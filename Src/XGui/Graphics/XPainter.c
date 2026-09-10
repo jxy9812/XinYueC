@@ -277,10 +277,12 @@ static void painterGpuDrawLineCommand(XPainter* self, void* userData)
  */
 static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                                     int x, int y);
+#if XPAINTER_IMAGE_RECT_ON
 struct XPainterImageRectParams;
 static bool painterRaster_drawImageRect(XPainter* self,
                                         const struct XPainterImageRectParams* params,
                                         const XImage* image);
+#endif /* XPAINTER_IMAGE_RECT_ON */
 static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
                                    uint32_t color);
 
@@ -299,6 +301,7 @@ static void painterGpuDrawImageCommand(XPainter* self, void* userData)
     painterRaster_drawImage(self, args->m_image, args->m_x, args->m_y);
 }
 
+#if XPAINTER_IMAGE_RECT_ON
 /** @brief drawImageRect（目标/源矩形/任意变换）局部提交参数。 */
 typedef struct PainterGpuImageRectArgs
 {
@@ -313,6 +316,7 @@ static void painterGpuDrawImageRectCommand(XPainter* self, void* userData)
         (const PainterGpuImageRectArgs*)userData;
     painterRaster_drawImageRect(self, args->m_params, args->m_image);
 }
+#endif /* XPAINTER_IMAGE_RECT_ON */
 
 /** @brief fillRect 局部提交参数（任意合成模式/变换）。 */
 typedef struct PainterGpuFillRectArgs

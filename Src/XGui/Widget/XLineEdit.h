@@ -41,6 +41,9 @@ extern "C" {
 #include "XPainter.h"
 #include "XAlignment.h"
 #include "XAction.h"
+#if XMENU_ON
+#include "XMenu.h"
+#endif /* XMENU_ON */
 
 #if XWIDGET_ON && XLINEEDIT_ON
 
@@ -590,6 +593,21 @@ void XLineEdit_copy(XLineEdit* self);
  * @return     无返回值。
  */
 void XLineEdit_paste(XLineEdit* self);
+
+#if XMENU_ON
+/**
+ * @brief      创建标准右键菜单（对标 QLineEdit::createStandardContextMenu）。
+ * @details    条目与启用语义完全对齐 Qt 6.8：可编辑态为
+ *             撤销/重做/分隔/剪切/复制/粘贴/删除/分隔/全选；只读态为
+ *             复制/分隔/全选。剪切与复制仅在 echoMode 为 Normal 且存在
+ *             选区时启用；粘贴在剪贴板文本非空时启用；全选在文本非空
+ *             且未全选时启用。菜单对象名为 "qt_edit_menu"。返回的菜单
+ *             所有权转移给调用方（调用方负责删除）。
+ * @param      self 目标编辑框；可为 NULL（返回 NULL）。
+ * @return     新菜单对象；创建失败返回 NULL。
+ */
+XMenu* XLineEdit_createStandardContextMenu(XLineEdit* self);
+#endif /* XMENU_ON */
 
 /* ==================== 其他属性（对标 QLineEdit public API） ==================== */
 

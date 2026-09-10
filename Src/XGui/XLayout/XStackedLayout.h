@@ -115,6 +115,23 @@ int XStackedLayout_currentIndex(const XStackedLayout* self);
 XWidget* XStackedLayout_widget(const XStackedLayout* self, int index);
 
 /**
+ * @brief 返回页面控件的索引（对标 QStackedLayout::indexOf）。
+ * @param self 目标布局；可为 NULL。
+ * @param widget 页面控件借用指针；可为 NULL。
+ * @return 索引；未找到返回 -1。
+ */
+int XStackedLayout_indexOf(const XStackedLayout* self, const XWidget* widget);
+
+/**
+ * @brief 移除页面控件（对标 QStackedLayout::removeWidget）。
+ * @details 布局放弃条目所有权并隐藏控件（不销毁控件）；移除后
+ *          发射 widgetRemoved 信号并维护 currentIndex。
+ * @param self 目标布局；可为 NULL。
+ * @param widget 页面控件借用指针；可为 NULL。
+ */
+void XStackedLayout_removeWidget(XStackedLayout* self, XWidget* widget);
+
+/**
  * @brief 返回页面数量（对标 QStackedLayout::count）。
  * @param self 目标布局；可为 NULL。
  * @return 页面数量；失败返回 0。

@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XImageBuiltinPlugin.c
  * @brief      XImageCodec 内置图像插件实现。
  * @note       插件把 XImageCodec 的格式发现、解码与编码能力包装成 Qt 风格
@@ -320,6 +320,7 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
 /* 从随机访问 JPEG 设备的头部读取 Qt 风格的 EXIF 方向变换。 */
 static XImageIOHandlerTransformation builtin_jpegTransformation(XIODevice* device)
 {
+#if XIMAGECODEC_JPEG_ON
     XByteArray* bytes;
     int transformation = 0;
     bool ok;
@@ -335,6 +336,11 @@ static XImageIOHandlerTransformation builtin_jpegTransformation(XIODevice* devic
     return ok && transformation >= 0 && transformation <= 7
         ? (XImageIOHandlerTransformation)transformation
         : XImageIOHandlerTransformation_None;
+#else /* !XIMAGECODEC_JPEG_ON */
+    /* JPEG 编解码被裁剪时不探测方向（无实现可链接）。 */
+    (void)device;
+    return XImageIOHandlerTransformation_None;
+#endif /* XIMAGECODEC_JPEG_ON */
 }
 
 /* 选项支持必须随具体格式变化。Qt 的 QBmpHandler 只声明 Size 和

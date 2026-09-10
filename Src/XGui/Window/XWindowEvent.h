@@ -25,7 +25,9 @@
  *             - XEnterEvent：指针进入事件（携带局部/全局坐标），与
  *               XWindow_enterEvent_base 配套，对标 QEnterEvent；指针离开
  *               为无负载的普通 XEvent（XEVENT_TYPE_LEAVE），与
- *               XWindow_leaveEvent_base 配套。
+ *               XWindow_leaveEvent_base 配套；
+ *             - XContextMenuEvent：上下文菜单事件（携带局部/全局坐标、
+ *               触发原因与修饰键），对标 QContextMenuEvent。
  *             所有事件类均继承 XEvent（m_class 为首成员），因此可直接
  *             强制转换成 XEvent* 送入 XCoreApplication_sendEvent /
  *             postEvent / sendSpontaneousEvent 投递，也可由窗口事件槽
@@ -522,6 +524,69 @@ XPoint XEnterEvent_globalPosition(const XEnterEvent* event);
 #define XEnterEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
+/*          XContextMenuEvent 上下文菜单事件（对标 QContextMenuEvent）          */
+/* ========================================================================== */
+/** @brief 上下文菜单触发原因（对标 QContextMenuEvent::Reason，数值一致）。 */
+typedef enum XContextMenuReason
+{
+    XContextMenuReason_Mouse = 0,     /**< 鼠标右键触发（对标 Reason::Mouse）。 */
+    XContextMenuReason_Keyboard = 1   /**< 键盘（菜单键）触发（对标
+                                           Reason::Keyboard）。 */
+} XContextMenuReason;
+
+/** @brief 声明 XContextMenuEvent 虚函数枚举：继承 XEvent（无新增槽）。 */
+XCLASS_DEFINE_BEGING(XContextMenuEvent)
+XCLASS_DEFINE_EXTEND_END(XContextMenuEvent, XEvent)
+
+/** @brief 上下文菜单事件对象；m_class 必须为第一个成员。 */
+typedef struct XContextMenuEvent
+{
+    XEvent m_class;              /**< 继承 XEvent；必须为第一个成员。 */
+    XPoint m_position;           /**< 事件源对象局部坐标（对标
+                                      QContextMenuEvent::pos）。 */
+    XPoint m_globalPosition;     /**< 屏幕全局坐标（对标
+                                      QContextMenuEvent::globalPos）。 */
+    XContextMenuReason m_reason; /**< 触发原因（对标 QContextMenuEvent::
+                                      reason）。 */
+    XKeyboardModifiers m_modifiers; /**< 事件发生时按下的修饰键（对标
+                                         QInputEvent::modifiers）。 */
+} XContextMenuEvent;
+
+/**
+ * @brief      创建上下文菜单事件（对标 QContextMenuEvent(reason, pos,
+ *             globalPos, modifiers)）。
+ * @param      memory        内存类型；通常传 XCLASS_DEFAULT_MEMORY_TYPE。
+ * @param      type          事件类型；必须为 XEVENT_TYPE_CONTEXT_MENU。
+ * @param      position      局部坐标；可为 NULL（按 0,0）。
+ * @param      globalPosition 屏幕全局坐标；可为 NULL（按局部坐标）。
+ * @param      reason        触发原因（鼠标/键盘）。
+ * @param      modifiers     修饰键位掩码。
+ * @return     新事件对象；内存分配失败返回 NULL。
+ */
+XContextMenuEvent* XContextMenuEvent_create_ex(
+        XMemoryType memory, XEventType type, const XPoint* position,
+        const XPoint* globalPosition, XContextMenuReason reason,
+        XKeyboardModifiers modifiers);
+/** @brief 初始化调用者提供的上下文菜单事件存储（参数语义同 create_ex）。 */
+void XContextMenuEvent_init(XContextMenuEvent* event, XEventType type,
+                            const XPoint* position,
+                            const XPoint* globalPosition,
+                            XContextMenuReason reason,
+                            XKeyboardModifiers modifiers);
+/** @brief 获取局部坐标（对标 QContextMenuEvent::pos）。 */
+XPoint XContextMenuEvent_position(const XContextMenuEvent* event);
+/** @brief 获取屏幕全局坐标（对标 QContextMenuEvent::globalPos）。 */
+XPoint XContextMenuEvent_globalPosition(const XContextMenuEvent* event);
+/** @brief 获取触发原因（对标 QContextMenuEvent::reason）。 */
+XContextMenuReason XContextMenuEvent_reason(const XContextMenuEvent* event);
+/** @brief 获取键盘修饰键（对标 QInputEvent::modifiers）。 */
+XKeyboardModifiers XContextMenuEvent_modifiers(const XContextMenuEvent* event);
+/** @brief 释放方式沿用 XEvent（无动态成员）。 */
+#define XContextMenuEvent_delete_base XEvent_delete_base
+/** @brief 释放方式沿用 XEvent（无动态成员）。 */
+#define XContextMenuEvent_deinit_base XEvent_deinit_base
+
+/* ========================================================================== */
 /*      XClass create API default-memory wrappers（默认内存池快速创建）。      */
 /* ========================================================================== */
 #undef XResizeEvent_create
@@ -542,6 +607,8 @@ XPoint XEnterEvent_globalPosition(const XEnterEvent* event);
 #define XWheelEvent_create(...) XWheelEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XEnterEvent_create
 #define XEnterEvent_create(...) XEnterEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
+#undef XContextMenuEvent_create
+#define XContextMenuEvent_create(...) XContextMenuEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 
 #endif /* XWINDOWEVENT_ON */
 

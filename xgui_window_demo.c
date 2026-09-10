@@ -82,6 +82,60 @@
 #endif
 #if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON
 #include "XTabWidget.h"
+#if XLCDNUMBER_ON
+#include "XLcdNumber.h"
+#endif
+#if XSCROLLBAR_ON
+#include "XScrollBar.h"
+#endif
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+#include "XScrollArea.h"
+#endif
+#if XSPLITTER_ON
+#include "XSplitter.h"
+#endif
+#if XTOOLBOX_ON
+#include "XToolBox.h"
+#endif
+#if XDIALOGBUTTONBOX_ON
+#include "XDialogButtonBox.h"
+#endif
+#if XMENUBAR_ON
+#include "XMenuBar.h"
+#endif
+#if XTOOLBAR_ON
+#include "XToolBar.h"
+#endif
+#if XPLAINTEXTEDIT_ON
+#include "XPlainTextEdit.h"
+#endif
+#if XDATETIMEEDIT_ON
+#include "XDateTimeEdit.h"
+#endif
+#if XFONTCOMBOBOX_ON
+#include "XFontComboBox.h"
+#endif
+#if XCALENDARWIDGET_ON
+#include "XCalendarWidget.h"
+#endif
+#if XTEXTBROWSER_ON
+#include "XTextBrowser.h"
+#endif
+#if XMDIAREA_ON
+#include "XMdiArea.h"
+#endif
+#if XSTATUSBAR_ON
+#include "XStatusBar.h"
+#endif
+#if XSTACKEDWIDGET_ON
+#include "XStackedWidget.h"
+#endif
+#if XBUTTONGROUP_ON
+#include "XButtonGroup.h"
+#endif
+#if XCHECKBOX_ON
+#include "XCheckBox.h"
+#endif
 #endif
 #if XWIDGET_ON && XCOMBOBOX_ON
 #include "XComboBox.h"
@@ -92,6 +146,58 @@
 #include "XVarList.h"
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #include "XStackedLayout.h"
+#endif
+
+#if XLCDNUMBER_ON
+#include "XLcdNumber.h"
+#endif
+#if XSCROLLBAR_ON
+#include "XScrollBar.h"
+#endif
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+#include "XScrollArea.h"
+#endif
+#if XSPLITTER_ON
+#include "XSplitter.h"
+#endif
+#if XTOOLBOX_ON
+#include "XToolBox.h"
+#endif
+#if XDIALOGBUTTONBOX_ON
+#include "XDialogButtonBox.h"
+#endif
+#if XMENUBAR_ON
+#include "XMenuBar.h"
+#endif
+#if XTOOLBAR_ON
+#include "XToolBar.h"
+#endif
+#if XSTACKEDWIDGET_ON
+#include "XStackedWidget.h"
+#endif
+#if XBUTTONGROUP_ON
+#include "XButtonGroup.h"
+#endif
+#if XSTATUSBAR_ON
+#include "XStatusBar.h"
+#endif
+#if XDATETIMEEDIT_ON
+#include "XDateTimeEdit.h"
+#endif
+#if XFONTCOMBOBOX_ON
+#include "XFontComboBox.h"
+#endif
+#if XPLAINTEXTEDIT_ON
+#include "XPlainTextEdit.h"
+#endif
+#if XMDIAREA_ON
+#include "XMdiArea.h"
+#endif
+#if XCALENDARWIDGET_ON
+#include "XCalendarWidget.h"
+#endif
+#if XTEXTBROWSER_ON
+#include "XTextBrowser.h"
 #endif
 
 #if XGUIAPPLICATION_ON && XWIDGET_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
@@ -228,6 +334,62 @@ typedef struct DemoWin
     XDial           m_dial;         /**< 页面 4：旋钮（页二内容）。 */
     XProgressBar    m_dialProgress; /**< 页面 4：旋钮联动进度条。 */
     XLabel          m_tabStatus;    /**< 页面 4：联动状态行。 */
+#if XLCDNUMBER_ON
+    XLcdNumber      m_lcd;          /**< LCD 数码管。 */
+#endif
+#if XSCROLLBAR_ON
+    XScrollBar      m_scrollBar;    /**< 滚动条。 */
+#endif
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    XScrollArea     m_scrollArea;   /**< 滚动区域。 */
+#endif
+#if XSPLITTER_ON
+    XSplitter       m_splitter;     /**< 分割器。 */
+#endif
+#if XTOOLBOX_ON
+    XToolBox        m_toolBox;      /**< 工具箱。 */
+#endif
+#if XDIALOGBUTTONBOX_ON
+    XDialogButtonBox m_buttonBox;   /**< 标准按钮盒。 */
+#endif
+#if XMENUBAR_ON && XMENU_ON
+    XMenuBar        m_menuBar;      /**< 菜单栏。 */
+    XMenu*          m_fileMenu;     /**< 文件菜单。 */
+    XMenu*          m_editMenu;     /**< 编辑菜单。 */
+#endif
+#if XTOOLBAR_ON
+    XToolBar        m_toolBar;      /**< 工具栏。 */
+#endif
+#if XPLAINTEXTEDIT_ON
+    XPlainTextEdit  m_plainEdit;    /**< 多行编辑。 */
+#endif
+#if XDATETIMEEDIT_ON
+    XDateTimeEdit   m_dtEdit;       /**< 日期时间编辑。 */
+#endif
+#if XFONTCOMBOBOX_ON
+    XFontComboBox   m_fontCombo;    /**< 字体下拉框。 */
+#endif
+#if XCALENDARWIDGET_ON
+    XCalendarWidget m_calendar;     /**< 日历。 */
+#endif
+#if XTEXTBROWSER_ON
+    XTextBrowser    m_textBrowser;  /**< 文本浏览器。 */
+#endif
+#if XMDIAREA_ON
+    XMdiArea        m_mdiArea;      /**< MDI 区域。 */
+#endif
+#if XSTATUSBAR_ON
+    XStatusBar      m_sb;           /**< 状态栏。 */
+    XLabel          m_sbLabel;      /**< 状态栏标签。 */
+#endif
+#if XSTACKEDWIDGET_ON
+    XStackedWidget  m_stackedW;     /**< 堆叠容器。 */
+#endif
+#if XBUTTONGROUP_ON
+    XButtonGroup    m_btnGroup;     /**< 按钮组。 */
+    XCheckBox       m_bgBtn0;       /**< 按钮组成员 0。 */
+    XCheckBox       m_bgBtn1;       /**< 按钮组成员 1。 */
+#endif
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XPushButton     m_button; /**< 页面 0：常驻按钮（点击/信号演示）。 */
@@ -1843,6 +2005,157 @@ static DemoWin* DemoWin_create(void)
                                        "\xE6\x97\x8B\xE9\x92\xAE"); /* 旋钮 */
         }
     }
+#if XLCDNUMBER_ON && XSCROLLBAR_ON
+    /* 页三：LCD + ScrollBar 联动。 */
+    XLcdNumber_init_2(&self->m_lcd, 4u, (XWidget*)&self->m_tabWidget, 0);
+    XLcdNumber_display_2(&self->m_lcd, 1888);
+    XScrollBar_init(&self->m_scrollBar, (XWidget*)&self->m_tabWidget, 0);
+    XAbstractSlider_setRange((XAbstractSlider*)&self->m_scrollBar, 0, 9999);
+    XAbstractSlider_setValue((XAbstractSlider*)&self->m_scrollBar, 1888);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 2,
+                               (XWidget*)&self->m_lcd, "数码管");
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 3,
+                               (XWidget*)&self->m_scrollBar, "滚动条");
+#endif
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON && XFRAME_ON && XLABEL_ON
+    /* 页四：XScrollArea。 */
+    XScrollArea_init(&self->m_scrollArea, (XWidget*)&self->m_tabWidget, 0);
+    {
+        XLabel* big = XLabel_create(NULL, 0);
+        XLabel_setText_2(big, "滚动内容\n第二行\n第三行\n第四行");
+        XWidget_resize(big, 400, 300);
+        XScrollArea_setWidget(&self->m_scrollArea, (XWidget*)big);
+    }
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 4,
+                               (XWidget*)&self->m_scrollArea, "滚动");
+#endif
+#if XSPLITTER_ON && XFRAME_ON && XLABEL_ON
+    /* 页五：XSplitter。 */
+    XSplitter_init(&self->m_splitter, (XWidget*)&self->m_tabWidget, 0);
+    {
+        XLabel* left = XLabel_create(NULL, 0);
+        XLabel* right = XLabel_create(NULL, 0);
+        XLabel_setText_2(left, "左");
+        XLabel_setText_2(right, "右");
+        XSplitter_addWidget(&self->m_splitter, (XWidget*)left);
+        XSplitter_addWidget(&self->m_splitter, (XWidget*)right);
+    }
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 5,
+                               (XWidget*)&self->m_splitter, "分割");
+#endif
+#if XTOOLBOX_ON && XFRAME_ON && XLABEL_ON
+    /* 页六：XToolBox。 */
+    XToolBox_init(&self->m_toolBox, (XWidget*)&self->m_tabWidget, 0);
+    {
+        XLabel* a = XLabel_create(NULL, 0);
+        XLabel* b = XLabel_create(NULL, 0);
+        XLabel_setText_2(a, "工具箱页一");
+        XLabel_setText_2(b, "工具箱页二");
+        XToolBox_addItem(&self->m_toolBox, (XWidget*)a, "页一");
+        XToolBox_addItem(&self->m_toolBox, (XWidget*)b, "页二");
+    }
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 6,
+                               (XWidget*)&self->m_toolBox, "工具箱");
+#endif
+#if XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON
+    /* 页七：XDialogButtonBox。 */
+    XDialogButtonBox_init(&self->m_buttonBox, (XWidget*)&self->m_tabWidget, 0);
+    XDialogButtonBox_setStandardButtons(&self->m_buttonBox,
+        (int)XDialogButtonBoxStandard_Ok | (int)XDialogButtonBoxStandard_Cancel);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 7,
+                               (XWidget*)&self->m_buttonBox, "按钮盒");
+#endif
+#if XMENUBAR_ON && XMENU_ON && XTOOLBAR_ON && XACTION_ON
+    /* 页八：XMenuBar + XToolBar。 */
+    {
+        XWidget* mbPage = (XWidget*)XMemory_malloc(sizeof(XWidget), XCLASS_DEFAULT_MEMORY_TYPE);
+        if (mbPage) {
+            XWidget_init(mbPage, (XWidget*)&self->m_tabWidget, 0);
+            Set_Class_Memory(mbPage, XCLASS_DEFAULT_MEMORY_TYPE);
+            Set_Class_IsHeap(mbPage, true);
+            XMenuBar_init(&self->m_menuBar, mbPage, 0);
+            self->m_fileMenu = XMenuBar_addMenu_2(&self->m_menuBar, "文件");
+            self->m_editMenu = XMenuBar_addMenu_2(&self->m_menuBar, "编辑");
+            if (self->m_fileMenu) XMenu_addAction_2(self->m_fileMenu, "退出");
+            if (self->m_editMenu) XMenu_addAction_2(self->m_editMenu, "全选");
+            XWidget_setGeometry((XWidget*)&self->m_menuBar, 0, 0, 300, 22);
+            XWidget_show((XWidget*)&self->m_menuBar);
+            XToolBar_init(&self->m_toolBar, mbPage, 0);
+            XToolBar_addAction_2(&self->m_toolBar, "新建");
+            XToolBar_addAction_2(&self->m_toolBar, "保存");
+            XWidget_setGeometry((XWidget*)&self->m_toolBar, 0, 22, 300, 30);
+            XWidget_show((XWidget*)&self->m_toolBar);
+            (void)XTabWidget_insertTab(&self->m_tabWidget, 8, mbPage, "菜单工具栏");
+        }
+    }
+#endif
+#if XPLAINTEXTEDIT_ON
+    /* 页九：XPlainTextEdit。 */
+    XPlainTextEdit_init(&self->m_plainEdit, (XWidget*)&self->m_tabWidget, 0);
+    XPlainTextEdit_setPlainText(&self->m_plainEdit, "多行编辑\n第二行\n第三行");
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 9,
+                               (XWidget*)&self->m_plainEdit, "多行编辑");
+#endif
+#if XDATETIMEEDIT_ON && XFONTCOMBOBOX_ON
+    /* 页十：XDateTimeEdit + XFontComboBox。 */
+    XDateTimeEdit_init(&self->m_dtEdit, (XWidget*)&self->m_tabWidget, 0);
+    XFontComboBox_init(&self->m_fontCombo, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_dtEdit, 10, 10, 200, 28);
+    XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 220, 28);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 10,
+                               (XWidget*)&self->m_dtEdit, "日期时间");
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 11,
+                               (XWidget*)&self->m_fontCombo, "字体");
+#endif
+#if XCALENDARWIDGET_ON
+    /* 页十一：XCalendarWidget。 */
+    XCalendarWidget_init(&self->m_calendar, (XWidget*)&self->m_tabWidget, 0);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 12,
+                               (XWidget*)&self->m_calendar, "日历");
+#endif
+#if XTEXTBROWSER_ON
+    /* 页十二：XTextBrowser。 */
+    XTextBrowser_init(&self->m_textBrowser, (XWidget*)&self->m_tabWidget, 0);
+    XPlainTextEdit_setPlainText(self->m_textBrowser.m_base.m_editor,
+        "帮助内容\n第二段\n第三段");
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 13,
+                               (XWidget*)&self->m_textBrowser, "浏览器");
+#endif
+#if XMDIAREA_ON && XFRAME_ON && XLABEL_ON
+    /* 页十三：XMdiArea。 */
+    XMdiArea_init(&self->m_mdiArea, (XWidget*)&self->m_tabWidget, 0);
+    {
+        XLabel* m0 = XLabel_create(NULL, 0);
+        XLabel* m1 = XLabel_create(NULL, 0);
+        XLabel_setText_2(m0, "文档 1");
+        XLabel_setText_2(m1, "文档 2");
+        XMdiArea_addSubWindow(&self->m_mdiArea, (XWidget*)m0);
+        XMdiArea_addSubWindow(&self->m_mdiArea, (XWidget*)m1);
+    }
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 14,
+                               (XWidget*)&self->m_mdiArea, "MDI");
+#endif
+#if XSTATUSBAR_ON && XLABEL_ON
+    /* 页十四：XStatusBar。 */
+    XStatusBar_init(&self->m_sb, (XWidget*)&self->m_tabWidget, 0);
+    XLabel_init(&self->m_sbLabel, (XWidget*)&self->m_sb, 0);
+    XLabel_setText_2(&self->m_sbLabel, "普通区标签");
+    XStatusBar_addWidget(&self->m_sb, (XWidget*)&self->m_sbLabel, 1);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 15,
+                               (XWidget*)&self->m_sb, "状态栏");
+#endif
+#if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON
+    /* 页十五：XStackedWidget + XButtonGroup。 */
+    XStackedWidget_init(&self->m_stackedW, (XWidget*)&self->m_tabWidget, 0);
+    XButtonGroup_init(&self->m_btnGroup, NULL);
+    XCheckBox_init(&self->m_bgBtn0, (XWidget*)&self->m_stackedW, 0);
+    XCheckBox_init(&self->m_bgBtn1, (XWidget*)&self->m_stackedW, 0);
+    XButtonGroup_addButton(&self->m_btnGroup, (XAbstractButton*)&self->m_bgBtn0, 0);
+    XButtonGroup_addButton(&self->m_btnGroup, (XAbstractButton*)&self->m_bgBtn1, 1);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 16,
+                               (XWidget*)&self->m_stackedW, "堆叠+按钮组");
+#endif
+
     XLabel_init(&self->m_tabStatus, (XWidget*)&self->m_pageTabs, 0);
     demo_set_widget_default_font((XWidget*)&self->m_tabStatus);
     XLabel_setText_2(&self->m_tabStatus, "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */

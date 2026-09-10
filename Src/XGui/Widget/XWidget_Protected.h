@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XWidget_Protected.h
  * @brief      XWidget 基类保护接口（仅供子类与内部实现使用）。
  * @details    本文件集中声明 Qt QWidget 中属于 protected 的事件虚函数、
@@ -123,6 +123,8 @@ void XWidget_keyPressEvent_base(XWidget* self, XEvent* event);
 void XWidget_keyReleaseEvent_base(XWidget* self, XEvent* event);
 /** @brief 输入法组合/提交事件槽（对标 QWidget::inputMethodEvent）。 */
 void XWidget_inputMethodEvent_base(XWidget* self, XEvent* event);
+/** @brief 上下文菜单事件槽（对标 QWidget::contextMenuEvent）。 */
+void XWidget_contextMenuEvent_base(XWidget* self, XEvent* event);
 /** @brief 拖放进入事件槽（对标 QWidget::dragEnterEvent）。 */
 void XWidget_dragEnterEvent_base(XWidget* self, XEvent* event);
 /** @brief 拖放移动事件槽（对标 QWidget::dragMoveEvent）。 */

@@ -47,6 +47,9 @@
 #include "XVarList.h"
 #include "XString.h"
 #include "XClipboard.h"
+#if XMENU_ON
+#include "XMenu.h"
+#endif /* XMENU_ON */
 #include "XColor.h"
 #if XPALETTE_ON
 #include "XPalette.h"
@@ -188,7 +191,7 @@ static void xlineedit_emitTextSignal(XLineEdit* self, size_t signal)
  *         inputRejected）。 */
 static void xlineedit_emitVoidSignal(XLineEdit* self, size_t signal)
 {
-    XVarList* arguments = XVarList_Create(0);
+    XVarList* arguments = XVarList_create(0);
     if (!arguments) return;
     if (self && ((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
@@ -1143,6 +1146,31 @@ static void VXLineEdit_keyReleaseEvent(XWidget* self, XEvent* event)
  * @param      event 输入法事件（m_commitString 为已确认文本）。
  * @return     无返回值。
  */
+#if XMENU_ON
+/** @brief 上下文菜单事件：创建标准菜单并弹出到事件全局坐标（对标
+ *         QLineEdit::contextMenuEvent 的 createStandardContextMenu +
+ *         popup；关闭即删对齐 WA_DeleteOnClose）。 */
+static void VXLineEdit_contextMenuEvent(XWidget* self, XEvent* event)
+{
+    XLineEdit* edit = (XLineEdit*)self;
+    XContextMenuEvent* ctx;
+    XMenu* menu;
+    XPoint global;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_CONTEXT_MENU) return;
+    ctx = (XContextMenuEvent*)event;
+    menu = XLineEdit_createStandardContextMenu(edit);
+    if (!menu) return;
+    global = XContextMenuEvent_globalPosition(ctx);
+    /* 对标 Qt：popup 非阻塞；关闭后由 DeleteOnClose 属性自删，
+       与 Qt 菜单的 WA_DeleteOnClose 语义一致。 */
+    XWidget_setAttribute((XWidget*)menu, XWidgetAttribute_DeleteOnClose,
+                         true);
+    XMenu_popup(menu, &global);
+    XEvent_accept(event);
+}
+#endif /* XMENU_ON */
+
 static void VXLineEdit_inputMethodEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -1621,6 +1649,10 @@ XVtable* XLineEdit_class_init(void)
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXLineEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VXLineEdit_inputMethodEvent);
+#if XMENU_ON
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent,
+                             VXLineEdit_contextMenuEvent);
+#endif /* XMENU_ON */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyReleaseEvent,
                              VXLineEdit_keyReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
@@ -2390,3 +2422,141 @@ XLineEdit* XLineEdit_focusedLineEdit(void)
 }
 
 #endif /* XWIDGET_ON && XLINEEDIT_ON */
+
+#if XMENU_ON
+/* ==================== 标准右键菜单（对标 QLineEdit::
+   createStandardContextMenu / contextMenuEvent） ==================== */
+
+/** @brief 菜单动作槽：撤销。 */
+static void xlineedit_menuUndoSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XLineEdit_undo((XLineEdit*)receiver);
+}
+
+/** @brief 菜单动作槽：重做。 */
+static void xlineedit_menuRedoSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XLineEdit_redo((XLineEdit*)receiver);
+}
+
+/** @brief 菜单动作槽：剪切。 */
+static void xlineedit_menuCutSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XLineEdit_cut((XLineEdit*)receiver);
+}
+
+/** @brief 菜单动作槽：复制。 */
+static void xlineedit_menuCopySlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XLineEdit_copy((XLineEdit*)receiver);
+}
+
+/** @brief 菜单动作槽：粘贴。 */
+static void xlineedit_menuPasteSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XLineEdit_paste((XLineEdit*)receiver);
+}
+
+/** @brief 菜单动作槽：删除选中文本（对标
+ *         QWidgetLineControl::_q_deleteSelected）。 */
+static void xlineedit_menuDeleteSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XLineEdit_del((XLineEdit*)receiver);
+}
+
+/** @brief 菜单动作槽：全选。 */
+static void xlineedit_menuSelectAllSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    XLineEdit_selectAll((XLineEdit*)receiver);
+}
+
+/** @brief 添加菜单动作并连接触发槽（返回动作便于设置启用态）。 */
+static XAction* xlineedit_addMenuAction(XMenu* menu, const char* utf8,
+                                        XSlotFunc1 slot, XLineEdit* edit)
+{
+    XAction* action = XMenu_addAction_2(menu, utf8);
+    if (action && slot)
+        XObject_connect_1((XObject*)action,
+                          XSignal(XAction_triggered_signal),
+                          (XObject*)edit, slot, XConnectionType_Direct);
+    return action;
+}
+
+/** @brief 是否已全选（存在选区且覆盖全部文本；对标 allSelected）。 */
+static bool xlineedit_allSelected(const XLineEdit* self)
+{
+    return xlineedit_hasSelection(self) &&
+           xlineedit_selStart(self) == 0 &&
+           xlineedit_selEnd(self) == strlen(self->m_text);
+}
+
+XMenu* XLineEdit_createStandardContextMenu(XLineEdit* self)
+{
+    XMenu* menu;
+    XAction* action;
+    XString* name;
+    bool readOnly;
+    bool hasSel;
+    bool echoNormal;
+    bool hasText;
+    bool hasClip;
+    char* clip;
+    if (!self) return NULL;
+    menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!menu) return NULL;
+    /* 对标 Qt：qt_edit_menu 对象名供测试与样式查找。 */
+    name = XString_create_utf8("qt_edit_menu");
+    if (name) {
+        XObject_setObjectName((XObject*)menu, name);
+        XString_delete_base((XClass*)name);
+    }
+    readOnly = self->m_readOnly;
+    hasSel = xlineedit_hasSelection(self);
+    echoNormal = XLineEdit_echoMode(self) == (int)XLineEditEchoMode_Normal;
+    hasText = self->m_text[0] != '\0';
+    clip = xlineedit_getClipboardText(self);
+    hasClip = clip && clip[0] != '\0';
+    if (clip) XFree_System(clip);
+
+    if (!readOnly) {
+        action = xlineedit_addMenuAction(menu, "撤销(&U)",
+                                         xlineedit_menuUndoSlot, self);
+        XAction_setEnabled(action, XLineEdit_isUndoAvailable(self));
+        action = xlineedit_addMenuAction(menu, "重做(&R)",
+                                         xlineedit_menuRedoSlot, self);
+        XAction_setEnabled(action, XLineEdit_isRedoAvailable(self));
+        XMenu_addSeparator(menu);
+    }
+    if (!readOnly) {
+        action = xlineedit_addMenuAction(menu, "剪切(&T)",
+                                         xlineedit_menuCutSlot, self);
+        XAction_setEnabled(action, hasSel && echoNormal);
+    }
+    action = xlineedit_addMenuAction(menu, "复制(&C)",
+                                     xlineedit_menuCopySlot, self);
+    XAction_setEnabled(action, hasSel && echoNormal);
+    if (!readOnly) {
+        action = xlineedit_addMenuAction(menu, "粘贴(&P)",
+                                         xlineedit_menuPasteSlot, self);
+        XAction_setEnabled(action, hasClip);
+        action = xlineedit_addMenuAction(menu, "删除",
+                                         xlineedit_menuDeleteSlot, self);
+        XAction_setEnabled(action, hasText && hasSel);
+    }
+    if (!XMenu_actions(menu) ||
+        XVector_size_base(XMenu_actions(menu)) == 0)
+        return menu;
+    XMenu_addSeparator(menu);
+    action = xlineedit_addMenuAction(menu, "全选(&A)",
+                                     xlineedit_menuSelectAllSlot, self);
+    XAction_setEnabled(action, hasText && !xlineedit_allSelected(self));
+    return menu;
+}
+#endif /* XMENU_ON */

@@ -83,6 +83,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #endif /* XWIDGET_ON && XFRAME_ON */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON
 #include "XAbstractButton.h"
+#include "XClipboard.h"
 #include "XLineEdit.h"
 #include "XLineEditTest.h"
 #include "XSliderTest.h"
@@ -92,6 +93,34 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XDialTest.h"
 #include "XComboBoxTest.h"
 #include "XTabBarTest.h"
+#include "XLcdNumberTest.h"
+#include "XScrollBarTest.h"
+#include "XStackedWidgetTest.h"
+#include "XButtonGroupTest.h"
+#include "XStatusBar.h"
+#include "XMenuBar.h"
+#include "XSplitter.h"
+#include "XToolBox.h"
+#include "XScrollArea.h"
+#include "XDateTimeEdit.h"
+#include "XFontComboBox.h"
+#include "XPlainTextEdit.h"
+#include "XMdiArea.h"
+#include "XCalendarWidget.h"
+#include "XTextBrowser.h"
+#include "XKeySequenceEdit.h"
+#include "XTextEdit.h"
+#include "XDialog.h"
+#include "XLabel.h"
+#include "XSizeGrip.h"
+#include "XRubberBand.h"
+#include "XFocusFrame.h"
+#include "XSplashScreen.h"
+#include "XMessageBox.h"
+#include "XDockWidget.h"
+#include "XMainWindow.h"
+#include "XToolBar.h"
+#include "XDialogButtonBox.h"
 #include "XAbstractButton_Protected.h"
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
@@ -20390,6 +20419,238 @@ static void test_widget_ime_commit_bridge(void)
                 "输入法桥接测试后单例清空");
 }
 
+/* ---------------- XLineEdit 上下文菜单事件探针（重载 contextMenuEvent） ---------------- */
+
+XCLASS_DEFINE_BEGING(CtxProbeEdit)
+XCLASS_DEFINE_EXTEND_END(CtxProbeEdit, XLineEdit)
+
+typedef struct CtxProbeEdit
+{
+    XLineEdit m_class;      /**< 基类；必须是第一个成员。 */
+    int m_ctxCount;         /**< contextMenuEvent 触发次数。 */
+} CtxProbeEdit;
+
+/** @brief contextMenuEvent：仅计数并接受，不弹真实菜单。 */
+static void VCtxProbeEdit_contextMenuEvent(XWidget* self, XEvent* event)
+{
+    ++((CtxProbeEdit*)self)->m_ctxCount;
+    XEvent_accept(event);
+}
+
+/** @brief 虚函数表：继承 XLineEdit，仅重载 contextMenuEvent。 */
+static XVtable* CtxProbeEdit_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(CtxProbeEdit)
+    XVTABLE_INHERIT_XCLASS(XLineEdit);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent,
+                             VCtxProbeEdit_contextMenuEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 创建上下文菜单探针编辑框；parent 可为 NULL。 */
+static CtxProbeEdit* CtxProbeEdit_create(XWidget* parent)
+{
+    CtxProbeEdit* self = (CtxProbeEdit*)XMemory_malloc(sizeof(CtxProbeEdit),
+                                                      XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self) return NULL;
+    memset(self, 0, sizeof(CtxProbeEdit));
+    XLineEdit_init(&self->m_class, parent, 0);
+    XClassSetVtable(self, CtxProbeEdit);
+    Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+/** @brief 取菜单第 index 个动作（分隔条也占位）；越界返回 NULL。 */
+static XAction* ctx_menu_action_at(const XMenu* menu, int index)
+{
+    const XVector* actions = XMenu_actions(menu);
+    if (!actions || index < 0 ||
+        index >= (int)XVector_size_base(actions)) return NULL;
+    return *(XAction**)XVector_at_base(actions, (size_t)index);
+}
+
+/** @brief XLineEdit 标准右键菜单契约（对标 QLineEdit::
+ *         createStandardContextMenu 的条目顺序、启用语义与只读分支），
+ *         并验证右键按下经控件分发合成 contextMenuEvent 的完整链路。 */
+static void test_lineedit_context_menu_contract(void)
+{
+    char argv0[] = "ctx_menu_test";
+    char* argv[] = { argv0, NULL };
+    int argc = 1;
+    XGuiApplication* app;
+    XLineEdit* edit;
+    XMenu* menu;
+    XAction* act;
+    XClipboard* cb;
+
+    app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
+    expect_true(app != NULL, "上下文菜单 XGuiApplication 创建");
+    edit = XLineEdit_create(NULL, 0);
+    expect_true(edit != NULL, "上下文菜单编辑框创建");
+    if (!app || !edit) {
+        if (edit) XWidget_delete_base((XClass*)edit);
+        if (app) XGuiApplication_delete_base(app);
+        return;
+    }
+
+    /* ---- 可编辑态：undo/redo/分隔/剪切/复制/粘贴/删除/分隔/全选 ---- */
+    XLineEdit_setText(edit, "hello");
+    XLineEdit_selectAll(edit);
+    menu = XLineEdit_createStandardContextMenu(edit);
+    expect_true(menu != NULL, "标准上下文菜单创建");
+    expect_true(XObject_objectName((XObject*)menu) != NULL &&
+                XString_equals_utf8(XObject_objectName((XObject*)menu),
+                                    "qt_edit_menu", XChar_CaseSensitive),
+                "菜单对象名为 qt_edit_menu");
+    expect_true(XMenu_actions(menu) != NULL &&
+                XVector_size_base(XMenu_actions(menu)) == 9,
+                "可编辑菜单共 9 个条目（含 2 个分隔条）");
+
+    act = ctx_menu_action_at(menu, 0);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                !XAction_isEnabled(act),
+                "空撤销栈时撤销动作禁用");
+    act = ctx_menu_action_at(menu, 1);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                !XAction_isEnabled(act),
+                "空重做栈时重做动作禁用");
+    act = ctx_menu_action_at(menu, 2);
+    expect_true(act != NULL && XAction_isSeparator(act),
+                "条目 2 为分隔条");
+    act = ctx_menu_action_at(menu, 3);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                XAction_isEnabled(act),
+                "有选区时剪切动作启用");
+    act = ctx_menu_action_at(menu, 4);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                XAction_isEnabled(act),
+                "有选区时复制动作启用");
+    act = ctx_menu_action_at(menu, 5);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                !XAction_isEnabled(act),
+                "剪贴板为空时粘贴动作禁用");
+    act = ctx_menu_action_at(menu, 6);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                XAction_isEnabled(act),
+                "有选区时删除动作启用");
+    act = ctx_menu_action_at(menu, 7);
+    expect_true(act != NULL && XAction_isSeparator(act),
+                "条目 7 为分隔条");
+    act = ctx_menu_action_at(menu, 8);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                !XAction_isEnabled(act),
+                "已全选时全选动作禁用");
+    XMenu_delete_base(menu);
+
+    /* ---- 剪贴板非空 → 粘贴启用；无选区 → 剪切/复制/删除禁用、全选启用 ---- */
+    cb = XGuiApplication_clipboard();
+    expect_true(cb != NULL, "应用剪贴板可用");
+    if (cb) {
+        XString* text = XString_create_utf8("clip");
+        if (text) {
+            XClipboard_setText(cb, text, XClipboardMode_Clipboard);
+            XString_delete_base((XClass*)text);
+        }
+    }
+    XLineEdit_setText(edit, "hello");
+    XLineEdit_setSelection(edit, 0, 0);
+    menu = XLineEdit_createStandardContextMenu(edit);
+    expect_true(menu != NULL, "第二次创建标准上下文菜单");
+    act = ctx_menu_action_at(menu, 5);
+    expect_true(act != NULL && XAction_isEnabled(act),
+                "剪贴板非空时粘贴动作启用");
+    act = ctx_menu_action_at(menu, 3);
+    expect_true(act != NULL && !XAction_isEnabled(act),
+                "无选区时剪切动作禁用");
+    act = ctx_menu_action_at(menu, 4);
+    expect_true(act != NULL && !XAction_isEnabled(act),
+                "无选区时复制动作禁用");
+    act = ctx_menu_action_at(menu, 6);
+    expect_true(act != NULL && !XAction_isEnabled(act),
+                "无选区时删除动作禁用");
+    act = ctx_menu_action_at(menu, 8);
+    expect_true(act != NULL && XAction_isEnabled(act),
+                "非全选时全选动作启用");
+    XMenu_delete_base(menu);
+
+    /* ---- 空文本：全选禁用（对标 text 为空时 Select All 禁用） ---- */
+    XLineEdit_clear(edit);
+    menu = XLineEdit_createStandardContextMenu(edit);
+    expect_true(menu != NULL, "空文本菜单创建");
+    act = ctx_menu_action_at(menu, 8);
+    expect_true(act != NULL && !XAction_isEnabled(act),
+                "空文本时全选动作禁用");
+    XMenu_delete_base(menu);
+
+    /* ---- 只读态：仅 复制/分隔/全选（对标 QLineEdit 只读分支） ---- */
+    XLineEdit_setText(edit, "abc");
+    XLineEdit_setReadOnly(edit, true);
+    menu = XLineEdit_createStandardContextMenu(edit);
+    expect_true(menu != NULL, "只读菜单创建");
+    expect_true(XMenu_actions(menu) != NULL &&
+                XVector_size_base(XMenu_actions(menu)) == 3,
+                "只读菜单共 3 个条目（复制/分隔/全选）");
+    act = ctx_menu_action_at(menu, 0);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                !XAction_isEnabled(act),
+                "只读且无选区时复制禁用");
+    act = ctx_menu_action_at(menu, 1);
+    expect_true(act != NULL && XAction_isSeparator(act),
+                "只读菜单条目 1 为分隔条");
+    act = ctx_menu_action_at(menu, 2);
+    expect_true(act != NULL && !XAction_isSeparator(act) &&
+                XAction_isEnabled(act),
+                "只读非全选时全选启用");
+    XMenu_delete_base(menu);
+    XLineEdit_setReadOnly(edit, false);
+
+    XLineEdit_delete_base((XClass*)edit);
+
+    /* ---- 右键合成链路：右键按下未接受 → contextMenuEvent 到达控件 ---- */
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON
+    {
+        XWidget* top;
+        CtxProbeEdit* probe;
+        XWindow* window;
+        top = XWidget_create(NULL, 0);
+        probe = top ? CtxProbeEdit_create(top) : NULL;
+        expect_true(top != NULL && probe != NULL,
+                    "右键合成探针创建");
+        if (top && probe) {
+            XWidget_resize(top, 200, 100);
+            /* 命中测试依赖子控件几何：把探针铺满右键点击位置。 */
+            XWidget_setGeometry((XWidget*)probe, 0, 0, 200, 100);
+            XWidget_show((XWidget*)probe);
+            XWidget_show(top);
+            XWidget_setFocus((XWidget*)probe);
+            window = XWidget_windowHandle(top);
+            expect_true(window != NULL, "右键合成窗口句柄");
+            /* 左键按下：不合成上下文菜单事件。 */
+            XWindowSystemInterface_handleMouseEvent(
+                window, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                XMouseButton_LeftButton, XMouseButton_LeftButton,
+                XKeyboardModifier_NoModifier, (XPoint){ 30, 30 });
+            expect_true(probe->m_ctxCount == 0,
+                        "左键按下不产生上下文菜单事件");
+            /* 右键按下：合成并派发 contextMenuEvent（对标 QGuiApplication
+             * 对未接受右键 press 的 QContextMenuEvent 合成）。 */
+            XWindowSystemInterface_handleMouseEvent(
+                window, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                XMouseButton_RightButton, XMouseButton_RightButton,
+                XKeyboardModifier_NoModifier, (XPoint){ 30, 30 });
+            expect_true(probe->m_ctxCount == 1,
+                        "右键按下合成 contextMenuEvent 一次");
+        }
+        if (top) XWidget_delete_base((XClass*)top);
+    }
+#endif /* XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON */
+
+    XGuiApplication_delete_base(app);
+    expect_true(XGuiApplication_instance() == NULL,
+                "上下文菜单测试后单例清空");
+}
+
 #endif /* XWIDGET_ON && XLINEEDIT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON */
 
 #if XWIDGET_ON
@@ -23887,6 +24148,7 @@ static void test_pushbutton_auto_exclusive_group(void)
 
 #if XWIDGET_ON && XPAINTER_RENDERHINT_ON
 /** @brief Antialiasing 提示驱动的多边形填充灰度边缘 + 默认行为不变。 */
+#if XPAINTER_POLYGON_ON
 static void test_painter_polygon_antialias(void)
 {
     XImage image;
@@ -23952,6 +24214,7 @@ static void test_painter_polygon_antialias(void)
     XPainter_deinit(&painter);
     XImage_deinit_base(&image);
 }
+#endif /* XPAINTER_POLYGON_ON */
 
 /** @brief outline 字形在 TextAntialiasing 下必须产生灰度边缘（AA 光栅）。 */
 static void test_painter_outline_text_antialias(void)
@@ -24688,6 +24951,1200 @@ static void test_toolbutton_contract(void)
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
 
+static void sw2_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[SBA-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void db2_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[DBB-FAIL] %s\n", what ? what : "");
+    }
+}
+
+/* ==================== XStatusBar 契约测试（对标 QStatusBar） ==================== */
+
+/** @brief XStatusBar 契约：消息槽、超时清除、控件区管理、sizeGrip。 */
+static void test_statusbar_contract(void)
+{
+    XStatusBar* sb = XStatusBar_create(NULL, 0);
+    XLabel* lbl = XLabel_create(NULL, 0);
+    XLabel* perm = XLabel_create(NULL, 0);
+
+    sw2_expect(sb != NULL, "XStatusBar 创建");
+    sw2_expect(XStatusBar_isSizeGripEnabled(sb), "默认 sizeGrip 开启");
+    sw2_expect(XStatusBar_currentMessage(sb)[0] == 0x00, "初始无消息");
+
+    XStatusBar_showMessage(sb, "ready", 0);
+    sw2_expect(strcmp(XStatusBar_currentMessage(sb), "ready") == 0,
+              "showMessage 写入当前消息");
+    XStatusBar_clearMessage(sb);
+    sw2_expect(XStatusBar_currentMessage(sb)[0] == 0x00, "clearMessage 清空");
+    XStatusBar_setSizeGripEnabled(sb, false);
+    sw2_expect(!XStatusBar_isSizeGripEnabled(sb), "sizeGrip 关闭");
+    XStatusBar_setSizeGripEnabled(sb, true);
+
+    XStatusBar_addWidget(sb, (XWidget*)lbl, 0);
+    XStatusBar_addPermanentWidget(sb, (XWidget*)perm, 0);
+    XStatusBar_removeWidget(sb, (XWidget*)lbl);
+    XStatusBar_removeWidget(sb, (XWidget*)perm);
+
+    XStatusBar_delete_base(sb);
+    XLabel_delete_base(lbl);
+    XLabel_delete_base(perm);
+}
+
+/* ==================== XMenuBar 契约测试（对标 QMenuBar） ==================== */
+
+static int mb_triggered = 0;
+static XAction* mb_lastAction = NULL;
+
+static void mb_triggeredSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_args_1(args, XAction*, action);
+    mb_lastAction = action;
+    ++mb_triggered;
+}
+
+static void mb2_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[MB-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_menubar_contract(void)
+{
+    XMenuBar* bar = XMenuBar_create(NULL, 0);
+    XMenu* fileMenu;
+    XMenu* editMenu;
+    XAction* fileAction;
+
+    mb2_expect(bar != NULL, "XMenuBar 创建");
+    mb2_expect(!XMenuBar_isDefaultUp(bar), "默认不向上");
+    mb2_expect(XMenuBar_actionCount(bar) == 0, "初始动作数 0");
+
+    fileMenu = XMenuBar_addMenu_2(bar, "文件");
+    editMenu = XMenuBar_addMenu_2(bar, "编辑");
+    mb2_expect(fileMenu != NULL && editMenu != NULL, "addMenu_2 创建两个菜单");
+    mb2_expect(XMenuBar_actionCount(bar) == 2, "注册两个动作");
+    fileAction = XMenuBar_addMenu(bar, fileMenu);
+    mb2_expect(fileAction != NULL, "重复注册返回新动作");
+    mb2_expect(XMenuBar_actionCount(bar) == 3, "三个动作");
+
+    XMenuBar_setDefaultUp(bar, true);
+    mb2_expect(XMenuBar_isDefaultUp(bar), "setDefaultUp 生效");
+
+    mb_triggered = 0;
+    mb_lastAction = NULL;
+    XObject_connect_2((XObject*)bar,
+        XSignal(XMenuBar_triggered_signal), mb_triggeredSlot);
+    XAction_trigger(fileAction);
+    mb2_expect(mb_triggered == 1, "动作触发经菜单栏转发 triggered");
+
+    XMenuBar_setActiveAction(bar, fileAction);
+    mb2_expect(XMenuBar_activeAction(bar) == fileAction, "activeAction 往返");
+
+    XMenuBar_clear(bar);
+    mb2_expect(XMenuBar_actionCount(bar) == 0, "clear 清空动作");
+
+    XMenuBar_delete_base(bar);
+    XMenu_delete_base(fileMenu);
+    XMenu_delete_base(editMenu);
+}
+/* ==================== XToolBar 契约测试（对标 QToolBar） ==================== */
+
+static int tb_triggered = 0;
+static XAction* tb_lastAction = NULL;
+
+static void tb_triggeredSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_args_1(args, XAction*, action);
+    tb_lastAction = action;
+    ++tb_triggered;
+}
+
+static void tb_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[TB-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_toolbar_contract(void)
+{
+    XToolBar* bar = XToolBar_create(NULL, 0);
+    XAction* act1;
+    XAction* act2;
+
+    tb_expect(bar != NULL, "XToolBar 创建");
+    tb_expect(XToolBar_isMovable(bar), "默认可移动");
+    tb_expect(XToolBar_isFloatable(bar), "默认可浮动");
+    tb_expect(XToolBar_orientation(bar) == 1, "默认水平");
+    tb_expect(XToolBar_iconSize(bar) == 16, "默认图标 16");
+    tb_expect(XToolBar_actionCount(bar) == 0, "初始动作数 0");
+
+    act1 = XToolBar_addAction_2(bar, "新建");
+    act2 = XToolBar_addAction_2(bar, "打开");
+    tb_expect(act1 != NULL && act2 != NULL, "addAction_2 创建动作");
+    tb_expect(XToolBar_actionCount(bar) == 2, "两个动作");
+    tb_expect(XToolBar_action(bar, 0) == act1, "action(0) 返回 act1");
+
+    tb_triggered = 0;
+    tb_lastAction = NULL;
+    XObject_connect_2((XObject*)bar,
+        XSignal(XToolBar_actionTriggered_signal), tb_triggeredSlot);
+    XAction_trigger(act1);
+    tb_expect(tb_triggered == 1 && tb_lastAction == act1,
+              "动作触发转发 actionTriggered");
+
+    XToolBar_setMovable(bar, false);
+    tb_expect(!XToolBar_isMovable(bar), "setMovable 生效");
+    XToolBar_setOrientation(bar, 2);
+    tb_expect(XToolBar_orientation(bar) == 2, "setOrientation 生效");
+
+    XToolBar_removeAction(bar, act1);
+    tb_expect(XToolBar_actionCount(bar) == 1, "removeAction 后剩 1");
+
+    XToolBar_clear(bar);
+    tb_expect(XToolBar_actionCount(bar) == 0, "clear 清空");
+
+    XToolBar_delete_base(bar);
+}
+/* ==================== XSplitter 契约测试（对标 QSplitter） ==================== */
+
+static void sp_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[SP-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_splitter_contract(void)
+{
+    XSplitter* sp = XSplitter_create(NULL, 0);
+    XLabel* p0 = XLabel_create(NULL, 0);
+    XLabel* p1 = XLabel_create(NULL, 0);
+    XLabel* p2 = XLabel_create(NULL, 0);
+
+    sp_expect(sp != NULL, "XSplitter 创建");
+    sp_expect(XSplitter_orientation(sp) == 1, "默认水平");
+    sp_expect(XSplitter_childrenCollapsible(sp), "默认可折叠");
+    sp_expect(XSplitter_opaqueResize(sp), "默认不透明拖动");
+    sp_expect(XSplitter_handleWidth(sp) == 5, "默认分隔条宽 5");
+    sp_expect(XSplitter_count(sp) == 0, "初始页数 0");
+
+    XSplitter_addWidget(sp, (XWidget*)p0);
+    XSplitter_addWidget(sp, (XWidget*)p1);
+    XSplitter_addWidget(sp, (XWidget*)p2);
+    sp_expect(XSplitter_count(sp) == 3, "三个页面");
+    sp_expect(XSplitter_widget(sp, 1) == (XWidget*)p1, "widget(1) 为 p1");
+    sp_expect(XSplitter_indexOf(sp, (XWidget*)p2) == 2, "indexOf(p2) 为 2");
+    sp_expect(XSplitter_indexOf(sp, (XWidget*)p1) == 1, "indexOf(p1) 为 1");
+
+    XSplitter_setOrientation(sp, 2);
+    sp_expect(XSplitter_orientation(sp) == 2, "setOrientation 切换垂直");
+    XSplitter_setOrientation(sp, 1);
+
+    XSplitter_setHandleWidth(sp, 8);
+    sp_expect(XSplitter_handleWidth(sp) == 8, "setHandleWidth 8");
+    XSplitter_setHandleWidth(sp, 5);
+
+    XSplitter_setCollapsible(sp, 0, false);
+    sp_expect(!XSplitter_isCollapsible(sp, 0), "逐页折叠覆写 false");
+    sp_expect(XSplitter_isCollapsible(sp, 1), "未覆写页用全局默认");
+    XSplitter_setChildrenCollapsible(sp, false);
+    sp_expect(!XSplitter_childrenCollapsible(sp), "全局折叠关闭");
+    XSplitter_setChildrenCollapsible(sp, true);
+
+    {
+        int sizes[3] = { 100, 200, 100 };
+        int got[3];
+        XSplitter_setSizes(sp, sizes, 3);
+        XSplitter_sizes(sp, got, 3);
+        sp_expect(got[1] >= got[0], "setSizes 按比例生效（中页最大）");
+    }
+
+    {
+        XByteArray* saved = XSplitter_saveState(sp);
+        XSplitter* sp2 = XSplitter_create_2(2, NULL, 0);
+        sp_expect(saved != NULL, "saveState 生成状态");
+        if (saved) {
+            sp_expect(!XSplitter_restoreState(sp2, saved),
+                      "restoreState 恢复失败（页数不匹配应失败）");
+            XByteArray_delete_base(saved);
+        }
+        XSplitter_delete_base(sp2);
+    }
+
+    XSplitter_delete_base(sp);
+    /* p0/p1/p2 已随分割器析构（addWidget 后所有权归容器） */
+}
+/* ==================== XToolBox 契约测试（对标 QToolBox） ==================== */
+
+static int tbx_changed = 0;
+static int tbx_lastIndex = -1;
+
+static void tbx_changedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    if (!args) return;
+    XVarList_args_1(args, int, index);
+    tbx_lastIndex = index;
+    ++tbx_changed;
+}
+
+static void tbx_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[TBX-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_toolbox_contract(void)
+{
+    XToolBox* box = XToolBox_create(NULL, 0);
+    XLabel* p0 = XLabel_create(NULL, 0);
+    XLabel* p1 = XLabel_create(NULL, 0);
+    XLabel* p2 = XLabel_create(NULL, 0);
+
+    tbx_expect(box != NULL, "XToolBox 创建");
+    tbx_expect(XToolBox_count(box) == 0, "初始页数 0");
+    tbx_expect(XToolBox_currentIndex(box) == -1, "初始索引 -1");
+
+    tbx_expect(XToolBox_addItem(box, (XWidget*)p0, "第一页") == 0,
+               "addItem page0 索引 0");
+    tbx_expect(XToolBox_addItem(box, (XWidget*)p2, "第三页") == 1,
+               "addItem page2 索引 1");
+    tbx_expect(XToolBox_insertItem(box, 1, (XWidget*)p1, "第二页") == 1,
+               "insertItem page1 到索引 1");
+    tbx_expect(XToolBox_count(box) == 3, "共 3 页");
+    tbx_expect(XToolBox_widget(box, 1) == (XWidget*)p1, "widget(1) 为 p1");
+    tbx_expect(XToolBox_indexOf(box, (XWidget*)p2) == 2, "indexOf(p2) 为 2");
+    tbx_expect(XToolBox_currentIndex(box) == 0, "首页自动成为当前页");
+
+    XToolBox_setItemText(box, 1, "中间页");
+    tbx_expect(strcmp(XToolBox_itemText(box, 1), "中间页") == 0,
+               "setItemText/itemText 往返");
+
+    tbx_changed = 0;
+    tbx_lastIndex = -1;
+    XObject_connect_2((XObject*)box,
+        XSignal(XToolBox_currentChanged_signal), tbx_changedSlot);
+    XToolBox_setCurrentIndex(box, 2);
+    tbx_expect(XToolBox_currentIndex(box) == 2, "setCurrentIndex(2)");
+    tbx_expect(XToolBox_currentWidget(box) == (XWidget*)p2,
+               "currentWidget 为 p2");
+    tbx_expect(tbx_changed == 1 && tbx_lastIndex == 2,
+               "currentChanged 发射一次且携带索引 2");
+
+    XToolBox_setItemEnabled(box, 0, false);
+    XToolBox_setCurrentIndex(box, 0);
+    tbx_expect(XToolBox_currentIndex(box) == 2, "禁用条目不可选");
+    XToolBox_setItemEnabled(box, 0, true);
+
+    XToolBox_removeItem(box, 2);
+    tbx_expect(XToolBox_count(box) == 2, "移除后剩 2 页");
+    tbx_expect(XToolBox_indexOf(box, (XWidget*)p2) == -1, "移除后 indexOf -1");
+
+    XToolBox_delete_base(box);
+    /* p0/p1/p2 均为 box 子控件（removeItem 保持父子关系，对标 Qt），
+       随 box 析构一并销毁，测试不再重复删除。 */
+}
+/* ==================== XScrollArea 契约测试（对标 QScrollArea） ==================== */
+
+static void sa_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[SA-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_scrollarea_contract(void)
+{
+    XScrollArea* area = XScrollArea_create(NULL, 0);
+    XLabel* content = XLabel_create(NULL, 0);
+
+    sa_expect(area != NULL, "XScrollArea 创建");
+    sa_expect(XAbstractScrollArea_viewport((XAbstractScrollArea*)area) != NULL,
+              "viewport 子控件存在");
+    sa_expect(XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)area) != NULL,
+              "垂直滚动条存在");
+    sa_expect(XAbstractScrollArea_horizontalScrollBar((XAbstractScrollArea*)area) != NULL,
+              "水平滚动条存在");
+    sa_expect(XAbstractScrollArea_verticalScrollBarPolicy(
+                  (XAbstractScrollArea*)area) == XScrollBarPolicy_AsNeeded,
+              "默认 AsNeeded 策略");
+    sa_expect(XScrollArea_widget(area) == NULL, "初始无内容");
+    sa_expect(!XScrollArea_widgetResizable(area), "默认不随视口缩放");
+
+    XWidget_resize(content, 100, 100);
+    XScrollArea_setWidget(area, (XWidget*)content);
+    sa_expect(XScrollArea_widget(area) == (XWidget*)content, "setWidget 生效");
+
+    XScrollArea_setWidgetResizable(area, true);
+    sa_expect(XScrollArea_widgetResizable(area), "setWidgetResizable 生效");
+
+    XAbstractScrollArea_setVerticalScrollBarPolicy(
+        (XAbstractScrollArea*)area, XScrollBarPolicy_AlwaysOn);
+    sa_expect(XAbstractScrollArea_verticalScrollBarPolicy(
+                  (XAbstractScrollArea*)area) == XScrollBarPolicy_AlwaysOn,
+              "垂直策略 AlwaysOn");
+
+    XScrollArea_setAlignment(area, (int)XAlignment_HCenter);
+    sa_expect(XScrollArea_alignment(area) == (int)XAlignment_HCenter,
+              "setAlignment 存储");
+
+    XScrollArea_ensureVisible(area, 50, 50, 10, 10);
+
+    {
+        XWidget* taken = XScrollArea_takeWidget(area);
+        sa_expect(taken == (XWidget*)content, "takeWidget 取回内容");
+        sa_expect(XScrollArea_widget(area) == NULL, "takeWidget 后无内容");
+    }
+
+    XScrollArea_delete_base(area);
+    XLabel_delete_base(content);
+}
+/* ==================== 小控件契约测试：SizeGrip/RubberBand/FocusFrame == */
+
+static void sml_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[SML-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_small_widgets_contract(void)
+{
+    /* ---- XSizeGrip ---- */
+    {
+        XSizeGrip* grip = XSizeGrip_create(NULL);
+        sml_expect(grip != NULL, "XSizeGrip 创建");
+        {
+            XSize hint = XWidget_sizeHint((XWidget*)grip);
+            sml_expect(hint.width == 16 && hint.height == 16,
+                       "sizeGrip sizeHint 16x16");
+        }
+        XSizeGrip_delete_base(grip);
+    }
+
+    /* ---- XRubberBand ---- */
+    {
+        XRubberBand* rb = XRubberBand_create(XRubberBandShape_Rectangle,
+                                             NULL);
+        sml_expect(rb != NULL, "XRubberBand 创建");
+        sml_expect(XRubberBand_shape(rb) == XRubberBandShape_Rectangle,
+                   "形状 Rectangle");
+        XWidget_setGeometry((XWidget*)rb, 5, 5, 60, 40);
+        sml_expect(XWidget_width((XWidget*)rb) == 60 &&
+                   XWidget_height((XWidget*)rb) == 40,
+                   "setGeometry 生效");
+        XRubberBand_delete_base(rb);
+    }
+
+    /* ---- XFocusFrame ---- */
+    {
+        XFocusFrame* ff = XFocusFrame_create(NULL, 0);
+        XLabel* target = XLabel_create(NULL, 0);
+        sml_expect(ff != NULL, "XFocusFrame 创建");
+        XFocusFrame_setWidget(ff, (XWidget*)target);
+        sml_expect(XFocusFrame_widget(ff) == (XWidget*)target,
+                   "setWidget/widget 往返");
+        XFocusFrame_delete_base(ff);
+        XLabel_delete_base(target);
+    }
+}
+/* ==================== XSplashScreen 契约测试（对标 QSplashScreen） === */
+
+static int sp_msgChanged = 0;
+
+static void sp_messageChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++sp_msgChanged;
+}
+
+static void sp2_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[SP2-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_splashscreen_contract(void)
+{
+    XSplashScreen* splash = XSplashScreen_create(NULL, 0);
+
+    sp2_expect(splash != NULL, "XSplashScreen 创建");
+    sp2_expect(XSplashScreen_message(splash)[0] == '\0', "初始无消息");
+
+    sp_msgChanged = 0;
+    XObject_connect_2((XObject*)splash,
+        XSignal(XSplashScreen_messageChanged_signal), sp_messageChangedSlot);
+    XSplashScreen_showMessage(splash, "加载中...", (int)XAlignment_Left,
+                              0xFF000000u);
+    sp2_expect(strcmp(XSplashScreen_message(splash), "加载中...") == 0,
+               "showMessage 写入消息");
+    sp2_expect(sp_msgChanged == 1, "messageChanged 发射一次");
+
+    XSplashScreen_clearMessage(splash);
+    sp2_expect(XSplashScreen_message(splash)[0] == '\0', "clearMessage 清空");
+
+    XSplashScreen_repaint(splash);
+
+    XSplashScreen_delete_base(splash);
+}
+/* ==================== XMessageBox 契约测试（对标 QMessageBox） ===== */
+
+static void msg_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[MSG-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_messagebox_contract(void)
+{
+    XMessageBox* box = XMessageBox_create(NULL, 0);
+
+    msg_expect(box != NULL, "XMessageBox 创建");
+    msg_expect(XMessageBox_icon(box) == XMessageBoxIcon_NoIcon,
+               "默认无图标");
+    msg_expect(XMessageBox_standardButtons(box) == 0, "初始无标准按钮");
+
+    XMessageBox_setText(box, "保存更改?");
+    msg_expect(strcmp(XMessageBox_text(box), "保存更改?") == 0,
+               "setText/text 往返");
+    XMessageBox_setTitle(box, "标题");
+    msg_expect(strcmp(XMessageBox_title(box), "标题") == 0,
+               "setTitle/title 往返");
+    XMessageBox_setIcon(box, XMessageBoxIcon_Question);
+    msg_expect(XMessageBox_icon(box) == XMessageBoxIcon_Question,
+               "setIcon 生效");
+
+    XMessageBox_setStandardButtons(box,
+        (int)XDialogButtonBoxStandard_Yes |
+        (int)XDialogButtonBoxStandard_No);
+    msg_expect(XMessageBox_button(box,
+                  XDialogButtonBoxStandard_Yes) != NULL,
+               "Yes 按钮存在");
+    msg_expect(XMessageBox_clickedButton(box) == NULL,
+               "初始 clickedButton NULL");
+
+    XMessageBox_delete_base(box);
+}
+/* ==================== XDockWidget/XMainWindow 契约测试 ================ */
+
+static void mw_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[MW-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_mainwindow_contract(void)
+{
+    /* ---- XDockWidget ---- */
+    {
+        XDockWidget* dock = XDockWidget_create("面板", NULL, 0);
+        XLabel* content = XLabel_create(NULL, 0);
+        sml_expect(dock != NULL, "XDockWidget 创建");
+        sml_expect(XDockWidget_features(dock) == 0x7,
+                   "默认特性 Closable|Movable|Floatable");
+        XDockWidget_setWidget(dock, (XWidget*)content);
+        sml_expect(XDockWidget_widget(dock) == (XWidget*)content,
+                   "setWidget/widget 往返");
+        XDockWidget_setFloating(dock, true);
+        sml_expect(XDockWidget_isFloating(dock), "setFloating 生效");
+        XDockWidget_setFeatures(dock, 0x1);
+        sml_expect(XDockWidget_features(dock) == 0x1, "setFeatures 生效");
+        XDockWidget_delete_base(dock);
+        sml_expect(XObject_parent((XObject*)content) == NULL,
+                   "dock 析构后内容控件随子控件销毁");
+    }
+
+    /* ---- XMainWindow ---- */
+    {
+        XMainWindow* win = XMainWindow_create(NULL, 0);
+        XLabel* central = XLabel_create(NULL, 0);
+        XWidget* taken;
+        sml_expect(win != NULL, "XMainWindow 创建");
+        sml_expect(XMainWindow_centralWidget(win) == NULL, "初始无中央控件");
+
+        XMainWindow_setCentralWidget(win, (XWidget*)central);
+        sml_expect(XMainWindow_centralWidget(win) == (XWidget*)central,
+                   "setCentralWidget 生效");
+        taken = XMainWindow_takeCentralWidget(win);
+        sml_expect(taken == (XWidget*)central, "takeCentralWidget 取回");
+
+        XMainWindow_setCentralWidget(win, (XWidget*)central);
+        XMainWindow_statusBar(win);
+        sml_expect(XMainWindow_statusBar(win) != NULL,
+                   "statusBar 惰性创建");
+        XMainWindow_menuBar(win);
+        sml_expect(XMainWindow_menuBar(win) != NULL,
+                   "menuBar 惰性创建");
+
+        XMainWindow_setDockOptions(win,
+            (int)XMainWindowDockOption_AllowTabbedDocks);
+        sml_expect(XMainWindow_dockOptions(win) ==
+                   (int)XMainWindowDockOption_AllowTabbedDocks,
+                   "dockOptions 存储");
+
+        XMainWindow_delete_base(win);
+        sml_expect(XObject_parent((XObject*)central) == NULL,
+                   "主窗口析构后中央控件随子控件销毁");
+    }
+
+    /* ---- 主窗口 + 停靠面板组合 ---- */
+    {
+        XMainWindow* win = XMainWindow_create(NULL, 0);
+        XDockWidget* dock = XDockWidget_create("检查器", NULL, 0);
+        XLabel* content = XLabel_create(NULL, 0);
+        XMainWindow_setCentralWidget(win,
+            (XWidget*)XLabel_create((XWidget*)win, 0));
+        XDockWidget_setWidget(dock, (XWidget*)content);
+        XMainWindow_addDockWidget(win, (int)XDockWidgetArea_Left,
+                                  (XWidget*)dock);
+        sml_expect(XObject_parent((XObject*)dock) == (XObject*)win,
+                   "addDockWidget 后 dock 归主窗口");
+        XMainWindow_removeDockWidget(win, (XWidget*)dock);
+        sml_expect(XObject_parent((XObject*)dock) == NULL,
+                   "removeDockWidget 后 dock 归还调用方");
+        XDockWidget_delete_base(dock);
+        XMainWindow_delete_base(win);
+    }
+}/* ==================== XDateTimeEdit 契约测试（对标 QDateTimeEdit） == */
+
+static int dt_changed = 0;
+
+static void dt_changedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    ++dt_changed;
+}
+
+static void dt_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[DT-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_datetimeedit_contract(void)
+{
+    XDateTimeEdit* edit = XDateTimeEdit_create(NULL, 0);
+
+    dt_expect(edit != NULL, "XDateTimeEdit 创建");
+    dt_expect(strcmp(XDateTimeEdit_displayFormat(edit),
+                     "yyyy-MM-dd HH:mm:ss") == 0,
+              "默认显示格式");
+    dt_expect((XDateTimeEdit_sections(edit) &
+               (int)XDateTimeEditSection_YearSection) != 0,
+              "格式含年段");
+    dt_expect(XDateTimeEdit_currentSection(edit) ==
+              (int)XDateTimeEditSection_YearSection, "默认年段");
+
+    dt_changed = 0;
+    XObject_connect_2((XObject*)edit,
+        XSignal(XDateTimeEdit_dateTimeChanged_signal), dt_changedSlot);
+
+    {
+        XDateTime dt = XDateTime_create();
+        XDate_setDate(&dt.m_date, 2026, 9, 9);
+        XTime_setHMS(&dt.m_time, 10, 20, 30, 0);
+        XDateTimeEdit_setDateTime(edit, &dt);
+        dt_expect(XDate_year(&XDateTimeEdit_dateTime(edit)->m_date) == 2026,
+                  "setDateTime 年 2026");
+        dt_expect(XTime_hour(&XDateTimeEdit_dateTime(edit)->m_time) == 10,
+                  "setDateTime 时 10");
+        dt_expect(dt_changed == 1, "setDateTime 发射 dateTimeChanged");
+    }
+
+    {
+        XDate d;
+        memset(&d, 0, sizeof(d));
+        XDate_setDate(&d, 2020, 1, 15);
+        XDateTimeEdit_setDate(edit, &d);
+        {
+            XDate got = XDateTimeEdit_date(edit);
+            dt_expect(XDate_year(&got) == 2020, "setDate year 2020");
+        }
+    }
+
+    {
+        XTime t;
+        memset(&t, 0, sizeof(t));
+        XTime_setHMS(&t, 23, 59, 0, 0);
+        XDateTimeEdit_setTime(edit, &t);
+        {
+            XTime got = XDateTimeEdit_time(edit);
+            dt_expect(XTime_hour(&got) == 23, "setTime hour 23");
+        }
+    }
+
+    /* 范围钳位。 */
+    {
+        XDateTime dt = XDateTime_create();
+        XDate_setDate(&dt.m_date, 2020, 1, 15);
+        XTime_setHMS(&dt.m_time, 23, 59, 0, 0);
+        XDateTimeEdit_setDateTime(edit, &dt);
+        {
+            XDateTime max = XDateTime_create();
+            XDate_setDate(&max.m_date, 2019, 6, 1);
+            XTime_setHMS(&max.m_time, 12, 0, 0, 0);
+            XDateTimeEdit_setMaximumDateTime(edit, &max);
+            dt_expect(XDate_year(&XDateTimeEdit_dateTime(edit)->m_date) == 2019,
+                      "超上限钳位到 2019");
+        }
+    }
+
+    XDateTimeEdit_setDisplayFormat(edit, "dd/MM/yyyy");
+    dt_expect(strcmp(XDateTimeEdit_displayFormat(edit), "dd/MM/yyyy") == 0,
+              "setDisplayFormat 往返");
+    dt_expect((XDateTimeEdit_sections(edit) &
+               (int)XDateTimeEditSection_DaySection) != 0,
+              "新格式含日段");
+
+    XDateTimeEdit_delete_base(edit);
+}
+/* ==================== XDateTimeEdit/XFontComboBox 已在上方;下面补录 ===
+ * QFontComboBox 契约测试（对标 QFontComboBox） ==================== */
+
+static void fcb_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[FCB-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_fontcombobox_contract(void)
+{
+    XFontComboBox* fcb = XFontComboBox_create(NULL, 0);
+
+    fcb_expect(fcb != NULL, "XFontComboBox 创建");
+    fcb_expect(XFontComboBox_fontFilters(fcb) ==
+               (int)XFontComboBoxFilter_AllFonts, "默认 AllFonts");
+
+    XFontComboBox_setFontFilters(fcb,
+        (int)XFontComboBoxFilter_MonospacedFonts);
+    fcb_expect(XFontComboBox_fontFilters(fcb) ==
+               (int)XFontComboBoxFilter_MonospacedFonts,
+               "setFontFilters 存储");
+
+    /* 条目为字体族列表（数量取决于平台字体；>0 即有效）。 */
+    fcb_expect(XComboBox_count((XComboBox*)fcb) >= 0,
+               "字体族条目可查询");
+
+    XFontComboBox_delete_base(fcb);
+}
+/* ==================== XPlainTextEdit 契约测试 ==================== */
+
+static int pe_textChanged = 0;
+
+static void pe_textChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    ++pe_textChanged;
+}
+
+static void pe_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[PE-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_plaintextedit_contract(void)
+{
+    XPlainTextEdit* edit = XPlainTextEdit_create(NULL, 0);
+    char* text;
+
+    pe_expect(edit != NULL, "XPlainTextEdit 创建");
+    pe_expect(XPlainTextEdit_lineWrapMode(edit) ==
+              (int)XPlainTextEditMode_WidgetWidth, "默认 WidgetWidth");
+    pe_expect(!XPlainTextEdit_isReadOnly(edit), "默认可编辑");
+    pe_expect(XPlainTextEdit_isUndoRedoEnabled(edit), "默认可撤销");
+    pe_expect(XPlainTextEdit_maximumBlockCount(edit) == 0, "默认无块上限");
+
+    /* setPlainText/toPlainText 往返。 */
+    XPlainTextEdit_setPlainText(edit, "line1\nline2\nline3");
+    text = XPlainTextEdit_toPlainText(edit);
+    pe_expect(text != NULL && strcmp(text, "line1\nline2\nline3") == 0,
+              "setPlainText/toPlainText 往返");
+    if (text) XFree_System(text);
+
+    /* setReadOnly。 */
+    XPlainTextEdit_setReadOnly(edit, true);
+    pe_expect(XPlainTextEdit_isReadOnly(edit), "setReadOnly 生效");
+    XPlainTextEdit_setReadOnly(edit, false);
+
+    /* maximumBlockCount。 */
+    XPlainTextEdit_setMaximumBlockCount(edit, 2);
+    pe_expect(XPlainTextEdit_maximumBlockCount(edit) == 2, "块上限 2");
+    XPlainTextEdit_setPlainText(edit, "a\nb\nc\nd");
+    text = XPlainTextEdit_toPlainText(edit);
+    pe_expect(text != NULL && strcmp(text, "c\nd") == 0,
+              "超上限丢弃最旧块");
+    if (text) XFree_System(text);
+    XPlainTextEdit_setMaximumBlockCount(edit, 0);
+
+    /* placeholder。 */
+    XPlainTextEdit_setPlaceholderText(edit, "输入...");
+    pe_expect(strcmp(XPlainTextEdit_placeholderText(edit), "输入...") == 0,
+              "placeholder 往返");
+
+    /* textChanged 信号。 */
+    pe_textChanged = 0;
+    XObject_connect_2((XObject*)edit,
+        XSignal(XPlainTextEdit_textChanged_signal), pe_textChangedSlot);
+    XPlainTextEdit_setPlainText(edit, "hello");
+    pe_expect(pe_textChanged >= 1, "setPlainText 触发 textChanged");
+
+    /* clear。 */
+    XPlainTextEdit_clear(edit);
+    text = XPlainTextEdit_toPlainText(edit);
+    pe_expect(text != NULL && text[0] == '\0', "clear 后空文本");
+    if (text) XFree_System(text);
+
+    XPlainTextEdit_delete_base(edit);
+}/* ==================== XMdiArea 契约测试（对标 QMdiArea） ========== */
+
+static int mdi_activated = 0;
+
+static void mdi_activatedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    ++mdi_activated;
+}
+
+static void mdi_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[MDI-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_mdiarea_contract(void)
+{
+    XMdiArea* area = XMdiArea_create(NULL, 0);
+    XLabel* c0 = XLabel_create(NULL, 0);
+    XLabel* c1 = XLabel_create(NULL, 0);
+    XMdiSubWindow* sw0;
+    XMdiSubWindow* sw1;
+
+    mdi_expect(area != NULL, "XMdiArea 创建");
+    mdi_expect(XMdiArea_subWindowCount(area) == 0, "初始子窗口 0");
+    mdi_expect(XMdiArea_activeSubWindow(area) == NULL, "初始无活动窗口");
+    mdi_expect(XMdiArea_viewMode(area) ==
+              XMdiAreaViewMode_SubWindowView, "默认平铺模式");
+
+    sw0 = XMdiArea_addSubWindow(area, (XWidget*)c0);
+    mdi_expect(sw0 != NULL, "addSubWindow 返回子窗口");
+    mdi_expect(XMdiArea_subWindowCount(area) == 1, "子窗口数 1");
+    mdi_expect(XMdiArea_activeSubWindow(area) == sw0, "新窗口自动激活");
+
+    sw1 = XMdiArea_addSubWindow(area, (XWidget*)c1);
+    mdi_expect(XMdiArea_subWindowCount(area) == 2, "子窗口数 2");
+    mdi_expect(XMdiArea_activeSubWindow(area) == sw1, "第二个自动激活");
+    mdi_expect(XMdiSubWindow_widget(sw1) == (XWidget*)c1,
+               "sub window widget 为 c1");
+
+    mdi_activated = 0;
+    XObject_connect_2((XObject*)area,
+        XSignal(XMdiArea_subWindowActivated_signal), mdi_activatedSlot);
+    XMdiArea_setActiveSubWindow(area, sw0);
+    mdi_expect(mdi_activated == 1, "setActiveSubWindow 发射信号");
+
+    XMdiArea_cascadeSubWindows(area);
+    XMdiArea_tileSubWindows(area);
+
+    XMdiArea_removeSubWindow(area, (XWidget*)c1);
+    mdi_expect(XMdiArea_subWindowCount(area) == 1, "移除后子窗口 1");
+
+    XMdiArea_setViewMode(area, XMdiAreaViewMode_TabbedView);
+    mdi_expect(XMdiArea_viewMode(area) ==
+              XMdiAreaViewMode_TabbedView, "setViewMode 生效");
+
+    XMdiArea_closeAllSubWindows(area);
+    mdi_expect(XMdiArea_subWindowCount(area) == 0, "closeAll 后 0");
+
+    XMdiArea_delete_base(area);
+    /* c0/c1 已随 area→sub window→内容 控件树一并销毁 */
+}/* ==================== XCalendarWidget 契约测试 ==================== */
+
+static int cal_selChanged = 0;
+static int cal_pageChanged = 0;
+static int cal_clicked = 0;
+
+static void cal_selectionChangedSlot(XObject* r, XVarList* a)
+{ (void)r; (void)a; ++cal_selChanged; }
+static void cal_pageChangedSlot(XObject* r, XVarList* a)
+{ (void)r; (void)a; ++cal_pageChanged; }
+static void cal_clickedSlot(XObject* r, XVarList* a)
+{ (void)r; (void)a; ++cal_clicked; }
+
+static void cal_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[CAL-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_calendarwidget_contract(void)
+{
+    XCalendarWidget* cal = XCalendarWidget_create(NULL, 0);
+    XDate d;
+
+    cal_expect(cal != NULL, "XCalendarWidget 创建");
+    cal_expect(XCalendarWidget_yearShown(cal) == 2026, "默认年 2026");
+    cal_expect(XCalendarWidget_monthShown(cal) == 9, "默认月 9");
+    cal_expect(XCalendarWidget_isNavigationBarVisible(cal), "默认导航栏");
+    cal_expect(!XCalendarWidget_isGridVisible(cal), "默认无网格");
+    cal_expect(XCalendarWidget_selectionMode(cal) ==
+              (int)XCalendarSelectionMode_SingleSelection, "默认单选");
+    d = XCalendarWidget_selectedDate(cal);
+    cal_expect(XDate_year(&d) == 2026 && XDate_month(&d) == 9,
+              "默认选中 2026-09");
+
+    memset(&d, 0, sizeof(d));
+    XDate_setDate(&d, 2026, 1, 15);
+    cal_selChanged = 0;
+    XObject_connect_2((XObject*)cal,
+        XSignal(XCalendarWidget_selectionChanged_signal),
+        cal_selectionChangedSlot);
+    XCalendarWidget_setSelectedDate(cal, &d);
+    { XDate _gd = XCalendarWidget_selectedDate(cal);
+      cal_expect(XDate_year(&_gd) == 2026, "setSelectedDate ok");
+      cal_expect(XDate_month(&_gd) == 1, "monthShown 1");
+    }
+    cal_expect(cal_selChanged >= 1, "selectionChanged 发射");
+
+    XCalendarWidget_setCurrentPage(cal, 2026, 12);
+    cal_expect(XCalendarWidget_yearShown(cal) == 2026, "yearShown 2026");
+
+    {
+        XDate minD;
+        memset(&minD, 0, sizeof(minD));
+        XDate_setDate(&minD, 2026, 1, 1);
+        XCalendarWidget_setMinimumDate(cal, &minD);
+        {
+            XDate d2;
+            memset(&d2, 0, sizeof(d2));
+            XDate_setDate(&d2, 2025, 6, 1);
+            XCalendarWidget_setSelectedDate(cal, &d2);
+    { XDate _gd = XCalendarWidget_selectedDate(cal);
+      cal_expect(XDate_year(&_gd) == 2026, "setSelectedDate ok");
+      cal_expect(XDate_month(&_gd) == 1, "monthShown 1");
+    }
+    }
+    }
+
+    XCalendarWidget_setGridVisible(cal, true);
+    cal_expect(XCalendarWidget_isGridVisible(cal), "setGridVisible 生效");
+    XCalendarWidget_setNavigationBarVisible(cal, false);
+    cal_expect(!XCalendarWidget_isNavigationBarVisible(cal),
+              "导航栏隐藏");
+    XCalendarWidget_setNavigationBarVisible(cal, true);
+
+    XCalendarWidget_delete_base(cal);
+}/* ==================== XTextBrowser 契约测试（对标 QTextBrowser） == */
+
+static void tbr_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[TBR-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_textbrowser_contract(void)
+{
+    XTextBrowser* tb = XTextBrowser_create(NULL, 0);
+
+    tbr_expect(tb != NULL, "XTextBrowser 创建");
+    tbr_expect(XPlainTextEdit_isReadOnly(tb->m_base.m_editor), "默认只读");
+    tbr_expect(XTextBrowser_source(tb)[0] == '\0', "初始无源");
+    tbr_expect(XTextBrowser_openLinks(tb), "默认 openLinks 开启");
+
+    XTextBrowser_setSource(tb, "file:///help/index.html");
+    tbr_expect(strcmp(XTextBrowser_source(tb), "file:///help/index.html") == 0,
+              "setSource/source 往返");
+
+    XPlainTextEdit_setPlainText(tb->m_base.m_editor, "帮助内容");
+    tbr_expect(strcmp(XPlainTextEdit_toPlainText(tb->m_base.m_editor),
+                      "帮助内容") == 0, "通过编辑器 setPlainText 生效");
+
+    XTextBrowser_setOpenLinks(tb, false);
+    tbr_expect(!XTextBrowser_openLinks(tb), "setOpenLinks 生效");
+
+    XTextBrowser_backward(tb);
+    XTextBrowser_forward(tb);
+    XTextBrowser_home(tb);
+    XTextBrowser_reload(tb);
+
+    XTextBrowser_delete_base(tb);
+}/* ==================== XKeySequenceEdit 契约测试 ==================== */
+
+static int kse_changed = 0;
+static int kse_finished = 0;
+
+static void kse_changedSlot(XObject* r, XVarList* a)
+{ (void)r; (void)a; ++kse_changed; }
+static void kse_finishedSlot(XObject* r, XVarList* a)
+{ (void)r; (void)a; ++kse_finished; }
+
+static void kse_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[KSE-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_keysequenceedit_contract(void)
+{
+    XKeySequenceEdit* edit = XKeySequenceEdit_create(NULL, 0);
+    const XKeySequence* seq;
+
+    kse_expect(edit != NULL, "XKeySequenceEdit 创建");
+    kse_expect(XKeySequenceEdit_maximumSequenceLength(edit) == 4,
+              "默认最大序列长度 4");
+    kse_expect(!XKeySequenceEdit_isClearButtonEnabled(edit),
+              "默认清除按钮关闭");
+    seq = XKeySequenceEdit_keySequence(edit);
+    kse_expect(seq != NULL && seq->count == 0, "初始序列空");
+
+    /* 模拟键盘捕获：Ctrl+S。 */
+    {
+        XKeyEvent ke;
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'S',
+                       XKeyboardModifier_ControlModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        seq = XKeySequenceEdit_keySequence(edit);
+        kse_expect(seq->count == 1, "捕获一组 Ctrl+S");
+        kse_expect(seq->combos[0].modifiers ==
+                   XKeyboardModifier_ControlModifier, "修饰键 Ctrl");
+        kse_expect(seq->combos[0].key == 'S', "键码 S");
+    }
+
+    /* setKeySequence 编程设置。 */
+    {
+        XKeySequence custom;
+        memset(&custom, 0, sizeof(custom));
+        custom.count = 1;
+        custom.combos[0].modifiers = XKeyboardModifier_ControlModifier |
+                                     XKeyboardModifier_ShiftModifier;
+        custom.combos[0].key = 'X';
+        XKeySequenceEdit_setKeySequence(edit, &custom);
+        seq = XKeySequenceEdit_keySequence(edit);
+        kse_expect(seq->count == 1 && seq->combos[0].key == 'X',
+                  "setKeySequence 编程覆盖");
+    }
+
+    /* clear。 */
+    XKeySequenceEdit_clear(edit);
+    seq = XKeySequenceEdit_keySequence(edit);
+    kse_expect(seq->count == 0, "clear 后序列空");
+
+    /* 信号连接。 */
+    kse_changed = 0;
+    kse_finished = 0;
+    XObject_connect_2((XObject*)edit,
+        XSignal(XKeySequenceEdit_keySequenceChanged_signal), kse_changedSlot);
+    XObject_connect_2((XObject*)edit,
+        XSignal(XKeySequenceEdit_editingFinished_signal), kse_finishedSlot);
+    {
+        XKeyEvent ke;
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'A',
+                       XKeyboardModifier_ControlModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        kse_expect(kse_changed >= 1, "键盘捕获发射 keySequenceChanged");
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, (int)XKey_Return, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        kse_expect(kse_finished >= 1, "Return 发射 editingFinished");
+    }
+
+    /* maxLength。 */
+    XKeySequenceEdit_setMaximumSequenceLength(edit, 2);
+    kse_expect(XKeySequenceEdit_maximumSequenceLength(edit) == 2,
+              "setMaximumSequenceLength 2");
+
+    XKeySequenceEdit_delete_base(edit);
+}/* ==================== XTextEdit 契约测试 ==================== */
+
+static void te_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[TE-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_textedit_contract(void)
+{
+    XTextEdit* edit = XTextEdit_create(NULL, 0);
+    char* html;
+
+    te_expect(edit != NULL, "XTextEdit 创建");
+    te_expect(!XTextEdit_isBold(edit), "默认非粗体");
+    te_expect(!XTextEdit_isItalic(edit), "默认非斜体");
+    te_expect(!XTextEdit_isUnderline(edit), "默认非下划线");
+
+    XTextEdit_setBold(edit, true);
+    XTextEdit_setItalic(edit, true);
+    te_expect(XTextEdit_isBold(edit) && XTextEdit_isItalic(edit),
+              "setBold/setItalic 生效");
+    XTextEdit_setTextColor(edit, 0xFFFF0000u);
+    te_expect(XTextEdit_textColor(edit) == 0xFFFF0000u, "setTextColor");
+    XTextEdit_setAlignment(edit, 4);
+    te_expect(XTextEdit_alignment(edit) == 4, "setAlignment");
+
+    /* setHtml 解析基础子集。 */
+    XTextEdit_setHtml(edit, "<b>Hello</b><br>World");
+    {
+        char* plain = XPlainTextEdit_toPlainText(edit->m_editor);
+        te_expect(plain != NULL && strstr(plain, "Hello") != NULL &&
+                  strstr(plain, "World") != NULL,
+                  "setHtml 解析 b/br 标签");
+        if (plain) XFree_System(plain);
+    }
+    te_expect(!XTextEdit_isBold(edit), "</b> 后 bold 关闭（对标 Qt 光标末尾格式）");
+
+    /* toHtml 生成。 */
+    XPlainTextEdit_setPlainText(edit->m_editor, "test");
+    html = XTextEdit_toHtml(edit);
+    te_expect(html != NULL && strstr(html, "<html>") != NULL &&
+              strstr(html, "test") != NULL, "toHtml 生成 HTML");
+    if (html) XFree_System(html);
+
+    XTextEdit_delete_base(edit);
+}
+
+/* ==================== XTextBrowser 契约测试 ==================== */
+
+static void tbr2_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[TBR2-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_textbrowser2_contract(void)
+{
+    XTextBrowser* tb = XTextBrowser_create(NULL, 0);
+    tbr2_expect(tb != NULL, "XTextBrowser 创建");
+    tbr2_expect(XPlainTextEdit_isReadOnly(tb->m_base.m_editor), "默认只读");
+    XTextBrowser_setSource(tb, "help.html");
+    tbr2_expect(strcmp(XTextBrowser_source(tb), "help.html") == 0,
+              "setSource/source 往返");
+    XTextBrowser_delete_base(tb);
+}/* ==================== XDialog 契约测试 ==================== */
+
+static int dlg_accepted = 0;
+static int dlg_rejected = 0;
+
+static void dlg_accSlot(XObject* r, XVarList* a) { (void)r; (void)a; ++dlg_accepted; }
+static void dlg_rejSlot(XObject* r, XVarList* a) { (void)r; (void)a; ++dlg_rejected; }
+
+static void dlg_expect(bool cond, const char* what)
+{
+    if (!cond) fprintf(stderr, "[DLG-FAIL] %s\n", what ? what : "");
+}
+
+static void test_dialog_contract(void)
+{
+    XDialog* dlg = XDialog_create(NULL, 0);
+    dlg_expect(dlg != NULL, "XDialog 创建");
+    dlg_expect(XDialog_isModal(dlg), "默认模态");
+    dlg_expect(XDialog_result(dlg) == 0, "初始 result 0");
+
+    dlg_accepted = 0; dlg_rejected = 0;
+    XObject_connect_2((XObject*)dlg, XSignal(XDialog_accepted_signal), dlg_accSlot);
+    XObject_connect_2((XObject*)dlg, XSignal(XDialog_rejected_signal), dlg_rejSlot);
+    XDialog_accept(dlg);
+    dlg_expect(dlg_accepted == 1, "accept 发射 accepted");
+    dlg_expect(XDialog_result(dlg) == 1, "accept 后 result 1");
+    XDialog_reject(dlg);
+    dlg_expect(dlg_rejected == 1, "reject 发射 rejected");
+    dlg_expect(XDialog_result(dlg) == 0, "reject 后 result 0");
+
+    XDialog_setModal(dlg, false);
+    dlg_expect(!XDialog_isModal(dlg), "setModal false");
+
+    XDialog_delete_base(dlg);
+
+    /* XMessageBox 继承 XDialog 验证。 */
+    {
+        XMessageBox* mb = XMessageBox_create(NULL, 0);
+        dlg_expect(mb != NULL, "XMessageBox 创建（继承 XDialog）");
+        XDialog_accept((XDialog*)mb);
+        dlg_expect(((XDialog*)mb)->m_result == 1, "XMessageBox 经 XDialog accept");
+        XMessageBox_delete_base(mb);
+    }
+}/* ==================== XDialogButtonBox 契约测试（对标 QDialogButtonBox） ==================== */
+
+static int db_accepted = 0;
+static int db_rejected = 0;
+
+static void db_acceptedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args; ++db_accepted;
+}
+
+static void db_rejectedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args; ++db_rejected;
+}
+
+/** @brief XDialogButtonBox 契约：标准按钮位值/文本/角色映射与信号。 */
+static void test_dialogbuttonbox_contract(void)
+{
+    XDialogButtonBox* box = XDialogButtonBox_create(NULL, 0);
+    XPushButton* ok;
+    XPushButton* cancel;
+
+    db2_expect(box != NULL, "XDialogButtonBox 创建");
+    db2_expect(XDialogButtonBox_standardButtons(box) == 0, "初始无标准按钮");
+    XDialogButtonBox_setStandardButtons(box,
+        (int)XDialogButtonBoxStandard_Ok |
+        (int)XDialogButtonBoxStandard_Cancel);
+    db2_expect(XDialogButtonBox_buttons(box) != NULL &&
+               XVector_size_base(XDialogButtonBox_buttons(box)) == 2,
+               "两个标准按钮");
+    ok = XDialogButtonBox_button(box, XDialogButtonBoxStandard_Ok);
+    cancel = XDialogButtonBox_button(box, XDialogButtonBoxStandard_Cancel);
+    db2_expect(ok != NULL && cancel != NULL, "Ok/Cancel 按钮存在");
+    db2_expect(XDialogButtonBox_standardButton(box,
+                  (XAbstractButton*)ok) == XDialogButtonBoxStandard_Ok,
+              "standardButton(ok) 反查");
+    db2_expect(XDialogButtonBox_buttonRole(box,
+                  (XAbstractButton*)cancel) == XDialogButtonBoxRole_RejectRole,
+              "Cancel 角色为 RejectRole");
+
+    db_accepted = 0;
+    db_rejected = 0;
+    XObject_connect_2((XObject*)box,
+        XSignal(XDialogButtonBox_accepted_signal), db_acceptedSlot);
+    XObject_connect_2((XObject*)box,
+        XSignal(XDialogButtonBox_rejected_signal), db_rejectedSlot);
+    XAbstractButton_click((XAbstractButton*)ok);
+    XAbstractButton_click((XAbstractButton*)cancel);
+    db2_expect(db_accepted == 1 && db_rejected == 1,
+              "Ok 发 accepted、Cancel 发 rejected 各一次");
+
+    XDialogButtonBox_clear(box);
+    db2_expect(XDialogButtonBox_standardButtons(box) == 0, "clear 清空");
+
+    XDialogButtonBox_delete_base(box);
+}
+
+
 /* ==================== XGui 控件功能测试（XGuiDemo 统一入口） ==================== */
 
 /** @brief 运行六个新控件的全部功能断言（LineEdit/Slider/SpinBox/
@@ -24702,6 +26159,31 @@ static void test_xgui_widgets(void)
     expect_true(XDialTest_runAll(), "XDial 控件功能");
     expect_true(XComboBoxTest_runAll(), "XComboBox 控件功能");
     expect_true(XTabBarTest_runAll(), "XTabBar/XTabWidget 控件功能");
+    expect_true(XLcdNumberTest_runAll(), "XLcdNumber 控件功能");
+    expect_true(XScrollBarTest_runAll(), "XScrollBar 控件功能");
+    expect_true(XStackedWidgetTest_runAll(), "XStackedWidget 控件功能");
+    expect_true(XButtonGroupTest_runAll(), "XButtonGroup 控件功能");
+    test_statusbar_contract();
+    test_menubar_contract();
+    test_splitter_contract();
+    test_toolbox_contract();
+    test_scrollarea_contract();
+    test_small_widgets_contract();
+    test_datetimeedit_contract();
+    test_fontcombobox_contract();
+    test_plaintextedit_contract();
+    test_mdiarea_contract();
+    test_calendarwidget_contract();
+    test_textbrowser_contract();
+    test_keysequenceedit_contract();
+    test_textedit_contract();
+    test_textbrowser2_contract();
+    test_dialog_contract();
+    test_splashscreen_contract();
+    test_messagebox_contract();
+    test_mainwindow_contract();
+    test_toolbar_contract();
+    test_dialogbuttonbox_contract();
 }
 
 int main(void)
@@ -24937,7 +26419,9 @@ int main(void)
 #endif /* XWIDGET_ON */
 #if XWIDGET_ON && XPAINTER_RENDERHINT_ON
     test_painter_outline_text_antialias();
+#if XPAINTER_POLYGON_ON
     test_painter_polygon_antialias();
+#endif /* XPAINTER_POLYGON_ON */
 #endif /* XWIDGET_ON && XPAINTER_RENDERHINT_ON */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
     test_checkbox_contract();
@@ -24984,6 +26468,7 @@ int main(void)
     test_window_event_payloads();
     test_window_event_loop();
     test_widget_ime_commit_bridge();
+    test_lineedit_context_menu_contract();
 #endif /* XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */

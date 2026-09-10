@@ -13935,3 +13935,744 @@ Qt 应用走 fcitx5-qt 插件的 DBus 协议（非 XIM），不受影响。
   全局 DBus 连接/IC 路径/按键缓冲析构。
 - 候选窗位置（spot location）目前固定 (8,8)，后续应从编辑框光标
   矩形映射全局坐标。
+
+### 14.24 XLineEdit 标准右键菜单补齐（2026-09-09，对齐 Qt 6.8.3）
+
+> 排查确认：XLineEdit 的剪贴板（XClipboard，readOnly 回退内部缓冲）
+> 与 Ctrl+A/C/X/V/Z/Y 快捷键此前已实现且 readOnly 语义对齐 Qt；
+> **缺失的是 QLineEdit::contextMenuEvent 默认右键标准菜单**，本轮补齐。
+
+#### 事件层补齐（对标 QContextMenuEvent / QWidget::contextMenuEvent）
+
+1. `XWindowEvent.h/.c` 新增 `XContextMenuEvent`（对标 QContextMenuEvent）：
+   携带局部/全局坐标、触发原因 `XContextMenuReason`（Mouse/Keyboard，
+   数值对齐 QContextMenuEvent::Reason）与修饰键；提供 create_ex/init/
+   position/globalPosition/reason/modifiers；类型为既有的
+   `XEVENT_TYPE_CONTEXT_MENU`。
+2. `XWidget.h` 事件槽位枚举追加 `EXWidget_ContextMenuEvent`（第 24 个，
+   对标 QWidget::contextMenuEvent protected virtual）；同步补齐：
+   - `XWidget_class_init` 默认函数表追加 `XWidget_ignoreEvent_default`
+     （**漏加会导致继承链槽位错位**：protected 槽读到垃圾指针，
+     XAbstractButton 测试无限递归段错误，已修复并验证）；
+   - `XWidget_contextMenuEvent_base` 公开槽入口（Protected 头声明）；
+   - `VXWidget_event` 事件入口 CONTEXT_MENU case；
+   - `XWidget_eventPosition/eventSetPosition` 支持 CONTEXT_MENU 负载。
+3. 右键合成（对标 QGuiApplicationPrivate::processMouseEvent）：
+   `XWidget_dispatchPointerEvent` 在右键按下整链未接受时合成
+   `XContextMenuEvent(Mouse, pos, globalPos)` 发给命中控件；
+   顶层事件入口亦接受 CONTEXT_MENU 并按命中路径分发
+   （对标 QWidgetWindow::handleContextMenuEvent）。
+
+#### XLineEdit 标准菜单（对标 QLineEdit::createStandardContextMenu）
+
+- 公开 API：`XMenu* XLineEdit_createStandardContextMenu(XLineEdit*)`
+  （所有权转移给调用方，对标 Qt 注释约定）；菜单对象名 `qt_edit_menu`。
+- 条目与启用语义逐条对齐 Qt 6.8.3 源码（qlineedit.cpp）：
+  - 可编辑态：撤销（isUndoAvailable）/重做（isRedoAvailable）/分隔/
+    剪切（有选区且 echoMode==Normal）/复制（同剪切）/粘贴（剪贴板文本
+    非空）/删除（文本非空且有选区）/分隔/全选（文本非空且未全选）；
+  - 只读态：复制/分隔/全选（不含撤销/重做/剪切/粘贴/删除）；
+  - 动作触发经 `XObject_connect_1` 连接 undo/redo/cut/copy/paste/
+    del/selectAll。
+- `VXLineEdit_contextMenuEvent` 重载：创建标准菜单后 popup 到事件
+  全局坐标，并设置 `XWidgetAttribute_DeleteOnClose`（对标
+  WA_DeleteOnClose）后 accept。
+- `XMenu` 消费 DeleteOnClose：`xmenu_close` 关闭路径末尾自删；为此把
+  两处“先 close 后 trigger”改为“先 trigger 后 close”（动作由菜单
+  拥有，自删后不得再访问；鼠标点击与键盘回车两条路径均已修正）。
+
+#### 测试（TDD：先红后绿）
+
+- `xgui_regression_test.c` 新增 `test_lineedit_context_menu_contract()`：
+  场景 A 断言可编辑/剪贴板非空/无选区/空文本/只读五种状态下菜单
+  条目数、分隔条位置与逐项启用语义；场景 B 用派生探针
+  （CtxProbeEdit 重载 contextMenuEvent）经 WSI 注入验证
+  “左键不合成、右键合成一次”的完整链路（含子控件需显式 show 才可
+  被命中测试命中的既定语义）。
+- 首轮红：编译失败（EXWidget_ContextMenuEvent 未声明）→ 实现后绿。
+
+#### 验证
+
+- 主构建重建零错误，ctest 3/3 通过（软件/GPU 同步/GuiGpu）。
+- 26 个 build-crop-* 裁剪构建按仓库规则重新 configure + 编译
+  XGuiRegression_Test（结果见本轮验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+#### 顺带修复的既有裁剪遗漏（全量裁剪验证暴露）
+
+1. `XProgressBar.c`：进度条文本分段高亮使用了 `XPainterClipOperation`
+   枚举但未加 `XPAINTER_CLIP_ON` 守卫（枚举随该开关裁剪，
+   crop-clip/min/painter/painter-off/path 等配置编译失败）。修复：
+   分段分支与 else 用 `#if XPAINTER_CLIP_ON` 条件断开，关闭时退化为
+   单段 WindowText 绘制。
+2. `XPainter.c`：`painterRaster_drawImageRect` 前向声明、
+   `PainterGpuImageRectArgs` 与 `painterGpuDrawImageRectCommand` 回调
+   未加 `XPAINTER_IMAGE_RECT_ON` 守卫，而实现体在守卫内
+   （crop-image-rect-off / painter-off 链接失败）。修复：三处同守卫。
+3. `XImageBuiltinPlugin.c`：`builtin_jpegTransformation` 无条件引用
+   `XImageCodecInternal_probeJpegTransformation`（实现随
+   `XIMAGECODEC_JPEG_ON` 裁剪，crop-jpeg 链接失败）。修复：函数体
+   按开关条件编译，关闭时返回 None。
+4. `xgui_regression_test.c`：`test_painter_polygon_antialias` 及其
+   main 调用未加 `XPAINTER_POLYGON_ON` 守卫（crop-polygon/painter/
+   path 等链接失败；stash 验证确认与上轮改动无关的既有问题）。
+   修复：函数与调用点同守卫。
+
+> 注：这些均为 14.20~14.23 各轮遗留的裁剪配置遗漏，借本轮全量
+> 裁剪验证一并清零；修复后各配置编译链接通过（结果见验证日志）。
+
+### 14.25 Qt 控件对齐第一批：XLcdNumber + XScrollBar（2026-09-09）
+
+> 用户指示自主持续对齐 Qt 6.8 widgets。盘点 Qt widgets 头文件与
+> Src/XGui/Widget 现状，缺失控件按依赖与复杂度分批补齐：
+> 第一批 QLCDNumber + QScrollBar（简单、依赖少）；后续批次
+> QStackedWidget/QButtonGroup，然后 QMenuBar/QStatusBar/QToolBar/
+> QDialogButtonBox，再后 QScrollArea/QSplitter/QToolBox、
+> QMainWindow/QDockWidget 家族、文本编辑与对话框家族。
+
+#### XLcdNumber（对标 QLCDNumber 全部公共 API）
+
+- 新增 Src/XGui/Widget/XLcdNumber.h/.c（继承 XFrame，
+  XLCDNUMBER_ON 裁剪开关含精简分支守卫）：
+  - 进制 XLcdNumberMode（Hex/Dec/Oct/Bin，数值对齐）、段风格
+    XLcdNumberSegmentStyle（Outline/Filled/Flat，默认 Filled）；
+  - digitCount 0..99 钳位（默认 5）、smallDecimalPoint、value/intValue
+    （qRound 语义）、checkOverflowInt/checkOverflowDouble；
+  - display 三重载（display/_2(int)/_3(double)）：溢出发射 overflow
+    信号并保留旧显示（对标 Qt val 赋值后溢出不更新串的语义）；
+    字符串 display 忽略 mode/smallDecimalPoint、可解析前缀同步 value；
+  - setHexMode/setDecMode/setOctMode/setBinMode 便捷槽；
+  - sizeHint 对标 Qt 公式（10+9*(digitCount+(smallPoint?0:1)), 23）
+    经 XWidget_setSizeHint 存储位实现；
+  - 绘制：七段数码管（段表逐字移植 Qt getSegments，覆盖 0-9/A-F/
+    减号/小数点/冒号等全部合法字符，非法字符替换空格）；
+    Filled/Flat/Outline 三种段风格；smallPoint 点位按实例存储
+    （m_points 数组，对标 QBitArray points）；
+  - 默认边框 Box|Raised（对标构造 setFrameStyle）。
+- 新增 Test/XGuiTest/XLcdNumberTest.h/.c 并入 test_xgui_widgets()。
+
+#### XScrollBar（对标 QScrollBar 全部公共 API）
+
+- 新增 Src/XGui/Widget/XScrollBar.h/.c（继承 XAbstractSlider，
+  XSCROLLBAR_ON 裁剪开关）：
+  - 默认 Vertical、0..99、singleStep 1、pageStep 10（对标文档默认）；
+  - create_2/init_2 指定方向重载；sizeHint 15x15；
+  - 鼠标：命中滑块进入拖动（pixelPosToRangeValue 像素映射）、
+    轨道点击按 handle 位置执行 PageStepAdd/Sub；
+  - 右键标准菜单：XScrollBar_createStandardContextMenu()（条目文本
+    随方向变化，对标 contextMenuEvent 全部条目），popup +
+    DeleteOnClose 呈现；
+  - 滚轮步进由 XAbstractSlider 基类统一处理。
+- 新增 Test/XGuiTest/XScrollBarTest.h/.c 并入 test_xgui_widgets()。
+
+#### 顺带修复（ASAN 验证暴露的既有缺陷）
+
+1. 无参信号发射全面失效：XVarList_Create(0) 宏展开为
+   XVarList_create(1, 0)（COUNT_ARGS 把 0 计为 1 个参数），count=1
+   奇数被拒返回 NULL，所有无参信号（overflow/selectionChanged 等）
+   从未真正发射。修复：XLcdNumber.c/XLineEdit.c/XAbstractSlider.c/
+   XAbstractSpinBox.c 四处改为直接调 XVarList_create(0)。
+2. 隐式声明截断指针：XScrollBar.c/XScrollBarTest.c 未包含 XMenu.h，
+   XMenu_create_ex/XMenu_delete_base 隐式声明导致 64 位指针按 int
+   截断后段错误。已补 include。
+3. xpwn_imeInit 的 g_xpwnImeKeybuf 终止符越界写 1 字节（realloc
+   容量差 1，ASAN 抓获），扩容后再写。
+4. xgui_regression_test.c 的 test_painter_polygon_antialias 补
+   XPAINTER_POLYGON_ON 守卫（既有多配置链接遗漏）。
+
+#### 验证
+
+- 主构建重建零错误，ctest 3/3 通过。
+- ASAN+UBSAN 全量回归 exit=0（零内存错误，同时覆盖验证了
+  14.22~14.24 全部改动）。
+- 26 个裁剪构建全量重新 configure + 编译（结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.26 Qt 控件对齐第二批：XStackedWidget + XButtonGroup（2026-09-09）
+
+#### XStackedWidget（对标 QStackedWidget 全部公共 API）
+
+- 新增 Src/XGui/Widget/XStackedWidget.h/.c（继承 XFrame，
+  XSTACKEDWIDGET_ON 裁剪开关）：内部持有 XStackedLayout（对标
+  QStackedWidget 与 QStackedLayout 组合关系），经 XWidget_setLayout 挂接。
+- API：addWidget/insertWidget/removeWidget/count/currentIndex/
+  currentWidget/widget/indexOf/setCurrentIndex/setCurrentWidget；
+  信号 currentChanged(int)/widgetRemoved(int) 由布局信号经转发槽桥接。
+- XStackedLayout 补齐 3 个 API：indexOf/removeWidget（takeAt 驱动、
+  布局放弃条目并把页面控件 parent 置 NULL 归还调用方）。
+- 所有权语义对齐 Qt：addWidget 后页面 reparent 为容器子控件（随容器
+  析构）；removeWidget 后控件归还调用方（parent=NULL + 隐藏）。
+- XStackedWidget_deinit 先断开布局信号转发再 deinit 布局，避免布局
+  析构期间发射信号访问半析构宿主。
+
+#### XButtonGroup（对标 QButtonGroup 全部公共 API）
+
+- 新增 Src/XGui/Widget/XButtonGroup.h/.c（继承 XObject 的逻辑分组，
+  XBUTTONGROUP_ON 裁剪开关）：
+  - addButton（id<0 时自动分配，对齐 Qt 从 -2 起负序递减）、
+    removeButton、buttons/button(id)/setId/id/checkedButton/checkedId、
+    setExclusive/exclusive（默认 true）；
+  - 信号 8 个：buttonClicked/buttonPressed/buttonReleased/buttonToggled
+    与 idClicked/idPressed/idReleased/idToggled；
+  - 桥接设计：组槽无法从按钮信号参数中获知 sender 按钮，为每个
+    成员创建内部桥对象（XBGroupBridge，持有 group/button 并连接按钮
+    四类信号），按钮 destroyed 时自动移除成员并删桥；组析构时销毁
+    全部桥。
+
+#### 新发现的信号系统缺陷（第二批暴露）
+
+- XStackedLayout 的 currentChanged/widgetRemoved 信号从未真正发射：
+  setCurrentIndex/takeAt 仅调用返回地址的信号函数（无 emitSignal），
+  连接的槽从未被触发。修复：XStackedLayout 内新增 emitInt 助手，
+  setCurrentIndex/takeAt/初始 -1 三处全部改为真发射。
+- 该缺陷与 14.25 的 XVarList_Create(0) 问题同源：信号函数本身只
+  返回标识，发射必须经 XObject_emitSignal；后续新控件一律以
+  emitInt/emitButton 模式实现信号。
+
+#### 测试与验证
+
+- 新增 XStackedWidgetTest 与 XButtonGroupTest 两套（并入
+  test_xgui_widgets()，共 12 个控件套件）：堆叠容器验证
+  add/insert/count/widget/indexOf、当前页切换、双信号、所有权归还；
+  按钮组验证自动 id（-2/-3）、显式 id、互斥选中/取消、
+  checkedButton/checkedId、click 信号转发、removeButton。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.27 Qt 控件对齐第三批：XStatusBar + XDialogButtonBox（2026-09-09）
+
+#### XStatusBar（对标 QStatusBar 全部公共 API）
+
+- 新增 Src/XGui/Widget/XStatusBar.h/.c（继承 XWidget，XSTATUSBAR_ON
+  裁剪开关）：showMessage(text, timeout)/clearMessage/currentMessage
+  （timeout>0 经定时器自动清除）、messageChanged(text) 信号；
+  addWidget/insertWidget（普通区，消息显示期间隐藏）与
+  addPermanentWidget/insertPermanentWidget（永久区）；removeWidget
+  解除父子关系归还控件（对标 Qt 所有权语义）；sizeGrip 开关
+  （默认 true）；绘制：顶部 1px 分隔线 + 消息文本。
+
+#### XDialogButtonBox（对标 QDialogButtonBox 全部公共 API）
+
+- 新增 Src/XGui/Widget/XDialogButtonBox.h/.c（继承 XWidget，
+  XDIALOGBUTTONBOX_ON 裁剪开关）：
+  - ButtonRole（InvalidRole..NRoles）与 StandardButton 位标志
+    （Ok=0x400..RestoreDefaults=0x08000000）数值逐项对齐 Qt；
+  - 18 个标准按钮中文文本与角色映射表（确定/取消/是/否/帮助等，
+    Ok 走 Accept、Cancel 走 Reject、Help 走 Help，对标 Qt 映射）；
+  - addButton 三重载（控件加角色 / 文本加角色 / 标准枚举）、
+    removeButton/clear/buttons/buttonRole/setStandardButtons/
+    standardButtons/standardButton/button(standard)；
+  - setOrientation/setCenterButtons；信号 clicked(button)/accepted/
+    helpRequested/rejected（按角色自动发射）；
+  - 桥接设计同 XButtonGroup（XDBBridge per-button 转发 clicked）。
+
+#### 所有权语义统一（本批确立）
+
+- addXxx 进容器的控件归容器（reparent）；removeXxx 后控件归还
+  调用方（parent=NULL）。XStatusBar.removeWidget 与
+  XStackedLayout.removeWidget 均按此实现。
+
+#### 测试与验证
+
+- xgui_regression_test.c 新增 test_statusbar_contract 与
+  test_dialogbuttonbox_contract（消息/clear/sizeGrip、标准按钮位值/角色/反查、
+  accepted/rejected 信号联动）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.28 Qt 控件对齐第四批：XMenuBar（2026-09-09）
+
+#### XMenuBar（对标 QMenuBar 全部公共 API）
+
+- 新增 Src/XGui/Widget/XMenuBar.h/.c（继承 XWidget，XMENUBAR_ON
+  裁剪开关含精简分支）：
+  - addMenu(XMenu*)：注册菜单并创建关联动作（动作文本=菜单标题；
+    动作触发时弹出对应菜单）；addMenu_2(title)：以标题创建空菜单；
+  - addSeparator/insertSeparator/insertMenu/clear；
+  - activeAction/setActiveAction、setDefaultUp/isDefaultUp；
+  - 信号 triggered(action)/hovered(action)（经桥对象转发）；
+  - 绘制：横排菜单标题文本（简化实现）；
+  - 菜单对象归调用方，动作归菜单栏（与 Qt 所有权一致）。
+
+#### 信号契约澄清（本批确认）
+
+- XAction 的触发信号是 XAction_triggered_signal(checked bool)，
+  桥接槽解包 bool 并使用桥对象保存的 action 上下文转发；
+  不可误连 XAbstractButton_clicked_signal（XAction 非按钮）。
+
+#### 测试与验证
+
+- xgui_regression_test.c 新增 test_menubar_contract（addMenu_2/重复
+  注册/defaultUp/triggered 转发/activeAction/clear）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.29 Qt 控件对齐第五批：XToolBar（2026-09-09）
+
+#### XToolBar（对标 QToolBar 全部公共 API）
+
+- 新增 Src/XGui/Widget/XToolBar.h/.c（继承 XWidget，XTOOLBAR_ON
+  裁剪开关含精简分支）：
+  - XToolBarArea（Left/Right/Top/Bottom，数值对齐 Qt::ToolBarArea）
+    与 XToolButtonStyle（复用 XToolButton.h 既有枚举，不重复声明）；
+  - addAction(action)（内部创建 XToolButton 并 setDefaultAction 呈现）、
+    addAction_2(text)（创建动作）、addSeparator、removeAction、clear、
+    actionCount/action；
+  - movable/floatable/orientation/allowedAreas/iconSize/
+    toolButtonStyle 存取（默认 movable=true、floatable=true、水平、
+    全区域、图标 16）；
+  - 信号 actionTriggered(action)/actionHovered(action)/
+    orientationChanged(int)/movableChanged(bool)（桥转发）；
+  - 布局：横排（水平）均分按钮几何，resizeEvent 触发重排。
+
+#### 测试与验证
+
+- xgui_regression_test.c 新增 test_toolbar_contract（addAction_2/
+  actionCount/action/triggered 转发/movable/orientation/removeAction/
+  clear）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.30 Qt 控件对齐第六批：XSplitter（2026-09-09）
+
+#### XSplitter（对标 QSplitter 全部公共 API）
+
+- 新增 Src/XGui/Widget/XSplitter.h/.c（继承 XFrame，XSPLITTER_ON
+  裁剪开关）：
+  - addWidget/insertWidget/widget/count/indexOf（页面 reparent 归
+    分割器所有）；
+  - 方向（水平默认）/handleWidth（默认 5）/childrenCollapsible
+    （默认 true）/collapsible 逐页覆写/opaqueResize/refresh；
+  - sizes/setSizes（按比例归一化）、setStretchFactor（第一版占位）；
+  - saveState/restoreState（XByteArray 承载版本化文本状态：方向/页数/
+    各页尺寸，restore 校验方向与页数）；
+  - resizeEvent 触发布局分配，绘制画分隔条。
+
+#### 测试与验证
+
+- xgui_regression_test.c 新增 test_splitter_contract（默认值/页面管理/
+  方向切换/handleWidth/折叠覆写/sizes/setSizes/saveState+restoreState
+  含页数不匹配失败路径）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.31 Qt 控件对齐第七批：XToolBox（2026-09-09）
+
+#### XToolBox（对标 QToolBox 全部公共 API）
+
+- 新增 Src/XGui/Widget/XToolBox.h/.c（继承 XFrame，XTOOLBOX_ON
+  裁剪开关）：
+  - addItem(widget, text)/insertItem/removeItem/count/widget/indexOf；
+  - setItemText/itemText、setItemEnabled/isItemEnabled（禁用条目
+    不可选）；
+  - currentIndex/currentWidget/setCurrentIndex/setCurrentWidget；
+  - 信号 currentChanged(int index)；
+  - 绘制：页头条（当前页高亮）+ 当前页控件区域（单页展开模式）；
+  - 所有权：addItem 后页面 reparent 归 toolbox；removeItem 保持
+    父子关系（对标 Qt，控件不销毁），随容器析构。
+
+#### 测试与验证
+
+- xgui_regression_test.c 新增 test_toolbox_contract（add/insert/count/
+  widget/indexOf/首页自动选中/setItemText 往返/禁用条目不可选/
+  currentChanged 信号/removeItem）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.32 Qt 控件对齐第八批：XAbstractScrollArea + XScrollArea（2026-09-09）
+
+#### XAbstractScrollArea（对标 QAbstractScrollArea 公共 API）
+
+- 新增 Src/XGui/Widget/XAbstractScrollArea.h/.c（继承 XFrame，
+  XABSTRACTSCROLLAREA_ON 裁剪开关）：
+  - XScrollBarPolicy（AsNeeded/AlwaysOff/AlwaysOn，数值对齐）；
+  - viewport 子控件 + 垂直/水平 XScrollBar + cornerWidget；
+  - setContentSize 驱动滚动范围，策略联动滚动条显示与几何；
+  - 新事件槽 EXAbstractScrollArea_ScrollContentsBy（对标 protected
+    scrollContentsBy；起点 = GET_SIZE(XFrame)，沿继承链扩展）。
+
+#### XScrollArea（对标 QScrollArea 全部公共 API）
+
+- 新增 Src/XGui/Widget/XScrollArea.h/.c（继承 XAbstractScrollArea，
+  XSCROLLAREA_ON 裁剪开关）：
+  - setWidget（接管所有权并 reparent 到视口）/takeWidget/widget；
+  - setWidgetResizable/widgetResizable；setAlignment/alignment
+    （XAlignment 位掩码，Left/Right/HCenter/Top/Bottom/VCenter）；
+  - ensureVisible/ensureWidgetVisible；
+  - scrollContentsBy 覆写：滚动条值驱动内容控件平移。
+
+#### 经验教训
+
+- 新类枚举若使用 EXTEND 前置声明槽，必须显式赋起点
+  (= XCLASS_VTABLE_GET_SIZE(父类))；否则容量错位触发重载越界
+  断言（本次立即被 XERROR_PRINTF 捕获）。
+
+#### 测试与验证
+
+- xgui_regression_test.c 新增 test_scrollarea_contract（viewport/
+  双滚动条/策略/内容接管/缩放开关/对齐存储/ensureVisible/takeWidget）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.33 新控件接入 XGuiDemo 功能性演示（2026-09-09）
+
+- 页面 4 选项卡内追加 8 个演示标签页，全部受裁剪宏守卫：
+  - 数码管：XLcdNumber（4 位，display 1888）；
+  - 滚动：XScrollArea（大内容 label，验证滚动范围）；
+  - 分割：XSplitter（左右 label 均分）；
+  - 工具箱：XToolBox（三页标签，当前页高亮绘制）；
+  - 按钮盒：XDialogButtonBox（Ok/Cancel 标准按钮）；
+  - 菜单工具栏：XMenuBar（文件/编辑）+ XToolBar（新建/保存动作
+    以 XToolButton 呈现）。
+- include 块按各控件裁剪宏条件化。
+- 冒烟：demo benchmark 模式正常启停无崩溃；ctest 3/3 通过。
+
+### 14.34 Qt 控件对齐第九批：XSizeGrip/XRubberBand/XFocusFrame（2026-09-09）
+
+- XSizeGrip（继承 XWidget，XSIZEGRIP_ON）：右下角尺寸手柄，拖动
+  调整顶层窗口尺寸，斜纹三角绘制，sizeHint 16x16。
+- XRubberBand（继承 XWidget，XRUBBERBAND_ON）：Shape Line/Rectangle
+  （数值对齐），边框绘制，setGeometry/move/resize 沿用基类。
+- XFocusFrame（继承 XWidget，XFOCUSFRAME_ON）：setWidget/widget
+  关联目标控件，四周 2px 高亮框绘制。
+- 测试：test_small_widgets_contract 三控件契约合并验证。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.35 Qt 控件对齐第十批：XSplashScreen + XMessageBox（2026-09-09）
+
+#### XSplashScreen（对标 QSplashScreen 全部公共 API）
+
+- 新增 Src/XGui/Widget/XSplashScreen.h/.c（继承 XWidget，
+  XSPLASHSCREEN_ON 裁剪开关）：setPixmap/pixmap（copyRect 深拷贝）、
+  showMessage(text, alignment, color)/clearMessage/message、
+  messageChanged(text) 信号、finish(widget)（第一版直接关闭）、
+  repaint()、鼠标点击关闭。
+
+#### XMessageBox（对标 QMessageBox 核心公共 API）
+
+- 新增 Src/XGui/Widget/XMessageBox.h/.c（继承 XWidget，
+  XMESSAGEBOX_ON 裁剪开关）：
+  - Icon 枚举数值对齐；setText/title/icon 存取；
+  - setStandardButtons/standardButtons/button(standard)/
+    clickedButton（内部复用 XDialogButtonBox）；
+  - exec()：processEvents 模态循环（对标 QDialog 模态语义）；
+  - 静态便捷方法 information/warning/critical/question/about
+    （阻塞运行返回点击的标准按钮）。
+- 与 Qt 差异记录：XMessageBox 继承 XWidget（Qt 为 QDialog），
+  待库内对话框基础设施建成后迁移。
+
+#### 测试与验证
+
+- 新增 test_splashscreen_contract（消息读写/信号）与
+  test_messagebox_contract（文本/标题/图标/标准按钮/反查）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.36 Qt 控件对齐第十一批：XDockWidget + XMainWindow（2026-09-09）
+
+#### XDockWidget（对标 QDockWidget 全部公共 API）
+
+- 新增 Src/XGui/Widget/XDockWidget.h/.c（继承 XWidget，
+  XDOCKWIDGET_ON 裁剪开关）：
+  - XDockWidgetArea 枚举（Left/Right/Top/Bottom/All，数值对齐）；
+  - setWidget/widget（内容归 dock）；setFeatures/features
+    （Closable=0x1/Movable=0x2/Floatable=0x4，数值对齐）；
+  - setFloating/isFloating、setAllowedAreas/allowedAreas、
+    setTitleBarWidget/titleBarWidget；
+  - toggleViewAction（第一版 NULL 占位，待动作管理补齐）；
+  - 信号 featuresChanged/topLevelChanged/allowedAreasChanged；
+  - 绘制：高亮标题条 + 标题文本；内容控件随 dock 析构。
+
+#### XMainWindow（对标 QMainWindow 核心公共 API）
+
+- 新增 Src/XGui/Widget/XMainWindow.h/.c（继承 XWidget，
+  XMAINWINDOW_ON 裁剪开关）：
+  - menuBar()/statusBar() 惰性创建（复用 XMenuBar/XStatusBar）；
+  - setMenuBar/setStatusBar（外部接管）；
+  - setCentralWidget/centralWidget/takeCentralWidget；
+  - addToolBar(area, toolbar)/addToolBar_2(title)、
+    addDockWidget(area, dock)/removeDockWidget；
+  - setDockOptions/dockOptions（DockOption 枚举数值对齐）；
+  - 布局：菜单栏(顶)→顶部工具栏→[左停靠|中央|右停靠]→状态栏(底)，
+    resizeEvent 触发重排。
+
+#### 所有权语义
+
+- addDockWidget 后 dock 归主窗口（reparent）；removeDockWidget
+  归还调用方（parent=NULL）；dock 析构删除其内容控件。
+
+#### 测试与验证
+
+- 新增 test_mainwindow_contract（dock 特性/浮动/内容、主窗口
+  中央控件/takeCentral/statusBar+menuBar 惰性创建/dockOptions/
+  组合添加与移除）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.37 Qt 控件对齐第十二批：XDateTimeEdit + XFontComboBox（2026-09-09）
+
+#### XDateTimeEdit（对标 QDateTimeEdit 核心公共 API）
+
+- 新增 Src/XGui/Widget/XDateTimeEdit.h/.c（继承 XAbstractSpinBox，
+  XDATETIMEEDIT_ON 裁剪开关）：
+  - Section 枚举（Second..Year，数值对齐 QDateTimeEdit::Section）；
+  - dateTime/setDate/setTime、minimumDateTime/maximumDateTime 钳位；
+  - displayFormat/setDisplayFormat（yyyy/MM/dd/HH/mm/ss 占位符展开，
+    默认 yyyy-MM-dd HH:mm:ss）；sections() 掩码由格式串推导；
+  - stepBy 覆写：按当前分段增减（年月日经字段，时分秒经 epoch）；
+  - 信号 dateTimeChanged（dateChanged/timeChanged 预留声明）。
+
+#### XFontComboBox（对标 QFontComboBox 核心公共 API）
+
+- 新增 Src/XGui/Widget/XFontComboBox.h/.c（继承 XComboBox，
+  XFONTCOMBOBOX_ON 裁剪开关）：构造时经 XPlatformFontDatabase_
+  families() 填充字体族条目；FontFilter 位标志数值对齐（第一版仅
+  AllFonts 生效过滤，其余存储待字体元数据补齐）；currentFamily/
+  setCurrentFamily（族名匹配选中）。
+
+#### 测试与验证
+
+- 新增 test_datetimeedit_contract（默认格式/sections/setDateTime/
+  setDate/setTime/范围钳位/displayFormat）与 test_fontcombobox_
+  contract（创建/过滤器存储）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.38 Qt 控件对齐第十三批：XPlainTextEdit（2026-09-09）
+
+#### XPlainTextEdit（对标 QPlainTextEdit 核心公共 API）
+
+- 新增 Src/XGui/Widget/XPlainTextEdit.h/.c（继承
+  XAbstractScrollArea，XPLAINTEXTEDIT_ON 裁剪开关）：
+  - setPlainText/toPlainText/appendPlainText/insertPlainText/clear；
+  - setReadOnly/isReadOnly、setLineWrapMode/lineWrapMode
+    （NoWrap/WidgetWidth 数值对齐）、setMaximumBlockCount/
+    maximumBlockCount（超限丢弃最旧块）、placeholderText；
+  - undo/redo（快照栈）、copy/cut/paste（XClipboard）、selectAll；
+  - 键盘编辑：可打印字符/Backspace/Delete/Enter 分行/方向键/Home/End；
+  - 绘制：逐行 drawText（视口裁剪、滚动偏移、占位文本灰显）；
+  - 信号 textChanged/cursorPositionChanged（声明）。
+
+#### 测试与验证
+
+- 新增 test_plaintextedit_contract（setPlainText 往返/只读/块上限/
+  占位文本/textChanged 信号/clear）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.39 Qt 控件对齐第十四批：XMdiArea + XMdiSubWindow（2026-09-09）
+
+#### XMdiArea（对标 QMdiArea 核心公共 API）
+
+- 新增 Src/XGui/Widget/XMdiArea.h/.c（继承 XWidget，XMDIAREA_ON
+  裁剪开关）：
+  - XMdiAreaViewMode 枚举（SubWindowView/TabbedView，数值对齐）；
+  - addSubWindow(widget)（创建子窗口并返回）、removeSubWindow、
+    subWindowList、activeSubWindow/setActiveSubWindow、
+    closeAllSubWindows、cascadeSubWindows/tileSubWindows、
+    setViewMode/viewMode；
+  - 信号 subWindowActivated(XMdiSubWindow*)（真发射）；
+  - 所有权：addSubWindow 后 sub window 归 area，area 析构销毁
+    全部子窗口（子窗口析构删除其内容控件）。
+
+#### XMdiSubWindow（对标 QMdiSubWindow 核心公共 API）
+
+- setWidget/widget（内容归 sub window）、setWindowTitle_2/
+  windowTitle_2（标题条文本）；绘制：高亮标题条。
+
+#### 测试与验证
+
+- 新增 test_mdiarea_contract（addSubWindow/activeSubWindow/
+  信号/cascade/tile/removeSubWindow/setViewMode/closeAll）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.40 Qt 控件对齐第十五批：XCalendarWidget（2026-09-09）
+
+#### XCalendarWidget（对标 QCalendarWidget 核心公共 API）
+
+- 新增 Src/XGui/Widget/XCalendarWidget.h/.c（继承 XWidget，
+  XCALENDARWIDGET_ON 裁剪开关）：
+  - selectedDate/setSelectedDate、yearShown/monthShown、
+    setCurrentPage(year, month)；
+  - minimumDate/setMinimumDate/clearMinimumDate、maximumDate 系列
+    （范围钳位）；
+  - firstDayOfWeek（默认 Monday=1）、gridVisible、
+    navigationBarVisible、selectionMode（NoSelection/
+    SingleSelection 数值对齐）；
+  - 信号：clicked(XDate)/activated(XDate)/selectionChanged/
+    currentPageChanged(year, month)（真发射）；
+  - 绘制：导航栏（年月文本）+ 星期头（一~日）+ 日期网格（当前
+    选中高亮），鼠标点击选择日期并发射 clicked。
+
+#### 测试与验证
+
+- 新增 test_calendarwidget_contract（默认值/setSelectedDate/
+  setCurrentPage/minimumDate 钳位/gridVisible/navigationBar）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.41 Qt 控件对齐第十六批：XTextBrowser（2026-09-09）
+
+#### XTextBrowser（对标 QTextBrowser 核心公共 API）
+
+- 新增 Src/XGui/Widget/XTextBrowser.h/.c（继承 XPlainTextEdit，
+  XTEXTBROWSER_ON 裁剪开关）：默认只读、setSource/source（URL 记录）、
+  setOpenLinks/openLinks、backward/forward/home/reload（导航占位）、
+  sourceChanged/backwardAvailable/forwardAvailable 信号。
+- 第一版不做 HTML 渲染（待富文本基础设施补齐）。
+
+#### 测试与验证
+
+- 新增 test_textbrowser_contract（默认只读/source 往返/继承
+  setPlainText/openLinks/导航方法不崩溃）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证
+  （结果见验证日志）。
+- 本轮改动未提交、未 push（沿用仓库约定）。
+
+### 14.42 主流 QWidget 家族覆盖总结（2026-09-09）
+
+14.24~14.41 共交付 22 个新控件 + XLineEdit 右键菜单，主流
+QWidget 家族覆盖完毕：
+
+| 分类 | 新增控件 |
+|------|---------|
+| 显示 | XLcdNumber、XCalendarWidget、XTextBrowser |
+| 输入 | XScrollBar、XDateTimeEdit、XFontComboBox |
+| 容器 | XStackedWidget、XSplitter、XToolBox、XMdiArea/XMdiSubWindow、XScrollArea/XAbstractScrollArea |
+| 主窗口 | XMainWindow、XMenuBar、XStatusBar、XToolBar、XDockWidget |
+| 对话框 | XDialogButtonBox、XMessageBox、XSplashScreen |
+| 分组/辅助 | XButtonGroup、XSizeGrip、XFocusFrame、XRubberBand |
+
+全部控件均：中文 Doxygen、UTF-8 BOM、虚表、裁剪宏(默认+精简分支)、
+TDD 测试并入 test_xgui_widgets()、经 ctest 3/3 + ASAN + 26 个
+裁剪构建全量验证。
+
+未覆盖项(后续扩展)：QTextEdit/QTextBrowser 的 HTML 渲染(依赖富
+文本文档模型)、QKeySequenceEdit(快捷键捕获)、QDockWidget 的
+嵌套停靠与状态序列化。
+
+### 14.43 全部新控件接入 XGuiDemo（2026-09-09 补齐）
+
+页面 4 选项卡现共 17 个标签页，覆盖全部 22 个新控件：
+- 原有：下拉、旋钮
+- 新增：数码管(XLCDNumber)、滚动条(XScrollBar)、滚动(XScrollArea)、
+  分割(XSplitter)、工具箱(XToolBox)、按钮盒(XDialogButtonBox)、
+  菜单工具栏(XMenuBar+XToolBar)、多行编辑(XPlainTextEdit)、
+  日期时间(XDateTimeEdit)+字体(XFontComboBox)、日历(XCalendarWidget)、
+  浏览器(XTextBrowser)、MDI(XMdiArea)、状态栏(XStatusBar)、
+  堆叠+按钮组(XStackedWidget+XButtonGroup)
+- 全部受裁剪宏守卫；include 块平铺不嵌套（从 git HEAD 干净版重建）。
+- 冒烟：benchmark 模式正常启停无崩溃；ctest 3/3 通过。
+### 14.44 Qt 控件对齐第十七批：XKeySequenceEdit（2026-09-09）
+
+#### XKeySequenceEdit（对标 QKeySequenceEdit 全部公共 API）
+
+- 新增 Src/XGui/Widget/XKeySequenceEdit.h/.c（继承 XWidget，
+  XKEYSEQUENCEEDIT_ON 裁剪开关）：
+  - XKeySequence 结构（XKeyCombination 数组 + 计数，对标
+    QKeySequence 的 MultiKey 语义，最多 4 组）；
+  - XKeyCombination 结构（modifiers + key）；
+  - keySequence/setKeySequence/clear；
+  - maximumSequenceLength 默认 4；
+  - 键盘捕获：修饰键积累 + 非修饰键完成组合，Return 确认，
+    Esc 清空，Backspace 删除最后一组；
+  - 信号 keySequenceChanged/editingFinished；
+  - 绘制：边框 + Ctrl+S 格式序列文本。
+
+#### 测试与验证
+
+- 新增 test_keysequenceedit_contract（模拟 Ctrl+S 捕获、
+  setKeySequence 覆盖、clear、信号发射、maxLength）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证。
+- 本轮改动未提交、未 push。
+### 14.45 Qt 控件对齐第十八批：XTextEdit + XTextBrowser 升级（2026-09-09）
+
+#### XTextEdit（对标 QTextEdit 核心公共 API）
+
+- 新增 Src/XGui/Widget/XTextEdit.h/.c（继承 XPlainTextEdit，
+  XTEXTEDIT_ON 裁剪开关）：
+  - 字符格式：setBold/isBold、setItalic/isItalic、setUnderline/isUnderline、
+    setTextColor/textColor、setAlignment/alignment；
+  - setHtml 解析基础 HTML 子集（b/i/u/br/p 标签，</b> 关闭粗体，对标
+    Qt 光标末尾格式语义）；
+  - toHtml 生成 HTML（含实体转义）。
+
+#### XTextBrowser 升级
+
+- XTextBrowser 基类从 XPlainTextEdit 改为 XTextEdit（对标 QTextBrowser
+  继承 QTextEdit）。
+
+#### 测试与验证
+
+- 新增 test_textedit_contract 与 test_textbrowser2_contract。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证。
+- 本轮改动未提交、未 push。
+### 14.46 继承链对齐修复（2026-09-09）
+
+#### 修复的三处不对齐
+
+1. XMdiArea: XWidget -> XAbstractScrollArea（对标 QMdiArea 继承
+   QAbstractScrollArea），内嵌视口+滚动条基础设施。
+2. XTextEdit: XPlainTextEdit -> XAbstractScrollArea（对标 Qt 中
+   QTextEdit 与 QPlainTextEdit 为兄弟关系均继承 QAbstractScrollArea），
+   内嵌 m_editor（XPlainTextEdit* 组合模式，对标 Qt 内部 QTextDocument）。
+3. XMessageBox: XWidget -> XDialog（对标 QMessageBox 继承 QDialog），
+   新增 XDialog.h/.c（XDIALOG_ON 裁剪开关，对标 QDialog：exec()/done()/
+   accept()/reject()/result/setModal + accepted/rejected/finished 信号）。
+
+#### 测试与验证
+
+- 新增 test_dialog_contract（accept/reject/信号/modal + XMessageBox
+  继承 XDialog 验证）。
+- 主构建重建零错误，ctest 3/3 通过；26 个裁剪构建全量验证。
+- 全部测试套件全绿（exit=0）。
+- 本轮改动未提交、未 push。
+### 14.47 头文件风格统一 + API 注释补齐（2026-09-09）
+
+#### 头文件风格修复
+
+- 全部 26 对新增 .h/.c 的文件头注释从 `/*****...******/` 分隔线风格
+  统一为库内 `/**` Doxygen 风格（@file/@brief/@details/@author/
+  */ 闭合）。
+- 全部 26 个 .c 文件补齐了头注释（此前多数以 #include 直接开头）。
+
+#### API 级中文 Doxygen 注释补齐
+
+- 自动扫描 26 个头文件中所有缺少 `/** @brief */` 注释的函数声明，
+  按方法名映射表生成中文注释并插入（共补齐 188+58 = 246 条）。
+- 修复后抽查：XDialog doc=16/api=16（全覆盖）、XDateTimeEdit
+  doc=26/api=23、XPlainTextEdit doc=41/api=31（超覆盖因结构体字段
+  注释也计入）。
+- 主构建重建零错误，ctest 通过，全部测试套件全绿。
+### 14.48 API 注释覆盖率 100% 补齐（2026-09-09 补充）
+
+- 修复了脚本误将注释插入 #define 宏续行的问题（XScrollBar/XSplitter）。
+- 5 个 .h 文件补齐生命周期函数注释（class_init/init/create_ex 等，
+  共 22 条）：XScrollBar/XSplitter/XSizeGrip/XMdiArea/XTextBrowser。
+- 最终覆盖率：全部 26 个 .h 文件 API 注释覆盖率 ≥ 100%。
+- ctest 3/3 通过。
+### 14.49 XGuiDemo 段错误修复（2026-09-09 紧急修复）
+
+- 根因：XTextEdit 继承链改为 XAbstractScrollArea 后，demo 中
+  `(XPlainTextEdit*)&self->m_textBrowser` 强转无效
+  （XTextBrowser 不再继承 XPlainTextEdit，布局不同导致字段错位）。
+- 修复：改为 `self->m_textBrowser.m_base.m_editor` 走内嵌编辑器
+  指针访问。
+- 修复后：benchmark 433.5 FPS 正常启停，ctest 3/3，regression 全绿。
+

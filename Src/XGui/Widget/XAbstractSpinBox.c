@@ -73,7 +73,7 @@ static void spinbox_emitVoidSignal(XAbstractSpinBox* self, size_t signal)
 {
     XVarList* arguments;
     if (!self) return;
-    arguments = XVarList_Create(0);
+    arguments = XVarList_create(0);
     if (!arguments) return;
     if (((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,

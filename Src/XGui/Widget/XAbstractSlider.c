@@ -50,7 +50,7 @@ static void VXAbstractSlider_move(XAbstractSlider* self,
 /* ==================== 内部辅助 ==================== */
 
 /** @brief 发射 void 参数信号（args 传 NULL，对标 XEmitSignal 的
- *         XObject_destroyed_signal 模式；XVarList_Create(0) 会因奇数
+ *         XObject_destroyed_signal 模式；XVarList_create(0) 会因奇数
  *         参数个数返回 NULL，不能用于空参列表）。 */
 static void xslider_emitVoidSignal(XAbstractSlider* self, size_t signal)
 {

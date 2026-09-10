@@ -594,7 +594,11 @@ static void xpwn_imeInit(void)
                     buf[len++] = (char)b;
                     dbus_message_iter_next(&arr);
                 }
-                if (buf) { buf[len] = '\0'; }
+                if (buf) {
+                    /* 追加终止符：扩容 1 字节保证 buf[len] 可写。 */
+                    buf = (char*)realloc(buf, len + 1);
+                    if (buf) buf[len] = '\0';
+                }
                 g_xpwnImeKeybuf = buf;
             }
         }

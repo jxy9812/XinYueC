@@ -399,6 +399,12 @@ static void xmenu_close(XMenu* self)
     }
     xmenu_emitVoid(self, (size_t)XMenu_aboutToHide_signal);
     XWidget_hide((XWidget*)self);
+    /* 对标 Qt WA_DeleteOnClose：设置该属性的弹出菜单在关闭时自删。
+       仅在交互关闭路径（动作触发/菜单外点击/Escape）执行；对象析构
+       路径不经过本函数，无二次删除风险。 */
+    if (XWidget_testAttribute((XWidget*)self,
+                              XWidgetAttribute_DeleteOnClose))
+        XWidget_delete_base((XClass*)self);
 }
 
 /* 移动高亮到下一个/上一个可选条目；wrap 循环。 */
@@ -694,8 +700,10 @@ static void VXMenu_mouseReleaseEvent(XWidget* self, XEvent* event)
         return;
     }
     menu->m_execResult = action;
-    xmenu_close(menu);
+    /* 先触发后关闭：动作由菜单拥有，设置 DeleteOnClose 的菜单会在
+       关闭路径中自删，必须保证触发时对象仍存活。 */
     XAction_trigger(action);
+    xmenu_close(menu);
     XEvent_accept(event);
 }
 
@@ -738,8 +746,10 @@ static void VXMenu_keyPressEvent(XWidget* self, XEvent* event)
         if (action && XAction_isEnabled(action) &&
             !XAction_isSeparator(action)) {
             menu->m_execResult = action;
-            xmenu_close(menu);
+            /* 先触发后关闭（动作由菜单拥有，DeleteOnClose 自删后
+               不得再访问 action）。 */
             XAction_trigger(action);
+            xmenu_close(menu);
         }
         XEvent_accept(event);
     } else if (key == XKey_Escape) {

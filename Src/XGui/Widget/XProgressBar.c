@@ -267,6 +267,9 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
                 else if (self->m_alignment & XAlignment_HCenter ||
                          self->m_alignment == 0)
                     tx = r.x + (bw - textW) / 2;
+#if XPAINTER_CLIP_ON
+                /* 分段高亮依赖裁剪操作（枚举随 XPAINTER_CLIP_ON 裁剪）；
+                   关闭裁剪时退化为下方单段 WindowText 绘制。 */
                 if (chunkPixel > 0) {
                     /* 块内段：与进度块的交集用 HighlightedText；块外段：
                        文本区间减进度块后用 WindowText。两段的裁剪区间都
@@ -310,7 +313,9 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
                     }
                     XPainter_setClipRect(painter, NULL,
                                          XPainterClipOperation_NoClip);
-                } else {
+                } else
+#endif /* XPAINTER_CLIP_ON */
+                {
                     XPainter_drawText(painter, tx, baseline, text,
                                       windowText);
                 }

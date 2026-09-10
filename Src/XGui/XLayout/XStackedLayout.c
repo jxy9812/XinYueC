@@ -13,6 +13,26 @@
 
 #if XLAYOUT_ON && XLAYOUT_STACKED_ON
 
+/* 发射助手（前置于全部调用点）。 */
+
+/** @brief 真正发射带 int 参数的信号（此前 setCurrentIndex/takeAt 仅
+ *         调用返回地址的信号函数，连接的槽从未被触发）。 */
+static void xstackedlayout_emitInt(XStackedLayout* self, size_t signal,
+                                   int index)
+{
+    XVarList* args = XVarList_Create(XVar(int, index));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+
+
+
 /** @brief 设置单页模式下的可见状态。 */
 static void XStackedLayout_applyStackOne(XStackedLayout* self)
 {
@@ -68,7 +88,8 @@ static XLayoutItem* VXStackedLayout_takeAt(XLayout* layout, int index)
             XStackedLayout_setCurrentIndex(
                 self, (index == count) ? count - 1 : index);
         } else {
-            XStackedLayout_currentChanged_signal(self, -1);
+            xstackedlayout_emitInt(self,
+                (size_t)XStackedLayout_currentChanged_signal, -1);
         }
     } else if (index < oldCurrent) {
         self->m_currentIndex = oldCurrent - 1;
@@ -76,7 +97,8 @@ static XLayoutItem* VXStackedLayout_takeAt(XLayout* layout, int index)
     widget = XLayoutItem_widget_base(item);
     if (widget)
         XWidget_setVisible(widget, false);
-    XStackedLayout_widgetRemoved_signal(self, index);
+    xstackedlayout_emitInt(self,
+        (size_t)XStackedLayout_widgetRemoved_signal, index);
     return item;
 }
 
@@ -332,6 +354,37 @@ int XStackedLayout_count(const XStackedLayout* self)
     return self ? self->m_base.m_itemCount : 0;
 }
 
+int XStackedLayout_indexOf(const XStackedLayout* self, const XWidget* widget)
+{
+    int i;
+    if (!self || !widget) return -1;
+    for (i = 0; i < self->m_base.m_itemCount; ++i) {
+        if (XStackedLayout_widget(self, i) == widget)
+            return i;
+    }
+    return -1;
+}
+
+void XStackedLayout_removeWidget(XStackedLayout* self, XWidget* widget)
+{
+    int index;
+    XLayoutItem* item;
+    XWidget* page;
+    if (!self || !widget) return;
+    index = XStackedLayout_indexOf(self, widget);
+    if (index < 0) return;
+    item = XLayout_takeAt_base((XLayout*)self, index);
+    if (!item) return;
+    page = XLayoutItem_widget_base(item);
+    if (page) {
+        XWidget_setVisible(page, false);
+        /* 对标 Qt：布局放弃条目所有权并把页面控件移出本容器
+           （parent 置 NULL），控件归还调用方管理。 */
+        XWidget_setParentPlain(page, NULL);
+    }
+    XLayoutItem_delete_base(item);
+}
+
 void XStackedLayout_setCurrentIndex(XStackedLayout* self, int index)
 {
     XWidget* previous;
@@ -347,7 +400,8 @@ void XStackedLayout_setCurrentIndex(XStackedLayout* self, int index)
     }
     self->m_currentIndex = index;
     XWidget_setVisible(next, true);
-    XStackedLayout_currentChanged_signal(self, index);
+    xstackedlayout_emitInt(self,
+        (size_t)XStackedLayout_currentChanged_signal, index);
 }
 
 void XStackedLayout_setCurrentWidget(XStackedLayout* self, XWidget* widget)

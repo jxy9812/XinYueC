@@ -900,6 +900,9 @@ static XPoint XWidget_eventPosition(const XEvent* event)
     case XEVENT_TYPE_ENTER:
         out = ((const XEnterEvent*)event)->m_position;
         break;
+    case XEVENT_TYPE_CONTEXT_MENU:
+        out = ((const XContextMenuEvent*)event)->m_position;
+        break;
 #endif /* XWINDOWEVENT_ON */
     default:
         break;
@@ -924,6 +927,9 @@ static void XWidget_eventSetPosition(XEvent* event, const XPoint* pos)
         break;
     case XEVENT_TYPE_ENTER:
         ((XEnterEvent*)event)->m_position = *pos;
+        break;
+    case XEVENT_TYPE_CONTEXT_MENU:
+        ((XContextMenuEvent*)event)->m_position = *pos;
         break;
 #endif /* XWINDOWEVENT_ON */
     default:
@@ -983,6 +989,27 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
         if (w == top) break;
         w = (XWidget*)XObject_parent((XObject*)w);
     }
+#if XWINDOWEVENT_ON
+    /* 对标 Qt：右键按下未被接受时合成上下文菜单事件，发给命中控件
+       （QGuiApplicationPrivate::processMouseEvent 在 press 未接受且
+       button==RightButton 时向窗口合成 QContextMenuEvent，最终由
+       QWidgetWindow 转发到鼠标下控件）。 */
+    if (!XEvent_isAccepted(event) &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
+        ((const XMouseEvent*)event)->m_button == XMouseButton_RightButton) {
+        XContextMenuEvent* ctx;
+        XPoint local = XWidget_eventPosition(event);
+        XPoint global = XWidget_mapToGlobal(target, &local);
+        ctx = XContextMenuEvent_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_CONTEXT_MENU, &local,
+            &global, XContextMenuReason_Mouse,
+            ((const XMouseEvent*)event)->m_modifiers);
+        if (ctx) {
+            XWidget_sendEvent(target, (XEvent*)ctx);
+            XEvent_delete_base((XEvent*)ctx);
+        }
+    }
+#endif /* XWINDOWEVENT_ON */
     return XEvent_isAccepted(event);
 }
 
@@ -1145,6 +1172,10 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     case XEVENT_TYPE_KEY_RELEASE:
     case XEVENT_TYPE_INPUT_METHOD:
         return XWidget_dispatchKeyEvent(top, event);
+    case XEVENT_TYPE_CONTEXT_MENU:
+        /* 对标 Qt：上下文菜单事件发给鼠标下控件（QWidgetWindow::
+           handleContextMenuEvent 命中转发）。 */
+        return XWidget_dispatchPointerEvent(top, event);
     case XEVENT_TYPE_DRAG_ENTER:
     case XEVENT_TYPE_DRAG_MOVE:
     case XEVENT_TYPE_DRAG_LEAVE:
@@ -1188,7 +1219,8 @@ XVtable* XWidget_class_init(void)
         XWidget_ignoreEvent_default,       /* WheelEvent */
         XWidget_noopEvent_default,         /* ShowEvent */
         XWidget_noopEvent_default,         /* HideEvent */
-        XWidget_noopEvent_default          /* ChangeEvent */
+        XWidget_noopEvent_default,         /* ChangeEvent */
+        XWidget_ignoreEvent_default        /* ContextMenuEvent */
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWidget_deinit);
@@ -1764,6 +1796,9 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         return true;
     case XEVENT_TYPE_INPUT_METHOD:
         XWidget_inputMethodEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_CONTEXT_MENU:
+        XWidget_contextMenuEvent_base(self, event);
         return true;
     case XEVENT_TYPE_DRAG_ENTER:
         XWidget_dragEnterEvent_base(self, event);
@@ -4619,6 +4654,7 @@ XWIDGET_VT_DISPATCH(leaveEvent, EXWidget_LeaveEvent)
 XWIDGET_VT_DISPATCH(keyPressEvent, EXWidget_KeyPressEvent)
 XWIDGET_VT_DISPATCH(keyReleaseEvent, EXWidget_KeyReleaseEvent)
 XWIDGET_VT_DISPATCH(inputMethodEvent, EXWidget_InputMethodEvent)
+XWIDGET_VT_DISPATCH(contextMenuEvent, EXWidget_ContextMenuEvent)
 XWIDGET_VT_DISPATCH(dragEnterEvent, EXWidget_DragEnterEvent)
 XWIDGET_VT_DISPATCH(dragMoveEvent, EXWidget_DragMoveEvent)
 XWIDGET_VT_DISPATCH(dragLeaveEvent, EXWidget_DragLeaveEvent)

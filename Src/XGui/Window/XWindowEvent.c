@@ -730,4 +730,64 @@ XPoint XEnterEvent_globalPosition(const XEnterEvent* event)
     return event ? event->m_globalPosition : (XPoint){0, 0};
 }
 
+/* ==================== XContextMenuEvent（对标 QContextMenuEvent） ==================== */
+
+XVtable* XContextMenuEvent_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XContextMenuEvent)
+    XVTABLE_INHERIT_XCLASS(XEvent);
+    return XVTABLE_DEFAULT;
+}
+
+void XContextMenuEvent_init(XContextMenuEvent* event, XEventType type,
+                            const XPoint* position,
+                            const XPoint* globalPosition,
+                            XContextMenuReason reason,
+                            XKeyboardModifiers modifiers)
+{
+    if (!event) return;
+    XEvent_init((XEvent*)event, type);
+    XClassGetVtable(event) = XContextMenuEvent_class_init();
+    event->m_class.input_event = true;
+    event->m_position = position ? *position : (XPoint){0, 0};
+    event->m_globalPosition = globalPosition ? *globalPosition :
+                              event->m_position;
+    event->m_reason = reason;
+    event->m_modifiers = modifiers;
+}
+
+XContextMenuEvent* XContextMenuEvent_create_ex(
+        XMemoryType memory, XEventType type, const XPoint* position,
+        const XPoint* globalPosition, XContextMenuReason reason,
+        XKeyboardModifiers modifiers)
+{
+    XContextMenuEvent* event = XMemory_malloc(sizeof(*event), memory);
+    if (!event) return NULL;
+    XContextMenuEvent_init(event, type, position, globalPosition, reason,
+                           modifiers);
+    Set_Class_Memory(event, memory);
+    Set_Class_IsHeap(event, true);
+    return event;
+}
+
+XPoint XContextMenuEvent_position(const XContextMenuEvent* event)
+{
+    return event ? event->m_position : (XPoint){0, 0};
+}
+
+XPoint XContextMenuEvent_globalPosition(const XContextMenuEvent* event)
+{
+    return event ? event->m_globalPosition : (XPoint){0, 0};
+}
+
+XContextMenuReason XContextMenuEvent_reason(const XContextMenuEvent* event)
+{
+    return event ? event->m_reason : XContextMenuReason_Mouse;
+}
+
+XKeyboardModifiers XContextMenuEvent_modifiers(const XContextMenuEvent* event)
+{
+    return event ? event->m_modifiers : XKeyboardModifier_NoModifier;
+}
+
 #endif /* XWINDOWEVENT_ON */

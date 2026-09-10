@@ -431,6 +431,7 @@ XCLASS_DEFINE_ENUM(XWidget, WheelEvent),
 XCLASS_DEFINE_ENUM(XWidget, ShowEvent),
 XCLASS_DEFINE_ENUM(XWidget, HideEvent),
 XCLASS_DEFINE_ENUM(XWidget, ChangeEvent),
+XCLASS_DEFINE_ENUM(XWidget, ContextMenuEvent),
 XCLASS_DEFINE_END(XWidget)
 
 /**
