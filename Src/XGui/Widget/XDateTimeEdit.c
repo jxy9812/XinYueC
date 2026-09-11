@@ -63,6 +63,7 @@ static void xdt_refreshText(XDateTimeEdit* self)
         XLineEdit* edit = XAbstractSpinBox_lineEdit(
             (XAbstractSpinBox*)self);
         if (edit) XLineEdit_setText(edit, buf);
+        XLineEdit_setCursorPosition(edit, 0);
     }
 }
 

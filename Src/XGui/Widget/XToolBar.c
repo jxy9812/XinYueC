@@ -225,6 +225,7 @@ void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_IsHeap(self, false);
     self->m_actions = XVector_Create(XAction*);
     self->m_buttons = XVector_Create(XToolButton*);
+    self->m_bridges = XVector_Create(XTBBridge*);
     self->m_movable = true;
     self->m_floatable = true;
     self->m_orientation = 1;
@@ -470,6 +471,28 @@ void* XToolBar_movableChanged_signal(XToolBar* self, bool movable)
     (void)self;
     (void)movable;
     return (void*)(size_t)XToolBar_movableChanged_signal;
+}
+
+
+void* XToolBar_allowedAreasChanged_signal(XToolBar* self)
+{
+    (void)self;
+    return (void*)(size_t)XToolBar_allowedAreasChanged_signal;
+}
+void* XToolBar_iconSizeChanged_signal(XToolBar* self)
+{
+    (void)self;
+    return (void*)(size_t)XToolBar_iconSizeChanged_signal;
+}
+void* XToolBar_toolButtonStyleChanged_signal(XToolBar* self)
+{
+    (void)self;
+    return (void*)(size_t)XToolBar_toolButtonStyleChanged_signal;
+}
+void* XToolBar_topLevelChanged_signal(XToolBar* self)
+{
+    (void)self;
+    return (void*)(size_t)XToolBar_topLevelChanged_signal;
 }
 
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */

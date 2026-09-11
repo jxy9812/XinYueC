@@ -190,4 +190,11 @@ void* XPlainTextEdit_cursorPositionChanged_signal(XPlainTextEdit* self);
 #ifdef __cplusplus
 }
 #endif
+
+void* XPlainTextEdit_blockCountChanged_signal(XPlainTextEdit* self);
+void* XPlainTextEdit_copyAvailable_signal(XPlainTextEdit* self);
+void* XPlainTextEdit_modificationChanged_signal(XPlainTextEdit* self);
+void* XPlainTextEdit_redoAvailable_signal(XPlainTextEdit* self);
+void* XPlainTextEdit_selectionChanged_signal(XPlainTextEdit* self);
+void* XPlainTextEdit_undoAvailable_signal(XPlainTextEdit* self);
 #endif /* XPLAINTEXTEDIT_H */

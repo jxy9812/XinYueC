@@ -96,6 +96,7 @@ typedef struct XComboBox
     bool    m_frame;                   /**< 边框开关（默认 true）。 */
     char    m_placeholderText[64];     /**< 占位文本。 */
     bool    m_popupVisible;            /**< 弹出可见（内部）。 */
+    int     m_savedHeight;             /**< 弹出前高度（展开/收起恢复）。 */
 } XComboBox;
 
 /* ==================== 生命周期 ==================== */

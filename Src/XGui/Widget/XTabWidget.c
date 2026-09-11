@@ -35,23 +35,44 @@ static void xtabwidget_layout(XTabWidget* self)
 {
     int w = XWidget_width((XWidget*)self);
     int h = XWidget_height((XWidget*)self);
-    int pageH = h - XTABWIDGET_BAR_H;
+    int barH;
+    int pageH;
     int i;
-    if (w < 1) w = 1;
+    {   /* 与 XTabBar 的 xtabbar_wrapLayout 一致：计算多行 tabBar 高度。 */
+        int minW = 48;
+        int cols;
+        int rows;
+        if (w < minW) w = minW;
+        cols = w / minW;
+        if (cols < 1) cols = 1;
+        if (cols > self->m_count) cols = self->m_count;
+        if (cols < 1) cols = 1; /* m_count=0 时防除零。 */
+        rows = (self->m_count + cols - 1) / cols;
+        if (rows < 1) rows = 1;
+        barH = rows * 24; /* 24 = XTABBAR_TAB_H */
+    }
+    pageH = h - barH;
     if (pageH < 1) pageH = 1;
-    XWidget_setGeometry((XWidget*)&self->m_tabBar, 0, 0, w, XTABWIDGET_BAR_H);
+    XWidget_setGeometry((XWidget*)&self->m_tabBar, 0, 0, w, barH);
     for (i = 0; i < self->m_count; ++i)
         if (self->m_pages[i])
-            XWidget_setGeometry(self->m_pages[i], 0, XTABWIDGET_BAR_H, w, pageH);
+            XWidget_setGeometry(self->m_pages[i], 0, barH, w, pageH);
 }
 
 /** @brief 切页：仅显示当前页容器。 */
 static void xtabwidget_showCurrent(XTabWidget* self)
 {
     int i;
-    for (i = 0; i < self->m_count; ++i)
-        if (self->m_pages[i])
-            XWidget_setVisible(self->m_pages[i], i == self->m_currentIndex);
+    for (i = 0; i < self->m_count; ++i) {
+        if (self->m_pages[i]) {
+            bool show = (i == self->m_currentIndex);
+            XWidget_setVisible(self->m_pages[i], show);
+            /* 内容控件显式 show：reparent 后 m_explicitShow=0 不会随
+             * 页容器可见而自动显示（对标 QWidget::setVisible 语义）。 */
+            if (show && self->m_clients[i])
+                XWidget_show(self->m_clients[i]);
+        }
+    }
     XWidget_update((XWidget*)self);
 }
 
@@ -158,6 +179,7 @@ void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_tabsClosable = false;
     self->m_movable = false;
     XTabBar_init(&self->m_tabBar, (XWidget*)self, 0);
+    XWidget_show((XWidget*)&self->m_tabBar);
     XObject_connect_2((XObject*)&self->m_tabBar,
                       (size_t)XTabBar_currentChanged_signal(&self->m_tabBar),
                       xtabwidget_currentChangedForward);
@@ -217,6 +239,7 @@ int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
         self->m_clients[index] = page;
         /* 内容控件挂到页容器。 */
         XWidget_setParent(page, self->m_pages[index], 0);
+
         ++self->m_count;
         (void)XTabBar_insertTab(&self->m_tabBar, index, label);
         xtabwidget_layout(self);
@@ -357,6 +380,13 @@ void* XTabWidget_currentChanged_signal(XTabWidget* self)
 void* XTabWidget_tabClicked_signal(XTabWidget* self)
 {
     return (void*)(size_t)XTabWidget_tabClicked_signal;
+}
+
+
+void* XTabWidget_tabCloseRequested_signal(XTabWidget* self)
+{
+    (void)self;
+    return (void*)(size_t)XTabWidget_tabCloseRequested_signal;
 }
 
 #endif /* XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON */

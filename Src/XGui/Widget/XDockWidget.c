@@ -237,4 +237,11 @@ void* XDockWidget_visibilityChanged_signal(XDockWidget* self, bool visible)
     return (void*)(size_t)XDockWidget_visibilityChanged_signal;
 }
 
+
+void* XDockWidget_dockLocationChanged_signal(XDockWidget* self)
+{
+    (void)self;
+    return (void*)(size_t)XDockWidget_dockLocationChanged_signal;
+}
+
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */

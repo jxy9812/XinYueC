@@ -75,4 +75,8 @@ void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family);
 #ifdef __cplusplus
 }
 #endif
+
+/* ==================== 信号 ==================== */
+
+void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self);
 #endif /* XFONTCOMBOBOX_H */

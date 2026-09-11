@@ -105,4 +105,11 @@ void* XTextEdit_textChanged_signal(XTextEdit* self);
 #ifdef __cplusplus
 }
 #endif
+
+void* XTextEdit_copyAvailable_signal(XTextEdit* self);
+void* XTextEdit_cursorPositionChanged_signal(XTextEdit* self);
+void* XTextEdit_modificationChanged_signal(XTextEdit* self);
+void* XTextEdit_redoAvailable_signal(XTextEdit* self);
+void* XTextEdit_selectionChanged_signal(XTextEdit* self);
+void* XTextEdit_undoAvailable_signal(XTextEdit* self);
 #endif /* XTEXTEDIT_H */

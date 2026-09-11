@@ -93,6 +93,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XDialTest.h"
 #include "XComboBoxTest.h"
 #include "XTabBarTest.h"
+#include "XTabWidget.h"
 #include "XLcdNumberTest.h"
 #include "XScrollBarTest.h"
 #include "XStackedWidgetTest.h"
@@ -109,6 +110,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XCalendarWidget.h"
 #include "XTextBrowser.h"
 #include "XKeySequenceEdit.h"
+#include "XWizard.h"
 #include "XTextEdit.h"
 #include "XDialog.h"
 #include "XLabel.h"
@@ -26087,6 +26089,150 @@ static void test_dialog_contract(void)
         dlg_expect(((XDialog*)mb)->m_result == 1, "XMessageBox 经 XDialog accept");
         XMessageBox_delete_base(mb);
     }
+}/* ==================== XTabWidget 多行换行 + 切换功能测试 ========== */
+
+static void tw_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[TW-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_tabwidget_wrap_contract(void)
+{
+    /* 构建含 17 个标签的 XTabWidget（与 XGuiDemo 等量）。 */
+    XTabWidget* tw = XTabWidget_create(NULL, 0);
+    XWidget* pages[17];
+    int i;
+    char label[32];
+
+    tw_expect(tw != NULL, "XTabWidget 创建");
+    XWidget_resize((XWidget*)tw, 472, 214);
+
+    for (i = 0; i < 17; ++i) {
+        pages[i] = (XWidget*)XMemory_malloc(sizeof(XWidget), XCLASS_DEFAULT_MEMORY_TYPE);
+        XWidget_init(pages[i], NULL, 0);
+        snprintf(label, sizeof(label), "标签%d", i);
+        XTabWidget_insertTab(tw, i, pages[i], label);
+    }
+    tw_expect(XTabWidget_count(tw) == 17, "插入 17 个标签");
+    tw_expect(XTabWidget_currentIndex(tw) == 0, "默认当前 0");
+
+    /* 逐个切换验证可见性。 */
+    for (i = 0; i < 17; ++i) {
+        XTabWidget_setCurrentIndex(tw, i);
+        tw_expect(XTabWidget_currentIndex(tw) == i, "切换到 index");
+    }
+
+    /* 验证切换后仅当前页可见。 */
+    XTabWidget_setCurrentIndex(tw, 5);
+    {
+        bool hid5 = XWidget_isHidden(tw->m_pages[5]);
+        bool hid0 = XWidget_isHidden(tw->m_pages[0]);
+        bool hid16 = XWidget_isHidden(tw->m_pages[16]);
+        tw_expect(!hid5, "page5 explicit show");
+        tw_expect(hid0, "page0 explicit hidden");
+        tw_expect(hid16, "page16 explicit hidden");
+    }
+
+    /* 边界：超界切换应钳位。 */
+    XTabWidget_setCurrentIndex(tw, -1);
+    tw_expect(XTabWidget_currentIndex(tw) >= 0, "负值不崩溃");
+    XTabWidget_setCurrentIndex(tw, 100);
+    tw_expect(XTabWidget_currentIndex(tw) < 17, "超界不崩溃");
+
+    /* tabText 往返。 */
+    tw_expect(strcmp(XTabWidget_tabText(tw, 0), "标签0") == 0,
+              "tabText(0) 往返");
+    tw_expect(strcmp(XTabWidget_tabText(tw, 16), "标签16") == 0,
+              "tabText(16) 往返");
+
+    XTabWidget_delete_base(tw);
+}/* ==================== XWizard 契约测试（对标 QWizard） ============== */
+
+static int wiz_currentChanged = 0;
+
+static void wiz_currentChangedSlot(XObject* r, XVarList* a)
+{ (void)r; (void)a; ++wiz_currentChanged; }
+
+static void wiz_expect(bool cond, const char* what)
+{
+    if (!cond) fprintf(stderr, "[WIZ-FAIL] %s\n", what ? what : "");
+}
+
+static void test_wizard_contract(void)
+{
+    XWizard* wiz = XWizard_create(NULL, 0);
+    XWizardPage* p0 = XWizardPage_create(NULL, 0);
+    XWizardPage* p1 = XWizardPage_create(NULL, 0);
+    XWizardPage* p2 = XWizardPage_create(NULL, 0);
+
+    wiz_expect(wiz != NULL, "XWizard 创建");
+    wiz_expect(XWizard_pageCount(wiz) == 0, "初始页数 0");
+    wiz_expect(XWizard_wizardStyle(wiz) == XWizardStyle_ClassicStyle,
+              "默认样式 Classic");
+
+    wiz_expect(XWizard_addPage(wiz, p0) == 0, "addPage p0 返回 0");
+    wiz_expect(XWizard_addPage(wiz, p1) == 1, "addPage p1 返回 1");
+    wiz_expect(XWizard_addPage(wiz, p2) == 2, "addPage p2 返回 2");
+    wiz_expect(XWizard_pageCount(wiz) == 3, "页数 3");
+    wiz_expect(XWizard_currentIndex(wiz) == 0, "初始 index 0");
+    wiz_expect(XWizard_currentPage(wiz) == p0, "currentPage p0");
+    wiz_expect(XWizard_hasVisitedPage(wiz, 0), "page0 已访问");
+    wiz_expect(!XWizard_hasVisitedPage(wiz, 1), "page1 未访问");
+
+    wiz_currentChanged = 0;
+    XObject_connect_2((XObject*)wiz,
+        XSignal(XWizard_currentIdChanged_signal), wiz_currentChangedSlot);
+
+    XWizard_next(wiz);
+    wiz_expect(XWizard_currentIndex(wiz) == 1, "next → index 1");
+    wiz_expect(XWizard_currentPage(wiz) == p1, "currentPage p1");
+    wiz_expect(wiz_currentChanged == 1, "currentIdChanged 发射");
+
+    XWizard_back(wiz);
+    wiz_expect(XWizard_currentIndex(wiz) == 0, "back → index 0");
+
+    XWizard_next(wiz); XWizard_next(wiz);
+    wiz_expect(XWizard_currentIndex(wiz) == 2, "next×2 → index 2");
+    wiz_expect(XWizard_hasVisitedPage(wiz, 2), "page2 已访问");
+    /* 尾页 next 应不崩溃。 */
+    XWizard_next(wiz);
+    wiz_expect(XWizard_currentIndex(wiz) == 2, "尾页 next 不越界");
+
+    XWizard_restart(wiz);
+    wiz_expect(XWizard_currentIndex(wiz) == 0, "restart → index 0");
+
+    /* setPage/removePage。 */
+    {
+        XWizardPage* pNew = XWizardPage_create(NULL, 0);
+        XWizard_setPage(wiz, 1, pNew);
+        wiz_expect(XWizard_page(wiz, 1) == pNew, "setPage 往返");
+    }
+    XWizard_removePage(wiz, 2);
+    wiz_expect(XWizard_pageCount(wiz) == 2, "removePage 后 2");
+
+    /* option/style。 */
+    XWizard_setOption(wiz, XWizardOption_NoCancelButton, true);
+    wiz_expect(XWizard_testOption(wiz, XWizardOption_NoCancelButton),
+              "setOption/testOption");
+    XWizard_setWizardStyle(wiz, XWizardStyle_ModernStyle);
+    wiz_expect(XWizard_wizardStyle(wiz) == XWizardStyle_ModernStyle,
+              "setWizardStyle");
+
+    /* buttonText。 */
+    XWizard_setButtonText(wiz, XWizardButton_NextButton, "继续");
+    wiz_expect(strcmp(XWizard_buttonText(wiz, XWizardButton_NextButton),
+                      "继续") == 0, "setButtonText");
+
+    /* XWizardPage 属性。 */
+    XWizardPage_setTitle(p0, "步骤一");
+    wiz_expect(strcmp(XWizardPage_title(p0), "步骤一") == 0, "setTitle");
+    XWizardPage_setComplete(p0, false);
+    wiz_expect(!XWizardPage_isComplete(p0), "setComplete false");
+
+    XWizard_delete_base(wiz);
+    /* 页面已作为 wizard 子控件随 deinit 自动清理。 */
 }/* ==================== XDialogButtonBox 契约测试（对标 QDialogButtonBox） ==================== */
 
 static int db_accepted = 0;
@@ -26179,6 +26325,8 @@ static void test_xgui_widgets(void)
     test_textedit_contract();
     test_textbrowser2_contract();
     test_dialog_contract();
+    test_wizard_contract();
+    test_tabwidget_wrap_contract();
     test_splashscreen_contract();
     test_messagebox_contract();
     test_mainwindow_contract();

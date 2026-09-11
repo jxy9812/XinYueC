@@ -89,7 +89,8 @@ static void xsp_layout(XSplitter* self)
         XRect r;
         int size = perPage;
         if (!child) continue;
-        if (!xsp_childVisible(self, i)) continue;
+        /* 几何分配不依赖当前可见性：子控件在隐藏时也需要正确尺寸，
+         * 否则 show 后因 0x0 仍不可见（对标 QSplitterPrivate::layoutChildren）。 */
         if (i == count - 1) size = len - used;
         if (size < 0) size = 0;
         if (xsp_horiz(self))

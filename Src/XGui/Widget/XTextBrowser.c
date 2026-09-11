@@ -56,6 +56,10 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     XPlainTextEdit_setReadOnly(self->m_base.m_editor, true);
+    /* 编辑器填满浏览器。 */
+    XWidget_setGeometry((XWidget*)self->m_base.m_editor, 0, 0,
+                        XWidget_width((XWidget*)self),
+                        XWidget_height((XWidget*)self));
     self->m_openLinks = true;
 }
 
@@ -114,6 +118,18 @@ void* XTextBrowser_forwardAvailable_signal(XTextBrowser* self, bool available)
 {
     (void)self; (void)available;
     return (void*)(size_t)XTextBrowser_forwardAvailable_signal;
+}
+
+
+void* XTextBrowser_anchorClicked_signal(XTextBrowser* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextBrowser_anchorClicked_signal;
+}
+void* XTextBrowser_highlighted_signal(XTextBrowser* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextBrowser_highlighted_signal;
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON */

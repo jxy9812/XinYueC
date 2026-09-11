@@ -267,4 +267,8 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter);
 #ifdef __cplusplus
 }
 #endif
+
+/* ==================== 信号 ==================== */
+
+void* XCheckBox_stateChanged_signal(XCheckBox* self);
 #endif /* XCHECKBOX_H */

@@ -551,4 +551,11 @@ XCheckBox* XCheckBox_create_ex(XMemoryType memory, XWidget* parent,
     return self;
 }
 
+
+void* XCheckBox_stateChanged_signal(XCheckBox* self)
+{
+    (void)self;
+    return (void*)(size_t)XCheckBox_stateChanged_signal;
+}
+
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */

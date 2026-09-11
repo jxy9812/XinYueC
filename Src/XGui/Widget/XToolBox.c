@@ -63,7 +63,15 @@ static void xtb2_layout(XToolBox* self)
     if (!self) return;
     current = XToolBox_currentWidget(self);
     if (!current) return;
-    XRect_init(&r, 0, 24, w, h > 24 ? h - 24 : 0);
+    /* 内容 y 偏移 = 全部条目头总高（每个 22px），与 paint 一致。 */
+    {
+        int64_t n = self->m_items
+                        ? XVector_size_base((const XContainer*)self->m_items)
+                        : 0;
+        int headerH = (int)n * 22;
+        int contentH = h > headerH ? h - headerH : 0;
+        XRect_init(&r, 0, headerH, w, contentH);
+    }
     XWidget_setGeometryRect(current, &r);
 }
 
@@ -238,8 +246,10 @@ int XToolBox_insertItem(XToolBox* self, int index, XWidget* widget,
     actual = index;
     if (self->m_currentIndex < 0)
         XToolBox_setCurrentIndex(self, actual);
-    else
+    else {
         XWidget_setVisible(widget, false);
+        xtb2_layout(self);
+    }
     return actual;
 }
 

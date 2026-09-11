@@ -144,14 +144,19 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
     cy = r.height / 2;
     radius = (r.width < r.height ? r.width : r.height) / 2 - 2;
 
-    /* 表盘圆（Button 底 + 立体描边近似：上下左右 1px 弧点）。 */
+    /* 表盘圆：扫描线填充（Button 底色）。 */
     {
-        XRect dial = { cx - radius, cy - radius, radius * 2, radius * 2 };
-        XPainter_fillRect(&painter, &dial, button);
+        int dy;
+        for (dy = -radius; dy <= radius; ++dy) {
+            int dx = (int)(sqrt((double)(radius * radius - dy * dy)));
+            if (dx < 1) continue;
+            XPainter_drawLine(&painter, cx - dx, cy + dy,
+                              cx + dx, cy + dy);
+        }
     }
     angle = xdial_valueToAngle(dial, XAbstractSlider_value((const XAbstractSlider*)dial));
 
-    XPainter_setPen(&painter, dark);
+    XPainter_setPen(&painter, button);
     /* 刻度：notchesVisible 时沿行程等距短线。 */
     notchCount = XDial_notchSize(dial);
     if (dial->m_notchesVisible && notchCount > 1) {
@@ -182,15 +187,10 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
     }
 
     XPainter_setPen(&painter, dark);
-    /* 外描边（凹陷：上/左 Dark，下/右 Light 的四点近似）。 */
-    XPainter_drawLine(&painter, cx - radius, cy - radius / 2,
-                      cx - radius, cy + radius / 2);
-    XPainter_drawLine(&painter, cx - radius, cy - radius / 2,
-                      cx - radius / 2, cy - radius);
-    XPainter_drawLine(&painter, cx + radius, cy - radius / 2,
-                      cx + radius, cy + radius / 2);
-    XPainter_drawLine(&painter, cx + radius, cy + radius / 2,
-                      cx + radius / 2, cy + radius);
+    {
+        XRect er = { cx - radius, cy - radius, radius * 2, radius * 2 };
+        XPainter_drawEllipse(&painter, &er);
+    }
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);

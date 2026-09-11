@@ -348,6 +348,11 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
     if (vsb) scroll = XScrollBar_value(vsb);
     text = xpe_color(edit, XPaletteColorRole_Text);
     placeholder = xpe_color(edit, XPaletteColorRole_Mid);
+    /* 背景：清屏防止父控件渲染透出。 */
+    {
+        XRect bg = { 0, 0, XWidget_width(self), XWidget_height(self) };
+        XPainter_fillRect(&painter, &bg, 0xFFFFFFFFu);
+    }
     firstVisible = scroll / XPE_LINE_HEIGHT;
     lastVisible = firstVisible + XWidget_height(self) / XPE_LINE_HEIGHT + 1;
     count = xpe_lineCount(edit);
@@ -719,6 +724,38 @@ void* XPlainTextEdit_cursorPositionChanged_signal(XPlainTextEdit* self)
 {
     (void)self;
     return (void*)(size_t)XPlainTextEdit_cursorPositionChanged_signal;
+}
+
+
+void* XPlainTextEdit_blockCountChanged_signal(XPlainTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XPlainTextEdit_blockCountChanged_signal;
+}
+void* XPlainTextEdit_copyAvailable_signal(XPlainTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XPlainTextEdit_copyAvailable_signal;
+}
+void* XPlainTextEdit_modificationChanged_signal(XPlainTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XPlainTextEdit_modificationChanged_signal;
+}
+void* XPlainTextEdit_redoAvailable_signal(XPlainTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XPlainTextEdit_redoAvailable_signal;
+}
+void* XPlainTextEdit_selectionChanged_signal(XPlainTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XPlainTextEdit_selectionChanged_signal;
+}
+void* XPlainTextEdit_undoAvailable_signal(XPlainTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XPlainTextEdit_undoAvailable_signal;
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON */

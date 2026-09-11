@@ -211,6 +211,13 @@ static void VXComboBox_mousePressEvent(XWidget* self, XEvent* event)
     }
     pos = XMouseEvent_position(me);
     if (combo->m_popupVisible) {
+        /* grabMouse 下点击超出自身边界 = 点击外部关闭弹出。 */
+        if (pos.x < 0 || pos.y < 0 ||
+            pos.x >= XWidget_width(self) || pos.y >= XWidget_height(self)) {
+            XComboBox_hidePopup_base(combo);
+            XEvent_accept(event);
+            return;
+        }
         int idx = xcombo_popupItemAt(combo, &pos);
         if (idx >= 0) {
             XComboBox_setCurrentIndex(combo, idx);
@@ -351,6 +358,7 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_frame = true;
     self->m_placeholderText[0] = '\0';
     self->m_popupVisible = false;
+    self->m_savedHeight = 0;
 }
 
 XComboBox* XComboBox_create_ex(XMemoryType memory, XWidget* parent,
@@ -638,9 +646,21 @@ void XComboBox_clear(XComboBox* self)
 
 void XComboBox_showPopup_base(XComboBox* self)
 {
+    int rows;
+    int newH;
     if (!self || self->m_popupVisible) return;
     self->m_popupVisible = true;
     g_comboPopupOffset = 0;
+    /* 临时扩展高度以完整显示弹出列表（对标 QComboBox 弹出窗口）。 */
+    self->m_savedHeight = XWidget_height((XWidget*)self);
+    if (self->m_savedHeight < 20) self->m_savedHeight = 26;
+    rows = self->m_itemCount;
+    if (rows > self->m_maxVisibleItems) rows = self->m_maxVisibleItems;
+    if (rows < 1) rows = 1;
+    newH = rows * XCOMBOBOX_ITEM_H + 2;
+    if (newH > self->m_savedHeight)
+        XWidget_resize((XWidget*)self, XWidget_width((XWidget*)self), newH);
+    XWidget_grabMouse((XWidget*)self);
     xcombo_emitInt(self, (size_t)XComboBox_popupShown_signal(self), 0);
     XWidget_update((XWidget*)self);
 }
@@ -648,9 +668,17 @@ void XComboBox_showPopup_base(XComboBox* self)
 void XComboBox_hidePopup_base(XComboBox* self)
 {
     if (!self || !self->m_popupVisible) return;
+    int rh;
+    XWidget* parent;
     self->m_popupVisible = false;
+    rh = self->m_savedHeight > 0 ? self->m_savedHeight : 26;
+    XWidget_resize((XWidget*)self, XWidget_width((XWidget*)self), rh);
+    XWidget_releaseMouse((XWidget*)self);
     xcombo_emitInt(self, (size_t)XComboBox_popupHidden_signal(self), 0);
     XWidget_update((XWidget*)self);
+    /* 收缩后暴露的区域属于父控件，必须让父控件重绘清除残留。 */
+    parent = (XWidget*)XObject_parent((XObject*)self);
+    if (parent) XWidget_update(parent);
 }
 
 bool XComboBox_popupVisible(const XComboBox* self)

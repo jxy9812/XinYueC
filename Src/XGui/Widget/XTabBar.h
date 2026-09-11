@@ -77,4 +77,8 @@ void* XTabBar_tabCloseRequested_signal(XTabBar* self);
 #ifdef __cplusplus
 }
 #endif
+
+void* XTabBar_tabBarClicked_signal(XTabBar* self);
+void* XTabBar_tabBarDoubleClicked_signal(XTabBar* self);
+void* XTabBar_tabMoved_signal(XTabBar* self);
 #endif /* XTABBAR_H */

@@ -19,10 +19,19 @@
 
 /* ==================== 生命周期与虚表 ==================== */
 
+static void VX_textEdit_resizeEvent(XWidget* self, XEvent* event)
+{
+    XTextEdit* te = (XTextEdit*)self;
+    if (!te || !te->m_editor) return;
+    XWidget_setGeometry((XWidget*)te->m_editor, 0, 0,
+                        XWidget_width(self), XWidget_height(self));
+}
+
 XVtable* XTextEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTextEdit)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_textEdit_resizeEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -34,6 +43,7 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     XAbstractScrollArea_init(&self->m_base, parent, flags);
     self->m_editor = XPlainTextEdit_create_ex(
         XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, 0);
+    XWidget_resize((XWidget*)self->m_editor, 200, 100);
     XClassSetVtable(self, XTextEdit);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
@@ -130,6 +140,38 @@ void* XTextEdit_textChanged_signal(XTextEdit* self)
 {
     (void)self;
     return (void*)(size_t)XTextEdit_textChanged_signal;
+}
+
+
+void* XTextEdit_copyAvailable_signal(XTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextEdit_copyAvailable_signal;
+}
+void* XTextEdit_cursorPositionChanged_signal(XTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextEdit_cursorPositionChanged_signal;
+}
+void* XTextEdit_modificationChanged_signal(XTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextEdit_modificationChanged_signal;
+}
+void* XTextEdit_redoAvailable_signal(XTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextEdit_redoAvailable_signal;
+}
+void* XTextEdit_selectionChanged_signal(XTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextEdit_selectionChanged_signal;
+}
+void* XTextEdit_undoAvailable_signal(XTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextEdit_undoAvailable_signal;
 }
 
 #endif /* XTEXTEDIT_ON */

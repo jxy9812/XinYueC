@@ -90,12 +90,45 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
     return true;
 }
 
+/** @brief 计算多行换行布局：列数/行数/标签宽度/总高度。
+ *  @details 当标签总宽超出可用宽度时自动换行，对标 QTabBar 多行模式。
+ *          列数 = barW / minTabW（每标签最小 48px 保可读），
+ *          行数 = ceil(count / cols)，标签宽度 = barW / cols。 */
+static void xtabbar_wrapLayout(const XTabBar* self,
+                               int* outCols, int* outRows,
+                               int* outTabW, int* outTotalH)
+{
+    int barW = XWidget_width((XWidget*)self);
+    int minW = 48;
+    int cols;
+    int rows;
+    int tabW;
+    if (barW < minW) barW = minW;
+    cols = barW / minW;
+    if (cols < 1) cols = 1;
+    if (cols > self->m_count) cols = self->m_count;
+    if (cols < 1) cols = 1; /* m_count=0 时防除零。 */
+    rows = (self->m_count + cols - 1) / cols;
+    if (rows < 1) rows = 1;
+    tabW = barW / cols;
+    if (tabW > XTABBAR_TAB_W) tabW = XTABBAR_TAB_W;
+    *outCols = cols;
+    *outRows = rows;
+    *outTabW = tabW;
+    *outTotalH = rows * XTABBAR_TAB_H;
+}
+
 /** @brief 点击坐标 → 项索引（-1 = 无）。 */
 static int xtabbar_tabAt(const XTabBar* self, const XPoint* pos)
 {
-    int idx;
-    if (!pos || pos->y < 0 || pos->y > XTABBAR_TAB_H) return -1;
-    idx = pos->x / XTABBAR_TAB_W;
+    int cols, rows, tabW, totalH;
+    int row, col, idx;
+    if (!pos) return -1;
+    xtabbar_wrapLayout(self, &cols, &rows, &tabW, &totalH);
+    if (pos->y < 0 || pos->y >= totalH) return -1;
+    row = pos->y / XTABBAR_TAB_H;
+    col = pos->x / tabW;
+    idx = row * cols + col;
     if (idx < 0 || idx >= self->m_count) return -1;
     return idx;
 }
@@ -136,19 +169,32 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
-    for (i = 0; i < bar->m_count; ++i) {
-        XRect tab = { i * XTABBAR_TAB_W, 0, XTABBAR_TAB_W - 2, XTABBAR_TAB_H };
-        bool isCur = (i == bar->m_currentIndex);
-        XPainter_fillRect(&painter, &tab, isCur ? highlight : button);
-        if (bar->m_titles[i])
-            XPainter_drawText(&painter, tab.x + 8, tab.y + 16,
-                              bar->m_titles[i],
-                              isCur ? highlightedText
-                                    : (bar->m_enabled[i] ? windowText : disabled));
-        /* 底边分隔线。 */
-        XPainter_setPen(&painter, dark);
-        XPainter_drawLine(&painter, tab.x, XTABBAR_TAB_H,
-                          tab.x + tab.width, XTABBAR_TAB_H);
+    {
+        int cols, rows, tabW, totalH;
+        int row, col;
+        xtabbar_wrapLayout(bar, &cols, &rows, &tabW, &totalH);
+        for (i = 0; i < bar->m_count; ++i) {
+            row = i / cols;
+            col = i % cols;
+            {
+                XRect tab = { col * tabW, row * XTABBAR_TAB_H,
+                              tabW - 1, XTABBAR_TAB_H };
+                bool isCur = (i == bar->m_currentIndex);
+                XPainter_fillRect(&painter, &tab,
+                                  isCur ? highlight : button);
+                if (bar->m_titles[i])
+                    XPainter_drawText(&painter, tab.x + 4, tab.y + 16,
+                                      bar->m_titles[i],
+                                      isCur ? highlightedText
+                                            : (bar->m_enabled[i] ? windowText
+                                                                 : disabled));
+                XPainter_setPen(&painter, dark);
+                XPainter_drawLine(&painter, tab.x,
+                                  tab.y + XTABBAR_TAB_H,
+                                  tab.x + tab.width,
+                                  tab.y + XTABBAR_TAB_H);
+            }
+        }
     }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -393,6 +439,23 @@ void* XTabBar_tabClicked_signal(XTabBar* self)
 void* XTabBar_tabCloseRequested_signal(XTabBar* self)
 {
     return (void*)(size_t)XTabBar_tabCloseRequested_signal;
+}
+
+
+void* XTabBar_tabBarClicked_signal(XTabBar* self)
+{
+    (void)self;
+    return (void*)(size_t)XTabBar_tabBarClicked_signal;
+}
+void* XTabBar_tabBarDoubleClicked_signal(XTabBar* self)
+{
+    (void)self;
+    return (void*)(size_t)XTabBar_tabBarDoubleClicked_signal;
+}
+void* XTabBar_tabMoved_signal(XTabBar* self)
+{
+    (void)self;
+    return (void*)(size_t)XTabBar_tabMoved_signal;
 }
 
 #endif /* XWIDGET_ON && XTABBAR_ON */

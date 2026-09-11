@@ -1250,7 +1250,10 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_updatesEnabled = 1;
     /* QWidgetPrivate::init 设置 WA_WState_Hidden：新控件在显式
      * show() 前保持隐藏，父控件首次显示时不会误显示该子控件。 */
-    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_WState_Hidden, true);
+    /* 对标 Qt：顶层控件初始 Hidden（需显式 show），子控件不 Hidden
+     * （随父控件 show 自动显示）。 */
+    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_WState_Hidden,
+                    parent == NULL);
     /* QWidgetPrivate::init 在 create() 前为控件预置几何：顶层窗口
      * 640x480，子控件 100x30。该尺寸不是布局结果，而是首个显式
      * setGeometry/布局激活前 QWidget::geometry() 的默认值。 */

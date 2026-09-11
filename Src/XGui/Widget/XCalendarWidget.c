@@ -135,6 +135,11 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
         XPainter_fillRect(&painter, &r, mid);
         snprintf(buf, sizeof(buf), "%04d-%02d", cal->m_shownYear, cal->m_shownMonth);
         XPainter_drawText(&painter, w / 2 - 24, 15, buf, windowText);
+        /* 导航按钮：◀(上一年) <(上一月) >(下一月) ▶(下一年) */
+        XPainter_drawText(&painter, 4, 15, "<", windowText);
+        XPainter_drawText(&painter, 26, 15, ">", windowText);
+        XPainter_drawText(&painter, w - 26, 15, "<", windowText);
+        XPainter_drawText(&painter, w - 10, 15, ">", windowText);
         y = 22;
     }
     {
@@ -203,6 +208,31 @@ static void VX_calendar_mousePressEvent(XWidget* self, XEvent* event)
     }
     pos = XMouseEvent_position(me);
     navY = cal->m_navBarVisible ? 22 : 0;
+    /* 导航栏按钮区域（navY=22px 内）。 */
+    if (cal->m_navBarVisible && pos.y <= navY) {
+        int w = XWidget_width(self);
+        if (pos.x >= 4 && pos.x <= 20) {
+            /* 上一月。 */
+            int m = cal->m_shownMonth - 1;
+            int y2 = cal->m_shownYear;
+            if (m < 1) { m = 12; --y2; }
+            XCalendarWidget_setCurrentPage(cal, y2, m);
+        } else if (pos.x >= 22 && pos.x <= 38) {
+            /* 下一年。 */
+            XCalendarWidget_setCurrentPage(cal, cal->m_shownYear + 1, cal->m_shownMonth);
+        } else if (pos.x >= w - 38 && pos.x <= w - 22) {
+            /* 上一年。 */
+            XCalendarWidget_setCurrentPage(cal, cal->m_shownYear - 1, cal->m_shownMonth);
+        } else if (pos.x >= w - 20 && pos.x <= w - 4) {
+            /* 下一月。 */
+            int m = cal->m_shownMonth + 1;
+            int y2 = cal->m_shownYear;
+            if (m > 12) { m = 1; ++y2; }
+            XCalendarWidget_setCurrentPage(cal, y2, m);
+        }
+        XEvent_accept(event);
+        return;
+    }
     if (pos.y < navY + 18) { XEvent_ignore(event); return; }
     row = (pos.y - navY - 18) / 24;
     col7 = pos.x * 7 / XWidget_width(self);

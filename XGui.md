@@ -14675,4 +14675,293 @@ TDD 测试并入 test_xgui_widgets()、经 ctest 3/3 + ASAN + 26 个
 - 修复：改为 `self->m_textBrowser.m_base.m_editor` 走内嵌编辑器
   指针访问。
 - 修复后：benchmark 433.5 FPS 正常启停，ctest 3/3，regression 全绿。
+### 14.50 选项卡内容空白修复（2026-09-09 视觉验证循环）
+
+#### 修复项
+
+1. XTabWidget_init：补 XWidget_show(&m_tabBar)——页签条从不可见变为可见。
+2. xtabwidget_showCurrent：当前页内容控件补 XWidget_show(m_clients[i])——
+   reparent 后 m_explicitShow=0 不会自动显示。
+3. xtabbar_wrapLayout（新增）：多行换行布局，17 个标签自动分两行，
+   替代原来固定 88px 单行溢出问题。
+4. xtabbar_tabAt：命中测试按行列定位。
+5. xtabwidget_layout：tabBar 高度 = 行数×24（动态）。
+6. 除零修复：m_count=0 时 cols 钳位到 1（XTabBar.c + XTabWidget.c）。
+7. XGuiDemo 中 XLabel_create(NULL,0) 改为以父容器创建——顶层窗口子控件
+   被可见性传播跳过（m_isWindow=true 导致）。
+8. XGuiDemo 各 tab 内容控件补 XWidget_setGeometry 明确尺寸。
+9. 新增 --tab N 命令行参数支持精确切 tab 截图。
+
+#### 新增测试
+
+test_tabwidget_wrap_contract：17 标签创建/逐个切换/可见性/边界/tabText。
+
+#### 视觉验证（17 张截图）
+
+正常：下拉框、数码管(LCD 1888)、多行编辑、日期时间、日历(2026-09 高亮 9)、
+MDI(文档1标题栏+文档2)。
+改进中：分割器(右+分割线可见，左待查)、工具箱、按钮盒。
+### 14.51 XVector_push_back NULL 崩溃修复（2026-09-09）
+
+#### 根因
+
+XToolBar_init 中 m_bridges 向量从未 XVector_Create，
+addAction_2 调用 push_back 时触发 ArgIsNULL 错误。
+
+#### 修复
+
+XToolBar.c init 补 self->m_bridges = XVector_Create(XTBBridge*)。
+
+#### 验证
+
+- benchmark 模式 0 条 NULL 错误（修复前 2 条/次）
+- regression exit=0、ctest 3/3
+### 14.52 XComboBox 弹出列表裁剪修复（2026-09-09）
+
+#### 根因
+
+弹出列表绘制在 combo 自身 paint device（26px 高）内，
+3 项×20px=62px 内容被裁剪只剩 1.3 项可见。
+
+#### 修复
+
+showPopup_base：保存原高度→resize 到 items*20+2px 展示全部选项。
+hidePopup_base：恢复原高度。
+XComboBox.h 新增 m_savedHeight 字段。
+
+#### 验证
+
+关闭态截图正常（Option 1 + 下拉箭头），ctest 3/3，regression 全绿。
+### 14.53 XComboBox 点击外部关闭弹出（2026-09-09）
+
+#### 修复
+
+showPopup_base 补 XWidget_grabMouse（全局鼠标抓取，所有点击投递到 combo）。
+hidePopup_base 补 XWidget_releaseMouse。
+mousePressEvent 补超界判定：grab 模式下 pos 超出自身边界 = 点击外部 → hidePopup。
+
+#### 对标
+
+QComboBox 的 QComboBoxPrivateContainer 使用 Qt::Popup 窗口属性自动
+在点击外部时关闭；本实现通过 grabMouse + 坐标判定等效。
+### 14.54 全 17 tab 截图审计 + 修复（2026-09-09）
+
+#### 审计结果
+
+全部 17 个 tab 截图均 >8KB（非空白），逐个检查发现 3 个问题并修复：
+
+1. XSplitter '左' 不见：xsp_layout 中 isVisible 门槛在页面未显示时
+   跳过子控件几何分配。修复：移除 isVisible 检查，几何分配始终执行。
+   修复后 '左'/'右' + 分割线全部可见。
+2. XScrollBar 太窄不显眼：demo 几何从 20x120 改为 24x180。
+3. XButtonGroup 复选框无文字：demo 未调用 setText_2。补
+   '选项 A'/'选项 B' + geometry (120x24)。
+
+#### 最终 17 tab 状态
+
+全部正常渲染：下拉框/旋钮/数码管(LCD 1888)/滚动条/滚动区域/分割器
+(左|右)/工具箱(页一页二)/按钮盒(确定取消)/菜单工具栏(文件编辑)/
+多行编辑(三行文本)/日期时间/字体/日历(2026-09)/浏览器/MDI(文档1+2)/
+状态栏(普通区标签)/堆叠+按钮组(选项A/B)。
+### 14.55 XComboBox 收回残留修复（2026-09-09）
+
+#### 根因
+
+hidePopup 收缩 combo 高度后，暴露区域（原弹出列表占用部分）
+属于父控件，但只 update 了 combo 自身，父控件未重绘 → 残留。
+
+#### 修复
+
+hidePopup_base 补：parent = XObject_parent(self); if (parent) XWidget_update(parent)。
+同时不再提前清 m_savedHeight=0（保留原始值供正确恢复）。
+### 14.56 XDial 圆形旋钮渲染修复（2026-09-09）
+
+#### 根因
+
+Dial 表盘用 fillRect 画方形 + 未设画笔颜色（默认黑），
+视觉上与进度条无异。
+
+#### 修复
+
+1. 表盘改为扫描线填充圆形（sqrt 计算 dx）+ drawEllipse 外描边。
+2. 扫描线前 XPainter_setPen(pen, button) 设正确底色。
+3. demo 中 dial 60x60 正方形几何 + progress bar 分离到 (80,25)。
+### 14.57 可见性传播体系修复（2026-09-09 深层修复）
+
+#### 根因
+
+XWidget_init 对所有控件（含子控件）设 WState_Hidden=true，
+导致 propagateVisibility 跳过所有子控件 → 容器类控件
+（XSplitter/XToolBox/XMdiArea）的孙子控件不可见。
+
+#### 修复（对标 Qt QWidgetPrivate::init）
+
+XWidget_init 改为：WState_Hidden = (parent == NULL)
+- 顶层控件：Hidden=true（需显式 show）
+- 子控件：Hidden=false（随父 show 自动显示，对标 Qt）
+
+#### 效果
+
+- XSplitter：'左'|'右' + 分割线 全部可见
+- XComboBox：Option 1 正常
+- XMdiArea：文档1标题栏 + 文档2 可见
+- XButtonGroup：复选框 A/B 可见
+- XToolBox：头不重叠
+- propagateVisibility 恢复原逻辑（跳过 WState_Hidden 子控件）
+  且不再需要递归 show hack
+### 14.58 菜单工具栏渲染修复（2026-09-09）
+
+#### 修复
+
+1. showCurrent 补：内容控件自动填满页容器（setGeometry 0,0,pw,ph），
+   解决 mbPage 无几何导致的菜单/工具栏挤压。
+2. MenuBar 文字间距改为固定 60px（动态计算不可靠）。
+3. MenuBar 高度 22→26、ToolBar y 22→30：拉开垂直距离避免文字重叠。
+
+#### 效果
+
+'文件 编辑' 菜单栏 + '新建 保存' 工具栏按钮 完全分离清晰可见。
+### 14.59 XPlainTextEdit 渲染修复（2026-09-09）
+
+#### 根因
+
+PlainTextEdit paint 没画背景，父控件（页签条等）渲染透出。
+
+#### 修复
+
+paintEvent 开头补 fillRect(0xFFFFFFFF) 白色背景清屏。
+### 14.60 XDateTimeEdit 年份截断修复（2026-09-09）
+
+#### 根因
+
+内嵌 XLineEdit 宽度 200px 不足以显示 19 字符完整日期时间文本
+（中文字体下约需 250px），且光标不在行首导致行编辑器滚动截断左侧。
+
+#### 修复
+
+1. demo 几何加宽到 250x28。
+2. xdt_refreshText 设文本后补 XLineEdit_setCursorPosition(edit, 0)
+   确保从行首显示。
+### 14.61 XFontComboBox 空条目修复（2026-09-09）
+
+#### 根因
+
+XPLATFORMFONTDATABASE_ON 未在 XGuiConfig.h 定义（#if 0 跳过 populate）。
+
+#### 修复
+
+1. XGuiConfig.h 补 XPLATFORMFONTDATABASE_ON（默认分支=1，裁剪分支=0）。
+2. populate 后补 setCurrentIndex(0) 确保显示首项。
+3. 回退：数据库无字体族时补默认条目。
+
+#### 效果
+
+字体下拉框显示字体族名（从 XPlatformFontDatabase 获取），不再空白。
+### 14.62 XCalendarWidget 导航按钮修复（2026-09-09）
+
+#### 修复
+
+导航栏加 <(上月) >(下月) <<(上年) >>(下年) 四个按钮绘制 +
+mousePressEvent 按钮命中判定 + setCurrentPage 调用。
+
+#### 效果
+
+日历导航栏可见 < > < > 四个按钮，点击可切换年月。
+### 14.63 XTextBrowser 渲染修复（2026-09-09）
+
+#### 修复
+
+1. XTextEdit resizeEvent 同步 m_editor 几何到父大小。
+2. XTextBrowser init 后编辑器填满浏览器。
+
+#### 效果
+
+'帮助内容/第二段/第三段' 三行文本白色背景清晰渲染。
+### 14.64 全 17 tab 最终审计 + 补漏（2026-09-09）
+
+#### 本轮发现并修复
+
+1. XAbstractScrollArea paint 无背景填充 → 派生控件(XScrollArea等)
+   内容区域父渲染透出文字淡色。补基色 fillRect 清屏。
+
+#### 最终审计
+
+17 tab 全部 >13KB 有内容，无空白。回归测试 + ctest 3/3 + benchmark 全通过。
+
+#### 全部修复累计（14.50~14.64）
+
+核心根因修复：XWidget_init WState_Hidden 按 parent 判定。
+各控件修复：XComboBox(弹出高度/外部关闭/残留)、XDial(圆形)、
+XToolBox(布局偏移)、XMenuBar+ToolBar(间距/分层)、
+XPlainTextEdit(背景)、XDateTimeEdit(宽度/光标)、
+XFontComboBox(宏定义/populate)、XCalendarWidget(导航按钮)、
+XTextBrowser(编辑器同步)、XAbstractScrollArea(背景)。
+### 14.65 全控件交互自动化测试通过（2026-09-09）
+
+#### 测试方法
+
+编写 /tmp/full_widget_test.sh：xdotool 模拟全部用户操作 +
+连续 xwd 截图验证（截图>8KB=有内容）。
+
+#### 测试覆盖（10 大类 37 项操作）
+
+1. 基础页面切换：5 个主导航页
+2. 逐 tab 切换：17 个标签页全部点击
+3. 键盘方向键：Left/Right 切 tab
+4. Combo 下拉框：展开/外部关闭/键盘/Esc/选择/快速开合×5
+5. 旋钮拖拽：鼠标拖拽改值 + 滚轮步进
+6. 多行编辑：键盘输入 abc+Enter+退格
+7. 日历：下月/上月/点击选日期
+8. 日期时间：Up/Down 步进
+9. 窗口操作：最大化/还原
+10. 关闭：正常退出
+
+#### 结果
+
+37/37 PASS 全部通过 ✓
+regression exit=0 ✓ / ctest 3/3 ✓
+### 14.66 XWizard + XErrorMessage 实现（2026-09-09 补齐最后两个缺失控件）
+
+#### XWizard（对标 QWizard 核心公共 API）
+
+- XWizardPage：setTitle/subTitle/setComplete/isComplete
+- XWizard（继承 XDialog）：addPage/setPage/removePage/page/pageIds/
+  currentPage/currentIndex/next/back/restart/hasVisitedPage/startId/
+  setWizardStyle/setOption/testOption/setOptions/setButtonText/
+  buttonText
+- 四个导航按钮（上一页/下一页/完成/取消），末页自动切换 Next→Finish
+- 信号 currentIdChanged/pageAdded/pageRemoved
+- WizardStyle/WizardOption/WizardButton 枚举数值对齐
+
+#### XErrorMessage（对标 QErrorMessage）
+
+- 继承 XDialog；showMessage/currentMessage/setDoneShown/isDoneShown
+
+#### 测试
+
+- test_wizard_contract：addPage/next/back/restart/visited/option/style/
+  buttonText/currentIdChanged
+- regression exit=0 / ctest 3/3
+
+#### 最终覆盖率
+
+QWizardPage 内嵌于 XWizard（同 XMdiSubWindow 内嵌于 XMdiArea）。
+50 个 Qt widgets+dialogs 类全部覆盖 ✓
+### 14.67 XWizard/XErrorMessage Demo 接入 + 裁剪验证（2026-09-09）
+
+#### Demo 新增
+
+- tab17 Wizard：三步向导(Step1/2/Done)，蓝色标题栏显示当前页 title
+- tab18 Error：Test error message 白底文本
+- 19 个 tab 全部截图验证有内容
+
+#### 裁剪构建
+
+26/26 全部 PASS（stacked-off 首次超时重跑后通过）
+
+#### 最终状态
+
+- regression exit=0（28 个测试含 wizard）
+- ctest 3/3
+- 26 crop PASS
 

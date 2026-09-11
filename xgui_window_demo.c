@@ -180,6 +180,12 @@
 #endif
 #if XSTATUSBAR_ON
 #include "XStatusBar.h"
+#if XWIZARD_ON
+#include "XWizard.h"
+#endif
+#if XERRORMESSAGE_ON
+#include "XErrorMessage.h"
+#endif
 #endif
 #if XDATETIMEEDIT_ON
 #include "XDateTimeEdit.h"
@@ -381,6 +387,15 @@ typedef struct DemoWin
 #if XSTATUSBAR_ON
     XStatusBar      m_sb;           /**< 状态栏。 */
     XLabel          m_sbLabel;      /**< 状态栏标签。 */
+#if XWIZARD_ON
+    XWizard         m_wizard;       /**< 向导。 */
+    XWizardPage     m_wizPage0;     /**< 向导页 0。 */
+    XWizardPage     m_wizPage1;     /**< 向导页 1。 */
+    XWizardPage     m_wizPage2;     /**< 向导页 2。 */
+#endif
+#if XERRORMESSAGE_ON
+    XErrorMessage   m_errMsg;       /**< 错误消息。 */
+#endif
 #endif
 #if XSTACKEDWIDGET_ON
     XStackedWidget  m_stackedW;     /**< 堆叠容器。 */
@@ -1971,6 +1986,7 @@ static DemoWin* DemoWin_create(void)
         XComboBox_addItem(&self->m_comboBox, "Option 2");
         XComboBox_addItem(&self->m_comboBox, "Option 3");
         XComboBox_setCurrentIndex(&self->m_comboBox, 0);
+        XWidget_setGeometry((XWidget*)&self->m_comboBox, 10, 10, 150, 26);
         XObject_connect_1((XObject*)&self->m_comboBox,
                           (size_t)XComboBox_currentTextChanged_signal(
                               &self->m_comboBox),
@@ -1992,6 +2008,7 @@ static DemoWin* DemoWin_create(void)
             demo_set_widget_default_font((XWidget*)&self->m_dial);
             XAbstractSlider_setRange((XAbstractSlider*)&self->m_dial, 0, 100);
             XAbstractSlider_setValue((XAbstractSlider*)&self->m_dial, 40);
+            XWidget_setGeometry((XWidget*)&self->m_dial, 10, 10, 60, 60);
             XObject_connect_1((XObject*)&self->m_dial,
                               (size_t)XDial_valueChanged_signal(&self->m_dial),
                               (XObject*)self, demo_tab_dialSlot,
@@ -2000,6 +2017,7 @@ static DemoWin* DemoWin_create(void)
             demo_set_widget_default_font((XWidget*)&self->m_dialProgress);
             XProgressBar_setRange(&self->m_dialProgress, 0, 100);
             XProgressBar_setValue(&self->m_dialProgress, 40);
+            XWidget_setGeometry((XWidget*)&self->m_dialProgress, 80, 25, 120, 20);
             XWidget_show(page);
             (void)XTabWidget_insertTab(&self->m_tabWidget, 1, page,
                                        "\xE6\x97\x8B\xE9\x92\xAE"); /* 旋钮 */
@@ -2012,6 +2030,8 @@ static DemoWin* DemoWin_create(void)
     XScrollBar_init(&self->m_scrollBar, (XWidget*)&self->m_tabWidget, 0);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_scrollBar, 0, 9999);
     XAbstractSlider_setValue((XAbstractSlider*)&self->m_scrollBar, 1888);
+    XWidget_setGeometry((XWidget*)&self->m_lcd, 10, 10, 160, 60);
+    XWidget_setGeometry((XWidget*)&self->m_scrollBar, 10, 80, 24, 180);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 2,
                                (XWidget*)&self->m_lcd, "数码管");
     (void)XTabWidget_insertTab(&self->m_tabWidget, 3,
@@ -2020,8 +2040,9 @@ static DemoWin* DemoWin_create(void)
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON && XFRAME_ON && XLABEL_ON
     /* 页四：XScrollArea。 */
     XScrollArea_init(&self->m_scrollArea, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_scrollArea, 10, 10, 300, 150);
     {
-        XLabel* big = XLabel_create(NULL, 0);
+        XLabel* big = XLabel_create((XWidget*)&self->m_scrollArea, 0);
         XLabel_setText_2(big, "滚动内容\n第二行\n第三行\n第四行");
         XWidget_resize(big, 400, 300);
         XScrollArea_setWidget(&self->m_scrollArea, (XWidget*)big);
@@ -2032,13 +2053,16 @@ static DemoWin* DemoWin_create(void)
 #if XSPLITTER_ON && XFRAME_ON && XLABEL_ON
     /* 页五：XSplitter。 */
     XSplitter_init(&self->m_splitter, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_splitter, 10, 10, 300, 150);
     {
-        XLabel* left = XLabel_create(NULL, 0);
-        XLabel* right = XLabel_create(NULL, 0);
+        XLabel* left = XLabel_create((XWidget*)&self->m_splitter, 0);
+        XLabel* right = XLabel_create((XWidget*)&self->m_splitter, 0);
         XLabel_setText_2(left, "左");
         XLabel_setText_2(right, "右");
         XSplitter_addWidget(&self->m_splitter, (XWidget*)left);
         XSplitter_addWidget(&self->m_splitter, (XWidget*)right);
+        XWidget_show((XWidget*)left);
+        XWidget_show((XWidget*)right);
     }
     (void)XTabWidget_insertTab(&self->m_tabWidget, 5,
                                (XWidget*)&self->m_splitter, "分割");
@@ -2046,13 +2070,16 @@ static DemoWin* DemoWin_create(void)
 #if XTOOLBOX_ON && XFRAME_ON && XLABEL_ON
     /* 页六：XToolBox。 */
     XToolBox_init(&self->m_toolBox, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_toolBox, 10, 10, 200, 150);
     {
-        XLabel* a = XLabel_create(NULL, 0);
-        XLabel* b = XLabel_create(NULL, 0);
+        XLabel* a = XLabel_create((XWidget*)&self->m_toolBox, 0);
+        XLabel* b = XLabel_create((XWidget*)&self->m_toolBox, 0);
         XLabel_setText_2(a, "工具箱页一");
         XLabel_setText_2(b, "工具箱页二");
         XToolBox_addItem(&self->m_toolBox, (XWidget*)a, "页一");
         XToolBox_addItem(&self->m_toolBox, (XWidget*)b, "页二");
+        XWidget_show((XWidget*)a);
+        XWidget_show((XWidget*)b);
     }
     (void)XTabWidget_insertTab(&self->m_tabWidget, 6,
                                (XWidget*)&self->m_toolBox, "工具箱");
@@ -2060,6 +2087,7 @@ static DemoWin* DemoWin_create(void)
 #if XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON
     /* 页七：XDialogButtonBox。 */
     XDialogButtonBox_init(&self->m_buttonBox, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_buttonBox, 10, 10, 300, 40);
     XDialogButtonBox_setStandardButtons(&self->m_buttonBox,
         (int)XDialogButtonBoxStandard_Ok | (int)XDialogButtonBoxStandard_Cancel);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 7,
@@ -2078,20 +2106,22 @@ static DemoWin* DemoWin_create(void)
             self->m_editMenu = XMenuBar_addMenu_2(&self->m_menuBar, "编辑");
             if (self->m_fileMenu) XMenu_addAction_2(self->m_fileMenu, "退出");
             if (self->m_editMenu) XMenu_addAction_2(self->m_editMenu, "全选");
-            XWidget_setGeometry((XWidget*)&self->m_menuBar, 0, 0, 300, 22);
+            XWidget_setGeometry((XWidget*)&self->m_menuBar, 0, 0, 300, 26);
             XWidget_show((XWidget*)&self->m_menuBar);
             XToolBar_init(&self->m_toolBar, mbPage, 0);
             XToolBar_addAction_2(&self->m_toolBar, "新建");
             XToolBar_addAction_2(&self->m_toolBar, "保存");
-            XWidget_setGeometry((XWidget*)&self->m_toolBar, 0, 22, 300, 30);
+            XWidget_setGeometry((XWidget*)&self->m_toolBar, 0, 30, 300, 34);
             XWidget_show((XWidget*)&self->m_toolBar);
-            (void)XTabWidget_insertTab(&self->m_tabWidget, 8, mbPage, "菜单工具栏");
+            XWidget_setGeometry(mbPage, 0, 0, 400, 220);
+            (void)XTabWidget_insertTab(&self->m_tabWidget, 8, mbPage, "èåå·¥å·æ ");
         }
     }
 #endif
 #if XPLAINTEXTEDIT_ON
     /* 页九：XPlainTextEdit。 */
     XPlainTextEdit_init(&self->m_plainEdit, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_plainEdit, 10, 10, 300, 150);
     XPlainTextEdit_setPlainText(&self->m_plainEdit, "多行编辑\n第二行\n第三行");
     (void)XTabWidget_insertTab(&self->m_tabWidget, 9,
                                (XWidget*)&self->m_plainEdit, "多行编辑");
@@ -2100,7 +2130,8 @@ static DemoWin* DemoWin_create(void)
     /* 页十：XDateTimeEdit + XFontComboBox。 */
     XDateTimeEdit_init(&self->m_dtEdit, (XWidget*)&self->m_tabWidget, 0);
     XFontComboBox_init(&self->m_fontCombo, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_dtEdit, 10, 10, 200, 28);
+    XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 200, 26);
+    XWidget_setGeometry((XWidget*)&self->m_dtEdit, 10, 10, 250, 28);
     XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 220, 28);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 10,
                                (XWidget*)&self->m_dtEdit, "日期时间");
@@ -2110,12 +2141,14 @@ static DemoWin* DemoWin_create(void)
 #if XCALENDARWIDGET_ON
     /* 页十一：XCalendarWidget。 */
     XCalendarWidget_init(&self->m_calendar, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_calendar, 10, 10, 280, 200);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 12,
                                (XWidget*)&self->m_calendar, "日历");
 #endif
 #if XTEXTBROWSER_ON
     /* 页十二：XTextBrowser。 */
     XTextBrowser_init(&self->m_textBrowser, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_textBrowser, 10, 10, 300, 150);
     XPlainTextEdit_setPlainText(self->m_textBrowser.m_base.m_editor,
         "帮助内容\n第二段\n第三段");
     (void)XTabWidget_insertTab(&self->m_tabWidget, 13,
@@ -2124,13 +2157,16 @@ static DemoWin* DemoWin_create(void)
 #if XMDIAREA_ON && XFRAME_ON && XLABEL_ON
     /* 页十三：XMdiArea。 */
     XMdiArea_init(&self->m_mdiArea, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_mdiArea, 10, 10, 350, 200);
     {
-        XLabel* m0 = XLabel_create(NULL, 0);
-        XLabel* m1 = XLabel_create(NULL, 0);
+        XLabel* m0 = XLabel_create((XWidget*)&self->m_mdiArea, 0);
+        XLabel* m1 = XLabel_create((XWidget*)&self->m_mdiArea, 0);
         XLabel_setText_2(m0, "文档 1");
         XLabel_setText_2(m1, "文档 2");
         XMdiArea_addSubWindow(&self->m_mdiArea, (XWidget*)m0);
         XMdiArea_addSubWindow(&self->m_mdiArea, (XWidget*)m1);
+        XWidget_show((XWidget*)m0);
+        XWidget_show((XWidget*)m1);
     }
     (void)XTabWidget_insertTab(&self->m_tabWidget, 14,
                                (XWidget*)&self->m_mdiArea, "MDI");
@@ -2138,6 +2174,7 @@ static DemoWin* DemoWin_create(void)
 #if XSTATUSBAR_ON && XLABEL_ON
     /* 页十四：XStatusBar。 */
     XStatusBar_init(&self->m_sb, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_sb, 10, 10, 350, 24);
     XLabel_init(&self->m_sbLabel, (XWidget*)&self->m_sb, 0);
     XLabel_setText_2(&self->m_sbLabel, "普通区标签");
     XStatusBar_addWidget(&self->m_sb, (XWidget*)&self->m_sbLabel, 1);
@@ -2147,11 +2184,49 @@ static DemoWin* DemoWin_create(void)
 #if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON
     /* 页十五：XStackedWidget + XButtonGroup。 */
     XStackedWidget_init(&self->m_stackedW, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_stackedW, 10, 10, 200, 100);
     XButtonGroup_init(&self->m_btnGroup, NULL);
     XCheckBox_init(&self->m_bgBtn0, (XWidget*)&self->m_stackedW, 0);
     XCheckBox_init(&self->m_bgBtn1, (XWidget*)&self->m_stackedW, 0);
+    XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn0, "éé¡¹ A");
+    XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn1, "éé¡¹ B");
+    XWidget_setGeometry((XWidget*)&self->m_bgBtn0, 10, 10, 120, 24);
+    XWidget_setGeometry((XWidget*)&self->m_bgBtn1, 10, 40, 120, 24);
     XButtonGroup_addButton(&self->m_btnGroup, (XAbstractButton*)&self->m_bgBtn0, 0);
     XButtonGroup_addButton(&self->m_btnGroup, (XAbstractButton*)&self->m_bgBtn1, 1);
+    XWidget_show((XWidget*)&self->m_bgBtn0);
+    XWidget_show((XWidget*)&self->m_bgBtn1);
+
+#if XWIZARD_ON && XLABEL_ON
+    /* 页十八：XWizard 向导。 */
+    XWizard_init(&self->m_wizard, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_wizard, 0, 0, 440, 220);
+    {
+        XLabel* w0 = XLabel_create((XWidget*)&self->m_wizPage0, 0);
+        XLabel_setText_2(w0, "Step 1");
+        XLabel* w1 = XLabel_create((XWidget*)&self->m_wizPage1, 0);
+        XLabel_setText_2(w1, "Step 2");
+        XLabel* w2 = XLabel_create((XWidget*)&self->m_wizPage2, 0);
+        XLabel_setText_2(w2, "Done");
+    }
+    XWizardPage_setTitle(&self->m_wizPage0, "Step 1");
+    XWizardPage_setTitle(&self->m_wizPage1, "Step 2");
+    XWizardPage_setTitle(&self->m_wizPage2, "Finish");
+    XWizard_addPage(&self->m_wizard, &self->m_wizPage0);
+    XWizard_addPage(&self->m_wizard, &self->m_wizPage1);
+    XWizard_addPage(&self->m_wizard, &self->m_wizPage2);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 17,
+                               (XWidget*)&self->m_wizard, "Wizard");
+#endif
+#if XERRORMESSAGE_ON
+    /* 页十九：XErrorMessage。 */
+    XErrorMessage_init(&self->m_errMsg, (XWidget*)&self->m_tabWidget, 0);
+    XErrorMessage_showMessage(&self->m_errMsg, "Test error message");
+    XWidget_setGeometry((XWidget*)&self->m_errMsg, 10, 10, 300, 120);
+    XWidget_show((XWidget*)&self->m_errMsg);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 18,
+                               (XWidget*)&self->m_errMsg, "Error");
+#endif
     (void)XTabWidget_insertTab(&self->m_tabWidget, 16,
                                (XWidget*)&self->m_stackedW, "堆叠+按钮组");
 #endif
@@ -2214,6 +2289,7 @@ int main(int argc, char* argv[])
     bool benchmarkResize;
     const char* screenshotPath;
     int screenshotPage;
+    int screenshotTab;
     bool autoTest;
     int argi;
     int eventLoopResult;
@@ -2224,6 +2300,7 @@ int main(int argc, char* argv[])
     screenshotPath = NULL;
     autoTest = false;
     screenshotPage = 0;
+    screenshotTab = -1;
     for (argi = 1; argi < argc; ++argi) {
         if (strcmp(argv[argi], "--benchmark") == 0 && argi + 1 < argc) {
             benchmarkSeconds = atoi(argv[++argi]);
@@ -2240,6 +2317,9 @@ int main(int argc, char* argv[])
         }
         else if (strcmp(argv[argi], "--page") == 0 && argi + 1 < argc) {
             screenshotPage = atoi(argv[++argi]);
+        }
+        else if (strcmp(argv[argi], "--tab") == 0) {
+            screenshotTab = atoi(argv[++argi]);
         }
         else if (strcmp(argv[argi], "--autotest") == 0) {
             autoTest = true;
@@ -2274,7 +2354,9 @@ int main(int argc, char* argv[])
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 截图模式可指定初始页面（配合 --screenshot <file> --page <N>）。 */
     if (screenshotPage > 0)
-        demo_switchPage(win, screenshotPage); /* 无需截图模式也能切页。 */
+        demo_switchPage(win, screenshotPage);
+    if (screenshotTab >= 0)
+        XTabWidget_setCurrentIndex(&win->m_tabWidget, screenshotTab); /* 无需截图模式也能切页。 */
 #endif
     {
         XString* title = XString_create_utf8(

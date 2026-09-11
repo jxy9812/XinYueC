@@ -129,6 +129,18 @@ static void VX_asa_paintEvent(XWidget* self, XEvent* event)
 #else
     mid = 0xFF808080u;
 #endif /* XPALETTE_ON */
+    /* 背景：基色清屏防止父控件渲染透出。 */
+    {
+        XRect bg = { 0, 0, w, h };
+#if XPALETTE_ON
+        XPalette palette = XWidget_palette(self);
+        XColor bc = XPalette_color(&palette, XPaletteColorGroup_Current,
+                                   XPaletteColorRole_Base);
+        XPainter_fillRect(&painter, &bg, XColor_rgba(&bc));
+#else
+        XPainter_fillRect(&painter, &bg, 0xFFFFFFFFu);
+#endif /* XPALETTE_ON */
+    }
     XRect_init(&line, 0, h - 1, w, 1);
     XPainter_fillRect(&painter, &line, mid);
     XPainter_deinit(&painter);

@@ -99,4 +99,9 @@ void* XTextBrowser_forwardAvailable_signal(XTextBrowser* self, bool available);
 #ifdef __cplusplus
 }
 #endif
+
+/* ==================== 信号 ==================== */
+
+void* XTextBrowser_anchorClicked_signal(XTextBrowser* self);
+void* XTextBrowser_highlighted_signal(XTextBrowser* self);
 #endif /* XTEXTBROWSER_H */

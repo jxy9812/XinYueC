@@ -87,4 +87,6 @@ void* XDockWidget_visibilityChanged_signal(XDockWidget* self, bool visible);
 #ifdef __cplusplus
 }
 #endif
+
+void* XDockWidget_dockLocationChanged_signal(XDockWidget* self);
 #endif /* XDOCKWIDGET_H */

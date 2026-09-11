@@ -149,4 +149,9 @@ void* XToolBar_movableChanged_signal(XToolBar* self, bool movable);
 #ifdef __cplusplus
 }
 #endif
+
+void* XToolBar_allowedAreasChanged_signal(XToolBar* self);
+void* XToolBar_iconSizeChanged_signal(XToolBar* self);
+void* XToolBar_toolButtonStyleChanged_signal(XToolBar* self);
+void* XToolBar_topLevelChanged_signal(XToolBar* self);
 #endif /* XTOOLBAR_H */

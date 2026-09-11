@@ -87,4 +87,8 @@ void* XTabWidget_tabClicked_signal(XTabWidget* self);
 #ifdef __cplusplus
 }
 #endif
+
+/* ==================== 信号 ==================== */
+
+void* XTabWidget_tabCloseRequested_signal(XTabWidget* self);
 #endif /* XTABWIDGET_H */

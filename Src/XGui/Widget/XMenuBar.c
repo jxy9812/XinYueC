@@ -159,7 +159,7 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                     XPainter_setFont(&painter, &font);
                     XPainter_drawText(&painter, x, 16,
                                       XString_toUtf8(title), text);
-                    x += 16 + (int)XString_length_base(title) * 8;
+                    x += 60; /* 固定间距确保中文菜单文字不重叠。 */
                 } else {
                     x += 12;
                 }

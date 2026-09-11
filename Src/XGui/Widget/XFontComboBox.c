@@ -38,9 +38,17 @@ static void xfcb_populate(XFontComboBox* self)
         }
     }
     XPlatformFontDatabase_destroy(db);
-#else
-    (void)self;
 #endif /* XPLATFORMFONTDATABASE_ON */
+    /* 回退：数据库未启用或无字体族时补默认条目确保控件非空。 */
+    if (XComboBox_count(self) > 0)
+        XComboBox_setCurrentIndex(self, 0);
+    if (XComboBox_count(self) == 0) {
+        XComboBox_addItem(self, "XFontOutlineCommon");
+        XComboBox_addItem(self, "Sans Serif");
+        XComboBox_addItem(self, "Serif");
+        XComboBox_addItem(self, "Monospace");
+        XComboBox_setCurrentIndex(self, 0);
+    }
 }
 
 XVtable* XFontComboBox_class_init(void)
@@ -106,6 +114,13 @@ void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
             return;
         }
     }
+}
+
+
+void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self)
+{
+    (void)self;
+    return (void*)(size_t)XFontComboBox_currentFontChanged_signal;
 }
 
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */
