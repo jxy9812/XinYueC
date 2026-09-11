@@ -284,4 +284,5 @@ void XMessageBox_reject_2(XMessageBox* self) { XDialog_reject((XDialog*)self); }
 static void XMessageBox_warning_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
 static void XMessageBox_critical_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
 static void XMessageBox_information_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
+void XMessageBox_setButtonText_2(XMessageBox* self, int button, const char* text) { (void)self; (void)button; (void)text; }
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */

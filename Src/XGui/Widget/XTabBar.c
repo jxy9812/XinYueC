@@ -479,4 +479,7 @@ const char* XTabBar_tabToolTip(const XTabBar* self, int index) { (void)self; (vo
 void XTabBar_setTabWhatsThis(XTabBar* self, int index, const char* text) { (void)self; (void)index; (void)text; }
 const char* XTabBar_tabWhatsThis(const XTabBar* self, int index) { (void)self; (void)index; return ""; }
 void XTabBar_setTabIcon(XTabBar* self, int index, const char* icon) { (void)self; (void)index; (void)icon; }
+bool XTabBar_expanding(const XTabBar* self) { return self?self->m_expanding:false; }
+bool XTabBar_drawBase(const XTabBar* self) { (void)self; return false; }
+void XTabBar_setDrawBase(XTabBar* self, bool drawBase) { (void)self; (void)drawBase; }
 #endif /* XWIDGET_ON && XTABBAR_ON */

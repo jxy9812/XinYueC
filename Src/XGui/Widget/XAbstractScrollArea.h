@@ -149,4 +149,5 @@ void XAbstractScrollArea_setSizeAdjustPolicy(XAbstractScrollArea* self, int poli
 void XAbstractScrollArea_setCornerWidget(XAbstractScrollArea* self, XWidget* widget);
 XWidget* XAbstractScrollArea_cornerWidget(const XAbstractScrollArea* self);
 int XAbstractScrollArea_maximumViewportSize_height(const XAbstractScrollArea* self);
+void XAbstractScrollArea_setViewport(XAbstractScrollArea* self, XWidget* widget);
 #endif /* XABSTRACTSCROLLAREA_H */

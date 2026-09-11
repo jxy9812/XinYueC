@@ -108,4 +108,7 @@ const char* XTabBar_tabToolTip(const XTabBar* self, int index);
 void XTabBar_setTabWhatsThis(XTabBar* self, int index, const char* text);
 const char* XTabBar_tabWhatsThis(const XTabBar* self, int index);
 void XTabBar_setTabIcon(XTabBar* self, int index, const char* icon);
+bool XTabBar_expanding(const XTabBar* self);
+bool XTabBar_drawBase(const XTabBar* self);
+void XTabBar_setDrawBase(XTabBar* self, bool drawBase);
 #endif /* XTABBAR_H */

@@ -123,4 +123,7 @@ bool XMainWindow_isAnimated(const XMainWindow* self);
 void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enabled);
 bool XMainWindow_isDockNestingEnabled(const XMainWindow* self);
 void XMainWindow_setSeparator(XMainWindow* self, int area);
+void XMainWindow_insertToolBar(XMainWindow* self, XToolBar* before, XToolBar* toolbar);
+void XMainWindow_removeToolBar(XMainWindow* self, XToolBar* toolbar);
+void XMainWindow_iconSizeChanged_signal(XMainWindow* self);
 #endif /* XMAINWINDOW_H */

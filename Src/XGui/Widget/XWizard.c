@@ -526,4 +526,5 @@ void XWizard_setTitleFormat(XWizard* self, int format) { (void)self; (void)forma
 int XWizard_titleFormat(const XWizard* self) { (void)self; return 0; }
 void XWizard_setSubTitleFormat(XWizard* self, int format) { (void)self; (void)format; }
 int XWizard_subTitleFormat(const XWizard* self) { (void)self; return 0; }
+void XWizard_done(XWizard* self, int result) { XDialog_done((XDialog*)self, result); }
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */

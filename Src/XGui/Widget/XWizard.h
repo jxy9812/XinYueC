@@ -183,4 +183,5 @@ void XWizard_setTitleFormat(XWizard* self, int format);
 int XWizard_titleFormat(const XWizard* self);
 void XWizard_setSubTitleFormat(XWizard* self, int format);
 int XWizard_subTitleFormat(const XWizard* self);
+void XWizard_done(XWizard* self, int result);
 #endif /* XWIZARD_H */

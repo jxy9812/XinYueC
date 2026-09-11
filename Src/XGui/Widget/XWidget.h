@@ -1476,4 +1476,5 @@ void XWidget_scroll_2(XWidget* self, int dx, int dy);
 void XWidget_setAttribute_2(XWidget* self, int attribute, bool on);
 bool XWidget_testAttribute_2(const XWidget* self, int attribute);
 void XWidget_setGraphicsEffect(XWidget* self, void* effect);
+const XVector* XWidget_actions(const XWidget* self);
 #endif /* XWIDGET_H */

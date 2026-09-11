@@ -357,4 +357,7 @@ bool XMainWindow_isAnimated(const XMainWindow* self) { (void)self; return false;
 void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enabled) { (void)self; (void)enabled; }
 bool XMainWindow_isDockNestingEnabled(const XMainWindow* self) { (void)self; return false; }
 void XMainWindow_setSeparator(XMainWindow* self, int area) { (void)self; (void)area; }
+void XMainWindow_insertToolBar(XMainWindow* self, XToolBar* before, XToolBar* toolbar) { (void)self; (void)before; (void)toolbar; }
+void XMainWindow_removeToolBar(XMainWindow* self, XToolBar* toolbar) { (void)self; (void)toolbar; }
+void XMainWindow_iconSizeChanged_signal(XMainWindow* self) { (void)self; }
 #endif /* XWIDGET_ON && XMAINWINDOW_ON */

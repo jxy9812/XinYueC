@@ -317,4 +317,5 @@ int XAbstractScrollArea_sizeAdjustPolicy(const XAbstractScrollArea* self) { (voi
 void XAbstractScrollArea_setSizeAdjustPolicy(XAbstractScrollArea* self, int policy) { (void)self; (void)policy; }
 int XAbstractScrollArea_maximumViewportSize_height(const XAbstractScrollArea* self)
 { return XWidget_height((XWidget*)self); }
+void XAbstractScrollArea_setViewport(XAbstractScrollArea* self, XWidget* widget) { (void)self; (void)widget; }
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON */

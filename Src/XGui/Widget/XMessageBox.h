@@ -186,4 +186,5 @@ void XMessageBox_reject_2(XMessageBox* self);
 static void XMessageBox_warning_2(XMessageBox* self, const char* title, const char* text);
 static void XMessageBox_critical_2(XMessageBox* self, const char* title, const char* text);
 static void XMessageBox_information_2(XMessageBox* self, const char* title, const char* text);
+void XMessageBox_setButtonText_2(XMessageBox* self, int button, const char* text);
 #endif /* XMESSAGEBOX_H */

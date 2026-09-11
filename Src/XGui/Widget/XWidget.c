@@ -4800,4 +4800,5 @@ void XWidget_scroll_2(XWidget* self, int dx, int dy) { (void)self; (void)dx; (vo
 void XWidget_setAttribute_2(XWidget* self, int attribute, bool on) { XWidget_attrSet(&self->m_attributes, attribute, on); }
 bool XWidget_testAttribute_2(const XWidget* self, int attribute) { return XWidget_attrTest(&self->m_attributes, attribute); }
 void XWidget_setGraphicsEffect(XWidget* self, void* effect) { (void)self; (void)effect; }
+const XVector* XWidget_actions(const XWidget* self) { (void)self; return NULL; }
 #endif /* XWIDGET_ON */
