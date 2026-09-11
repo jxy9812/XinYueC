@@ -996,4 +996,6 @@ void* XSpinBox_textChanged_signal(XSpinBox* self)
     return (void*)(size_t)XSpinBox_textChanged_signal;
 }
 
+int XSpinBox_decimals(const XSpinBox* self) { return 0; }
+void XSpinBox_setDecimals(XSpinBox* self, int decimals) { (void)self; (void)decimals; }
 #endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */

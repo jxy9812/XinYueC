@@ -360,4 +360,25 @@ void* XMdiArea_subWindowActivated_signal(XMdiArea* self,
     return (void*)(size_t)XMdiArea_subWindowActivated_signal;
 }
 
+void XMdiArea_activateNextSubWindow(XMdiArea* self)
+{ int idx; if(!self||!self->m_subWindows) return; idx=(int)XVector_size_base((const XContainer*)self->m_subWindows); if(idx<=0) return; XMdiArea_setActiveSubWindow(self, *(XMdiSubWindow**)XVector_at_base(self->m_subWindows, (self->m_active?(idx-1):0)%idx)); }
+void XMdiArea_activatePreviousSubWindow(XMdiArea* self)
+{ int idx; if(!self||!self->m_subWindows) return; idx=(int)XVector_size_base((const XContainer*)self->m_subWindows); if(idx<=0) return; XMdiArea_setActiveSubWindow(self, *(XMdiSubWindow**)XVector_at_base(self->m_subWindows, (idx-1)%idx)); }
+void XMdiArea_closeActiveSubWindow(XMdiArea* self)
+{ if(self&&self->m_active) XMdiArea_removeSubWindow(self, XMdiSubWindow_widget(self->m_active)); }
+void XMdiArea_setActiveSubWindow_2(XMdiArea* self, XWidget* window) { (void)self; (void)window; }
+void XMdiArea_setViewMode_2(XMdiArea* self, int mode) { if(self) self->m_viewMode = mode; }
+void XMdiArea_cascadeSubWindows_2(XMdiArea* self) { XMdiArea_cascadeSubWindows(self); }
+void XMdiArea_tileSubWindows_2(XMdiArea* self) { XMdiArea_tileSubWindows(self); }
+void XMdiArea_closeAllSubWindows_2(XMdiArea* self) { XMdiArea_closeAllSubWindows(self); }
+void XMdiArea_removeSubWindow_2(XMdiArea* self, XWidget* widget) { XMdiArea_removeSubWindow(self, widget); }
+int XMdiArea_subWindowCount_2(const XMdiArea* self) { return XMdiArea_subWindowCount(self); }
+void XMdiArea_setBackground(XMdiArea* self, uint32_t color) { (void)self; (void)color; }
+uint32_t XMdiArea_background(const XMdiArea* self) { (void)self; return 0xFFC0C0C0u; }
+void XMdiArea_setDocumentMode_2(XMdiArea* self, bool mode) { (void)self; (void)mode; }
+bool XMdiArea_documentMode_2(const XMdiArea* self) { (void)self; return false; }
+void XMdiArea_setTabPosition(XMdiArea* self, int position) { (void)self; (void)position; }
+int XMdiArea_tabPosition(const XMdiArea* self) { (void)self; return 0; }
+void XMdiArea_setTabsClosable_2(XMdiArea* self, bool closable) { (void)self; (void)closable; }
+bool XMdiArea_isTabsClosable_2(const XMdiArea* self) { (void)self; return false; }
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON */

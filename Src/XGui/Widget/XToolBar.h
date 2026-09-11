@@ -154,4 +154,10 @@ void* XToolBar_allowedAreasChanged_signal(XToolBar* self);
 void* XToolBar_iconSizeChanged_signal(XToolBar* self);
 void* XToolBar_toolButtonStyleChanged_signal(XToolBar* self);
 void* XToolBar_topLevelChanged_signal(XToolBar* self);
+bool XToolBar_isAreaAllowed(const XToolBar* self, int area);
+bool XToolBar_isFloating(const XToolBar* self);
+void XToolBar_setAllowedAreas_2(XToolBar* self, int areas);
+void XToolBar_setFloatable_2(XToolBar* self, bool floatable);
+void XToolBar_setMovable_2(XToolBar* self, bool movable);
+void XToolBar_setOrientation_2(XToolBar* self, int orientation);
 #endif /* XTOOLBAR_H */

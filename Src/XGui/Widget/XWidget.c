@@ -4786,4 +4786,18 @@ void XWidget_applyWindowVisibility(XWidget* self, bool visible)
     XWidget_propagateVisibility(self, oldVisible);
 }
 
+void XWidget_addAction_2(XWidget* self, XAction* action) { (void)self; (void)action; }
+void XWidget_removeAction_2(XWidget* self, XAction* action) { (void)self; (void)action; }
+void XWidget_setWindowTitle_2(XWidget* self, const char* utf8) { XWidget_setWindowTitle(self, utf8); }
+void XWidget_setToolTip_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
+const char* XWidget_toolTip_2(const XWidget* self) { (void)self; return ""; }
+void XWidget_setStatusTip_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
+void XWidget_setWhatsThis_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
+void XWidget_setAccessibleName_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
+void XWidget_setAccessibleDescription_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
+void XWidget_clearFocus_2(XWidget* self) { XWidget_clearFocusBase(self, 0); }
+void XWidget_scroll_2(XWidget* self, int dx, int dy) { (void)self; (void)dx; (void)dy; }
+void XWidget_setAttribute_2(XWidget* self, int attribute, bool on) { XWidget_attrSet(&self->m_attributes, attribute, on); }
+bool XWidget_testAttribute_2(const XWidget* self, int attribute) { return XWidget_attrTest(&self->m_attributes, attribute); }
+void XWidget_setGraphicsEffect(XWidget* self, void* effect) { (void)self; (void)effect; }
 #endif /* XWIDGET_ON */

@@ -169,4 +169,18 @@ void* XWizard_pageRemoved_signal(XWizard* self, int index);
 
 void* XWizard_completeChanged_signal(XWizard* self);
 void* XWizard_customButtonClicked_signal(XWizard* self);
+void XWizard_setPixmap(XWizard* self, int which, const char* path);
+const char* XWizard_pixmap(const XWizard* self, int which);
+void XWizard_setField_2(XWizard* self, const char* name, const char* value);
+const char* XWizard_field(const XWizard* self, const char* name);
+void XWizard_setSideWidget(XWizard* self, XWidget* widget);
+XWidget* XWizard_sideWidget(const XWizard* self);
+int XWizard_visitedIds_count(const XWizard* self);
+bool XWizard_validateCurrentPage(XWizard* self);
+void XWizard_setButtonLayout(XWizard* self, const int* layout, int count);
+void XWizard_setButton_2(XWizard* self, XWizardButton which, XPushButton* button);
+void XWizard_setTitleFormat(XWizard* self, int format);
+int XWizard_titleFormat(const XWizard* self);
+void XWizard_setSubTitleFormat(XWizard* self, int format);
+int XWizard_subTitleFormat(const XWizard* self);
 #endif /* XWIZARD_H */

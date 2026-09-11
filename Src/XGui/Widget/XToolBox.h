@@ -125,4 +125,7 @@ void* XToolBox_currentChanged_signal(XToolBox* self, int index);
 #ifdef __cplusplus
 }
 #endif
+const char* XToolBox_itemToolTip(const XToolBox* self, int index);
+void XToolBox_setItemIcon(XToolBox* self, int index, const char* icon);
+void XToolBox_setItemToolTip(XToolBox* self, int index, const char* tip);
 #endif /* XTOOLBOX_H */

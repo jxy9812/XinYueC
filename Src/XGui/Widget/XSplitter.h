@@ -171,4 +171,6 @@ void* XSplitter_splitterMoved_signal(XSplitter* self, int pos, int index);
 #ifdef __cplusplus
 }
 #endif
+void XSplitter_setRubberBand(XSplitter* self, bool on);
+bool XSplitter_rubberBand(const XSplitter* self);
 #endif /* XSPLITTER_H */

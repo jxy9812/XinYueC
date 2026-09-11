@@ -104,4 +104,8 @@ void* XTextBrowser_forwardAvailable_signal(XTextBrowser* self, bool available);
 
 void* XTextBrowser_anchorClicked_signal(XTextBrowser* self);
 void* XTextBrowser_highlighted_signal(XTextBrowser* self);
+void XTextBrowser_clearHistory(XTextBrowser* self);
+int XTextBrowser_backwardHistoryCount(const XTextBrowser* self);
+int XTextBrowser_forwardHistoryCount(const XTextBrowser* self);
+void XTextBrowser_setSource_2(XTextBrowser* self, const char* url);
 #endif /* XTEXTBROWSER_H */

@@ -1048,4 +1048,9 @@ void* XMenu_hovered_signal(XMenu* self, XAction* action)
     return (void*)(size_t)XMenu_hovered_signal;
 }
 
+void XMenu_setDefaultAction_2(XMenu* self, XAction* action) { (void)self; (void)action; }
+XAction* XMenu_defaultAction_2(const XMenu* self) { (void)self; return NULL; }
+void XMenu_setToolTipsVisible_2(XMenu* self, bool visible) { (void)self; (void)visible; }
+bool XMenu_toolTipsVisible_2(const XMenu* self) { (void)self; return false; }
+int XMenu_columnCount_2(const XMenu* self) { (void)self; return 1; }
 #endif /* XWIDGET_ON && XMENU_ON */

@@ -458,4 +458,25 @@ void* XTabBar_tabMoved_signal(XTabBar* self)
     return (void*)(size_t)XTabBar_tabMoved_signal;
 }
 
+void XTabBar_setAutoHide(XTabBar* self, bool hide) { if(self) self->m_autoHide=hide; }
+bool XTabBar_autoHide(const XTabBar* self) { return self?self->m_autoHide:false; }
+void XTabBar_setDocumentMode(XTabBar* self, bool mode) { (void)self; (void)mode; }
+bool XTabBar_documentMode(const XTabBar* self) { (void)self; return false; }
+void XTabBar_setElideMode(XTabBar* self, int mode) { (void)self; (void)mode; }
+int XTabBar_elideMode(const XTabBar* self) { (void)self; return 0; }
+void XTabBar_setExpanding(XTabBar* self, bool expanding) { (void)self; (void)expanding; }
+bool XTabBar_isExpanding(const XTabBar* self) { (void)self; return false; }
+void XTabBar_setSelectionBehaviorOnRemove(XTabBar* self, int behavior) { (void)self; (void)behavior; }
+int XTabBar_selectionBehaviorOnRemove(const XTabBar* self) { (void)self; return 0; }
+void XTabBar_setUsesScrollButtons(XTabBar* self, bool useButtons) { (void)self; (void)useButtons; }
+bool XTabBar_usesScrollButtons(const XTabBar* self) { (void)self; return false; }
+void XTabBar_setTabButton(XTabBar* self, int index, int position, XWidget* widget) { (void)self; (void)index; (void)position; (void)widget; }
+XWidget* XTabBar_tabButton(const XTabBar* self, int index, int position) { (void)self; (void)index; (void)position; return NULL; }
+void XTabBar_setTabTextColor(XTabBar* self, int index, uint32_t color) { (void)self; (void)index; (void)color; }
+uint32_t XTabBar_tabTextColor(const XTabBar* self, int index) { (void)self; (void)index; return 0; }
+void XTabBar_setTabToolTip(XTabBar* self, int index, const char* tip) { (void)self; (void)index; (void)tip; }
+const char* XTabBar_tabToolTip(const XTabBar* self, int index) { (void)self; (void)index; return ""; }
+void XTabBar_setTabWhatsThis(XTabBar* self, int index, const char* text) { (void)self; (void)index; (void)text; }
+const char* XTabBar_tabWhatsThis(const XTabBar* self, int index) { (void)self; (void)index; return ""; }
+void XTabBar_setTabIcon(XTabBar* self, int index, const char* icon) { (void)self; (void)index; (void)icon; }
 #endif /* XWIDGET_ON && XTABBAR_ON */

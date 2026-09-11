@@ -510,4 +510,20 @@ void* XWizard_customButtonClicked_signal(XWizard* self)
     return (void*)(size_t)XWizard_customButtonClicked_signal;
 }
 
+void XWizard_setPixmap(XWizard* self, int which, const char* path) { (void)self; (void)which; (void)path; }
+const char* XWizard_pixmap(const XWizard* self, int which) { (void)self; (void)which; return ""; }
+void XWizard_setField_2(XWizard* self, const char* name, const char* value) { (void)self; (void)name; (void)value; }
+const char* XWizard_field(const XWizard* self, const char* name) { (void)self; (void)name; return ""; }
+void XWizard_setSideWidget(XWizard* self, XWidget* widget) { (void)self; (void)widget; }
+XWidget* XWizard_sideWidget(const XWizard* self) { (void)self; return NULL; }
+int XWizard_visitedIds_count(const XWizard* self)
+{ int i; int c=0; if(!self) return 0; for(i=0;i<self->m_pageCount;++i) if(self->m_visited[i]) ++c; return c; }
+bool XWizard_validateCurrentPage(XWizard* self)
+{ XWizardPage* p; if(!self) return false; p=XWizard_currentPage(self); return p?XWizardPage_isComplete(p):true; }
+void XWizard_setButtonLayout(XWizard* self, const int* layout, int count) { (void)self; (void)layout; (void)count; }
+void XWizard_setButton_2(XWizard* self, XWizardButton which, XPushButton* button) { (void)self; (void)which; (void)button; }
+void XWizard_setTitleFormat(XWizard* self, int format) { (void)self; (void)format; }
+int XWizard_titleFormat(const XWizard* self) { (void)self; return 0; }
+void XWizard_setSubTitleFormat(XWizard* self, int format) { (void)self; (void)format; }
+int XWizard_subTitleFormat(const XWizard* self) { (void)self; return 0; }
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */

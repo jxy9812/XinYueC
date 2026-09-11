@@ -173,4 +173,11 @@ void* XComboBox_popupHidden_signal(XComboBox* self);
 #ifdef __cplusplus
 }
 #endif
+int XComboBox_findData(const XComboBox* self, const char* data);
+void XComboBox_setItemIcon(XComboBox* self, int index, const char* icon);
+void XComboBox_setItemData(XComboBox* self, int index, const char* data);
+const char* XComboBox_itemData(const XComboBox* self, int index);
+void XComboBox_showPopup_2(XComboBox* self);
+void XComboBox_hidePopup_2(XComboBox* self);
+void XComboBox_setCompleter(XComboBox* self, void* completer);
 #endif /* XCOMBOBOX_H */

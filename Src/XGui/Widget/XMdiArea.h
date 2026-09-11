@@ -155,4 +155,22 @@ void* XMdiArea_subWindowActivated_signal(XMdiArea* self,
 #ifdef __cplusplus
 }
 #endif
+void XMdiArea_activateNextSubWindow(XMdiArea* self);
+void XMdiArea_activatePreviousSubWindow(XMdiArea* self);
+void XMdiArea_closeActiveSubWindow(XMdiArea* self);
+void XMdiArea_setActiveSubWindow_2(XMdiArea* self, XWidget* window);
+void XMdiArea_setViewMode_2(XMdiArea* self, int mode);
+void XMdiArea_cascadeSubWindows_2(XMdiArea* self);
+void XMdiArea_tileSubWindows_2(XMdiArea* self);
+void XMdiArea_closeAllSubWindows_2(XMdiArea* self);
+void XMdiArea_removeSubWindow_2(XMdiArea* self, XWidget* widget);
+int XMdiArea_subWindowCount_2(const XMdiArea* self);
+void XMdiArea_setBackground(XMdiArea* self, uint32_t color);
+uint32_t XMdiArea_background(const XMdiArea* self);
+void XMdiArea_setDocumentMode_2(XMdiArea* self, bool mode);
+bool XMdiArea_documentMode_2(const XMdiArea* self);
+void XMdiArea_setTabPosition(XMdiArea* self, int position);
+int XMdiArea_tabPosition(const XMdiArea* self);
+void XMdiArea_setTabsClosable_2(XMdiArea* self, bool closable);
+bool XMdiArea_isTabsClosable_2(const XMdiArea* self);
 #endif /* XMDIAREA_H */

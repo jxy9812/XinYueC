@@ -438,4 +438,9 @@ void* XMenu_hovered_signal(XMenu* self, XAction* action);
 }
 #endif
 
+void XMenu_setDefaultAction_2(XMenu* self, XAction* action);
+XAction* XMenu_defaultAction_2(const XMenu* self);
+void XMenu_setToolTipsVisible_2(XMenu* self, bool visible);
+bool XMenu_toolTipsVisible_2(const XMenu* self);
+int XMenu_columnCount_2(const XMenu* self);
 #endif /* XMENU_H */

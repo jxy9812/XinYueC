@@ -43,4 +43,5 @@ bool XErrorMessage_isDoneShown(const XErrorMessage* self);
 #ifdef __cplusplus
 }
 #endif
+void XErrorMessage_done(XErrorMessage* self, int result);
 #endif /* XERRORMESSAGE_H */

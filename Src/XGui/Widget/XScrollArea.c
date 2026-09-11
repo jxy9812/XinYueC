@@ -218,4 +218,9 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self,
     XScrollArea_ensureVisible(self, geom.x, geom.y, xmargin, ymargin);
 }
 
+void XScrollArea_viewportSizeHint(XScrollArea* self, int* w, int* h)
+{
+    if (w) *w = XWidget_width((XWidget*)self);
+    if (h) *h = XWidget_height((XWidget*)self);
+}
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && XSCROLLAREA_ON */

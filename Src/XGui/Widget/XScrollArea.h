@@ -114,4 +114,5 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self, XWidget* childWidget,
 #ifdef __cplusplus
 }
 #endif
+void XScrollArea_viewportSizeHint(XScrollArea* self, int* w, int* h);
 #endif /* XSCROLLAREA_H */

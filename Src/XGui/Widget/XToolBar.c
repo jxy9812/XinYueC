@@ -495,4 +495,11 @@ void* XToolBar_topLevelChanged_signal(XToolBar* self)
     return (void*)(size_t)XToolBar_topLevelChanged_signal;
 }
 
+bool XToolBar_isAreaAllowed(const XToolBar* self, int area)
+{ return self ? (self->m_allowedAreas & area) != 0 : false; }
+bool XToolBar_isFloating(const XToolBar* self) { (void)self; return false; }
+void XToolBar_setAllowedAreas_2(XToolBar* self, int areas) { if (self) self->m_allowedAreas = areas; }
+void XToolBar_setFloatable_2(XToolBar* self, bool floatable) { if (self) self->m_floatable = floatable; }
+void XToolBar_setMovable_2(XToolBar* self, bool movable) { if (self) self->m_movable = movable; }
+void XToolBar_setOrientation_2(XToolBar* self, int orientation) { if (self) self->m_orientation = orientation; }
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */

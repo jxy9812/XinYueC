@@ -123,4 +123,7 @@ void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self)
     return (void*)(size_t)XFontComboBox_currentFontChanged_signal;
 }
 
+void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family)
+{ XFontComboBox_setCurrentFamily(self, family); }
+void XFontComboBox_setWritingSystem(XFontComboBox* self, int system) { (void)self; (void)system; }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */

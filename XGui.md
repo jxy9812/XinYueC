@@ -14964,4 +14964,42 @@ QWizardPage 内嵌于 XWizard（同 XMdiSubWindow 内嵌于 XMdiArea）。
 - regression exit=0（28 个测试含 wizard）
 - ctest 3/3
 - 26 crop PASS
+### 14.68 Qt API 全量补齐完成（2026-09-09）
+
+#### 阶段 1：信号批量补齐
+
+27 个新增信号声明+实现，30 个控件 104 个信号全覆盖。
+
+#### 阶段 2-3：少量+中量方法补齐
+
+XSpinBox(decimals)/XErrorMessage(done)/XScrollArea(viewportSizeHint)/
+XLcdNumber(checkOverflow)/XAbstractScrollArea(6)/XMenu(6)/
+XTextBrowser(4)/XToolBar(6)/XToolBox(3)/XFontComboBox(2)/XSplitter(2)/
+XDialogButtonBox(4 信号)/XMessageBox(5)
+
+#### 阶段 4：大量方法补齐（12 个控件约 200 个新方法）
+
+XTabBar: 25 个（autoHide/documentMode/elideMode/movable/tabButton 等）
+XMainWindow: 20 个（toolBarArea/dockWidgetArea/corner/tabPosition 等）
+XDateTimeEdit: 20 个（clear 系列/calendarPopup/timeSpec/range 等）
+XTabWidget: 20 个（clear/cornerWidget/elideMode/documentMode 等）
+XWidget: 20 个（action/windowFlags/toolTip/attribute/scroll 等）
+XMessageBox: 15 个（defaultButton/textFormat/checkBox 等）
+XCalendarWidget: 15 个（dateEdit/weekNumber/headerFormat 等）
+XWizard: 15 个（pixmap/field/sideWidget/buttonLayout/validate 等）
+XComboBox: 12 个（findText/findData/editable/duplicates 等）
+XMdiArea: 18 个（activateNext/Previous/closeActive 等）
+XMenu: 8 个（popup/defaultAction/toolTips 等）
+
+#### 最终验证
+
+- regression exit=0 ✓
+- ctest 3/3 ✓
+- 26 裁剪构建 26/26 PASS ✓
+- benchmark 471FPS ✓
+
+#### 缺口剩余
+
+仅 XTextEdit/XPlainTextEdit 的 HTML 富文本引擎（约 127 个 API）
+需要 QTextDocument 完整替代，留后续版本。
 

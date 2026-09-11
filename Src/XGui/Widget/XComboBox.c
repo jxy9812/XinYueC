@@ -725,4 +725,11 @@ void* XComboBox_popupHidden_signal(XComboBox* self)
     return (void*)(size_t)XComboBox_popupHidden_signal;
 }
 
+int XComboBox_findData(const XComboBox* self, const char* data) { (void)self; (void)data; return -1; }
+void XComboBox_setItemIcon(XComboBox* self, int index, const char* icon) { (void)self; (void)index; (void)icon; }
+void XComboBox_setItemData(XComboBox* self, int index, const char* data) { (void)self; (void)index; (void)data; }
+const char* XComboBox_itemData(const XComboBox* self, int index) { (void)self; (void)index; return ""; }
+void XComboBox_showPopup_2(XComboBox* self) { XComboBox_showPopup_base(self); }
+void XComboBox_hidePopup_2(XComboBox* self) { XComboBox_hidePopup_base(self); }
+void XComboBox_setCompleter(XComboBox* self, void* completer) { (void)self; (void)completer; }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */

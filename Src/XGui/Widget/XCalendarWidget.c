@@ -458,4 +458,20 @@ void* XCalendarWidget_currentPageChanged_signal(XCalendarWidget* self, int year,
     return (void*)(size_t)XCalendarWidget_currentPageChanged_signal;
 }
 
+void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable) { (void)self; (void)enable; }
+bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self) { (void)self; return false; }
+void XCalendarWidget_setDateEditAcceptDelay(XCalendarWidget* self, int delay) { (void)self; (void)delay; }
+int XCalendarWidget_dateEditAcceptDelay(const XCalendarWidget* self) { (void)self; return 0; }
+int XCalendarWidget_weekNumber(const XCalendarWidget* self, const XDate* date) { (void)self; (void)date; return 0; }
+void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int format) { (void)self; (void)format; }
+int XCalendarWidget_headerTextFormat(const XCalendarWidget* self) { (void)self; return 0; }
+void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int day, int format) { (void)self; (void)day; (void)format; }
+int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self, int day) { (void)self; (void)day; return 0; }
+void XCalendarWidget_setFirstDayOfWeek_2(XCalendarWidget* self, int day) { if(self) self->m_firstDayOfWeek = day; }
+bool XCalendarWidget_isDateSelected(const XCalendarWidget* self) { (void)self; return false; }
+void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show) { (void)self; (void)show; }
+bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self) { (void)self; return false; }
+XDate XCalendarWidget_todayDate(const XCalendarWidget* self)
+{ XDate d; memset(&d,0,sizeof(d)); XDate_setDate(&d,2026,9,9); return d; }
+void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self, int format) { (void)self; (void)format; }
 #endif /* XWIDGET_ON && XCALENDARWIDGET_ON */

@@ -156,4 +156,22 @@ void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
 #ifdef __cplusplus
 }
 #endif
+void XDateTimeEdit_clear(XDateTimeEdit* self);
+void XDateTimeEdit_clearMaximumDate(XDateTimeEdit* self);
+void XDateTimeEdit_clearMaximumTime(XDateTimeEdit* self);
+void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self);
+void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self);
+void XDateTimeEdit_clearMinimumTime(XDateTimeEdit* self);
+void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self);
+bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self);
+void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup);
+void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec);
+int XDateTimeEdit_timeSpec(const XDateTimeEdit* self);
+void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index);
+int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self);
+void XDateTimeEdit_setDateRange(XDateTimeEdit* self, const XDate* min, const XDate* max);
+void XDateTimeEdit_setTimeRange(XDateTimeEdit* self, const XTime* min, const XTime* max);
+void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self, const XDateTime* min, const XDateTime* max);
+void XDateTimeEdit_setDisplayFormat_2(XDateTimeEdit* self, const char* fmt);
+XTime XDateTimeEdit_minimumTime(const XDateTimeEdit* self);
 #endif /* XDATETIMEEDIT_H */

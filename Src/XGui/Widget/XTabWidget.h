@@ -91,4 +91,21 @@ void* XTabWidget_tabClicked_signal(XTabWidget* self);
 /* ==================== 信号 ==================== */
 
 void* XTabWidget_tabCloseRequested_signal(XTabWidget* self);
+void XTabWidget_clear(XTabWidget* self);
+void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner);
+XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner);
+void XTabWidget_setElideMode(XTabWidget* self, int mode);
+int XTabWidget_elideMode(const XTabWidget* self);
+void XTabWidget_setDocumentMode(XTabWidget* self, bool mode);
+bool XTabWidget_documentMode(const XTabWidget* self);
+bool XTabWidget_isTabsClosable(const XTabWidget* self);
+void XTabWidget_setTabShape(XTabWidget* self, int shape);
+int XTabWidget_tabShape(const XTabWidget* self);
+void XTabWidget_setIconSize(XTabWidget* self, int size);
+int XTabWidget_iconSize(const XTabWidget* self);
+void XTabWidget_setUsesScrollButtons(XTabWidget* self, bool useButtons);
+bool XTabWidget_usesScrollButtons(const XTabWidget* self);
+void XTabWidget_setTabTextColor(XTabWidget* self, int index, uint32_t color);
+uint32_t XTabWidget_tabTextColor(const XTabWidget* self, int index);
+void XTabWidget_setTabToolTip(XTabWidget* self, int index, const char* tip);
 #endif /* XTABWIDGET_H */

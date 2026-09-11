@@ -132,4 +132,9 @@ void* XTextBrowser_highlighted_signal(XTextBrowser* self)
     return (void*)(size_t)XTextBrowser_highlighted_signal;
 }
 
+void XTextBrowser_clearHistory(XTextBrowser* self) { (void)self; }
+int XTextBrowser_backwardHistoryCount(const XTextBrowser* self) { (void)self; return 0; }
+int XTextBrowser_forwardHistoryCount(const XTextBrowser* self) { (void)self; return 0; }
+void XTextBrowser_setSource_2(XTextBrowser* self, const char* url)
+{ XTextBrowser_setSource(self, url); }
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON */

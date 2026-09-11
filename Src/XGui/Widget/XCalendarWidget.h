@@ -180,4 +180,19 @@ void* XCalendarWidget_currentPageChanged_signal(XCalendarWidget* self, int year,
 #ifdef __cplusplus
 }
 #endif
+void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable);
+bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self);
+void XCalendarWidget_setDateEditAcceptDelay(XCalendarWidget* self, int delay);
+int XCalendarWidget_dateEditAcceptDelay(const XCalendarWidget* self);
+int XCalendarWidget_weekNumber(const XCalendarWidget* self, const XDate* date);
+void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int format);
+int XCalendarWidget_headerTextFormat(const XCalendarWidget* self);
+void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int day, int format);
+int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self, int day);
+void XCalendarWidget_setFirstDayOfWeek_2(XCalendarWidget* self, int day);
+bool XCalendarWidget_isDateSelected(const XCalendarWidget* self);
+void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show);
+bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self);
+XDate XCalendarWidget_todayDate(const XCalendarWidget* self);
+void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self, int format);
 #endif /* XCALENDARWIDGET_H */

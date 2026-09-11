@@ -191,4 +191,6 @@ void* XSpinBox_textChanged_signal(XSpinBox* self);
 #ifdef __cplusplus
 }
 #endif
+int XSpinBox_decimals(const XSpinBox* self);
+void XSpinBox_setDecimals(XSpinBox* self, int decimals);
 #endif /* XSPINBOX_H */

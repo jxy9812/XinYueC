@@ -1462,4 +1462,18 @@ void* XWidget_customContextMenuRequested_signal(XWidget* self, const XPoint* pos
 #ifdef __cplusplus
 }
 #endif
+void XWidget_addAction_2(XWidget* self, XAction* action);
+void XWidget_removeAction_2(XWidget* self, XAction* action);
+void XWidget_setWindowTitle_2(XWidget* self, const char* utf8);
+void XWidget_setToolTip_2(XWidget* self, const char* utf8);
+const char* XWidget_toolTip_2(const XWidget* self);
+void XWidget_setStatusTip_2(XWidget* self, const char* utf8);
+void XWidget_setWhatsThis_2(XWidget* self, const char* utf8);
+void XWidget_setAccessibleName_2(XWidget* self, const char* utf8);
+void XWidget_setAccessibleDescription_2(XWidget* self, const char* utf8);
+void XWidget_clearFocus_2(XWidget* self);
+void XWidget_scroll_2(XWidget* self, int dx, int dy);
+void XWidget_setAttribute_2(XWidget* self, int attribute, bool on);
+bool XWidget_testAttribute_2(const XWidget* self, int attribute);
+void XWidget_setGraphicsEffect(XWidget* self, void* effect);
 #endif /* XWIDGET_H */

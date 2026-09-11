@@ -27,6 +27,7 @@ extern "C" {
 #include "XWidget.h"
 #if XDOCKWIDGET_ON
 #include "XDockWidget.h"
+#include "XToolBar.h"
 #endif
 
 #if XWIDGET_ON && XMAINWINDOW_ON
@@ -102,4 +103,24 @@ int XMainWindow_dockOptions(const XMainWindow* self);
 #ifdef __cplusplus
 }
 #endif
+int XMainWindow_toolBarArea(const XMainWindow* self, XToolBar* toolbar);
+int XMainWindow_dockWidgetArea(const XMainWindow* self, XDockWidget* dock);
+void XMainWindow_addToolBarBreak(XMainWindow* self, int area);
+void XMainWindow_setDocumentMode(XMainWindow* self, bool mode);
+bool XMainWindow_documentMode(const XMainWindow* self);
+void XMainWindow_setIconSize(XMainWindow* self, int size);
+int XMainWindow_iconSize(const XMainWindow* self);
+void XMainWindow_setCorner(XMainWindow* self, int corner, int area);
+int XMainWindow_corner(const XMainWindow* self, int corner);
+void XMainWindow_setTabPosition(XMainWindow* self, int area, int position);
+int XMainWindow_tabPosition(const XMainWindow* self, int area);
+void XMainWindow_setTabShape(XMainWindow* self, int shape);
+int XMainWindow_tabShape(const XMainWindow* self);
+void XMainWindow_setUnifiedTitleAndToolBarOnMac(XMainWindow* self, bool set);
+bool XMainWindow_isUnifiedTitleAndToolBarOnMac(const XMainWindow* self);
+void XMainWindow_setAnimated(XMainWindow* self, bool enabled);
+bool XMainWindow_isAnimated(const XMainWindow* self);
+void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enabled);
+bool XMainWindow_isDockNestingEnabled(const XMainWindow* self);
+void XMainWindow_setSeparator(XMainWindow* self, int area);
 #endif /* XMAINWINDOW_H */

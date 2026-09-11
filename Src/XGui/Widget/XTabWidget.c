@@ -389,4 +389,22 @@ void* XTabWidget_tabCloseRequested_signal(XTabWidget* self)
     return (void*)(size_t)XTabWidget_tabCloseRequested_signal;
 }
 
+void XTabWidget_clear(XTabWidget* self)
+{ while (XTabWidget_count(self) > 0) XTabWidget_removeTab(self, XTabWidget_count(self)-1); }
+void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner) { (void)self; (void)widget; (void)corner; }
+XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner) { (void)self; (void)corner; return NULL; }
+void XTabWidget_setElideMode(XTabWidget* self, int mode) { (void)self; (void)mode; }
+int XTabWidget_elideMode(const XTabWidget* self) { (void)self; return 0; }
+void XTabWidget_setDocumentMode(XTabWidget* self, bool mode) { (void)self; (void)mode; }
+bool XTabWidget_documentMode(const XTabWidget* self) { (void)self; return false; }
+bool XTabWidget_isTabsClosable(const XTabWidget* self) { (void)self; return false; }
+void XTabWidget_setTabShape(XTabWidget* self, int shape) { (void)self; (void)shape; }
+int XTabWidget_tabShape(const XTabWidget* self) { (void)self; return 0; }
+void XTabWidget_setIconSize(XTabWidget* self, int size) { (void)self; (void)size; }
+int XTabWidget_iconSize(const XTabWidget* self) { (void)self; return 16; }
+void XTabWidget_setUsesScrollButtons(XTabWidget* self, bool useButtons) { (void)self; (void)useButtons; }
+bool XTabWidget_usesScrollButtons(const XTabWidget* self) { (void)self; return false; }
+void XTabWidget_setTabTextColor(XTabWidget* self, int index, uint32_t color) { (void)self; (void)index; (void)color; }
+uint32_t XTabWidget_tabTextColor(const XTabWidget* self, int index) { (void)self; (void)index; return 0; }
+void XTabWidget_setTabToolTip(XTabWidget* self, int index, const char* tip) { (void)self; (void)index; (void)tip; }
 #endif /* XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON */

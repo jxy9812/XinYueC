@@ -166,4 +166,24 @@ void XMessageBox_about(XWidget* parent, const char* title,
 #ifdef __cplusplus
 }
 #endif
+void XMessageBox_setDetailedText(XMessageBox* self, const char* text);
+const char* XMessageBox_detailedText(const XMessageBox* self);
+void XMessageBox_setInformativeText(XMessageBox* self, const char* text);
+const char* XMessageBox_informativeText(const XMessageBox* self);
+void XMessageBox_addButton(XMessageBox* self, XAbstractButton* button);
+void XMessageBox_setDefaultButton(XMessageBox* self, int button);
+int XMessageBox_defaultButton(const XMessageBox* self);
+void XMessageBox_setEscapeButton(XMessageBox* self, int button);
+int XMessageBox_escapeButton(const XMessageBox* self);
+void XMessageBox_setTextFormat(XMessageBox* self, int format);
+int XMessageBox_textFormat(const XMessageBox* self);
+void XMessageBox_setTextInteractionFlags(XMessageBox* self, int flags);
+int XMessageBox_textInteractionFlags(const XMessageBox* self);
+void XMessageBox_setCheckBox_2(XMessageBox* self, bool checked);
+bool XMessageBox_checkBox(const XMessageBox* self);
+void XMessageBox_open_2(XMessageBox* self);
+void XMessageBox_reject_2(XMessageBox* self);
+static void XMessageBox_warning_2(XMessageBox* self, const char* title, const char* text);
+static void XMessageBox_critical_2(XMessageBox* self, const char* title, const char* text);
+static void XMessageBox_information_2(XMessageBox* self, const char* title, const char* text);
 #endif /* XMESSAGEBOX_H */

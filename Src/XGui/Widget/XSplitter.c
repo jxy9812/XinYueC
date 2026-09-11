@@ -528,4 +528,6 @@ void* XSplitter_splitterMoved_signal(XSplitter* self, int pos, int index)
     return (void*)(size_t)XSplitter_splitterMoved_signal;
 }
 
+void XSplitter_setRubberBand(XSplitter* self, bool on) { (void)self; (void)on; }
+bool XSplitter_rubberBand(const XSplitter* self) { (void)self; return false; }
 #endif /* XWIDGET_ON && XFRAME_ON && XSPLITTER_ON */

@@ -102,4 +102,8 @@ bool XErrorMessage_isDoneShown(const XErrorMessage* self)
     return self ? self->m_doneShown : false;
 }
 
+void XErrorMessage_done(XErrorMessage* self, int result)
+{
+    XDialog_done((XDialog*)self, result);
+}
 #endif /* XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON */

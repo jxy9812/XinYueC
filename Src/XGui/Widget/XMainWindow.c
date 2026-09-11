@@ -337,4 +337,24 @@ int XMainWindow_dockOptions(const XMainWindow* self)
     return self ? self->m_dockOptions : 0;
 }
 
+int XMainWindow_toolBarArea(const XMainWindow* self, XToolBar* toolbar) { (void)self; (void)toolbar; return 0; }
+int XMainWindow_dockWidgetArea(const XMainWindow* self, XDockWidget* dock) { (void)self; (void)dock; return 0; }
+void XMainWindow_addToolBarBreak(XMainWindow* self, int area) { (void)self; (void)area; }
+void XMainWindow_setDocumentMode(XMainWindow* self, bool mode) { (void)self; (void)mode; }
+bool XMainWindow_documentMode(const XMainWindow* self) { (void)self; return false; }
+void XMainWindow_setIconSize(XMainWindow* self, int size) { if(self) self->m_iconSize = size; }
+int XMainWindow_iconSize(const XMainWindow* self) { return self?self->m_iconSize:16; }
+void XMainWindow_setCorner(XMainWindow* self, int corner, int area) { (void)self; (void)corner; (void)area; }
+int XMainWindow_corner(const XMainWindow* self, int corner) { (void)self; (void)corner; return 0; }
+void XMainWindow_setTabPosition(XMainWindow* self, int area, int position) { (void)self; (void)area; (void)position; }
+int XMainWindow_tabPosition(const XMainWindow* self, int area) { (void)self; (void)area; return 0; }
+void XMainWindow_setTabShape(XMainWindow* self, int shape) { (void)self; (void)shape; }
+int XMainWindow_tabShape(const XMainWindow* self) { (void)self; return 0; }
+void XMainWindow_setUnifiedTitleAndToolBarOnMac(XMainWindow* self, bool set) { (void)self; (void)set; }
+bool XMainWindow_isUnifiedTitleAndToolBarOnMac(const XMainWindow* self) { (void)self; return false; }
+void XMainWindow_setAnimated(XMainWindow* self, bool enabled) { (void)self; (void)enabled; }
+bool XMainWindow_isAnimated(const XMainWindow* self) { (void)self; return false; }
+void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enabled) { (void)self; (void)enabled; }
+bool XMainWindow_isDockNestingEnabled(const XMainWindow* self) { (void)self; return false; }
+void XMainWindow_setSeparator(XMainWindow* self, int area) { (void)self; (void)area; }
 #endif /* XWIDGET_ON && XMAINWINDOW_ON */

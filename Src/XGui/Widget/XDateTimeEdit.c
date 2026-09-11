@@ -350,4 +350,34 @@ void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
     return (void*)(size_t)XDateTimeEdit_timeChanged_signal;
 }
 
+void XDateTimeEdit_clear(XDateTimeEdit* self)
+{ (void)self; }
+void XDateTimeEdit_clearMaximumDate(XDateTimeEdit* self)
+{ (void)self; }
+void XDateTimeEdit_clearMaximumTime(XDateTimeEdit* self)
+{ (void)self; }
+void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self)
+{ XDateTimeEdit_clearMaximumDate(self); XDateTimeEdit_clearMaximumTime(self); }
+void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self)
+{ (void)self; }
+void XDateTimeEdit_clearMinimumTime(XDateTimeEdit* self)
+{ (void)self; }
+void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self)
+{ XDateTimeEdit_clearMinimumDate(self); XDateTimeEdit_clearMinimumTime(self); }
+bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self) { (void)self; return false; }
+void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup) { (void)self; (void)popup; }
+void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec) { (void)self; (void)spec; }
+int XDateTimeEdit_timeSpec(const XDateTimeEdit* self) { (void)self; return 0; }
+void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index) { (void)self; (void)index; }
+int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self) { (void)self; return 0; }
+void XDateTimeEdit_setDateRange(XDateTimeEdit* self, const XDate* min, const XDate* max)
+{ (void)self; }
+void XDateTimeEdit_setTimeRange(XDateTimeEdit* self, const XTime* min, const XTime* max)
+{ (void)self; }
+void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self, const XDateTime* min, const XDateTime* max)
+{ (void)self; }
+void XDateTimeEdit_setDisplayFormat_2(XDateTimeEdit* self, const char* fmt)
+{ (void)self; }
+XTime XDateTimeEdit_minimumTime(const XDateTimeEdit* self)
+{ XTime t; memset(&t,0,sizeof(t)); return t; }
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */

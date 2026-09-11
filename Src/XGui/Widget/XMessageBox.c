@@ -264,4 +264,24 @@ void XMessageBox_about(XWidget* parent, const char* title,
                    (int)XMessageBoxIcon_Information);
 }
 
+void XMessageBox_setDetailedText(XMessageBox* self, const char* text) { (void)self; (void)text; }
+const char* XMessageBox_detailedText(const XMessageBox* self) { (void)self; return ""; }
+void XMessageBox_setInformativeText(XMessageBox* self, const char* text) { (void)self; (void)text; }
+const char* XMessageBox_informativeText(const XMessageBox* self) { (void)self; return ""; }
+void XMessageBox_addButton(XMessageBox* self, XAbstractButton* button) { (void)self; (void)button; }
+void XMessageBox_setDefaultButton(XMessageBox* self, int button) { (void)self; (void)button; }
+int XMessageBox_defaultButton(const XMessageBox* self) { (void)self; return 0; }
+void XMessageBox_setEscapeButton(XMessageBox* self, int button) { (void)self; (void)button; }
+int XMessageBox_escapeButton(const XMessageBox* self) { (void)self; return 0; }
+void XMessageBox_setTextFormat(XMessageBox* self, int format) { (void)self; (void)format; }
+int XMessageBox_textFormat(const XMessageBox* self) { (void)self; return 0; }
+void XMessageBox_setTextInteractionFlags(XMessageBox* self, int flags) { (void)self; (void)flags; }
+int XMessageBox_textInteractionFlags(const XMessageBox* self) { (void)self; return 0; }
+void XMessageBox_setCheckBox_2(XMessageBox* self, bool checked) { (void)self; (void)checked; }
+bool XMessageBox_checkBox(const XMessageBox* self) { (void)self; return false; }
+void XMessageBox_open_2(XMessageBox* self) { XWidget_show((XWidget*)self); }
+void XMessageBox_reject_2(XMessageBox* self) { XDialog_reject((XDialog*)self); }
+static void XMessageBox_warning_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
+static void XMessageBox_critical_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
+static void XMessageBox_information_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */
