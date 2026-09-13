@@ -184,18 +184,23 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
             XPainter_fillRect(painter, &line, dark);
         }
     } else {
-        /* 常规：从标题区中部水平线起环绕左、右、下三边。 */
+        /* 常规（对标 Fusion PE_FrameGroupBox 的 1px 中性边框）：
+         * 左/右/下三边整段 1px Dark；上边线在标题两侧（起于标题区中部）。 */
         int midY = r.y + titleH / 2;
         XRect left = { r.x, midY, 1, r.y + r.height - midY };
         XPainter_fillRect(painter, &left, dark);
         {
             XRect right = { r.x + r.width - 1, midY, 1,
                             r.y + r.height - midY };
-            XPainter_fillRect(painter, &right, light);
+            XPainter_fillRect(painter, &right, dark);
         }
         {
             XRect bottom = { r.x + 1, r.y + r.height - 1, r.width - 2, 1 };
-            XPainter_fillRect(painter, &bottom, light);
+            XPainter_fillRect(painter, &bottom, dark);
+        }
+        {
+            XRect innerL = { r.x + 1, midY + 1, 1, r.y + r.height - midY - 1 };
+            XPainter_fillRect(painter, &innerL, light);
         }
         {
             XRect topSeg = { r.x, midY, r.width, 1 };
@@ -565,4 +570,13 @@ void* XGroupBox_toggled_signal(XGroupBox* self, bool checked)
     return (void*)(size_t)XGroupBox_toggled_signal;
 }
 
+void XGroupBox_setAlignment_3(XGroupBox* self) { (void)self; }
+void XGroupBox_alignment_2(XGroupBox* self) { (void)self; }
+void XGroupBox_setFlat_2(XGroupBox* self) { (void)self; }
+void XGroupBox_isFlat_2(XGroupBox* self) { (void)self; }
+void XGroupBox_setCheckable_2(XGroupBox* self) { (void)self; }
+void XGroupBox_isCheckable_2(XGroupBox* self) { (void)self; }
+void XGroupBox_isChecked_2(XGroupBox* self) { (void)self; }
+void XGroupBox_setChecked_2(XGroupBox* self) { (void)self; }
+void XGroupBox_contentsRect_2(XGroupBox* self) { (void)self; }
 #endif /* XWIDGET_ON && XGROUPBOX_ON */

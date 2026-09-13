@@ -263,4 +263,49 @@ void* XGroupBox_toggled_signal(XGroupBox* self, bool checked);
 #ifdef __cplusplus
 }
 #endif
+/** @brief X组盒set对齐3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_setAlignment_3(XGroupBox* self);
+/** @brief X组盒alignment2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_alignment_2(XGroupBox* self);
+/** @brief X组盒setFlat2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_setFlat_2(XGroupBox* self);
+/** @brief X组盒isFlat2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_isFlat_2(XGroupBox* self);
+/** @brief X组盒setCheckable2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_setCheckable_2(XGroupBox* self);
+/** @brief X组盒isCheckable2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_isCheckable_2(XGroupBox* self);
+/** @brief X组盒is勾选2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_isChecked_2(XGroupBox* self);
+/** @brief X组盒set勾选2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_setChecked_2(XGroupBox* self);
+/** @brief X组盒contents矩形2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XGroupBox_contentsRect_2(XGroupBox* self);
 #endif /* XGROUPBOX_H */

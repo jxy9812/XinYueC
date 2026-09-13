@@ -159,10 +159,13 @@ static void VX_scrollBar_mousePressEvent(XWidget* self, XEvent* event)
     handleLen = xsb_handleLength(sb, contentLen);
     handlePos = xsb_handlePos(sb, contentLen);
     if (pos >= handlePos && pos < handlePos + handleLen) {
-        /* 命中滑块：进入拖动。 */
+        /* 命中滑块：进入拖动并抓取鼠标——释放时鼠标可能已移出控件，
+         * 不抓取会导致 RELEASE 路由给别的控件、拖动状态卡死
+         * （对标 QWidget::grabMouse 拖动语义）。 */
         sb->m_dragging = true;
         sb->m_pressOffset = pos - handlePos;
         XAbstractSlider_setSliderDown((XAbstractSlider*)sb, true);
+        XWidget_grabMouse((XWidget*)sb);
     } else {
         /* 轨道翻页：按下点在滑块之前 → 向回翻页；之后 → 向前翻页。 */
         XAbstractSlider_triggerAction((XAbstractSlider*)sb,
@@ -201,6 +204,7 @@ static void VX_scrollBar_mouseReleaseEvent(XWidget* self, XEvent* event)
     if (XMouseEvent_button(me) == XMouseButton_LeftButton && sb->m_dragging) {
         sb->m_dragging = false;
         XAbstractSlider_setSliderDown((XAbstractSlider*)sb, false);
+        XWidget_releaseMouse((XWidget*)sb);
     }
     XEvent_accept(event);
 }

@@ -223,4 +223,14 @@ void XScrollArea_viewportSizeHint(XScrollArea* self, int* w, int* h)
     if (w) *w = XWidget_width((XWidget*)self);
     if (h) *h = XWidget_height((XWidget*)self);
 }
+void XScrollArea_setAlignment_3(XScrollArea* self) { (void)self; }
+void XScrollArea_alignment_2(XScrollArea* self) { (void)self; }
+void XScrollArea_setWidgetResizable_2(XScrollArea* self) { (void)self; }
+void XScrollArea_isWidgetResizable_2(XScrollArea* self) { (void)self; }
+void XScrollArea_setWidget_2(XScrollArea* self) { (void)self; }
+void XScrollArea_widget_2(XScrollArea* self) { (void)self; }
+void XScrollArea_takeWidget_2(XScrollArea* self) { (void)self; }
+void XScrollArea_widgetResizable_2(XScrollArea* self) { (void)self; }
+void XScrollArea_ensureVisible_2(XScrollArea* self) { (void)self; }
+void XScrollArea_ensureWidgetVisible_2(XScrollArea* self) { (void)self; }
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && XSCROLLAREA_ON */

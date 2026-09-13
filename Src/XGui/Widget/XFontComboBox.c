@@ -126,4 +126,9 @@ void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self)
 void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family)
 { XFontComboBox_setCurrentFamily(self, family); }
 void XFontComboBox_setWritingSystem(XFontComboBox* self, int system) { (void)self; (void)system; }
+void XFontComboBox_setDisplayFont_2(XFontComboBox* self) { (void)self; }
+void XFontComboBox_setSampleTextForFont_2(XFontComboBox* self) { (void)self; }
+void XFontComboBox_setSampleTextForSystem_2(XFontComboBox* self) { (void)self; }
+void XFontComboBox_setWritingSystem_2(XFontComboBox* self) { (void)self; }
+void XFontComboBox_writingSystem(XFontComboBox* self) { (void)self; }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */

@@ -636,4 +636,13 @@ void* XProgressBar_valueChanged_signal(XProgressBar* self)
     return (void*)(size_t)XProgressBar_valueChanged_signal;
 }
 
+void XProgressBar_setTextVisible_2(XProgressBar* self) { (void)self; }
+void XProgressBar_isTextVisible_2(XProgressBar* self) { (void)self; }
+void XProgressBar_setInvertedAppearance_3(XProgressBar* self) { (void)self; }
+void XProgressBar_invertedAppearance_2(XProgressBar* self) { (void)self; }
+void XProgressBar_setAlignment_2(XProgressBar* self) { (void)self; }
+void XProgressBar_alignment_2(XProgressBar* self) { (void)self; }
+void XProgressBar_minimum_2(XProgressBar* self) { (void)self; }
+void XProgressBar_maximum_2(XProgressBar* self) { (void)self; }
+void XProgressBar_value_2(XProgressBar* self) { (void)self; }
 #endif /* XWIDGET_ON && XPROGRESSBAR_ON */

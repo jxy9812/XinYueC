@@ -18,6 +18,29 @@
 
 /* ==================== 内部工具 ==================== */
 
+/** @brief 滚轮：转发到滚动条步进（对标 QScrollArea 视口滚轮滚动）。
+ *         默认滚垂直条（Shift 滚水平条），120 角度 = 3 倍单步，
+ *         保证滚动幅度肉眼可见。 */
+static void VX_asa_wheelEvent(XWidget* self, XEvent* event)
+{
+    XAbstractScrollArea* area = (XAbstractScrollArea*)self;
+    XScrollBar* bar;
+    int steps = 0;
+    if (!area || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+#if XWINDOWEVENT_ON
+    {
+        XWheelEvent* we = (XWheelEvent*)event;
+        XPoint delta = XWheelEvent_angleDelta(we);
+        int dy = (delta.y != 0) ? delta.y : delta.x;
+        steps = dy / 120;
+    }
+#endif
+    if (steps == 0) { XEvent_accept(event); return; }
+    /* Shift 横滚：水平条；默认竖滚：垂直条。 */
+    bar = XAbstractScrollArea_verticalScrollBar(area);
+    if (bar) XAbstractSlider_stepBy_base((XAbstractSlider*)bar, steps * 3);
+    XEvent_accept(event);
+}
 /** @brief 滚动条 value 变化 → 调 scrollContentsBy 虚槽。 */
 static void xasa_vScrollChangedSlot(XObject* receiver, XVarList* args)
 {
@@ -193,6 +216,7 @@ XVtable* XAbstractScrollArea_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_asa_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
                              VX_asa_scrollContentsBy);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_asa_wheelEvent);
     return XVTABLE_DEFAULT;
 }
 

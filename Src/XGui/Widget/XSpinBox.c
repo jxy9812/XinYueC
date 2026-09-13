@@ -459,7 +459,7 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
         int cx = bx + XSPINBOX_BUTTON_W / 2;
         int cy1 = r.y + bh / 2;
         int cy2 = r.y + bh + bh / 2;
-        int s = 3;
+        int s = 4;
         XPainter_setPen(&painter, dark);
         XPainter_drawLine(&painter, cx - s, cy1 + 1, cx + s, cy1 + 1);
         XPainter_drawLine(&painter, cx - s, cy1 + 1, cx, cy1 - s);
@@ -998,4 +998,17 @@ void* XSpinBox_textChanged_signal(XSpinBox* self)
 
 int XSpinBox_decimals(const XSpinBox* self) { return 0; }
 void XSpinBox_setDecimals(XSpinBox* self, int decimals) { (void)self; (void)decimals; }
+void XSpinBox_setRange_2(XSpinBox* self) { (void)self; }
+void XSpinBox_minimum_2(XSpinBox* self) { (void)self; }
+void XSpinBox_maximum_2(XSpinBox* self) { (void)self; }
+void XSpinBox_value_2(XSpinBox* self) { (void)self; }
+void XSpinBox_setValue_2(XSpinBox* self) { (void)self; }
+void XSpinBox_setPrefix_2(XSpinBox* self) { (void)self; }
+void XSpinBox_prefix_2(XSpinBox* self) { (void)self; }
+void XSpinBox_setSuffix_2(XSpinBox* self) { (void)self; }
+void XSpinBox_suffix_2(XSpinBox* self) { (void)self; }
+void XSpinBox_setSingleStep_2(XSpinBox* self) { (void)self; }
+void XSpinBox_singleStep_2(XSpinBox* self) { (void)self; }
+void XSpinBox_setWrapping_2(XSpinBox* self) { (void)self; }
+void XSpinBox_wrapping_2(XSpinBox* self) { (void)self; }
 #endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */

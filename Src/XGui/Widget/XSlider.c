@@ -41,8 +41,8 @@
 #include <stdint.h>
 
 /* handle 固定宽度（水平）/ 高度（垂直）与凹槽厚度、刻度线尺寸 */
-#define XSLIDER_HANDLE_SIZE 12
-#define XSLIDER_GROOVE_H    3
+#define XSLIDER_HANDLE_SIZE 16
+#define XSLIDER_GROOVE_H    5
 #define XSLIDER_TICK_SIZE   3
 
 /* ==================== 前向声明 ==================== */
@@ -171,8 +171,11 @@ static void VXSlider_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
-    /* 点击凹槽：handle 跳到点击处（Qt 默认左键绝对定位）。 */
+    /* 点击凹槽：handle 跳到点击处并进入拖动（对标 Qt：左键
+     * 绝对定位后 move 持续跟踪，否则后续 mouseMove 全被忽略）。 */
     value = xslider_posToValue(slider, pickPos);
+    slider->m_dragOffset = 0;
+    XAbstractSlider_setSliderDown(base, true);
     XAbstractSlider_setSliderPosition(base, value);
     XAbstractSlider_triggerAction(base, XAbstractSliderSliderAction_Move);
     XEvent_accept(event);
@@ -338,16 +341,45 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
         handle.y = r.y + 1;
     }
 
-    /* 凹槽：Dark 上线 + Light 下线（凹陷）。 */
+    /* 凹槽：Base 底 + Dark 1px 边框（凹陷），已走过部分填 Highlight
+     * （对标 Fusion 风格 sub-page 高亮）。 */
     XPainter_fillRect(&painter, &groove, baseColor);
     {
-        XRect line = groove;
+        XRect line;
+        line = groove;
         line.height = 1;
         XPainter_fillRect(&painter, &line, dark);
         line = groove;
         line.y = groove.y + groove.height - 1;
         line.height = 1;
-        XPainter_fillRect(&painter, &line, light);
+        XPainter_fillRect(&painter, &line, dark);
+        line = groove;
+        line.width = 1;
+        XPainter_fillRect(&painter, &line, dark);
+        line = groove;
+        line.x = groove.x + groove.width - 1;
+        line.width = 1;
+        XPainter_fillRect(&painter, &line, dark);
+    }
+    {
+        /* 子页高亮：从凹槽起点到 handle 中心（仅水平/垂直主方向）。 */
+        uint32_t highlight = xslider_color(slider, XPaletteColorRole_Highlight);
+        XRect sub = groove;
+        if (base->m_orientation == XAbstractSliderOrientation_Vertical) {
+            int h = handlePos - sub.y;
+            if (h > 0) {
+                if (h > sub.height) h = sub.height;
+                sub.height = h;
+                XPainter_fillRect(&painter, &sub, highlight);
+            }
+        } else {
+            int wgt = handlePos - sub.x;
+            if (wgt > 0) {
+                if (wgt > sub.width) wgt = sub.width;
+                sub.width = wgt;
+                XPainter_fillRect(&painter, &sub, highlight);
+            }
+        }
     }
 
     /* 刻度线（在 handle 之下绘制）。 */

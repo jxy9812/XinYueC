@@ -423,4 +423,7 @@ void* XToolBox_currentChanged_signal(XToolBox* self, int index)
 const char* XToolBox_itemToolTip(const XToolBox* self, int index) { (void)self; (void)index; return ""; }
 void XToolBox_setItemIcon(XToolBox* self, int index, const char* icon) { (void)self; (void)index; (void)icon; }
 void XToolBox_setItemToolTip(XToolBox* self, int index, const char* tip) { (void)self; (void)index; (void)tip; }
+void XToolBox_setItemIcon_2(XToolBox* self) { (void)self; }
+void XToolBox_setItemEnabled_2(XToolBox* self) { (void)self; }
+void XToolBox_isItemEnabled_2(XToolBox* self) { (void)self; }
 #endif /* XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON */

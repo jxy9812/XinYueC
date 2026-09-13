@@ -61,10 +61,19 @@ typedef struct XKeySequenceEdit
     bool m_capturing;        /**< 正在捕获（有部分输入）。 */
 } XKeySequenceEdit;
 
+/** @brief XKeySequenceEditclassinit（对标 Qt 同名接口）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XVtable* XKeySequenceEdit_class_init(void);
 void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
                            XWidgetFlags flags);
 #define XKeySequenceEdit_create(parent, flags) XKeySequenceEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+/** @brief XKeySequenceEditcreateex（对标 Qt 同名接口）。
+ * @param memory XMemoryType 参数。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XKeySequenceEdit* XKeySequenceEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 #define XKeySequenceEdit_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
 #define XKeySequenceEdit_delete_base(self) XClass_delete_base((XClass*)(self))
@@ -116,4 +125,19 @@ void* XKeySequenceEdit_editingFinished_signal(XKeySequenceEdit* self);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XKeySequenceEditsetFinishingKeyCombinations2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XKeySequenceEdit_setFinishingKeyCombinations_2(XKeySequenceEdit* self);
+/** @brief XKeySequenceEditfinishingKeyCombinations（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XKeySequenceEdit_finishingKeyCombinations(XKeySequenceEdit* self);
+/** @brief XKeySequenceEditclear2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XKeySequenceEdit_clear_2(XKeySequenceEdit* self);
 #endif /* XKEYSEQUENCEEDIT_H */

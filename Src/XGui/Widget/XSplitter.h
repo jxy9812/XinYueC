@@ -98,14 +98,36 @@ void XSplitter_insertWidget(XSplitter* self, int index, XWidget* widget);
  * @brief      获取内容控件（对标 Qt 同名方法）。
  */
 XWidget* XSplitter_widget(const XSplitter* self, int index);
+/** @brief XSplittercount（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XSplitter_count(const XSplitter* self);
+/** @brief XSplitterindexOf（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param widget 子控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XSplitter_indexOf(const XSplitter* self, const XWidget* widget);
 
 /* ==================== 属性 ==================== */
 
 void XSplitter_setOrientation(XSplitter* self, int orientation);
+/** @brief XSplitterorientation（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XSplitter_orientation(const XSplitter* self);
+/** @brief XSplittersetChildren可折叠（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param collapsible bool 参数。
+ * @return 无返回值。
+ */
 void XSplitter_setChildrenCollapsible(XSplitter* self, bool collapsible);
+/** @brief XSplitterchildren可折叠（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XSplitter_childrenCollapsible(const XSplitter* self);
 /**
  * @brief      设置可折叠。
@@ -131,7 +153,17 @@ int XSplitter_handleWidth(const XSplitter* self);
  * @brief      设置把手宽度。
  */
 void XSplitter_setHandleWidth(XSplitter* self, int width);
+/** @brief XSplitterset拉伸Factor（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param stretch 拉伸因子。
+ * @return 无返回值。
+ */
 void XSplitter_setStretchFactor(XSplitter* self, int index, int stretch);
+/** @brief XSplitterrefresh（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
 void XSplitter_refresh(XSplitter* self);
 
 /* ==================== 尺寸与状态 ==================== */
@@ -171,6 +203,50 @@ void* XSplitter_splitterMoved_signal(XSplitter* self, int pos, int index);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XSplittersetRubberBand（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param on bool：true 开启。
+ * @return 无返回值。
+ */
 void XSplitter_setRubberBand(XSplitter* self, bool on);
+/** @brief XSplitterrubberBand（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XSplitter_rubberBand(const XSplitter* self);
+/** @brief XSplitterclosestLegal位置（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSplitter_closestLegalPosition(XSplitter* self);
+/** @brief XSplitterget范围（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSplitter_getRange(XSplitter* self);
+/** @brief XSplittermoveSplitter2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSplitter_moveSplitter_2(XSplitter* self);
+/** @brief XSplitterminimum尺寸Hintheight（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSplitter_minimumSizeHint_height(XSplitter* self);
+/** @brief XSplitterminimum尺寸Hintwidth（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSplitter_minimumSizeHint_width(XSplitter* self);
+/** @brief XSplitterreplace控件（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSplitter_replaceWidget(XSplitter* self);
+/** @brief XSplittersetChildren可折叠2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSplitter_setChildrenCollapsible_2(XSplitter* self);
 #endif /* XSPLITTER_H */

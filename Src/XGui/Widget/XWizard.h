@@ -88,17 +88,59 @@ typedef struct XWizardPage
     bool m_complete;       /**< 是否完成（默认 true）。 */
 } XWizardPage;
 
+/** @brief XWizard页classinit（对标 Qt 同名接口）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XVtable* XWizardPage_class_init(void);
+/** @brief XWizard页init（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XWizardPage_init(XWizardPage* self, XWidget* parent, XWidgetFlags flags);
 #define XWizardPage_create(parent, flags) XWizardPage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+/** @brief XWizard页createex（对标 Qt 同名接口）。
+ * @param memory XMemoryType 参数。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XWizardPage* XWizardPage_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 #define XWizardPage_delete_base(self) XWidget_deinit_base((XWidget*)(self))
 
+/** @brief XWizard页set标题（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param utf8 UTF-8 文本。
+ * @return 无返回值。
+ */
 void XWizardPage_setTitle(XWizardPage* self, const char* utf8);
+/** @brief XWizard页title（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XWizardPage_title(const XWizardPage* self);
+/** @brief XWizard页set子标题（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param utf8 UTF-8 文本。
+ * @return 无返回值。
+ */
 void XWizardPage_setSubTitle(XWizardPage* self, const char* utf8);
+/** @brief XWizard页sub标题（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XWizardPage_subTitle(const XWizardPage* self);
+/** @brief XWizard页setComplete（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param complete bool 参数。
+ * @return 无返回值。
+ */
 void XWizardPage_setComplete(XWizardPage* self, bool complete);
+/** @brief XWizard页isComplete（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XWizardPage_isComplete(const XWizardPage* self);
 
 /* ==================== XWizard ==================== */
@@ -127,38 +169,162 @@ typedef struct XWizard
 #endif
 } XWizard;
 
+/** @brief XWizardclassinit（对标 Qt 同名接口）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XVtable* XWizard_class_init(void);
+/** @brief XWizardinit（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XWizard_init(XWizard* self, XWidget* parent, XWidgetFlags flags);
 #define XWizard_create(parent, flags) XWizard_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+/** @brief XWizardcreateex（对标 Qt 同名接口）。
+ * @param memory XMemoryType 参数。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XWizard* XWizard_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 #define XWizard_delete_base(self) XDialog_delete_base((XDialog*)(self))
 
+/** @brief XWizardadd页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param page XWizardPage 参数。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_addPage(XWizard* self, XWizardPage* page);
+/** @brief XWizardset页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param page XWizardPage 参数。
+ * @return 无返回值。
+ */
 void XWizard_setPage(XWizard* self, int index, XWizardPage* page);
+/** @brief XWizardremove页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 无返回值。
+ */
 void XWizard_removePage(XWizard* self, int index);
+/** @brief XWizardpage（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XWizardPage* XWizard_page(XWizard* self, int index);
+/** @brief XWizardpage数量（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_pageCount(const XWizard* self);
+/** @brief XWizardcurrent页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XWizardPage* XWizard_currentPage(const XWizard* self);
+/** @brief XWizardcurrent索引（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_currentIndex(const XWizard* self);
+/** @brief XWizardnext（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
 void XWizard_next(XWizard* self);
+/** @brief XWizardback（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
 void XWizard_back(XWizard* self);
+/** @brief XWizardrestart（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
 void XWizard_restart(XWizard* self);
+/** @brief XWizardsetStart索引（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 无返回值。
+ */
 void XWizard_setStartIndex(XWizard* self, int index);
+/** @brief XWizardstart索引（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_startIndex(const XWizard* self);
+/** @brief XWizardhasVisited页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XWizard_hasVisitedPage(const XWizard* self, int index);
+/** @brief XWizardsetWizard样式（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param style XWizardStyle 参数。
+ * @return 无返回值。
+ */
 void XWizard_setWizardStyle(XWizard* self, XWizardStyle style);
+/** @brief XWizardwizard样式（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应值。
+ */
 XWizardStyle XWizard_wizardStyle(const XWizard* self);
+/** @brief XWizardset选项（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param option XWizardOption 参数。
+ * @param on bool：true 开启。
+ * @return 无返回值。
+ */
 void XWizard_setOption(XWizard* self, XWizardOption option, bool on);
+/** @brief XWizardtest选项（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param option XWizardOption 参数。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XWizard_testOption(const XWizard* self, XWizardOption option);
+/** @brief XWizardsetOptions（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param options int 参数。
+ * @return 无返回值。
+ */
 void XWizard_setOptions(XWizard* self, int options);
+/** @brief XWizardoptions（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_options(const XWizard* self);
+/** @brief XWizardset按钮文本（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param which 目标枚举项。
+ * @param utf8 UTF-8 文本。
+ * @return 无返回值。
+ */
 void XWizard_setButtonText(XWizard* self, XWizardButton which, const char* utf8);
+/** @brief XWizardbutton文本（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param which 目标枚举项。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XWizard_buttonText(const XWizard* self, XWizardButton which);
 
 /* ==================== 信号 ==================== */
 
 void* XWizard_currentIdChanged_signal(XWizard* self, int index);
+/** @brief XWizardpageAdded 信号地址（发射经 XObject_emitSignal）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 void* XWizard_pageAdded_signal(XWizard* self, int index);
+/** @brief XWizardpageRemoved 信号地址（发射经 XObject_emitSignal）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 void* XWizard_pageRemoved_signal(XWizard* self, int index);
 
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */
@@ -167,21 +333,178 @@ void* XWizard_pageRemoved_signal(XWizard* self, int index);
 }
 #endif
 
+/** @brief XWizardcomplete变更 信号地址（发射经 XObject_emitSignal）。
+ * @param self 目标控件指针。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 void* XWizard_completeChanged_signal(XWizard* self);
+/** @brief XWizardcustom按钮点击 信号地址（发射经 XObject_emitSignal）。
+ * @param self 目标控件指针。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 void* XWizard_customButtonClicked_signal(XWizard* self);
+/** @brief XWizardset图像（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param which 目标枚举项。
+ * @param path 路径。
+ * @return 无返回值。
+ */
 void XWizard_setPixmap(XWizard* self, int which, const char* path);
+/** @brief XWizardpixmap（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param which 目标枚举项。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XWizard_pixmap(const XWizard* self, int which);
+/** @brief XWizardset字段2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param name 名称（UTF-8）。
+ * @param value 数值。
+ * @return 无返回值。
+ */
 void XWizard_setField_2(XWizard* self, const char* name, const char* value);
+/** @brief XWizardfield（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param name 名称（UTF-8）。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XWizard_field(const XWizard* self, const char* name);
+/** @brief XWizardset侧控件（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param widget 子控件指针。
+ * @return 无返回值。
+ */
 void XWizard_setSideWidget(XWizard* self, XWidget* widget);
+/** @brief XWizardside控件（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XWidget* XWizard_sideWidget(const XWizard* self);
+/** @brief XWizardvisitedIdscount（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_visitedIds_count(const XWizard* self);
+/** @brief XWizardvalidate当前页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XWizard_validateCurrentPage(XWizard* self);
+/** @brief XWizardset按钮布局（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param layout 布局数组指针。
+ * @param count 元素个数。
+ * @return 无返回值。
+ */
 void XWizard_setButtonLayout(XWizard* self, const int* layout, int count);
+/** @brief XWizardset按钮2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param which 目标枚举项。
+ * @param button 按钮枚举或指针。
+ * @return 无返回值。
+ */
 void XWizard_setButton_2(XWizard* self, XWizardButton which, XPushButton* button);
+/** @brief XWizardset标题Format（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param format int 参数。
+ * @return 无返回值。
+ */
 void XWizard_setTitleFormat(XWizard* self, int format);
+/** @brief XWizardtitleFormat（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_titleFormat(const XWizard* self);
+/** @brief XWizardset子标题Format（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param format int 参数。
+ * @return 无返回值。
+ */
 void XWizard_setSubTitleFormat(XWizard* self, int format);
+/** @brief XWizardsub标题Format（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XWizard_subTitleFormat(const XWizard* self);
+/** @brief XWizarddone（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param result int 参数。
+ * @return 无返回值。
+ */
 void XWizard_done(XWizard* self, int result);
+/** @brief XWizardcleanup页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_cleanupPage(XWizard* self);
+/** @brief XWizardinitialize页（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_initializePage(XWizard* self);
+/** @brief XWizardset字段3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_setField_3(XWizard* self);
+/** @brief XWizardfield2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_field_2(XWizard* self);
+/** @brief XWizardset图像2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_setPixmap_2(XWizard* self);
+/** @brief XWizardpixmap2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_pixmap_2(XWizard* self);
+/** @brief XWizardset侧控件2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_setSideWidget_2(XWizard* self);
+/** @brief XWizardside控件2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_sideWidget_2(XWizard* self);
+/** @brief XWizardcurrentId2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_currentId_2(XWizard* self);
+/** @brief XWizardsetStartId2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_setStartId_2(XWizard* self);
+/** @brief XWizardstartId2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_startId_2(XWizard* self);
+/** @brief XWizardsetDefaultProperty（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_setDefaultProperty(XWizard* self);
+/** @brief XWizardvalidate当前页2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_validateCurrentPage_2(XWizard* self);
+/** @brief XWizardnextId（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_nextId(XWizard* self);
+/** @brief XWizardset可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XWizard_setVisible_2(XWizard* self);
 #endif /* XWIZARD_H */

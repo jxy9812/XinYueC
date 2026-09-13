@@ -685,4 +685,10 @@ void* XToolButton_triggered_signal(XToolButton* self, XAction* action)
     return (void*)(size_t)XToolButton_triggered_signal;
 }
 
+void XToolButton_setMenu_2(XToolButton* self) { (void)self; }
+void XToolButton_menu_2(XToolButton* self) { (void)self; }
+void XToolButton_setPopupMode_2(XToolButton* self) { (void)self; }
+void XToolButton_popupMode_2(XToolButton* self) { (void)self; }
+void XToolButton_setToolButtonStyle_2(XToolButton* self) { (void)self; }
+void XToolButton_toolButtonStyle_2(XToolButton* self) { (void)self; }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */

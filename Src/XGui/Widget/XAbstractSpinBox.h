@@ -126,7 +126,19 @@ typedef struct XAbstractSpinBox
 /* ==================== 生命周期 ==================== */
 
 XVtable* XAbstractSpinBox_class_init(void);
+/** @brief XAbstractSpin盒init（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XAbstractSpinBox_init(XAbstractSpinBox* self, XWidget* parent, XWidgetFlags flags);
+/** @brief XAbstractSpin盒createex（对标 Qt 同名接口）。
+ * @param memory XMemoryType 参数。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XAbstractSpinBox* XAbstractSpinBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 #define XAbstractSpinBox_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
 #define XAbstractSpinBox_delete_base(self) XWidget_delete_base((XWidget*)(self))
@@ -307,4 +319,129 @@ void* XAbstractSpinBox_editingFinished_signal(XAbstractSpinBox* self);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XAbstractSpin盒clear3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_clear_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒is选中2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_isSelected_2(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set键盘步长3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setKeyboardStep_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒stepUp3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_stepUp_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒step按下3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_stepDown_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒selectAll3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_selectAll_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒interpret文本3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_interpretText_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒is加速3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_isAccelerated_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set加速3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setAccelerated_3(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒setReadOnly4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setReadOnly_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒isReadOnly4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_isReadOnly_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set特殊值文本4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setSpecialValueText_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒special值文本4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_specialValueText_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set环绕4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setWrapping_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒wrapping4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_wrapping_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set对齐5（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setAlignment_5(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒alignment5（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_alignment_5(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set按钮Symbols4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setButtonSymbols_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒buttonSymbols4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_buttonSymbols_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set修正模式4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setCorrectionMode_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒correction模式4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_correctionMode_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set边框4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setFrame_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒has边框4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_hasFrame_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒set键盘跟踪4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_setKeyboardTracking_4(XAbstractSpinBox* self);
+/** @brief XAbstractSpin盒keyboard跟踪4（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XAbstractSpinBox_keyboardTracking_4(XAbstractSpinBox* self);
 #endif /* XABSTRACTSPINBOX_H */

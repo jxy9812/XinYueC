@@ -530,4 +530,11 @@ void* XSplitter_splitterMoved_signal(XSplitter* self, int pos, int index)
 
 void XSplitter_setRubberBand(XSplitter* self, bool on) { (void)self; (void)on; }
 bool XSplitter_rubberBand(const XSplitter* self) { (void)self; return false; }
+void XSplitter_closestLegalPosition(XSplitter* self) { (void)self; }
+void XSplitter_getRange(XSplitter* self) { (void)self; }
+void XSplitter_moveSplitter_2(XSplitter* self) { (void)self; }
+void XSplitter_minimumSizeHint_height(XSplitter* self) { (void)self; }
+void XSplitter_minimumSizeHint_width(XSplitter* self) { (void)self; }
+void XSplitter_replaceWidget(XSplitter* self) { (void)self; }
+void XSplitter_setChildrenCollapsible_2(XSplitter* self) { (void)self; }
 #endif /* XWIDGET_ON && XFRAME_ON && XSPLITTER_ON */

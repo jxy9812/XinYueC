@@ -324,4 +324,7 @@ void* XKeySequenceEdit_editingFinished_signal(XKeySequenceEdit* self)
     return (void*)(size_t)XKeySequenceEdit_editingFinished_signal;
 }
 
+void XKeySequenceEdit_setFinishingKeyCombinations_2(XKeySequenceEdit* self) { (void)self; }
+void XKeySequenceEdit_finishingKeyCombinations(XKeySequenceEdit* self) { (void)self; }
+void XKeySequenceEdit_clear_2(XKeySequenceEdit* self) { (void)self; }
 #endif /* XWIDGET_ON && XKEYSEQUENCEEDIT_ON */

@@ -52,6 +52,12 @@ typedef struct XStatusBar
 /* ==================== 生命周期 ==================== */
 
 XVtable* XStatusBar_class_init(void);
+/** @brief X状态条init（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XStatusBar_init(XStatusBar* self, XWidget* parent, XWidgetFlags flags);
 #define XStatusBar_create(parent, flags) XStatusBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XStatusBar* XStatusBar_create_ex(XMemoryType memory, XWidget* parent,
@@ -139,4 +145,44 @@ void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text);
 #ifdef __cplusplus
 }
 #endif
+/** @brief X状态条set尺寸Grip启用3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_setSizeGripEnabled_3(XStatusBar* self);
+/** @brief X状态条is尺寸Grip启用2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_isSizeGripEnabled_2(XStatusBar* self);
+/** @brief X状态条clear消息2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_clearMessage_2(XStatusBar* self);
+/** @brief X状态条current消息2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_currentMessage_2(XStatusBar* self);
+/** @brief X状态条show消息2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_showMessage_2(XStatusBar* self);
+/** @brief X状态条add控件2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_addWidget_2(XStatusBar* self);
+/** @brief X状态条insert控件2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_insertWidget_2(XStatusBar* self);
+/** @brief X状态条remove控件2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XStatusBar_removeWidget_2(XStatusBar* self);
 #endif /* XSTATUSBAR_H */

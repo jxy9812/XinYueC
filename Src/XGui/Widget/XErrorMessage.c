@@ -106,4 +106,8 @@ void XErrorMessage_done(XErrorMessage* self, int result)
 {
     XDialog_done((XDialog*)self, result);
 }
+void XErrorMessage_setDoneShown_2(XErrorMessage* self) { (void)self; }
+void XErrorMessage_isDoneShown_2(XErrorMessage* self) { (void)self; }
+void XErrorMessage_showMessage_2(XErrorMessage* self) { (void)self; }
+void XErrorMessage_currentMessage_2(XErrorMessage* self) { (void)self; }
 #endif /* XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON */

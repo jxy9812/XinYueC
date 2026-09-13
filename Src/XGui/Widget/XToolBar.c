@@ -110,7 +110,7 @@ static void xtb_relayout(XToolBar* bar)
     int horiz = bar->m_orientation != 2;
     int extent = horiz ? w : h;
     int cross = horiz ? h : w;
-    int bw = 32;
+    int bw = 48;
     int bh = cross > 6 ? cross - 6 : 20;
     int x = 2;
     int y = 2;
@@ -127,7 +127,7 @@ static void xtb_relayout(XToolBar* bar)
         else
             XRect_init(&r, y, x, bh, bw);
         XWidget_setGeometryRect((XWidget*)*btn, &r);
-        x += bw + 2;
+        x += bw + 4;
     }
     (void)extent;
 }
@@ -345,6 +345,14 @@ void XToolBar_addAction(XToolBar* self, XAction* action)
     button = XToolButton_create(self, 0);
     if (button) {
         XToolButton_setDefaultAction(button, action);
+        /* 确保 toolbutton 从 action 获取文字 */
+        {
+            const XString* atext = XAction_text_const(action);
+            if (atext && XString_length_base(atext) > 0) {
+                XAbstractButton_setText_2((XAbstractButton*)button,
+                                          XString_toUtf8(atext));
+            }
+        }
     }
     XVector_push_back_1_base(self->m_buttons, &button);
     XVector_push_back_1_base(self->m_bridges, &bridge);

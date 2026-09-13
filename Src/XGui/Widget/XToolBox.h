@@ -48,6 +48,12 @@ typedef struct XToolBox
 /* ==================== 生命周期 ==================== */
 
 XVtable* XToolBox_class_init(void);
+/** @brief X工具盒init（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XToolBox_init(XToolBox* self, XWidget* parent, XWidgetFlags flags);
 #define XToolBox_create(parent, flags) XToolBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XToolBox* XToolBox_create_ex(XMemoryType memory, XWidget* parent,
@@ -107,7 +113,17 @@ int XToolBox_currentIndex(const XToolBox* self);
  * @brief      获取当前控件。
  */
 XWidget* XToolBox_currentWidget(const XToolBox* self);
+/** @brief X工具盒set当前索引（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 无返回值。
+ */
 void XToolBox_setCurrentIndex(XToolBox* self, int index);
+/** @brief X工具盒set当前控件（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param widget 子控件指针。
+ * @return 无返回值。
+ */
 void XToolBox_setCurrentWidget(XToolBox* self, XWidget* widget);
 
 /* ==================== 信号 ==================== */
@@ -125,7 +141,39 @@ void* XToolBox_currentChanged_signal(XToolBox* self, int index);
 #ifdef __cplusplus
 }
 #endif
+/** @brief X工具盒item工具提示（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XToolBox_itemToolTip(const XToolBox* self, int index);
+/** @brief X工具盒set项图标（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param icon 图标路径。
+ * @return 无返回值。
+ */
 void XToolBox_setItemIcon(XToolBox* self, int index, const char* icon);
+/** @brief X工具盒set项工具提示（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param tip const char 参数。
+ * @return 无返回值。
+ */
 void XToolBox_setItemToolTip(XToolBox* self, int index, const char* tip);
+/** @brief X工具盒set项图标2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XToolBox_setItemIcon_2(XToolBox* self);
+/** @brief X工具盒set项启用2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XToolBox_setItemEnabled_2(XToolBox* self);
+/** @brief X工具盒is项启用2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XToolBox_isItemEnabled_2(XToolBox* self);
 #endif /* XTOOLBOX_H */

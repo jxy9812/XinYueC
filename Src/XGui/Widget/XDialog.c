@@ -120,4 +120,11 @@ void* XDialog_rejected_signal(XDialog* self)
 void* XDialog_finished_signal(XDialog* self, int result)
 { (void)self; (void)result; return (void*)(size_t)XDialog_finished_signal; }
 
+void XDialog_open_2(XDialog* self) { (void)self; }
+void XDialog_setSizeGripEnabled(XDialog* self) { (void)self; }
+void XDialog_isSizeGripEnabled(XDialog* self) { (void)self; }
+void XDialog_setModal_2(XDialog* self) { (void)self; }
+void XDialog_isModal_2(XDialog* self) { (void)self; }
+void XDialog_result_2(XDialog* self) { (void)self; }
+void XDialog_setResult_2(XDialog* self) { (void)self; }
 #endif /* XWIDGET_ON && XDIALOG_ON */

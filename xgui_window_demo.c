@@ -120,6 +120,15 @@
 #endif
 #if XTEXTBROWSER_ON
 #include "XTextBrowser.h"
+#include "XTableWidget.h"
+#include "XChartView.h"
+#include "XValueAxis.h"
+#include "XLineSeries.h"
+#include "XBarSeries.h"
+#include "XScatterSeries.h"
+#include "XAreaSeries.h"
+#include "XSplineSeries.h"
+#include "XPieSeries.h"
 #endif
 #if XMDIAREA_ON
 #include "XMdiArea.h"
@@ -204,6 +213,15 @@
 #endif
 #if XTEXTBROWSER_ON
 #include "XTextBrowser.h"
+#include "XTableWidget.h"
+#include "XChartView.h"
+#include "XValueAxis.h"
+#include "XLineSeries.h"
+#include "XBarSeries.h"
+#include "XScatterSeries.h"
+#include "XAreaSeries.h"
+#include "XSplineSeries.h"
+#include "XPieSeries.h"
 #endif
 
 #if XGUIAPPLICATION_ON && XWIDGET_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
@@ -298,6 +316,8 @@ typedef struct DemoWin
     bool            m_staticSceneDirty; /**< 静态场景需重新生成。 */
     XHandle         m_framePump; /**< 事件循环轮询回调句柄（刷新不受定时器限制）。 */
     XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
+    XTimerId        m_lcdTimer;     /**< LCD 数码管自动更新定时器。 */
+    int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
     const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
     int             m_screenshotFrames; /**< 截图模式已渲染帧数。 */
@@ -380,6 +400,19 @@ typedef struct DemoWin
 #endif
 #if XTEXTBROWSER_ON
     XTextBrowser    m_textBrowser;  /**< 文本浏览器。 */
+#endif
+#if XTABLEWIDGET_ON
+    XTableWidget    m_tableWidget; /**< 表格控件。 */
+#endif
+#if XCHARTS_ON
+    XChartView      m_chartView;   /**< 图表视图。 */
+    XPushButton     m_btnLegend;   /**< 图表：图例开关。 */
+    XPushButton     m_btnGrid;     /**< 图表：网格开关。 */
+    XPushButton     m_btnTitle;    /**< 图表：标题开关。 */
+    XPushButton     m_btnSeries;   /**< 图表：序列循环。 */
+    XPushButton     m_btnRange;    /**< 图表：Y 轴范围切换。 */
+    int             m_chartSeriesMode; /**< 图表序列显示模式 0=全部。 */
+    int             m_chartRange;  /**< 图表 Y 轴范围 0=0..60 1=0..30。 */
 #endif
 #if XMDIAREA_ON
     XMdiArea        m_mdiArea;      /**< MDI 区域。 */
@@ -1029,6 +1062,10 @@ static void demo_stopTimers(DemoWin* self)
         XObject_killTimer((XObject*)self, self->m_autoQuitTimer);
         self->m_autoQuitTimer = XTIMER_INVALID_ID;
     }
+    if (self->m_lcdTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_lcdTimer);
+        self->m_lcdTimer = XTIMER_INVALID_ID;
+    }
 }
 
 /** @brief 标准事件循环中的自动退出定时器处理。 */
@@ -1042,6 +1079,21 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
         demo_stopTimers(self);
         self->m_closed = true;
         XGuiApplication_quit();
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    if (timerId == self->m_lcdTimer) {
+        /* 循环展示段码表全部 30 行字符（0-9/A-F/a-f 大小写同形/-/.
+         * /O/g/h/L/o/P/r/u/U/Y/:，对标 QLCDNumber::display 支持集）。
+         * m_lcdValue 复用为字符序列索引。 */
+        static const char* const lcdSeq[30] = {
+            "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+            "A", "B", "C", "D", "E", "F",
+            "a", "b", "c", "d", "e", "f",
+            "-", ".", ":", "O", "g", "h", "L", " "
+        };
+        self->m_lcdValue = (self->m_lcdValue + 1) % 30;
+        XLcdNumber_display(&self->m_lcd, lcdSeq[self->m_lcdValue]);
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -1154,7 +1206,9 @@ static void demo_layout_content(DemoWin* self)
         if (w5 < 120) w5 = 120;
         XWidget_setGeometry((XWidget*)&self->m_tabWidget,
                             12, 8, w5, contentHeight - 40);
-        XWidget_setGeometry((XWidget*)&self->m_inputStatus,
+        /* page4 自己的状态行 m_tabStatus（原代码错放 page3 的
+           m_inputStatus，导致 m_tabStatus 无几何默认 (0,0) 压住 tab）。 */
+        XWidget_setGeometry((XWidget*)&self->m_tabStatus,
                             12, 8 + contentHeight - 40 + 8,
                             contentWidth, 24);
     }
@@ -1171,11 +1225,125 @@ static void demo_switchPage(DemoWin* self, int index)
     /* XStackedLayout 的 setGeometry 只给当前页面分配几何；切换后必须
        重新分配，否则新页面容器保持 0x0 导致页面内容不可见。 */
     demo_layout_content(self);
+    /* 切页后标脏静态场景缓存，触发重新渲染。 */
+    self->m_staticSceneDirty = true;
     XPrintf("XGuiWindowDemo: switch page=%d (%s)\n", index,
             demo_page_name(index));
     demo_set_status(self, demo_page_name(index));
 }
 #endif /* XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
+#if XCHARTS_ON
+/** @brief 图表：图例开关槽。 */
+static void demo_chartLegendSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    XChart* chart;
+    (void)args;
+    if (!self) return;
+    chart = XChartView_chart(&self->m_chartView);
+    if (!chart) return;
+    XChart_setLegendVisible(chart, !XChart_isLegendVisible(chart));
+    XChartView_updateChart(&self->m_chartView);
+    demo_set_status(self, "图表: 图例切换");
+}
+
+/** @brief 图表：网格开关槽。 */
+static void demo_chartGridSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    XChart* chart;
+    (void)args;
+    if (!self) return;
+    chart = XChartView_chart(&self->m_chartView);
+    if (!chart || !chart->m_axisY) return;
+    XValueAxis_setGridVisible(chart->m_axisY,
+                              !XValueAxis_isGridVisible(chart->m_axisY));
+    XChartView_updateChart(&self->m_chartView);
+    demo_set_status(self, "图表: 网格切换");
+}
+
+/** @brief 图表：标题开关槽。 */
+static void demo_chartTitleSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    XChart* chart;
+    (void)args;
+    if (!self) return;
+    chart = XChartView_chart(&self->m_chartView);
+    if (!chart) return;
+    XChart_setTitleVisible(chart, !XChart_isTitleVisible(chart));
+    XChartView_updateChart(&self->m_chartView);
+    demo_set_status(self, "图表: 标题切换");
+}
+
+/** @brief 图表：序列显示模式循环（全部/折线/柱状/散点/面积/样条）。 */
+static void demo_chartSeriesSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    XChart* chart;
+    int i;
+    (void)args;
+    if (!self) return;
+    chart = XChartView_chart(&self->m_chartView);
+    if (!chart) return;
+    self->m_chartSeriesMode = (self->m_chartSeriesMode + 1) % 6;
+    for (i = 0; i < chart->m_lineCount; ++i)
+        chart->m_lineSeries[i]->m_visible =
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 1);
+    for (i = 0; i < chart->m_barCount; ++i)
+        chart->m_barSeries[i]->m_visible =
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 2);
+    for (i = 0; i < chart->m_scatterCount; ++i)
+        chart->m_scatterSeries[i]->m_visible =
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 3);
+    for (i = 0; i < chart->m_areaCount; ++i)
+        chart->m_areaSeries[i]->m_visible =
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 4);
+    for (i = 0; i < chart->m_splineCount; ++i)
+        chart->m_splineSeries[i]->m_visible =
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 5);
+    XChartView_updateChart(&self->m_chartView);
+    demo_set_status(self, "图表: 序列模式切换");
+}
+
+/** @brief 图表：Y 轴范围切换槽。 */
+static void demo_chartRangeSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    XChart* chart;
+    (void)args;
+    if (!self) return;
+    chart = XChartView_chart(&self->m_chartView);
+    if (!chart || !chart->m_axisY) return;
+    self->m_chartRange = (self->m_chartRange + 1) % 2;
+    if (self->m_chartRange == 0)
+        XValueAxis_setRange(chart->m_axisY, 0, 60);
+    else
+        XValueAxis_setRange(chart->m_axisY, 0, 30);
+    XChartView_updateChart(&self->m_chartView);
+    demo_set_status(self, "图表: 范围切换");
+}
+#endif /* XCHARTS_ON */
+
+/** @brief 把紧凑内容控件包进页容器（页容器铺满 tab 页，内容保持
+ *         自身几何；对标 Qt 页容器+布局的分层语义）。返回页容器。 */
+static XWidget* demo_wrapTabPage(DemoWin* self, XWidget* content)
+{
+    XWidget* page;
+    if (!self || !content) return content;
+    page = (XWidget*)XMemory_malloc(sizeof(XWidget),
+                                    XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!page) return content;
+    XWidget_init(page, (XWidget*)&self->m_tabWidget, 0);
+    Set_Class_Memory(page, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(page, true);
+    XWidget_setParent(content, page, 0);
+    XWidget_show(content);
+    XWidget_show(page);
+    return page;
+}
+
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 /** @brief 页面 1（按钮演示）导航按钮 clicked 槽。 */
@@ -1972,6 +2140,8 @@ static DemoWin* DemoWin_create(void)
     XWidget_show((XWidget*)&self->m_slider);
     XWidget_show((XWidget*)&self->m_progressBar);
     XWidget_show((XWidget*)&self->m_inputStatus);
+    /* 放到最低层避免挡住 tab 按钮 */
+    XWidget_lower((XWidget*)&self->m_inputStatus);
 #endif
 #if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON && XCOMBOBOX_ON && \
     XABSTRACTSLIDER_ON && XDIAL_ON && XPROGRESSBAR_ON && XFRAME_ON && XLABEL_ON
@@ -1993,7 +2163,7 @@ static DemoWin* DemoWin_create(void)
                           (XObject*)self, demo_tab_comboSlot,
                           XConnectionType_Direct);
         (void)XTabWidget_insertTab(&self->m_tabWidget, 0,
-                                   (XWidget*)&self->m_comboBox,
+                                   demo_wrapTabPage(self, (XWidget*)&self->m_comboBox),
                                    "\xE4\xB8\x8B\xE6\x8B\x89"); /* 下拉 */
     }
     {
@@ -2026,16 +2196,18 @@ static DemoWin* DemoWin_create(void)
 #if XLCDNUMBER_ON && XSCROLLBAR_ON
     /* 页三：LCD + ScrollBar 联动。 */
     XLcdNumber_init_2(&self->m_lcd, 4u, (XWidget*)&self->m_tabWidget, 0);
-    XLcdNumber_display_2(&self->m_lcd, 1888);
+    XLcdNumber_display(&self->m_lcd, "0");
     XScrollBar_init(&self->m_scrollBar, (XWidget*)&self->m_tabWidget, 0);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_scrollBar, 0, 9999);
     XAbstractSlider_setValue((XAbstractSlider*)&self->m_scrollBar, 1888);
     XWidget_setGeometry((XWidget*)&self->m_lcd, 10, 10, 160, 60);
     XWidget_setGeometry((XWidget*)&self->m_scrollBar, 10, 80, 24, 180);
+    /* 数码管直插（铺满）：包裹容器下其分段绘制缓存偏移与清屏错位
+     * （reparent 后 paintOffset 失效问题），先恢复直插保证完整渲染。 */
     (void)XTabWidget_insertTab(&self->m_tabWidget, 2,
                                (XWidget*)&self->m_lcd, "数码管");
     (void)XTabWidget_insertTab(&self->m_tabWidget, 3,
-                               (XWidget*)&self->m_scrollBar, "滚动条");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_scrollBar), "滚动条");
 #endif
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON && XFRAME_ON && XLABEL_ON
     /* 页四：XScrollArea。 */
@@ -2043,8 +2215,8 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_scrollArea, 10, 10, 300, 150);
     {
         XLabel* big = XLabel_create((XWidget*)&self->m_scrollArea, 0);
-        XLabel_setText_2(big, "滚动内容\n第二行\n第三行\n第四行");
-        XWidget_resize(big, 400, 300);
+        XLabel_setText_2(big, "滚动内容\n第二行\n第三行\n第四行\n第五行\n第六行");
+        XWidget_resize(big, 260, 200);
         XScrollArea_setWidget(&self->m_scrollArea, (XWidget*)big);
     }
     (void)XTabWidget_insertTab(&self->m_tabWidget, 4,
@@ -2091,7 +2263,7 @@ static DemoWin* DemoWin_create(void)
     XDialogButtonBox_setStandardButtons(&self->m_buttonBox,
         (int)XDialogButtonBoxStandard_Ok | (int)XDialogButtonBoxStandard_Cancel);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 7,
-                               (XWidget*)&self->m_buttonBox, "按钮盒");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_buttonBox), "按钮盒");
 #endif
 #if XMENUBAR_ON && XMENU_ON && XTOOLBAR_ON && XACTION_ON
     /* 页八：XMenuBar + XToolBar。 */
@@ -2114,7 +2286,7 @@ static DemoWin* DemoWin_create(void)
             XWidget_setGeometry((XWidget*)&self->m_toolBar, 0, 30, 300, 34);
             XWidget_show((XWidget*)&self->m_toolBar);
             XWidget_setGeometry(mbPage, 0, 0, 400, 220);
-            (void)XTabWidget_insertTab(&self->m_tabWidget, 8, mbPage, "èåå·¥å·æ ");
+            (void)XTabWidget_insertTab(&self->m_tabWidget, 8, mbPage, "菜单工具栏");
         }
     }
 #endif
@@ -2134,16 +2306,16 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_dtEdit, 10, 10, 250, 28);
     XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 220, 28);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 10,
-                               (XWidget*)&self->m_dtEdit, "日期时间");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_dtEdit), "日期时间");
     (void)XTabWidget_insertTab(&self->m_tabWidget, 11,
-                               (XWidget*)&self->m_fontCombo, "字体");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_fontCombo), "字体");
 #endif
 #if XCALENDARWIDGET_ON
     /* 页十一：XCalendarWidget。 */
     XCalendarWidget_init(&self->m_calendar, (XWidget*)&self->m_tabWidget, 0);
     XWidget_setGeometry((XWidget*)&self->m_calendar, 10, 10, 280, 200);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 12,
-                               (XWidget*)&self->m_calendar, "日历");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_calendar), "日历");
 #endif
 #if XTEXTBROWSER_ON
     /* 页十二：XTextBrowser。 */
@@ -2188,8 +2360,8 @@ static DemoWin* DemoWin_create(void)
     XButtonGroup_init(&self->m_btnGroup, NULL);
     XCheckBox_init(&self->m_bgBtn0, (XWidget*)&self->m_stackedW, 0);
     XCheckBox_init(&self->m_bgBtn1, (XWidget*)&self->m_stackedW, 0);
-    XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn0, "éé¡¹ A");
-    XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn1, "éé¡¹ B");
+    XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn0, "选项 A");
+    XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn1, "选项 B");
     XWidget_setGeometry((XWidget*)&self->m_bgBtn0, 10, 10, 120, 24);
     XWidget_setGeometry((XWidget*)&self->m_bgBtn1, 10, 40, 120, 24);
     XButtonGroup_addButton(&self->m_btnGroup, (XAbstractButton*)&self->m_bgBtn0, 0);
@@ -2200,6 +2372,9 @@ static DemoWin* DemoWin_create(void)
 #if XWIZARD_ON && XLABEL_ON
     /* 页十八：XWizard 向导。 */
     XWizard_init(&self->m_wizard, (XWidget*)&self->m_tabWidget, 0);
+    XWizardPage_init(&self->m_wizPage0, (XWidget*)&self->m_wizard, 0);
+    XWizardPage_init(&self->m_wizPage1, (XWidget*)&self->m_wizard, 0);
+    XWizardPage_init(&self->m_wizPage2, (XWidget*)&self->m_wizard, 0);
     XWidget_setGeometry((XWidget*)&self->m_wizard, 0, 0, 440, 220);
     {
         XLabel* w0 = XLabel_create((XWidget*)&self->m_wizPage0, 0);
@@ -2218,6 +2393,151 @@ static DemoWin* DemoWin_create(void)
     (void)XTabWidget_insertTab(&self->m_tabWidget, 17,
                                (XWidget*)&self->m_wizard, "Wizard");
 #endif
+#if XTABLEWIDGET_ON
+    /* 页二十：XTableWidget 表格（对标 QTableWidget 核心用法）。 */
+    XTableWidget_init(&self->m_tableWidget, (XWidget*)&self->m_tabWidget, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_tableWidget);
+    XTableWidget_setRowCount(&self->m_tableWidget, 5);
+    XTableWidget_setColumnCount(&self->m_tableWidget, 4);
+    {
+        static const char* const th[] = {"名称", "类型", "大小", "修改时间"};
+        static const char* const thv[] = {"1", "2", "3", "4", "5"};
+        XTableWidget_setHorizontalHeaderLabels(&self->m_tableWidget, th, 4);
+        XTableWidget_setVerticalHeaderLabels(&self->m_tableWidget, thv, 5);
+    }
+    {
+        static const char* const cells[5][4] = {
+            {"XWidget.h", "头文件", "48 KB", "2026-09-12"},
+            {"XPainter.c", "源文件", "210 KB", "2026-09-11"},
+            {"XGuiDemo", "可执行", "1.2 MB", "2026-09-12"},
+            {"XGui.md", "文档", "88 KB", "2026-09-10"},
+            {"assets", "目录", "--", "2026-09-01"} };
+        int r;
+        int c;
+        for (r = 0; r < 5; ++r)
+            for (c = 0; c < 4; ++c)
+                XTableWidget_setText(&self->m_tableWidget, r, c, cells[r][c]);
+    }
+    XTableWidget_setCurrentCell(&self->m_tableWidget, 0, 0);
+    XWidget_show((XWidget*)&self->m_tableWidget);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 19,
+                               (XWidget*)&self->m_tableWidget, "表格");
+#endif
+#if XCHARTS_ON
+    /* 页二十一：XChartView 图表（折线 + 饼图，对标 QChartView）。 */
+    XChartView_init(&self->m_chartView, (XWidget*)&self->m_tabWidget, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_chartView);
+    XWidget_setGeometry((XWidget*)&self->m_chartView, 0, 0, 568, 262);
+    {
+        XChart* chart = XChartView_chart(&self->m_chartView);
+        XLineSeries* line = XLineSeries_create();
+        XPieSeries* pie = XPieSeries_create();
+        int i;
+        XChart_setTitle(chart, "XinYueC Charts");
+        if (line) {
+            XLineSeries_setName(line, "销量");
+            for (i = 0; i < 7; ++i)
+                XLineSeries_append(line, i, (i * 37) % 50 + 10);
+            XChart_addLineSeries(chart, line);
+        }
+        if (pie) {
+            XPieSeries_setName(pie, "占比");
+            XPieSeries_append(pie, "A", 30);
+            XPieSeries_append(pie, "B", 20);
+            XPieSeries_append(pie, "C", 50);
+            /* 饼图与折线共用坐标系会互相遮挡：饼图保留但默认从 demo
+               主视图分离（第一版只演示折线/柱状/散点/面积/样条）。 */
+            XPieSeries_delete_base(pie);
+        }
+        {
+            XBarSeries* bar = XBarSeries_create();
+            XScatterSeries* sc = XScatterSeries_create();
+            XAreaSeries* area = XAreaSeries_create();
+            XSplineSeries* sp = XSplineSeries_create();
+            if (bar) {
+                XBarSeries_setName(bar, "月销");
+                XBarSeries_append(bar, "一月", 20);
+                XBarSeries_append(bar, "二月", 45);
+                XBarSeries_append(bar, "三月", 30);
+                XChart_addBarSeries(chart, bar);
+            }
+            if (sc) {
+                XScatterSeries_setName(sc, "离散点");
+                XScatterSeries_append(sc, 0.5, 45);
+                XScatterSeries_append(sc, 2.5, 25);
+                XScatterSeries_append(sc, 4.5, 55);
+                XScatterSeries_setColor(sc, 0xFFD1294Bu);
+                XChart_addScatterSeries(chart, sc);
+            }
+            if (area) {
+                XAreaSeries_setName(area, "面积");
+                XAreaSeries_setBaseValue(area, 0);
+                XLineSeries_append(XAreaSeries_upperSeries(area), 3, 15);
+                XLineSeries_append(XAreaSeries_upperSeries(area), 4, 28);
+                XLineSeries_append(XAreaSeries_upperSeries(area), 5, 20);
+                XAreaSeries_setColor(area, 0x5516AFA9u);
+                XChart_addAreaSeries(chart, area);
+            }
+            if (sp) {
+                XSplineSeries_setName(sp, "平滑线");
+                XSplineSeries_append(sp, 1, 40);
+                XSplineSeries_append(sp, 2, 22);
+                XSplineSeries_append(sp, 3, 48);
+                XSplineSeries_setColor(sp, 0xFF8B5AC7u);
+                XChart_addSplineSeries(chart, sp);
+            }
+        }
+        XValueAxis_setRange(XChart_axisY(chart), 0, 60);
+        }
+    XWidget_show((XWidget*)&self->m_chartView);
+    {
+        const char* texts[5] = {"图例", "网格", "标题", "序列", "范围"};
+        XPushButton_init(&self->m_btnLegend, (XWidget*)&self->m_chartView, 0);
+        XPushButton_init(&self->m_btnGrid, (XWidget*)&self->m_chartView, 0);
+        XPushButton_init(&self->m_btnTitle, (XWidget*)&self->m_chartView, 0);
+        XPushButton_init(&self->m_btnSeries, (XWidget*)&self->m_chartView, 0);
+        XPushButton_init(&self->m_btnRange, (XWidget*)&self->m_chartView, 0);
+        demo_set_widget_default_font((XWidget*)&self->m_btnLegend);
+        demo_set_widget_default_font((XWidget*)&self->m_btnGrid);
+        demo_set_widget_default_font((XWidget*)&self->m_btnTitle);
+        demo_set_widget_default_font((XWidget*)&self->m_btnSeries);
+        demo_set_widget_default_font((XWidget*)&self->m_btnRange);
+        XAbstractButton_setText_2((XAbstractButton*)&self->m_btnLegend, texts[0]);
+        XAbstractButton_setText_2((XAbstractButton*)&self->m_btnGrid, texts[1]);
+        XAbstractButton_setText_2((XAbstractButton*)&self->m_btnTitle, texts[2]);
+        XAbstractButton_setText_2((XAbstractButton*)&self->m_btnSeries, texts[3]);
+        XAbstractButton_setText_2((XAbstractButton*)&self->m_btnRange, texts[4]);
+        XWidget_setGeometry((XWidget*)&self->m_btnLegend, 5, 5, 52, 22);
+        XWidget_setGeometry((XWidget*)&self->m_btnGrid, 62, 5, 52, 22);
+        XWidget_setGeometry((XWidget*)&self->m_btnTitle, 119, 5, 52, 22);
+        XWidget_setGeometry((XWidget*)&self->m_btnSeries, 176, 5, 52, 22);
+        XWidget_setGeometry((XWidget*)&self->m_btnRange, 233, 5, 52, 22);
+        XObject_connect_1((XObject*)&self->m_btnLegend,
+                          (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnLegend, false),
+                          (XObject*)self, demo_chartLegendSlot, XConnectionType_Direct);
+        XObject_connect_1((XObject*)&self->m_btnGrid,
+                          (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnGrid, false),
+                          (XObject*)self, demo_chartGridSlot, XConnectionType_Direct);
+        XObject_connect_1((XObject*)&self->m_btnTitle,
+                          (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnTitle, false),
+                          (XObject*)self, demo_chartTitleSlot, XConnectionType_Direct);
+        XObject_connect_1((XObject*)&self->m_btnSeries,
+                          (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnSeries, false),
+                          (XObject*)self, demo_chartSeriesSlot, XConnectionType_Direct);
+        XObject_connect_1((XObject*)&self->m_btnRange,
+                          (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnRange, false),
+                          (XObject*)self, demo_chartRangeSlot, XConnectionType_Direct);
+        XWidget_show((XWidget*)&self->m_btnLegend);
+        XWidget_show((XWidget*)&self->m_btnGrid);
+        XWidget_show((XWidget*)&self->m_btnTitle);
+        XWidget_show((XWidget*)&self->m_btnSeries);
+        XWidget_show((XWidget*)&self->m_btnRange);
+    }
+    /* 图表视图下移给按钮留位。 */
+    XWidget_setGeometry((XWidget*)&self->m_chartView, 0, 30, 568, 232);
+    (void)XTabWidget_insertTab(&self->m_tabWidget, 20,
+                               (XWidget*)&self->m_chartView, "图表");
+#endif
 #if XERRORMESSAGE_ON
     /* 页十九：XErrorMessage。 */
     XErrorMessage_init(&self->m_errMsg, (XWidget*)&self->m_tabWidget, 0);
@@ -2225,10 +2545,10 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_errMsg, 10, 10, 300, 120);
     XWidget_show((XWidget*)&self->m_errMsg);
     (void)XTabWidget_insertTab(&self->m_tabWidget, 18,
-                               (XWidget*)&self->m_errMsg, "Error");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_errMsg), "Error");
 #endif
     (void)XTabWidget_insertTab(&self->m_tabWidget, 16,
-                               (XWidget*)&self->m_stackedW, "堆叠+按钮组");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_stackedW), "堆叠+按钮组");
 #endif
 
     XLabel_init(&self->m_tabStatus, (XWidget*)&self->m_pageTabs, 0);
@@ -2236,6 +2556,8 @@ static DemoWin* DemoWin_create(void)
     XLabel_setText_2(&self->m_tabStatus, "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
     XWidget_show((XWidget*)&self->m_tabWidget);
     XWidget_show((XWidget*)&self->m_inputStatus);
+    /* 放到最低层避免挡住 tab 按钮 */
+    XWidget_lower((XWidget*)&self->m_inputStatus);
 #endif
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -2396,6 +2718,12 @@ int main(int argc, char* argv[])
                 XPrintf("XGuiWindowDemo: 自动退出定时器创建失败\n");
                 eventLoopResult = 2;
             }
+        }
+        /* LCD 数码管自动更新定时器（1 秒间隔循环 0-9）。 */
+        win->m_lcdTimer = XObject_startTimer_ms(
+            (XObject*)win, 1000u, XTimerType_CoarseTimer);
+        if (win->m_lcdTimer == XTIMER_INVALID_ID) {
+            XPrintf("XGuiWindowDemo: LCD 定时器创建失败\n");
         }
         if (eventLoopResult == 0)
             eventLoopResult = XGuiApplication_exec();

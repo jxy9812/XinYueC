@@ -371,4 +371,49 @@ void* XProgressBar_valueChanged_signal(XProgressBar* self);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XProgress条set文本可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_setTextVisible_2(XProgressBar* self);
+/** @brief XProgress条is文本可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_isTextVisible_2(XProgressBar* self);
+/** @brief XProgress条set反转外观3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_setInvertedAppearance_3(XProgressBar* self);
+/** @brief XProgress条inverted外观2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_invertedAppearance_2(XProgressBar* self);
+/** @brief XProgress条set对齐2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_setAlignment_2(XProgressBar* self);
+/** @brief XProgress条alignment2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_alignment_2(XProgressBar* self);
+/** @brief XProgress条minimum2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_minimum_2(XProgressBar* self);
+/** @brief XProgress条maximum2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_maximum_2(XProgressBar* self);
+/** @brief XProgress条value2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XProgressBar_value_2(XProgressBar* self);
 #endif /* XPROGRESSBAR_H */

@@ -315,7 +315,16 @@
 #define XWIZARD_ON 1
 #ifndef XERRORMESSAGE_ON
 #define XERRORMESSAGE_ON 1
+#ifndef XTEXTDOCUMENT_ON
+#define XTEXTDOCUMENT_ON 1
 #endif
+#endif
+#ifndef XTABLEWIDGET_ON
+#define XTABLEWIDGET_ON 1
+#endif
+#endif
+#ifndef XCHARTS_ON
+#define XCHARTS_ON 1
 #endif
 #endif
 #ifndef XDIALOG_ON
@@ -658,10 +667,16 @@
 #define XWIZARD_ON 0
 #undef XERRORMESSAGE_ON
 #define XERRORMESSAGE_ON 0
+#undef XTEXTDOCUMENT_ON
+#define XTEXTDOCUMENT_ON 1
 #undef XDIALOG_ON
 #define XDIALOG_ON 0
+#undef XTABLEWIDGET_ON
+#define XTABLEWIDGET_ON 1
 #undef XDOCKWIDGET_ON
 #define XDOCKWIDGET_ON 0
+#undef XCHARTS_ON
+#define XCHARTS_ON 1
 #undef XMAINWINDOW_ON
 #define XMAINWINDOW_ON 0
 #undef XTOOLBOX_ON

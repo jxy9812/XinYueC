@@ -88,6 +88,9 @@ typedef struct XMessageBox
     bool m_inExec;               /**< exec 循环进行中。 */
 } XMessageBox;
 
+/** @brief X消息盒classinit（对标 Qt 同名接口）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XVtable* XMessageBox_class_init(void);
 void XMessageBox_init(XMessageBox* self, XWidget* parent,
                       XWidgetFlags flags);
@@ -100,10 +103,32 @@ XMessageBox* XMessageBox_create_ex(XMemoryType memory, XWidget* parent,
 /* ==================== 文本与图标 ==================== */
 
 void XMessageBox_setText(XMessageBox* self, const char* utf8);
+/** @brief X消息盒text（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XMessageBox_text(const XMessageBox* self);
+/** @brief X消息盒set标题（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param utf8 UTF-8 文本。
+ * @return 无返回值。
+ */
 void XMessageBox_setTitle(XMessageBox* self, const char* utf8);
+/** @brief X消息盒title（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XMessageBox_title(const XMessageBox* self);
+/** @brief X消息盒set图标（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param icon 图标路径（UTF-8）。
+ * @return 无返回值。
+ */
 void XMessageBox_setIcon(XMessageBox* self, XMessageBoxIcon icon);
+/** @brief X消息盒icon（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应值。
+ */
 XMessageBoxIcon XMessageBox_icon(const XMessageBox* self);
 
 /* ==================== 按钮管理 ==================== */
@@ -166,25 +191,192 @@ void XMessageBox_about(XWidget* parent, const char* title,
 #ifdef __cplusplus
 }
 #endif
+/** @brief X消息盒setDetailed文本（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param text UTF-8 文本。
+ * @return 无返回值。
+ */
 void XMessageBox_setDetailedText(XMessageBox* self, const char* text);
+/** @brief X消息盒detailed文本（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XMessageBox_detailedText(const XMessageBox* self);
+/** @brief X消息盒setInformative文本（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param text UTF-8 文本。
+ * @return 无返回值。
+ */
 void XMessageBox_setInformativeText(XMessageBox* self, const char* text);
+/** @brief X消息盒informative文本（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回 UTF-8 文本；无效时返回空串。
+ */
 const char* XMessageBox_informativeText(const XMessageBox* self);
+/** @brief X消息盒add按钮（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param button 按钮枚举或指针。
+ * @return 无返回值。
+ */
 void XMessageBox_addButton(XMessageBox* self, XAbstractButton* button);
+/** @brief X消息盒setDefault按钮（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param button 按钮枚举或指针。
+ * @return 无返回值。
+ */
 void XMessageBox_setDefaultButton(XMessageBox* self, int button);
+/** @brief X消息盒default按钮（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XMessageBox_defaultButton(const XMessageBox* self);
+/** @brief X消息盒setEscape按钮（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param button 按钮枚举或指针。
+ * @return 无返回值。
+ */
 void XMessageBox_setEscapeButton(XMessageBox* self, int button);
+/** @brief X消息盒escape按钮（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XMessageBox_escapeButton(const XMessageBox* self);
+/** @brief X消息盒set文本Format（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param format int 参数。
+ * @return 无返回值。
+ */
 void XMessageBox_setTextFormat(XMessageBox* self, int format);
+/** @brief X消息盒textFormat（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XMessageBox_textFormat(const XMessageBox* self);
+/** @brief X消息盒set文本交互Flags（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XMessageBox_setTextInteractionFlags(XMessageBox* self, int flags);
+/** @brief X消息盒text交互Flags（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XMessageBox_textInteractionFlags(const XMessageBox* self);
+/** @brief X消息盒setCheck盒2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param checked bool：true 勾选。
+ * @return 无返回值。
+ */
 void XMessageBox_setCheckBox_2(XMessageBox* self, bool checked);
+/** @brief X消息盒check盒（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XMessageBox_checkBox(const XMessageBox* self);
+/** @brief X消息盒open2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
 void XMessageBox_open_2(XMessageBox* self);
+/** @brief X消息盒reject2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
 void XMessageBox_reject_2(XMessageBox* self);
 static void XMessageBox_warning_2(XMessageBox* self, const char* title, const char* text);
 static void XMessageBox_critical_2(XMessageBox* self, const char* title, const char* text);
 static void XMessageBox_information_2(XMessageBox* self, const char* title, const char* text);
+/** @brief X消息盒set按钮文本2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param button 按钮枚举或指针。
+ * @param text UTF-8 文本。
+ * @return 无返回值。
+ */
 void XMessageBox_setButtonText_2(XMessageBox* self, int button, const char* text);
+/** @brief X消息盒set图标图像（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_setIconPixmap(XMessageBox* self);
+/** @brief X消息盒icon图像（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_iconPixmap(XMessageBox* self);
+/** @brief X消息盒standardButtons2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_standardButtons_2(XMessageBox* self);
+/** @brief X消息盒button2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_button_2(XMessageBox* self);
+/** @brief X消息盒buttonRole（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_buttonRole(XMessageBox* self);
+/** @brief X消息盒remove按钮2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_removeButton_2(XMessageBox* self);
+/** @brief X消息盒set文本2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_setText_2(XMessageBox* self);
+/** @brief X消息盒text2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_text_2(XMessageBox* self);
+/** @brief X消息盒setCheck盒3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_setCheckBox_3(XMessageBox* self);
+/** @brief X消息盒check盒2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_checkBox_2(XMessageBox* self);
+/** @brief X消息盒setDefault按钮2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_setDefaultButton_2(XMessageBox* self);
+/** @brief X消息盒default按钮2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_defaultButton_2(XMessageBox* self);
+/** @brief X消息盒setEscape按钮2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_setEscapeButton_2(XMessageBox* self);
+/** @brief X消息盒escape按钮2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_escapeButton_2(XMessageBox* self);
+/** @brief X消息盒set文本Format2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_setTextFormat_2(XMessageBox* self);
+/** @brief X消息盒textFormat2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_textFormat_2(XMessageBox* self);
+/** @brief X消息盒set文本交互Flags2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMessageBox_setTextInteractionFlags_2(XMessageBox* self);
 #endif /* XMESSAGEBOX_H */

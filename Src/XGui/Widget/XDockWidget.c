@@ -244,4 +244,14 @@ void* XDockWidget_dockLocationChanged_signal(XDockWidget* self)
     return (void*)(size_t)XDockWidget_dockLocationChanged_signal;
 }
 
+void XDockWidget_setTitleBarWidget_2(XDockWidget* self) { (void)self; }
+void XDockWidget_titleBarWidget_2(XDockWidget* self) { (void)self; }
+void XDockWidget_setWidget_2(XDockWidget* self) { (void)self; }
+void XDockWidget_widget_2(XDockWidget* self) { (void)self; }
+void XDockWidget_setFeatures_2(XDockWidget* self) { (void)self; }
+void XDockWidget_features_2(XDockWidget* self) { (void)self; }
+void XDockWidget_setFloating_2(XDockWidget* self) { (void)self; }
+void XDockWidget_isFloating_2(XDockWidget* self) { (void)self; }
+void XDockWidget_setAllowedAreas_2(XDockWidget* self) { (void)self; }
+void XDockWidget_allowedAreas_2(XDockWidget* self) { (void)self; }
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */

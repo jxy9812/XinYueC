@@ -732,4 +732,13 @@ const char* XComboBox_itemData(const XComboBox* self, int index) { (void)self; (
 void XComboBox_showPopup_2(XComboBox* self) { XComboBox_showPopup_base(self); }
 void XComboBox_hidePopup_2(XComboBox* self) { XComboBox_hidePopup_base(self); }
 void XComboBox_setCompleter(XComboBox* self, void* completer) { (void)self; (void)completer; }
+void XComboBox_setItemText_2(XComboBox* self) { (void)self; }
+void XComboBox_maxCount_2(XComboBox* self) { (void)self; }
+void XComboBox_setMaxCount_2(XComboBox* self) { (void)self; }
+void XComboBox_setInsertPolicy_2(XComboBox* self) { (void)self; }
+void XComboBox_insertPolicy_2(XComboBox* self) { (void)self; }
+void XComboBox_setSizeAdjustPolicy_2(XComboBox* self) { (void)self; }
+void XComboBox_sizeAdjustPolicy_2(XComboBox* self) { (void)self; }
+void XComboBox_setIconSize_3(XComboBox* self) { (void)self; }
+void XComboBox_iconSize_2(XComboBox* self) { (void)self; }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */

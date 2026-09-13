@@ -360,4 +360,22 @@ void XMainWindow_setSeparator(XMainWindow* self, int area) { (void)self; (void)a
 void XMainWindow_insertToolBar(XMainWindow* self, XToolBar* before, XToolBar* toolbar) { (void)self; (void)before; (void)toolbar; }
 void XMainWindow_removeToolBar(XMainWindow* self, XToolBar* toolbar) { (void)self; (void)toolbar; }
 void XMainWindow_iconSizeChanged_signal(XMainWindow* self) { (void)self; }
+void XMainWindow_insertToolBarBreak_2(XMainWindow* self) { (void)self; }
+void XMainWindow_removeToolBarBreak(XMainWindow* self) { (void)self; }
+void XMainWindow_isSeparator_2(XMainWindow* self) { (void)self; }
+void XMainWindow_removeToolBar_2(XMainWindow* self) { (void)self; }
+void XMainWindow_setCentralWidget_2(XMainWindow* self) { (void)self; }
+void XMainWindow_setMenuBar_2(XMainWindow* self) { (void)self; }
+void XMainWindow_setStatusBar_2(XMainWindow* self) { (void)self; }
+void XMainWindow_setDockOptions_2(XMainWindow* self) { (void)self; }
+void XMainWindow_takeCentralWidget_2(XMainWindow* self) { (void)self; }
+void XMainWindow_centralWidget_2(XMainWindow* self) { (void)self; }
+void XMainWindow_menuBar_2(XMainWindow* self) { (void)self; }
+void XMainWindow_statusBar_2(XMainWindow* self) { (void)self; }
+void XMainWindow_addDockWidget_2(XMainWindow* self) { (void)self; }
+void XMainWindow_removeDockWidget_2(XMainWindow* self) { (void)self; }
+void XMainWindow_setDockWidgetArea(XMainWindow* self) { (void)self; }
+void XMainWindow_dockOptions_2(XMainWindow* self) { (void)self; }
+void XMainWindow_addToolBar_3(XMainWindow* self) { (void)self; }
+void XMainWindow_iconSizeChanged_signal_2(XMainWindow* self) { (void)self; }
 #endif /* XWIDGET_ON && XMAINWINDOW_ON */

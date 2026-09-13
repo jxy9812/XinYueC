@@ -39,7 +39,7 @@ static void xtabwidget_layout(XTabWidget* self)
     int pageH;
     int i;
     {   /* 与 XTabBar 的 xtabbar_wrapLayout 一致：计算多行 tabBar 高度。 */
-        int minW = 48;
+        int minW = 72;
         int cols;
         int rows;
         if (w < minW) w = minW;
@@ -54,9 +54,15 @@ static void xtabwidget_layout(XTabWidget* self)
     pageH = h - barH;
     if (pageH < 1) pageH = 1;
     XWidget_setGeometry((XWidget*)&self->m_tabBar, 0, 0, w, barH);
-    for (i = 0; i < self->m_count; ++i)
+    for (i = 0; i < self->m_count; ++i) {
         if (self->m_pages[i])
             XWidget_setGeometry(self->m_pages[i], 0, barH, w, pageH);
+        /* 用户内容控件（client）必须铺满页容器，否则停留在默认几何
+           (0,0,100,30)，子控件坐标越界导致 childAt 命中失败、鼠标
+           事件永远到不了内容（对标 QStackedLayout 填满几何语义）。 */
+        if (self->m_clients[i])
+            XWidget_setGeometry(self->m_clients[i], 0, 0, w, pageH);
+    }
 }
 
 /** @brief 切页：仅显示当前页容器。 */

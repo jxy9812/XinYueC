@@ -443,15 +443,17 @@ bool XSliderTest_runAll(void)
         XAbstractSlider* mb = (XAbstractSlider*)ms;
         XWidget_setGeometry((XWidget*)host, 0, 0, 300, 100);
         XWidget_setGeometry((XWidget*)ms, 0, 0, 200, 30);
-        /* 值域 0..99；handle 宽 12，value=0 时 handle 中心 x=6。
-           点击 x=106 处换算值 = (106-6)*99/188 = 52.6 → 52。 */
+        /* 值域 0..99；handle 宽 16，value=0 时 handle 中心 x=8。
+           点击 x=106 处换算值：rel=106-8=98 → 98*99/184 = 52。
+           拖动到 x=106（自 handle 中心 8 起偏移 -2 → 108）：
+           rel=100 → 100*99/184 = 53。 */
 
         /* A. 点击 handle → 进入拖动 + sliderPressed。 */
         sl_mousePress((XWidget*)ms, 6, 10);
         sl_expect(XAbstractSlider_isSliderDown(mb), "按下 handle 进入拖动");
         sl_mouseMove((XWidget*)ms, 106, 10);
-        sl_expect(XAbstractSlider_sliderPosition(mb) == 52 &&
-                  XAbstractSlider_value(mb) == 52,
+        sl_expect(XAbstractSlider_sliderPosition(mb) == 53 &&
+                  XAbstractSlider_value(mb) == 53,
                   "拖动实时提交值（tracking=true）");
         sl_mouseRelease((XWidget*)ms, 106, 10);
         sl_expect(!XAbstractSlider_isSliderDown(mb), "释放退出拖动");
@@ -468,11 +470,11 @@ bool XSliderTest_runAll(void)
         XAbstractSlider_setValue(mb, 0);
         sl_mousePress((XWidget*)ms, 6, 10);
         sl_mouseMove((XWidget*)ms, 106, 10);
-        sl_expect(XAbstractSlider_sliderPosition(mb) == 52 &&
+        sl_expect(XAbstractSlider_sliderPosition(mb) == 53 &&
                   XAbstractSlider_value(mb) == 0,
                   "tracking=false 拖动只动位置");
         sl_mouseRelease((XWidget*)ms, 106, 10);
-        sl_expect(XAbstractSlider_value(mb) == 52, "释放提交位置到值");
+        sl_expect(XAbstractSlider_value(mb) == 53, "释放提交位置到值");
         XAbstractSlider_setTracking(mb, true);
 
         XSlider_delete_base(ms);

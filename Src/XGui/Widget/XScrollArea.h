@@ -114,5 +114,61 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self, XWidget* childWidget,
 #ifdef __cplusplus
 }
 #endif
+/** @brief X滚动区域viewport尺寸Hint（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param w 宽（像素）。
+ * @param h 高（像素）。
+ * @return 无返回值。
+ */
 void XScrollArea_viewportSizeHint(XScrollArea* self, int* w, int* h);
+/** @brief X滚动区域set对齐3（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_setAlignment_3(XScrollArea* self);
+/** @brief X滚动区域alignment2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_alignment_2(XScrollArea* self);
+/** @brief X滚动区域set控件Resizable2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_setWidgetResizable_2(XScrollArea* self);
+/** @brief X滚动区域is控件Resizable2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_isWidgetResizable_2(XScrollArea* self);
+/** @brief X滚动区域set控件2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_setWidget_2(XScrollArea* self);
+/** @brief X滚动区域widget2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_widget_2(XScrollArea* self);
+/** @brief X滚动区域take控件2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_takeWidget_2(XScrollArea* self);
+/** @brief X滚动区域widgetResizable2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_widgetResizable_2(XScrollArea* self);
+/** @brief X滚动区域ensure可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_ensureVisible_2(XScrollArea* self);
+/** @brief X滚动区域ensure控件可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XScrollArea_ensureWidgetVisible_2(XScrollArea* self);
 #endif /* XSCROLLAREA_H */

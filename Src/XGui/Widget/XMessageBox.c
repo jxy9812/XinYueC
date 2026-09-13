@@ -285,4 +285,21 @@ static void XMessageBox_warning_2(XMessageBox* self, const char* title, const ch
 static void XMessageBox_critical_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
 static void XMessageBox_information_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
 void XMessageBox_setButtonText_2(XMessageBox* self, int button, const char* text) { (void)self; (void)button; (void)text; }
+void XMessageBox_setIconPixmap(XMessageBox* self) { (void)self; }
+void XMessageBox_iconPixmap(XMessageBox* self) { (void)self; }
+void XMessageBox_standardButtons_2(XMessageBox* self) { (void)self; }
+void XMessageBox_button_2(XMessageBox* self) { (void)self; }
+void XMessageBox_buttonRole(XMessageBox* self) { (void)self; }
+void XMessageBox_removeButton_2(XMessageBox* self) { (void)self; }
+void XMessageBox_setText_2(XMessageBox* self) { (void)self; }
+void XMessageBox_text_2(XMessageBox* self) { (void)self; }
+void XMessageBox_setCheckBox_3(XMessageBox* self) { (void)self; }
+void XMessageBox_checkBox_2(XMessageBox* self) { (void)self; }
+void XMessageBox_setDefaultButton_2(XMessageBox* self) { (void)self; }
+void XMessageBox_defaultButton_2(XMessageBox* self) { (void)self; }
+void XMessageBox_setEscapeButton_2(XMessageBox* self) { (void)self; }
+void XMessageBox_escapeButton_2(XMessageBox* self) { (void)self; }
+void XMessageBox_setTextFormat_2(XMessageBox* self) { (void)self; }
+void XMessageBox_textFormat_2(XMessageBox* self) { (void)self; }
+void XMessageBox_setTextInteractionFlags_2(XMessageBox* self) { (void)self; }
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */

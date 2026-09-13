@@ -327,4 +327,12 @@ void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text)
     return (void*)(size_t)XStatusBar_messageChanged_signal;
 }
 
+void XStatusBar_setSizeGripEnabled_3(XStatusBar* self) { (void)self; }
+void XStatusBar_isSizeGripEnabled_2(XStatusBar* self) { (void)self; }
+void XStatusBar_clearMessage_2(XStatusBar* self) { (void)self; }
+void XStatusBar_currentMessage_2(XStatusBar* self) { (void)self; }
+void XStatusBar_showMessage_2(XStatusBar* self) { (void)self; }
+void XStatusBar_addWidget_2(XStatusBar* self) { (void)self; }
+void XStatusBar_insertWidget_2(XStatusBar* self) { (void)self; }
+void XStatusBar_removeWidget_2(XStatusBar* self) { (void)self; }
 #endif /* XWIDGET_ON && XSTATUSBAR_ON */

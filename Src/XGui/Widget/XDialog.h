@@ -28,9 +28,24 @@ typedef struct XDialog
     bool m_inExec;     /**< exec() 循环标志。 */
 } XDialog;
 
+/** @brief XDialogclassinit（对标 Qt 同名接口）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XVtable* XDialog_class_init(void);
+/** @brief XDialoginit（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags);
 #define XDialog_create(parent, flags) XDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+/** @brief XDialogcreateex（对标 Qt 同名接口）。
+ * @param memory XMemoryType 参数。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 #define XDialog_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
 #define XDialog_delete_base(self) XClass_delete_base((XClass*)(self))
@@ -88,4 +103,39 @@ void* XDialog_finished_signal(XDialog* self, int result);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XDialogopen2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialog_open_2(XDialog* self);
+/** @brief XDialogset尺寸Grip启用（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialog_setSizeGripEnabled(XDialog* self);
+/** @brief XDialogis尺寸Grip启用（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialog_isSizeGripEnabled(XDialog* self);
+/** @brief XDialogsetModal2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialog_setModal_2(XDialog* self);
+/** @brief XDialogisModal2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialog_isModal_2(XDialog* self);
+/** @brief XDialogresult2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialog_result_2(XDialog* self);
+/** @brief XDialogsetResult2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialog_setResult_2(XDialog* self);
 #endif /* XDIALOG_H */

@@ -271,4 +271,19 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter);
 /* ==================== 信号 ==================== */
 
 void* XCheckBox_stateChanged_signal(XCheckBox* self);
+/** @brief XCheck盒setCheckState2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XCheckBox_setCheckState_2(XCheckBox* self);
+/** @brief XCheck盒checkState2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XCheckBox_checkState_2(XCheckBox* self);
+/** @brief XCheck盒nextCheckState2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XCheckBox_nextCheckState_2(XCheckBox* self);
 #endif /* XCHECKBOX_H */

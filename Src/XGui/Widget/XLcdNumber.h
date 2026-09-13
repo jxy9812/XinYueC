@@ -86,6 +86,12 @@ typedef struct XLcdNumber
 /* ==================== 生命周期 ==================== */
 
 XVtable* XLcdNumber_class_init(void);
+/** @brief XLcdNumberinit（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XLcdNumber_init(XLcdNumber* self, XWidget* parent, XWidgetFlags flags);
 /** @brief 以指定位数初始化（对标 QLCDNumber(uint, QWidget*) 构造）。 */
 void XLcdNumber_init_2(XLcdNumber* self, unsigned numDigits,
@@ -221,4 +227,14 @@ void* XLcdNumber_overflow_signal(XLcdNumber* self);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XLcdNumbercheckOverflow2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XLcdNumber_checkOverflow_2(XLcdNumber* self);
+/** @brief XLcdNumberoverflow2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XLcdNumber_overflow_2(XLcdNumber* self);
 #endif /* XLCDNUMBER_H */

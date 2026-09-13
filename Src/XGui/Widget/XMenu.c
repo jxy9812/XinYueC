@@ -1053,4 +1053,19 @@ XAction* XMenu_defaultAction_2(const XMenu* self) { (void)self; return NULL; }
 void XMenu_setToolTipsVisible_2(XMenu* self, bool visible) { (void)self; (void)visible; }
 bool XMenu_toolTipsVisible_2(const XMenu* self) { (void)self; return false; }
 int XMenu_columnCount_2(const XMenu* self) { (void)self; return 1; }
+void XMenu_setNoReplay_2(XMenu* self) { (void)self; }
+void XMenu_noReplay(XMenu* self) { (void)self; }
+void XMenu_setIcon_2(XMenu* self) { (void)self; }
+void XMenu_icon_2(XMenu* self) { (void)self; }
+void XMenu_clear_2(XMenu* self) { (void)self; }
+void XMenu_addSeparator_2(XMenu* self) { (void)self; }
+void XMenu_removeAction_2(XMenu* self) { (void)self; }
+void XMenu_title_2(XMenu* self) { (void)self; }
+void XMenu_setTearOffEnabled_2(XMenu* self) { (void)self; }
+void XMenu_isTearOffEnabled_2(XMenu* self) { (void)self; }
+void XMenu_isTearOffMenuVisible_2(XMenu* self) { (void)self; }
+void XMenu_hideTearOffMenu_2(XMenu* self) { (void)self; }
+void XMenu_menuAction_2(XMenu* self) { (void)self; }
+void XMenu_isEmpty_2(XMenu* self) { (void)self; }
+void XMenu_setMinimumWidth_2(XMenu* self) { (void)self; }
 #endif /* XWIDGET_ON && XMENU_ON */

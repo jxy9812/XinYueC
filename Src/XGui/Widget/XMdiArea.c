@@ -381,4 +381,21 @@ void XMdiArea_setTabPosition(XMdiArea* self, int position) { (void)self; (void)p
 int XMdiArea_tabPosition(const XMdiArea* self) { (void)self; return 0; }
 void XMdiArea_setTabsClosable_2(XMdiArea* self, bool closable) { (void)self; (void)closable; }
 bool XMdiArea_isTabsClosable_2(const XMdiArea* self) { (void)self; return false; }
+void XMdiArea_setActivationOrder(XMdiArea* self) { (void)self; }
+void XMdiArea_activationOrder(XMdiArea* self) { (void)self; }
+void XMdiArea_setOption_2(XMdiArea* self) { (void)self; }
+void XMdiArea_testOption_2(XMdiArea* self) { (void)self; }
+void XMdiArea_scrollContentsBy_2(XMdiArea* self) { (void)self; }
+void XMdiArea_setHorizontalScrollBarPolicy_2(XMdiArea* self) { (void)self; }
+void XMdiArea_setVerticalScrollBarPolicy_2(XMdiArea* self) { (void)self; }
+void XMdiArea_setTabShape_2(XMdiArea* self) { (void)self; }
+void XMdiArea_tabShape_2(XMdiArea* self) { (void)self; }
+void XMdiArea_setTabTabsClosable_2(XMdiArea* self) { (void)self; }
+void XMdiArea_tabTabsClosable_2(XMdiArea* self) { (void)self; }
+void XMdiArea_setTabTabsMovable_2(XMdiArea* self) { (void)self; }
+void XMdiArea_tabTabsMovable_2(XMdiArea* self) { (void)self; }
+void XMdiArea_setTabTabsAutoHide_2(XMdiArea* self) { (void)self; }
+void XMdiArea_tabTabsAutoHide_2(XMdiArea* self) { (void)self; }
+void XMdiArea_sizeHint_2(XMdiArea* self) { (void)self; }
+void XMdiArea_subWindowList_count(XMdiArea* self) { (void)self; }
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON */

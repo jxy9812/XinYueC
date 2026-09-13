@@ -181,7 +181,7 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
     if (textColor == 0u)
         textColor = 0xFF000000u;
 
-    XPainter_fillRect(painter, &rect, window);
+    /* 对标 Qt：单选钮不绘制自身背景（透明）。 */
 
     /* 圆形 indicator：外侧深色、内侧浅色双圈近似立体感。
        XPAINTER_SHAPE_ON=0（硬裁剪）时以矩形描边退化为方框。 */

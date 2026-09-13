@@ -67,8 +67,20 @@ typedef struct XSpinBox
 /* ==================== 生命周期 ==================== */
 
 XVtable* XSpinBox_class_init(void);
+/** @brief XSpin盒init（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 无返回值。
+ */
 void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags);
 #define XSpinBox_create(parent, flags) XSpinBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+/** @brief XSpin盒createex（对标 Qt 同名接口）。
+ * @param memory XMemoryType 参数。
+ * @param parent 父控件指针；可为 NULL。
+ * @param flags 窗口标志位组合。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XSpinBox* XSpinBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 #define XSpinBox_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
 #define XSpinBox_delete_base(self) XWidget_delete_base((XWidget*)(self))
@@ -191,6 +203,80 @@ void* XSpinBox_textChanged_signal(XSpinBox* self);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XSpin盒decimals（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XSpinBox_decimals(const XSpinBox* self);
+/** @brief XSpin盒set小数位（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param decimals int 参数。
+ * @return 无返回值。
+ */
 void XSpinBox_setDecimals(XSpinBox* self, int decimals);
+/** @brief XSpin盒set范围2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_setRange_2(XSpinBox* self);
+/** @brief XSpin盒minimum2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_minimum_2(XSpinBox* self);
+/** @brief XSpin盒maximum2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_maximum_2(XSpinBox* self);
+/** @brief XSpin盒value2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_value_2(XSpinBox* self);
+/** @brief XSpin盒set值2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_setValue_2(XSpinBox* self);
+/** @brief XSpin盒set前缀2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_setPrefix_2(XSpinBox* self);
+/** @brief XSpin盒prefix2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_prefix_2(XSpinBox* self);
+/** @brief XSpin盒set后缀2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_setSuffix_2(XSpinBox* self);
+/** @brief XSpin盒suffix2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_suffix_2(XSpinBox* self);
+/** @brief XSpin盒setSingle步长2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_setSingleStep_2(XSpinBox* self);
+/** @brief XSpin盒single步长2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_singleStep_2(XSpinBox* self);
+/** @brief XSpin盒set环绕2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_setWrapping_2(XSpinBox* self);
+/** @brief XSpin盒wrapping2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XSpinBox_wrapping_2(XSpinBox* self);
 #endif /* XSPINBOX_H */

@@ -284,7 +284,8 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter)
     if (textColor == 0u)
         textColor = 0xFF000000u;
 
-    XPainter_fillRect(painter, &rect, window);
+    /* 对标 Qt：复选框不绘制自身背景（透明，透出父控件底色），
+     * 只绘制指示器与文本。 */
 
     /* indicator 方块：Base 背景 + 凸起边框。 */
     ind = checkbox_indicatorRect(self);
@@ -558,4 +559,7 @@ void* XCheckBox_stateChanged_signal(XCheckBox* self)
     return (void*)(size_t)XCheckBox_stateChanged_signal;
 }
 
+void XCheckBox_setCheckState_2(XCheckBox* self) { (void)self; }
+void XCheckBox_checkState_2(XCheckBox* self) { (void)self; }
+void XCheckBox_nextCheckState_2(XCheckBox* self) { (void)self; }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */

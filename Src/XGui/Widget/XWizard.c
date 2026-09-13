@@ -527,4 +527,19 @@ int XWizard_titleFormat(const XWizard* self) { (void)self; return 0; }
 void XWizard_setSubTitleFormat(XWizard* self, int format) { (void)self; (void)format; }
 int XWizard_subTitleFormat(const XWizard* self) { (void)self; return 0; }
 void XWizard_done(XWizard* self, int result) { XDialog_done((XDialog*)self, result); }
+void XWizard_cleanupPage(XWizard* self) { (void)self; }
+void XWizard_initializePage(XWizard* self) { (void)self; }
+void XWizard_setField_3(XWizard* self) { (void)self; }
+void XWizard_field_2(XWizard* self) { (void)self; }
+void XWizard_setPixmap_2(XWizard* self) { (void)self; }
+void XWizard_pixmap_2(XWizard* self) { (void)self; }
+void XWizard_setSideWidget_2(XWizard* self) { (void)self; }
+void XWizard_sideWidget_2(XWizard* self) { (void)self; }
+void XWizard_currentId_2(XWizard* self) { (void)self; }
+void XWizard_setStartId_2(XWizard* self) { (void)self; }
+void XWizard_startId_2(XWizard* self) { (void)self; }
+void XWizard_setDefaultProperty(XWizard* self) { (void)self; }
+void XWizard_validateCurrentPage_2(XWizard* self) { (void)self; }
+void XWizard_nextId(XWizard* self) { (void)self; }
+void XWizard_setVisible_2(XWizard* self) { (void)self; }
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */

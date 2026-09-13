@@ -56,6 +56,11 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     XPlainTextEdit_setReadOnly(self->m_base.m_editor, true);
+#if XTEXTDOCUMENT_ON
+    self->m_base.m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+#endif
+    self->m_historyCount = 0;
+    self->m_historyIndex = -1;
     /* 编辑器填满浏览器。 */
     XWidget_setGeometry((XWidget*)self->m_base.m_editor, 0, 0,
                         XWidget_width((XWidget*)self),
@@ -79,6 +84,13 @@ void XTextBrowser_setSource(XTextBrowser* self, const char* url)
     strncpy(self->m_source, url ? url : "", sizeof(self->m_source) - 1);
     self->m_source[sizeof(self->m_source) - 1] = '\0';
     xtb_emitStr(self, (size_t)XTextBrowser_sourceChanged_signal, self->m_source);
+    /* 记录导航历史 */
+    if (self->m_historyIndex < 31) {
+        self->m_historyIndex++;
+        strncpy(self->m_history[self->m_historyIndex], self->m_source, sizeof(self->m_history[0]) - 1);
+        self->m_history[self->m_historyIndex][sizeof(self->m_history[0]) - 1] = 0;
+        self->m_historyCount = self->m_historyIndex + 1;
+    }
 }
 
 const char* XTextBrowser_source(const XTextBrowser* self)
@@ -97,9 +109,9 @@ bool XTextBrowser_openLinks(const XTextBrowser* self)
     return self ? self->m_openLinks : false;
 }
 
-void XTextBrowser_backward(XTextBrowser* self) { (void)self; }
-void XTextBrowser_forward(XTextBrowser* self) { (void)self; }
-void XTextBrowser_home(XTextBrowser* self) { (void)self; }
+void XTextBrowser_backward(XTextBrowser* self) { if(self && self->m_historyIndex > 0) { self->m_historyIndex--; XTextBrowser_setSource(self, self->m_history[self->m_historyIndex]); } }
+void XTextBrowser_forward(XTextBrowser* self) { if(self && self->m_historyIndex < self->m_historyCount - 1) { self->m_historyIndex++; XTextBrowser_setSource(self, self->m_history[self->m_historyIndex]); } }
+void XTextBrowser_home(XTextBrowser* self) { if(self && self->m_historyCount > 0) { self->m_historyIndex = 0; XTextBrowser_setSource(self, self->m_history[0]); } }
 void XTextBrowser_reload(XTextBrowser* self) { (void)self; }
 
 void* XTextBrowser_sourceChanged_signal(XTextBrowser* self, const char* url)
@@ -137,4 +149,16 @@ int XTextBrowser_backwardHistoryCount(const XTextBrowser* self) { (void)self; re
 int XTextBrowser_forwardHistoryCount(const XTextBrowser* self) { (void)self; return 0; }
 void XTextBrowser_setSource_2(XTextBrowser* self, const char* url)
 { XTextBrowser_setSource(self, url); }
+void XTextBrowser_setSource_3(XTextBrowser* self) { (void)self; }
+void XTextBrowser_doSetSource(XTextBrowser* self) { (void)self; }
+void XTextBrowser_highlighted_2(XTextBrowser* self) { (void)self; }
+void XTextBrowser_setOpenExternalLinks(XTextBrowser* self) { (void)self; }
+void XTextBrowser_openExternalLinks(XTextBrowser* self) { (void)self; }
+void XTextBrowser_setSearchPaths(XTextBrowser* self) { (void)self; }
+void XTextBrowser_loadResource_2(XTextBrowser* self) { (void)self; }
+void XTextBrowser_isBackwardAvailable_2(XTextBrowser* self) { (void)self; }
+void XTextBrowser_isForwardAvailable_2(XTextBrowser* self) { (void)self; }
+void XTextBrowser_backward_2(XTextBrowser* self) { (void)self; }
+void XTextBrowser_forward_2(XTextBrowser* self) { (void)self; }
+void XTextBrowser_home_2(XTextBrowser* self) { (void)self; }
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON */

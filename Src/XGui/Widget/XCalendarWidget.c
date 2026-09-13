@@ -474,4 +474,20 @@ bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self) { (void)self; 
 XDate XCalendarWidget_todayDate(const XCalendarWidget* self)
 { XDate d; memset(&d,0,sizeof(d)); XDate_setDate(&d,2026,9,9); return d; }
 void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self, int format) { (void)self; (void)format; }
+void XCalendarWidget_setSelectedDate_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setDateRange_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setCurrentPage_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_showTodayPage(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setWeekdayTextFormat_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setHeaderFormat_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setVerticalHeaderFormat_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setSelectionMode_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_selectionMode_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setGridVisible_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setNavigationBarVisible_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_firstDayOfWeek_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setDateEditEnabled_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_isDateEditEnabled_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_setDateEditAcceptDelay_2(XCalendarWidget* self) { (void)self; }
+void XCalendarWidget_dateEditAcceptDelay_2(XCalendarWidget* self) { (void)self; }
 #endif /* XWIDGET_ON && XCALENDARWIDGET_ON */

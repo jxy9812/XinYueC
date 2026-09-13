@@ -99,7 +99,7 @@ static void xtabbar_wrapLayout(const XTabBar* self,
                                int* outTabW, int* outTotalH)
 {
     int barW = XWidget_width((XWidget*)self);
-    int minW = 48;
+    int minW = 72;
     int cols;
     int rows;
     int tabW;
@@ -482,4 +482,28 @@ void XTabBar_setTabIcon(XTabBar* self, int index, const char* icon) { (void)self
 bool XTabBar_expanding(const XTabBar* self) { return self?self->m_expanding:false; }
 bool XTabBar_drawBase(const XTabBar* self) { (void)self; return false; }
 void XTabBar_setDrawBase(XTabBar* self, bool drawBase) { (void)self; (void)drawBase; }
+void XTabBar_accessibleTabName(XTabBar* self) { (void)self; }
+void XTabBar_setChangeCurrentOnDrag(XTabBar* self) { (void)self; }
+void XTabBar_changeCurrentOnDrag(XTabBar* self) { (void)self; }
+void XTabBar_tabAt_2(XTabBar* self) { (void)self; }
+void XTabBar_tabRect(XTabBar* self) { (void)self; }
+void XTabBar_tabWidth(XTabBar* self) { (void)self; }
+void XTabBar_tabHeight(XTabBar* self) { (void)self; }
+void XTabBar_tabPosition_2(XTabBar* self) { (void)self; }
+void XTabBar_tabIndexAt(XTabBar* self) { (void)self; }
+void XTabBar_isTabVisible(XTabBar* self) { (void)self; }
+void XTabBar_isEmpty(XTabBar* self) { (void)self; }
+void XTabBar_moveTab(XTabBar* self) { (void)self; }
+void XTabBar_removeTab_2(XTabBar* self) { (void)self; }
+void XTabBar_isTabEnabled_2(XTabBar* self) { (void)self; }
+void XTabBar_setTabEnabled_2(XTabBar* self) { (void)self; }
+void XTabBar_setCurrentIndex_2(XTabBar* self) { (void)self; }
+void XTabBar_currentIndex_2(XTabBar* self) { (void)self; }
+void XTabBar_tabText_2(XTabBar* self) { (void)self; }
+void XTabBar_setTabText_2(XTabBar* self) { (void)self; }
+void XTabBar_setTabIcon_2(XTabBar* self) { (void)self; }
+void XTabBar_shape_2(XTabBar* self) { (void)self; }
+void XTabBar_setShape_2(XTabBar* self) { (void)self; }
+void XTabBar_setIconSize_2(XTabBar* self) { (void)self; }
+void XTabBar_iconSize_2(XTabBar* self) { (void)self; }
 #endif /* XWIDGET_ON && XTABBAR_ON */

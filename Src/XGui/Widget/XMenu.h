@@ -438,9 +438,106 @@ void* XMenu_hovered_signal(XMenu* self, XAction* action);
 }
 #endif
 
+/** @brief X菜单setDefault动作2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param action 动作指针。
+ * @return 无返回值。
+ */
 void XMenu_setDefaultAction_2(XMenu* self, XAction* action);
+/** @brief X菜单default动作2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XAction* XMenu_defaultAction_2(const XMenu* self);
+/** @brief X菜单set工具Tips可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param visible bool：true 可见。
+ * @return 无返回值。
+ */
 void XMenu_setToolTipsVisible_2(XMenu* self, bool visible);
+/** @brief X菜单toolTips可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XMenu_toolTipsVisible_2(const XMenu* self);
+/** @brief X菜单column数量2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XMenu_columnCount_2(const XMenu* self);
+/** @brief X菜单setNoReplay2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_setNoReplay_2(XMenu* self);
+/** @brief X菜单noReplay（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_noReplay(XMenu* self);
+/** @brief X菜单set图标2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_setIcon_2(XMenu* self);
+/** @brief X菜单icon2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_icon_2(XMenu* self);
+/** @brief X菜单clear2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_clear_2(XMenu* self);
+/** @brief X菜单addSeparator2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_addSeparator_2(XMenu* self);
+/** @brief X菜单remove动作2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_removeAction_2(XMenu* self);
+/** @brief X菜单title2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_title_2(XMenu* self);
+/** @brief X菜单setTearOff启用2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_setTearOffEnabled_2(XMenu* self);
+/** @brief X菜单isTearOff启用2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_isTearOffEnabled_2(XMenu* self);
+/** @brief X菜单isTearOff菜单可见2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_isTearOffMenuVisible_2(XMenu* self);
+/** @brief X菜单hideTearOff菜单2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_hideTearOffMenu_2(XMenu* self);
+/** @brief X菜单menu动作2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_menuAction_2(XMenu* self);
+/** @brief X菜单isEmpty2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_isEmpty_2(XMenu* self);
+/** @brief X菜单set最小宽2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XMenu_setMinimumWidth_2(XMenu* self);
 #endif /* XMENU_H */

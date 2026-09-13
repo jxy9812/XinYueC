@@ -4801,4 +4801,30 @@ void XWidget_setAttribute_2(XWidget* self, int attribute, bool on) { XWidget_att
 bool XWidget_testAttribute_2(const XWidget* self, int attribute) { return XWidget_attrTest(&self->m_attributes, attribute); }
 void XWidget_setGraphicsEffect(XWidget* self, void* effect) { (void)self; (void)effect; }
 const XVector* XWidget_actions(const XWidget* self) { (void)self; return NULL; }
+void XWidget_addAction_3(XWidget* self) { (void)self; }
+void XWidget_addActions_2(XWidget* self) { (void)self; }
+void XWidget_removeAction_3(XWidget* self) { (void)self; }
+void XWidget_insertAction_2(XWidget* self) { (void)self; }
+void XWidget_setLocale_2(XWidget* self) { (void)self; }
+void XWidget_unsetCursor_2(XWidget* self) { (void)self; }
+void XWidget_setFocusPolicy_2(XWidget* self) { (void)self; }
+void XWidget_focusPolicy_2(XWidget* self) { (void)self; }
+void XWidget_setWindowIcon_2(XWidget* self) { (void)self; }
+void XWidget_setWindowRole_2(XWidget* self) { (void)self; }
+void XWidget_setWindowFilePath_2(XWidget* self) { (void)self; }
+void XWidget_windowFilePath_2(XWidget* self) { (void)self; }
+void XWidget_setPalette_2(XWidget* self) { (void)self; }
+void XWidget_setFont_2(XWidget* self) { (void)self; }
+void XWidget_setStyleSheet_2(XWidget* self) { (void)self; }
+void XWidget_styleSheet_2(XWidget* self) { (void)self; }
+void XWidget_setMask_2(XWidget* self) { (void)self; }
+void XWidget_clearMask_2(XWidget* self) { (void)self; }
+void XWidget_setParent_3(XWidget* self) { (void)self; }
+void XWidget_isHidden_2(XWidget* self) { (void)self; }
+void XWidget_isWindow_2(XWidget* self) { (void)self; }
+void XWidget_isModal_2(XWidget* self) { (void)self; }
+void XWidget_setWindowModified_2(XWidget* self) { (void)self; }
+void XWidget_setFixedSize_2(XWidget* self) { (void)self; }
+void XWidget_setFixedWidth_2(XWidget* self) { (void)self; }
+void XWidget_setFixedHeight_2(XWidget* self) { (void)self; }
 #endif /* XWIDGET_ON */

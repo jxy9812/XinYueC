@@ -42,6 +42,9 @@ typedef struct XFontComboBox
     int m_filters;        /**< 字体过滤位标志（默认 AllFonts）。 */
 } XFontComboBox;
 
+/** @brief X字体Combo盒classinit（对标 Qt 同名接口）。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 XVtable* XFontComboBox_class_init(void);
 void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
                         XWidgetFlags flags);
@@ -79,4 +82,29 @@ void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family);
 /* ==================== 信号 ==================== */
 
 void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self);
+/** @brief X字体Combo盒setDisplay字体2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XFontComboBox_setDisplayFont_2(XFontComboBox* self);
+/** @brief X字体Combo盒setSample文本For字体2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XFontComboBox_setSampleTextForFont_2(XFontComboBox* self);
+/** @brief X字体Combo盒setSample文本ForSystem2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XFontComboBox_setSampleTextForSystem_2(XFontComboBox* self);
+/** @brief X字体Combo盒setWritingSystem2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XFontComboBox_setWritingSystem_2(XFontComboBox* self);
+/** @brief X字体Combo盒writingSystem（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XFontComboBox_writingSystem(XFontComboBox* self);
 #endif /* XFONTCOMBOBOX_H */

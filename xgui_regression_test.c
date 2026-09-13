@@ -111,6 +111,14 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XTextBrowser.h"
 #include "XKeySequenceEdit.h"
 #include "XWizard.h"
+#include "XChartView.h"
+#include "XLineSeries.h"
+#include "XPieSeries.h"
+#include "XBarSeries.h"
+#include "XScatterSeries.h"
+#include "XAreaSeries.h"
+#include "XSplineSeries.h"
+#include "XTableWidget.h"
 #include "XTextEdit.h"
 #include "XDialog.h"
 #include "XLabel.h"
@@ -26618,6 +26626,99 @@ int main(void)
     test_widget_ime_commit_bridge();
     test_lineedit_context_menu_contract();
 #endif /* XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON */
+#if XTABLEWIDGET_ON
+    {
+        XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+        if (tw) {
+            XTableWidgetItem item;
+            memset(&item, 0, sizeof(item));
+            XTableWidget_setRowCount(tw, 3);
+            XTableWidget_setColumnCount(tw, 2);
+            XTableWidget_setText(tw, 0, 0, "A1");
+            XTableWidget_setText(tw, 1, 0, "B2");
+            XTableWidget_setText(tw, 2, 0, "C3");
+            expect_true(XTableWidget_rowCount(tw) == 3 &&
+                        XTableWidget_columnCount(tw) == 2,
+                        "XTableWidget 行列数");
+            expect_true(strcmp(XTableWidget_text(tw, 1, 0), "B2") == 0,
+                        "XTableWidget 单元格文本存取");
+            XTableWidget_setCurrentCell(tw, 1, 1);
+            expect_true(XTableWidget_currentRow(tw) == 1 &&
+                        XTableWidget_currentColumn(tw) == 1,
+                        "XTableWidget 当前单元格");
+            XTableWidget_sortItems(tw, 0, 0);
+            expect_true(strcmp(XTableWidget_text(tw, 0, 0), "A1") == 0,
+                        "XTableWidget 排序后首行");
+            memset(&item, 0, sizeof(item));
+            strcpy(item.text, "S");
+            XTableWidget_setItem(tw, 2, 1, &item);
+            expect_true(strcmp(XTableWidget_text(tw, 2, 1), "S") == 0,
+                        "XTableWidget setItem");
+            XTableWidget_clear(tw);
+            expect_true(XTableWidget_rowCount(tw) == 0,
+                        "XTableWidget clear");
+            XTableWidget_delete_base(tw);
+        }
+    }
+#endif /* XTABLEWIDGET_ON */
+#if XCHARTS_ON
+    {
+        XChart* chart = XChart_create();
+        XLineSeries* line = XLineSeries_create();
+        XBarSeries* bar = XBarSeries_create();
+        XScatterSeries* sc = XScatterSeries_create();
+        XAreaSeries* area = XAreaSeries_create();
+        XSplineSeries* sp = XSplineSeries_create();
+        XPieSeries* pie = XPieSeries_create();
+        expect_true(chart != NULL && line != NULL && bar != NULL &&
+                    sc != NULL && area != NULL && sp != NULL &&
+                    pie != NULL, "XChart 序列创建");
+        XLineSeries_append(line, 0, 10);
+        XLineSeries_append(line, 1, 20);
+        expect_true(XLineSeries_count(line) == 2 &&
+                    XLineSeries_at(line, 1)->y == 20,
+                    "XLineSeries 点存取");
+        XLineSeries_setName(line, "L");
+        expect_true(strcmp(XLineSeries_name(line), "L") == 0,
+                    "XLineSeries 序列名");
+        XChart_addLineSeries(chart, line);
+        expect_true(XChart_lineSeriesCount(chart) == 1 &&
+                    XChart_lineSeries(chart, 0) == line,
+                    "XChart addLineSeries");
+        XBarSeries_append(bar, "一", 5);
+        XBarSeries_append(bar, "二", 8);
+        expect_true(XBarSeries_count(bar) == 2 &&
+                    XBarSeries_value(bar, 1) == 8 &&
+                    strcmp(XBarSeries_category(bar, 0), "一") == 0,
+                    "XBarSeries 柱存取");
+        XChart_addBarSeries(chart, bar);
+        expect_true(XChart_barSeriesCount(chart) == 1,
+                    "XChart addBarSeries");
+        XScatterSeries_append(sc, 1, 2);
+        expect_true(XScatterSeries_count(sc) == 1, "XScatterSeries 点");
+        XChart_addScatterSeries(chart, sc);
+        XAreaSeries_setBaseValue(area, 0);
+        XLineSeries_append(XAreaSeries_upperSeries(area), 0, 3);
+        expect_true(XAreaSeries_upperSeries(area)->m_count == 1,
+                    "XAreaSeries 上边界");
+        XChart_addAreaSeries(chart, area);
+        XSplineSeries_append(sp, 0, 1);
+        XSplineSeries_append(sp, 1, 2);
+        expect_true(XSplineSeries_count(sp) == 2, "XSplineSeries 点");
+        XChart_addSplineSeries(chart, sp);
+        XPieSeries_append(pie, "A", 3);
+        XPieSeries_append(pie, "B", 1);
+        expect_true(XPieSeries_count(pie) == 2 &&
+                    XPieSeries_sum(pie) == 4, "XPieSeries 切片与求和");
+        XChart_setPieSeries(chart, pie);
+        expect_true(XChart_pieSeries(chart) == pie, "XChart setPieSeries");
+        XChart_setTitle(chart, "T");
+        expect_true(strcmp(XChart_title(chart), "T") == 0, "XChart 标题");
+        expect_true(XChart_axisX(chart) != NULL &&
+                    XChart_axisY(chart) != NULL, "XChart 轴");
+        XChart_deinit(chart);
+    }
+#endif /* XCHARTS_ON */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     if (s_failures != 0) {

@@ -125,8 +125,21 @@ XDialogButtonBox* XDialogButtonBox_create_ex(XMemoryType memory,
 /* ==================== 方向与布局 ==================== */
 
 void XDialogButtonBox_setOrientation(XDialogButtonBox* self, int orientation);
+/** @brief XDialog按钮盒orientation（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ */
 int XDialogButtonBox_orientation(const XDialogButtonBox* self);
+/** @brief XDialog按钮盒set居中Buttons（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @param center bool 参数。
+ * @return 无返回值。
+ */
 void XDialogButtonBox_setCenterButtons(XDialogButtonBox* self, bool center);
+/** @brief XDialog按钮盒centerButtons（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 条件成立返回 true，否则返回 false。
+ */
 bool XDialogButtonBox_centerButtons(const XDialogButtonBox* self);
 
 /* ==================== 按钮管理 ==================== */
@@ -207,6 +220,10 @@ void* XDialogButtonBox_clicked_signal(XDialogButtonBox* self,
  * @brief      接受信号（真发射）。
  */
 void* XDialogButtonBox_accepted_signal(XDialogButtonBox* self);
+/** @brief XDialog按钮盒helpRequested 信号地址（发射经 XObject_emitSignal）。
+ * @param self 目标控件指针。
+ * @return 返回对象指针；无效时返回 NULL。
+ */
 void* XDialogButtonBox_helpRequested_signal(XDialogButtonBox* self);
 /**
  * @brief      拒绝信号（真发射）。
@@ -221,4 +238,19 @@ void* XDialogButtonBox_rejected_signal(XDialogButtonBox* self);
 #ifdef __cplusplus
 }
 #endif
+/** @brief XDialog按钮盒clear2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialogButtonBox_clear_2(XDialogButtonBox* self);
+/** @brief XDialog按钮盒button2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialogButtonBox_button_2(XDialogButtonBox* self);
+/** @brief XDialog按钮盒standardButtons2（对标 Qt 同名接口）。
+ * @param self 目标控件指针。
+ * @return 无返回值。
+ */
+void XDialogButtonBox_standardButtons_2(XDialogButtonBox* self);
 #endif /* XDIALOGBUTTONBOX_H */
