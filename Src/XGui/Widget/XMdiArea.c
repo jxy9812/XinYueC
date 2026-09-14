@@ -60,7 +60,9 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
 #endif /* XPALETTE_ON */
     XRect_init(&head, 0, 0, w, 20);
     XPainter_fillRect(&painter, &head, highlight);
-    XPainter_drawText(&painter, 6, 14, sw->m_title, windowText);
+    XPainter_drawText(&painter, 6, 14,
+                      sw->m_title ? XString_toUtf8(sw->m_title) : "",
+                      windowText);
     XPainter_deinit(&painter);
 }
 
@@ -70,6 +72,10 @@ static void VX_mdiSubWindow_deinit(XMdiSubWindow* self)
     if (self->m_widget) {
         XWidget_delete_base(self->m_widget);
         self->m_widget = NULL;
+    }
+    if (self->m_title) {
+        XString_delete_base(self->m_title);
+        self->m_title = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -132,14 +138,18 @@ XWidget* XMdiSubWindow_widget(const XMdiSubWindow* self)
 void XMdiSubWindow_setWindowTitle_2(XMdiSubWindow* self, const char* utf8)
 {
     if (!self) return;
-    strncpy(self->m_title, utf8 ? utf8 : "", sizeof(self->m_title) - 1);
-    self->m_title[sizeof(self->m_title) - 1] = '\0';
+    if (!self->m_title) self->m_title = XString_create();
+    if (self->m_title)
+        XString_assign_utf8(self->m_title, utf8 ? utf8 : "");
     XWidget_update((XWidget*)self);
 }
 
 const char* XMdiSubWindow_windowTitle_2(const XMdiSubWindow* self)
 {
-    return self ? self->m_title : "";
+    const char* text;
+    if (!self || !self->m_title) return "";
+    text = XString_toUtf8(self->m_title);
+    return text ? text : "";
 }
 
 /* ==================== XMdiArea ==================== */

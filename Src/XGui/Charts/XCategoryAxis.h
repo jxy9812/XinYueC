@@ -13,13 +13,14 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
+#include "XString.h"
 
 #if XCHARTS_ON
 
 /** @brief 类别轴（对标 QCategoryAxis）。 */
 typedef struct XCategoryAxis
 {
-    char (*m_categories)[64]; /**< 类别标签数组（堆）。 */
+    XString** m_categories;  /**< 类别标签数组（对象拥有；堆）。 */
     int m_count;              /**< 类别数。 */
     int m_capacity;           /**< 容量。 */
     bool m_visible;           /**< 轴可见（默认 true）。 */

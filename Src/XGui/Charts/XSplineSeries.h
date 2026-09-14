@@ -1,7 +1,8 @@
 ﻿/**
  * @file       XSplineSeries.h
  * @brief      XSplineSeries 样条序列（对标 Qt Charts 6.8 QSplineSeries）。
- * @details    继承折线点集；渲染时以 Catmull-Rom 插值平滑。
+ * @details    继承 XXYSeries（QXYSeries 对齐）；无自有 API，
+ *             渲染时以 Catmull-Rom 插值平滑。
  * @note       模块总开关 XCHARTS_ON。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -13,36 +14,37 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
-#include "XLineSeries.h"
+#include "XXYSeries.h"
 
 #if XCHARTS_ON
 
-/** @brief 样条序列（点集复用折线；渲染平滑插值）。 */
+XCLASS_DEFINE_BEGING(XSplineSeries)
+XCLASS_DEFINE_EXTEND_END(XSplineSeries, XXYSeries)
+
+/** @brief 样条序列（对标 QSplineSeries；数据/外观在 XXYSeries）。 */
 typedef struct XSplineSeries
 {
-    char m_name[64];          /**< 序列名。 */
-    uint32_t m_color;         /**< 线色（0=主题色）。 */
-    double m_width;           /**< 线宽（像素，默认 2）。 */
-    XPointF* m_points;        /**< 控制点数组（堆）。 */
-    int m_count;              /**< 控制点数。 */
-    int m_capacity;           /**< 容量。 */
-    bool m_visible;           /**< 可见（默认 true）。 */
+    XXYSeries m_base;  /**< 基类成员；必须是第一个。 */
 } XSplineSeries;
+
+XVtable* XSplineSeries_class_init(void);
+
+/**
+ * @brief 初始化嵌入式样条序列。
+ *
+ * @param self 目标序列指针，不能为空。
+ * @return 无返回值。
+ */
+void XSplineSeries_init(XSplineSeries* self);
 
 XSplineSeries* XSplineSeries_create_ex(XMemoryType memory);
 #define XSplineSeries_create() XSplineSeries_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-void XSplineSeries_delete_base(XSplineSeries* self);
 
-/** @brief 追加控制点。 @param self 目标序列指针。 @param x X 坐标。 @param y Y 坐标。 @return 无返回值。 */
-void XSplineSeries_append(XSplineSeries* self, double x, double y);
-/** @brief 查询控制点数。 @param self 目标序列指针。 @return 控制点数。 */
-int XSplineSeries_count(const XSplineSeries* self);
-/** @brief 设置线色。 @param self 目标序列指针。 @param color ARGB。 @return 无返回值。 */
-void XSplineSeries_setColor(XSplineSeries* self, uint32_t color);
-/** @brief 设置序列名。 @param self 目标序列指针。 @param name UTF-8 名称。 @return 无返回值。 */
-void XSplineSeries_setName(XSplineSeries* self, const char* name);
-/** @brief 清空。 @param self 目标序列指针。 @return 无返回值。 */
-void XSplineSeries_clear(XSplineSeries* self);
+/** @brief 析构入口（查表分派父类析构）。 */
+#define XSplineSeries_deinit_base(self) XClass_deinit_base((XClass*)(self))
+
+/** @brief 删除堆上序列（查表分派析构并释放内存）。 */
+#define XSplineSeries_delete_base(self) XClass_delete_base((XClass*)(self))
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

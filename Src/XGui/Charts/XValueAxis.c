@@ -1,4 +1,5 @@
 ﻿#include "XValueAxis.h"
+#include "XString.h"
 #include <string.h>
 
 #if XCHARTS_ON
@@ -10,7 +11,8 @@ void XValueAxis_init(XValueAxis* self)
     self->m_min = 0.0;
     self->m_max = 10.0;
     self->m_tickCount = 6;
-    strcpy(self->m_labelFormat, "%g");
+    self->m_labelFormat = XString_create_utf8("%g");
+    self->m_titleText = XString_create();
     self->m_visible = true;
     self->m_gridVisible = true;
 }
@@ -36,15 +38,17 @@ int XValueAxis_tickCount(const XValueAxis* self) { return self ? self->m_tickCou
 void XValueAxis_setLabelFormat(XValueAxis* self, const char* fmt)
 {
     if (!self || !fmt) return;
-    strncpy(self->m_labelFormat, fmt, sizeof(self->m_labelFormat) - 1);
-    self->m_labelFormat[sizeof(self->m_labelFormat) - 1] = 0;
+    if (!self->m_labelFormat) self->m_labelFormat = XString_create();
+    if (self->m_labelFormat)
+        XString_assign_utf8(self->m_labelFormat, fmt ? fmt : "");
 }
 
 void XValueAxis_setTitleText(XValueAxis* self, const char* title)
 {
     if (!self || !title) return;
-    strncpy(self->m_titleText, title, sizeof(self->m_titleText) - 1);
-    self->m_titleText[sizeof(self->m_titleText) - 1] = 0;
+    if (!self->m_titleText) self->m_titleText = XString_create();
+    if (self->m_titleText)
+        XString_assign_utf8(self->m_titleText, title ? title : "");
 }
 
 void XValueAxis_setVisible(XValueAxis* self, bool visible)

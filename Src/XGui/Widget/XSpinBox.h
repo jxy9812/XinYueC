@@ -27,6 +27,7 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XWidget.h"
 #include "XAbstractSpinBox.h"
+#include "XString.h"
 
 #if XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON
 
@@ -59,8 +60,10 @@ typedef struct XSpinBox
     int     m_singleStep;            /**< 单步。 */
     int     m_stepType;              /**< 步进类型（XAbstractSpinBoxStepType）。 */
     int     m_displayIntegerBase;    /**< 显示进制（默认 10）。 */
-    char*   m_prefix;                /**< 前缀（拥有；NULL=空）。 */
-    char*   m_suffix;                /**< 后缀（拥有；NULL=空）。 */
+    XString* m_prefix;               /**< 前缀（对象拥有；NULL=空）。 */
+    XString* m_suffix;               /**< 后缀（对象拥有；NULL=空）。 */
+    bool    m_activeUp;              /**< 上按钮为活动子控件（对标 activeSubControls）。 */
+    bool    m_activeDown;            /**< 下按钮为活动子控件。 */
     bool    m_textDirty;             /**< 文本编辑中标志。 */
 } XSpinBox;
 

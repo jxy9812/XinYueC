@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XMenu.c
  * @brief      XMenu 弹出菜单实现（对标 Qt 6.8 QMenu）。
  * @details    对齐 QMenu 的动作容器、属性、弹出与信号语义：
@@ -15,6 +15,8 @@
  *             XAction/XString/XPainter 抽象层，不依赖任何平台 API。
  */
 #include "XMenu.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XWidget_Protected.h"
 #include "XWindow.h"
 #include "XMemory.h"
@@ -557,6 +559,65 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
     if (!self || !painter)
         return;
     rect = XWidget_rect((XWidget*)self);
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共接管：菜单面板 + 条目走 PE_PanelMenu/CE_MenuItem
+         * （分隔线保留原实现；选中项 highlight + HighlightedText）。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption panel;
+        int64_t n;
+        int64_t k;
+        XStyleOption_init(&panel, XStylePE_PanelMenu);
+        panel.m_rect = rect;
+        panel.m_state = XWidget_isEnabled((XWidget*)self)
+            ? XStyleState_Enabled : 0;
+#if XPALETTE_ON
+        panel.m_palette = XWidget_palette((XWidget*)self);
+#endif
+        XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
+        font = XWidget_font((XWidget*)self);
+        XPainter_setFont(painter, &font);
+        n = self->m_actions
+                ? (int64_t)XVector_size_base((const XContainer*)self->m_actions)
+                : 0;
+        for (k = 0; k < n; ++k) {
+            XAction** it = (XAction**)XVector_at_base(
+                (XContainer*)self->m_actions, k);
+            XAction* act = it ? *it : NULL;
+            XRect cell;
+            int yy;
+            if (!act) continue;
+            yy = rect.y + (int)k * self->m_actionHeight;
+            XRect_init(&cell, rect.x, yy, rect.width, self->m_actionHeight);
+            if (XAction_isSeparator(act)) {
+                XRect line;
+                XRect_init(&line, rect.x + 6, yy + self->m_actionHeight / 2,
+                           rect.width - 12, 1);
+                XPainter_fillRect(painter, &line, 0xFFA0A0A0u);
+                continue;
+            }
+            {
+                XStyleOption mi;
+                XStyleOption_init(&mi, XStyleCE_MenuItem);
+                mi.m_rect = cell;
+                mi.m_state = XAction_isEnabled(act)
+                    ? XStyleState_Enabled : 0;
+                if (act == self->m_activeAction) {
+                    mi.m_state |= XStyleState_Selected;
+                    mi.m_selected = true;
+                }
+                mi.m_text = XString_toUtf8(
+                    XAction_text_const(act) ? XAction_text_const(act) : NULL);
+#if XPALETTE_ON
+                mi.m_palette = XWidget_palette((XWidget*)self);
+#endif
+                XStyle_drawControl(style, XStyleCE_MenuItem, &mi, painter,
+                                   (XWidget*)self);
+            }
+        }
+        return;
+    }
+#endif /* XSTYLE_ON */
     XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);

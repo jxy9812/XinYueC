@@ -161,6 +161,8 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     self->m_dockAreas = XVector_Create(int);
     self->m_dockOptions = (int)XMainWindowDockOption_AnimatedDocks;
     self->m_iconSize = 16;
+    self->m_toolButtonStyle = (int)XToolButtonStyle_IconOnly;
+    self->m_activeTabifiedDock = NULL;
     XWidget_resize(self, 600, 450);
 }
 
@@ -285,8 +287,7 @@ XWidget* XMainWindow_addToolBar_2(XMainWindow* self,
         XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, 0);
     if (toolbar) {
         XToolBar* tb = (XToolBar*)toolbar;
-        strncpy(tb->m_title, utf8Title ? utf8Title : "",
-                sizeof(tb->m_title) - 1);
+        XToolBar_setTitle(tb, utf8Title ? utf8Title : "");
         XMainWindow_addToolBar(self, (int)XDockWidgetArea_Top, toolbar);
     }
 #endif
@@ -359,7 +360,90 @@ bool XMainWindow_isDockNestingEnabled(const XMainWindow* self) { (void)self; ret
 void XMainWindow_setSeparator(XMainWindow* self, int area) { (void)self; (void)area; }
 void XMainWindow_insertToolBar(XMainWindow* self, XToolBar* before, XToolBar* toolbar) { (void)self; (void)before; (void)toolbar; }
 void XMainWindow_removeToolBar(XMainWindow* self, XToolBar* toolbar) { (void)self; (void)toolbar; }
-void XMainWindow_iconSizeChanged_signal(XMainWindow* self) { (void)self; }
+void XMainWindow_iconSizeChanged_signal(XMainWindow* self)
+{
+    (void)self;
+}
+
+/**
+ * @brief      向主窗口发射带 int 载荷的信号（无连接时释放参数）。
+ * @param      self 目标主窗口；NULL 时不发射。
+ * @param      signal 信号标识。
+ * @param      value int 载荷。
+ * @return     无返回值。
+ */
+static void xmw_emitInt(XMainWindow* self, size_t signal, int value)
+{
+    XVarList* args;
+
+    if (!self) return;
+    args = XVarList_Create(XVar(int, value));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/**
+ * @brief      向主窗口发射 XWidget* 载荷的信号（无连接时释放参数）。
+ * @param      self 目标主窗口；NULL 时不发射。
+ * @param      signal 信号标识。
+ * @param      widget 控件载荷；可为 NULL。
+ * @return     无返回值。
+ */
+static void xmw_emitWidget(XMainWindow* self, size_t signal,
+                           XWidget* widget)
+{
+    XVarList* args;
+
+    if (!self) return;
+    args = XVarList_Create(XVar(XWidget*, widget));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+void* XMainWindow_toolButtonStyleChanged_signal(XMainWindow* self,
+                                                int toolButtonStyle)
+{
+    if (!self)
+        return (void*)(size_t)XMainWindow_toolButtonStyleChanged_signal;
+    xmw_emitInt(self, (size_t)XMainWindow_toolButtonStyleChanged_signal,
+                toolButtonStyle);
+    return (void*)(size_t)XMainWindow_toolButtonStyleChanged_signal;
+}
+
+void* XMainWindow_tabifiedDockWidgetActivated_signal(XMainWindow* self,
+                                                     XWidget* dockWidget)
+{
+    if (self)
+        self->m_activeTabifiedDock = dockWidget;
+    if (!self)
+        return (void*)(size_t)XMainWindow_tabifiedDockWidgetActivated_signal;
+    xmw_emitWidget(self,
+                   (size_t)XMainWindow_tabifiedDockWidgetActivated_signal,
+                   dockWidget);
+    return (void*)(size_t)XMainWindow_tabifiedDockWidgetActivated_signal;
+}
+
+void XMainWindow_setToolButtonStyle(XMainWindow* self, int toolButtonStyle)
+{
+    if (!self || self->m_toolButtonStyle == toolButtonStyle)
+        return;
+    self->m_toolButtonStyle = toolButtonStyle;
+    xmw_emitInt(self, (size_t)XMainWindow_toolButtonStyleChanged_signal,
+                toolButtonStyle);
+}
+
+int XMainWindow_toolButtonStyle(const XMainWindow* self)
+{
+    return self ? self->m_toolButtonStyle : (int)XToolButtonStyle_IconOnly;
+}
 void XMainWindow_insertToolBarBreak_2(XMainWindow* self) { (void)self; }
 void XMainWindow_removeToolBarBreak(XMainWindow* self) { (void)self; }
 void XMainWindow_isSeparator_2(XMainWindow* self) { (void)self; }

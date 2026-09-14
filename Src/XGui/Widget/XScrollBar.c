@@ -7,6 +7,8 @@
  */
 
 #include "XScrollBar.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
@@ -118,6 +120,41 @@ static void VX_scrollBar_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：渐变槽 + 渐变滑块 + 双层描边走
+         * CC_ScrollBar（完整对标 QFusionStyle 非 transient 路径）。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCC_ScrollBar);
+        {
+            XRect rr;
+            XRect_init(&rr, 0, 0, w, h);
+            opt.m_rect = rr;
+        }
+        opt.m_state = XWidget_isEnabled(self)
+            ? XStyleState_Enabled | XStyleState_Raised : 0;
+        if (XWidget_hasFocus(self))
+            opt.m_state |= XStyleState_HasFocus;
+        if (XWidget_underMouse(self) && XWidget_isEnabled(self))
+            opt.m_state |= XStyleState_MouseOver;
+        opt.m_horizontal = xsb_horizontal(sb);
+        opt.m_sliderMin = XAbstractSlider_minimum((XAbstractSlider*)sb);
+        opt.m_sliderMax = XAbstractSlider_maximum((XAbstractSlider*)sb);
+        opt.m_sliderValue = XAbstractSlider_value((XAbstractSlider*)sb);
+        opt.m_sliderPageStep = XAbstractSlider_pageStep(
+            (XAbstractSlider*)sb);
+        opt.m_sliderSingleStep = XAbstractSlider_singleStep(
+            (XAbstractSlider*)sb);
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawComplexControl(style, XStyleCC_ScrollBar, &opt,
+                                  &painter, self);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     groove = xsb_color(sb, XPaletteColorRole_Window);
     handle = xsb_color(sb, XPaletteColorRole_Mid);
     if (xsb_horizontal(sb)) {

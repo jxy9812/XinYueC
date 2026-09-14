@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XProgressBar.c
  * @brief      XProgressBar 进度条控件实现（对标 Qt 6.8 QProgressBar）。
  * @details    绘制分层：
@@ -24,6 +24,9 @@
 #if XWIDGET_ON && XPROGRESSBAR_ON
 
 #include "XProgressBar.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
+#include "XString.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -89,7 +92,8 @@ static void xprogressbar_emitInt(XProgressBar* self, size_t signal, int value)
 static void xprogressbar_buildText(const XProgressBar* self, char* out,
                                    int outSize)
 {
-    const char* fmt = self->m_format;
+    const char* fmt = (self->m_format ? XString_toUtf8(self->m_format) : NULL);
+    if (!fmt) fmt = "%p%";
     int range = self->m_max - self->m_min;
     int percent = (range > 0)
         ? (int)(((int64_t)(self->m_value - self->m_min) * 100 + range / 2) / range)
@@ -133,6 +137,105 @@ static void xprogressbar_buildText(const XProgressBar* self, char* out,
  * @param      painter 画笔（已绑定绘制图像并应用平移/裁剪）。
  * @return     无返回值。
  */
+/** @brief 绘制进度文本（垂直旋转 / 水平分段裁剪，完整复刻原实现）。
+ *  @param self 目标进度条指针（可变：XProgressBar_text 需要非 const）。
+ *  @param painter 目标画家。
+ *  @param r 内容矩形。
+ *  @param bw 矩形宽。 @param bh 矩形高。
+ *  @param chunkPixel 进度块像素长（0=无块，退化为单色）。
+ *  @param fromStart true 进度从头端开始。
+ *  @param windowText 块外文本色。 @param highlightText 块内文本色。 */
+static void xprogressbar_drawTextSegments(XProgressBar* self,
+                                          XPainter* painter,
+                                          const XRect* r, int bw, int bh,
+                                          int chunkPixel, bool fromStart,
+                                          uint32_t windowText,
+                                          uint32_t highlightText)
+{
+    char text[64];
+    XProgressBar* mutableSelf = self;
+    XProgressBar_text(mutableSelf, text, (int)sizeof(text));
+    if (self->m_orientation == XProgressBarOrientation_Vertical) {
+        /* 垂直文本：按 textDirection 旋转 90° 排布，单色居中绘制。 */
+        {
+            int textW = XPainter_textWidth(XPainter_font(painter), text);
+            int textH = 14;
+            int cx = r->x + bw / 2;
+            int cy = r->y + bh / 2;
+            XImageTransform savedTransform;
+            XPainter_transform(painter, &savedTransform);
+            XPainter_translate(painter, (float)cx, (float)cy);
+            /* TopToBottom：顺时针 90°（文本自上而下）；BottomToTop：
+               逆时针 90°（文本自下而上）。 */
+            XPainter_rotate(painter,
+                (self->m_textDirection ==
+                 XProgressBarDirection_BottomToTop) ? -90.0f : 90.0f);
+            XPainter_drawText(painter, -textW / 2, -textH / 2 + textH - 2,
+                              text, windowText);
+            XPainter_setTransform(painter, &savedTransform, false);
+        }
+    } else {
+        /* 文本宽度按当前字体真实度量测量（轮廓字库步进远大于 8px）。 */
+        int textW = XPainter_textWidth(XPainter_font(painter), text);
+        int textH = 14;
+        int tx = r->x + 1;
+        int ty = r->y + (bh - textH) / 2;
+        int baseline = ty + textH - 2;
+        if (self->m_alignment & XAlignment_Right)
+            tx = r->x + bw - 1 - textW;
+        else if (self->m_alignment & XAlignment_HCenter ||
+                 self->m_alignment == 0)
+            tx = r->x + (bw - textW) / 2;
+#if XPAINTER_CLIP_ON
+        /* 分段高亮依赖裁剪操作；关闭裁剪时退化为单段 WindowText。 */
+        if (chunkPixel > 0) {
+            int textRight = tx + textW;
+            int chunkLeft = fromStart
+                ? (r->x + 1)
+                : (r->x + (bw - 1) - chunkPixel);
+            int chunkRight = fromStart
+                ? (r->x + 1 + chunkPixel)
+                : (r->x + (bw - 1));
+            int insideL = fromStart
+                ? tx
+                : (chunkLeft > tx ? chunkLeft : tx);
+            int insideR = fromStart
+                ? (chunkRight < textRight ? chunkRight : textRight)
+                : textRight;
+            int outsideL = fromStart
+                ? (chunkRight > tx ? chunkRight : tx)
+                : tx;
+            int outsideR = fromStart
+                ? textRight
+                : (chunkLeft < textRight ? chunkLeft : textRight);
+            if (insideR > insideL) {
+                XRect clip;
+                XRect_init(&clip, insideL, ty, insideR - insideL,
+                           textH);
+                XPainter_setClipRect(painter, &clip,
+                                     XPainterClipOperation_ReplaceClip);
+                XPainter_drawText(painter, tx, baseline, text,
+                                  highlightText);
+            }
+            if (outsideR > outsideL) {
+                XRect clip;
+                XRect_init(&clip, outsideL, ty, outsideR - outsideL,
+                           textH);
+                XPainter_setClipRect(painter, &clip,
+                                     XPainterClipOperation_ReplaceClip);
+                XPainter_drawText(painter, tx, baseline, text,
+                                  windowText);
+            }
+            XPainter_setClipRect(painter, NULL,
+                                 XPainterClipOperation_NoClip);
+        } else
+#endif /* XPAINTER_CLIP_ON */
+        {
+            XPainter_drawText(painter, tx, baseline, text, windowText);
+        }
+    }
+}
+
 void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
 {
     XRect r = XWidget_rect((XWidget*)self);
@@ -162,6 +265,47 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
     bw = r.width;
     bh = r.height;
 
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：槽 + 内容块由样式引擎绘制。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCE_ProgressBarGroove);
+        opt.m_rect = r;
+        opt.m_state = XWidget_isEnabled((XWidget*)self)
+            ? XStyleState_Enabled : 0;
+        opt.m_horizontal = self->m_orientation ==
+            XProgressBarOrientation_Horizontal;
+        opt.m_progressMin = self->m_min;
+        opt.m_progressMax = self->m_max;
+        opt.m_progressValue = self->m_value;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)self);
+#endif
+        XStyle_drawControl(style, XStyleCE_ProgressBarGroove, &opt,
+                           painter, (XWidget*)self);
+        XStyle_drawControl(style, XStyleCE_ProgressBarContents, &opt,
+                           painter, (XWidget*)self);
+        /* 文本完整复刻原实现（分段裁剪 / 垂直旋转）。 */
+        if (self->m_textVisible) {
+            XProgressBar* ms = (XProgressBar*)self;
+            int filledPct = (range > 0)
+                ? ((int64_t)(self->m_value - self->m_min) * 100
+                   + range / 2) / range : 0;
+            int chunkPix;
+            if (filledPct < 0) filledPct = 0;
+            if (filledPct > 100) filledPct = 100;
+            if (self->m_orientation == XProgressBarOrientation_Vertical)
+                chunkPix = (bh - 2) * filledPct / 100;
+            else
+                chunkPix = (bw - 2) * filledPct / 100;
+            xprogressbar_drawTextSegments(ms, painter, &r, bw, bh,
+                chunkPix > 0 ? chunkPix : 0,
+                !self->m_invertedAppearance, windowText, highlightText);
+        }
+        return;
+    }
+#endif /* XSTYLE_ON */
     /* 1) Base 底 + 凹陷 1px 描边（上/左 Dark，下/右 Light）。 */
     XPainter_fillRect(painter, &r, base);
     {
@@ -223,107 +367,14 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
         }
     }
 
-    /* 3) 分段文本（textVisible 且有对齐时）：块内 HighlightedText、
-     *    块外 WindowText，按进度块边界分两段裁剪绘制。 */
+    /* 3) 分段文本（textVisible）：完整复刻（分段裁剪 / 垂直旋转）。 */
     if (self->m_textVisible) {
-        XProgressBar* mutableSelf = (XProgressBar*)self;
-        int chunkPixel = (chunkLen > 0) ? chunkLen : 0;
-        XPainter_setPen(painter, windowText);
-        if (self->m_orientation == XProgressBarOrientation_Vertical) {
-            /* 垂直文本：按 textDirection 旋转 90° 排布，单色居中绘制
-               （块内/块外分段裁剪为后续扩展）。 */
-            XProgressBar_text(mutableSelf, text, (int)sizeof(text));
-            {
-                /* 旋转文本同样按真实字体度量居中（8px 估算会偏出中心）。 */
-                int textW = XPainter_textWidth(XPainter_font(painter), text);
-                int textH = 14;
-                int cx = r.x + bw / 2;
-                int cy = r.y + bh / 2;
-                XImageTransform savedTransform;
-                XPainter_transform(painter, &savedTransform);
-                XPainter_translate(painter, (float)cx, (float)cy);
-                /* TopToBottom：顺时针 90°（文本自上而下）；BottomToTop：
-                   逆时针 90°（文本自下而上）。 */
-                XPainter_rotate(painter,
-                    (self->m_textDirection ==
-                     XProgressBarDirection_BottomToTop) ? -90.0f : 90.0f);
-                XPainter_drawText(painter, -textW / 2, -textH / 2 + textH - 2,
-                                  text, windowText);
-                XPainter_setTransform(painter, &savedTransform, false);
-            }
-        } else {
-            XProgressBar_text(mutableSelf, text, (int)sizeof(text));
-            /* 文本宽度必须按当前字体真实度量测量：轮廓字库的字符步进
-               远大于旧点阵的 8px（'%' 约 15px），用估算宽度做居中与
-               分段裁剪会把 % 字形切掉一角（视觉上变成"9"等残形）。 */
-            {
-                int textW = XPainter_textWidth(XPainter_font(painter), text);
-                int textH = 14;
-                int tx = r.x + 1;
-                int ty = r.y + (bh - textH) / 2;
-                int baseline = ty + textH - 2;
-                if (self->m_alignment & XAlignment_Right)
-                    tx = r.x + bw - 1 - textW;
-                else if (self->m_alignment & XAlignment_HCenter ||
-                         self->m_alignment == 0)
-                    tx = r.x + (bw - textW) / 2;
-#if XPAINTER_CLIP_ON
-                /* 分段高亮依赖裁剪操作（枚举随 XPAINTER_CLIP_ON 裁剪）；
-                   关闭裁剪时退化为下方单段 WindowText 绘制。 */
-                if (chunkPixel > 0) {
-                    /* 块内段：与进度块的交集用 HighlightedText；块外段：
-                       文本区间减进度块后用 WindowText。两段的裁剪区间都
-                       以真实文本右缘 textRight 为界，避免截断字形。 */
-                    int textRight = tx + textW;
-                    int chunkLeft = fromStart
-                        ? (r.x + 1)
-                        : (r.x + (bw - 1) - chunkPixel);
-                    int chunkRight = fromStart
-                        ? (r.x + 1 + chunkPixel)
-                        : (r.x + (bw - 1));
-                    int insideL = fromStart
-                        ? tx
-                        : (chunkLeft > tx ? chunkLeft : tx);
-                    int insideR = fromStart
-                        ? (chunkRight < textRight ? chunkRight : textRight)
-                        : textRight;
-                    int outsideL = fromStart
-                        ? (chunkRight > tx ? chunkRight : tx)
-                        : tx;
-                    int outsideR = fromStart
-                        ? textRight
-                        : (chunkLeft < textRight ? chunkLeft : textRight);
-                    if (insideR > insideL) {
-                        XRect clip;
-                        XRect_init(&clip, insideL, ty, insideR - insideL,
-                                   textH);
-                        XPainter_setClipRect(painter, &clip,
-                                             XPainterClipOperation_ReplaceClip);
-                        XPainter_drawText(painter, tx, baseline, text,
-                                          highlightText);
-                    }
-                    if (outsideR > outsideL) {
-                        XRect clip;
-                        XRect_init(&clip, outsideL, ty, outsideR - outsideL,
-                                   textH);
-                        XPainter_setClipRect(painter, &clip,
-                                             XPainterClipOperation_ReplaceClip);
-                        XPainter_drawText(painter, tx, baseline, text,
-                                          windowText);
-                    }
-                    XPainter_setClipRect(painter, NULL,
-                                         XPainterClipOperation_NoClip);
-                } else
-#endif /* XPAINTER_CLIP_ON */
-                {
-                    XPainter_drawText(painter, tx, baseline, text,
-                                      windowText);
-                }
-            }
-        }
-        (void)mutableSelf;
+        XProgressBar* ms = (XProgressBar*)self;
+        xprogressbar_drawTextSegments(ms, painter, &r, bw, bh,
+            chunkLen > 0 ? chunkLen : 0, fromStart, windowText,
+            highlightText);
     }
-    (void)bw;
+(void)bw;
     (void)bh;
 }
 
@@ -385,7 +436,8 @@ static void VXProgressBar_copy(XProgressBar* self, const XProgressBar* other)
     self->m_textVisible = other->m_textVisible;
     self->m_textDirection = other->m_textDirection;
     self->m_alignment = other->m_alignment;
-    memcpy(self->m_format, other->m_format, sizeof(self->m_format));
+    if (self->m_format && other->m_format)
+        XString_assign(self->m_format, other->m_format);
 }
 
 /** @brief 移动语义：基类移动后转移字段，源对象归构造默认值。 */
@@ -404,7 +456,9 @@ static void VXProgressBar_move(XProgressBar* self, XProgressBar* other)
     self->m_textVisible = other->m_textVisible;
     self->m_textDirection = other->m_textDirection;
     self->m_alignment = other->m_alignment;
-    memcpy(self->m_format, other->m_format, sizeof(self->m_format));
+    if (self->m_format) XString_delete_base(self->m_format);
+    self->m_format = other->m_format;
+    other->m_format = XString_create_utf8("%p%");
     other->m_min = 0;
     other->m_max = 100;
     other->m_value = 0;
@@ -413,13 +467,20 @@ static void VXProgressBar_move(XProgressBar* self, XProgressBar* other)
     other->m_textVisible = true;
     other->m_textDirection = XProgressBarDirection_TopToBottom;
     other->m_alignment = XAlignment_HCenter | XAlignment_VCenter;
-    other->m_format[0] = '%';
-    other->m_format[1] = 'p';
-    other->m_format[2] = '%';
-    other->m_format[3] = '\0';
+    /* m_format 已转移并重建。 */
 }
 
 /* ==================== 生命周期 ==================== */
+
+static void VXProgressBar_deinit(XProgressBar* self)
+{
+    if (!self) return;
+    if (self->m_format) {
+        XString_delete_base(self->m_format);
+        self->m_format = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
 
 XVtable* XProgressBar_class_init(void)
 {
@@ -431,6 +492,7 @@ XVtable* XProgressBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXProgressBar_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXProgressBar_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXProgressBar_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXProgressBar_deinit);
 
     return XVTABLE_DEFAULT;
 }
@@ -449,10 +511,7 @@ void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_textVisible = true;
     self->m_textDirection = XProgressBarDirection_TopToBottom;
     self->m_alignment = XAlignment_HCenter | XAlignment_VCenter;
-    self->m_format[0] = '%';
-    self->m_format[1] = 'p';
-    self->m_format[2] = '%';
-    self->m_format[3] = '\0';
+    self->m_format = XString_create_utf8("%p%");
 }
 
 XProgressBar* XProgressBar_create_ex(XMemoryType memory, XWidget* parent,
@@ -600,22 +659,27 @@ void XProgressBar_setAlignment(XProgressBar* self, int alignment)
 
 const char* XProgressBar_format(const XProgressBar* self)
 {
-    return (self && self->m_format[0]) ? self->m_format : "%p%";
+    const char* text;
+    if (!self || !self->m_format) return "%p%";
+    text = XString_toUtf8(self->m_format);
+    return (text && text[0]) ? text : "%p%";
 }
 
 void XProgressBar_setFormat(XProgressBar* self, const char* format)
 {
     if (!self) return;
     if (!format) format = "%p%";
-    strncpy(self->m_format, format, sizeof(self->m_format) - 1);
-    self->m_format[sizeof(self->m_format) - 1] = '\0';
+    if (!self->m_format) self->m_format = XString_create();
+    if (self->m_format)
+        XString_assign_utf8(self->m_format, format ? format : "%p%");
     XWidget_update((XWidget*)self);
 }
 
 void XProgressBar_resetFormat(XProgressBar* self)
 {
     if (!self) return;
-    strcpy(self->m_format, "%p%");
+    if (!self->m_format) self->m_format = XString_create();
+    if (self->m_format) XString_assign_utf8(self->m_format, "%p%");
     XWidget_update((XWidget*)self);
 }
 

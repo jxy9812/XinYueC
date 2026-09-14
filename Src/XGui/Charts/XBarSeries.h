@@ -14,45 +14,46 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
+#include "XString.h"
 #include "XClass.h"
+#include "XObject.h"
+#include "XAbstractBarSeries.h"
 
 #if XCHARTS_ON
 
-/** @brief 柱状序列（对标 QBarSeries + 单 QBarSet）。 */
+XCLASS_DEFINE_BEGING(XBarSeries)
+XCLASS_DEFINE_EXTEND_END(XBarSeries, XAbstractBarSeries)
+
+/** @brief 柱状序列（对标 QBarSeries；单组柱，数据在 XAbstractBarSeries）。 */
 typedef struct XBarSeries
 {
-    char m_name[64];          /**< 序列名（图例显示）。 */
-    double* m_values;         /**< 柱值数组（堆）。 */
-    char (*m_categories)[64]; /**< 类别标签数组（堆）。 */
-    int m_count;              /**< 柱数。 */
-    int m_capacity;           /**< 容量。 */
-    double m_barWidth;        /**< 组宽比例 0-1（默认 0.8）。 */
-    uint32_t m_color;         /**< 柱色（0=主题色）。 */
-    bool m_visible;           /**< 可见（默认 true）。 */
+    XAbstractBarSeries m_base; /**< 基类成员；必须是第一个。 */
+    uint32_t m_color;          /**< 柱色（0=主题色）。 */
 } XBarSeries;
+
+XVtable* XBarSeries_class_init(void);
+
+/**
+ * @brief 初始化嵌入式柱状序列。
+ *
+ * @param self 目标序列指针，不能为空。
+ * @return 无返回值。
+ */
+void XBarSeries_init(XBarSeries* self);
 
 XBarSeries* XBarSeries_create_ex(XMemoryType memory);
 #define XBarSeries_create() XBarSeries_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-void XBarSeries_delete_base(XBarSeries* self);
 
-/** @brief 追加柱（label + value）。 @param self 目标序列指针。 @param label 类别标签。 @param value 柱值。 @return 下标；失败 -1。 */
-int XBarSeries_append(XBarSeries* self, const char* label, double value);
-/** @brief 查询柱数。 @param self 目标序列指针。 @return 柱数。 */
-int XBarSeries_count(const XBarSeries* self);
-/** @brief 查询柱值。 @param self 目标序列指针。 @param index 下标。 @return 柱值；越界 0。 */
-double XBarSeries_value(const XBarSeries* self, int index);
-/** @brief 查询类别标签。 @param self 目标序列指针。 @param index 下标。 @return 标签；越界空串。 */
-const char* XBarSeries_category(const XBarSeries* self, int index);
-/** @brief 设置组宽比例。 @param self 目标序列指针。 @param width 0-1。 @return 无返回值。 */
-void XBarSeries_setBarWidth(XBarSeries* self, double width);
+/** @brief 析构入口（查表分派父类析构）。 */
+#define XBarSeries_deinit_base(self) XClass_deinit_base((XClass*)(self))
+
+/** @brief 删除堆上序列（查表分派析构并释放内存）。 */
+#define XBarSeries_delete_base(self) XClass_delete_base((XClass*)(self))
+
 /** @brief 设置柱色。 @param self 目标序列指针。 @param color ARGB。 @return 无返回值。 */
 void XBarSeries_setColor(XBarSeries* self, uint32_t color);
-/** @brief 设置序列名。 @param self 目标序列指针。 @param name UTF-8 名称。 @return 无返回值。 */
-void XBarSeries_setName(XBarSeries* self, const char* name);
-/** @brief 查询序列名。 @param self 目标序列指针。 @return 序列名。 */
-const char* XBarSeries_name(const XBarSeries* self);
-/** @brief 清空。 @param self 目标序列指针。 @return 无返回值。 */
-void XBarSeries_clear(XBarSeries* self);
+/** @brief 查询柱色。 @param self 目标序列指针。 @return ARGB。 */
+uint32_t XBarSeries_color(const XBarSeries* self);
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

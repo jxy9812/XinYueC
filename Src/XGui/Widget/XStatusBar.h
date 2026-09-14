@@ -29,6 +29,7 @@ extern "C" {
 #include <stddef.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 
 #if XWIDGET_ON && XSTATUSBAR_ON
 
@@ -43,7 +44,7 @@ typedef struct XStatusBar
     XWidget m_base;              /**< 基类成员；必须是第一个。 */
     XVector* m_items;            /**< 普通区条目（XStatusBarItem*，拥有）。 */
     XVector* m_permanents;       /**< 永久区条目（XStatusBarItem*，拥有）。 */
-    char m_currentMessage[512];  /**< 当前临时消息（UTF-8）。 */
+    XString* m_currentMessage;  /**< 当前临时消息（对象拥有）。 */
     int m_tempTimeout;           /**< 当前消息超时（毫秒；0=不自动清除）。 */
     XTimerId m_messageTimer;     /**< 消息超时定时器。 */
     bool m_sizeGripEnabled;      /**< 尺寸手柄开关（默认 true）。 */

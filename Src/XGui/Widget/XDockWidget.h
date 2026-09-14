@@ -26,6 +26,7 @@ extern "C" {
 #include <stddef.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 
 #if XWIDGET_ON && XDOCKWIDGET_ON
 
@@ -50,7 +51,7 @@ typedef struct XDockWidget
     int m_allowedAreas;      /**< 允许停靠区域。 */
     bool m_floating;         /**< 浮动状态。 */
     XWidget* m_titleBar;     /**< 自定义标题条（借用）。 */
-    char m_title[128];       /**< 标题文本。 */
+    XString* m_title;       /**< 标题文本（对象拥有）。 */
 } XDockWidget;
 
 /** @brief X停靠控件classinit（对标 Qt 同名接口）。

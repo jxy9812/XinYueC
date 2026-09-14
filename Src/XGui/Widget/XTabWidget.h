@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XTabWidget.h
  * @brief      XTabWidget 选项卡容器控件（对标 Qt 6.8 QTabWidget）。
  * @details    XTabBar（顶部页签）+ 页容器（每页一个 XWidget 子容器）
@@ -91,6 +91,30 @@ void* XTabWidget_tabClicked_signal(XTabWidget* self);
 /* ==================== 信号 ==================== */
 
 void* XTabWidget_tabCloseRequested_signal(XTabWidget* self);
+
+/**
+ * @brief      tabBarClicked(int) 信号地址（对标 QTabWidget::
+ *             tabBarClicked）。
+ * @details    页签条上左键单击某页签时由 XTabBar 点击事件转发真发射；
+ *             self 非 NULL 且有已连接槽时经 XObject_emitSignal 同步
+ *             通知，否则只返回信号标识。
+ * @param      self 目标选项卡容器指针；可为 NULL。
+ * @return     不透明的 tabBarClicked 信号标识；返回值不指向可释放
+ *             对象，也不得解引用。
+ */
+void* XTabWidget_tabBarClicked_signal(XTabWidget* self);
+
+/**
+ * @brief      tabBarDoubleClicked(int) 信号地址（对标 QTabWidget::
+ *             tabBarDoubleClicked）。
+ * @details    页签条上双击某页签时由 XTabBar 双击事件转发真发射；
+ *             self 非 NULL 且有已连接槽时经 XObject_emitSignal 同步
+ *             通知，否则只返回信号标识。
+ * @param      self 目标选项卡容器指针；可为 NULL。
+ * @return     不透明的 tabBarDoubleClicked 信号标识；返回值不指向
+ *             可释放对象，也不得解引用。
+ */
+void* XTabWidget_tabBarDoubleClicked_signal(XTabWidget* self);
 void XTabWidget_clear(XTabWidget* self);
 void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner);
 XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner);

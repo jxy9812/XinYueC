@@ -13,11 +13,11 @@ extern "C" {
 #include <stddef.h>
 
 #include "XAbstractSheet.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 /** @brief XChartsheet 图表工作表结构体 */
 typedef struct XChartsheet {
     XAbstractSheet m_base;         /**< 基类 */
-    XChart* m_chart;              /**< 关联的图表 */
+    XExcelChart* m_chart;              /**< 关联的图表 */
     bool m_ownsChart;             /**< 是否拥有图表生命周期（加载文档时为 true） */
 } XChartsheet;
 /**
@@ -50,14 +50,14 @@ void XChartsheet_delete(XChartsheet* self);
  * @param  self   XChartsheet 指针
  * @param  chart  图表对象（所有权不转移）
  */
-void XChartsheet_setChart(XChartsheet* self, XChart* chart);
+void XChartsheet_setChart(XChartsheet* self, XExcelChart* chart);
 
 /**
  * @brief  获取图表工作表关联的图表对象
  * @param  self  XChartsheet 指针
  * @return 图表对象指针，未设置返回 NULL
  */
-XChart* XChartsheet_chart(const XChartsheet* self);
+XExcelChart* XChartsheet_chart(const XChartsheet* self);
 
 /**
  * @brief 将 Chartsheet 序列化为 OOXML 数据。

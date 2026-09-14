@@ -31,11 +31,14 @@ typedef struct XTextBrowser
 #if XTEXTDOCUMENT_ON
     XTextDocument* m_textDoc; /**< 富文本文档。 */
 #endif
-    char m_history[32][256]; /**< 历史栈。 */
+    XString** m_history;    /**< 历史栈（对象拥有；动态扩容）。 */
     int m_historyCount;
     int m_historyIndex;
-    char m_source[256];     /**< 当前源 URL。 */
+    int m_historyCapacity;
+    XString* m_source;      /**< 当前源 URL（对象拥有）。 */
     bool m_openLinks;       /**< 链接可点击（默认 true）。 */
+    bool m_backwardAvailable; /**< 上次发射的后退可用状态（变化才发信号）。 */
+    bool m_forwardAvailable;  /**< 上次发射的前进可用状态（变化才发信号）。 */
 } XTextBrowser;
 
 /**
@@ -99,6 +102,18 @@ void* XTextBrowser_backwardAvailable_signal(XTextBrowser* self, bool available);
  * @brief      前进可用信号（真发射）。
  */
 void* XTextBrowser_forwardAvailable_signal(XTextBrowser* self, bool available);
+
+/**
+ * @brief      historyChanged(const QString&) 信号地址（对标
+ *             QTextBrowser::historyChanged）。
+ * @details    导航历史变化（setSource 追加历史、clearHistory 清空）时
+ *             真发射；self 非 NULL 且有已连接槽时经 XObject_emitSignal
+ *             同步通知，self 为 NULL 或无连接时只返回信号标识。
+ * @param      self 目标控件指针；可为 NULL。
+ * @return     不透明的 historyChanged 信号标识；返回值不指向可释放
+ *             对象，也不得解引用。
+ */
+void* XTextBrowser_historyChanged_signal(XTextBrowser* self);
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON */
 

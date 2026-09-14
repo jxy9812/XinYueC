@@ -89,12 +89,15 @@ int main(void)
     if (!XPainter_drawText(&painter, 1, 24, "Ag", 0xffffffffu)) ok = 0;
     fprintf(stderr, "gpu-test: text done backend=%d\n",
             (int)XPainter_rasterBackend(&painter));
-    /* drawTextRect（文本布局路径）同样必须留在 GPU 快速路径内。 */
+    /* drawTextRect（文本布局路径）同样必须留在 GPU 快速路径内；
+       TEXTLAYOUT 裁剪关闭的构建下该 API 不存在，跳过。 */
+#if XPAINTER_TEXTLAYOUT_ON
     {
         XRect textRect = { 30, 4, 30, 30 };
         if (!XPainter_drawTextRect(&painter, &textRect, 0, "Xy", 0xffffffffu))
             ok = 0;
     }
+#endif /* XPAINTER_TEXTLAYOUT_ON */
     fprintf(stderr, "gpu-test: textRect done backend=%d\n",
             (int)XPainter_rasterBackend(&painter));
     if (wasGpu && XPainter_rasterBackend(&painter) !=
@@ -249,7 +252,9 @@ int main(void)
                 fprintf(stderr, "gpu-test: atlas reset kept entries\n");
                 ok = 0;
             }
-            /* 几何 AA：GPU 会话内 AA 多边形产生灰度边缘且不降级。 */
+            /* 几何 AA：GPU 会话内 AA 多边形产生灰度边缘且不降级。
+               PATH/RENDERHINT 裁剪关闭的构建下跳过该段。 */
+#if XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON
             {
                 XImage polyFrame;
                 XPainter polyPainter;
@@ -309,6 +314,7 @@ int main(void)
                 XPainter_deinit(&polyPainter);
                 XImage_deinit_base(&polyFrame);
             }
+#endif /* XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON */
             /* 画线/描边 GPU 快速路径：轴对齐线与 drawRect 边框零降级、
                像素精确；斜线回退软件（降级但内容正确）。 */
             {
@@ -349,6 +355,7 @@ int main(void)
                     ok = 0;
                 }
                 /* 渐变笔刷：局部提交不降级。 */
+#if XPAINTER_BRUSH_ON
                 {
                     XPainterGradient gradient;
                     XRect gRect = { 40, 2, 20, 4 };
@@ -365,13 +372,16 @@ int main(void)
                         ok = 0;
                     }
                 }
+#endif /* XPAINTER_BRUSH_ON */
                 XPainter_end(&linePainter);
                 /* 渐变端点颜色采样（局部提交经 FBO，帧末 readback 可见）。 */
+#if XPAINTER_BRUSH_ON
                 if (XImage_pixel(&lineFrame, 41, 4) == 0xff202020u)
                 {
                     fprintf(stderr, "gpu-test: gradient not drawn\n");
                     ok = 0;
                 }
+#endif /* XPAINTER_BRUSH_ON */
                 /* 像素断言在 end/readback 之后（GPU 模式帧末才落回目标）。 */
                 {
                     int bad = 0;

@@ -42,7 +42,7 @@ bool XDocument_saveAsCsv(const XDocument* self, const XString* csvFileName);
 #include "XWorkbook.h"
 #include "XDataValidation.h"
 #include "XConditionalFormatting.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 #include "XDocPropsApp.h"
 #include "XDocPropsCore.h"
 #include "XZipReader.h"
@@ -208,7 +208,7 @@ unsigned int XDocument_getImageCount(const XDocument* self);
  * @param height 图表高度，使用工作表坐标单位。
  * @return 新创建的图表指针；失败返回 NULL；图表由工作表/文档持有。
  */
-XChart* XDocument_insertChart(XDocument* self, int row, int col, int width, int height);
+XExcelChart* XDocument_insertChart(XDocument* self, int row, int col, int width, int height);
 
 /* ========== 合并单元格 ========== */
 /**

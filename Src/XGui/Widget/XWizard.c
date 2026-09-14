@@ -13,10 +13,25 @@
 
 /* ==================== XWizardPage ==================== */
 
+static void VXWizardPage_deinit(XWizardPage* self)
+{
+    if (!self) return;
+    if (self->m_title) {
+        XString_delete_base(self->m_title);
+        self->m_title = NULL;
+    }
+    if (self->m_subTitle) {
+        XString_delete_base(self->m_subTitle);
+        self->m_subTitle = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 XVtable* XWizardPage_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XWizardPage)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWizardPage_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -29,6 +44,8 @@ void XWizardPage_init(XWizardPage* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_complete = true;
+    self->m_title = XString_create();
+    self->m_subTitle = XString_create();
 }
 
 XWizardPage* XWizardPage_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -44,26 +61,34 @@ XWizardPage* XWizardPage_create_ex(XMemoryType memory, XWidget* parent, XWidgetF
 void XWizardPage_setTitle(XWizardPage* self, const char* utf8)
 {
     if (!self) return;
-    strncpy(self->m_title, utf8 ? utf8 : "", sizeof(self->m_title) - 1);
-    self->m_title[sizeof(self->m_title) - 1] = '\0';
+    if (!self->m_title) self->m_title = XString_create();
+    if (self->m_title)
+        XString_assign_utf8(self->m_title, utf8 ? utf8 : "");
     XWidget_update((XWidget*)self);
 }
 
 const char* XWizardPage_title(const XWizardPage* self)
 {
-    return self ? self->m_title : "";
+    const char* text;
+    if (!self || !self->m_title) return "";
+    text = XString_toUtf8(self->m_title);
+    return text ? text : "";
 }
 
 void XWizardPage_setSubTitle(XWizardPage* self, const char* utf8)
 {
     if (!self) return;
-    strncpy(self->m_subTitle, utf8 ? utf8 : "", sizeof(self->m_subTitle) - 1);
-    self->m_subTitle[sizeof(self->m_subTitle) - 1] = '\0';
+    if (!self->m_subTitle) self->m_subTitle = XString_create();
+    if (self->m_subTitle)
+        XString_assign_utf8(self->m_subTitle, utf8 ? utf8 : "");
 }
 
 const char* XWizardPage_subTitle(const XWizardPage* self)
 {
-    return self ? self->m_subTitle : "";
+    const char* text;
+    if (!self || !self->m_subTitle) return "";
+    text = XString_toUtf8(self->m_subTitle);
+    return text ? text : "";
 }
 
 void XWizardPage_setComplete(XWizardPage* self, bool complete)
@@ -91,6 +116,24 @@ static void xwiz_emitInt(XWizard* self, size_t signal, int val)
     }
 }
 
+/**
+ * @brief      发射无参信号（helpRequested/completeChanged 等）。
+ * @param      self 目标向导；NULL 或无已连接槽时不发射。
+ * @param      signal 信号标识。
+ * @return     无返回值。
+ */
+static void xwiz_emitVoid(XWizard* self, size_t signal)
+{
+    XVarList* arguments = XVarList_create(0);
+    if (!arguments) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(arguments);
+    }
+}
+
 static const char* xwiz_defaultButtonText(XWizardButton which)
 {
     switch (which) {
@@ -111,16 +154,16 @@ static void xwiz_updateButtons(XWizard* self)
 #if XPUSHBUTTON_ON
     if (self->m_btnBack) {
         XWidget_setVisible((XWidget*)self->m_btnBack, !isFirst);
-        const char* txt = self->m_buttonTexts[XWizardButton_BackButton][0]
-            ? self->m_buttonTexts[XWizardButton_BackButton]
-            : xwiz_defaultButtonText(XWizardButton_BackButton);
+        const char* txt = XWizard_buttonText(self, XWizardButton_BackButton);
+        if (!txt || !txt[0])
+            txt = xwiz_defaultButtonText(XWizardButton_BackButton);
         XAbstractButton_setText_2((XAbstractButton*)self->m_btnBack, txt);
     }
     if (self->m_btnNext) {
         XWidget_setVisible((XWidget*)self->m_btnNext, !isLast);
-        const char* txt = self->m_buttonTexts[XWizardButton_NextButton][0]
-            ? self->m_buttonTexts[XWizardButton_NextButton]
-            : xwiz_defaultButtonText(XWizardButton_NextButton);
+        const char* txt = XWizard_buttonText(self, XWizardButton_NextButton);
+        if (!txt || !txt[0])
+            txt = xwiz_defaultButtonText(XWizardButton_NextButton);
         XAbstractButton_setText_2((XAbstractButton*)self->m_btnNext, txt);
     }
     if (self->m_btnFinish) {
@@ -175,6 +218,11 @@ static void xwiz_btnCancelSlot(XObject* receiver, XVarList* args)
     (void)args;
     XDialog_reject((XDialog*)receiver);
 }
+static void xwiz_btnHelpSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    xwiz_emitVoid((XWizard*)receiver, (size_t)XWizard_helpRequested_signal);
+}
 #endif
 
 /* ==================== XWizard 生命周期与虚表 ==================== */
@@ -226,7 +274,7 @@ static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
     if (page) {
         XRect head = { 0, 0, r.width, 32 };
         XPainter_fillRect(&painter, &head, highlight);
-        snprintf(buf, sizeof(buf), "%s", page->m_title);
+        snprintf(buf, sizeof(buf), "%s", XWizardPage_title(page));
         XPainter_drawText(&painter, 8, 20, buf, 0xFFFFFFFFu);
     }
     /* 底部分隔线。 */
@@ -239,7 +287,14 @@ static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
 
 static void VX_wizard_deinit(XWizard* self)
 {
+    int bi;
     if (!self) return;
+    for (bi = 0; bi < XWizardButton_NStandardButtons; ++bi) {
+        if (self->m_buttonTexts[bi]) {
+            XString_delete_base(self->m_buttonTexts[bi]);
+            self->m_buttonTexts[bi] = NULL;
+        }
+    }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -259,6 +314,11 @@ void XWizard_init(XWizard* self, XWidget* parent, XWidgetFlags flags)
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XWizard);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    {
+        int bi;
+        for (bi = 0; bi < XWizardButton_NStandardButtons; ++bi)
+            self->m_buttonTexts[bi] = XString_create();
+    }
     Set_Class_IsHeap(self, false);
     self->m_pageCount = 0;
     self->m_currentIndex = 0;
@@ -271,6 +331,24 @@ void XWizard_init(XWizard* self, XWidget* parent, XWidgetFlags flags)
         int bw = 80, bh = 28, by, gap = 6;
         int h = XWidget_height(self);
         by = h - bh - 8;
+        /* 帮助按钮在最左（HaveHelpButton 选项时创建，对标 QWizard
+           布局：Help 在导航按钮区之外靠左）。 */
+        if (self->m_options & (int)XWizardOption_HaveHelpButton) {
+            self->m_btnHelp = XPushButton_create_ex(
+                XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, 0);
+            {
+                const char* ht = XWizard_buttonText(self,
+                                                   XWizardButton_HelpButton);
+                XAbstractButton_setText_2((XAbstractButton*)self->m_btnHelp,
+                    (ht && ht[0]) ? ht : "帮助");
+            }
+            XWidget_setGeometry((XWidget*)self->m_btnHelp, 8, by, bw, bh);
+            XWidget_show((XWidget*)self->m_btnHelp);
+            XObject_connect_1((XObject*)self->m_btnHelp,
+                (size_t)XAbstractButton_clicked_signal(
+                    (XAbstractButton*)self->m_btnHelp, false),
+                (XObject*)self, xwiz_btnHelpSlot, XConnectionType_Direct);
+        }
         /* 取消在最右。 */
         self->m_btnCancel = XPushButton_create_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, 0);
@@ -477,16 +555,21 @@ int XWizard_options(const XWizard* self)
 void XWizard_setButtonText(XWizard* self, XWizardButton which, const char* utf8)
 {
     if (!self || which < 0 || which >= XWizardButton_NStandardButtons) return;
-    strncpy(self->m_buttonTexts[which], utf8 ? utf8 : "",
-            sizeof(self->m_buttonTexts[which]) - 1);
-    self->m_buttonTexts[which][sizeof(self->m_buttonTexts[which]) - 1] = '\0';
+    if (!self->m_buttonTexts[which])
+        self->m_buttonTexts[which] = XString_create();
+    if (self->m_buttonTexts[which])
+        XString_assign_utf8(self->m_buttonTexts[which],
+                            utf8 ? utf8 : "");
     xwiz_updateButtons(self);
 }
 
 const char* XWizard_buttonText(const XWizard* self, XWizardButton which)
 {
+    const char* text;
     if (!self || which < 0 || which >= XWizardButton_NStandardButtons) return "";
-    return self->m_buttonTexts[which];
+    if (!self->m_buttonTexts[which]) return "";
+    text = XString_toUtf8(self->m_buttonTexts[which]);
+    return text ? text : "";
 }
 
 /* ==================== 信号 ==================== */
@@ -497,6 +580,14 @@ void* XWizard_pageAdded_signal(XWizard* self, int index)
 { (void)self; (void)index; return (void*)(size_t)XWizard_pageAdded_signal; }
 void* XWizard_pageRemoved_signal(XWizard* self, int index)
 { (void)self; (void)index; return (void*)(size_t)XWizard_pageRemoved_signal; }
+
+void* XWizard_helpRequested_signal(XWizard* self)
+{
+    if (!self)
+        return (void*)(size_t)XWizard_helpRequested_signal;
+    xwiz_emitVoid(self, (size_t)XWizard_helpRequested_signal);
+    return (void*)(size_t)XWizard_helpRequested_signal;
+}
 
 
 void* XWizard_completeChanged_signal(XWizard* self)

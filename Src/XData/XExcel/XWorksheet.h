@@ -33,7 +33,7 @@ extern "C" {
 #include "XRichString.h"
 #include "XDataValidation.h"
 #include "XConditionalFormatting.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 #include "XMediaFile.h"
 
 /* 前向声明 */
@@ -95,7 +95,7 @@ typedef struct XWorksheet {
     /* 图片和图表 */
     XVector* m_mediaFiles;         /**< 媒体文件列表 (XMediaFile*) */
     XVector* m_imagePositions;     /**< 图片位置列表 (XWorksheet_ImagePosition)，与 m_mediaFiles 同索引 */
-    XVector* m_chartFiles;         /**< 图表文件列表 (XChart*) */
+    XVector* m_chartFiles;         /**< 图表文件列表 (XExcelChart*) */
     /* 属性 */
     bool m_windowProtection;       /**< 窗口保护 */
     bool m_showFormulas;           /**< 显示公式 */
@@ -402,7 +402,7 @@ unsigned int XWorksheet_getImageCount(const XWorksheet* self);
  * @param self 工作表指针；@param row 锚点行号；@param column 锚点列号；@param width 图表宽度；@param height 图表高度。
  * @return 新图表指针；失败返回 NULL；图表由工作表持有。
  */
-XChart* XWorksheet_insertChart(XWorksheet* self, int row, int column, int width, int height);
+XExcelChart* XWorksheet_insertChart(XWorksheet* self, int row, int column, int width, int height);
 
 /* ========== 合并单元格 ========== */
 /**

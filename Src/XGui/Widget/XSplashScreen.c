@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSplashScreen.c
  * @brief      启动画面控件实现（对标 Qt 6.8 QSplashScreen 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -60,10 +60,12 @@ static void VX_splash_paintEvent(XWidget* self, XEvent* event)
     if (sp->m_pixmap)
         XPainter_drawPixmap(&painter, sp->m_pixmap, 0, 0);
 #endif /* XPIXMAP_ON */
-    if (sp->m_message[0] != '\0') {
+    if (sp->m_message && XString_toUtf8(sp->m_message) &&
+        XString_toUtf8(sp->m_message)[0] != '\0') {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
-        XPainter_drawText(&painter, 8, h - 12, sp->m_message, sp->m_color);
+        XPainter_drawText(&painter, 8, h - 12,
+                          XString_toUtf8(sp->m_message), sp->m_color);
     }
     (void)w;
     (void)h;
@@ -78,6 +80,16 @@ static void VX_splash_mousePressEvent(XWidget* self, XEvent* event)
         XWidget_close(self);
 }
 
+static void VXSplashScreen_deinit(XSplashScreen* self)
+{
+    if (!self) return;
+    if (self->m_message) {
+        XString_delete_base(self->m_message);
+        self->m_message = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 XVtable* XSplashScreen_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSplashScreen)
@@ -85,6 +97,7 @@ XVtable* XSplashScreen_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_splash_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VX_splash_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSplashScreen_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -149,27 +162,33 @@ void XSplashScreen_showMessage(XSplashScreen* self, const char* utf8,
                                int alignment, uint32_t color)
 {
     if (!self) return;
-    strncpy(self->m_message, utf8 ? utf8 : "",
-            sizeof(self->m_message) - 1);
-    self->m_message[sizeof(self->m_message) - 1] = '\0';
+    if (!self->m_message) self->m_message = XString_create();
+    if (self->m_message)
+        XString_assign_utf8(self->m_message, utf8 ? utf8 : "");
     self->m_alignment = alignment;
     self->m_color = color;
-    xsp2_emitMessageChanged(self, self->m_message);
+    xsp2_emitMessageChanged(self,
+        self->m_message ? XString_toUtf8(self->m_message) : "");
     XWidget_update((XWidget*)self);
 }
 
 void XSplashScreen_clearMessage(XSplashScreen* self)
 {
     if (!self) return;
-    if (self->m_message[0] == '\0') return;
-    self->m_message[0] = '\0';
+    if (!self->m_message ||
+        !XString_toUtf8(self->m_message) ||
+        XString_toUtf8(self->m_message)[0] == '\0') return;
+    XString_assign_utf8(self->m_message, "");
     xsp2_emitMessageChanged(self, "");
     XWidget_update((XWidget*)self);
 }
 
 const char* XSplashScreen_message(const XSplashScreen* self)
 {
-    return self ? self->m_message : "";
+    const char* text;
+    if (!self || !self->m_message) return "";
+    text = XString_toUtf8(self->m_message);
+    return text ? text : "";
 }
 
 void XSplashScreen_finish(XSplashScreen* self, XWidget* widget)

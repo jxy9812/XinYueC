@@ -13,6 +13,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
+#include "XString.h"
 
 #if XCHARTS_ON
 
@@ -22,8 +23,8 @@ typedef struct XValueAxis
     double m_min;             /**< 轴最小值。 */
     double m_max;             /**< 轴最大值。 */
     int m_tickCount;          /**< 刻度数（含端点，默认 6）。 */
-    char m_labelFormat[32];   /**< 刻度标签格式（printf 风格）。 */
-    char m_titleText[64];     /**< 轴标题（UTF-8）。 */
+    XString* m_labelFormat;   /**< 刻度标签格式（对象拥有；printf 风格）。 */
+    XString* m_titleText;     /**< 轴标题（对象拥有）。 */
     bool m_visible;           /**< 轴可见（默认 true）。 */
     bool m_gridVisible;       /**< 网格线可见（默认 true）。 */
 } XValueAxis;

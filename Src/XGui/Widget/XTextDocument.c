@@ -10,6 +10,12 @@
 
 #if XTEXTDOCUMENT_ON
 
+static void xtd_formatAssign(XTDCharFormat* dst, const XTDCharFormat* src);
+static void xtd_formatClear(XTDCharFormat* fmt);
+static bool xtd_formatEqual(const XTDCharFormat* a, const XTDCharFormat* b);
+static void xtd_fragClear(XTDFragment* frag);
+static const char* xtd_fragText(const XTDFragment* frag);
+
 /* ==================== 生命周期 ==================== */
 
 XVtable* XTextDocument_class_init(void)
@@ -21,16 +27,27 @@ XVtable* XTextDocument_class_init(void)
 
 static void VX_td_deinit(XTextDocument* self)
 {
+    int i, j;
     if (!self) return;
     if (self->m_blocks) {
-        int i, j;
         for (i = 0; i < self->m_blockCount; ++i) {
-            for (j = 0; j < self->m_blocks[i].fragmentCount; ++j) {
-                /* fragments 是内嵌数组无需单独释放。 */
+            for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
+                xtd_fragClear(&self->m_blocks[i].fragments[j]);
+            if (self->m_blocks[i].blockFormat) {
+                XString_delete_base(self->m_blocks[i].blockFormat);
+                self->m_blocks[i].blockFormat = NULL;
             }
         }
         XFree_System(self->m_blocks);
         self->m_blocks = NULL;
+    }
+    if (self->m_title) {
+        XString_delete_base(self->m_title);
+        self->m_title = NULL;
+    }
+    if (self->m_url) {
+        XString_delete_base(self->m_url);
+        self->m_url = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
@@ -50,6 +67,8 @@ void XTextDocument_init(XTextDocument* self)
         sizeof(XTDBlock) * (size_t)self->m_capacity);
     self->m_blockCount = 1; /* 至少一个空块。 */
     self->m_undoRedoEnabled = true;
+    self->m_title = XString_create();
+    self->m_url = XString_create();
 }
 
 XTextDocument* XTextDocument_create_ex(XMemoryType memory)
@@ -90,6 +109,82 @@ static void xtd_emitVoid(XTextDocument* self, size_t signal)
     }
 }
 
+/** @brief 深拷贝字符格式（含字符串字段）。 */
+static void xtd_formatAssign(XTDCharFormat* dst, const XTDCharFormat* src)
+{
+    if (!dst || !src || dst == src) return;
+    if (dst->fontFamily && src->fontFamily)
+        XString_assign(dst->fontFamily, src->fontFamily);
+    else if (!dst->fontFamily && src->fontFamily)
+        dst->fontFamily = XString_create_copy(src->fontFamily);
+    if (dst->anchorHref && src->anchorHref)
+        XString_assign(dst->anchorHref, src->anchorHref);
+    else if (!dst->anchorHref && src->anchorHref)
+        dst->anchorHref = XString_create_copy(src->anchorHref);
+    dst->bold = src->bold;
+    dst->italic = src->italic;
+    dst->underline = src->underline;
+    dst->strikeOut = src->strikeOut;
+    dst->fgColor = src->fgColor;
+    dst->bgColor = src->bgColor;
+    dst->fontPointSize = src->fontPointSize;
+    dst->superScript = src->superScript;
+    dst->subScript = src->subScript;
+}
+
+/** @brief 释放字符格式字符串字段。 */
+static void xtd_formatClear(XTDCharFormat* fmt)
+{
+    if (!fmt) return;
+    if (fmt->fontFamily) {
+        XString_delete_base(fmt->fontFamily);
+        fmt->fontFamily = NULL;
+    }
+    if (fmt->anchorHref) {
+        XString_delete_base(fmt->anchorHref);
+        fmt->anchorHref = NULL;
+    }
+}
+
+/** @brief 格式相等比较（对标 memcmp 语义，字符串按内容比较）。 */
+static bool xtd_formatEqual(const XTDCharFormat* a, const XTDCharFormat* b)
+{
+    if (!a || !b) return a == b;
+    if (a->bold != b->bold || a->italic != b->italic ||
+        a->underline != b->underline || a->strikeOut != b->strikeOut ||
+        a->fgColor != b->fgColor || a->bgColor != b->bgColor ||
+        a->fontPointSize != b->fontPointSize ||
+        a->superScript != b->superScript || a->subScript != b->subScript)
+        return false;
+    if ((a->fontFamily == NULL) != (b->fontFamily == NULL)) return false;
+    if (a->fontFamily && !XString_equals(a->fontFamily, b->fontFamily,
+                                         XChar_CaseSensitive)) return false;
+    if ((a->anchorHref == NULL) != (b->anchorHref == NULL)) return false;
+    if (a->anchorHref && !XString_equals(a->anchorHref, b->anchorHref,
+                                         XChar_CaseSensitive)) return false;
+    return true;
+}
+
+/** @brief 释放片段全部字符串并清零。 */
+static void xtd_fragClear(XTDFragment* frag)
+{
+    if (!frag) return;
+    if (frag->text) {
+        XString_delete_base(frag->text);
+        frag->text = NULL;
+    }
+    xtd_formatClear(&frag->fmt);
+}
+
+/** @brief 读取片段文本（空串安全）。 */
+static const char* xtd_fragText(const XTDFragment* frag)
+{
+    const char* t;
+    if (!frag || !frag->text) return "";
+    t = XString_toUtf8(frag->text);
+    return t ? t : "";
+}
+
 static void xtd_changed(XTextDocument* self)
 {
     if (self) {
@@ -102,9 +197,18 @@ static void xtd_changed(XTextDocument* self)
 
 void XTextDocument_clear(XTextDocument* self)
 {
+    int j;
     if (!self) return;
+    if (self->m_blocks) {
+        for (j = 0; j < self->m_blocks[0].fragmentCount; ++j)
+            xtd_fragClear(&self->m_blocks[0].fragments[j]);
+        if (self->m_blocks[0].blockFormat) {
+            XString_delete_base(self->m_blocks[0].blockFormat);
+            self->m_blocks[0].blockFormat = NULL;
+        }
+        memset(&self->m_blocks[0], 0, sizeof(XTDBlock));
+    }
     self->m_blockCount = 1;
-    if (self->m_blocks) memset(&self->m_blocks[0], 0, sizeof(XTDBlock));
     xtd_changed(self);
 }
 
@@ -114,7 +218,7 @@ bool XTextDocument_isEmpty(const XTextDocument* self)
     if (!self) return true;
     for (i = 0; i < self->m_blockCount; ++i) {
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j) {
-            if (self->m_blocks[i].fragments[j].text[0]) return false;
+            if (xtd_fragText(&self->m_blocks[i].fragments[j])[0]) return false;
         }
     }
     return true;
@@ -131,7 +235,7 @@ int XTextDocument_characterCount(const XTextDocument* self)
     if (!self) return 0;
     for (i = 0; i < self->m_blockCount; ++i)
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
-            total += (int)strlen(self->m_blocks[i].fragments[j].text);
+            total += (int)strlen(xtd_fragText(&self->m_blocks[i].fragments[j]));
     return total;
 }
 
@@ -145,14 +249,14 @@ char* XTextDocument_toPlainText(const XTextDocument* self)
     if (!self) return NULL;
     for (i = 0; i < self->m_blockCount; ++i)
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
-            total += (int)strlen(self->m_blocks[i].fragments[j].text);
+            total += (int)strlen(xtd_fragText(&self->m_blocks[i].fragments[j]));
     total += self->m_blockCount; /* 换行符。 */
     out = (char*)XMalloc_System((size_t)total);
     if (!out) return NULL;
     out[0] = '\0';
     for (i = 0; i < self->m_blockCount; ++i) {
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j) {
-            const char* t = self->m_blocks[i].fragments[j].text;
+            const char* t = xtd_fragText(&self->m_blocks[i].fragments[j]);
             size_t len = strlen(t);
             memcpy(out + o, t, len); o += len;
         }
@@ -181,11 +285,9 @@ void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
                 self->m_blockCount = blockIdx + 1;
             }
             frag = &self->m_blocks[blockIdx].fragments[0];
-            if (len < sizeof(frag->text)) {
-                memcpy(frag->text, p, len);
-                frag->text[len] = '\0';
-                self->m_blocks[blockIdx].fragmentCount = 1;
-            }
+            if (frag->text) XString_delete_base(frag->text);
+            frag->text = XString_create_with_length_utf8(p, len);
+            self->m_blocks[blockIdx].fragmentCount = 1;
         }
         blockIdx++;
         if (!nl) break;
@@ -254,14 +356,18 @@ void XTextDocument_setHtml(XTextDocument* self, const char* html)
                 cur.fgColor = 0xFF000000u; while (*p && *p != '>') ++p; if (*p) ++p;
             } else if (strncmp(p, "a ", 2) == 0) {
                 const char* href = strstr(p, "href=");
-                if (href) { href += 6;
-                    strncpy(cur.anchorHref, href, sizeof(cur.anchorHref)-1);
-                    { char* end = strchr(cur.anchorHref, '"');
-                      if (end) *end = 0; }
+                if (href) { char tmp[256]; const char* q;
+                    href += 6;
+                    for (q = href; *q && *q != '"' && (size_t)(q - href) < 255; ++q)
+                        tmp[(size_t)(q - href)] = *q;
+                    tmp[(size_t)(q - href)] = 0;
+                    if (!cur.anchorHref) cur.anchorHref = XString_create();
+                    if (cur.anchorHref) XString_assign_utf8(cur.anchorHref, tmp);
                 }
                 while (*p && *p != '>') ++p; if (*p) ++p;
             } else if (strncmp(p, "/a>", 3) == 0) {
-                cur.anchorHref[0] = 0; while (*p && *p != '>') ++p; if (*p) ++p;
+                if (cur.anchorHref) XString_assign_utf8(cur.anchorHref, "");
+                while (*p && *p != '>') ++p; if (*p) ++p;
             } else {
                 while (*p && *p != '>') ++p; if (*p) ++p;
             }
@@ -274,8 +380,8 @@ void XTextDocument_setHtml(XTextDocument* self, const char* html)
                     int fi = self->m_blocks[blockIdx].fragmentCount;
                     if (fi < XTD_MAX_FRAGMENTS_PER_BLOCK) {
                         XTDFragment* f = &self->m_blocks[blockIdx].fragments[fi];
-                        strcpy(f->text, "&");
-                        f->fmt = cur;
+                        f->text = XString_create_utf8("&");
+                        xtd_formatAssign(&f->fmt, &cur);
                         self->m_blocks[blockIdx].fragmentCount = fi + 1;
                     }
                 }
@@ -292,22 +398,23 @@ void XTextDocument_setHtml(XTextDocument* self, const char* html)
                 XTDBlock* blk = &self->m_blocks[blockIdx];
                 int fi = blk->fragmentCount;
                 size_t len;
-                if (fi == 0 || (fi > 0 && memcmp(&blk->fragments[fi-1].fmt, &cur, sizeof(XTDCharFormat)) != 0)) {
+                if (fi == 0 || (fi > 0 && !xtd_formatEqual(&blk->fragments[fi-1].fmt, &cur))) {
                     /* 格式变化或第一个片段：新建片段。 */
                     if (fi < XTD_MAX_FRAGMENTS_PER_BLOCK) {
-                        memset(&blk->fragments[fi], 0, sizeof(XTDFragment));
-                        blk->fragments[fi].fmt = cur;
-                        blk->fragments[fi].text[0] = *p;
-                        blk->fragments[fi].text[1] = 0;
+                        XTDFragment* nf = &blk->fragments[fi];
+                        memset(nf, 0, sizeof(XTDFragment));
+                        xtd_formatAssign(&nf->fmt, &cur);
+                        nf->text = XString_create();
+                        if (nf->text) XString_append_with_length_utf8(
+                            nf->text, p, 1);
                         blk->fragmentCount = fi + 1;
                     }
                 } else {
                     /* 格式相同：追加文本。 */
-                    len = strlen(blk->fragments[fi-1].text);
-                    if (len + 1 < sizeof(blk->fragments[fi-1].text)) {
-                        blk->fragments[fi-1].text[len] = *p;
-                        blk->fragments[fi-1].text[len+1] = 0;
-                    }
+                    XTDFragment* pf = &blk->fragments[fi-1];
+                    if (!pf->text) pf->text = XString_create();
+                    if (pf->text) XString_append_with_length_utf8(
+                        pf->text, p, 1);
                 }
             }
             ++p;
@@ -327,7 +434,7 @@ char* XTextDocument_toHtml(const XTextDocument* self)
     if (!self) return NULL;
     for (i = 0; i < self->m_blockCount; ++i)
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
-            cap += strlen(self->m_blocks[i].fragments[j].text) * 8 + 64;
+            cap += strlen(xtd_fragText(&self->m_blocks[i].fragments[j])) * 8 + 64;
     out = (char*)XMalloc_System(cap);
     if (!out) return NULL;
     o = (size_t)snprintf(out, cap, "<html><body>");
@@ -342,7 +449,7 @@ char* XTextDocument_toHtml(const XTextDocument* self)
                 o += (size_t)snprintf(out+o, cap-o,
                     "<font color='#[%06x]'>", (unsigned)(f->fmt.fgColor & 0xFFFFFF));
             {
-                const char* t = f->text;
+                const char* t = xtd_fragText(f);
                 while (*t) {
                     if (*t == '<') o += (size_t)snprintf(out+o, cap-o, "&lt;");
                     else if (*t == '>') o += (size_t)snprintf(out+o, cap-o, "&gt;");
@@ -396,8 +503,8 @@ int XTextDocument_addFragment(XTextDocument* self, int blockIndex,
     fi = blk->fragmentCount;
     if (fi >= XTD_MAX_FRAGMENTS_PER_BLOCK) return -1;
     memset(&blk->fragments[fi], 0, sizeof(XTDFragment));
-    strncpy(blk->fragments[fi].text, text, sizeof(blk->fragments[fi].text) - 1);
-    if (fmt) blk->fragments[fi].fmt = *fmt;
+    blk->fragments[fi].text = XString_create_utf8(text);
+    if (fmt) xtd_formatAssign(&blk->fragments[fi].fmt, fmt);
     blk->fragmentCount = fi + 1;
     xtd_changed(self);
     return fi;
@@ -454,16 +561,32 @@ void XTextDocument_appendHtml(XTextDocument* self, const char* html)
 void XTextDocument_setMetaInformation(XTextDocument* self, int info, const char* value)
 {
     if (!self || !value) return;
-    if (info == 0) strncpy(self->m_title, value, sizeof(self->m_title) - 1);
-    else if (info == 1) strncpy(self->m_url, value, sizeof(self->m_url) - 1);
+    if (info == 0) {
+        if (!self->m_title) self->m_title = XString_create();
+        if (self->m_title) XString_assign_utf8(self->m_title, value);
+    } else if (info == 1) {
+        if (!self->m_url) self->m_url = XString_create();
+        if (self->m_url) XString_assign_utf8(self->m_url, value);
+    }
 }
 
 const char* XTextDocument_metaInformation(const XTextDocument* self, int info)
 {
     if (!self) return "";
-    if (info == 0) return self->m_title;
-    if (info == 1) return self->m_url;
-    return "";
+    {
+        const char* text;
+        if (info == 0) {
+            if (!self->m_title) return "";
+            text = XString_toUtf8(self->m_title);
+            return text ? text : "";
+        }
+        if (info == 1) {
+            if (!self->m_url) return "";
+            text = XString_toUtf8(self->m_url);
+            return text ? text : "";
+        }
+        return "";
+    }
 }
 
 /* ==================== 撤销/重做 ==================== */
@@ -482,7 +605,9 @@ bool XTextDocument_isRedoAvailable(const XTextDocument* self)
 static XTDCharFormat g_tdDefaultFmt;
 
 void XTextDocument_setDefaultFormat(XTextDocument* self, const XTDCharFormat* fmt)
-{ if (self && fmt) g_tdDefaultFmt = *fmt; }
+{
+    if (self && fmt) xtd_formatAssign(&g_tdDefaultFmt, fmt);
+}
 const XTDCharFormat* XTextDocument_defaultFormat(const XTextDocument* self)
 { (void)self; return &g_tdDefaultFmt; }
 
@@ -607,9 +732,11 @@ void XTextDocument_setFragmentFontFamily(XTextDocument* self, int bi, int fi, co
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
     if (!family) return;
-    strncpy(self->m_blocks[bi].fragments[fi].fmt.fontFamily, family,
-            sizeof(self->m_blocks[bi].fragments[fi].fmt.fontFamily) - 1);
-    self->m_blocks[bi].fragments[fi].fmt.fontFamily[sizeof(self->m_blocks[bi].fragments[fi].fmt.fontFamily) - 1] = 0;
+    if (!self->m_blocks[bi].fragments[fi].fmt.fontFamily)
+        self->m_blocks[bi].fragments[fi].fmt.fontFamily = XString_create();
+    if (self->m_blocks[bi].fragments[fi].fmt.fontFamily)
+        XString_assign_utf8(self->m_blocks[bi].fragments[fi].fmt.fontFamily,
+                            family);
     xtd_changed(self);
 }
 

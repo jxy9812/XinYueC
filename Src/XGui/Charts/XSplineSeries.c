@@ -1,60 +1,45 @@
 ﻿#include "XSplineSeries.h"
+#include "XXYSeries.h"
 #include "XMemory.h"
 #include "XClass.h"
 #include <string.h>
 
 #if XCHARTS_ON
 
+static void VXSplineSeries_deinit(XSplineSeries* self);
+
+static void VXSplineSeries_deinit(XSplineSeries* self)
+{
+    if (!self) return;
+    XClass_Deinit_Parent(XXYSeries, &self->m_base);
+}
+
+XVtable* XSplineSeries_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XSplineSeries)
+    XVTABLE_INHERIT_XCLASS(XXYSeries);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSplineSeries_deinit);
+    return XVTABLE_DEFAULT;
+}
+
+void XSplineSeries_init(XSplineSeries* self)
+{
+    if (!self) return;
+    memset(self, 0, sizeof(*self));
+    XXYSeries_init(&self->m_base);
+    XClassSetVtable(self, XSplineSeries);
+    XAbstractSeries_setName(&self->m_base.m_base, "spline");
+    self->m_base.m_base.m_type = XChartSeriesType_Spline;
+}
+
 XSplineSeries* XSplineSeries_create_ex(XMemoryType memory)
 {
     XSplineSeries* self = (XSplineSeries*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
-    strcpy(self->m_name, "spline");
-    self->m_width = 2.0;
-    self->m_visible = true;
+    XSplineSeries_init(self);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
 }
-
-void XSplineSeries_delete_base(XSplineSeries* self)
-{
-    if (!self) return;
-    if (self->m_points) XFree_System(self->m_points);
-    XFree_System(self);
-}
-
-void XSplineSeries_append(XSplineSeries* self, double x, double y)
-{
-    if (!self) return;
-    if (self->m_count >= self->m_capacity) {
-        int cap = self->m_capacity > 0 ? self->m_capacity * 2 : 16;
-        XPointF* p = (XPointF*)XRealloc_System(self->m_points,
-            sizeof(XPointF) * (size_t)cap);
-        if (!p) return;
-        self->m_points = p;
-        self->m_capacity = cap;
-    }
-    self->m_points[self->m_count].x = x;
-    self->m_points[self->m_count].y = y;
-    self->m_count++;
-}
-
-int XSplineSeries_count(const XSplineSeries* self)
-{ return self ? self->m_count : 0; }
-
-void XSplineSeries_setColor(XSplineSeries* self, uint32_t color)
-{ if (self) self->m_color = color; }
-
-void XSplineSeries_setName(XSplineSeries* self, const char* name)
-{
-    if (!self || !name) return;
-    strncpy(self->m_name, name, sizeof(self->m_name) - 1);
-    self->m_name[sizeof(self->m_name) - 1] = 0;
-}
-
-void XSplineSeries_clear(XSplineSeries* self)
-{ if (self) self->m_count = 0; }
 
 #endif /* XCHARTS_ON */

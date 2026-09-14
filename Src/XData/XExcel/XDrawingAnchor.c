@@ -10,7 +10,7 @@
 #include "XXmlStreamWriter.h"
 #include "XXmlStreamReader.h"
 #include "XMediaFile.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 #include "XFile.h"
 #include "XIODevice.h"
 #include "XClass.h"
@@ -104,7 +104,7 @@ bool XDrawingAnchor_setPictureFromData(XDrawingAnchor* self, const uint8_t* data
     return true;
 }
 
-void XDrawingAnchor_setChart(XDrawingAnchor* self, XChart* chart) {
+void XDrawingAnchor_setChart(XDrawingAnchor* self, XExcelChart* chart) {
     if (!self) return;
     if (self->m_pictureFile) {
         XMediaFile_delete(self->m_pictureFile);

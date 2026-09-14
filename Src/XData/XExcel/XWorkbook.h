@@ -24,7 +24,7 @@ extern "C" {
 #include "XSharedStrings.h"
 #include "XStyles.h"
 #include "XTheme.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 #include "XMediaFile.h"
 
 /* 前向声明 */
@@ -49,7 +49,7 @@ typedef struct XWorkbook {
     XStyles* m_styles;                 /**< 样式管理器 */
     XTheme* m_theme;                   /**< 主题 */
     XVector* m_mediaFiles;             /**< 媒体文件列表 (XMediaFile*) */
-    XVector* m_chartFiles;             /**< 图表文件列表 (XChart*) */
+    XVector* m_chartFiles;             /**< 图表文件列表 (XExcelChart*) */
     XVector* m_defineNames;            /**< 定义名称列表 (XWorkbook_DefineName) */
     bool m_date1904;                   /**< 是否使用1904日期系统 */
     bool m_stringsToNumbers;           /**< 字符串转数字 */
@@ -312,7 +312,7 @@ XMediaFile** XWorkbook_mediaFiles(const XWorkbook* self, int* count);
  * @param  self       工作簿指针
  * @param  chartFile  图表对象（非拥有引用，资源由所属工作表管理）
  */
-void XWorkbook_addChartFile(XWorkbook* self, XChart* chartFile);
+void XWorkbook_addChartFile(XWorkbook* self, XExcelChart* chartFile);
 
 /**
  * @brief  获取所有图表文件列表
@@ -320,7 +320,7 @@ void XWorkbook_addChartFile(XWorkbook* self, XChart* chartFile);
  * @param  count  [out] 接收图表文件数量
  * @return 图表文件指针数组
  */
-XChart** XWorkbook_chartFiles(const XWorkbook* self, int* count);
+XExcelChart** XWorkbook_chartFiles(const XWorkbook* self, int* count);
 
 /**
  * @brief  按类型获取工作表列表

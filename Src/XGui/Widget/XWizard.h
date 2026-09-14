@@ -83,8 +83,8 @@ XCLASS_DEFINE_EXTEND_END(XWizardPage, XWidget)
 typedef struct XWizardPage
 {
     XWidget m_base;        /**< 基类成员；必须是第一个。 */
-    char m_title[128];     /**< 页面标题。 */
-    char m_subTitle[128];  /**< 页面子标题。 */
+    XString* m_title;     /**< 页面标题（对象拥有）。 */
+    XString* m_subTitle;  /**< 页面子标题（对象拥有）。 */
     bool m_complete;       /**< 是否完成（默认 true）。 */
 } XWizardPage;
 
@@ -160,12 +160,13 @@ typedef struct XWizard
     bool m_visited[XWIZARD_MAX_PAGES]; /**< 已访问标记。 */
     int m_style;                /**< 向导样式。 */
     int m_options;              /**< 选项位标志。 */
-    char m_buttonTexts[6][32];  /**< 自定义按钮文本。 */
+    XString* m_buttonTexts[XWizardButton_NStandardButtons]; /**< 自定义按钮文本（对象拥有）。 */
 #if XPUSHBUTTON_ON
     XPushButton* m_btnBack;     /**< 上一页按钮。 */
     XPushButton* m_btnNext;     /**< 下一页按钮。 */
     XPushButton* m_btnFinish;   /**< 完成按钮。 */
     XPushButton* m_btnCancel;   /**< 取消按钮。 */
+    XPushButton* m_btnHelp;     /**< 帮助按钮（HaveHelpButton 时创建）。 */
 #endif
 } XWizard;
 
@@ -326,6 +327,17 @@ void* XWizard_pageAdded_signal(XWizard* self, int index);
  * @return 返回对象指针；无效时返回 NULL。
  */
 void* XWizard_pageRemoved_signal(XWizard* self, int index);
+
+/**
+ * @brief      发射 helpRequested() 信号（对标 QWizard::helpRequested）。
+ * @details    用户点击向导的 Help 按钮时真发射；self 非 NULL 且有已
+ *             连接槽时经 XObject_emitSignal 同步通知（空参信号
+ *             args = NULL），否则只返回信号标识。
+ * @param      self 目标向导指针；可为 NULL。
+ * @return     不透明的 helpRequested 信号标识；返回值不指向可释放
+ *             对象，也不得解引用。
+ */
+void* XWizard_helpRequested_signal(XWizard* self);
 
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */
 

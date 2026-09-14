@@ -55,7 +55,7 @@ typedef struct XDateTimeEdit
     XDateTime m_dateTime;      /**< 当前值。 */
     XDateTime m_minimum;       /**< 最小值。 */
     XDateTime m_maximum;       /**< 最大值。 */
-    char m_displayFormat[64];  /**< 显示格式串。 */
+    XString* m_displayFormat;  /**< 显示格式串（对象拥有）。 */
     int m_currentSection;      /**< 当前编辑分段。 */
 } XDateTimeEdit;
 

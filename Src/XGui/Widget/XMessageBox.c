@@ -67,12 +67,27 @@ static void xmsg_rejectedSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 生命周期与虚表 ==================== */
 
+static void VXMessageBox_deinit(XMessageBox* self)
+{
+    if (!self) return;
+    if (self->m_text) {
+        XString_delete_base(self->m_text);
+        self->m_text = NULL;
+    }
+    if (self->m_title) {
+        XString_delete_base(self->m_title);
+        self->m_title = NULL;
+    }
+    XClass_Deinit_Parent(XDialog, (XDialog*)self);
+}
+
 XVtable* XMessageBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMessageBox)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
                              VX_messageBox_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMessageBox_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -87,7 +102,8 @@ void XMessageBox_init(XMessageBox* self, XWidget* parent,
     Set_Class_IsHeap(self, false);
     self->m_icon = (int)XMessageBoxIcon_NoIcon;
     self->m_inExec = false;
-    self->m_text[0] = 0;
+    self->m_text = XString_create();
+    self->m_title = XString_create();
 #if XDIALOGBUTTONBOX_ON
     self->m_buttonBox = XDialogButtonBox_create(self, 0);
     if (self->m_buttonBox) {
@@ -126,29 +142,34 @@ void XMessageBox_setText(XMessageBox* self, const char* utf8)
 {
     if (!self || !self->m_textLabel) return;
     XLabel_setText_2(self->m_textLabel, utf8 ? utf8 : "");
-    strncpy(self->m_text, utf8 ? utf8 : "",
-            sizeof(self->m_text) - 1);
-    self->m_text[sizeof(self->m_text) - 1] = 0;
+    if (!self->m_text) self->m_text = XString_create();
+    if (self->m_text)
+        XString_assign_utf8(self->m_text, utf8 ? utf8 : "");
 }
 
 const char* XMessageBox_text(const XMessageBox* self)
 {
     if (!self || !self->m_textLabel)
         return "";
-    return self->m_text;
+    return self->m_text ? XString_toUtf8(self->m_text) : "";
 }
 
 void XMessageBox_setTitle(XMessageBox* self, const char* utf8)
 {
     if (!self) return;
-    strncpy(self->m_title, utf8 ? utf8 : "",
-            sizeof(self->m_title) - 1);
-    self->m_title[sizeof(self->m_title) - 1] = '\0';
+    if (!self->m_title) self->m_title = XString_create();
+    if (self->m_title)
+        XString_assign_utf8(self->m_title, utf8 ? utf8 : "");
 }
 
 const char* XMessageBox_title(const XMessageBox* self)
 {
-    return self ? self->m_title : "";
+    {
+        const char* text;
+        if (!self || !self->m_title) return "";
+        text = XString_toUtf8(self->m_title);
+        return text ? text : "";
+    }
 }
 
 void XMessageBox_setIcon(XMessageBox* self, XMessageBoxIcon icon)

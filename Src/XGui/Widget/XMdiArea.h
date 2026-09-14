@@ -47,7 +47,7 @@ typedef struct XMdiSubWindow
 {
     XWidget m_base;      /**< 基类成员；必须是第一个。 */
     XWidget* m_widget;   /**< 内容控件（借用，归 sub window）。 */
-    char m_title[128];   /**< 标题条文本。 */
+    XString* m_title;   /**< 标题条文本（对象拥有）。 */
 } XMdiSubWindow;
 
 /** @brief XMdi子Windowclassinit（对标 Qt 同名接口）。

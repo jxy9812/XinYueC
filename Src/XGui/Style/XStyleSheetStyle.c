@@ -1,0 +1,570 @@
+﻿#include "XStyleSheetStyle.h"
+#include "XMemory.h"
+#include "XClass.h"
+#include "XPainter.h"
+#include "XFont.h"
+#include "XObject.h"
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+
+#if XSTYLE_ON
+
+/* ==================== 值解析 ==================== */
+
+/** @brief 16 进制单字符 → 值（-1 非法）。 */
+static int xsss_hexDigit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/** @brief 解析颜色（#RGB/#RRGGBB/#AARRGGBB/rgb(r,g,b)，含少量具名色）。 */
+bool XCssParseColor(const char* value, uint32_t* out)
+{
+    const char* p;
+    size_t len;
+    if (!value || !out) return false;
+    while (*value && isspace((unsigned char)*value)) ++value;
+    p = value;
+    len = strlen(p);
+    while (len > 0 && isspace((unsigned char)p[len - 1])) --len;
+    if (len > 0 && p[0] == '#') {
+        int i;
+        uint32_t v = 0;
+        ++p; --len;
+        if (len != 3 && len != 6 && len != 8) return false;
+        for (i = 0; i < (int)len; ++i) {
+            int d = xsss_hexDigit(p[i]);
+            if (d < 0) return false;
+            v = (v << 4) | (uint32_t)d;
+        }
+        if (len == 3) {
+            /* #RGB 展开为 #RRGGBB。 */
+            uint32_t r = (v >> 8) & 0xF;
+            uint32_t g = (v >> 4) & 0xF;
+            uint32_t b = v & 0xF;
+            *out = 0xFF000000u | (r << 20) | (r << 16) | (g << 12) |
+                   (g << 8) | (b << 4) | b;
+        } else if (len == 6) {
+            *out = 0xFF000000u | v;
+        } else {
+            *out = v; /* #AARRGGBB。 */
+        }
+        return true;
+    }
+    if (strncasecmp(p, "rgb", 3) == 0) {
+        int r = 0;
+        int g = 0;
+        int b = 0;
+        int a = 255;
+        if (sscanf(p, "rgba(%d,%d,%d,%d", &r, &g, &b, &a) >= 3 ||
+            sscanf(p, "rgb(%d,%d,%d", &r, &g, &b) >= 3) {
+            if (r < 0) r = 0; if (r > 255) r = 255;
+            if (g < 0) g = 0; if (g > 255) g = 255;
+            if (b < 0) b = 0; if (b > 255) b = 255;
+            if (a < 0) a = 0; if (a > 255) a = 255;
+            *out = ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+                   ((uint32_t)g << 8) | (uint32_t)b;
+            return true;
+        }
+        return false;
+    }
+    /* 具名色子集（对标 CSS 基础色）。 */
+    {
+        static const struct { const char* n; uint32_t v; } names[] = {
+            { "black", 0xFF000000u }, { "white", 0xFFFFFFFFu },
+            { "red", 0xFFFF0000u }, { "green", 0xFF008000u },
+            { "blue", 0xFF0000FFu }, { "gray", 0xFF808080u },
+            { "grey", 0xFF808080u }, { "transparent", 0x00000000u },
+        };
+        size_t i;
+        for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+            if (strlen(names[i].n) == len &&
+                strncasecmp(names[i].n, p, len) == 0) {
+                *out = names[i].v;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/** @brief 限长颜色 token 解析（供 border 简写拆分；非 NUL 结尾）。 */
+bool XCssParseColorToken(const char* value, size_t len, uint32_t* out)
+{
+    char buf[32];
+    if (!value || len == 0 || len >= sizeof(buf)) return false;
+    memcpy(buf, value, len);
+    buf[len] = '\0';
+    return XCssParseColor(buf, out);
+}
+
+/** @brief 解析长度（"12px"/"12" → 12）。 */
+bool XCssParseLength(const char* value, int* out)
+{
+    if (!value || !out) return false;
+    while (*value && isspace((unsigned char)*value)) ++value;
+    if (!isdigit((unsigned char)*value) && *value != '-' && *value != '+')
+        return false;
+    *out = atoi(value);
+    return true;
+}
+
+/* ==================== 值/声明查询 ==================== */
+
+/** @brief 在规则内查声明值（同属性后出现者覆盖前者，对标 CSS 级联）。 */
+static const XCssDeclaration* xsss_findDecl(const XCssStyleRule* rule,
+                                            XCssProperty id)
+{
+    int i;
+    const XCssDeclaration* found = NULL;
+    for (i = 0; i < rule->m_declarationCount; ++i) {
+        if (rule->m_declarations[i].m_propertyId != id) continue;
+        if (!found || rule->m_declarations[i].m_important ||
+            !found->m_important)
+            found = &rule->m_declarations[i];
+    }
+    return found;
+}
+
+/** @brief 对象类名（vtable 名；关闭名称配置时返回 NULL）。 */
+static const char* xsss_className(const XObject* obj)
+{
+    XVtable* vt;
+    if (!obj) return NULL;
+    vt = XClassGetVtable((const XClass*)obj);
+    return XVTABLE_GET_NAME(vt);
+}
+
+/** @brief 对象 objectName（UTF-8；无则 NULL）。 */
+static const char* xsss_objectName(const XObject* obj)
+{
+    const XString* n;
+    if (!obj) return NULL;
+    n = XObject_objectName(obj);
+    return n ? XString_toUtf8(n) : NULL;
+}
+
+/** @brief 由 XStyleState 位映射伪类位（用于规则匹配）。 */
+static uint32_t xsss_statePseudos(uint32_t state)
+{
+    uint32_t ps = 0;
+    if (state & XStyleState_Enabled) ps |= XCssPseudo_Enabled;
+    else ps |= XCssPseudo_Disabled;
+    if (state & XStyleState_MouseOver) ps |= XCssPseudo_Hover;
+    if (state & XStyleState_Sunken) ps |= XCssPseudo_Pressed;
+    if (state & XStyleState_HasFocus) ps |= XCssPseudo_Focus;
+    if (state & XStyleState_On) ps |= XCssPseudo_Checked;
+    if (state & XStyleState_Selected) ps |= XCssPseudo_Selected;
+    return ps;
+}
+
+/** @brief 选择器是否匹配（元素名=类名、#id=objectName、伪类子集）。 */
+static bool xsss_selectorMatches(const XCssBasicSelector* sel,
+                                 const XObject* obj, uint32_t statePseudos)
+{
+    const char* cls;
+    const char* id;
+    if (!sel) return false;
+    if (sel->m_elementName) {
+        const char* want = XString_toUtf8(sel->m_elementName);
+        cls = xsss_className(obj);
+        if (!cls || !want || strcasecmp(cls, want) != 0) return false;
+    }
+    if (sel->m_id) {
+        const char* want = XString_toUtf8(sel->m_id);
+        id = xsss_objectName(obj);
+        if (!id || !want || strcmp(id, want) != 0) return false;
+    }
+    if (sel->m_pseudoClasses &&
+        (sel->m_pseudoClasses & statePseudos) != sel->m_pseudoClasses)
+        return false;
+    return true;
+}
+
+/**
+ * @brief 在样式表中查最优先命中的声明（specificity 高者胜）。
+ */
+static const XCssDeclaration* xsss_lookup(const XCssStyleSheet* sheet,
+                                          const XObject* obj, uint32_t state,
+                                          XCssProperty id)
+{
+    int ri;
+    int si;
+    const XCssDeclaration* best = NULL;
+    int bestSpec = -1;
+    uint32_t statePseudos;
+    if (!sheet || sheet->m_ruleCount == 0) return NULL;
+    statePseudos = xsss_statePseudos(state);
+    for (ri = 0; ri < sheet->m_ruleCount; ++ri) {
+        const XCssStyleRule* rule = &sheet->m_rules[ri];
+        for (si = 0; si < rule->m_selectorCount; ++si) {
+            const XCssSelector* sel = &rule->m_selectors[si];
+            const XCssDeclaration* d;
+            if (!xsss_selectorMatches(&sel->m_basic, obj, statePseudos))
+                continue;
+            if (sel->m_specificity <= bestSpec) continue;
+            d = xsss_findDecl(rule, id);
+            if (d) {
+                best = d;
+                bestSpec = sel->m_specificity;
+            }
+        }
+    }
+    return best;
+}
+
+/* ==================== 底层样式回落 ==================== */
+
+/** @brief 底层样式（显式设置或全局默认）。 */
+static XStyle* xsss_source(XStyleSheetStyle* self)
+{
+    if (self->m_source) return self->m_source;
+    return XStyle_defaultStyle();
+}
+
+/* ==================== 绘制分派 ==================== */
+
+/** @brief 应用文本色覆盖（绘制前：影响底层文本渲染色）。
+ *
+ *  对标 QSS 级联：命中 color 时覆盖 option 文本色后交底层绘制；
+ *  背景色在底层绘制之后单独覆盖（见 xsss_applyBackground）。
+ */
+static void xsss_applyTextColor(XStyleSheetStyle* self, const XObject* obj,
+                                XStyleOption* option)
+{
+    const XCssDeclaration* fg;
+    uint32_t color;
+    if (!self || !option) return;
+    if (self->m_sheet.m_ruleCount == 0) return;
+    fg = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                     XCssProperty_Color);
+    if (fg && fg->m_value &&
+        XCssParseColor(XString_toUtf8(fg->m_value), &color))
+        option->m_textColor = color;
+}
+
+/** @brief 应用字体覆盖（绘制前：font-family/font-size 命中时重设
+ *         画家字体，对标 QSS font 属性）。 */
+static void xsss_applyFont(XStyleSheetStyle* self, const XObject* obj,
+                           XStyleOption* option, XPainter* painter)
+{
+    const XCssDeclaration* family;
+    const XCssDeclaration* size;
+    XFont font;
+    bool changed = false;
+    if (!self || !option || !painter) return;
+    if (self->m_sheet.m_ruleCount == 0) return;
+    family = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                         XCssProperty_FontFamily);
+    /* 基准字体：画家当前字体（底层绘制会再按控件字体覆盖）。 */
+    {
+        XFont* cur = XPainter_font(painter);
+        if (!cur) return;
+        font = *cur;
+    }
+    size = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                       XCssProperty_FontSize);
+    if (family && family->m_value) {
+        const char* f = XString_toUtf8(family->m_value);
+        if (f && f[0]) {
+            XFont_setFamily(&font, f);
+            changed = true;
+        }
+    }
+    if (size && size->m_value) {
+        int px = 0;
+        if (XCssParseLength(XString_toUtf8(size->m_value), &px) && px > 0) {
+            XFont_setPixelSize(&font, px);
+            changed = true;
+        }
+    }
+    if (changed) XPainter_setFont(painter, &font);
+}
+
+/** @brief 应用背景色覆盖（绘制后：QSS 背景优先于底层面板填充）。 */
+static void xsss_applyBackground(XStyleSheetStyle* self, const XObject* obj,
+                                 const XStyleOption* option,
+                                 XPainter* painter)
+{
+    const XCssDeclaration* bg;
+    uint32_t color;
+    if (!self || !option || !painter) return;
+    if (self->m_sheet.m_ruleCount == 0) return;
+    bg = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                     XCssProperty_BackgroundColor);
+    if (!bg)
+        bg = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                         XCssProperty_Background);
+    if (bg && bg->m_value &&
+        XCssParseColor(XString_toUtf8(bg->m_value), &color))
+        XPainter_fillRect(painter, &option->m_rect, color);
+}
+
+/** @brief 查询盒模型内边距（padding 系列声明；CSS 四值简写展开）。 */
+static void xsss_padding(const XCssStyleSheet* sheet, const XObject* obj,
+                         uint32_t state, int out[4])
+{
+    const XCssDeclaration* d;
+    int v = 0;
+    out[0] = out[1] = out[2] = out[3] = 0; /* 左/上/右/下。 */
+    d = xsss_lookup(sheet, obj, state, XCssProperty_Padding);
+    if (d && d->m_value &&
+        XCssParseLength(XString_toUtf8(d->m_value), &v)) {
+        /* 简写：单值四边。 */
+        out[0] = out[1] = out[2] = out[3] = v;
+        return;
+    }
+    d = xsss_lookup(sheet, obj, state, XCssProperty_PaddingLeft);
+    if (d && d->m_value) XCssParseLength(XString_toUtf8(d->m_value), &out[0]);
+    d = xsss_lookup(sheet, obj, state, XCssProperty_PaddingTop);
+    if (d && d->m_value) XCssParseLength(XString_toUtf8(d->m_value), &out[1]);
+    d = xsss_lookup(sheet, obj, state, XCssProperty_PaddingRight);
+    if (d && d->m_value) XCssParseLength(XString_toUtf8(d->m_value), &out[2]);
+    d = xsss_lookup(sheet, obj, state, XCssProperty_PaddingBottom);
+    if (d && d->m_value) XCssParseLength(XString_toUtf8(d->m_value), &out[3]);
+}
+
+/** @brief 绘制 QSS 边框（border-width/color/radius 命中时）。 */
+static void xsss_drawBorder(XStyleSheetStyle* self, const XObject* obj,
+                            const XStyleOption* option, XPainter* painter)
+{
+    const XCssDeclaration* bw;
+    const XCssDeclaration* bc;
+    const XCssDeclaration* br;
+    int width = 0;
+    uint32_t color = 0; /* 0=未指定；简写扫描或回落文本色。 */
+    int radius = 0;
+    XRect r;
+    if (!self || !option || !painter) return;
+    if (self->m_sheet.m_ruleCount == 0) return;
+    bw = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                     XCssProperty_BorderWidth);
+    if (!bw)
+        bw = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                         XCssProperty_Border);
+    if (bw && bw->m_value)
+        XCssParseLength(XString_toUtf8(bw->m_value), &width);
+    bc = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                     XCssProperty_BorderColor);
+    if (bc && bc->m_value)
+        XCssParseColor(XString_toUtf8(bc->m_value), &color);
+    /* border 简写（"2px solid #FF0000"）：从简写值中提取颜色 token
+     * （对标 CSS border 简写的组成解析）。 */
+    if (color == 0 && bw && bw->m_value) {
+        const char* v = XString_toUtf8(bw->m_value);
+        while (v && *v) {
+            uint32_t token = 0;
+            const char* tok = v;
+            while (*v && !isspace((unsigned char)*v)) ++v;
+            if (XCssParseColorToken(tok, (size_t)(v - tok), &token)) {
+                color = token;
+                break;
+            }
+            while (*v && isspace((unsigned char)*v)) ++v;
+        }
+    }
+    if (width <= 0 || color == 0) return;
+    /* 设置画笔色（否则沿用上一绘制状态的画笔色）。 */
+    XPainter_setPen(painter, color);
+    r = option->m_rect;
+    if (width >= 2) {
+        r.x += width / 2;
+        r.y += width / 2;
+        r.width -= width;
+        r.height -= width;
+    }
+    br = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                     XCssProperty_BorderRadius);
+    if (br && br->m_value)
+        XCssParseLength(XString_toUtf8(br->m_value), &radius);
+#if XPAINTER_SHAPE_ON
+    if (radius > 0) {
+        XPainter_drawRoundedRect(painter, &r, radius, radius);
+        return;
+    }
+#endif
+    if (color == 0) {
+        /* CSS 语义：border 无色时回落当前颜色（对标 border 默认
+         * currentColor）。 */
+        const XCssDeclaration* fg = xsss_lookup(&self->m_sheet, obj,
+                                               option->m_state,
+                                               XCssProperty_Color);
+        color = (fg && fg->m_value &&
+                 XCssParseColor(XString_toUtf8(fg->m_value), &color))
+            ? color
+            : (option->m_textColor
+                   ? option->m_textColor : 0xFF000000u);
+    }
+    /* 直角边框：drawLine 四边（线宽 1px/次，width>1 时多层内缩）。 */
+    {
+        int i;
+        for (i = 0; i < width; ++i) {
+            XPainter_drawLine(painter, r.x + i, r.y + i,
+                              r.x + r.width - 1 - i, r.y + i);
+            XPainter_drawLine(painter, r.x + r.width - 1 - i, r.y + i,
+                              r.x + r.width - 1 - i,
+                              r.y + r.height - 1 - i);
+            XPainter_drawLine(painter, r.x + r.width - 1 - i,
+                              r.y + r.height - 1 - i, r.x + i,
+                              r.y + r.height - 1 - i);
+            XPainter_drawLine(painter, r.x + i, r.y + r.height - 1 - i,
+                              r.x + i, r.y + i);
+        }
+    }
+}
+
+/** @brief 应用盒模型（绘制前：padding 内缩内容区）。 */
+static void xsss_applyBoxModel(XStyleSheetStyle* self, const XObject* obj,
+                               XStyleOption* option)
+{
+    int pad[4];
+    if (!self || !option) return;
+    if (self->m_sheet.m_ruleCount == 0) return;
+    xsss_padding(&self->m_sheet, obj, option->m_state, pad);
+    if (pad[0] || pad[1] || pad[2] || pad[3]) {
+        option->m_rect.x += pad[0];
+        option->m_rect.y += pad[1];
+        option->m_rect.width -= pad[0] + pad[2];
+        option->m_rect.height -= pad[1] + pad[3];
+        if (option->m_rect.width < 1) option->m_rect.width = 1;
+        if (option->m_rect.height < 1) option->m_rect.height = 1;
+    }
+}
+
+static void VXStyleSheetStyle_drawPrimitive(XStyle* self, int pe,
+                                            const XStyleOption* option,
+                                            XPainter* painter,
+                                            const XWidget* widget)
+{
+    XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
+    XStyle* src = xsss_source(ss);
+    XStyleOption opt;
+    if (option) {
+        opt = *option;
+        xsss_applyTextColor(ss, (const XObject*)widget, &opt);
+        xsss_applyFont(ss, (const XObject*)widget, &opt, painter);
+        xsss_applyBoxModel(ss, (const XObject*)widget, &opt);
+    }
+    if (src && src != self)
+        XStyle_drawPrimitive(src, pe, option ? &opt : option, painter,
+                             widget);
+    if (option) {
+        xsss_applyBackground(ss, (const XObject*)widget, option, painter);
+        xsss_drawBorder(ss, (const XObject*)widget, option, painter);
+    }
+}
+
+static void VXStyleSheetStyle_drawControl(XStyle* self, int ce,
+                                          const XStyleOption* option,
+                                          XPainter* painter,
+                                          const XWidget* widget)
+{
+    XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
+    XStyle* src = xsss_source(ss);
+    XStyleOption opt;
+    if (option) {
+        opt = *option;
+        xsss_applyTextColor(ss, (const XObject*)widget, &opt);
+        xsss_applyFont(ss, (const XObject*)widget, &opt, painter);
+        xsss_applyBoxModel(ss, (const XObject*)widget, &opt);
+    }
+    if (src && src != self)
+        XStyle_drawControl(src, ce, option ? &opt : option, painter,
+                           widget);
+    if (option) {
+        xsss_applyBackground(ss, (const XObject*)widget, option, painter);
+        xsss_drawBorder(ss, (const XObject*)widget, option, painter);
+    }
+}
+
+static void VXStyleSheetStyle_drawComplexControl(XStyle* self, int cc,
+                                                 const XStyleOption* option,
+                                                 XPainter* painter,
+                                                 const XWidget* widget)
+{
+    XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
+    XStyle* src = xsss_source(ss);
+    XStyleOption opt;
+    if (option) {
+        opt = *option;
+        xsss_applyTextColor(ss, (const XObject*)widget, &opt);
+        xsss_applyFont(ss, (const XObject*)widget, &opt, painter);
+        xsss_applyBoxModel(ss, (const XObject*)widget, &opt);
+    }
+    if (src && src != self)
+        XStyle_drawComplexControl(src, cc, option ? &opt : option, painter,
+                                  widget);
+    if (option) {
+        xsss_applyBackground(ss, (const XObject*)widget, option, painter);
+        xsss_drawBorder(ss, (const XObject*)widget, option, painter);
+    }
+}
+
+/* ==================== 生命周期 ==================== */
+
+static void VXStyleSheetStyle_deinit(XStyleSheetStyle* self);
+
+XVtable* XStyleSheetStyle_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XStyleSheetStyle)
+    XVTABLE_INHERIT_XCLASS(XWindowsStyle);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStyleSheetStyle_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawPrimitive,
+                             VXStyleSheetStyle_drawPrimitive);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawControl,
+                             VXStyleSheetStyle_drawControl);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawComplexControl,
+                             VXStyleSheetStyle_drawComplexControl);
+    return XVTABLE_DEFAULT;
+}
+
+void XStyleSheetStyle_init(XStyleSheetStyle* self)
+{
+    if (!self) return;
+    memset(self, 0, sizeof(*self));
+    XWindowsStyle_init(&self->m_base);
+    XClassSetVtable(self, XStyleSheetStyle);
+    XCssStyleSheet_init(&self->m_sheet);
+    self->m_source = NULL;
+}
+
+XStyleSheetStyle* XStyleSheetStyle_create_ex(XMemoryType memory)
+{
+    XStyleSheetStyle* self = (XStyleSheetStyle*)XMemory_malloc(
+        sizeof(*self), memory);
+    if (!self) return NULL;
+    XStyleSheetStyle_init(self);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+static void VXStyleSheetStyle_deinit(XStyleSheetStyle* self)
+{
+    if (!self) return;
+    XCssStyleSheet_clear(&self->m_sheet);
+    self->m_source = NULL;
+    XClass_Deinit_Parent(XWindowsStyle, (XWindowsStyle*)self);
+}
+
+bool XStyleSheetStyle_setStyleSheet(XStyleSheetStyle* self, const char* css)
+{
+    if (!self) return false;
+    return XCssStyleSheet_parse(&self->m_sheet, css);
+}
+
+void XStyleSheetStyle_setSourceStyle(XStyleSheetStyle* self, XStyle* source)
+{
+    if (self) self->m_source = source;
+}
+
+int XStyleSheetStyle_ruleCount(const XStyleSheetStyle* self)
+{
+    return self ? self->m_sheet.m_ruleCount : 0;
+}
+
+#endif /* XSTYLE_ON */

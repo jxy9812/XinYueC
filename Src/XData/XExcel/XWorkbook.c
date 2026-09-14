@@ -28,7 +28,7 @@ XWorkbook* XWorkbook_create(XAbstractOOXmlFile_CreateFlag flag)
     self->m_styles = XStyles_create(flag);
     self->m_theme = XTheme_create(flag);
     self->m_mediaFiles = XVector_Create(XMediaFile*);
-    self->m_chartFiles = XVector_Create(XChart*);
+    self->m_chartFiles = XVector_Create(XExcelChart*);
     self->m_defineNames = XVector_Create(XWorkbook_DefineName);
     self->m_activeSheetIndex = 0;
     self->m_nextSheetId = 1;
@@ -232,8 +232,8 @@ bool XWorkbook_copySheet(XWorkbook* self, int index, const XString* newName)
         XChartsheet* chartsheet = XChartsheet_create(useName, newId, self,
             XAbstractOOXmlFile_F_NewFromScratch);
         if (chartsheet) {
-            XChart* sourceChart = ((XChartsheet*)src)->m_chart;
-            chartsheet->m_chart = sourceChart ? XChart_copy(sourceChart, &chartsheet->m_base) : NULL;
+            XExcelChart* sourceChart = ((XChartsheet*)src)->m_chart;
+            chartsheet->m_chart = sourceChart ? XExcelChart_copy(sourceChart, &chartsheet->m_base) : NULL;
             chartsheet->m_ownsChart = chartsheet->m_chart != NULL;
             newSheet = &chartsheet->m_base;
         }
@@ -371,18 +371,18 @@ XMediaFile** XWorkbook_mediaFiles(const XWorkbook* self, int* count) {
     return (self && self->m_mediaFiles) ? (XMediaFile**)XVector_data(self->m_mediaFiles) : NULL;
 }
 
-void XWorkbook_addChartFile(XWorkbook* self, XChart* chartFile) {
+void XWorkbook_addChartFile(XWorkbook* self, XExcelChart* chartFile) {
     if (!self || !self->m_chartFiles || !chartFile) return;
     for (size_t i = 0; i < XVector_size_base(self->m_chartFiles); ++i) {
-        XChart* existing = *(XChart**)XVector_at_base(self->m_chartFiles, i);
+        XExcelChart* existing = *(XExcelChart**)XVector_at_base(self->m_chartFiles, i);
         if (existing == chartFile) return;
     }
     XVector_push_back_2(self->m_chartFiles, &chartFile, 1);
 }
 
-XChart** XWorkbook_chartFiles(const XWorkbook* self, int* count) {
+XExcelChart** XWorkbook_chartFiles(const XWorkbook* self, int* count) {
     if (count) *count = (self && self->m_chartFiles) ? (int)XVector_size_base(self->m_chartFiles) : 0;
-    return (self && self->m_chartFiles) ? (XChart**)XVector_data(self->m_chartFiles) : NULL;
+    return (self && self->m_chartFiles) ? (XExcelChart**)XVector_data(self->m_chartFiles) : NULL;
 }
 
 XAbstractSheet** XWorkbook_getSheetsByTypes(const XWorkbook* self, XAbstractSheet_SheetType type, int* count)

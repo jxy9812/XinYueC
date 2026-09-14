@@ -76,7 +76,9 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
 #endif /* XPALETTE_ON */
     XRect_init(&head, 0, 0, w, 20);
     XPainter_fillRect(&painter, &head, highlight);
-    XPainter_drawText(&painter, 6, 14, dock->m_title, windowText);
+    XPainter_drawText(&painter, 6, 14,
+                      dock->m_title ? XString_toUtf8(dock->m_title) : "",
+                      windowText);
     XRect_init(&line, 0, 20, w, 1);
     XPainter_fillRect(&painter, &line, windowText);
     XPainter_deinit(&painter);
@@ -90,6 +92,10 @@ static void VX_dockWidget_deinit(XDockWidget* self)
     if (self->m_widget) {
         XWidget_delete_base(self->m_widget);
         self->m_widget = NULL;
+    }
+    if (self->m_title) {
+        XString_delete_base(self->m_title);
+        self->m_title = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -112,8 +118,7 @@ void XDockWidget_init(XDockWidget* self, const char* utf8Title,
     XClassSetVtable(self, XDockWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    strncpy(self->m_title, utf8Title ? utf8Title : "",
-            sizeof(self->m_title) - 1);
+    self->m_title = XString_create_utf8(utf8Title ? utf8Title : "");
     self->m_features = 0x1 | 0x2 | 0x4; /* Closable|Movable|Floatable */
     self->m_allowedAreas = (int)XDockWidgetArea_All;
     self->m_floating = false;

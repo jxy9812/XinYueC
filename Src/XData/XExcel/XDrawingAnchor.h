@@ -16,7 +16,7 @@ extern "C" {
 
 #include "XString.h"
 #include "XByteArray.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 typedef struct XDrawing XDrawing;
 
 /** @brief 锚点标记（单元格位置+偏移）*/
@@ -49,7 +49,7 @@ typedef struct XDrawingAnchor {
     XDrawingAnchor_ObjectType m_objectType;     /**< 对象类型*/
     XDrawingAnchor_Type m_anchorType;           /**< 锚点类型*/
     XMediaFile* m_pictureFile;                  /**< 图片文件 */
-    XChart* m_chartFile;                       /**< 图表文件 */
+    XExcelChart* m_chartFile;                       /**< 图表文件 */
     int m_id;                                   /**< ID */
 
     /* 位置信息 */
@@ -113,7 +113,7 @@ bool XDrawingAnchor_setPictureFromData(XDrawingAnchor* self, const uint8_t* data
  * @param self  锚点指针
  * @param chart 图表
  */
-void XDrawingAnchor_setChart(XDrawingAnchor* self, XChart* chart);
+void XDrawingAnchor_setChart(XDrawingAnchor* self, XExcelChart* chart);
 
 /**
  * @brief      获取锚点关联的图片数据

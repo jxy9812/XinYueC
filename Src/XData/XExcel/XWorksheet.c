@@ -84,7 +84,7 @@ XWorksheet* XWorksheet_create(const XString* sheetName, int sheetId, XWorkbook* 
     self->m_hyperlinks = XVector_Create(XWorksheet_Hyperlink);
     self->m_mediaFiles = XVector_Create(XMediaFile*);
     self->m_imagePositions = XVector_Create(XWorksheet_ImagePosition);
-    self->m_chartFiles = XVector_Create(XChart*);
+    self->m_chartFiles = XVector_Create(XExcelChart*);
     self->m_rowSpans = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint64_t), sizeof(uint64_t), uint64_t_compare, false);
     self->m_showGridLines = true;
     self->m_showRowColHeaders = true;
@@ -222,8 +222,8 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
     if (self->m_chartFiles) {
         size_t count = XVector_size_base((XContainer*)self->m_chartFiles);
         for (size_t i = 0; i < count; ++i) {
-            XChart* source = *(XChart**)XVector_at_base(self->m_chartFiles, i);
-            XChart* copy = source ? XChart_copy(source, &ws->m_base) : NULL;
+            XExcelChart* source = *(XExcelChart**)XVector_at_base(self->m_chartFiles, i);
+            XExcelChart* copy = source ? XExcelChart_copy(source, &ws->m_base) : NULL;
             if (copy) XVector_push_back_2(ws->m_chartFiles, &copy, 1);
         }
     }
@@ -316,8 +316,8 @@ void XWorksheet_delete(XWorksheet* self)
     /* 释放图表文件 */
     if (self->m_chartFiles) {
         for (size_t i = 0; i < XVector_size_base((XContainer*)self->m_chartFiles); ++i) {
-            XChart* ch = *(XChart**)XVector_at_base(self->m_chartFiles, i);
-            if (ch) XChart_delete(ch);
+            XExcelChart* ch = *(XExcelChart**)XVector_at_base(self->m_chartFiles, i);
+            if (ch) XExcelChart_delete(ch);
         }
         XVector_delete_base(self->m_chartFiles);
     }
@@ -826,13 +826,13 @@ bool XWorksheet_getImageAt(XWorksheet* self, int row, int column, XByteArray* im
 }
 unsigned int XWorksheet_getImageCount(const XWorksheet* self) { return self ? (unsigned int)XVector_size_base((XContainer*)self->m_mediaFiles) : 0; }
 
-XChart* XWorksheet_insertChart(XWorksheet* self, int row, int column, int width, int height)
+XExcelChart* XWorksheet_insertChart(XWorksheet* self, int row, int column, int width, int height)
 {
     if (!self) return NULL;
-    XChart* chart = XChart_create((XAbstractSheet*)&self->m_base, XAbstractOOXmlFile_F_NewFromScratch);
+    XExcelChart* chart = XExcelChart_create((XAbstractSheet*)&self->m_base, XAbstractOOXmlFile_F_NewFromScratch);
     if (!chart) return NULL;
-    XChart_setSize(chart, width, height);
-    XChart_setPosition(chart, row, column, 0, 0);
+    XExcelChart_setSize(chart, width, height);
+    XExcelChart_setPosition(chart, row, column, 0, 0);
     XVector_push_back_2(self->m_chartFiles, &chart, 1);
     return chart;
 }

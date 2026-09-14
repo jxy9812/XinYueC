@@ -1,4 +1,4 @@
-#include "XGroupBoxTest.h"
+﻿#include "XGroupBoxTest.h"
 #include "XGroupBox.h"
 #include "XMemory.h"
 #include "XCoreApplication.h"
@@ -51,7 +51,7 @@ bool XGroupBoxTest_runAll(void)
         memset(longTitle, 'A', sizeof(longTitle));
         longTitle[sizeof(longTitle) - 1] = '\0';
         XGroupBox_setTitle(box, longTitle);
-        gb_expect(strlen(XGroupBox_title(box)) == 63, "超长标题截断到 63");
+        gb_expect(strlen(XGroupBox_title(box)) == 99, "超长标题不截断（XString 全量保留）");
     }
     XGroupBox_setTitle(box, "分组");
 

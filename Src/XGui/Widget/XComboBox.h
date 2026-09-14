@@ -33,6 +33,7 @@ extern "C" {
 #include <stdbool.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #include "XLineEdit.h"
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
@@ -93,8 +94,7 @@ typedef struct XComboBox
     int     m_insertPolicy;            /**< 插入策略。 */
     int     m_sizeAdjustPolicy;        /**< 尺寸自适应策略。 */
     int     m_minimumContentsLength;   /**< 最小内容字符数。 */
-    bool    m_frame;                   /**< 边框开关（默认 true）。 */
-    char    m_placeholderText[64];     /**< 占位文本。 */
+    bool    m_frame;                   /**< 边框开关（默认 true）。 */    XString* m_placeholderText;             /**< 字符串字段（对象拥有）。 */
     bool    m_popupVisible;            /**< 弹出可见（内部）。 */
     int     m_savedHeight;             /**< 弹出前高度（展开/收起恢复）。 */
 } XComboBox;

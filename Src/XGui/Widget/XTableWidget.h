@@ -21,12 +21,13 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include "XAbstractScrollArea.h"
+#include "XTableView.h"
 #include "XGuiConfig.h"
 
 #if XTABLEWIDGET_ON
 
 XCLASS_DEFINE_BEGING(XTableWidget)
-XCLASS_DEFINE_EXTEND_END(XTableWidget, XAbstractScrollArea)
+XCLASS_DEFINE_EXTEND_END(XTableWidget, XTableView)
 
 /**
  * @brief 单元格（对标 QTableWidgetItem 的文本/外观子集）。
@@ -36,7 +37,7 @@ XCLASS_DEFINE_EXTEND_END(XTableWidget, XAbstractScrollArea)
  */
 typedef struct XTableWidgetItem
 {
-    char     text[128];       /**< 显示文本（UTF-8，超长截断）。 */
+    XString* text;            /**< 显示文本（对象拥有）。 */
     bool     selected;        /**< 是否选中。 */
     uint32_t foreground;      /**< 前景色 ARGB；0=使用调色板默认。 */
     uint32_t background;      /**< 背景色 ARGB；0=使用调色板默认。 */
@@ -51,24 +52,21 @@ typedef struct XTableWidgetItem
  */
 typedef struct XTableWidget
 {
-    XAbstractScrollArea m_base;   /**< 基类成员；必须是第一个。 */
+    XTableView m_base;            /**< 基类成员；必须是第一个。 */
     XTableWidgetItem** m_cells;   /**< 行指针数组（行×列单元格）。 */
     int m_rows;                   /**< 当前行数。 */
     int m_columns;                /**< 当前列数。 */
     int m_rowCapacity;            /**< 行指针数组容量。 */
-    int m_colCapacity;            /**< 列容量（每行单元格数）。 */
-    int* m_colWidths;             /**< 各列宽（像素，下标=列号）。 */
-    char (*m_hHeaders)[64];       /**< 水平表头标签（下标=列号）。 */
-    char (*m_vHeaders)[64];       /**< 垂直表头标签（下标=行号）。 */
-    int m_currentRow;             /**< 当前单元格行；-1=无。 */
-    int m_currentColumn;          /**< 当前单元格列；-1=无。 */
-    int m_rowHeight;              /**< 统一行高（像素，默认 24）。 */
+    XString** m_hHeaders;         /**< 水平表头标签（对象拥有；下标=列号）。 */
+    XString** m_vHeaders;         /**< 垂直表头标签（对象拥有；下标=行号）。 */
+    int m_vHeaderCapacity;        /**< 垂直表头容量。 */
     int m_headerHeight;           /**< 水平表头高度（像素）。 */
     int m_headerWidth;            /**< 垂直表头宽度（像素）。 */
-    bool m_sortingEnabled;        /**< 允许排序（对标 sortingEnabled）。 */
-    bool m_gridVisible;           /**< 显示网格线（默认开）。 */
-    int m_sortColumn;             /**< 最近一次排序列。 */
-    int m_sortOrder;              /**< 最近一次排序序：0 升/1 降。 */
+    int m_selectionRow;           /**< 选中单元格行；-1=无（用于 itemSelectionChanged）。 */
+    int m_selectionColumn;        /**< 选中单元格列；-1=无。 */
+    int m_enteredRow;             /**< 上次发射 cellEntered 的行；-2=尚未进入任何单元格。 */
+    int m_enteredColumn;          /**< 上次发射 cellEntered 的列；-2=尚未进入。 */
+    bool m_selectionChangedPending; /**< 选区等待发射 itemSelectionChanged。 */
 } XTableWidget;
 
 XVtable* XTableWidget_class_init(void);
@@ -103,7 +101,7 @@ XTableWidget* XTableWidget_create_ex(XMemoryType memory, XWidget* parent,
  * @param self 目标表格控件指针。
  * @return 无返回值。
  */
-#define XTableWidget_delete_base(self) XAbstractScrollArea_delete_base((XAbstractScrollArea*)(self))
+#define XTableWidget_delete_base(self) XTableView_delete_base((XTableView*)(self))
 
 /* ===== 尺寸（对标 QTableWidget 行列 API） ===== */
 
@@ -306,45 +304,6 @@ const char* XTableWidget_verticalHeaderItem(const XTableWidget* self, int row);
  * @param width  列宽（像素）。
  * @return 无返回值。
  */
-void XTableWidget_setColumnWidth(XTableWidget* self, int column, int width);
-
-/**
- * @brief 查询列宽。
- *
- * @param self   目标表格控件指针。
- * @param column 列号。
- * @return 列宽（像素）；越界返回默认宽 90。
- */
-int XTableWidget_columnWidth(const XTableWidget* self, int column);
-
-/* ===== 行为 ===== */
-
-/**
- * @brief 启用/禁用排序（对标 setSortingEnabled）。
- *
- * @param self   目标表格控件指针。
- * @param enable true 允许排序。
- * @return 无返回值。
- */
-void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable);
-
-/**
- * @brief 查询是否允许排序（对标 isSortingEnabled）。
- *
- * @param self 目标表格控件指针。
- * @return 允许排序返回 true。
- */
-bool XTableWidget_isSortingEnabled(const XTableWidget* self);
-
-/**
- * @brief 按 column 列文本排序（冒泡；对标 sortItems）。
- *
- * @param self   目标表格控件指针。
- * @param column 排序列号。
- * @param order  0 升序/1 降序。
- * @return 无返回值。
- */
-void XTableWidget_sortItems(XTableWidget* self, int column, int order);
 
 /**
  * @brief 设置网格线可见性（对标 setGridVisible）。
@@ -353,40 +312,6 @@ void XTableWidget_sortItems(XTableWidget* self, int column, int order);
  * @param visible true 显示网格线。
  * @return 无返回值。
  */
-void XTableWidget_setGridVisible(XTableWidget* self, bool visible);
-
-/**
- * @brief 查询网格线是否可见（对标 isGridVisible）。
- *
- * @param self 目标表格控件指针。
- * @return 网格线可见返回 true。
- */
-bool XTableWidget_isGridVisible(const XTableWidget* self);
-
-/**
- * @brief 设置统一行高（最小 16px）。
- *
- * @param self   目标表格控件指针。
- * @param height 行高（像素）。
- * @return 无返回值。
- */
-void XTableWidget_setRowHeight(XTableWidget* self, int height);
-
-/**
- * @brief 查询行高。
- *
- * @param self 目标表格控件指针。
- * @return 行高（像素）；self 为 NULL 返回默认 24。
- */
-int XTableWidget_rowHeight(const XTableWidget* self);
-
-/**
- * @brief 清空表格（行列数归零；对标 clear）。
- *
- * @param self 目标表格控件指针。
- * @return 无返回值。
- */
-void XTableWidget_clear(XTableWidget* self);
 
 /**
  * @brief 清空全部单元格内容（保留行列数；对标 clearContents）。
@@ -441,6 +366,94 @@ void* XTableWidget_currentCellChanged_signal(XTableWidget* self);
  * @return 信号槽地址。
  */
 void* XTableWidget_itemChanged_signal(XTableWidget* self);
+
+/**
+ * @brief itemClicked 信号地址（载荷：item 指针）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_itemClicked_signal(XTableWidget* self);
+
+/**
+ * @brief itemDoubleClicked 信号地址（载荷：item 指针）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_itemDoubleClicked_signal(XTableWidget* self);
+
+/**
+ * @brief itemPressed 信号地址（载荷：item 指针）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_itemPressed_signal(XTableWidget* self);
+
+/**
+ * @brief itemEntered 信号地址（载荷：item 指针）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_itemEntered_signal(XTableWidget* self);
+
+/**
+ * @brief itemActivated 信号地址（载荷：item 指针）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_itemActivated_signal(XTableWidget* self);
+
+/**
+ * @brief cellPressed 信号地址（载荷：row, column）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_cellPressed_signal(XTableWidget* self);
+
+/**
+ * @brief cellEntered 信号地址（载荷：row, column）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_cellEntered_signal(XTableWidget* self);
+
+/**
+ * @brief cellActivated 信号地址（载荷：row, column）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_cellActivated_signal(XTableWidget* self);
+
+/**
+ * @brief cellChanged 信号地址（载荷：row, column）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_cellChanged_signal(XTableWidget* self);
+
+/**
+ * @brief currentItemChanged 信号地址（载荷：current, previous）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_currentItemChanged_signal(XTableWidget* self);
+
+/**
+ * @brief itemSelectionChanged 信号地址（无载荷）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 信号槽地址。
+ */
+void* XTableWidget_itemSelectionChanged_signal(XTableWidget* self);
 
 #endif /* XTABLEWIDGET_ON */
 

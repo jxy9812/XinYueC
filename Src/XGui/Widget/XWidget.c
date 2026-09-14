@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XWidget.c
  * @brief      XWidget 控件基类实现（对标 Qt 6.8 QWidget 的嵌入式 API）。
  * @details    本文件实现 XWidget 已覆盖行为的 Qt 6.8 语义，逐一与 Qt 6.8
@@ -1785,11 +1785,14 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
                         true);
         XWidget_enterEvent_base(self, event);
+        /* 悬停状态翻转触发重绘（对标 Qt hover 样式刷新）。 */
+        XWidget_update(self);
         return true;
     case XEVENT_TYPE_LEAVE:
         XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
                         false);
         XWidget_leaveEvent_base(self, event);
+        XWidget_update(self);
         return true;
     case XEVENT_TYPE_KEY_PRESS:
         XWidget_keyPressEvent_base(self, event);

@@ -23,7 +23,7 @@ XCLASS_DEFINE_EXTEND_END(XErrorMessage, XDialog)
 typedef struct XErrorMessage
 {
     XDialog m_base;      /**< 基类成员；必须是第一个。 */
-    char m_message[512]; /**< 当前消息。 */
+    XString* m_message; /**< 当前消息（对象拥有）。 */
     bool m_doneShown;    /**< 是否显示 "不再显示" 复选框。 */
 } XErrorMessage;
 

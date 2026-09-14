@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XMessageBox.h
  * @brief      XMessageBox 消息对话框控件（对标 Qt 6.8 QMessageBox 核心
  *             公共 API）。
@@ -31,6 +31,7 @@ extern "C" {
 #include <stddef.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #if XDIALOG_ON
 #include "XDialog.h"
 #endif
@@ -81,8 +82,8 @@ typedef struct XMessageBox
     XDialogButtonBox* m_buttonBox; /**< 按钮盒（拥有）。 */
     XVector* m_standards;        /**< 与成员顺序对应的标准按钮值。 */
 #endif
-    char m_title[128];           /**< 窗口标题。 */
-    char m_text[512];            /**< 消息文本缓存（对标 text）。 */
+    XString* m_title;           /**< 窗口标题（对象拥有）。 */
+    XString* m_text;            /**< 消息文本缓存（对象拥有；对标 text）。 */
     int m_icon;                  /**< 图标（XMessageBoxIcon）。 */
     XAbstractButton* m_clicked;  /**< 最近点击的按钮（exec 结果）。 */
     bool m_inExec;               /**< exec 循环进行中。 */

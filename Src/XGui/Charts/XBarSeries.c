@@ -1,89 +1,52 @@
 ﻿#include "XBarSeries.h"
+#include "XAbstractBarSeries.h"
+#include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
 #include <string.h>
 
 #if XCHARTS_ON
 
+static void VXBarSeries_deinit(XBarSeries* self);
+
+XVtable* XBarSeries_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XBarSeries)
+    XVTABLE_INHERIT_XCLASS(XAbstractBarSeries);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBarSeries_deinit);
+    return XVTABLE_DEFAULT;
+}
+
+void XBarSeries_init(XBarSeries* self)
+{
+    if (!self) return;
+    memset(self, 0, sizeof(*self));
+    XAbstractBarSeries_init(&self->m_base);
+    XClassSetVtable(self, XBarSeries);
+    XAbstractSeries_setName(&self->m_base.m_base, "bar");
+    self->m_base.m_base.m_type = XChartSeriesType_Bar;
+}
+
 XBarSeries* XBarSeries_create_ex(XMemoryType memory)
 {
     XBarSeries* self = (XBarSeries*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
-    strcpy(self->m_name, "bar");
-    self->m_barWidth = 0.8;
-    self->m_visible = true;
+    XBarSeries_init(self);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
 }
 
-void XBarSeries_delete_base(XBarSeries* self)
+static void VXBarSeries_deinit(XBarSeries* self)
 {
     if (!self) return;
-    if (self->m_values) XFree_System(self->m_values);
-    if (self->m_categories) XFree_System(self->m_categories);
-    XFree_System(self);
-}
-
-int XBarSeries_append(XBarSeries* self, const char* label, double value)
-{
-    int idx;
-    if (!self || !label) return -1;
-    if (self->m_count >= self->m_capacity) {
-        int cap = self->m_capacity > 0 ? self->m_capacity * 2 : 8;
-        double* v = (double*)XRealloc_System(self->m_values,
-            sizeof(double) * (size_t)cap);
-        char (*cat)[64] = (char(*)[64])XRealloc_System(self->m_categories,
-            sizeof(char[64]) * (size_t)cap);
-        if (!v || !cat) return -1;
-        self->m_values = v;
-        self->m_categories = cat;
-        self->m_capacity = cap;
-    }
-    idx = self->m_count;
-    self->m_values[idx] = value;
-    memset(self->m_categories[idx], 0, 64);
-    strncpy(self->m_categories[idx], label, 63);
-    self->m_count++;
-    return idx;
-}
-
-int XBarSeries_count(const XBarSeries* self) { return self ? self->m_count : 0; }
-
-double XBarSeries_value(const XBarSeries* self, int index)
-{
-    if (!self || index < 0 || index >= self->m_count) return 0;
-    return self->m_values[index];
-}
-
-const char* XBarSeries_category(const XBarSeries* self, int index)
-{
-    if (!self || index < 0 || index >= self->m_count) return "";
-    return self->m_categories[index];
-}
-
-void XBarSeries_setBarWidth(XBarSeries* self, double width)
-{
-    if (!self) return;
-    if (width < 0.1) width = 0.1;
-    if (width > 1.0) width = 1.0;
-    self->m_barWidth = width;
+    XClass_Deinit_Parent(XAbstractBarSeries, (XAbstractBarSeries*)self);
 }
 
 void XBarSeries_setColor(XBarSeries* self, uint32_t color)
 { if (self) self->m_color = color; }
 
-void XBarSeries_setName(XBarSeries* self, const char* name)
-{
-    if (!self || !name) return;
-    strncpy(self->m_name, name, sizeof(self->m_name) - 1);
-    self->m_name[sizeof(self->m_name) - 1] = 0;
-}
-
-const char* XBarSeries_name(const XBarSeries* self)
-{ return self ? self->m_name : ""; }
-
-void XBarSeries_clear(XBarSeries* self) { if (self) self->m_count = 0; }
+uint32_t XBarSeries_color(const XBarSeries* self)
+{ return self ? self->m_color : 0; }
 
 #endif /* XCHARTS_ON */

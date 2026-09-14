@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPushButton.c
  * @brief      XPushButton 按钮控件实现（对标 Qt 6.8 QPushButton，继承 XAbstractButton）。
  * @details    实现要点：
@@ -29,6 +29,8 @@
  ******************************************************************************/
 #include "XPushButton.h"
 #include "XAbstractButton_Protected.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XWidget_Protected.h"
 #include "XPainter.h"
 #include "XPalette.h"
@@ -357,6 +359,44 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
         bg = 0xFFCFCFCFu;
     pressed = ab->m_down || ab->m_checked;
 
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：面板 + 焦点框由样式引擎绘制。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStylePE_PanelButtonCommand);
+        opt.m_rect = rect;
+        opt.m_state = pressed
+            ? (XStyleState_Enabled | XStyleState_Sunken | XStyleState_On)
+            : (XStyleState_Enabled | XStyleState_Raised);
+        if (!XWidget_isEnabled((XWidget*)self))
+            opt.m_state &= ~(uint32_t)XStyleState_Enabled;
+        if (XWidget_underMouse((XWidget*)self) &&
+            XWidget_isEnabled((XWidget*)self))
+            opt.m_state |= XStyleState_MouseOver;
+        if (XWidget_hasFocus((XWidget*)self))
+            opt.m_state |= XStyleState_HasFocus;
+        opt.m_flat = self->m_flat;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)self);
+#endif
+        XStyle_drawPrimitive(style, XStylePE_PanelButtonCommand, &opt,
+                             painter, (XWidget*)self);
+        if (XWidget_hasFocus((XWidget*)self) && !self->m_flat) {
+            XStyleOption foc = opt;
+            XRect fr = rect;
+            fr.x += 3;
+            fr.y += 3;
+            fr.width -= 6;
+            fr.height -= 6;
+            foc.m_type = XStylePE_FrameFocusRect;
+            foc.m_rect = fr;
+            XStyle_drawPrimitive(style, XStylePE_FrameFocusRect, &foc,
+                                 painter, (XWidget*)self);
+        }
+        goto xpb_style_label;
+    }
+#endif /* XSTYLE_ON */
     XPainter_fillRect(painter, &rect, bg);
     if (!self->m_flat && rect.width > 2 && rect.height > 2) {
         XRect edge;
@@ -389,6 +429,7 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter)
         }
     }
 
+xpb_style_label:
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
     text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);

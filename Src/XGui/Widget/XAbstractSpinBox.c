@@ -23,6 +23,7 @@
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON
 
 #include "XAbstractSpinBox.h"
+#include "XString.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
@@ -403,9 +404,13 @@ static void VXAbstractSpinBox_copy(XAbstractSpinBox* self,
     self->m_groupSeparatorShown = other->m_groupSeparatorShown;
     self->m_cleared = other->m_cleared;
     self->m_wheelDeltaRemainder = other->m_wheelDeltaRemainder;
-    spinbox_strfree(&self->m_specialValueText);
-    self->m_specialValueText =
-        spinbox_strdup(other->m_specialValueText);
+    if (self->m_specialValueText) {
+        XString_delete_base(self->m_specialValueText);
+        self->m_specialValueText = NULL;
+    }
+    if (other->m_specialValueText)
+        self->m_specialValueText =
+            XString_create_copy(other->m_specialValueText);
     /* 编辑框不可复制：重建默认编辑框（父控件指针指向自身）。 */
     if (self->m_lineEdit)
         XLineEdit_delete_base(self->m_lineEdit);
@@ -425,7 +430,10 @@ static void VXAbstractSpinBox_move(XAbstractSpinBox* self,
         XLineEdit_delete_base(self->m_lineEdit);
     self->m_lineEdit = other->m_lineEdit;
     other->m_lineEdit = NULL;
-    spinbox_strfree(&self->m_specialValueText);
+    if (self->m_specialValueText) {
+        XString_delete_base(self->m_specialValueText);
+        self->m_specialValueText = NULL;
+    }
     self->m_specialValueText = other->m_specialValueText;
     other->m_specialValueText = NULL;
     self->m_buttonSymbols = other->m_buttonSymbols;
@@ -456,7 +464,10 @@ static void VXAbstractSpinBox_deinit(XClass* obj)
     if (self->m_lineEdit)
         XLineEdit_delete_base(self->m_lineEdit);
     self->m_lineEdit = NULL;
-    spinbox_strfree(&self->m_specialValueText);
+    if (self->m_specialValueText) {
+        XString_delete_base(self->m_specialValueText);
+        self->m_specialValueText = NULL;
+    }
     XClass_Deinit_Parent(XWidget, (XWidget*)obj);
 }
 
@@ -612,7 +623,10 @@ const char* XAbstractSpinBox_text(const XAbstractSpinBox* self)
 
 const char* XAbstractSpinBox_specialValueText(const XAbstractSpinBox* self)
 {
-    return (self && self->m_specialValueText) ? self->m_specialValueText : "";
+    const char* text;
+    if (!self || !self->m_specialValueText) return "";
+    text = XString_toUtf8(self->m_specialValueText);
+    return text ? text : "";
 }
 
 void XAbstractSpinBox_setSpecialValueText(XAbstractSpinBox* self,
@@ -620,11 +634,16 @@ void XAbstractSpinBox_setSpecialValueText(XAbstractSpinBox* self,
 {
     if (!self) return;
     if (!text) text = "";
-    if (self->m_specialValueText &&
-        strcmp(self->m_specialValueText, text) == 0)
-        return;
-    spinbox_strfree(&self->m_specialValueText);
-    self->m_specialValueText = spinbox_strdup(text);
+    {
+        const char* cur = self->m_specialValueText
+            ? XString_toUtf8(self->m_specialValueText) : NULL;
+        if (cur && strcmp(cur, text) == 0) return;
+        if (!cur && text[0] == '\0') return;
+    }
+    if (!self->m_specialValueText)
+        self->m_specialValueText = XString_create();
+    if (self->m_specialValueText)
+        XString_assign_utf8(self->m_specialValueText, text);
     /* 值==minimum 时显示刷新（经 UpdateEdit 虚槽）。 */
     XAbstractSpinBox_updateEdit_base(self);
 }

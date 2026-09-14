@@ -13,6 +13,8 @@
 #if XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON
 
 #include "XDial.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XWidget_Protected.h"
 #include "XPainter.h"
 #include "XMemory.h"
@@ -156,6 +158,41 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：表盘绘制走 CC_Dial（刻度/圆/双弧/箭头
+         * 描边分区完整复刻）。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCC_Dial);
+        opt.m_rect = r;
+        opt.m_state = XWidget_isEnabled(self)
+            ? XStyleState_Enabled | XStyleState_Raised : 0;
+        if (XWidget_hasFocus(self))
+            opt.m_state |= XStyleState_HasFocus;
+        if (XWidget_underMouse(self) && XWidget_isEnabled(self))
+            opt.m_state |= XStyleState_MouseOver;
+        opt.m_dialWrapping = dial->m_wrapping;
+        opt.m_notchesVisible = dial->m_notchesVisible;
+        opt.m_notchSize = XDial_notchSize(dial);
+        opt.m_pageStep = XAbstractSlider_pageStep(
+            (const XAbstractSlider*)dial);
+        opt.m_sliderMin = XAbstractSlider_minimum(
+            (const XAbstractSlider*)dial);
+        opt.m_sliderMax = XAbstractSlider_maximum(
+            (const XAbstractSlider*)dial);
+        opt.m_sliderValue = XAbstractSlider_value(
+            (const XAbstractSlider*)dial);
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawComplexControl(style, XStyleCC_Dial, &opt,
+                                  &painter, self);
+        XPainter_end(&painter);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     width  = r.width;
     height = r.height;
     radius = (width < height ? width : height) / 2;
@@ -176,19 +213,28 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
         notchCount = XDial_notchSize(dial);
         if (dial->m_notchesVisible && notchCount > 0) {
             int smallLine = bigLine / 2;
+            int pageStep = XAbstractSlider_pageStep(
+                (const XAbstractSlider*)dial);
             XPainter_setPen(&painter, windowText);
             for (i = 0; i <= notchCount; ++i) {
+                /* 区分大线/小线（对标 calcLines：i==0 或 pageStep 倍数
+                 * 画大线，其余画小线）。 */
+                bool big = (i == 0) ||
+                    (pageStep > 0 &&
+                     ((notchCount * i) % pageStep) == 0);
+                int inner = big ? (br2 - bigLine)
+                                : (br2 - 1 - smallLine);
+                int outer = big ? br2 : (br2 - 1);
                 double a = (XDIAL_START_ANGLE +
                             XDIAL_SWEEP_ANGLE * i / notchCount) *
                            3.14159265358979323846 / 180.0;
                 double c = cos(a);
                 double sn = -sin(a);
                 XPainter_drawLine(&painter,
-                                  (int)(bcx + (br2 - bigLine) * c),
-                                  (int)(bcy + (br2 - bigLine) * sn),
-                                  (int)(bcx + br2 * c),
-                                  (int)(bcy + br2 * sn));
-                (void)smallLine;
+                                  (int)(bcx + inner * c),
+                                  (int)(bcy + inner * sn),
+                                  (int)(bcx + outer * c),
+                                  (int)(bcy + outer * sn));
             }
         }
 
@@ -240,7 +286,7 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
         arrow[2].y = (int)(bcy + back * -sin(angleRad - 3.14159265358979323846 * 5.0 / 6.0));
         XPainter_setBrush(&painter, button);
         XPainter_setPen(&painter, dark);
-#if XPAINTER_SHAPE_ON
+#if XPAINTER_POLYGON_ON
         XPainter_drawConvexPolygon(&painter, arrow, 3);
 #else
         XPainter_drawLine(&painter, arrow[0].x, arrow[0].y,
@@ -250,11 +296,60 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
         XPainter_drawLine(&painter, arrow[2].x, arrow[2].y,
                           arrow[0].x, arrow[0].y);
 #endif
-        /* 箭头描边（对标按角度区段的 light/dark 高光）：简单取
-           light 色沿两边提亮，模拟 3D 凸起。 */
-        XPainter_setPen(&painter, light);
-        XPainter_drawLine(&painter, arrow[0].x, arrow[0].y,
-                          arrow[2].x, arrow[2].y);
+        /* 箭头描边：按箭头角度分区选 light/dark（对标 QCommonStyle
+         * CC_Dial 按 a 角度区间的 3D 高光/阴影方向）。 */
+        {
+            double aDeg = XDIAL_START_ANGLE -
+                XDIAL_SWEEP_ANGLE *
+                ((double)(XAbstractSlider_value(
+                     (const XAbstractSlider*)dial) -
+                    XAbstractSlider_minimum((const XAbstractSlider*)dial)) /
+                 (double)(XAbstractSlider_maximum(
+                     (const XAbstractSlider*)dial) -
+                     XAbstractSlider_minimum((const XAbstractSlider*)dial) > 0
+                     ? (XAbstractSlider_maximum(
+                            (const XAbstractSlider*)dial) -
+                         XAbstractSlider_minimum((const XAbstractSlider*)dial))
+                     : 1));
+            if (aDeg < 0) aDeg += 360.0;
+            if (aDeg <= 240.0 + 30.0 || aDeg > 360.0 - 30.0) {
+                XPainter_setPen(&painter, light);
+                XPainter_drawLine(&painter, arrow[0].x, arrow[0].y,
+                                  arrow[2].x, arrow[2].y);
+                XPainter_drawLine(&painter, arrow[1].x, arrow[1].y,
+                                  arrow[2].x, arrow[2].y);
+                XPainter_setPen(&painter, dark);
+                XPainter_drawLine(&painter, arrow[0].x, arrow[0].y,
+                                  arrow[1].x, arrow[1].y);
+            } else if (aDeg <= 240.0 + 75.0) {
+                XPainter_setPen(&painter, light);
+                XPainter_drawLine(&painter, arrow[2].x, arrow[2].y,
+                                  arrow[0].x, arrow[0].y);
+                XPainter_setPen(&painter, dark);
+                XPainter_drawLine(&painter, arrow[1].x, arrow[1].y,
+                                  arrow[2].x, arrow[2].y);
+                XPainter_drawLine(&painter, arrow[0].x, arrow[0].y,
+                                  arrow[1].x, arrow[1].y);
+            } else if (aDeg <= 240.0 + 225.0) {
+                XPainter_setPen(&painter, dark);
+                XPainter_drawLine(&painter, arrow[2].x, arrow[2].y,
+                                  arrow[0].x, arrow[0].y);
+                XPainter_drawLine(&painter, arrow[1].x, arrow[1].y,
+                                  arrow[2].x, arrow[2].y);
+                XPainter_setPen(&painter, light);
+                XPainter_drawLine(&painter, arrow[0].x, arrow[0].y,
+                                  arrow[1].x, arrow[1].y);
+            } else {
+                XPainter_setPen(&painter, dark);
+                XPainter_drawLine(&painter, arrow[2].x, arrow[2].y,
+                                  arrow[0].x, arrow[0].y);
+                XPainter_setPen(&painter, light);
+                XPainter_drawLine(&painter, arrow[0].x, arrow[0].y,
+                                  arrow[1].x, arrow[1].y);
+                XPainter_drawLine(&painter, arrow[1].x, arrow[1].y,
+                                  arrow[2].x, arrow[2].y);
+            }
+        }
     }
 
     XPainter_end(&painter);

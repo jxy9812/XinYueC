@@ -123,11 +123,13 @@ static void VX_statusBar_paintEvent(XWidget* self, XEvent* event)
     text = xsb_color(sb, XPaletteColorRole_WindowText);
     XRect_init(&line, 0, 0, w, 1);
     XPainter_fillRect(&painter, &line, dark);
-    if (sb->m_currentMessage[0] != '\0') {
+    if (sb->m_currentMessage && XString_toUtf8(sb->m_currentMessage) &&
+        XString_toUtf8(sb->m_currentMessage)[0] != '\0') {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
         XRect_init(&msgRect, 4, 1, w - 8, h - 2);
-        XPainter_drawText(&painter, 4, h - 6, sb->m_currentMessage, text);
+        XPainter_drawText(&painter, 4, h - 6,
+                          XString_toUtf8(sb->m_currentMessage), text);
     }
     (void)msgRect;
     XPainter_deinit(&painter);
@@ -147,12 +149,23 @@ static void VX_statusBar_timerEvent(XObject* object, XTimerEvent* event)
 
 /* ==================== 生命周期与虚表 ==================== */
 
+static void VXStatusBar_deinit(XStatusBar* self)
+{
+    if (!self) return;
+    if (self->m_currentMessage) {
+        XString_delete_base(self->m_currentMessage);
+        self->m_currentMessage = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 XVtable* XStatusBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XStatusBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_statusBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_statusBar_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStatusBar_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -193,7 +206,9 @@ void XStatusBar_addWidget(XStatusBar* self, XWidget* widget, int stretch)
     if (!item) return;
     XVector_push_back_1_base(self->m_items, &item);
     XWidget_setParent(widget, (XWidget*)self, 0);
-    XWidget_setVisible(widget, self->m_currentMessage[0] == '\0');
+    XWidget_setVisible(widget, !self->m_currentMessage ||
+                        !XString_toUtf8(self->m_currentMessage) ||
+                        XString_toUtf8(self->m_currentMessage)[0] == '\0');
 }
 
 int XStatusBar_insertWidget(XStatusBar* self, int index, XWidget* widget,
@@ -275,8 +290,9 @@ void XStatusBar_showMessage(XStatusBar* self, const char* utf8, int timeout)
         XStatusBar_clearMessage(self);
         return;
     }
-    strncpy(self->m_currentMessage, s, sizeof(self->m_currentMessage) - 1);
-    self->m_currentMessage[sizeof(self->m_currentMessage) - 1] = '\0';
+    if (!self->m_currentMessage) self->m_currentMessage = XString_create();
+    if (self->m_currentMessage)
+        XString_assign_utf8(self->m_currentMessage, s);
     self->m_tempTimeout = timeout;
     if (timeout > 0) {
         if (self->m_messageTimer != XTIMER_INVALID_ID)
@@ -284,7 +300,7 @@ void XStatusBar_showMessage(XStatusBar* self, const char* utf8, int timeout)
         self->m_messageTimer = XObject_startTimer_ms(
             (XObject*)self, (unsigned)timeout, XTimerType_CoarseTimer);
     }
-    XStatusBar_messageChanged_signal(self, self->m_currentMessage);
+    XStatusBar_messageChanged_signal(self, XString_toUtf8(self->m_currentMessage));
     XWidget_update((XWidget*)self);
 }
 
@@ -295,15 +311,20 @@ void XStatusBar_clearMessage(XStatusBar* self)
         XObject_killTimer((XObject*)self, self->m_messageTimer);
         self->m_messageTimer = XTIMER_INVALID_ID;
     }
-    if (self->m_currentMessage[0] == '\0') return;
-    self->m_currentMessage[0] = '\0';
+    if (!self->m_currentMessage ||
+        !XString_toUtf8(self->m_currentMessage) ||
+        XString_toUtf8(self->m_currentMessage)[0] == '\0') return;
+    XString_assign_utf8(self->m_currentMessage, "");
     XStatusBar_messageChanged_signal(self, "");
     XWidget_update((XWidget*)self);
 }
 
 const char* XStatusBar_currentMessage(const XStatusBar* self)
 {
-    return (self && self->m_currentMessage[0]) ? self->m_currentMessage : "";
+    const char* text;
+    if (!self || !self->m_currentMessage) return "";
+    text = XString_toUtf8(self->m_currentMessage);
+    return (text && text[0]) ? text : "";
 }
 
 /* ==================== 信号 ==================== */

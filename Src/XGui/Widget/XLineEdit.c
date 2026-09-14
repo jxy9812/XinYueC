@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XLineEdit.c
  * @brief      XLineEdit 单行编辑控件实现（对标 Qt 6.8 QLineEdit 全部公共 API）。
  * @details    内部表示：文本为 UTF-8 动态缓冲（NUL 结尾），光标/选区锚点
@@ -36,6 +36,8 @@
 #if XWIDGET_ON && XLINEEDIT_ON
 
 #include "XLineEdit.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XWidget_Protected.h"
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
@@ -1327,15 +1329,45 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
     }
 
     if (edit->m_frame) {
-        XRect e = r;
-        e.height = 1;
-        XPainter_fillRect(&painter, &e, dark);
-        e = r; e.width = 1;
-        XPainter_fillRect(&painter, &e, dark);
-        e = r; e.x = r.x + r.width - 1; e.width = 1;
-        XPainter_fillRect(&painter, &e, light);
-        e = r; e.y = r.y + r.height - 1; e.height = 1;
-        XPainter_fillRect(&painter, &e, light);
+#if XSTYLE_ON
+        if (XStyle_defaultStyle() != NULL) {
+            /* Fusion/公共风格接管：输入框面板由样式引擎绘制。 */
+            XStyle* style = XStyle_defaultStyle();
+            XStyleOption opt;
+            XStyleOption_init(&opt, XStylePE_PanelLineEdit);
+            opt.m_rect = r;
+            opt.m_state = XWidget_isEnabled(self)
+                ? XStyleState_Enabled : 0;
+            if (XWidget_hasFocus(self))
+                opt.m_state |= XStyleState_HasFocus;
+            if (XWidget_underMouse(self) && XWidget_isEnabled(self))
+                opt.m_state |= XStyleState_MouseOver;
+            opt.m_text = XLineEdit_placeholderText(edit);
+#if XPALETTE_ON
+            opt.m_palette = XWidget_palette(self);
+#endif
+            XStyle_drawPrimitive(style, XStylePE_PanelLineEdit, &opt,
+                                 &painter, self);
+            if (XWidget_hasFocus(self)) {
+                XStyleOption foc = opt;
+                foc.m_type = XStylePE_FrameFocusRect;
+                foc.m_rect = r;
+                XStyle_drawPrimitive(style, XStylePE_FrameFocusRect,
+                                     &foc, &painter, self);
+            }
+        } else
+#endif /* XSTYLE_ON */
+        {
+            XRect e = r;
+            e.height = 1;
+            XPainter_fillRect(&painter, &e, dark);
+            e = r; e.width = 1;
+            XPainter_fillRect(&painter, &e, dark);
+            e = r; e.x = r.x + r.width - 1; e.width = 1;
+            XPainter_fillRect(&painter, &e, light);
+            e = r; e.y = r.y + r.height - 1; e.height = 1;
+            XPainter_fillRect(&painter, &e, light);
+        }
     }
 
     xlineedit_refreshDisplay(edit);
@@ -1426,9 +1458,11 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
                 XPainter_fillRect(&painter, &cursor, text);
             }
         }
-    } else if (edit->m_placeholder[0]) {
+    } else if (edit->m_placeholder &&
+               XString_toUtf8(edit->m_placeholder) &&
+               XString_toUtf8(edit->m_placeholder)[0]) {
         XPainter_drawText(&painter, tx - edit->m_viewOffset, baseline,
-                          edit->m_placeholder, mid);
+                          XString_toUtf8(edit->m_placeholder), mid);
         if (XWidget_hasFocus(self)) {
             XRect cursor = { tx - edit->m_viewOffset, ty,
                              XLINEEDIT_CURSOR_W, lineH };
@@ -1496,6 +1530,10 @@ static void VXLineEdit_deinit(XLineEdit* self)
         XFree_System(self->m_clipboardText);
         self->m_clipboardText = NULL;
     }
+    if (self->m_placeholder) {
+        XString_delete_base(self->m_placeholder);
+        self->m_placeholder = NULL;
+    }
     for (i = 0; i < self->m_undoCount; ++i)
         XFree_System(self->m_undoStack[i]);
     for (i = 0; i < self->m_redoCount; ++i)
@@ -1515,8 +1553,8 @@ static void VXLineEdit_copy(XLineEdit* self, const XLineEdit* other)
                   void(*)(XWidget*, const XWidget*))((XWidget*)self,
                                                      (const XWidget*)other);
     XLineEdit_setText(self, other->m_text);
-    memcpy(self->m_placeholder, other->m_placeholder,
-           sizeof(self->m_placeholder));
+    if (self->m_placeholder && other->m_placeholder)
+        XString_assign(self->m_placeholder, other->m_placeholder);
     self->m_cursor = other->m_cursor;
     self->m_anchor = other->m_anchor;
     self->m_viewOffset = other->m_viewOffset;
@@ -1596,8 +1634,9 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     self->m_redoCount = other->m_redoCount;
     other->m_redoCount = 0;
 
-    memcpy(self->m_placeholder, other->m_placeholder,
-           sizeof(self->m_placeholder));
+    if (self->m_placeholder) XString_delete_base(self->m_placeholder);
+    self->m_placeholder = other->m_placeholder;
+    other->m_placeholder = XString_create();
     self->m_cursor = other->m_cursor;
     self->m_anchor = other->m_anchor;
     self->m_viewOffset = other->m_viewOffset;
@@ -1617,7 +1656,7 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     self->m_clearButtonRect = other->m_clearButtonRect;
 
     /* 源对象归构造默认值。 */
-    other->m_placeholder[0] = '\0';
+    /* m_placeholder 已转移并重新创建为空串。 */
     other->m_cursor = 0;
     other->m_anchor = 0;
     other->m_viewOffset = 0;
@@ -1678,7 +1717,7 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
 
     self->m_text = (char*)XMalloc_System(1);
     if (self->m_text) self->m_text[0] = '\0';
-    self->m_placeholder[0] = '\0';
+    self->m_placeholder = XString_create();
     self->m_cursor = 0;
     self->m_anchor = 0;
     self->m_viewOffset = 0;
@@ -1759,16 +1798,18 @@ void XLineEdit_insert(XLineEdit* self, const char* utf8)
 
 const char* XLineEdit_placeholderText(const XLineEdit* self)
 {
-    return (self && self->m_placeholder[0]) ? self->m_placeholder : "";
+    const char* text;
+    if (!self || !self->m_placeholder) return "";
+    text = XString_toUtf8(self->m_placeholder);
+    return (text && text[0]) ? text : "";
 }
 
 void XLineEdit_setPlaceholderText(XLineEdit* self, const char* placeholder)
 {
     if (!self) return;
-    if (!placeholder) placeholder = "";
-    strncpy(self->m_placeholder, placeholder,
-            sizeof(self->m_placeholder) - 1);
-    self->m_placeholder[sizeof(self->m_placeholder) - 1] = '\0';
+    if (!self->m_placeholder) self->m_placeholder = XString_create();
+    if (self->m_placeholder)
+        XString_assign_utf8(self->m_placeholder, placeholder ? placeholder : "");
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
 }
@@ -1899,18 +1940,20 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
         return s;
     }
     if (self->m_text) chars = xlineedit_charCount(self->m_text);
-    if (self->m_placeholder[0]) {
-        size_t pc = xlineedit_charCount(self->m_placeholder);
-        if (pc > chars) chars = pc;
-    }
     {
+        const char* phText = (self->m_placeholder
+                              ? XString_toUtf8(self->m_placeholder) : NULL);
+        if (phText && phText[0]) {
+            size_t pc = xlineedit_charCount(phText);
+            if (pc > chars) chars = pc;
+        }
         /* 首选宽度按真实字体度量（取文本与 placeholder 中较宽者），
            中文双宽不再被按 8px 低估。 */
         XFont font = XWidget_font((const XWidget*)self);
         const char* textPtr = self->m_text ? self->m_text : "";
-        const char* phPtr = self->m_placeholder;
+        const char* phPtr = phText ? phText : "";
         int textW = xlineedit_displayWidth(&font, textPtr, chars);
-        int phW = self->m_placeholder[0]
+        int phW = (phText && phText[0])
                       ? xlineedit_displayWidth(&font, phPtr,
                                                xlineedit_charCount(phPtr))
                       : 0;

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XToolBar.h
  * @brief      XToolBar 工具栏控件（对标 Qt 6.8 QToolBar 全部公共 API）。
  * @details    功能范围：
@@ -32,6 +32,7 @@ extern "C" {
 #include <stddef.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #if XACTION_ON
 #include "XAction.h"
 #endif
@@ -68,8 +69,12 @@ typedef struct XToolBar
     int m_allowedAreas;      /**< 允许停靠区域（默认全部）。 */
     int m_iconSize;          /**< 图标尺寸（默认 16）。 */
     int m_buttonStyle;       /**< 按钮风格（默认 IconOnly；文本绘制用）。 */
-    char m_title[128];       /**< 工具栏标题。 */
 } XToolBar;
+
+/** @brief 设置工具栏标题（对标 QToolBar::setWindowTitle；存于 XWidget 窗口标题）。 @param self 目标工具栏指针。 @param utf8 标题（UTF-8）。 @return 无返回值。 */
+void XToolBar_setTitle(XToolBar* self, const char* utf8);
+/** @brief 读取工具栏标题。 @param self 目标工具栏指针。 @return 标题（UTF-8）。 */
+const char* XToolBar_title(const XToolBar* self);
 
 /* ==================== 生命周期 ==================== */
 
@@ -140,6 +145,19 @@ void* XToolBar_actionTriggered_signal(XToolBar* self, XAction* action);
 void* XToolBar_actionHovered_signal(XToolBar* self, XAction* action);
 void* XToolBar_orientationChanged_signal(XToolBar* self, int orientation);
 void* XToolBar_movableChanged_signal(XToolBar* self, bool movable);
+
+/**
+ * @brief      可见性变化信号（真发射；show/hide 事件驱动，对标
+ *             QToolBar::visibilityChanged）。
+ * @details    XToolBar 显示时发射 visibilityChanged(true)，隐藏时发射
+ *             visibilityChanged(false)；self 非 NULL 且有已连接槽时经
+ *             XObject_emitSignal 同步通知，否则只返回信号标识。
+ * @param      self 目标工具栏指针；可为 NULL。
+ * @param      visible true 表示已显示，false 表示已隐藏。
+ * @return     不透明的 visibilityChanged 信号标识；返回值不指向可释放
+ *             对象，也不得解引用。
+ */
+void* XToolBar_visibilityChanged_signal(XToolBar* self, bool visible);
 
 #ifdef __cplusplus
 }

@@ -1,4 +1,4 @@
-﻿#include "XChart.h"
+﻿#include "XExcelChart.h"
 #include "XAbstractSheet.h"
 #include "XMemory.h"
 #include "XFile.h"
@@ -12,22 +12,22 @@
 #include <string.h>
 #include <stdio.h>
 
-XChart* XChart_create(XAbstractSheet* parent, XAbstractOOXmlFile_CreateFlag flag) {
-    XChart* self = (XChart*)XMalloc_System(sizeof(XChart));
-    if (!self) return NULL; memset(self, 0, sizeof(XChart));
+XExcelChart* XExcelChart_create(XAbstractSheet* parent, XAbstractOOXmlFile_CreateFlag flag) {
+    XExcelChart* self = (XExcelChart*)XMalloc_System(sizeof(XExcelChart));
+    if (!self) return NULL; memset(self, 0, sizeof(XExcelChart));
     XAbstractOOXmlFile_init(&self->m_base, flag);
-    self->m_chartType = XChart_NoStatementChart;
+    self->m_chartType = XExcelChart_NoStatementChart;
     self->m_chartStyle = -1;
-    self->m_legendPos = XChart_AxisPosRight;
-    self->m_series = XVector_Create(XChart_Series);
+    self->m_legendPos = XExcelChart_AxisPosRight;
+    self->m_series = XVector_Create(XExcelChart_Series);
     self->m_width = 480; self->m_height = 290;
     if (parent && parent->m_sheetName)
         self->m_dataSheetName = XString_create_copy(parent->m_sheetName);
     return self;
 }
-XChart* XChart_copy(const XChart* source, XAbstractSheet* parent) {
+XExcelChart* XExcelChart_copy(const XExcelChart* source, XAbstractSheet* parent) {
     if (!source) return NULL;
-    XChart* copy = XChart_create(parent, XAbstractOOXmlFile_F_NewFromScratch);
+    XExcelChart* copy = XExcelChart_create(parent, XAbstractOOXmlFile_F_NewFromScratch);
     if (!copy) return NULL;
     copy->m_chartType = source->m_chartType;
     copy->m_chartStyle = source->m_chartStyle;
@@ -50,12 +50,12 @@ XChart* XChart_copy(const XChart* source, XAbstractSheet* parent) {
     if (source->m_axisTitleBottom) copy->m_axisTitleBottom = XString_create_copy(source->m_axisTitleBottom);
     size_t count = source->m_series ? XVector_size_base((XContainer*)source->m_series) : 0;
     for (size_t i = 0; i < count; ++i) {
-        XChart_Series* series = (XChart_Series*)XVector_at_base(source->m_series, i);
+        XExcelChart_Series* series = (XExcelChart_Series*)XVector_at_base(source->m_series, i);
         if (series) XVector_push_back_2(copy->m_series, series, 1);
     }
     return copy;
 }
-void XChart_delete(XChart* self) {
+void XExcelChart_delete(XExcelChart* self) {
     if (!self) return;
     if (self->m_chartTitle) XString_delete_base(self->m_chartTitle);
     if (self->m_axisTitleLeft) XString_delete_base(self->m_axisTitleLeft);
@@ -66,12 +66,12 @@ void XChart_delete(XChart* self) {
     if (self->m_series) XVector_delete_base(self->m_series);
     XAbstractOOXmlFile_deinit(&self->m_base); XFree_System(self);
 }
-void XChart_addSeries(XChart* self, const XCellRange* range, bool headerH, bool headerV, bool swapHeaders) {
+void XExcelChart_addSeries(XExcelChart* self, const XCellRange* range, bool headerH, bool headerV, bool swapHeaders) {
     if (!self || !range) return;
-    XChart_Series s; memset(&s, 0, sizeof(s)); s.m_range = *range; s.m_headerH = headerH; s.m_headerV = headerV; s.m_swapHeaders = swapHeaders;
+    XExcelChart_Series s; memset(&s, 0, sizeof(s)); s.m_range = *range; s.m_headerH = headerH; s.m_headerV = headerV; s.m_swapHeaders = swapHeaders;
     XVector_push_back_2(self->m_series, &s, 1);
 }
-void XChart_setDataSheetName(XChart* self, const XString* name) {
+void XExcelChart_setDataSheetName(XExcelChart* self, const XString* name) {
     if (!self) return;
     if (self->m_dataSheetName) {
         XString_delete_base(self->m_dataSheetName);
@@ -79,33 +79,33 @@ void XChart_setDataSheetName(XChart* self, const XString* name) {
     }
     if (name) self->m_dataSheetName = XString_create_copy(name);
 }
-void XChart_setDataSheetName_utf8(XChart* self, const char* name) {
+void XExcelChart_setDataSheetName_utf8(XExcelChart* self, const char* name) {
     XString* sheetName = name ? XString_create_utf8(name) : NULL;
-    XChart_setDataSheetName(self, sheetName);
+    XExcelChart_setDataSheetName(self, sheetName);
     if (sheetName) XString_delete_base(sheetName);
 }
-void XChart_setChartType(XChart* self, XChart_ChartType type) { if (self) self->m_chartType = type; }
-void XChart_setChartStyle(XChart* self, int id) { if (self) self->m_chartStyle = id; }
-void XChart_setAxisTitle(XChart* self, XChart_ChartAxisPos pos, const XString* axisTitle) {
+void XExcelChart_setChartType(XExcelChart* self, XExcelChart_ChartType type) { if (self) self->m_chartType = type; }
+void XExcelChart_setChartStyle(XExcelChart* self, int id) { if (self) self->m_chartStyle = id; }
+void XExcelChart_setAxisTitle(XExcelChart* self, XExcelChart_ChartAxisPos pos, const XString* axisTitle) {
     if (!self) return;
     XString** target = NULL;
-    if (pos == XChart_AxisPosLeft) target = &self->m_axisTitleLeft;
-    else if (pos == XChart_AxisPosRight) target = &self->m_axisTitleRight;
-    else if (pos == XChart_AxisPosTop) target = &self->m_axisTitleTop;
-    else if (pos == XChart_AxisPosBottom) target = &self->m_axisTitleBottom;
+    if (pos == XExcelChart_AxisPosLeft) target = &self->m_axisTitleLeft;
+    else if (pos == XExcelChart_AxisPosRight) target = &self->m_axisTitleRight;
+    else if (pos == XExcelChart_AxisPosTop) target = &self->m_axisTitleTop;
+    else if (pos == XExcelChart_AxisPosBottom) target = &self->m_axisTitleBottom;
     if (target) { if (!*target) *target = XString_create(); if (*target) { XString_clear_base(*target); if (axisTitle) XString_append(*target, axisTitle); } }
 }
-void XChart_setChartTitle(XChart* self, const XString* title) {
+void XExcelChart_setChartTitle(XExcelChart* self, const XString* title) {
     if (!self) return;
     if (!self->m_chartTitle) self->m_chartTitle = XString_create();
     if (self->m_chartTitle) { XString_clear_base(self->m_chartTitle); if (title) XString_append(self->m_chartTitle, title); }
 }
-void XChart_setChartLegend(XChart* self, XChart_ChartAxisPos legendPos, bool overlap) { if (self) { self->m_legendPos = legendPos; self->m_legendOverlay = overlap; } }
-void XChart_setGridlinesEnable(XChart* self, bool majorEnable, bool minorEnable) { if (self) { self->m_majorGridlinesEnable = majorEnable; self->m_minorGridlinesEnable = minorEnable; } }
-void XChart_setSize(XChart* self, int width, int height) { if (self) { self->m_width = width; self->m_height = height; } }
-void XChart_setPosition(XChart* self, int row, int col, int rowOff, int colOff) { if (self) { self->m_row = row; self->m_col = col; self->m_rowOffset = rowOff; self->m_colOffset = colOff; } }
+void XExcelChart_setChartLegend(XExcelChart* self, XExcelChart_ChartAxisPos legendPos, bool overlap) { if (self) { self->m_legendPos = legendPos; self->m_legendOverlay = overlap; } }
+void XExcelChart_setGridlinesEnable(XExcelChart* self, bool majorEnable, bool minorEnable) { if (self) { self->m_majorGridlinesEnable = majorEnable; self->m_minorGridlinesEnable = minorEnable; } }
+void XExcelChart_setSize(XExcelChart* self, int width, int height) { if (self) { self->m_width = width; self->m_height = height; } }
+void XExcelChart_setPosition(XExcelChart* self, int row, int col, int rowOff, int colOff) { if (self) { self->m_row = row; self->m_col = col; self->m_rowOffset = rowOff; self->m_colOffset = colOff; } }
 
-static const char* chart_type_name(XChart_ChartType type)
+static const char* chart_type_name(XExcelChart_ChartType type)
 {
     static const char* names[] = {
         "", "areaChart", "area3DChart", "lineChart", "line3DChart", "stockChart",
@@ -113,27 +113,27 @@ static const char* chart_type_name(XChart_ChartType type)
         "barChart", "bar3DChart", "ofPieChart", "surfaceChart", "surface3DChart",
         "bubbleChart"
     };
-    return (type > XChart_NoStatementChart && type <= XChart_BubbleChart)
+    return (type > XExcelChart_NoStatementChart && type <= XExcelChart_BubbleChart)
         ? names[(int)type] : "lineChart";
 }
 
-static XChart_ChartType chart_type_from_name(const XString* name)
+static XExcelChart_ChartType chart_type_from_name(const XString* name)
 {
-    if (!name) return XChart_NoStatementChart;
-    for (int type = XChart_AreaChart; type <= XChart_BubbleChart; ++type) {
-        if (XString_equals_utf8(name, chart_type_name((XChart_ChartType)type), XChar_CaseSensitive))
-            return (XChart_ChartType)type;
+    if (!name) return XExcelChart_NoStatementChart;
+    for (int type = XExcelChart_AreaChart; type <= XExcelChart_BubbleChart; ++type) {
+        if (XString_equals_utf8(name, chart_type_name((XExcelChart_ChartType)type), XChar_CaseSensitive))
+            return (XExcelChart_ChartType)type;
     }
-    return XChart_NoStatementChart;
+    return XExcelChart_NoStatementChart;
 }
 
-static const char* legend_position_name(XChart_ChartAxisPos position)
+static const char* legend_position_name(XExcelChart_ChartAxisPos position)
 {
     switch (position) {
-        case XChart_AxisPosLeft: return "l";
-        case XChart_AxisPosTop: return "t";
-        case XChart_AxisPosBottom: return "b";
-        case XChart_AxisPosRight: return "r";
+        case XExcelChart_AxisPosLeft: return "l";
+        case XExcelChart_AxisPosTop: return "t";
+        case XExcelChart_AxisPosBottom: return "b";
+        case XExcelChart_AxisPosRight: return "r";
         default: return "r";
     }
 }
@@ -171,7 +171,7 @@ static void write_chart_title(XXmlStreamWriter* writer, const XString* title)
     XXmlStreamWriter_writeEndElement(writer);
 }
 
-static XString chart_formula_for_range(const XChart* self, const XCellRange* range)
+static XString chart_formula_for_range(const XExcelChart* self, const XCellRange* range)
 {
     XString formula;
     XString_init(&formula);
@@ -200,7 +200,7 @@ static XString chart_formula_for_range(const XChart* self, const XCellRange* ran
 }
 
 static void write_chart_reference(XXmlStreamWriter* writer, const char* containerName,
-                                  const char* referenceName, const XChart* chart,
+                                  const char* referenceName, const XExcelChart* chart,
                                   const XCellRange* range)
 {
     XXmlStreamWriter_writeStartElement_utf8(writer, containerName);
@@ -212,7 +212,7 @@ static void write_chart_reference(XXmlStreamWriter* writer, const char* containe
     XString_deinit_base(&formula);
 }
 
-static bool chart_series_ranges(const XChart_Series* series, XCellRange* valueRange,
+static bool chart_series_ranges(const XExcelChart_Series* series, XCellRange* valueRange,
                                 XCellRange* categoryRange, XCellRange* titleCell)
 {
     if (!series || !valueRange || !categoryRange || !titleCell ||
@@ -249,8 +249,8 @@ static bool chart_series_ranges(const XChart_Series* series, XCellRange* valueRa
     return XCellRange_isValid(valueRange);
 }
 
-static void write_chart_series(XXmlStreamWriter* writer, const XChart* chart,
-                               const XChart_Series* series, size_t index)
+static void write_chart_series(XXmlStreamWriter* writer, const XExcelChart* chart,
+                               const XExcelChart_Series* series, size_t index)
 {
     XCellRange valueRange;
     XCellRange categoryRange;
@@ -264,7 +264,7 @@ static void write_chart_series(XXmlStreamWriter* writer, const XChart* chart,
     write_value_element(writer, "c:order", indexText);
     if (XCellRange_isValid(&titleCell))
         write_chart_reference(writer, "c:tx", "c:strRef", chart, &titleCell);
-    if (chart->m_chartType == XChart_LineChart) {
+    if (chart->m_chartType == XExcelChart_LineChart) {
         XXmlStreamWriter_writeStartElement_utf8(writer, "c:marker");
         write_value_element(writer, "c:symbol", "none");
         XXmlStreamWriter_writeEndElement(writer);
@@ -275,10 +275,10 @@ static void write_chart_series(XXmlStreamWriter* writer, const XChart* chart,
     XXmlStreamWriter_writeEndElement(writer);
 }
 
-static bool chart_type_has_axes(XChart_ChartType type)
+static bool chart_type_has_axes(XExcelChart_ChartType type)
 {
-    return type == XChart_AreaChart || type == XChart_LineChart ||
-        type == XChart_BarChart;
+    return type == XExcelChart_AreaChart || type == XExcelChart_LineChart ||
+        type == XExcelChart_BarChart;
 }
 
 static void write_chart_axes(XXmlStreamWriter* writer, bool majorGridlinesEnable)
@@ -321,7 +321,7 @@ static void write_chart_axes(XXmlStreamWriter* writer, bool majorGridlinesEnable
     XXmlStreamWriter_writeEndElement(writer);
 }
 
-static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
+static bool write_chart_xml(XExcelChart* self, XXmlStreamWriter* writer)
 {
     if (!self || !writer) return false;
     XXmlStreamWriter_writeStartDocument_ex_utf8(writer, "1.0");
@@ -347,23 +347,23 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
     char chartElementName[40];
     snprintf(chartElementName, sizeof(chartElementName), "c:%s", chart_type_name(self->m_chartType));
     XXmlStreamWriter_writeStartElement_utf8(writer, chartElementName);
-    if (self->m_chartType == XChart_BarChart) {
+    if (self->m_chartType == XExcelChart_BarChart) {
         write_value_element(writer, "c:barDir", "col");
         write_value_element(writer, "c:grouping", "clustered");
-    } else if (self->m_chartType == XChart_LineChart || self->m_chartType == XChart_AreaChart) {
+    } else if (self->m_chartType == XExcelChart_LineChart || self->m_chartType == XExcelChart_AreaChart) {
         write_value_element(writer, "c:grouping", "standard");
     }
-    if (self->m_chartType == XChart_LineChart || self->m_chartType == XChart_AreaChart ||
-        self->m_chartType == XChart_BarChart || self->m_chartType == XChart_PieChart ||
-        self->m_chartType == XChart_DoughnutChart)
+    if (self->m_chartType == XExcelChart_LineChart || self->m_chartType == XExcelChart_AreaChart ||
+        self->m_chartType == XExcelChart_BarChart || self->m_chartType == XExcelChart_PieChart ||
+        self->m_chartType == XExcelChart_DoughnutChart)
         write_value_element(writer, "c:varyColors", "0");
     size_t seriesCount = XVector_size_base((XContainer*)self->m_series);
     for (size_t i = 0; i < seriesCount; ++i) {
-        const XChart_Series* series = (const XChart_Series*)XVector_at_base(self->m_series, i);
+        const XExcelChart_Series* series = (const XExcelChart_Series*)XVector_at_base(self->m_series, i);
         if (!series || !XCellRange_isValid(&series->m_range)) continue;
         write_chart_series(writer, self, series, i);
     }
-    if (self->m_chartType == XChart_BarChart)
+    if (self->m_chartType == XExcelChart_BarChart)
         write_value_element(writer, "c:gapWidth", "150");
     if (chart_type_has_axes(self->m_chartType)) {
         write_value_element(writer, "c:axId", "1");
@@ -373,7 +373,7 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
     if (chart_type_has_axes(self->m_chartType))
         write_chart_axes(writer, self->m_majorGridlinesEnable);
     XXmlStreamWriter_writeEndElement(writer);
-    if (self->m_legendPos != XChart_AxisPosNone) {
+    if (self->m_legendPos != XExcelChart_AxisPosNone) {
         XXmlStreamWriter_writeStartElement_utf8(writer, "c:legend");
         write_value_element(writer, "c:legendPos", legend_position_name(self->m_legendPos));
         write_value_element(writer, "c:overlay", self->m_legendOverlay ? "1" : "0");
@@ -384,7 +384,7 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
     XXmlStreamWriter_writeEndElement(writer);
 
     /* 图表位置和尺寸由 Drawing 保存，但独立图表 XML 也要保留对象属性，
-       这样 XChart_saveToXmlData/XChart_loadFromXmlData 可以无损往返。 */
+       这样 XExcelChart_saveToXmlData/XExcelChart_loadFromXmlData 可以无损往返。 */
     XXmlStreamWriter_writeEmptyElement_utf8(writer, "settings");
     char setting[32];
 #define WRITE_CHART_SETTING(field, name) do { \
@@ -406,7 +406,7 @@ static bool write_chart_xml(XChart* self, XXmlStreamWriter* writer)
     return !XXmlStreamWriter_hasError(writer);
 }
 
-bool XChart_saveToXmlData(XChart* self, uint8_t** outData, size_t* outLen)
+bool XExcelChart_saveToXmlData(XExcelChart* self, uint8_t** outData, size_t* outLen)
 {
     if (!self || !outData || !outLen) return false;
     *outData = NULL;
@@ -428,12 +428,12 @@ bool XChart_saveToXmlData(XChart* self, uint8_t** outData, size_t* outLen)
     return *outData != NULL;
 }
 
-bool XChart_saveToXmlFile(XChart* self, const XString* filePath)
+bool XExcelChart_saveToXmlFile(XExcelChart* self, const XString* filePath)
 {
     if (!self || !filePath) return false;
     uint8_t* xml = NULL;
     size_t size = 0;
-    if (!XChart_saveToXmlData(self, &xml, &size)) return false;
+    if (!XExcelChart_saveToXmlData(self, &xml, &size)) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     bool ok = file &&
         XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate);
@@ -461,7 +461,7 @@ static void normalize_chart_range(const char* formula, char* output, size_t outp
     output[written] = '\0';
 }
 
-static void set_chart_sheet_from_formula(XChart* self, const char* formula)
+static void set_chart_sheet_from_formula(XExcelChart* self, const char* formula)
 {
     if (!self || !formula) return;
     const char* bang = strrchr(formula, '!');
@@ -479,10 +479,10 @@ static void set_chart_sheet_from_formula(XChart* self, const char* formula)
         name[written++] = start[i];
     }
     name[written] = '\0';
-    if (written > 0) XChart_setDataSheetName_utf8(self, name);
+    if (written > 0) XExcelChart_setDataSheetName_utf8(self, name);
 }
 
-bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
+bool XExcelChart_loadFromXmlData(XExcelChart* self, const uint8_t* bytes, size_t len)
 {
     if (!self || !bytes || len == 0) return false;
     XByteArray* data = XByteArray_create_with_data((const char*)bytes, len);
@@ -492,7 +492,7 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
     XXmlStreamReader_addData(reader, data);
     XByteArray_delete_base(data);
     XVector_clear_base(self->m_series);
-    XChart_Series pending;
+    XExcelChart_Series pending;
     memset(&pending, 0, sizeof(pending));
     pending.m_range = XCellRange_create();
     bool inSeries = false;
@@ -502,13 +502,13 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
         int token = XXmlStreamReader_readNext(reader);
         const XString* name = XXmlStreamReader_name(reader);
         if (token == XXmlStream_StartElement) {
-            XChart_ChartType type = chart_type_from_name(name);
-            if (type != XChart_NoStatementChart) self->m_chartType = type;
+            XExcelChart_ChartType type = chart_type_from_name(name);
+            if (type != XExcelChart_NoStatementChart) self->m_chartType = type;
             if (name && XString_equals_utf8(name, "title", XChar_CaseSensitive)) inTitle = true;
             else if (name && XString_equals_utf8(name, "t", XChar_CaseSensitive) && inTitle) {
                 const XString* title = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
-                XChart_setChartTitle(self, title);
+                XExcelChart_setChartTitle(self, title);
             } else if (name && XString_equals_utf8(name, "ser", XChar_CaseSensitive)) {
                 memset(&pending, 0, sizeof(pending));
                 pending.m_range = XCellRange_create();
@@ -534,11 +534,11 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
             } else if (name && XString_equals_utf8(name, "legendPos", XChar_CaseSensitive)) {
                 const XString* valueString = chart_attribute(XXmlStreamReader_attributes(reader), "val");
                 self->m_legendPos = XString_equals_utf8(valueString, "l", XChar_CaseSensitive) ?
-                    XChart_AxisPosLeft :
+                    XExcelChart_AxisPosLeft :
                     XString_equals_utf8(valueString, "t", XChar_CaseSensitive) ?
-                    XChart_AxisPosTop :
+                    XExcelChart_AxisPosTop :
                     XString_equals_utf8(valueString, "b", XChar_CaseSensitive) ?
-                    XChart_AxisPosBottom : XChart_AxisPosRight;
+                    XExcelChart_AxisPosBottom : XExcelChart_AxisPosRight;
             } else if (name && XString_equals_utf8(name, "overlay", XChar_CaseSensitive)) {
                 const XString* overlay = chart_attribute(XXmlStreamReader_attributes(reader), "val");
                 self->m_legendOverlay = overlay && atoi(XString_toUtf8(overlay)) != 0;
@@ -558,12 +558,12 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
                 const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
                 const XString* position = chart_attribute(attributes, "pos");
                 const XString* title = chart_attribute(attributes, "title");
-                XChart_setAxisTitle(self, XString_equals_utf8(position, "left", XChar_CaseSensitive) ?
-                    XChart_AxisPosLeft :
+                XExcelChart_setAxisTitle(self, XString_equals_utf8(position, "left", XChar_CaseSensitive) ?
+                    XExcelChart_AxisPosLeft :
                     XString_equals_utf8(position, "right", XChar_CaseSensitive) ?
-                    XChart_AxisPosRight :
+                    XExcelChart_AxisPosRight :
                     XString_equals_utf8(position, "top", XChar_CaseSensitive) ?
-                    XChart_AxisPosTop : XChart_AxisPosBottom, title);
+                    XExcelChart_AxisPosTop : XExcelChart_AxisPosBottom, title);
             }
         } else if (token == XXmlStream_EndElement) {
             if (name && XString_equals_utf8(name, "title", XChar_CaseSensitive)) inTitle = false;
@@ -574,12 +574,12 @@ bool XChart_loadFromXmlData(XChart* self, const uint8_t* bytes, size_t len)
             }
         }
     }
-    bool ok = !XXmlStreamReader_hasError(reader) && self->m_chartType != XChart_NoStatementChart;
+    bool ok = !XXmlStreamReader_hasError(reader) && self->m_chartType != XExcelChart_NoStatementChart;
     XXmlStreamReader_delete_base(reader);
     return ok;
 }
 
-bool XChart_loadFromXmlFile(XChart* self, const XString* filePath)
+bool XExcelChart_loadFromXmlFile(XExcelChart* self, const XString* filePath)
 {
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
@@ -590,7 +590,7 @@ bool XChart_loadFromXmlFile(XChart* self, const XString* filePath)
     XByteArray* data = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
     XClass_delete_base((XClass*)file);
-    bool ok = data && XChart_loadFromXmlData(self, XByteArray_data(data),
+    bool ok = data && XExcelChart_loadFromXmlData(self, XByteArray_data(data),
         XByteArray_size_base((XContainer*)data));
     if (data) XByteArray_delete_base(data);
     return ok;
@@ -598,9 +598,9 @@ bool XChart_loadFromXmlFile(XChart* self, const XString* filePath)
 
 /* ========== UTF-8 便捷变体 ========== */
 
-void XChart_setChartTitle_utf8(XChart* self, const char* title)
+void XExcelChart_setChartTitle_utf8(XExcelChart* self, const char* title)
 {
     XString* s = title ? XString_create_utf8(title) : NULL;
-    XChart_setChartTitle(self, s);
+    XExcelChart_setChartTitle(self, s);
     if (s) XString_delete_base(s);
 }

@@ -27,6 +27,7 @@ extern "C" {
 #include <stddef.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #if XPIXMAP_ON
 #include "XPixmap.h"
 #endif
@@ -40,7 +41,7 @@ typedef struct XSplashScreen
 {
     XWidget m_base;        /**< 基类成员；必须是第一个。 */
     XPixmap* m_pixmap;     /**< 背景图（拥有，可为 NULL）。 */
-    char m_message[256];   /**< 当前消息文本。 */
+    XString* m_message;   /**< 当前消息文本（对象拥有）。 */
     int m_alignment;       /**< 消息对齐（XAlignment 位掩码）。 */
     uint32_t m_color;      /**< 消息颜色（ARGB）。 */
 } XSplashScreen;

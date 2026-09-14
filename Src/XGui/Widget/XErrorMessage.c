@@ -43,10 +43,21 @@ static void VX_errMsg_paintEvent(XWidget* self, XEvent* event)
 #else
     text = 0xFF000000u;
 #endif
-    if (em->m_message[0])
+    if (em->m_message && XString_toUtf8(em->m_message) &&
+        XString_toUtf8(em->m_message)[0])
         XPainter_drawText(&painter, 12, r.height / 2,
-                          em->m_message, text);
+                          XString_toUtf8(em->m_message), text);
     XPainter_deinit(&painter);
+}
+
+static void VXErrorMessage_deinit(XErrorMessage* self)
+{
+    if (!self) return;
+    if (self->m_message) {
+        XString_delete_base(self->m_message);
+        self->m_message = NULL;
+    }
+    XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
 XVtable* XErrorMessage_class_init(void)
@@ -54,6 +65,7 @@ XVtable* XErrorMessage_class_init(void)
     XVTABLE_INIT_DEFAULT(XErrorMessage)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_errMsg_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXErrorMessage_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -66,6 +78,7 @@ void XErrorMessage_init(XErrorMessage* self, XWidget* parent, XWidgetFlags flags
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_doneShown = true;
+    self->m_message = XString_create();
 }
 
 XErrorMessage* XErrorMessage_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -81,14 +94,18 @@ XErrorMessage* XErrorMessage_create_ex(XMemoryType memory, XWidget* parent, XWid
 void XErrorMessage_showMessage(XErrorMessage* self, const char* msg)
 {
     if (!self || !msg) return;
-    strncpy(self->m_message, msg, sizeof(self->m_message) - 1);
-    self->m_message[sizeof(self->m_message) - 1] = '\0';
+    if (!self->m_message) self->m_message = XString_create();
+    if (self->m_message)
+        XString_assign_utf8(self->m_message, msg ? msg : "");
     XWidget_show((XWidget*)self);
 }
 
 const char* XErrorMessage_currentMessage(const XErrorMessage* self)
 {
-    return self ? self->m_message : "";
+    const char* text;
+    if (!self || !self->m_message) return "";
+    text = XString_toUtf8(self->m_message);
+    return text ? text : "";
 }
 
 void XErrorMessage_setDoneShown(XErrorMessage* self, bool on)

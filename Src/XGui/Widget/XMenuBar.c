@@ -7,6 +7,8 @@
  */
 
 #include "XMenuBar.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -146,6 +148,58 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     text = xsb_color_bar(bar, XPaletteColorRole_WindowText);
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：面板 + 每项走 PE_PanelMenuBar/CE_MenuBarItem。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption panel;
+        XStyleOption_init(&panel, XStylePE_PanelMenuBar);
+        {
+            XRect pr;
+            XRect_init(&pr, 0, 0, XWidget_width(self), XWidget_height(self));
+            panel.m_rect = pr;
+        }
+        panel.m_state = XWidget_isEnabled(self) ? XStyleState_Enabled : 0;
+#if XPALETTE_ON
+        panel.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawPrimitive(style, XStylePE_PanelMenuBar, &panel, &painter,
+                             self);
+        if (bar->m_actions) {
+            n = XVector_size_base((const XContainer*)bar->m_actions);
+            for (i = 0; i < n; ++i) {
+                XAction** item = (XAction**)XVector_at_base(bar->m_actions, i);
+                XFont font = XWidget_font(self);
+                const XString* title;
+                if (item && *item) {
+                    XStyleOption mi;
+                    title = XAction_text_const(*item);
+                    XStyleOption_init(&mi, XStyleCE_MenuBarItem);
+                    {
+                        int mw = title
+                            ? XPainter_textWidth(&font, XString_toUtf8(title))
+                              + 16 : 24;
+                        XRect mr;
+                        XRect_init(&mr, x - 8, 0, mw, XWidget_height(self));
+                        mi.m_rect = mr;
+                    }
+                    mi.m_state = XWidget_isEnabled(self)
+                        ? XStyleState_Enabled : 0;
+                    mi.m_text = title ? XString_toUtf8(title) : "";
+#if XPALETTE_ON
+                    mi.m_palette = XWidget_palette(self);
+#endif
+                    XPainter_setFont(&painter, &font);
+                    XStyle_drawControl(style, XStyleCE_MenuBarItem, &mi,
+                                       &painter, self);
+                    x += mi.m_rect.width;
+                }
+            }
+        }
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     if (bar->m_actions) {
         n = XVector_size_base((const XContainer*)bar->m_actions);
         for (i = 0; i < n; ++i) {

@@ -24,7 +24,9 @@
 static void xdt_refreshText(XDateTimeEdit* self)
 {
     char buf[128];
-    const char* fmt = self->m_displayFormat;
+    const char* fmt = (self->m_displayFormat
+                       ? XString_toUtf8(self->m_displayFormat) : NULL);
+    if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
     size_t o = 0;
     size_t i = 0;
     if (!self) return;
@@ -146,6 +148,16 @@ static int XDateTimeEdit_stepEnabled(const XAbstractSpinBox* self)
 
 /* ==================== 生命周期与虚表 ==================== */
 
+static void VXDateTimeEdit_deinit(XDateTimeEdit* self)
+{
+    if (!self) return;
+    if (self->m_displayFormat) {
+        XString_delete_base(self->m_displayFormat);
+        self->m_displayFormat = NULL;
+    }
+    XClass_Deinit_Parent(XAbstractSpinBox, (XAbstractSpinBox*)self);
+}
+
 XVtable* XDateTimeEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDateTimeEdit)
@@ -154,6 +166,7 @@ XVtable* XDateTimeEdit_class_init(void)
                              XDateTimeEdit_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepEnabled,
                              XDateTimeEdit_stepEnabled);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDateTimeEdit_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -177,7 +190,7 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     self->m_maximum = XDateTime_create();
     XDate_setDate(&self->m_maximum.m_date, 2999, 12, 31);
     XTime_setHMS(&self->m_maximum.m_time, 23, 59, 59, 999);
-    strcpy(self->m_displayFormat, "yyyy-MM-dd HH:mm:ss");
+    self->m_displayFormat = XString_create_utf8("yyyy-MM-dd HH:mm:ss");
     self->m_currentSection =
         (int)XDateTimeEditSection_YearSection;
     /* 以当前时间刷新编辑框文本（无信号）。 */
@@ -278,15 +291,20 @@ void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
                                     const char* utf8)
 {
     if (!self) return;
-    strncpy(self->m_displayFormat, utf8 ? utf8 : "",
-            sizeof(self->m_displayFormat) - 1);
-    self->m_displayFormat[sizeof(self->m_displayFormat) - 1] = '\0';
+    if (!self->m_displayFormat) self->m_displayFormat = XString_create();
+    if (self->m_displayFormat)
+        XString_assign_utf8(self->m_displayFormat, utf8 ? utf8 : "");
     xdt_refreshText(self);
 }
 
 const char* XDateTimeEdit_displayFormat(const XDateTimeEdit* self)
 {
-    return self ? self->m_displayFormat : "";
+    {
+        const char* text;
+        if (!self || !self->m_displayFormat) return "";
+        text = XString_toUtf8(self->m_displayFormat);
+        return text ? text : "";
+    }
 }
 
 int XDateTimeEdit_currentSection(const XDateTimeEdit* self)
@@ -306,7 +324,8 @@ int XDateTimeEdit_sections(const XDateTimeEdit* self)
     const char* fmt;
     size_t i = 0;
     if (!self) return 0;
-    fmt = self->m_displayFormat;
+    fmt = (self->m_displayFormat ? XString_toUtf8(self->m_displayFormat) : NULL);
+    if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
     while (fmt[i] != '\0') {
         if (strncmp(&fmt[i], "yyyy", 4) == 0) {
             mask |= (int)XDateTimeEditSection_YearSection; i += 4;

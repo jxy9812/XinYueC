@@ -33,6 +33,7 @@ extern "C" {
 #include <stddef.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #include "XLineEdit.h"
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON
@@ -118,7 +119,7 @@ typedef struct XAbstractSpinBox
     bool    m_wrapping;                /**< 循环步进开关。 */
     bool    m_accelerated;             /**< 加速开关（行为后续扩展）。 */
     bool    m_groupSeparatorShown;     /**< 千分位分隔显示。 */
-    char*   m_specialValueText;        /**< 特殊值文本（拥有；NULL=未设置）。 */
+    XString* m_specialValueText;       /**< 特殊值文本（对象拥有；NULL=未设置）。 */
     bool    m_cleared;                 /**< 内部：clear() 后待解释标志。 */
     int     m_wheelDeltaRemainder;     /**< 内部：滚轮角度累积余数。 */
 } XAbstractSpinBox;

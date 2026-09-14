@@ -181,7 +181,7 @@ static bool saveWorksheetDrawing(XZipWriter* zip, const XWorksheet* ws,
         XByteArray_append_utf8(drawing, pictureXml);
     }
     for (size_t i = 0; ok && i < chartCount; ++i) {
-        XChart* chart = *(XChart**)XVector_at_base(ws->m_chartFiles, i);
+        XExcelChart* chart = *(XExcelChart**)XVector_at_base(ws->m_chartFiles, i);
         if (!chart) continue;
         int chartIndex = (*nextChartIndex)++;
         uint8_t* chartData = NULL;
@@ -190,7 +190,7 @@ static bool saveWorksheetDrawing(XZipWriter* zip, const XWorksheet* ws,
         char chartTarget[128];
         snprintf(chartPath, sizeof(chartPath), "xl/charts/chart%d.xml", chartIndex);
         snprintf(chartTarget, sizeof(chartTarget), "../charts/chart%d.xml", chartIndex);
-        ok = XChart_saveToXmlData(chart, &chartData, &chartLength) &&
+        ok = XExcelChart_saveToXmlData(chart, &chartData, &chartLength) &&
              zipAddFile_cstr(zip, chartPath, chartData, chartLength);
         if (chartData) XFree_System(chartData);
         if (!ok) break;
@@ -240,12 +240,12 @@ static bool saveChartsheetDrawing(XZipWriter* zip, const XChartsheet* chartsheet
                                   int drawingIndex, int chartIndex)
 {
     if (!zip || !chartsheet || !chartsheet->m_chart) return false;
-    XChart* chart = chartsheet->m_chart;
+    XExcelChart* chart = chartsheet->m_chart;
     uint8_t* chartData = NULL;
     size_t chartLength = 0;
     char path[160];
     snprintf(path, sizeof(path), "xl/charts/chart%d.xml", chartIndex);
-    bool ok = XChart_saveToXmlData(chart, &chartData, &chartLength) &&
+    bool ok = XExcelChart_saveToXmlData(chart, &chartData, &chartLength) &&
         zipAddFile_cstr(zip, path, chartData, chartLength);
     if (chartData) XFree_System(chartData);
     if (!ok) return false;
@@ -437,7 +437,7 @@ unsigned int XDocument_getImageCount(const XDocument* self)
 }
 
 /* ========== 图表 ========== */
-XChart* XDocument_insertChart(XDocument* self, int row, int col, int width, int height)
+XExcelChart* XDocument_insertChart(XDocument* self, int row, int col, int width, int height)
 {
     XWorksheet* ws = getCurrentWorksheet(self);
     if (!ws) return NULL;
@@ -1375,16 +1375,16 @@ static bool loadChartsheetFromReader(const XZipReader* zip, XChartsheet* chartsh
     XByteArray* chartXml = XZipReader_fileData(zip, chartPath);
     XString_delete_base(chartPath);
     if (!chartXml) return false;
-    XChart* chart = XChart_create(&chartsheet->m_base,
+    XExcelChart* chart = XExcelChart_create(&chartsheet->m_base,
         XAbstractOOXmlFile_F_LoadFromExists);
-    ok = chart && XChart_loadFromXmlData(chart, XByteArray_data(chartXml),
+    ok = chart && XExcelChart_loadFromXmlData(chart, XByteArray_data(chartXml),
         XByteArray_size_base((XContainer*)chartXml));
     XByteArray_delete_base(chartXml);
     if (!ok) {
-        if (chart) XChart_delete(chart);
+        if (chart) XExcelChart_delete(chart);
         return false;
     }
-    if (chartsheet->m_ownsChart && chartsheet->m_chart) XChart_delete(chartsheet->m_chart);
+    if (chartsheet->m_ownsChart && chartsheet->m_chart) XExcelChart_delete(chartsheet->m_chart);
     chartsheet->m_chart = chart;
     chartsheet->m_ownsChart = true;
     return true;
@@ -1522,19 +1522,19 @@ static bool loadWorksheetImagesFromReader(const XZipReader* zip, XWorksheet* wor
             else
                 snprintf(chartPath, sizeof(chartPath), "xl/drawings/%s", target);
             XByteArray* chartData = zipFileDataUtf8(zip, chartPath);
-            XChart* chart = chartData
-                ? XChart_create(&worksheet->m_base, XAbstractOOXmlFile_F_LoadFromExists) : NULL;
-            if (!chart || !XChart_loadFromXmlData(chart, XByteArray_data(chartData),
+            XExcelChart* chart = chartData
+                ? XExcelChart_create(&worksheet->m_base, XAbstractOOXmlFile_F_LoadFromExists) : NULL;
+            if (!chart || !XExcelChart_loadFromXmlData(chart, XByteArray_data(chartData),
                     XByteArray_size_base((XContainer*)chartData))) {
-                if (chart) XChart_delete(chart);
+                if (chart) XExcelChart_delete(chart);
                 if (chartData) XByteArray_delete_base(chartData);
                 ok = false;
                 break;
             }
             if (chart->m_row <= 0 || chart->m_col <= 0)
-                XChart_setPosition(chart, row, column, 0, 0);
+                XExcelChart_setPosition(chart, row, column, 0, 0);
             if (!XVector_push_back_2(worksheet->m_chartFiles, &chart, 1)) {
-                XChart_delete(chart);
+                XExcelChart_delete(chart);
                 XByteArray_delete_base(chartData);
                 ok = false;
                 break;

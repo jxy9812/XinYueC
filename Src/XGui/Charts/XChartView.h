@@ -20,12 +20,35 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XChartView)
 XCLASS_DEFINE_EXTEND_END(XChartView, XWidget)
 
+/**
+ * @brief      框选缩放模式（对标 Qt Charts 6.8 QChartView::RubberBand，
+ *             数值一致）。
+ * @details    可按位组合；RectangleRubberBand = Vertical|Horizontal。
+ */
+typedef enum XChartView_RubberBand
+{
+    XChartView_RubberBand_NoRubberBand = 0x0,           /**< 关闭框选（对标 NoRubberBand）。 */
+    XChartView_RubberBand_VerticalRubberBand = 0x1,     /**< 仅纵向框选（对标 VerticalRubberBand）。 */
+    XChartView_RubberBand_HorizontalRubberBand = 0x2,   /**< 仅横向框选（对标 HorizontalRubberBand）。 */
+    XChartView_RubberBand_RectangleRubberBand = 0x3,    /**< 矩形框选（对标 RectangleRubberBand）。 */
+    XChartView_RubberBand_ClickThroughRubberBand = 0x80 /**< 点击穿透（对标 ClickThroughRubberBand）。 */
+} XChartView_RubberBand;
+
+/** @brief 框选缩放模式集合（可按位组合；对标 QChartView::RubberBands）。 */
+typedef uint32_t XChartView_RubberBands;
+
 /** @brief 图表视图控件（对标 QChartView）。 */
 typedef struct XChartView
 {
     XWidget m_base;           /**< 基类成员；必须是第一个。 */
-    XChart* m_chart;          /**< 图表模型（内部拥有）。 */
-    bool m_rubberBand;        /**< 框选缩放（预留）。 */
+    XChart* m_chart;          /**< 图表模型（内部拥有；setChart 转移）。 */
+    XChartView_RubberBands m_rubberBand; /**< 框选缩放模式（对标 rubberBand）。 */
+    bool m_dragging;          /**< 框选拖拽进行中。 */
+    XPoint m_dragStart;       /**< 拖拽起点（视图局部坐标）。 */
+    XRect m_dragRect;         /**< 当前橡皮筋矩形（视图局部坐标）。 */
+    XAbstractSeries* m_hoverSeries; /**< 悬停命中的序列（借用；无命中 NULL）。 */
+    int m_hoverIndex;         /**< 悬停命中的点下标（无命中 -1）。 */
+    bool m_hovering;          /**< 当前是否处于悬停命中状态。 */
 } XChartView;
 
 XVtable* XChartView_class_init(void);
@@ -53,10 +76,27 @@ XChartView* XChartView_create_ex(XMemoryType memory, XWidget* parent,
 #define XChartView_create(parent, flags) \
     XChartView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, flags)
 
+/** @brief 删除堆上图表视图（查表分派析构并释放内存）。 */
+#define XChartView_delete_base(self) XClass_delete_base((XClass*)(self))
+
 /** @brief 读取图表模型。 @param self 目标视图指针。 @return 图表指针（内部拥有）。 */
 XChart* XChartView_chart(const XChartView* self);
 /** @brief 请求重绘（模型变化后调用）。 @param self 目标视图指针。 @return 无返回值。 */
 void XChartView_updateChart(XChartView* self);
+
+/**
+ * @brief 替换图表模型（对标 QChartView::setChart）。
+ *
+ * @param self  目标视图指针。
+ * @param chart 新图表指针；接管所有权并释放旧模型；NULL 仅清空。
+ * @return 无返回值。
+ */
+void XChartView_setChart(XChartView* self, XChart* chart);
+
+/** @brief 设置框选缩放模式。 @param self 目标视图指针。 @param rubberBands 模式位集合。 @return 无返回值。 */
+void XChartView_setRubberBand(XChartView* self, XChartView_RubberBands rubberBands);
+/** @brief 读取框选缩放模式。 @param self 目标视图指针。 @return 模式位集合。 */
+XChartView_RubberBands XChartView_rubberBand(const XChartView* self);
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

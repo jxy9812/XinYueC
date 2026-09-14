@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XTabWidget.c
  * @brief      XTabWidget 选项卡容器实现（对标 Qt 6.8 QTabWidget 子集）。
  * @details    页签条固定在顶部（高 XTABBAR_TAB_H），页容器占其余区域；
@@ -27,6 +27,8 @@ static void VXTabWidget_copy(XTabWidget* self, const XTabWidget* other);
 static void VXTabWidget_move(XTabWidget* self, XTabWidget* other);
 static void xtabwidget_currentChangedForward(void* sender, XVarList* args);
 static void xtabwidget_emitIntForward(XTabWidget* self);
+static void xtabwidget_tabBarClickedForward(void* sender, XVarList* args);
+static void xtabwidget_tabBarDoubleClickedForward(void* sender, XVarList* args);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -111,6 +113,61 @@ static void xtabwidget_emitIntForward(XTabWidget* self)
     }
 }
 
+/**
+ * @brief      从页签条上溯所属 XTabWidget。
+ * @param      sender 页签条对象（connect_2 槽首参）。
+ * @return     所属容器；上溯失败返回 NULL。
+ */
+static XTabWidget* xtabwidget_ownerOf(void* sender)
+{
+    XWidget* bar = (XWidget*)sender;
+    XWidget* owner = bar ? XWidget_parentWidget(bar) : NULL;
+
+    return owner ? (XTabWidget*)owner : NULL;
+}
+
+/** @brief 转发页签单击（tabClicked → tabBarClicked(int)）。 */
+static void xtabwidget_tabBarClickedForward(void* sender, XVarList* args)
+{
+    XTabWidget* self = xtabwidget_ownerOf(sender);
+    int idx;
+    XVarList* arguments;
+
+    if (!self) return;
+    idx = 0;
+    if (args) {
+        XVarList_start(args);
+        idx = XVarList_arg(args, int);
+    }
+    if (!((XObject*)self)->m_signalSlot) return;
+    arguments = XVarList_Create(XVar(int, idx));
+    if (!arguments) return;
+    XObject_emitSignal((XObject*)self,
+                       (size_t)XTabWidget_tabBarClicked_signal,
+                       arguments, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+/** @brief 转发页签双击（tabDoubleClicked → tabBarDoubleClicked(int)）。 */
+static void xtabwidget_tabBarDoubleClickedForward(void* sender, XVarList* args)
+{
+    XTabWidget* self = xtabwidget_ownerOf(sender);
+    int idx;
+    XVarList* arguments;
+
+    if (!self) return;
+    idx = 0;
+    if (args) {
+        XVarList_start(args);
+        idx = XVarList_arg(args, int);
+    }
+    if (!((XObject*)self)->m_signalSlot) return;
+    arguments = XVarList_Create(XVar(int, idx));
+    if (!arguments) return;
+    XObject_emitSignal((XObject*)self,
+                       (size_t)XTabWidget_tabBarDoubleClicked_signal,
+                       arguments, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
 /* ==================== 虚槽实现 ==================== */
 
 static void VXTabWidget_resizeEvent(XWidget* self, XEvent* event)
@@ -189,6 +246,12 @@ void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
     XObject_connect_2((XObject*)&self->m_tabBar,
                       (size_t)XTabBar_currentChanged_signal(&self->m_tabBar),
                       xtabwidget_currentChangedForward);
+    XObject_connect_2((XObject*)&self->m_tabBar,
+                      (size_t)XTabBar_tabClicked_signal(&self->m_tabBar),
+                      xtabwidget_tabBarClickedForward);
+    XObject_connect_2((XObject*)&self->m_tabBar,
+                      (size_t)XTabBar_tabBarDoubleClicked_signal(&self->m_tabBar),
+                      xtabwidget_tabBarDoubleClickedForward);
 }
 
 XTabWidget* XTabWidget_create_ex(XMemoryType memory, XWidget* parent,
@@ -393,6 +456,48 @@ void* XTabWidget_tabCloseRequested_signal(XTabWidget* self)
 {
     (void)self;
     return (void*)(size_t)XTabWidget_tabCloseRequested_signal;
+}
+
+void* XTabWidget_tabBarClicked_signal(XTabWidget* self)
+{
+    XVarList* arguments;
+    int index;
+
+    if (!self)
+        return (void*)(size_t)XTabWidget_tabBarClicked_signal;
+    index = self->m_tabBar.m_currentIndex;
+    arguments = XVarList_Create(XVar(int, index));
+    if (arguments) {
+        if (((XObject*)self)->m_signalSlot)
+            XObject_emitSignal((XObject*)self,
+                               (size_t)XTabWidget_tabBarClicked_signal,
+                               arguments, NULL, NULL,
+                               XEVENT_PRIORITY_NORMAL);
+        else
+            XVarList_delete(arguments);
+    }
+    return (void*)(size_t)XTabWidget_tabBarClicked_signal;
+}
+
+void* XTabWidget_tabBarDoubleClicked_signal(XTabWidget* self)
+{
+    XVarList* arguments;
+    int index;
+
+    if (!self)
+        return (void*)(size_t)XTabWidget_tabBarDoubleClicked_signal;
+    index = self->m_tabBar.m_currentIndex;
+    arguments = XVarList_Create(XVar(int, index));
+    if (arguments) {
+        if (((XObject*)self)->m_signalSlot)
+            XObject_emitSignal((XObject*)self,
+                               (size_t)XTabWidget_tabBarDoubleClicked_signal,
+                               arguments, NULL, NULL,
+                               XEVENT_PRIORITY_NORMAL);
+        else
+            XVarList_delete(arguments);
+    }
+    return (void*)(size_t)XTabWidget_tabBarDoubleClicked_signal;
 }
 
 void XTabWidget_clear(XTabWidget* self)

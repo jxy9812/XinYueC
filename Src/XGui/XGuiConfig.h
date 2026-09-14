@@ -1,4 +1,4 @@
-/****************************************************************************
+﻿/****************************************************************************
  * @file       XGuiConfig.h
  * @brief      XGui 模块总开关与子功能配置。
  * @details    CXinYueConfig.h 只保留 XGUI_ON 总开关入口；所有 GUI 子开关
@@ -40,6 +40,9 @@
 #endif
 #ifndef XSTYLEHINTS_ON
 #define XSTYLEHINTS_ON 1
+#endif
+#ifndef XSTYLE_ON
+#define XSTYLE_ON 1
 #endif
 #ifndef XCLIPBOARD_ON
 #define XCLIPBOARD_ON 1

@@ -361,8 +361,11 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
     }
-    if (count == 0 && edit->m_placeholder[0] != 0) {
-        XPainter_drawText(&painter, 4, 14, edit->m_placeholder, placeholder);
+    if (count == 0 && edit->m_placeholder &&
+        XString_toUtf8(edit->m_placeholder) &&
+        XString_toUtf8(edit->m_placeholder)[0] != 0) {
+        XPainter_drawText(&painter, 4, 14,
+                          XString_toUtf8(edit->m_placeholder), placeholder);
     }
     for (i = firstVisible; i < count && i <= lastVisible; ++i) {
         int y = i * XPE_LINE_HEIGHT - scroll;
@@ -371,10 +374,36 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
+/**
+ * @brief      取控件视口矩形（局部坐标）。
+ * @param      self 目标控件；NULL 时返回零矩形。
+ * @return     视口矩形。
+ */
+static XRect xpe_viewportRect(const XPlainTextEdit* self)
+{
+    XRect r;
+
+    if (!self) {
+        XRect_init(&r, 0, 0, 0, 0);
+        return r;
+    }
+    XRect_init(&r, 0, 0, XWidget_width((XWidget*)self),
+               XWidget_height((XWidget*)self));
+    return r;
+}
+
 static void VX_plainTextEdit_scrollContentsBy(XAbstractScrollArea* self, int dx, int dy)
 {
-    (void)dx; (void)dy;
+    XPlainTextEdit* edit;
+    XRect r;
+
+    (void)dx;
     XWidget_update((XWidget*)self);
+    edit = (XPlainTextEdit*)self;
+    if (edit) {
+        r = xpe_viewportRect(edit);
+        XPlainTextEdit_updateRequest_signal(edit, &r, dy);
+    }
 }
 
 static void VX_plainTextEdit_deinit(XPlainTextEdit* self)
@@ -408,6 +437,10 @@ static void VX_plainTextEdit_deinit(XPlainTextEdit* self)
         }
         XVector_delete_base(self->m_redoStack);
         self->m_redoStack = NULL;
+    }
+    if (self->m_placeholder) {
+        XString_delete_base(self->m_placeholder);
+        self->m_placeholder = NULL;
     }
     XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
 }
@@ -590,15 +623,20 @@ void XPlainTextEdit_setMaximumBlockCount(XPlainTextEdit* self, int maximum)
 void XPlainTextEdit_setPlaceholderText(XPlainTextEdit* self, const char* utf8)
 {
     if (!self) return;
-    strncpy(self->m_placeholder, utf8 ? utf8 : "",
-            sizeof(self->m_placeholder) - 1);
-    self->m_placeholder[sizeof(self->m_placeholder) - 1] = 0;
+    if (!self->m_placeholder) self->m_placeholder = XString_create();
+    if (self->m_placeholder)
+        XString_assign_utf8(self->m_placeholder, utf8 ? utf8 : "");
     XWidget_update((XWidget*)self);
 }
 
 const char* XPlainTextEdit_placeholderText(const XPlainTextEdit* self)
 {
-    return self ? self->m_placeholder : "";
+    {
+        const char* text;
+        if (!self || !self->m_placeholder) return "";
+        text = XString_toUtf8(self->m_placeholder);
+        return text ? text : "";
+    }
 }
 
 bool XPlainTextEdit_isUndoRedoEnabled(const XPlainTextEdit* self)
@@ -722,6 +760,29 @@ void* XPlainTextEdit_textChanged_signal(XPlainTextEdit* self)
 {
     (void)self;
     return (void*)(size_t)XPlainTextEdit_textChanged_signal;
+}
+
+void* XPlainTextEdit_updateRequest_signal(XPlainTextEdit* self,
+                                          const XRect* rect, int dy)
+{
+    XRect area;
+    XVarList* args;
+
+    if (!self)
+        return (void*)(size_t)XPlainTextEdit_updateRequest_signal;
+    if (rect)
+        area = *rect;
+    else
+        area = xpe_viewportRect(self);
+    if (((XObject*)self)->m_signalSlot) {
+        args = XVarList_Create(XVar(XRect, area), XVar(int, dy));
+        if (!args)
+            return (void*)(size_t)XPlainTextEdit_updateRequest_signal;
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XPlainTextEdit_updateRequest_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    }
+    return (void*)(size_t)XPlainTextEdit_updateRequest_signal;
 }
 
 void* XPlainTextEdit_cursorPositionChanged_signal(XPlainTextEdit* self)

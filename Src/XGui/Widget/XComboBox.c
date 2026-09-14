@@ -15,6 +15,9 @@
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
 
 #include "XComboBox.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
+#include "XString.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -133,6 +136,30 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：面板 + 下拉按钮区走 CC_ComboBox。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCC_ComboBox);
+        opt.m_rect = r;
+        opt.m_state = XWidget_isEnabled(self)
+            ? XStyleState_Enabled | XStyleState_Raised : 0;
+        if (combo->m_popupVisible)
+            opt.m_state |= XStyleState_Sunken | XStyleState_On;
+        if (XWidget_hasFocus(self))
+            opt.m_state |= XStyleState_HasFocus;
+        if (XWidget_underMouse(self) && XWidget_isEnabled(self))
+            opt.m_state |= XStyleState_MouseOver;
+        opt.m_text = "";
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawComplexControl(style, XStyleCC_ComboBox, &opt,
+                                  &painter, self);
+        goto xcombo_style_text;
+    }
+#endif /* XSTYLE_ON */
     XPainter_fillRect(&painter, &r, base);
     {
         XRect e = r;
@@ -159,15 +186,19 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
             XPainter_drawLine(&painter, cx + 4, cy - 2, cx, cy + 3);
         }
     }
+xcombo_style_text: {}
+    /* style 分支与原路径共用：当前项文本在下方绘制。 */
     /* 当前项文本（弹出时列表替代文本显示）。 */
     if (!combo->m_popupVisible) {
         if (combo->m_currentIndex >= 0 && combo->m_currentIndex < combo->m_itemCount &&
             combo->m_items[combo->m_currentIndex]) {
             XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
                               combo->m_items[combo->m_currentIndex], text);
-        } else if (combo->m_placeholderText[0]) {
+        } else if (combo->m_placeholderText &&
+                   XString_toUtf8(combo->m_placeholderText) &&
+                   XString_toUtf8(combo->m_placeholderText)[0]) {
             XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
-                              combo->m_placeholderText,
+                              XString_toUtf8(combo->m_placeholderText),
                               xcombo_color(combo, XPaletteColorRole_Mid));
         }
     }
@@ -276,8 +307,8 @@ static void VXComboBox_copy(XComboBox* self, const XComboBox* other)
     self->m_sizeAdjustPolicy = other->m_sizeAdjustPolicy;
     self->m_minimumContentsLength = other->m_minimumContentsLength;
     self->m_frame = other->m_frame;
-    memcpy(self->m_placeholderText, other->m_placeholderText,
-           sizeof(self->m_placeholderText));
+    if (self->m_placeholderText && other->m_placeholderText)
+        XString_assign(self->m_placeholderText, other->m_placeholderText);
 }
 
 /** @brief 移动语义：基类移动后转移项数组，源对象归默认值。 */
@@ -306,8 +337,9 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     self->m_sizeAdjustPolicy = other->m_sizeAdjustPolicy;
     self->m_minimumContentsLength = other->m_minimumContentsLength;
     self->m_frame = other->m_frame;
-    memcpy(self->m_placeholderText, other->m_placeholderText,
-           sizeof(self->m_placeholderText));
+    if (self->m_placeholderText) XString_delete_base(self->m_placeholderText);
+    self->m_placeholderText = other->m_placeholderText;
+    other->m_placeholderText = XString_create();
     other->m_maxCount = 2147483647;
     other->m_maxVisibleItems = 10;
     other->m_duplicatesEnabled = false;
@@ -315,11 +347,21 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     other->m_insertPolicy = XComboBoxInsertPolicy_InsertAtBottom;
     other->m_sizeAdjustPolicy = XComboBoxSizeAdjustPolicy_AdjustToContents;
     other->m_frame = true;
-    other->m_placeholderText[0] = '\0';
+    /* m_placeholderText 已转移并重建。 */
     for (i = 0; i < self->m_itemCount; ++i) { (void)0; }
 }
 
 /* ==================== 生命周期 ==================== */
+
+static void VXComboBox_deinit(XComboBox* self)
+{
+    if (!self) return;
+    if (self->m_placeholderText) {
+        XString_delete_base(self->m_placeholderText);
+        self->m_placeholderText = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
 
 XVtable* XComboBox_class_init(void)
 {
@@ -333,6 +375,7 @@ XVtable* XComboBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXComboBox_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXComboBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXComboBox_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXComboBox_deinit);
 
     return XVTABLE_DEFAULT;
 }
@@ -356,7 +399,7 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_sizeAdjustPolicy = XComboBoxSizeAdjustPolicy_AdjustToContents;
     self->m_minimumContentsLength = 0;
     self->m_frame = true;
-    self->m_placeholderText[0] = '\0';
+    self->m_placeholderText = XString_create();
     self->m_popupVisible = false;
     self->m_savedHeight = 0;
 }
@@ -428,15 +471,20 @@ void XComboBox_setMinimumContentsLength(XComboBox* self, int characters)
 }
 const char* XComboBox_placeholderText(const XComboBox* self)
 {
-    return (self && self->m_placeholderText[0]) ? self->m_placeholderText : "";
+    const char* text;
+    if (!self || !self->m_placeholderText) return "";
+    text = XString_toUtf8(self->m_placeholderText);
+    return (text && text[0]) ? text : "";
 }
 void XComboBox_setPlaceholderText(XComboBox* self, const char* placeholderText)
 {
     if (!self) return;
     if (!placeholderText) placeholderText = "";
-    strncpy(self->m_placeholderText, placeholderText,
-            sizeof(self->m_placeholderText) - 1);
-    self->m_placeholderText[sizeof(self->m_placeholderText) - 1] = '\0';
+    if (!self->m_placeholderText)
+        self->m_placeholderText = XString_create();
+    if (self->m_placeholderText)
+        XString_assign_utf8(self->m_placeholderText,
+                            placeholderText ? placeholderText : "");
     XWidget_update((XWidget*)self);
 }
 bool XComboBox_isEditable(const XComboBox* self)

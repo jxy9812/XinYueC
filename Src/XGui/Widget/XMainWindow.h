@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XMainWindow.h
  * @brief      XMainWindow 主窗口控件（对标 Qt 6.8 QMainWindow 核心
  *             公共 API）。
@@ -60,6 +60,8 @@ typedef struct XMainWindow
     XVector* m_dockAreas;        /**< 停靠面板区域（int）。 */
     int m_dockOptions;           /**< 停靠选项。 */
     int m_iconSize;              /**< 工具栏图标尺寸。 */
+    int m_toolButtonStyle;       /**< 全局工具按钮样式（XToolButtonStyle 取值）。 */
+    XWidget* m_activeTabifiedDock; /**< 最近激活的标签化停靠面板（借用）。 */
 } XMainWindow;
 
 /** @brief XMainWindowclassinit（对标 Qt 同名接口）。
@@ -273,6 +275,49 @@ void XMainWindow_removeToolBar(XMainWindow* self, XToolBar* toolbar);
  * @return 无返回值。
  */
 void XMainWindow_iconSizeChanged_signal(XMainWindow* self);
+
+/**
+ * @brief      发射 toolButtonStyleChanged(Qt::ToolButtonStyle) 信号
+ *             （对标 QMainWindow::toolButtonStyleChanged）。
+ * @details    setToolButtonStyle 改变全局工具按钮样式时真发射；
+ *             self 非 NULL 且有已连接槽时经 XObject_emitSignal 同步
+ *             通知，否则只返回信号标识。
+ * @param      self 目标主窗口指针；可为 NULL。
+ * @param      toolButtonStyle 新的工具按钮样式（XToolButtonStyle 取值）。
+ * @return     不透明的 toolButtonStyleChanged 信号标识；返回值不指向
+ *             可释放对象，也不得解引用。
+ */
+void* XMainWindow_toolButtonStyleChanged_signal(XMainWindow* self, int toolButtonStyle);
+
+/**
+ * @brief      发射 tabifiedDockWidgetActivated(QDockWidget*) 信号
+ *             （对标 QMainWindow::tabifiedDockWidgetActivated）。
+ * @details    某停靠面板被激活并带出同组标签化停靠面板时真发射；
+ *             本实现中停靠面板暂无标签化分组，信号保留 API 且仅在
+ *             显式调用时发射。self 非 NULL 且有已连接槽时经
+ *             XObject_emitSignal 同步通知，否则只返回信号标识。
+ * @param      self 目标主窗口指针；可为 NULL。
+ * @param      dockWidget 被激活的停靠面板；可为 NULL。
+ * @return     不透明的 tabifiedDockWidgetActivated 信号标识；返回值
+ *             不指向可释放对象，也不得解引用。
+ */
+void* XMainWindow_tabifiedDockWidgetActivated_signal(XMainWindow* self, XWidget* dockWidget);
+
+/**
+ * @brief      设置全局工具按钮样式并发射 toolButtonStyleChanged
+ *             （对标 QMainWindow::setToolButtonStyle）。
+ * @param      self 目标主窗口指针；NULL 时无操作。
+ * @param      toolButtonStyle 工具按钮样式（XToolButtonStyle 取值）。
+ * @return     无返回值。
+ */
+void XMainWindow_setToolButtonStyle(XMainWindow* self, int toolButtonStyle);
+
+/**
+ * @brief      读取全局工具按钮样式（对标 QMainWindow::toolButtonStyle）。
+ * @param      self 目标主窗口指针；NULL 时返回 IconOnly。
+ * @return     工具按钮样式（XToolButtonStyle 取值）。
+ */
+int XMainWindow_toolButtonStyle(const XMainWindow* self);
 /** @brief XMainWindowinsert工具条Break2（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。

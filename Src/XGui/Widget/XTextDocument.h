@@ -26,6 +26,7 @@ extern "C" {
 #include "XObject.h"
 #include "XEvent.h"
 #include "XVarList.h"
+#include "XString.h"
 
 #if XTEXTDOCUMENT_ON
 
@@ -41,17 +42,17 @@ typedef struct XTDCharFormat
     bool strikeOut;
     uint32_t fgColor;      /**< ARGB。 */
     uint32_t bgColor;      /**< ARGB；0=无背景。 */
-    char fontFamily[64];
+    XString* fontFamily;     /**< 字体族（对象拥有；空=默认）。 */
     int fontPointSize;     /**< 字号（磅），0=默认。 */
     bool superScript;
     bool subScript;
-    char anchorHref[256];  /**< 超链接（空=无链接）。 */
+    XString* anchorHref;   /**< 超链接（对象拥有；空=无链接）。 */
 } XTDCharFormat;
 
 /** @brief 文本片段（连续相同格式的字符范围）。 */
 typedef struct XTDFragment
 {
-    char text[256];       /**< UTF-8 文本。 */
+    XString* text;        /**< UTF-8 文本（对象拥有）。 */
     XTDCharFormat fmt;
 } XTDFragment;
 
@@ -77,7 +78,7 @@ typedef struct XTDBlock
     bool isListItem;       /**< 是否为列表项。 */
     bool isOrdered;        /**< 有序列表（<ol>）。 */
     int headingLevel;      /**< h1-h6，0=普通段落。 */
-    char blockFormat[64];  /**< 附加块级格式（CSS 类名等）。 */
+    XString* blockFormat;  /**< 附加块级格式（对象拥有；CSS 类名等）。 */
 } XTDBlock;
 
 XCLASS_DEFINE_BEGING(XTextDocument)
@@ -90,8 +91,8 @@ typedef struct XTextDocument
     int m_blockCount;      /**< 块数。 */
     int m_capacity;        /**< 块数组容量。 */
     bool m_undoRedoEnabled;
-    char m_title[256];
-    char m_url[256];
+    XString* m_title;      /**< 文档标题（对象拥有；metaInformation 0）。 */
+    XString* m_url;        /**< 文档源 URL（对象拥有；metaInformation 1）。 */
     int m_modified;        /**< 修改计数。 */
 } XTextDocument;
 

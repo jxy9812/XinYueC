@@ -11,6 +11,8 @@
 #if XWIDGET_ON && XTABBAR_ON
 
 #include "XTabBar.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XWidget_Protected.h"
 #include "XPainter.h"
 #include "XMemory.h"
@@ -29,9 +31,39 @@
 /* ==================== 前向声明 ==================== */
 static void  VXTabBar_paintEvent(XWidget* self, XEvent* event);
 static void  VXTabBar_mousePressEvent(XWidget* self, XEvent* event);
+static void  VXTabBar_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 static void  VXTabBar_changeEvent(XWidget* self, XEvent* event);
 static void  VXTabBar_copy(XTabBar* self, const XTabBar* other);
 static void  VXTabBar_move(XTabBar* self, XTabBar* other);
+static int   xtabbar_tabAt(const XTabBar* self, const XPoint* pos);
+static void  xtabbar_emitInt(XTabBar* self, size_t signal, int value);
+
+/** @brief 双击：命中页签时发射 tabBarDoubleClicked(int)（对标
+ *         QTabBar::tabBarDoubleClicked）。 */
+static void VXTabBar_mouseDoubleClickEvent(XWidget* self, XEvent* event)
+{
+    XTabBar* bar = (XTabBar*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int idx;
+
+    if (!bar || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK) return;
+    me = (XMouseEvent*)event;
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
+        XEvent_ignore(event);
+        return;
+    }
+    pos = XMouseEvent_position(me);
+    idx = xtabbar_tabAt(bar, &pos);
+    if (idx < 0) {
+        XEvent_ignore(event);
+        return;
+    }
+    xtabbar_emitInt(bar, (size_t)XTabBar_tabBarDoubleClicked_signal(bar),
+                    idx);
+    XEvent_accept(event);
+}
 
 /* ==================== 内部辅助 ==================== */
 
@@ -172,6 +204,10 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
     {
         int cols, rows, tabW, totalH;
         int row, col;
+        XStyle* style = NULL;
+#if XSTYLE_ON
+        style = XStyle_defaultStyle();
+#endif
         xtabbar_wrapLayout(bar, &cols, &rows, &tabW, &totalH);
         for (i = 0; i < bar->m_count; ++i) {
             row = i / cols;
@@ -180,6 +216,39 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                 XRect tab = { col * tabW, row * XTABBAR_TAB_H,
                               tabW - 1, XTABBAR_TAB_H };
                 bool isCur = (i == bar->m_currentIndex);
+#if XSTYLE_ON
+                if (style != NULL) {
+                    /* Fusion/公共风格接管：页签形状 + 标签由样式引擎绘制。 */
+                    XStyleOption opt;
+                    XStyleOption_init(&opt, XStyleCE_TabBarTabShape);
+                    opt.m_rect = tab;
+                    opt.m_state = bar->m_enabled[i] && XWidget_isEnabled(self)
+                        ? XStyleState_Enabled : 0;
+                    if (isCur) opt.m_state |= XStyleState_Selected;
+                    if (XWidget_underMouse(self) &&
+                        XWidget_isEnabled(self))
+                        opt.m_state |= XStyleState_MouseOver;
+                    if (XWidget_hasFocus(self) && isCur)
+                        opt.m_state |= XStyleState_HasFocus;
+                    opt.m_tabSelected = isCur;
+                    opt.m_tabIndex = i;
+                    opt.m_text = bar->m_titles[i] ? bar->m_titles[i] : "";
+#if XPALETTE_ON
+                    opt.m_palette = XWidget_palette(self);
+#endif
+                    XStyle_drawControl(style, XStyleCE_TabBarTabShape,
+                                       &opt, &painter, self);
+                    opt.m_type = XStyleCE_TabBarTabLabel;
+                    XStyle_drawControl(style, XStyleCE_TabBarTabLabel,
+                                       &opt, &painter, self);
+                    XPainter_setPen(&painter, dark);
+                    XPainter_drawLine(&painter, tab.x,
+                                      tab.y + XTABBAR_TAB_H,
+                                      tab.x + tab.width,
+                                      tab.y + XTABBAR_TAB_H);
+                    continue;
+                }
+#endif /* XSTYLE_ON */
                 XPainter_fillRect(&painter, &tab,
                                   isCur ? highlight : button);
                 if (bar->m_titles[i])
@@ -217,6 +286,7 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     idx = xtabbar_tabAt(bar, &pos);
     if (idx < 0) { XEvent_ignore(event); return; }
     xtabbar_emitInt2(bar, (size_t)XTabBar_tabClicked_signal(bar), idx, 0);
+    xtabbar_emitInt(bar, (size_t)XTabBar_tabBarClicked_signal(bar), idx);
     if (!bar->m_enabled[idx]) { XEvent_ignore(event); return; }
     if (idx != bar->m_currentIndex) {
         int old = bar->m_currentIndex;
@@ -284,6 +354,7 @@ XVtable* XTabBar_class_init(void)
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXTabBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXTabBar_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXTabBar_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabBar_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXTabBar_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTabBar_move);

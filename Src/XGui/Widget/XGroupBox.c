@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGroupBox.c
  * @brief      XGroupBox 分组框控件实现（对标 Qt 6.8 QGroupBox）。
  * @details    绘制分层：
@@ -20,6 +20,9 @@
 #if XWIDGET_ON && XGROUPBOX_ON
 
 #include "XGroupBox.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
+#include "XString.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -56,10 +59,20 @@ static uint32_t xgroupbox_color(const XGroupBox* self, XPaletteColorRole role)
 #endif /* XPALETTE_ON */
 }
 
+/** @brief 读取标题文本（空串表示无标题）。 */
+static const char* xgroupbox_titleText(const XGroupBox* self)
+{
+    const char* t;
+    if (!self || !self->m_title) return "";
+    t = XString_toUtf8(self->m_title);
+    return (t && t[0]) ? t : "";
+}
+
 /** @brief 计算标题区高度（无标题返回 0）。 */
 static int xgroupbox_titleHeight(const XGroupBox* self)
 {
-    return (self->m_title[0] != '\0') ? 14 + XGROUPBOX_TITLE_PAD * 2 : 0;
+    return (self->m_title && xgroupbox_titleText(self)[0] != '\0')
+        ? 14 + XGROUPBOX_TITLE_PAD * 2 : 0;
 }
 
 /** @brief 标题内容（勾选框/文本）的起始 X 坐标；可勾选时勾选框居前，
@@ -75,7 +88,7 @@ static int xgroupbox_contentX(const XGroupBox* self, int leftMargin)
 static bool xgroupbox_titleRowHit(const XGroupBox* self, const XPoint* pos)
 {
     int titleH;
-    if (!self || !pos || self->m_title[0] == '\0') return false;
+    if (!self || !pos || !xgroupbox_titleText(self)[0]) return false;
     titleH = xgroupbox_titleHeight(self);
     return pos->y >= 0 && pos->y < titleH;
 }
@@ -143,7 +156,34 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
     titleH = xgroupbox_titleHeight(self);
     (void)text;
 
-    if (self->m_title[0] == '\0') {
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：分组框整体走 CC_GroupBox（镂空边框 +
+         * 标题 + 勾选框完整复刻）。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCC_GroupBox);
+        opt.m_rect = r;
+        opt.m_state = XWidget_isEnabled((XWidget*)self)
+            ? XStyleState_Enabled : 0;
+        if (XWidget_hasFocus((XWidget*)self))
+            opt.m_state |= XStyleState_HasFocus;
+        if (XWidget_underMouse((XWidget*)self) &&
+            XWidget_isEnabled((XWidget*)self))
+            opt.m_state |= XStyleState_MouseOver;
+        opt.m_text = xgroupbox_titleText(self);
+        opt.m_flat = self->m_flat;
+        opt.m_checkable = self->m_checkable;
+        opt.m_checked = self->m_checked;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)self);
+#endif
+        XStyle_drawComplexControl(style, XStyleCC_GroupBox, &opt,
+                                  painter, (XWidget*)self);
+        return;
+    }
+#endif /* XSTYLE_ON */
+    if (!xgroupbox_titleText(self)[0]) {
         /* 无标题：四边完整凹陷边框。 */
         XRect e = r;
         e.height = 1;
@@ -157,7 +197,7 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
         return;
     }
 
-    snprintf(text, sizeof(text), "%s", self->m_title);
+    snprintf(text, sizeof(text), "%s", xgroupbox_titleText(self));
 
     if (self->m_flat) {
         /* 扁平：标题两侧各一段短边框线（上边线 y=titleH/2）。 */
@@ -385,7 +425,8 @@ static void VXGroupBox_copy(XGroupBox* self, const XGroupBox* other)
     XClass_Parent(XWidget, EXClass_Copy,
                   void(*)(XWidget*, const XWidget*))((XWidget*)self,
                                                      (const XWidget*)other);
-    memcpy(self->m_title, other->m_title, sizeof(self->m_title));
+    if (self->m_title && other->m_title)
+        XString_assign(self->m_title, other->m_title);
     self->m_alignment = other->m_alignment;
     self->m_flat = other->m_flat;
     self->m_checkable = other->m_checkable;
@@ -400,12 +441,14 @@ static void VXGroupBox_move(XGroupBox* self, XGroupBox* other)
     XClass_Parent(XWidget, EXClass_Move,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
-    memcpy(self->m_title, other->m_title, sizeof(self->m_title));
+    if (self->m_title) XString_delete_base(self->m_title);
+    self->m_title = other->m_title;
+    other->m_title = XString_create();
     self->m_alignment = other->m_alignment;
     self->m_flat = other->m_flat;
     self->m_checkable = other->m_checkable;
     self->m_checked = other->m_checked;
-    other->m_title[0] = '\0';
+    /* m_title 已转移并重建。 */
     other->m_alignment = XAlignment_Left;
     other->m_flat = false;
     other->m_checkable = false;
@@ -413,6 +456,16 @@ static void VXGroupBox_move(XGroupBox* self, XGroupBox* other)
 }
 
 /* ==================== 生命周期 ==================== */
+
+static void VXGroupBox_deinit(XGroupBox* self)
+{
+    if (!self) return;
+    if (self->m_title) {
+        XString_delete_base(self->m_title);
+        self->m_title = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
 
 XVtable* XGroupBox_class_init(void)
 {
@@ -432,6 +485,7 @@ XVtable* XGroupBox_class_init(void)
                              VXGroupBox_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXGroupBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXGroupBox_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXGroupBox_deinit);
 
     return XVTABLE_DEFAULT;
 }
@@ -442,7 +496,7 @@ void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XGroupBox);
 
-    self->m_title[0] = '\0';
+    self->m_title = XString_create();
     self->m_alignment = XAlignment_Left;
     self->m_flat = false;
     self->m_checkable = false;
@@ -463,15 +517,16 @@ XGroupBox* XGroupBox_create_ex(XMemoryType memory, XWidget* parent,
 
 const char* XGroupBox_title(const XGroupBox* self)
 {
-    return (self && self->m_title[0]) ? self->m_title : "";
+    return xgroupbox_titleText(self);
 }
 
 void XGroupBox_setTitle(XGroupBox* self, const char* title)
 {
     if (!self) return;
     if (!title) title = "";
-    strncpy(self->m_title, title, sizeof(self->m_title) - 1);
-    self->m_title[sizeof(self->m_title) - 1] = '\0';
+    if (!self->m_title) self->m_title = XString_create();
+    if (self->m_title)
+        XString_assign_utf8(self->m_title, title ? title : "");
     XWidget_update((XWidget*)self);
 }
 

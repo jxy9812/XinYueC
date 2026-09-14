@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XCheckBox.c
  * @brief      XCheckBox 复选框控件实现（对标 Qt 6.8 QCheckBox，继承 XAbstractButton）。
  * @details    实现要点：
@@ -26,6 +26,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XCheckBox.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
 #include "XWidget_Protected.h"
 #include "XPainter.h"
@@ -289,6 +291,36 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter)
 
     /* indicator 方块：Base 背景 + 凸起边框。 */
     ind = checkbox_indicatorRect(self);
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：指示器由样式引擎绘制。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption indOpt;
+        XStyleOption_init(&indOpt, XStylePE_IndicatorCheckBox);
+        indOpt.m_rect = ind;
+        XCheckState st = XCheckBox_checkState(self);
+        indOpt.m_state = XStyleState_Enabled;
+        if (st == XCheckState_Checked)
+            indOpt.m_state |= XStyleState_On;
+        else if (st == XCheckState_PartiallyChecked)
+            indOpt.m_state |= XStyleState_NoChange;
+        else
+            indOpt.m_state |= XStyleState_Off;
+        if (!XWidget_isEnabled((XWidget*)self))
+            indOpt.m_state &= ~(uint32_t)XStyleState_Enabled;
+        if (XWidget_underMouse((XWidget*)self) &&
+            XWidget_isEnabled((XWidget*)self))
+            indOpt.m_state |= XStyleState_MouseOver;
+        if (XWidget_hasFocus((XWidget*)self))
+            indOpt.m_state |= XStyleState_HasFocus;
+#if XPALETTE_ON
+        indOpt.m_palette = XWidget_palette((XWidget*)self);
+#endif
+        XStyle_drawPrimitive(style, XStylePE_IndicatorCheckBox, &indOpt,
+                             painter, (XWidget*)self);
+        goto xcb_style_label;
+    }
+#endif /* XSTYLE_ON */
     XPainter_fillRect(painter, &ind, base);
     if (ind.width > 2 && ind.height > 2) {
         XRect edge;
@@ -319,6 +351,7 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter)
                           ind.x + 10, ind.y + 7);
     }
 
+xcb_style_label:
     /* 图标（indicator 与文本之间）。 */
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);

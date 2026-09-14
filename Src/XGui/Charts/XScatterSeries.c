@@ -1,63 +1,58 @@
 ﻿#include "XScatterSeries.h"
+#include "XXYSeries.h"
 #include "XMemory.h"
 #include "XClass.h"
 #include <string.h>
 
 #if XCHARTS_ON
 
+static void VXScatterSeries_deinit(XScatterSeries* self);
+
+static void VXScatterSeries_deinit(XScatterSeries* self)
+{
+    if (!self) return;
+    XClass_Deinit_Parent(XXYSeries, &self->m_base);
+}
+
+XVtable* XScatterSeries_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XScatterSeries)
+    XVTABLE_INHERIT_XCLASS(XXYSeries);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXScatterSeries_deinit);
+    return XVTABLE_DEFAULT;
+}
+
+void XScatterSeries_init(XScatterSeries* self)
+{
+    if (!self) return;
+    memset(self, 0, sizeof(*self));
+    XXYSeries_init(&self->m_base);
+    XClassSetVtable(self, XScatterSeries);
+    XAbstractSeries_setName(&self->m_base.m_base, "scatter");
+    self->m_markerShape = XScatterSeriesMarkerShape_Circle;
+    self->m_base.m_base.m_type = XChartSeriesType_Scatter;
+}
+
 XScatterSeries* XScatterSeries_create_ex(XMemoryType memory)
 {
     XScatterSeries* self = (XScatterSeries*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
-    strcpy(self->m_name, "scatter");
-    self->m_markerSize = 8;
-    self->m_visible = true;
+    XScatterSeries_init(self);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
 }
 
-void XScatterSeries_delete_base(XScatterSeries* self)
-{
-    if (!self) return;
-    if (self->m_points) XFree_System(self->m_points);
-    XFree_System(self);
-}
+void XScatterSeries_setMarkerShape(XScatterSeries* self, int shape)
+{ if (self) self->m_markerShape = shape; }
 
-void XScatterSeries_setName(XScatterSeries* self, const char* name)
-{
-    if (!self || !name) return;
-    strncpy(self->m_name, name, sizeof(self->m_name) - 1);
-    self->m_name[sizeof(self->m_name) - 1] = 0;
-}
+int XScatterSeries_markerShape(const XScatterSeries* self)
+{ return self ? self->m_markerShape : XScatterSeriesMarkerShape_Circle; }
 
-void XScatterSeries_setColor(XScatterSeries* self, uint32_t color)
-{ if (self) self->m_color = color; }
+void XScatterSeries_setBorderColor(XScatterSeries* self, uint32_t color)
+{ if (self) self->m_borderColor = color; }
 
-void XScatterSeries_setMarkerSize(XScatterSeries* self, int size)
-{ if (self && size >= 2) self->m_markerSize = size; }
-
-void XScatterSeries_append(XScatterSeries* self, double x, double y)
-{
-    if (!self) return;
-    if (self->m_count >= self->m_capacity) {
-        int cap = self->m_capacity > 0 ? self->m_capacity * 2 : 16;
-        XPointF* p = (XPointF*)XRealloc_System(self->m_points,
-            sizeof(XPointF) * (size_t)cap);
-        if (!p) return;
-        self->m_points = p;
-        self->m_capacity = cap;
-    }
-    self->m_points[self->m_count].x = x;
-    self->m_points[self->m_count].y = y;
-    self->m_count++;
-}
-
-int XScatterSeries_count(const XScatterSeries* self)
-{ return self ? self->m_count : 0; }
-
-void XScatterSeries_clear(XScatterSeries* self)
-{ if (self) self->m_count = 0; }
+uint32_t XScatterSeries_borderColor(const XScatterSeries* self)
+{ return self ? self->m_borderColor : 0; }
 
 #endif /* XCHARTS_ON */

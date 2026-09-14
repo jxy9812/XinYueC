@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XProgressBar.h
  * @brief      XProgressBar 进度条控件（对标 Qt 6.8 QProgressBar）。
  * @details    提供水平/垂直进度条：范围与当前值（setValue 越界钳位并
@@ -30,6 +30,7 @@ extern "C" {
 #include <stdbool.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #include "XPainter.h"
 #include "XAlignment.h"
 
@@ -87,8 +88,7 @@ typedef struct XProgressBar
     bool    m_invertedAppearance;   /**< 外观翻转。 */
     bool    m_textVisible;          /**< 是否绘制文本。 */
     int     m_textDirection;        /**< 垂直文本方向（XProgressBarDirection）。 */
-    int     m_alignment;            /**< 文本对齐（XAlignment 组合）。 */
-    char    m_format[32];           /**< 文本格式串（NUL 结尾）。 */
+    int     m_alignment;            /**< 文本对齐（XAlignment 组合）。 */    XString* m_format;             /**< 字符串字段（对象拥有）。 */
 } XProgressBar;
 
 /* ==================== 生命周期（对标 QProgressBar 构造/析构） ==================== */

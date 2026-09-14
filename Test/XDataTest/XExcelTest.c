@@ -22,7 +22,7 @@
 #include "XRichString.h"
 #include "XConditionalFormatting.h"
 #include "XDataValidation.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 #include "XChartsheet.h"
 #include "XAbstractSheet.h"
 #include "XVariant.h"
@@ -381,7 +381,7 @@ static bool test_feature_roundtrip_flow(void)
     XFormat* highlightFormat = NULL;
     XDataValidation* validation = NULL;
     XConditionalFormatting* conditional = NULL;
-    XChart* chartSheetChart = NULL;
+    XExcelChart* chartSheetChart = NULL;
 
     TEST_INFO("===== 流程2：布局、验证、条件格式、图片与图表往返 =====");
     document = XDocument_create();
@@ -474,16 +474,16 @@ static bool test_feature_roundtrip_flow(void)
             conditional = NULL;
         XString_deinit_base(conditionFormula);
 
-        XChart* inlineChart = XWorksheet_insertChart(feature, 10, 1, 640, 360);
+        XExcelChart* inlineChart = XWorksheet_insertChart(feature, 10, 1, 640, 360);
         CHECK_OK(inlineChart != NULL, "insert worksheet chart");
         if (inlineChart) {
             XCellRange chartRange = XCellRange_create_ex(2, 1, 7, 3);
-            XChart_setChartType(inlineChart, XChart_BarChart);
-            XChart_setChartTitle_utf8(inlineChart, "Feature amounts");
-            XChart_setChartStyle(inlineChart, 10);
-            XChart_setChartLegend(inlineChart, XChart_AxisPosBottom, true);
-            XChart_setGridlinesEnable(inlineChart, true, false);
-            XChart_addSeries(inlineChart, &chartRange, true, true, false);
+            XExcelChart_setChartType(inlineChart, XExcelChart_BarChart);
+            XExcelChart_setChartTitle_utf8(inlineChart, "Feature amounts");
+            XExcelChart_setChartStyle(inlineChart, 10);
+            XExcelChart_setChartLegend(inlineChart, XExcelChart_AxisPosBottom, true);
+            XExcelChart_setGridlinesEnable(inlineChart, true, false);
+            XExcelChart_addSeries(inlineChart, &chartRange, true, true, false);
             CHECK_OK(XVector_size_base((XContainer*)feature->m_chartFiles) > 0,
                 "register worksheet chart");
         }
@@ -526,18 +526,18 @@ static bool test_feature_roundtrip_flow(void)
         chartSheetBase->m_sheetType == XAbstractSheet_ST_ChartSheet
         ? (XChartsheet*)chartSheetBase : NULL;
     if (chartSheet) {
-        chartSheetChart = XChart_create(&chartSheet->m_base,
+        chartSheetChart = XExcelChart_create(&chartSheet->m_base,
             XAbstractOOXmlFile_F_NewFromScratch);
         CHECK_OK(chartSheetChart != NULL, "create chart sheet chart");
         if (chartSheetChart) {
             XCellRange chartRange = XCellRange_create_ex(2, 1, 7, 3);
             XString_Init_Utf8(axisTitle, "Amount");
-            XChart_setChartType(chartSheetChart, XChart_PieChart);
-            XChart_setChartTitle_utf8(chartSheetChart, "Feature distribution");
-            XChart_setAxisTitle(chartSheetChart, XChart_AxisPosLeft, axisTitle);
-            XChart_setSize(chartSheetChart, 640, 360);
-            XChart_setDataSheetName_utf8(chartSheetChart, "Feature");
-            XChart_addSeries(chartSheetChart, &chartRange, true, true, false);
+            XExcelChart_setChartType(chartSheetChart, XExcelChart_PieChart);
+            XExcelChart_setChartTitle_utf8(chartSheetChart, "Feature distribution");
+            XExcelChart_setAxisTitle(chartSheetChart, XExcelChart_AxisPosLeft, axisTitle);
+            XExcelChart_setSize(chartSheetChart, 640, 360);
+            XExcelChart_setDataSheetName_utf8(chartSheetChart, "Feature");
+            XExcelChart_addSeries(chartSheetChart, &chartRange, true, true, false);
             XChartsheet_setChart(chartSheet, chartSheetChart);
             XString_deinit_base(axisTitle);
         }
@@ -591,13 +591,13 @@ static bool test_feature_roundtrip_flow(void)
             loadedChartSheetBase->m_sheetType == XAbstractSheet_ST_ChartSheet
             ? (XChartsheet*)loadedChartSheetBase : NULL;
         CHECK_OK(loadedChartSheet && XChartsheet_chart(loadedChartSheet) &&
-            XChartsheet_chart(loadedChartSheet)->m_chartType == XChart_PieChart,
+            XChartsheet_chart(loadedChartSheet)->m_chartType == XExcelChart_PieChart,
             "loaded ChartSheet chart");
     }
 
     XDocument_delete(loaded);
     XDocument_delete(document);
-    if (chartSheetChart) XChart_delete(chartSheetChart);
+    if (chartSheetChart) XExcelChart_delete(chartSheetChart);
     xexcel_remove_file(output);
     return all_pass;
 }
@@ -615,7 +615,7 @@ static bool test_office_inspection_flow(void)
     XFormat* date = NULL;
     XFormat* time = NULL;
     XFormat* dateTime = NULL;
-    XChart* chartSheetChart = NULL;
+    XExcelChart* chartSheetChart = NULL;
 
     TEST_INFO("===== 流程3：生成 Office 人工检查工作簿 =====");
     document = XDocument_create();
@@ -699,14 +699,14 @@ static bool test_office_inspection_flow(void)
                 "set inspection Summary width");
         CHECK_OK(XDocument_defineName_utf8(document, "InspectionTotal", "Summary!$D$3:$D$7",
             NULL, NULL), "define inspection range");
-        XChart* chart = XWorksheet_insertChart(summary, 10, 1, 640, 360);
+        XExcelChart* chart = XWorksheet_insertChart(summary, 10, 1, 640, 360);
         CHECK_OK(chart != NULL, "insert inspection worksheet chart");
         if (chart) {
             XCellRange chartRange = XCellRange_create_ex(37, 1, 42, 2);
-            XChart_setChartType(chart, XChart_LineChart);
-            XChart_setChartTitle_utf8(chart, "Inspection totals");
-            XChart_setChartStyle(chart, 12);
-            XChart_addSeries(chart, &chartRange, true, true, false);
+            XExcelChart_setChartType(chart, XExcelChart_LineChart);
+            XExcelChart_setChartTitle_utf8(chart, "Inspection totals");
+            XExcelChart_setChartStyle(chart, 12);
+            XExcelChart_addSeries(chart, &chartRange, true, true, false);
         }
     } else {
         TEST_FAIL("获取检查用汇总表", "工作表不可用");
@@ -804,17 +804,17 @@ static bool test_office_inspection_flow(void)
         chartSheetBase->m_sheetType == XAbstractSheet_ST_ChartSheet
         ? (XChartsheet*)chartSheetBase : NULL;
     if (chartSheet && chartData) {
-        chartSheetChart = XChart_create(&chartSheet->m_base,
+        chartSheetChart = XExcelChart_create(&chartSheet->m_base,
             XAbstractOOXmlFile_F_NewFromScratch);
         CHECK_OK(chartSheetChart != NULL, "create inspection chartsheet chart");
         if (chartSheetChart) {
             XCellRange range = XCellRange_create_ex(1, 1, 7, 2);
-            XChart_setChartType(chartSheetChart, XChart_BarChart);
-            XChart_setChartTitle_utf8(chartSheetChart, "Monthly sales");
-            XChart_setChartLegend(chartSheetChart, XChart_AxisPosBottom, false);
-            XChart_setGridlinesEnable(chartSheetChart, true, true);
-            XChart_setDataSheetName_utf8(chartSheetChart, "ChartData");
-            XChart_addSeries(chartSheetChart, &range, true, true, false);
+            XExcelChart_setChartType(chartSheetChart, XExcelChart_BarChart);
+            XExcelChart_setChartTitle_utf8(chartSheetChart, "Monthly sales");
+            XExcelChart_setChartLegend(chartSheetChart, XExcelChart_AxisPosBottom, false);
+            XExcelChart_setGridlinesEnable(chartSheetChart, true, true);
+            XExcelChart_setDataSheetName_utf8(chartSheetChart, "ChartData");
+            XExcelChart_addSeries(chartSheetChart, &range, true, true, false);
             XChartsheet_setChart(chartSheet, chartSheetChart);
         }
     } else {
@@ -855,7 +855,7 @@ static bool test_office_inspection_flow(void)
 
     XDocument_delete(loaded);
     XDocument_delete(document);
-    if (chartSheetChart) XChart_delete(chartSheetChart);
+    if (chartSheetChart) XExcelChart_delete(chartSheetChart);
     return all_pass;
 }
 

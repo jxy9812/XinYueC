@@ -29,6 +29,8 @@
 #if XWIDGET_ON && XABSTRACTSLIDER_ON && XSLIDER_ON
 
 #include "XSlider.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -321,6 +323,38 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
 
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：凹槽/子页高亮/刻度/把手走 CC_Slider。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCC_Slider);
+        opt.m_rect = r;
+        opt.m_state = XWidget_isEnabled(self)
+            ? XStyleState_Enabled | XStyleState_Raised : 0;
+        if (XWidget_hasFocus(self))
+            opt.m_state |= XStyleState_HasFocus;
+        if (XWidget_underMouse(self) && XWidget_isEnabled(self))
+            opt.m_state |= XStyleState_MouseOver;
+        opt.m_horizontal = base->m_orientation ==
+            XAbstractSliderOrientation_Horizontal;
+        opt.m_sliderMin = base->m_min;
+        opt.m_sliderMax = base->m_max;
+        opt.m_sliderValue = base->m_value;
+        opt.m_sliderSingleStep = base->m_singleStep;
+        opt.m_sliderPageStep = base->m_pageStep;
+        opt.m_sliderTickInterval = slider->m_tickInterval;
+        opt.m_sliderTickPosition = (int)slider->m_tickPosition;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawComplexControl(style, XStyleCC_Slider, &opt,
+                                  &painter, self);
+        XPainter_end(&painter);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     if (base->m_orientation == XAbstractSliderOrientation_Vertical) {
         grooveX = (r.width - XSLIDER_GROOVE_H) / 2;
         groove.x = grooveX; groove.y = r.y + 1;

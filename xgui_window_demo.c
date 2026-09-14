@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       xgui_window_demo.c
  * @brief      XGui GUI 控件统一可视化测试程序（Linux X11 / Windows Win32）。
  * @details    本程序是 GUI 控件的人工可视化验收入口，演示 XGui 完整窗口链路：
@@ -136,7 +136,7 @@
 #if XSTATUSBAR_ON
 #include "XStatusBar.h"
 #endif
-#if XSTACKEDWIDGET_ON
+#if XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON
 #include "XStackedWidget.h"
 #endif
 #if XBUTTONGROUP_ON
@@ -181,7 +181,7 @@
 #if XTOOLBAR_ON
 #include "XToolBar.h"
 #endif
-#if XSTACKEDWIDGET_ON
+#if XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON
 #include "XStackedWidget.h"
 #endif
 #if XBUTTONGROUP_ON
@@ -430,7 +430,7 @@ typedef struct DemoWin
     XErrorMessage   m_errMsg;       /**< 错误消息。 */
 #endif
 #endif
-#if XSTACKEDWIDGET_ON
+#if XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON
     XStackedWidget  m_stackedW;     /**< 堆叠容器。 */
 #endif
 #if XBUTTONGROUP_ON
@@ -1289,20 +1289,20 @@ static void demo_chartSeriesSlot(XObject* receiver, XVarList* args)
     if (!chart) return;
     self->m_chartSeriesMode = (self->m_chartSeriesMode + 1) % 6;
     for (i = 0; i < chart->m_lineCount; ++i)
-        chart->m_lineSeries[i]->m_visible =
-            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 1);
+        XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_lineSeries[i]->m_base,
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 1));
     for (i = 0; i < chart->m_barCount; ++i)
-        chart->m_barSeries[i]->m_visible =
-            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 2);
+        XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_barSeries[i]->m_base,
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 2));
     for (i = 0; i < chart->m_scatterCount; ++i)
-        chart->m_scatterSeries[i]->m_visible =
-            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 3);
+        XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_scatterSeries[i]->m_base,
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 3));
     for (i = 0; i < chart->m_areaCount; ++i)
-        chart->m_areaSeries[i]->m_visible =
-            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 4);
+        XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_areaSeries[i]->m_base,
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 4));
     for (i = 0; i < chart->m_splineCount; ++i)
-        chart->m_splineSeries[i]->m_visible =
-            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 5);
+        XAbstractSeries_setVisible((XAbstractSeries*)&chart->m_splineSeries[i]->m_base,
+            (self->m_chartSeriesMode == 0 || self->m_chartSeriesMode == 5));
     XChartView_updateChart(&self->m_chartView);
     demo_set_status(self, "图表: 序列模式切换");
 }
@@ -2353,7 +2353,7 @@ static DemoWin* DemoWin_create(void)
     (void)XTabWidget_insertTab(&self->m_tabWidget, 15,
                                (XWidget*)&self->m_sb, "状态栏");
 #endif
-#if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON
+#if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON && XLAYOUT_STACKED_ON
     /* 页十五：XStackedWidget + XButtonGroup。 */
     XStackedWidget_init(&self->m_stackedW, (XWidget*)&self->m_tabWidget, 0);
     XWidget_setGeometry((XWidget*)&self->m_stackedW, 10, 10, 200, 100);
@@ -2435,13 +2435,13 @@ static DemoWin* DemoWin_create(void)
         int i;
         XChart_setTitle(chart, "XinYueC Charts");
         if (line) {
-            XLineSeries_setName(line, "销量");
+            XAbstractSeries_setName(&line->m_base.m_base, "销量");
             for (i = 0; i < 7; ++i)
-                XLineSeries_append(line, i, (i * 37) % 50 + 10);
+                XXYSeries_append(line, i, (i * 37) % 50 + 10);
             XChart_addLineSeries(chart, line);
         }
         if (pie) {
-            XPieSeries_setName(pie, "占比");
+            XAbstractSeries_setName((XAbstractSeries*)&pie->m_base, "占比");
             XPieSeries_append(pie, "A", 30);
             XPieSeries_append(pie, "B", 20);
             XPieSeries_append(pie, "C", 50);
@@ -2455,35 +2455,35 @@ static DemoWin* DemoWin_create(void)
             XAreaSeries* area = XAreaSeries_create();
             XSplineSeries* sp = XSplineSeries_create();
             if (bar) {
-                XBarSeries_setName(bar, "月销");
-                XBarSeries_append(bar, "一月", 20);
-                XBarSeries_append(bar, "二月", 45);
-                XBarSeries_append(bar, "三月", 30);
+                XAbstractSeries_setName(&bar->m_base.m_base, "月销");
+                XAbstractBarSeries_append(bar, "一月", 20);
+                XAbstractBarSeries_append(bar, "二月", 45);
+                XAbstractBarSeries_append(bar, "三月", 30);
                 XChart_addBarSeries(chart, bar);
             }
             if (sc) {
-                XScatterSeries_setName(sc, "离散点");
-                XScatterSeries_append(sc, 0.5, 45);
-                XScatterSeries_append(sc, 2.5, 25);
-                XScatterSeries_append(sc, 4.5, 55);
-                XScatterSeries_setColor(sc, 0xFFD1294Bu);
+                XAbstractSeries_setName(&sc->m_base.m_base, "离散点");
+                XXYSeries_append(sc, 0.5, 45);
+                XXYSeries_append(sc, 2.5, 25);
+                XXYSeries_append(sc, 4.5, 55);
+                XXYSeries_setColor(sc, 0xFFD1294Bu);
                 XChart_addScatterSeries(chart, sc);
             }
             if (area) {
                 XAreaSeries_setName(area, "面积");
                 XAreaSeries_setBaseValue(area, 0);
-                XLineSeries_append(XAreaSeries_upperSeries(area), 3, 15);
-                XLineSeries_append(XAreaSeries_upperSeries(area), 4, 28);
-                XLineSeries_append(XAreaSeries_upperSeries(area), 5, 20);
+                XXYSeries_append(XAreaSeries_upperSeries(area), 3, 15);
+                XXYSeries_append(XAreaSeries_upperSeries(area), 4, 28);
+                XXYSeries_append(XAreaSeries_upperSeries(area), 5, 20);
                 XAreaSeries_setColor(area, 0x5516AFA9u);
                 XChart_addAreaSeries(chart, area);
             }
             if (sp) {
-                XSplineSeries_setName(sp, "平滑线");
-                XSplineSeries_append(sp, 1, 40);
-                XSplineSeries_append(sp, 2, 22);
-                XSplineSeries_append(sp, 3, 48);
-                XSplineSeries_setColor(sp, 0xFF8B5AC7u);
+                XAbstractSeries_setName(&sp->m_base.m_base, "平滑线");
+                XXYSeries_append(sp, 1, 40);
+                XXYSeries_append(sp, 2, 22);
+                XXYSeries_append(sp, 3, 48);
+                XXYSeries_setColor(sp, 0xFF8B5AC7u);
                 XChart_addSplineSeries(chart, sp);
             }
         }
@@ -2618,6 +2618,12 @@ int main(int argc, char* argv[])
 
     autoSeconds = 0;
     benchmarkSeconds = 0;
+#if XSTYLE_ON
+    XFusionStyle_installDefault();
+    XStyle_installStyleSheet(
+        "XPushButton:hover { background-color: #3D8BFD; }\n"
+        "XLineEdit { background-color: #FFFFE0; }\n");
+#endif
     benchmarkResize = false;
     screenshotPath = NULL;
     autoTest = false;

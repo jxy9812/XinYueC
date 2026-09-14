@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XLineEdit.h
  * @brief      XLineEdit 单行文本编辑控件（对标 Qt 6.8 QLineEdit 全部公共 API）。
  * @details    功能范围：
@@ -38,6 +38,7 @@ extern "C" {
 #include <stddef.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #include "XPainter.h"
 #include "XAlignment.h"
 #include "XAction.h"
@@ -146,7 +147,7 @@ typedef struct XLineEdit
 {
     XWidget m_base;                  /**< 基类成员；必须是第一个。 */
     char*   m_text;                  /**< 文本动态缓冲（NUL 结尾）。 */
-    char    m_placeholder[64];       /**< 占位提示（固定缓冲）。 */
+    XString* m_placeholder;         /**< 占位提示（对象拥有）。 */
     size_t  m_cursor;                /**< 光标字节偏移。 */
     size_t  m_anchor;                /**< 选区锚点字节偏移（无选区时==m_cursor）。 */
     int     m_viewOffset;            /**< 水平滚动偏移（像素，简化估算）。 */

@@ -7,6 +7,8 @@
  */
 
 #include "XToolBar.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -68,6 +70,43 @@ static void xtb_emitAction(XToolBar* bar, size_t signal, XAction* action)
 static void xtb_emitVoid(XToolBar* bar, size_t signal, int orientation)
 {
     XVarList* args = XVarList_Create(XVar(int, orientation));
+    if (!args) return;
+    if (bar && ((XObject*)bar)->m_signalSlot) {
+        XObject_emitSignal((XObject*)bar, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/**
+ * @brief      发射无参信号（真正无参版本）。
+ * @param      bar 目标工具栏；NULL 或无已连接槽时不发射。
+ * @param      signal 信号标识。
+ * @return     无返回值。
+ */
+static void xtb_emitSignalVoid(XToolBar* bar, size_t signal)
+{
+    XVarList* arguments = XVarList_create(0);
+    if (!arguments) return;
+    if (bar && ((XObject*)bar)->m_signalSlot) {
+        XObject_emitSignal((XObject*)bar, signal, arguments, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(arguments);
+    }
+}
+
+/**
+ * @brief      发射 bool 载荷信号（visibilityChanged(bool) 等）。
+ * @param      bar 目标工具栏；NULL 或无已连接槽时不发射。
+ * @param      signal 信号标识。
+ * @param      value bool 载荷。
+ * @return     无返回值。
+ */
+static void xtb_emitBool(XToolBar* bar, size_t signal, bool value)
+{
+    XVarList* args = XVarList_Create(XVar(bool, value));
     if (!args) return;
     if (bar && ((XObject*)bar)->m_signalSlot) {
         XObject_emitSignal((XObject*)bar, signal, args, NULL, NULL,
@@ -174,9 +213,47 @@ static void VX_toolBar_paintEvent(XWidget* self, XEvent* event)
 #else
     mid = 0xFF808080u;
 #endif /* XPALETTE_ON */
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：工具栏面板走 PE_PanelToolBar。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStylePE_PanelToolBar);
+        {
+            XRect pr;
+            XRect_init(&pr, 0, 0, w, h);
+            opt.m_rect = pr;
+        }
+        opt.m_state = XWidget_isEnabled(self) ? XStyleState_Enabled : 0;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawPrimitive(style, XStylePE_PanelToolBar, &opt, &painter,
+                             self);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     XRect_init(&line, 0, h - 1, w, 1);
     XPainter_fillRect(&painter, &line, mid);
     XPainter_deinit(&painter);
+}
+
+void XToolBar_setTitle(XToolBar* self, const char* utf8)
+{
+    if (!self) return;
+    XWidget_setWindowTitle_2((XWidget*)self, utf8 ? utf8 : "");
+}
+
+const char* XToolBar_title(const XToolBar* self)
+{
+    const XString* t;
+    const char* text;
+    if (!self) return "";
+    t = XWidget_windowTitle((const XWidget*)self);
+    if (!t) return "";
+    text = XString_toUtf8(t);
+    return text ? text : "";
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -204,12 +281,34 @@ static void VX_toolBar_deinit(XToolBar* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/** @brief 显示事件：发射 visibilityChanged(true) 后转发父类。 */
+static void VX_toolBar_showEvent(XWidget* self, XEvent* event)
+{
+    if (self)
+        xtb_emitBool((XToolBar*)self,
+                     (size_t)XToolBar_visibilityChanged_signal, true);
+    XClass_Parent(XWidget, EXWidget_ShowEvent,
+                  void(*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief 隐藏事件：发射 visibilityChanged(false) 后转发父类。 */
+static void VX_toolBar_hideEvent(XWidget* self, XEvent* event)
+{
+    if (self)
+        xtb_emitBool((XToolBar*)self,
+                     (size_t)XToolBar_visibilityChanged_signal, false);
+    XClass_Parent(XWidget, EXWidget_HideEvent,
+                  void(*)(XWidget*, XEvent*))(self, event);
+}
+
 XVtable* XToolBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XToolBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_toolBar_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_toolBar_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VX_toolBar_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VX_toolBar_hideEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_toolBar_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -501,6 +600,25 @@ void* XToolBar_topLevelChanged_signal(XToolBar* self)
 {
     (void)self;
     return (void*)(size_t)XToolBar_topLevelChanged_signal;
+}
+
+/**
+ * @brief      发射 visibilityChanged(bool) 信号（对标 QToolBar::
+ *             visibilityChanged）。
+ * @details    显示/隐藏由 showEvent/hideEvent 驱动真发射；本函数供
+ *             外部手动触发或连接使用。self 非 NULL 且有已连接槽时经
+ *             XObject_emitSignal 同步通知，否则只返回信号标识。
+ * @param      self 目标工具栏；可为 NULL。
+ * @param      visible true 表示已显示，false 表示已隐藏。
+ * @return     不透明的 visibilityChanged 信号标识；返回值不指向可释放
+ *             对象，也不得解引用。
+ */
+void* XToolBar_visibilityChanged_signal(XToolBar* self, bool visible)
+{
+    if (!self)
+        return (void*)(size_t)XToolBar_visibilityChanged_signal;
+    xtb_emitBool(self, (size_t)XToolBar_visibilityChanged_signal, visible);
+    return (void*)(size_t)XToolBar_visibilityChanged_signal;
 }
 
 bool XToolBar_isAreaAllowed(const XToolBar* self, int area)

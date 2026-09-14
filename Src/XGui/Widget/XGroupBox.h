@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGroupBox.h
  * @brief      XGroupBox 分组框控件（对标 Qt 6.8 QGroupBox）。
  * @details    带可选标题的分组容器：1px 凹陷边框环绕三边，顶部为
@@ -28,6 +28,7 @@ extern "C" {
 #include <stdbool.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XString.h"
 #include "XPainter.h"
 #include "XAlignment.h"
 
@@ -56,7 +57,7 @@ XCLASS_DEFINE_EXTEND_END(XGroupBox, XWidget)
 typedef struct XGroupBox
 {
     XWidget m_base;                 /**< 基类成员；必须是第一个。 */
-    char    m_title[64];            /**< 标题文本（NUL 结尾）。 */
+    XString* m_title;             /**< 标题文本（对象拥有；空串表示无标题）。 */
     int     m_alignment;            /**< 标题水平对齐（XAlignment 组合）。 */
     bool    m_flat;                 /**< 扁平样式。 */
     bool    m_checkable;            /**< 是否可勾选。 */

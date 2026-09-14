@@ -14,9 +14,9 @@ XChartsheet* XChartsheet_create(const XString* sheetName, int sheetId, void* boo
     self->m_base.m_sheetType = XAbstractSheet_ST_ChartSheet;
     return self;
 }
-void XChartsheet_delete(XChartsheet* self) { if (!self) return; if (self->m_ownsChart && self->m_chart) XChart_delete(self->m_chart); XAbstractSheet_deinit(&self->m_base); XFree_System(self); }
-void XChartsheet_setChart(XChartsheet* self, XChart* chart) { if (self) { if (self->m_ownsChart && self->m_chart && self->m_chart != chart) XChart_delete(self->m_chart); self->m_chart = chart; self->m_ownsChart = false; } }
-XChart* XChartsheet_chart(const XChartsheet* self) { return self ? self->m_chart : NULL; }
+void XChartsheet_delete(XChartsheet* self) { if (!self) return; if (self->m_ownsChart && self->m_chart) XExcelChart_delete(self->m_chart); XAbstractSheet_deinit(&self->m_base); XFree_System(self); }
+void XChartsheet_setChart(XChartsheet* self, XExcelChart* chart) { if (self) { if (self->m_ownsChart && self->m_chart && self->m_chart != chart) XExcelChart_delete(self->m_chart); self->m_chart = chart; self->m_ownsChart = false; } }
+XExcelChart* XChartsheet_chart(const XChartsheet* self) { return self ? self->m_chart : NULL; }
 
 bool XChartsheet_saveToXmlData(const XChartsheet* self, uint8_t** outData, size_t* outLen)
 {

@@ -62,7 +62,7 @@ typedef struct XPlainTextEdit
     bool m_readOnly;            /**< 只读。 */
     int m_wrapMode;             /**< 换行模式（默认 WidgetWidth）。 */
     int m_maxBlockCount;        /**< 块数上限（0 = 无限制）。 */
-    char m_placeholder[256];    /**< 占位文本。 */
+    XString* m_placeholder;    /**< 占位文本（对象拥有）。 */
     bool m_undoEnabled;         /**< 撤销开关（默认 true）。 */
     XVector* m_undoStack;       /**< 撤销快照栈（char*）。 */
     XVector* m_redoStack;       /**< 重做快照栈（char*）。 */
@@ -195,6 +195,21 @@ void* XPlainTextEdit_textChanged_signal(XPlainTextEdit* self);
  * @brief      光标位置变化信号（真发射）。
  */
 void* XPlainTextEdit_cursorPositionChanged_signal(XPlainTextEdit* self);
+
+/**
+ * @brief      视口重绘请求信号（对标 QPlainTextEdit::updateRequest）。
+ * @details    滚动或内容变化触发视口重绘时真发射，载荷为需要重绘的
+ *             视口矩形与垂直滚动增量 dy（内容上移为正，0 表示全量）；
+ *             self 非 NULL 且有已连接槽时经 XObject_emitSignal 同步
+ *             通知，否则只返回信号标识。
+ * @param      self 目标控件指针；可为 NULL。
+ * @param      rect 需要重绘的视口区域；NULL 视为整个视口。
+ * @param      dy 垂直滚动增量（像素）。
+ * @return     不透明的 updateRequest 信号标识；返回值不指向可释放
+ *             对象，也不得解引用。
+ */
+void* XPlainTextEdit_updateRequest_signal(XPlainTextEdit* self,
+                                          const XRect* rect, int dy);
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON */
 

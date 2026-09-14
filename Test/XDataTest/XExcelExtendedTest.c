@@ -4,7 +4,7 @@
 #include "XByteArray.h"
 #include "XCell.h"
 #include "XCellFormula.h"
-#include "XChart.h"
+#include "XExcelChart.h"
 #include "XChartsheet.h"
 #include "XClass.h"
 #include "XConditionalFormatting.h"
@@ -519,22 +519,22 @@ static bool test_chart_drawing_roundtrip(void)
     bool groupOk = true;
     XPrintf("[INFO] 扩展测试：Chart 与 DrawingAnchor 往返\n");
     XString_Init_Utf8(chartPath, "/tmp/xinyue_chart_extended.xml");
-    XChart* chart = XChart_create(NULL, XAbstractOOXmlFile_F_NewFromScratch);
-    XChart_setChartType(chart, XChart_BarChart);
-    XChart_setChartStyle(chart, 7);
-    XChart_setChartTitle_utf8(chart, "Revenue & Cost");
+    XExcelChart* chart = XExcelChart_create(NULL, XAbstractOOXmlFile_F_NewFromScratch);
+    XExcelChart_setChartType(chart, XExcelChart_BarChart);
+    XExcelChart_setChartStyle(chart, 7);
+    XExcelChart_setChartTitle_utf8(chart, "Revenue & Cost");
     XString_Init_Utf8(axisTitle, "Amount <USD>");
-    XChart_setAxisTitle(chart, XChart_AxisPosLeft, axisTitle);
-    XChart_setChartLegend(chart, XChart_AxisPosBottom, true);
-    XChart_setGridlinesEnable(chart, true, true);
-    XChart_setPosition(chart, 4, 5, 6, 7);
-    XChart_setSize(chart, 640, 360);
+    XExcelChart_setAxisTitle(chart, XExcelChart_AxisPosLeft, axisTitle);
+    XExcelChart_setChartLegend(chart, XExcelChart_AxisPosBottom, true);
+    XExcelChart_setGridlinesEnable(chart, true, true);
+    XExcelChart_setPosition(chart, 4, 5, 6, 7);
+    XExcelChart_setSize(chart, 640, 360);
     XCellRange range = XCellRange_create_ex(1, 1, 10, 2);
-    XChart_addSeries(chart, &range, true, false, true);
-    CHECK(XChart_saveToXmlFile(chart, chartPath), "保存标准图表 XML");
-    XChart* loaded = XChart_create(NULL, XAbstractOOXmlFile_F_LoadFromExists);
-    CHECK(loaded && XChart_loadFromXmlFile(loaded, chartPath), "加载图表 XML");
-    CHECK(loaded && loaded->m_chartType == XChart_BarChart && loaded->m_chartStyle == 7,
+    XExcelChart_addSeries(chart, &range, true, false, true);
+    CHECK(XExcelChart_saveToXmlFile(chart, chartPath), "保存标准图表 XML");
+    XExcelChart* loaded = XExcelChart_create(NULL, XAbstractOOXmlFile_F_LoadFromExists);
+    CHECK(loaded && XExcelChart_loadFromXmlFile(loaded, chartPath), "加载图表 XML");
+    CHECK(loaded && loaded->m_chartType == XExcelChart_BarChart && loaded->m_chartStyle == 7,
           "图表类型与样式往返");
     CHECK(loaded && loaded->m_chartTitle && XString_equals_utf8(loaded->m_chartTitle,
           "Revenue & Cost", XChar_CaseSensitive), "图表标题 XML 转义往返");
@@ -542,8 +542,8 @@ static bool test_chart_drawing_roundtrip(void)
           "图表系列及范围往返");
     CHECK(loaded && loaded->m_width == 640 && loaded->m_height == 360 &&
           loaded->m_row == 4 && loaded->m_col == 5, "图表尺寸与位置往返");
-    XChart_delete(chart);
-    XChart_delete(loaded);
+    XExcelChart_delete(chart);
+    XExcelChart_delete(loaded);
     XString_deinit_base(axisTitle);
     remove(XString_toUtf8(chartPath));
     XString_deinit_base(chartPath);
@@ -882,14 +882,14 @@ static bool test_support_modules(void)
     CHECK(mediaDeduplicated && workbookMediaCount == 2 &&
           XMediaFile_index(mediaDuplicate2) == 1,
           "工作簿媒体表按内容去重、回填索引且 force 参数允许强制重复");
-    XChart* registeredChart = XChart_create(NULL, XAbstractOOXmlFile_F_NewFromScratch);
+    XExcelChart* registeredChart = XExcelChart_create(NULL, XAbstractOOXmlFile_F_NewFromScratch);
     XWorkbook_addChartFile(mediaWorkbook, registeredChart);
     XWorkbook_addChartFile(mediaWorkbook, registeredChart);
     int registeredChartCount = -1;
     XWorkbook_chartFiles(mediaWorkbook, &registeredChartCount);
     CHECK(registeredChartCount == 1, "工作簿图表注册表拒绝重复对象指针");
     XWorkbook_delete(mediaWorkbook);
-    XChart_delete(registeredChart);
+    XExcelChart_delete(registeredChart);
     XMediaFile_delete(mediaDuplicate1);
     XMediaFile_delete(mediaDuplicate2);
     if (mediaKey) XFree_System(mediaKey);
@@ -1437,10 +1437,10 @@ static bool test_document_charts_and_hyperlinks(void)
     XWorksheet_writeNumeric(worksheet, 1, 1, 10.0, NULL);
     XWorksheet_writeNumeric(worksheet, 2, 1, 20.0, NULL);
     XCellRange seriesRange = XCellRange_create_ex(1, 1, 2, 1);
-    XChart* worksheetChart = XWorksheet_insertChart(worksheet, 3, 2, 640, 360);
-    XChart_setChartType(worksheetChart, XChart_LineChart);
-    XChart_setChartTitle_utf8(worksheetChart, "Worksheet & chart");
-    XChart_addSeries(worksheetChart, &seriesRange, false, false, false);
+    XExcelChart* worksheetChart = XWorksheet_insertChart(worksheet, 3, 2, 640, 360);
+    XExcelChart_setChartType(worksheetChart, XExcelChart_LineChart);
+    XExcelChart_setChartTitle_utf8(worksheetChart, "Worksheet & chart");
+    XExcelChart_addSeries(worksheetChart, &seriesRange, false, false, false);
     XString_Init_Utf8(url, "https://example.com/report?a=1&b=2");
     XString_Init_Utf8(display, "Report link");
     XWorksheet_writeHyperlink(worksheet, 5, 1, url, NULL, display, NULL);
@@ -1449,12 +1449,12 @@ static bool test_document_charts_and_hyperlinks(void)
     CHECK(XDocument_addSheet(document, chartSheetName, XAbstractSheet_ST_ChartSheet),
           "添加 Chartsheet");
     XChartsheet* chartsheet = (XChartsheet*)XWorkbook_sheet(document->m_workbook, 1);
-    XChart* chartsheetChart = XChart_create(chartsheet ? &chartsheet->m_base : NULL,
+    XExcelChart* chartsheetChart = XExcelChart_create(chartsheet ? &chartsheet->m_base : NULL,
         XAbstractOOXmlFile_F_NewFromScratch);
-    XChart_setChartType(chartsheetChart, XChart_PieChart);
-    XChart_setChartTitle_utf8(chartsheetChart, "Chartsheet <pie>");
-    XChart_setDataSheetName_utf8(chartsheetChart, "Sheet1");
-    XChart_addSeries(chartsheetChart, &seriesRange, false, false, false);
+    XExcelChart_setChartType(chartsheetChart, XExcelChart_PieChart);
+    XExcelChart_setChartTitle_utf8(chartsheetChart, "Chartsheet <pie>");
+    XExcelChart_setDataSheetName_utf8(chartsheetChart, "Sheet1");
+    XExcelChart_addSeries(chartsheetChart, &seriesRange, false, false, false);
     XChartsheet_setChart(chartsheet, chartsheetChart);
     CHECK(XDocument_saveAs(document, path),
           "保存含工作表图表、Chartsheet 和超链接的 XLSX");
@@ -1505,10 +1505,10 @@ static bool test_document_charts_and_hyperlinks(void)
         loadedFirst->m_sheetType == XAbstractSheet_ST_WorkSheet ? (XWorksheet*)loadedFirst : NULL;
     XChartsheet* loadedChartsheet = loadedSecond &&
         loadedSecond->m_sheetType == XAbstractSheet_ST_ChartSheet ? (XChartsheet*)loadedSecond : NULL;
-    XChart* loadedWorksheetChart = loadedWorksheet && loadedWorksheet->m_chartFiles &&
+    XExcelChart* loadedWorksheetChart = loadedWorksheet && loadedWorksheet->m_chartFiles &&
         XVector_size_base((XContainer*)loadedWorksheet->m_chartFiles) == 1
-        ? *(XChart**)XVector_at_base(loadedWorksheet->m_chartFiles, 0) : NULL;
-    CHECK(loadedWorksheetChart && loadedWorksheetChart->m_chartType == XChart_LineChart &&
+        ? *(XExcelChart**)XVector_at_base(loadedWorksheet->m_chartFiles, 0) : NULL;
+    CHECK(loadedWorksheetChart && loadedWorksheetChart->m_chartType == XExcelChart_LineChart &&
           loadedWorksheetChart->m_chartTitle &&
           XString_equals_utf8(loadedWorksheetChart->m_chartTitle, "Worksheet & chart",
               XChar_CaseSensitive), "工作表内图表类型、标题和绘图关系往返");
@@ -1518,14 +1518,14 @@ static bool test_document_charts_and_hyperlinks(void)
     CHECK(loadedHyperlink && loadedHyperlink->m_url &&
           XString_equals(loadedHyperlink->m_url, url, XChar_CaseSensitive),
           "外部超链接通过 sheet relationships 恢复真实 URL");
-    XChart* loadedChartsheetChart = loadedChartsheet ? XChartsheet_chart(loadedChartsheet) : NULL;
-    CHECK(loadedChartsheetChart && loadedChartsheetChart->m_chartType == XChart_PieChart &&
+    XExcelChart* loadedChartsheetChart = loadedChartsheet ? XChartsheet_chart(loadedChartsheet) : NULL;
+    CHECK(loadedChartsheetChart && loadedChartsheetChart->m_chartType == XExcelChart_PieChart &&
           loadedChartsheetChart->m_chartTitle &&
           XString_equals_utf8(loadedChartsheetChart->m_chartTitle, "Chartsheet <pie>",
               XChar_CaseSensitive), "Chartsheet 类型与关联图表完整往返");
 
     XDocument_delete(document);
-    XChart_delete(chartsheetChart);
+    XExcelChart_delete(chartsheetChart);
     if (loaded) XDocument_delete(loaded);
     remove(XString_toUtf8(path));
     XString_deinit_base(path);
