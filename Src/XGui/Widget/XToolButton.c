@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XToolButton.c
  * @brief      XToolButton 工具按钮实现（对标 Qt 6.8 QToolButton）。
  * @details    对齐 QToolButton 的核心语义：
@@ -15,6 +15,8 @@
  *             翻转，最终选中状态与动作一致。
  */
 #include "XToolButton.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
@@ -447,6 +449,37 @@ static void VXToolButton_paintEvent(XWidget* self, XEvent* event)
     enabled = XWidget_isEnabled((XWidget*)tb);
 
     /* 背景与边框：非 autoRaise 或按下/悬停时绘制。 */
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：面板走 PE_PanelButtonTool（AutoRaise
+         * 时仅按下/悬停凸起，完整对标 QFusionStyle 工具按钮语义）。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStylePE_PanelButtonTool);
+        opt.m_rect = rect;
+        opt.m_state = enabled ? XStyleState_Enabled : 0;
+        if (ab->m_down)
+            opt.m_state |= XStyleState_Sunken | XStyleState_On;
+        else
+            opt.m_state |= XStyleState_Raised;
+        if (XWidget_underMouse((XWidget*)tb) && enabled)
+            opt.m_state |= XStyleState_MouseOver;
+        if (XWidget_hasFocus((XWidget*)tb))
+            opt.m_state |= XStyleState_HasFocus;
+        if (tb->m_autoRaise && !ab->m_down &&
+            !(opt.m_state & XStyleState_MouseOver))
+            opt.m_state |= XStyleState_AutoRaise;
+        opt.m_flat = tb->m_autoRaise;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)tb);
+#endif
+        if (!tb->m_autoRaise || ab->m_down ||
+            (opt.m_state & XStyleState_MouseOver))
+            XStyle_drawPrimitive(style, XStylePE_PanelButtonTool, &opt,
+                                 &painter, (XWidget*)tb);
+        goto xtb_style_label;
+    }
+#endif /* XSTYLE_ON */
     if (!tb->m_autoRaise || ab->m_down) {
         XRect edge;
         XPainter_fillRect(&painter, &rect,
@@ -460,7 +493,10 @@ static void VXToolButton_paintEvent(XWidget* self, XEvent* event)
         XRect_init(&edge, rect.x + rect.width - 1, rect.y, 1, rect.height);
         XPainter_fillRect(&painter, &edge, 0xFFA0A0A0u);
     }
-
+    goto xtb_style_label;
+#if XSTYLE_ON
+xtb_style_label:
+#endif
     hasIcon = !XIcon_isNull(&ab->m_icon);
     text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
     if (!text)

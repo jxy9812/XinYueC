@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XRadioButton.c
  * @brief      XRadioButton 单选按钮控件实现（对标 Qt 6.8 QRadioButton，继承 XAbstractButton）。
  * @details    实现要点：
@@ -23,6 +23,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XRadioButton.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
 #include "XWidget_Protected.h"
 #include "XPainter.h"
@@ -182,6 +184,38 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
         textColor = 0xFF000000u;
 
     /* 对标 Qt：单选钮不绘制自身背景（透明）。 */
+
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：指示器 + 标签走 CE_RadioButton。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCE_RadioButton);
+        opt.m_rect = rect;
+        opt.m_state = XWidget_isEnabled((XWidget*)self)
+            ? XStyleState_Enabled : 0;
+        if (ab->m_checked)
+            opt.m_state |= XStyleState_On;
+        else
+            opt.m_state |= XStyleState_Off;
+        if (ab->m_down)
+            opt.m_state |= XStyleState_Sunken;
+        if (XWidget_underMouse((XWidget*)self) &&
+            XWidget_isEnabled((XWidget*)self))
+            opt.m_state |= XStyleState_MouseOver;
+        if (XWidget_hasFocus((XWidget*)self))
+            opt.m_state |= XStyleState_HasFocus;
+        opt.m_text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
+        opt.m_textColor = textColor;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)self);
+#endif
+        XStyle_drawControl(style, XStyleCE_RadioButton, &opt, painter,
+                           (XWidget*)self);
+        XPainter_restore(painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
 
     /* 圆形 indicator：外侧深色、内侧浅色双圈近似立体感。
        XPAINTER_SHAPE_ON=0（硬裁剪）时以矩形描边退化为方框。 */

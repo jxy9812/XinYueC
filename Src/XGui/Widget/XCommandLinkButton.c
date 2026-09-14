@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XCommandLinkButton.c
  * @brief      XCommandLinkButton 命令链接按钮实现（对标 Qt 6.8 QCommandLinkButton，继承 XPushButton）。
  * @details    实现要点：
@@ -20,6 +20,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XCommandLinkButton.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
 #include "XWidget_Protected.h"
 #include "XPainter.h"
@@ -230,8 +232,46 @@ void XCommandLinkButton_drawContents(XCommandLinkButton* self,
     if (descColor == 0u)
         descColor = 0xFF808080u;
 
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：面板走 PE_PanelButtonCommand（悬停渐变/
+         * 按下反转/焦点环），标题/描述/图标保留本控件绘制。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStylePE_PanelButtonCommand);
+        opt.m_rect = rect;
+        opt.m_state = XWidget_isEnabled((XWidget*)self)
+            ? XStyleState_Enabled | XStyleState_Raised : 0;
+        if (ab->m_down || ab->m_checked)
+            opt.m_state |= XStyleState_Sunken | XStyleState_On;
+        if (XWidget_underMouse((XWidget*)self) &&
+            XWidget_isEnabled((XWidget*)self))
+            opt.m_state |= XStyleState_MouseOver;
+        if (XWidget_hasFocus((XWidget*)self))
+            opt.m_state |= XStyleState_HasFocus;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)self);
+#endif
+        XStyle_drawPrimitive(style, XStylePE_PanelButtonCommand, &opt,
+                             painter, (XWidget*)self);
+        if (XWidget_hasFocus((XWidget*)self)) {
+            XStyleOption foc = opt;
+            XRect fr = rect;
+            fr.x += 3;
+            fr.y += 3;
+            fr.width -= 6;
+            fr.height -= 6;
+            foc.m_type = XStylePE_FrameFocusRect;
+            foc.m_rect = fr;
+            XStyle_drawPrimitive(style, XStylePE_FrameFocusRect, &foc,
+                                 painter, (XWidget*)self);
+        }
+        goto xcl_style_label;
+    }
+#endif /* XSTYLE_ON */
     XPainter_fillRect(painter, &rect, window);
 
+xcl_style_label:
     iconSize = commandlink_iconSize(self);
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
