@@ -5,6 +5,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformNativeInterface.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XVarList.h"
@@ -18,7 +21,6 @@
 #if XSCREEN_ON
 #include "XScreen.h"
 #endif /* XSCREEN_ON */
-#include <string.h>
 
 #if XPLATFORMNATIVEINTERFACE_ON
 
@@ -41,7 +43,7 @@ struct XPlatformNativeInterfacePrivate
 /** @brief 资源名相等判断（区分大小写，对标 QByteArray 精确匹配）。 */
 static bool resourceMatch(const char* resource, const char* expected)
 {
-    return resource && expected && strcmp(resource, expected) == 0;
+    return resource && expected && XStrcmp(resource, expected) == 0;
 }
 
 static void VXPlatformNativeInterface_deinit(XPlatformNativeInterface* self)
@@ -70,12 +72,12 @@ XVtable* XPlatformNativeInterface_class_init(void)
 void XPlatformNativeInterface_init(XPlatformNativeInterface* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XPlatformNativeInterface));
+    XMemset(self, 0, sizeof(XPlatformNativeInterface));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XPlatformNativeInterface);
     self->m_data = (XPlatformNativeInterfacePrivate*)XMalloc_System(sizeof(XPlatformNativeInterfacePrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XPlatformNativeInterfacePrivate));
+    XMemset(self->m_data, 0, sizeof(XPlatformNativeInterfacePrivate));
 }
 
 XPlatformNativeInterface* XPlatformNativeInterface_create_ex(XMemoryType memory)
@@ -218,7 +220,7 @@ void* XPlatformNativeInterface_platformFunction(
     if (!self || !self->m_data || !name || !name[0]) return NULL;
     for (i = 0; i < XPLATFORMNATIVEINTERFACE_MAX_FUNCTIONS; ++i) {
         if (self->m_data->m_functions[i].m_name &&
-            strcmp(self->m_data->m_functions[i].m_name, name) == 0)
+            XStrcmp(self->m_data->m_functions[i].m_name, name) == 0)
             return self->m_data->m_functions[i].m_function;
     }
     return NULL;
@@ -237,7 +239,7 @@ bool XPlatformNativeInterface_registerPlatformFunction(
             if (freeSlot < 0) freeSlot = i;
             continue;
         }
-        if (strcmp(entry->m_name, name) != 0) continue;
+        if (XStrcmp(entry->m_name, name) != 0) continue;
         if (!function) {
             XFree_System(entry->m_name);
             entry->m_name = NULL;

@@ -15,6 +15,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON
 
 #include "XSpinBox.h"
@@ -29,8 +32,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
 
@@ -162,19 +163,19 @@ static bool spinbox_stripText(const XSpinBox* self, const char* text,
     size_t o = 0;
     size_t i;
     if (!self || !text || !out || cap == 0) return false;
-    plen = strlen(spinbox_prefixText(self));
-    slen = strlen(spinbox_suffixText(self));
+    plen = XStrlen(spinbox_prefixText(self));
+    slen = XStrlen(spinbox_suffixText(self));
     p = text;
     if (plen) {
-        if (strncmp(p, spinbox_prefixText(self), plen) != 0) {
+        if (XStrncmp(p, spinbox_prefixText(self), plen) != 0) {
             if (strict) return false;
         } else {
             p += plen;
         }
     }
-    len = strlen(p);
+    len = XStrlen(p);
     if (slen) {
-        if (len < slen || strcmp(p + len - slen,
+        if (len < slen || XStrcmp(p + len - slen,
                                  spinbox_suffixText(self)) != 0) {
             if (strict) return false;
         } else {
@@ -206,7 +207,7 @@ static int spinbox_parseValue(const XSpinBox* self, const char* stripped,
     if (*p == '-') { sign = -1; ++p; }
     else if (*p == '+') { ++p; }
     if (!*p) return 0;
-    v = strtol(p, &end, self->m_displayIntegerBase);
+    v = XStrtol(p, &end, self->m_displayIntegerBase);
     if (end == p || *end != '\0') return 0;
     if (ok) *ok = true;
     return (int)(sign * v);
@@ -264,14 +265,14 @@ static char* spinbox_textFromValue(const XSpinBox* self, int val)
     if (spinbox_specialText(self)[0] && val == self->m_min)
         return spinbox_strdup(spinbox_specialText(self));
     spinbox_formatValue(self, val, num, sizeof(num));
-    plen = strlen(spinbox_prefixText(self));
-    slen = strlen(spinbox_suffixText(self));
-    nlen = strlen(num);
+    plen = XStrlen(spinbox_prefixText(self));
+    slen = XStrlen(spinbox_suffixText(self));
+    nlen = XStrlen(num);
     out = (char*)XMalloc_System(plen + nlen + slen + 1);
     if (!out) return NULL;
-    if (plen) memcpy(out, spinbox_prefixText(self), plen);
-    memcpy(out + plen, num, nlen);
-    if (slen) memcpy(out + plen + nlen, spinbox_suffixText(self), slen);
+    if (plen) XMemcpy(out, spinbox_prefixText(self), plen);
+    XMemcpy(out + plen, num, nlen);
+    if (slen) XMemcpy(out + plen + nlen, spinbox_suffixText(self), slen);
     out[plen + nlen + slen] = '\0';
     return out;
 }
@@ -310,7 +311,7 @@ static void spinbox_refreshText(XSpinBox* self)
     if (!edit) return;
     buf = XSpinBox_textFromValue_base(self, self->m_value);
     if (!buf) return;
-    if (strcmp(XLineEdit_text(edit), buf) != 0)
+    if (XStrcmp(XLineEdit_text(edit), buf) != 0)
         XLineEdit_setText(edit, buf);
     XFree_System(buf);
 }
@@ -352,7 +353,7 @@ static void spinbox_onTextChanged(XObject* sender, XVarList* args)
     if (text[0] != '\0') self->m_base.m_cleared = false;
     /* 特殊值文本：值归 minimum。 */
     if (spinbox_specialText(self)[0] &&
-        strcmp(text, spinbox_specialText(self)) == 0) {
+        XStrcmp(text, spinbox_specialText(self)) == 0) {
         if (self->m_value != self->m_min) {
             self->m_value = self->m_min;
             spinbox_emitInt(self,
@@ -595,14 +596,14 @@ static XValidatorState VXSpinBox_validate(XAbstractSpinBox* self,
     (void)pos;
     if (!spin || !input) return XValidatorState_Invalid;
     if (spinbox_specialText(self)[0] &&
-        strcmp(input, spinbox_specialText(self)) == 0)
+        XStrcmp(input, spinbox_specialText(self)) == 0)
         return XValidatorState_Acceptable;
     if (!spinbox_stripText(spin, input, stripped, sizeof(stripped), true))
         return XValidatorState_Invalid; /* 前缀/后缀缺失不可接受 */
     if (spin->m_max != spin->m_min &&
         (stripped[0] == '\0' ||
-         (spin->m_min < 0 && strcmp(stripped, "-") == 0) ||
-         (spin->m_max >= 0 && strcmp(stripped, "+") == 0)))
+         (spin->m_min < 0 && XStrcmp(stripped, "-") == 0) ||
+         (spin->m_max >= 0 && XStrcmp(stripped, "+") == 0)))
         return XValidatorState_Intermediate;
     if (stripped[0] == '-' && spin->m_min >= 0)
         return XValidatorState_Invalid; /* 负号但下限非负（对标 Qt 特例） */
@@ -646,7 +647,7 @@ static void VXSpinBox_fixup(XAbstractSpinBox* self, char* input,
     input[o] = '\0';
     /* 去除首尾空白。 */
     while (o > 0 && input[0] == ' ') {
-        memmove(input, input + 1, o);
+        XMemmove(input, input + 1, o);
         --o;
     }
     while (o > 0 && input[o - 1] == ' ') input[--o] = '\0';
@@ -662,11 +663,11 @@ static void VXSpinBox_clear(XAbstractSpinBox* self)
     self->m_cleared = true;
     edit = self->m_lineEdit;
     if (!edit) return;
-    snprintf(buf, sizeof(buf), "%s%s",
+    XSnprintf(buf, sizeof(buf), "%s%s",
              spinbox_prefixText(spin), spinbox_suffixText(spin));
     XLineEdit_setText(edit, buf);
     XLineEdit_setCursorPosition(edit,
-        (int)strlen(spinbox_prefixText(spin)));
+        (int)XStrlen(spinbox_prefixText(spin)));
 }
 
 /** @brief 步进使能虚槽：按当前值是否到边界返回位组合（wrapping 恒双向）。 */
@@ -704,7 +705,7 @@ static void VXSpinBox_interpret(XAbstractSpinBox* self)
     if (!edit) return;
     if (self->m_cleared) { self->m_cleared = false; return; }
     t = XLineEdit_text(edit);
-    snprintf(buf, sizeof(buf), "%s", t ? t : "");
+    XSnprintf(buf, sizeof(buf), "%s", t ? t : "");
     st = XAbstractSpinBox_validate_base(self, buf, &pos);
     if (st == XValidatorState_Acceptable) {
         v = XSpinBox_valueFromText_base(spin, buf);
@@ -752,7 +753,7 @@ static int VXSpinBox_valueFromText(XSpinBox* self, const char* text)
     if (!self) return 0;
     if (!text) return self->m_min;
     if (spinbox_specialText(self)[0] &&
-        strcmp(text, spinbox_specialText(self)) == 0)
+        XStrcmp(text, spinbox_specialText(self)) == 0)
         return self->m_min;
     if (!spinbox_stripText(self, text, stripped, sizeof(stripped), true))
         return self->m_min;
@@ -1009,7 +1010,7 @@ void XSpinBox_setPrefix(XSpinBox* self, const char* prefix)
     {
         const char* cur = self->m_prefix
             ? XString_toUtf8(self->m_prefix) : NULL;
-        if (cur && strcmp(cur, prefix) == 0) return;
+        if (cur && XStrcmp(cur, prefix) == 0) return;
         if (!cur && prefix[0] == '\0') return;
     }
     if (!self->m_prefix) self->m_prefix = XString_create();
@@ -1030,7 +1031,7 @@ void XSpinBox_setSuffix(XSpinBox* self, const char* suffix)
     {
         const char* cur = self->m_suffix
             ? XString_toUtf8(self->m_suffix) : NULL;
-        if (cur && strcmp(cur, suffix) == 0) return;
+        if (cur && XStrcmp(cur, suffix) == 0) return;
         if (!cur && suffix[0] == '\0') return;
     }
     if (!self->m_suffix) self->m_suffix = XString_create();

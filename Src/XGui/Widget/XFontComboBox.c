@@ -7,13 +7,15 @@
  */
 
 #include "XFontComboBox.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #if XPLATFORMFONTDATABASE_ON
 #include "XPlatformFontDatabase.h"
 #endif
-#include <string.h>
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON
 
@@ -62,7 +64,7 @@ void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
                         XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XComboBox_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XFontComboBox);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -109,7 +111,7 @@ void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
     if (!self || !family) return;
     n = XComboBox_count(self);
     for (i = 0; i < n; ++i) {
-        if (strcmp(XComboBox_itemText(self, i), family) == 0) {
+        if (XStrcmp(XComboBox_itemText(self, i), family) == 0) {
             XComboBox_setCurrentIndex(self, i);
             return;
         }

@@ -7,12 +7,13 @@
  *             不调用平台 API，所有扫描都限制在输入缓冲区边界内。
  ******************************************************************************/
 #include "XImageCodecInternal.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodec_config.h"
 #include "XMemory.h"
-#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON && XIMAGECODEC_XBM_ON
 
@@ -51,7 +52,7 @@ static bool xbm_parseDefine(const uint8_t* line, size_t length, int* value)
     unsigned long long magnitude = 0;
     bool negative = false;
     bool hasDigit = false;
-    if (!line || !value || length < 7 || memcmp(line, "#define", 7) != 0)
+    if (!line || !value || length < 7 || XMemcmp(line, "#define", 7) != 0)
         return false;
     pos = 7;
     while (pos < length && xbm_space(line[pos])) ++pos;
@@ -229,12 +230,12 @@ static void xbm_makeName(const char* name, char* out, size_t capacity)
     out[0] = '\0';
     begin = name && name[0] ? name : "image";
     {
-        const char* slash = strrchr(begin, '/');
-        const char* backslash = strrchr(begin, '\\');
+        const char* slash = XStrrchr(begin, '/');
+        const char* backslash = XStrrchr(begin, '\\');
         if (backslash && (!slash || backslash > slash)) slash = backslash;
         if (slash) begin = slash + 1;
     }
-    dot = strrchr(begin, '.');
+    dot = XStrrchr(begin, '.');
     while (*begin && begin != dot && used + 1u < capacity) {
         unsigned char c = (unsigned char)*begin++;
         if ((c >= (unsigned char)'a' && c <= (unsigned char)'z') ||
@@ -246,7 +247,7 @@ static void xbm_makeName(const char* name, char* out, size_t capacity)
     }
     if (!used) out[used++] = 'i';
     if (out[0] >= '0' && out[0] <= '9' && used + 1u < capacity) {
-        memmove(out + 1, out, used);
+        XMemmove(out + 1, out, used);
         out[0] = '_';
         ++used;
     }
@@ -277,11 +278,11 @@ bool XImageCodecInternal_encodeXbmNamed(const XImage* image, const char* name,
     if (XImage_isNull(&mono)) return false;
     xbm_makeName(name, identifier, sizeof(identifier));
     invert = xbm_gray(XImage_color(&mono, 0)) < xbm_gray(XImage_color(&mono, 1));
-    if (snprintf(header, sizeof(header),
+    if (XSnprintf(header, sizeof(header),
                  "#define %s_width %d\n#define %s_height %d\n"
                  "static char %s_bits[] = {\n ",
                  identifier, width, identifier, height, identifier) <= 0 ||
-        !XImageCodecInternal_appendBytes(out, header, strlen(header))) {
+        !XImageCodecInternal_appendBytes(out, header, XStrlen(header))) {
         XImage_deinit_base(&mono);
         return false;
     }
@@ -296,8 +297,8 @@ bool XImageCodecInternal_encodeXbmNamed(const XImage* image, const char* name,
             uint8_t value = line[i];
             bool last = y == height - 1 && i == rowBytes - 1;
             if (invert) value = (uint8_t)~value;
-            if (snprintf(token, sizeof(token), "0x%02x%s", value, last ? "" : ",") <= 0 ||
-                !XImageCodecInternal_appendBytes(out, token, strlen(token))) {
+            if (XSnprintf(token, sizeof(token), "0x%02x%s", value, last ? "" : ",") <= 0 ||
+                !XImageCodecInternal_appendBytes(out, token, XStrlen(token))) {
                 XImage_deinit_base(&mono);
                 return false;
             }

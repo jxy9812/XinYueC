@@ -13,8 +13,9 @@
 #include "XGuiApplication.h"
 #include "XEventLoop.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -53,7 +54,7 @@ XVtable* XDialog_class_init(void)
 void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

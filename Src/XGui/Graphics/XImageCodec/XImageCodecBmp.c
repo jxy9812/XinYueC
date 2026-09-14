@@ -15,12 +15,13 @@
  *              统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
  */
 #include "XImageCodec_config.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodecInternal.h"
 #include "XImage.h"
 #include "XMemory.h"
 #include <limits.h>
 #include <stdint.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_BMP_ON
@@ -395,7 +396,7 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
         indexBuffer = (uint8_t*)XMalloc_System(count);
         if (!indexBuffer) return false;
         /* 未覆盖到的剩余像素补 0：RLE 流允许不显式铺满整行，未写区域按索引 0 处理。 */
-        memset(indexBuffer, 0, count);
+        XMemset(indexBuffer, 0, count);
         if (rle) {
             if (pixelPos < size &&
                 !bmpRleDecode(data + pixelPos, size - pixelPos, bpp, width,
@@ -632,12 +633,12 @@ wrap:
     total = size + 14u;
     wrapped = (uint8_t*)XMalloc_System(total);
     if (!wrapped) return false;
-    memset(wrapped, 0, 14u);
+    XMemset(wrapped, 0, 14u);
     XImageCodecInternal_writeU16LE(wrapped, 0x4d42u);
     XImageCodecInternal_writeU32LE(wrapped + 2u, (uint32_t)total);
     XImageCodecInternal_writeU32LE(wrapped + 10u,
                                    (uint32_t)(pixelOffset + 14u));
-    memcpy(wrapped + 14u, data, size);
+    XMemcpy(wrapped + 14u, data, size);
     ok = XImageCodecInternal_decodeBmp(wrapped, total, out);
     XFree_System(wrapped);
     return ok;
@@ -670,7 +671,7 @@ bool XImageCodecInternal_encodeBmp(const XImage* image, XByteArray* out)
     if (total > UINT32_MAX ||
         !XByteArray_resize_base((XVector*)out, total))
         return false;
-    memset(XByteArray_data(out), 0, total);
+    XMemset(XByteArray_data(out), 0, total);
     XImageCodecInternal_writeU16LE(header, 0x4d42u);
     XImageCodecInternal_writeU32LE(header + 2, (uint32_t)total);
     XImageCodecInternal_writeU32LE(header + 10, (uint32_t)headerSize);
@@ -695,7 +696,7 @@ bool XImageCodecInternal_encodeBmp(const XImage* image, XByteArray* out)
         XImageCodecInternal_writeU32LE(header + 62, 0x000000ffu);
         XImageCodecInternal_writeU32LE(header + 66, 0xff000000u);
     }
-    memcpy(XByteArray_data(out), header, headerSize);
+    XMemcpy(XByteArray_data(out), header, headerSize);
     for (int y = 0; y < height; ++y) {
         uint8_t* dst =
             XByteArray_data(out) + headerSize +
@@ -816,7 +817,7 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
         return false;
     }
     dst = XByteArray_data(out);
-    memset(dst, 0, total);
+    XMemset(dst, 0, total);
     XImageCodecInternal_writeU32LE(dst, 40u);
     XImageCodecInternal_writeU32LE(dst + 4u, (uint32_t)width);
     XImageCodecInternal_writeU32LE(dst + 8u, (uint32_t)height);
@@ -854,7 +855,7 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
                 if (hasConverted) XImage_deinit_base(&converted);
                 return false;
             }
-            memcpy(dst + 40u + colorBytes + (size_t)(height - 1 - y) * bplBmp,
+            XMemcpy(dst + 40u + colorBytes + (size_t)(height - 1 - y) * bplBmp,
                    pixels, bpl);
         }
     } else {

@@ -1,4 +1,7 @@
 ﻿#include "XStyle.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XCommonStyle.h"
 #include "XWindowsStyle.h"
 #include "XStyleSheetStyle.h"
@@ -6,7 +9,6 @@
 #include "XClass.h"
 #include "XPainter.h"
 #include "XWidget.h"
-#include <string.h>
 
 #if XSTYLE_ON
 
@@ -60,7 +62,7 @@ XVtable* XStyle_class_init(void)
 void XStyle_init(XStyle* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init(&self->m_base);
     XClassSetVtable(self, XStyle);
 }
@@ -174,7 +176,7 @@ bool XStyle_installStyleSheet(const char* css)
         /* 已是样式表风格则复用（重复调用更新规则表）。 */
         XVtable* vt = XClassGetVtable((XClass*)g_defaultStyle);
         if (XVTABLE_GET_NAME(vt) &&
-            strcmp(XVTABLE_GET_NAME(vt), "XStyleSheetStyle") == 0) {
+            XStrcmp(XVTABLE_GET_NAME(vt), "XStyleSheetStyle") == 0) {
             return XStyleSheetStyle_setStyleSheet(
                 (XStyleSheetStyle*)g_defaultStyle, css);
         }

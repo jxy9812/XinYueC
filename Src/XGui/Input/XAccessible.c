@@ -3,7 +3,9 @@
  * @brief      XAccessible 可访问节点实现；无平台 API。
  ****************************************************************************/
 #include "XAccessible.h"
+#include "XMemory.h"
 
+#include "XAlgorithm.h"
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XWindow.h"
 #if XWIDGET_ON
@@ -14,7 +16,6 @@
 #endif
 #include "XGuiApplication.h"
 #include "XCoreApplication.h"
-#include <string.h>
 
 static void VXAccessible_deinit(XAccessible* self)
 {
@@ -42,7 +43,7 @@ XAccessible* XAccessible_createForWindow_ex(XMemoryType memory, XWindow* window)
     if (!window) return NULL;
     self = (XAccessible*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XAccessible);
     Set_Class_Memory(self, memory);
@@ -59,7 +60,7 @@ XAccessible* XAccessible_createForWidget_ex(XMemoryType memory, XWidget* widget)
     if (!widget) return NULL;
     self = (XAccessible*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XAccessible);
     Set_Class_Memory(self, memory);
@@ -79,7 +80,7 @@ XAccessible* XAccessible_createApplication_ex(XMemoryType memory)
 {
     XAccessible* self = (XAccessible*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XAccessible);
     Set_Class_Memory(self, memory);

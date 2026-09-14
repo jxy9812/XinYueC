@@ -12,11 +12,12 @@
 #include "XVarList.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #if XABSTRACTSCROLLAREA_ON
 #include "XAbstractScrollArea.h"
 #endif
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON
 
@@ -94,7 +95,7 @@ void XMdiSubWindow_init(XMdiSubWindow* self, XWidget* parent,
                         XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XMdiSubWindow);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -204,7 +205,7 @@ XVtable* XMdiArea_class_init(void)
 void XMdiArea_init(XMdiArea* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractScrollArea_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XMdiArea);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XLcdNumber.c
  * @brief      LCD 数码管控件实现（对标 Qt 6.8 QLCDNumber 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -13,10 +13,11 @@
 #include "XVarList.h"
 #include "XString.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
+#include "XStringUtils.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 
 #if XWIDGET_ON && XFRAME_ON && XLCDNUMBER_ON
 
@@ -29,12 +30,12 @@ static int xlcd_formatDec(double num, int ndigits, char* out, size_t cap,
     int nd = ndigits;
     int len = 0;
     do {
-        len = snprintf(out, cap, "%*.*g", ndigits, nd, num);
+        len = XSnprintf(out, cap, "%*.*g", ndigits, nd, num);
         if (len < 0) len = 0;
         if ((size_t)len >= cap) len = (int)cap - 1;
         /* Qt 将 "e+" 的 '+' 换为空格以省一位；本实现同样处理。 */
         {
-            char* e = strchr(out, 'e');
+            char* e = XStrchr(out, 'e');
             if (e && e[1] == '+') e[1] = ' ';
         }
     } while (nd-- && (int)len > ndigits);
@@ -58,13 +59,13 @@ static int xlcd_formatInt(int num, int base, int ndigits, char* out,
     }
     switch (base) {
     case XLcdNumberMode_Hex:
-        len = snprintf(out, cap, "%*x", ndigits, un);
+        len = XSnprintf(out, cap, "%*x", ndigits, un);
         break;
     case XLcdNumberMode_Dec:
-        len = snprintf(out, cap, "%*i", ndigits, num);
+        len = XSnprintf(out, cap, "%*i", ndigits, num);
         break;
     case XLcdNumberMode_Oct:
-        len = snprintf(out, cap, "%*o", ndigits, un);
+        len = XSnprintf(out, cap, "%*o", ndigits, un);
         break;
     case XLcdNumberMode_Bin: {
         char buf[42];
@@ -79,8 +80,8 @@ static int xlcd_formatInt(int num, int base, int ndigits, char* out,
         len = ndigits - nlen;
         if (len < 0) len = 0;
         if ((size_t)len < cap) {
-            memset(out, ' ', (size_t)len);
-            strncpy(out + len, p, cap - (size_t)len - 1);
+            XMemset(out, ' ', (size_t)len);
+            XStrncpy(out + len, p, cap - (size_t)len - 1);
             out[cap - 1] = '\0';
             len += nlen;
         } else {
@@ -99,7 +100,7 @@ static int xlcd_formatInt(int num, int base, int ndigits, char* out,
         if (first > out) {
             first[-1] = '-';
         } else if ((size_t)len + 1 < cap) {
-            memmove(out + 1, out, strlen(out) + 1);
+            XMemmove(out + 1, out, XStrlen(out) + 1);
             out[0] = '-';
             ++len;
         }
@@ -185,7 +186,7 @@ static const char* xlcd_segments(char ch)
 /** @brief 初始化显示串：ndigits 个空格，末位 '0'（对标构造默认显示）。 */
 static void xlcd_resetString(XLcdNumber* self)
 {
-    memset(self->m_digitStr, ' ', (size_t)self->m_digitCount);
+    XMemset(self->m_digitStr, ' ', (size_t)self->m_digitCount);
     if (self->m_digitCount > 0)
         self->m_digitStr[self->m_digitCount - 1] = '0';
     self->m_digitStr[self->m_digitCount] = '\0';
@@ -209,23 +210,23 @@ static void xlcd_internalSetString(XLcdNumber* self, const char* s)
     char buffer[XLCDNUMBER_STR_MAX];
     bool points[XLCDNUMBER_STR_MAX];
     int ndigits = self->m_digitCount;
-    int len = s ? (int)strlen(s) : 0;
+    int len = s ? (int)XStrlen(s) : 0;
     int i;
     int index;
-    memset(points, 0, sizeof(points));
-    memset(buffer, ' ', (size_t)(ndigits > 0 ? ndigits : 0));
+    XMemset(points, 0, sizeof(points));
+    XMemset(buffer, ' ', (size_t)(ndigits > 0 ? ndigits : 0));
     if (ndigits <= 0) {
         self->m_digitStr[0] = '\0';
-        memset(self->m_points, 0, sizeof(self->m_points));
+        XMemset(self->m_points, 0, sizeof(self->m_points));
         return;
     }
     if (!self->m_smallDecimalPoint) {
         if (len == ndigits) {
-            memcpy(buffer, s, (size_t)ndigits);
+            XMemcpy(buffer, s, (size_t)ndigits);
         } else if (len > ndigits) {
-            memcpy(buffer, s + (len - ndigits), (size_t)ndigits);
+            XMemcpy(buffer, s + (len - ndigits), (size_t)ndigits);
         } else {
-            memcpy(buffer + (ndigits - len), s, (size_t)len);
+            XMemcpy(buffer + (ndigits - len), s, (size_t)len);
         }
     } else {
         bool lastWasPoint = true;
@@ -258,9 +259,9 @@ static void xlcd_internalSetString(XLcdNumber* self, const char* s)
             }
         }
     }
-    memcpy(self->m_digitStr, buffer, (size_t)ndigits);
+    XMemcpy(self->m_digitStr, buffer, (size_t)ndigits);
     self->m_digitStr[ndigits] = '\0';
-    memcpy(self->m_points, points, sizeof(self->m_points));
+    XMemcpy(self->m_points, points, sizeof(self->m_points));
     XWidget_update((XWidget*)self);
 }
 
@@ -421,7 +422,7 @@ void XLcdNumber_init_2(XLcdNumber* self, unsigned numDigits,
                        XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XFrame_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XLcdNumber);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -575,8 +576,9 @@ void XLcdNumber_display(XLcdNumber* self, const char* utf8)
     /* 对标 display(const QString&)：值取字符串可解析前缀的数值，
        不可解析为 0；显示串忽略 mode/smallDecimalPoint。 */
     {
+        /* 前缀解析（对标 XStrtod）："12.5px"→12.5。 */
         char* end = NULL;
-        double v = strtod(s, &end);
+        double v = XStrtod(s, &end);
         self->m_value = (end && end != s) ? v : 0.0;
     }
     for (i = 0; s[i] != '\0' && i < XLCDNUMBER_STR_MAX - 1; ++i)

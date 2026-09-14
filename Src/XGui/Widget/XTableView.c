@@ -1,7 +1,8 @@
 ﻿#include "XTableView.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XTABLEWIDGET_ON || 1
 
@@ -21,7 +22,7 @@ XVtable* XTableView_class_init(void)
 void XTableView_init(XTableView* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractItemView_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XTableView);
     self->m_rowHeight = XTV_DEFAULT_ROW_HEIGHT;

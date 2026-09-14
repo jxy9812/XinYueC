@@ -4,10 +4,12 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XIconScaledPixmapCache.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XString.h"
 #include "XPixmapCache.h"
 #include <stdio.h>
-#include <string.h>
 
 static bool cacheKeyBuild(char* out, size_t outSize, const char* prefix,
                           const char* sourceKey, uint64_t paletteKey,
@@ -18,7 +20,7 @@ static bool cacheKeyBuild(char* out, size_t outSize, const char* prefix,
     if (!out || outSize == 0 || !prefix || !sourceKey || width <= 0 ||
         height <= 0 || dprThousand < 0)
         return false;
-    written = snprintf(out, outSize, "%s%s/%llu/%d/%d/%d/%d",
+    written = XSnprintf(out, outSize, "%s%s/%llu/%d/%d/%d/%d",
                        prefix, sourceKey,
                        (unsigned long long)paletteKey, (int)mode,
                        width, height, dprThousand);

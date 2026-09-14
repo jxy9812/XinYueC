@@ -1,10 +1,11 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XImageIOPlugin.c
  * @brief      XImageIOPlugin 图像 I/O 插件抽象类实现。
  ******************************************************************************/
 #include "XImageIOPlugin.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
-#include <string.h>
 
 static uint32_t VXImageIOPlugin_capabilities(const XImageIOPlugin* self,
                                              XIODevice* device, const XString* format)
@@ -48,7 +49,7 @@ XImageIOPlugin* XImageIOPlugin_create_ex(XMemoryType memory)
 void XImageIOPlugin_init(XImageIOPlugin* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XImageIOPlugin);
 }

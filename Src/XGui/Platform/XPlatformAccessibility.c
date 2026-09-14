@@ -1,10 +1,11 @@
-/** @file XPlatformAccessibility.c @brief 公共辅助功能桥接实现，无平台 API。 */
+﻿/** @file XPlatformAccessibility.c @brief 公共辅助功能桥接实现，无平台 API。 */
 #include "XPlatformAccessibility.h"
+#include "XMemory.h"
 
+#include "XAlgorithm.h"
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XWindow.h"
 #include "XWidget.h"
-#include <string.h>
 
 static XPlatformAccessibility* g_platformAccessibility;
 static unsigned int g_platformAccessibilityNotifyDepth;
@@ -36,7 +37,7 @@ XPlatformAccessibility* XPlatformAccessibility_create_ex(XMemoryType memory)
     XPlatformAccessibility* self = (XPlatformAccessibility*)XMemory_malloc(
         sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XPlatformAccessibility);
     Set_Class_Memory(self, memory);

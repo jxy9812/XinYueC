@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XKeySequenceEdit.c
  * @brief      快捷键捕获控件实现（对标 Qt 6.8 QKeySequenceEdit 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -7,14 +7,16 @@
  */
 
 #include "XKeySequenceEdit.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
 
 #if XWIDGET_ON && XKEYSEQUENCEEDIT_ON
 
@@ -25,13 +27,13 @@ static void xks_modPrefix(XKeyboardModifiers mods, char* out, size_t cap)
 {
     out[0] = 0;
     if (mods & XKeyboardModifier_ControlModifier)
-        strncat(out, "Ctrl+", cap - strlen(out) - 1);
+        XStrncat(out, "Ctrl+", cap - XStrlen(out) - 1);
     if (mods & XKeyboardModifier_ShiftModifier)
-        strncat(out, "Shift+", cap - strlen(out) - 1);
+        XStrncat(out, "Shift+", cap - XStrlen(out) - 1);
     if (mods & XKeyboardModifier_AltModifier)
-        strncat(out, "Alt+", cap - strlen(out) - 1);
+        XStrncat(out, "Alt+", cap - XStrlen(out) - 1);
     if (mods & XKeyboardModifier_MetaModifier)
-        strncat(out, "Meta+", cap - strlen(out) - 1);
+        XStrncat(out, "Meta+", cap - XStrlen(out) - 1);
 }
 
 /** @brief 将键码转为可读名称（对标 QKeySequence 的键名映射）。 */
@@ -65,12 +67,12 @@ static void xks_toString(const XKeySequence* seq, char* out, size_t cap)
     int i;
     out[0] = 0;
     if (!seq || seq->count == 0) return;
-    for (i = 0; i < seq->count && (size_t)cap > strlen(out) + 32; ++i) {
+    for (i = 0; i < seq->count && (size_t)cap > XStrlen(out) + 32; ++i) {
         char prefix[32];
-        if (i > 0) strncat(out, ", ", cap - strlen(out) - 1);
+        if (i > 0) XStrncat(out, ", ", cap - XStrlen(out) - 1);
         xks_modPrefix(seq->combos[i].modifiers, prefix, sizeof(prefix));
-        strncat(out, prefix, cap - strlen(out) - 1);
-        strncat(out, xks_keyName(seq->combos[i].key), cap - strlen(out) - 1);
+        XStrncat(out, prefix, cap - XStrlen(out) - 1);
+        XStrncat(out, xks_keyName(seq->combos[i].key), cap - XStrlen(out) - 1);
     }
 }
 
@@ -237,7 +239,7 @@ void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XKeySequenceEdit);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -281,7 +283,7 @@ void XKeySequenceEdit_setKeySequence(XKeySequenceEdit* self,
 void XKeySequenceEdit_clear(XKeySequenceEdit* self)
 {
     if (!self || self->m_sequence.count == 0) return;
-    memset(&self->m_sequence, 0, sizeof(XKeySequence));
+    XMemset(&self->m_sequence, 0, sizeof(XKeySequence));
     xkse_emitChanged(self);
     XWidget_update((XWidget*)self);
 }

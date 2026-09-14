@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XGuiApplication.c
  * @brief      XGuiApplication GUI 应用类实现（对标 Qt 6.8 QGuiApplication）。
  * @details    本文件实现 XGuiApplication 的全部公开 API：
@@ -38,6 +38,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XGuiApplication.h"
+
+#include "XAlgorithm.h"
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XPlatformAccessibility.h"
 #endif
@@ -53,7 +55,6 @@
 #if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
 #include "XWindowSystemInterface.h"
 #endif /* XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON */
-#include <string.h>
 
 #if XGUIAPPLICATION_ON
 
@@ -210,7 +211,7 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
 
     /* 先清空 GUI 尾部字段，再由基类初始化统一清零 XGuiApplication 中的
        XObject/XCoreApplication 部分，最后套用本类虚函数表。 */
-    memset(((XCoreApplication*)app) + 1, 0,
+    XMemset(((XCoreApplication*)app) + 1, 0,
            sizeof(XGuiApplication) - sizeof(XCoreApplication));
     XCoreApplication_init((XCoreApplication*)app, argc, argv);
     XClassSetVtable(app, XGuiApplication);

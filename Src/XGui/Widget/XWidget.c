@@ -52,9 +52,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XWidget.h"
+#include "XMemory.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XVarList.h"
-#include <string.h>
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
 #endif /* XWINDOWEVENT_ON */
@@ -482,7 +484,7 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
     win = (XWidgetWindow*)XMemory_malloc(sizeof(XWidgetWindow),
                                          XCLASS_DEFAULT_MEMORY_TYPE);
     if (!win) return NULL;
-    memset(win, 0, sizeof(XWidgetWindow));
+    XMemset(win, 0, sizeof(XWidgetWindow));
     XWindow_init(&win->m_base);
     XClassSetVtable(win, XWidgetWindow);
     Set_Class_Memory(win, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -671,7 +673,7 @@ static int XWidgetSizePolicy_ctz(uint32_t value)
 XWidgetSizePolicy XWidgetSizePolicy_create(void)
 {
     XWidgetSizePolicy policy;
-    memset(&policy, 0, sizeof(policy));
+    XMemset(&policy, 0, sizeof(policy));
     policy.m_horizontalPolicy = XWidgetSizePolicy_Preferred;
     policy.m_verticalPolicy = XWidgetSizePolicy_Preferred;
     policy.m_controlType = XWidgetSizePolicy_ctz(
@@ -1233,7 +1235,7 @@ XVtable* XWidget_class_init(void)
 void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XWidget));
+    XMemset(self, 0, sizeof(XWidget));
     XObject_init(&self->m_class);
     ((XObject*)self)->is_widget = 1;
     XClassSetVtable(self, XWidget);
@@ -1320,7 +1322,7 @@ XWidget* XWidget_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags fla
 {
     XWidget* self = (XWidget*)XMemory_malloc(sizeof(XWidget), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XWidget));
+    XMemset(self, 0, sizeof(XWidget));
     XWidget_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
@@ -1382,7 +1384,7 @@ static void XFocusProxy_register(XWidget* owner)
     e = (XFocusProxyEntry*)XMemory_malloc(sizeof(XFocusProxyEntry),
                                           XCLASS_DEFAULT_MEMORY_TYPE);
     if (!e) return;
-    memset(e, 0, sizeof(XFocusProxyEntry));
+    XMemset(e, 0, sizeof(XFocusProxyEntry));
     e->owner = owner;
     e->proxy = owner->m_focusProxy;
     e->next = g_focusProxyEntries;
@@ -1724,7 +1726,7 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     self->m_palette = other->m_palette;
 #endif
     /* 基类/父链沿用目标；源对象归零字段 */
-    memset((char*)other + sizeof(XObject), 0, sizeof(XWidget) - sizeof(XObject));
+    XMemset((char*)other + sizeof(XObject), 0, sizeof(XWidget) - sizeof(XObject));
     /* 上面的整体清零不能破坏嵌入式 XClass 对象的析构前提。移动后的
        源控件不再拥有资源，但仍必须能被 XWidget_delete_base 安全销毁。 */
     XFont_init(&other->m_font);
@@ -3873,7 +3875,7 @@ XCursor XWidget_cursor(const XWidget* self)
     return out;
 #else
     XCursor out;
-    memset(&out, 0, sizeof(out));
+    XMemset(&out, 0, sizeof(out));
     (void)self;
     return out;
 #endif /* XCURSOR_ON */

@@ -3,6 +3,10 @@
  * @brief      XImageReader 图像读取器实现（对标 Qt 6.8 QImageReader）
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XSystem.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageReader.h"
 #include "XImageCodec.h"
 #include "XImagePluginRegistry.h"
@@ -13,13 +17,10 @@
 #include "XVector.h"
 #include "XStringList.h"
 #include "XFile.h"
-#include <string.h>
 
 /* C 字符串兼容重载没有调用方缓冲区；上限覆盖 Qt 插件常见格式键，
  * 同时避免原先 16 字节缓存对合法长键的静默截断。 */
 #define XIMAGE_READER_FORMAT_BUFFER_SIZE 256
-#include <stdlib.h>
-#include <ctype.h>
 #include <stdio.h>
 #include <limits.h>
 
@@ -69,9 +70,9 @@ static bool XImageReader_parseAllocationEnvironment(const char* text, int* value
         bitProbe >>= 1;
     } while (bitProbe != 0);
     maxLength = (size_t)((bitCount + 2u) / 3u + 2u);
-    if (!text || !value || strlen(text) > maxLength) return false;
+    if (!text || !value || XStrlen(text) > maxLength) return false;
     cursor = text;
-    end = text + strlen(text);
+    end = text + XStrlen(text);
     while (cursor < end && XImageReader_asciiSpace(*cursor)) ++cursor;
     if (cursor < end && (*cursor == '+' || *cursor == '-')) {
         negative = *cursor == '-';
@@ -125,7 +126,7 @@ static int XImageReader_effectiveAllocationLimit(void)
 {
     if (!g_imageReaderAllocationEnvResolved)
     {
-        const char* text = getenv("QT_IMAGEIO_MAXALLOC");
+        const char* text = XSystem_environment("QT_IMAGEIO_MAXALLOC");
         int parsed = -1;
         if (XImageReader_parseAllocationEnvironment(text, &parsed))
             g_imageReaderAllocationEnvLimitMb = parsed;
@@ -216,7 +217,7 @@ static bool XImageReader_mimeEquals(const char* mimeType, const char* expected)
 {
     /* Qt QImageReaderWriterHelpers 按 QByteArray 值精确匹配 MIME；
        仅格式名本身按大小写不敏感处理。 */
-    return mimeType && expected && strcmp(mimeType, expected) == 0;
+    return mimeType && expected && XStrcmp(mimeType, expected) == 0;
 }
 
 static bool XImageReader_mimeIsBmp(const char* mimeType)
@@ -287,7 +288,7 @@ static bool XImageReader_explicitFormatMatchesContent(
        比较仅用于防止未来裁剪实现提供签名时破坏显式格式语义。 */
     {
         const char* value = XString_toUtf8(requested);
-        return value && strcmp(value, detected) == 0;
+        return value && XStrcmp(value, detected) == 0;
     }
 #endif
 }
@@ -438,7 +439,7 @@ static void XImageReader_loadText(XImageReader* self)
     if (!XImageIOHandler_supportsOption_base(data->m_handler,
                                              XImageIOHandlerOption_Description))
         return;
-    memset(&optionValue, 0, sizeof(optionValue));
+    XMemset(&optionValue, 0, sizeof(optionValue));
     if (!XImageIOHandler_option_base(data->m_handler,
                                      XImageIOHandlerOption_Description,
                                      &optionValue) || !optionValue.string)
@@ -568,18 +569,18 @@ static bool XImageReader_probeSize(XImageReader* self)
     if (self->m_data->m_sourceBytes) {
         size = XByteArray_size_base((const XContainer*)self->m_data->m_sourceBytes);
         if (size > sizeof(header)) size = sizeof(header);
-        memcpy(header, XByteArray_data(self->m_data->m_sourceBytes), size);
+        XMemcpy(header, XByteArray_data(self->m_data->m_sourceBytes), size);
     } else if (self->m_data->m_fileName) {
         fileObject = XFile_create_2(self->m_data->m_fileName);
         if (!fileObject || !XIODevice_open_base((XIODevice*)fileObject, XIODevice_ReadOnly)) { if (fileObject) XClass_delete_base((XClass*)fileObject); return false; }
         bytes = XIODevice_readAll_3((XIODevice*)fileObject); XIODevice_close_base((XIODevice*)fileObject); XClass_delete_base((XClass*)fileObject);
-        if (!bytes) return false; size = XByteArray_size_base((const XContainer*)bytes); if (size > sizeof(header)) size = sizeof(header); if (size) memcpy(header, XByteArray_data(bytes), size); XByteArray_delete_base((XClass*)bytes);
+        if (!bytes) return false; size = XByteArray_size_base((const XContainer*)bytes); if (size > sizeof(header)) size = sizeof(header); if (size) XMemcpy(header, XByteArray_data(bytes), size); XByteArray_delete_base((XClass*)bytes);
     } else if (self->m_data->m_device) {
         bytes = XIODevice_peek_3(self->m_data->m_device, (int64_t)sizeof(header));
         if (!bytes) return false;
         size = (size_t)XByteArray_size_base((const XContainer*)bytes);
         if (size > sizeof(header)) size = sizeof(header);
-        if (size) memcpy(header, XByteArray_data(bytes), size);
+        if (size) XMemcpy(header, XByteArray_data(bytes), size);
         XByteArray_delete_base((XClass*)bytes);
     } else {
         return false;
@@ -645,13 +646,13 @@ static XString* XImageReader_fileSuffix(const XString* fileName)
     if (!utf8) return NULL;
     /* QFileInfo::suffix() only examines the final path component.  A dot in
        a parent directory must never become the image format suffix. */
-    base = strrchr(utf8, '/');
+    base = XStrrchr(utf8, '/');
     {
-        const char* backslash = strrchr(utf8, '\\');
+        const char* backslash = XStrrchr(utf8, '\\');
         if (backslash && (!base || backslash > base)) base = backslash;
     }
     base = base ? base + 1 : utf8;
-    dot = strrchr(base, '.');
+    dot = XStrrchr(base, '.');
     if (!dot || !dot[1]) return NULL;
     suffix = XString_create_utf8(dot + 1);
     if (!suffix) return NULL;
@@ -678,20 +679,20 @@ static float XImageReader_fileDevicePixelRatio(const XString* fileName)
     /* Qt uses a function-local static initialized once, so later environment
        changes do not alter the reader behavior in the same process. */
     if (disableNxImageLoading < 0) {
-        const char* disable = getenv("QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING");
+        const char* disable = XSystem_environment("QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING");
         disableNxImageLoading = disable && disable[0] ? 1 : 0;
     }
     if (disableNxImageLoading) return 0.0f;
     utf8 = XString_toUtf8(fileName);
     if (!utf8) return 0.0f;
-    base = strrchr(utf8, '/');
+    base = XStrrchr(utf8, '/');
     {
-        const char* backslash = strrchr(utf8, '\\');
+        const char* backslash = XStrrchr(utf8, '\\');
         if (backslash && (!base || backslash > base)) base = backslash;
     }
     base = base ? base + 1 : utf8;
-    dot = strrchr(base, '.');
-    length = dot ? (size_t)(dot - base) : strlen(base);
+    dot = XStrrchr(base, '.');
+    length = dot ? (size_t)(dot - base) : XStrlen(base);
     if (length < 3 || base[length - 3] != '@' ||
         base[length - 1] != 'x' || base[length - 2] < '2' ||
         base[length - 2] > '9')
@@ -1029,13 +1030,13 @@ XImageReader* XImageReader_create_ex(XMemoryType memory)
 void XImageReader_init(XImageReader* self)
 {
     if (ISNULL(self, "XImageReader")) return;
-    memset(self, 0, sizeof(XImageReader));
+    XMemset(self, 0, sizeof(XImageReader));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XImageReader);
     self->m_data = (XImageReaderPrivate*)XMalloc_System(sizeof(XImageReaderPrivate));
     if (self->m_data)
     {
-        memset(self->m_data, 0, sizeof(XImageReaderPrivate));
+        XMemset(self->m_data, 0, sizeof(XImageReaderPrivate));
         XStringList_init(&self->m_data->m_textKeys);
         XStringList_init(&self->m_data->m_textValues);
         XString_init(&self->m_data->m_textCache);
@@ -1282,7 +1283,7 @@ XImageFormat XImageReader_imageFormatValue(const XImageReader* self)
         !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
                                              XImageIOHandlerOption_ImageFormat))
         return XImageFormat_Invalid;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (!XImageIOHandler_option_base(self->m_data->m_handler,
                                      XImageIOHandlerOption_ImageFormat,
                                      &value))
@@ -1421,7 +1422,7 @@ void XImageReader_setBackgroundColor(XImageReader* self, uint32_t color)
         !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
                                              XImageIOHandlerOption_BackgroundColor))
         return;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     value.color = color;
     XImageIOHandler_setOption_base(self->m_data->m_handler,
                                    XImageIOHandlerOption_BackgroundColor,
@@ -1435,7 +1436,7 @@ uint32_t XImageReader_backgroundColor(const XImageReader* self)
         !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
                                              XImageIOHandlerOption_BackgroundColor))
         return 0;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     return XImageIOHandler_option_base(self->m_data->m_handler,
                                        XImageIOHandlerOption_BackgroundColor,
                                        &value)
@@ -1461,7 +1462,7 @@ bool XImageReader_supportsAnimation(const XImageReader* self)
     if (!handler || !XImageIOHandler_supportsOption_base(
             handler, XImageIOHandlerOption_Animation))
         return false;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     return XImageIOHandler_option_base(handler,
                                        XImageIOHandlerOption_Animation,
                                        &value) && value.boolean;
@@ -1500,7 +1501,7 @@ static void XImageReader_applyAutoTransform(
             transformation == XImageIOHandlerTransformation_FlipAndRotate90);
     width = XImage_width(image);
     height = XImage_height(image);
-    memset(&matrix, 0, sizeof(matrix));
+    XMemset(&matrix, 0, sizeof(matrix));
     matrix.m11 = 0.0f;
     matrix.m22 = 0.0f;
     matrix.m33 = 1.0f;
@@ -1529,7 +1530,7 @@ XImageIOHandlerTransformation XImageReader_transformation(const XImageReader* se
         !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
                                              XImageIOHandlerOption_ImageTransformation))
         return XImageIOHandlerTransformation_None;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     return XImageIOHandler_option_base(self->m_data->m_handler,
                                        XImageIOHandlerOption_ImageTransformation,
                                        &value)
@@ -1556,7 +1557,7 @@ const XString* XImageReader_subType_const(const XImageReader* self)
         !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
                                              XImageIOHandlerOption_SubType))
         return NULL;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (!XImageIOHandler_option_base(self->m_data->m_handler,
                                      XImageIOHandlerOption_SubType, &value) ||
         !value.string || XContainer_isEmpty_base((const XContainer*)value.string))
@@ -1577,7 +1578,7 @@ XStringList* XImageReader_supportedSubTypes(const XImageReader* self)
         !XImageIOHandler_supportsOption_base(self->m_data->m_handler,
                                              XImageIOHandlerOption_SupportedSubTypes))
         return XImageReader_makeStringList(NULL, 0);
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (!XImageIOHandler_option_base(self->m_data->m_handler,
                                      XImageIOHandlerOption_SupportedSubTypes,
                                      &value) || !value.stringList)
@@ -1754,7 +1755,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
         supportScaledClipRect = !scaledClipRectNull &&
             XImageIOHandler_supportsOption_base(self->m_data->m_handler,
                                                 XImageIOHandlerOption_ScaledClipRect);
-        memset(&optionValue, 0, sizeof(optionValue));
+        XMemset(&optionValue, 0, sizeof(optionValue));
         if (supportScaledSize && (supportClipRect || clipRectNull)) {
             optionValue.size = scaledSize;
             XImageIOHandler_setOption_base(self->m_data->m_handler,
@@ -2080,7 +2081,7 @@ int XImageReader_currentImageNumber(const XImageReader* self)
 void XImageReader_currentImageRect(const XImageReader* self, XRect* out)
 {
     if (!out) return;
-    memset(out, 0, sizeof(XRect));
+    XMemset(out, 0, sizeof(XRect));
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     if (self && self->m_data && XImageReader_prepareAnimation((XImageReader*)self) &&
         self->m_data->m_animation) {
@@ -2153,7 +2154,7 @@ const char* XImageReader_imageFormat_2(const char* fileName)
     const char* utf8 = XString_toUtf8(result);
     static char format[XIMAGE_READER_FORMAT_BUFFER_SIZE];
     if (utf8) {
-        strncpy(format, utf8, sizeof(format) - 1u);
+        XStrncpy(format, utf8, sizeof(format) - 1u);
         format[sizeof(format) - 1u] = '\0';
     } else {
         format[0] = '\0';
@@ -2256,7 +2257,7 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
     /* SVG 仅通过 Qt SVG 图像处理器提供公共 imageFormat() 结果；裁剪掉
        XImageIOPlugin 后虽然 codec facade 仍可直接读写 SVG，但没有处理器
        可返回格式名，不能在静态查询中伪造支持。 */
-    if (result && (strcmp(result, "svg") == 0 || strcmp(result, "svgz") == 0))
+    if (result && (XStrcmp(result, "svg") == 0 || XStrcmp(result, "svgz") == 0))
         result = NULL;
 #endif
     return result ? XString_create_utf8(result) : XString_create();
@@ -2270,7 +2271,7 @@ const char* XImageReader_imageFormatDevice_2(XIODevice* device)
     value = XImageReader_imageFormatDevice(device);
     utf8 = XString_toUtf8(value);
     if (utf8) {
-        strncpy(format, utf8, sizeof(format) - 1);
+        XStrncpy(format, utf8, sizeof(format) - 1);
         format[sizeof(format) - 1] = '\0';
     } else {
         format[0] = '\0';

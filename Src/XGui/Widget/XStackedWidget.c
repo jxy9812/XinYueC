@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XStackedWidget.c
  * @brief      堆叠容器控件实现（对标 Qt 6.8 QStackedWidget 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -10,8 +10,8 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XGuiConfig.h"
-#include <string.h>
 
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XFRAME_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON && XSTACKEDWIDGET_ON
 
 /* ==================== 信号转发槽 ==================== */
@@ -68,7 +68,7 @@ void XStackedWidget_init(XStackedWidget* self, XWidget* parent,
                          XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XFrame_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XStackedWidget);
     fprintf(stderr, "[sw-dbg] init self=%p layout=%p szS=%d szL=%d vt=%p deinit=%p\n",

@@ -1,15 +1,17 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPerformanceOverlay.c
  * @brief      XGui 性能悬浮层控件实现。
  ******************************************************************************/
 #include "XPerformanceOverlay.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XEvent.h"
 #include "XFont.h"
 #include "XImage.h"
 #include "XMemory.h"
 #include <stdio.h>
-#include <string.h>
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
@@ -27,7 +29,7 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
     text[0] = '\0';
 #if XGUI_PERFORMANCE_OVERLAY_FPS_ON
     if (self->m_fpsVisible) {
-        n = snprintf(text + used, sizeof(text) - used, "FPS %.1f", self->m_fps);
+        n = XSnprintf(text + used, sizeof(text) - used, "FPS %.1f", self->m_fps);
         if (n > 0)
             used += (size_t)n < sizeof(text) - used
                         ? (size_t)n : sizeof(text) - used - 1;
@@ -36,7 +38,7 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
 #if XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON
     if (self->m_frameTimeVisible) {
         if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
-        n = snprintf(text + used, sizeof(text) - used, "帧耗时 %.2f/%.2f ms",
+        n = XSnprintf(text + used, sizeof(text) - used, "帧耗时 %.2f/%.2f ms",
                      self->m_frameMs, self->m_maxFrameMs);
         if (n > 0)
             used += (size_t)n < sizeof(text) - used
@@ -59,11 +61,11 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
                 uploadRate /= 1024.0;
                 uploadUnit = "MB/s";
             }
-            n = snprintf(text + used, sizeof(text) - used,
+            n = XSnprintf(text + used, sizeof(text) - used,
                          "下载 %.1f %s 上传 %.1f %s",
                          downloadRate, downloadUnit, uploadRate, uploadUnit);
         } else {
-            n = snprintf(text + used, sizeof(text) - used,
+            n = XSnprintf(text + used, sizeof(text) - used,
                          "下载 无 上传 无");
         }
         if (n > 0)
@@ -72,7 +74,7 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
     }
 #endif
     if (used == 0)
-        (void)snprintf(text, sizeof(text), "Perf disabled");
+        (void)XSnprintf(text, sizeof(text), "Perf disabled");
     else
         text[used] = '\0';
     XLabel_setText_2(&self->m_base, text);
@@ -190,7 +192,7 @@ void XPerformanceOverlay_init(XPerformanceOverlay* self, XWidget* parent,
 {
     XPalette palette;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XLabel_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XPerformanceOverlay);
     self->m_backgroundColor = 0xd9000000u;

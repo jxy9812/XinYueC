@@ -4,8 +4,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XMimeData.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XMIMEDATA_ON
 
@@ -146,12 +147,12 @@ XVtable* XMimeData_class_init(void)
 void XMimeData_init(XMimeData* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XMimeData));
+    XMemset(self, 0, sizeof(XMimeData));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XMimeData);
     self->m_data = (XMimeDataPrivate*)XMalloc_System(sizeof(XMimeDataPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XMimeDataPrivate));
+    XMemset(self->m_data, 0, sizeof(XMimeDataPrivate));
     XColor_init_rgb(&self->m_data->m_color, 0, 0, 0, 0);
     self->m_data->m_hasColor = false;
 }

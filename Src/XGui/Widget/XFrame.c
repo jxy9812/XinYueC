@@ -30,6 +30,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XFrame.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XEventType.h"
@@ -37,7 +39,6 @@
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
 #endif
-#include <string.h>
 
 #if XWIDGET_ON && XFRAME_ON
 
@@ -569,7 +570,7 @@ XVtable* XFrame_class_init(void)
 void XFrame_init(XFrame* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XFrame));
+    XMemset(self, 0, sizeof(XFrame));
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XFrame);
     self->m_frameStyle = XFrameShape_NoFrame | XFrameShadow_Plain;
@@ -586,7 +587,7 @@ XFrame* XFrame_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags
 {
     XFrame* self = (XFrame*)XMemory_malloc(sizeof(XFrame), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XFrame));
+    XMemset(self, 0, sizeof(XFrame));
     XFrame_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
@@ -786,7 +787,7 @@ void XFrame_initStyleOption(XFrame* self, XFrameStyleOption* option)
 {
     int shape, shadow;
     if (!self || !option) return;
-    memset(option, 0, sizeof(*option));
+    XMemset(option, 0, sizeof(*option));
     option->m_rect = XFrame_frameRect(self);
     shape = self->m_frameStyle & XFrameStyleMask_Shape;
     shadow = self->m_frameStyle & XFrameStyleMask_Shadow;

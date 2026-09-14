@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XGpuRenderBackend.c
  * @brief      XGui GPU 渲染后端通用层（可插拔驱动工厂 + 字形图集管理）。
  * @details    对齐 Qt QRhi 后端模式：本文件只做与图形 API 无关的通用
@@ -10,6 +10,9 @@
  *             XPainter 转回软件光栅，保证行为不变。
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XSystem.h"
+
+#include "XAlgorithm.h"
 #include "XGpuRenderBackend.h"
 #include "XGpuRenderDriver.h"
 
@@ -18,8 +21,6 @@
 #include "XImage.h"
 #include "XMemory.h"
 #include <limits.h>
-#include <stdlib.h>
-#include <string.h>
 
 /* ==================== 字形图集（阶段 3） ==================== */
 
@@ -111,7 +112,7 @@ static void xgpu_sync_upload_if_requested(XGpuRenderBackend* self)
     static int requested = -1;
     if (requested < 0)
     {
-        const char* value = getenv("XGUI_GPU_SYNC");
+        const char* value = XSystem_environment("XGUI_GPU_SYNC");
         requested = value && *value ? 1 : 0;
     }
     if (self && requested && self->m_syncTarget &&
@@ -132,7 +133,7 @@ static void xgpu_sync_readback_if_requested(XGpuRenderBackend* self)
     static int requested = -1;
     if (requested < 0)
     {
-        const char* value = getenv("XGUI_GPU_SYNC");
+        const char* value = XSystem_environment("XGUI_GPU_SYNC");
         requested = value && *value ? 1 : 0;
     }
     if (self && requested && self->m_syncTarget)
@@ -155,7 +156,7 @@ bool XGpuRenderBackend_uploadFrame(XGpuRenderBackend* self, XImage* target)
     static int requested = -1;
     if (requested < 0)
     {
-        const char* value = getenv("XGUI_GPU_SYNC");
+        const char* value = XSystem_environment("XGUI_GPU_SYNC");
         requested = value && *value ? 1 : 0;
     }
     if (!XGpuRenderBackend_isValid(self) || !requested || !target)
@@ -197,8 +198,8 @@ bool XGpuRenderBackend_requested(void)
 {
     const char* value;
     if (g_xgpuRequested >= 0) return g_xgpuRequested != 0;
-    value = getenv("XGUI_RENDER_BACKEND");
-    if (!value || !*value) value = getenv("XGPU_BACKEND");
+    value = XSystem_environment("XGUI_RENDER_BACKEND");
+    if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
     g_xgpuRequested =
         xgpu_text_equals(value, "gpu") ||
         xgpu_text_equals(value, "opengl") ||
@@ -427,8 +428,8 @@ unsigned XGpuRenderBackend_glyphAtlasHitCount(const XGpuRenderBackend* self)
  */
 static XGpuRenderDriverType xgpu_driver_type(void)
 {
-    const char* value = getenv("XGUI_RENDER_BACKEND");
-    if (!value || !*value) value = getenv("XGPU_BACKEND");
+    const char* value = XSystem_environment("XGUI_RENDER_BACKEND");
+    if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
     if (xgpu_text_equals(value, "vulkan"))
         return XGpuRenderDriver_Vulkan;
     return XGpuRenderDriver_OpenGL;

@@ -7,12 +7,13 @@
  *             接口，不调用平台 API 或标准 C 内存分配函数。
  ******************************************************************************/
 #include "XImageCodecInternal.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodec_config.h"
 #include "XMemory.h"
-#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON && XIMAGECODEC_XPM_ON
 
@@ -66,7 +67,7 @@ static char* xpm_nextString(const uint8_t* data, size_t size, size_t* pos,
     if (end >= size) return NULL;
     result = (char*)XMalloc_System(end - begin + 1u);
     if (!result) return NULL;
-    if (end > begin) memcpy(result, data + begin, end - begin);
+    if (end > begin) XMemcpy(result, data + begin, end - begin);
     result[end - begin] = '\0';
     *pos = end + 1u;
     *length = end - begin;
@@ -110,7 +111,7 @@ static bool xpm_parseHeader(const uint8_t* data, size_t size,
     size_t lineCursor = 0;
     bool ok;
     if (!data || !header || !pos || size < 6u ||
-        memcmp(data, "/* XPM", 6u) != 0)
+        XMemcmp(data, "/* XPM", 6u) != 0)
         return false;
     line = xpm_nextString(data, size, &cursor, &length);
     if (!line) return false;
@@ -130,12 +131,12 @@ static bool xpm_parseHeader(const uint8_t* data, size_t size,
 
 static bool xpm_equalWord(const char* value, size_t length, const char* word)
 {
-    size_t wordLength = word ? strlen(word) : 0;
+    size_t wordLength = word ? XStrlen(word) : 0;
     size_t i;
     if (!value || !word || length != wordLength) return false;
     for (i = 0; i < length; ++i)
-        if (tolower((unsigned char)value[i]) !=
-            tolower((unsigned char)word[i]))
+        if (XToLower((unsigned char)value[i]) !=
+            XToLower((unsigned char)word[i]))
             return false;
     return true;
 }
@@ -952,7 +953,7 @@ static bool xpm_parseColor(const char* value, size_t length,
         if (tokenEnd == tokenBegin) break;
         if (xpm_isPrefix(value + tokenBegin, tokenEnd - tokenBegin)) break;
         if (compactLength + tokenEnd - tokenBegin >= sizeof(compact)) break;
-        memcpy(compact + compactLength, value + tokenBegin, tokenEnd - tokenBegin);
+        XMemcpy(compact + compactLength, value + tokenBegin, tokenEnd - tokenBegin);
         compactLength += tokenEnd - tokenBegin;
     }
     colorLength = compactLength;
@@ -1036,7 +1037,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
     colorBytes = (size_t)header.m_colorCount * sizeof(*colors);
     colors = (XImageCodecXpmColor*)XMalloc_System(colorBytes);
     if (!colors) return false;
-    memset(colors, 0, colorBytes);
+    XMemset(colors, 0, colorBytes);
     for (i = 0; i < header.m_colorCount; ++i) {
         char* line;
         size_t length;
@@ -1051,7 +1052,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
             XFree_System(colors);
             return false;
         }
-        memcpy(colors[i].m_key, line, (size_t)header.m_charsPerPixel);
+        XMemcpy(colors[i].m_key, line, (size_t)header.m_charsPerPixel);
         colors[i].m_key[header.m_charsPerPixel] = '\0';
         colors[i].m_hash = xpm_hash(colors[i].m_key,
                                     (size_t)header.m_charsPerPixel);
@@ -1108,13 +1109,13 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
 static void xpm_makeName(const char* name, char* output, size_t capacity)
 {
     const char* begin = name && name[0] ? name : "image";
-    const char* slash = strrchr(begin, '/');
-    const char* backslash = strrchr(begin, '\\');
+    const char* slash = XStrrchr(begin, '/');
+    const char* backslash = XStrrchr(begin, '\\');
     const char* dot;
     size_t length = 0;
     if (backslash && (!slash || backslash > slash)) slash = backslash;
     if (slash) begin = slash + 1;
-    dot = strrchr(begin, '.');
+    dot = XStrrchr(begin, '.');
     while (*begin && begin != dot && length + 1u < capacity) {
         unsigned char value = (unsigned char)*begin++;
         output[length++] = ((value >= 'a' && value <= 'z') ||
@@ -1124,7 +1125,7 @@ static void xpm_makeName(const char* name, char* output, size_t capacity)
     }
     if (!length && capacity > 1u) output[length++] = 'i';
     if (length && output[0] >= '0' && output[0] <= '9' && length + 1u < capacity) {
-        memmove(output + 1, output, length);
+        XMemmove(output + 1, output, length);
         output[0] = '_';
         ++length;
     }
@@ -1246,9 +1247,9 @@ bool XImageCodecInternal_encodeXpmNamed(const XImage* image, const char* name,
         return false;
     }
     xpm_makeName(name, identifier, sizeof(identifier));
-    if (snprintf(line, sizeof(line), "/* XPM */\nstatic char *%s[]={\n\"%d %d %u %d\"",
+    if (XSnprintf(line, sizeof(line), "/* XPM */\nstatic char *%s[]={\n\"%d %d %u %d\"",
                  identifier, width, height, (unsigned)colorCount, cpp) <= 0 ||
-        !XImageCodecInternal_appendBytes(out, line, strlen(line))) {
+        !XImageCodecInternal_appendBytes(out, line, XStrlen(line))) {
         XFree_System(paletteOrder);
         XFree_System(colors);
         return false;
@@ -1259,12 +1260,12 @@ bool XImageCodecInternal_encodeXpmNamed(const XImage* image, const char* name,
         bool transparent = preserveAlpha && ((color >> 24) & 0xffu) == 0u;
         xpm_colorName(cpp, (uint64_t)paletteIndex, key, sizeof(key));
         if (transparent) {
-            if (snprintf(line, sizeof(line), ",\n\"%s c None\"", key) <= 0) {
+            if (XSnprintf(line, sizeof(line), ",\n\"%s c None\"", key) <= 0) {
                 XFree_System(paletteOrder);
                 XFree_System(colors);
                 return false;
             }
-        } else if (snprintf(line, sizeof(line), ",\n\"%s c #%02x%02x%02x\"", key,
+        } else if (XSnprintf(line, sizeof(line), ",\n\"%s c #%02x%02x%02x\"", key,
                             (unsigned)((color >> 16) & 0xffu),
                             (unsigned)((color >> 8) & 0xffu),
                             (unsigned)(color & 0xffu)) <= 0) {
@@ -1272,7 +1273,7 @@ bool XImageCodecInternal_encodeXpmNamed(const XImage* image, const char* name,
             XFree_System(colors);
             return false;
         }
-        if (!XImageCodecInternal_appendBytes(out, line, strlen(line))) {
+        if (!XImageCodecInternal_appendBytes(out, line, XStrlen(line))) {
             XFree_System(paletteOrder);
             XFree_System(colors);
             return false;

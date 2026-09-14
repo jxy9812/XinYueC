@@ -1,13 +1,14 @@
 ﻿#include "XCategoryAxis.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
 void XCategoryAxis_init(XCategoryAxis* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     self->m_visible = true;
     self->m_gridVisible = true;
 }

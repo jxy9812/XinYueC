@@ -31,6 +31,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformIntegration.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XVector.h"
@@ -49,7 +51,6 @@
 #if XGUIAPPLICATION_ON
 #include "XGuiApplication.h"
 #endif /* XGUIAPPLICATION_ON */
-#include <string.h>
 
 #if XPLATFORMINTEGRATION_ON
 
@@ -170,12 +171,12 @@ XVtable* XPlatformIntegration_class_init(void)
 void XPlatformIntegration_init(XPlatformIntegration* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XPlatformIntegration));
+    XMemset(self, 0, sizeof(XPlatformIntegration));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XPlatformIntegration);
     self->m_data = (XPlatformIntegrationPrivate*)XMalloc_System(sizeof(XPlatformIntegrationPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XPlatformIntegrationPrivate));
+    XMemset(self->m_data, 0, sizeof(XPlatformIntegrationPrivate));
 
     self->m_data->m_themeName = XString_create_utf8("embedded");
     self->m_data->m_fontDatabase = XPlatformFontDatabase_create();

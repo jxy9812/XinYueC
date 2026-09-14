@@ -1,9 +1,10 @@
 ﻿#include "XAreaSeries.h"
+
+#include "XAlgorithm.h"
 #include "XAbstractSeries.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -38,7 +39,7 @@ XVtable* XAreaSeries_class_init(void)
 void XAreaSeries_init(XAreaSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractSeries_init(&self->m_base);
     XClassSetVtable(self, XAreaSeries);
     XAbstractSeries_setName(&self->m_base, "area");

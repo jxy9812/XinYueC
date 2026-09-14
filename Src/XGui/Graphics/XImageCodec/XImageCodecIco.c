@@ -7,12 +7,13 @@
  *             1/4/8/24/32 位无压缩 DIB，编码统一写出一个 32 位 DIB 条目。
  */
 #include "XImageCodec_config.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodecInternal.h"
 #include "XImage.h"
 #include "XMemory.h"
 #include <limits.h>
 #include <stdint.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON && XIMAGECODEC_ICO_ON
 
@@ -271,7 +272,7 @@ bool XImageCodecInternal_decodeIco(const uint8_t* data, size_t size, XImage* out
     payload = data + imageOffset;
 #if XIMAGECODEC_PNG_ON
     if (bytesInRes >= 8u &&
-        memcmp(payload, "\x89PNG\r\n\x1a\n", 8u) == 0)
+        XMemcmp(payload, "\x89PNG\r\n\x1a\n", 8u) == 0)
         return XImageCodecInternal_decodePng(payload, (size_t)bytesInRes, out);
 #endif
     return ico_decodeDib(payload, (size_t)bytesInRes, entryWidth, entryHeight,
@@ -326,7 +327,7 @@ bool XImageCodecInternal_encodeIco(const XImage* image, XByteArray* out)
         if (hasScaled) XImage_deinit_base(&scaled);
         return false;
     }
-    memset(bytes, 0, total);
+    XMemset(bytes, 0, total);
     XImageCodecInternal_writeU16LE(bytes, 0u);
     XImageCodecInternal_writeU16LE(bytes + 2u, 1u);
     XImageCodecInternal_writeU16LE(bytes + 4u, 1u);
@@ -361,7 +362,7 @@ bool XImageCodecInternal_encodeIco(const XImage* image, XByteArray* out)
                            colorStride * (size_t)fileY;
             uint8_t* mask = dib + ICO_DIB_HEADER_SIZE + colorBytes +
                             maskStride * (size_t)fileY;
-            memset(mask, 0xff, maskStride);
+            XMemset(mask, 0xff, maskStride);
             for (int x = 0; x < width; ++x) {
                 uint32_t color = XImage_pixel(source, x, sourceY);
                 uint8_t* pixel = row + (size_t)x * 4u;

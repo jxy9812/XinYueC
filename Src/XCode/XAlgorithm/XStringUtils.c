@@ -1,4 +1,4 @@
-﻿#include "XNumStrConv.h"
+﻿#include "XStringUtils.h"
 #include <string.h>
 #include <math.h>
 static float pow10_float(int n);
@@ -1100,4 +1100,278 @@ static float pow10_float(int n) {
         }
     }
     return result;
+}
+
+/* ==================== 通用字符串/字符原语实现 ==================== */
+
+size_t XStrlen(const char* str)
+{
+	return str ? __builtin_strlen(str) : (size_t)0;
+}
+
+int XStrcmp(const char* lhs, const char* rhs)
+{
+	return __builtin_strcmp(lhs, rhs);
+}
+
+int XStrncmp(const char* lhs, const char* rhs, size_t n)
+{
+	return __builtin_strncmp(lhs, rhs, n);
+}
+
+const char* XStrstr(const char* haystack, const char* needle)
+{
+	size_t nl;
+	if (!haystack || !needle) return haystack;
+	nl = XStrlen(needle);
+	if (nl == 0) return haystack;
+	for (; *haystack; ++haystack) {
+		size_t i;
+		for (i = 0; i < nl; ++i)
+			if (haystack[i] != needle[i]) break;
+		if (i == nl) return haystack;
+	}
+	return NULL;
+}
+
+const char* XStrchr(const char* str, int ch)
+{
+	if (!str) return NULL;
+	for (; *str; ++str)
+		if (*str == (char)ch) return str;
+	return (ch == '\0') ? str : NULL;
+}
+
+const char* XStrrchr(const char* str, int ch)
+{
+	const char* last = NULL;
+	if (!str) return NULL;
+	for (; *str; ++str)
+		if (*str == (char)ch) last = str;
+	if (ch == '\0') last = str;
+	return last;
+}
+
+char* XStrcpy(char* dest, const char* src)
+{
+	char* d = dest;
+	if (!dest || !src) return dest;
+	while ((*d++ = *src++) != '\0') {}
+	return dest;
+}
+
+char* XStrncpy(char* dest, const char* src, size_t n)
+{
+	size_t i = 0;
+	if (!dest) return dest;
+	if (src) {
+		for (; i < n && src[i]; ++i) dest[i] = src[i];
+	}
+	for (; i < n; ++i) dest[i] = '\0';
+	return dest;
+}
+
+char* XStrcat(char* dest, const char* src)
+{
+	char* d = dest;
+	if (!dest || !src) return dest;
+	while (*d) ++d;
+	while ((*d++ = *src++) != '\0') {}
+	return dest;
+}
+
+char* XStrncat(char* dest, const char* src, size_t n)
+{
+	char* d = dest;
+	size_t i = 0;
+	if (!dest || !src) return dest;
+	while (*d) ++d;
+	while (i < n && src[i]) {
+		d[i] = src[i];
+		++i;
+	}
+	d[i] = '\0';
+	return dest;
+}
+
+int XIsSpace(int ch)
+{
+	return ch == ' ' || (ch >= '\t' && ch <= '\r');
+}
+
+int XIsDigit(int ch)
+{
+	return ch >= '0' && ch <= '9';
+}
+
+int XIsAlpha(int ch)
+{
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+
+int XIsAlnum(int ch)
+{
+	return XIsAlpha(ch) || XIsDigit(ch);
+}
+
+int XToLower(int ch)
+{
+	return (ch >= 'A' && ch <= 'Z') ? ch + ('a' - 'A') : ch;
+}
+
+int XToUpper(int ch)
+{
+	return (ch >= 'a' && ch <= 'z') ? ch - ('a' - 'A') : ch;
+}
+
+int XStrcasecmp(const char* lhs, const char* rhs)
+{
+	if (!lhs || !rhs) return lhs ? 1 : (rhs ? -1 : 0);
+	while (*lhs && *rhs) {
+		int d = XToLower((unsigned char)*lhs) -
+			XToLower((unsigned char)*rhs);
+		if (d) return d;
+		++lhs;
+		++rhs;
+	}
+	return (unsigned char)*lhs - (unsigned char)*rhs;
+}
+
+int XStrncasecmp(const char* lhs, const char* rhs, size_t n)
+{
+	if (!lhs || !rhs) return lhs ? 1 : (rhs ? -1 : 0);
+	while (n > 0 && *lhs && *rhs) {
+		int d = XToLower((unsigned char)*lhs) -
+			XToLower((unsigned char)*rhs);
+		if (d) return d;
+		++lhs;
+		++rhs;
+		--n;
+	}
+	return n ? (unsigned char)*lhs - (unsigned char)*rhs : 0;
+}
+
+
+long XStrtol(const char* str, char** endptr, int base)
+{
+	long sign = 1;
+	long value = 0;
+	const char* start;
+	if (!str) {
+		if (endptr) *endptr = NULL;
+		return 0;
+	}
+	while (XIsSpace((unsigned char)*str)) ++str;
+	if (*str == '-') {
+		sign = -1;
+		++str;
+	} else if (*str == '+') {
+		++str;
+	}
+	if (base == 0) base = 10;
+	start = str;
+	while (*str) {
+		int d;
+		if (XIsDigit((unsigned char)*str)) d = *str - '0';
+		else if (XIsAlpha((unsigned char)*str))
+			d = XToLower((unsigned char)*str) - 'a' + 10;
+		else break;
+		if (d >= base) break;
+		value = value * base + d;
+		++str;
+	}
+	if (endptr) *endptr = (char*)(str == start ? start : str);
+	return sign * value;
+}
+
+
+double XStrtod(const char* str, char** endptr)
+{
+	double sign = 1.0;
+	double value = 0.0;
+	double frac = 0.0;
+	double scale = 1.0;
+	int expSign = 1;
+	int expVal = 0;
+	const char* start;
+	if (!str) {
+		if (endptr) *endptr = NULL;
+		return 0.0;
+	}
+	while (XIsSpace((unsigned char)*str)) ++str;
+	if (*str == '-') {
+		sign = -1.0;
+		++str;
+	} else if (*str == '+') {
+		++str;
+	}
+	start = str;
+	while (XIsDigit((unsigned char)*str)) {
+		value = value * 10.0 + (*str - '0');
+		++str;
+	}
+	if (*str == '.') {
+		++str;
+		while (XIsDigit((unsigned char)*str)) {
+			frac = frac * 10.0 + (*str - '0');
+			scale *= 10.0;
+			++str;
+		}
+	}
+	value += frac / scale;
+	if (*str == 'e' || *str == 'E') {
+		const char* e = str + 1;
+		if (*e == '-' || *e == '+') {
+			expSign = (*e == '-') ? -1 : 1;
+			++e;
+		}
+		if (XIsDigit((unsigned char)*e)) {
+			str = e;
+			while (XIsDigit((unsigned char)*str)) {
+				expVal = expVal * 10 + (*str - '0');
+				++str;
+			}
+			while (expVal-- > 0)
+				value = (expSign < 0) ? value / 10.0 : value * 10.0;
+		}
+	}
+	if (endptr) *endptr = (char*)(str == start ? start : str);
+	return sign * value;
+}
+
+
+/* ==================== XSnprintf（包装标准库 vsnprintf） ==================== */
+
+#include <stdarg.h>
+#include <stdio.h>
+
+int XSnprintf(char* buf, size_t size, const char* format, ...)
+{
+	va_list args;
+	int n;
+	if (!buf || size == 0 || !format) {
+		/* 无缓冲区时也需消耗参数并返回所需长度（对标 snprintf）。 */
+		va_start(args, format);
+		n = vsnprintf(NULL, 0, format, args);
+		va_end(args);
+		return n;
+	}
+	va_start(args, format);
+	n = vsnprintf(buf, size, format, args);
+	va_end(args);
+	return n;
+}
+
+
+/* ==================== XSscanf（包装标准库 vsscanf） ==================== */
+
+int XSscanf(const char* str, const char* format, ...)
+{
+	va_list args;
+	int n;
+	if (!str || !format) return -1;
+	va_start(args, format);
+	n = vsscanf(str, format, args);
+	va_end(args);
+	return n;
 }

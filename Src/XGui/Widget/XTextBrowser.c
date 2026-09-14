@@ -11,8 +11,8 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
-#include <string.h>
 
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON
 
 static void xtb_emitStr(XTextBrowser* self, size_t signal, const char* text);
@@ -117,7 +117,7 @@ XVtable* XTextBrowser_class_init(void)
 void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XTextEdit_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XTextBrowser);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

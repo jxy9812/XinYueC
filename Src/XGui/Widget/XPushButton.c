@@ -28,6 +28,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPushButton.h"
+
+#include "XAlgorithm.h"
 #include "XAbstractButton_Protected.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -40,7 +42,6 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XAlignment.h"
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
 
@@ -165,7 +166,7 @@ void XPushButton_init(XPushButton* self, XWidget* parent, XWidgetFlags flags)
 {
     XWidgetSizePolicy policy;
     if (!self) return;
-    memset(self, 0, sizeof(XPushButton));
+    XMemset(self, 0, sizeof(XPushButton));
     /* 基类初始化：文本/图标/状态位/定时器/调色板角色/焦点策略全部由
        XAbstractButton_init 设置 Qt 默认值。 */
     XAbstractButton_init(&self->m_base, parent, flags);
@@ -186,7 +187,7 @@ XPushButton* XPushButton_create_ex(XMemoryType memory, XWidget* parent,
 {
     XPushButton* self = (XPushButton*)XMemory_malloc(sizeof(XPushButton), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XPushButton));
+    XMemset(self, 0, sizeof(XPushButton));
     XPushButton_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

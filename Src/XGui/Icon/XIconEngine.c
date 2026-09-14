@@ -3,6 +3,8 @@
  * @brief      XIconEngine 图标引擎抽象类实现。
  ******************************************************************************/
 #include "XIconEngine.h"
+
+#include "XAlgorithm.h"
 #include "XIcon.h"
 #include "XMemory.h"
 #include "XObject.h"
@@ -10,7 +12,6 @@
 #include "XPainter.h"
 #include <limits.h>
 #include <math.h>
-#include <string.h>
 
 static void VXIconEngine_paint(const XIconEngine* self, void* painter, const XRect* rect,
                                XIconMode mode, XIconState state)
@@ -190,7 +191,7 @@ XIconEngine* XIconEngine_create_ex(XMemoryType memory)
 void XIconEngine_init(XIconEngine* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XIconEngine);
 }

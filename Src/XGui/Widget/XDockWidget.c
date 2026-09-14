@@ -5,9 +5,10 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XPainter.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XDOCKWIDGET_ON
 
@@ -138,7 +139,7 @@ void XDockWidget_init(XDockWidget* self, const char* utf8Title,
                       XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XDockWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

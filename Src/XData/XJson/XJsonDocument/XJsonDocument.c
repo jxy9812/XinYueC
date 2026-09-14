@@ -9,7 +9,7 @@
 #include "XStack.h"
 #include "XMemory.h"
 #include "XVariantTypeOps.h"
-#include "XNumStrConv.h"
+#include "XStringUtils.h"
 #include <ctype.h>
 #include <inttypes.h>
 #include <math.h>

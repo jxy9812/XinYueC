@@ -1,8 +1,9 @@
 ﻿#include "XCommonStyle.h"
+#include "XStringUtils.h"
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XClass.h"
 #include "XPainter.h"
-#include <string.h>
 #include <math.h>
 
 #if XSTYLE_ON
@@ -1060,7 +1061,7 @@ static void xcs_drawGroupBox(XStyle* self, const XStyleOption* option,
     if (base == 0) base = 0xFFFFFFFFu;
     titleH = 16;
     /* 标题文本区（勾选框占位在标题左缘）。 */
-    textW = option->m_text ? (int)strlen(option->m_text) : 0;
+    textW = option->m_text ? (int)XStrlen(option->m_text) : 0;
     textRect.x = r.x + 6 + (option->m_checkable ? 16 : 0);
     textRect.y = r.y;
     textRect.width = textW;
@@ -1324,13 +1325,18 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
     travel = contentLen - handleLen;
     handlePos = (range > 0 && travel > 0)
         ? (option->m_sliderValue - option->m_sliderMin) * travel / range : 0;
-    /* groove 矩形（横条垂直居中 8px，与 XScrollBar 布局一致）。 */
-    if (horizontal) {
-        XRect_init(&groove, 0, (rect.height - 8) / 2,
-                   rect.width, 8);
-    } else {
-        XRect_init(&groove, (rect.width - 8) / 2, 0,
-                   8, rect.height);
+    /* groove 矩形（横条垂直居中 8px，与 XScrollBar 布局一致；
+       显示按钮时扣除两端按钮区）。 */
+    {
+        int btn = (option->m_scrollSubLine || option->m_scrollAddLine)
+            ? 16 : 0;
+        if (horizontal) {
+            XRect_init(&groove, btn, (rect.height - 8) / 2,
+                       rect.width - btn * 2, 8);
+        } else {
+            XRect_init(&groove, (rect.width - 8) / 2, btn,
+                       8, rect.height - btn * 2);
+        }
     }
     /* 1) groove 渐变（darker 107/105/105/107 四点）。 */
     for (i = 0; i < (horizontal ? groove.height : groove.width); ++i) {
@@ -1406,6 +1412,49 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
                       slider.y + slider.height - 1);
     XPainter_drawLine(painter, slider.x, slider.y + slider.height - 1,
                       slider.x, slider.y);
+    /* 6b) 两端步进按钮（SC_ScrollBarSubLine/AddLine：gradientStop 填充 +
+     *     alphaOutline 边框 + 方向箭头，按下加深）。 */
+    if (option->m_scrollSubLine || option->m_scrollAddLine) {
+        int bw = 16;
+        XRect grow = option->m_rect;
+        XRect b1;
+        XRect b2;
+        uint32_t btnFill = option->m_scrollActiveSub
+            ? xcs_merged(gradStart, gradStop, 40) : gradStop;
+        if (horizontal) {
+            XRect_init(&b1, grow.x, grow.y, bw, grow.height);
+            XRect_init(&b2, grow.x + grow.width - bw, grow.y, bw,
+                       grow.height);
+        } else {
+            XRect_init(&b1, grow.x, grow.y, grow.width, bw);
+            XRect_init(&b2, grow.x, grow.y + grow.height - bw, grow.width,
+                       bw);
+        }
+        if (option->m_scrollSubLine) {
+            XStyleOption arrow = *option;
+            XPainter_fillRect(painter, &b1, btnFill);
+            XPainter_setPen(painter, alphaOutline);
+            XPainter_drawLine(painter, b1.x, b1.y,
+                              b1.x + b1.width - 1, b1.y);
+            arrow.m_type = horizontal ? XStylePE_IndicatorArrowLeft
+                                      : XStylePE_IndicatorArrowUp;
+            arrow.m_rect = b1;
+            xcs_drawArrow(self, &arrow, painter,
+                          horizontal ? 2 : 1);
+        }
+        if (option->m_scrollAddLine) {
+            XStyleOption arrow = *option;
+            XPainter_fillRect(painter, &b2, btnFill);
+            XPainter_setPen(painter, alphaOutline);
+            XPainter_drawLine(painter, b2.x, b2.y,
+                              b2.x + b2.width - 1, b2.y);
+            arrow.m_type = horizontal ? XStylePE_IndicatorArrowRight
+                                      : XStylePE_IndicatorArrowDown;
+            arrow.m_rect = b2;
+            xcs_drawArrow(self, &arrow, painter,
+                          horizontal ? 3 : 0);
+        }
+    }
     /* 7) innerContrastLine 内框（adjusted(1,1,-1,-1)）。 */
     XPainter_drawLine(painter, slider.x + 1, slider.y + 1,
                       slider.x + slider.width - 2, slider.y + 1);
@@ -1417,6 +1466,53 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
                       slider.y + slider.height - 2);
     XPainter_drawLine(painter, slider.x + 1, slider.y + slider.height - 2,
                       slider.x + 1, slider.y + 1);
+}
+
+
+/** @brief 绘制工具按钮（CC_ToolButton：AutoRaise 面板 + 图标/文本/箭头）。
+ *
+ *  完整对标 QCommonStyle::drawComplexControl(CC_ToolButton)：
+ *  非按下/AutoRaise 时不画面板（PE_PanelButtonTool 条件分派），
+ *  箭头经 PE_IndicatorArrow*，文本/图标居中组合。
+ */
+static void xcs_drawToolButton(XStyle* self, const XStyleOption* option,
+                               XPainter* painter, const XWidget* widget)
+{
+    XStyleOption bevel = *option;
+    bool autoRaise = false;
+    bool sunken;
+    bool hover;
+    if (!option || !painter) return;
+    autoRaise = (option->m_state & XStyleState_AutoRaise) != 0;
+    sunken = (option->m_state & XStyleState_Sunken) != 0;
+    hover = (option->m_state & XStyleState_MouseOver) != 0;
+    bevel.m_type = XStylePE_PanelButtonTool;
+    bevel.m_rect = option->m_rect;
+    if (!autoRaise || sunken || (hover && !sunken)) {
+        xcs_drawBarPanel(self, &bevel, painter);
+    }
+    /* 箭头（SP_ArrowLeft/Right 等价）：居中绘制。 */
+    if (option->m_checkState == 1) { /* 复用 checkState 传箭头方向 0-3。 */
+        XStyleOption arrow = *option;
+        int dir = option->m_progressMin;
+        int s = 5;
+        XRect ar;
+        uint32_t fg = xcs_buttonText(option);
+        int cx = option->m_rect.x + option->m_rect.width / 2;
+        int cy = option->m_rect.y + option->m_rect.height / 2;
+        (void)s;
+        XRect_init(&ar, cx - 4, cy - 4, 8, 8);
+        arrow.m_type = XStylePE_IndicatorArrowDown;
+        arrow.m_rect = ar;
+        switch (dir) {
+        case 0: arrow.m_type = XStylePE_IndicatorArrowUp; break;
+        case 1: arrow.m_type = XStylePE_IndicatorArrowDown; break;
+        case 2: arrow.m_type = XStylePE_IndicatorArrowLeft; break;
+        default: arrow.m_type = XStylePE_IndicatorArrowRight; break;
+        }
+        XPainter_setPen(painter, fg);
+        xcs_drawArrow(self, &arrow, painter, dir);
+    }
 }
 
 static void VXCommonStyle_drawComplexControl(XStyle* self, int cc,
@@ -1442,6 +1538,9 @@ static void VXCommonStyle_drawComplexControl(XStyle* self, int cc,
         break;
     case XStyleCC_ComboBox:
         xcs_drawComboBox(self, option, painter, widget);
+        break;
+    case XStyleCC_ToolButton:
+        xcs_drawToolButton(self, option, painter, widget);
         break;
     default:
         break;
@@ -1646,6 +1745,167 @@ static void xcs_drawDockTitle(XStyle* self, const XStyleOption* option,
                                         r.width, 1}, windowText);
 }
 
+
+/** @brief 绘制分隔条（CE_Splitter：Mid 底 + 中央把手点线）。 */
+static void xcs_drawSplitter(XStyle* self, const XStyleOption* option,
+                             XPainter* painter, const XWidget* widget)
+{
+    uint32_t mid;
+    uint32_t light;
+    XRect r;
+    int i;
+    (void)widget;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    mid = xcs_color(option, XPaletteColorRole_Mid);
+    light = xcs_color(option, XPaletteColorRole_Light);
+    if (mid == 0) mid = 0xFFA0A0A0u;
+    if (light == 0) light = 0xFFE0E0E0u;
+    XPainter_fillRect(painter, &r, mid);
+    if (option->m_horizontal) {
+        /* 垂直分隔条（水平布局）：中央竖排 3 点。 */
+        for (i = -1; i <= 1; ++i)
+            XPainter_fillRect(painter, &(XRect){r.x + r.width / 2 - 1,
+                                                r.y + r.height / 2 + i * 4 - 1,
+                                                3, 3}, light);
+    } else {
+        for (i = -1; i <= 1; ++i)
+            XPainter_fillRect(painter, &(XRect){r.x + r.width / 2 + i * 4 - 1,
+                                                r.y + r.height / 2 - 1,
+                                                3, 3}, light);
+    }
+}
+
+/** @brief 绘制尺寸手柄（CE_SizeGrip：右下角斜点阵）。 */
+static void xcs_drawSizeGrip(XStyle* self, const XStyleOption* option,
+                             XPainter* painter, const XWidget* widget)
+{
+    uint32_t mid;
+    uint32_t light;
+    XRect r;
+    int i;
+    int j;
+    (void)widget;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    mid = xcs_color(option, XPaletteColorRole_Mid);
+    light = xcs_color(option, XPaletteColorRole_Light);
+    if (mid == 0) mid = 0xFFA0A0A0u;
+    if (light == 0) light = 0xFFE0E0E0u;
+    XPainter_fillRect(painter, &r, mid);
+    /* 斜点阵（对标 QStyle::drawPrimitive CE_SizeGrip 的 dot matrix）。 */
+    for (i = 0; i < 4; ++i)
+        for (j = 0; j <= i; ++j) {
+            int x = r.x + r.width - 4 - i * 4;
+            int y = r.y + r.height - 4 - j * 4;
+            XPainter_fillRect(painter, &(XRect){x, y, 2, 2}, light);
+        }
+}
+
+/** @brief 绘制橡皮筋（CE_RubberBand：半透明蓝填充 + 边框）。 */
+static void xcs_drawRubberBand(XStyle* self, const XStyleOption* option,
+                               XPainter* painter, const XWidget* widget)
+{
+    uint32_t highlight;
+    uint32_t fill;
+    XRect r;
+    (void)widget;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    highlight = xcs_color(option, XPaletteColorRole_Highlight);
+    if (highlight == 0) highlight = 0xFF2A82DAu;
+    /* 半透明填充（alpha 60）+ 不透明边框（对标
+       QStyle::CE_RubberBand 的 alpha blend）。 */
+    fill = (highlight & 0x00FFFFFFu) | (60u << 24);
+    XPainter_fillRect(painter, &r, fill);
+    XPainter_drawLine(painter, r.x, r.y, r.x + r.width - 1, r.y);
+    XPainter_drawLine(painter, r.x + r.width - 1, r.y,
+                      r.x + r.width - 1, r.y + r.height - 1);
+    XPainter_drawLine(painter, r.x + r.width - 1, r.y + r.height - 1,
+                      r.x, r.y + r.height - 1);
+    XPainter_drawLine(painter, r.x, r.y + r.height - 1, r.x, r.y);
+}
+
+/** @brief 绘制工具箱页（CE_ToolBoxTab：highlight 头 + 文本 + 边框）。 */
+static void xcs_drawToolBoxTab(XStyle* self, const XStyleOption* option,
+                               XPainter* painter, const XWidget* widget)
+{
+    uint32_t highlight;
+    uint32_t highlightedText;
+    uint32_t windowText;
+    XRect r;
+    int textH;
+    bool selected;
+    (void)widget;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    highlight = xcs_color(option, XPaletteColorRole_Highlight);
+    highlightedText = xcs_color(option, XPaletteColorRole_HighlightedText);
+    windowText = xcs_color(option, XPaletteColorRole_WindowText);
+    if (highlight == 0) highlight = 0xFF2A82DAu;
+    if (highlightedText == 0) highlightedText = 0xFFFFFFFFu;
+    if (windowText == 0) windowText = 0xFF000000u;
+    selected = option->m_tabSelected;
+    XPainter_fillRect(painter, &r, selected ? highlight
+                                            : xcs_color(option, XPaletteColorRole_Button));
+    if (option->m_text && option->m_text[0]) {
+        textH = XPainter_textHeight(XPainter_font(painter));
+        if (textH < 14) textH = 14;
+        XPainter_drawText(painter, r.x + 6,
+                          r.y + (r.height - textH) / 2 + textH - 4,
+                          option->m_text, selected ? highlightedText
+                                                   : windowText);
+    }
+    XPainter_drawLine(painter, r.x, r.y + r.height - 1,
+                      r.x + r.width - 1, r.y + r.height - 1);
+}
+
+
+/** @brief 绘制表头段（CE_HeaderSection：Button 底 + 边框）。 */
+static void xcs_drawHeaderSection(XStyle* self, const XStyleOption* option,
+                                  XPainter* painter, const XWidget* widget)
+{
+    uint32_t button;
+    uint32_t mid;
+    XRect r;
+    (void)widget;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    button = xcs_color(option, XPaletteColorRole_Button);
+    mid = xcs_color(option, XPaletteColorRole_Mid);
+    if (button == 0) button = 0xFFCFCFCFu;
+    if (mid == 0) mid = 0xFFA0A0A0u;
+    XPainter_fillRect(painter, &r, button);
+    XPainter_drawLine(painter, r.x, r.y + r.height - 1,
+                      r.x + r.width - 1, r.y + r.height - 1);
+    XPainter_drawLine(painter, r.x + r.width - 1, r.y,
+                      r.x + r.width - 1, r.y + r.height - 1);
+    (void)mid;
+}
+
+/** @brief 绘制表头标签（CE_HeaderLabel：居中文本）。 */
+static void xcs_drawHeaderLabel(XStyle* self, const XStyleOption* option,
+                                XPainter* painter, const XWidget* widget)
+{
+    uint32_t textColor;
+    XRect r;
+    int textW;
+    int textH;
+    (void)widget;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    textColor = xcs_color(option, XPaletteColorRole_WindowText);
+    if (textColor == 0) textColor = 0xFF000000u;
+    if (option->m_text && option->m_text[0]) {
+        textW = XPainter_textWidth(XPainter_font(painter), option->m_text);
+        textH = XPainter_textHeight(XPainter_font(painter));
+        if (textH < 14) textH = 14;
+        XPainter_drawText(painter, r.x + (r.width - textW) / 2,
+                          r.y + (r.height - textH) / 2 + textH - 4,
+                          option->m_text, textColor);
+    }
+}
+
 static void VXCommonStyle_drawControl(XStyle* self, int ce,
                                       const XStyleOption* option,
                                       XPainter* painter,
@@ -1682,6 +1942,24 @@ static void VXCommonStyle_drawControl(XStyle* self, int ce,
         break;
     case XStyleCE_DockWidgetTitle:
         xcs_drawDockTitle(self, option, painter, widget);
+        break;
+    case XStyleCE_Splitter:
+        xcs_drawSplitter(self, option, painter, widget);
+        break;
+    case XStyleCE_SizeGrip:
+        xcs_drawSizeGrip(self, option, painter, widget);
+        break;
+    case XStyleCE_RubberBand:
+        xcs_drawRubberBand(self, option, painter, widget);
+        break;
+    case XStyleCE_ToolBoxTab:
+        xcs_drawToolBoxTab(self, option, painter, widget);
+        break;
+    case XStyleCE_HeaderSection:
+        xcs_drawHeaderSection(self, option, painter, widget);
+        break;
+    case XStyleCE_HeaderLabel:
+        xcs_drawHeaderLabel(self, option, painter, widget);
         break;
     default:
         break;
@@ -1764,7 +2042,7 @@ XVtable* XCommonStyle_class_init(void)
 void XCommonStyle_init(XCommonStyle* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XStyle_init(&self->m_base);
     XClassSetVtable(self, XCommonStyle);
 }

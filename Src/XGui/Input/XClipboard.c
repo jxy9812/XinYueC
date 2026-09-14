@@ -4,10 +4,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XClipboard.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEventType.h"
-#include <string.h>
 
 #if XCLIPBOARD_ON
 
@@ -60,12 +61,12 @@ XVtable* XClipboard_class_init(void)
 void XClipboard_init(XClipboard* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XClipboard));
+    XMemset(self, 0, sizeof(XClipboard));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XClipboard);
     self->m_data = (XClipboardPrivate*)XMalloc_System(sizeof(XClipboardPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XClipboardPrivate));
+    XMemset(self->m_data, 0, sizeof(XClipboardPrivate));
 }
 
 XClipboard* XClipboard_create_ex(XMemoryType memory)

@@ -10,8 +10,8 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
-#include <string.h>
 
+#include "XAlgorithm.h"
 #if XABSTRACTBUTTON_ON && XBUTTONGROUP_ON
 
 /* ==================== 内部工具 ==================== */
@@ -137,7 +137,7 @@ static XBGroupBridge* xbgroup_bridgeCreate(XButtonGroup* group,
         (XBGroupBridge*)XMemory_malloc(sizeof(*bridge),
                                        XCLASS_DEFAULT_MEMORY_TYPE);
     if (!bridge) return NULL;
-    memset(bridge, 0, sizeof(*bridge));
+    XMemset(bridge, 0, sizeof(*bridge));
     XObject_init(&bridge->m_base);
     XClassSetVtable(bridge, XBGroupBridge);
     Set_Class_Memory(bridge, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -350,7 +350,7 @@ XVtable* XButtonGroup_class_init(void)
 void XButtonGroup_init(XButtonGroup* self, XObject* parent)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init(&self->m_base);
     if (parent)
         XObject_setParent((XObject*)self, parent);

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XGpuRenderDriver_gl.c
  * @brief      XGui GPU 渲染驱动——OpenGL/GLES 实现。
  * @details    实现 XGpuRenderDriver.h 的驱动操作表：离屏表面（GLX/WGL
@@ -11,6 +11,9 @@
  * @note       仅在 XPLATFORMINTEGRATION_ON && XGPU_ON 时编译。
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XSystem.h"
+
+#include "XAlgorithm.h"
 #include "XGpuRenderDriver.h"
 
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
@@ -22,9 +25,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 
 /* ==================== 最小 GLES 2/桌面 GL 类型与常量 ==================== */
 
@@ -223,7 +224,7 @@ static bool xgld_load_proc(XGpuRenderDriverSession* self, const char* name,
     if (!destination || destinationSize != sizeof(procedure)) return false;
     procedure = xgld_proc(self, name);
     if (!procedure) return false;
-    memcpy(destination, &procedure, sizeof(procedure));
+    XMemcpy(destination, &procedure, sizeof(procedure));
     return true;
 }
 
@@ -235,7 +236,7 @@ static bool xgld_load_proc_alias(XGpuRenderDriverSession* self,
     if (!procedure && alias) procedure = xgld_proc(self, alias);
     if (!procedure || !destination || destinationSize != sizeof(procedure))
         return false;
-    memcpy(destination, &procedure, sizeof(procedure));
+    XMemcpy(destination, &procedure, sizeof(procedure));
     return true;
 }
 
@@ -817,7 +818,7 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
     static int profOn = -1;
     if (profOn < 0)
     {
-        const char* env = getenv("XGPU_PROFILE");
+        const char* env = XSystem_environment("XGPU_PROFILE");
         profOn = env && *env ? 1 : 0;
     }
     if (!self || !self->m_windowSession || !self->m_windowContext)

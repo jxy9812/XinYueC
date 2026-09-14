@@ -1,9 +1,10 @@
 ﻿#include "XAbstractSeries.h"
+
+#include "XAlgorithm.h"
 #include "XValueAxis.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -26,7 +27,7 @@ XVtable* XAbstractSeries_class_init(void)
 void XAbstractSeries_init(XAbstractSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init(&self->m_base);
     XClassSetVtable(self, XAbstractSeries);
     self->m_name = XString_create();

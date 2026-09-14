@@ -19,11 +19,13 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XScreen.h"
+#include "XMemory.h"
+
+#include "XAlgorithm.h"
 #include "XVarList.h"
 #if XPLATFORMNATIVEWINDOW_ON
 #include "XPlatformNativeWindow.h"
 #endif /* XPLATFORMNATIVEWINDOW_ON */
-#include <string.h>
 
 #if XSCREEN_ON
 
@@ -264,12 +266,12 @@ XVtable* XScreen_class_init(void)
 void XScreen_init(XScreen* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XScreen));
+    XMemset(self, 0, sizeof(XScreen));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XScreen);
     self->m_data = (XScreenPrivate*)XMalloc_System(sizeof(XScreenPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XScreenPrivate));
+    XMemset(self->m_data, 0, sizeof(XScreenPrivate));
     self->m_data->m_depth = 32;
     self->m_data->m_logicalDotsPerInchX = 96.0f;
     self->m_data->m_logicalDotsPerInchY = 96.0f;

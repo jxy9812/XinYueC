@@ -68,3 +68,33 @@ XSystemResult XSystem_shutdown(void)
     return XSystemResult_NotSupported;
 #endif
 }
+
+/**
+ * @brief 读取进程环境变量值（公共分发）。
+ * @param name 环境变量名；空指针或空串返回 NULL。
+ * @return 变量值借用指针；无 OS 环境块或变量不存在时返回 NULL。
+ */
+const char* XSystem_environment(const char* name)
+{
+    if (!name || !name[0]) return NULL;
+#if XPLATFORM_HAS_OS
+    return XSystem_platformEnvironment(name);
+#else
+    return NULL;
+#endif
+}
+
+/**
+ * @brief 查询进程环境变量是否存在（公共分发）。
+ * @param name 环境变量名；空指针或空串返回 false。
+ * @return 存在返回 true；无 OS 环境块或变量不存在时返回 false。
+ */
+bool XSystem_hasEnvironment(const char* name)
+{
+    if (!name || !name[0]) return false;
+#if XPLATFORM_HAS_OS
+    return XSystem_platformHasEnvironment(name);
+#else
+    return false;
+#endif
+}

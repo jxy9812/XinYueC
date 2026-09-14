@@ -11,6 +11,8 @@
  *             6. insert 覆盖旧字符串键时使用内部无锁路径，避免递归上锁。
  ******************************************************************************/
 #include "XPixmapCache.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XSync_config.h"
@@ -18,7 +20,6 @@
 #include "XThread.h"
 #include "XThreadData.h"
 #endif
-#include <string.h>
 #include <limits.h>
 
 /*
@@ -165,7 +166,7 @@ static XPixmapCacheKeyData* XPixmapCacheKeyData_create(bool valid)
 {
     XPixmapCacheKeyData* d = (XPixmapCacheKeyData*)XMalloc_System(sizeof(XPixmapCacheKeyData));
     if (!d) return NULL;
-    memset(d, 0, sizeof(XPixmapCacheKeyData));
+    XMemset(d, 0, sizeof(XPixmapCacheKeyData));
     XAtomic_init(d->m_refCount, 1);
     XAtomic_init(d->m_serial, nextKeySerial());
     XAtomic_init(d->m_isValid, valid);
@@ -454,7 +455,7 @@ bool XPixmapCache_insert(const XString* key, const XPixmap* pixmap)
     }
     entry = (XCacheEntry*)XMalloc_System(sizeof(XCacheEntry));
     if (!entry) { cacheLockRelease(); return false; }
-    memset(entry, 0, sizeof(XCacheEntry));
+    XMemset(entry, 0, sizeof(XCacheEntry));
     entry->m_key = XString_create_copy(key);
     if (!entry->m_key) { XFree_System(entry); cacheLockRelease(); return false; }
     /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
@@ -519,7 +520,7 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
         cacheLockRelease();
         return false;
     }
-    memset(entry, 0, sizeof(XCacheEntry));
+    XMemset(entry, 0, sizeof(XCacheEntry));
     /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
     XCopy(&entry->m_pixmap, pixmap);
     entry->m_keyData = keyData;

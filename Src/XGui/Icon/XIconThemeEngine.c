@@ -6,6 +6,8 @@
  *             编解码配置裁剪。
  ******************************************************************************/
 #include "XIconThemeEngine.h"
+
+#include "XAlgorithm.h"
 #include "XIconThemeInternal.h"
 #include "XIconScaledPixmapCache.h"
 #include "XIconStyleHelper.h"
@@ -15,7 +17,6 @@
 #include "XMemory.h"
 #include <limits.h>
 #include <math.h>
-#include <string.h>
 
 static void themeEngine_pixmapForSize(const XIconThemeEngine* self,
                                       int targetSize, int iconScale,
@@ -146,7 +147,7 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
                               drawRect->height, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {
         XPixmap styled;
-        XPixmap_init(&styled);
+        XMemset(&styled, 0, sizeof(styled)); XPixmap_init(&styled);
         XIconStyleHelper_apply(mode, &pixmap, &styled);
         if (!XPixmap_isNull(&styled))
         {
@@ -545,7 +546,7 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
                               iconScale, physicalWidth, physicalHeight, out);
     if (!XPixmap_isNull(out)) {
         XPixmap styled;
-        XPixmap_init(&styled);
+        XMemset(&styled, 0, sizeof(styled)); XPixmap_init(&styled);
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {
@@ -659,7 +660,7 @@ XIconThemeEngine* XIconThemeEngine_create_ex(XMemoryType memory,
     XIconThemeEngine* self = (XIconThemeEngine*)XMemory_malloc(
         sizeof(XIconThemeEngine), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XIconThemeEngine));
+    XMemset(self, 0, sizeof(XIconThemeEngine));
     XIconThemeEngine_init(self, iconName);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
@@ -679,7 +680,7 @@ XIconThemeEngine* XIconThemeEngine_create_2_ex(XMemoryType memory,
 void XIconThemeEngine_init(XIconThemeEngine* self, const XString* iconName)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XIconThemeEngine));
+    XMemset(self, 0, sizeof(XIconThemeEngine));
     XIconEngine_init(&self->m_base);
     XClassSetVtable(self, XIconThemeEngine);
     self->m_iconName = iconName ? XString_create_copy(iconName) : NULL;

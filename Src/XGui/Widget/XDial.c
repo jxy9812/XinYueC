@@ -10,6 +10,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON
 
 #include "XDial.h"
@@ -25,8 +27,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <string.h>
-#include <stdlib.h>
 
 /* 行程角（度）：对标 QCommonStyle::calcArrow/calcLines——
  * 数学角 240°（屏幕左下）起，顺时针（数学角递减）扫 300°，

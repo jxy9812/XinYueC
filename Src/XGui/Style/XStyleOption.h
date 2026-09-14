@@ -203,6 +203,9 @@ typedef struct XStyleOption
     int m_sliderPageStep; /**< 滑块页步。 */
     int m_sliderTickInterval; /**< 刻度间隔值（0=自动，对标 tickInterval）。 */
     int m_sliderTickPosition; /**< 刻度位置：0 无/1 上/2 下/3 双侧。 */
+    bool m_scrollSubLine;     /**< 绘制起始按钮（对标 SC_ScrollBarSubLine）。 */
+    bool m_scrollAddLine;     /**< 绘制结束按钮（对标 SC_ScrollBarAddLine）。 */
+    bool m_scrollActiveSub;   /**< 按下按钮（对标 activeSubControls 非空）。 */
     /* ---- 菜单/表头 ---- */
     bool m_selected;      /**< 选中。 */
     bool m_mouseOver;     /**< 悬停（冗余便捷）。 */

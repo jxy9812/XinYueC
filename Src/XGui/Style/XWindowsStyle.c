@@ -1,7 +1,8 @@
 ﻿#include "XWindowsStyle.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XSTYLE_ON
 
@@ -22,7 +23,7 @@ XVtable* XWindowsStyle_class_init(void)
 void XWindowsStyle_init(XWindowsStyle* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XCommonStyle_init(&self->m_base);
     XClassSetVtable(self, XWindowsStyle);
 }

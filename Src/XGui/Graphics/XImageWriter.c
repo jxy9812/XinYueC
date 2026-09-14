@@ -4,6 +4,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XImageWriter.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodec.h"
 #include "XImageCodecInternal.h"
 #include "XImagePluginRegistry.h"
@@ -14,7 +17,6 @@
 #include "XVtable.h"
 #include "XMemory.h"
 #include "XStringList.h"
-#include <string.h>
 #include <limits.h>
 
 /* Keep writer discovery aligned with XImageCodec capabilities. */
@@ -94,7 +96,7 @@ static bool XImageWriter_mimeEquals(const char* mimeType, const char* expected)
 {
     /* Qt QImageReaderWriterHelpers 按 QByteArray 值精确匹配 MIME；格式名
        本身才按大小写不敏感规则规范化。 */
-    return mimeType && expected && strcmp(mimeType, expected) == 0;
+    return mimeType && expected && XStrcmp(mimeType, expected) == 0;
 }
 
 /**
@@ -209,12 +211,12 @@ static XString* XImageWriter_resolveFormatForHandler(const XImageWriter* self)
     fileName = XImageWriter_fileNameForFormat(self->m_data);
     if (fileName) {
         const char* fileNameUtf8 = XString_toUtf8(fileName);
-        const char* base = fileNameUtf8 ? strrchr(fileNameUtf8, '/') : NULL;
+        const char* base = fileNameUtf8 ? XStrrchr(fileNameUtf8, '/') : NULL;
         const char* dot;
-        const char* backslash = fileNameUtf8 ? strrchr(fileNameUtf8, '\\') : NULL;
+        const char* backslash = fileNameUtf8 ? XStrrchr(fileNameUtf8, '\\') : NULL;
         if (backslash && (!base || backslash > base)) base = backslash;
         base = base ? base + 1 : fileNameUtf8;
-        dot = base ? strrchr(base, '.') : NULL;
+        dot = base ? XStrrchr(base, '.') : NULL;
         if (dot && dot[1]) return XString_create_utf8(dot + 1);
     }
     return XString_create();
@@ -363,48 +365,48 @@ static void XImageWriter_applyHandlerSettings(XImageIOHandler* handler,
 {
     XImageIOHandlerOptionValue value;
     if (!handler || !data) return;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_Quality)) {
         value.integer = data->m_quality;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_Quality, &value);
     }
     if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_CompressionRatio)) {
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.integer = data->m_compression;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_CompressionRatio, &value);
     }
     if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_Gamma)) {
         /* 对齐 Qt 6.8 qimagewriter.cpp:668-669；即使没有公共 Gamma
            setter，默认的 0.0 仍需传给支持该选项的处理器。 */
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.real = data->m_gamma;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_Gamma, &value);
     }
     if (data->m_description &&
         !XContainer_isEmpty_base((const XContainer*)data->m_description) &&
         XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_Description)) {
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.string = data->m_description;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_Description, &value);
     }
     if (data->m_subType && !XContainer_isEmpty_base((const XContainer*)data->m_subType) &&
         XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_SubType)) {
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.string = data->m_subType;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_SubType, &value);
     }
     if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_OptimizedWrite)) {
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.boolean = data->m_optimizedWrite;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_OptimizedWrite, &value);
     }
     if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_ProgressiveScanWrite)) {
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.boolean = data->m_progressiveScan;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ProgressiveScanWrite, &value);
     }
     if (XImageIOHandler_supportsOption_base(handler, XImageIOHandlerOption_ImageTransformation)) {
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.transformation = data->m_transformation;
         XImageIOHandler_setOption_base(handler, XImageIOHandlerOption_ImageTransformation, &value);
     }
@@ -444,13 +446,13 @@ static bool XImageWriter_fileLooksSupported(const char* fileName)
     const char* base;
     const char* dot;
     if (!fileName) return false;
-    base = strrchr(fileName, '/');
+    base = XStrrchr(fileName, '/');
     {
-        const char* backslash = strrchr(fileName, '\\');
+        const char* backslash = XStrrchr(fileName, '\\');
         if (backslash && (!base || backslash > base)) base = backslash;
     }
     base = base ? base + 1 : fileName;
-    dot = strrchr(base, '.');
+    dot = XStrrchr(base, '.');
     return dot && XImageWriter_isSupportedFormat(dot + 1);
 }
 
@@ -579,13 +581,13 @@ XImageWriter* XImageWriter_create_ex(XMemoryType memory)
 void XImageWriter_init(XImageWriter* self)
 {
     if (ISNULL(self, "XImageWriter")) return;
-    memset(self, 0, sizeof(XImageWriter));
+    XMemset(self, 0, sizeof(XImageWriter));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XImageWriter);
     self->m_data = (XImageWriterPrivate*)XMalloc_System(sizeof(XImageWriterPrivate));
     if (self->m_data)
     {
-        memset(self->m_data, 0, sizeof(XImageWriterPrivate));
+        XMemset(self->m_data, 0, sizeof(XImageWriterPrivate));
         self->m_data->m_quality = -1;
         self->m_data->m_compression = -1;
         /* QImageWriterPrivate 将 gamma 初始化为 0.0，并在 write() 中
@@ -772,7 +774,7 @@ XStringList* XImageWriter_supportedSubTypes(const XImageWriter* self)
         !XImageIOHandler_supportsOption_base(handler,
                                              XImageIOHandlerOption_SupportedSubTypes))
         return XImageWriter_makeStringList(NULL, 0);
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (!XImageIOHandler_option_base(handler,
                                      XImageIOHandlerOption_SupportedSubTypes,
                                      &value) || !value.stringList)

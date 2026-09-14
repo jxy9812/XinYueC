@@ -11,9 +11,10 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
 
 #if XWIDGET_ON && XPUSHBUTTON_ON && XDIALOGBUTTONBOX_ON
 
@@ -85,7 +86,7 @@ static XDBBridge* xdb_bridgeCreate(XDialogButtonBox* box,
         (XDBBridge*)XMemory_malloc(sizeof(*bridge),
                                    XCLASS_DEFAULT_MEMORY_TYPE);
     if (!bridge) return NULL;
-    memset(bridge, 0, sizeof(*bridge));
+    XMemset(bridge, 0, sizeof(*bridge));
     XObject_init(&bridge->m_base);
     XClassSetVtable(bridge, XDBBridge);
     Set_Class_Memory(bridge, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -233,7 +234,7 @@ void XDialogButtonBox_init(XDialogButtonBox* self, XWidget* parent,
                            XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XDialogButtonBox);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

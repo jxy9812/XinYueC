@@ -12,9 +12,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XSurfaceFormat.h"
+#include "XMemory.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XColorSpace.h"
-#include <string.h>
 
 #if XSURFACEFORMAT_ON
 
@@ -28,7 +30,7 @@ static bool g_defaultFormatSet = false;
 static XSurfaceFormat XSurfaceFormat_makeDefault(void)
 {
     XSurfaceFormat f;
-    memset(&f, 0, sizeof(f));
+    XMemset(&f, 0, sizeof(f));
     f.m_options = 0;
     f.m_redBufferSize = -1;
     f.m_greenBufferSize = -1;

@@ -4,6 +4,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XImage.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodec.h"
 #include "XImageCodecInternal.h"
 #include "XImageFormat.h"
@@ -16,8 +19,6 @@
 #include "XStringList.h"
 #include "XVariant.h"
 #include "XFile.h"
-#include <string.h>
-#include <stdlib.h>
 #include <limits.h>
 #include <math.h>
 
@@ -82,7 +83,7 @@ static bool XImageColorProfileResource_validateLut(const void* data,
         else
         {
             uint16_t sample;
-            memcpy(&sample, (const uint8_t*)data + (size_t)i * 2u,
+            XMemcpy(&sample, (const uint8_t*)data + (size_t)i * 2u,
                    sizeof(sample));
             value = sample;
         }
@@ -118,7 +119,7 @@ static XImageColorProfileResource* XImageColorProfileResource_create(
     resource = (XImageColorProfileResource*)XMalloc_System(sizeof(*resource));
     if (!resource)
         return NULL;
-    memset(resource, 0, sizeof(*resource));
+    XMemset(resource, 0, sizeof(*resource));
     XAtomic_init(resource->m_refCount, 1);
     if (spec->m_iccSize != 0)
     {
@@ -145,7 +146,7 @@ static XImageColorProfileResource* XImageColorProfileResource_create(
             XImageColorProfileResource_unref(resource);
             return NULL;
         }
-        memcpy(resource->m_lutData[channel], spec->m_lutData[channel], bytes);
+        XMemcpy(resource->m_lutData[channel], spec->m_lutData[channel], bytes);
         resource->m_lutElements[channel] = spec->m_lutElements[channel];
         resource->m_lutBits[channel] = spec->m_lutBits[channel];
         resource->m_lutTwoWay[channel] = spec->m_lutTwoWay[channel];
@@ -459,7 +460,7 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
 
     XImageData* d = (XImageData*)XMalloc_System(sizeof(XImageData));
     if (!d) return NULL;
-    memset(d, 0, sizeof(XImageData));
+    XMemset(d, 0, sizeof(XImageData));
     XStringList_init(&d->m_textKeys);
     XStringList_init(&d->m_textValues);
     XString_init(&d->m_textAll);
@@ -496,7 +497,7 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
             XFree_System(d);
             return NULL;
         }
-        memset(d->m_data, 0, totalSize);
+        XMemset(d->m_data, 0, totalSize);
         d->m_ownsData = true;
     }
 
@@ -552,7 +553,7 @@ static XImageData* XImageData_clone(const XImageData* source)
                                          NULL, NULL, NULL);
     if (!copy)
         return NULL;
-    memcpy(copy->m_data, source->m_data,
+    XMemcpy(copy->m_data, source->m_data,
            (size_t)source->m_bytesPerLine * (size_t)source->m_height);
     XImageData_copyMetadata(copy, source);
     if (source->m_colorCount > 0 && source->m_colorTable)
@@ -568,7 +569,7 @@ static XImageData* XImageData_clone(const XImageData* source)
             XImageData_unref(copy);
             return NULL;
         }
-        memcpy(copy->m_colorTable, source->m_colorTable,
+        XMemcpy(copy->m_colorTable, source->m_colorTable,
                (size_t)source->m_colorCount * sizeof(uint32_t));
         copy->m_colorCount = source->m_colorCount;
     }
@@ -644,7 +645,7 @@ XImage* XImage_create_ex(XMemoryType memory)
 void XImage_init(XImage* self)
 {
     if (ISNULL(self, "XImage")) return;
-    memset(self, 0, sizeof(XImage));
+    XMemset(self, 0, sizeof(XImage));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XImage);
 }
@@ -808,7 +809,7 @@ bool XImage_equals(const XImage* left, const XImage* right)
                 (size_t)y * (size_t)left->m_data->m_bytesPerLine;
             const uint8_t* rightLine = right->m_data->m_data +
                 (size_t)y * (size_t)right->m_data->m_bytesPerLine;
-            if (memcmp(leftLine, rightLine, rowBytes) != 0)
+            if (XMemcmp(leftLine, rightLine, rowBytes) != 0)
                 return false;
         }
     }
@@ -1049,7 +1050,7 @@ bool XImageCodecInternal_copyIccProfile(const XImage* self, XByteArray* out)
     if (!XByteArray_resize_base((XVector*)out, size))
         return false;
     if (size)
-        memcpy(XByteArray_data(out),
+        XMemcpy(XByteArray_data(out),
                XByteArray_data(self->m_data->m_colorProfile->m_iccData),
                size);
     return true;
@@ -1079,7 +1080,7 @@ bool XImageCodecInternal_copyLut(const XImage* self, int channel,
             (size_t)(resource->m_lutBits[channel] / 8u);
     if (!out || outBytes < bytes)
         return false;
-    memcpy(out, resource->m_lutData[channel], bytes);
+    XMemcpy(out, resource->m_lutData[channel], bytes);
     return true;
 }
 
@@ -1361,7 +1362,7 @@ static bool XImage_colorSpaceToXyz(const XColorSpace* colorSpace,
                                                  adaptation))
                 return false;
             XImage_matrixMultiply(adaptation, matrix, adapted);
-            memcpy(matrix, adapted, sizeof(adapted));
+            XMemcpy(matrix, adapted, sizeof(adapted));
         }
         return true;
     }
@@ -1686,13 +1687,13 @@ static bool XImage_readNativeFloat(const XImageData* d, int x, int y,
     else
     {
         pixel = line + (size_t)x * 16u;
-        memcpy(red, pixel, sizeof(float));
-        memcpy(green, pixel + 4u, sizeof(float));
-        memcpy(blue, pixel + 8u, sizeof(float));
+        XMemcpy(red, pixel, sizeof(float));
+        XMemcpy(green, pixel + 4u, sizeof(float));
+        XMemcpy(blue, pixel + 8u, sizeof(float));
         *alpha = d->m_format == XImageFormat_RGBX32FPx4
             ? 1.0f : 0.0f;
         if (d->m_format != XImageFormat_RGBX32FPx4)
-            memcpy(alpha, pixel + 12u, sizeof(float));
+            XMemcpy(alpha, pixel + 12u, sizeof(float));
     }
     if (d->m_format == XImageFormat_RGBA16FPx4_Premultiplied ||
         d->m_format == XImageFormat_RGBA32FPx4_Premultiplied)
@@ -1752,10 +1753,10 @@ static bool XImage_writeNativeFloat(XImageData* d, int x, int y,
     else
     {
         pixel = line + (size_t)x * 16u;
-        memcpy(pixel, &red, sizeof(float));
-        memcpy(pixel + 4u, &green, sizeof(float));
-        memcpy(pixel + 8u, &blue, sizeof(float));
-        memcpy(pixel + 12u, &storageAlpha, sizeof(float));
+        XMemcpy(pixel, &red, sizeof(float));
+        XMemcpy(pixel + 4u, &green, sizeof(float));
+        XMemcpy(pixel + 8u, &blue, sizeof(float));
+        XMemcpy(pixel + 12u, &storageAlpha, sizeof(float));
     }
     return true;
 }
@@ -2173,10 +2174,10 @@ void XImage_setColorCount(XImage* self, int count)
     {
         replacement = (uint32_t*)XMalloc_System((size_t)count * sizeof(uint32_t));
         if (!replacement) return;
-        memset(replacement, 0, (size_t)count * sizeof(uint32_t));
+        XMemset(replacement, 0, (size_t)count * sizeof(uint32_t));
         int retained = count < self->m_data->m_colorCount ? count : self->m_data->m_colorCount;
         if (retained > 0 && self->m_data->m_colorTable)
-            memcpy(replacement, self->m_data->m_colorTable, (size_t)retained * sizeof(uint32_t));
+            XMemcpy(replacement, self->m_data->m_colorTable, (size_t)retained * sizeof(uint32_t));
     }
     XFree_System(self->m_data->m_colorTable);
     self->m_data->m_colorTable = replacement;
@@ -2222,7 +2223,7 @@ int XImage_colorTable(const XImage* self, uint32_t* out, int maxCount)
     if (out && maxCount > 0 && self->m_data->m_colorTable)
     {
         int copyCount = count < maxCount ? count : maxCount;
-        memcpy(out, self->m_data->m_colorTable, (size_t)copyCount * sizeof(uint32_t));
+        XMemcpy(out, self->m_data->m_colorTable, (size_t)copyCount * sizeof(uint32_t));
     }
     return count;
 }
@@ -2238,7 +2239,7 @@ void XImage_setColorTable(XImage* self, const uint32_t* colors, int count)
     {
         replacement = (uint32_t*)XMalloc_System((size_t)count * sizeof(uint32_t));
         if (!replacement) return;
-        memcpy(replacement, colors, (size_t)count * sizeof(uint32_t));
+        XMemcpy(replacement, colors, (size_t)count * sizeof(uint32_t));
     }
     XFree_System(self->m_data->m_colorTable);
     self->m_data->m_colorTable = replacement;
@@ -2263,14 +2264,14 @@ void XImage_fill(XImage* self, uint32_t pixel)
         const size_t bytes = ((size_t)d->m_width + 7u) / 8u;
         const int value = (pixel & 1u) ? 0xff : 0;
         for (y = 0; y < d->m_height; ++y)
-            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+            XMemset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
                    value, bytes);
     }
     else if (d->m_depth == 8)
     {
         const uint8_t value = (uint8_t)pixel;
         for (y = 0; y < d->m_height; ++y)
-            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+            XMemset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
                    value, (size_t)d->m_width);
     }
     else if (d->m_depth == 16)
@@ -2291,7 +2292,7 @@ void XImage_fill(XImage* self, uint32_t pixel)
         bytes[2] = (uint8_t)value;
         for (y = 0; y < d->m_height; ++y)
             for (x = 0; x < d->m_width; ++x)
-                memcpy(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 3u,
+                XMemcpy(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 3u,
                        bytes, sizeof(bytes));
     }
     else if (d->m_format >= XImageFormat_RGBX16FPx4 &&
@@ -2342,8 +2343,8 @@ void XImage_fill(XImage* self, uint32_t pixel)
             for (x = 0; x < d->m_width; ++x)
             {
                 uint8_t* p = d->m_data + (size_t)y * (size_t)d->m_bytesPerLine + (size_t)x * 16u;
-                memcpy(p, &r, sizeof(float)); memcpy(p + 4, &g, sizeof(float));
-                memcpy(p + 8, &b, sizeof(float)); memcpy(p + 12, &a, sizeof(float));
+                XMemcpy(p, &r, sizeof(float)); XMemcpy(p + 4, &g, sizeof(float));
+                XMemcpy(p + 8, &b, sizeof(float)); XMemcpy(p + 12, &a, sizeof(float));
             }
     }
     else
@@ -2404,7 +2405,7 @@ void XImage_fillColor(XImage* self, const XColor* color)
         const size_t bytes = ((size_t)d->m_width + 7u) / 8u;
         const int value = argb == 0xffffffffu ? 0xff : 0;
         for (y = 0; y < d->m_height; ++y)
-            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+            XMemset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
                    value, bytes);
     }
     else if (d->m_format == XImageFormat_Indexed8)
@@ -2422,7 +2423,7 @@ void XImage_fillColor(XImage* self, const XColor* color)
             }
         }
         for (y = 0; y < d->m_height; ++y)
-            memset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
+            XMemset(d->m_data + (size_t)y * (size_t)d->m_bytesPerLine,
                    (int)(uint8_t)index, (size_t)d->m_width);
     }
     else if (d->m_format == XImageFormat_BGR30 ||
@@ -3091,7 +3092,7 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
     }
 
     /* 输出初始为全不透明，队列中的位清零即表示已剥离的透明背景。 */
-    memset(out->m_data->m_data, 0xff,
+    XMemset(out->m_data->m_data, 0xff,
            (size_t)out->m_data->m_bytesPerLine * (size_t)height);
     if ((size_t)width > SIZE_MAX / (size_t)height)
         return;
@@ -3179,7 +3180,7 @@ void XImage_createMaskFromColor(const XImage* self, uint32_t color,
        default table, unlike the alpha/heuristic factories which replace it
        with their white/black mask convention. */
     XImage_setColorTable(out, qtMaskColors, 2);
-    memset(out->m_data->m_data, 0,
+    XMemset(out->m_data->m_data, 0,
            (size_t)out->m_data->m_bytesPerLine *
            (size_t)out->m_data->m_height);
     for (int y = 0; y < self->m_data->m_height; ++y)
@@ -3299,25 +3300,25 @@ static uint8_t XImage_luma(uint32_t color)
 static uint16_t XImage_load16(const uint8_t* p)
 {
     uint16_t value = 0;
-    if (p) memcpy(&value, p, sizeof(value));
+    if (p) XMemcpy(&value, p, sizeof(value));
     return value;
 }
 
 static void XImage_store16(uint8_t* p, uint16_t value)
 {
-    if (p) memcpy(p, &value, sizeof(value));
+    if (p) XMemcpy(p, &value, sizeof(value));
 }
 
 static uint32_t XImage_load32(const uint8_t* p)
 {
     uint32_t value = 0;
-    if (p) memcpy(&value, p, sizeof(value));
+    if (p) XMemcpy(&value, p, sizeof(value));
     return value;
 }
 
 static void XImage_store32(uint8_t* p, uint32_t value)
 {
-    if (p) memcpy(p, &value, sizeof(value));
+    if (p) XMemcpy(p, &value, sizeof(value));
 }
 
 static uint8_t XImage_expand4(unsigned value)
@@ -3510,10 +3511,10 @@ static void XImage_writePixelColor16(XImageData* d, int x, int y,
                 blueF *= alphaF;
             }
             pixel = line + (size_t)x * 16u;
-            memcpy(pixel, &redF, sizeof(float));
-            memcpy(pixel + 4u, &greenF, sizeof(float));
-            memcpy(pixel + 8u, &blueF, sizeof(float));
-            memcpy(pixel + 12u, &alphaF, sizeof(float));
+            XMemcpy(pixel, &redF, sizeof(float));
+            XMemcpy(pixel + 4u, &greenF, sizeof(float));
+            XMemcpy(pixel + 8u, &blueF, sizeof(float));
+            XMemcpy(pixel + 12u, &alphaF, sizeof(float));
             return;
         default:
             return;
@@ -3762,7 +3763,7 @@ static uint32_t XImage_readPixelValue(const XImageData* d, int x, int y)
         {
             float rf, gf, bf, af;
             const uint8_t* p = line + x * 16;
-            memcpy(&rf, p, sizeof(float)); memcpy(&gf, p + 4, sizeof(float)); memcpy(&bf, p + 8, sizeof(float)); memcpy(&af, p + 12, sizeof(float));
+            XMemcpy(&rf, p, sizeof(float)); XMemcpy(&gf, p + 4, sizeof(float)); XMemcpy(&bf, p + 8, sizeof(float)); XMemcpy(&af, p + 12, sizeof(float));
             a = d->m_format == XImageFormat_RGBX32FPx4 ? 255 : XImage_floatChannel(af);
             r = XImage_floatChannel(rf); g = XImage_floatChannel(gf); b = XImage_floatChannel(bf);
             if (d->m_format == XImageFormat_RGBA32FPx4_Premultiplied) { r = XImage_unpremultiply8(r, a); g = XImage_unpremultiply8(g, a); b = XImage_unpremultiply8(b, a); }
@@ -3928,7 +3929,7 @@ static void XImage_writePixelValue(XImageData* d, int x, int y, uint32_t color)
             float gf = d->m_format == XImageFormat_RGBA32FPx4_Premultiplied ? (g / 255.0f) * af : g / 255.0f;
             float bf = d->m_format == XImageFormat_RGBA32FPx4_Premultiplied ? (b / 255.0f) * af : b / 255.0f;
             float xf = d->m_format == XImageFormat_RGBX32FPx4 ? 1.0f : af;
-            memcpy(p, &rf, sizeof(float)); memcpy(p + 4, &gf, sizeof(float)); memcpy(p + 8, &bf, sizeof(float)); memcpy(p + 12, &xf, sizeof(float)); break;
+            XMemcpy(p, &rf, sizeof(float)); XMemcpy(p + 4, &gf, sizeof(float)); XMemcpy(p + 8, &bf, sizeof(float)); XMemcpy(p + 12, &xf, sizeof(float)); break;
         }
         case XImageFormat_CMYK8888:
         {
@@ -4035,7 +4036,7 @@ void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
     {
         out->m_data->m_colorTable = (uint32_t*)XMalloc_System((size_t)self->m_data->m_colorCount * sizeof(uint32_t));
         if (!out->m_data->m_colorTable) { XImage_deinit_base(out); return; }
-        memcpy(out->m_data->m_colorTable, self->m_data->m_colorTable, (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
+        XMemcpy(out->m_data->m_colorTable, self->m_data->m_colorTable, (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
         out->m_data->m_colorCount = self->m_data->m_colorCount;
     }
     for (int y = 0; y < rh; ++y)
@@ -4099,7 +4100,7 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
             self->m_data->m_colorTable && self->m_data->m_colorCount > 0)
         {
             int count = self->m_data->m_colorCount < 256 ? self->m_data->m_colorCount : 256;
-            memcpy(out->m_data->m_colorTable, self->m_data->m_colorTable, (size_t)count * sizeof(uint32_t));
+            XMemcpy(out->m_data->m_colorTable, self->m_data->m_colorTable, (size_t)count * sizeof(uint32_t));
         }
     }
     for (int y = 0; y < self->m_data->m_height; ++y)
@@ -4159,7 +4160,7 @@ void XImage_convertToFormat_ex(const XImage* self, XImageFormat format,
     XImage_setColorCount(out, colorCount);
     if (!out->m_data->m_colorTable || out->m_data->m_colorCount != colorCount)
         return;
-    memcpy(out->m_data->m_colorTable, colorTable, (size_t)colorCount * sizeof(uint32_t));
+    XMemcpy(out->m_data->m_colorTable, colorTable, (size_t)colorCount * sizeof(uint32_t));
     XImageData_markDirty(out->m_data);
 }
 
@@ -4235,7 +4236,7 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
             out->m_data = NULL;
             return;
         }
-        memcpy(out->m_data->m_colorTable, self->m_data->m_colorTable,
+        XMemcpy(out->m_data->m_colorTable, self->m_data->m_colorTable,
                (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
         out->m_data->m_colorCount = self->m_data->m_colorCount;
     }
@@ -4422,7 +4423,7 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
         {
             XImageData_unref(out->m_data); out->m_data = NULL; return;
         }
-        memcpy(out->m_data->m_colorTable, self->m_data->m_colorTable,
+        XMemcpy(out->m_data->m_colorTable, self->m_data->m_colorTable,
                (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
         out->m_data->m_colorCount = self->m_data->m_colorCount;
     }
@@ -4502,7 +4503,7 @@ static void XImage_transformMatrix(const XImageTransform* matrix, float out[9])
                                       0.0f, 1.0f, 0.0f,
                                       0.0f, 0.0f, 1.0f};
     if (!matrix) {
-        memcpy(out, identity, sizeof(identity));
+        XMemcpy(out, identity, sizeof(identity));
         return;
     }
     out[0] = matrix->m11;
@@ -4570,7 +4571,7 @@ void XImage_trueMatrix(const XImageTransform* matrix, int width, int height,
         if (i == 0 || transformedY > maxY) maxY = transformedY;
     }
     if (!valid) {
-        if (out) memset(out, 0, sizeof(*out));
+        if (out) XMemset(out, 0, sizeof(*out));
         if (transformedSize) { transformedSize->width = 0; transformedSize->height = 0; }
         return;
     }
@@ -4692,14 +4693,14 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
             &decoded, XByteArray_data(bytes),
             (int)XByteArray_size_base((const XContainer*)bytes), format);
     } else {
-        const char* base = strrchr(fileName, '/');
-        const char* backslash = strrchr(fileName, '\\');
+        const char* base = XStrrchr(fileName, '/');
+        const char* backslash = XStrrchr(fileName, '\\');
         const char* dot;
         const char* suffix = NULL;
         if (backslash && (!base || backslash > base))
             base = backslash;
         base = base ? base + 1 : fileName;
-        dot = strrchr(base, '.');
+        dot = XStrrchr(base, '.');
         if (dot && dot[1])
             suffix = dot + 1;
         if (suffix && XImageCodec_formatFromName_2(suffix) !=
@@ -4781,13 +4782,13 @@ bool XImage_save_2(const XImage* self, const char* fileName, const char* format,
        when writing a file, both select the final filename suffix. */
     type = (format && format[0]) ? XString_create_utf8(format) : NULL;
     if (!type) {
-        const char* base = strrchr(fileName, '/');
-        const char* backslash = strrchr(fileName, '\\');
+        const char* base = XStrrchr(fileName, '/');
+        const char* backslash = XStrrchr(fileName, '\\');
         const char* dot;
         if (backslash && (!base || backslash > base))
             base = backslash;
         base = base ? base + 1 : fileName;
-        dot = strrchr(base, '.');
+        dot = XStrrchr(base, '.');
         extension = dot && dot[1] ? XString_create_utf8(dot + 1) : NULL;
     }
 #if XIMAGECODEC_ON
@@ -5545,8 +5546,8 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
             {
                 uint8_t* p = line + (size_t)x * 16u;
                 float r, g, b, a;
-                memcpy(&r, p, sizeof(float)); memcpy(&g, p + 4, sizeof(float));
-                memcpy(&b, p + 8, sizeof(float)); memcpy(&a, p + 12, sizeof(float));
+                XMemcpy(&r, p, sizeof(float)); XMemcpy(&g, p + 4, sizeof(float));
+                XMemcpy(&b, p + 8, sizeof(float)); XMemcpy(&a, p + 12, sizeof(float));
                 if (premultiplied)
                 {
                     if (a <= 0.0f) r = g = b = a = 0.0f;
@@ -5555,10 +5556,10 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
                 r = 1.0f - r; g = 1.0f - g; b = 1.0f - b;
                 if (mode == XImageInvertMode_InvertRgba) a = 1.0f - a;
                 if (premultiplied) { r *= a; g *= a; b *= a; }
-                memcpy(p, &r, sizeof(float)); memcpy(p + 4, &g, sizeof(float));
-                memcpy(p + 8, &b, sizeof(float));
+                XMemcpy(p, &r, sizeof(float)); XMemcpy(p + 4, &g, sizeof(float));
+                XMemcpy(p + 8, &b, sizeof(float));
                 if (mode == XImageInvertMode_InvertRgba || premultiplied)
-                    memcpy(p + 12, &a, sizeof(float));
+                    XMemcpy(p + 12, &a, sizeof(float));
             }
         }
     }

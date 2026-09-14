@@ -14,9 +14,10 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XWindowEvent.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XPrintf.h"
-#include <string.h>
 
 #if XWINDOWEVENT_ON
 
@@ -26,7 +27,7 @@ static XEvent* VXResizeEvent_clone(const XResizeEvent* event)
 {
     XResizeEvent* copy = XClass_Malloc(XResizeEvent);
     if (copy) {
-        memcpy(copy, event, sizeof(XResizeEvent));
+        XMemcpy(copy, event, sizeof(XResizeEvent));
         Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
         Set_Class_IsHeap(copy, true);
     }
@@ -45,7 +46,7 @@ static XEvent* VXExposeEvent_clone(const XExposeEvent* event)
 {
     XExposeEvent* copy = XClass_Malloc(XExposeEvent);
     if (!copy) return NULL;
-    memcpy(copy, event, sizeof(XExposeEvent));
+    XMemcpy(copy, event, sizeof(XExposeEvent));
     Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     /* memcpy 复制了源的 rects 指针，必须重新初始化后再深拷贝，
      * 避免副本 deinit 时误释放源区域。 */
@@ -66,7 +67,7 @@ static XEvent* VXPaintEvent_clone(const XPaintEvent* event)
 {
     XPaintEvent* copy = XClass_Malloc(XPaintEvent);
     if (!copy) return NULL;
-    memcpy(copy, event, sizeof(XPaintEvent));
+    XMemcpy(copy, event, sizeof(XPaintEvent));
     Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     XRegion_init(&copy->m_region);
     XRegion_copy(&event->m_region, &copy->m_region);
@@ -79,7 +80,7 @@ static XEvent* VXCloseEvent_clone(const XCloseEvent* event)
 {
     XCloseEvent* copy = XClass_Malloc(XCloseEvent);
     if (copy) {
-        memcpy(copy, event, sizeof(XCloseEvent));
+        XMemcpy(copy, event, sizeof(XCloseEvent));
         Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
         Set_Class_IsHeap(copy, true);
     }
@@ -90,7 +91,7 @@ static XEvent* VXShowEvent_clone(const XShowEvent* event)
 {
     XShowEvent* copy = XClass_Malloc(XShowEvent);
     if (copy) {
-        memcpy(copy, event, sizeof(XShowEvent));
+        XMemcpy(copy, event, sizeof(XShowEvent));
         Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
         Set_Class_IsHeap(copy, true);
     }
@@ -101,7 +102,7 @@ static XEvent* VXHideEvent_clone(const XHideEvent* event)
 {
     XHideEvent* copy = XClass_Malloc(XHideEvent);
     if (copy) {
-        memcpy(copy, event, sizeof(XHideEvent));
+        XMemcpy(copy, event, sizeof(XHideEvent));
         Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
         Set_Class_IsHeap(copy, true);
     }
@@ -112,7 +113,7 @@ static XEvent* VXFocusEvent_clone(const XFocusEvent* event)
 {
     XFocusEvent* copy = XClass_Malloc(XFocusEvent);
     if (copy) {
-        memcpy(copy, event, sizeof(XFocusEvent));
+        XMemcpy(copy, event, sizeof(XFocusEvent));
         Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
         Set_Class_IsHeap(copy, true);
     }

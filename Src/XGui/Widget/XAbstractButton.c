@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XAbstractButton.c
  * @brief      XAbstractButton 抽象按钮基类实现。
  * @details    对齐 Qt 6.8 QAbstractButton 的公共状态、激活、自动重复、
@@ -7,13 +7,14 @@
  *             和 XClass 抽象层，不调用 Win32、POSIX、Qt 或其他平台 API。
  */
 #include "XAbstractButton.h"
+
+#include "XAlgorithm.h"
 #include "XAbstractButton_Protected.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XVector.h"
 
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON
 
@@ -1103,7 +1104,7 @@ void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
     if (!self)
         return;
 
-    memset(self, 0, sizeof(XAbstractButton));
+    XMemset(self, 0, sizeof(XAbstractButton));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XAbstractButton);
     self->m_text = XString_create();
@@ -1128,7 +1129,7 @@ XAbstractButton* XAbstractButton_create_ex(XMemoryType memory,
 
     if (!self)
         return NULL;
-    memset(self, 0, sizeof(XAbstractButton));
+    XMemset(self, 0, sizeof(XAbstractButton));
     XAbstractButton_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

@@ -1,4 +1,6 @@
 ﻿#include "XChart.h"
+
+#include "XAlgorithm.h"
 #include "XString.h"
 #include "XValueAxis.h"
 #include "XLineSeries.h"
@@ -9,7 +11,6 @@
 #include "XSplineSeries.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -144,7 +145,7 @@ static void xchart_deleteSeriesByType(void* series, XChartSeriesType type)
 void XChart_init(XChart* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init(&self->m_base);
     XClassSetVtable(self, XChart);
     self->m_title = XString_create_utf8("Chart");
@@ -157,7 +158,7 @@ void XChart_init(XChart* self)
     if (self->m_axisX) XValueAxis_init(self->m_axisX);
     if (self->m_axisY) XValueAxis_init(self->m_axisY);
     self->m_themeId = XChart_ChartTheme_Light;
-    memcpy(self->m_theme, g_themeLight, sizeof(g_themeLight));
+    XMemcpy(self->m_theme, g_themeLight, sizeof(g_themeLight));
     self->m_backgroundVisible = true;
     self->m_animationDuration = 1000;
     self->m_animationEasingCurve = XEasingCurve_Linear;
@@ -282,8 +283,8 @@ static void VXChart_move(XChart* self, XChart* other)
     other->m_title = NULL;
     other->m_titleFamily = NULL;
     other->m_locale = NULL;
-    memcpy(self, other, sizeof(XChart));
-    memset(other, 0, sizeof(XChart));
+    XMemcpy(self, other, sizeof(XChart));
+    XMemset(other, 0, sizeof(XChart));
     XChart_init(other);
 }
 
@@ -383,35 +384,35 @@ static void xchart_unlinkSeries(XChart* self, void* series)
     if (!self || !series) return;
     for (i = 0; i < self->m_lineCount; ++i) {
         if ((void*)self->m_lineSeries[i] != series) continue;
-        memmove(&self->m_lineSeries[i], &self->m_lineSeries[i + 1],
+        XMemmove(&self->m_lineSeries[i], &self->m_lineSeries[i + 1],
                 (size_t)(self->m_lineCount - i - 1) * sizeof(self->m_lineSeries[0]));
         self->m_lineSeries[--self->m_lineCount] = NULL;
         return;
     }
     for (i = 0; i < self->m_barCount; ++i) {
         if ((void*)self->m_barSeries[i] != series) continue;
-        memmove(&self->m_barSeries[i], &self->m_barSeries[i + 1],
+        XMemmove(&self->m_barSeries[i], &self->m_barSeries[i + 1],
                 (size_t)(self->m_barCount - i - 1) * sizeof(self->m_barSeries[0]));
         self->m_barSeries[--self->m_barCount] = NULL;
         return;
     }
     for (i = 0; i < self->m_scatterCount; ++i) {
         if ((void*)self->m_scatterSeries[i] != series) continue;
-        memmove(&self->m_scatterSeries[i], &self->m_scatterSeries[i + 1],
+        XMemmove(&self->m_scatterSeries[i], &self->m_scatterSeries[i + 1],
                 (size_t)(self->m_scatterCount - i - 1) * sizeof(self->m_scatterSeries[0]));
         self->m_scatterSeries[--self->m_scatterCount] = NULL;
         return;
     }
     for (i = 0; i < self->m_areaCount; ++i) {
         if ((void*)self->m_areaSeries[i] != series) continue;
-        memmove(&self->m_areaSeries[i], &self->m_areaSeries[i + 1],
+        XMemmove(&self->m_areaSeries[i], &self->m_areaSeries[i + 1],
                 (size_t)(self->m_areaCount - i - 1) * sizeof(self->m_areaSeries[0]));
         self->m_areaSeries[--self->m_areaCount] = NULL;
         return;
     }
     for (i = 0; i < self->m_splineCount; ++i) {
         if ((void*)self->m_splineSeries[i] != series) continue;
-        memmove(&self->m_splineSeries[i], &self->m_splineSeries[i + 1],
+        XMemmove(&self->m_splineSeries[i], &self->m_splineSeries[i + 1],
                 (size_t)(self->m_splineCount - i - 1) * sizeof(self->m_splineSeries[0]));
         self->m_splineSeries[--self->m_splineCount] = NULL;
         return;
@@ -430,9 +431,9 @@ void XChart_removeSeries(XChart* self, void* series)
         if (self->m_series[i] != series) continue;
         type = self->m_seriesTypes[i];
         found = 1;
-        memmove(&self->m_series[i], &self->m_series[i + 1],
+        XMemmove(&self->m_series[i], &self->m_series[i + 1],
                 (size_t)(self->m_seriesCount - i - 1) * sizeof(self->m_series[0]));
-        memmove(&self->m_seriesTypes[i], &self->m_seriesTypes[i + 1],
+        XMemmove(&self->m_seriesTypes[i], &self->m_seriesTypes[i + 1],
                 (size_t)(self->m_seriesCount - i - 1) * sizeof(self->m_seriesTypes[0]));
         --self->m_seriesCount;
         break;
@@ -507,7 +508,7 @@ void XChart_setTheme(XChart* self, XChart_ChartTheme theme)
     if ((int)theme < 0 || theme > XChart_ChartTheme_Qt)
         theme = XChart_ChartTheme_Light;
     self->m_themeId = theme;
-    memcpy(self->m_theme, xchart_themeTable(theme), sizeof(self->m_theme));
+    XMemcpy(self->m_theme, xchart_themeTable(theme), sizeof(self->m_theme));
 }
 
 XChart_ChartTheme XChart_theme(const XChart* self)
@@ -612,7 +613,7 @@ static bool xchart_pushZoom(XChart* self)
         XRectF* grown = (XRectF*)XMalloc_System(sizeof(XRectF) * (size_t)newCap);
         if (!grown) return false;
         if (self->m_zoomStack) {
-            memcpy(grown, self->m_zoomStack,
+            XMemcpy(grown, self->m_zoomStack,
                    sizeof(XRectF) * (size_t)self->m_zoomCapacity);
             XFree_System(self->m_zoomStack);
         }
@@ -716,7 +717,7 @@ XMargins XChart_margins(const XChart* self)
 XRectF XChart_plotArea(const XChart* self)
 {
     XRectF r;
-    memset(&r, 0, sizeof(r));
+    XMemset(&r, 0, sizeof(r));
     return self ? self->m_plotArea : r;
 }
 

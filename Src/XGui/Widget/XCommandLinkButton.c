@@ -20,6 +20,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XCommandLinkButton.h"
+
+#include "XAlgorithm.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
@@ -32,7 +34,6 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XAlignment.h"
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
 
@@ -447,7 +448,7 @@ void XCommandLinkButton_init(XCommandLinkButton* self, XWidget* parent,
     XSize iconSize;
 
     if (!self) return;
-    memset(self, 0, sizeof(XCommandLinkButton));
+    XMemset(self, 0, sizeof(XCommandLinkButton));
     XPushButton_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XCommandLinkButton);
     self->m_description = XString_create();
@@ -469,7 +470,7 @@ XCommandLinkButton* XCommandLinkButton_create_ex(XMemoryType memory,
     XCommandLinkButton* self = (XCommandLinkButton*)XMemory_malloc(
         sizeof(XCommandLinkButton), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XCommandLinkButton));
+    XMemset(self, 0, sizeof(XCommandLinkButton));
     XCommandLinkButton_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

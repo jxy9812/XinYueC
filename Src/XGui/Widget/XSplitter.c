@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSplitter.c
  * @brief      分割器控件实现（对标 Qt 6.8 QSplitter 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -7,15 +7,18 @@
  */
 
 #include "XSplitter.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
+#include "XStringUtils.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 
 #if XWIDGET_ON && XFRAME_ON && XSPLITTER_ON
 
@@ -173,15 +176,49 @@ static void VX_splitter_paintEvent(XWidget* self, XEvent* event)
     y = 0;
     for (i = 0; i < count; ++i) {
         XWidget* child = xsp_childAt(self, i);
+        XStyle* style = NULL;
         if (!child || !xsp_childVisible(self, i)) continue;
+#if XSTYLE_ON
+        style = XStyle_defaultStyle();
+#endif
         if (xsp_horiz(sp)) {
             x += XWidget_width(child);
             XRect_init(&line, x, 0, sp->m_handleWidth, h);
+#if XSTYLE_ON
+            if (style != NULL) {
+                XStyleOption opt;
+                XStyleOption_init(&opt, XStyleCE_Splitter);
+                opt.m_rect = line;
+                opt.m_state = XWidget_isEnabled(self)
+                    ? XStyleState_Enabled : 0;
+                opt.m_horizontal = false; /* 垂直分隔条。 */
+#if XPALETTE_ON
+                opt.m_palette = XWidget_palette(self);
+#endif
+                XStyle_drawControl(style, XStyleCE_Splitter, &opt,
+                                   &painter, self);
+            } else
+#endif
             XPainter_fillRect(&painter, &line, mid);
             x += sp->m_handleWidth;
         } else {
             y += XWidget_height(child);
             XRect_init(&line, 0, y, w, sp->m_handleWidth);
+#if XSTYLE_ON
+            if (style != NULL) {
+                XStyleOption opt;
+                XStyleOption_init(&opt, XStyleCE_Splitter);
+                opt.m_rect = line;
+                opt.m_state = XWidget_isEnabled(self)
+                    ? XStyleState_Enabled : 0;
+                opt.m_horizontal = true; /* 水平分隔条。 */
+#if XPALETTE_ON
+                opt.m_palette = XWidget_palette(self);
+#endif
+                XStyle_drawControl(style, XStyleCE_Splitter, &opt,
+                                   &painter, self);
+            } else
+#endif
             XPainter_fillRect(&painter, &line, mid);
             y += sp->m_handleWidth;
         }
@@ -249,7 +286,7 @@ static void xsp_ensureCollapsibleCap(XSplitter* self, int pages)
 void XSplitter_init(XSplitter* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XFrame_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XSplitter);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -470,7 +507,7 @@ XByteArray* XSplitter_saveState(const XSplitter* self)
     out = XByteArray_create();
     if (!out) return NULL;
     count = xsp_childCount(self);
-    snprintf(header, sizeof(header), "XSP%03d%03d", self->m_orientation,
+    XSnprintf(header, sizeof(header), "XSP%03d%03d", self->m_orientation,
              count);
     XByteArray_append_utf8(out, header);
     for (i = 0; i < count; ++i) {
@@ -480,7 +517,7 @@ XByteArray* XSplitter_saveState(const XSplitter* self)
         if (child)
             size = xsp_horiz(self) ? XWidget_width(child)
                                    : XWidget_height(child);
-        snprintf(buf, sizeof(buf), "%05d", size);
+        XSnprintf(buf, sizeof(buf), "%05d", size);
         XByteArray_append_utf8(out, buf);
     }
     return out;
@@ -495,7 +532,7 @@ bool XSplitter_restoreState(XSplitter* self, const XByteArray* state)
     char buf[8];
     if (!self || !state) return false;
     data = (const char*)XByteArray_constData(state);
-    if (!data || strncmp(data, "XSP", 3) != 0) return false;
+    if (!data || XStrncmp(data, "XSP", 3) != 0) return false;
     orientation = (data[3] - '0') * 100 + (data[4] - '0') * 10 +
                   (data[5] - '0');
     count = (data[6] - '0') * 100 + (data[7] - '0') * 10 +
@@ -507,9 +544,12 @@ bool XSplitter_restoreState(XSplitter* self, const XByteArray* state)
         int* sizes = (int*)XMalloc_System((size_t)count * sizeof(int));
         if (!sizes) return false;
         for (i = 0; i < count; ++i) {
-            memcpy(buf, data + 9 + i * 5, 5);
+            XMemcpy(buf, data + 9 + i * 5, 5);
             buf[5] = '\0';
-            sizes[i] = atoi(buf);
+            {
+                int32_t v = 0;
+                sizes[i] = (str_to_int32(buf, &v) == CONV_OK) ? (int)v : 0;
+            }
         }
         XSplitter_setSizes(self, sizes, count);
         XFree_System(sizes);

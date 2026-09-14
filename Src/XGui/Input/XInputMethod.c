@@ -4,10 +4,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XInputMethod.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEventType.h"
-#include <string.h>
 #if XGUIAPPLICATION_ON
 #include "XGuiApplication.h"
 #endif /* XGUIAPPLICATION_ON */
@@ -95,7 +96,7 @@ static bool xinput_variantRect(const XVariant* value, XRectF* rect)
     data = XVariant_data((XVariant*)value);
     if (type == XVariantType_User &&
         XVariant_dataSize((XVariant*)value) == sizeof(XRectF) && data) {
-        memcpy(rect, data, sizeof(XRectF));
+        XMemcpy(rect, data, sizeof(XRectF));
         return true;
     }
     /* 允许平台回调返回借用的 XRectF 指针，等价于 Qt QVariant<QRectF>。 */
@@ -126,7 +127,7 @@ static XRectF xinput_queryRect(const XInputMethod* self,
 void XInputMethodTransform_identity(XInputMethodTransform* t)
 {
     if (!t) return;
-    memset(t, 0, sizeof(*t));
+    XMemset(t, 0, sizeof(*t));
     t->xm11 = 1.0f;
     t->xm22 = 1.0f;
     t->xm33 = 1.0f;
@@ -153,12 +154,12 @@ XVtable* XInputMethod_class_init(void)
 void XInputMethod_init(XInputMethod* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XInputMethod));
+    XMemset(self, 0, sizeof(XInputMethod));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XInputMethod);
     self->m_data = (XInputMethodPrivate*)XMalloc_System(sizeof(XInputMethodPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XInputMethodPrivate));
+    XMemset(self->m_data, 0, sizeof(XInputMethodPrivate));
     XInputMethodTransform_identity(&self->m_data->m_inputItemTransform);
 }
 

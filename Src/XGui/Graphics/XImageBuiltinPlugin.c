@@ -1,10 +1,13 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XImageBuiltinPlugin.c
  * @brief      XImageCodec 内置图像插件实现。
  * @note       插件把 XImageCodec 的格式发现、解码与编码能力包装成 Qt 风格
  *             图像插件，供 XImagePluginRegistry 统一发现和创建处理器。
  ******************************************************************************/
 #include "XImageBuiltinPlugin.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodec.h"
 #include "XImageCodecInternal.h"
 #include "XImageIOHandler.h"
@@ -12,7 +15,6 @@
 #include "XByteArray.h"
 #include "XStringList.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XIMAGEIOPLUGIN_ON
 
@@ -82,7 +84,7 @@ static uint32_t builtin_capabilityForFormat(const XString* format)
     if (!format || XContainer_isEmpty_base((const XContainer*)format))
         return 0;
     formatUtf8 = XString_toUtf8(format);
-    svgz = formatUtf8 && strcmp(formatUtf8, "svgz") == 0;
+    svgz = formatUtf8 && XStrcmp(formatUtf8, "svgz") == 0;
     codecFormat = builtin_formatFromString(format);
     if (codecFormat == XImageCodecFormat_Unknown)
         return 0;
@@ -537,7 +539,7 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
             ? (const uint8_t*)XByteArray_data(svgHeader) : NULL;
         size_t rawSize = svgHeader
             ? (size_t)XByteArray_size_base((const XContainer*)svgHeader) : 0;
-        compressedSvg = (requestedUtf8 && strcmp(requestedUtf8, "svgz") == 0) ||
+        compressedSvg = (requestedUtf8 && XStrcmp(requestedUtf8, "svgz") == 0) ||
             (raw && rawSize >= 2 && raw[0] == 0x1fu && raw[1] == 0x8bu);
         if (svgHeader) XByteArray_delete_base((XClass*)svgHeader);
     }
@@ -648,7 +650,7 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
        valid for the duration of this call. */
     if (format == XImageCodecFormat_Ppm) {
         XImageIOHandlerOptionValue subtypeValue;
-        memset(&subtypeValue, 0, sizeof(subtypeValue));
+        XMemset(&subtypeValue, 0, sizeof(subtypeValue));
         if (XImageIOHandler_optionValue(self,
                                         XImageIOHandlerOption_SubType,
                                         &subtypeValue) &&
@@ -658,20 +660,20 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
     }
     bytes = XByteArray_create();
     if (!bytes) return false;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (XImageIOHandler_optionValue(self, XImageIOHandlerOption_Quality, &value))
         quality = value.integer;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (XImageIOHandler_optionValue(self,
                                     XImageIOHandlerOption_CompressionRatio,
                                     &value))
         compression = value.integer;
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (XImageIOHandler_optionValue(self, XImageIOHandlerOption_Gamma, &value))
         gamma = value.real;
     if (format == XImageCodecFormat_Png) {
         XImageIOHandlerOptionValue descriptionValue;
-        memset(&descriptionValue, 0, sizeof(descriptionValue));
+        XMemset(&descriptionValue, 0, sizeof(descriptionValue));
         if (XImageIOHandler_option_base(self,
                                         XImageIOHandlerOption_Description,
                                         &descriptionValue) &&
@@ -690,7 +692,7 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
         }
     }
 #if XIMAGECODEC_XBM_ON
-    memset(&value, 0, sizeof(value));
+    XMemset(&value, 0, sizeof(value));
     if (format == XImageCodecFormat_Xbm &&
         XImageIOHandler_optionValue(self, XImageIOHandlerOption_Name, &value) &&
         value.string && XString_toUtf8(value.string) && XString_toUtf8(value.string)[0])
@@ -773,7 +775,7 @@ static bool VXImageBuiltinHandler_option(const XImageIOHandler* self,
     if (option == XImageIOHandlerOption_Name && value &&
         builtin_supportsOption(self, option)) {
         XImageIOHandlerOptionValue stored;
-        memset(&stored, 0, sizeof(stored));
+        XMemset(&stored, 0, sizeof(stored));
         if (!XImageIOHandler_optionValue(self, option, &stored)) return false;
         value->string = stored.string;
         return value->string != NULL;
@@ -861,7 +863,7 @@ static XImageBuiltinHandler* XImageBuiltinHandler_create(void)
     XImageBuiltinHandler* self = (XImageBuiltinHandler*)XMemory_malloc(
         sizeof(XImageBuiltinHandler), XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XImageIOHandler_init(&self->m_base);
     XClassSetVtable(self, XImageBuiltinHandler);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -927,7 +929,7 @@ static void builtin_loadPngGamma(XImageBuiltinHandler* handler)
     if (XImageCodecInternal_extractPngGamma(
             (const uint8_t*)XByteArray_data(bytes),
             (size_t)XByteArray_size_base((const XContainer*)bytes), &gamma)) {
-        memset(&value, 0, sizeof(value));
+        XMemset(&value, 0, sizeof(value));
         value.real = gamma;
         XImageIOHandler_storeOptionValue(&handler->m_base,
                                           XImageIOHandlerOption_Gamma, &value);
@@ -1093,7 +1095,7 @@ static XImageBuiltinPlugin* XImageBuiltinPlugin_ensure(void)
 {
     int64_t i;
     if (g_builtinPlugin.m_keys) return &g_builtinPlugin;
-    memset(&g_builtinPlugin, 0, sizeof(g_builtinPlugin));
+    XMemset(&g_builtinPlugin, 0, sizeof(g_builtinPlugin));
     XImageIOPlugin_init(&g_builtinPlugin.m_base);
     g_builtinPlugin.m_keys = XStringList_create();
     g_builtinPlugin.m_mimes = XStringList_create();
@@ -1106,7 +1108,7 @@ static XImageBuiltinPlugin* XImageBuiltinPlugin_ensure(void)
             XStringList_delete_base((XClass*)g_builtinPlugin.m_mimes);
         if (g_builtinPlugin.m_filters)
             XStringList_delete_base((XClass*)g_builtinPlugin.m_filters);
-        memset(&g_builtinPlugin, 0, sizeof(g_builtinPlugin));
+        XMemset(&g_builtinPlugin, 0, sizeof(g_builtinPlugin));
         return NULL;
     }
     /* 三个元数据数组必须保持一一对应；使用数组长度避免新增别名时

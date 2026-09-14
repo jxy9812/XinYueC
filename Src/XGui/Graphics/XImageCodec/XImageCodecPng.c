@@ -18,13 +18,15 @@
  *              统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
  */
 #include "XImageCodec_config.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodecInternal.h"
 #include "XMemory.h"
 #include "XCrc.h"
 #include "zlib.h"
 #include <limits.h>
 #include <stdint.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_PNG_ON
@@ -142,15 +144,15 @@ static bool pngParseTextChunk(const char type[4], const uint8_t* data,
     }
     if (keyLen == 0 || keyLen >= size) return false;
     textOffset = keyLen + 1u;
-    if (!memcmp(type, "tEXt", 4)) {
+    if (!XMemcmp(type, "tEXt", 4)) {
         textLen = size - textOffset;
-    } else if (!memcmp(type, "zTXt", 4)) {
+    } else if (!XMemcmp(type, "zTXt", 4)) {
         if (textOffset >= size || data[textOffset] != 0) return false;
         compressed = true;
         textOffset += 1u;
         if (textOffset >= size) return false;
         textLen = size - textOffset;
-    } else if (!memcmp(type, "iTXt", 4)) {
+    } else if (!XMemcmp(type, "iTXt", 4)) {
         size_t languageEnd, translatedEnd;
         uint8_t compressionFlag, compressionMethod;
         if (textOffset + 2u > size) return false;
@@ -253,7 +255,7 @@ bool XImageCodecInternal_extractPngDescription(const uint8_t* data,
     bool haveIhdr = false;
     bool haveIdat = false;
     bool ok = false;
-    if (!data || size < 8u || !out || memcmp(data, "\x89PNG\r\n\x1a\n", 8))
+    if (!data || size < 8u || !out || XMemcmp(data, "\x89PNG\r\n\x1a\n", 8))
         return false;
     XStringList_init(&keys);
     XStringList_init(&values);
@@ -264,26 +266,26 @@ bool XImageCodecInternal_extractPngDescription(const uint8_t* data,
         if (length > 0x7fffffffu || length > size - pos - 12u ||
             !pngChunkTypeValid(type))
             goto done;
-        if (!haveIhdr && memcmp(type, "IHDR", 4) != 0)
+        if (!haveIhdr && XMemcmp(type, "IHDR", 4) != 0)
             goto done;
-        if (!memcmp(type, "IHDR", 4)) {
+        if (!XMemcmp(type, "IHDR", 4)) {
             if (haveIhdr || length != 13u ||
                 !pngChunkCrcValid(type, chunkData, length, true))
                 goto done;
             haveIhdr = true;
-        } else if (!memcmp(type, "IDAT", 4)) {
+        } else if (!XMemcmp(type, "IDAT", 4)) {
             if (!haveIhdr || !pngChunkCrcValid(type, chunkData, length, true))
                 goto done;
             haveIdat = true;
-        } else if (!memcmp(type, "tEXt", 4) ||
-                   !memcmp(type, "zTXt", 4) ||
-                   !memcmp(type, "iTXt", 4)) {
+        } else if (!XMemcmp(type, "tEXt", 4) ||
+                   !XMemcmp(type, "zTXt", 4) ||
+                   !XMemcmp(type, "iTXt", 4)) {
             /* QPngHandler reads both info_ptr and end_info, so ancillary
              * text after IDAT is visible as well as text before IDAT. */
             if (pngChunkCrcValid(type, chunkData, length, true))
                 (void)pngParseTextChunk((const char*)type, chunkData, length,
                                          &keys, &values, &textBytes);
-        } else if (!memcmp(type, "IEND", 4)) {
+        } else if (!XMemcmp(type, "IEND", 4)) {
             if (!haveIhdr || !haveIdat || length != 0u)
                 goto done;
             ok = pngBuildDescription(&keys, &values, out);
@@ -304,7 +306,7 @@ bool XImageCodecInternal_extractPngGamma(const uint8_t* data,
     size_t pos = 8u;
     bool haveIhdr = false;
     bool haveIdat = false;
-    if (!data || size < 8u || !out || memcmp(data, "\x89PNG\r\n\x1a\n", 8))
+    if (!data || size < 8u || !out || XMemcmp(data, "\x89PNG\r\n\x1a\n", 8))
         return false;
     *out = 0.0f;
     while (pos <= size && size - pos >= 12u) {
@@ -314,18 +316,18 @@ bool XImageCodecInternal_extractPngGamma(const uint8_t* data,
         if (length > 0x7fffffffu || length > size - pos - 12u ||
             !pngChunkTypeValid(type))
             return false;
-        if (!haveIhdr && memcmp(type, "IHDR", 4) != 0)
+        if (!haveIhdr && XMemcmp(type, "IHDR", 4) != 0)
             return false;
-        if (!memcmp(type, "IHDR", 4)) {
+        if (!XMemcmp(type, "IHDR", 4)) {
             if (haveIhdr || length != 13u ||
                 !pngChunkCrcValid(type, chunkData, length, true))
                 return false;
             haveIhdr = true;
-        } else if (!memcmp(type, "IDAT", 4)) {
+        } else if (!XMemcmp(type, "IDAT", 4)) {
             if (!haveIhdr || !pngChunkCrcValid(type, chunkData, length, true))
                 return false;
             haveIdat = true;
-        } else if (!haveIdat && !memcmp(type, "gAMA", 4) && length == 4u &&
+        } else if (!haveIdat && !XMemcmp(type, "gAMA", 4) && length == 4u &&
                    pngChunkCrcValid(type, chunkData, length, true)) {
             uint32_t raw = XImageCodecInternal_readU32BE(chunkData);
             if (raw != 0u) {
@@ -412,7 +414,7 @@ static bool pngAppendColorProfile(const XImage* image, XByteArray* out)
         ok = false;
         goto done;
     }
-    memcpy(payload, description, nameSize);
+    XMemcpy(payload, description, nameSize);
     payload[nameSize] = 0;
     payload[nameSize + 1u] = 0; /* PNG compression method: zlib */
     if (compress2(compressed, &compressedSize, profileData,
@@ -420,7 +422,7 @@ static bool pngAppendColorProfile(const XImage* image, XByteArray* out)
         ok = false;
         goto done;
     }
-    memcpy(payload + nameSize + 2u, compressed, (size_t)compressedSize);
+    XMemcpy(payload + nameSize + 2u, compressed, (size_t)compressedSize);
     ok = pngAppendChunk(out, "iCCP", payload,
                         nameSize + 2u + (size_t)compressedSize);
 done:
@@ -500,7 +502,7 @@ static bool pngAppendChunk(XByteArray* out, const char type[4],
     uint8_t header[8], crcData[4];
     if (size > UINT32_MAX) return false;
     XImageCodecInternal_writeU32BE(header, (uint32_t)size);
-    memcpy(header + 4, type, 4);
+    XMemcpy(header + 4, type, 4);
     if (!XImageCodecInternal_appendBytes(out, header, sizeof(header)))
         return false;
     if (size && !XImageCodecInternal_appendBytes(out, data, size))
@@ -584,28 +586,28 @@ static bool pngAppendTextChunk(XByteArray* out, const char* key,
     if (payloadSize > UINT32_MAX) goto done;
     payload = (uint8_t*)XMalloc_System(payloadSize ? payloadSize : 1u);
     if (!payload) goto done;
-    memcpy(payload, key, keyLen);
+    XMemcpy(payload, key, keyLen);
     payload[keyLen] = 0;
-    if (!strcmp(chunkType, "iTXt")) {
+    if (!XStrcmp(chunkType, "iTXt")) {
         size_t at = keyLen + 1u;
         payload[at++] = compressText ? 1u : 0u;
         payload[at++] = 0u;
-        memcpy(payload + at, "UTF-8", 5u);
+        XMemcpy(payload + at, "UTF-8", 5u);
         at += 5u;
         payload[at++] = 0u;
-        memcpy(payload + at, key, keyLen);
+        XMemcpy(payload + at, key, keyLen);
         at += keyLen;
         payload[at++] = 0u;
         if (compressText)
-            memcpy(payload + at, compressed, (size_t)compressedSize);
+            XMemcpy(payload + at, compressed, (size_t)compressedSize);
         else if (valueLen)
-            memcpy(payload + at, value, valueLen);
-    } else if (!strcmp(chunkType, "zTXt")) {
+            XMemcpy(payload + at, value, valueLen);
+    } else if (!XStrcmp(chunkType, "zTXt")) {
         size_t at = keyLen + 1u;
         payload[at++] = 0u;
-        memcpy(payload + at, compressed, (size_t)compressedSize);
+        XMemcpy(payload + at, compressed, (size_t)compressedSize);
     } else if (valueLen) {
-        memcpy(payload + keyLen + 1u, value, valueLen);
+        XMemcpy(payload + keyLen + 1u, value, valueLen);
     }
     {
         bool ok = pngAppendChunk(out, chunkType, payload, payloadSize);
@@ -804,11 +806,11 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     bool tempInitialized = false;
     bool ok = false;
 
-    if (!data || size < 33 || !out || memcmp(data, "\x89PNG\r\n\x1a\n", 8))
+    if (!data || size < 33 || !out || XMemcmp(data, "\x89PNG\r\n\x1a\n", 8))
         return false;
-    memset(palette, 0, sizeof(palette));
-    memset(trnsAlpha, 0, sizeof(trnsAlpha));
-    memset(&chrm, 0, sizeof(chrm));
+    XMemset(palette, 0, sizeof(palette));
+    XMemset(trnsAlpha, 0, sizeof(trnsAlpha));
+    XMemset(&chrm, 0, sizeof(chrm));
     XStringList_init(&textKeys);
     XStringList_init(&textValues);
 
@@ -830,17 +832,17 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
          * png_crc_finish_critical(..., 1) 按可选块处理 IEND，
          * 因而 IEND 的 CRC 只产生警告；非调色板图的 PLTE 同理。依据
          * pngrutil.c:1041-1044、1082-1107。 */
-        if (isCritical && memcmp(type, "IEND", 4) != 0 &&
-            (memcmp(type, "PLTE", 4) != 0 || colorType == PNG_CT_PALETTE) &&
+        if (isCritical && XMemcmp(type, "IEND", 4) != 0 &&
+            (XMemcmp(type, "PLTE", 4) != 0 || colorType == PNG_CT_PALETTE) &&
             !pngChunkCrcValid(type, chunkData, length, true))
             goto fail;
-        if (!haveIHDR && memcmp(type, "IHDR", 4) != 0) goto fail;
+        if (!haveIHDR && XMemcmp(type, "IHDR", 4) != 0) goto fail;
         /* libpng 在遇到 IDAT 以外的块后进入 PNG_AFTER_IDAT 状态；其后
          * 再出现 IDAT 会在 png_read_end 中被报告 benign warning 并丢弃。
          * 保持该状态，复现 pngread.c:699-744 的流式块顺序处理。 */
-        if (haveIDAT && memcmp(type, "IDAT", 4) != 0)
+        if (haveIDAT && XMemcmp(type, "IDAT", 4) != 0)
             idatEnded = true;
-        if (!memcmp(type, "IHDR", 4)) {
+        if (!XMemcmp(type, "IHDR", 4)) {
             /* libpng 的 CDIHDR 规则（pngrutil.c:3069-3075）要求 IHDR
              * 只能出现一次且长度必须精确为 13 字节。 */
             if (haveIHDR || length != 13u) goto fail;
@@ -850,7 +852,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
             compression = data[pos + 18]; filter = data[pos + 19];
             interlace = data[pos + 20];
             haveIHDR = true;
-        } else if (!memcmp(type, "PLTE", 4)) {
+        } else if (!XMemcmp(type, "PLTE", 4)) {
             /* png_handle_PLTE() 对非调色板图把 PLTE 当作可选块：灰度
              * 图直接忽略；RGB/RGBA 图只有首个、位置正确且长度合法的
              * PLTE 才会保存，重复、越界或位置不对仅发 benign warning
@@ -888,7 +890,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                     (uint32_t)p[i * 3 + 2];
             }
             havePLTE = true;
-        } else if (!memcmp(type, "tRNS", 4)) {
+        } else if (!XMemcmp(type, "tRNS", 4)) {
             /* tRNS 是 ancillary。libpng 对重复、位置、长度和 CRC
              * 异常均走 benign warning（pngrutil.c:1705-1771），读取仍
              * 可继续；只有完整且位置正确的块才改变透明语义。 */
@@ -925,19 +927,19 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 continue;
             }
             haveTrns = true;
-        } else if (!memcmp(type, "iCCP", 4)) {
+        } else if (!XMemcmp(type, "iCCP", 4)) {
             /* png_handle_iCCP() 只接受首个 profile；重复块发出警告并
              * 保留先出现的数据。压缩失败按无效 profile 忽略，像 Qt
              * fromIccProfile() 返回无效 QColorSpace 时仍继续读图。 */
             if (!haveIcc && pngParseIccProfile(chunkData, length,
                                                &iccProfile, &iccProfileSize))
                 haveIcc = true;
-        } else if (!memcmp(type, "sRGB", 4)) {
+        } else if (!XMemcmp(type, "sRGB", 4)) {
             /* sRGB 的 rendering intent 不影响 QImage 色彩空间，但值必须
              * 在 PNG 规范 0..3 范围内；libpng 对非法值只报告错误并忽略。 */
             if (!haveSrgb && length == 1u && chunkData[0] <= 3u)
                 haveSrgb = true;
-        } else if (!memcmp(type, "gAMA", 4)) {
+        } else if (!XMemcmp(type, "gAMA", 4)) {
             /* gAMA 用 1e5 倍定点保存文件 gamma，Qt 传入的是其倒数。 */
             if (!haveGamma && length == 4u) {
                 uint32_t rawGamma = XImageCodecInternal_readU32BE(chunkData);
@@ -946,7 +948,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                     haveGamma = true;
                 }
             }
-        } else if (!memcmp(type, "cHRM", 4)) {
+        } else if (!XMemcmp(type, "cHRM", 4)) {
             /* cHRM 八个 1e5 倍定点坐标按 Qt 的 QPointF 传入；最终
              * 有效性由 XColorSpace_create_custom() 的范围校验负责。 */
             if (!haveChrm && length == 32u) {
@@ -960,7 +962,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 chrm.m_bluePoint.y = (float)XImageCodecInternal_readU32BE(chunkData + 28) / 100000.0f;
                 haveChrm = true;
             }
-        } else if (!memcmp(type, "pHYs", 4)) {
+        } else if (!XMemcmp(type, "pHYs", 4)) {
             /* qpnghandler.cpp 通过 png_get_x/y_pixels_per_meter() 读取
              * 米制分辨率；非米制 pHYs 不改变 QImage 的 DPM。 */
             if (!havePhys && length == 9u &&
@@ -970,7 +972,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 pixelsPerMeterY = XImageCodecInternal_readU32BE(chunkData + 4);
                 havePhys = true;
             }
-        } else if (!memcmp(type, "oFFs", 4)) {
+        } else if (!XMemcmp(type, "oFFs", 4)) {
             /* Qt 仅在 unit_type == PNG_OFFSET_PIXEL 时设置 offset；负值
              * 通过有符号 32 位 TIFF/PNG 字段原样保留。 */
             if (!haveOffset && length == 9u &&
@@ -980,9 +982,9 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 offsetY = (int32_t)XImageCodecInternal_readU32BE(chunkData + 4);
                 haveOffset = true;
             }
-        } else if (!memcmp(type, "tEXt", 4) ||
-                   !memcmp(type, "zTXt", 4) ||
-                   !memcmp(type, "iTXt", 4)) {
+        } else if (!XMemcmp(type, "tEXt", 4) ||
+                   !XMemcmp(type, "zTXt", 4) ||
+                   !XMemcmp(type, "iTXt", 4)) {
             /* Qt 通过 libpng 在 info/end 两阶段读取文本；坏 CRC 的
              * ancillary 块只告警并忽略，合法重复键由 XImage_setText
              * 在转移阶段按最后一次出现的值覆盖。 */
@@ -990,7 +992,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 (void)pngParseTextChunk((const char*)type, chunkData,
                                         length, &textKeys, &textValues,
                                         &textBytes);
-        } else if (!memcmp(type, "IDAT", 4)) {
+        } else if (!XMemcmp(type, "IDAT", 4)) {
             if (!haveIHDR ||
                 (colorType == PNG_CT_PALETTE && !havePLTE))
                 goto fail;
@@ -999,11 +1001,11 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                 uint8_t* next = (uint8_t*)XRealloc_System(idat, idatSize + length);
                 if (!next) goto fail;
                 idat = next;
-                memcpy(idat + idatSize, data + pos + 8, length);
+                XMemcpy(idat + idatSize, data + pos + 8, length);
                 idatSize += length;
                 haveIDAT = true;
             }
-        } else if (!memcmp(type, "IEND", 4)) {
+        } else if (!XMemcmp(type, "IEND", 4)) {
             if (!haveIHDR || !haveIDAT) goto fail;
             /* png_handle_IEND() 将非零长度和 CRC 作为 benign warning，
              * 仍设置 PNG_HAVE_IEND 并结束读取（pngrutil.c:1097-1109）。 */
@@ -1139,10 +1141,10 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
 #if XIMAGECODEC_PNG_INTERLACE_ON
         if (interlace == 1) {
             passCount = 7;
-            memcpy(startX, pngAdam7StartX, sizeof(startX));
-            memcpy(startY, pngAdam7StartY, sizeof(startY));
-            memcpy(stepX, pngAdam7StepX, sizeof(stepX));
-            memcpy(stepY, pngAdam7StepY, sizeof(stepY));
+            XMemcpy(startX, pngAdam7StartX, sizeof(startX));
+            XMemcpy(startY, pngAdam7StartY, sizeof(startY));
+            XMemcpy(stepX, pngAdam7StepX, sizeof(stepX));
+            XMemcpy(stepY, pngAdam7StepY, sizeof(stepY));
         } else
 #endif
         {
@@ -1294,7 +1296,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
             if (channels == 1 && !hasTransparentColor) {
                 for (int x = 0; x < (int)width; ++x) {
                     uint16_t v = src[x];
-                    memcpy(row + (size_t)x * 2, &v, 2);
+                    XMemcpy(row + (size_t)x * 2, &v, 2);
                 }
             } else {
                 for (int x = 0; x < (int)width; ++x) {
@@ -1322,7 +1324,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
                     if (colorType == PNG_CT_RGB && !hasTransparentColor)
                         tmp[3] = 0xffffu;
                     for (c = 0; c < 4; ++c)
-                        memcpy(row + (size_t)x * 8 + (size_t)c * 2, &tmp[c], 2);
+                        XMemcpy(row + (size_t)x * 8 + (size_t)c * 2, &tmp[c], 2);
                 }
             }
         }
@@ -1386,7 +1388,7 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
     }
     if (haveIcc) {
         XImageColorProfileSpec profileSpec;
-        memset(&profileSpec, 0, sizeof(profileSpec));
+        XMemset(&profileSpec, 0, sizeof(profileSpec));
         profileSpec.m_iccData = iccProfile;
         profileSpec.m_iccSize = iccProfileSize;
         (void)XImageCodecInternal_setColorProfile(&temp, &profileSpec);
@@ -1496,7 +1498,7 @@ static bool pngEncodeIndexed(const XImage* image, int compressionLevel,
                                  (uLong)rawSize, compressionLevel) != Z_OK)
         goto done;
     if (!XByteArray_resize_base((XVector*)out, 0)) goto done;
-    memset(ihdr, 0, sizeof(ihdr));
+    XMemset(ihdr, 0, sizeof(ihdr));
     XImageCodecInternal_writeU32BE(ihdr, (uint32_t)width);
     XImageCodecInternal_writeU32BE(ihdr + 4, (uint32_t)height);
     ihdr[8] = 8; ihdr[9] = 3;
@@ -1600,7 +1602,7 @@ bool XImageCodecInternal_encodePngOptions(const XImage* image,
                                  (uLong)rawSize, compressionLevel) != Z_OK)
         goto done;
     if (!XByteArray_resize_base((XVector*)out, 0)) goto done;
-    memset(ihdr, 0, sizeof(ihdr));
+    XMemset(ihdr, 0, sizeof(ihdr));
     XImageCodecInternal_writeU32BE(ihdr, (uint32_t)width);
     XImageCodecInternal_writeU32BE(ihdr + 4, (uint32_t)height);
     ihdr[8] = 8; ihdr[9] = 6;

@@ -8,6 +8,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XIconThemeInternal.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XStringList.h"
@@ -24,7 +27,6 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON && XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON
 #define XICON_THEME_SVG_AVAILABLE 1
@@ -57,7 +59,7 @@ static int theme_parseSize(const char* s)
 {
     int value = 0;
     if (!s) return 0;
-    s = strchr(s, 'x');
+    s = XStrchr(s, 'x');
     if (!s || !s[1]) return 0;
     ++s;
     while (*s >= '0' && *s <= '9') {
@@ -74,7 +76,7 @@ static void theme_buildDirPath(char* out, size_t outSize, const char* root,
                                const char* context, const char* name,
                                const char* ext)
 {
-    snprintf(out, outSize, "%s/%s/%s/%s/%s%s", root ? root : "",
+    XSnprintf(out, outSize, "%s/%s/%s/%s/%s%s", root ? root : "",
              theme ? theme : "", sizeDir ? sizeDir : "",
              context ? context : "", name ? name : "", ext ? ext : "");
 }
@@ -83,14 +85,14 @@ static void theme_buildThemePath(char* out, size_t outSize, const char* root,
                                  const char* theme, const char* name,
                                  const char* ext)
 {
-    snprintf(out, outSize, "%s/%s/%s%s", root ? root : "",
+    XSnprintf(out, outSize, "%s/%s/%s%s", root ? root : "",
              theme ? theme : "", name ? name : "", ext ? ext : "");
 }
 
 static void theme_buildRootPath(char* out, size_t outSize, const char* root,
                                 const char* name, const char* ext)
 {
-    snprintf(out, outSize, "%s/%s%s", root ? root : "", name ? name : "",
+    XSnprintf(out, outSize, "%s/%s%s", root ? root : "", name ? name : "",
              ext ? ext : "");
 }
 
@@ -132,7 +134,7 @@ static bool theme_indexExists(const char* root, const char* theme)
     char path[1024];
     int written;
     if (!root || !root[0] || !theme || !theme[0]) return false;
-    written = snprintf(path, sizeof(path), "%s/%s/index.theme", root, theme);
+    written = XSnprintf(path, sizeof(path), "%s/%s/index.theme", root, theme);
     if (written < 0 || (size_t)written >= sizeof(path)) return false;
     return theme_fileExists(path);
 }
@@ -156,10 +158,10 @@ static bool theme_extAllowed(const char* ext)
 static int theme_extPriority(const char* ext)
 {
     if (!ext) return INT_MAX;
-    if (strcmp(ext, ".png") == 0) return 0;
-    if (strcmp(ext, ".svg") == 0) return 1;
-    if (strcmp(ext, ".xpm") == 0) return 2;
-    if (strcmp(ext, ".bmp") == 0) return 3;
+    if (XStrcmp(ext, ".png") == 0) return 0;
+    if (XStrcmp(ext, ".svg") == 0) return 1;
+    if (XStrcmp(ext, ".xpm") == 0) return 2;
+    if (XStrcmp(ext, ".bmp") == 0) return 3;
     if (ext[0] == '\0') return 4;
     return 5;
 }
@@ -246,7 +248,7 @@ static bool theme_cachePath(const char* root, const char* theme,
     int written;
     if (!root || !root[0] || !theme || !theme[0] || !out || outSize == 0)
         return false;
-    written = snprintf(out, outSize, "%s/%s/icon-theme.cache", root, theme);
+    written = XSnprintf(out, outSize, "%s/%s/icon-theme.cache", root, theme);
     return written >= 0 && (size_t)written < outSize;
 }
 
@@ -285,7 +287,7 @@ static bool theme_cacheFresh(const uint8_t* data, size_t length,
         !theme_cacheRange(data, length, dirListOffset,
                           4u + 4u * (uint64_t)dirListLength))
         return false;
-    written = snprintf(themePath, sizeof(themePath), "%s/%s", root, theme);
+    written = XSnprintf(themePath, sizeof(themePath), "%s/%s", root, theme);
     if (written < 0 || (size_t)written >= sizeof(themePath)) return false;
     themeStamp = theme_fileModified(themePath, &themePresent);
     /* Qt 先比较主题根目录时间，再检查缓存列出的每个内容目录。 */
@@ -301,7 +303,7 @@ static bool theme_cacheFresh(const uint8_t* data, size_t length,
             !theme_cacheString(data, length, dirOffset))
             return false;
         {
-            int written = snprintf(dirPath, sizeof(dirPath), "%s/%s/%s",
+            int written = XSnprintf(dirPath, sizeof(dirPath), "%s/%s/%s",
                                    root, theme,
                                    theme_cacheString(data, length, dirOffset));
             if (written < 0 || (size_t)written >= sizeof(dirPath))
@@ -394,7 +396,7 @@ static int theme_cacheDirState(const char* root, const char* theme,
             !theme_cacheRange(data, length, listOffset,
                               4u + 8u * (uint64_t)listLength))
             goto done;
-        if (strcmp(theme_cacheString(data, length, nameOffset), name) == 0) {
+        if (XStrcmp(theme_cacheString(data, length, nameOffset), name) == 0) {
             for (listIndex = 0; listIndex < listLength; ++listIndex) {
                 uint16_t directoryIndex;
                 uint32_t directoryOffset;
@@ -415,7 +417,7 @@ static int theme_cacheDirState(const char* root, const char* theme,
                     !(cachedDirectory = theme_cacheString(data, length,
                                                           directoryOffset)))
                     goto done;
-                if (strcmp(cachedDirectory, directory) == 0) {
+                if (XStrcmp(cachedDirectory, directory) == 0) {
                     result = 1;
                     goto done;
                 }
@@ -559,7 +561,7 @@ static char* theme_trimLine(char* s)
     char* end;
     if (!s) return NULL;
     while (*s == ' ' || *s == '\t' || *s == '\r') ++s;
-    end = s + strlen(s);
+    end = s + XStrlen(s);
     while (end > s && (end[-1] == ' ' || end[-1] == '\t' ||
                        end[-1] == '\r')) --end;
     *end = '\0';
@@ -660,7 +662,7 @@ static void theme_stringListDelete(XStringList* list)
 static void themeContext_init(ThemeContext* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     self->m_dirs = XStringList_create();
     self->m_parents = XStringList_create();
 }
@@ -671,7 +673,7 @@ static void themeContext_deinit(ThemeContext* self)
     theme_stringListDelete(self->m_dirs);
     theme_stringListDelete(self->m_parents);
     if (self->m_meta) XFree_System(self->m_meta);
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
 }
 
 /* 解析同一批搜索路径时只替换目录元数据，列表对象和容量可以继续复用。 */
@@ -699,7 +701,7 @@ static bool themeContext_prepareDirs(ThemeContext* self)
     /* C 标准不允许把 NULL 作为 memset 目标，即使长度为零；空主题
        目录列表在 UBSan 下也必须保持合法。 */
     if (count)
-        memset(self->m_meta, 0, count * sizeof(ThemeDirInfo));
+        XMemset(self->m_meta, 0, count * sizeof(ThemeDirInfo));
     for (i = 0; i < count; ++i) {
         const XString* nameStr = (const XString*)XStringList_at_base(
             (const XVector*)self->m_dirs, (int64_t)i);
@@ -725,7 +727,7 @@ static ThemeDirInfo* themeContext_findDir(ThemeContext* self,
         const XString* nameStr = (const XString*)XStringList_at_base(
             (const XVector*)self->m_dirs, (int64_t)i);
         const char* name = nameStr ? XString_toUtf8(nameStr) : NULL;
-        if (name && strcmp(name, section) == 0)
+        if (name && XStrcmp(name, section) == 0)
             return &self->m_meta[i];
     }
     return NULL;
@@ -763,7 +765,7 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
 
     if (!root || !root[0] || !theme || !theme[0] || !out) return false;
     themeContext_reset(out);
-    snprintf(filePath, sizeof(filePath), "%s/%s/index.theme", root, theme);
+    XSnprintf(filePath, sizeof(filePath), "%s/%s/index.theme", root, theme);
     fileName = XString_create_utf8(filePath);
     if (!fileName) return false;
     file = XFile_create_2(fileName);
@@ -781,7 +783,7 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
     len = (size_t)XByteArray_size_base((const XContainer*)bytes);
     text = (char*)XMalloc_Hybrid(len + 1);
     if (!text) goto done;
-    if (len) memcpy(text, XByteArray_data(bytes), len);
+    if (len) XMemcpy(text, XByteArray_data(bytes), len);
     text[len] = '\0';
 
     {
@@ -792,15 +794,15 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
             const char* newline;
             size_t n;
             char* lp;
-            newline = strchr(cursor, '\n');
-            n = newline ? (size_t)(newline - cursor) : strlen(cursor);
+            newline = XStrchr(cursor, '\n');
+            n = newline ? (size_t)(newline - cursor) : XStrlen(cursor);
             if (n >= sizeof(line)) n = sizeof(line) - 1;
-            memcpy(line, cursor, n);
+            XMemcpy(line, cursor, n);
             line[n] = '\0';
             lp = theme_trimLine(line);
             if (lp[0]) {
                 if (lp[0] == '[') {
-                    char* closing = strchr(lp, ']');
+                    char* closing = XStrchr(lp, ']');
                     const char* start;
                     const char* end;
                     size_t sLen;
@@ -810,13 +812,13 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
                         theme_trimSpan(&start, &end);
                         sLen = (size_t)(end - start);
                         if (sLen >= sizeof(section)) sLen = sizeof(section) - 1;
-                        memcpy(section, start, sLen);
+                        XMemcpy(section, start, sLen);
                         section[sLen] = '\0';
                     } else {
                         section[0] = '\0';
                     }
                 } else {
-                    char* eq = strchr(lp, '=');
+                    char* eq = XStrchr(lp, '=');
                     if (eq && section[0]) {
                         char* key;
                         char* value;
@@ -849,15 +851,15 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
             const char* newline;
             size_t n;
             char* lp;
-            newline = strchr(cursor, '\n');
-            n = newline ? (size_t)(newline - cursor) : strlen(cursor);
+            newline = XStrchr(cursor, '\n');
+            n = newline ? (size_t)(newline - cursor) : XStrlen(cursor);
             if (n >= sizeof(line)) n = sizeof(line) - 1;
-            memcpy(line, cursor, n);
+            XMemcpy(line, cursor, n);
             line[n] = '\0';
             lp = theme_trimLine(line);
             if (lp[0]) {
                 if (lp[0] == '[') {
-                    char* closing = strchr(lp, ']');
+                    char* closing = XStrchr(lp, ']');
                     const char* start;
                     const char* end;
                     size_t sLen;
@@ -867,13 +869,13 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
                         theme_trimSpan(&start, &end);
                         sLen = (size_t)(end - start);
                         if (sLen >= sizeof(section)) sLen = sizeof(section) - 1;
-                        memcpy(section, start, sLen);
+                        XMemcpy(section, start, sLen);
                         section[sLen] = '\0';
                     } else {
                         section[0] = '\0';
                     }
                 } else {
-                    char* eq = strchr(lp, '=');
+                    char* eq = XStrchr(lp, '=');
                     if (eq && section[0]) {
                         char* key;
                         char* value;
@@ -1021,7 +1023,7 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
              sizeof(theme_import_exts[0]); ++extIndex) {
         const char* ext = theme_import_exts[extIndex];
         if (!theme_extAllowed(ext)) continue;
-        snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme, dir,
+        XSnprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme, dir,
                  name, ext);
         /* qiconloader.cpp records the first existing extension before any
            decode.  Preserve that entry even when loading fails, so a broken
@@ -1065,7 +1067,7 @@ static bool theme_tryParsedDirExists(const ThemeContext* ctx, size_t dirIndex,
              sizeof(theme_import_exts[0]); ++extIndex) {
         const char* ext = theme_import_exts[extIndex];
         if (!theme_extAllowed(ext)) continue;
-        if (snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme,
+        if (XSnprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme,
                      dir, name, ext) < 0 ||
             !theme_fileExists(path))
             continue;
@@ -1104,7 +1106,7 @@ static int theme_parsedDirFormatPriority(const ThemeContext* ctx,
         const char* ext = theme_import_exts[extIndex];
         int written;
         if (!theme_extAllowed(ext)) continue;
-        written = snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme,
+        written = XSnprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme,
                            dir, name, ext);
         if (written < 0 || (size_t)written >= sizeof(path)) continue;
         if (theme_fileExists(path)) return theme_extPriority(ext);
@@ -1231,14 +1233,14 @@ static bool theme_selectLegacyEntryType(const XStringList* paths,
                     const char* ext = theme_import_exts[extIndex];
                     int written;
                     if (!theme_extAllowed(ext)) continue;
-                    written = snprintf(path, sizeof(path), "%s/%s/%s/%s/%s%s",
+                    written = XSnprintf(path, sizeof(path), "%s/%s/%s/%s/%s%s",
                                        root, theme, theme_size_dirs[dirIndex],
                                        theme_context_dirs[contextIndex], name,
                                        ext);
                     if (written < 0 || (size_t)written >= sizeof(path) ||
                         !theme_fileExists(path))
                         continue;
-                    *scalable = strcmp(theme_size_dirs[dirIndex], "scalable") == 0;
+                    *scalable = XStrcmp(theme_size_dirs[dirIndex], "scalable") == 0;
                     return true;
                 }
             }
@@ -1315,7 +1317,7 @@ static bool theme_selectEntryType(const XStringList* paths,
         }
     }
     if (allowDashFallback) {
-        size_t nameLen = strlen(name);
+        size_t nameLen = XStrlen(name);
         while (nameLen > 2) {
             char dashName[1024];
             size_t dashPos = theme_lastDash(name, nameLen);
@@ -1323,9 +1325,9 @@ static bool theme_selectEntryType(const XStringList* paths,
             if (dashPos == (size_t)-1 || dashPos == 0 ||
                 dashPos >= sizeof(dashName)) break;
             nameLen = dashPos;
-            memcpy(dashName, name, nameLen);
+            XMemcpy(dashName, name, nameLen);
             dashName[nameLen] = '\0';
-            memset(&fresh, 0, sizeof(fresh));
+            XMemset(&fresh, 0, sizeof(fresh));
             if (theme_selectEntryType(paths, theme, dashName, target,
                                       fallbackTheme, &fresh, true, true,
                                       scalable)) {
@@ -1456,7 +1458,7 @@ static bool theme_visitContains(const ThemeVisitStack* stack, const char* name)
     size_t i;
     if (!stack || !name) return false;
     for (i = 0; i < stack->m_count; ++i) {
-        if (stack->m_names[i] && strcmp(stack->m_names[i], name) == 0)
+        if (stack->m_names[i] && XStrcmp(stack->m_names[i], name) == 0)
             return true;
     }
     return false;
@@ -1483,7 +1485,7 @@ static void theme_appendUnique(XStringList* list, const char* value)
         const XString* item = (const XString*)XStringList_at_base(
             (const XVector*)list, (int64_t)i);
         const char* n = item ? XString_toUtf8(item) : NULL;
-        if (n && strcmp(n, value) == 0) return;
+        if (n && XStrcmp(n, value) == 0) return;
     }
     XStringList_push_back_utf8(list, value);
 }
@@ -1505,13 +1507,13 @@ static XStringList* theme_parentsFor(const ThemeContext* ctx,
             trimmed = XString_trimmed(src);
             if (!trimmed) continue;
             name = XString_toUtf8(trimmed);
-            if (name && name[0] && strcmp(name, "hicolor") != 0)
+            if (name && name[0] && XStrcmp(name, "hicolor") != 0)
                 theme_appendUnique(result, name);
             XString_delete_base((XClass*)trimmed);
         }
     }
     if (fallbackTheme && fallbackTheme[0] &&
-        strcmp(fallbackTheme, "hicolor") != 0)
+        XStrcmp(fallbackTheme, "hicolor") != 0)
         theme_appendUnique(result, fallbackTheme);
     theme_appendUnique(result, "hicolor");
     return result;
@@ -1638,7 +1640,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
     }
 
     if (allowDashFallback && !foundParent) {
-        size_t nameLen = strlen(name);
+        size_t nameLen = XStrlen(name);
         while (nameLen > 2) {
             char dashName[1024];
             size_t dashPos;
@@ -1647,9 +1649,9 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             if (dashPos == (size_t)-1 || dashPos == 0) break;
             nameLen = dashPos;
             if (nameLen >= sizeof(dashName)) break;
-            memcpy(dashName, name, nameLen);
+            XMemcpy(dashName, name, nameLen);
             dashName[nameLen] = '\0';
-            memset(&fresh, 0, sizeof(fresh));
+            XMemset(&fresh, 0, sizeof(fresh));
             if (theme_searchTheme(paths, theme, dashName, target, iconScale,
                                   fallbackTheme, &fresh, true, true, out)) {
                 dashFound = true;
@@ -1744,7 +1746,7 @@ static bool theme_searchThemeExists(const XStringList* paths,
                              sizeof(theme_import_exts[0]); ++extIndex) {
                         const char* ext = theme_import_exts[extIndex];
                         if (!theme_extAllowed(ext)) continue;
-                        if (snprintf(path, sizeof(path), "%s/%s/%s/%s/%s%s",
+                        if (XSnprintf(path, sizeof(path), "%s/%s/%s/%s/%s%s",
                                      root, theme, theme_size_dirs[dirIndex],
                                      theme_context_dirs[contextIndex], name,
                                      ext) >= 0 && theme_fileExists(path)) {
@@ -1779,7 +1781,7 @@ static bool theme_searchThemeExists(const XStringList* paths,
         }
     }
     if (!local && allowDashFallback) {
-        size_t nameLen = strlen(name);
+        size_t nameLen = XStrlen(name);
         while (nameLen > 2) {
             char dashName[1024];
             size_t dashPos = theme_lastDash(name, nameLen);
@@ -1787,9 +1789,9 @@ static bool theme_searchThemeExists(const XStringList* paths,
             if (dashPos == (size_t)-1 || dashPos == 0 ||
                 dashPos >= sizeof(dashName)) break;
             nameLen = dashPos;
-            memcpy(dashName, name, nameLen);
+            XMemcpy(dashName, name, nameLen);
             dashName[nameLen] = '\0';
-            memset(&fresh, 0, sizeof(fresh));
+            XMemset(&fresh, 0, sizeof(fresh));
             if (theme_searchThemeExists(paths, theme, dashName, target,
                                         iconScale, fallbackTheme, &fresh,
                                         true, true)) {
@@ -1850,7 +1852,7 @@ static bool theme_dirHasIcon(const char* root, const char* theme,
              sizeof(theme_import_exts[0]); ++extIndex) {
         const char* ext = theme_import_exts[extIndex];
         if (!theme_extAllowed(ext)) continue;
-        snprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme, dir,
+        XSnprintf(path, sizeof(path), "%s/%s/%s/%s%s", root, theme, dir,
                  name, ext);
         /* availableSizes()/isNull() operate on registered entries and must
            not decode the image just to answer an existence query. */
@@ -1933,7 +1935,7 @@ static bool theme_collectSizes(const XStringList* paths, const char* theme,
                         (const XVector*)paths, (int64_t)pathIndex);
                     const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
                     char dir[64];
-                    snprintf(dir, sizeof(dir), "%s", theme_size_dirs[dirIndex]);
+                    XSnprintf(dir, sizeof(dir), "%s", theme_size_dirs[dirIndex]);
                     if (theme_dirHasIcon(root, theme, dir, name)) {
                         theme_appendSize(out, logicalSize);
                         found = true;
@@ -2049,7 +2051,7 @@ static bool theme_loadLegacy(const XStringList* paths, const char* theme,
             const char* root = path ? XString_toUtf8(path) : NULL;
             char indexPath[1024];
             if (!root || !root[0]) continue;
-            snprintf(indexPath, sizeof(indexPath), "%s/%s/index.theme",
+            XSnprintf(indexPath, sizeof(indexPath), "%s/%s/index.theme",
                      root, theme);
             if (theme_fileExists(indexPath)) {
                 indexedTheme = true;
@@ -2132,7 +2134,7 @@ static bool theme_fallbackEntryExists(const XStringList* paths,
                  sizeof(theme_fallback_exts[0]); ++extIndex) {
             const char* ext = theme_fallback_exts[extIndex];
             if (!theme_extAllowed(ext)) continue;
-            if (snprintf(filePath, sizeof(filePath), "%s/%s%s", root,
+            if (XSnprintf(filePath, sizeof(filePath), "%s/%s%s", root,
                          name, ext) >= 0 && theme_fileExists(filePath))
                 return true;
         }
@@ -2238,7 +2240,7 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
             (const XContainer*)fallbackThemeName))
         fallbackUtf8 = XString_toUtf8(fallbackThemeName);
 
-    memset(&visited, 0, sizeof(visited));
+    XMemset(&visited, 0, sizeof(visited));
     XPixmap_init(&best);
 
     if (themeUtf8) {
@@ -2349,11 +2351,11 @@ bool XIconInternal_availableThemeSizes(const char* name, XVector* out)
             (const XContainer*)fallbackThemeName))
         fallbackUtf8 = XString_toUtf8(fallbackThemeName);
 
-    memset(&visited, 0, sizeof(visited));
+    XMemset(&visited, 0, sizeof(visited));
     if (themeUtf8)
         found = theme_collectSizes(themePaths, themeUtf8, name, fallbackUtf8,
                                    &visited, out) || found;
-    memset(&visited, 0, sizeof(visited));
+    XMemset(&visited, 0, sizeof(visited));
     if (!found && fallbackUtf8)
         found = theme_collectSizes(themePaths, fallbackUtf8, name, NULL,
                                    &visited, out) || found;
@@ -2393,12 +2395,12 @@ bool XIconInternal_themeHasScalable(const char* name)
             (const XContainer*)fallbackThemeName))
         fallbackUtf8 = XString_toUtf8(fallbackThemeName);
 
-    memset(&visited, 0, sizeof(visited));
+    XMemset(&visited, 0, sizeof(visited));
     if (themeUtf8)
         found = theme_collectScalable(themePaths, themeUtf8, name,
                                       fallbackUtf8, &visited);
     if (!found && fallbackUtf8) {
-        memset(&visited, 0, sizeof(visited));
+        XMemset(&visited, 0, sizeof(visited));
         found = theme_collectScalable(themePaths, fallbackUtf8, name,
                                       NULL, &visited);
     }
@@ -2433,11 +2435,11 @@ static bool theme_fallbackSelectedType(const XStringList* paths,
             char path[1024];
             int written;
             if (!theme_extAllowed(ext)) continue;
-            written = snprintf(path, sizeof(path), "%s/%s%s", root, name, ext);
+            written = XSnprintf(path, sizeof(path), "%s/%s%s", root, name, ext);
             if (written < 0 || (size_t)written >= sizeof(path) ||
                 !theme_fileExists(path))
                 continue;
-            *scalable = strcmp(ext, ".svg") == 0;
+            *scalable = XStrcmp(ext, ".svg") == 0;
             return true;
         }
     }
@@ -2470,13 +2472,13 @@ bool XIconInternal_themeUsesScalableEntry(const char* name, int size)
             (const XContainer*)fallbackThemeName))
         fallbackUtf8 = XString_toUtf8(fallbackThemeName);
 
-    memset(&visited, 0, sizeof(visited));
+    XMemset(&visited, 0, sizeof(visited));
     if (themeUtf8)
         found = theme_selectEntryType(themePaths, themeUtf8, name, size,
                                       fallbackUtf8, &visited, false, true,
                                       &scalable);
     if (!found && fallbackUtf8) {
-        memset(&visited, 0, sizeof(visited));
+        XMemset(&visited, 0, sizeof(visited));
         found = theme_selectEntryType(themePaths, fallbackUtf8, name, size,
                                       NULL, &visited, false, true, &scalable);
     }
@@ -2512,12 +2514,12 @@ bool XIconInternal_themeHasIcon(const char* name)
             (const XContainer*)fallbackThemeName))
         fallbackUtf8 = XString_toUtf8(fallbackThemeName);
 
-    memset(&visited, 0, sizeof(visited));
+    XMemset(&visited, 0, sizeof(visited));
     if (themeUtf8)
         found = theme_searchThemeExists(themePaths, themeUtf8, name, 48, 1,
                                         fallbackUtf8, &visited, false, true);
     if (!found && fallbackUtf8) {
-        memset(&visited, 0, sizeof(visited));
+        XMemset(&visited, 0, sizeof(visited));
         found = theme_searchThemeExists(themePaths, fallbackUtf8, name, 48, 1,
                                         NULL, &visited, false, true);
     }
@@ -2540,7 +2542,7 @@ static bool theme_exactEntryExists(const XStringList* paths,
 {
     ThemeVisitStack visited;
     if (!paths || !theme || !theme[0] || !name || !name[0]) return false;
-    memset(&visited, 0, sizeof(visited));
+    XMemset(&visited, 0, sizeof(visited));
     return theme_searchThemeExists(paths, theme, name, 48, 1,
                                    fallbackTheme, &visited, false, false);
 }
@@ -2590,14 +2592,14 @@ XString* XIconInternal_resolveThemeIconName(const char* name)
     }
 
     /* 原始名称未命中后，Qt 逐级去掉最后一个短横线，首次命中即停止。 */
-    nameLen = strlen(name);
+    nameLen = XStrlen(name);
     while (nameLen > 2 && !result) {
         char dashName[1024];
         size_t dashPos = theme_lastDash(name, nameLen);
         if (dashPos == (size_t)-1 || dashPos == 0 ||
             dashPos >= sizeof(dashName)) break;
         nameLen = dashPos;
-        memcpy(dashName, name, nameLen);
+        XMemcpy(dashName, name, nameLen);
         dashName[nameLen] = '\0';
         if ((themeUtf8 && theme_exactEntryExists(themePaths, themeUtf8,
                                                   dashName, fallbackUtf8)) ||

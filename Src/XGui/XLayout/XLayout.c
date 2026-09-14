@@ -25,11 +25,12 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XLayout.h"
+
+#include "XAlgorithm.h"
 #include "XLayout_Internal.h"
 #include "XLayoutItem_Protected.h"
 #include "XWidget.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XLAYOUT_ON
 
@@ -47,7 +48,7 @@ static bool XLayout_growItemCapacity(XLayout* self, int need)
     items = (XLayoutItem**)XRealloc_System(self->m_items,
                                            (size_t)newCap * sizeof(XLayoutItem*));
     if (!items) return false;
-    memset(items + self->m_itemCapacity, 0,
+    XMemset(items + self->m_itemCapacity, 0,
            (size_t)(newCap - self->m_itemCapacity) * sizeof(XLayoutItem*));
     self->m_items = items;
     self->m_itemCapacity = newCap;
@@ -254,7 +255,7 @@ static XLayoutItem* VXLayout_takeAt(XLayout* self, int index)
     XLayoutItem* item;
     if (!self || index < 0 || index >= self->m_itemCount) return NULL;
     item = self->m_items[index];
-    memmove(&self->m_items[index], &self->m_items[index + 1],
+    XMemmove(&self->m_items[index], &self->m_items[index + 1],
             (size_t)(self->m_itemCount - index - 1) * sizeof(XLayoutItem*));
     self->m_items[self->m_itemCount - 1] = NULL;
     self->m_itemCount--;
@@ -410,7 +411,7 @@ XVtable* XLayout_class_init(void)
 void XLayout_init(XLayout* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XLayout));
+    XMemset(self, 0, sizeof(XLayout));
     XLayoutItem_init((XLayoutItem*)self);
     XClassSetVtable(self, XLayout);
     XMargins_init(&self->m_contentsMargins, -1, -1, -1, -1);
@@ -487,7 +488,7 @@ int XLayout_insertItemAt(XLayout* self, int index, XLayoutItem* item, bool owned
     if (index > self->m_itemCount) index = self->m_itemCount;
     if (!XLayout_growItemCapacity(self, self->m_itemCount + 1)) return -1;
     idx = index;
-    memmove(&self->m_items[idx + 1], &self->m_items[idx],
+    XMemmove(&self->m_items[idx + 1], &self->m_items[idx],
             (size_t)(self->m_itemCount - idx) * sizeof(XLayoutItem*));
     if (owned) item->m_ownedByLayout = 1;
     self->m_items[idx] = item;

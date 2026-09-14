@@ -7,12 +7,15 @@
  */
 
 #include "XRubberBand.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XRUBBERBAND_ON
 
@@ -49,6 +52,24 @@ static void XRubberBand_paintEvent(XWidget* self, XEvent* event)
 #else
     outline = 0xFF3080C0u;
 #endif /* XPALETTE_ON */
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL &&
+        rb->m_shape == XRubberBandShape_Rectangle) {
+        /* Fusion/公共风格接管：半透明 highlight 填充 + 边框。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCE_RubberBand);
+        XRect_init(&opt.m_rect, 0, 0, w, h);
+        opt.m_state = XStyleState_Enabled;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)rb);
+#endif
+        XStyle_drawControl(style, XStyleCE_RubberBand, &opt, &painter,
+                           (XWidget*)rb);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     if (rb->m_shape == XRubberBandShape_Rectangle) {
         XRect top;
         XRect bottom;
@@ -82,7 +103,7 @@ void XRubberBand_init(XRubberBand* self, XRubberBandShape shape,
                       XWidget* parent)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, 0);
     XClassSetVtable(self, XRubberBand);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

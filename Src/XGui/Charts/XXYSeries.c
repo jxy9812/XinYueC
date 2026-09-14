@@ -1,8 +1,9 @@
 ﻿#include "XXYSeries.h"
+
+#include "XAlgorithm.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -62,7 +63,7 @@ XVtable* XXYSeries_class_init(void)
 void XXYSeries_init(XXYSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractSeries_init(&self->m_base);
     XClassSetVtable(self, XXYSeries);
     self->m_width = 2.0;
@@ -134,7 +135,7 @@ static void VXXYSeries_copy(XXYSeries* self, const XXYSeries* other)
         self->m_points = (XPointF*)XMalloc_System(
             sizeof(XPointF) * (size_t)other->m_count);
         if (self->m_points) {
-            memcpy(self->m_points, other->m_points,
+            XMemcpy(self->m_points, other->m_points,
                    sizeof(XPointF) * (size_t)other->m_count);
             self->m_count = other->m_count;
             self->m_capacity = other->m_count;
@@ -144,7 +145,7 @@ static void VXXYSeries_copy(XXYSeries* self, const XXYSeries* other)
         self->m_selected = (bool*)XMalloc_System(
             sizeof(bool) * (size_t)other->m_count);
         if (self->m_selected)
-            memcpy(self->m_selected, other->m_selected,
+            XMemcpy(self->m_selected, other->m_selected,
                    sizeof(bool) * (size_t)other->m_count);
     }
     self->m_color = other->m_color;
@@ -436,7 +437,7 @@ void XXYSeries_setPointSelected(XXYSeries* self, int index, bool selected)
         cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
         s = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
         if (!s) return;
-        memset(s, 0, sizeof(bool) * (size_t)cap);
+        XMemset(s, 0, sizeof(bool) * (size_t)cap);
         self->m_selected = s;
     }
     self->m_selected[index] = selected;
@@ -569,7 +570,7 @@ int XXYSeries_points(const XXYSeries* self, XPointF* out, int maxCount)
     if (!self || !out || maxCount <= 0) return 0;
     n = self->m_count < maxCount ? self->m_count : maxCount;
     if (self->m_points)
-        memcpy(out, self->m_points, sizeof(XPointF) * (size_t)n);
+        XMemcpy(out, self->m_points, sizeof(XPointF) * (size_t)n);
     return n;
 }
 

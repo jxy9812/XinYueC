@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPlatformBackingStore.c
  * @brief      XPlatformBackingStore 平台后备存储「共享软件核心」实现。
  * @details    本文件把 QPlatformBackingStore 的软件语义全部收敛到公共层：
@@ -17,12 +17,12 @@
  ******************************************************************************/
 #include "XPlatformBackingStore.h"
 
+#include "XAlgorithm.h"
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
 
 #include "XImage.h"
 #include "XImageFormat.h"
 #include "XMemory.h"
-#include <string.h>
 
 /** @brief 后备缓冲默认像素格式（对标 Qt 栅格后备存储的 ARGB32 预乘）。 */
 #define XPBS_IMAGE_FORMAT XImageFormat_ARGB32_Premultiplied
@@ -111,7 +111,7 @@ static void xpbs_copyRectPixels(const XImage* src, int sx, int sy,
     dstBpl = XImage_bytesPerLine(dst);
     if (!sbuf || !dbuf || srcBpl <= 0 || dstBpl <= 0) return;
     for (row = 0; row < h; ++row)
-        memmove(dbuf + (int64_t)(dy + row) * dstBpl + (int64_t)dx * 4,
+        XMemmove(dbuf + (int64_t)(dy + row) * dstBpl + (int64_t)dx * 4,
                 sbuf + (int64_t)(sy + row) * srcBpl + (int64_t)sx * 4,
                 (size_t)w * 4u);
 }
@@ -135,7 +135,7 @@ static bool xpbs_deepCopy(const XImage* src, XImage* dst)
     bpl = XImage_bytesPerLine(src);
     if (!sbuf || !dbuf || bpl <= 0 || XImage_bytesPerLine(dst) != bpl) return false;
     for (row = 0; row < h; ++row)
-        memcpy(dbuf + (int64_t)row * bpl, sbuf + (int64_t)row * bpl, (size_t)bpl);
+        XMemcpy(dbuf + (int64_t)row * bpl, sbuf + (int64_t)row * bpl, (size_t)bpl);
     return true;
 }
 

@@ -35,10 +35,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XBoxLayout.h"
+
+#include "XAlgorithm.h"
 #include "XLayout_Internal.h"
 #include "XLayoutItem_Protected.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XLAYOUT_ON && XLAYOUT_BOX_ON
 
@@ -144,7 +145,7 @@ static bool XBoxLayout_growStretches(XBoxLayout* self, int need)
     arr = (int*)XRealloc_System(self->m_stretches,
                                 (size_t)newCap * sizeof(int));
     if (!arr) return false;
-    memset(arr + self->m_stretchCapacity, 0,
+    XMemset(arr + self->m_stretchCapacity, 0,
            (size_t)(newCap - self->m_stretchCapacity) * sizeof(int));
     self->m_stretches = arr;
     self->m_stretchCapacity = newCap;
@@ -161,7 +162,7 @@ static bool XBoxLayout_insertStretchSlot(XBoxLayout* self, int index, int stretc
     if (!XBoxLayout_growStretches(self, self->m_base.m_itemCount + 1))
         return false;
     idx = index;
-    memmove(&self->m_stretches[idx + 1], &self->m_stretches[idx],
+    XMemmove(&self->m_stretches[idx + 1], &self->m_stretches[idx],
             (size_t)(self->m_base.m_itemCount - idx) * sizeof(int));
     self->m_stretches[idx] = stretch < 0 ? 0 : stretch;
     return true;
@@ -250,7 +251,7 @@ static int XBoxLayout_collectGeom(const XBoxLayout* self, XBoxGeom* out)
         XLayoutExpandingDirections exp;
         bool empty;
         bool mainExpand;
-        memset(g, 0, sizeof(XBoxGeom));
+        XMemset(g, 0, sizeof(XBoxGeom));
         g->spacing = 0;
         if (!item) { g->empty = true; continue; }
         hint = XLayoutItem_sizeHint_base(item);
@@ -884,7 +885,7 @@ static XLayoutItem* VXBoxLayout_takeAt(XLayout* self, int index)
     item = XClass_Parent(XLayout, EXLayout_TakeAt,
                          XLayoutItem*(*)(XLayout*, int))(self, index);
     if (box->m_stretches && index < box->m_stretchCapacity) {
-        memmove(&box->m_stretches[index], &box->m_stretches[index + 1],
+        XMemmove(&box->m_stretches[index], &box->m_stretches[index + 1],
                 (size_t)(self->m_itemCount - index) * sizeof(int));
         box->m_stretches[self->m_itemCount] = 0;
     }
@@ -1101,7 +1102,7 @@ XVtable* XBoxLayout_class_init(void)
 void XBoxLayout_init(XBoxLayout* self, XBoxLayoutDirection direction)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XBoxLayout));
+    XMemset(self, 0, sizeof(XBoxLayout));
     XLayout_init((XLayout*)self);
     XClassSetVtable(self, XBoxLayout);
     self->m_direction = direction;
@@ -1114,7 +1115,7 @@ static XBoxLayout* XBoxLayout_createInternal(XBoxLayoutDirection direction,
 {
     XBoxLayout* self = (XBoxLayout*)XMalloc_System(sizeof(XBoxLayout));
     if (!self) return NULL;
-    memset(self, 0, sizeof(XBoxLayout));
+    XMemset(self, 0, sizeof(XBoxLayout));
     XBoxLayout_init(self, direction);
     Set_Class_IsHeap(self, true);
     if (parent)

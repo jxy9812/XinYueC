@@ -15,6 +15,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XApplication.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON
 #include "XWidget.h"
 #endif /* XWIDGET_ON */
@@ -26,7 +28,6 @@
 #if XSTYLEHINTS_ON
 #include "XStyleHints.h"
 #endif /* XSTYLEHINTS_ON */
-#include <string.h>
 
 /* ==================== 私有实现 ==================== */
 

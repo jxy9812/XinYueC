@@ -12,6 +12,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
 
 #include "XComboBox.h"
@@ -23,8 +26,6 @@
 #include "XEvent.h"
 #include "XCoreApplication.h"
 #include "XColor.h"
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 
 /* 弹出列表几何常量 */
@@ -545,7 +546,7 @@ int XComboBox_findText(const XComboBox* self, const char* text)
     int i;
     if (!self || !text) return -1;
     for (i = 0; i < self->m_itemCount; ++i)
-        if (self->m_items[i] && strcmp(self->m_items[i], text) == 0) return i;
+        if (self->m_items[i] && XStrcmp(self->m_items[i], text) == 0) return i;
     return -1;
 }
 
@@ -599,15 +600,15 @@ void XComboBox_insertItem(XComboBox* self, int index, const char* text)
         self->m_items = grown;
         self->m_itemCapacity = newCap;
     }
-    len = strlen(text) + 1;
+    len = XStrlen(text) + 1;
     {
         /* 对标 Qt 模型插入：先在堆上复制文本，右移腾位后挂到 index。
            （此前"尾部占位再搬回"的写法会 memmove 覆盖占位指针，
            导致所有项变成第 0 项副本。） */
         char* copy = (char*)XMalloc_System(len);
         if (!copy) return;
-        memcpy(copy, text, len);
-        memmove(&self->m_items[index + 1], &self->m_items[index],
+        XMemcpy(copy, text, len);
+        XMemmove(&self->m_items[index + 1], &self->m_items[index],
                 sizeof(char*) * (size_t)(self->m_itemCount - index));
         self->m_items[index] = copy;
         ++self->m_itemCount;
@@ -656,7 +657,7 @@ void XComboBox_removeItem(XComboBox* self, int index)
     char* removed;
     if (!self || index < 0 || index >= self->m_itemCount) return;
     removed = self->m_items[index];
-    memmove(&self->m_items[index], &self->m_items[index + 1],
+    XMemmove(&self->m_items[index], &self->m_items[index + 1],
             sizeof(char*) * (size_t)(self->m_itemCount - index - 1));
     --self->m_itemCount;
     XFree_System(removed);
@@ -671,10 +672,10 @@ void XComboBox_setItemText(XComboBox* self, int index, const char* text)
     size_t len;
     if (!self || !text || index < 0 || index >= self->m_itemCount) return;
     replaced = self->m_items[index];
-    len = strlen(text) + 1;
+    len = XStrlen(text) + 1;
     self->m_items[index] = (char*)XMalloc_System(len);
     if (!self->m_items[index]) { self->m_items[index] = replaced; return; }
-    memcpy(self->m_items[index], text, len);
+    XMemcpy(self->m_items[index], text, len);
     XFree_System(replaced);
     XWidget_update((XWidget*)self);
 }

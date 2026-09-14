@@ -33,6 +33,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XLINEEDIT_ON
 
 #include "XLineEdit.h"
@@ -56,8 +59,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <string.h>
-#include <stdlib.h>
 
 /** @brief 当前聚焦的 XLineEdit（全局；IME CommitString 直投目标）。 */
 static XLineEdit* g_focusedLineEdit = NULL;
@@ -246,12 +247,12 @@ static void xlineedit_undoPush(XLineEdit* self)
 {
     char* snap;
     if (!self || !self->m_text) return;
-    snap = (char*)XMalloc_System(strlen(self->m_text) + 1);
+    snap = (char*)XMalloc_System(XStrlen(self->m_text) + 1);
     if (!snap) return;
-    strcpy(snap, self->m_text);
+    XStrcpy(snap, self->m_text);
     if (self->m_undoCount == XLINEEDIT_UNDO_DEPTH) {
         XFree_System(self->m_undoStack[0]);
-        memmove(&self->m_undoStack[0], &self->m_undoStack[1],
+        XMemmove(&self->m_undoStack[0], &self->m_undoStack[1],
                 (size_t)(XLINEEDIT_UNDO_DEPTH - 1) * sizeof(char*));
         self->m_undoCount = XLINEEDIT_UNDO_DEPTH - 1;
     }
@@ -273,12 +274,12 @@ static void xlineedit_redoPush(XLineEdit* self)
 {
     char* snap;
     if (!self || !self->m_text) return;
-    snap = (char*)XMalloc_System(strlen(self->m_text) + 1);
+    snap = (char*)XMalloc_System(XStrlen(self->m_text) + 1);
     if (!snap) return;
-    strcpy(snap, self->m_text);
+    XStrcpy(snap, self->m_text);
     if (self->m_redoCount == XLINEEDIT_UNDO_DEPTH) {
         XFree_System(self->m_redoStack[0]);
-        memmove(&self->m_redoStack[0], &self->m_redoStack[1],
+        XMemmove(&self->m_redoStack[0], &self->m_redoStack[1],
                 (size_t)(XLINEEDIT_UNDO_DEPTH - 1) * sizeof(char*));
         self->m_redoCount = XLINEEDIT_UNDO_DEPTH - 1;
     }
@@ -408,7 +409,7 @@ static void xlineedit_filterInsert(const XLineEdit* self, size_t posByte,
     if (!insert || !out || outCap == 0) return;
     out[0] = '\0';
     if (!self->m_inputMask || self->m_inputMask[0] == '\0') {
-        strncpy(out, insert, outCap - 1);
+        XStrncpy(out, insert, outCap - 1);
         out[outCap - 1] = '\0';
         return;
     }
@@ -430,7 +431,7 @@ static void xlineedit_filterInsert(const XLineEdit* self, size_t posByte,
             break; /* 超出掩码长度：丢弃剩余 */
         if (classChar == 'X' || classChar == 'x') {
             if (o + charLen + 1 > outCap) break;
-            memcpy(out + o, insert, charLen);
+            XMemcpy(out + o, insert, charLen);
             o += charLen;
             matched = true;
         } else if (charLen == 1 &&
@@ -477,18 +478,18 @@ static size_t xlineedit_appendDisplayChar(const XLineEdit* self,
             (charLen == 1 &&
              xlineedit_maskCharMatches(classChar, (unsigned char)*ch))) {
             if (cap < charLen) return 0;
-            memcpy(out, ch, charLen);
+            XMemcpy(out, ch, charLen);
             return charLen;
         }
         {
-            const char* semi = strchr(self->m_inputMask, ';');
+            const char* semi = XStrchr(self->m_inputMask, ';');
             if (semi && semi[1]) placeholder = semi[1];
         }
         out[0] = placeholder;
         return 1;
     }
     if (cap < charLen) return 0;
-    memcpy(out, ch, charLen);
+    XMemcpy(out, ch, charLen);
     return charLen;
 }
 
@@ -508,7 +509,7 @@ static void xlineedit_refreshDisplay(XLineEdit* self)
         if (self->m_displayBuf) self->m_displayBuf[0] = '\0';
         return;
     }
-    len = strlen(self->m_text);
+    len = XStrlen(self->m_text);
     cap = len + 1;
     if (self->m_displayBuf)
         updated = (char*)XRealloc_System(self->m_displayBuf, cap);
@@ -547,7 +548,7 @@ static void xlineedit_splitDisplay(const XLineEdit* self, size_t selStart,
     size_t c0 = 0, c1 = 0, c2 = 0;
     size_t cap = 0;
     if (!self || !self->m_text) goto done;
-    cap = strlen(self->m_text) + 1;
+    cap = XStrlen(self->m_text) + 1;
     p = self->m_text;
     while (*p) {
         size_t charLen = 1;
@@ -722,7 +723,7 @@ static size_t xlineedit_posToCursor(const XLineEdit* self, int x)
     boundary = 0;
     prevWidth = 0;
     p = self->m_text;
-    while (boundary < strlen(self->m_text)) {
+    while (boundary < XStrlen(self->m_text)) {
         size_t next = boundary;
         int charW;
         ++next;
@@ -736,7 +737,7 @@ static size_t xlineedit_posToCursor(const XLineEdit* self, int x)
         if ((int)chars == 0) break;
     }
     (void)p;
-    return strlen(self->m_text);
+    return XStrlen(self->m_text);
 }
 
 /** @brief 移动光标（mark=true 保留锚点扩展选区；false 清除选区）并发射
@@ -748,7 +749,7 @@ static void xlineedit_moveCursor(XLineEdit* self, size_t newPos, bool mark)
     bool oldSel;
     bool newSel;
     if (!self || !self->m_text) return;
-    maxPos = strlen(self->m_text);
+    maxPos = XStrlen(self->m_text);
     if (newPos > maxPos) newPos = maxPos;
     oldCursor = self->m_cursor;
     oldSel = xlineedit_hasSelection(self);
@@ -825,10 +826,10 @@ static void xlineedit_setContent(XLineEdit* self, const char* newText,
         xlineedit_redoClear(self);
     }
 
-    updated = (char*)XRealloc_System(self->m_text, strlen(newText) + 1);
+    updated = (char*)XRealloc_System(self->m_text, XStrlen(newText) + 1);
     if (!updated) return;
     self->m_text = updated;
-    strcpy(self->m_text, newText);
+    XStrcpy(self->m_text, newText);
     self->m_cursor = newCursor;
     self->m_anchor = newCursor;
 
@@ -865,17 +866,17 @@ static bool xlineedit_insertText(XLineEdit* self, const char* utf8,
     char* filtered;
     char* newText;
     if (!self || !self->m_text || !utf8 || !utf8[0]) return false;
-    textLen = strlen(self->m_text);
+    textLen = XStrlen(self->m_text);
     if (xlineedit_hasSelection(self)) {
         start = xlineedit_selStart(self);
         end = xlineedit_selEnd(self);
     } else {
         start = end = self->m_cursor;
     }
-    filtered = (char*)XMalloc_System(strlen(utf8) + 1);
+    filtered = (char*)XMalloc_System(XStrlen(utf8) + 1);
     if (!filtered) return false;
-    xlineedit_filterInsert(self, start, utf8, filtered, strlen(utf8) + 1);
-    insertLen = strlen(filtered);
+    xlineedit_filterInsert(self, start, utf8, filtered, XStrlen(utf8) + 1);
+    insertLen = XStrlen(filtered);
     if (insertLen == 0) {
         XFree_System(filtered);
         return false;
@@ -913,9 +914,9 @@ static bool xlineedit_insertText(XLineEdit* self, const char* utf8,
         XFree_System(filtered);
         return false;
     }
-    memcpy(newText, self->m_text, start);
-    memcpy(newText + start, filtered, insertLen);
-    memcpy(newText + start + insertLen, self->m_text + end,
+    XMemcpy(newText, self->m_text, start);
+    XMemcpy(newText + start, filtered, insertLen);
+    XMemcpy(newText + start + insertLen, self->m_text + end,
            textLen - end + 1);
     newText[newLen] = '\0';
     /* 校验回调：Invalid 拒绝整个编辑。 */
@@ -941,12 +942,12 @@ static void xlineedit_eraseRange(XLineEdit* self, size_t from, size_t to)
     size_t textLen;
     char* newText;
     if (!self || !self->m_text || from >= to) return;
-    textLen = strlen(self->m_text);
+    textLen = XStrlen(self->m_text);
     if (to > textLen) to = textLen;
     newText = (char*)XMalloc_System(textLen - (to - from) + 1);
     if (!newText) return;
-    memcpy(newText, self->m_text, from);
-    memcpy(newText + from, self->m_text + to, textLen - to + 1);
+    XMemcpy(newText, self->m_text, from);
+    XMemcpy(newText + from, self->m_text + to, textLen - to + 1);
     xlineedit_setContent(self, newText, from, true, false, true);
     XFree_System(newText);
 }
@@ -972,10 +973,10 @@ static void xlineedit_setClipboardText(XLineEdit* self, const char* text)
 #endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     {
         char* updated =
-            (char*)XRealloc_System(self->m_clipboardText, strlen(text) + 1);
+            (char*)XRealloc_System(self->m_clipboardText, XStrlen(text) + 1);
         if (!updated) return;
         self->m_clipboardText = updated;
-        strcpy(self->m_clipboardText, text);
+        XStrcpy(self->m_clipboardText, text);
     }
 }
 
@@ -992,7 +993,7 @@ static char* xlineedit_getClipboardText(XLineEdit* self)
                 size_t len = XString_toUtf8_length(str);
                 char* out = (char*)XMalloc_System(len + 1);
                 if (out) {
-                    memcpy(out, utf8, len);
+                    XMemcpy(out, utf8, len);
                     out[len] = '\0';
                 }
                 XString_delete_base(str);
@@ -1003,9 +1004,9 @@ static char* xlineedit_getClipboardText(XLineEdit* self)
     }
 #endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     if (self && self->m_clipboardText) {
-        size_t len = strlen(self->m_clipboardText);
+        size_t len = XStrlen(self->m_clipboardText);
         char* out = (char*)XMalloc_System(len + 1);
-        if (out) strcpy(out, self->m_clipboardText);
+        if (out) XStrcpy(out, self->m_clipboardText);
         return out;
     }
     return NULL;
@@ -1402,7 +1403,7 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
             size_t c0 = 0;
             size_t c1 = 0;
             size_t c2 = 0;
-            size_t displayLen = strlen(display);
+            size_t displayLen = XStrlen(display);
             seg0 = (char*)XMalloc_System(displayLen + 1);
             seg1 = (char*)XMalloc_System(displayLen + 1);
             seg2 = (char*)XMalloc_System(displayLen + 1);
@@ -1576,22 +1577,22 @@ static void VXLineEdit_copy(XLineEdit* self, const XLineEdit* other)
     /* 撤销/重做栈：深拷贝（setText 已清空本对象历史）。 */
     for (i = 0; i < other->m_undoCount; ++i) {
         char* snap =
-            (char*)XMalloc_System(strlen(other->m_undoStack[i]) + 1);
+            (char*)XMalloc_System(XStrlen(other->m_undoStack[i]) + 1);
         if (!snap) break;
-        strcpy(snap, other->m_undoStack[i]);
+        XStrcpy(snap, other->m_undoStack[i]);
         self->m_undoStack[self->m_undoCount++] = snap;
     }
     for (i = 0; i < other->m_redoCount; ++i) {
         char* snap =
-            (char*)XMalloc_System(strlen(other->m_redoStack[i]) + 1);
+            (char*)XMalloc_System(XStrlen(other->m_redoStack[i]) + 1);
         if (!snap) break;
-        strcpy(snap, other->m_redoStack[i]);
+        XStrcpy(snap, other->m_redoStack[i]);
         self->m_redoStack[self->m_redoCount++] = snap;
     }
     if (other->m_clipboardText) {
-        char* cb = (char*)XMalloc_System(strlen(other->m_clipboardText) + 1);
+        char* cb = (char*)XMalloc_System(XStrlen(other->m_clipboardText) + 1);
         if (cb) {
-            strcpy(cb, other->m_clipboardText);
+            XStrcpy(cb, other->m_clipboardText);
             self->m_clipboardText = cb;
         }
     }
@@ -1743,10 +1744,10 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
        的话 m_actionCount 为堆残留垃圾，首帧绘制会解引用野指针（Debug CRT
        cdcd 填充模式直接暴露）。撤销/重做栈同为成员指针数组，一并清零。 */
     self->m_actionCount = 0;
-    memset(self->m_actions, 0, sizeof(self->m_actions));
-    memset(self->m_actionPositions, 0, sizeof(self->m_actionPositions));
-    memset(self->m_undoStack, 0, sizeof(self->m_undoStack));
-    memset(self->m_redoStack, 0, sizeof(self->m_redoStack));
+    XMemset(self->m_actions, 0, sizeof(self->m_actions));
+    XMemset(self->m_actionPositions, 0, sizeof(self->m_actionPositions));
+    XMemset(self->m_undoStack, 0, sizeof(self->m_undoStack));
+    XMemset(self->m_redoStack, 0, sizeof(self->m_redoStack));
     XRect_init(&self->m_clearButtonRect, 0, 0, 0, 0);
     XWidget_setFocusPolicy(self, XWidgetFocusPolicy_ClickFocus);
     xlineedit_updateSizeHints(self);
@@ -1780,8 +1781,8 @@ const char* XLineEdit_displayText(const XLineEdit* self)
 void XLineEdit_setText(XLineEdit* self, const char* text)
 {
     if (!self || !text) return;
-    if (self->m_text && strcmp(self->m_text, text) == 0) return;
-    xlineedit_setContent(self, text, strlen(text), false, true, true);
+    if (self->m_text && XStrcmp(self->m_text, text) == 0) return;
+    xlineedit_setContent(self, text, XStrlen(text), false, true, true);
 }
 
 void XLineEdit_clear(XLineEdit* self)
@@ -1838,7 +1839,7 @@ void XLineEdit_setEchoMode(XLineEdit* self, int echoMode)
     self->m_echoMode = echoMode;
     /* Qt 语义：切换回显模式清除选区并把光标移到末尾。 */
     self->m_anchor = self->m_cursor =
-        self->m_text ? strlen(self->m_text) : 0;
+        self->m_text ? XStrlen(self->m_text) : 0;
     xlineedit_refreshDisplay(self);
     XWidget_update((XWidget*)self);
 }
@@ -1865,7 +1866,7 @@ void XLineEdit_setMaxLength(XLineEdit* self, int maxLength)
         if (cut) {
             truncated = (char*)XMalloc_System(cut + 1);
             if (truncated) {
-                memcpy(truncated, self->m_text, cut);
+                XMemcpy(truncated, self->m_text, cut);
                 truncated[cut] = '\0';
                 xlineedit_setContent(self, truncated, cut, false, false, true);
                 XFree_System(truncated);
@@ -1993,7 +1994,7 @@ XRect XLineEdit_cursorRect(const XLineEdit* self)
     int ty;
     int baseline = 0;
     int editBaseline = 0;    int cx;
-    memset(&rect, 0, sizeof(rect));
+    XMemset(&rect, 0, sizeof(rect));
     if (!self) return rect;
     {
         XFont font = XWidget_font((XWidget*)self);
@@ -2022,22 +2023,34 @@ XRect XLineEdit_cursorRect(const XLineEdit* self)
 
 int XLineEdit_cursorPosition(const XLineEdit* self)
 {
-    return self ? (int)self->m_cursor : 0;
+    /* 对标 Qt：返回字符索引（非字节偏移）。 */
+    return self ? (int)xlineedit_charCountPrefix(self->m_text,
+                                                 self->m_cursor) : 0;
 }
 void XLineEdit_setCursorPosition(XLineEdit* self, int position)
 {
-    size_t pos;
+    size_t chars;
+    size_t bytePos;
+    size_t i;
     if (!self || !self->m_text) return;
     if (position < 0) position = 0;
-    if ((size_t)position > strlen(self->m_text))
-        position = (int)strlen(self->m_text);
-    pos = xlineedit_prevBoundary(self->m_text, (size_t)position);
-    xlineedit_moveCursor(self, pos, false);
+    /* 字符索引 → 字节偏移（对标 Qt 字符索引光标语义）。 */
+    chars = xlineedit_charCount(self->m_text);
+    if ((size_t)position > chars) position = (int)chars;
+    bytePos = 0;
+    for (i = 0; i < (size_t)position && self->m_text[bytePos]; ++i) {
+        ++bytePos;
+        while (((unsigned char)self->m_text[bytePos] & 0xC0u) == 0x80u)
+            ++bytePos;
+    }
+    xlineedit_moveCursor(self, bytePos, false);
 }
 int XLineEdit_cursorPositionAt(const XLineEdit* self, const XPoint* pos)
 {
     if (!self) return 0;
-    return (int)xlineedit_posToCursor(self, pos ? pos->x : 0);
+    /* 像素位置 → 字节偏移 → 字符索引（对标 Qt 字符索引）。 */
+    return (int)xlineedit_charCountPrefix(
+        self->m_text, xlineedit_posToCursor(self, pos ? pos->x : 0));
 }
 
 /* ==================== 光标移动与编辑键 ==================== */
@@ -2145,7 +2158,7 @@ void XLineEdit_home(XLineEdit* self, bool mark)
 void XLineEdit_end(XLineEdit* self, bool mark)
 {
     if (!self || !self->m_text) return;
-    xlineedit_moveCursor(self, strlen(self->m_text), mark);
+    xlineedit_moveCursor(self, XStrlen(self->m_text), mark);
 }
 
 /* ==================== 修改状态 ==================== */
@@ -2167,21 +2180,35 @@ void XLineEdit_setSelection(XLineEdit* self, int start, int length)
     size_t s;
     size_t e;
     size_t i;
-    size_t maxLen;
+    size_t chars;
     if (!self || !self->m_text) return;
-    maxLen = strlen(self->m_text);
-    if (length < 0) {
-        /* 负长度：选区向 start 左侧扩展。 */
-        s = (start + length < 0) ? 0 : (size_t)(start + length);
-        e = (start < 0) ? 0 : (size_t)start;
-    } else {
-        s = (start < 0) ? 0 : (size_t)start;
-        e = s;
-        for (i = 0; i < (size_t)length; ++i)
-            e = xlineedit_nextBoundary(self->m_text, e);
+    /* 字符索引 → 字节偏移（对标 Qt 字符索引选区语义）。 */
+    chars = xlineedit_charCount(self->m_text);
+    if (start < 0) start = 0;
+    if ((size_t)start > chars) start = (int)chars;
+    s = 0;
+    for (i = 0; i < (size_t)start && self->m_text[s]; ++i) {
+        ++s;
+        while (((unsigned char)self->m_text[s] & 0xC0u) == 0x80u) ++s;
     }
-    if (s > maxLen) s = maxLen;
-    if (e > maxLen) e = maxLen;
+    e = s;
+    if (length < 0) {
+        /* 负长度：选区向 start 左侧扩展（按字符数）。 */
+        size_t n = (size_t)(-length);
+        size_t cnt = 0;
+        while (e > 0 && cnt < n) {
+            --e;
+            while (e > 0 &&
+                   ((unsigned char)self->m_text[e] & 0xC0u) == 0x80u)
+                --e;
+            ++cnt;
+        }
+    } else {
+        for (i = 0; i < (size_t)length && self->m_text[e]; ++i) {
+            ++e;
+            while (((unsigned char)self->m_text[e] & 0xC0u) == 0x80u) ++e;
+        }
+    }
     xlineedit_setSelectionRange(self, s, e);
 }
 
@@ -2202,7 +2229,7 @@ char* XLineEdit_selectedText(const XLineEdit* self)
     len = e - s;
     out = (char*)XMalloc_System(len + 1);
     if (!out) return NULL;
-    memcpy(out, self->m_text + s, len);
+    XMemcpy(out, self->m_text + s, len);
     out[len] = '\0';
     return out;
 }
@@ -2240,7 +2267,7 @@ void XLineEdit_deselect(XLineEdit* self)
 void XLineEdit_selectAll(XLineEdit* self)
 {
     if (!self || !self->m_text) return;
-    xlineedit_setSelectionRange(self, 0, strlen(self->m_text));
+    xlineedit_setSelectionRange(self, 0, XStrlen(self->m_text));
 }
 
 /* ==================== 撤销/重做 ==================== */
@@ -2261,7 +2288,7 @@ void XLineEdit_undo(XLineEdit* self)
     if (!self || self->m_undoCount == 0) return;
     snap = self->m_undoStack[--self->m_undoCount];
     xlineedit_redoPush(self);
-    xlineedit_setContent(self, snap, strlen(snap), false, false, true);
+    xlineedit_setContent(self, snap, XStrlen(snap), false, false, true);
     XFree_System(snap);
 }
 
@@ -2271,7 +2298,7 @@ void XLineEdit_redo(XLineEdit* self)
     if (!self || self->m_redoCount == 0) return;
     snap = self->m_redoStack[--self->m_redoCount];
     xlineedit_undoPush(self);
-    xlineedit_setContent(self, snap, strlen(snap), false, false, true);
+    xlineedit_setContent(self, snap, XStrlen(snap), false, false, true);
     XFree_System(snap);
 }
 
@@ -2287,7 +2314,7 @@ void XLineEdit_cut(XLineEdit* self)
     e = xlineedit_selEnd(self);
     sel = (char*)XMalloc_System(e - s + 1);
     if (sel) {
-        memcpy(sel, self->m_text + s, e - s);
+        XMemcpy(sel, self->m_text + s, e - s);
         sel[e - s] = '\0';
         xlineedit_setClipboardText(self, sel);
         XFree_System(sel);
@@ -2305,7 +2332,7 @@ void XLineEdit_copy(XLineEdit* self)
     e = xlineedit_selEnd(self);
     sel = (char*)XMalloc_System(e - s + 1);
     if (!sel) return;
-    memcpy(sel, self->m_text + s, e - s);
+    XMemcpy(sel, self->m_text + s, e - s);
     sel[e - s] = '\0';
     xlineedit_setClipboardText(self, sel);
     XFree_System(sel);
@@ -2361,13 +2388,13 @@ void XLineEdit_setInputMask(XLineEdit* self, const char* inputMask)
     char* updated;
     if (!self) return;
     if (!inputMask) inputMask = "";
-    if (self->m_inputMask && strcmp(self->m_inputMask, inputMask) == 0)
+    if (self->m_inputMask && XStrcmp(self->m_inputMask, inputMask) == 0)
         return;
     updated = (char*)XRealloc_System(self->m_inputMask,
-                                     strlen(inputMask) + 1);
+                                     XStrlen(inputMask) + 1);
     if (!updated) return;
     self->m_inputMask = updated;
-    strcpy(self->m_inputMask, inputMask);
+    XStrcpy(self->m_inputMask, inputMask);
     xlineedit_refreshDisplay(self);
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
@@ -2537,7 +2564,7 @@ static bool xlineedit_allSelected(const XLineEdit* self)
 {
     return xlineedit_hasSelection(self) &&
            xlineedit_selStart(self) == 0 &&
-           xlineedit_selEnd(self) == strlen(self->m_text);
+           xlineedit_selEnd(self) == XStrlen(self->m_text);
 }
 
 XMenu* XLineEdit_createStandardContextMenu(XLineEdit* self)

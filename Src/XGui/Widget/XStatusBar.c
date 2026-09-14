@@ -12,10 +12,10 @@
 #include "XPainter.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 
 #if XWIDGET_ON && XSTATUSBAR_ON
 
@@ -172,7 +172,7 @@ XVtable* XStatusBar_class_init(void)
 void XStatusBar_init(XStatusBar* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XStatusBar);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

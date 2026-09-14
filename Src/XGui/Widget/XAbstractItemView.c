@@ -1,7 +1,8 @@
 ﻿#include "XAbstractItemView.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XTABLEWIDGET_ON || 1
 
@@ -19,7 +20,7 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
                             XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractScrollArea_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XAbstractItemView);
     self->m_currentRow = -1;

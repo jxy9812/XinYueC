@@ -3,9 +3,11 @@
  * @brief      平台无关字体家族快照实现。
  ****************************************************************************/
 #include "XPlatformFontDatabase.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XString.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XPLATFORMINTEGRATION_ON
 struct XPlatformFontDatabase { XVector* m_families; bool m_valid; };
@@ -27,7 +29,7 @@ XPlatformFontDatabase* XPlatformFontDatabase_create_ex(XMemoryType memory)
     XPlatformFontDatabase* self = (XPlatformFontDatabase*)XMemory_malloc(
         sizeof(*self), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     self->m_families = XVector_Create(XString*);
     if (!self->m_families) { XFree_System(self); return NULL; }
     self->m_valid = XPlatformFontDatabaseDriver_collect(self->m_families);
@@ -71,7 +73,7 @@ bool XPlatformFontDatabase_hasFamily(const XPlatformFontDatabase* self,
     for (i = 0; i < n; ++i) {
         XString* const* item = (XString* const*)XVector_at_base(
             self->m_families, (int64_t)i);
-        if (item && *item && strcmp(XString_toUtf8(*item), family) == 0)
+        if (item && *item && XStrcmp(XString_toUtf8(*item), family) == 0)
             return true;
     }
     return false;

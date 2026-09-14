@@ -11,8 +11,9 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON
 
@@ -225,7 +226,7 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XFrame_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XAbstractScrollArea);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

@@ -6,11 +6,12 @@
  *              PGM P5 或 PPM P6。所有分配使用项目内存接口，不依赖平台 API。
  ******************************************************************************/
 #include "XImageCodecInternal.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
-#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON && XIMAGECODEC_PPM_ON
 
@@ -303,8 +304,8 @@ static bool ppm_subtypeIs(const char* subtype, const char* expected)
     if (!subtype || !expected) return false;
     for (i = 0; i < 3; ++i) {
         if (!subtype[i] || !expected[i] ||
-            tolower((unsigned char)subtype[i]) !=
-                tolower((unsigned char)expected[i]))
+            XToLower((unsigned char)subtype[i]) !=
+                XToLower((unsigned char)expected[i]))
             return false;
     }
     return true;
@@ -347,7 +348,7 @@ bool XImageCodecInternal_encodePpmSubtype(const XImage* image,
     total = rowBytes * (size_t)height;
     pixels = (uint8_t*)XMalloc_System(total ? total : 1u);
     if (!pixels) return false;
-    memset(pixels, 0, total);
+    XMemset(pixels, 0, total);
     if (type == '4') {
         for (y = 0; y < height; ++y) {
             for (x = 0; x < width; ++x) {
@@ -375,10 +376,10 @@ bool XImageCodecInternal_encodePpmSubtype(const XImage* image,
         }
     }
     if ((type == '4'
-             ? snprintf(header, sizeof(header), "P4\n%d %d\n", width, height)
-             : snprintf(header, sizeof(header), "P%c\n%d %d\n255\n", type,
+             ? XSnprintf(header, sizeof(header), "P4\n%d %d\n", width, height)
+             : XSnprintf(header, sizeof(header), "P%c\n%d %d\n255\n", type,
                         width, height)) <= 0 ||
-        !XImageCodecInternal_appendBytes(out, header, strlen(header)) ||
+        !XImageCodecInternal_appendBytes(out, header, XStrlen(header)) ||
         !XImageCodecInternal_appendBytes(out, pixels, total)) {
         XFree_System(pixels);
         return false;

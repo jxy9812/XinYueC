@@ -22,11 +22,12 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XGridLayout.h"
+
+#include "XAlgorithm.h"
 #include "XLayout_Internal.h"
 #include "XLayoutItem_Protected.h"
 #include "XWidget.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XLAYOUT_ON && XLAYOUT_GRID_ON
 
@@ -57,7 +58,7 @@ static bool XGridLayout_growArray(void** data, int* capacity, int need,
     while (newCap < need) newCap <<= 1;
     p = XRealloc_System(*data, (size_t)newCap * elemSize);
     if (!p) return false;
-    memset((char*)p + (size_t)(*capacity) * elemSize, 0,
+    XMemset((char*)p + (size_t)(*capacity) * elemSize, 0,
            (size_t)(newCap - *capacity) * elemSize);
     *data = p;
     *capacity = newCap;
@@ -202,7 +203,7 @@ static int XGridLayout_appendCellItem(XGridLayout* self, XLayoutItem* item,
         }
     }
     cell = &self->m_cells[idx];
-    memset(cell, 0, sizeof(*cell));
+    XMemset(cell, 0, sizeof(*cell));
     cell->m_row = row;
     cell->m_column = column;
     cell->m_rowSpan = row + rowSpan - 1;
@@ -645,12 +646,12 @@ static void XGridLayout_updateCache(XGridLayout* self,
                                &self->m_cacheRowSizeCount, rows, sizeof(int)))
         return;
     if (cols > 0) {
-        memcpy(self->m_cacheColPos, colPos, (size_t)cols * sizeof(int));
-        memcpy(self->m_cacheColSize, colSize, (size_t)cols * sizeof(int));
+        XMemcpy(self->m_cacheColPos, colPos, (size_t)cols * sizeof(int));
+        XMemcpy(self->m_cacheColSize, colSize, (size_t)cols * sizeof(int));
     }
     if (rows > 0) {
-        memcpy(self->m_cacheRowPos, rowPos, (size_t)rows * sizeof(int));
-        memcpy(self->m_cacheRowSize, rowSize, (size_t)rows * sizeof(int));
+        XMemcpy(self->m_cacheRowPos, rowPos, (size_t)rows * sizeof(int));
+        XMemcpy(self->m_cacheRowSize, rowSize, (size_t)rows * sizeof(int));
     }
 }
 
@@ -1185,11 +1186,11 @@ static XLayoutItem* VXGridLayout_takeAt(XLayout* self, int index)
     if (!self || index < 0 || index >= (int)self->m_itemCount) return NULL;
     grid = (XGridLayout*)self;
     if (grid->m_cells && index < grid->m_cellCapacity) {
-        memmove(&grid->m_cells[index], &grid->m_cells[index + 1],
+        XMemmove(&grid->m_cells[index], &grid->m_cells[index + 1],
                 (size_t)(self->m_itemCount - index - 1) *
                     sizeof(XGridLayoutCell));
         if (grid->m_cellCapacity > 0)
-            memset(&grid->m_cells[self->m_itemCount - 1], 0,
+            XMemset(&grid->m_cells[self->m_itemCount - 1], 0,
                    sizeof(XGridLayoutCell));
     }
     item = XClass_Parent(XLayout, EXLayout_TakeAt,
@@ -1225,22 +1226,22 @@ static void VXGridLayout_copy(XGridLayout* self, const XGridLayout* other)
         if (XGridLayout_growArray((void**)&self->m_rowStretch,
                                   &self->m_rowStretchCapacity,
                                   other->m_rowStretchCapacity, sizeof(int)))
-            memcpy(self->m_rowStretch, other->m_rowStretch,
+            XMemcpy(self->m_rowStretch, other->m_rowStretch,
                    (size_t)other->m_rowStretchCapacity * sizeof(int));
         if (XGridLayout_growArray((void**)&self->m_columnStretch,
                                   &self->m_columnStretchCapacity,
                                   other->m_columnStretchCapacity, sizeof(int)))
-            memcpy(self->m_columnStretch, other->m_columnStretch,
+            XMemcpy(self->m_columnStretch, other->m_columnStretch,
                    (size_t)other->m_columnStretchCapacity * sizeof(int));
         if (XGridLayout_growArray((void**)&self->m_rowMinHeight,
                                   &self->m_rowMinHeightCapacity,
                                   other->m_rowMinHeightCapacity, sizeof(int)))
-            memcpy(self->m_rowMinHeight, other->m_rowMinHeight,
+            XMemcpy(self->m_rowMinHeight, other->m_rowMinHeight,
                    (size_t)other->m_rowMinHeightCapacity * sizeof(int));
         if (XGridLayout_growArray((void**)&self->m_columnMinWidth,
                                   &self->m_columnMinWidthCapacity,
                                   other->m_columnMinWidthCapacity, sizeof(int)))
-            memcpy(self->m_columnMinWidth, other->m_columnMinWidth,
+            XMemcpy(self->m_columnMinWidth, other->m_columnMinWidth,
                    (size_t)other->m_columnMinWidthCapacity * sizeof(int));
     }
     self->m_nextR = other->m_nextR;
@@ -1340,7 +1341,7 @@ XVtable* XGridLayout_class_init(void)
 void XGridLayout_init(XGridLayout* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XGridLayout));
+    XMemset(self, 0, sizeof(XGridLayout));
     XLayout_init((XLayout*)self);
     XClassSetVtable(self, XGridLayout);
     self->m_hSpacing = -1;
@@ -1354,7 +1355,7 @@ XGridLayout* XGridLayout_create(XWidget* parent)
 {
     XGridLayout* self = (XGridLayout*)XMalloc_System(sizeof(XGridLayout));
     if (!self) return NULL;
-    memset(self, 0, sizeof(XGridLayout));
+    XMemset(self, 0, sizeof(XGridLayout));
     XGridLayout_init(self);
     Set_Class_IsHeap(self, true);
     if (parent)

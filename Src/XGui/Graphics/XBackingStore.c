@@ -4,10 +4,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XBackingStore.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XImageFormat.h"
-#include <string.h>
 
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
 
@@ -79,12 +80,12 @@ XVtable* XBackingStore_class_init(void)
 void XBackingStore_init(XBackingStore* self, XWindow* window)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XBackingStore));
+    XMemset(self, 0, sizeof(XBackingStore));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XBackingStore);
     self->m_data = (XBackingStorePrivate*)XMalloc_System(sizeof(XBackingStorePrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XBackingStorePrivate));
+    XMemset(self->m_data, 0, sizeof(XBackingStorePrivate));
     self->m_data->m_window = window;
     XSize_init(&self->m_data->m_size, 0, 0);
     XRegion_init(&self->m_data->m_staticContents);

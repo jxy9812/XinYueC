@@ -15,10 +15,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XLayoutItem.h"
+
+#include "XAlgorithm.h"
 #include "XLayoutItem_Protected.h"
 #include "XLayout_Internal.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XLAYOUT_ON
 
@@ -565,7 +566,7 @@ XVtable* XLayoutItem_class_init(void)
 void XLayoutItem_init(XLayoutItem* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XLayoutItem));
+    XMemset(self, 0, sizeof(XLayoutItem));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XLayoutItem);
     XRect_init(&self->m_geometry, 0, 0, 0, 0);
@@ -606,7 +607,7 @@ XVtable* XWidgetItem_class_init(void)
 void XWidgetItem_init(XWidgetItem* self, XWidget* widget)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XWidgetItem));
+    XMemset(self, 0, sizeof(XWidgetItem));
     XLayoutItem_init(&self->m_base);
     XClassSetVtable(self, XWidgetItem);
     self->m_widget = widget;
@@ -648,7 +649,7 @@ void XSpacerItem_init(XSpacerItem* self, int width, int height,
                       XWidgetSizePolicyPolicy vPolicy)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XSpacerItem));
+    XMemset(self, 0, sizeof(XSpacerItem));
     XLayoutItem_init(&self->m_base);
     XClassSetVtable(self, XSpacerItem);
     if (width < 0) width = 0;
@@ -666,7 +667,7 @@ XSpacerItem* XSpacerItem_create(int width, int height,
 {
     XSpacerItem* item = (XSpacerItem*)XMalloc_System(sizeof(XSpacerItem));
     if (!item) return NULL;
-    memset(item, 0, sizeof(XSpacerItem));
+    XMemset(item, 0, sizeof(XSpacerItem));
     XSpacerItem_init(item, width, height, hPolicy, vPolicy);
     Set_Class_IsHeap(item, true);
     return item;
@@ -699,7 +700,7 @@ XLayoutItem* XLayoutItem_createWidgetItem(XWidget* widget)
 {
     XWidgetItem* item = (XWidgetItem*)XMalloc_System(sizeof(XWidgetItem));
     if (!item) return NULL;
-    memset(item, 0, sizeof(XWidgetItem));
+    XMemset(item, 0, sizeof(XWidgetItem));
     XWidgetItem_init(item, widget);
     Set_Class_IsHeap(item, true);
     return (XLayoutItem*)item;
@@ -711,7 +712,7 @@ XLayoutItem* XLayoutItem_createSpacerItem(const XSize* size,
 {
     XSpacerItem* item = (XSpacerItem*)XMalloc_System(sizeof(XSpacerItem));
     if (!item) return NULL;
-    memset(item, 0, sizeof(XSpacerItem));
+    XMemset(item, 0, sizeof(XSpacerItem));
     XSpacerItem_init(item, size ? size->width : 0, size ? size->height : 0,
                      hPolicy, vPolicy);
     Set_Class_IsHeap(item, true);

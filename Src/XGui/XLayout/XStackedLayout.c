@@ -6,10 +6,11 @@
  *             均按 Qt 6.8 源码实现。该布局不引入平台 API。
  ******************************************************************************/
 #include "XStackedLayout.h"
+
+#include "XAlgorithm.h"
 #include "XLayout_Internal.h"
 #include "XLayoutItem_Protected.h"
 #include "XMemory.h"
-#include <string.h>
 
 #if XLAYOUT_ON && XLAYOUT_STACKED_ON
 
@@ -271,7 +272,7 @@ XVtable* XStackedLayout_class_init(void)
 void XStackedLayout_init(XStackedLayout* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XStackedLayout));
+    XMemset(self, 0, sizeof(XStackedLayout));
     XLayout_init(&self->m_base);
     XClassSetVtable(self, XStackedLayout);
     self->m_currentIndex = -1;
@@ -283,7 +284,7 @@ XStackedLayout* XStackedLayout_create(XWidget* parent)
     XStackedLayout* self = (XStackedLayout*)XMalloc_System(
         sizeof(XStackedLayout));
     if (!self) return NULL;
-    memset(self, 0, sizeof(XStackedLayout));
+    XMemset(self, 0, sizeof(XStackedLayout));
     XStackedLayout_init(self);
     Set_Class_IsHeap(self, true);
     if (parent)

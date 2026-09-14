@@ -21,6 +21,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XPROGRESSBAR_ON
 
 #include "XProgressBar.h"
@@ -35,8 +38,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 
 /* 内部格式串缓冲上限（含 NUL） */
@@ -107,11 +108,11 @@ static void xprogressbar_buildText(const XProgressBar* self, char* out,
             char tmp[16];
             ++p;
             if (p[0] == 'p') {
-                snprintf(tmp, sizeof(tmp), "%d", percent);
+                XSnprintf(tmp, sizeof(tmp), "%d", percent);
             } else if (p[0] == 'v') {
-                snprintf(tmp, sizeof(tmp), "%d", self->m_value);
+                XSnprintf(tmp, sizeof(tmp), "%d", self->m_value);
             } else if (p[0] == 'm') {
-                snprintf(tmp, sizeof(tmp), "%d", self->m_max);
+                XSnprintf(tmp, sizeof(tmp), "%d", self->m_max);
             } else if (p[0] == '%') {
                 tmp[0] = '%'; tmp[1] = '\0';
             } else {

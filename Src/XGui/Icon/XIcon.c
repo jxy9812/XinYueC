@@ -3,6 +3,10 @@
  * @brief      XIcon 图标类实现（对标 Qt 6.8 QIcon）
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XSystem.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XIcon.h"
 #include "XAtomic.h"
 #include "XClass.h"
@@ -25,8 +29,6 @@
 #include "XPlatformTheme.h"
 #include <limits.h>
 #include <math.h>
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 
 /* ========== 图标条目数据结构 ========== */
@@ -172,17 +174,17 @@ static XString* XIcon_findAtNxFile(const XString* baseFileName,
         return NULL;
     /* Qt 使用函数内 static，只在第一次调用时读取环境变量。 */
     if (disableNxImageLoading < 0) {
-        const char* disable = getenv("QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING");
+        const char* disable = XSystem_environment("QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING");
         disableNxImageLoading = disable && disable[0] ? 1 : 0;
     }
     if (disableNxImageLoading) return NULL;
     source = XString_toUtf8(baseFileName);
-    sourceLength = source ? strlen(source) : 0u;
+    sourceLength = source ? XStrlen(source) : 0u;
     if (!source || sourceLength == 0u || sourceLength > 1019u) return NULL;
 
     /* QString::lastIndexOf('.') 按完整路径查找；保留 Qt 的 .9.* 特例。 */
     {
-        const char* dot = strrchr(source, '.');
+        const char* dot = XStrrchr(source, '.');
         dotIndex = dot ? (size_t)(dot - source) : sourceLength;
     }
     if (dotIndex >= 2u && source[dotIndex - 2u] == '.' &&
@@ -198,11 +200,11 @@ static XString* XIcon_findAtNxFile(const XString* baseFileName,
         char candidate[1024];
         XString* candidateString;
         size_t length = prefixLength + 3u + suffixLength;
-        memcpy(candidate, source, prefixLength);
+        XMemcpy(candidate, source, prefixLength);
         candidate[prefixLength] = '@';
         candidate[prefixLength + 1u] = (char)('0' + n);
         candidate[prefixLength + 2u] = 'x';
-        memcpy(candidate + prefixLength + 3u, source + dotIndex, suffixLength);
+        XMemcpy(candidate + prefixLength + 3u, source + dotIndex, suffixLength);
         candidate[length] = '\0';
         candidateString = XString_create_utf8(candidate);
         if (candidateString && XFile_exists_static(candidateString))
@@ -241,7 +243,7 @@ static XIconPrivate* XIconPrivate_create()
 {
     XIconPrivate* d = (XIconPrivate*)XMalloc_System(sizeof(XIconPrivate));
     if (!d) return NULL;
-    memset(d, 0, sizeof(XIconPrivate));
+    XMemset(d, 0, sizeof(XIconPrivate));
     XVector_init(&d->m_entries, sizeof(XIconEntry), true);
     XContainerSetDataCopyMethod(&d->m_entries, XIconEntry_copy);
     XContainerSetDataMoveMethod(&d->m_entries, XIconEntry_move);
@@ -330,7 +332,7 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
         XIconPrivate_touch(d);
         return;
     }
-    memset(&entry, 0, sizeof(entry));
+    XMemset(&entry, 0, sizeof(entry));
     XPixmap_init(&entry.m_pixmap);
     XCopy(&entry.m_pixmap, pixmap);
     entry.m_mode = mode;
@@ -363,7 +365,7 @@ static void XIconPrivate_addFileEntry(XIconPrivate* d, const XString* fileName,
        explicit requests; only negative components mean "all frames". */
     if (!d || !fileName || width < 0 || height < 0) return;
     if (!XIconPrivate_canReadFile(fileName)) return;
-    memset(&entry, 0, sizeof(entry));
+    XMemset(&entry, 0, sizeof(entry));
     XPixmap_init(&entry.m_pixmap);
     entry.m_fileName = XString_create_copy(fileName);
     if (!entry.m_fileName) return;
@@ -418,7 +420,7 @@ static void XIconPrivate_addFileEntries(XIconPrivate* d,
     imageCount = XImageReader_imageCount(&reader);
     if (imageCount <= 0) {
         XPixmap pixmap;
-        XPixmap_init(&pixmap);
+        XMemset(&pixmap, 0, sizeof(pixmap)); XPixmap_init(&pixmap);
         if (XPixmap_load(&pixmap, fileName, NULL, 0))
             XIconPrivate_addEntry(d, &pixmap, mode, state);
         XPixmap_deinit_base(&pixmap);
@@ -527,7 +529,7 @@ XIcon* XIcon_create_ex(XMemoryType memory)
 void XIcon_init(XIcon* self)
 {
     if (ISNULL(self, "XIcon")) return;
-    memset(self, 0, sizeof(XIcon));
+    XMemset(self, 0, sizeof(XIcon));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XIcon);
     self->m_data = XIconPrivate_create();
@@ -605,7 +607,7 @@ void XIcon_detach(XIcon* self)
             {
                 XIconEntry copy;
                 const XIconEntry* entry = (const XIconEntry*)XVector_at_base(&self->m_data->m_entries, (int64_t)i);
-                memset(&copy, 0, sizeof(copy));
+                XMemset(&copy, 0, sizeof(copy));
                 XIconEntry_copy(&copy, entry);
                 if (!XVector_push_back_move_1_base(&newData->m_entries, &copy))
                     XIconEntry_deinit(&copy);
@@ -1031,7 +1033,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         devicePixelRatio, targetWidth, targetHeight,
         actual.width, actual.height);
     dprThousand = (int)(outputRatio * 1000.0f + 0.5f);
-    snprintf(sourceKey, sizeof(sourceKey), "%llx",
+    XSnprintf(sourceKey, sizeof(sourceKey), "%llx",
              (unsigned long long)XPixmap_cacheKey(&best->m_pixmap));
     paletteKey = XIconStyleHelper_paletteCacheKey();
     if (XIconScaledPixmapCache_find(
@@ -1043,7 +1045,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         actual.height != XPixmap_height(&best->m_pixmap))
     {
         XPixmap scaled;
-        XPixmap_init(&scaled);
+        XMemset(&scaled, 0, sizeof(scaled)); XPixmap_init(&scaled);
         XPixmap_scaled(&best->m_pixmap, actual.width, actual.height, 0, 0,
                        &scaled);
         if (!XPixmap_isNull(&scaled))
@@ -1056,7 +1058,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
     if (best->m_mode != mode && mode != XIconMode_Normal)
     {
         XPixmap styled;
-        XPixmap_init(&styled);
+        XMemset(&styled, 0, sizeof(styled)); XPixmap_init(&styled);
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {

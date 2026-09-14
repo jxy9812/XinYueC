@@ -2,6 +2,8 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #if XMENUBAR_ON
 #include "XMenuBar.h"
@@ -12,7 +14,6 @@
 #if XTOOLBAR_ON
 #include "XToolBar.h"
 #endif
-#include <string.h>
 
 #if XWIDGET_ON && XMAINWINDOW_ON
 
@@ -150,7 +151,7 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
                       XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XMainWindow);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

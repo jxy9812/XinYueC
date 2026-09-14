@@ -3,13 +3,14 @@
  * @brief      XMovie 单帧/动画读取控制实现。
  */
 #include "XMovie.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XImageCodec.h"
 #if XIMAGEIOPLUGIN_ON
 #include "XImagePluginRegistry.h"
 #endif
-#include <string.h>
 #include <limits.h>
 
 struct XMoviePrivate
@@ -47,9 +48,9 @@ static bool XMovie_isInitializedObject(const XMovie* self)
     XVtable* vtable;
     if (!self) return false;
     vtable = XMovie_class_init();
-    memcpy(actual, &self->m_class.m_class.m_vtable, sizeof(actual));
-    memcpy(expected, &vtable, sizeof(expected));
-    return memcmp(actual, expected, sizeof(actual)) == 0;
+    XMemcpy(actual, &self->m_class.m_class.m_vtable, sizeof(actual));
+    XMemcpy(expected, &vtable, sizeof(expected));
+    return XMemcmp(actual, expected, sizeof(actual)) == 0;
 }
 
 static void XMovie_clearCurrent(XMoviePrivate* data)
@@ -57,7 +58,7 @@ static void XMovie_clearCurrent(XMoviePrivate* data)
     if (!data) return;
     XImage_deinit_base(&data->m_currentImage);
     XPixmap_deinit_base(&data->m_currentPixmap);
-    memset(&data->m_frameRect, 0, sizeof(data->m_frameRect));
+    XMemset(&data->m_frameRect, 0, sizeof(data->m_frameRect));
     data->m_currentFrame = -1;
 }
 
@@ -282,14 +283,14 @@ void XMovie_init(XMovie* self)
         isHeap = Class_IsHeap(self);
         XMovie_deinit_base(self);
     }
-    memset(self, 0, sizeof(XMovie));
+    XMemset(self, 0, sizeof(XMovie));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XMovie);
     if (memory) Class_Memory(self) = memory;
     Class_IsHeap(self) = isHeap;
     self->m_data = (XMoviePrivate*)XMalloc_System(sizeof(XMoviePrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XMoviePrivate));
+    XMemset(self->m_data, 0, sizeof(XMoviePrivate));
     self->m_data->m_reader = XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     XImage_init(&self->m_data->m_currentImage);
     XPixmap_init(&self->m_data->m_currentPixmap);
@@ -403,7 +404,7 @@ static void VXMovie_copy(XMovie* self, const XMovie* other)
     if (!XMovie_isInitializedObject(self)) XMovie_init(self);
     if (!self->m_data) return;
     XMovie_clearPrivate(self->m_data);
-    memset(self->m_data, 0, sizeof(XMoviePrivate));
+    XMemset(self->m_data, 0, sizeof(XMoviePrivate));
     self->m_data->m_reader = XMovie_cloneReader(source->m_reader);
     XCopy(&self->m_data->m_currentImage, &source->m_currentImage);
     XCopy(&self->m_data->m_currentPixmap, &source->m_currentPixmap);
@@ -566,7 +567,7 @@ XMovieState XMovie_state(const XMovie* self)
 void XMovie_frameRect(const XMovie* self, XRect* out)
 {
     if (!out) return;
-    if (!self || !self->m_data) memset(out, 0, sizeof(*out));
+    if (!self || !self->m_data) XMemset(out, 0, sizeof(*out));
     else *out = self->m_data->m_frameRect;
 }
 void XMovie_currentImage(const XMovie* self, XImage* out)
@@ -640,7 +641,7 @@ void XMovie_setSpeed(XMovie* self, int percentSpeed)
 void XMovie_scaledSize(const XMovie* self, XSize* out)
 {
     if (!out) return;
-    if (!self || !self->m_data) memset(out, 0, sizeof(*out));
+    if (!self || !self->m_data) XMemset(out, 0, sizeof(*out));
     else *out = self->m_data->m_scaledSize;
 }
 void XMovie_setScaledSize(XMovie* self, const XSize* size)

@@ -15,6 +15,8 @@
  *             XAction/XString/XPainter 抽象层，不依赖任何平台 API。
  */
 #include "XMenu.h"
+
+#include "XAlgorithm.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XWidget_Protected.h"
@@ -26,7 +28,6 @@
 #include "XCoreApplication.h"
 #include "XVarList.h"
 
-#include <string.h>
 
 #if XWIDGET_ON && XMENU_ON
 
@@ -1017,7 +1018,7 @@ void XMenu_init_2(XMenu* self, XWidget* parent, const char* utf8Title)
 {
     if (!self)
         return;
-    memset(self, 0, sizeof(XMenu));
+    XMemset(self, 0, sizeof(XMenu));
     /* 菜单使用 Popup 窗口类型（对标 Qt::Popup）：无边框、无标题栏、
      * 无关闭按钮，弹出时覆盖式显示；X11 平台据此设置 override-redirect。 */
     XWidget_init(&self->m_base, parent, (XWidgetFlags)XWindowType_Popup);
@@ -1042,7 +1043,7 @@ XMenu* XMenu_create_ex(XMemoryType memory, XWidget* parent,
 
     if (!self)
         return NULL;
-    memset(self, 0, sizeof(XMenu));
+    XMemset(self, 0, sizeof(XMenu));
     XMenu_init_2(self, parent, utf8Title);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

@@ -15,6 +15,8 @@
  *             翻转，最终选中状态与动作一致。
  */
 #include "XToolButton.h"
+
+#include "XAlgorithm.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
@@ -27,7 +29,6 @@
 #include "XFont.h"
 #include "XVarList.h"
 
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON
 
@@ -673,7 +674,7 @@ void XToolButton_init(XToolButton* self, XWidget* parent,
 {
     if (!self)
         return;
-    memset(self, 0, sizeof(XToolButton));
+    XMemset(self, 0, sizeof(XToolButton));
     XAbstractButton_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XToolButton);
     self->m_toolButtonStyle = XToolButtonStyle_IconOnly;
@@ -693,7 +694,7 @@ XToolButton* XToolButton_create_ex(XMemoryType memory, XWidget* parent,
 
     if (!self)
         return NULL;
-    memset(self, 0, sizeof(XToolButton));
+    XMemset(self, 0, sizeof(XToolButton));
     XToolButton_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

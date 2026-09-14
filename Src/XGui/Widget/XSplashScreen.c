@@ -12,9 +12,10 @@
 #include "XPainter.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XAlignment.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XSPLASHSCREEN_ON
 
@@ -105,7 +106,7 @@ void XSplashScreen_init(XSplashScreen* self, XWidget* parent,
                         XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XSplashScreen);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

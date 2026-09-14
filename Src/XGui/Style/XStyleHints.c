@@ -4,10 +4,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XStyleHints.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEventType.h"
-#include <string.h>
 
 #if XSTYLEHINTS_ON
 
@@ -61,12 +62,12 @@ XVtable* XStyleHints_class_init(void)
 void XStyleHints_init(XStyleHints* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XStyleHints));
+    XMemset(self, 0, sizeof(XStyleHints));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XStyleHints);
     self->m_data = (XStyleHintsPrivate*)XMalloc_System(sizeof(XStyleHintsPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XStyleHintsPrivate));
+    XMemset(self->m_data, 0, sizeof(XStyleHintsPrivate));
 
     /* 默认值参考桌面 Qt 平台（见各 getter 注释）。 */
     self->m_data->m_cursorFlashTime          = 1000;

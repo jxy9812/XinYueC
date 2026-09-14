@@ -1,8 +1,9 @@
 ﻿#include "XSplineSeries.h"
+
+#include "XAlgorithm.h"
 #include "XXYSeries.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -25,7 +26,7 @@ XVtable* XSplineSeries_class_init(void)
 void XSplineSeries_init(XSplineSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XXYSeries_init(&self->m_base);
     XClassSetVtable(self, XSplineSeries);
     XAbstractSeries_setName(&self->m_base.m_base, "spline");

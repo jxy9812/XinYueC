@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XTabWidget.c
  * @brief      XTabWidget 选项卡容器实现（对标 Qt 6.8 QTabWidget 子集）。
  * @details    页签条固定在顶部（高 XTABBAR_TAB_H），页容器占其余区域；
@@ -8,6 +8,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON
 
 #include "XTabWidget.h"
@@ -15,8 +17,6 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
-#include <string.h>
-#include <stdlib.h>
 
 #define XTABWIDGET_BAR_H 24
 
@@ -294,9 +294,9 @@ int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
             self->m_clients = clients;
             self->m_capacity = cap;
         }
-        memmove(&self->m_pages[index + 1], &self->m_pages[index],
+        XMemmove(&self->m_pages[index + 1], &self->m_pages[index],
                 sizeof(XWidget*) * (size_t)(self->m_count - index));
-        memmove(&self->m_clients[index + 1], &self->m_clients[index],
+        XMemmove(&self->m_clients[index + 1], &self->m_clients[index],
                 sizeof(XWidget*) * (size_t)(self->m_count - index));
         /* 页容器（内部 XWidget，parent 为本控件）。 */
         self->m_pages[index] = (XWidget*)XMemory_malloc(sizeof(XWidget),
@@ -329,9 +329,9 @@ void XTabWidget_removeTab(XTabWidget* self, int index)
         XWidget_deinit_base(self->m_pages[index]);
         XFree_System(self->m_pages[index]);
     }
-    memmove(&self->m_pages[index], &self->m_pages[index + 1],
+    XMemmove(&self->m_pages[index], &self->m_pages[index + 1],
             sizeof(XWidget*) * (size_t)(self->m_count - index - 1));
-    memmove(&self->m_clients[index], &self->m_clients[index + 1],
+    XMemmove(&self->m_clients[index], &self->m_clients[index + 1],
             sizeof(XWidget*) * (size_t)(self->m_count - index - 1));
     --self->m_count;
     if (self->m_currentIndex >= self->m_count)

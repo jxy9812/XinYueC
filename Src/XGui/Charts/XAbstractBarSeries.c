@@ -1,8 +1,10 @@
 ﻿#include "XAbstractBarSeries.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -37,7 +39,7 @@ XVtable* XAbstractBarSeries_class_init(void)
 void XAbstractBarSeries_init(XAbstractBarSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractSeries_init(&self->m_base);
     XClassSetVtable(self, XAbstractBarSeries);
     self->m_barWidth = 0.8;
@@ -313,8 +315,8 @@ double XAbstractBarSeries_take(XAbstractBarSeries* self, int index,
     v = self->m_values ? self->m_values[index] : 0.0;
     if (labelOut) {
         const char* t = XAbstractBarSeries_category(self, index);
-        *labelOut = (char*)XMalloc_System(strlen(t) + 1);
-        if (*labelOut) strcpy(*labelOut, t);
+        *labelOut = (char*)XMalloc_System(XStrlen(t) + 1);
+        if (*labelOut) XStrcpy(*labelOut, t);
     }
     XAbstractBarSeries_remove(self, index);
     return v;

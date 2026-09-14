@@ -11,9 +11,11 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XCursor.h"
+#include "XMemory.h"
+
+#include "XAlgorithm.h"
 #include "XBitmap.h"
 #include "XPixmap.h"
-#include <string.h>
 
 #if XCURSOR_ON
 
@@ -81,7 +83,7 @@ XVtable* XCursor_class_init(void)
 void XCursor_init(XCursor* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XCursor));
+    XMemset(self, 0, sizeof(XCursor));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XCursor);
     self->m_shape = XCursor_Arrow;

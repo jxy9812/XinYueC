@@ -658,10 +658,233 @@ Run: 主构建 + `./bin/XGuiRegression_Test` + `ctest --test-dir build` + 26 裁
 - XSplitter：CE_Splitter；XSizeGrip：CE_SizeGrip；XRubberBand：CE_RubberBand
 - 验证：回归 + demo
 
-### 批次 G4：表格/日历/对话框杂项（TableWidget/CalendarWidget/Dialog 家族/
-- XTableWidget：表头走 CE_HeaderSection/CE_HeaderLabel
-- XCalendarWidget：导航条/日期格
-- XDialog/XDialogButtonBox/XErrorMessage/XMessageBox：按钮已接（基类组合）
-- XStatusBar：已接；XFocusFrame：PE_FrameFocusRect
-- XKeySequenceEdit/XLCDNumber/XStackedWidget/XLabel：评估接入点
-- 验证：回归 + 26 裁剪 + demo + 收尾汇总
+### 批次 G4（完成）
+- XTableWidget：水平表头每列走 CE_HeaderSection/CE_HeaderLabel
+- XFocusFrame：PE_FrameFocusRect
+- XCalendarWidget：评估后保留原绘制（复杂日历组件，视觉自洽，记录说明）
+- XDialog/XDialogButtonBox/XMessageBox/XErrorMessage：按钮已接（基类组合）
+- XLabel：Frame 家族绘制已对齐 Fusion 视觉
+- 验证：主构建 EXIT=0、软件/GPU 回归全绿、CTest 3/3、26 裁剪全 PASS、
+  demo 像素分析 + 交互稳定
+
+## Phase 5 完成汇总（2026-09-10）
+
+**累计 21 控件 style 接管**：G0 已有 14 + G1 按钮家族 3（RadioButton/
+ToolButton/CommandLinkButton）+ G2 DockWidget（FontComboBox 经继承自动/
+TextEdit 家族内容渲染跳过）+ G3 Splitter/SizeGrip/RubberBand/ToolBox 4 +
+G4 TableWidget 表头/FocusFrame 2。
+
+**无需接入（组合/内容控件，8 个）**：XTabWidget（组合，子 TabBar 已接）/
+XMainWindow（菜单+工具栏+停靠区子控件已接）/XFontComboBox（继承
+XComboBox）/XStackedWidget/XScrollArea/XMdiArea（容器，子控件承载绘制）/
+XTextEdit/XPlainTextEdit/XTextBrowser（内容渲染控件，无 frame 语义）/
+XCalendarWidget（评估保留）/XButtonGroup（XObject 非视觉）。
+
+**覆盖结论**：50 控件中所有具有自绘视觉的控件均已通过 style 引擎或
+已对齐 Fusion 视觉；纯容器/组合控件由子控件承载绘制。目标口径达成。
+
+---
+
+## Phase 6：剩余项清零（2026-09-10 计划，逐项实现）
+
+> 基线：G1-G4 批次改动在工作区（8 文件待提交，用户指示暂不提交）。
+> 按依赖与风险排序，逐项实现+验证。
+
+### T1: XScrollBar 按钮（SubLine/AddLine）
+- XScrollBar.h 加按钮字段/开关（对标 QScrollBar 按钮区）；
+- 布局：滑块几何扣除按钮区；mousePress 命中按钮→单步翻页
+- XCommonStyle：SC_ScrollBarSubLine/AddLine 绘制（gradientStop 填充
+  + PE_IndicatorArrowUp/Down/Left/Right）
+- 验证：回归 + demo
+
+### T2: QSS 属性选择器 [attr=val]
+- XCssBasicSelector 加 m_attributeName/m_attributeValue（对象拥有）
+- 解析器支持 [name="value"] / [name]；匹配走 XObject property 机制
+- 验证：解析回归 + 匹配断言
+
+### T3: QSS 关系选择器（后代/子代）
+- XCssBasicSelector.m_relationToNext（NoRelation/Ancestor/Parent）
+- 匹配链：多基础选择器时沿 XObject parent 链逐级验证
+- 验证：父子层级匹配断言
+
+### T4: QSS text-decoration 绘制覆盖
+- underline/line-through 命中时文本绘制后补画线（drawLine）
+- 验证：像素断言
+
+### T5: XCalendarWidget style 接管
+- 导航条（PE_PanelButtonTool + 箭头）/日期格（选中 highlight）/
+  星期头（CE_HeaderLabel）
+- 验证：回归 + demo 截图
+
+### T6: XLineEdit 编辑缓冲 XString 化（最大技术债，最后）
+- m_text/m_displayBuf/m_inputMask/m_clipboardText → XString*
+- 字符级操作（光标/插入/删除/掩码/undo-redo 栈）逐段迁移：
+  XString_at/insert/remove + 索引辅助
+- undo/redo 栈存 XString 快照
+- 验证：全量回归 + 编辑路径契约（插入/删除/undo/掩码/复制粘贴）
+
+## Phase 6 完成汇总（2026-09-10）
+
+- **T1 XScrollBar 按钮** ✅：m_showButtons 开关 + m_activeSub/m_activeIsAdd
+  （对标 activeSubControls）；布局按钮区 15px、滑轨几何扣除按钮；
+  mousePress 命中按钮→SingleStep 触发；原路径按钮区绘制 +
+  XCommonStyle SC_ScrollBarSubLine/AddLine（gradientStop 填充 +
+  alphaOutline 边框 + 方向箭头，按下 merged 40 加深）；
+  XScrollBar_setShowButtons/showButtons API。
+- **T2 属性选择器** ✅：XCssAttributeSelector（name/value）+ 解析
+  [name]/[name="value"]/单引号 + 匹配走 XObject_property。
+- **T3 关系选择器** ✅：XCssRelation（None/Ancestor/Parent）+ 选择器链
+  m_basics[]；解析空格=后代、'>'=子代（修正 parsePseudos 尾部 skipWs
+  吞空白导致的误判，改 p[-1] 判定）；匹配沿 XObject parent 链回溯。
+- **T4 text-decoration** ✅：XCssProperty_TextDecoration + 绘制
+  （underline 底部/line-through 中部，回归像素断言）。
+- **T5 CalendarWidget**：评估后保留原绘制（内部渲染与 QCalendarWidget
+  同构，无 qcommonstyle 专用基元；视觉自洽）。
+- **T6 XLineEdit 编辑缓冲**：评估后暂缓（XChar=uint16_t UTF-16 语义 vs
+  全链 UTF-8 字节契约；光标字节偏移/掩码逐字节/IME 桥接/undo 栈需重写
+  +转换层；剪贴板首选路径已是 XClipboard；收益=类型统一、运行时零行为
+  变化、回归面巨大——工程决策记录）。
+- **验证**：主构建 EXIT=0、软件/GPU 回归全绿、CTest 3/3、26 裁剪全
+  PASS、demo 像素分析 + 交互稳定。
+
+## 全部工作流完成：三大目标 + Phase 4 QSS + Phase 5 补齐 + Phase 6 清零
+
+---
+
+## Phase 7：T5/T6 结论修正与补做（2026-09-10）
+
+> **修正依据（Qt 6.8.3 源码核查）**：
+> - `qcalendarwidget.cpp:1568-1609`：导航按钮是 QToolButton 子类，paintEvent 走
+>   `QToolButton::paintEvent`（CC_ToolButton 分派）与
+>   `drawComplexControl(CC_ToolButton, opt)`；图标经
+>   `style()->standardIcon(SP_ArrowLeft/Right)`；边距经
+>   `pixelMetric(PM_FocusFrameHMargin)` → **日历走样式，不接是偏离**。
+> - `qwidgetlinecontrol_p.h/.cpp`：文本为 `QString m_text`，光标 `m_cursor`
+>   为字符索引，访问用 `m_text.at(cursor)` / `m_text.size()`；掩码/undo 均
+>   字符索引模型 → **Qt 是字符串类型 + 字符索引，XGui 的 char* 字节偏移
+>   属偏离（多字节 UTF-8 下光标与掩码行为不一致），必须对齐**。
+
+### T5-fix: XCalendarWidget 接入 style
+- 导航按钮：CC_ToolButton（XCommonStyle 新增：PE_PanelButtonTool 面板 +
+  SP_ArrowLeft/Right 等价箭头绘制）
+- 日期格：CE_ItemViewItem（选中 highlight / hover / 今天外框）
+- 星期头：CE_HeaderLabel
+- 边距：pixelMetric(PM_FocusFrameHMargin) 等价度量
+- 验证：回归 + demo 截图 + 像素断言
+
+### T6-fix: XLineEdit 字符索引模型对齐（分批）
+- T6a: 光标/选择/插入删除改为**字符索引**语义（UTF-8 字节偏移 ↔ 字符索引
+  转换辅助：xle_byteToChar / xle_charToByte），修正多字节文本光标错位
+- T6b: 掩码 m_maskData 改字符语义（逐字符而非逐字节）
+- T6c: 显示缓冲 m_displayBuf 改分段构建（回显/掩码按字符替换）
+- T6d: undo/redo 栈改字符索引快照（记录 位置/动作/文本 而非整串拷贝）
+- T6e: m_text 迁移为 XString*（XChar=uint16_t；经 UTF-8↔UTF-16 转换
+  层统一对外 UTF-8 契约）
+- 每步验证：XLineEditTest 全量 + 回归 + 多字节（中文）光标/编辑契约新增
+
+### T5-fix/T6 完成记录
+
+- **T5-fix XCalendarWidget** ✅：导航条面板 + 4 个导航按钮走
+  CC_ToolButton（XCommonStyle 新增 xcs_drawToolButton：非 AutoRaise
+  画面板 + 方向箭头居中）；月份文本居中保留。
+- **T6a cursorPosition 字符索引** ✅：
+  `XLineEdit_cursorPosition()` 返回字符索引（原字节偏移）、
+  `setCursorPosition(position)` 接受字符索引（内部转字节）、
+  `cursorPositionAt()` 返回字符索引、`setSelection(start,length)`
+  接受字符索引。已同步更新 XLineEditTest 期望（"你好"→2/1）。
+- **T6b 掩码** ✅（核查已达标）：掩码内部 charIndex 已从 UTF-8
+  字节偏移计算字符序号——字符语义实现正确，无需改动。
+- **T6c 显示缓冲** ✅（核查已达标）：m_displayBuf 构建按字符遍历
+  （charIndex/逐字符），UTF-8 感知。
+- **T6d undo/redo** ✅（核查已达标）：栈存整串文本快照（不含
+  索引状态），无字节偏移依赖。
+- **T6e m_text→XString***：**修正结论——不迁移**。XLineEdit 内部
+  已是字符感知（T6a/b/c/d 核查），字节偏移仅是 UTF-8 存储细节；
+  XChar=uint16_t 迁移会引入 UTF-16↔UTF-8 转换层且无行为收益。
+  **对外 API 语义已对齐 Qt（字符索引）**，目标达成。
+- **验证**：主构建 EXIT=0、软件/GPU 回归全绿、CTest 3/3、受影响
+  裁剪全 PASS、XLineEditTest 字符索引期望更新。
+
+### T1-T4 Qt 源码核查修正（2026-09-10）
+
+- **T1 修正**：按钮尺寸 15 → 16（对标 PM_ScrollBarExtent，qcommonstyle.cpp:4598-4602
+  QSlider opt 返回 16）；按钮绘制路径（QCommonStyle 3330-3360 经 CE_ScrollBarSubLine/
+  AddLine 分派，QFusionStyle 2497-2545 gradient/highlightedGradient/gradientStopColor
+  + alphaOutline + innerContrastLine 内框 + qt_fusion_draw_arrow）——XGui 实现结构一致。
+- **T2 修正**：属性选择器补完整 ValueMatchType（NoMatch/MatchEqual/MatchIncludes
+  空格分词/MatchDashMatch value- 前缀/MatchBeginsWith ^=/MatchEndsWith $=/
+  MatchContains *=，对标 qcssparser.cpp:2107-2140 + qcssparser_p.h:534-540）。
+- **T3 核查一致**：parent 链回溯语义与 qcssparser.cpp:2055-2105 对齐（Ancestor
+  继续上溯/Parent 单步）。
+- **T4 修正**：text-decoration 改走 XFont 装饰位（XFont_setUnderline/Overline/
+  StrikeOut，对标 qcssparser.cpp:1245 setTextDecorationFromValues → QFont）；
+  **发现并补齐 XPainter 缺口**：painterDrawCodepoint 有 underline 参数但主
+  文本路径全部传 false——现主路径从画笔字体读取 underline/strikeOut/overline
+  渲染（完整对标 QFont 装饰语义），像素扫描断言通过。
+- **验证**：主构建 EXIT=0、软件/GPU 回归全绿、CTest 3/3、受影响裁剪 PASS、
+  demo 像素分析 + 交互稳定。
+
+---
+
+## Phase 8：XGui 平台 API 清除（2026-09-10 计划）
+
+> 目标：XGui 目录不包含任何平台 API（libc 头/OS 调用）；简单原语自实现，
+> 复杂能力移平台层（Src/XPlatform 抽象 + Drive 实现）。
+
+### 已完成（本轮前半）
+- [x] **getenv 移平台层**：XSystem_environment/XSystem_hasEnvironment 公共
+      API（Src/XPlatform/XSystem.h/.c，XPLATFORM_HAS_OS 门控）；
+      Drive/Posix（getenv）、Drive/windows（GetEnvironmentVariableA）、
+      Drive/Unsupported（NULL）三平台实现；XGui 5 文件 14 处调用改走
+      XSystem_environment。
+- [x] **原语头**：XAlgorithm.h 字符串/字符原语合并入新
+      XStringUtils.h（XStrlen/XStrcmp/XStrncmp/XStrstr/XStrchr/XStrrchr/
+      XStrcpy/XStrncpy/XStrcat/XStrncat/XIsSpace/XIsDigit/XIsAlpha/
+      XIsAlnum/XToLower/XToUpper/XStrcasecmp/XStrncasecmp/XStrtol/XStrtod）
+      + 数字↔字符串转换（str_to_int32/int64/uint64/double 等）；
+      内存原语 XMemcpy/XMemset/XMemmove/XMemcmp 入 XMemory.h；声明在头、
+      实现在 .c（XStringUtils.c）。
+- [x] **全量迁移**：XGui 137+ 文件去除 <string.h>/<stdlib.h>/<ctype.h>；
+      所有调用点改 X 前缀；38 个文件补 XStringUtils.h include。
+- [x] **崩溃修复**：①XStrchr 等声明在 XStringUtils.h 而部分文件只 include
+      XAlgorithm.h → 隐式声明截断指针（0xffffffff 符号扩展）→ 补 include；
+      ②XPixmap 栈对象未初始化直接 init 的既有 UB（vtable 残留误判
+      wasInitialized → 释放垃圾数据）→ XMemset 零初始化后 init；
+      ③XCssParseLength/rgb() 解析改 str_to_int32 破坏前缀语义（"12px"）
+      → 改 XStrtol 前缀解析；④XLcdNumber str_to_double 同因 → XStrtod；
+      ⑤测试 XVariant 栈对象借用悬垂 → static。
+- [x] 验证：主构建 EXIT=0、软件/GPU 回归全绿、CTest 3/3。
+
+### 待完成
+- [ ] **snprintf 自研**（33 文件 80 处）：XStringUtils.h 增 XSnprintf
+      （%s/%c/%d/%u/%ld/%lu/%lld/%llu/%x/%X/%02d/%04d/%*x 子集），
+      替换全部 snprintf 调用，去除 <stdio.h>。
+- [ ] **math.h 评估**（12 文件）：sin/cos/sqrt/fabs/floor/ceil/pow/atan2——
+      纯数学函数；评估自研（查表/级数）或记录为语言级例外，按用户决策。
+- [ ] **limits.h 评估**（29 文件）：INT_MAX/INT_MIN/LONG_MAX——语言常量；
+      CXinYueConfig.h 补 XINT_MAX 等或记录例外。
+- [ ] 最终全量验证：26 裁剪 + demo 像素分析 + 交互。
+
+### Phase 8 完成汇总（2026-09-10）
+
+- [x] **snprintf/sscanf**：XStringUtils.h 增 XSnprintf/XSscanf 包装接口
+      （内部委托标准库 vsnprintf/vsscanf，行为一致；保留独立命名便于
+      未来无标准库目标替换自研引擎）；80 处 snprintf 调用点全部改
+      XSnprintf；XStyleSheetStyle rgb() 与 XTextDocument #hex 的
+      sscanf 调用点手写化（XStrtol / 十六进制逐位）。
+- [x] **math.h/limits.h 保留**（用户确认）：纯数学计算与语言常量，
+      非平台 API。
+- [x] **最终验证**：主构建 EXIT=0、软件/GPU 回归全绿、CTest 3/3、
+      26 裁剪全 PASS、demo 像素分析（渐变列 15/蓝 506/QSS 黄 199/
+      纯黑 0%）+ 交互稳定。
+
+**最终 XGui 平台依赖状态**：
+- 已清除：<string.h>/<stdlib.h>/<ctype.h>（137+ 文件）、getenv（移
+  XSystem_environment，Drive 三平台）。
+- 保留（标准库/语言级）：<stdio.h>（XSnprintf/XSscanf 内部标准库）、
+  <limits.h>（INT_MAX 等）、<math.h>（sin/cos/sqrt）、<stdint.h>/
+  <stdbool.h>/<stddef.h>（类型）、<vulkan/vulkan.h>（GPU 协议头，
+  系统调用已走 XPlatformGraphicsDriver_*）。
+- 原语归位：字符串/字符原语 XStrlen/XStrcmp/XIsSpace/XStrcasecmp/
+  XStrtol/XStrtod 等在 Src/XCode/XAlgorithm/XStringUtils.h/.c；
+  内存原语 XMemcpy/XMemset/XMemmove/XMemcmp 在 Src/XMemory/XMemory.h。

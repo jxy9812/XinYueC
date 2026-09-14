@@ -24,13 +24,15 @@
  *             统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
  */
 #include "XImageCodec_config.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodecInternal.h"
 #include "XImage.h"
 #include "XMemory.h"
 #include "XStringList.h"
 #include <limits.h>
 #include <stdint.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_JPEG_ON
@@ -307,7 +309,7 @@ static void jpegHuffmanBuildEncode(const uint8_t counts[16],
 {
     uint16_t code = 0;
     int idx = 0;
-    memset(out, 0, sizeof(*out));
+    XMemset(out, 0, sizeof(*out));
     for (int len = 1; len <= 16; ++len) {
         for (int i = 0; i < counts[len - 1]; ++i) {
             uint8_t sym = symbols[idx];
@@ -558,7 +560,7 @@ static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
         return true;
     utf8 = (char*)XMalloc_System(len + 1u);
     if (!utf8) return true;
-    memcpy(utf8, data, len);
+    XMemcpy(utf8, data, len);
     utf8[len] = '\0';
     source = XString_create_utf8(utf8);
     XFree_System(utf8);
@@ -569,8 +571,8 @@ static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
         XClass_delete_base((XClass*)source);
         return true;
     }
-    separator = strstr(text, ": ");
-    firstSpace = strchr(text, ' ');
+    separator = XStrstr(text, ": ");
+    firstSpace = XStrchr(text, ' ');
     if (!separator || (firstSpace && firstSpace < separator)) {
         key = XString_create_utf8("Description");
         value = XString_create_copy(source);
@@ -581,7 +583,7 @@ static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
             XClass_delete_base((XClass*)source);
             return true;
         }
-        memcpy(keyUtf8, text, keyLen);
+        XMemcpy(keyUtf8, text, keyLen);
         keyUtf8[keyLen] = '\0';
         key = XString_create_utf8(keyUtf8);
         XFree_System(keyUtf8);
@@ -621,7 +623,7 @@ static bool jpegParseIcc(const uint8_t* data, size_t len, JpegCtx* ctx)
     size_t part;
     uint8_t* replacement;
     if (!ctx || !data || len < 14u ||
-        memcmp(data, "ICC_PROFILE\0", 12u) != 0)
+        XMemcmp(data, "ICC_PROFILE\0", 12u) != 0)
         return true;
     part = len - 14u;
     if (part == 0 || part > JPEG_MAX_ICC_PROFILE ||
@@ -639,12 +641,12 @@ static bool jpegParseIcc(const uint8_t* data, size_t len, JpegCtx* ctx)
         replacement = (uint8_t*)XMalloc_System(capacity);
         if (!replacement) return true;
         if (ctx->iccProfile && ctx->iccSize)
-            memcpy(replacement, ctx->iccProfile, ctx->iccSize);
+            XMemcpy(replacement, ctx->iccProfile, ctx->iccSize);
         if (ctx->iccProfile) XFree_System(ctx->iccProfile);
         ctx->iccProfile = replacement;
         ctx->iccCapacity = capacity;
     }
-    memcpy(ctx->iccProfile + ctx->iccSize, data + 14u, part);
+    XMemcpy(ctx->iccProfile + ctx->iccSize, data + 14u, part);
     ctx->iccSize += part;
     return true;
 }
@@ -695,7 +697,7 @@ static int jpegExifOrientation(const uint8_t* data, size_t len)
     uint16_t marker;
     uint32_t offset;
     int depth;
-    if (!data || len < tiff + 8u || memcmp(data, "Exif\0\0", 6u) != 0)
+    if (!data || len < tiff + 8u || XMemcmp(data, "Exif\0\0", 6u) != 0)
         return 0;
     if (data[tiff] == 'I' && data[tiff + 1u] == 'I') little = true;
     else if (data[tiff] == 'M' && data[tiff + 1u] == 'M') little = false;
@@ -982,7 +984,7 @@ static bool jpegParseSof(const uint8_t* data, size_t len, size_t* pos,
     if ((precision != 8 && precision != 12) ||
         width <= 0 || height <= 0 || nf < 1 || nf > 4)
         return false;
-    memset(frame, 0, sizeof(*frame));
+    XMemset(frame, 0, sizeof(*frame));
     frame->width = width;
     frame->height = height;
     frame->nf = nf;
@@ -1030,7 +1032,7 @@ static bool jpegParseSos(const uint8_t* data, size_t len, size_t* pos,
     if (end > len) return false;
     n = data[(*pos)++];
     if (n < 1 || n > 4) return false;
-    memset(scan, 0, sizeof(*scan));
+    XMemset(scan, 0, sizeof(*scan));
     for (int i = 0; i < n; ++i) {
         int id, tab, found = -1;
         if (*pos + 2 > end) return false;
@@ -1166,7 +1168,7 @@ static void jpegBlockToSamples(JpegCtx* ctx, int compIdx,
     ctx->frBlkW = pl->pw / 8;
     ctx->frBlkH = pl->ph / 8;
     if (bx >= ctx->frBlkW || by >= ctx->frBlkH) return;
-    memset(f, 0, sizeof(f));
+    XMemset(f, 0, sizeof(f));
     for (int nat = 0; nat < 64; ++nat) {
         int v = coeff[nat];
         if (v) {
@@ -1261,14 +1263,14 @@ static void jpegScanReset(JpegCtx* ctx, const JpegScan* sc, bool scanStart)
             if (!ctx->frame.progressive || dcScan) {
                 int tbl = sc->comp[i].tdc;
                 if (tbl >= 0 && tbl < 4) {
-                    memset(ctx->arith.dcStats[tbl], 0,
+                    XMemset(ctx->arith.dcStats[tbl], 0,
                            sizeof(ctx->arith.dcStats[tbl]));
                 }
             }
             if (!ctx->frame.progressive || acPart || scanStart) {
                 int tbl = sc->comp[i].tac;
                 if (tbl >= 0 && tbl < 4) {
-                    memset(ctx->arith.acStats[tbl], 0,
+                    XMemset(ctx->arith.acStats[tbl], 0,
                            sizeof(ctx->arith.acStats[tbl]));
                 }
             }
@@ -1907,7 +1909,7 @@ static bool jpegLoadBlock(const JpegCtx* ctx, int frameIdx, int blockX,
         return false;
     if (blockX >= cp->blocksW || blockY >= cp->blocksH)
         return false;
-    memcpy(coeff, cp->data + ((size_t)blockY * (size_t)cp->blocksW +
+    XMemcpy(coeff, cp->data + ((size_t)blockY * (size_t)cp->blocksW +
                               (size_t)blockX) * 64u,
            sizeof(int32_t) * 64u);
     return true;
@@ -1923,7 +1925,7 @@ static bool jpegPlaceBlock(JpegCtx* ctx, int frameIdx, int blockX, int blockY,
             return false;
         if (blockX >= cp->blocksW || blockY >= cp->blocksH)
             return false;
-        memcpy(cp->data + ((size_t)blockY * (size_t)cp->blocksW +
+        XMemcpy(cp->data + ((size_t)blockY * (size_t)cp->blocksW +
                            (size_t)blockX) * 64u, coeff,
                sizeof(int32_t) * 64u);
         return true;
@@ -1960,7 +1962,7 @@ static bool jpegRunScan(JpegCtx* ctx, const JpegScan* sc,
         ctx->arith.pos = *pos;
         jpegArithBegin(ctx);
     } else {
-        memset(&ctx->bits, 0, sizeof(ctx->bits));
+        XMemset(&ctx->bits, 0, sizeof(ctx->bits));
         ctx->bits.data = data;
         ctx->bits.size = size;
         ctx->bits.pos = *pos;
@@ -1999,7 +2001,7 @@ static bool jpegRunScan(JpegCtx* ctx, const JpegScan* sc,
                                                    my * fc->v + vy, coeff))
                                     return false;
                             } else {
-                                memset(coeff, 0, sizeof(coeff));
+                                XMemset(coeff, 0, sizeof(coeff));
                             }
                             if (!jpegDecodeOneBlock(ctx, sc, c->frameIdx,
                                                     c->tdc, c->tac, coeff))
@@ -2022,7 +2024,7 @@ static bool jpegRunScan(JpegCtx* ctx, const JpegScan* sc,
                     if (!jpegLoadBlock(ctx, c->frameIdx, mx, my, coeff))
                         return false;
                 } else {
-                    memset(coeff, 0, sizeof(coeff));
+                    XMemset(coeff, 0, sizeof(coeff));
                 }
                 if (!jpegDecodeOneBlock(ctx, sc, c->frameIdx,
                                         c->tdc, c->tac, coeff))
@@ -2086,7 +2088,7 @@ static bool jpegParseAdobe(const uint8_t* data, size_t size, size_t* pos,
     if (end > size) return false;
     if (segLen >= 12) {
         /* 载荷：'A''d''o''b''e' + 版本2 + flags0 2 + flags1 2 + 转换1 */
-        if (memcmp(data + *pos, "Adobe", 5) == 0) {
+        if (XMemcmp(data + *pos, "Adobe", 5) == 0) {
             ctx->frame.adobe = 1;
             ctx->frame.adobeTransform = data[*pos + 11];
         }
@@ -2112,7 +2114,7 @@ static bool jpegParseJfif(const uint8_t* data, size_t size, size_t* pos,
     if (end > size) return false;
     payload = end - *pos;
     /* JFIF 固定头至少包含标识、版本、单位、两个密度和缩略图尺寸。 */
-    if (payload >= 14 && memcmp(data + *pos, "JFIF\0", 5) == 0 &&
+    if (payload >= 14 && XMemcmp(data + *pos, "JFIF\0", 5) == 0 &&
         ctx->densityUnit == 0) {
         int unit = data[*pos + 7];
         if (unit == 1 || unit == 2) {
@@ -2161,7 +2163,7 @@ static bool jpegAllocatePlanes(JpegCtx* ctx)
             if (!cp->data) return false;
             cp->blocksW = blocksW;
             cp->blocksH = blocksH;
-            memset(cp->data, 0, cn); /* 渐进式系数初始为 0 */
+            XMemset(cp->data, 0, cn); /* 渐进式系数初始为 0 */
         }
     }
     return true;
@@ -2310,7 +2312,7 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
        数据已经转移到 out 后再写元数据，避免破坏输出图像的 COW 资源。 */
     if (ctx->iccProfile && ctx->iccSize) {
         XImageColorProfileSpec profile;
-        memset(&profile, 0, sizeof(profile));
+        XMemset(&profile, 0, sizeof(profile));
         profile.m_iccData = ctx->iccProfile;
         profile.m_iccSize = ctx->iccSize;
         (void)XImageCodecInternal_setColorProfile(out, &profile);
@@ -2353,7 +2355,7 @@ bool XImageCodecInternal_decodeJpeg(const uint8_t* data, size_t size,
      * 非 JPEG 数据误认成有效图像。 */
     if (!data || size < 4 || !out || data[0] != 0xff || data[1] != 0xd8)
         return false;
-    memset(&ctx, 0, sizeof(ctx));
+    XMemset(&ctx, 0, sizeof(ctx));
     XStringList_init(&ctx.textKeys);
     XStringList_init(&ctx.textValues);
     /* 算术条件表默认（JPEG 规范 F.1.4.2：L=0, U=1, K=5） */
@@ -2506,7 +2508,7 @@ static bool jpegBitWriterReserve(JpegBitWriter* w, size_t extra)
         }
         p = (uint8_t*)XMalloc_System(cap);
         if (!p) { w->error = true; return false; }
-        if (w->out) { memcpy(p, w->out, w->len); XFree_System(w->out); }
+        if (w->out) { XMemcpy(p, w->out, w->len); XFree_System(w->out); }
         w->out = p;
         w->cap = cap;
     }
@@ -2674,14 +2676,14 @@ static bool jpegAppendComment(XByteArray* out, const XString* key,
     payload = (uint8_t*)XMalloc_System(total);
     if (!payload) return false;
     if (keyWritten) {
-        memcpy(payload, keyUtf8, keyWritten);
+        XMemcpy(payload, keyUtf8, keyWritten);
         if (separator) {
             payload[keyWritten] = ':';
             payload[keyWritten + 1u] = ' ';
         }
     }
     if (valueWritten)
-        memcpy(payload + keyWritten + separator, valueUtf8, valueWritten);
+        XMemcpy(payload + keyWritten + separator, valueUtf8, valueWritten);
     ok = jpegAppendSegment(out, 0xFE, payload, total);
     XFree_System(payload);
     return ok;
@@ -2735,13 +2737,13 @@ static bool jpegAppendIccProfile(XByteArray* out, const XImage* image)
         XByteArray_delete_base((XClass*)profile);
         return false;
     }
-    memcpy(payload, "ICC_PROFILE\0", 12u);
+    XMemcpy(payload, "ICC_PROFILE\0", 12u);
     while (offset < size) {
         size_t part = size - offset;
         if (part > maxPart) part = maxPart;
         payload[12] = (uint8_t)((offset / maxPart) + 1u);
         payload[13] = (uint8_t)markers;
-        memcpy(payload + 14u, XByteArray_data(profile) + offset, part);
+        XMemcpy(payload + 14u, XByteArray_data(profile) + offset, part);
         if (!jpegAppendSegment(out, 0xE2, payload, 14u + part)) {
             ok = false;
             break;
@@ -2982,7 +2984,7 @@ bool XImageCodecInternal_encodeJpeg(const XImage* image, int quality,
         }
     }
 
-    memset(&w, 0, sizeof(w));
+    XMemset(&w, 0, sizeof(w));
     if (!XByteArray_resize_base((XVector*)out, 0)) goto done;
     {
         static const uint8_t soi[2] = { 0xFF, 0xD8 };

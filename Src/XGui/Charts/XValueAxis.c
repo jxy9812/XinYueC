@@ -1,13 +1,15 @@
 ﻿#include "XValueAxis.h"
+#include "XMemory.h"
+
+#include "XAlgorithm.h"
 #include "XString.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
 void XValueAxis_init(XValueAxis* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     self->m_min = 0.0;
     self->m_max = 10.0;
     self->m_tickCount = 6;

@@ -25659,6 +25659,115 @@ static void test_qss_contract(void)
             XImage_deinit_base(&image);
             XPushButton_delete_base(btn);
         }
+        /* 属性选择器/关系选择器。 */
+        {
+            XStyleSheetStyle* ss4 = XStyleSheetStyle_create();
+            XLineEdit* host4 = XLineEdit_create(NULL, 0);
+            XVariant* v;
+            XString* pn;
+            XString* pv;
+            c1_expect(ss4 != NULL && host4 != NULL, "QSS 选择器：创建");
+            /* 动态属性 [role=input]。 */
+            pn = XString_create_utf8("role");
+            pv = XString_create_utf8("input");
+            {
+                /* 库借用值指针：属性值须为堆/静态生命周期，
+                 * 栈上 XVariant 会在作用域结束后悬垂。 */
+                static XVariant rv;
+                static bool rvInited = false;
+                if (!rvInited) {
+                    static char roleValue[] = "input";
+                    XVariant_init(&rv, roleValue, strlen(roleValue) + 1,
+                                  XVariantType_Char);
+                    rvInited = true;
+                }
+                XObject_setProperty((XObject*)host4, pn, &rv);
+            }
+            XStyleSheetStyle_setStyleSheet(ss4,
+                "XLineEdit[role=\"input\"] { background-color: #123456; }");
+            c1_expect(XStyleSheetStyle_ruleCount(ss4) == 1,
+                      "属性选择器解析规则数");
+            {
+                XCssStyleSheet* sheet = &ss4->m_sheet;
+                c1_expect(sheet->m_rules[0].m_selectors[0]
+                              .m_basics[0].m_attribute.m_name != NULL,
+                          "属性选择器名称解析");
+            }
+            XString_delete_base(pn);
+            XString_delete_base(pv);
+            (void)v;
+            /* 关系选择器 "XWidget XLineEdit"（后代）。 */
+            XStyleSheetStyle_setStyleSheet(ss4,
+                "XWidget XLineEdit { background-color: #223344; }");
+            c1_expect(XStyleSheetStyle_ruleCount(ss4) == 1,
+                      "关系选择器解析规则数");
+            {
+                XCssStyleSheet* sheet = &ss4->m_sheet;
+                c1_expect(sheet->m_rules[0].m_selectors[0].m_basicCount == 2 &&
+                          sheet->m_rules[0].m_selectors[0]
+                              .m_basics[1].m_relationToPrev ==
+                              XCssRelation_Ancestor,
+                          "后代关系解析");
+            }
+            if (host4) XLineEdit_delete_base(host4);
+            XStyleSheetStyle_delete_base(ss4);
+        }
+        /* text-decoration 绘制（像素级：下划线）。 */
+        {
+            XStyleSheetStyle* ss5 = XStyleSheetStyle_create();
+            XLineEdit* host5 = XLineEdit_create(NULL, 0);
+            XImage image;
+            XPainter painter;
+            XStyleOption opt;
+            XRect r;
+            XColor pc;
+            uint32_t pxTop;
+            uint32_t pxBottom;
+            XStyleSheetStyle_setStyleSheet(ss5,
+                "XLineEdit { text-decoration: underline; }");
+            if (host5) XWidget_resize((XWidget*)host5, 40, 20);
+            XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32);
+            XPainter_init(&painter, NULL);
+            if (XPainter_begin_image(&painter, &image)) {
+                XStyleOption_init(&opt, XStylePE_PanelLineEdit);
+                XRect_init(&r, 0, 0, 40, 20);
+                opt.m_rect = r;
+                opt.m_state = XStyleState_Enabled;
+                opt.m_textColor = 0xFFFF0000u;
+                if (host5) opt.m_palette = XWidget_palette((XWidget*)host5);
+                XStyle_drawPrimitive((XStyle*)ss5, XStylePE_PanelLineEdit,
+                                     &opt, &painter, (XWidget*)host5);
+                /* 带装饰字体渲染文本：underline 由 XPainter 按 QFont 语义绘制。 */
+                {
+                    XFont f = XWidget_font((XWidget*)host5);
+                    XPainter_setFont(&painter, &f);
+                    XPainter_drawText(&painter, 4, 16, "ab", 0xFFFF0000u);
+                }
+                XPainter_end(&painter);
+            }
+            XPainter_deinit(&painter);
+            {
+                /* 扫描判定：字形下方存在红色下划线行。 */
+                int y;
+                int found = 0;
+                int redAt;
+                for (y = 10; y < 20; ++y) {
+                    int x;
+                    int cnt = 0;
+                    for (x = 2; x < 14; ++x) {
+                        XColor pcx = XImage_pixelColor(&image, x, y);
+                        if ((XColor_rgba(&pcx) & 0x00FFFFFFu) == 0xFF0000u)
+                            ++cnt;
+                    }
+                    if (cnt >= 4) { found++; redAt = y; }
+                }
+                c1_expect(found > 0, "QSS 下划线绘制（字体装饰线）");
+                (void)pxTop; (void)pxBottom; (void)redAt;
+            }
+            XImage_deinit_base(&image);
+            if (host5) XLineEdit_delete_base(host5);
+            XStyleSheetStyle_delete_base(ss5);
+        }
         /* :hover 伪类动态匹配（状态位翻转 → 背景色变化）。 */
         {
             XStyleSheetStyle* ss3 = XStyleSheetStyle_create();

@@ -7,12 +7,15 @@
  */
 
 #include "XFocusFrame.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XFOCUSFRAME_ON
 
@@ -49,6 +52,23 @@ static void XFocusFrame_paintEvent(XWidget* self, XEvent* event)
 #else
     highlight = 0xFF3080C0u;
 #endif /* XPALETTE_ON */
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：焦点框走 PE_FrameFocusRect。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStylePE_FrameFocusRect);
+        XRect_init(&opt.m_rect, 0, 0, w, h);
+        opt.m_state = XStyleState_Enabled | XStyleState_HasFocus;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawPrimitive(style, XStylePE_FrameFocusRect, &opt,
+                             &painter, self);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     XRect_init(&r, 0, 0, w, 2);
     XPainter_fillRect(&painter, &r, highlight);
     XRect_init(&r, 0, h - 2, w, 2);
@@ -71,7 +91,7 @@ XVtable* XFocusFrame_class_init(void)
 void XFocusFrame_init(XFocusFrame* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XFocusFrame);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

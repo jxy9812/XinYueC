@@ -19,8 +19,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformInputContext.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
-#include <string.h>
 #if XGUIAPPLICATION_ON
 #include "XGuiApplication.h"
 #endif /* XGUIAPPLICATION_ON */
@@ -161,12 +162,12 @@ XVtable* XPlatformInputContext_class_init(void)
 void XPlatformInputContext_init(XPlatformInputContext* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XPlatformInputContext));
+    XMemset(self, 0, sizeof(XPlatformInputContext));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XPlatformInputContext);
     self->m_data = (XPlatformInputContextPrivate*)XMalloc_System(sizeof(XPlatformInputContextPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XPlatformInputContextPrivate));
+    XMemset(self->m_data, 0, sizeof(XPlatformInputContextPrivate));
     self->m_data->m_locale = XString_create_utf8("C");
     self->m_data->m_inputDirection = XInputMethodLayoutDirection_LeftToRight;
 }

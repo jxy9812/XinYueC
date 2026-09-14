@@ -1,9 +1,10 @@
 ﻿#include "XBarSeries.h"
+
+#include "XAlgorithm.h"
 #include "XAbstractBarSeries.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -20,7 +21,7 @@ XVtable* XBarSeries_class_init(void)
 void XBarSeries_init(XBarSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractBarSeries_init(&self->m_base);
     XClassSetVtable(self, XBarSeries);
     XAbstractSeries_setName(&self->m_base.m_base, "bar");

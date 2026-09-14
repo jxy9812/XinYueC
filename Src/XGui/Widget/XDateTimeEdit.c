@@ -7,14 +7,16 @@
  */
 
 #include "XDateTimeEdit.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XLineEdit.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
 
@@ -31,28 +33,28 @@ static void xdt_refreshText(XDateTimeEdit* self)
     size_t i = 0;
     if (!self) return;
     while (fmt[i] != '\0' && o < sizeof(buf) - 1) {
-        if (strncmp(&fmt[i], "yyyy", 4) == 0) {
-            o += (size_t)snprintf(&buf[o], sizeof(buf) - o, "%04d",
+        if (XStrncmp(&fmt[i], "yyyy", 4) == 0) {
+            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%04d",
                                   XDate_year(&self->m_dateTime.m_date));
             i += 4;
-        } else if (strncmp(&fmt[i], "MM", 2) == 0) {
-            o += (size_t)snprintf(&buf[o], sizeof(buf) - o, "%02d",
+        } else if (XStrncmp(&fmt[i], "MM", 2) == 0) {
+            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
                                   XDate_month(&self->m_dateTime.m_date));
             i += 2;
-        } else if (strncmp(&fmt[i], "dd", 2) == 0) {
-            o += (size_t)snprintf(&buf[o], sizeof(buf) - o, "%02d",
+        } else if (XStrncmp(&fmt[i], "dd", 2) == 0) {
+            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
                                   XDate_day(&self->m_dateTime.m_date));
             i += 2;
-        } else if (strncmp(&fmt[i], "HH", 2) == 0) {
-            o += (size_t)snprintf(&buf[o], sizeof(buf) - o, "%02d",
+        } else if (XStrncmp(&fmt[i], "HH", 2) == 0) {
+            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
                                   XTime_hour(&self->m_dateTime.m_time));
             i += 2;
-        } else if (strncmp(&fmt[i], "mm", 2) == 0) {
-            o += (size_t)snprintf(&buf[o], sizeof(buf) - o, "%02d",
+        } else if (XStrncmp(&fmt[i], "mm", 2) == 0) {
+            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
                                   XTime_minute(&self->m_dateTime.m_time));
             i += 2;
-        } else if (strncmp(&fmt[i], "ss", 2) == 0) {
-            o += (size_t)snprintf(&buf[o], sizeof(buf) - o, "%02d",
+        } else if (XStrncmp(&fmt[i], "ss", 2) == 0) {
+            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
                                   XTime_second(&self->m_dateTime.m_time));
             i += 2;
         } else {
@@ -175,7 +177,7 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
 {
     XDateTime now;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractSpinBox_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XDateTimeEdit);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -239,7 +241,7 @@ void XDateTimeEdit_setDate(XDateTimeEdit* self, const XDate* date)
 XDate XDateTimeEdit_date(const XDateTimeEdit* self)
 {
     XDate d;
-    memset(&d, 0, sizeof(d));
+    XMemset(&d, 0, sizeof(d));
     if (self) d = self->m_dateTime.m_date;
     return d;
 }
@@ -256,7 +258,7 @@ void XDateTimeEdit_setTime(XDateTimeEdit* self, const XTime* time)
 XTime XDateTimeEdit_time(const XDateTimeEdit* self)
 {
     XTime t;
-    memset(&t, 0, sizeof(t));
+    XMemset(&t, 0, sizeof(t));
     if (self) t = self->m_dateTime.m_time;
     return t;
 }
@@ -327,17 +329,17 @@ int XDateTimeEdit_sections(const XDateTimeEdit* self)
     fmt = (self->m_displayFormat ? XString_toUtf8(self->m_displayFormat) : NULL);
     if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
     while (fmt[i] != '\0') {
-        if (strncmp(&fmt[i], "yyyy", 4) == 0) {
+        if (XStrncmp(&fmt[i], "yyyy", 4) == 0) {
             mask |= (int)XDateTimeEditSection_YearSection; i += 4;
-        } else if (strncmp(&fmt[i], "MM", 2) == 0) {
+        } else if (XStrncmp(&fmt[i], "MM", 2) == 0) {
             mask |= (int)XDateTimeEditSection_MonthSection; i += 2;
-        } else if (strncmp(&fmt[i], "dd", 2) == 0) {
+        } else if (XStrncmp(&fmt[i], "dd", 2) == 0) {
             mask |= (int)XDateTimeEditSection_DaySection; i += 2;
-        } else if (strncmp(&fmt[i], "HH", 2) == 0) {
+        } else if (XStrncmp(&fmt[i], "HH", 2) == 0) {
             mask |= (int)XDateTimeEditSection_HourSection; i += 2;
-        } else if (strncmp(&fmt[i], "mm", 2) == 0) {
+        } else if (XStrncmp(&fmt[i], "mm", 2) == 0) {
             mask |= (int)XDateTimeEditSection_MinuteSection; i += 2;
-        } else if (strncmp(&fmt[i], "ss", 2) == 0) {
+        } else if (XStrncmp(&fmt[i], "ss", 2) == 0) {
             mask |= (int)XDateTimeEditSection_SecondSection; i += 2;
         } else {
             ++i;
@@ -398,5 +400,5 @@ void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self, const XDateTime* min, c
 void XDateTimeEdit_setDisplayFormat_2(XDateTimeEdit* self, const char* fmt)
 { (void)self; }
 XTime XDateTimeEdit_minimumTime(const XDateTimeEdit* self)
-{ XTime t; memset(&t,0,sizeof(t)); return t; }
+{ XTime t; XMemset(&t,0,sizeof(t)); return t; }
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */

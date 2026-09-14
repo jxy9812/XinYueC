@@ -7,6 +7,7 @@
  */
 
 #include "XPlainTextEdit.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
@@ -15,10 +16,10 @@
 #include "XGuiApplication.h"
 #include "XTextDocument.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON
 
@@ -55,10 +56,10 @@ static void xpe_setLine(XPlainTextEdit* self, int index, const char* text)
         return;
     item = (char**)XVector_at_base(self->m_lines, index);
     if (!item) return;
-    len = strlen(text) + 1;
+    len = XStrlen(text) + 1;
     copy = (char*)XMalloc_System(len);
     if (!copy) return;
-    memcpy(copy, text, len);
+    XMemcpy(copy, text, len);
     if (*item) XFree_System(*item);
     *item = copy;
 }
@@ -70,10 +71,10 @@ static void xpe_insertLineAt(XPlainTextEdit* self, int index, const char* text)
     if (!self || !self->m_lines || index < 0 ||
         index > (int)XVector_size_base((const XContainer*)self->m_lines))
         return;
-    len = strlen(text) + 1;
+    len = XStrlen(text) + 1;
     copy = (char*)XMalloc_System(len);
     if (!copy) return;
-    memcpy(copy, text, len);
+    XMemcpy(copy, text, len);
     XVector_insert_1_base(self->m_lines, index, &copy, 1);
 }
 
@@ -152,15 +153,15 @@ static void xpe_insertAtCursor(XPlainTextEdit* self, const char* text)
 {
     char* line = xpe_lineAt(self, self->m_cursorLine);
     size_t col = (size_t)self->m_cursorCol;
-    size_t llen = strlen(line);
-    size_t tlen = strlen(text);
+    size_t llen = XStrlen(line);
+    size_t tlen = XStrlen(text);
     char* merged;
     if (col > llen) col = llen;
     merged = (char*)XMalloc_System(llen + tlen + 1);
     if (!merged) return;
-    memcpy(merged, line, col);
-    memcpy(merged + col, text, tlen);
-    memcpy(merged + col + tlen, line + col, llen - col + 1);
+    XMemcpy(merged, line, col);
+    XMemcpy(merged + col, text, tlen);
+    XMemcpy(merged + col + tlen, line + col, llen - col + 1);
     xpe_setLine(self, self->m_cursorLine, merged);
     self->m_cursorCol += (int)tlen;
     XFree_System(merged);
@@ -173,11 +174,11 @@ static void xpe_splitLineAtCursor(XPlainTextEdit* self)
     char* tail;
     size_t llen;
     if (col < 0) col = 0;
-    llen = strlen(line);
+    llen = XStrlen(line);
     if ((size_t)col > llen) col = (int)llen;
     tail = (char*)XMalloc_System(llen - (size_t)col + 1);
     if (!tail) return;
-    strcpy(tail, line + col);
+    XStrcpy(tail, line + col);
     line[col] = '\0';
     xpe_setLine(self, self->m_cursorLine, line);
     xpe_insertLineAt(self, self->m_cursorLine + 1, tail);
@@ -192,21 +193,21 @@ static void xpe_backspace(XPlainTextEdit* self)
     int col = self->m_cursorCol;
     size_t len;
     if (col > 0) {
-        len = strlen(line);
+        len = XStrlen(line);
         if ((size_t)col <= len) {
-            memmove(line + col - 1, line + col, len - col + 1);
+            XMemmove(line + col - 1, line + col, len - col + 1);
             --self->m_cursorCol;
         }
         return;
     }
     if (self->m_cursorLine > 0) {
         char* prev = xpe_lineAt(self, self->m_cursorLine - 1);
-        int prevLen = (int)strlen(prev);
+        int prevLen = (int)XStrlen(prev);
         char* merged =
-            (char*)XMalloc_System((size_t)prevLen + strlen(line) + 1);
+            (char*)XMalloc_System((size_t)prevLen + XStrlen(line) + 1);
         if (!merged) return;
-        strcpy(merged, prev);
-        strcat(merged, line);
+        XStrcpy(merged, prev);
+        XStrcat(merged, line);
         xpe_setLine(self, self->m_cursorLine - 1, merged);
         XFree_System(merged);
         xpe_removeLineAt(self, self->m_cursorLine);
@@ -219,18 +220,18 @@ static void xpe_deleteChar(XPlainTextEdit* self)
 {
     char* line = xpe_lineAt(self, self->m_cursorLine);
     int col = self->m_cursorCol;
-    size_t len = strlen(line);
+    size_t len = XStrlen(line);
     if ((size_t)col < len) {
-        memmove(line + col, line + col + 1, len - col);
+        XMemmove(line + col, line + col + 1, len - col);
         return;
     }
     if (self->m_cursorLine + 1 < xpe_lineCount(self)) {
         char* next = xpe_lineAt(self, self->m_cursorLine + 1);
         char* merged =
-            (char*)XMalloc_System(len + strlen(next) + 1);
+            (char*)XMalloc_System(len + XStrlen(next) + 1);
         if (!merged) return;
-        strcpy(merged, line);
-        strcat(merged, next);
+        XStrcpy(merged, line);
+        XStrcat(merged, next);
         xpe_setLine(self, self->m_cursorLine, merged);
         XFree_System(merged);
         xpe_removeLineAt(self, self->m_cursorLine + 1);
@@ -253,7 +254,7 @@ static void VX_plainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
         return;
     }
     lines = xpe_lineCount(edit);
-    lineLen = (int)strlen(xpe_lineAt(edit, edit->m_cursorLine));
+    lineLen = (int)XStrlen(xpe_lineAt(edit, edit->m_cursorLine));
     if (key == (int)XKey_Return || key == (int)XKey_Enter) {
         xpe_pushUndo(edit);
         xpe_splitLineAtCursor(edit);
@@ -291,7 +292,7 @@ static void VX_plainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
         else if (edit->m_cursorLine > 0) {
             --edit->m_cursorLine;
             edit->m_cursorCol =
-                (int)strlen(xpe_lineAt(edit, edit->m_cursorLine));
+                (int)XStrlen(xpe_lineAt(edit, edit->m_cursorLine));
         }
         break;
     case XKey_Right:
@@ -460,7 +461,7 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractScrollArea_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XPlainTextEdit);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -509,12 +510,12 @@ void XPlainTextEdit_setPlainText(XPlainTextEdit* self, const char* utf8)
         }
         XVector_clear_base(self->m_lines);
     }
-    while (start <= strlen(src)) {
-        const char* nl = strchr(src + start, 0x0A);
-        size_t end = nl ? (size_t)(nl - (src + start)) : strlen(src + start);
+    while (start <= XStrlen(src)) {
+        const char* nl = XStrchr(src + start, 0x0A);
+        size_t end = nl ? (size_t)(nl - (src + start)) : XStrlen(src + start);
         char* line = (char*)XMalloc_System(end + 1);
         if (!line) break;
-        memcpy(line, src + start, end);
+        XMemcpy(line, src + start, end);
         line[end] = 0;
         {
             char* lp = line;
@@ -536,14 +537,14 @@ char* XPlainTextEdit_toPlainText(const XPlainTextEdit* self)
     char* out;
     size_t o = 0;
     for (i = 0; i < n; ++i)
-        total += strlen(xpe_lineAt(self, i)) + 1;
+        total += XStrlen(xpe_lineAt(self, i)) + 1;
     out = (char*)XMalloc_System(total);
     if (!out) return NULL;
     out[0] = 0;
     for (i = 0; i < n; ++i) {
         const char* line = xpe_lineAt(self, i);
-        size_t len = strlen(line);
-        memcpy(out + o, line, len);
+        size_t len = XStrlen(line);
+        XMemcpy(out + o, line, len);
         o += len;
         if (i + 1 < n) out[o++] = 0x0A;
     }
@@ -557,11 +558,11 @@ void XPlainTextEdit_appendPlainText(XPlainTextEdit* self, const char* utf8)
     size_t llen;
     char* merged;
     if (!self || !utf8) return;
-    llen = strlen(line);
-    merged = (char*)XMalloc_System(llen + strlen(utf8) + 1);
+    llen = XStrlen(line);
+    merged = (char*)XMalloc_System(llen + XStrlen(utf8) + 1);
     if (!merged) return;
-    strcpy(merged, line);
-    strcat(merged, utf8);
+    XStrcpy(merged, line);
+    XStrcat(merged, utf8);
     xpe_setLine(self, xpe_lineCount(self) - 1, merged);
     XFree_System(merged);
     xpe_pushUndo(self);
@@ -836,7 +837,7 @@ void XPlainTextEdit_zoomOut_2(XPlainTextEdit* self, int range) { (void)self; (vo
 void XPlainTextPrint_setCenterOnScroll_2(XPlainTextEdit* self, bool enabled) { (void)self; (void)enabled; }
 bool XPlainTextEdit_centerOnScroll_2(const XPlainTextEdit* self) { (void)self; return false; }
 int XPlainTextEdit_blockCount_2(const XPlainTextEdit* self) { return self ? self->m_cursorLine + 1 : 0; }
-int XPlainTextEdit_characterCount_2(const XPlainTextEdit* self) { int i,n,total=0; if(!self||!self->m_lines)return 0; n=(int)XVector_size_base((const XContainer*)self->m_lines); for(i=0;i<n;++i){char**l=(char**)XVector_at_base(self->m_lines,i); if(l&&*l) total+=(int)strlen(*l);} return total; }
+int XPlainTextEdit_characterCount_2(const XPlainTextEdit* self) { int i,n,total=0; if(!self||!self->m_lines)return 0; n=(int)XVector_size_base((const XContainer*)self->m_lines); for(i=0;i<n;++i){char**l=(char**)XVector_at_base(self->m_lines,i); if(l&&*l) total+=(int)XStrlen(*l);} return total; }
 void XPlainTextEdit_setExtraSelections_2(XPlainTextEdit* self, void* selections) { (void)self; (void)selections; }
 void XPlainTextEdit_setWordWrapMode_2(XPlainTextEdit* self, int policy) { (void)self; (void)policy; }
 int XPlainTextEdit_wordWrapMode_2(const XPlainTextEdit* self) { (void)self; return 0; }

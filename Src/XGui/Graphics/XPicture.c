@@ -4,6 +4,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPicture.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XPainter.h"
 #include "XImage.h"
 #include "XPixmap.h"
@@ -14,8 +17,6 @@
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
-#include <string.h>
-#include <stdlib.h>
 #include <limits.h>
 #include <math.h>
 
@@ -66,7 +67,7 @@ static float XPicture_getF32(const uint8_t* p)
 {
     uint32_t bits = XPicture_getU32(p);
     float value;
-    memcpy(&value, &bits, sizeof(value));
+    XMemcpy(&value, &bits, sizeof(value));
     return value;
 }
 
@@ -92,7 +93,7 @@ static void XPicture_putI32(uint8_t* p, int32_t value)
 static void XPicture_putF32(uint8_t* p, float value)
 {
     uint32_t bits;
-    memcpy(&bits, &value, sizeof(bits));
+    XMemcpy(&bits, &value, sizeof(bits));
     XPicture_putU32(p, bits);
 }
 
@@ -183,7 +184,7 @@ static uint32_t XPicture_checksum(const uint8_t* data, uint32_t size)
 static bool XPicture_magicMatches(const uint8_t* data, uint32_t size)
 {
     return data && size >= XPICTURE_MAGIC_SIZE &&
-           memcmp(data, g_xpictureMagic, XPICTURE_MAGIC_SIZE) == 0;
+           XMemcmp(data, g_xpictureMagic, XPICTURE_MAGIC_SIZE) == 0;
 }
 
 static bool XPicture_validateImagePayloadEx(const uint8_t* payload,
@@ -201,7 +202,7 @@ static bool XPicture_validateImagePayloadEx(const uint8_t* payload,
     imageSize = XPicture_getU32(payload + 24);
     dprBits = XPicture_getU32(payload + 28);
     colorCount = XPicture_getU32(payload + 48);
-    memcpy(&dpr, &dprBits, sizeof(dpr));
+    XMemcpy(&dpr, &dprBits, sizeof(dpr));
     if (width == 0 || height == 0 || width > (uint32_t)INT_MAX ||
         height > (uint32_t)INT_MAX || bytesPerLine == 0 ||
         imageSize == 0 || colorCount > 65536u ||
@@ -524,7 +525,7 @@ static XPicturePrivate* XPicturePrivate_create(int formatVersion)
 {
     XPicturePrivate* d = (XPicturePrivate*)XMalloc_System(sizeof(XPicturePrivate));
     if (!d) return NULL;
-    memset(d, 0, sizeof(XPicturePrivate));
+    XMemset(d, 0, sizeof(XPicturePrivate));
     XAtomic_init(d->m_refCount, 1);
     d->m_isNull = true;
     d->m_formatVersion = formatVersion;
@@ -567,7 +568,7 @@ static XPicturePrivate* XPicturePrivate_clone(const XPicturePrivate* source)
             XPicturePrivate_unref(copy);
             return NULL;
         }
-        memcpy(copy->m_data, source->m_data, source->m_dataSize);
+        XMemcpy(copy->m_data, source->m_data, source->m_dataSize);
         copy->m_dataSize = source->m_dataSize;
         copy->m_dataCapacity = source->m_dataSize;
     }
@@ -581,9 +582,9 @@ static bool XPicture_isInitializedObject(const XPicture* self)
     XVtable* vtable;
     if (!self) return false;
     vtable = XPicture_class_init();
-    memcpy(actual, &self->m_class.m_vtable, sizeof(actual));
-    memcpy(expected, &vtable, sizeof(expected));
-    return memcmp(actual, expected, sizeof(actual)) == 0;
+    XMemcpy(actual, &self->m_class.m_vtable, sizeof(actual));
+    XMemcpy(expected, &vtable, sizeof(expected));
+    return XMemcmp(actual, expected, sizeof(actual)) == 0;
 }
 
 static void XPicture_reset(XPicture* self)
@@ -680,7 +681,7 @@ void XPicture_init(XPicture* self, int formatVersion)
         isHeap = Class_IsHeap(self);
         XPicture_deinit_base(self);
     }
-    memset(self, 0, sizeof(XPicture));
+    XMemset(self, 0, sizeof(XPicture));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XPicture);
     if (memory) Class_Memory(self) = memory;
@@ -712,7 +713,7 @@ void XPicture_setData(XPicture* self, const char* data, uint32_t size)
     {
         newData = (char*)XMalloc_System(size);
         if (!newData) return;
-        memcpy(newData, data, size);
+        XMemcpy(newData, data, size);
     }
     XPicture_detach(self);
     if (!XPicture_isDetached(self))
@@ -778,8 +779,8 @@ static bool XPicture_prepareStream(XPicture* self)
     {
         bytes = (uint8_t*)XMalloc_System(XPICTURE_HEADER_SIZE);
         if (!bytes) return false;
-        memset(bytes, 0, XPICTURE_HEADER_SIZE);
-        memcpy(bytes, g_xpictureMagic, XPICTURE_MAGIC_SIZE);
+        XMemset(bytes, 0, XPICTURE_HEADER_SIZE);
+        XMemcpy(bytes, g_xpictureMagic, XPICTURE_MAGIC_SIZE);
         XPicture_putU16(bytes + 8, XPICTURE_STREAM_VERSION);
         XPicture_putU16(bytes + 10, XPICTURE_HEADER_SIZE);
         XPicture_putU32(bytes + 12, 0);
@@ -828,7 +829,7 @@ static bool XPicture_appendRecord(XPicture* self, uint8_t opcode,
     XPicture_putU16(bytes + oldSize + 2u, 0);
     XPicture_putU32(bytes + oldSize + 4u, payloadSize);
     if (payloadSize != 0)
-        memcpy(bytes + oldSize + XPICTURE_RECORD_HEADER_SIZE, payload, payloadSize);
+        XMemcpy(bytes + oldSize + XPICTURE_RECORD_HEADER_SIZE, payload, payloadSize);
     count = XPicture_getU32(bytes + 12);
     if (count == UINT32_MAX) return false;
     XPicture_putU32(bytes + 12, count + 1u);
@@ -924,7 +925,7 @@ bool XPicture_recordDrawText(XPicture* self, int x, int baselineY,
     int width;
     int height;
     if (!self || !utf8) return false;
-    /* Avoid an unbounded strlen() walk when a caller passes an oversized
+    /* Avoid an unbounded XStrlen() walk when a caller passes an oversized
        buffer: the portable stream has a fixed, documented text limit. */
     while (utf8[textLength] != '\0')
     {
@@ -938,7 +939,7 @@ bool XPicture_recordDrawText(XPicture* self, int x, int baselineY,
     XPicture_putI32(payload + 4u, baselineY);
     XPicture_putU32(payload + 8u, color);
     XPicture_putU32(payload + 12u, (uint32_t)textLength);
-    memcpy(payload + XPICTURE_TEXT_FIXED_SIZE, utf8, textLength);
+    XMemcpy(payload + XPICTURE_TEXT_FIXED_SIZE, utf8, textLength);
     if (!XPicture_appendRecord(self, XPictureOpcode_DrawText, payload,
                                (uint32_t)(XPICTURE_TEXT_FIXED_SIZE + textLength)))
     {
@@ -992,7 +993,7 @@ bool XPicture_recordSetFont(XPicture* self, const XFont* font)
     snapshot = XFont_toString(font);
     if (!snapshot) return false;
     utf8 = XString_toUtf8(snapshot);
-    length = utf8 ? strlen(utf8) : 0u;
+    length = utf8 ? XStrlen(utf8) : 0u;
     if (!utf8 || length == 0u || length > XPICTURE_MAX_FONT_TEXT)
     {
         XString_delete_base((XClass*)snapshot);
@@ -1006,7 +1007,7 @@ bool XPicture_recordSetFont(XPicture* self, const XFont* font)
     }
     XPicture_putU32(payload, (uint32_t)length);
     XPicture_putI32(payload + 4u, XFont_pixelSize(font));
-    memcpy(payload + XPICTURE_FONT_FIXED_SIZE, utf8, length);
+    XMemcpy(payload + XPICTURE_FONT_FIXED_SIZE, utf8, length);
     ok = XPicture_appendRecord(self, XPictureOpcode_SetFont, payload,
                                (uint32_t)(length + XPICTURE_FONT_FIXED_SIZE));
     XFree_Hybrid(payload);
@@ -1246,7 +1247,7 @@ bool XPicture_recordSetBrushGradient(XPicture* self,
         gradient->m_stopCount < 0 ||
         gradient->m_stopCount > XPAINTER_GRADIENT_MAX_STOPS)
         return false;
-    memset(geometry, 0, sizeof(geometry));
+    XMemset(geometry, 0, sizeof(geometry));
     if (gradient->m_type == XPainterGradientType_Linear)
     {
         geometry[0] = gradient->m_startX;
@@ -1271,7 +1272,7 @@ bool XPicture_recordSetBrushGradient(XPicture* self,
     for (i = 0; i < 10u; ++i)
         if (!isfinite(geometry[i])) return false;
     count = (uint32_t)gradient->m_stopCount;
-    memset(payload, 0, sizeof(payload));
+    XMemset(payload, 0, sizeof(payload));
     XPicture_putU32(payload + 0u, (uint32_t)gradient->m_type);
     for (i = 0; i < 10u; ++i)
         XPicture_putF32(payload + 4u + i * 4u, geometry[i]);
@@ -1343,7 +1344,7 @@ bool XPicture_recordDrawShape(XPicture* self, int shapeOp, const XRect* rect,
     if (normalized.width <= 0 || normalized.height <= 0 || shapeOp < 1 ||
         shapeOp > 5)
         return true;
-    memset(payload, 0, sizeof(payload));
+    XMemset(payload, 0, sizeof(payload));
     XPicture_putI32(payload + 0, shapeOp);
     XPicture_putI32(payload + 4, normalized.x);
     XPicture_putI32(payload + 8, normalized.y);
@@ -1559,7 +1560,7 @@ bool XPicture_recordDrawImage(XPicture* self, const XImage* image, int x, int y)
     if (payloadSize64 > UINT32_MAX) return false;
     payload = (uint8_t*)XMalloc_Hybrid((size_t)payloadSize64);
     if (!payload) return false;
-    memset(payload, 0, (size_t)payloadSize64);
+    XMemset(payload, 0, (size_t)payloadSize64);
     XPicture_putI32(payload + 0, x);
     XPicture_putI32(payload + 4, y);
     XPicture_putU32(payload + 8, (uint32_t)size.width);
@@ -1567,7 +1568,7 @@ bool XPicture_recordDrawImage(XPicture* self, const XImage* image, int x, int y)
     XPicture_putU32(payload + 16, (uint32_t)XImage_format(image));
     XPicture_putU32(payload + 20, (uint32_t)bytesPerLine);
     XPicture_putU32(payload + 24, (uint32_t)imageSize);
-    memcpy(&dprBits, &dpr, sizeof(dprBits));
+    XMemcpy(&dprBits, &dpr, sizeof(dprBits));
     XPicture_putU32(payload + 28, dprBits);
     XPicture_putI32(payload + 32, XImage_dotsPerMeterX(image));
     XPicture_putI32(payload + 36, XImage_dotsPerMeterY(image));
@@ -1578,7 +1579,7 @@ bool XPicture_recordDrawImage(XPicture* self, const XImage* image, int x, int y)
     for (i = 0; i < colorCount; ++i)
         XPicture_putU32(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)i * 4u,
                         XImage_color(image, i));
-    memcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
+    XMemcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
            bits, (size_t)imageSize);
     if (!XPicture_appendRecord(self, XPictureOpcode_DrawImage, payload,
                                (uint32_t)payloadSize64))
@@ -1623,7 +1624,7 @@ bool XPicture_recordDrawTiledPixmap(XPicture* self, const XImage* image,
     if (payloadSize64 > UINT32_MAX) return false;
     payload = (uint8_t*)XMalloc_Hybrid((size_t)payloadSize64);
     if (!payload) return false;
-    memset(payload, 0, (size_t)payloadSize64);
+    XMemset(payload, 0, (size_t)payloadSize64);
     XPicture_putI32(payload + 0, rect->x);
     XPicture_putI32(payload + 4, rect->y);
     XPicture_putU32(payload + 8, (uint32_t)size.width);
@@ -1631,7 +1632,7 @@ bool XPicture_recordDrawTiledPixmap(XPicture* self, const XImage* image,
     XPicture_putU32(payload + 16, (uint32_t)XImage_format(image));
     XPicture_putU32(payload + 20, (uint32_t)bytesPerLine);
     XPicture_putU32(payload + 24, (uint32_t)imageSize);
-    memcpy(&dprBits, &dpr, sizeof(dprBits));
+    XMemcpy(&dprBits, &dpr, sizeof(dprBits));
     XPicture_putU32(payload + 28, dprBits);
     XPicture_putI32(payload + 32, XImage_dotsPerMeterX(image));
     XPicture_putI32(payload + 36, XImage_dotsPerMeterY(image));
@@ -1642,7 +1643,7 @@ bool XPicture_recordDrawTiledPixmap(XPicture* self, const XImage* image,
     for (i = 0; i < colorCount; ++i)
         XPicture_putU32(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)i * 4u,
                         XImage_color(image, i));
-    memcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
+    XMemcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
            bits, (size_t)imageSize);
     extraOffset = XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u +
                   (uint32_t)imageSize;
@@ -1699,7 +1700,7 @@ bool XPicture_recordDrawPixmap(XPicture* self, const XImage* image,
     if (payloadSize64 > UINT32_MAX) return false;
     payload = (uint8_t*)XMalloc_Hybrid((size_t)payloadSize64);
     if (!payload) return false;
-    memset(payload, 0, (size_t)payloadSize64);
+    XMemset(payload, 0, (size_t)payloadSize64);
     XPicture_putI32(payload + 0, targetRect->x);
     XPicture_putI32(payload + 4, targetRect->y);
     XPicture_putU32(payload + 8, (uint32_t)size.width);
@@ -1707,7 +1708,7 @@ bool XPicture_recordDrawPixmap(XPicture* self, const XImage* image,
     XPicture_putU32(payload + 16, (uint32_t)XImage_format(image));
     XPicture_putU32(payload + 20, (uint32_t)bytesPerLine);
     XPicture_putU32(payload + 24, (uint32_t)imageSize);
-    memcpy(&dprBits, &dpr, sizeof(dprBits));
+    XMemcpy(&dprBits, &dpr, sizeof(dprBits));
     XPicture_putU32(payload + 28, dprBits);
     XPicture_putI32(payload + 32, XImage_dotsPerMeterX(image));
     XPicture_putI32(payload + 36, XImage_dotsPerMeterY(image));
@@ -1718,7 +1719,7 @@ bool XPicture_recordDrawPixmap(XPicture* self, const XImage* image,
     for (i = 0; i < colorCount; ++i)
         XPicture_putU32(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)i * 4u,
                         XImage_color(image, i));
-    memcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
+    XMemcpy(payload + XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u,
            bits, (size_t)imageSize);
     extraOffset = XPICTURE_IMAGE_FIXED_SIZE + (uint32_t)colorCount * 4u +
                   (uint32_t)imageSize;
@@ -1877,7 +1878,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                     parsed = false;
                 else
                 {
-                    memcpy(snapshot, payload + XPICTURE_FONT_FIXED_SIZE,
+                    XMemcpy(snapshot, payload + XPICTURE_FONT_FIXED_SIZE,
                            fontLength);
                     snapshot[fontLength] = '\0';
                     parsed = XFont_fromString(&font, snapshot);
@@ -2063,7 +2064,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                 XPainterBrushStyle_SolidPattern;
             painter->m_state.m_backgroundBrush.m_color =
                 painter->m_state.m_backgroundColor;
-            memset(&painter->m_state.m_backgroundBrush.m_gradient, 0,
+            XMemset(&painter->m_state.m_backgroundBrush.m_gradient, 0,
                    sizeof(painter->m_state.m_backgroundBrush.m_gradient));
 #endif /* XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON */
             ok = true;
@@ -2123,7 +2124,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                 (XPainterBrushStyle)XPicture_getI32(payload + 0u);
             painter->m_state.m_brush.m_color =
                 painter->m_state.m_brushColor;
-            memset(&painter->m_state.m_brush.m_gradient, 0,
+            XMemset(&painter->m_state.m_brush.m_gradient, 0,
                    sizeof(painter->m_state.m_brush.m_gradient));
 #endif /* XPAINTER_BRUSH_ON */
             ok = true;
@@ -2139,7 +2140,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             uint32_t textLength = XPicture_getU32(payload + 12u);
             char* text = (char*)XMalloc_Hybrid((size_t)textLength + 1u);
             if (!text) return false;
-            memcpy(text, payload + XPICTURE_TEXT_FIXED_SIZE, textLength);
+            XMemcpy(text, payload + XPICTURE_TEXT_FIXED_SIZE, textLength);
             text[textLength] = '\0';
             ok = XPainter_drawText(painter,
                                    (int)XPicture_getI32(payload + 0u),
@@ -2347,7 +2348,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             imageData = payload + XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u;
             imageBytes = (uint8_t*)XMalloc_Hybrid(imageSize);
             if (!imageBytes) return false;
-            memcpy(imageBytes, imageData, imageSize);
+            XMemcpy(imageBytes, imageData, imageSize);
             XImage_init_ex_2(&image, (int)width, (int)height, format,
                              (int64_t)bytesPerLine, imageBytes,
                              XPicture_imageDataCleanup, imageBytes);
@@ -2357,7 +2358,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                 XFree_Hybrid(imageBytes);
                 return false;
             }
-            memcpy(&dpr, &dprBits, sizeof(dpr));
+            XMemcpy(&dpr, &dprBits, sizeof(dpr));
             XImage_setDevicePixelRatio(&image, dpr);
             XImage_setDotsPerMeterX(&image, (int)XPicture_getI32(payload + 32));
             XImage_setDotsPerMeterY(&image, (int)XPicture_getI32(payload + 36));
@@ -2401,7 +2402,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             uint32_t i;
             if (!painter->m_drawImage || !imageBytes) return false;
             XPixmap_init(&pixmap);
-            memcpy(imageBytes, imageData, imageSize);
+            XMemcpy(imageBytes, imageData, imageSize);
             XImage_init_ex_2(&image, (int)width, (int)height, format,
                              (int64_t)bytesPerLine, imageBytes,
                              XPicture_imageDataCleanup, imageBytes);
@@ -2412,7 +2413,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                 XFree_Hybrid(imageBytes);
                 return false;
             }
-            memcpy(&dpr, &dprBits, sizeof(dpr));
+            XMemcpy(&dpr, &dprBits, sizeof(dpr));
             XImage_setDevicePixelRatio(&image, dpr);
             XImage_setDotsPerMeterX(&image, (int)XPicture_getI32(payload + 32));
             XImage_setDotsPerMeterY(&image, (int)XPicture_getI32(payload + 36));
@@ -2468,7 +2469,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             uint32_t i;
             if (!painter->m_drawImage || !imageBytes) return false;
             XPixmap_init(&pixmap);
-            memcpy(imageBytes, imageData, imageSize);
+            XMemcpy(imageBytes, imageData, imageSize);
             XImage_init_ex_2(&image, (int)width, (int)height, format,
                              (int64_t)bytesPerLine, imageBytes,
                              XPicture_imageDataCleanup, imageBytes);
@@ -2479,7 +2480,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                 XFree_Hybrid(imageBytes);
                 return false;
             }
-            memcpy(&dpr, &dprBits, sizeof(dpr));
+            XMemcpy(&dpr, &dprBits, sizeof(dpr));
             XImage_setDevicePixelRatio(&image, dpr);
             XImage_setDotsPerMeterX(&image, (int)XPicture_getI32(payload + 32));
             XImage_setDotsPerMeterY(&image, (int)XPicture_getI32(payload + 36));

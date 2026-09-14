@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XToolBox.c
  * @brief      工具箱控件实现（对标 Qt 6.8 QToolBox 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -7,13 +7,17 @@
  */
 
 #include "XToolBox.h"
+#include "XStringUtils.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
 
 #if XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON
 
@@ -33,7 +37,7 @@ static XToolBoxItem* xtb2_itemCreate(XWidget* widget, const char* text)
     if (!item) return NULL;
     item->widget = widget;
     item->enabled = true;
-    strncpy(item->text, text ? text : "", sizeof(item->text) - 1);
+    XStrncpy(item->text, text ? text : "", sizeof(item->text) - 1);
     item->text[sizeof(item->text) - 1] = '\0';
     return item;
 }
@@ -142,6 +146,29 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
                 (XToolBoxItem**)XVector_at_base(box->m_items, i);
             if (!item || !*item) continue;
             XRect_init(&head, 0, y, w, 22);
+#if XSTYLE_ON
+            if (XStyle_defaultStyle() != NULL) {
+                XStyle* style = XStyle_defaultStyle();
+                XStyleOption opt;
+                XStyleOption_init(&opt, XStyleCE_ToolBoxTab);
+                opt.m_rect = head;
+                opt.m_state = XWidget_isEnabled((XWidget*)box)
+                    ? XStyleState_Enabled : 0;
+                if ((int)i == box->m_currentIndex)
+                    opt.m_state |= XStyleState_Selected;
+                opt.m_tabSelected = ((int)i == box->m_currentIndex);
+                opt.m_text = (*item)->text;
+#if XPALETTE_ON
+                opt.m_palette = XWidget_palette((XWidget*)box);
+#endif
+                XStyle_drawControl(style, XStyleCE_ToolBoxTab, &opt,
+                                   &painter, (XWidget*)box);
+                y += 22;
+                XRect_init(&line, 0, y - 1, w, 1);
+                XPainter_fillRect(&painter, &line, windowText);
+                continue;
+            }
+#endif /* XSTYLE_ON */
             if ((int)i == box->m_currentIndex)
                 XPainter_fillRect(&painter, &head, highlight);
             else
@@ -196,7 +223,7 @@ void XToolBox_init(XToolBox* self, XWidget* parent, XWidgetFlags flags)
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XFrame_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XToolBox);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -320,7 +347,7 @@ void XToolBox_setItemText(XToolBox* self, int index, const char* utf8)
         return;
     item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
     if (item && *item) {
-        strncpy((*item)->text, utf8 ? utf8 : "",
+        XStrncpy((*item)->text, utf8 ? utf8 : "",
                 sizeof((*item)->text) - 1);
         (*item)->text[sizeof((*item)->text) - 1] = '\0';
         XWidget_update((XWidget*)self);

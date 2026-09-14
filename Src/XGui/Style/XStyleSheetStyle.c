@@ -1,12 +1,11 @@
 ﻿#include "XStyleSheetStyle.h"
+#include "XAlgorithm.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XClass.h"
 #include "XPainter.h"
 #include "XFont.h"
 #include "XObject.h"
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
 
 #if XSTYLE_ON
 
@@ -27,10 +26,10 @@ bool XCssParseColor(const char* value, uint32_t* out)
     const char* p;
     size_t len;
     if (!value || !out) return false;
-    while (*value && isspace((unsigned char)*value)) ++value;
+    while (*value && XIsSpace((unsigned char)*value)) ++value;
     p = value;
-    len = strlen(p);
-    while (len > 0 && isspace((unsigned char)p[len - 1])) --len;
+    len = XStrlen(p);
+    while (len > 0 && XIsSpace((unsigned char)p[len - 1])) --len;
     if (len > 0 && p[0] == '#') {
         int i;
         uint32_t v = 0;
@@ -55,13 +54,29 @@ bool XCssParseColor(const char* value, uint32_t* out)
         }
         return true;
     }
-    if (strncasecmp(p, "rgb", 3) == 0) {
+    if (XStrncasecmp(p, "rgb", 3) == 0) {
         int r = 0;
         int g = 0;
         int b = 0;
         int a = 255;
-        if (sscanf(p, "rgba(%d,%d,%d,%d", &r, &g, &b, &a) >= 3 ||
-            sscanf(p, "rgb(%d,%d,%d", &r, &g, &b) >= 3) {
+        {
+            /* rgb(r,g,b)/rgba(r,g,b,a) 手写解析（对标 sscanf 子集）。 */
+            const char* q = p + 3;
+            if (*q == 'a' || *q == 'A') ++q;
+            if (*q == '(') {
+                ++q;
+                r = (int)XStrtol(q, (char**)&q, 10);
+                if (*q == ',') ++q;
+                g = (int)XStrtol(q, (char**)&q, 10);
+                if (*q == ',') ++q;
+                b = (int)XStrtol(q, (char**)&q, 10);
+                if ((p[3] == 'a' || p[3] == 'A') && *q == ',') {
+                    ++q;
+                    a = (int)XStrtol(q, (char**)&q, 10);
+                }
+            }
+        }
+        {
             if (r < 0) r = 0; if (r > 255) r = 255;
             if (g < 0) g = 0; if (g > 255) g = 255;
             if (b < 0) b = 0; if (b > 255) b = 255;
@@ -82,8 +97,8 @@ bool XCssParseColor(const char* value, uint32_t* out)
         };
         size_t i;
         for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
-            if (strlen(names[i].n) == len &&
-                strncasecmp(names[i].n, p, len) == 0) {
+            if (XStrlen(names[i].n) == len &&
+                XStrncasecmp(names[i].n, p, len) == 0) {
                 *out = names[i].v;
                 return true;
             }
@@ -97,7 +112,7 @@ bool XCssParseColorToken(const char* value, size_t len, uint32_t* out)
 {
     char buf[32];
     if (!value || len == 0 || len >= sizeof(buf)) return false;
-    memcpy(buf, value, len);
+    XMemcpy(buf, value, len);
     buf[len] = '\0';
     return XCssParseColor(buf, out);
 }
@@ -106,11 +121,14 @@ bool XCssParseColorToken(const char* value, size_t len, uint32_t* out)
 bool XCssParseLength(const char* value, int* out)
 {
     if (!value || !out) return false;
-    while (*value && isspace((unsigned char)*value)) ++value;
-    if (!isdigit((unsigned char)*value) && *value != '-' && *value != '+')
+    while (*value && XIsSpace((unsigned char)*value)) ++value;
+    if (!XIsDigit((unsigned char)*value) && *value != '-' && *value != '+')
         return false;
-    *out = atoi(value);
-    return true;
+    {
+        /* 前缀解析（对标原 atoi："12px"→12），XStrtol 不要求全串数字。 */
+        *out = (int)XStrtol(value, NULL, 10);
+        return true;
+    }
 }
 
 /* ==================== 值/声明查询 ==================== */
@@ -162,9 +180,71 @@ static uint32_t xsss_statePseudos(uint32_t state)
     return ps;
 }
 
-/** @brief 选择器是否匹配（元素名=类名、#id=objectName、伪类子集）。 */
-static bool xsss_selectorMatches(const XCssBasicSelector* sel,
-                                 const XObject* obj, uint32_t statePseudos)
+/** @brief 属性选择器匹配（[name] 存在 / [name=value] 相等）。
+ *
+ *  属性值来源：XObject 动态属性（XObject_property），对标 QSS 的
+ *  QObject::property 匹配。
+ */
+static bool xsss_attrMatches(const XCssAttributeSelector* attr,
+                             const XObject* obj)
+{
+    XString* name;
+    XVariant* v;
+    const char* want;
+    if (!attr || !attr->m_name) return true; /* 无属性限定。 */
+    if (!obj) return false;
+    name = attr->m_name;
+    v = XObject_property(obj, name);
+    if (!v) return false; /* [name] 要求属性存在。 */
+    want = XString_toUtf8(attr->m_value);
+    {
+        const char* actual = (const char*)XVariant_data(v);
+        if (!actual) return false;
+        if (!want) return false;
+        /* 按 ValueMatchType 分派（对标 QCss::StyleSelector 匹配）。 */
+        switch (attr->m_match) {
+        case XCssValueMatch_NoMatch:
+            return true;
+        case XCssValueMatch_Equal:
+            return XStrcmp(actual, want) == 0;
+        case XCssValueMatch_Includes: {
+            /* 空格分词包含。 */
+            const char* q = actual;
+            size_t wl = XStrlen(want);
+            while (*q) {
+                const char* tok;
+                size_t tl;
+                while (*q == ' ') ++q;
+                tok = q;
+                while (*q && *q != ' ') ++q;
+                tl = (size_t)(q - tok);
+                if (tl == wl && XStrncmp(tok, want, wl) == 0) return true;
+            }
+            return false;
+        }
+        case XCssValueMatch_DashMatch: {
+            size_t wl = XStrlen(want);
+            if (XStrcmp(actual, want) == 0) return true;
+            return XStrncmp(actual, want, wl) == 0 && actual[wl] == '-';
+        }
+        case XCssValueMatch_BeginsWith:
+            return XStrncmp(actual, want, XStrlen(want)) == 0;
+        case XCssValueMatch_EndsWith: {
+            size_t al = XStrlen(actual);
+            size_t wl = XStrlen(want);
+            return al >= wl && XStrcmp(actual + al - wl, want) == 0;
+        }
+        case XCssValueMatch_Contains:
+            return XStrstr(actual, want) != NULL;
+        default:
+            return false;
+        }
+    }
+}
+
+/** @brief 单段基础选择器匹配（元素名=类名、#id=objectName、伪类、属性）。 */
+static bool xsss_basicMatches(const XCssBasicSelector* sel,
+                              const XObject* obj, uint32_t statePseudos)
 {
     const char* cls;
     const char* id;
@@ -172,16 +252,65 @@ static bool xsss_selectorMatches(const XCssBasicSelector* sel,
     if (sel->m_elementName) {
         const char* want = XString_toUtf8(sel->m_elementName);
         cls = xsss_className(obj);
-        if (!cls || !want || strcasecmp(cls, want) != 0) return false;
+        if (!cls || !want || XStrcasecmp(cls, want) != 0) return false;
     }
     if (sel->m_id) {
         const char* want = XString_toUtf8(sel->m_id);
         id = xsss_objectName(obj);
-        if (!id || !want || strcmp(id, want) != 0) return false;
+        if (!id || !want || XStrcmp(id, want) != 0) return false;
     }
     if (sel->m_pseudoClasses &&
         (sel->m_pseudoClasses & statePseudos) != sel->m_pseudoClasses)
         return false;
+    return xsss_attrMatches(&sel->m_attribute, obj);
+}
+
+/** @brief 选择器链匹配（对标 CSS 关系选择器）。
+ *
+ *  末段在 obj 上匹配；前段按 relationToPrev 沿 XObject parent 链回溯
+ *  （Ancestor=任意祖先，Parent=直接父）。 */
+static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
+                                 uint32_t statePseudos)
+{
+    const XObject* cur;
+    int idx;
+    if (!sel || sel->m_basicCount <= 0) return false;
+    if (!xsss_basicMatches(&sel->m_basics[sel->m_basicCount - 1], obj,
+                           statePseudos))
+        return false;
+    cur = obj;
+    for (idx = sel->m_basicCount - 2; idx >= 0; --idx) {
+        XCssRelation rel = sel->m_basics[idx + 1].m_relationToPrev;
+        const XObject* parent = XObject_parent(cur);
+        bool matched = false;
+        if (rel == XCssRelation_Parent) {
+            if (parent &&
+                xsss_basicMatches(&sel->m_basics[idx], parent,
+                                  xsss_statePseudos(0)))
+                matched = true;
+            cur = parent;
+        } else if (rel == XCssRelation_Ancestor) {
+            const XObject* a = parent;
+            while (a) {
+                if (xsss_basicMatches(&sel->m_basics[idx], a,
+                                      xsss_statePseudos(0))) {
+                    matched = true;
+                    break;
+                }
+                a = XObject_parent(a);
+            }
+            cur = parent;
+            if (matched && a) cur = a;
+        } else {
+            /* None：同级顺序无关，按父匹配一次。 */
+            if (parent &&
+                xsss_basicMatches(&sel->m_basics[idx], parent,
+                                  xsss_statePseudos(0)))
+                matched = true;
+            cur = parent;
+        }
+        if (!matched) return false;
+    }
     return true;
 }
 
@@ -204,7 +333,7 @@ static const XCssDeclaration* xsss_lookup(const XCssStyleSheet* sheet,
         for (si = 0; si < rule->m_selectorCount; ++si) {
             const XCssSelector* sel = &rule->m_selectors[si];
             const XCssDeclaration* d;
-            if (!xsss_selectorMatches(&sel->m_basic, obj, statePseudos))
+            if (!xsss_selectorMatches(sel, obj, statePseudos))
                 continue;
             if (sel->m_specificity <= bestSpec) continue;
             d = xsss_findDecl(rule, id);
@@ -285,6 +414,50 @@ static void xsss_applyFont(XStyleSheetStyle* self, const XObject* obj,
     if (changed) XPainter_setFont(painter, &font);
 }
 
+/** @brief 应用文本装饰（绘制前：underline/overline/line-through 设置到
+ *         画家字体——完整对标 Qt setTextDecorationFromValues → QFont）。
+ *
+ *  Qt 语义：text-decoration 作用于 QFont 的 underline/overline/strikeOut，
+ *  由文本渲染器绘制装饰线，而非在矩形上补画线。
+ */
+static void xsss_applyTextDecoration(XStyleSheetStyle* self,
+                                     const XObject* obj,
+                                     XStyleOption* option,
+                                     XPainter* painter)
+{
+    const XCssDeclaration* d;
+    const char* v;
+    XFont* cur;
+    XFont font;
+    bool has = false;
+    if (!self || !option || !painter) return;
+    if (self->m_sheet.m_ruleCount == 0) return;
+    d = xsss_lookup(&self->m_sheet, obj, option->m_state,
+                    XCssProperty_TextDecoration);
+    if (!d || !d->m_value) return;
+    v = XString_toUtf8(d->m_value);
+    if (!v) return;
+    cur = XPainter_font(painter);
+    if (!cur) return;
+    font = *cur;
+    if (XStrcasecmp(v, "underline") == 0) {
+        XFont_setUnderline(&font, true);
+        has = true;
+    } else if (XStrcasecmp(v, "line-through") == 0) {
+        XFont_setStrikeOut(&font, true);
+        has = true;
+    } else if (XStrcasecmp(v, "overline") == 0) {
+        XFont_setOverline(&font, true);
+        has = true;
+    } else if (XStrcasecmp(v, "none") == 0) {
+        XFont_setUnderline(&font, false);
+        XFont_setStrikeOut(&font, false);
+        XFont_setOverline(&font, false);
+        has = true;
+    }
+    if (has) XPainter_setFont(painter, &font);
+}
+
 /** @brief 应用背景色覆盖（绘制后：QSS 背景优先于底层面板填充）。 */
 static void xsss_applyBackground(XStyleSheetStyle* self, const XObject* obj,
                                  const XStyleOption* option,
@@ -359,12 +532,12 @@ static void xsss_drawBorder(XStyleSheetStyle* self, const XObject* obj,
         while (v && *v) {
             uint32_t token = 0;
             const char* tok = v;
-            while (*v && !isspace((unsigned char)*v)) ++v;
+            while (*v && !XIsSpace((unsigned char)*v)) ++v;
             if (XCssParseColorToken(tok, (size_t)(v - tok), &token)) {
                 color = token;
                 break;
             }
-            while (*v && isspace((unsigned char)*v)) ++v;
+            while (*v && XIsSpace((unsigned char)*v)) ++v;
         }
     }
     if (width <= 0 || color == 0) return;
@@ -447,6 +620,7 @@ static void VXStyleSheetStyle_drawPrimitive(XStyle* self, int pe,
         opt = *option;
         xsss_applyTextColor(ss, (const XObject*)widget, &opt);
         xsss_applyFont(ss, (const XObject*)widget, &opt, painter);
+        xsss_applyTextDecoration(ss, (const XObject*)widget, &opt, painter);
         xsss_applyBoxModel(ss, (const XObject*)widget, &opt);
     }
     if (src && src != self)
@@ -470,6 +644,7 @@ static void VXStyleSheetStyle_drawControl(XStyle* self, int ce,
         opt = *option;
         xsss_applyTextColor(ss, (const XObject*)widget, &opt);
         xsss_applyFont(ss, (const XObject*)widget, &opt, painter);
+        xsss_applyTextDecoration(ss, (const XObject*)widget, &opt, painter);
         xsss_applyBoxModel(ss, (const XObject*)widget, &opt);
     }
     if (src && src != self)
@@ -493,6 +668,7 @@ static void VXStyleSheetStyle_drawComplexControl(XStyle* self, int cc,
         opt = *option;
         xsss_applyTextColor(ss, (const XObject*)widget, &opt);
         xsss_applyFont(ss, (const XObject*)widget, &opt, painter);
+        xsss_applyTextDecoration(ss, (const XObject*)widget, &opt, painter);
         xsss_applyBoxModel(ss, (const XObject*)widget, &opt);
     }
     if (src && src != self)
@@ -525,7 +701,7 @@ XVtable* XStyleSheetStyle_class_init(void)
 void XStyleSheetStyle_init(XStyleSheetStyle* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWindowsStyle_init(&self->m_base);
     XClassSetVtable(self, XStyleSheetStyle);
     XCssStyleSheet_init(&self->m_sheet);

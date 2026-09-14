@@ -14,10 +14,11 @@
  *              分发。
  */
 #include "XImageCodec_config.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodecInternal.h"
 #include "XMemory.h"
 #include <stdint.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_GIF_ON
@@ -197,7 +198,7 @@ static uint8_t* gifCollectSubBlocks(const uint8_t* data, size_t size,
             buf = next;
             capacity = nextCap;
         }
-        memcpy(buf + used, data + *pos, n);
+        XMemcpy(buf + used, data + *pos, n);
         used = required;
         *pos += n;
         if (partialBlock) break;
@@ -217,7 +218,7 @@ static bool gifReadPalette(const uint8_t* data, size_t size, size_t* pos,
     paletteCount = (size_t)1u << ((packed & 7u) + 1u);
     if (paletteCount > 256 || *pos > size ||
         paletteCount > (size - *pos) / 3u) return false;
-    memcpy(palette, data + *pos, paletteCount * 3);
+    XMemcpy(palette, data + *pos, paletteCount * 3);
     *pos += paletteCount * 3;
     *count = paletteCount;
     return true;
@@ -245,7 +246,7 @@ static bool gifExpandIndices(const uint8_t* compressed, size_t compressedSize,
             int start = pass == 0 ? 0 : pass == 1 ? 4 : pass == 2 ? 2 : 1;
             int step = pass >= 2 ? (pass == 2 ? 4 : 2) : 8;
             for (int y = start; y < height; y += step) {
-                memcpy(indices + (size_t)y * width, ordered + p,
+                XMemcpy(indices + (size_t)y * width, ordered + p,
                        (size_t)width);
                 p += (size_t)width;
             }
@@ -299,7 +300,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
     bool cleanEofAfterFrame = false;
 
     if (!data || size < 13 || (!singleOut && (!frames || maxFrames <= 0)) ||
-        (memcmp(data, "GIF87a", 6) && memcmp(data, "GIF89a", 6)))
+        (XMemcmp(data, "GIF87a", 6) && XMemcmp(data, "GIF89a", 6)))
         return false;
     screenW = XImageCodecInternal_readU16LE(data + 6);
     screenH = XImageCodecInternal_readU16LE(data + 8);
@@ -375,7 +376,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                 if (pos >= size) goto done;
                 len = data[pos++];
                 if (len > size - pos) goto done;
-                if (len >= 8 && !memcmp(data + pos, "NETSCAPE", 8)) {
+                if (len >= 8 && !XMemcmp(data + pos, "NETSCAPE", 8)) {
                     pos += len;
                     if (pos + 4 <= size && data[pos] == 3 &&
                         data[pos + 1] == 1) {
@@ -431,7 +432,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                                     &paletteCount))
                     goto done;
             } else {
-                memcpy(palette, globalPalette, globalCount * 3);
+                XMemcpy(palette, globalPalette, globalCount * 3);
                 paletteCount = globalCount;
             }
             if (XImage_isNull(&canvas)) {
@@ -442,7 +443,7 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                     XFree_System(compressed);
                     goto done;
                 }
-                /* Qt 先 memset(bits(), 0, sizeInBytes())；RGB32 的
+                /* Qt 先 XMemset(bits(), 0, sizeInBytes())；RGB32 的
                    pixel() 会强制 Alpha=0xff，故 XImage_fill 的黑色
                    结果与 Qt 的全零存储完全一致。 */
                 XImage_fill(&canvas, 0x00000000u);
@@ -613,11 +614,11 @@ bool XImageCodecInternal_decodeGifFrames(const uint8_t* data, size_t size,
     int count = 0, loop = 0;
     bool ok;
     if (!animation) return false;
-    memset(animation, 0, sizeof(*animation));
+    XMemset(animation, 0, sizeof(*animation));
     frames = (XImageCodecFrame*)XMalloc_System(
         (size_t)XIMAGECODEC_GIF_ANIM_MAX_FRAMES * sizeof(XImageCodecFrame));
     if (!frames) return false;
-    memset(frames, 0, (size_t)XIMAGECODEC_GIF_ANIM_MAX_FRAMES *
+    XMemset(frames, 0, (size_t)XIMAGECODEC_GIF_ANIM_MAX_FRAMES *
                        sizeof(XImageCodecFrame));
     ok = gifDecodeCore(data, size, NULL, frames,
                        XIMAGECODEC_GIF_ANIM_MAX_FRAMES, &count, &loop);

@@ -29,3 +29,19 @@ XSystemResult XSystem_platformShutdown(void)
 }
 
 #endif /* !defined(__linux__) && !defined(_WIN32) */
+
+#if !defined(__linux__) && !defined(_WIN32)
+
+const char* XSystem_platformEnvironment(const char* name)
+{
+    (void)name;
+    return NULL;
+}
+
+bool XSystem_platformHasEnvironment(const char* name)
+{
+    (void)name;
+    return false;
+}
+
+#endif /* !defined(__linux__) && !defined(_WIN32) */

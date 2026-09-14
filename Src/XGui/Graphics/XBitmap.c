@@ -4,12 +4,13 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XBitmap.h"
+
+#include "XAlgorithm.h"
 #include "XImage.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
 #include "XVariant.h"
-#include <string.h>
 #include <limits.h>
 
 /* Qt 的 QBitmap 不是“黑白图像”的别名，而是保证像素深度为 1 的
@@ -85,9 +86,9 @@ static bool XBitmap_vtableIs(const XBitmap* self, XVtable* expected)
     unsigned char actualBytes[sizeof(void*)];
     unsigned char expectedBytes[sizeof(void*)];
     if (!self || !expected) return false;
-    memcpy(actualBytes, &self->m_class.m_class.m_vtable, sizeof(actualBytes));
-    memcpy(expectedBytes, &expected, sizeof(expectedBytes));
-    return memcmp(actualBytes, expectedBytes, sizeof(actualBytes)) == 0;
+    XMemcpy(actualBytes, &self->m_class.m_class.m_vtable, sizeof(actualBytes));
+    XMemcpy(expectedBytes, &expected, sizeof(expectedBytes));
+    return XMemcmp(actualBytes, expectedBytes, sizeof(actualBytes)) == 0;
 }
 
 static bool XBitmap_isInitializedObject(const XBitmap* self)
@@ -154,7 +155,7 @@ void XBitmap_init(XBitmap* self)
         isHeap = Class_IsHeap(self) != 0;
         XClass_deinit_base((XClass*)self);
     }
-    memset(self, 0, sizeof(XBitmap));
+    XMemset(self, 0, sizeof(XBitmap));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XBitmap);
     if (wasInitialized)
@@ -331,7 +332,7 @@ void XBitmap_fromData(const XSize* size, const uint8_t* bits, XImageFormat monoF
     }
     const int sourceStride = (size->width + 7) / 8;
     for (int y = 0; y < size->height; ++y)
-        memcpy(XImage_scanLine(&img, y), bits + y * sourceStride, (size_t)sourceStride);
+        XMemcpy(XImage_scanLine(&img, y), bits + y * sourceStride, (size_t)sourceStride);
     XBitmap_fromImage(&img, 0, out);
     XImage_deinit_base(&img);
 }

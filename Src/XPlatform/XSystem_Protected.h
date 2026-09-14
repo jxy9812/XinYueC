@@ -43,6 +43,23 @@ XSystemResult XSystem_platformReboot(XSystemRebootMode mode);
  */
 XSystemResult XSystem_platformShutdown(void);
 
+/**
+ * @brief 调用当前平台的环境变量读取实现。
+ * @param name 环境变量名；保证非空字符串，平台可直接传给 getenv 或等效 API。
+ * @return 变量值的借用指针；不存在返回 NULL。实现必须返回进程环境块内的
+ *         借用指针，不得返回需要调用方释放的内存。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用。
+ */
+const char* XSystem_platformEnvironment(const char* name);
+
+/**
+ * @brief 调用当前平台的环境变量存在性实现。
+ * @param name 环境变量名；保证非空字符串。
+ * @return 存在返回 true；不存在返回 false。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用。
+ */
+bool XSystem_platformHasEnvironment(const char* name);
+
 #ifdef __cplusplus
 }
 #endif

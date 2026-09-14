@@ -31,6 +31,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XWindow.h"
+#include "XMemory.h"
+
+#include "XAlgorithm.h"
 #include "XWindow_Protected.h"
 #include "XAccessible.h"
 #if XACCESSIBLE_ON
@@ -50,7 +53,6 @@
 #if XPLATFORMWINDOW_ON
 #include "XPlatformWindow.h"
 #endif /* XPLATFORMWINDOW_ON */
-#include <string.h>
 
 #if XWINDOW_ON
 
@@ -362,7 +364,7 @@ static XSurfaceFormat XWindow_mergeFormat(const XSurfaceFormat* requested)
     if (result.m_swapInterval == 0) result.m_swapInterval = def.m_swapInterval;
 #else
     (void)requested;
-    memset(&result, 0, sizeof(result));
+    XMemset(&result, 0, sizeof(result));
     result.m_redBufferSize = -1;
     result.m_greenBufferSize = -1;
     result.m_blueBufferSize = -1;
@@ -520,13 +522,13 @@ XVtable* XWindow_class_init(void)
 void XWindow_init(XWindow* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XWindow));
+    XMemset(self, 0, sizeof(XWindow));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XWindow);
     ((XObject*)self)->is_window = 1;
     self->m_data = (XWindowPrivate*)XMalloc_System(sizeof(XWindowPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XWindowPrivate));
+    XMemset(self->m_data, 0, sizeof(XWindowPrivate));
     XRegion_init(&self->m_data->m_mask);
 #if XSURFACEFORMAT_ON
     /* Qt qwindow.cpp:216-237 initializes requestedFormat from the
@@ -675,7 +677,7 @@ static void VXWindow_copy(XWindow* self, const XWindow* other)
     oldAccessibleRoot = target->m_accessibleRoot;
 #endif /* XACCESSIBLE_ON */
     XWindow_releasePrivateData(self, true);
-    memset(target, 0, sizeof(XWindowPrivate));
+    XMemset(target, 0, sizeof(XWindowPrivate));
     target->m_mask = copiedMask;
     target->m_title = copiedTitle;
     copiedTitle = NULL;

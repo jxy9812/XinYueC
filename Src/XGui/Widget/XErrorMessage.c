@@ -3,8 +3,9 @@
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON
 
@@ -72,7 +73,7 @@ XVtable* XErrorMessage_class_init(void)
 void XErrorMessage_init(XErrorMessage* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XErrorMessage);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

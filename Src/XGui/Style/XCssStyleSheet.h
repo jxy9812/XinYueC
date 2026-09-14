@@ -42,7 +42,8 @@ typedef enum XCssProperty
     XCssProperty_MaxHeight,
     XCssProperty_Width,
     XCssProperty_Height,
-    XCssProperty_Background
+    XCssProperty_Background,
+    XCssProperty_TextDecoration
 } XCssProperty;
 
 /**
@@ -72,25 +73,62 @@ typedef struct XCssDeclaration
 } XCssDeclaration;
 
 /**
- * @brief 基础选择器（对标 BasicSelector：元素名/ID/伪类）。
+ * @brief      选择器关系（对标 BasicSelector::Relation 子集）。
+ */
+typedef enum XCssRelation
+{
+    XCssRelation_None = 0,      /**< 无（单选择器或末段）。 */
+    XCssRelation_Ancestor,      /**< 后代（空格分隔：A B 匹配 B 且 A 为祖先）。 */
+    XCssRelation_Parent         /**< 子代（> 分隔：A > B 匹配 B 且 A 为直接父）。 */
+} XCssRelation;
+
+/**
+ * @brief      值匹配准则（对标 AttributeSelector::ValueMatchType）。
+ */
+typedef enum XCssValueMatch
+{
+    XCssValueMatch_NoMatch = 0,     /**< 无匹配要求（[attr] 存在判定）。 */
+    XCssValueMatch_Equal,           /**< [attr=value]。 */
+    XCssValueMatch_Includes,        /**< [attr~=value] 空格分词包含。 */
+    XCssValueMatch_DashMatch,       /**< [attr|=value] 前缀或 value- 开头。 */
+    XCssValueMatch_BeginsWith,      /**< [attr^=value]。 */
+    XCssValueMatch_EndsWith,        /**< [attr$=value]。 */
+    XCssValueMatch_Contains         /**< [attr*=value]。 */
+} XCssValueMatch;
+
+/**
+ * @brief 属性选择器（对标 AttributeSelector）。
+ */
+typedef struct XCssAttributeSelector
+{
+    XString* m_name;   /**< 属性名（对象拥有）。 */
+    XString* m_value;  /**< 属性值（对象拥有；NULL=仅要求属性存在）。 */
+    XCssValueMatch m_match; /**< 匹配准则（默认 NoMatch）。 */
+} XCssAttributeSelector;
+
+/**
+ * @brief 基础选择器（对标 BasicSelector：元素名/ID/伪类/属性/关系）。
  */
 typedef struct XCssBasicSelector
 {
     XString* m_elementName;   /**< 元素名（对象拥有；如 "XLineEdit"；空=通配）。 */
     XString* m_id;            /**< ID 选择器（对象拥有；#objectName）。 */
     uint32_t m_pseudoClasses; /**< XCssPseudoClass 位组合。 */
+    XCssAttributeSelector m_attribute; /**< 属性选择器（对标 attributeSelectors）。 */
+    XCssRelation m_relationToPrev; /**< 与前一段的关系（首段为 None）。 */
 } XCssBasicSelector;
 
 /**
- * @brief 选择器（对标 Selector：基础选择器列表 + specificity）。
+ * @brief 选择器（对标 Selector：基础选择器链 + specificity）。
  *
- *        当前支持逗号分隔的多选择器；后代/子代关系子集暂记为单基础
- *        选择器（与控件级匹配语义一致，Qt 的关系选择器用于父子控件）。
+ *        支持逗号分隔的多选择器与关系链（"A B" 后代 / "A > B" 子代），
+ *        匹配沿 XObject parent 链逐段验证。
  */
 typedef struct XCssSelector
 {
-    XCssBasicSelector m_basic; /**< 基础选择器。 */
-    int m_specificity;         /**< 特异度（id*100 + class*10 + element）。 */
+    XCssBasicSelector* m_basics; /**< 基础选择器链（堆；对象拥有）。 */
+    int m_basicCount;            /**< 链长（>=1）。 */
+    int m_specificity;           /**< 特异度（id*100 + class*10 + element）。 */
 } XCssSelector;
 
 /**

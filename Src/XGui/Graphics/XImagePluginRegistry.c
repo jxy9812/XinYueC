@@ -1,8 +1,11 @@
-/*
+﻿/*
  * @file       XImagePluginRegistry.c
  * @brief      XImageIOPlugin 源码级注册表实现。
  */
 #include "XImagePluginRegistry.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageBuiltinPlugin.h"
 #include "XContainer.h"
 #include "XMemory.h"
@@ -12,7 +15,6 @@
 #if XSYNC_ON && XMUTEX_ON
 #include "XMutex.h"
 #endif
-#include <string.h>
 
 #if XIMAGEIOPLUGIN_ON
 
@@ -118,7 +120,7 @@ static bool XImagePluginRegistry_mimeEquals(const char* mimeType, const char* ex
      * QByteArray MIME value exactly.  MIME lookup is therefore deliberately
      * case-sensitive even though image format names are normalized to lower
      * case by QImageReader/QImageWriter. */
-    return mimeType && expected && strcmp(mimeType, expected) == 0;
+    return mimeType && expected && XStrcmp(mimeType, expected) == 0;
 }
 
 static bool XImagePluginRegistry_formatEmpty(const XString* format)
@@ -196,9 +198,9 @@ static bool XImagePluginRegistry_pluginHasKey(XImageIOPlugin* plugin, const char
        别名不加入插件元数据列表，只在显式格式匹配和处理器创建时视为
        内置插件键，避免改变公开格式枚举及 MIME 反查结果。 */
     if (plugin == XImageBuiltinPlugin_instance()) {
-        return strcmp(key, "pbmraw") == 0 ||
-               strcmp(key, "pgmraw") == 0 ||
-               strcmp(key, "ppmraw") == 0;
+        return XStrcmp(key, "pbmraw") == 0 ||
+               XStrcmp(key, "pgmraw") == 0 ||
+               XStrcmp(key, "ppmraw") == 0;
     }
     return false;
 }
@@ -288,7 +290,7 @@ void XImagePluginRegistry_clear(void)
 {
     XImagePluginRegistryMutex mutex = XImagePluginRegistry_lock();
     g_pluginCount = 0;
-    memset(g_plugins, 0, sizeof(g_plugins));
+    XMemset(g_plugins, 0, sizeof(g_plugins));
     g_builtinRegistered = false;
     /* 保留发现回调配置；清空后下一次查询应重新建立外部插件集合。 */
     ++g_discoveryGeneration;
@@ -892,7 +894,7 @@ XString* XImagePluginRegistry_detectReadFormat(XIODevice* device)
             /* DIB has no file signature and is accepted only when the caller
              * explicitly requests the internal format. */
             if (plugin == XImageBuiltinPlugin_instance() && keyUtf8 &&
-                strcmp(keyUtf8, "dib") == 0) continue;
+                XStrcmp(keyUtf8, "dib") == 0) continue;
             if (keyUtf8 && XImagePluginRegistry_pluginSupports(plugin, true,
                                                                 device, keyUtf8) &&
                 XImagePluginRegistry_pluginCanRead(plugin, device, key)) {
@@ -940,7 +942,7 @@ XStringList* XImagePluginRegistry_supportedImageFormats(bool readOnly)
             /* Qt's explicit DIB handler is an internal format and is not
              * included in supportedImageFormats(). */
             if (plugin == XImageBuiltinPlugin_instance() && key &&
-                strcmp(key, "dib") == 0) continue;
+                XStrcmp(key, "dib") == 0) continue;
             if (key && XImagePluginRegistry_pluginSupports(plugin, readOnly, NULL, key))
                 XImagePluginRegistry_appendUniqueUtf8(result, key);
         }

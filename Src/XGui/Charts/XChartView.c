@@ -1,4 +1,7 @@
 ﻿#include "XChartView.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XAbstractSeries.h"
 #include "XString.h"
 #include "XValueAxis.h"
@@ -12,7 +15,6 @@
 #include "XPainter.h"
 #include "XWidget_Protected.h"
 #include <math.h>
-#include <string.h>
 #include <stdio.h>
 
 #if XCHARTS_ON
@@ -70,7 +72,7 @@ static void xcv_paintTitle(XChartView* self, XPainter* painter,
     {
         const char* title = XChart_title(self->m_chart);
         XPainter_drawText(painter, titleR->x + titleR->width / 2 -
-                          (int)strlen(title) * 4,
+                          (int)XStrlen(title) * 4,
                           titleR->y + titleR->height - 8, title, text);
     }
 }
@@ -105,7 +107,7 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
         if (ay->m_gridVisible && i > 0)
             XPainter_drawLine(painter, plotR->x, y,
                               plotR->x + plotR->width, y);
-        snprintf(buf, sizeof(buf), XString_toUtf8(ay->m_labelFormat), v);
+        XSnprintf(buf, sizeof(buf), XString_toUtf8(ay->m_labelFormat), v);
         XPainter_drawText(painter, plotR->x - 40, y + 6, buf, text);
     }
     ticks = ax->m_tickCount > 1 ? ax->m_tickCount : 2;
@@ -116,7 +118,7 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
         if (ax->m_gridVisible && i > 0)
             XPainter_drawLine(painter, x, plotR->y, x,
                               plotR->y + plotR->height);
-        snprintf(buf, sizeof(buf), XString_toUtf8(ax->m_labelFormat), v);
+        XSnprintf(buf, sizeof(buf), XString_toUtf8(ax->m_labelFormat), v);
         XPainter_drawText(painter, x - 12,
                           plotR->y + plotR->height + 16, buf, text);
     }
@@ -606,7 +608,7 @@ static void xcv_pushCurrentDomain(XChartView* self)
         grown = (XRectF*)XMalloc_System(sizeof(XRectF) * (size_t)newCap);
         if (!grown) return;
         if (chart->m_zoomStack) {
-            memcpy(grown, chart->m_zoomStack,
+            XMemcpy(grown, chart->m_zoomStack,
                    sizeof(XRectF) * (size_t)chart->m_zoomCapacity);
             XFree_System(chart->m_zoomStack);
         }
@@ -904,7 +906,7 @@ static void VX_chartView_wheelEvent(XWidget* self, XEvent* event)
 void XChartView_init(XChartView* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XChartView);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

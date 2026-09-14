@@ -1,11 +1,14 @@
 ﻿#include "XTableWidget.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XWidget_Protected.h"
 #include "XEvent.h"
 #include "XPainter.h"
-#include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 #if XTABLEWIDGET_ON
 
@@ -62,7 +65,7 @@ static void xtw_ensureCols(XTableWidget* self, int cols)
         XTableWidgetItem* nr = (XTableWidgetItem*)XRealloc_System(row,
             sizeof(XTableWidgetItem) * (size_t)cap);
         if (nr) { self->m_cells[i] = nr;
-            memset(nr + self->m_base.m_colCapacity, 0,
+            XMemset(nr + self->m_base.m_colCapacity, 0,
                    sizeof(XTableWidgetItem) * (size_t)(cap - self->m_base.m_colCapacity)); }
     }
     self->m_base.m_colCapacity = cap;
@@ -73,7 +76,7 @@ static XTableWidgetItem* xtw_newRow(int cols)
 {
     XTableWidgetItem* row =
         (XTableWidgetItem*)XMalloc_System(sizeof(XTableWidgetItem) * (size_t)cols);
-    if (row) memset(row, 0, sizeof(XTableWidgetItem) * (size_t)cols);
+    if (row) XMemset(row, 0, sizeof(XTableWidgetItem) * (size_t)cols);
     return row;
 }
 
@@ -196,7 +199,7 @@ static void VXTableWidget_deinit(XTableWidget* self)
 void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XTableView_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XTableWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -256,7 +259,7 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
         for (i = 0; i < self->m_rows; ++i) {
             if (self->m_cells[i] == NULL)
                 self->m_cells[i] = xtw_newRow(columns);
-            memset(&self->m_cells[i][self->m_columns], 0,
+            XMemset(&self->m_cells[i][self->m_columns], 0,
                    sizeof(XTableWidgetItem) * (size_t)(columns - self->m_columns));
         }
     }
@@ -464,7 +467,7 @@ void XTableWidget_sortItems(XTableWidget* self, int column, int order)
                 ? XString_toUtf8(self->m_cells[j][column].text) : "";
             const char* b = self->m_cells[j+1][column].text
                 ? XString_toUtf8(self->m_cells[j+1][column].text) : "";
-            bool swap = (order == 0) ? (strcmp(a, b) > 0) : (strcmp(a, b) < 0);
+            bool swap = (order == 0) ? (XStrcmp(a, b) > 0) : (XStrcmp(a, b) < 0);
             if (swap) {
                 XTableWidgetItem tmp;
                 int k;
@@ -504,7 +507,7 @@ void XTableWidget_clearContents(XTableWidget* self)
                 self->m_cells[i][k].text = NULL;
             }
         }
-        memset(self->m_cells[i], 0,
+        XMemset(self->m_cells[i], 0,
                sizeof(XTableWidgetItem) * (size_t)self->m_base.m_colCapacity);
     }
     XWidget_update((XWidget*)self);
@@ -639,7 +642,29 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     for (col = 0; col < tw->m_columns; ++col) {
         int cx = xtw_colX(tw, col) - ho;
         int cw = tw->m_base.m_colWidths[col];
+        XStyle* style = NULL;
         if (cx + cw < 0 || cx > w) continue;
+#if XSTYLE_ON
+        style = XStyle_defaultStyle();
+#endif
+        if (style != NULL) {
+            /* Fusion/公共风格接管：列头走 CE_HeaderSection/HeaderLabel。 */
+            XStyleOption hs;
+            XStyleOption_init(&hs, XStyleCE_HeaderSection);
+            XRect_init(&hs.m_rect, cx, 0, cw, tw->m_headerHeight);
+            hs.m_state = XWidget_isEnabled((XWidget*)tw)
+                ? XStyleState_Enabled : 0;
+            hs.m_text = XTableWidget_horizontalHeaderItem(tw, col);
+#if XPALETTE_ON
+            hs.m_palette = XWidget_palette((XWidget*)tw);
+#endif
+            XStyle_drawControl(style, XStyleCE_HeaderSection, &hs,
+                               &painter, (XWidget*)tw);
+            hs.m_type = XStyleCE_HeaderLabel;
+            XStyle_drawControl(style, XStyleCE_HeaderLabel, &hs,
+                               &painter, (XWidget*)tw);
+            continue;
+        }
         XPainter_drawText(&painter, cx + 4, tw->m_headerHeight - 8,
                           XTableWidget_horizontalHeaderItem(tw, col),
                           windowText);

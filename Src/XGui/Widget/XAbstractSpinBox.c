@@ -20,6 +20,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON
 
 #include "XAbstractSpinBox.h"
@@ -27,7 +30,6 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
-#include <string.h>
 #include <stdio.h>
 #include <limits.h>
 #if XWINDOWEVENT_ON
@@ -637,7 +639,7 @@ void XAbstractSpinBox_setSpecialValueText(XAbstractSpinBox* self,
     {
         const char* cur = self->m_specialValueText
             ? XString_toUtf8(self->m_specialValueText) : NULL;
-        if (cur && strcmp(cur, text) == 0) return;
+        if (cur && XStrcmp(cur, text) == 0) return;
         if (!cur && text[0] == '\0') return;
     }
     if (!self->m_specialValueText)

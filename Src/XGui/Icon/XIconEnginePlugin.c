@@ -1,10 +1,11 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconEnginePlugin.c
  * @brief      XIconEnginePlugin 图标引擎插件工厂实现。
  ******************************************************************************/
 #include "XIconEnginePlugin.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
-#include <string.h>
 
 static XIconEngine* VXIconEnginePlugin_create(XIconEnginePlugin* self,
                                                const XString* fileName)
@@ -36,7 +37,7 @@ XIconEnginePlugin* XIconEnginePlugin_create_ex(XMemoryType memory)
 void XIconEnginePlugin_init(XIconEnginePlugin* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XIconEnginePlugin);
 }

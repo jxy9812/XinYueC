@@ -12,12 +12,13 @@
  *              PPM_ON / XBM_ON / SVG_ON / ICO_ON）。
  */
 #include "XImageCodec.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodecInternal.h"
 #include "XImageCodec_config.h"
 #include "XMemory.h"
-#include <ctype.h>
 #include <limits.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON
 
@@ -28,8 +29,8 @@ static bool codec_is_name(const XString* format, const char* expected)
     size_t i;
     if (!value || !value[0]) return false;
     for (i = 0; value[i] && expected[i]; ++i)
-        if (tolower((unsigned char)value[i]) !=
-            tolower((unsigned char)expected[i]))
+        if (XToLower((unsigned char)value[i]) !=
+            XToLower((unsigned char)expected[i]))
             return false;
     return value[i] == '\0' && expected[i] == '\0';
 }
@@ -84,7 +85,7 @@ static size_t codec_svg_prepareProbe(const uint8_t* data, size_t size,
     if (!encoded) {
         count = size - offset;
         if (count > capacity - 1) count = capacity - 1;
-        memcpy(out, data + offset, count);
+        XMemcpy(out, data + offset, count);
         out[count] = '\0';
         return count;
     }
@@ -182,7 +183,7 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
         return XImageCodecFormat_Bmp;
 #endif
 #if XIMAGECODEC_PNG_ON
-    if (size >= 8 && !memcmp(data, "\x89PNG\r\n\x1a\n", 8))
+    if (size >= 8 && !XMemcmp(data, "\x89PNG\r\n\x1a\n", 8))
         return XImageCodecFormat_Png;
 #endif
 #if XIMAGECODEC_JPEG_ON
@@ -191,7 +192,7 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
 #endif
 #if XIMAGECODEC_GIF_ON
     if (size >= 6 &&
-        (!memcmp(data, "GIF87a", 6) || !memcmp(data, "GIF89a", 6)))
+        (!XMemcmp(data, "GIF87a", 6) || !XMemcmp(data, "GIF89a", 6)))
         return XImageCodecFormat_Gif;
 #endif
 #if XIMAGECODEC_PPM_ON
@@ -209,7 +210,7 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
     }
 #endif
 #if XIMAGECODEC_XPM_ON
-    if (size >= 6 && memcmp(data, "/* XPM", 6) == 0)
+    if (size >= 6 && XMemcmp(data, "/* XPM", 6) == 0)
         return XImageCodecFormat_Xpm;
 #endif
 #if XIMAGECODEC_SVG_ON
@@ -241,14 +242,14 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
             svgData[pos + 2] == 'v' && svgData[pos + 3] == 'g')
             return XImageCodecFormat_Svg;
         if (svgSize - pos >= 13 && svgData[pos] == '<' && svgData[pos + 1] == '!' &&
-            memcmp(svgData + pos, "<!DOCTYPE svg", 13) == 0)
+            XMemcmp(svgData + pos, "<!DOCTYPE svg", 13) == 0)
             return XImageCodecFormat_Svg;
         /* QSvgTinyDocument::hasSvgHeader() accepts an XML declaration or
          * leading comment only when the same bounded prefix also contains
          * an SVG root/doctype.  Do the same instead of accepting every XML
          * document as an image. */
         if (svgSize - pos >= 5 && svgData[pos] == '<' && svgData[pos + 1] == '?')
-            prefixed = memcmp(svgData + pos, "<?xml", 5) == 0;
+            prefixed = XMemcmp(svgData + pos, "<?xml", 5) == 0;
         else if (svgSize - pos >= 4 && svgData[pos] == '<' && svgData[pos + 1] == '!' &&
                  svgData[pos + 2] == '-' && svgData[pos + 3] == '-')
             prefixed = true;
@@ -258,7 +259,7 @@ XImageCodecFormat XImageCodec_detect(const uint8_t* data, size_t size)
                     svgData[scan + 2] == 'v' && svgData[scan + 3] == 'g')
                     return XImageCodecFormat_Svg;
                 if (svgSize - scan >= 13 && svgData[scan] == '<' &&
-                    memcmp(svgData + scan, "<!DOCTYPE svg", 13) == 0)
+                    XMemcmp(svgData + scan, "<!DOCTYPE svg", 13) == 0)
                     return XImageCodecFormat_Svg;
             }
         }
@@ -430,7 +431,7 @@ bool XImageCodec_probeSize(const uint8_t* data, size_t size,
         case XImageCodecFormat_Png: {
             uint32_t w, h;
             if (size < 24 ||
-                memcmp(data, "\x89PNG\r\n\x1a\n", 8) != 0) return false;
+                XMemcmp(data, "\x89PNG\r\n\x1a\n", 8) != 0) return false;
             w = XImageCodecInternal_readU32BE(data + 16);
             h = XImageCodecInternal_readU32BE(data + 20);
             if (w == 0 || h == 0 || w > (uint32_t)INT_MAX ||
@@ -445,8 +446,8 @@ bool XImageCodec_probeSize(const uint8_t* data, size_t size,
         case XImageCodecFormat_Gif: {
             uint16_t w, h;
             if (size < 10 ||
-                (memcmp(data, "GIF87a", 6) != 0 &&
-                 memcmp(data, "GIF89a", 6) != 0)) return false;
+                (XMemcmp(data, "GIF87a", 6) != 0 &&
+                 XMemcmp(data, "GIF89a", 6) != 0)) return false;
             w = XImageCodecInternal_readU16LE(data + 6);
             h = XImageCodecInternal_readU16LE(data + 8);
             if (w == 0 || h == 0) return false;

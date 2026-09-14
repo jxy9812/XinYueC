@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XGpuRenderDriver_vulkan.c
  * @brief      XGui GPU 渲染驱动——Vulkan 实现。
  * @details    实现 XGpuRenderDriver.h 的驱动操作表：离屏会话（渲染目标
@@ -19,6 +19,7 @@
  ******************************************************************************/
 #include "XGpuRenderDriver.h"
 
+#include "XAlgorithm.h"
 #if XPLATFORMINTEGRATION_ON && XGPU_ON && defined(XINYUE_C_HAS_VULKAN)
 
 #include "XImage.h"
@@ -28,8 +29,6 @@
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 /* 仅包含跨平台 Vulkan SDK 核心头；窗口表面（X11 Xlib / Win32）的系统
    API 实现位于 Drive（XPlatformGraphicsDriver_createVulkanWindowSurface），
    本文件不含任何平台窗口系统头。 */
@@ -143,7 +142,7 @@ static bool xvkl_alloc_memory(VkDevice device, VkPhysicalDevice physical,
             (props.memoryTypes[i].propertyFlags & flags) == flags)
         {
             VkMemoryAllocateInfo ai;
-            memset(&ai, 0, sizeof(ai));
+            XMemset(&ai, 0, sizeof(ai));
             ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             ai.allocationSize = req->size;
             ai.memoryTypeIndex = i;
@@ -162,7 +161,7 @@ static bool xvkl_create_host_buffer(VkDevice device, VkPhysicalDevice physical,
     VkBufferCreateInfo bi;
     VkMemoryRequirements req;
     if (!outBuffer || !outMemory) return false;
-    memset(&bi, 0, sizeof(bi));
+    XMemset(&bi, 0, sizeof(bi));
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bi.size = bytes;
     bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
@@ -195,7 +194,7 @@ static bool xvkl_create_color_image(VkDevice device,
     VkMemoryRequirements req;
     VkImageViewCreateInfo vi;
     if (!outImage || !outMemory || !outView) return false;
-    memset(&ii, 0, sizeof(ii));
+    XMemset(&ii, 0, sizeof(ii));
     ii.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ii.imageType = VK_IMAGE_TYPE_2D;
     ii.format = format;
@@ -217,7 +216,7 @@ static bool xvkl_create_color_image(VkDevice device,
         return false;
     if (vkBindImageMemory(device, *outImage, *outMemory, 0) != VK_SUCCESS)
         return false;
-    memset(&vi, 0, sizeof(vi));
+    XMemset(&vi, 0, sizeof(vi));
     vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vi.image = *outImage;
     vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -235,7 +234,7 @@ static bool xvkl_create_sampler(XGpuRenderDriverSession* self)
 {
     VkSamplerCreateInfo si;
     if (!self) return false;
-    memset(&si, 0, sizeof(si));
+    XMemset(&si, 0, sizeof(si));
     si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     si.magFilter = VK_FILTER_NEAREST;
     si.minFilter = VK_FILTER_NEAREST;
@@ -256,11 +255,11 @@ static void xvkl_update_texture_descriptor(XGpuRenderDriverSession* self,
     VkDescriptorImageInfo info;
     VkWriteDescriptorSet write;
     if (!self || !set || !view || !self->m_sampler) return;
-    memset(&info, 0, sizeof(info));
+    XMemset(&info, 0, sizeof(info));
     info.sampler = self->m_sampler;
     info.imageView = view;
     info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    memset(&write, 0, sizeof(write));
+    XMemset(&write, 0, sizeof(write));
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = set;
     write.dstBinding = 0;
@@ -279,7 +278,7 @@ static bool xvkl_create_render_pass(VkDevice device, VkFormat format,
     VkAttachmentReference colorRef;
     VkSubpassDescription subpass;
     VkRenderPassCreateInfo ci;
-    memset(&attachment, 0, sizeof(attachment));
+    XMemset(&attachment, 0, sizeof(attachment));
     attachment.format = format;
     attachment.samples = VK_SAMPLE_COUNT_1_BIT;
     attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;  /* 帧首显式清/上传。 */
@@ -292,14 +291,14 @@ static bool xvkl_create_render_pass(VkDevice device, VkFormat format,
     attachment.finalLayout = presentSrc
         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
         : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    memset(&colorRef, 0, sizeof(colorRef));
+    XMemset(&colorRef, 0, sizeof(colorRef));
     colorRef.attachment = 0;
     colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    memset(&subpass, 0, sizeof(subpass));
+    XMemset(&subpass, 0, sizeof(subpass));
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorRef;
-    memset(&ci, 0, sizeof(ci));
+    XMemset(&ci, 0, sizeof(ci));
     ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     ci.attachmentCount = 1;
     ci.pAttachments = &attachment;
@@ -333,7 +332,7 @@ static bool xvkl_create_pipeline(VkDevice device, VkRenderPass pass,
     VkShaderModule vs = 0, fs = 0;
     bool ok = false;
     VkShaderModuleCreateInfo sci;
-    memset(&sci, 0, sizeof(sci));
+    XMemset(&sci, 0, sizeof(sci));
     sci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     sci.codeSize = KSPVVERTEX_WORDS * sizeof(uint32_t);
     sci.pCode = kSpvVertex;
@@ -347,7 +346,7 @@ static bool xvkl_create_pipeline(VkDevice device, VkRenderPass pass,
         vkDestroyShaderModule(device, vs, NULL);
         return false;
     }
-    memset(stages, 0, sizeof(stages));
+    XMemset(stages, 0, sizeof(stages));
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     stages[0].module = vs;
@@ -356,40 +355,40 @@ static bool xvkl_create_pipeline(VkDevice device, VkRenderPass pass,
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     stages[1].module = fs;
     stages[1].pName = "main";
-    memset(&binding, 0, sizeof(binding));
+    XMemset(&binding, 0, sizeof(binding));
     binding.binding = 0;
     binding.stride = sizeof(float) * 8u;
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    memset(attrs, 0, sizeof(attrs));
+    XMemset(attrs, 0, sizeof(attrs));
     attrs[0].binding = 0; attrs[0].location = 0;
     attrs[0].format = VK_FORMAT_R32G32_SFLOAT; attrs[0].offset = 0;
     attrs[1].binding = 0; attrs[1].location = 1;
     attrs[1].format = VK_FORMAT_R32G32_SFLOAT; attrs[1].offset = 8;
     attrs[2].binding = 0; attrs[2].location = 2;
     attrs[2].format = VK_FORMAT_R32G32B32A32_SFLOAT; attrs[2].offset = 16;
-    memset(&vertexInput, 0, sizeof(vertexInput));
+    XMemset(&vertexInput, 0, sizeof(vertexInput));
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertexInput.vertexBindingDescriptionCount = 1;
     vertexInput.pVertexBindingDescriptions = &binding;
     vertexInput.vertexAttributeDescriptionCount = 3;
     vertexInput.pVertexAttributeDescriptions = attrs;
-    memset(&assembly, 0, sizeof(assembly));
+    XMemset(&assembly, 0, sizeof(assembly));
     assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    memset(&viewport, 0, sizeof(viewport));
+    XMemset(&viewport, 0, sizeof(viewport));
     viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewport.viewportCount = 1;
     viewport.scissorCount = 1;
-    memset(&raster, 0, sizeof(raster));
+    XMemset(&raster, 0, sizeof(raster));
     raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     raster.polygonMode = VK_POLYGON_MODE_FILL;
     raster.cullMode = VK_CULL_MODE_NONE;
     raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster.lineWidth = 1.0f;
-    memset(&multisample, 0, sizeof(multisample));
+    XMemset(&multisample, 0, sizeof(multisample));
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    memset(&blendAttachment, 0, sizeof(blendAttachment));
+    XMemset(&blendAttachment, 0, sizeof(blendAttachment));
     blendAttachment.blendEnable = sourceOver ? VK_TRUE : VK_FALSE;
     blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -400,17 +399,17 @@ static bool xvkl_create_pipeline(VkDevice device, VkRenderPass pass,
     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
         VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
         VK_COLOR_COMPONENT_A_BIT;
-    memset(&blend, 0, sizeof(blend));
+    XMemset(&blend, 0, sizeof(blend));
     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     blend.attachmentCount = 1;
     blend.pAttachments = &blendAttachment;
-    memset(&dynamic, 0, sizeof(dynamic));
+    XMemset(&dynamic, 0, sizeof(dynamic));
     dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynStates[0] = VK_DYNAMIC_STATE_VIEWPORT;
     dynStates[1] = VK_DYNAMIC_STATE_SCISSOR;
     dynamic.dynamicStateCount = 2;
     dynamic.pDynamicStates = dynStates;
-    memset(&ci, 0, sizeof(ci));
+    XMemset(&ci, 0, sizeof(ci));
     ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     ci.stageCount = 2;
     ci.pStages = stages;
@@ -490,22 +489,22 @@ static bool xvkl_create_device_objects(XGpuRenderDriverSession* self,
     if (!xvkl_create_render_pass(self->m_device, targetFormat, self->m_window,
                                  &self->m_renderPass))
         return false;
-    memset(&pushRange, 0, sizeof(pushRange));
+    XMemset(&pushRange, 0, sizeof(pushRange));
     pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     pushRange.offset = 0;
     pushRange.size = sizeof(float) * 4u;
-    memset(&layoutCi, 0, sizeof(layoutCi));
+    XMemset(&layoutCi, 0, sizeof(layoutCi));
     layoutCi.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutCi.pushConstantRangeCount = 1;
     layoutCi.pPushConstantRanges = &pushRange;
     if (vkCreatePipelineLayout(self->m_device, &layoutCi, NULL,
                                &self->m_solidLayout) != VK_SUCCESS)
         return false;
-    memset(&binding, 0, sizeof(binding));
+    XMemset(&binding, 0, sizeof(binding));
     binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binding.descriptorCount = 1;
     binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    memset(&setCi, 0, sizeof(setCi));
+    XMemset(&setCi, 0, sizeof(setCi));
     setCi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     setCi.bindingCount = 1;
     setCi.pBindings = &binding;
@@ -522,10 +521,10 @@ static bool xvkl_create_device_objects(XGpuRenderDriverSession* self,
                                    &self->m_texLayout) != VK_SUCCESS)
             return false;
     }
-    memset(&poolSize, 0, sizeof(poolSize));
+    XMemset(&poolSize, 0, sizeof(poolSize));
     poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSize.descriptorCount = 4;
-    memset(&poolCi, 0, sizeof(poolCi));
+    XMemset(&poolCi, 0, sizeof(poolCi));
     poolCi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCi.maxSets = 4;
     poolCi.poolSizeCount = 1;
@@ -563,7 +562,7 @@ static bool xvkl_create_device_objects(XGpuRenderDriverSession* self,
         fprintf(stderr, "vulkan: texture source pipeline failed\n");
         return false;
     }
-    memset(&allocCi, 0, sizeof(allocCi));
+    XMemset(&allocCi, 0, sizeof(allocCi));
     allocCi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocCi.descriptorPool = self->m_descPool;
     allocCi.descriptorSetCount = 1;
@@ -630,7 +629,7 @@ static bool xvkl_create_offscreen_target(XGpuRenderDriverSession* self)
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             &self->m_colorImage, &self->m_colorMemory, &self->m_colorView))
         return false;
-    memset(&fi, 0, sizeof(fi));
+    XMemset(&fi, 0, sizeof(fi));
     fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fi.renderPass = self->m_renderPass;
     fi.attachmentCount = 1;
@@ -711,7 +710,7 @@ static bool xvkl_create_swapchain(XGpuRenderDriverSession* self)
     imageCount = caps.minImageCount + 1u;
     if (caps.maxImageCount && imageCount > caps.maxImageCount)
         imageCount = caps.maxImageCount;
-    memset(&ci, 0, sizeof(ci));
+    XMemset(&ci, 0, sizeof(ci));
     ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     ci.surface = self->m_surface;
     ci.minImageCount = imageCount;
@@ -744,7 +743,7 @@ static bool xvkl_create_swapchain(XGpuRenderDriverSession* self)
     for (i = 0; i < self->m_swapCount; ++i)
     {
         VkImageViewCreateInfo vi;
-        memset(&vi, 0, sizeof(vi));
+        XMemset(&vi, 0, sizeof(vi));
         vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         vi.image = self->m_swapImages[i];
         vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -757,7 +756,7 @@ static bool xvkl_create_swapchain(XGpuRenderDriverSession* self)
             return false;
         self->m_swapLayouts[i] = VK_IMAGE_LAYOUT_UNDEFINED;
     }
-    memset(&fi, 0, sizeof(fi));
+    XMemset(&fi, 0, sizeof(fi));
     fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fi.renderPass = self->m_renderPass;
     fi.attachmentCount = 1;
@@ -815,11 +814,11 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     self->m_window = window != NULL;
     self->m_width = width;
     self->m_height = height;
-    memset(&app, 0, sizeof(app));
+    XMemset(&app, 0, sizeof(app));
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = "XinYueC";
     app.apiVersion = VK_API_VERSION_1_0;
-    memset(&ici, 0, sizeof(ici));
+    XMemset(&ici, 0, sizeof(ici));
     ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo = &app;
     self->m_windowObject = window;
@@ -850,12 +849,12 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         self->m_physical = devices[0];
     }
     if (!xvkl_find_queue_family(self, &self->m_queueFamily)) goto fail;
-    memset(&qci, 0, sizeof(qci));
+    XMemset(&qci, 0, sizeof(qci));
     qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     qci.queueFamilyIndex = self->m_queueFamily;
     qci.queueCount = 1;
     qci.pQueuePriorities = &priority;
-    memset(&dci, 0, sizeof(dci));
+    XMemset(&dci, 0, sizeof(dci));
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
@@ -870,14 +869,14 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         goto fail;
     vkGetDeviceQueue(self->m_device, self->m_queueFamily, 0, &self->m_queue);
     if (!self->m_queue) goto fail;
-    memset(&poolCi, 0, sizeof(poolCi));
+    XMemset(&poolCi, 0, sizeof(poolCi));
     poolCi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolCi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolCi.queueFamilyIndex = self->m_queueFamily;
     if (vkCreateCommandPool(self->m_device, &poolCi, NULL,
                             &self->m_cmdPool) != VK_SUCCESS)
         goto fail;
-    memset(&cbAi, 0, sizeof(cbAi));
+    XMemset(&cbAi, 0, sizeof(cbAi));
     cbAi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbAi.commandPool = self->m_cmdPool;
     cbAi.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -890,13 +889,13 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         self->m_cmd = buffers[0];
         self->m_transferCmd = buffers[1];
     }
-    memset(&fci, 0, sizeof(fci));
+    XMemset(&fci, 0, sizeof(fci));
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     if (vkCreateFence(self->m_device, &fci, NULL, &self->m_frameFence) !=
         VK_SUCCESS)
         goto fail;
-    memset(&sci, 0, sizeof(sci));
+    XMemset(&sci, 0, sizeof(sci));
     sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     if (self->m_window)
     {
@@ -1029,7 +1028,7 @@ static void xvkl_image_barrier(VkCommandBuffer cmd, VkImage image,
                                VkPipelineStageFlags dstStage)
 {
     VkImageMemoryBarrier barrier;
-    memset(&barrier, 0, sizeof(barrier));
+    XMemset(&barrier, 0, sizeof(barrier));
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.srcAccessMask = srcAccess;
     barrier.dstAccessMask = dstAccess;
@@ -1077,7 +1076,7 @@ static bool xvkl_submit_transfer(XGpuRenderDriverSession* self)
     VkSubmitInfo submit;
     if (!self || !self->m_transferCmd) return false;
     if (vkEndCommandBuffer(self->m_transferCmd) != VK_SUCCESS) return false;
-    memset(&submit, 0, sizeof(submit));
+    XMemset(&submit, 0, sizeof(submit));
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &self->m_transferCmd;
@@ -1092,7 +1091,7 @@ static bool xvkl_begin_transfer(XGpuRenderDriverSession* self)
     if (!self || !self->m_transferCmd) return false;
     if (vkResetCommandBuffer(self->m_transferCmd, 0) != VK_SUCCESS)
         return false;
-    memset(&begin, 0, sizeof(begin));
+    XMemset(&begin, 0, sizeof(begin));
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     return vkBeginCommandBuffer(self->m_transferCmd, &begin) == VK_SUCCESS;
 }
@@ -1133,7 +1132,7 @@ static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
                        VK_PIPELINE_STAGE_TRANSFER_BIT);
     {
         VkBufferImageCopy region;
-        memset(&region, 0, sizeof(region));
+        XMemset(&region, 0, sizeof(region));
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.layerCount = 1;
         region.imageExtent.width = (uint32_t)self->m_width;
@@ -1182,10 +1181,10 @@ static bool xvkl_begin_render_pass(XGpuRenderDriverSession* self)
     VkViewport viewport;
     VkRect2D scissor;
     if (!self) return false;
-    memset(&begin, 0, sizeof(begin));
+    XMemset(&begin, 0, sizeof(begin));
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     if (vkBeginCommandBuffer(self->m_cmd, &begin) != VK_SUCCESS) return false;
-    memset(&rp, 0, sizeof(rp));
+    XMemset(&rp, 0, sizeof(rp));
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass = self->m_renderPass;
     rp.framebuffer = xvkl_framebuffer(self);
@@ -1218,7 +1217,7 @@ static bool xvkl_begin_render_pass(XGpuRenderDriverSession* self)
 static void xvkl_transition_color_for_draw(VkCommandBuffer cmd, VkImage image)
 {
     VkImageMemoryBarrier barrier;
-    memset(&barrier, 0, sizeof(barrier));
+    XMemset(&barrier, 0, sizeof(barrier));
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.srcAccessMask = 0;
     barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
@@ -1281,7 +1280,7 @@ static void xvkl_end_frame(XGpuRenderDriverSession* self)
     vkCmdEndRenderPass(self->m_cmd);
     vkEndCommandBuffer(self->m_cmd);
     self->m_recording = false;
-    memset(&si, 0, sizeof(si));
+    XMemset(&si, 0, sizeof(si));
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &self->m_cmd;
@@ -1309,7 +1308,7 @@ static void xvkl_end_frame(XGpuRenderDriverSession* self)
     if (self->m_window)
     {
         VkPresentInfoKHR pi;
-        memset(&pi, 0, sizeof(pi));
+        XMemset(&pi, 0, sizeof(pi));
         pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         pi.waitSemaphoreCount = 1;
         pi.pWaitSemaphores = &self->m_renderDone;
@@ -1332,7 +1331,7 @@ static bool xvkl_suspend_for_transfer(XGpuRenderDriverSession* self)
     vkCmdEndRenderPass(self->m_cmd);
     if (vkEndCommandBuffer(self->m_cmd) != VK_SUCCESS) return false;
     self->m_recording = false;
-    memset(&submit, 0, sizeof(submit));
+    XMemset(&submit, 0, sizeof(submit));
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &self->m_cmd;
@@ -1371,7 +1370,7 @@ static bool xvkl_copy_frame_to_image(XGpuRenderDriverSession* self,
                        VK_ACCESS_TRANSFER_READ_BIT,
                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT);
-    memset(&region, 0, sizeof(region));
+    XMemset(&region, 0, sizeof(region));
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent.width = (uint32_t)self->m_width;
@@ -1497,7 +1496,7 @@ static void xvkl_clear(XGpuRenderDriverSession* self, uint32_t argb)
     VkClearAttachment attachment;
     VkClearRect rect;
     if (!self || !self->m_recording) return;
-    memset(&attachment, 0, sizeof(attachment));
+    XMemset(&attachment, 0, sizeof(attachment));
     attachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     attachment.clearValue.color.float32[0] =
         (float)((argb >> 16) & 0xffu) / 255.0f;
@@ -1507,7 +1506,7 @@ static void xvkl_clear(XGpuRenderDriverSession* self, uint32_t argb)
         (float)(argb & 0xffu) / 255.0f;
     attachment.clearValue.color.float32[3] =
         (float)((argb >> 24) & 0xffu) / 255.0f;
-    memset(&rect, 0, sizeof(rect));
+    XMemset(&rect, 0, sizeof(rect));
     rect.rect.extent.width = (uint32_t)self->m_width;
     rect.rect.extent.height = (uint32_t)self->m_height;
     rect.layerCount = 1;
@@ -1685,7 +1684,7 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
         }
     }
     if (!xvkl_ensure_source_image(self, width, height)) return false;
-    memset(&bi, 0, sizeof(bi));
+    XMemset(&bi, 0, sizeof(bi));
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     /* 上传需要在当前渲染通道外执行：打断当前录制，先做 transfer，再
        重新开始渲染通道并重放已录制的绘制——实现复杂度高。简化：本帧
@@ -1696,7 +1695,7 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
     vkEndCommandBuffer(self->m_cmd);
     {
         VkSubmitInfo si;
-        memset(&si, 0, sizeof(si));
+        XMemset(&si, 0, sizeof(si));
         si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
         si.pCommandBuffers = &self->m_cmd;
@@ -1711,7 +1710,7 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
                                        : self->m_colorImage);
     {
         VkImageMemoryBarrier barrier;
-        memset(&barrier, 0, sizeof(barrier));
+        XMemset(&barrier, 0, sizeof(barrier));
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1727,7 +1726,7 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
                              NULL, 1, &barrier);
     }
-    memset(&region, 0, sizeof(region));
+    XMemset(&region, 0, sizeof(region));
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent.width = (uint32_t)width;
@@ -1738,7 +1737,7 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
     {
         VkImageMemoryBarrier barrier;
-        memset(&barrier, 0, sizeof(barrier));
+        XMemset(&barrier, 0, sizeof(barrier));
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -1756,7 +1755,7 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
     }
     {
         VkRenderPassBeginInfo rp;
-        memset(&rp, 0, sizeof(rp));
+        XMemset(&rp, 0, sizeof(rp));
         rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rp.renderPass = self->m_renderPass;
         rp.framebuffer = self->m_window
@@ -1786,11 +1785,11 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
         /* 重新绑定源纹理描述符（图像视图内容已更新）。 */
         VkDescriptorImageInfo imageInfo;
         VkWriteDescriptorSet write;
-        memset(&imageInfo, 0, sizeof(imageInfo));
+        XMemset(&imageInfo, 0, sizeof(imageInfo));
         imageInfo.sampler = 0;
         imageInfo.imageView = self->m_sourceView;
         imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        memset(&write, 0, sizeof(write));
+        XMemset(&write, 0, sizeof(write));
         write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         write.dstSet = self->m_sourceSet;
         write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1842,7 +1841,7 @@ static bool xvkl_draw_alpha_bitmap(XGpuRenderDriverSession* self,
     XImage_init_ex(&proxy, width, height, XImageFormat_ARGB32);
     if (!XImage_isNull(&proxy))
     {
-        memcpy(XImage_bits(&proxy), gray, bytes);
+        XMemcpy(XImage_bits(&proxy), gray, bytes);
         ok = xvkl_draw_image(self, &proxy, x, y, width, height, 1.0f,
                              sourceOver);
     }
@@ -1891,12 +1890,12 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
                                  &self->m_atlasImage, &self->m_atlasMemory,
                                  &self->m_atlasView))
         return false;
-    memset(&bi, 0, sizeof(bi));
+    XMemset(&bi, 0, sizeof(bi));
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     /* 图集上传在帧外即时执行（独立提交，阻塞等待——字形上传频率低）。 */
     vkResetCommandBuffer(self->m_cmd, 0);
     vkBeginCommandBuffer(self->m_cmd, &bi);
-    memset(&barrier, 0, sizeof(barrier));
+    XMemset(&barrier, 0, sizeof(barrier));
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.srcAccessMask = 0;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1911,7 +1910,7 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
     vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
                          1, &barrier);
-    memset(&region, 0, sizeof(region));
+    XMemset(&region, 0, sizeof(region));
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageOffset.x = atlasX;
@@ -1933,7 +1932,7 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
                              NULL, 0, NULL, 1, &toRead);
     }
     vkEndCommandBuffer(self->m_cmd);
-    memset(&si, 0, sizeof(si));
+    XMemset(&si, 0, sizeof(si));
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &self->m_cmd;
@@ -1968,11 +1967,11 @@ static bool xvkl_glyph_atlas_readback(XGpuRenderDriverSession* self,
         atlasHeight <= 0 || !outCoverage || !self->m_atlasImage)
         return false;
     if (!xvkl_stage_pixels(self, bytes)) return false;
-    memset(&bi, 0, sizeof(bi));
+    XMemset(&bi, 0, sizeof(bi));
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkResetCommandBuffer(self->m_cmd, 0);
     vkBeginCommandBuffer(self->m_cmd, &bi);
-    memset(&region, 0, sizeof(region));
+    XMemset(&region, 0, sizeof(region));
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageOffset.x = atlasX;
@@ -1984,7 +1983,7 @@ static bool xvkl_glyph_atlas_readback(XGpuRenderDriverSession* self,
                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                            self->m_stagingBuffer, 1, &region);
     vkEndCommandBuffer(self->m_cmd);
-    memset(&si, 0, sizeof(si));
+    XMemset(&si, 0, sizeof(si));
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &self->m_cmd;
@@ -1995,7 +1994,7 @@ static bool xvkl_glyph_atlas_readback(XGpuRenderDriverSession* self,
         const uint8_t* src = (const uint8_t*)self->m_stagingMapped +
             (size_t)y * (size_t)atlasWidth * 4u;
         uint8_t* dst = outCoverage + (size_t)y * (size_t)atlasWidth;
-        memcpy(dst, src, (size_t)atlasWidth);
+        XMemcpy(dst, src, (size_t)atlasWidth);
     }
     return true;
 }

@@ -14,9 +14,10 @@
 #include "XVarList.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
 
 #if XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON
 
@@ -45,7 +46,7 @@ static XTBBridge* xtb_bridgeCreate(XToolBar* bar, XAction* action)
         (XTBBridge*)XMemory_malloc(sizeof(*bridge),
                                    XCLASS_DEFAULT_MEMORY_TYPE);
     if (!bridge) return NULL;
-    memset(bridge, 0, sizeof(*bridge));
+    XMemset(bridge, 0, sizeof(*bridge));
     XObject_init(&bridge->m_base);
     XClassSetVtable(bridge, XTBBridge);
     Set_Class_Memory(bridge, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -317,7 +318,7 @@ void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags)
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XToolBar);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

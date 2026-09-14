@@ -1,8 +1,9 @@
 ﻿#include "XPieSlice.h"
+
+#include "XAlgorithm.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -59,7 +60,7 @@ XVtable* XPieSlice_class_init(void)
 void XPieSlice_init(XPieSlice* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init(&self->m_base);
     XClassSetVtable(self, XPieSlice);
     self->m_label = XString_create();
@@ -133,8 +134,8 @@ static void VXSlice_move(XPieSlice* self, XPieSlice* other)
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XPieSlice_init(self);
     if (self->m_label) XString_delete_base(self->m_label);
-    memcpy(self, other, sizeof(XPieSlice));
-    memset(other, 0, sizeof(XPieSlice));
+    XMemcpy(self, other, sizeof(XPieSlice));
+    XMemset(other, 0, sizeof(XPieSlice));
     XPieSlice_init(other);
 }
 

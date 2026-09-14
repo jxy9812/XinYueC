@@ -5,6 +5,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformWindow.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XString.h"
 #if XPLATFORMNATIVEWINDOW_ON
@@ -13,7 +15,6 @@
 #if XGUIAPPLICATION_ON && XWINDOW_ON
 #include "XGuiApplication.h"
 #endif /* XGUIAPPLICATION_ON && XWINDOW_ON */
-#include <string.h>
 
 #if XPLATFORMWINDOW_ON
 
@@ -58,12 +59,12 @@ XVtable* XPlatformWindow_class_init(void)
 void XPlatformWindow_init(XPlatformWindow* self, XWindow* window)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XPlatformWindow));
+    XMemset(self, 0, sizeof(XPlatformWindow));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XPlatformWindow);
     self->m_data = (XPlatformWindowPrivate*)XMalloc_System(sizeof(XPlatformWindowPrivate));
     if (!self->m_data) return;
-    memset(self->m_data, 0, sizeof(XPlatformWindowPrivate));
+    XMemset(self->m_data, 0, sizeof(XPlatformWindowPrivate));
     self->m_data->m_window = window;
     self->m_data->m_nativeId = ++g_nextNativeId;
     self->m_data->m_properties = XHashMap_create_XVariantHashMap();

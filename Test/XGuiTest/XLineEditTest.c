@@ -95,9 +95,10 @@ bool XLineEditTest_runAll(void)
     /* '中' 的 UTF-8 为 E4 B8 AD——逐字节注入无法经键盘码位（单字节），
        用 setText 注入后测试光标边界移动。 */
     XLineEdit_setText(edit, "中文");
-    le_expect(XLineEdit_cursorPosition(edit) == 6, "setText 光标在 UTF-8 末尾");
+    /* 对标 Qt 字符索引语义："你好" 2 字符 → 光标 2；Left 后 1。 */
+    le_expect(XLineEdit_cursorPosition(edit) == 2, "setText 光标在字符末尾");
     le_key(edit, XKey_Left);
-    le_expect(XLineEdit_cursorPosition(edit) == 3, "Left 跳过续字节");
+    le_expect(XLineEdit_cursorPosition(edit) == 1, "Left 按字符步进");
     le_key(edit, XKey_Backspace);
     le_expect(strcmp(XLineEdit_text(edit), "文") == 0,
               "Backspace 删除整个 UTF-8 字符");

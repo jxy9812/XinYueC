@@ -1,7 +1,9 @@
 ﻿/*****************************************************************************/
 #include "XImageCodecInternal.h"
+#include "XMemory.h"
+
+#include "XAlgorithm.h"
 #include "XImageCodec_config.h"
-#include <string.h>
 
 #if XIMAGECODEC_ON
 
@@ -59,7 +61,7 @@ bool XImageCodecInternal_appendBytes(XByteArray* out,
     if (size > SIZE_MAX - oldSize ||
         !XByteArray_resize_base((XVector*)out, oldSize + size)) return false;
     dst = XByteArray_data(out);
-    if (size) memcpy(dst + oldSize, data, size);
+    if (size) XMemcpy(dst + oldSize, data, size);
     return true;
 }
 

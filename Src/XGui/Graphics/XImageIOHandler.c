@@ -4,11 +4,12 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XImageIOHandler.h"
+
+#include "XAlgorithm.h"
 #include "XImageReader.h"
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
-#include <string.h>
 #include <limits.h>
 
 /**
@@ -120,7 +121,7 @@ static int VXImageIOHandler_currentImageNumber(const XImageIOHandler* self)
 static void VXImageIOHandler_currentImageRect(const XImageIOHandler* self, XRect* out)
 {
     (void)self;
-    if (out) memset(out, 0, sizeof(XRect));
+    if (out) XMemset(out, 0, sizeof(XRect));
 }
 
 /* ========== 虚函数表初始化 ========== */
@@ -159,11 +160,11 @@ XImageIOHandler* XImageIOHandler_create_ex(XMemoryType memory)
 void XImageIOHandler_init(XImageIOHandler* self)
 {
     if (ISNULL(self, "XImageIOHandler")) return;
-    memset(self, 0, sizeof(XImageIOHandler));
+    XMemset(self, 0, sizeof(XImageIOHandler));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XImageIOHandler);
     self->m_data = (XImageIOHandlerPrivate*)XMalloc_System(sizeof(XImageIOHandlerPrivate));
-    if (self->m_data) memset(self->m_data, 0, sizeof(XImageIOHandlerPrivate));
+    if (self->m_data) XMemset(self->m_data, 0, sizeof(XImageIOHandlerPrivate));
 }
 
 void XImageIOHandler_setDevice(XImageIOHandler* self, XIODevice* device)

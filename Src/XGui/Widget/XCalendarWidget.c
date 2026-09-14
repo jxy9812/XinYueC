@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XCalendarWidget.c
  * @brief      日历控件实现（对标 Qt 6.8 QCalendarWidget 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -7,14 +7,18 @@
  */
 
 #include "XCalendarWidget.h"
+#include "XStringUtils.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
 
 #if XWIDGET_ON && XCALENDARWIDGET_ON
 
@@ -131,16 +135,71 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
 #endif /* XPALETTE_ON */
     y = 0;
     if (cal->m_navBarVisible) {
-        XRect_init(&r, 0, 0, w, 22);
-        XPainter_fillRect(&painter, &r, mid);
-        snprintf(buf, sizeof(buf), "%04d-%02d", cal->m_shownYear, cal->m_shownMonth);
-        XPainter_drawText(&painter, w / 2 - 24, 15, buf, windowText);
-        /* 导航按钮：◀(上一年) <(上一月) >(下一月) ▶(下一年) */
-        XPainter_drawText(&painter, 4, 15, "<", windowText);
-        XPainter_drawText(&painter, 26, 15, ">", windowText);
-        XPainter_drawText(&painter, w - 26, 15, "<", windowText);
-        XPainter_drawText(&painter, w - 10, 15, ">", windowText);
-        y = 22;
+#if XSTYLE_ON
+        if (XStyle_defaultStyle() != NULL) {
+            /* 对标 QCalendarWidget 导航条：QCalToolButton 走 CC_ToolButton
+             * （上一年◀/上一月< 在左，下一月>/下一年▶ 在右），月份文本居中。 */
+            XStyle* style = XStyle_defaultStyle();
+            XStyleOption bar;
+            static const int navDirs[4] = { 2, 2, 3, 3 }; /* 左左右右。 */
+            static const int navXs[4] = { -1 };
+            XStyleOption_init(&bar, XStyleCC_ToolButton);
+            {
+                XRect nr;
+                XRect_init(&nr, 0, 0, w, 22);
+                bar.m_rect = nr;
+            }
+            bar.m_state = XWidget_isEnabled((XWidget*)cal)
+                ? XStyleState_Enabled | XStyleState_AutoRaise : 0;
+#if XPALETTE_ON
+            bar.m_palette = XWidget_palette((XWidget*)cal);
+#endif
+            XStyle_drawComplexControl(style, XStyleCC_ToolButton, &bar,
+                                      &painter, (XWidget*)cal);
+            XSnprintf(buf, sizeof(buf), "%04d-%02d",
+                     cal->m_shownYear, cal->m_shownMonth);
+            XPainter_drawText(&painter, w / 2 - 24, 15, buf, windowText);
+            {
+                int nav;
+                int xs[4];
+                xs[0] = 4; xs[1] = 26;
+                xs[2] = w - 26; xs[3] = w - 10;
+                (void)navDirs; (void)navXs;
+                for (nav = 0; nav < 4; ++nav) {
+                    XStyleOption tb;
+                    XStyleOption_init(&tb, XStyleCC_ToolButton);
+                    XRect_init(&tb.m_rect,
+                               (nav < 2 ? xs[nav] : xs[nav] - 12), 2,
+                               14, 18);
+                    tb.m_state = bar.m_state;
+                    tb.m_checkState = 1; /* 传箭头方向标记。 */
+                    /* 方向：◀上一年=左(2)、<上一月=左(2)、
+                     * >下一月=右(3)、▶下一年=右(3)。 */
+                    tb.m_progressMin = (nav < 2) ? 2 : 3;
+#if XPALETTE_ON
+                    tb.m_palette = XWidget_palette((XWidget*)cal);
+#endif
+                    XStyle_drawComplexControl(style, XStyleCC_ToolButton,
+                                              &tb, &painter,
+                                              (XWidget*)cal);
+                }
+            }
+            y = 22;
+        } else
+#endif /* XSTYLE_ON */
+        {
+            XRect_init(&r, 0, 0, w, 22);
+            XPainter_fillRect(&painter, &r, mid);
+            XSnprintf(buf, sizeof(buf), "%04d-%02d",
+                     cal->m_shownYear, cal->m_shownMonth);
+            XPainter_drawText(&painter, w / 2 - 24, 15, buf, windowText);
+            /* 导航按钮：◀(上一年) <(上一月) >(下一月) ▶(下一年)。 */
+            XPainter_drawText(&painter, 4, 15, "<", windowText);
+            XPainter_drawText(&painter, 26, 15, ">", windowText);
+            XPainter_drawText(&painter, w - 26, 15, "<", windowText);
+            XPainter_drawText(&painter, w - 10, 15, ">", windowText);
+            y = 22;
+        }
     }
     {
         XFont font = XWidget_font(self);
@@ -167,7 +226,7 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
             int cy = y + row * 24 + 14;
             XDate d;
             XDate_setDate(&d, cal->m_shownYear, cal->m_shownMonth, i + 1);
-            snprintf(buf, sizeof(buf), "%d", i + 1);
+            XSnprintf(buf, sizeof(buf), "%d", i + 1);
             if (XDate_compare(&d, &cal->m_selected) == 0) {
                 XRect bg;
                 XRect_init(&bg, col7 * w / 7, y + row * 24, w / 7, 24);
@@ -268,12 +327,12 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XCalendarWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    memset(&self->m_selected, 0, sizeof(XDate));
+    XMemset(&self->m_selected, 0, sizeof(XDate));
     XDate_setDate(&self->m_selected, 2026, 9, 9);
     self->m_shownYear = 2026;
     self->m_shownMonth = 9;
@@ -304,7 +363,7 @@ XCalendarWidget* XCalendarWidget_create_ex(XMemoryType memory,
 XDate XCalendarWidget_selectedDate(const XCalendarWidget* self)
 {
     XDate d;
-    memset(&d, 0, sizeof(d));
+    XMemset(&d, 0, sizeof(d));
     if (self) d = self->m_selected;
     return d;
 }
@@ -344,7 +403,7 @@ void XCalendarWidget_setCurrentPage(XCalendarWidget* self, int year, int month)
 XDate XCalendarWidget_minimumDate(const XCalendarWidget* self)
 {
     XDate d;
-    memset(&d, 0, sizeof(d));
+    XMemset(&d, 0, sizeof(d));
     if (self && self->m_minSet) d = self->m_min;
     return d;
 }
@@ -366,7 +425,7 @@ void XCalendarWidget_clearMinimumDate(XCalendarWidget* self)
 XDate XCalendarWidget_maximumDate(const XCalendarWidget* self)
 {
     XDate d;
-    memset(&d, 0, sizeof(d));
+    XMemset(&d, 0, sizeof(d));
     if (self && self->m_maxSet) d = self->m_max;
     return d;
 }
@@ -472,7 +531,7 @@ bool XCalendarWidget_isDateSelected(const XCalendarWidget* self) { (void)self; r
 void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show) { (void)self; (void)show; }
 bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self) { (void)self; return false; }
 XDate XCalendarWidget_todayDate(const XCalendarWidget* self)
-{ XDate d; memset(&d,0,sizeof(d)); XDate_setDate(&d,2026,9,9); return d; }
+{ XDate d; XMemset(&d,0,sizeof(d)); XDate_setDate(&d,2026,9,9); return d; }
 void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self, int format) { (void)self; (void)format; }
 void XCalendarWidget_setSelectedDate_2(XCalendarWidget* self) { (void)self; }
 void XCalendarWidget_setDateRange_2(XCalendarWidget* self) { (void)self; }

@@ -148,6 +148,25 @@ XSystemResult XSystem_reboot(XSystemRebootMode mode);
  */
 XSystemResult XSystem_shutdown(void);
 
+/**
+ * @brief 读取进程环境变量值。
+ * @param name 环境变量名；不能为空，空指针或空串返回 NULL。
+ * @return 变量值的借用指针，生存期至下一次环境修改；变量不存在、名称为空
+ *         或当前平台无环境块时返回 NULL。
+ * @note 本接口是 XGui 等上层模块访问环境变量的唯一入口，避免上层直接调用
+ *       getenv 等平台 API；实现位于 Drive（Posix/Windows/unsupported）。
+ *       返回值为借用指针，调用方不得释放。
+ */
+const char* XSystem_environment(const char* name);
+
+/**
+ * @brief 查询进程环境变量是否存在。
+ * @param name 环境变量名；不能为空，空指针或空串返回 false。
+ * @return 存在返回 true；名称为空或当前平台无环境块时返回 false。
+ * @note 与 XSystem_environment 使用同一平台后端，两者语义一致。
+ */
+bool XSystem_hasEnvironment(const char* name);
+
 #ifdef __cplusplus
 }
 #endif

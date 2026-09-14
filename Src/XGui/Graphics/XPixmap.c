@@ -4,6 +4,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPixmap.h"
+
+#include "XAlgorithm.h"
 #include "XImage.h"
 #include "XImageFormat.h"
 #include "XImageReader.h"
@@ -12,8 +14,6 @@
 #include "XClass.h"
 #include "XVtable.h"
 #include "XMemory.h"
-#include <string.h>
-#include <stdlib.h>
 #include <math.h>
 #include <limits.h>
 
@@ -48,9 +48,9 @@ static bool XPixmap_vtableIs(const XPixmap* self, XVtable* expected)
     unsigned char actualBytes[sizeof(void*)];
     unsigned char expectedBytes[sizeof(void*)];
     if (!self || !expected) return false;
-    memcpy(actualBytes, &self->m_class.m_vtable, sizeof(actualBytes));
-    memcpy(expectedBytes, &expected, sizeof(expectedBytes));
-    return memcmp(actualBytes, expectedBytes, sizeof(actualBytes)) == 0;
+    XMemcpy(actualBytes, &self->m_class.m_vtable, sizeof(actualBytes));
+    XMemcpy(expectedBytes, &expected, sizeof(expectedBytes));
+    return XMemcmp(actualBytes, expectedBytes, sizeof(actualBytes)) == 0;
 }
 
 static bool XPixmap_isInitializedObject(const XPixmap* self)
@@ -107,7 +107,7 @@ static XPlatformPixmap* XPlatformPixmap_create(int width, int height)
 {
     XPlatformPixmap* d = (XPlatformPixmap*)XMalloc_System(sizeof(XPlatformPixmap));
     if (!d) return NULL;
-    memset(d, 0, sizeof(XPlatformPixmap));
+    XMemset(d, 0, sizeof(XPlatformPixmap));
     XAtomic_init(d->m_refCount, 1);
     XImage_init_ex(&d->m_image, width, height, XImageFormat_ARGB32_Premultiplied);
     d->m_devicePixelRatio = 1.0f;
@@ -165,7 +165,7 @@ static XPlatformPixmap* XPlatformPixmap_createFromImage(const XImage* image,
             XImage_deinit_base(&converted);
         return NULL;
     }
-    memset(d, 0, sizeof(XPlatformPixmap));
+    XMemset(d, 0, sizeof(XPlatformPixmap));
     XAtomic_init(d->m_refCount, 1);
     XCopy(&d->m_image, source);
     d->m_devicePixelRatio = XImage_devicePixelRatio(source);
@@ -257,7 +257,7 @@ void XPixmap_init(XPixmap* self)
         isHeap = Class_IsHeap(self) != 0;
         XPixmap_releaseData(self);
     }
-    memset(self, 0, sizeof(XPixmap));
+    XMemset(self, 0, sizeof(XPixmap));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XPixmap);
     if (wasInitialized)
@@ -490,7 +490,7 @@ void XPixmap_createHeuristicMask(const XPixmap* self, bool clipTight, XPixmap* o
         XImage_deinit_base(&maskImage);
         return;
     }
-    memset(maskBits, 0xff, (size_t)XImage_sizeInBytes(&maskImage));
+    XMemset(maskBits, 0xff, (size_t)XImage_sizeInBytes(&maskImage));
 
     uint32_t corners[4];
     corners[0] = XImage_pixel(source, 0, 0) & 0x00ffffffu;
@@ -1008,7 +1008,7 @@ void XPixmap_scroll(XPixmap* self, int dx, int dy, const XRect* rect, XRegion* e
             {
                 const uint8_t* s = XImage_constScanLine(&oldImage, (int)srcTop + y) + (size_t)srcLeft * bytes;
                 uint8_t* d = XImage_scanLine(&self->m_data->m_image, (int)movedTop + y) + (size_t)movedLeft * bytes;
-                memcpy(d, s, (size_t)(srcRight - srcLeft) * bytes);
+                XMemcpy(d, s, (size_t)(srcRight - srcLeft) * bytes);
             }
         }
         else

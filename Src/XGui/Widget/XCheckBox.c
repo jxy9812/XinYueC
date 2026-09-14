@@ -26,6 +26,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XCheckBox.h"
+
+#include "XAlgorithm.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
@@ -39,7 +41,6 @@
 #include "XString.h"
 #include "XAlignment.h"
 #include "XVarList.h"
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
 
@@ -561,7 +562,7 @@ XVtable* XCheckBox_class_init(void)
 void XCheckBox_init(XCheckBox* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XCheckBox));
+    XMemset(self, 0, sizeof(XCheckBox));
     XAbstractButton_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XCheckBox);
     /* 对标 Qt 6.8 QCheckBoxPrivate::init：checkable 默认开启。 */
@@ -578,7 +579,7 @@ XCheckBox* XCheckBox_create_ex(XMemoryType memory, XWidget* parent,
 {
     XCheckBox* self = (XCheckBox*)XMemory_malloc(sizeof(XCheckBox), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XCheckBox));
+    XMemset(self, 0, sizeof(XCheckBox));
     XCheckBox_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

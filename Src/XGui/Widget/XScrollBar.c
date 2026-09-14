@@ -15,13 +15,13 @@
 #include "XVarList.h"
 #include "XString.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #if XMENU_ON
 #include "XMenu.h"
 #endif /* XMENU_ON */
 #include "XWidget_Protected.h"
 #include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 
 #if XWIDGET_ON && XABSTRACTSLIDER_ON && XSCROLLBAR_ON
 
@@ -50,6 +50,42 @@ static uint32_t xsb_color(const XScrollBar* self, XPaletteColorRole role)
 
 /** @brief 滑块像素长度：handle 长度 = 内容长 * page/(max-min+page+1)
  *         （对标 QStyle::sliderLength 的比例语义简化）。 */
+#define XSCROLLBAR_BUTTON_W 16
+
+/** @brief 按钮区长度（显示按钮时=按钮宽，否则 0）。 */
+static int xsb_buttonLen(const XScrollBar* self)
+{
+    return (self && self->m_showButtons) ? XSCROLLBAR_BUTTON_W : 0;
+}
+
+/** @brief 滑轨区间原点（按钮之后）。 */
+static int xsb_sliderOrigin(const XScrollBar* self, int contentLen)
+{
+    (void)contentLen;
+    return xsb_buttonLen(self);
+}
+
+/** @brief 滑轨长度（扣除两端按钮）。 */
+static int xsb_sliderLen(const XScrollBar* self, int contentLen)
+{
+    int btn = xsb_buttonLen(self) * 2;
+    int len = contentLen - btn;
+    return len > 0 ? len : 0;
+}
+
+/** @brief 命中起始按钮（坐标位于滑轨起点之前）。 */
+static bool xsb_hitSub(const XScrollBar* self, int pos)
+{
+    return self->m_showButtons && pos < xsb_buttonLen(self);
+}
+
+/** @brief 命中结束按钮。 */
+static bool xsb_hitAdd(const XScrollBar* self, int pos, int contentLen)
+{
+    return self->m_showButtons &&
+           pos >= contentLen - xsb_buttonLen(self);
+}
+
 static int xsb_handleLength(const XScrollBar* self, int contentLen)
 {
     int range = XAbstractSlider_maximum((const XAbstractSlider*)self) -
@@ -146,6 +182,9 @@ static void VX_scrollBar_paintEvent(XWidget* self, XEvent* event)
             (XAbstractSlider*)sb);
         opt.m_sliderSingleStep = XAbstractSlider_singleStep(
             (XAbstractSlider*)sb);
+        opt.m_scrollSubLine = sb->m_showButtons;
+        opt.m_scrollAddLine = sb->m_showButtons;
+        opt.m_scrollActiveSub = sb->m_activeSub;
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette(self);
 #endif
@@ -157,17 +196,53 @@ static void VX_scrollBar_paintEvent(XWidget* self, XEvent* event)
 #endif /* XSTYLE_ON */
     groove = xsb_color(sb, XPaletteColorRole_Window);
     handle = xsb_color(sb, XPaletteColorRole_Mid);
+    if (sb->m_showButtons) {
+        /* 按钮区（原路径：Button 底 + Mid 箭头）。 */
+        uint32_t btnC = xsb_color(sb, XPaletteColorRole_Button);
+        int bw = XSCROLLBAR_BUTTON_W;
+        if (xsb_horizontal(sb)) {
+            XRect b1, b2;
+            XRect_init(&b1, 0, 0, bw, h);
+            XRect_init(&b2, w - bw, 0, bw, h);
+            XPainter_fillRect(&painter, &b1, btnC);
+            XPainter_fillRect(&painter, &b2, btnC);
+            XPainter_setPen(&painter, handle);
+            XPainter_drawLine(&painter, bw / 2 + 3, h / 2,
+                              bw / 2 - 3, h / 2 - 3);
+            XPainter_drawLine(&painter, bw / 2 - 3, h / 2 - 3,
+                              bw / 2 - 3, h / 2 + 3);
+            XPainter_drawLine(&painter, w - bw / 2 - 3, h / 2,
+                              w - bw / 2 + 3, h / 2 - 3);
+            XPainter_drawLine(&painter, w - bw / 2 + 3, h / 2 - 3,
+                              w - bw / 2 + 3, h / 2 + 3);
+        } else {
+            XRect b1, b2;
+            XRect_init(&b1, 0, 0, w, bw);
+            XRect_init(&b2, 0, h - bw, w, bw);
+            XPainter_fillRect(&painter, &b1, btnC);
+            XPainter_fillRect(&painter, &b2, btnC);
+            XPainter_setPen(&painter, handle);
+            XPainter_drawLine(&painter, w / 2, bw / 2 + 3,
+                              w / 2 - 3, bw / 2 - 3);
+            XPainter_drawLine(&painter, w / 2 - 3, bw / 2 - 3,
+                              w / 2 + 3, bw / 2 - 3);
+            XPainter_drawLine(&painter, w / 2, h - bw / 2 - 3,
+                              w / 2 - 3, h - bw / 2 + 3);
+            XPainter_drawLine(&painter, w / 2 - 3, h - bw / 2 + 3,
+                              w / 2 + 3, h - bw / 2 + 3);
+        }
+    }
     if (xsb_horizontal(sb)) {
         XRect_init(&r, 0, (h - 8) / 2, w, 8);
         XPainter_fillRect(&painter, &r, groove);
-        XRect_init(&r, xsb_handlePos(sb, w), (h - 8) / 2,
-                   xsb_handleLength(sb, w), 8);
+        XRect_init(&r, xsb_sliderOrigin(sb, w) + xsb_handlePos(sb, w),
+                   (h - 8) / 2, xsb_handleLength(sb, w), 8);
         XPainter_fillRect(&painter, &r, handle);
     } else {
         XRect_init(&r, (w - 8) / 2, 0, 8, h);
         XPainter_fillRect(&painter, &r, groove);
-        XRect_init(&r, (w - 8) / 2, xsb_handlePos(sb, h),
-                   8, xsb_handleLength(sb, h));
+        XRect_init(&r, (w - 8) / 2, xsb_sliderOrigin(sb, h) +
+                   xsb_handlePos(sb, h), 8, xsb_handleLength(sb, h));
         XPainter_fillRect(&painter, &r, handle);
     }
     XPainter_deinit(&painter);
@@ -193,8 +268,27 @@ static void VX_scrollBar_mousePressEvent(XWidget* self, XEvent* event)
                                     : XWidget_height(self);
     pos = xsb_horizontal(sb) ? XMouseEvent_position(me).x
                              : XMouseEvent_position(me).y;
+    if (sb->m_showButtons && xsb_hitSub(sb, pos)) {
+        sb->m_activeSub = true;
+        sb->m_activeIsAdd = 0;
+        XAbstractSlider_triggerAction((XAbstractSlider*)sb,
+            XAbstractSliderSliderAction_SingleStepSub);
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
+    if (sb->m_showButtons && xsb_hitAdd(sb, pos, contentLen)) {
+        sb->m_activeSub = true;
+        sb->m_activeIsAdd = 1;
+        XAbstractSlider_triggerAction((XAbstractSlider*)sb,
+            XAbstractSliderSliderAction_SingleStepAdd);
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
     handleLen = xsb_handleLength(sb, contentLen);
-    handlePos = xsb_handlePos(sb, contentLen);
+    handlePos = xsb_sliderOrigin(sb, contentLen) +
+                xsb_handlePos(sb, contentLen);
     if (pos >= handlePos && pos < handlePos + handleLen) {
         /* 命中滑块：进入拖动并抓取鼠标——释放时鼠标可能已移出控件，
          * 不抓取会导致 RELEASE 路由给别的控件、拖动状态卡死
@@ -226,7 +320,8 @@ static void VX_scrollBar_mouseMoveEvent(XWidget* self, XEvent* event)
                                     : XWidget_height(self);
     pos = xsb_horizontal(sb) ? XMouseEvent_position(me).x
                              : XMouseEvent_position(me).y;
-    xsb_posToValue(sb, pos, contentLen, &value);
+    xsb_posToValue(sb, pos - xsb_sliderOrigin(sb, contentLen),
+                   xsb_sliderLen(sb, contentLen), &value);
     XAbstractSlider_setValue((XAbstractSlider*)sb, value);
     XEvent_accept(event);
 }
@@ -234,6 +329,11 @@ static void VX_scrollBar_mouseMoveEvent(XWidget* self, XEvent* event)
 /** @brief 鼠标释放：结束拖动。 */
 static void VX_scrollBar_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
+    XScrollBar* sbr = (XScrollBar*)self;
+    if (sbr && (sbr->m_activeSub)) {
+        sbr->m_activeSub = false;
+        XWidget_update(self);
+    }
     XScrollBar* sb = (XScrollBar*)self;
     XMouseEvent* me = (XMouseEvent*)event;
     if (!sb || !event ||
@@ -304,7 +404,7 @@ void XScrollBar_init_2(XScrollBar* self, int orientation,
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractSlider_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XScrollBar);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -316,6 +416,16 @@ void XScrollBar_init_2(XScrollBar* self, int orientation,
     hint.height = 15;
     XWidget_setSizeHint((XWidget*)self, &hint);
 }
+
+void XScrollBar_setShowButtons(XScrollBar* self, bool show)
+{
+    if (!self || self->m_showButtons == show) return;
+    self->m_showButtons = show;
+    XWidget_update((XWidget*)self);
+}
+
+bool XScrollBar_showButtons(const XScrollBar* self)
+{ return self ? self->m_showButtons : false; }
 
 XScrollBar* XScrollBar_create_ex(XMemoryType memory, XWidget* parent,
                                  XWidgetFlags flags)

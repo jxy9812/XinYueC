@@ -1,12 +1,14 @@
-/*
+﻿/*
  * @file       XColorSpace.c
  * @brief      XColorSpace 色彩空间值类型实现
  * @note       本文件只处理不持有堆资源的色彩空间元数据，便于 C99 值复制。
  */
 #include "XColorSpace.h"
+#include "XStringUtils.h"
+#include "XMemory.h"
 
+#include "XAlgorithm.h"
 #include <math.h>
-#include <string.h>
 
 static XPointF xcolorspace_point(float x, float y)
 {
@@ -129,10 +131,10 @@ static void xcolorspace_set_user_description(XColorSpace* self,
     if (!self) return;
     self->m_userDescription[0] = '\0';
     if (!text) return;
-    length = strlen(text);
+    length = XStrlen(text);
     if (length >= sizeof(self->m_userDescription))
         length = sizeof(self->m_userDescription) - 1u;
-    memcpy(self->m_userDescription, text, length);
+    XMemcpy(self->m_userDescription, text, length);
     self->m_userDescription[length] = '\0';
 }
 
@@ -213,17 +215,17 @@ static void xcolorspace_set_description(XColorSpace* self, const char* text)
     if (!self) return;
     self->m_description[0] = '\0';
     if (!text) return;
-    length = strlen(text);
+    length = XStrlen(text);
     if (length >= sizeof(self->m_description))
         length = sizeof(self->m_description) - 1u;
-    memcpy(self->m_description, text, length);
+    XMemcpy(self->m_description, text, length);
     self->m_description[length] = '\0';
 }
 
 XColorSpace XColorSpace_create(void)
 {
     XColorSpace result;
-    memset(&result, 0, sizeof(result));
+    XMemset(&result, 0, sizeof(result));
     result.m_primaries = XColorSpacePrimaries_Custom;
     result.m_transferFunction = XColorSpaceTransfer_Custom;
     result.m_namedColorSpace = XColorSpaceNamed_Unknown;
@@ -468,7 +470,7 @@ void XColorSpace_setPrimariesData(XColorSpace* self,
     if (!self || !xcolorspace_valid_primaries(primaries))
         return;
     if (self->m_primaries == XColorSpacePrimaries_Custom &&
-        memcmp(&self->m_primariesData, primaries,
+        XMemcmp(&self->m_primariesData, primaries,
                sizeof(*primaries)) == 0 &&
         self->m_colorModel == XColorSpaceModel_Rgb)
         return;
@@ -562,7 +564,7 @@ bool XColorSpace_equals(const XColorSpace* left, const XColorSpace* right)
     {
         if (left->m_primaries != right->m_primaries) return false;
     }
-    else if (memcmp(&left->m_primariesData, &right->m_primariesData,
+    else if (XMemcmp(&left->m_primariesData, &right->m_primariesData,
                     sizeof(left->m_primariesData)) != 0)
         return false;
     if (left->m_transferFunction != right->m_transferFunction) return false;

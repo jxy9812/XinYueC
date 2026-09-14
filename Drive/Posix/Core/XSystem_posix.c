@@ -13,6 +13,7 @@
 #if defined(__linux__)
 
 #include <errno.h>
+#include <stdlib.h>
 #include <sys/reboot.h>
 #include <unistd.h>
 
@@ -53,3 +54,15 @@ XSystemResult XSystem_platformShutdown(void)
 }
 
 #endif /* defined(__linux__) */
+
+const char* XSystem_platformEnvironment(const char* name)
+{
+    if (!name || !name[0]) return NULL;
+    return getenv(name);
+}
+
+bool XSystem_platformHasEnvironment(const char* name)
+{
+    if (!name || !name[0]) return false;
+    return getenv(name) != NULL;
+}

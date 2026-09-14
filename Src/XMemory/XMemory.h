@@ -241,6 +241,55 @@ bool XMemory_write_data(uint8_t* write, XByteOrder writeOrder, const uint8_t* in
 * @param varType    输出变量类型
 */
 #define XMemory_Write_Var(in,writeOrder,varName,varType) varType varName; XMemory_write_data(&varName,writeOrder,in,sizeof(varType));
+
+/**
+ * @brief 内存复制（语义同 memcpy；编译器内建实现，与 libc 相同优化）。
+ * @param dest 目标起始地址，须至少有 n 字节可写空间。
+ * @param src 源起始地址，须至少有 n 字节可读；与 dest 不得重叠。
+ * @param n 复制字节数。
+ * @return dest。
+ */
+static inline void* XMemcpy(void* dest, const void* src, size_t n)
+{
+    return __builtin_memcpy(dest, src, n);
+}
+
+/**
+ * @brief 内存填充（语义同 memset；value 取低 8 位）。
+ * @param dest 目标起始地址。
+ * @param value 填充字节值。
+ * @param n 填充字节数。
+ * @return dest。
+ */
+static inline void* XMemset(void* dest, int value, size_t n)
+{
+    return __builtin_memset(dest, value, n);
+}
+
+/**
+ * @brief 内存移动（语义同 memmove，允许源/目标重叠）。
+ * @param dest 目标起始地址。
+ * @param src 源起始地址。
+ * @param n 移动字节数。
+ * @return dest。
+ */
+static inline void* XMemmove(void* dest, const void* src, size_t n)
+{
+    return __builtin_memmove(dest, src, n);
+}
+
+/**
+ * @brief 内存比较（语义同 memcmp，按无符号字节）。
+ * @param lhs 第一块内存起始地址。
+ * @param rhs 第二块内存起始地址。
+ * @param n 比较字节数。
+ * @return lhs 小于/等于/大于 rhs 时分别返回负值/0/正值。
+ */
+static inline int XMemcmp(const void* lhs, const void* rhs, size_t n)
+{
+    return __builtin_memcmp(lhs, rhs, n);
+}
+
 #ifdef __cplusplus
 }
 #endif

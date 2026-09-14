@@ -1,12 +1,14 @@
 ﻿#include "XWizard.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XPainter.h"
 #include "XLabel.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 #include <stdio.h>
 
 #if XWIDGET_ON && XDIALOG_ON && XWIZARD_ON
@@ -38,7 +40,7 @@ XVtable* XWizardPage_class_init(void)
 void XWizardPage_init(XWizardPage* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XWizardPage);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -274,7 +276,7 @@ static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
     if (page) {
         XRect head = { 0, 0, r.width, 32 };
         XPainter_fillRect(&painter, &head, highlight);
-        snprintf(buf, sizeof(buf), "%s", XWizardPage_title(page));
+        XSnprintf(buf, sizeof(buf), "%s", XWizardPage_title(page));
         XPainter_drawText(&painter, 8, 20, buf, 0xFFFFFFFFu);
     }
     /* 底部分隔线。 */
@@ -310,7 +312,7 @@ XVtable* XWizard_class_init(void)
 void XWizard_init(XWizard* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XWizard);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

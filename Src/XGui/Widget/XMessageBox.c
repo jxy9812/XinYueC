@@ -11,9 +11,10 @@
 #include "XEvent.h"
 #include "XCoreApplication.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XDialog.h"
-#include <string.h>
 
 #if XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON
 
@@ -95,7 +96,7 @@ void XMessageBox_init(XMessageBox* self, XWidget* parent,
                       XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XMessageBox);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

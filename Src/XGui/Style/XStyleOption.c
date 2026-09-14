@@ -1,12 +1,13 @@
 ﻿#include "XStyleOption.h"
-#include <string.h>
+#include "XMemory.h"
 
+#include "XAlgorithm.h"
 #if XSTYLE_ON
 
 void XStyleOption_init(XStyleOption* option, int type)
 {
     if (!option) return;
-    memset(option, 0, sizeof(*option));
+    XMemset(option, 0, sizeof(*option));
     option->m_version = 1;
     option->m_type = type;
     option->m_checkState = 0;

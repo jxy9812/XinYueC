@@ -33,6 +33,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XLabel.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XFont.h"
 #include "XMemory.h"
@@ -43,7 +46,6 @@
 #include "XMovie.h"
 #include "XCursor.h"
 #include "XFont8x16.h"
-#include <string.h>
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
@@ -55,7 +57,7 @@ static bool label_faceBitmapInfo(const XFont* font, XFontBitmapInfo* info)
     if (!info)
         return false;
     face = XFont_face(font);
-    memset(&faceInfo, 0, sizeof(faceInfo));
+    XMemset(&faceInfo, 0, sizeof(faceInfo));
     if (!face || !XFontFace_info_base(face, font, &faceInfo) ||
         faceInfo.m_kind != XFontFace_Bitmap)
         return false;
@@ -169,7 +171,7 @@ static int label_pixelSize(const XLabel* self)
     if (!self) return XFONT_DEFAULT_PIXEL_SIZE > 0
                        ? XFONT_DEFAULT_PIXEL_SIZE : XFONT8X16_HEIGHT;
     f = XWidget_font((XWidget*)self);
-    memset(&info, 0, sizeof(info));
+    XMemset(&info, 0, sizeof(info));
     info.m_height = XFONT8X16_HEIGHT;
     info.m_rowBytes = 1;
     (void)label_faceBitmapInfo(&f, &info);
@@ -183,7 +185,7 @@ static XFontBitmapInfo label_bitmapInfo(const XLabel* self)
 {
     XFontBitmapInfo info;
     XFont f;
-    memset(&info, 0, sizeof(info));
+    XMemset(&info, 0, sizeof(info));
     info.m_width = XFONT8X16_WIDTH;
     info.m_height = XFONT8X16_HEIGHT;
     info.m_ascent = XFONT8X16_ASCENT;
@@ -206,7 +208,7 @@ static float label_scale(const XLabel* self)
     float sc;
     if (!self) return 1.0f;
     f = XWidget_font((XWidget*)self);
-    memset(&info, 0, sizeof(info));
+    XMemset(&info, 0, sizeof(info));
     info.m_height = XFONT8X16_HEIGHT;
     info.m_rowBytes = 1;
     info.m_bpp = 1;
@@ -361,11 +363,11 @@ static bool label_mightBeRichText(const char* utf8)
     const char* lt;
     char next;
     if (!utf8 || !*utf8) return false;
-    lt = strchr(utf8, '<');
+    lt = XStrchr(utf8, '<');
     if (!lt) return false;
     next = lt[1];
     if (next == '&' || next == '<' || next == '>') return false;
-    return strchr(lt, '>') != NULL;
+    return XStrchr(lt, '>') != NULL;
 }
 
 /** @brief 标签首词是否等于 name（大小写不敏感，遇空格/斜杠/大于号结束）。 */
@@ -391,7 +393,7 @@ static bool label_tagIsClose(const char* tag, const char* name)
 /** @brief 从 <a ...> 标签文本中提取 href 属性值；无则返回 NULL。 */
 static XString* label_extractHref(const char* tag)
 {
-    const char* h = strstr(tag, "href");
+    const char* h = XStrstr(tag, "href");
     const char* end;
     char quote;
     if (!h) return NULL;
@@ -403,7 +405,7 @@ static XString* label_extractHref(const char* tag)
     quote = *h;
     if (quote != '"' && quote != '\'') return NULL;
     ++h;
-    end = strchr(h, quote);
+    end = XStrchr(h, quote);
     if (!end) return NULL;
     return XString_create_with_length_utf8(h, (size_t)(end - h));
 }
@@ -418,12 +420,12 @@ static int label_decodeEntity(const char* p, XChar* out)
     const char* semi;
     int i, n;
     if (!p || p[0] != '&') return 0;
-    semi = strchr(p, ';');
+    semi = XStrchr(p, ';');
     if (!semi || semi - p > 8) return 0;
     n = (int)(semi - p) - 1; /* 不含 '&' 与 ';' */
     for (i = 0; i < (int)(sizeof(kEntities) / sizeof(kEntities[0])); ++i) {
-        if ((int)strlen(kEntities[i].name) == n &&
-            strncmp(p + 1, kEntities[i].name, (size_t)n) == 0) {
+        if ((int)XStrlen(kEntities[i].name) == n &&
+            XStrncmp(p + 1, kEntities[i].name, (size_t)n) == 0) {
             if (out) *out = kEntities[i].ch;
             return n + 2;
         }
@@ -476,13 +478,13 @@ static void label_parseHtml(XLabel* self, const char* utf8)
     const char* p = utf8;
     while (p && *p) {
         if (*p == '<') {
-            const char* gt = strchr(p + 1, '>');
+            const char* gt = XStrchr(p + 1, '>');
             char tag[64];
             int tlen;
             if (!gt) break; /* 无闭合 '>'：剩余按原文处理 */
             tlen = (int)(gt - (p + 1));
             if (tlen > 63) tlen = 63;
-            memcpy(tag, p + 1, (size_t)tlen);
+            XMemcpy(tag, p + 1, (size_t)tlen);
             tag[tlen] = '\0';
             if (label_tagIs(tag, "br") || label_tagIs(tag, "p") ||
                 label_tagIsClose(tag, "p")) {
@@ -557,9 +559,9 @@ static void label_parseMarkdown(XLabel* self, const char* utf8)
             }
         }
         if (*p == '[') {
-            const char* close = strchr(p + 1, ']');
+            const char* close = XStrchr(p + 1, ']');
             if (close && close[1] == '(') {
-                const char* paren = strchr(close + 2, ')');
+                const char* paren = XStrchr(close + 2, ')');
                 if (paren) {
                     XString* url = XString_create_with_length_utf8(
                         close + 2, (size_t)(paren - close - 2));
@@ -584,9 +586,9 @@ static void label_parseMarkdown(XLabel* self, const char* utf8)
             const char* close;
             if (mlen == 2) {
                 char pair[3] = { *p, *p, '\0' };
-                close = strstr(p + mlen, pair);
+                close = XStrstr(p + mlen, pair);
             } else {
-                close = strchr(p + mlen, *p);
+                close = XStrchr(p + mlen, *p);
             }
             if (close) {
                 /* 剥掉两端强调标记，内容原样保留 */
@@ -731,7 +733,7 @@ static void label_layoutSegment(const char* utf8, int start, int end,
     bool haveWord = false;
     float scale;
     XFontBitmapInfo bitmapInfo;
-    memset(&bitmapInfo, 0, sizeof(bitmapInfo));
+    XMemset(&bitmapInfo, 0, sizeof(bitmapInfo));
     bitmapInfo.m_width = XFONT8X16_WIDTH;
     bitmapInfo.m_height = XFONT8X16_HEIGHT;
     bitmapInfo.m_ascent = XFONT8X16_ASCENT;
@@ -859,7 +861,7 @@ static void label_layoutSegment(const char* utf8, int start, int end,
 static int label_layout(const char* utf8, int availWidth, bool wrap,
                         const XFont* font, LabelLine** outLines)
 {
-    int len = (int)strlen(utf8);
+    int len = (int)XStrlen(utf8);
     int cap = len + 1;
     int count = 0;
     int segStart = 0;
@@ -1087,7 +1089,7 @@ static void label_drawLine(XPainter* painter, const char* utf8,
     int fallbackAdvance;
     XFontBitmapInfo bitmapInfo;
     fnt = XPainter_font(painter);
-    memset(&bitmapInfo, 0, sizeof(bitmapInfo));
+    XMemset(&bitmapInfo, 0, sizeof(bitmapInfo));
     bitmapInfo.m_width = XFONT8X16_WIDTH;
     bitmapInfo.m_height = XFONT8X16_HEIGHT;
     bitmapInfo.m_ascent = XFONT8X16_ASCENT;
@@ -2065,7 +2067,7 @@ void XLabel_init(XLabel* self, XWidget* parent, XWidgetFlags flags)
 {
     XWidgetSizePolicy policy;
     if (!self) return;
-    memset(self, 0, sizeof(XLabel));
+    XMemset(self, 0, sizeof(XLabel));
     XFrame_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XLabel);
     self->m_text = XString_create();
@@ -2100,7 +2102,7 @@ XLabel* XLabel_create_ex(XMemoryType memory, XWidget* parent,
 {
     XLabel* self = (XLabel*)XMemory_malloc(sizeof(XLabel), memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XLabel));
+    XMemset(self, 0, sizeof(XLabel));
     XLabel_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

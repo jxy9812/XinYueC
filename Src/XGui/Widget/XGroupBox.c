@@ -17,6 +17,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XGROUPBOX_ON
 
 #include "XGroupBox.h"
@@ -33,7 +36,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <string.h>
 #include <stdio.h>
 
 /* 标题区上下间距（像素） */
@@ -197,12 +199,12 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
         return;
     }
 
-    snprintf(text, sizeof(text), "%s", xgroupbox_titleText(self));
+    XSnprintf(text, sizeof(text), "%s", xgroupbox_titleText(self));
 
     if (self->m_flat) {
         /* 扁平：标题两侧各一段短边框线（上边线 y=titleH/2）。 */
         int midY = r.y + titleH / 2;
-        int textW = (int)strlen(text) * 8;
+        int textW = (int)XStrlen(text) * 8;
         int textX = xgroupbox_contentX(self, r.x + 6);
         int leftEnd;
         if (self->m_alignment & XAlignment_HCenter)
@@ -274,7 +276,7 @@ void XGroupBox_drawControl(const XGroupBox* self, XPainter* painter)
 
     /* 标题文本：Base 底色矩形挖空边框线 + WindowText 文本。 */
     {
-        int textW = (int)strlen(text) * 8;
+        int textW = (int)XStrlen(text) * 8;
         int textX = xgroupbox_contentX(self, r.x + 6);
         int backX;
         int backW;
@@ -562,7 +564,7 @@ XRect XGroupBox_contentsRect(const XGroupBox* self)
 {
     XRect r;
     int titleH;
-    memset(&r, 0, sizeof(r));
+    XMemset(&r, 0, sizeof(r));
     if (!self) return r;
     r = XWidget_rect((XWidget*)self);
     titleH = xgroupbox_titleHeight(self);

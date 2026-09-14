@@ -23,6 +23,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XRadioButton.h"
+
+#include "XAlgorithm.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XAbstractButton_Protected.h"
@@ -35,7 +37,6 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XAlignment.h"
-#include <string.h>
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
 
@@ -374,7 +375,7 @@ void XRadioButton_init(XRadioButton* self, XWidget* parent,
                        XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XRadioButton));
+    XMemset(self, 0, sizeof(XRadioButton));
     XAbstractButton_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XRadioButton);
     /* 对标 Qt 6.8 QRadioButtonPrivate::init：checkable + autoExclusive
@@ -391,7 +392,7 @@ XRadioButton* XRadioButton_create_ex(XMemoryType memory, XWidget* parent,
     XRadioButton* self = (XRadioButton*)XMemory_malloc(sizeof(XRadioButton),
                                                        memory);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XRadioButton));
+    XMemset(self, 0, sizeof(XRadioButton));
     XRadioButton_init(self, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);

@@ -8,6 +8,9 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
+#include "XStringUtils.h"
+
+#include "XAlgorithm.h"
 #if XWIDGET_ON && XTABBAR_ON
 
 #include "XTabBar.h"
@@ -22,8 +25,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <string.h>
-#include <stdlib.h>
 
 #define XTABBAR_TAB_W 88
 #define XTABBAR_TAB_H 24
@@ -401,14 +402,14 @@ int XTabBar_insertTab(XTabBar* self, int index, const char* text)
     if (index < 0) index = 0;
     if (index > self->m_count) index = self->m_count;
     if (!xtabbar_ensureCapacity(self, self->m_count + 1)) return -1;
-    len = strlen(text) + 1;
+    len = XStrlen(text) + 1;
     {
         char* copy = (char*)XMalloc_System(len);
         if (!copy) return -1;
-        memcpy(copy, text, len);
-        memmove(&self->m_titles[index + 1], &self->m_titles[index],
+        XMemcpy(copy, text, len);
+        XMemmove(&self->m_titles[index + 1], &self->m_titles[index],
                 sizeof(char*) * (size_t)(self->m_count - index));
-        memmove(&self->m_enabled[index + 1], &self->m_enabled[index],
+        XMemmove(&self->m_enabled[index + 1], &self->m_enabled[index],
                 sizeof(bool) * (size_t)(self->m_count - index));
         self->m_titles[index] = copy;
         self->m_enabled[index] = true;
@@ -423,9 +424,9 @@ void XTabBar_removeTab(XTabBar* self, int index)
 {
     if (!self || index < 0 || index >= self->m_count) return;
     if (self->m_titles[index]) XFree_System(self->m_titles[index]);
-    memmove(&self->m_titles[index], &self->m_titles[index + 1],
+    XMemmove(&self->m_titles[index], &self->m_titles[index + 1],
             sizeof(char*) * (size_t)(self->m_count - index - 1));
-    memmove(&self->m_enabled[index], &self->m_enabled[index + 1],
+    XMemmove(&self->m_enabled[index], &self->m_enabled[index + 1],
             sizeof(bool) * (size_t)(self->m_count - index - 1));
     --self->m_count;
     if (self->m_currentIndex >= self->m_count)
@@ -459,11 +460,11 @@ void XTabBar_setTabText(XTabBar* self, int index, const char* text)
 {
     size_t len;
     if (!self || !text || index < 0 || index >= self->m_count) return;
-    len = strlen(text) + 1;
+    len = XStrlen(text) + 1;
     if (self->m_titles[index]) XFree_System(self->m_titles[index]);
     self->m_titles[index] = (char*)XMalloc_System(len);
     if (!self->m_titles[index]) return;
-    memcpy(self->m_titles[index], text, len);
+    XMemcpy(self->m_titles[index], text, len);
     XWidget_update((XWidget*)self);
 }
 

@@ -45,6 +45,11 @@ typedef struct XScrollBar
     XAbstractSlider m_base;      /**< 基类成员；必须是第一个。 */
     bool m_dragging;             /**< 滑块拖动中。 */
     int  m_pressOffset;          /**< 按下点相对滑块原点的偏移像素。 */
+    bool m_showButtons;          /**< 显示两端步进按钮（对标
+                                      QScrollBar 按钮；默认 false=transient
+                                      风格无按钮）。 */
+    bool m_activeSub;            /**< 按下按钮（对标 activeSubControls）。 */
+    int  m_activeIsAdd;          /**< 按下的是 AddLine（1）或 SubLine（0）。 */
 } XScrollBar;
 
 /* ==================== 生命周期 ==================== */

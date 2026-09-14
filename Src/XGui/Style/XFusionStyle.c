@@ -1,8 +1,9 @@
 ﻿#include "XFusionStyle.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XClass.h"
 #include "XPainter.h"
-#include <string.h>
 
 #if XSTYLE_ON
 
@@ -296,7 +297,7 @@ XVtable* XFusionStyle_class_init(void)
 void XFusionStyle_init(XFusionStyle* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWindowsStyle_init(&self->m_base);
     XClassSetVtable(self, XFusionStyle);
 }

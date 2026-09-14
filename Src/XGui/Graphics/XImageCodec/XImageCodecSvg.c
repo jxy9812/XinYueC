@@ -18,16 +18,15 @@
  * @author     XinYueC 团队
  */
 #include "XImageCodec_config.h"
+
+#include "XStringUtils.h"
 #include "XImageCodecInternal.h"
 #include "XMemory.h"
 #include "XBase64.h"
 #include "zlib.h"
-#include <ctype.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_SVG_ON
@@ -64,7 +63,7 @@ static bool svgInflateGzip(const uint8_t* data, size_t size,
         return false;
     buffer = (uint8_t*)XMalloc_Hybrid(capacity);
     if (!buffer) return false;
-    memset(&stream, 0, sizeof(stream));
+    XMemset(&stream, 0, sizeof(stream));
     result = inflateInit2(&stream, MAX_WBITS + 16);
     if (result != Z_OK) {
         XFree_Hybrid(buffer);
@@ -142,11 +141,11 @@ static bool svgInflateGzip(const uint8_t* data, size_t size,
 static int svgNumber(const uint8_t* data, size_t size,
                      const char* key, int fallback)
 {
-    const uint8_t* p = (const uint8_t*)strstr((const char*)data, key);
+    const uint8_t* p = (const uint8_t*)XStrstr((const char*)data, key);
     int value = 0;
     bool found = false;
     if (!p || (size_t)(p - data) >= size) return fallback;
-    p += strlen(key);
+    p += XStrlen(key);
     while ((size_t)(p - data) < size &&
            (*p == '"' || *p == '\'' || *p == '=' || *p == ' '))
         ++p;
@@ -161,11 +160,11 @@ static int svgNumber(const uint8_t* data, size_t size,
 /* SVG fill 属性取值（#RRGGBB 或 #AARRGGBB）。 */
 static uint32_t svgColor(const uint8_t* data, size_t size)
 {
-    const uint8_t* p = (const uint8_t*)strstr((const char*)data, "fill");
+    const uint8_t* p = (const uint8_t*)XStrstr((const char*)data, "fill");
     unsigned value = 0;
     int digits = 0;
     if (!p || (size_t)(p - data) >= size) return 0xff000000u;
-    p = (const uint8_t*)strchr((const char*)p, '#');
+    p = (const uint8_t*)XStrchr((const char*)p, '#');
     if (!p || (size_t)(p - data) >= size) return 0xff000000u;
     ++p;
     while ((size_t)(p - data) < size && digits < 8) {
@@ -194,7 +193,7 @@ static XByteArray* svgBase64Decode(const uint8_t* data, size_t size)
     clean = (uint8_t*)XMalloc_Hybrid(size);
     if (!clean) return NULL;
     for (size_t i = 0; i < size; ++i) {
-        if (!isspace(data[i])) clean[cleanSize++] = data[i];
+        if (!XIsSpace(data[i])) clean[cleanSize++] = data[i];
     }
     if (!cleanSize) {
         XFree_Hybrid(clean);
@@ -312,7 +311,7 @@ static bool svgDecodeXmlText(const uint8_t* data, size_t size,
             XFree_Hybrid(text);
             return false;
         }
-        memcpy(text, data + offset, size - offset);
+        XMemcpy(text, data + offset, size - offset);
         used = size - offset;
     } else {
         size_t pos = offset;
@@ -551,7 +550,7 @@ static const char* svgArenaCopyN(SvgArena* a, const char* src, size_t n, bool* o
 {
     char* out = (char*)svgArenaAlloc(a, n + 1, ok);
     if (!out) return NULL;
-    memcpy(out, src, n);
+    XMemcpy(out, src, n);
     out[n] = '\0';
     return out;
 }
@@ -583,7 +582,7 @@ static const char* svgNodeAttr(const SvgNode* n, const char* name)
     int i;
     if (!n || !name) return NULL;
     for (i = 0; i < n->m_attrCount; ++i) {
-        if (strcmp(n->m_attrs[i].m_name, name) == 0)
+        if (XStrcmp(n->m_attrs[i].m_name, name) == 0)
             return n->m_attrs[i].m_value;
     }
     return NULL;
@@ -596,7 +595,7 @@ static void svgUnescape(char* s)
     char* w = s;
     while (*r) {
         if (*r == '&') {
-            char* semi = strchr(r + 1, ';');
+            char* semi = XStrchr(r + 1, ';');
             int c = -1;
             if (semi && (size_t)(semi - r) <= 10) {
                 if (r[1] == '#') {
@@ -604,14 +603,14 @@ static void svgUnescape(char* s)
                     int base = 10;
                     if (*np == 'x' || *np == 'X') { ++np; base = 16; }
                     char* nend = NULL;
-                    long v = strtol(np, &nend, base);
+                    long v = XStrtol(np, &nend, base);
                     if (nend == semi && v >= 0 && v <= 0x7f) c = (int)v;
-                } else if (semi - r == 3 && memcmp(r, "&lt", 3) == 0) c = '<';
-                else if (semi - r == 3 && memcmp(r, "&gt", 3) == 0) c = '>';
-                else if (semi - r == 4 && memcmp(r, "&amp", 4) == 0) c = '&';
-                else if (semi - r == 5 && memcmp(r, "&quot", 5) == 0) c = '"';
-                else if (semi - r == 5 && memcmp(r, "&apos", 5) == 0) c = '\'';
-                else if (semi - r == 5 && memcmp(r, "&nbsp", 5) == 0) c = ' ';
+                } else if (semi - r == 3 && XMemcmp(r, "&lt", 3) == 0) c = '<';
+                else if (semi - r == 3 && XMemcmp(r, "&gt", 3) == 0) c = '>';
+                else if (semi - r == 4 && XMemcmp(r, "&amp", 4) == 0) c = '&';
+                else if (semi - r == 5 && XMemcmp(r, "&quot", 5) == 0) c = '"';
+                else if (semi - r == 5 && XMemcmp(r, "&apos", 5) == 0) c = '\'';
+                else if (semi - r == 5 && XMemcmp(r, "&nbsp", 5) == 0) c = ' ';
                 if (c >= 0) {
                     *w++ = (char)c;
                     r = semi + 1;
@@ -651,7 +650,7 @@ static bool svgNodeAddAttr(SvgParser* p, SvgNode* n,
             p->m_arena, (size_t)newCap * sizeof(SvgAttr), &ok);
         if (!na) return false;
         if (n->m_attrCount)
-            memcpy(na, n->m_attrs, (size_t)n->m_attrCount * sizeof(SvgAttr));
+            XMemcpy(na, n->m_attrs, (size_t)n->m_attrCount * sizeof(SvgAttr));
         n->m_attrs = na;
         n->m_attrCap = newCap;
     }
@@ -663,15 +662,15 @@ static bool svgNodeAddAttr(SvgParser* p, SvgNode* n,
 
 static const char* svgTextAppend(SvgParser* p, const char* old, const char* add)
 {
-    size_t olen = old ? strlen(old) : 0;
-    size_t alen = strlen(add);
+    size_t olen = old ? XStrlen(old) : 0;
+    size_t alen = XStrlen(add);
     bool ok = true;
     char* out;
     if (alen == 0) return old;
     out = (char*)svgArenaAlloc(p->m_arena, olen + alen + 1, &ok);
     if (!out) return old;
-    if (olen) memcpy(out, old, olen);
-    memcpy(out + olen, add, alen + 1);
+    if (olen) XMemcpy(out, old, olen);
+    XMemcpy(out + olen, add, alen + 1);
     return out;
 }
 
@@ -680,7 +679,7 @@ static SvgNode* svgNewNode(SvgParser* p, const char* name)
     bool ok = true;
     SvgNode* n = (SvgNode*)svgArenaAlloc(p->m_arena, sizeof(SvgNode), &ok);
     if (!n) return NULL;
-    memset(n, 0, sizeof(SvgNode));
+    XMemset(n, 0, sizeof(SvgNode));
     n->m_name = name;
     n->m_parent = p->m_cur;
     if (p->m_cur) {
@@ -750,7 +749,7 @@ static bool svgParseOpen(SvgParser* p)
                 v = (char*)svgArenaAlloc(p->m_arena,
                                          (size_t)(pos - vs) + 1, &ok);
                 if (!v) return false;
-                memcpy(v, vs, (size_t)(pos - vs));
+                XMemcpy(v, vs, (size_t)(pos - vs));
                 v[pos - vs] = '\0';
                 svgUnescape(v);
                 ++pos;
@@ -792,9 +791,9 @@ static SvgNode* svgParseDom(const char* text, size_t size, SvgArena* arena)
     if (!text || !size || size > (size_t)INT_MAX) return NULL;
     buf = (char*)svgArenaAlloc(arena, size + 1, &ok);
     if (!buf) return NULL;
-    memcpy(buf, text, size);
+    XMemcpy(buf, text, size);
     buf[size] = '\0';
-    memset(&p, 0, sizeof(p));
+    XMemset(&p, 0, sizeof(p));
     p.m_pos = buf;
     p.m_end = buf + size;
     p.m_arena = arena;
@@ -807,15 +806,15 @@ static SvgNode* svgParseDom(const char* text, size_t size, SvgArena* arena)
         if (c == '<') {
             if (p.m_end - p.m_pos >= 4 && p.m_pos[1] == '!' &&
                 p.m_pos[2] == '-' && p.m_pos[3] == '-') {
-                char* q = strstr(p.m_pos + 4, "-->");
+                char* q = XStrstr(p.m_pos + 4, "-->");
                 if (!q) return NULL;
                 p.m_pos = q + 3;
             } else if (p.m_end - p.m_pos >= 2 && p.m_pos[1] == '?') {
-                char* q = strstr(p.m_pos + 2, "?>");
+                char* q = XStrstr(p.m_pos + 2, "?>");
                 if (!q) return NULL;
                 p.m_pos = q + 2;
             } else if (p.m_end - p.m_pos >= 2 && p.m_pos[1] == '!') {
-                char* q = strchr(p.m_pos, '>');
+                char* q = XStrchr(p.m_pos, '>');
                 if (!q) return NULL;
                 p.m_pos = q + 1;
             } else if (p.m_end - p.m_pos >= 2 && p.m_pos[1] == '/') {
@@ -826,7 +825,7 @@ static SvgNode* svgParseDom(const char* text, size_t size, SvgArena* arena)
         } else {
             /* 文本内容：只保留在已知可含文本的元素内。 */
             const char* name = p.m_cur ? p.m_cur->m_name : NULL;
-            bool keep = name && strcmp(name, "text") == 0;
+            bool keep = name && XStrcmp(name, "text") == 0;
             char* start = p.m_pos;
             while (p.m_pos < p.m_end && *p.m_pos != '<') ++p.m_pos;
             if (p.m_pos >= p.m_end) return NULL;
@@ -837,7 +836,7 @@ static SvgNode* svgParseDom(const char* text, size_t size, SvgArena* arena)
                 *p.m_pos = '\0';
                 while (*t == ' ' || *t == '\t' || *t == '\r' || *t == '\n')
                     ++t;
-                tend = t + strlen(t);
+                tend = t + XStrlen(t);
                 while (tend > t &&
                        (tend[-1] == ' ' || tend[-1] == '\t' ||
                         tend[-1] == '\r' || tend[-1] == '\n'))
@@ -852,7 +851,7 @@ static SvgNode* svgParseDom(const char* text, size_t size, SvgArena* arena)
             /* 其它元素内的文本直接丢弃；主循环继续处理 '<'。 */
         }
     }
-    if (!p.m_root || strcmp(p.m_root->m_name, "svg") != 0) return NULL;
+    if (!p.m_root || XStrcmp(p.m_root->m_name, "svg") != 0) return NULL;
     return p.m_root;
 }
 
@@ -924,7 +923,7 @@ static bool svgParseLength(const char* s, double* out)
     if (!s || !out) return false;
     while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
     {
-        const char* end = s + strlen(s);
+        const char* end = s + XStrlen(s);
         if (!svgNumberScan(&s, end, &v)) return false;
     }
     *out = v;
@@ -940,7 +939,7 @@ static bool svgParseNumberList(const char* s, double* values,
     const char* end;
     if (!s || !values || !actualCount) return false;
     p = s;
-    end = s + strlen(s);
+    end = s + XStrlen(s);
     for (;;) {
         while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' ||
                            *p == '\n' || *p == ','))
@@ -984,7 +983,7 @@ static bool svgParseColor(const char* s, uint32_t* out)
     if (!s || !out) return false;
     while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
     if (*s == '\0') return false;
-    if (strcmp(s, "none") == 0 || strcmp(s, "transparent") == 0) {
+    if (XStrcmp(s, "none") == 0 || XStrcmp(s, "transparent") == 0) {
         *out = 0x00000000u;
         return true;
     }
@@ -1026,9 +1025,9 @@ static bool svgParseColor(const char* s, uint32_t* out)
         }
         return false;
     }
-    if (strncmp(s, "rgb(", 4) == 0) {
+    if (XStrncmp(s, "rgb(", 4) == 0) {
         const char* p = s + 4;
-        const char* end = s + strlen(s);
+        const char* end = s + XStrlen(s);
         double values[3];
         double c[3];
         int count = 0;
@@ -1055,7 +1054,7 @@ static bool svgParseColor(const char* s, uint32_t* out)
     }
     for (i = 0; i < (int)(sizeof(kSvgNamedColors) /
                           sizeof(kSvgNamedColors[0])); ++i) {
-        if (strcmp(s, kSvgNamedColors[i].m_name) == 0) {
+        if (XStrcmp(s, kSvgNamedColors[i].m_name) == 0) {
             *out = 0xff000000u | kSvgNamedColors[i].m_rgb;
             return true;
         }
@@ -1090,7 +1089,7 @@ typedef struct SvgShape
 
 static void svgShapeInit(SvgShape* s)
 {
-    memset(s, 0, sizeof(SvgShape));
+    XMemset(s, 0, sizeof(SvgShape));
 }
 
 static void svgShapeCleanup(SvgShape* s)
@@ -1099,7 +1098,7 @@ static void svgShapeCleanup(SvgShape* s)
     if (s->m_y) XFree_Hybrid(s->m_y);
     if (s->m_subStart) XFree_Hybrid(s->m_subStart);
     if (s->m_subClosed) XFree_Hybrid(s->m_subClosed);
-    memset(s, 0, sizeof(SvgShape));
+    XMemset(s, 0, sizeof(SvgShape));
 }
 
 static bool svgShapeAppendPoint(SvgShape* s, double x, double y)
@@ -1384,11 +1383,11 @@ static bool svgParsePathData(const char* d, SvgShape* out)
     const char* end;
     int lastCmd = 0;
     bool first = true;
-    memset(&ctx, 0, sizeof(ctx));
+    XMemset(&ctx, 0, sizeof(ctx));
     ctx.m_lastCmd = 0;
     if (!d) return false;
     p = d;
-    end = d + strlen(d);
+    end = d + XStrlen(d);
     while (p < end) {
         int cmd;
         bool rel;
@@ -1397,7 +1396,7 @@ static bool svgParsePathData(const char* d, SvgShape* out)
                            *p == '\n' || *p == ','))
             ++p;
         if (p >= end) break;
-        if (isalpha((unsigned char)*p)) {
+        if (XIsAlpha((unsigned char)*p)) {
             cmd = (unsigned char)*p++;
             lastCmd = cmd;
         } else {
@@ -1632,7 +1631,7 @@ static bool svgParsePoints(const char* pts, SvgShape* shape, bool closed)
     bool firstPair = true;
     if (!pts || !shape) return false;
     p = pts;
-    end = pts + strlen(pts);
+    end = pts + XStrlen(pts);
     for (;;) {
         int n;
         double x, y;
@@ -1713,7 +1712,7 @@ static bool svgParseTransform(const char* s, SvgMatrix* out)
     svgMatrixIdentity(&total);
     if (!s || !out) return false;
     p = s;
-    end = s + strlen(s);
+    end = s + XStrlen(s);
     for (;;) {
         SvgMatrix local;
         char fn[16];
@@ -1723,7 +1722,7 @@ static bool svgParseTransform(const char* s, SvgMatrix* out)
                            *p == '\n' || *p == ','))
             ++p;
         if (p >= end) break;
-        while (p < end && isalpha((unsigned char)*p) && fnLen < 15)
+        while (p < end && XIsAlpha((unsigned char)*p) && fnLen < 15)
             fn[fnLen++] = *p++;
         fn[fnLen] = '\0';
         while (p < end && (*p == ' ' || *p == '\t')) ++p;
@@ -1749,20 +1748,20 @@ static bool svgParseTransform(const char* s, SvgMatrix* out)
             while (p < end && *p != ')') ++p;
             if (p >= end || *p != ')') return false;
             ++p;
-            if (strcmp(fn, "matrix") == 0) {
+            if (XStrcmp(fn, "matrix") == 0) {
                 if (n < 6) return false;
                 local.m_a = vals[0]; local.m_b = vals[1];
                 local.m_c = vals[2]; local.m_d = vals[3];
                 local.m_e = vals[4]; local.m_f = vals[5];
-            } else if (strcmp(fn, "translate") == 0) {
+            } else if (XStrcmp(fn, "translate") == 0) {
                 if (n < 1) return false;
                 local.m_e = vals[0];
                 local.m_f = n >= 2 ? vals[1] : 0.0;
-            } else if (strcmp(fn, "scale") == 0) {
+            } else if (XStrcmp(fn, "scale") == 0) {
                 if (n < 1) return false;
                 local.m_a = vals[0];
                 local.m_d = n >= 2 ? vals[1] : vals[0];
-            } else if (strcmp(fn, "rotate") == 0) {
+            } else if (XStrcmp(fn, "rotate") == 0) {
                 double ang;
                 if (n < 1) return false;
                 ang = vals[0] * M_PI / 180.0;
@@ -1779,12 +1778,12 @@ static bool svgParseTransform(const char* s, SvgMatrix* out)
                     local.m_a = cos(ang); local.m_b = sin(ang);
                     local.m_c = -sin(ang); local.m_d = cos(ang);
                 }
-            } else if (strcmp(fn, "skewX") == 0) {
+            } else if (XStrcmp(fn, "skewX") == 0) {
                 double ang;
                 if (n < 1) return false;
                 ang = vals[0] * M_PI / 180.0;
                 local.m_c = tan(ang);
-            } else if (strcmp(fn, "skewY") == 0) {
+            } else if (XStrcmp(fn, "skewY") == 0) {
                 double ang;
                 if (n < 1) return false;
                 ang = vals[0] * M_PI / 180.0;
@@ -1867,11 +1866,11 @@ static void svgStyleResolve(const SvgNode* n, const SvgStyle* parent,
     *out = *parent;
     if (!n) return;
     v = svgNodeAttr(n, "fill");
-    if (v && strcmp(v, "inherit") != 0) {
-        if (strncmp(v, "url(", 4) == 0) {
+    if (v && XStrcmp(v, "inherit") != 0) {
+        if (XStrncmp(v, "url(", 4) == 0) {
             out->m_fillUrl = v;
             out->m_fillSet = true;
-        } else if (strcmp(v, "none") == 0) {
+        } else if (XStrcmp(v, "none") == 0) {
             out->m_fillSet = false;
         } else if (svgParseColor(v, &c)) {
             out->m_fillColor = c;
@@ -1882,11 +1881,11 @@ static void svgStyleResolve(const SvgNode* n, const SvgStyle* parent,
     v = svgNodeAttr(n, "fill-opacity");
     if (v) svgParseOpacity(v, &out->m_fillOpacity);
     v = svgNodeAttr(n, "stroke");
-    if (v && strcmp(v, "inherit") != 0) {
-        if (strncmp(v, "url(", 4) == 0) {
+    if (v && XStrcmp(v, "inherit") != 0) {
+        if (XStrncmp(v, "url(", 4) == 0) {
             out->m_strokeUrl = v;
             out->m_strokeSet = true;
-        } else if (strcmp(v, "none") == 0) {
+        } else if (XStrcmp(v, "none") == 0) {
             out->m_strokeSet = false;
         } else if (svgParseColor(v, &c)) {
             out->m_strokeColor = c;
@@ -1928,8 +1927,8 @@ static bool svgCollectGradients(SvgRenderer* r, SvgNode* n)
 {
     SvgNode* c;
     if (!n) return true;
-    if ((strcmp(n->m_name, "linearGradient") == 0 ||
-         strcmp(n->m_name, "radialGradient") == 0) &&
+    if ((XStrcmp(n->m_name, "linearGradient") == 0 ||
+         XStrcmp(n->m_name, "radialGradient") == 0) &&
         svgNodeAttr(n, "id")) {
         if (!svgParseGradient(r, n)) return false;
     }
@@ -1947,22 +1946,22 @@ static bool svgParseGradient(SvgRenderer* r, SvgNode* n)
     const char* v;
     if (r->m_gradientCount >= SVG_GRADIENT_MAX) return false;
     g = &r->m_gradients[r->m_gradientCount];
-    memset(g, 0, sizeof(*g));
+    XMemset(g, 0, sizeof(*g));
     g->m_id = svgNodeAttr(n, "id");
-    g->m_kind = strcmp(n->m_name, "radialGradient") == 0 ? 1 : 0;
+    g->m_kind = XStrcmp(n->m_name, "radialGradient") == 0 ? 1 : 0;
     v = svgNodeAttr(n, "href");
     if (!v) v = svgNodeAttr(n, "xlink:href");
-    if (v && strncmp(v, "#", 1) == 0) g->m_href = v + 1;
+    if (v && XStrncmp(v, "#", 1) == 0) g->m_href = v + 1;
     else g->m_href = v;
     v = svgNodeAttr(n, "gradientUnits");
     if (v) {
         g->m_hasUnits = true;
-        g->m_userSpace = strcmp(v, "userSpaceOnUse") == 0;
+        g->m_userSpace = XStrcmp(v, "userSpaceOnUse") == 0;
     }
     v = svgNodeAttr(n, "spreadMethod");
     if (v) {
         g->m_hasSpread = true;
-        if (strcmp(v, "reflect") == 0 || strcmp(v, "repeat") == 0)
+        if (XStrcmp(v, "reflect") == 0 || XStrcmp(v, "repeat") == 0)
             g->m_spread = v;
         else
             g->m_spread = "pad";
@@ -1998,7 +1997,7 @@ static bool svgParseGradient(SvgRenderer* r, SvgNode* n)
     for (c = n->m_first; c; c = c->m_next) {
         uint32_t color = 0xff000000u;
         double offset = 0.0;
-        if (strcmp(c->m_name, "stop") != 0) continue;
+        if (XStrcmp(c->m_name, "stop") != 0) continue;
         if (g->m_stopCount >= SVG_STOPS_MAX) break;
         v = svgNodeAttr(c, "offset");
         if (v) svgParseLength(v, &offset);
@@ -2034,7 +2033,7 @@ static const SvgGradient* svgGradientFind(SvgRenderer* r, const char* id)
     if (!id) return NULL;
     for (i = 0; i < r->m_gradientCount; ++i) {
         if (r->m_gradients[i].m_id &&
-            strcmp(r->m_gradients[i].m_id, id) == 0)
+            XStrcmp(r->m_gradients[i].m_id, id) == 0)
             return &r->m_gradients[i];
     }
     return NULL;
@@ -2044,7 +2043,7 @@ static const SvgGradient* svgGradientFind(SvgRenderer* r, const char* id)
 static const SvgGradient* svgGradientFindUrl(SvgRenderer* r,
                                              const char* url)
 {
-    const char* p = url ? strchr(url, '#') : NULL;
+    const char* p = url ? XStrchr(url, '#') : NULL;
     size_t n;
     int i;
     if (!p) return NULL;
@@ -2052,7 +2051,7 @@ static const SvgGradient* svgGradientFindUrl(SvgRenderer* r,
     n = strcspn(p, ") \t\r\n");
     for (i = 0; i < r->m_gradientCount; ++i) {
         const char* gid = r->m_gradients[i].m_id;
-        if (gid && strlen(gid) == n && strncmp(gid, p, n) == 0)
+        if (gid && XStrlen(gid) == n && XStrncmp(gid, p, n) == 0)
             return &r->m_gradients[i];
     }
     return NULL;
@@ -2062,7 +2061,7 @@ static const SvgGradient* svgGradientFindUrl(SvgRenderer* r,
 static bool svgGradientResolve(SvgRenderer* r, const SvgGradient* base,
                                SvgGradient* out, int depth)
 {
-    if (depth == 0) memset(out, 0, sizeof(*out));
+    if (depth == 0) XMemset(out, 0, sizeof(*out));
     if (depth > SVG_HREF_DEPTH) return false;
     if (base->m_href && depth < SVG_HREF_DEPTH) {
         const SvgGradient* parent = svgGradientFind(r, base->m_href);
@@ -2087,7 +2086,7 @@ static bool svgGradientResolve(SvgRenderer* r, const SvgGradient* base,
     if (base->m_hasTransform) { out->m_transform = base->m_transform;
                                 out->m_hasTransform = true; }
     if (base->m_stopCount) {
-        memcpy(out->m_stops, base->m_stops,
+        XMemcpy(out->m_stops, base->m_stops,
                (size_t)base->m_stopCount * sizeof(SvgGradientStop));
         out->m_stopCount = base->m_stopCount;
     }
@@ -2263,9 +2262,9 @@ static void svgGradientColorAt(SvgRenderer* r, const SvgGradient* grad,
         }
     }
     /* spreadMethod 处理 */
-    if (grad->m_spread && strcmp(grad->m_spread, "reflect") == 0)
+    if (grad->m_spread && XStrcmp(grad->m_spread, "reflect") == 0)
         t = svgGradientReflect(t);
-    else if (grad->m_spread && strcmp(grad->m_spread, "repeat") == 0 &&
+    else if (grad->m_spread && XStrcmp(grad->m_spread, "repeat") == 0 &&
              fabs(t) > 1.0 && t != 0.0)
         t = t - floor(t);
     svgGradientSample(grad, t, out);
@@ -2814,7 +2813,7 @@ static bool svgRenderText(SvgRenderer* r, SvgNode* n,
     }
     if (fontSize <= 0.0) return true;
     step = fontSize / 7.0;
-    len = strlen(text);
+    len = XStrlen(text);
     adv = 0.0;
     for (i = 0; i < len; ++i) {
         unsigned char c = (unsigned char)text[i];
@@ -2822,8 +2821,8 @@ static bool svgRenderText(SvgRenderer* r, SvgNode* n,
     }
     v = svgNodeAttr(n, "text-anchor");
     if (v) {
-        if (strcmp(v, "middle") == 0) x -= adv * 0.5;
-        else if (strcmp(v, "end") == 0) x -= adv;
+        if (XStrcmp(v, "middle") == 0) x -= adv * 0.5;
+        else if (XStrcmp(v, "end") == 0) x -= adv;
     }
     svgShapeInit(&shape);
     for (i = 0; i < len; ++i) {
@@ -2880,31 +2879,31 @@ static bool svgRenderNode(SvgRenderer* r, SvgNode* n,
             svgMatrixMul(&ctm, &ctm, &local);
     }
     name = n->m_name;
-    if (strcmp(name, "g") == 0 || strcmp(name, "a") == 0 ||
-        strcmp(name, "svg") == 0) {
+    if (XStrcmp(name, "g") == 0 || XStrcmp(name, "a") == 0 ||
+        XStrcmp(name, "svg") == 0) {
         for (c = n->m_first; c; c = c->m_next) {
             if (!svgRenderNode(r, c, &st, &ctm)) {
                 --r->m_depth;
                 return false;
             }
         }
-    } else if (strcmp(name, "defs") == 0) {
+    } else if (XStrcmp(name, "defs") == 0) {
         /* 渐变已在预扫描时收集，defs 内容不参与渲染 */
-    } else if (strcmp(name, "rect") == 0) {
+    } else if (XStrcmp(name, "rect") == 0) {
         svgRenderRect(r, n, &st, &ctm);
-    } else if (strcmp(name, "circle") == 0) {
+    } else if (XStrcmp(name, "circle") == 0) {
         svgRenderCircle(r, n, &st, &ctm);
-    } else if (strcmp(name, "ellipse") == 0) {
+    } else if (XStrcmp(name, "ellipse") == 0) {
         svgRenderEllipse(r, n, &st, &ctm);
-    } else if (strcmp(name, "line") == 0) {
+    } else if (XStrcmp(name, "line") == 0) {
         svgRenderLine(r, n, &st, &ctm);
-    } else if (strcmp(name, "polyline") == 0) {
+    } else if (XStrcmp(name, "polyline") == 0) {
         svgRenderPoints(r, n, &st, &ctm, false);
-    } else if (strcmp(name, "polygon") == 0) {
+    } else if (XStrcmp(name, "polygon") == 0) {
         svgRenderPoints(r, n, &st, &ctm, true);
-    } else if (strcmp(name, "path") == 0) {
+    } else if (XStrcmp(name, "path") == 0) {
         svgRenderPath(r, n, &st, &ctm);
-    } else if (strcmp(name, "text") == 0) {
+    } else if (XStrcmp(name, "text") == 0) {
         svgRenderText(r, n, &st, &ctm);
     }
     /* title/desc/metadata/style/image 等元素在此静默跳过 */
@@ -2931,14 +2930,14 @@ static bool svgRootTransform(SvgRenderer* r, SvgNode* root,
     }
     if (!vb) return true;
     if (par) {
-        if (strstr(par, "none")) {
+        if (XStrstr(par, "none")) {
             stretch = true;
         } else {
-            if (strstr(par, "xMin")) ax = 0;
-            else if (strstr(par, "xMax")) ax = 2;
-            if (strstr(par, "YMin")) ay = 0;
-            else if (strstr(par, "YMax")) ay = 2;
-            if (strstr(par, "slice")) slice = true;
+            if (XStrstr(par, "xMin")) ax = 0;
+            else if (XStrstr(par, "xMax")) ax = 2;
+            if (XStrstr(par, "YMin")) ay = 0;
+            else if (XStrstr(par, "YMax")) ay = 2;
+            if (XStrstr(par, "slice")) slice = true;
         }
     }
     {
@@ -2986,7 +2985,7 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
     int okCount = 0;
     SvgNode* c;
     XImage temp;
-    memset(&r, 0, sizeof(r));
+    XMemset(&r, 0, sizeof(r));
     svgArenaInit(&arena);
     root = svgParseDom(text, size, &arena);
     if (!root) {
@@ -3188,7 +3187,7 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
     svgArenaInit(&arena);
     root = svgParseDom(text, textSize, &arena);
     XFree_Hybrid(text);
-    if (!root || strcmp(root->m_name, "svg") != 0) {
+    if (!root || XStrcmp(root->m_name, "svg") != 0) {
         svgArenaCleanup(&arena);
         return false;
     }
@@ -3235,9 +3234,9 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
         return result;
     }
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
-    widthAttr = strstr(text, "width");
-    heightAttr = strstr(text, "height");
-    viewBox = strstr(text, "viewBox");
+    widthAttr = XStrstr(text, "width");
+    heightAttr = XStrstr(text, "height");
+    viewBox = XStrstr(text, "viewBox");
     if (widthAttr &&
         (size_t)(widthAttr - text) < textSize) {
         double v;
@@ -3301,13 +3300,13 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
     if (!svgDecodeXmlText(data, size, &text, &textSize)) return false;
 
     /* 形态 1：内嵌 PNG 位图（编码路径的产物，逐像素还原）。 */
-    p = (const uint8_t*)strstr(text, marker);
+    p = (const uint8_t*)XStrstr(text, marker);
     if (p) {
         const uint8_t* end;
         XByteArray* encoded;
         bool result;
-        p += strlen(marker);
-        end = (const uint8_t*)strchr((const char*)p, '"');
+        p += XStrlen(marker);
+        end = (const uint8_t*)XStrchr((const char*)p, '"');
         if (!end) end = (const uint8_t*)text + textSize;
         encoded = svgBase64Decode(p, (size_t)(end - p));
         result = encoded &&
@@ -3379,7 +3378,7 @@ bool XImageCodecInternal_encodeSvg(const XImage* image, XByteArray* out)
     }
     width = XImage_width(image);
     height = XImage_height(image);
-    length = snprintf(header, sizeof(header),
+    length = XSnprintf(header, sizeof(header),
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\">"
         "<image width=\"%d\" height=\"%d\" href=\"data:image/png;base64,",
         width, height, width, height);

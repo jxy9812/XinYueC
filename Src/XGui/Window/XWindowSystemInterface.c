@@ -14,9 +14,10 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XWindowSystemInterface.h"
+
+#include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XPrintf.h"
-#include <string.h>
 
 #if XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON && XWINDOWEVENT_ON
 

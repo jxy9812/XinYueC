@@ -1,12 +1,13 @@
 ﻿#include "XTextDocument.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XObject.h"
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
-#include <string.h>
+
+#include "XAlgorithm.h"
 #include <stdio.h>
-#include <stdlib.h>
 
 #if XTEXTDOCUMENT_ON
 
@@ -55,7 +56,7 @@ static void VX_td_deinit(XTextDocument* self)
 void XTextDocument_init(XTextDocument* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XObject_init(&self->m_base);
     XClassSetVtable(self, XTextDocument);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -63,7 +64,7 @@ void XTextDocument_init(XTextDocument* self)
     self->m_capacity = 16;
     self->m_blocks = (XTDBlock*)XMalloc_System(
         sizeof(XTDBlock) * (size_t)self->m_capacity);
-    if (self->m_blocks) memset(self->m_blocks, 0,
+    if (self->m_blocks) XMemset(self->m_blocks, 0,
         sizeof(XTDBlock) * (size_t)self->m_capacity);
     self->m_blockCount = 1; /* 至少一个空块。 */
     self->m_undoRedoEnabled = true;
@@ -206,7 +207,7 @@ void XTextDocument_clear(XTextDocument* self)
             XString_delete_base(self->m_blocks[0].blockFormat);
             self->m_blocks[0].blockFormat = NULL;
         }
-        memset(&self->m_blocks[0], 0, sizeof(XTDBlock));
+        XMemset(&self->m_blocks[0], 0, sizeof(XTDBlock));
     }
     self->m_blockCount = 1;
     xtd_changed(self);
@@ -235,7 +236,7 @@ int XTextDocument_characterCount(const XTextDocument* self)
     if (!self) return 0;
     for (i = 0; i < self->m_blockCount; ++i)
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
-            total += (int)strlen(xtd_fragText(&self->m_blocks[i].fragments[j]));
+            total += (int)XStrlen(xtd_fragText(&self->m_blocks[i].fragments[j]));
     return total;
 }
 
@@ -249,7 +250,7 @@ char* XTextDocument_toPlainText(const XTextDocument* self)
     if (!self) return NULL;
     for (i = 0; i < self->m_blockCount; ++i)
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
-            total += (int)strlen(xtd_fragText(&self->m_blocks[i].fragments[j]));
+            total += (int)XStrlen(xtd_fragText(&self->m_blocks[i].fragments[j]));
     total += self->m_blockCount; /* 换行符。 */
     out = (char*)XMalloc_System((size_t)total);
     if (!out) return NULL;
@@ -257,8 +258,8 @@ char* XTextDocument_toPlainText(const XTextDocument* self)
     for (i = 0; i < self->m_blockCount; ++i) {
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j) {
             const char* t = xtd_fragText(&self->m_blocks[i].fragments[j]);
-            size_t len = strlen(t);
-            memcpy(out + o, t, len); o += len;
+            size_t len = XStrlen(t);
+            XMemcpy(out + o, t, len); o += len;
         }
         if (i + 1 < self->m_blockCount) out[o++] = '\n';
     }
@@ -275,8 +276,8 @@ void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
     if (!utf8 || !utf8[0]) return;
     p = utf8;
     while (*p) {
-        const char* nl = strchr(p, '\n');
-        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        const char* nl = XStrchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : XStrlen(p);
         if (blockIdx >= XTD_MAX_BLOCKS) break;
         if (len > 0 && blockIdx < self->m_blockCount) {
             XTDFragment* frag;
@@ -308,54 +309,67 @@ void XTextDocument_setHtml(XTextDocument* self, const char* html)
     XTDCharFormat cur;
     if (!self || !html) return;
     XTextDocument_clear(self);
-    memset(&cur, 0, sizeof(cur));
+    XMemset(&cur, 0, sizeof(cur));
     p = html;
     while (*p && blockIdx < XTD_MAX_BLOCKS) {
         if (*p == '<') {
             ++p;
-            if (strncmp(p, "b>", 2) == 0 || strncmp(p, "strong>", 7) == 0) {
+            if (XStrncmp(p, "b>", 2) == 0 || XStrncmp(p, "strong>", 7) == 0) {
                 cur.bold = true; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "/b>", 3) == 0 || strncmp(p, "/strong>", 8) == 0) {
+            } else if (XStrncmp(p, "/b>", 3) == 0 || XStrncmp(p, "/strong>", 8) == 0) {
                 cur.bold = false; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "i>", 2) == 0 || strncmp(p, "em>", 4) == 0) {
+            } else if (XStrncmp(p, "i>", 2) == 0 || XStrncmp(p, "em>", 4) == 0) {
                 cur.italic = true; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "/i>", 3) == 0 || strncmp(p, "/em>", 4) == 0) {
+            } else if (XStrncmp(p, "/i>", 3) == 0 || XStrncmp(p, "/em>", 4) == 0) {
                 cur.italic = false; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "u>", 2) == 0) {
+            } else if (XStrncmp(p, "u>", 2) == 0) {
                 cur.underline = true; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "/u>", 3) == 0) {
+            } else if (XStrncmp(p, "/u>", 3) == 0) {
                 cur.underline = false; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "s>", 2) == 0 || strncmp(p, "strike>", 7) == 0) {
+            } else if (XStrncmp(p, "s>", 2) == 0 || XStrncmp(p, "strike>", 7) == 0) {
                 cur.strikeOut = true; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "/s>", 3) == 0 || strncmp(p, "/strike>", 8) == 0) {
+            } else if (XStrncmp(p, "/s>", 3) == 0 || XStrncmp(p, "/strike>", 8) == 0) {
                 cur.strikeOut = false; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "br", 2) == 0) {
+            } else if (XStrncmp(p, "br", 2) == 0) {
                 blockIdx++; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "p", 1) == 0 || strncmp(p, "div", 3) == 0) {
+            } else if (XStrncmp(p, "p", 1) == 0 || XStrncmp(p, "div", 3) == 0) {
                 blockIdx++; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "/p>", 3) == 0 || strncmp(p, "/div>", 5) == 0) {
+            } else if (XStrncmp(p, "/p>", 3) == 0 || XStrncmp(p, "/div>", 5) == 0) {
                 while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "h1>", 3) == 0) {
+            } else if (XStrncmp(p, "h1>", 3) == 0) {
                 blockIdx++; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "h2>", 3) == 0 || strncmp(p, "h3>", 3) == 0) {
+            } else if (XStrncmp(p, "h2>", 3) == 0 || XStrncmp(p, "h3>", 3) == 0) {
                 blockIdx++; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "li>", 3) == 0) {
+            } else if (XStrncmp(p, "li>", 3) == 0) {
                 blockIdx++; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "font", 4) == 0) {
-                const char* colorStart = strstr(p, "color=");
+            } else if (XStrncmp(p, "font", 4) == 0) {
+                const char* colorStart = XStrstr(p, "color=");
                 if (colorStart) {
                     colorStart += 7; /* color=" */
                     if (*colorStart == '#') {
+                        /* #RRGGBB 手写解析（对标 sscanf %02x%02x%02x）。 */
                         uint32_t r=0,g=0,b=0;
-                        sscanf(colorStart+1, "%02x%02x%02x", &r,&g,&b);
-                        cur.fgColor = 0xFF000000u | (r<<16) | (g<<8) | b;
+                        const char* hx = colorStart + 1;
+                        int i;
+                        for (i = 0; i < 6 && hx[i]; ++i) {
+                            int d;
+                            if (hx[i] >= '0' && hx[i] <= '9') d = hx[i]-'0';
+                            else if (hx[i] >= 'a' && hx[i] <= 'f') d = hx[i]-'a'+10;
+                            else if (hx[i] >= 'A' && hx[i] <= 'F') d = hx[i]-'A'+10;
+                            else break;
+                            if (i < 2) r = r*16 + (uint32_t)d;
+                            else if (i < 4) g = g*16 + (uint32_t)d;
+                            else b = b*16 + (uint32_t)d;
+                        }
+                        if (i == 6)
+                            cur.fgColor = 0xFF000000u | (r<<16) | (g<<8) | b;
                     }
                 }
                 while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "/font>", 6) == 0) {
+            } else if (XStrncmp(p, "/font>", 6) == 0) {
                 cur.fgColor = 0xFF000000u; while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "a ", 2) == 0) {
-                const char* href = strstr(p, "href=");
+            } else if (XStrncmp(p, "a ", 2) == 0) {
+                const char* href = XStrstr(p, "href=");
                 if (href) { char tmp[256]; const char* q;
                     href += 6;
                     for (q = href; *q && *q != '"' && (size_t)(q - href) < 255; ++q)
@@ -365,14 +379,14 @@ void XTextDocument_setHtml(XTextDocument* self, const char* html)
                     if (cur.anchorHref) XString_assign_utf8(cur.anchorHref, tmp);
                 }
                 while (*p && *p != '>') ++p; if (*p) ++p;
-            } else if (strncmp(p, "/a>", 3) == 0) {
+            } else if (XStrncmp(p, "/a>", 3) == 0) {
                 if (cur.anchorHref) XString_assign_utf8(cur.anchorHref, "");
                 while (*p && *p != '>') ++p; if (*p) ++p;
             } else {
                 while (*p && *p != '>') ++p; if (*p) ++p;
             }
         } else if (*p == '&') {
-            if (strncmp(p, "&amp;", 5) == 0) {
+            if (XStrncmp(p, "&amp;", 5) == 0) {
                 /* 插入 & 字符 */
                 xtd_ensureCapacity(self, blockIdx + 1);
                 if (blockIdx >= self->m_blockCount) self->m_blockCount = blockIdx + 1;
@@ -386,9 +400,9 @@ void XTextDocument_setHtml(XTextDocument* self, const char* html)
                     }
                 }
                 p += 5;
-            } else if (strncmp(p, "&lt;", 4) == 0) { p += 4; }
-            else if (strncmp(p, "&gt;", 4) == 0) { p += 4; }
-            else if (strncmp(p, "&nbsp;", 6) == 0) { p += 6; }
+            } else if (XStrncmp(p, "&lt;", 4) == 0) { p += 4; }
+            else if (XStrncmp(p, "&gt;", 4) == 0) { p += 4; }
+            else if (XStrncmp(p, "&nbsp;", 6) == 0) { p += 6; }
             else ++p;
         } else {
             /* 普通字符：追加到当前块最后一个片段。 */
@@ -402,7 +416,7 @@ void XTextDocument_setHtml(XTextDocument* self, const char* html)
                     /* 格式变化或第一个片段：新建片段。 */
                     if (fi < XTD_MAX_FRAGMENTS_PER_BLOCK) {
                         XTDFragment* nf = &blk->fragments[fi];
-                        memset(nf, 0, sizeof(XTDFragment));
+                        XMemset(nf, 0, sizeof(XTDFragment));
                         xtd_formatAssign(&nf->fmt, &cur);
                         nf->text = XString_create();
                         if (nf->text) XString_append_with_length_utf8(
@@ -434,38 +448,38 @@ char* XTextDocument_toHtml(const XTextDocument* self)
     if (!self) return NULL;
     for (i = 0; i < self->m_blockCount; ++i)
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
-            cap += strlen(xtd_fragText(&self->m_blocks[i].fragments[j])) * 8 + 64;
+            cap += XStrlen(xtd_fragText(&self->m_blocks[i].fragments[j])) * 8 + 64;
     out = (char*)XMalloc_System(cap);
     if (!out) return NULL;
-    o = (size_t)snprintf(out, cap, "<html><body>");
+    o = (size_t)XSnprintf(out, cap, "<html><body>");
     for (i = 0; i < self->m_blockCount; ++i) {
-        o += (size_t)snprintf(out+o, cap-o, "<p>");
+        o += (size_t)XSnprintf(out+o, cap-o, "<p>");
         for (j = 0; j < self->m_blocks[i].fragmentCount; ++j) {
             XTDFragment* f = &self->m_blocks[i].fragments[j];
-            if (f->fmt.bold) o += (size_t)snprintf(out+o, cap-o, "<b>");
-            if (f->fmt.italic) o += (size_t)snprintf(out+o, cap-o, "<i>");
-            if (f->fmt.underline) o += (size_t)snprintf(out+o, cap-o, "<u>");
+            if (f->fmt.bold) o += (size_t)XSnprintf(out+o, cap-o, "<b>");
+            if (f->fmt.italic) o += (size_t)XSnprintf(out+o, cap-o, "<i>");
+            if (f->fmt.underline) o += (size_t)XSnprintf(out+o, cap-o, "<u>");
             if (f->fmt.fgColor != 0xFF000000u)
-                o += (size_t)snprintf(out+o, cap-o,
+                o += (size_t)XSnprintf(out+o, cap-o,
                     "<font color='#[%06x]'>", (unsigned)(f->fmt.fgColor & 0xFFFFFF));
             {
                 const char* t = xtd_fragText(f);
                 while (*t) {
-                    if (*t == '<') o += (size_t)snprintf(out+o, cap-o, "&lt;");
-                    else if (*t == '>') o += (size_t)snprintf(out+o, cap-o, "&gt;");
-                    else if (*t == '&') o += (size_t)snprintf(out+o, cap-o, "&amp;");
-                    else o += (size_t)snprintf(out+o, cap-o, "%c", *t);
+                    if (*t == '<') o += (size_t)XSnprintf(out+o, cap-o, "&lt;");
+                    else if (*t == '>') o += (size_t)XSnprintf(out+o, cap-o, "&gt;");
+                    else if (*t == '&') o += (size_t)XSnprintf(out+o, cap-o, "&amp;");
+                    else o += (size_t)XSnprintf(out+o, cap-o, "%c", *t);
                     ++t;
                 }
             }
-            if (f->fmt.fgColor != 0xFF000000u) o += (size_t)snprintf(out+o, cap-o, "</font>");
-            if (f->fmt.underline) o += (size_t)snprintf(out+o, cap-o, "</u>");
-            if (f->fmt.italic) o += (size_t)snprintf(out+o, cap-o, "</i>");
-            if (f->fmt.bold) o += (size_t)snprintf(out+o, cap-o, "</b>");
+            if (f->fmt.fgColor != 0xFF000000u) o += (size_t)XSnprintf(out+o, cap-o, "</font>");
+            if (f->fmt.underline) o += (size_t)XSnprintf(out+o, cap-o, "</u>");
+            if (f->fmt.italic) o += (size_t)XSnprintf(out+o, cap-o, "</i>");
+            if (f->fmt.bold) o += (size_t)XSnprintf(out+o, cap-o, "</b>");
         }
-        o += (size_t)snprintf(out+o, cap-o, "</p>");
+        o += (size_t)XSnprintf(out+o, cap-o, "</p>");
     }
-    o += (size_t)snprintf(out+o, cap-o, "</body></html>");
+    o += (size_t)XSnprintf(out+o, cap-o, "</body></html>");
     return out;
 }
 
@@ -502,7 +516,7 @@ int XTextDocument_addFragment(XTextDocument* self, int blockIndex,
     blk = &self->m_blocks[blockIndex];
     fi = blk->fragmentCount;
     if (fi >= XTD_MAX_FRAGMENTS_PER_BLOCK) return -1;
-    memset(&blk->fragments[fi], 0, sizeof(XTDFragment));
+    XMemset(&blk->fragments[fi], 0, sizeof(XTDFragment));
     blk->fragments[fi].text = XString_create_utf8(text);
     if (fmt) xtd_formatAssign(&blk->fragments[fi].fmt, fmt);
     blk->fragmentCount = fi + 1;
@@ -538,7 +552,7 @@ void XTextDocument_appendBlock(XTextDocument* self, const XTDCharFormat* fmt)
 {
     xtd_ensureCapacity(self, self->m_blockCount + 1);
     if (self->m_blockCount < XTD_MAX_BLOCKS) {
-        memset(&self->m_blocks[self->m_blockCount], 0, sizeof(XTDBlock));
+        XMemset(&self->m_blocks[self->m_blockCount], 0, sizeof(XTDBlock));
         self->m_blockCount++;
     }
     (void)fmt;

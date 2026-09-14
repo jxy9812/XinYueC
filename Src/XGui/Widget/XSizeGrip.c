@@ -7,12 +7,15 @@
  */
 
 #include "XSizeGrip.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
 
 #if XWIDGET_ON && XSIZEGRIP_ON
 
@@ -40,6 +43,23 @@ static void VX_sizeGrip_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：右下角斜点阵走 CE_SizeGrip。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCE_SizeGrip);
+        XRect_init(&opt.m_rect, 0, 0, w, h);
+        opt.m_state = XWidget_isEnabled(self) ? XStyleState_Enabled : 0;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette(self);
+#endif
+        XStyle_drawControl(style, XStyleCE_SizeGrip, &opt, &painter, self);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
 #if XPALETTE_ON
     {
         XPalette palette = XWidget_palette(self);
@@ -102,7 +122,7 @@ void XSizeGrip_init(XSizeGrip* self, XWidget* parent)
 {
     XSize hint;
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XWidget_init(&self->m_base, parent, 0);
     XClassSetVtable(self, XSizeGrip);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);

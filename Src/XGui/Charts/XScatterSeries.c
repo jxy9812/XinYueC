@@ -1,8 +1,9 @@
 ﻿#include "XScatterSeries.h"
+
+#include "XAlgorithm.h"
 #include "XXYSeries.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -25,7 +26,7 @@ XVtable* XScatterSeries_class_init(void)
 void XScatterSeries_init(XScatterSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XXYSeries_init(&self->m_base);
     XClassSetVtable(self, XScatterSeries);
     XAbstractSeries_setName(&self->m_base.m_base, "scatter");

@@ -1,9 +1,10 @@
 ﻿#include "XPieSeries.h"
+
+#include "XAlgorithm.h"
 #include "XPieSlice.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XClass.h"
-#include <string.h>
 
 #if XCHARTS_ON
 
@@ -84,7 +85,7 @@ XVtable* XPieSeries_class_init(void)
 void XPieSeries_init(XPieSeries* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractSeries_init(&self->m_base);
     XClassSetVtable(self, XPieSeries);
     XAbstractSeries_setName(&self->m_base, "pie");
@@ -251,7 +252,7 @@ bool XPieSeries_take(XPieSeries* self, XPieSlice* slice)
     for (i = 0; i < self->m_count; ++i) {
         if (self->m_slices[i] != slice) continue;
         found = 1;
-        memmove(&self->m_slices[i], &self->m_slices[i + 1],
+        XMemmove(&self->m_slices[i], &self->m_slices[i + 1],
                 (size_t)(self->m_count - i - 1) * sizeof(self->m_slices[0]));
         --self->m_count;
         break;

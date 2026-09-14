@@ -7,13 +7,14 @@
  */
 
 #include "XTextEdit.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XTextDocument.h"
 #include "XGuiConfig.h"
+
+#include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTEDIT_ON
@@ -73,9 +74,9 @@ static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
             }
             XPainter_setPen(&painter, color);
             XPainter_drawText(&painter, xStart, y + 14, f->text, color);
-            xStart += (int)strlen(f->text) * 8;
+            xStart += (int)XStrlen(f->text) * 8;
             if (f->fmt.underline) {
-                XPainter_drawLine(&painter, xStart - (int)strlen(f->text) * 8, y + 16,
+                XPainter_drawLine(&painter, xStart - (int)XStrlen(f->text) * 8, y + 16,
                                   xStart, y + 16);
             }
         }
@@ -115,7 +116,7 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
                            XWidgetFlags flags)
 {
     if (!self) return;
-    memset(self, 0, sizeof(*self));
+    XMemset(self, 0, sizeof(*self));
     XAbstractScrollArea_init(&self->m_base, parent, flags);
     self->m_editor = XPlainTextEdit_create_ex(
         XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, 0);
@@ -168,13 +169,13 @@ void XTextEdit_setHtml(XTextEdit* self, const char* html)
     while (*p && o < sizeof(plain) - 1) {
         if (*p == '<') {
             ++p;
-            if (strncmp(p, "b>", 2) == 0) { bold = true; xte_skipTag(&p); }
-            else if (strncmp(p, "/b>", 3) == 0) { bold = false; xte_skipTag(&p); }
-            else if (strncmp(p, "i>", 2) == 0) { italic = true; xte_skipTag(&p); }
-            else if (strncmp(p, "/i>", 3) == 0) { italic = false; xte_skipTag(&p); }
-            else if (strncmp(p, "u>", 2) == 0) { underline = true; xte_skipTag(&p); }
-            else if (strncmp(p, "/u>", 3) == 0) { underline = false; xte_skipTag(&p); }
-            else if (strncmp(p, "br", 2) == 0 || strncmp(p, "p", 1) == 0) { plain[o++] = '\n'; xte_skipTag(&p); }
+            if (XStrncmp(p, "b>", 2) == 0) { bold = true; xte_skipTag(&p); }
+            else if (XStrncmp(p, "/b>", 3) == 0) { bold = false; xte_skipTag(&p); }
+            else if (XStrncmp(p, "i>", 2) == 0) { italic = true; xte_skipTag(&p); }
+            else if (XStrncmp(p, "/i>", 3) == 0) { italic = false; xte_skipTag(&p); }
+            else if (XStrncmp(p, "u>", 2) == 0) { underline = true; xte_skipTag(&p); }
+            else if (XStrncmp(p, "/u>", 3) == 0) { underline = false; xte_skipTag(&p); }
+            else if (XStrncmp(p, "br", 2) == 0 || XStrncmp(p, "p", 1) == 0) { plain[o++] = '\n'; xte_skipTag(&p); }
             else xte_skipTag(&p);
         } else {
             plain[o++] = *p++;
@@ -212,18 +213,18 @@ char* XTextEdit_toHtml(const XTextEdit* self)
     if (!self) return NULL;
     plain = XPlainTextEdit_toPlainText(self->m_editor);
     if (!plain) return NULL;
-    cap = strlen(plain) * 8 + 128;
+    cap = XStrlen(plain) * 8 + 128;
     html = (char*)XMalloc_System(cap);
     if (!html) { XFree_System(plain); return NULL; }
-    o = (size_t)snprintf(html, cap, "<html><body>");
+    o = (size_t)XSnprintf(html, cap, "<html><body>");
     for (i = 0; plain[i]; ++i) {
-        if (plain[i] == '\n') o += (size_t)snprintf(html + o, cap - o, "<br>");
-        else if (plain[i] == '<') o += (size_t)snprintf(html + o, cap - o, "&lt;");
-        else if (plain[i] == '>') o += (size_t)snprintf(html + o, cap - o, "&gt;");
-        else if (plain[i] == '&') o += (size_t)snprintf(html + o, cap - o, "&amp;");
-        else o += (size_t)snprintf(html + o, cap - o, "%c", plain[i]);
+        if (plain[i] == '\n') o += (size_t)XSnprintf(html + o, cap - o, "<br>");
+        else if (plain[i] == '<') o += (size_t)XSnprintf(html + o, cap - o, "&lt;");
+        else if (plain[i] == '>') o += (size_t)XSnprintf(html + o, cap - o, "&gt;");
+        else if (plain[i] == '&') o += (size_t)XSnprintf(html + o, cap - o, "&amp;");
+        else o += (size_t)XSnprintf(html + o, cap - o, "%c", plain[i]);
     }
-    o += (size_t)snprintf(html + o, cap - o, "</body></html>");
+    o += (size_t)XSnprintf(html + o, cap - o, "</body></html>");
     XFree_System(plain);
     return html;
 }

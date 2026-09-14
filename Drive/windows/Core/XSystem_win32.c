@@ -90,3 +90,23 @@ XSystemResult XSystem_platformShutdown(void)
 }
 
 #endif /* defined(_WIN32) */
+
+#if defined(_WIN32)
+
+const char* XSystem_platformEnvironment(const char* name)
+{
+    static char buffer[1024];
+    DWORD len;
+    if (!name || !name[0]) return NULL;
+    len = GetEnvironmentVariableA(name, buffer, (DWORD)sizeof(buffer));
+    if (len == 0 || len >= sizeof(buffer)) return NULL;
+    return buffer;
+}
+
+bool XSystem_platformHasEnvironment(const char* name)
+{
+    if (!name || !name[0]) return false;
+    return GetEnvironmentVariableA(name, NULL, 0) != 0;
+}
+
+#endif /* defined(_WIN32) */
