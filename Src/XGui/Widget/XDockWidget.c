@@ -1,4 +1,6 @@
 ﻿#include "XDockWidget.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -74,6 +76,29 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
     highlight = 0xFF3080C0u;
     windowText = 0xFF000000u;
 #endif /* XPALETTE_ON */
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        /* Fusion/公共风格接管：标题栏走 CE_DockWidgetTitle
+         * （highlight 标题条 + 标题文本 + 底部分隔线）。 */
+        XStyle* style = XStyle_defaultStyle();
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCE_DockWidgetTitle);
+        XRect_init(&opt.m_rect, 0, 0, w, 20);
+        opt.m_state = XWidget_isEnabled((XWidget*)dock)
+            ? XStyleState_Enabled : 0;
+        opt.m_text = dock->m_title ? XString_toUtf8(dock->m_title) : "";
+        opt.m_closable = (dock->m_features & 0x1) != 0;
+        opt.m_movable = (dock->m_features & 0x2) != 0;
+        opt.m_floatable = (dock->m_features & 0x4) != 0;
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)dock);
+#endif
+        XStyle_drawControl(style, XStyleCE_DockWidgetTitle, &opt, &painter,
+                           (XWidget*)dock);
+        XPainter_deinit(&painter);
+        return;
+    }
+#endif /* XSTYLE_ON */
     XRect_init(&head, 0, 0, w, 20);
     XPainter_fillRect(&painter, &head, highlight);
     XPainter_drawText(&painter, 6, 14,

@@ -1614,6 +1614,38 @@ static void xcs_drawComboBox(XStyle* self, const XStyleOption* option,
     }
 }
 
+
+/** @brief 绘制停靠窗标题（CE_DockWidgetTitle：highlight 标题条 +
+ *         左对齐标题文本 + 底部分隔线）。 */
+static void xcs_drawDockTitle(XStyle* self, const XStyleOption* option,
+                              XPainter* painter, const XWidget* widget)
+{
+    uint32_t highlight;
+    uint32_t highlightedText;
+    uint32_t windowText;
+    XRect r;
+    int textH;
+    (void)widget;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    highlight = xcs_color(option, XPaletteColorRole_Highlight);
+    highlightedText = xcs_color(option, XPaletteColorRole_HighlightedText);
+    windowText = xcs_color(option, XPaletteColorRole_WindowText);
+    if (highlight == 0) highlight = 0xFF2A82DAu;
+    if (highlightedText == 0) highlightedText = 0xFFFFFFFFu;
+    if (windowText == 0) windowText = 0xFF000000u;
+    XPainter_fillRect(painter, &r, highlight);
+    if (option->m_text && option->m_text[0]) {
+        textH = XPainter_textHeight(XPainter_font(painter));
+        if (textH < 14) textH = 14;
+        XPainter_drawText(painter, r.x + 6,
+                          r.y + (r.height - textH) / 2 + textH - 4,
+                          option->m_text, highlightedText);
+    }
+    XPainter_fillRect(painter, &(XRect){r.x, r.y + r.height,
+                                        r.width, 1}, windowText);
+}
+
 static void VXCommonStyle_drawControl(XStyle* self, int ce,
                                       const XStyleOption* option,
                                       XPainter* painter,
@@ -1647,6 +1679,9 @@ static void VXCommonStyle_drawControl(XStyle* self, int ce,
         break;
     case XStyleCE_MenuItem:
         xcs_drawMenuItem(self, option, painter, widget);
+        break;
+    case XStyleCE_DockWidgetTitle:
+        xcs_drawDockTitle(self, option, painter, widget);
         break;
     default:
         break;
