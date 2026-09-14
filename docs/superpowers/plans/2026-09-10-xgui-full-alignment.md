@@ -629,3 +629,39 @@ Run: 主构建 + `./bin/XGuiRegression_Test` + `ctest --test-dir build` + 26 裁
 - Produces: `XWidget_setStyleSheet` 后按规则重绘；样式优先级：
   QSS 命中规则 > 全局默认 style > 控件内置绘制
 - [ ] 接入 + 回归 + demo 截图验证（QSS 覆盖背景色/文字色效果）
+
+
+---
+
+## Phase 5：剩余 36 控件 style 接管（已提交 d7034750 后继续）
+
+> 基线：d7034750 全绿（主构建/软件+GPU 回归/CTest 3/3/26 裁剪）。
+> 已接入 14 控件，本阶段补齐其余控件绘制接管（分 4 批）。
+
+### 批次 G1：按钮家族（RadioButton/ToolButton/CommandLinkButton）
+- XRadioButton：CE_RadioButton（XCommonStyle 已实现单选指示器+标签）
+- XToolButton：CE_ToolButtonLabel + PE_PanelButtonTool（AutoRaise 悬停凸起）
+- XCommandLinkButton：CE_PushButton 变体（图标+两行文本）
+- 验证：回归 + demo
+
+### 批次 G2：输入/容器（FontComboBox/ScrollArea/TextEdit 家族/DockWidget）
+- XFontComboBox：CC_ComboBox（继承 XComboBox 路径）
+- XTextEdit/XPlainTextEdit/XTextBrowser：PE_PanelLineEdit 帧接入（基类
+  XAbstractScrollArea 视口）
+- XDockWidget：CE_DockWidgetTitle
+- 验证：回归 + demo
+
+### 批次 G3：导航/容器（TabWidget/MainWindow/ToolBox/Splitter/SizeGrip/RubberBand）
+- XTabWidget：PE_FrameTabWidget + 页签容器
+- XMainWindow：菜单/工具栏/停靠区组合（子控件已接）
+- XToolBox：CE_ToolBoxTab
+- XSplitter：CE_Splitter；XSizeGrip：CE_SizeGrip；XRubberBand：CE_RubberBand
+- 验证：回归 + demo
+
+### 批次 G4：表格/日历/对话框杂项（TableWidget/CalendarWidget/Dialog 家族/
+- XTableWidget：表头走 CE_HeaderSection/CE_HeaderLabel
+- XCalendarWidget：导航条/日期格
+- XDialog/XDialogButtonBox/XErrorMessage/XMessageBox：按钮已接（基类组合）
+- XStatusBar：已接；XFocusFrame：PE_FrameFocusRect
+- XKeySequenceEdit/XLCDNumber/XStackedWidget/XLabel：评估接入点
+- 验证：回归 + 26 裁剪 + demo + 收尾汇总
