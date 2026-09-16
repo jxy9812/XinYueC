@@ -214,6 +214,25 @@ bool XMemory_write_data(uint8_t* write, XByteOrder writeOrder, const uint8_t* in
 
 	return true;
 }
+void* XMemcpy(void* dest, const void* src, size_t n)
+{
+	return memcpy(dest, src, n);
+}
+void* XMemset(void* dest, int value, size_t n)
+{
+	return memset(dest, value, n);
+}
+
+void* XMemmove(void* dest, const void* src, size_t n)
+{
+	return memmove(dest, src, n);
+}
+
+int XMemcmp(const void* lhs, const void* rhs, size_t n)
+{
+	return memcmp(lhs, rhs, n);
+}
+
 void* XMemory_realloc_isMalloc(void* ptr, size_t size, XMemoryType type)
 {
 	if (ptr == NULL)

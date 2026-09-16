@@ -40,9 +40,9 @@ static void xaxis_emitText(XAbstractAxis* self, size_t signal,
 }
 
 static void xaxis_emitRange(XAbstractAxis* self, size_t signal,
-                            double min, double max)
+                            double mi, double ma)
 {
-    XVarList* args = XVarList_Create(XVar(double, min), XVar(double, max));
+    XVarList* args = XVarList_Create(XVar(double, mi), XVar(double, ma));
     if (!args) return;
     if (self && ((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,

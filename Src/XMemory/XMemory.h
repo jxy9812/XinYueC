@@ -249,11 +249,7 @@ bool XMemory_write_data(uint8_t* write, XByteOrder writeOrder, const uint8_t* in
  * @param n 复制字节数。
  * @return dest。
  */
-static inline void* XMemcpy(void* dest, const void* src, size_t n)
-{
-    return __builtin_memcpy(dest, src, n);
-}
-
+void* XMemcpy(void* dest, const void* src, size_t n);
 /**
  * @brief 内存填充（语义同 memset；value 取低 8 位）。
  * @param dest 目标起始地址。
@@ -261,10 +257,7 @@ static inline void* XMemcpy(void* dest, const void* src, size_t n)
  * @param n 填充字节数。
  * @return dest。
  */
-static inline void* XMemset(void* dest, int value, size_t n)
-{
-    return __builtin_memset(dest, value, n);
-}
+void* XMemset(void* dest, int value, size_t n);
 
 /**
  * @brief 内存移动（语义同 memmove，允许源/目标重叠）。
@@ -273,11 +266,7 @@ static inline void* XMemset(void* dest, int value, size_t n)
  * @param n 移动字节数。
  * @return dest。
  */
-static inline void* XMemmove(void* dest, const void* src, size_t n)
-{
-    return __builtin_memmove(dest, src, n);
-}
-
+void* XMemmove(void* dest, const void* src, size_t n);
 /**
  * @brief 内存比较（语义同 memcmp，按无符号字节）。
  * @param lhs 第一块内存起始地址。
@@ -285,11 +274,7 @@ static inline void* XMemmove(void* dest, const void* src, size_t n)
  * @param n 比较字节数。
  * @return lhs 小于/等于/大于 rhs 时分别返回负值/0/正值。
  */
-static inline int XMemcmp(const void* lhs, const void* rhs, size_t n)
-{
-    return __builtin_memcmp(lhs, rhs, n);
-}
-
+int XMemcmp(const void* lhs, const void* rhs, size_t n);
 #ifdef __cplusplus
 }
 #endif

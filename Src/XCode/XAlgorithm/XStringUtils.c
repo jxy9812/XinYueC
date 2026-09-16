@@ -1106,17 +1106,17 @@ static float pow10_float(int n) {
 
 size_t XStrlen(const char* str)
 {
-	return str ? __builtin_strlen(str) : (size_t)0;
+	return str ? strlen(str) : (size_t)0;
 }
 
 int XStrcmp(const char* lhs, const char* rhs)
 {
-	return __builtin_strcmp(lhs, rhs);
+	return strcmp(lhs, rhs);
 }
 
 int XStrncmp(const char* lhs, const char* rhs, size_t n)
 {
-	return __builtin_strncmp(lhs, rhs, n);
+	return strncmp(lhs, rhs, n);
 }
 
 const char* XStrstr(const char* haystack, const char* needle)
