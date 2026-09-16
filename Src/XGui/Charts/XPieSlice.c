@@ -70,7 +70,7 @@ void XPieSlice_init(XPieSlice* self)
     self->m_labelArmLengthFactor = 0.15;
 }
 
-void XPieSlice_init_2(XPieSlice* self, const char* label, double value)
+void XPieSlice_init_ex(XPieSlice* self, const XString* label, double value)
 {
     if (!self) return;
     XPieSlice_init(self);
@@ -83,15 +83,38 @@ void XPieSlice_init_2(XPieSlice* self, const char* label, double value)
     self->m_labelFontFamily = NULL;
     self->m_labelFontSize = 0;
 }
+void XPieSlice_init_ex_2(XPieSlice* self, const char* label, double value)
+{
+    XString* tmp = NULL;
+    if (label) {
+        tmp = XString_create_utf8(label);
+        if (!tmp) return;
+    }
+    XPieSlice_init_ex(self, tmp, value);
+    if (tmp) XString_delete_base(tmp);
+}
 
-XPieSlice* XPieSlice_create_ex(XMemoryType memory, const char* label,
+XPieSlice* XPieSlice_create_ex(XMemoryType memory, const XString* label,
                                double value)
 {
     XPieSlice* self = (XPieSlice*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
-    XPieSlice_init_2(self, label, value);
+    XPieSlice_init_ex(self, label, value);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
+    return self;
+}
+XPieSlice* XPieSlice_create_ex_2(XMemoryType memory, const char* label,
+                                 double value)
+{
+    XString* tmp = NULL;
+    XPieSlice* self;
+    if (label) {
+        tmp = XString_create_utf8(label);
+        if (!tmp) return NULL;
+    }
+    self = XPieSlice_create_ex(memory, tmp, value);
+    if (tmp) XString_delete_base(tmp);
     return self;
 }
 
@@ -106,6 +129,7 @@ static void VXSlice_deinit(XPieSlice* self)
         XString_delete_base(self->m_labelFontFamily);
         self->m_labelFontFamily = NULL;
     }
+    XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
 static void VXSlice_copy(XPieSlice* self, const XPieSlice* other)
@@ -134,27 +158,49 @@ static void VXSlice_move(XPieSlice* self, XPieSlice* other)
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XPieSlice_init(self);
     if (self->m_label) XString_delete_base(self->m_label);
-    XMemcpy(self, other, sizeof(XPieSlice));
+    if (self->m_labelFontFamily) XString_delete_base(self->m_labelFontFamily);
+    /* 结构体赋值转移全部字段；other 重置为全新默认对象。 */
+    *self = *other;
     XMemset(other, 0, sizeof(XPieSlice));
     XPieSlice_init(other);
+    XClassSetVtable(self, XPieSlice);
 }
 
 /* ==================== 属性 ==================== */
 
-void XPieSlice_setLabel(XPieSlice* self, const char* label)
+void XPieSlice_setLabel(XPieSlice* self, const XString* label)
 {
     if (!self) return;
     if (!self->m_label) self->m_label = XString_create();
-    if (self->m_label)
-        XString_assign_utf8(self->m_label, label ? label : "");
+    if (!self->m_label) return;
+    if (label)
+        XString_assign(self->m_label, label);
+    else
+        XString_assign_utf8(self->m_label, "");
     xpieslice_emit0(self, (size_t)XPieSlice_labelChanged_signal);
 }
-
-const char* XPieSlice_label(const XPieSlice* self)
+void XPieSlice_setLabel_2(XPieSlice* self, const char* label)
 {
+    XString* tmp = NULL;
+    if (label) {
+        tmp = XString_create_utf8(label);
+        if (!tmp) return;
+    }
+    XPieSlice_setLabel(self, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XPieSlice_label(const XPieSlice* self)
+{
+    return (self && self->m_label) ? self->m_label : NULL;
+}
+const char* XPieSlice_label_2(const XPieSlice* self)
+{
+    const XString* s;
     const char* text;
-    if (!self || !self->m_label) return "";
-    text = XString_toUtf8(self->m_label);
+    s = XPieSlice_label(self);
+    if (!s) return "";
+    text = XString_toUtf8(s);
     return text ? text : "";
 }
 
@@ -220,7 +266,10 @@ uint32_t XPieSlice_borderColor(const XPieSlice* self)
 void XPieSlice_setBorderWidth(XPieSlice* self, int width)
 {
     if (!self) return;
-    self->m_borderWidth = width > 0 ? width : 0;
+    width = width > 0 ? width : 0;
+    if (self->m_borderWidth == width) return;
+    self->m_borderWidth = width;
+    xpieslice_emit0(self, (size_t)XPieSlice_borderWidthChanged_signal);
 }
 
 int XPieSlice_borderWidth(const XPieSlice* self)
@@ -238,8 +287,9 @@ uint32_t XPieSlice_color(const XPieSlice* self)
 
 void XPieSlice_setLabelColor(XPieSlice* self, uint32_t color)
 {
-    if (!self) return;
+    if (!self || self->m_labelColor == color) return;
     self->m_labelColor = color;
+    xpieslice_emit0(self, (size_t)XPieSlice_labelColorChanged_signal);
 }
 
 uint32_t XPieSlice_labelColor(const XPieSlice* self)
@@ -372,46 +422,142 @@ void* XPieSlice_angleSpanChanged_signal(XPieSlice* self)
     return (void*)(size_t)XPieSlice_angleSpanChanged_signal;
 }
 
+void* XPieSlice_borderWidthChanged_signal(XPieSlice* self)
+{
+    if (!self) return (void*)(size_t)XPieSlice_borderWidthChanged_signal;
+    xpieslice_emit0(self, (size_t)XPieSlice_borderWidthChanged_signal);
+    return (void*)(size_t)XPieSlice_borderWidthChanged_signal;
+}
+
+void* XPieSlice_penChanged_signal(XPieSlice* self)
+{
+    if (!self) return (void*)(size_t)XPieSlice_penChanged_signal;
+    xpieslice_emit0(self, (size_t)XPieSlice_penChanged_signal);
+    return (void*)(size_t)XPieSlice_penChanged_signal;
+}
+
+void* XPieSlice_brushChanged_signal(XPieSlice* self)
+{
+    if (!self) return (void*)(size_t)XPieSlice_brushChanged_signal;
+    xpieslice_emit0(self, (size_t)XPieSlice_brushChanged_signal);
+    return (void*)(size_t)XPieSlice_brushChanged_signal;
+}
+
+void* XPieSlice_labelBrushChanged_signal(XPieSlice* self)
+{
+    if (!self) return (void*)(size_t)XPieSlice_labelBrushChanged_signal;
+    xpieslice_emit0(self, (size_t)XPieSlice_labelBrushChanged_signal);
+    return (void*)(size_t)XPieSlice_labelBrushChanged_signal;
+}
+
+void* XPieSlice_labelFontChanged_signal(XPieSlice* self)
+{
+    if (!self) return (void*)(size_t)XPieSlice_labelFontChanged_signal;
+    xpieslice_emit0(self, (size_t)XPieSlice_labelFontChanged_signal);
+    return (void*)(size_t)XPieSlice_labelFontChanged_signal;
+}
+
+void* XPieSlice_labelColorChanged_signal(XPieSlice* self)
+{
+    if (!self) return (void*)(size_t)XPieSlice_labelColorChanged_signal;
+    xpieslice_emit0(self, (size_t)XPieSlice_labelColorChanged_signal);
+    return (void*)(size_t)XPieSlice_labelColorChanged_signal;
+}
+
 void XPieSlice_setPen(XPieSlice* self, uint32_t color, double width)
 {
     if (!self) return;
+    if (self->m_penColor == color &&
+        (width <= 0 || self->m_penWidth == width))
+        return;
     self->m_penColor = color;
     if (width > 0) self->m_penWidth = width;
+    xpieslice_emit0(self, (size_t)XPieSlice_penChanged_signal);
+}
+
+void XPieSlice_pen(const XPieSlice* self, uint32_t* color, double* width)
+{
+    if (!self) return;
+    if (color) *color = self->m_penColor;
+    if (width) *width = self->m_penWidth;
 }
 
 uint32_t XPieSlice_penColor(const XPieSlice* self)
 { return self ? self->m_penColor : 0; }
 
 void XPieSlice_setBrush(XPieSlice* self, uint32_t color)
-{ if (self) self->m_brushColor = color; }
+{
+    if (!self || self->m_brushColor == color) return;
+    self->m_brushColor = color;
+    xpieslice_emit0(self, (size_t)XPieSlice_brushChanged_signal);
+}
 
 uint32_t XPieSlice_brushColor(const XPieSlice* self)
 { return self ? self->m_brushColor : 0; }
 
+/** @brief 读取画刷颜色（头文件声明的 Qt 对齐名，转发 brushColor）。 */
+uint32_t XPieSlice_brush(const XPieSlice* self)
+{ return XPieSlice_brushColor(self); }
+
 void XPieSlice_setLabelBrush(XPieSlice* self, uint32_t color)
-{ if (self) self->m_labelBrushColor = color; }
+{
+    if (!self || self->m_labelBrushColor == color) return;
+    self->m_labelBrushColor = color;
+    xpieslice_emit0(self, (size_t)XPieSlice_labelBrushChanged_signal);
+}
 
 uint32_t XPieSlice_labelBrushColor(const XPieSlice* self)
 { return self ? self->m_labelBrushColor : 0; }
 
-void XPieSlice_setLabelFont(XPieSlice* self, const char* family,
+/** @brief 读取标签画刷颜色（头文件声明的 Qt 对齐名，转发 labelBrushColor）。 */
+uint32_t XPieSlice_labelBrush(const XPieSlice* self)
+{ return XPieSlice_labelBrushColor(self); }
+
+void XPieSlice_setLabelFont(XPieSlice* self, const XString* family,
                             int pointSize)
 {
+    bool changed = false;
     if (!self) return;
     if (family) {
         if (!self->m_labelFontFamily)
             self->m_labelFontFamily = XString_create();
-        if (self->m_labelFontFamily)
-            XString_assign_utf8(self->m_labelFontFamily, family);
+        if (!self->m_labelFontFamily) return;
+        if (!XString_equals(self->m_labelFontFamily, family,
+                            XChar_CaseSensitive)) {
+            XString_assign(self->m_labelFontFamily, family);
+            changed = true;
+        }
     }
-    if (pointSize > 0) self->m_labelFontSize = pointSize;
+    if (pointSize > 0 && self->m_labelFontSize != pointSize) {
+        self->m_labelFontSize = pointSize;
+        changed = true;
+    }
+    if (changed)
+        xpieslice_emit0(self, (size_t)XPieSlice_labelFontChanged_signal);
+}
+void XPieSlice_setLabelFont_2(XPieSlice* self, const char* family,
+                              int pointSize)
+{
+    XString* tmp = NULL;
+    if (family) {
+        tmp = XString_create_utf8(family);
+        if (!tmp) return;
+    }
+    XPieSlice_setLabelFont(self, tmp, pointSize);
+    if (tmp) XString_delete_base(tmp);
 }
 
-const char* XPieSlice_labelFontFamily(const XPieSlice* self)
+const XString* XPieSlice_labelFont(const XPieSlice* self)
 {
+    return (self && self->m_labelFontFamily) ? self->m_labelFontFamily : NULL;
+}
+const char* XPieSlice_labelFont_2(const XPieSlice* self)
+{
+    const XString* s;
     const char* text;
-    if (!self || !self->m_labelFontFamily) return "";
-    text = XString_toUtf8(self->m_labelFontFamily);
+    s = XPieSlice_labelFont(self);
+    if (!s) return "";
+    text = XString_toUtf8(s);
     return text ? text : "";
 }
 

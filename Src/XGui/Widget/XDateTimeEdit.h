@@ -57,6 +57,8 @@ typedef struct XDateTimeEdit
     XDateTime m_maximum;       /**< 最大值。 */
     XString* m_displayFormat;  /**< 显示格式串（对象拥有）。 */
     int m_currentSection;      /**< 当前编辑分段。 */
+    bool m_calendarPopup;      /**< 日历弹出（默认 true）。 */
+    int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime）。 */
 } XDateTimeEdit;
 
 XVtable* XDateTimeEdit_class_init(void);
@@ -66,6 +68,28 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
 XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
                                        XWidgetFlags flags);
 #define XDateTimeEdit_deinit_base(self) XAbstractSpinBox_deinit_base((XAbstractSpinBox*)(self))
+/** @brief 设置日历弹出（对标 setCalendarPopup）。
+ * @param self 目标控件。
+ * @param popup true 弹出日历。
+ * @return 无返回值。
+ */
+void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup);
+/** @brief 查询日历弹出。 @param self 目标控件。 @return 弹出返回 true。 */
+bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self);
+/** @brief 设置时区规格（对标 setTimeSpec）。
+ * @param self 目标控件。
+ * @param spec 时区规格码（Qt::TimeSpec：0=LocalTime，1=UTC，2=OffsetFromUTC，3=TimeZone）。
+ * @return 无返回值。
+ */
+void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec);
+/** @brief 查询时区规格。 @param self 目标控件。 @return 规格码。 */
+int XDateTimeEdit_timeSpec(const XDateTimeEdit* self);
+/** @brief 设置当前编辑分段（对标 setCurrentSectionIndex）。
+ * @param self 目标控件。
+ * @param index 分段序号。
+ * @return 无返回值。
+ */
+void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index);
 #define XDateTimeEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
@@ -153,25 +177,4 @@ void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
 
-#ifdef __cplusplus
-}
-#endif
-void XDateTimeEdit_clear(XDateTimeEdit* self);
-void XDateTimeEdit_clearMaximumDate(XDateTimeEdit* self);
-void XDateTimeEdit_clearMaximumTime(XDateTimeEdit* self);
-void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self);
-void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self);
-void XDateTimeEdit_clearMinimumTime(XDateTimeEdit* self);
-void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self);
-bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self);
-void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup);
-void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec);
-int XDateTimeEdit_timeSpec(const XDateTimeEdit* self);
-void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index);
-int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self);
-void XDateTimeEdit_setDateRange(XDateTimeEdit* self, const XDate* min, const XDate* max);
-void XDateTimeEdit_setTimeRange(XDateTimeEdit* self, const XTime* min, const XTime* max);
-void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self, const XDateTime* min, const XDateTime* max);
-void XDateTimeEdit_setDisplayFormat_2(XDateTimeEdit* self, const char* fmt);
-XTime XDateTimeEdit_minimumTime(const XDateTimeEdit* self);
 #endif /* XDATETIMEEDIT_H */

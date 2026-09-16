@@ -22,6 +22,7 @@ extern "C" {
 #include <stddef.h>
 #include "XAbstractScrollArea.h"
 #include "XTableView.h"
+#include "XAbstractItemModel.h"
 #include "XGuiConfig.h"
 
 #if XTABLEWIDGET_ON
@@ -67,6 +68,7 @@ typedef struct XTableWidget
     int m_enteredRow;             /**< 上次发射 cellEntered 的行；-2=尚未进入任何单元格。 */
     int m_enteredColumn;          /**< 上次发射 cellEntered 的列；-2=尚未进入。 */
     bool m_selectionChangedPending; /**< 选区等待发射 itemSelectionChanged。 */
+    XAbstractItemModel* m_model;   /**< 内建数据模型桥（对象拥有；与单元格同步）。 */
 } XTableWidget;
 
 XVtable* XTableWidget_class_init(void);
@@ -114,6 +116,8 @@ XTableWidget* XTableWidget_create_ex(XMemoryType memory, XWidget* parent,
  * @param rows 新行数；负值忽略。
  * @return 无返回值。
  */
+/** @brief 内建数据模型（对标 QTableWidget::model；与单元格同步）。 */
+XAbstractItemModel* XTableWidget_model(const XTableWidget* self);
 void XTableWidget_setRowCount(XTableWidget* self, int rows);
 
 /**

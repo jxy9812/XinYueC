@@ -181,17 +181,13 @@ void XPlatformWindow_requestActivate(XPlatformWindow* self)
  * @return     属性值借用指针；未找到/入参非法返回 NULL。
  */
 static XVariant* xplatformWindow_lookupProperty(const XPlatformWindow* self,
-                                                const char* name)
+                                                const XString* name)
 {
-    XString* key;
     XVariant* value;
     if (!self || !self->m_data || !self->m_data->m_properties || !name)
         return NULL;
-    key = XString_create_utf8(name);
-    if (!key) return NULL;
     value = (XVariant*)XMapBase_value_base((XMapBase*)self->m_data->m_properties,
-                                           key);
-    XString_delete_base((XClass*)key);
+                                           (void*)name);
     return value;
 }
 
@@ -200,15 +196,25 @@ XVariantHashMap* XPlatformWindow_properties(const XPlatformWindow* self)
     return (self && self->m_data) ? self->m_data->m_properties : NULL;
 }
 
-XVariant* XPlatformWindow_property(const XPlatformWindow* self, const char* name)
+XVariant* XPlatformWindow_property(const XPlatformWindow* self, const XString* name)
 {
     return xplatformWindow_lookupProperty(self, name);
 }
+XVariant* XPlatformWindow_property_2(const XPlatformWindow* self, const char* name)
+{
+    XString* tmp = NULL;
+    XVariant* v;
+    if (!name) return NULL;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return NULL;
+    v = XPlatformWindow_property(self, tmp);
+    XString_delete_base(tmp);
+    return v;
+}
 
-void XPlatformWindow_setProperty(XPlatformWindow* self, const char* name,
+void XPlatformWindow_setProperty(XPlatformWindow* self, const XString* name,
                                  const XVariant* value)
 {
-    XString* key;
     if (!self || !self->m_data || !self->m_data->m_properties || !name)
         return;
     /* 值为 NULL 等价于移除属性（与 Qt 语义一致）。 */
@@ -217,22 +223,35 @@ void XPlatformWindow_setProperty(XPlatformWindow* self, const char* name,
         return;
     }
     /* 已存在同名属性时，XHashMap 按内容比较命中并原地更新值。 */
-    key = XString_create_utf8(name);
-    if (!key) return;
-    XHashMap_insert_base(self->m_data->m_properties, key, value);
-    XString_delete_base((XClass*)key);
+    XHashMap_insert_base(self->m_data->m_properties, (void*)name, value);
+}
+void XPlatformWindow_setProperty_2(XPlatformWindow* self, const char* name,
+                                   const XVariant* value)
+{
+    XString* tmp = NULL;
+    if (!name) return;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return;
+    XPlatformWindow_setProperty(self, tmp, value);
+    XString_delete_base(tmp);
 }
 
-bool XPlatformWindow_removeProperty(XPlatformWindow* self, const char* name)
+bool XPlatformWindow_removeProperty(XPlatformWindow* self, const XString* name)
 {
-    XString* key;
-    bool removed;
     if (!self || !self->m_data || !self->m_data->m_properties || !name)
         return false;
-    key = XString_create_utf8(name);
-    if (!key) return false;
-    removed = XMapBase_remove_base((XMapBase*)self->m_data->m_properties, key);
-    XString_delete_base((XClass*)key);
+    return XMapBase_remove_base((XMapBase*)self->m_data->m_properties,
+                                (void*)name);
+}
+bool XPlatformWindow_removeProperty_2(XPlatformWindow* self, const char* name)
+{
+    XString* tmp = NULL;
+    bool removed;
+    if (!name) return false;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return false;
+    removed = XPlatformWindow_removeProperty(self, tmp);
+    XString_delete_base(tmp);
     return removed;
 }
 

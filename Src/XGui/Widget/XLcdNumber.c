@@ -359,7 +359,7 @@ static void VX_lcdNumber_paintEvent(XWidget* self, XEvent* event)
     r.width = XWidget_width(self);
     r.height = XWidget_height(self);
     if (r.width <= 2 || r.height <= 2) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

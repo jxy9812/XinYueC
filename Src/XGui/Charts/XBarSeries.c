@@ -24,7 +24,7 @@ void XBarSeries_init(XBarSeries* self)
     XMemset(self, 0, sizeof(*self));
     XAbstractBarSeries_init(&self->m_base);
     XClassSetVtable(self, XBarSeries);
-    XAbstractSeries_setName(&self->m_base.m_base, "bar");
+    XAbstractSeries_setName_2(&self->m_base.m_base, "bar");
     self->m_base.m_base.m_type = XChartSeriesType_Bar;
 }
 

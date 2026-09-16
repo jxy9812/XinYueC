@@ -52,6 +52,13 @@ XPlatformAccessibility* XPlatformAccessibility_create_ex(XMemoryType memory);
 
 XAccessible* XPlatformAccessibility_root(const XPlatformAccessibility* self);
 bool XPlatformAccessibility_isActive(const XPlatformAccessibility* self);
+/** @brief 启用/禁用辅助功能（对标 setActive）。 */
+void XPlatformAccessibility_setActive(const XPlatformAccessibility* self,
+                                      bool active);
+/** @brief 初始化辅助功能后端（对标 initialize；幂等）。 */
+void XPlatformAccessibility_initialize(const XPlatformAccessibility* self);
+/** @brief 清理辅助功能后端（对标 cleanup；幂等）。 */
+void XPlatformAccessibility_cleanup(const XPlatformAccessibility* self);
 void XPlatformAccessibility_notify(XPlatformAccessibility* self,
                                    XAccessibleEvent event,
                                    XAccessible* accessible);

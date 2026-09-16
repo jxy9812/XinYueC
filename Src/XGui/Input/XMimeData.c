@@ -25,6 +25,7 @@ struct XMimeDataPrivate
     XColor         m_color;      /**< 颜色数据（application/x-color）。 */
     bool           m_hasColor;   /**< 是否已登记颜色。 */
     XImage*        m_image;      /**< 图像（application/x-qt-image）。 */
+    XStringList*   m_urls;       /**< URL 列表（text/uri-list 行；拥有）。 */
     XVector*       m_custom;     /**< XMimeCustomEntry* 列表，自定义格式。 */
 };
 
@@ -37,6 +38,7 @@ static void mime_clearPrivate(XMimeDataPrivate* d)
     if (d->m_text)  { XString_delete_base(d->m_text);  d->m_text  = NULL; }
     if (d->m_html)  { XString_delete_base(d->m_html);  d->m_html  = NULL; }
     if (d->m_image) { XImage_delete_base((XClass*)d->m_image); d->m_image = NULL; }
+    if (d->m_urls)  { XStringList_delete_base(d->m_urls); d->m_urls = NULL; }
     d->m_hasColor = false;
     XColor_init_rgb(&d->m_color, 0, 0, 0, 0);
     if (d->m_custom) {
@@ -85,6 +87,8 @@ static void VXMimeData_copy(XMimeData* self, const XMimeData* other)
         if (target->m_image)
             XCopy(target->m_image, source->m_image);
     }
+    if (source->m_urls)
+        target->m_urls = XStringList_create_copy(source->m_urls);
     if (source->m_custom) {
         size_t n = XVector_size_base((const XContainer*)source->m_custom);
         for (i = 0; i < n; ++i) {
@@ -253,6 +257,40 @@ XStringList* XMimeData_formats(const XMimeData* self)
             XStringList_push_back_base(list, entry->m_format);
     }
     return list;
+}
+
+bool XMimeData_hasUrls(const XMimeData* self)
+{
+    return self && self->m_data && self->m_data->m_urls &&
+           XStringList_size_base((const XStringList*)self->m_data->m_urls) > 0;
+}
+
+XStringList* XMimeData_urls(const XMimeData* self)
+{
+    XStringList* list = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!self || !self->m_data || !self->m_data->m_urls || !list)
+        return list;
+    {
+        int64_t i;
+        int64_t n = XStringList_size_base(
+            (const XStringList*)self->m_data->m_urls);
+        for (i = 0; i < n; ++i) {
+            const XString* s = XStringList_at_base(
+                (const XStringList*)self->m_data->m_urls, i);
+            if (s)
+                XStringList_push_back_base(list, (XString*)s);
+        }
+    }
+    return list;
+}
+
+void XMimeData_setUrls(XMimeData* self, const XStringList* urls)
+{
+    XMimeDataPrivate* d;
+    if (!self || !(d = self->m_data)) return;
+    if (d->m_urls)
+        XStringList_delete_base(d->m_urls);
+    d->m_urls = urls ? XStringList_create_copy(urls) : NULL;
 }
 
 bool XMimeData_hasText(const XMimeData* self)

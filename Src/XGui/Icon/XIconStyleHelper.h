@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XIconStyleHelper.h
  * @brief      XIcon 样式态生成内部辅助（对标 Qt 6.8 QApplicationPrivate::
  *             applyQIconStyleHelper / QCommonStyle::generatedIconPixmap）。

@@ -29,7 +29,7 @@ void XLineSeries_init(XLineSeries* self)
     XMemset(self, 0, sizeof(*self));
     XXYSeries_init(&self->m_base);
     XClassSetVtable(self, XLineSeries);
-    XAbstractSeries_setName(&self->m_base.m_base, "line");
+    XAbstractSeries_setName_2(&self->m_base.m_base, "line");
     self->m_base.m_base.m_type = XChartSeriesType_Line;
 }
 

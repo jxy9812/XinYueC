@@ -35,7 +35,7 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
     int w;
     if (!sw || !event) return;
     w = XWidget_width(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -78,6 +78,10 @@ static void VX_mdiSubWindow_deinit(XMdiSubWindow* self)
         XString_delete_base(self->m_title);
         self->m_title = NULL;
     }
+    if (self->m_systemMenu) {
+        XClass_delete_base((XClass*)self->m_systemMenu);
+        self->m_systemMenu = NULL;
+    }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -101,6 +105,9 @@ void XMdiSubWindow_init(XMdiSubWindow* self, XWidget* parent,
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     XWidget_resize(self, 200, 150);
+    /* 默认值与 Qt QMdiSubWindowPrivate 一致。 */
+    self->m_keyboardSingleStep = 5;
+    self->m_keyboardPageStep = 20;
 }
 
 XMdiSubWindow* XMdiSubWindow_create_ex(XMemoryType memory, XWidget* parent,
@@ -168,6 +175,32 @@ static void xmdi_emitActivated(XMdiArea* self, XMdiSubWindow* window)
     }
 }
 
+static void xmdi_emitAboutToActivate(XMdiSubWindow* sw)
+{
+    if (!sw) return;
+    if (((XObject*)sw)->m_signalSlot) {
+        XObject_emitSignal((XObject*)sw,
+            (size_t)XMdiSubWindow_aboutToActivate_signal,
+            NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    }
+}
+
+static void xmdi_emitStateChanged(XMdiSubWindow* sw,
+                                  int oldState, int newState)
+{
+    XVarList* args;
+    if (!sw) return;
+    args = XVarList_Create(XVar(int, oldState), XVar(int, newState));
+    if (!args) return;
+    if (((XObject*)sw)->m_signalSlot) {
+        XObject_emitSignal((XObject*)sw,
+            (size_t)XMdiSubWindow_windowStateChanged_signal, args,
+            NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
 static void VX_mdiArea_resizeEvent(XWidget* self, XEvent* event)
 {
     (void)event;
@@ -213,6 +246,14 @@ void XMdiArea_init(XMdiArea* self, XWidget* parent, XWidgetFlags flags)
     self->m_subWindows = XVector_Create(XMdiSubWindow*);
     self->m_active = NULL;
     self->m_viewMode = (int)XMdiAreaViewMode_SubWindowView;
+    self->m_background = 0;
+    self->m_tabPosition = 0;
+    self->m_tabShape = 0;
+    self->m_tabsMovable = false;
+    self->m_tabsClosable = false;
+    self->m_activationOrder = (int)XMdiAreaWindowOrder_CreationOrder;
+    self->m_options = 0;
+    self->m_documentMode = false;
 }
 
 XMdiArea* XMdiArea_create_ex(XMemoryType memory, XWidget* parent,
@@ -271,7 +312,14 @@ XMdiSubWindow* XMdiArea_activeSubWindow(const XMdiArea* self)
 void XMdiArea_setActiveSubWindow(XMdiArea* self, XMdiSubWindow* window)
 {
     if (!self || !window) return;
+    if (self->m_active == window) return;
+    if (self->m_active) {
+        xmdi_emitStateChanged(self->m_active, self->m_active->m_state, 0);
+        self->m_active->m_state = 0;
+    }
+    xmdi_emitAboutToActivate(window);
     self->m_active = window;
+    xmdi_emitStateChanged(window, 0, window->m_state);
     xmdi_emitActivated(self, window);
 }
 
@@ -371,42 +419,290 @@ void* XMdiArea_subWindowActivated_signal(XMdiArea* self,
     return (void*)(size_t)XMdiArea_subWindowActivated_signal;
 }
 
-void XMdiArea_activateNextSubWindow(XMdiArea* self)
-{ int idx; if(!self||!self->m_subWindows) return; idx=(int)XVector_size_base((const XContainer*)self->m_subWindows); if(idx<=0) return; XMdiArea_setActiveSubWindow(self, *(XMdiSubWindow**)XVector_at_base(self->m_subWindows, (self->m_active?(idx-1):0)%idx)); }
-void XMdiArea_activatePreviousSubWindow(XMdiArea* self)
-{ int idx; if(!self||!self->m_subWindows) return; idx=(int)XVector_size_base((const XContainer*)self->m_subWindows); if(idx<=0) return; XMdiArea_setActiveSubWindow(self, *(XMdiSubWindow**)XVector_at_base(self->m_subWindows, (idx-1)%idx)); }
+void* XMdiSubWindow_aboutToActivate_signal(XMdiSubWindow* self)
+{
+    (void)self;
+    return (void*)(size_t)XMdiSubWindow_aboutToActivate_signal;
+}
+void* XMdiSubWindow_windowStateChanged_signal(XMdiSubWindow* self,
+                                              int oldState, int newState)
+{
+    (void)self; (void)oldState; (void)newState;
+    return (void*)(size_t)XMdiSubWindow_windowStateChanged_signal;
+}
+
+/* ==================== Task 2.7：MdiArea 补充 API ==================== */
+
+XMdiSubWindow* XMdiArea_currentSubWindow(const XMdiArea* self)
+{ return self ? self->m_active : NULL; }
+
+void XMdiArea_setBackground(XMdiArea* self, uint32_t color)
+{
+    if (self) {
+        self->m_background = color;
+        XWidget_update((XWidget*)self);
+    }
+}
+uint32_t XMdiArea_background(const XMdiArea* self)
+{ return self ? self->m_background : 0; }
+
+void XMdiArea_setTabPosition(XMdiArea* self, int position)
+{ if (self) self->m_tabPosition = position; }
+int XMdiArea_tabPosition(const XMdiArea* self)
+{ return self ? self->m_tabPosition : 0; }
+
+void XMdiArea_setTabsMovable(XMdiArea* self, bool movable)
+{ if (self) self->m_tabsMovable = movable; }
+bool XMdiArea_tabsMovable(const XMdiArea* self)
+{ return self ? self->m_tabsMovable : false; }
+
+void XMdiArea_setTabsClosable(XMdiArea* self, bool closable)
+{ if (self) self->m_tabsClosable = closable; }
+bool XMdiArea_tabsClosable(const XMdiArea* self)
+{ return self ? self->m_tabsClosable : false; }
+
+void XMdiArea_setActivationOrder(XMdiArea* self, int order)
+{ if (self) self->m_activationOrder = order; }
+int XMdiArea_activationOrder(const XMdiArea* self)
+{ return self ? self->m_activationOrder : 0; }
+
+/* ==================== Task 2.7：XMdiSubWindow 补充 API ==================== */
+
+void XMdiSubWindow_setOption(XMdiSubWindow* self, int option, bool on)
+{
+    if (!self) return;
+    if (on) self->m_options |= option;
+    else self->m_options &= ~option;
+}
+
+bool XMdiSubWindow_testOption(const XMdiSubWindow* self, int option)
+{
+    return self ? (self->m_options & option) != 0 : false;
+}
+
+void XMdiSubWindow_setKeyboardSingleStep(XMdiSubWindow* self, int step)
+{ if (self && step > 0) self->m_keyboardSingleStep = step; }
+
+int XMdiSubWindow_keyboardSingleStep(const XMdiSubWindow* self)
+{ return self ? self->m_keyboardSingleStep : 0; }
+
+void XMdiSubWindow_setKeyboardPageStep(XMdiSubWindow* self, int step)
+{ if (self && step > 0) self->m_keyboardPageStep = step; }
+
+int XMdiSubWindow_keyboardPageStep(const XMdiSubWindow* self)
+{ return self ? self->m_keyboardPageStep : 0; }
+
+bool XMdiSubWindow_isShaded(const XMdiSubWindow* self)
+{ return self ? self->m_shaded : false; }
+
+void XMdiSubWindow_showShaded(XMdiSubWindow* self)
+{
+    int oldState;
+    if (!self) return;
+    oldState = self->m_state;
+    self->m_shaded = !self->m_shaded;
+    if (self->m_shaded) {
+        /* 折叠：仅保留标题条高度。 */
+        self->m_state |= XMdiSubWindowState_Shaded;
+        XWidget_resize((XWidget*)self, XWidget_width((XWidget*)self), 20);
+    } else {
+        self->m_state &= ~XMdiSubWindowState_Shaded;
+        XWidget_resize((XWidget*)self, XWidget_width((XWidget*)self), 150);
+    }
+    XWidget_update((XWidget*)self);
+    if (oldState != self->m_state)
+        xmdi_emitStateChanged(self, oldState, self->m_state);
+}
+
+void XMdiSubWindow_showSystemMenu(XMdiSubWindow* self)
+{
+    XPoint pos;
+    if (!self || !self->m_systemMenu) return;
+    XPoint_init(&pos, 4, XWidget_height((XWidget*)self) > 20 ? 18 : 0);
+    XMenu_popup(self->m_systemMenu, &pos);
+}
+
+void XMdiSubWindow_setSystemMenu(XMdiSubWindow* self, XMenu* systemMenu)
+{
+    if (!self) return;
+    if (self->m_systemMenu == systemMenu) return;
+    if (self->m_systemMenu)
+        XClass_delete_base((XClass*)self->m_systemMenu);
+    self->m_systemMenu = systemMenu;
+}
+
+XMenu* XMdiSubWindow_systemMenu(const XMdiSubWindow* self)
+{ return self ? self->m_systemMenu : NULL; }
+
+XMdiArea* XMdiSubWindow_mdiArea(const XMdiSubWindow* self)
+{
+    XWidget* parent;
+    if (!self) return NULL;
+    parent = XWidget_parentWidget((XWidget*)self);
+    return (XMdiArea*)parent;
+}
+
+XSize XMdiSubWindow_sizeHint(const XMdiSubWindow* self)
+{
+    XSize size;
+    int w = 200;
+    int h = 150;
+    if (!self) {
+        XSize_init(&size, w, h);
+        return size;
+    }
+    if (self->m_widget) {
+        XSize ws = XWidget_sizeHint(self->m_widget);
+        w = ws.width;
+        h = ws.height;
+    }
+    if (w < 200) w = 200;
+    if (h < 150) h = 150;
+    XSize_init(&size, w, h + 20); /* 标题条 */
+    return size;
+}
+
+XSize XMdiSubWindow_minimumSizeHint(const XMdiSubWindow* self)
+{
+    XSize size;
+    (void)self;
+    XSize_init(&size, 50, 20);
+    return size;
+}
+
+XWidget* XMdiSubWindow_maximizedButtonsWidget(const XMdiSubWindow* self)
+{ (void)self; return NULL; }
+
+XWidget* XMdiSubWindow_maximizedSystemMenuIconWidget(
+    const XMdiSubWindow* self)
+{ (void)self; return NULL; }
+
+/* ==================== Task 2.7：XMdiArea 补充 API ==================== */
+
+void XMdiArea_setOption(XMdiArea* self, int option, bool on)
+{
+    if (!self) return;
+    if (on) self->m_options |= option;
+    else self->m_options &= ~option;
+}
+
+bool XMdiArea_testOption(const XMdiArea* self, int option)
+{
+    return self ? (self->m_options & option) != 0 : false;
+}
+
+void XMdiArea_setDocumentMode(XMdiArea* self, bool enabled)
+{
+    if (self) {
+        self->m_documentMode = enabled;
+        XWidget_update((XWidget*)self);
+    }
+}
+
+bool XMdiArea_documentMode(const XMdiArea* self)
+{ return self ? self->m_documentMode : false; }
+
+void XMdiArea_setTabShape(XMdiArea* self, int shape)
+{ if (self) self->m_tabShape = shape; }
+
+int XMdiArea_tabShape(const XMdiArea* self)
+{ return self ? self->m_tabShape : 0; }
+
 void XMdiArea_closeActiveSubWindow(XMdiArea* self)
-{ if(self&&self->m_active) XMdiArea_removeSubWindow(self, XMdiSubWindow_widget(self->m_active)); }
-void XMdiArea_setActiveSubWindow_2(XMdiArea* self, XWidget* window) { (void)self; (void)window; }
-void XMdiArea_setViewMode_2(XMdiArea* self, int mode) { if(self) self->m_viewMode = mode; }
-void XMdiArea_cascadeSubWindows_2(XMdiArea* self) { XMdiArea_cascadeSubWindows(self); }
-void XMdiArea_tileSubWindows_2(XMdiArea* self) { XMdiArea_tileSubWindows(self); }
-void XMdiArea_closeAllSubWindows_2(XMdiArea* self) { XMdiArea_closeAllSubWindows(self); }
-void XMdiArea_removeSubWindow_2(XMdiArea* self, XWidget* widget) { XMdiArea_removeSubWindow(self, widget); }
-int XMdiArea_subWindowCount_2(const XMdiArea* self) { return XMdiArea_subWindowCount(self); }
-void XMdiArea_setBackground(XMdiArea* self, uint32_t color) { (void)self; (void)color; }
-uint32_t XMdiArea_background(const XMdiArea* self) { (void)self; return 0xFFC0C0C0u; }
-void XMdiArea_setDocumentMode_2(XMdiArea* self, bool mode) { (void)self; (void)mode; }
-bool XMdiArea_documentMode_2(const XMdiArea* self) { (void)self; return false; }
-void XMdiArea_setTabPosition(XMdiArea* self, int position) { (void)self; (void)position; }
-int XMdiArea_tabPosition(const XMdiArea* self) { (void)self; return 0; }
-void XMdiArea_setTabsClosable_2(XMdiArea* self, bool closable) { (void)self; (void)closable; }
-bool XMdiArea_isTabsClosable_2(const XMdiArea* self) { (void)self; return false; }
-void XMdiArea_setActivationOrder(XMdiArea* self) { (void)self; }
-void XMdiArea_activationOrder(XMdiArea* self) { (void)self; }
-void XMdiArea_setOption_2(XMdiArea* self) { (void)self; }
-void XMdiArea_testOption_2(XMdiArea* self) { (void)self; }
-void XMdiArea_scrollContentsBy_2(XMdiArea* self) { (void)self; }
-void XMdiArea_setHorizontalScrollBarPolicy_2(XMdiArea* self) { (void)self; }
-void XMdiArea_setVerticalScrollBarPolicy_2(XMdiArea* self) { (void)self; }
-void XMdiArea_setTabShape_2(XMdiArea* self) { (void)self; }
-void XMdiArea_tabShape_2(XMdiArea* self) { (void)self; }
-void XMdiArea_setTabTabsClosable_2(XMdiArea* self) { (void)self; }
-void XMdiArea_tabTabsClosable_2(XMdiArea* self) { (void)self; }
-void XMdiArea_setTabTabsMovable_2(XMdiArea* self) { (void)self; }
-void XMdiArea_tabTabsMovable_2(XMdiArea* self) { (void)self; }
-void XMdiArea_setTabTabsAutoHide_2(XMdiArea* self) { (void)self; }
-void XMdiArea_tabTabsAutoHide_2(XMdiArea* self) { (void)self; }
-void XMdiArea_sizeHint_2(XMdiArea* self) { (void)self; }
-void XMdiArea_subWindowList_count(XMdiArea* self) { (void)self; }
+{
+    XMdiSubWindow* sw;
+    int64_t i;
+    int64_t n;
+    if (!self) return;
+    sw = self->m_active;
+    if (!sw) return;
+    self->m_active = NULL;
+    if (!self->m_subWindows) return;
+    n = XVector_size_base((const XContainer*)self->m_subWindows);
+    for (i = 0; i < n; ++i) {
+        XMdiSubWindow** slot =
+            (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
+        if (slot && *slot == sw) {
+            XClass_delete_base((XClass*)sw);
+            XVector_remove_base(self->m_subWindows, i, 1);
+            break;
+        }
+    }
+    /* 对标 Qt：关闭活动窗口后激活剩余的第一个子窗口。 */
+    n = XVector_size_base((const XContainer*)self->m_subWindows);
+    if (n > 0) {
+        XMdiSubWindow** first = (XMdiSubWindow**)XVector_at_base(
+            self->m_subWindows, 0);
+        if (first && *first)
+            XMdiArea_setActiveSubWindow(self, *first);
+    }
+}
+
+void XMdiArea_activateNextSubWindow(XMdiArea* self)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !self->m_subWindows) return;
+    n = XVector_size_base((const XContainer*)self->m_subWindows);
+    if (n <= 0) return;
+    if (!self->m_active) {
+        XMdiSubWindow** first = (XMdiSubWindow**)XVector_at_base(
+            self->m_subWindows, 0);
+        if (first && *first)
+            XMdiArea_setActiveSubWindow(self, *first);
+        return;
+    }
+    for (i = 0; i < n; ++i) {
+        XMdiSubWindow** slot =
+            (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
+        if (slot && *slot == self->m_active) {
+            XMdiSubWindow** next = (XMdiSubWindow**)XVector_at_base(
+                self->m_subWindows, (i + 1) % n);
+            if (next && *next)
+                XMdiArea_setActiveSubWindow(self, *next);
+            return;
+        }
+    }
+    /* 活动窗口不在列表：激活第一个。 */
+    {
+        XMdiSubWindow** first = (XMdiSubWindow**)XVector_at_base(
+            self->m_subWindows, 0);
+        if (first && *first)
+            XMdiArea_setActiveSubWindow(self, *first);
+    }
+}
+
+void XMdiArea_activatePreviousSubWindow(XMdiArea* self)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !self->m_subWindows) return;
+    n = XVector_size_base((const XContainer*)self->m_subWindows);
+    if (n <= 0) return;
+    if (!self->m_active) {
+        XMdiSubWindow** last = (XMdiSubWindow**)XVector_at_base(
+            self->m_subWindows, n - 1);
+        if (last && *last)
+            XMdiArea_setActiveSubWindow(self, *last);
+        return;
+    }
+    for (i = 0; i < n; ++i) {
+        XMdiSubWindow** slot =
+            (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
+        if (slot && *slot == self->m_active) {
+            XMdiSubWindow** prev = (XMdiSubWindow**)XVector_at_base(
+                self->m_subWindows, (i - 1 + n) % n);
+            if (prev && *prev)
+                XMdiArea_setActiveSubWindow(self, *prev);
+            return;
+        }
+    }
+    {
+        XMdiSubWindow** last = (XMdiSubWindow**)XVector_at_base(
+            self->m_subWindows, n - 1);
+        if (last && *last)
+            XMdiArea_setActiveSubWindow(self, *last);
+    }
+}
+
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON */

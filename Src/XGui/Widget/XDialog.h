@@ -100,42 +100,4 @@ void* XDialog_finished_signal(XDialog* self, int result);
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XDialogopen2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialog_open_2(XDialog* self);
-/** @brief XDialogset尺寸Grip启用（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialog_setSizeGripEnabled(XDialog* self);
-/** @brief XDialogis尺寸Grip启用（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialog_isSizeGripEnabled(XDialog* self);
-/** @brief XDialogsetModal2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialog_setModal_2(XDialog* self);
-/** @brief XDialogisModal2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialog_isModal_2(XDialog* self);
-/** @brief XDialogresult2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialog_result_2(XDialog* self);
-/** @brief XDialogsetResult2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialog_setResult_2(XDialog* self);
 #endif /* XDIALOG_H */

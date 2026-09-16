@@ -12,11 +12,16 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "XGuiConfig.h"
 #include "XClass.h"
 #include "XGeometry.h"
 #include "XTypes.h"
 #include "XString.h"
 #include "XPainter_config.h"
+
+#if XPAINTDEVICE_ON
+typedef struct XPaintDevice XPaintDevice; /* 前向声明。 */
+#endif
 
 typedef struct XIODevice XIODevice;
 
@@ -571,6 +576,15 @@ void XPicture_detach(XPicture* self);
  * @return 已分离返回 true
  */
 bool XPicture_isDetached(const XPicture* self);
+
+#if XPAINTDEVICE_ON
+/**
+ * @brief      返回绘制设备描述（XPaintDevice；边界矩形即设备尺寸）。
+ * @param      self 目标图片指针。
+ * @return     绘制设备借用指针；无效返回 NULL。
+ */
+XPaintDevice* XPicture_paintDevice(XPicture* self);
+#endif /* XPAINTDEVICE_ON */
 
 #ifdef __cplusplus
 }

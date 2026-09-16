@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPlatformDrag.h
  * @brief      平台出站拖放契约（对标 Qt QPlatformDrag）。
  * @details    公共层仅传递 XMimeData 与动作掩码；Linux XDND、Windows OLE
@@ -29,6 +29,9 @@ typedef enum XPlatformDragAction
     XPlatformDragAction_Link = 4u
 } XPlatformDragAction;
 
+/** @brief 拖放执行结果（XGui 独立数值，不直接等于 Qt::DropAction；
+ *        上层经 XDropAction 转换：Copied=CopyAction、Moved=MoveAction、
+ *        Linked=LinkAction——Task 2.16 文档化）。 */
 typedef enum XPlatformDragResult
 {
     XPlatformDragResult_Unsupported = 0,

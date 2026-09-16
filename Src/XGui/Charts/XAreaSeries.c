@@ -42,7 +42,7 @@ void XAreaSeries_init(XAreaSeries* self)
     XMemset(self, 0, sizeof(*self));
     XAbstractSeries_init(&self->m_base);
     XClassSetVtable(self, XAreaSeries);
-    XAbstractSeries_setName(&self->m_base, "area");
+    XAbstractSeries_setName_2(&self->m_base, "area");
     self->m_base.m_type = XChartSeriesType_Area;
     self->m_upper = XLineSeries_create();
     self->m_lower = NULL;
@@ -78,11 +78,17 @@ void XAreaSeries_setBaseValue(XAreaSeries* self, double base)
 void XAreaSeries_setColor(XAreaSeries* self, uint32_t color)
 { if (self) self->m_color = color; }
 
-void XAreaSeries_setName(XAreaSeries* self, const char* name)
+void XAreaSeries_setName(XAreaSeries* self, const XString* name)
 { if (self) XAbstractSeries_setName(&self->m_base, name); }
 
-const char* XAreaSeries_name(const XAreaSeries* self)
-{ return self ? XAbstractSeries_name(&self->m_base) : ""; }
+void XAreaSeries_setName_2(XAreaSeries* self, const char* name)
+{ if (self) XAbstractSeries_setName_2(&self->m_base, name); }
+
+const XString* XAreaSeries_name(const XAreaSeries* self)
+{ return self ? XAbstractSeries_name(&self->m_base) : NULL; }
+
+const char* XAreaSeries_name_2(const XAreaSeries* self)
+{ return self ? XAbstractSeries_name_2(&self->m_base) : ""; }
 
 void XAreaSeries_setUpperSeries(XAreaSeries* self, XLineSeries* series)
 {
@@ -116,22 +122,38 @@ void XAreaSeries_setPointLabelsVisible(XAreaSeries* self, bool visible)
 bool XAreaSeries_pointLabelsVisible(const XAreaSeries* self)
 { return self ? self->m_pointLabelsVisible : false; }
 
-void XAreaSeries_setPointLabelsFormat(XAreaSeries* self, const char* format)
+void XAreaSeries_setPointLabelsFormat(XAreaSeries* self, const XString* format)
 {
     if (!self) return;
     if (!self->m_pointLabelsFormat)
         self->m_pointLabelsFormat = XString_create();
-    if (self->m_pointLabelsFormat)
-        XString_assign_utf8(self->m_pointLabelsFormat,
-                            format ? format : "@xPoint, @yPoint");
+    if (!self->m_pointLabelsFormat) return;
+    if (format)
+        XString_assign(self->m_pointLabelsFormat, format);
+    else
+        XString_assign_utf8(self->m_pointLabelsFormat, "@xPoint, @yPoint");
+}
+void XAreaSeries_setPointLabelsFormat_2(XAreaSeries* self, const char* format)
+{
+    XString* tmp = NULL;
+    if (format) {
+        tmp = XString_create_utf8(format);
+        if (!tmp) return;
+    }
+    XAreaSeries_setPointLabelsFormat(self, tmp);
+    if (tmp) XString_delete_base(tmp);
 }
 
-const char* XAreaSeries_pointLabelsFormat(const XAreaSeries* self)
+const XString* XAreaSeries_pointLabelsFormat(const XAreaSeries* self)
 {
-    const char* text;
-    if (!self || !self->m_pointLabelsFormat) return "@xPoint, @yPoint";
-    text = XString_toUtf8(self->m_pointLabelsFormat);
-    return text ? text : "@xPoint, @yPoint";
+    return (self && self->m_pointLabelsFormat)
+               ? self->m_pointLabelsFormat : NULL;
+}
+const char* XAreaSeries_pointLabelsFormat_2(const XAreaSeries* self)
+{
+    const XString* s;
+    s = XAreaSeries_pointLabelsFormat(self);
+    return s ? XString_toUtf8(s) : "@xPoint, @yPoint";
 }
 
 void XAreaSeries_setPointLabelsColor(XAreaSeries* self, uint32_t color)
@@ -140,7 +162,7 @@ void XAreaSeries_setPointLabelsColor(XAreaSeries* self, uint32_t color)
 uint32_t XAreaSeries_pointLabelsColor(const XAreaSeries* self)
 { return self ? self->m_pointLabelsColor : 0; }
 
-void XAreaSeries_setPointLabelsFont(XAreaSeries* self, const char* family,
+void XAreaSeries_setPointLabelsFont(XAreaSeries* self, const XString* family,
                                     int pointSize)
 {
     if (!self) return;
@@ -148,17 +170,32 @@ void XAreaSeries_setPointLabelsFont(XAreaSeries* self, const char* family,
         if (!self->m_pointLabelsFontFamily)
             self->m_pointLabelsFontFamily = XString_create();
         if (self->m_pointLabelsFontFamily)
-            XString_assign_utf8(self->m_pointLabelsFontFamily, family);
+            XString_assign(self->m_pointLabelsFontFamily, family);
     }
     if (pointSize > 0) self->m_pointLabelsFontSize = pointSize;
 }
-
-const char* XAreaSeries_pointLabelsFontFamily(const XAreaSeries* self)
+void XAreaSeries_setPointLabelsFont_2(XAreaSeries* self, const char* family,
+                                      int pointSize)
 {
-    const char* text;
-    if (!self || !self->m_pointLabelsFontFamily) return "";
-    text = XString_toUtf8(self->m_pointLabelsFontFamily);
-    return text ? text : "";
+    XString* tmp = NULL;
+    if (family) {
+        tmp = XString_create_utf8(family);
+        if (!tmp) return;
+    }
+    XAreaSeries_setPointLabelsFont(self, tmp, pointSize);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XAreaSeries_pointLabelsFontFamily(const XAreaSeries* self)
+{
+    return (self && self->m_pointLabelsFontFamily)
+               ? self->m_pointLabelsFontFamily : NULL;
+}
+const char* XAreaSeries_pointLabelsFontFamily_2(const XAreaSeries* self)
+{
+    const XString* s;
+    s = XAreaSeries_pointLabelsFontFamily(self);
+    return s ? XString_toUtf8(s) : "";
 }
 
 int XAreaSeries_pointLabelsFontSize(const XAreaSeries* self)
@@ -194,7 +231,9 @@ void XAreaSeries_setBrush(XAreaSeries* self, uint32_t color)
 uint32_t XAreaSeries_brush(const XAreaSeries* self)
 { return self ? self->m_brushColor : 0; }
 
-const char* XAreaSeries_pointLabelsFont(const XAreaSeries* self)
+const XString* XAreaSeries_pointLabelsFont(const XAreaSeries* self)
 { return XAreaSeries_pointLabelsFontFamily(self); }
+const char* XAreaSeries_pointLabelsFont_2(const XAreaSeries* self)
+{ return XAreaSeries_pointLabelsFontFamily_2(self); }
 
 #endif /* XCHARTS_ON */

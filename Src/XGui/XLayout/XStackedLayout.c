@@ -14,22 +14,11 @@
 
 #if XLAYOUT_ON && XLAYOUT_STACKED_ON
 
-/* 发射助手（前置于全部调用点）。 */
-
-/** @brief 真正发射带 int 参数的信号（此前 setCurrentIndex/takeAt 仅
- *         调用返回地址的信号函数，连接的槽从未被触发）。 */
-static void xstackedlayout_emitInt(XStackedLayout* self, size_t signal,
-                                   int index)
-{
-    XVarList* args = XVarList_Create(XVar(int, index));
-    if (!args) return;
-    if (self && ((XObject*)self)->m_signalSlot) {
-        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
-                           XEVENT_PRIORITY_NORMAL);
-    } else {
-        XVarList_delete(args);
-    }
-}
+/* 信号说明：XStackedLayout 继承链为 XLayout→XLayoutItem→XClass，
+ * 不含 XObject 信号槽（m_signalSlot）。XStackedLayout_*_signal 仅返回
+ * 信号地址供连接方占位，不会真正发射；Qt QStackedLayout 的
+ * currentChanged/widgetRemoved 发射语义为后续扩展项（如需发射需先
+ * 引入 XObject 中间基类层，见 Task 1.x 规划）。 */
 
 
 
@@ -88,9 +77,6 @@ static XLayoutItem* VXStackedLayout_takeAt(XLayout* layout, int index)
         if (count > 0) {
             XStackedLayout_setCurrentIndex(
                 self, (index == count) ? count - 1 : index);
-        } else {
-            xstackedlayout_emitInt(self,
-                (size_t)XStackedLayout_currentChanged_signal, -1);
         }
     } else if (index < oldCurrent) {
         self->m_currentIndex = oldCurrent - 1;
@@ -98,8 +84,6 @@ static XLayoutItem* VXStackedLayout_takeAt(XLayout* layout, int index)
     widget = XLayoutItem_widget_base(item);
     if (widget)
         XWidget_setVisible(widget, false);
-    xstackedlayout_emitInt(self,
-        (size_t)XStackedLayout_widgetRemoved_signal, index);
     return item;
 }
 
@@ -401,8 +385,6 @@ void XStackedLayout_setCurrentIndex(XStackedLayout* self, int index)
     }
     self->m_currentIndex = index;
     XWidget_setVisible(next, true);
-    xstackedlayout_emitInt(self,
-        (size_t)XStackedLayout_currentChanged_signal, index);
 }
 
 void XStackedLayout_setCurrentWidget(XStackedLayout* self, XWidget* widget)

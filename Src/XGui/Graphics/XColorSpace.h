@@ -1,4 +1,4 @@
-/*
+﻿/*
  * @file       XColorSpace.h
  * @brief      XColorSpace 色彩空间值类型（对标 Qt 6.8 QColorSpace）
  */
@@ -100,8 +100,9 @@ typedef struct XColorSpacePrimariesData
  * @brief 轻量、可按值复制的色彩空间描述。
  * @details 该结构不持有堆资源，因此可以安全地嵌入 XImage、XSurfaceFormat
  *          等值对象并直接复制。当前实现覆盖 Qt 的三分量矩阵模型以及
- *          Gray/RGB 模型的基础元数据；ICC 原始字节和逐通道 LUT 需要资源
- *          容器后才能无歧义地实现，暂不放入这个值类型。
+ *          Gray/RGB 模型的基础元数据；ICC 原始字节以固定 1024 字节缓冲
+ *          透明承载（对标 QColorSpace::fromIccProfile/iccProfile；
+ *          超过 1024 字节的 ICC 会被截断——已知偏差，Task 2.20 记录）。
  */
 typedef struct XColorSpace
 {
@@ -115,6 +116,8 @@ typedef struct XColorSpace
     XColorSpacePrimariesData m_primariesData; /**< 自定义或预定义原色坐标。 */
     char m_description[64]; /**< 自动识别或预定义的短描述；超长内容会被截断。 */
     char m_userDescription[64]; /**< 用户设置的短描述；为空时回退到自动描述。 */
+    unsigned char m_iccData[1024]; /**< ICC 原始字节透明承载（0=无）。 */
+    int m_iccSize; /**< ICC 字节数（0=无）。 */
 } XColorSpace;
 
 /**
@@ -339,6 +342,44 @@ void XColorSpace_setDescription(XColorSpace* self, const char* description);
  * @return 两者属性相等返回 true，否则返回 false。
  */
 bool XColorSpace_equals(const XColorSpace* left, const XColorSpace* right);
+
+/**
+ * @brief 从 ICC 原始字节创建色彩空间（对标 QColorSpace::fromIccProfile）。
+ * @note ICC 字节以固定 1024 缓冲透明承载；超过 1024 字节被截断（已知
+ *       偏差）。ICC 不解析为矩阵/LUT——色彩映射由 XImage 色彩管理
+ *       路径经 m_iccData 承载（Task 2.20 记录）。
+ * @param out 输出色彩空间（可为 NULL）。
+ * @param data ICC 字节（可为 NULL）。
+ * @param size ICC 字节数。
+ * @return 无返回值。
+ */
+void XColorSpace_fromIccProfile(XColorSpace* out, const uint8_t* data,
+                                int size);
+/**
+ * @brief 查询是否承载 ICC 原始字节（对标 QColorSpace::iccProfile 非空）。
+ * @param self 目标色彩空间。
+ * @return 承载返回 true。
+ */
+bool XColorSpace_hasIccProfile(const XColorSpace* self);
+/**
+ * @brief 取出 ICC 原始字节（对标 QColorSpace::iccProfile）。
+ * @param self 目标色彩空间。
+ * @param out 输出缓冲；可为 NULL 仅查询长度。
+ * @param capacity 输出缓冲容量。
+ * @return 实际字节数；无 ICC 返回 0。
+ */
+int XColorSpace_iccProfile(const XColorSpace* self, uint8_t* out,
+                           int capacity);
+/**
+ * @brief 计算到目标色彩空间的变换（对标 QColorSpace::transformationToColorSpace）。
+ * @note 当前返回 (源,目标) 描述对，实际逐像素变换由
+ *       XImage_applyColorTransform 消费；无 ICC/矩阵解析（已知偏差）。
+ * @param self 源色彩空间。
+ * @param target 目标色彩空间。
+ * @return 颜色变换描述。
+ */
+XColorTransform XColorSpace_transformationToColorSpace(
+    const XColorSpace* self, const XColorSpace* target);
 
 #ifdef __cplusplus
 }

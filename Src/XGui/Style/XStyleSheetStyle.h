@@ -28,7 +28,16 @@ typedef struct XStyleSheetStyle
 {
     XWindowsStyle m_base;      /**< 基类成员；必须是第一个。 */
     XCssStyleSheet m_sheet;    /**< 解析后的规则表（对象拥有）。 */
-    XStyle* m_source;          /**< 底层样式（借用；NULL=用全局默认）。 */
+    XStyle* m_source;          /**< 底层样式（NULL=用全局默认）。 */
+    bool m_sourceOwned;        /**< m_source 是否由本对象拥有（析构时释放）。 */
+    /* ---- 渲染规则缓存（对标 QStyleSheetStylePrivate::renderRules 的
+     *      单槽近似：按 (对象指针,状态) 缓存最高特异度命中规则） ---- */
+    const XObject* m_cacheObj;      /**< 缓存对象指针。 */
+    uint32_t m_cacheState;          /**< 缓存状态位。 */
+    const XCssStyleRule* m_cacheRule; /**< 缓存命中规则。 */
+    const XCssSelector* m_cacheSel;  /**< 缓存命中选择器。 */
+    int m_cacheSpec;                /**< 缓存特异度。 */
+    bool m_cacheValid;              /**< 缓存是否有效。 */
 } XStyleSheetStyle;
 
 XVtable* XStyleSheetStyle_class_init(void);
@@ -72,10 +81,16 @@ bool XStyleSheetStyle_setStyleSheet(XStyleSheetStyle* self, const char* css);
  * @brief 设置底层样式（借用；NULL=回落全局默认样式）。
  *
  * @param self 目标样式指针。
- * @param source 底层样式指针。
+ * @param source 底层样式指针（借用；本对象不取得所有权）。
  * @return 无返回值。
  */
 void XStyleSheetStyle_setSourceStyle(XStyleSheetStyle* self, XStyle* source);
+/** @brief 设置底层样式并转移所有权（析构时释放 source；用于 installStyleSheet 接管默认样式）。
+ * @param self 目标样式指针。
+ * @param source 底层样式指针（所有权转移给 self；可为 NULL）。
+ * @return 无返回值。
+ */
+void XStyleSheetStyle_setSourceStyle_move(XStyleSheetStyle* self, XStyle* source);
 
 /**
  * @brief 查询当前规则数（测试/诊断）。

@@ -168,7 +168,8 @@ XString* XClipboard_text(XClipboard* self, XClipboardMode mode)
     return NULL;
 }
 
-XString* XClipboard_text_2(XClipboard* self, XString** subtype, XClipboardMode mode)
+XString* XClipboard_text_subtype(XClipboard* self, XString** subtype,
+                              XClipboardMode mode)
 {
     XClipboardModeData* data;
     XString* text;

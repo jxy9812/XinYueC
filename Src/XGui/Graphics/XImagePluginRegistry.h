@@ -1,4 +1,4 @@
-/*
+﻿/*
  * @file       XImagePluginRegistry.h
  * @brief      XImageIOPlugin 源码级注册表，对标 Qt 6.8 图像插件发现机制。
  * @details    提供固定容量插件注册表，并负责把插件声明的格式、MIME 类型与

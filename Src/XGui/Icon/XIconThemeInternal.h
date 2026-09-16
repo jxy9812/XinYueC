@@ -1,4 +1,4 @@
-#ifndef XICONTHEMEINTERNAL_H
+﻿#ifndef XICONTHEMEINTERNAL_H
 #define XICONTHEMEINTERNAL_H
 
 #ifdef __cplusplus

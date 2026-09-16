@@ -41,9 +41,132 @@ static void xxy_emitIndex(XXYSeries* self, size_t signal, int index)
 /** @brief 发射无载荷信号。 */
 static void xxy_emitVoid(XXYSeries* self, size_t signal)
 {
-    XVarList* args = XVarList_create(0);
+    if (!self) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, NULL, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+}
+
+/** @brief 发射双 int 载荷信号。 */
+static void xxy_emitIndexCount(XXYSeries* self, size_t signal, int index,
+                               int count)
+{
+    int vi = index;
+    int vc = count;
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(int, vi), XVar(int, vc));
     if (!args) return;
-    if (self && ((XObject*)self)->m_signalSlot)
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射 bool 载荷信号。 */
+static void xxy_emitBool(XXYSeries* self, size_t signal, bool value)
+{
+    bool vb = value;
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(bool, vb));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射 double 载荷信号。 */
+static void xxy_emitDouble(XXYSeries* self, size_t signal, double value)
+{
+    double vd = value;
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(double, vd));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射 uint32_t 颜色载荷信号。 */
+static void xxy_emitColor(XXYSeries* self, size_t signal, uint32_t color)
+{
+    uint32_t vc = color;
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(uint32_t, vc));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射字符串载荷信号。 */
+static void xxy_emitStr(XXYSeries* self, size_t signal, const char* text)
+{
+    const char* vs = text ? text : "";
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(const char*, vs));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射字体（族+字号）载荷信号。 */
+static void xxy_emitFont(XXYSeries* self, size_t signal, const char* family,
+                         int pointSize)
+{
+    const char* vf = family ? family : "";
+    int vs = pointSize;
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(const char*, vf), XVar(int, vs));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射指针载荷信号。 */
+static void xxy_emitPtr(XXYSeries* self, size_t signal, const void* ptr)
+{
+    const void* vp = ptr;
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(const void*, vp));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    else
+        XVarList_delete(args);
+}
+
+/** @brief 发射画笔（颜色+线宽）载荷信号。 */
+static void xxy_emitPen(XXYSeries* self, size_t signal, uint32_t color,
+                        double width)
+{
+    uint32_t vc = color;
+    double vw = width;
+    XVarList* args;
+    if (!self) return;
+    args = XVarList_Create(XVar(uint32_t, vc), XVar(double, vw));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot)
         XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
                            XEVENT_PRIORITY_NORMAL);
     else
@@ -285,6 +408,7 @@ bool XXYSeries_remove(XXYSeries* self, double x, double y)
 bool XXYSeries_removeAt(XXYSeries* self, int index)
 {
     int i;
+    bool anyChanged = false;
     if (!self || index < 0 || index >= self->m_count) return false;
     for (i = index; i < self->m_count - 1; ++i)
         self->m_points[i] = self->m_points[i + 1];
@@ -292,28 +416,43 @@ bool XXYSeries_removeAt(XXYSeries* self, int index)
     if (self->m_selected) {
         for (i = index; i < self->m_count; ++i)
             self->m_selected[i] = self->m_selected[i + 1];
+        for (i = 0; i < self->m_count; ++i) {
+            if (self->m_selected[i]) { anyChanged = true; break; }
+        }
     }
     xxy_emitIndex(self, (size_t)XXYSeries_pointRemoved_signal, index);
+    if (anyChanged)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
     return true;
 }
 
 void XXYSeries_removePoints(XXYSeries* self, int index, int count)
 {
     int i;
+    bool anyChanged = false;
     if (!self || index < 0 || count <= 0) return;
     if (index + count > self->m_count) count = self->m_count - index;
+    if (count <= 0) return;
     for (i = index; i < self->m_count - count; ++i)
         self->m_points[i] = self->m_points[i + count];
     self->m_count -= count;
     if (self->m_selected) {
         for (i = index; i < self->m_count; ++i)
             self->m_selected[i] = self->m_selected[i + count];
+        for (i = 0; i < self->m_count; ++i) {
+            if (self->m_selected[i]) { anyChanged = true; break; }
+        }
     }
+    xxy_emitIndexCount(self, (size_t)XXYSeries_pointsRemoved_signal,
+                       index, count);
+    if (anyChanged)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 bool XXYSeries_insert(XXYSeries* self, int index, const XPointF* point)
 {
     int i;
+    bool anySelected;
     XPointF* p;
     if (!self || !point || index < 0 || index > self->m_count) return false;
     if (self->m_count >= self->m_capacity) {
@@ -329,17 +468,45 @@ bool XXYSeries_insert(XXYSeries* self, int index, const XPointF* point)
     self->m_points[index] = *point;
     self->m_count++;
     xxy_emitIndex(self, (size_t)XXYSeries_pointAdded_signal, index);
+    /* 插入后选中下标 >= index 者后移（对标 Qt，选中变化时发信号）。 */
+    anySelected = false;
+    if (self->m_selected) {
+        bool* ns;
+        int cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
+        ns = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
+        if (ns) {
+            XMemset(ns, 0, sizeof(bool) * (size_t)cap);
+            for (i = 0; i < self->m_count - 1; ++i) {
+                if (self->m_selected[i]) {
+                    ns[(i >= index) ? i + 1 : i] = true;
+                    anySelected = true;
+                }
+            }
+            XFree_System(self->m_selected);
+            self->m_selected = ns;
+        }
+    }
+    if (anySelected)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
     return true;
 }
 
 void XXYSeries_clear(XXYSeries* self)
 {
+    int n;
+    bool hadSelected;
+    int i;
     if (!self) return;
-    self->m_count = 0;
+    n = self->m_count;
+    hadSelected = false;
     if (self->m_selected) {
+        for (i = 0; i < n; ++i) {
+            if (self->m_selected[i]) { hadSelected = true; break; }
+        }
         XFree_System(self->m_selected);
         self->m_selected = NULL;
     }
+    self->m_count = 0;
     if (self->m_pointColors) {
         XFree_System(self->m_pointColors);
         self->m_pointColors = NULL;
@@ -348,6 +515,10 @@ void XXYSeries_clear(XXYSeries* self)
         XFree_System(self->m_pointSizes);
         self->m_pointSizes = NULL;
     }
+    if (n > 0)
+        xxy_emitIndexCount(self, (size_t)XXYSeries_pointsRemoved_signal, 0, n);
+    if (hadSelected)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 int XXYSeries_count(const XXYSeries* self)
@@ -365,7 +536,9 @@ void XXYSeries_setColor(XXYSeries* self, uint32_t color)
 {
     if (!self || self->m_color == color) return;
     self->m_color = color;
-    xxy_emitIndex(self, (size_t)XXYSeries_colorChanged_signal, (int)color);
+    xxy_emitColor(self, (size_t)XXYSeries_colorChanged_signal, color);
+    xxy_emitPen(self, (size_t)XXYSeries_penChanged_signal, color,
+                self->m_width);
 }
 
 uint32_t XXYSeries_color(const XXYSeries* self)
@@ -378,7 +551,11 @@ double XXYSeries_width(const XXYSeries* self)
 { return self ? self->m_width : 0; }
 
 void XXYSeries_setMarkerSize(XXYSeries* self, double size)
-{ if (self && size > 0) self->m_markerSize = size; }
+{
+    if (!self || size <= 0 || self->m_markerSize == size) return;
+    self->m_markerSize = size;
+    xxy_emitDouble(self, (size_t)XXYSeries_markerSizeChanged_signal, size);
+}
 
 double XXYSeries_markerSize(const XXYSeries* self)
 { return self ? self->m_markerSize : 0; }
@@ -389,32 +566,72 @@ void XXYSeries_setPointsVisible(XXYSeries* self, bool visible)
 bool XXYSeries_pointsVisible(const XXYSeries* self)
 { return self ? self->m_pointsVisible : false; }
 
-void XXYSeries_setPointLabelsFormat(XXYSeries* self, const char* format)
+void XXYSeries_setPointLabelsFormat(XXYSeries* self, const XString* format)
 {
+    const char* text;
     if (!self) return;
     if (!self->m_pointLabelsFormat)
         self->m_pointLabelsFormat = XString_create();
-    if (self->m_pointLabelsFormat)
-        XString_assign_utf8(self->m_pointLabelsFormat,
-                            format ? format : "@xPoint, @yPoint");
+    if (!self->m_pointLabelsFormat) return;
+    if (format) {
+        if (XString_equals(self->m_pointLabelsFormat, format,
+                           XChar_CaseSensitive))
+            return;
+        XString_assign(self->m_pointLabelsFormat, format);
+    } else {
+        if (XString_equals_utf8(self->m_pointLabelsFormat,
+                                "@xPoint, @yPoint", XChar_CaseSensitive))
+            return;
+        XString_assign_utf8(self->m_pointLabelsFormat, "@xPoint, @yPoint");
+    }
+    text = XString_toUtf8(self->m_pointLabelsFormat);
+    xxy_emitStr(self, (size_t)XXYSeries_pointLabelsFormatChanged_signal,
+                text ? text : "");
+}
+void XXYSeries_setPointLabelsFormat_2(XXYSeries* self, const char* format)
+{
+    XString* tmp = NULL;
+    if (format) {
+        tmp = XString_create_utf8(format);
+        if (!tmp) return;
+    }
+    XXYSeries_setPointLabelsFormat(self, tmp);
+    if (tmp) XString_delete_base(tmp);
 }
 
-const char* XXYSeries_pointLabelsFormat(const XXYSeries* self)
+const XString* XXYSeries_pointLabelsFormat(const XXYSeries* self)
 {
+    return (self && self->m_pointLabelsFormat)
+               ? self->m_pointLabelsFormat : NULL;
+}
+const char* XXYSeries_pointLabelsFormat_2(const XXYSeries* self)
+{
+    const XString* s;
     const char* text;
-    if (!self || !self->m_pointLabelsFormat) return "@xPoint, @yPoint";
-    text = XString_toUtf8(self->m_pointLabelsFormat);
-    return text ? text : "@xPoint, @yPoint";
+    s = XXYSeries_pointLabelsFormat(self);
+    if (!s) return "@xPoint, @yPoint";
+    text = XString_toUtf8(s);
+    return text ? text : "";
 }
 
 void XXYSeries_setPointLabelsVisible(XXYSeries* self, bool visible)
-{ if (self) self->m_pointLabelsVisible = visible; }
+{
+    if (!self || self->m_pointLabelsVisible == visible) return;
+    self->m_pointLabelsVisible = visible;
+    xxy_emitBool(self, (size_t)XXYSeries_pointLabelsVisibilityChanged_signal,
+                 visible);
+}
 
 bool XXYSeries_pointLabelsVisible(const XXYSeries* self)
 { return self ? self->m_pointLabelsVisible : false; }
 
 void XXYSeries_setPointLabelsColor(XXYSeries* self, uint32_t color)
-{ if (self) self->m_pointLabelsColor = color; }
+{
+    if (!self || self->m_pointLabelsColor == color) return;
+    self->m_pointLabelsColor = color;
+    xxy_emitColor(self, (size_t)XXYSeries_pointLabelsColorChanged_signal,
+                  color);
+}
 
 uint32_t XXYSeries_pointLabelsColor(const XXYSeries* self)
 { return self ? self->m_pointLabelsColor : 0; }
@@ -440,7 +657,9 @@ void XXYSeries_setPointSelected(XXYSeries* self, int index, bool selected)
         XMemset(s, 0, sizeof(bool) * (size_t)cap);
         self->m_selected = s;
     }
+    if (self->m_selected[index] == selected) return;
     self->m_selected[index] = selected;
+    xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 void XXYSeries_selectPoint(XXYSeries* self, int index)
@@ -452,15 +671,36 @@ void XXYSeries_deselectPoint(XXYSeries* self, int index)
 void XXYSeries_selectAllPoints(XXYSeries* self)
 {
     int i;
+    bool changed = false;
     if (!self) return;
-    for (i = 0; i < self->m_count; ++i)
-        XXYSeries_setPointSelected(self, i, true);
+    for (i = 0; i < self->m_count; ++i) {
+        int cap;
+        bool* s;
+        if (!self->m_selected) {
+            cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
+            s = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
+            if (!s) return;
+            XMemset(s, 0, sizeof(bool) * (size_t)cap);
+            self->m_selected = s;
+        }
+        if (!self->m_selected[i]) {
+            self->m_selected[i] = true;
+            changed = true;
+        }
+    }
+    if (changed)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 void XXYSeries_deselectAllPoints(XXYSeries* self)
 {
+    int i;
+    bool hadSelected = false;
     if (!self) return;
     if (self->m_selected) {
+        for (i = 0; i < self->m_count; ++i) {
+            if (self->m_selected[i]) { hadSelected = true; break; }
+        }
         XFree_System(self->m_selected);
         self->m_selected = NULL;
     }
@@ -472,6 +712,8 @@ void XXYSeries_deselectAllPoints(XXYSeries* self)
         XFree_System(self->m_pointSizes);
         self->m_pointSizes = NULL;
     }
+    if (hadSelected)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 /* ==================== 信号标识 ==================== */
@@ -505,14 +747,82 @@ void* XXYSeries_pointsReplaced_signal(XXYSeries* self)
 void* XXYSeries_colorChanged_signal(XXYSeries* self, uint32_t color)
 { (void)self; (void)color;
   return (void*)(size_t)XXYSeries_colorChanged_signal; }
+void* XXYSeries_selectedColorChanged_signal(XXYSeries* self, uint32_t color)
+{ (void)self; (void)color;
+  return (void*)(size_t)XXYSeries_selectedColorChanged_signal; }
+void* XXYSeries_pointsRemoved_signal(XXYSeries* self, int index, int count)
+{ (void)self; (void)index; (void)count;
+  return (void*)(size_t)XXYSeries_pointsRemoved_signal; }
+void* XXYSeries_penChanged_signal(XXYSeries* self, uint32_t color,
+                                  double width)
+{ (void)self; (void)color; (void)width;
+  return (void*)(size_t)XXYSeries_penChanged_signal; }
+void* XXYSeries_selectedPointsChanged_signal(XXYSeries* self)
+{ (void)self; return (void*)(size_t)XXYSeries_selectedPointsChanged_signal; }
+void* XXYSeries_pointLabelsFormatChanged_signal(XXYSeries* self,
+                                                const char* format)
+{ (void)self; (void)format;
+  return (void*)(size_t)XXYSeries_pointLabelsFormatChanged_signal; }
+void* XXYSeries_pointLabelsVisibilityChanged_signal(XXYSeries* self,
+                                                    bool visible)
+{ (void)self; (void)visible;
+  return (void*)(size_t)XXYSeries_pointLabelsVisibilityChanged_signal; }
+void* XXYSeries_pointLabelsFontChanged_signal(XXYSeries* self,
+                                              const char* family,
+                                              int pointSize)
+{ (void)self; (void)family; (void)pointSize;
+  return (void*)(size_t)XXYSeries_pointLabelsFontChanged_signal; }
+void* XXYSeries_pointLabelsColorChanged_signal(XXYSeries* self,
+                                               uint32_t color)
+{ (void)self; (void)color;
+  return (void*)(size_t)XXYSeries_pointLabelsColorChanged_signal; }
+void* XXYSeries_pointLabelsClippingChanged_signal(XXYSeries* self,
+                                                  bool clipping)
+{ (void)self; (void)clipping;
+  return (void*)(size_t)XXYSeries_pointLabelsClippingChanged_signal; }
+void* XXYSeries_lightMarkerChanged_signal(XXYSeries* self,
+                                          const XPixmap* marker)
+{ (void)self; (void)marker;
+  return (void*)(size_t)XXYSeries_lightMarkerChanged_signal; }
+void* XXYSeries_selectedLightMarkerChanged_signal(XXYSeries* self,
+                                                  const XPixmap* marker)
+{ (void)self; (void)marker;
+  return (void*)(size_t)XXYSeries_selectedLightMarkerChanged_signal; }
+void* XXYSeries_markerSizeChanged_signal(XXYSeries* self, double size)
+{ (void)self; (void)size;
+  return (void*)(size_t)XXYSeries_markerSizeChanged_signal; }
+void* XXYSeries_bestFitLineVisibilityChanged_signal(XXYSeries* self,
+                                                    bool visible)
+{ (void)self; (void)visible;
+  return (void*)(size_t)XXYSeries_bestFitLineVisibilityChanged_signal; }
+void* XXYSeries_bestFitLinePenChanged_signal(XXYSeries* self,
+                                             uint32_t color, double width)
+{ (void)self; (void)color; (void)width;
+  return (void*)(size_t)XXYSeries_bestFitLinePenChanged_signal; }
+void* XXYSeries_bestFitLineColorChanged_signal(XXYSeries* self,
+                                               uint32_t color)
+{ (void)self; (void)color;
+  return (void*)(size_t)XXYSeries_bestFitLineColorChanged_signal; }
+void* XXYSeries_pointsConfigurationChanged_signal(XXYSeries* self)
+{ (void)self; return (void*)(size_t)XXYSeries_pointsConfigurationChanged_signal; }
 
 /* ==================== 画笔/画刷/选中色/点标签字体（参数化） ==================== */
 
 void XXYSeries_setPen(XXYSeries* self, uint32_t color, double width)
 {
+    bool colorChanged;
+    bool penChanged;
     if (!self) return;
+    colorChanged = self->m_color != color;
+    penChanged = colorChanged ||
+                 (width > 0 && self->m_width != width);
     self->m_color = color;
     if (width > 0) self->m_width = width;
+    if (!penChanged) return;
+    if (colorChanged)
+        xxy_emitColor(self, (size_t)XXYSeries_colorChanged_signal, color);
+    xxy_emitPen(self, (size_t)XXYSeries_penChanged_signal,
+                self->m_color, self->m_width);
 }
 
 void XXYSeries_pen(const XXYSeries* self, uint32_t* color, double* width)
@@ -529,35 +839,74 @@ uint32_t XXYSeries_brush(const XXYSeries* self)
 { return self ? self->m_brush : 0; }
 
 void XXYSeries_setSelectedColor(XXYSeries* self, uint32_t color)
-{ if (self) self->m_selectedColor = color; }
+{
+    if (!self || self->m_selectedColor == color) return;
+    self->m_selectedColor = color;
+    xxy_emitColor(self, (size_t)XXYSeries_selectedColorChanged_signal, color);
+}
 
 uint32_t XXYSeries_selectedColor(const XXYSeries* self)
 { return self ? self->m_selectedColor : 0; }
 
 void XXYSeries_setPointLabelsClipping(XXYSeries* self, bool clip)
-{ if (self) self->m_pointLabelsClipping = clip; }
+{
+    if (!self || self->m_pointLabelsClipping == clip) return;
+    self->m_pointLabelsClipping = clip;
+    xxy_emitBool(self, (size_t)XXYSeries_pointLabelsClippingChanged_signal,
+                 clip);
+}
 
 bool XXYSeries_pointLabelsClipping(const XXYSeries* self)
 { return self ? self->m_pointLabelsClipping : true; }
 
-void XXYSeries_setPointLabelsFont(XXYSeries* self, const char* family,
+void XXYSeries_setPointLabelsFont(XXYSeries* self, const XString* family,
                                   int pointSize)
 {
+    bool changed = false;
     if (!self) return;
     if (family) {
         if (!self->m_pointLabelsFontFamily)
             self->m_pointLabelsFontFamily = XString_create();
-        if (self->m_pointLabelsFontFamily)
-            XString_assign_utf8(self->m_pointLabelsFontFamily, family);
+        if (!self->m_pointLabelsFontFamily) return;
+        if (!XString_equals(self->m_pointLabelsFontFamily, family,
+                            XChar_CaseSensitive)) {
+            XString_assign(self->m_pointLabelsFontFamily, family);
+            changed = true;
+        }
     }
-    if (pointSize > 0) self->m_pointLabelsFontSize = pointSize;
+    if (pointSize > 0 && self->m_pointLabelsFontSize != pointSize) {
+        self->m_pointLabelsFontSize = pointSize;
+        changed = true;
+    }
+    if (changed)
+        xxy_emitFont(self, (size_t)XXYSeries_pointLabelsFontChanged_signal,
+                     XXYSeries_pointLabelsFontFamily_2(self),
+                     self->m_pointLabelsFontSize);
+}
+void XXYSeries_setPointLabelsFont_2(XXYSeries* self, const char* family,
+                                    int pointSize)
+{
+    XString* tmp = NULL;
+    if (family) {
+        tmp = XString_create_utf8(family);
+        if (!tmp) return;
+    }
+    XXYSeries_setPointLabelsFont(self, tmp, pointSize);
+    if (tmp) XString_delete_base(tmp);
 }
 
-const char* XXYSeries_pointLabelsFontFamily(const XXYSeries* self)
+const XString* XXYSeries_pointLabelsFontFamily(const XXYSeries* self)
 {
+    return (self && self->m_pointLabelsFontFamily)
+               ? self->m_pointLabelsFontFamily : NULL;
+}
+const char* XXYSeries_pointLabelsFontFamily_2(const XXYSeries* self)
+{
+    const XString* s;
     const char* text;
-    if (!self || !self->m_pointLabelsFontFamily) return "";
-    text = XString_toUtf8(self->m_pointLabelsFontFamily);
+    s = XXYSeries_pointLabelsFontFamily(self);
+    if (!s) return "";
+    text = XString_toUtf8(s);
     return text ? text : "";
 }
 
@@ -580,7 +929,12 @@ int XXYSeries_pointsVector(const XXYSeries* self, XPointF* out, int maxCount)
 /* ==================== 最佳拟合线 ==================== */
 
 void XXYSeries_setBestFitLineVisible(XXYSeries* self, bool visible)
-{ if (self) self->m_bestFitVisible = visible; }
+{
+    if (!self || self->m_bestFitVisible == visible) return;
+    self->m_bestFitVisible = visible;
+    xxy_emitBool(self, (size_t)XXYSeries_bestFitLineVisibilityChanged_signal,
+                 visible);
+}
 
 bool XXYSeries_bestFitLineVisible(const XXYSeries* self)
 { return self ? self->m_bestFitVisible : false; }
@@ -610,7 +964,14 @@ bool XXYSeries_bestFitLineEquation(const XXYSeries* self, double* slope,
 }
 
 void XXYSeries_setBestFitLineColor(XXYSeries* self, uint32_t color)
-{ if (self) self->m_bestFitColor = color; }
+{
+    if (!self || self->m_bestFitColor == color) return;
+    self->m_bestFitColor = color;
+    xxy_emitColor(self, (size_t)XXYSeries_bestFitLineColorChanged_signal,
+                  color);
+    xxy_emitPen(self, (size_t)XXYSeries_bestFitLinePenChanged_signal,
+                color, self->m_bestFitWidth);
+}
 
 uint32_t XXYSeries_bestFitLineColor(const XXYSeries* self)
 { return self ? self->m_bestFitColor : 0; }
@@ -623,29 +984,68 @@ void XXYSeries_setBestFitLineWidth(XXYSeries* self, double width)
 void XXYSeries_selectPoints(XXYSeries* self, const int* indexes, int count)
 {
     int i;
+    bool changed = false;
     if (!self || !indexes) return;
-    for (i = 0; i < count; ++i)
-        XXYSeries_selectPoint(self, indexes[i]);
+    for (i = 0; i < count; ++i) {
+        int idx = indexes[i];
+        int cap;
+        bool* s;
+        if (idx < 0 || idx >= self->m_count) continue;
+        if (!self->m_selected) {
+            cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
+            s = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
+            if (!s) return;
+            XMemset(s, 0, sizeof(bool) * (size_t)cap);
+            self->m_selected = s;
+        }
+        if (!self->m_selected[idx]) {
+            self->m_selected[idx] = true;
+            changed = true;
+        }
+    }
+    if (changed)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 void XXYSeries_deselectPoints(XXYSeries* self, const int* indexes, int count)
 {
     int i;
-    if (!self || !indexes) return;
-    for (i = 0; i < count; ++i)
-        XXYSeries_deselectPoint(self, indexes[i]);
+    bool changed = false;
+    if (!self || !indexes || !self->m_selected) return;
+    for (i = 0; i < count; ++i) {
+        int idx = indexes[i];
+        if (idx < 0 || idx >= self->m_count) continue;
+        if (self->m_selected[idx]) {
+            self->m_selected[idx] = false;
+            changed = true;
+        }
+    }
+    if (changed)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 void XXYSeries_toggleSelection(XXYSeries* self, const int* indexes, int count)
 {
     int i;
+    bool changed = false;
     if (!self || !indexes) return;
     for (i = 0; i < count; ++i) {
         int idx = indexes[i];
-        if (idx >= 0 && idx < self->m_count)
-            XXYSeries_setPointSelected(self, idx,
-                !XXYSeries_isPointSelected(self, idx));
+        int cap;
+        bool* s;
+        if (idx < 0 || idx >= self->m_count) continue;
+        if (!self->m_selected) {
+            cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
+            s = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
+            if (!s) return;
+            XMemset(s, 0, sizeof(bool) * (size_t)cap);
+            self->m_selected = s;
+        }
+        self->m_selected[idx] = !self->m_selected[idx];
+        changed = true;
     }
+    if (changed)
+        xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
 }
 
 int XXYSeries_selectedPoints(const XXYSeries* self, int* out, int maxCount)
@@ -661,9 +1061,20 @@ int XXYSeries_selectedPoints(const XXYSeries* self, int* out, int maxCount)
 void XXYSeries_setBestFitLinePen(XXYSeries* self, uint32_t color,
                                  double width)
 {
+    bool colorChanged;
+    bool penChanged;
     if (!self) return;
+    colorChanged = self->m_bestFitColor != color;
+    penChanged = colorChanged ||
+                 (width > 0 && self->m_bestFitWidth != width);
     self->m_bestFitColor = color;
     if (width > 0) self->m_bestFitWidth = width;
+    if (!penChanged) return;
+    if (colorChanged)
+        xxy_emitColor(self, (size_t)XXYSeries_bestFitLineColorChanged_signal,
+                      color);
+    xxy_emitPen(self, (size_t)XXYSeries_bestFitLinePenChanged_signal,
+                self->m_bestFitColor, self->m_bestFitWidth);
 }
 
 void XXYSeries_bestFitLinePen(const XXYSeries* self, uint32_t* color,
@@ -674,17 +1085,28 @@ void XXYSeries_bestFitLinePen(const XXYSeries* self, uint32_t* color,
     if (width) *width = self->m_bestFitWidth;
 }
 
-const char* XXYSeries_pointLabelsFont(const XXYSeries* self)
+const XString* XXYSeries_pointLabelsFont(const XXYSeries* self)
 { return XXYSeries_pointLabelsFontFamily(self); }
+const char* XXYSeries_pointLabelsFont_2(const XXYSeries* self)
+{ return XXYSeries_pointLabelsFontFamily_2(self); }
 
 void XXYSeries_setLightMarker(XXYSeries* self, const XPixmap* marker)
-{ if (self) self->m_lightMarker = marker; }
+{
+    if (!self || self->m_lightMarker == marker) return;
+    self->m_lightMarker = marker;
+    xxy_emitPtr(self, (size_t)XXYSeries_lightMarkerChanged_signal, marker);
+}
 
 const XPixmap* XXYSeries_lightMarker(const XXYSeries* self)
 { return self ? self->m_lightMarker : NULL; }
 
 void XXYSeries_setSelectedLightMarker(XXYSeries* self, const XPixmap* marker)
-{ if (self) self->m_selectedLightMarker = marker; }
+{
+    if (!self || self->m_selectedLightMarker == marker) return;
+    self->m_selectedLightMarker = marker;
+    xxy_emitPtr(self, (size_t)XXYSeries_selectedLightMarkerChanged_signal,
+                marker);
+}
 
 const XPixmap* XXYSeries_selectedLightMarker(const XXYSeries* self)
 { return self ? self->m_selectedLightMarker : NULL; }
@@ -694,6 +1116,7 @@ void XXYSeries_setPointConfiguration(XXYSeries* self, int index,
 {
     uint32_t* pc;
     double* ps;
+    bool changed = false;
     if (!self || index < 0) return;
     if (index >= self->m_pointConfigCapacity) {
         int cap = self->m_pointConfigCapacity > 0
@@ -708,10 +1131,21 @@ void XXYSeries_setPointConfiguration(XXYSeries* self, int index,
         self->m_pointSizes = ps;
         self->m_pointConfigCapacity = cap;
     }
-    if (color != 0 && self->m_pointColors)
-        self->m_pointColors[index] = color;
-    if (size != 0 && self->m_pointSizes)
-        self->m_pointSizes[index] = size;
+    if (color != 0 && self->m_pointColors) {
+        if (self->m_pointColors[index] != color) {
+            self->m_pointColors[index] = color;
+            changed = true;
+        }
+    }
+    if (size != 0 && self->m_pointSizes) {
+        if (self->m_pointSizes[index] != size) {
+            self->m_pointSizes[index] = size;
+            changed = true;
+        }
+    }
+    if (changed)
+        xxy_emitVoid(self,
+                     (size_t)XXYSeries_pointsConfigurationChanged_signal);
 }
 
 uint32_t XXYSeries_pointColor(const XXYSeries* self, int index)
@@ -732,8 +1166,10 @@ double XXYSeries_pointSize(const XXYSeries* self, int index)
 
 void XXYSeries_clearPointConfiguration(XXYSeries* self, int index)
 {
+    bool changed = false;
     if (!self) return;
     if (index < 0) {
+        if (self->m_pointColors || self->m_pointSizes) changed = true;
         if (self->m_pointColors) {
             XFree_System(self->m_pointColors);
             self->m_pointColors = NULL;
@@ -744,11 +1180,18 @@ void XXYSeries_clearPointConfiguration(XXYSeries* self, int index)
         }
         self->m_pointConfigCapacity = 0;
     } else if (index < self->m_pointConfigCapacity) {
-        if (self->m_pointColors)
+        if (self->m_pointColors && self->m_pointColors[index] != 0) {
             self->m_pointColors[index] = 0;
-        if (self->m_pointSizes)
+            changed = true;
+        }
+        if (self->m_pointSizes && self->m_pointSizes[index] != 0) {
             self->m_pointSizes[index] = 0;
+            changed = true;
+        }
     }
+    if (changed)
+        xxy_emitVoid(self,
+                     (size_t)XXYSeries_pointsConfigurationChanged_signal);
 }
 
 void XXYSeries_sizeBy(XXYSeries* self, const double* sourceData, int count,

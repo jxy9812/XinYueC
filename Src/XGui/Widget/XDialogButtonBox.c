@@ -538,7 +538,7 @@ void* XDialogButtonBox_rejected_signal(XDialogButtonBox* self)
     return (void*)(size_t)XDialogButtonBox_rejected_signal;
 }
 
-void XDialogButtonBox_clear_2(XDialogButtonBox* self) { (void)self; }
-void XDialogButtonBox_button_2(XDialogButtonBox* self) { (void)self; }
-void XDialogButtonBox_standardButtons_2(XDialogButtonBox* self) { (void)self; }
+
+
+
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XDIALOGBUTTONBOX_ON */

@@ -29,7 +29,7 @@ void XSplineSeries_init(XSplineSeries* self)
     XMemset(self, 0, sizeof(*self));
     XXYSeries_init(&self->m_base);
     XClassSetVtable(self, XSplineSeries);
-    XAbstractSeries_setName(&self->m_base.m_base, "spline");
+    XAbstractSeries_setName_2(&self->m_base.m_base, "spline");
     self->m_base.m_base.m_type = XChartSeriesType_Spline;
 }
 

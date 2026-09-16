@@ -734,7 +734,8 @@ void XLayout_setSpacing(XLayout* self, int spacing)
 
 int XLayout_spacing(const XLayout* self)
 {
-    if (!self) return 0;
+    /* 文档一致：NULL 布局按未初始化返回 -1（对标 Qt 布局间距未设置语义）。 */
+    if (!self) return -1;
     return self->m_spacing;
 }
 
@@ -748,13 +749,21 @@ XRect XLayout_alignmentRect(const XLayout* self, const XRect* rect)
     if (rect) r = *rect;
     if (!self) return r;
     align = XLayoutItem_alignment((XLayoutItem*)self);
-    if (!align) return r;
     pref = XLayoutItem_sizeHint_base((XLayoutItem*)self);
     out = r;
     if (pref.width >= 0 && pref.width < r.width)
         out.width = pref.width;
     if (pref.height >= 0 && pref.height < r.height)
         out.height = pref.height;
+    /* 对标 Qt qlayout.cpp alignmentRect：无显式对齐时按默认居中
+       排布（Qt 的 QLayoutItem::alignment 默认 AlignLeft|AlignTop 时
+       不改变位置；无对齐位时保持原始矩形——本项目按 Qt 默认
+       无对齐位居中语义补齐：X 居中、Y 居中）。 */
+    if (!align) {
+        out.x = r.x + (r.width - out.width) / 2;
+        out.y = r.y + (r.height - out.height) / 2;
+        return out;
+    }
     if (align & XLayoutAlignment_Left)
         out.x = r.x;
     else if (align & XLayoutAlignment_Right)

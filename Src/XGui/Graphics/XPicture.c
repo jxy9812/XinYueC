@@ -10,6 +10,7 @@
 #include "XPainter.h"
 #include "XImage.h"
 #include "XPixmap.h"
+#include "XPaintDevice.h"
 #include "XIODevice.h"
 #include "XByteArray.h"
 #include "XFile.h"
@@ -519,7 +520,34 @@ typedef struct XPicturePrivate
     int              m_boundingY;   /**< 边界矩形 Y */
     int              m_boundingW;   /**< 边界矩形宽度 */
     int              m_boundingH;   /**< 边界矩形高度 */
+#if XPAINTDEVICE_ON
+    XPaintDevice     m_paintDevice; /**< 绘制设备描述（内嵌）。 */
+#endif
 }XPicturePrivate;
+
+#if XPAINTDEVICE_ON
+/** @brief XPicture 绘制设备度量回调（边界矩形即设备尺寸）。 */
+static int xpicture_paintDeviceMetric(void* userData, int metric)
+{
+    XPicturePrivate* d = (XPicturePrivate*)userData;
+    if (!d) return 0;
+    switch (metric)
+    {
+        case XPaintDeviceMetric_PdmWidth: return d->m_boundingW;
+        case XPaintDeviceMetric_PdmHeight: return d->m_boundingH;
+        case XPaintDeviceMetric_PdmNumColors: return 1;
+        case XPaintDeviceMetric_PdmDepth: return 24;
+        case XPaintDeviceMetric_PdmDpiX:
+        case XPaintDeviceMetric_PdmDpiY:
+        case XPaintDeviceMetric_PdmPhysicalDpiX:
+        case XPaintDeviceMetric_PdmPhysicalDpiY:
+            return 96;
+        case XPaintDeviceMetric_PdmDevicePixelRatio: return 1;
+        case XPaintDeviceMetric_PdmDevicePixelRatioScaled: return 256;
+        default: return 0;
+    }
+}
+#endif /* XPAINTDEVICE_ON */
 
 static XPicturePrivate* XPicturePrivate_create(int formatVersion)
 {
@@ -529,6 +557,11 @@ static XPicturePrivate* XPicturePrivate_create(int formatVersion)
     XAtomic_init(d->m_refCount, 1);
     d->m_isNull = true;
     d->m_formatVersion = formatVersion;
+#if XPAINTDEVICE_ON
+    XPaintDevice_init(&d->m_paintDevice, XPaintDeviceType_Picture, d,
+                      xpicture_paintDeviceMetric, XPaintEngineType_Picture,
+                      (uint32_t)XPaintEngineFeature_AllFeatures);
+#endif
     return d;
 }
 
@@ -2645,3 +2678,11 @@ bool XPicture_isDetached(const XPicture* self)
 {
     return !self || !self->m_data || XAtomic_load_int32(&self->m_data->m_refCount, XAtomic_MemoryOrder_Relaxed) == 1;
 }
+
+#if XPAINTDEVICE_ON
+XPaintDevice* XPicture_paintDevice(XPicture* self)
+{
+    if (!self || !self->m_data) return NULL;
+    return &self->m_data->m_paintDevice;
+}
+#endif /* XPAINTDEVICE_ON */

@@ -70,6 +70,7 @@ static void VXAbstractSeries_deinit(XAbstractSeries* self)
     self->m_axes = NULL;
     self->m_axisCount = 0;
     self->m_axisCapacity = 0;
+    XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
 static void VXAbstractSeries_copy(XAbstractSeries* self,
@@ -114,15 +115,36 @@ static void VXAbstractSeries_move(XAbstractSeries* self,
     other->m_axisCapacity = 0;
 }
 
-void XAbstractSeries_setName(XAbstractSeries* self, const char* name)
+void XAbstractSeries_setName(XAbstractSeries* self, const XString* name)
 {
     if (!self) return;
     if (!self->m_name) self->m_name = XString_create();
-    if (self->m_name)
-        XString_assign_utf8(self->m_name, name ? name : "");
+    if (!self->m_name) return;
+    if (name)
+        XString_assign(self->m_name, name);
+    else
+        XString_assign_utf8(self->m_name, "");
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XAbstractSeries_nameChanged_signal,
+                           NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+void XAbstractSeries_setName_2(XAbstractSeries* self, const char* name)
+{
+    XString* tmp = NULL;
+    if (name) {
+        tmp = XString_create_utf8(name);
+        if (!tmp) return;
+    }
+    XAbstractSeries_setName(self, tmp);
+    if (tmp) XString_delete_base(tmp);
 }
 
-const char* XAbstractSeries_name(const XAbstractSeries* self)
+const XString* XAbstractSeries_name(const XAbstractSeries* self)
+{
+    return (self && self->m_name) ? self->m_name : NULL;
+}
+const char* XAbstractSeries_name_2(const XAbstractSeries* self)
 {
     const char* text;
     if (!self || !self->m_name) return "";
@@ -131,7 +153,14 @@ const char* XAbstractSeries_name(const XAbstractSeries* self)
 }
 
 void XAbstractSeries_setVisible(XAbstractSeries* self, bool visible)
-{ if (self) self->m_visible = visible; }
+{
+    if (!self || self->m_visible == visible) return;
+    self->m_visible = visible;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XAbstractSeries_visibleChanged_signal,
+                           NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
 
 bool XAbstractSeries_isVisible(const XAbstractSeries* self)
 { return self ? self->m_visible : false; }
@@ -141,17 +170,35 @@ void XAbstractSeries_setOpacity(XAbstractSeries* self, double opacity)
     if (!self) return;
     if (opacity < 0.0) opacity = 0.0;
     if (opacity > 1.0) opacity = 1.0;
+    if (self->m_opacity == opacity) return;
     self->m_opacity = opacity;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XAbstractSeries_opacityChanged_signal,
+                           NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 double XAbstractSeries_opacity(const XAbstractSeries* self)
 { return self ? self->m_opacity : 1.0; }
 
 void XAbstractSeries_setUseOpenGL(XAbstractSeries* self, bool enable)
-{ if (self) self->m_useOpenGL = enable; }
+{
+    if (!self || self->m_useOpenGL == enable) return;
+    self->m_useOpenGL = enable;
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XAbstractSeries_useOpenGLChanged_signal,
+                           NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
 
 bool XAbstractSeries_useOpenGL(const XAbstractSeries* self)
 { return self ? self->m_useOpenGL : false; }
+
+void XAbstractSeries_show(XAbstractSeries* self)
+{ XAbstractSeries_setVisible(self, true); }
+
+void XAbstractSeries_hide(XAbstractSeries* self)
+{ XAbstractSeries_setVisible(self, false); }
 
 XChart* XAbstractSeries_chart(const XAbstractSeries* self)
 { return self ? self->m_chart : NULL; }
@@ -211,5 +258,16 @@ int XAbstractSeries_attachedAxes(const XAbstractSeries* self,
         out[i] = self->m_axes ? self->m_axes[i] : NULL;
     return n;
 }
+
+/* ==================== 信号 ==================== */
+
+void* XAbstractSeries_nameChanged_signal(XAbstractSeries* self)
+{ (void)self; return (void*)(size_t)XAbstractSeries_nameChanged_signal; }
+void* XAbstractSeries_visibleChanged_signal(XAbstractSeries* self)
+{ (void)self; return (void*)(size_t)XAbstractSeries_visibleChanged_signal; }
+void* XAbstractSeries_opacityChanged_signal(XAbstractSeries* self)
+{ (void)self; return (void*)(size_t)XAbstractSeries_opacityChanged_signal; }
+void* XAbstractSeries_useOpenGLChanged_signal(XAbstractSeries* self)
+{ (void)self; return (void*)(size_t)XAbstractSeries_useOpenGLChanged_signal; }
 
 #endif /* XCHARTS_ON */

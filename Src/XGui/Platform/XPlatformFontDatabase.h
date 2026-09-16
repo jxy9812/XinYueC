@@ -11,12 +11,20 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include "XString.h"
+#include "XFont.h"
 #include "XGuiConfig.h"
 #include "XMemory.h"
 #include "XVector.h"
 
 #if XPLATFORMINTEGRATION_ON
 typedef struct XPlatformFontDatabase XPlatformFontDatabase;
+/** @brief 平台默认字体（对标 QPlatformFontDatabase::defaultFont）。 */
+XFont XPlatformFontDatabase_defaultFont(const XPlatformFontDatabase* self);
+/** @brief 标准字号列表（对标 QPlatformFontDatabase::standardSizes；
+ *        元素为 int 的 XVector，调用方释放）。 */
+XVector* XPlatformFontDatabase_standardSizes(
+        const XPlatformFontDatabase* self);
 
 XPlatformFontDatabase* XPlatformFontDatabase_create_ex(XMemoryType memory);
 #define XPlatformFontDatabase_create() \
@@ -26,7 +34,9 @@ bool XPlatformFontDatabase_isValid(const XPlatformFontDatabase* self);
 /** @brief 返回新建的字体家族列表；元素为新建 XString*，调用方负责释放。 */
 XVector* XPlatformFontDatabase_families(const XPlatformFontDatabase* self);
 bool XPlatformFontDatabase_hasFamily(const XPlatformFontDatabase* self,
-                                     const char* family);
+                                     const XString* family);
+bool XPlatformFontDatabase_hasFamily_2(const XPlatformFontDatabase* self,
+                                       const char* family);
 
 /* Drive 后端入口；不得在 Src 中包含平台字体头文件。 */
 bool XPlatformFontDatabaseDriver_collect(XVector* families);

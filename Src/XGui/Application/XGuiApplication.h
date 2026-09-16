@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XGuiApplication.h
  * @brief      XGuiApplication GUI 应用类（对标 Qt 6.8 QGuiApplication 全部公开 API）。
  * @details    XGuiApplication 继承 XCoreApplication，是进程内唯一的 GUI 应用
@@ -251,6 +251,12 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv);
 void XGuiApplication_setApplicationDisplayName(const XString* name);
 
 /**
+ * @brief      设置应用显示名（UTF-8 兼容重载，转发主版本）。
+ * @param      name UTF-8 显示名；可为 NULL（清空）。
+ */
+void XGuiApplication_setApplicationDisplayName_2(const char* name);
+
+/**
  * @brief      获取应用显示名（对标 QGuiApplication::applicationDisplayName）。
  * @return     内部借用指针；未设置时返回 NULL。
  */
@@ -261,6 +267,12 @@ const XString* XGuiApplication_applicationDisplayName(void);
  * @param      name UTF-8 文件名（可带 .desktop 后缀）；可为 NULL。
  */
 void XGuiApplication_setDesktopFileName(const XString* name);
+
+/**
+ * @brief      设置桌面文件名（UTF-8 兼容重载，转发主版本）。
+ * @param      name UTF-8 文件名（可带 .desktop 后缀）；可为 NULL。
+ */
+void XGuiApplication_setDesktopFileName_2(const char* name);
 
 /**
  * @brief      获取桌面文件名（对标 QGuiApplication::desktopFileName）。
@@ -707,13 +719,24 @@ const XString* XGuiApplication_sessionKey(void);
 bool XGuiApplication_isSavingSession(void);
 
 /**
- * @brief      平台注入：设置会话恢复/保存状态。
+ * @brief      平台注入：设置会话恢复/保存状态（XString 主版本）。
  * @param      restored 是否从会话恢复。
  * @param      saving   是否正在保存会话。
- * @param      id       会话 ID（UTF-8，内部深拷贝）。
- * @param      key      会话键（UTF-8，内部深拷贝）。
+ * @param      id       会话 ID（借用 XString*；可为 NULL）。
+ * @param      key      会话键（借用 XString*；可为 NULL）。
  */
-void XGuiApplication_setSessionState(bool restored, bool saving, const char* id, const char* key);
+void XGuiApplication_setSessionState(bool restored, bool saving,
+                                     const XString* id, const XString* key);
+
+/**
+ * @brief      平台注入：设置会话恢复/保存状态（UTF-8 兼容重载，转发主版本）。
+ * @param      restored 是否从会话恢复。
+ * @param      saving   是否正在保存会话。
+ * @param      id       会话 ID（UTF-8；可为 NULL）。
+ * @param      key      会话键（UTF-8；可为 NULL）。
+ */
+void XGuiApplication_setSessionState_2(bool restored, bool saving,
+                                       const char* id, const char* key);
 
 /* ==================== 同步（对标 QGuiApplication::sync） ==================== */
 

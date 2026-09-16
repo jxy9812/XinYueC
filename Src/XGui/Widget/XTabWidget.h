@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XTabWidget.h
  * @brief      XTabWidget 选项卡容器控件（对标 Qt 6.8 QTabWidget）。
  * @details    XTabBar（顶部页签）+ 页容器（每页一个 XWidget 子容器）
@@ -52,9 +52,38 @@ XTabWidget* XTabWidget_create_ex(XMemoryType memory, XWidget* parent, XWidgetFla
 
 /* ==================== API（对标 QTabWidget public API 子集） ==================== */
 
-int XTabWidget_addTab(XTabWidget* self, XWidget* page, const char* label);
+/** @brief 追加页签（XString 主版本；对标 QTabWidget::addTab）。
+ * @param self 目标控件指针。
+ * @param page 页控件借用指针；不能为 NULL。
+ * @param label 借用 XString*；不能为 NULL。
+ * @return 新页签索引；参数无效时返回 -1。
+ */
+int XTabWidget_addTab(XTabWidget* self, XWidget* page, const XString* label);
+/** @brief 追加页签（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param page 页控件借用指针；不能为 NULL。
+ * @param label UTF-8 文本；不能为 NULL。
+ * @return 新页签索引；参数无效时返回 -1。
+ */
+int XTabWidget_addTab_2(XTabWidget* self, XWidget* page, const char* label);
+/** @brief 插入页签（XString 主版本；对标 QTabWidget::insertTab）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param page 页控件借用指针；不能为 NULL。
+ * @param label 借用 XString*；不能为 NULL。
+ * @return 插入位置索引；参数无效时返回 -1。
+ */
 int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
-                         const char* label);
+                         const XString* label);
+/** @brief 插入页签（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param page 页控件借用指针；不能为 NULL。
+ * @param label UTF-8 文本；不能为 NULL。
+ * @return 插入位置索引；参数无效时返回 -1。
+ */
+int XTabWidget_insertTab_2(XTabWidget* self, int index, XWidget* page,
+                           const char* label);
 void XTabWidget_removeTab(XTabWidget* self, int index);
 int XTabWidget_count(const XTabWidget* self);
 int XTabWidget_currentIndex(const XTabWidget* self);
@@ -62,11 +91,93 @@ void XTabWidget_setCurrentIndex(XTabWidget* self, int index);
 XWidget* XTabWidget_currentWidget(const XTabWidget* self);
 XWidget* XTabWidget_widget(const XTabWidget* self, int index);
 int XTabWidget_indexOf(const XTabWidget* self, const XWidget* page);
-const char* XTabWidget_tabText(const XTabWidget* self, int index);
-void XTabWidget_setTabText(XTabWidget* self, int index, const char* text);
+/** @brief 读取页签文本（返回新建 XString*，调用方负责 delete_base；对标 QTabWidget::tabText）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 新建 XString*；参数无效时返回 NULL。
+ */
+XString* XTabWidget_tabText(const XTabWidget* self, int index);
+/** @brief 读取页签文本（UTF-8 借用；对标 QTabWidget::tabText）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @return 内部 UTF-8 借用指针；参数无效时返回空串，不得释放或修改。
+ */
+const char* XTabWidget_tabText_2(const XTabWidget* self, int index);
+/** @brief 设置页签文本（XString 主版本；对标 QTabWidget::setTabText）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param text 借用 XString*；不能为 NULL。
+ * @return 无返回值。
+ */
+void XTabWidget_setTabText(XTabWidget* self, int index, const XString* text);
+/** @brief 设置页签文本（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @return 无返回值。
+ */
+void XTabWidget_setTabText_2(XTabWidget* self, int index, const char* text);
 bool XTabWidget_isTabEnabled(const XTabWidget* self, int index);
 void XTabWidget_setTabEnabled(XTabWidget* self, int index, bool enabled);
 XTabBar* XTabWidget_tabBar(const XTabWidget* self);
+/** @brief 设置当前页控件（对标 QTabWidget::setCurrentWidget）。
+ * @param self 目标控件。
+ * @param page 页控件借用指针；不能为 NULL。
+ * @return 无返回值。
+ */
+void XTabWidget_setCurrentWidget(XTabWidget* self, XWidget* page);
+/** @brief 设置页签图标路径（XString 主版本；嵌入式路径表达）。
+ * @param self 目标控件。
+ * @param index 页签号。
+ * @param path 借用 XString*；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XTabWidget_setTabIcon(XTabWidget* self, int index, const XString* path);
+/** @brief 设置页签图标路径（UTF-8 兼容重载）。 */
+void XTabWidget_setTabIcon_2(XTabWidget* self, int index, const char* path);
+/** @brief 读取页签图标路径（内部借用 XString*；不得释放）。 */
+const XString* XTabWidget_tabIcon(const XTabWidget* self, int index);
+/** @brief 读取页签图标路径（UTF-8 借用）。 */
+const char* XTabWidget_tabIcon_2(const XTabWidget* self, int index);
+/** @brief 设置页签提示（XString 主版本；对标 setTabToolTip）。
+ * @param self 目标控件。
+ * @param index 页签号。
+ * @param tip 借用 XString*；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XTabWidget_setTabToolTip(XTabWidget* self, int index,
+                              const XString* tip);
+/** @brief 设置页签提示（UTF-8 兼容重载）。 */
+void XTabWidget_setTabToolTip_2(XTabWidget* self, int index,
+                                const char* tip);
+/** @brief 设置页签帮助文本（XString 主版本；对标 setTabWhatsThis）。
+ * @param self 目标控件。
+ * @param index 页签号。
+ * @param text 借用 XString*；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XTabWidget_setTabWhatsThis(XTabWidget* self, int index,
+                                const XString* text);
+/** @brief 设置页签帮助文本（UTF-8 兼容重载）。 */
+void XTabWidget_setTabWhatsThis_2(XTabWidget* self, int index,
+                                  const char* text);
+/** @brief 设置页签可见（对标 setTabVisible）。
+ * @param self 目标控件。
+ * @param index 页签号。
+ * @param visible true 显示。
+ * @return 无返回值。
+ */
+void XTabWidget_setTabVisible(XTabWidget* self, int index, bool visible);
+/** @brief 查询页签可见。 @param self 目标控件。 @param index 页签号。 @return 可见返回 true。 */
+bool XTabWidget_isTabVisible(const XTabWidget* self, int index);
+/** @brief 设置页签条自动隐藏（对标 setTabBarAutoHide）。
+ * @param self 目标控件。
+ * @param enable true 自动隐藏。
+ * @return 无返回值。
+ */
+void XTabWidget_setTabBarAutoHide(XTabWidget* self, bool enable);
+/** @brief 查询页签条自动隐藏。 @param self 目标控件。 @return 自动隐藏返回 true。 */
+bool XTabWidget_tabBarAutoHide(const XTabWidget* self);
 int XTabWidget_tabPosition(const XTabWidget* self);
 void XTabWidget_setTabPosition(XTabWidget* self, int position);
 bool XTabWidget_tabsClosable(const XTabWidget* self);
@@ -76,21 +187,18 @@ void XTabWidget_setMovable(XTabWidget* self, bool movable);
 
 /* ==================== 信号（转发页签条） ==================== */
 
-void* XTabWidget_currentChanged_signal(XTabWidget* self);
+void* XTabWidget_currentChanged_signal(XTabWidget* self, int index);
 void* XTabWidget_tabClicked_signal(XTabWidget* self);
 
 #ifdef __cplusplus
 }
 #endif
 #endif /* XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON */
-
 #ifdef __cplusplus
 }
 #endif
 
 /* ==================== 信号 ==================== */
-
-void* XTabWidget_tabCloseRequested_signal(XTabWidget* self);
 
 /**
  * @brief      tabBarClicked(int) 信号地址（对标 QTabWidget::
@@ -115,21 +223,4 @@ void* XTabWidget_tabBarClicked_signal(XTabWidget* self);
  *             可释放对象，也不得解引用。
  */
 void* XTabWidget_tabBarDoubleClicked_signal(XTabWidget* self);
-void XTabWidget_clear(XTabWidget* self);
-void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner);
-XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner);
-void XTabWidget_setElideMode(XTabWidget* self, int mode);
-int XTabWidget_elideMode(const XTabWidget* self);
-void XTabWidget_setDocumentMode(XTabWidget* self, bool mode);
-bool XTabWidget_documentMode(const XTabWidget* self);
-bool XTabWidget_isTabsClosable(const XTabWidget* self);
-void XTabWidget_setTabShape(XTabWidget* self, int shape);
-int XTabWidget_tabShape(const XTabWidget* self);
-void XTabWidget_setIconSize(XTabWidget* self, int size);
-int XTabWidget_iconSize(const XTabWidget* self);
-void XTabWidget_setUsesScrollButtons(XTabWidget* self, bool useButtons);
-bool XTabWidget_usesScrollButtons(const XTabWidget* self);
-void XTabWidget_setTabTextColor(XTabWidget* self, int index, uint32_t color);
-uint32_t XTabWidget_tabTextColor(const XTabWidget* self, int index);
-void XTabWidget_setTabToolTip(XTabWidget* self, int index, const char* tip);
 #endif /* XTABWIDGET_H */

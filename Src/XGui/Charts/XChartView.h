@@ -85,6 +85,18 @@ XChart* XChartView_chart(const XChartView* self);
 void XChartView_updateChart(XChartView* self);
 
 /**
+ * @brief 离屏渲染整张图表到目标图像（对标 QChartView 绘制的测试/导出路径）。
+ *
+ * @details 与 paintEvent 共用同一渲染管线（主题背景/轴/序列/图例/饼图）；
+ *          便于无窗口环境的回归冒烟与像素断言。
+ *
+ * @param self  目标视图指针。
+ * @param image 目标图像；宽高按视图当前尺寸。
+ * @return 渲染成功返回 true；参数非法或绘制器绑定失败返回 false。
+ */
+bool XChartView_renderToImage(XChartView* self, XImage* image);
+
+/**
  * @brief 替换图表模型（对标 QChartView::setChart）。
  *
  * @param self  目标视图指针。

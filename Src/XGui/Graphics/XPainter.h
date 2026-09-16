@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPainter.h
  * @brief      XPainter 绘图器类（对标 Qt 6.8 QPainter）
  * @author     XinYueC 团队
@@ -473,6 +473,8 @@ typedef struct XPainterState
     XPainterPenStyle m_penStyle;          /**< 画笔线段样式（对标 QPen::style）。 */
     XPainterPenCapStyle m_penCap;         /**< 画笔端点样式（默认 SquareCap）。 */
     XPainterPenJoinStyle m_penJoin;       /**< 画笔拐角样式（默认 BevelJoin）。 */
+    float m_dashPattern[16];              /**< 用户虚线节距（对标 QPen::dashPattern）。 */
+    int m_dashCount;                      /**< 用户虚线节距数（0=未设置）。 */
 #endif
     uint32_t m_penColor;        /**< 画笔颜色（ARGB32）。 */
     int m_penWidth;             /**< 画笔宽度（像素；0 表示 cosmetic）。 */
@@ -1119,6 +1121,19 @@ int XPainter_textAscent(const XFont* font);
 int XPainter_textDescent(const XFont* font);
 
 /**
+ * @brief      计算文本在给定矩形内按对齐标志的实际包围矩形
+ *             （对标 QPainter::boundingRect(rect, flags, text)）。
+ * @param      self 绘制器指针（取当前字体）。
+ * @param      rect 参考矩形（可为 NULL）。
+ * @param      flags 对齐标志（XPAINTER_TEXT_ALIGN_* 位组合；0=左对齐）。
+ * @param      utf8 UTF-8 文本；NULL 视为空文本。
+ * @param      out 输出矩形（可为 NULL）。
+ * @return     无返回值。
+ */
+void XPainter_boundingRect(XPainter* self, const XRect* rect, int flags,
+                           const char* utf8, XRect* out);
+
+/**
  * @brief      绘制一个 UTF-8 码点字形并返回消耗字节数。
  * @details    供 XLabel 逐字形着色（选中段/链接段）与链接下划线使用：
  *             - 从 utf8 解码下一个码点，按字体像素字号整倍缩放输出字形，
@@ -1307,6 +1322,21 @@ XPainterPenCapStyle XPainter_penCapStyle(const XPainter* self);
 void XPainter_setPenJoinStyle(XPainter* self, XPainterPenJoinStyle join);
 /** @brief 获取当前画笔拐角样式。 */
 XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self);
+/** @brief 设置用户自定义虚线节距（对标 QPen::setDashPattern）。
+ * @param self 绘制器指针。
+ * @param pattern 画/空交替节距数组（像素）；可为 NULL 表示清除自定义节距。
+ * @param count 节距数量（最多 16；0 或负数表示清除）。
+ * @return 无返回值；未激活或参数非法时忽略。
+ */
+void XPainter_setDashPattern(XPainter* self, const float* pattern,
+                             int count);
+/** @brief 查询用户自定义虚线节距（对标 QPen::dashPattern）。
+ * @param self 绘制器指针。
+ * @param out 输出缓冲区（至少 16 个 float）；可为 NULL 仅查询数量。
+ * @param capacity 输出缓冲区容量。
+ * @return 实际节距数量；未设置返回 0。
+ */
+int XPainter_dashPattern(const XPainter* self, float* out, int capacity);
 #endif /* XPAINTER_PENSTYLE_ON */
 
 #if XPAINTER_BRUSH_ON
@@ -1424,6 +1454,28 @@ void XPainter_setClipRegion(XPainter* self, const XRegion* region,
  */
 void XPainter_clipRegion(const XPainter* self, XRegion* out);
 #endif /* XPAINTER_CLIP_REGION_ON */
+
+#if XPAINTER_PATH_ON
+/**
+ * @brief 设置路径裁剪（对标 QPainter::setClipPath）。
+ * @note 当前以路径包围矩形近似（精确路径光栅裁剪登记为已知偏差，
+ *       Task 2.20）；clipPath() 返回空路径。
+ * @param self 绘制器指针。
+ * @param path 逻辑坐标路径；NULL 视为空操作。
+ * @param operation 裁剪操作；非法值按 ReplaceClip 处理。
+ * @return 无返回值。
+ */
+void XPainter_setClipPath(XPainter* self, const XPainterPath* path,
+                          XPainterClipOperation operation);
+/**
+ * @brief 获取当前路径裁剪（对标 QPainter::clipPath）。
+ * @note 路径级裁剪未存储（见 setClipPath @note），输出空路径。
+ * @param self 绘制器指针；可为 NULL。
+ * @param out 输出路径；调用方负责 XPainterPath_deinit。
+ * @return 无返回值。
+ */
+void XPainter_clipPath(const XPainter* self, XPainterPath* out);
+#endif /* XPAINTER_PATH_ON */
 #endif /* XPAINTER_CLIP_ON */
 
 /* ========== 变换 ========== */

@@ -34,10 +34,15 @@ static void xfcb_populate(XFontComboBox* self)
     if (families) {
         n = XVector_size_base((const XContainer*)families);
         for (i = 0; i < n; ++i) {
-            char** name = (char**)XVector_at_base(families, i);
-            if (name && *name)
+            XString** name = (XString**)XVector_at_base(families, i);
+            if (name && *name) {
                 XComboBox_addItem(self, *name);
+                XString_delete_base(*name);
+                *name = NULL;
+            }
         }
+        XVector_delete_base(families);
+        families = NULL;
     }
     XPlatformFontDatabase_destroy(db);
 #endif /* XPLATFORMFONTDATABASE_ON */
@@ -45,10 +50,10 @@ static void xfcb_populate(XFontComboBox* self)
     if (XComboBox_count(self) > 0)
         XComboBox_setCurrentIndex(self, 0);
     if (XComboBox_count(self) == 0) {
-        XComboBox_addItem(self, "XFontOutlineCommon");
-        XComboBox_addItem(self, "Sans Serif");
-        XComboBox_addItem(self, "Serif");
-        XComboBox_addItem(self, "Monospace");
+        XComboBox_addItem_2(self, "XFontOutlineCommon");
+        XComboBox_addItem_2(self, "Sans Serif");
+        XComboBox_addItem_2(self, "Serif");
+        XComboBox_addItem_2(self, "Monospace");
         XComboBox_setCurrentIndex(self, 0);
     }
 }
@@ -101,7 +106,21 @@ int XFontComboBox_fontFilters(const XFontComboBox* self)
 const char* XFontComboBox_currentFamily(const XFontComboBox* self)
 {
     if (!self) return "";
-    return XComboBox_currentText(self);
+    return XComboBox_currentText_2(self);
+}
+
+
+/** @brief 发射带 const char* 参数的信号（UTF-8 借用）。 */
+static void xfcb_emitText(XFontComboBox* self, size_t signal, const char* text)
+{
+    XVarList* args = XVarList_Create(XVar(const char*, text));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
 }
 
 void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
@@ -111,26 +130,33 @@ void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
     if (!self || !family) return;
     n = XComboBox_count(self);
     for (i = 0; i < n; ++i) {
-        if (XStrcmp(XComboBox_itemText(self, i), family) == 0) {
+        if (XStrcmp(XComboBox_itemText_2(self, i), family) == 0) {
             XComboBox_setCurrentIndex(self, i);
+            xfcb_emitText(self,
+                          (size_t)XFontComboBox_currentFontChanged_signal(
+                              self, family),
+                          family);
             return;
         }
     }
 }
 
 
-void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self)
-{
-    (void)self;
-    return (void*)(size_t)XFontComboBox_currentFontChanged_signal;
-}
+
 
 void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family)
 { XFontComboBox_setCurrentFamily(self, family); }
 void XFontComboBox_setWritingSystem(XFontComboBox* self, int system) { (void)self; (void)system; }
-void XFontComboBox_setDisplayFont_2(XFontComboBox* self) { (void)self; }
-void XFontComboBox_setSampleTextForFont_2(XFontComboBox* self) { (void)self; }
-void XFontComboBox_setSampleTextForSystem_2(XFontComboBox* self) { (void)self; }
-void XFontComboBox_setWritingSystem_2(XFontComboBox* self) { (void)self; }
-void XFontComboBox_writingSystem(XFontComboBox* self) { (void)self; }
+
+
+
+
+
+void* XFontComboBox_currentFontChanged_signal(
+        XFontComboBox* self, const char* family)
+{
+    (void)family;
+    return (void*)(size_t)XFontComboBox_currentFontChanged_signal;
+}
+
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */

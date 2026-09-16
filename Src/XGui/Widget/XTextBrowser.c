@@ -22,17 +22,29 @@ static void xtb_updateNavigationState(XTextBrowser* self);
 static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
                                   bool addHistory);
 
+/** @brief argsDel 回调：释放 XString 载荷（对齐 XObject 信号惯例）。 */
+static void xtb_str_args_del(XVarList* list)
+{
+    XVarList_args_1(list, XString*, val);
+    if (val) XString_delete_base((XClass*)val);
+}
+
 static void xtb_emitStr(XTextBrowser* self, size_t signal, const char* text)
 {
     XVarList* args;
     XString* val;
-    if (!self || !((XObject*)self)->m_signalSlot) return;
+    if (!self) return;
     val = XString_create_utf8(text ? text : "");
     if (!val) return;
     args = XVarList_Create(XVar(XString*, val));
     if (!args) { XString_delete_base((XClass*)val); return; }
-    XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
-                       XEVENT_PRIORITY_NORMAL);
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args,
+                           xtb_str_args_del, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_setArgsDel(args, xtb_str_args_del);
+        XVarList_delete(args);
+    }
 }
 
 static void xtb_emitBool(XTextBrowser* self, size_t signal, bool v)
@@ -124,6 +136,11 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_IsHeap(self, false);
     XPlainTextEdit_setReadOnly(self->m_base.m_editor, true);
 #if XTEXTDOCUMENT_ON
+    /* XTextEdit_init 已创建 m_textDoc：覆盖前释放旧对象（否则泄漏）。 */
+    if (self->m_base.m_textDoc) {
+        XClass_delete_base((XClass*)self->m_base.m_textDoc);
+        self->m_base.m_textDoc = NULL;
+    }
     self->m_base.m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 #endif
     self->m_historyCount = 0;
@@ -191,7 +208,21 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
     xtb_emitStr(self, (size_t)XTextBrowser_sourceChanged_signal,
                 XString_toUtf8(self->m_source));
     if (addHistory) {
-        XString* copy = XString_create_copy(self->m_source);
+        XString* copy;
+        /* 新导航清掉 forward 历史（对标 Qt：重新访问旧地址时
+           forward 条目被截断并释放，避免覆盖泄漏）。 */
+        if (self->m_historyIndex + 1 < self->m_historyCount) {
+            int fi;
+            for (fi = self->m_historyIndex + 1;
+                 fi < self->m_historyCount; ++fi) {
+                if (self->m_history && self->m_history[fi]) {
+                    XString_delete_base(self->m_history[fi]);
+                    self->m_history[fi] = NULL;
+                }
+            }
+            self->m_historyCount = self->m_historyIndex + 1;
+        }
+        copy = XString_create_copy(self->m_source);
         if (copy) {
             if (self->m_historyIndex + 1 >= self->m_historyCapacity) {
                 int cap = self->m_historyCapacity > 0
@@ -309,20 +340,21 @@ void* XTextBrowser_historyChanged_signal(XTextBrowser* self)
 }
 
 
-void* XTextBrowser_anchorClicked_signal(XTextBrowser* self)
-{
-    (void)self;
-    return (void*)(size_t)XTextBrowser_anchorClicked_signal;
-}
-void* XTextBrowser_highlighted_signal(XTextBrowser* self)
-{
-    (void)self;
-    return (void*)(size_t)XTextBrowser_highlighted_signal;
-}
+
+
 
 void XTextBrowser_clearHistory(XTextBrowser* self)
 {
+    int i;
     if (!self) return;
+    if (self->m_history) {
+        for (i = 0; i < self->m_historyCount; ++i) {
+            if (self->m_history[i]) {
+                XString_delete_base(self->m_history[i]);
+                self->m_history[i] = NULL;
+            }
+        }
+    }
     self->m_historyCount = 0;
     self->m_historyIndex = -1;
     xtb_emitVoid(self, (size_t)XTextBrowser_historyChanged_signal);
@@ -340,18 +372,23 @@ int XTextBrowser_forwardHistoryCount(const XTextBrowser* self)
         return 0;
     return self->m_historyCount - self->m_historyIndex - 1;
 }
-void XTextBrowser_setSource_2(XTextBrowser* self, const char* url)
-{ XTextBrowser_setSource(self, url); }
-void XTextBrowser_setSource_3(XTextBrowser* self) { (void)self; }
-void XTextBrowser_doSetSource(XTextBrowser* self) { (void)self; }
-void XTextBrowser_highlighted_2(XTextBrowser* self) { (void)self; }
-void XTextBrowser_setOpenExternalLinks(XTextBrowser* self) { (void)self; }
-void XTextBrowser_openExternalLinks(XTextBrowser* self) { (void)self; }
-void XTextBrowser_setSearchPaths(XTextBrowser* self) { (void)self; }
-void XTextBrowser_loadResource_2(XTextBrowser* self) { (void)self; }
-void XTextBrowser_isBackwardAvailable_2(XTextBrowser* self) { (void)self; }
-void XTextBrowser_isForwardAvailable_2(XTextBrowser* self) { (void)self; }
-void XTextBrowser_backward_2(XTextBrowser* self) { (void)self; }
-void XTextBrowser_forward_2(XTextBrowser* self) { (void)self; }
-void XTextBrowser_home_2(XTextBrowser* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+void* XTextBrowser_anchorClicked_signal(XTextBrowser* self, const char* url)
+{
+    (void)self; (void)url;
+    return (void*)(size_t)XTextBrowser_anchorClicked_signal;
+}
+
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON */

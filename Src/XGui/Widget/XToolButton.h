@@ -297,38 +297,4 @@ void* XToolButton_triggered_signal(XToolButton* self, XAction* action);
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
 
-#ifdef __cplusplus
-}
-#endif
-
-/** @brief X工具按钮set菜单2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XToolButton_setMenu_2(XToolButton* self);
-/** @brief X工具按钮menu2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XToolButton_menu_2(XToolButton* self);
-/** @brief X工具按钮setPopup模式2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XToolButton_setPopupMode_2(XToolButton* self);
-/** @brief X工具按钮popup模式2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XToolButton_popupMode_2(XToolButton* self);
-/** @brief X工具按钮set工具按钮样式2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XToolButton_setToolButtonStyle_2(XToolButton* self);
-/** @brief X工具按钮tool按钮样式2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XToolButton_toolButtonStyle_2(XToolButton* self);
 #endif /* XTOOLBUTTON_H */

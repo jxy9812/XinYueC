@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XMenu.h
  * @brief      XMenu 弹出菜单公开 API（对标 Qt 6.8 QMenu）。
  * @details    XMenu 继承 XWidget，实现 QMenu 的核心语义：
@@ -75,6 +75,9 @@ typedef struct XMenu
     bool         m_separatorsCollapsible; /**< 相邻分隔条是否合并（对标 QMenu::separatorsCollapsible）。 */
     bool         m_toolTipsVisible;       /**< 是否显示动作工具提示（对标 QMenu::toolTipsVisible）。 */
     bool         m_tearOffEnabled;        /**< 是否允许撕离（对标 QMenu::tearOffEnabled）；仅存储位。 */
+    bool         m_tearOffMenuVisible;    /**< 撕离菜单是否可见（对标 isTearOffMenuVisible）。 */
+    XWidget*     m_noReplayFor;           /**< 不重放点击的目标控件（对标 setNoReplayFor）；借用。 */
+    void*        m_platformMenu;          /**< 平台菜单句柄（对标 setPlatformMenu）；不透明。 */
     int          m_actionHeight;          /**< 每个动作条目的渲染高度；仅供内部使用。 */
 } XMenu;
 
@@ -198,6 +201,109 @@ XMenu* XMenu_addMenu_2(XMenu* self, const char* utf8Title);
  * @return     新建的分隔动作指针（由菜单拥有）；失败返回 NULL。
  */
 XAction* XMenu_addSeparator(XMenu* self);
+
+/**
+ * @brief      追加一个节标题动作（对标 QMenu::addSection(text)）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      text 节标题借用指针；可为 NULL 表示空文本。
+ * @return     新建的节动作指针（由菜单拥有，禁用不可选中）；失败返回 NULL。
+ */
+XAction* XMenu_addSection(XMenu* self, const XString* text);
+/**
+ * @brief      使用 UTF-8 字符串追加节标题（UTF-8 兼容重载）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      utf8 以 '\0' 结尾的 UTF-8 字符串；可为 NULL。
+ * @return     新建的节动作指针；失败返回 NULL。
+ */
+XAction* XMenu_addSection_2(XMenu* self, const char* utf8);
+/**
+ * @brief      在 before 动作之前插入子菜单（对标 QMenu::insertMenu）。
+ * @details    before 为 NULL 时等价追加；子菜单所有权转移给本菜单。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      before 参考动作借用指针；可为 NULL。
+ * @param      menu 子菜单借用指针；可为 NULL（创建分隔占位）。
+ * @return     新建的代表动作指针（由菜单拥有）；失败返回 NULL。
+ */
+XAction* XMenu_insertMenu(XMenu* self, XAction* before, XMenu* menu);
+/**
+ * @brief      在 before 动作之前插入分隔条（对标 QMenu::insertSeparator）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      before 参考动作借用指针；可为 NULL（等价追加）。
+ * @return     新建的分隔动作指针；失败返回 NULL。
+ */
+XAction* XMenu_insertSeparator(XMenu* self, XAction* before);
+/**
+ * @brief      在 before 动作之前插入节标题（对标 QMenu::insertSection）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      before 参考动作借用指针；可为 NULL（等价追加）。
+ * @param      text 节标题借用指针；可为 NULL。
+ * @return     新建的节动作指针；失败返回 NULL。
+ */
+XAction* XMenu_insertSection(XMenu* self, XAction* before,
+                             const XString* text);
+/**
+ * @brief      使用 UTF-8 字符串在 before 前插入节标题（UTF-8 兼容重载）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      before 参考动作借用指针；可为 NULL。
+ * @param      utf8 节标题（UTF-8）；可为 NULL。
+ * @return     新建的节动作指针；失败返回 NULL。
+ */
+XAction* XMenu_insertSection_2(XMenu* self, XAction* before,
+                               const char* utf8);
+/**
+ * @brief      返回动作在菜单局部坐标中的几何（对标 QMenu::actionGeometry）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      action 目标动作借用指针；可为 NULL。
+ * @return     命中返回动作矩形；未命中或参数无效返回空矩形 (0,0,0,0)。
+ */
+XRect XMenu_actionGeometry(const XMenu* self, XAction* action);
+/**
+ * @brief      设置不重放点击的目标控件（对标 QMenu::setNoReplayFor）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      widget 目标控件借用指针；可为 NULL 表示清除。
+ * @return     无返回值。
+ */
+void XMenu_setNoReplayFor(XMenu* self, XWidget* widget);
+/**
+ * @brief      设置平台菜单句柄（对标 QMenu::setPlatformMenu）。
+ * @note       本项目的平台菜单句柄为不透明存储，不参与渲染。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      platformMenu 平台菜单句柄；可为 NULL 表示清除。
+ * @return     无返回值。
+ */
+void XMenu_setPlatformMenu(XMenu* self, void* platformMenu);
+/**
+ * @brief      查询平台菜单句柄（对标 QMenu::platformMenu）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @return     不透明句柄；未设置返回 NULL。
+ */
+void* XMenu_platformMenu(const XMenu* self);
+/**
+ * @brief      设置为 Dock 菜单（对标 QMenu::setAsDockMenu；macOS 专用）。
+ * @note       本项目为跨平台裁剪：无 macOS Dock 概念，函数仅记录。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @return     无返回值。
+ */
+void XMenu_setAsDockMenu(XMenu* self);
+/**
+ * @brief      显示撕离菜单（对标 QMenu::showTearOffMenu）。
+ * @note       本项目无平台撕离窗口；仅记录可见位并重绘。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @return     无返回值。
+ */
+void XMenu_showTearOffMenu(XMenu* self);
+/**
+ * @brief      隐藏撕离菜单（对标 QMenu::hideTearOffMenu）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @return     无返回值。
+ */
+void XMenu_hideTearOffMenu(XMenu* self);
+/**
+ * @brief      查询撕离菜单是否可见（对标 QMenu::isTearOffMenuVisible）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @return     可见返回 true。
+ */
+bool XMenu_isTearOffMenuVisible(const XMenu* self);
 
 /**
  * @brief      清空菜单全部动作与子菜单（对标 QMenu::clear）。
@@ -434,110 +540,4 @@ void* XMenu_hovered_signal(XMenu* self, XAction* action);
 
 #endif /* XWIDGET_ON && XMENU_ON */
 
-#ifdef __cplusplus
-}
-#endif
-
-/** @brief X菜单setDefault动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param action 动作指针。
- * @return 无返回值。
- */
-void XMenu_setDefaultAction_2(XMenu* self, XAction* action);
-/** @brief X菜单default动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对象指针；无效时返回 NULL。
- */
-XAction* XMenu_defaultAction_2(const XMenu* self);
-/** @brief X菜单set工具Tips可见2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param visible bool：true 可见。
- * @return 无返回值。
- */
-void XMenu_setToolTipsVisible_2(XMenu* self, bool visible);
-/** @brief X菜单toolTips可见2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XMenu_toolTipsVisible_2(const XMenu* self);
-/** @brief X菜单column数量2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XMenu_columnCount_2(const XMenu* self);
-/** @brief X菜单setNoReplay2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_setNoReplay_2(XMenu* self);
-/** @brief X菜单noReplay（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_noReplay(XMenu* self);
-/** @brief X菜单set图标2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_setIcon_2(XMenu* self);
-/** @brief X菜单icon2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_icon_2(XMenu* self);
-/** @brief X菜单clear2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_clear_2(XMenu* self);
-/** @brief X菜单addSeparator2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_addSeparator_2(XMenu* self);
-/** @brief X菜单remove动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_removeAction_2(XMenu* self);
-/** @brief X菜单title2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_title_2(XMenu* self);
-/** @brief X菜单setTearOff启用2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_setTearOffEnabled_2(XMenu* self);
-/** @brief X菜单isTearOff启用2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_isTearOffEnabled_2(XMenu* self);
-/** @brief X菜单isTearOff菜单可见2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_isTearOffMenuVisible_2(XMenu* self);
-/** @brief X菜单hideTearOff菜单2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_hideTearOffMenu_2(XMenu* self);
-/** @brief X菜单menu动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_menuAction_2(XMenu* self);
-/** @brief X菜单isEmpty2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_isEmpty_2(XMenu* self);
-/** @brief X菜单set最小宽2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMenu_setMinimumWidth_2(XMenu* self);
 #endif /* XMENU_H */

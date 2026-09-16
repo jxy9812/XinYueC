@@ -7,12 +7,12 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
-#include "XWindowsStyle.h"
+#include "XCommonStyle.h"
 
 #if XSTYLE_ON
 
 XCLASS_DEFINE_BEGING(XFusionStyle)
-XCLASS_DEFINE_EXTEND_END(XFusionStyle, XWindowsStyle)
+XCLASS_DEFINE_EXTEND_END(XFusionStyle, XCommonStyle)
 
 /**
  * @brief Fusion 风格（对标 Qt 6.8 QFusionStyle）。
@@ -22,7 +22,7 @@ XCLASS_DEFINE_EXTEND_END(XFusionStyle, XWindowsStyle)
  */
 typedef struct XFusionStyle
 {
-    XWindowsStyle m_base;  /**< 基类成员；必须是第一个。 */
+    XCommonStyle m_base;  /**< 基类成员；必须是第一个（Qt 6.8 QFusionStyle : QCommonStyle）。 */
 } XFusionStyle;
 
 XVtable* XFusionStyle_class_init(void);

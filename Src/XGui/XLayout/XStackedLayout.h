@@ -174,6 +174,7 @@ void XStackedLayout_setStackingMode(XStackedLayout* self,
  * @param index 新当前页面索引。
  * @return 稳定的信号标识值。
  */
+/** @brief currentChanged 信号地址（占位；本类无 XObject 信号槽，不发射）。 */
 void* XStackedLayout_currentChanged_signal(XStackedLayout* self, int index);
 
 /**
@@ -182,6 +183,7 @@ void* XStackedLayout_currentChanged_signal(XStackedLayout* self, int index);
  * @param index 被移除页面索引。
  * @return 稳定的信号标识值。
  */
+/** @brief widgetRemoved 信号地址（占位；本类无 XObject 信号槽，不发射）。 */
 void* XStackedLayout_widgetRemoved_signal(XStackedLayout* self, int index);
 
 #endif /* XLAYOUT_ON && XLAYOUT_STACKED_ON */

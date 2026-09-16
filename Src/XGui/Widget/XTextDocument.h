@@ -94,13 +94,14 @@ typedef struct XTextDocument
     XString* m_title;      /**< 文档标题（对象拥有；metaInformation 0）。 */
     XString* m_url;        /**< 文档源 URL（对象拥有；metaInformation 1）。 */
     int m_modified;        /**< 修改计数。 */
+    int m_cursorPosition;  /**< 光标位置（字符索引；默认 0）。 */
 } XTextDocument;
 
 XVtable* XTextDocument_class_init(void);
 void XTextDocument_init(XTextDocument* self);
 #define XTextDocument_create() XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 XTextDocument* XTextDocument_create_ex(XMemoryType memory);
-#define XTextDocument_delete_base(self) XObject_delete_base((XObject*)(self))
+#define XTextDocument_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ===== 块操作 ===== */
 void XTextDocument_clear(XTextDocument* self);
@@ -165,8 +166,40 @@ void XTextDocument_setFragmentFgColor(XTextDocument* self, int bi, int fi, uint3
 void XTextDocument_setFragmentBgColor(XTextDocument* self, int bi, int fi, uint32_t color);
 void XTextDocument_setFragmentFontFamily(XTextDocument* self, int bi, int fi, const char* family);
 void XTextDocument_setFragmentFontSize(XTextDocument* self, int bi, int fi, int size);
+/** @brief 设置光标位置（QTextCursor 语义简化）。
+ * @param self 目标文档。
+ * @param position 字符索引（>=0；越界钳位）。
+ * @return 无返回值（变化时发射 cursorPositionChanged）。
+ */
+void XTextDocument_setCursorPosition(XTextDocument* self, int position);
+/** @brief 查询光标位置。 @param self 目标文档。 @return 字符索引。 */
+int XTextDocument_cursorPosition(const XTextDocument* self);
+/** @brief 定位查找文本（对标 QTextDocument::find）。
+ * @param self 目标文档。
+ * @param text UTF-8 查找串；不能为 NULL。
+ * @return 首个匹配的字符位置；未命中 -1。
+ */
+int XTextDocument_find(const XTextDocument* self, const char* text);
+/** @brief 读取指定字符（对标 QTextDocument::characterAt）。
+ * @param self 目标文档。
+ * @param position 字符索引。
+ * @return UTF-8 字符（单字符缓冲）；越界返回 '\0'。
+ */
+char XTextDocument_characterAt(const XTextDocument* self, int position);
 void XTextDocument_undo(XTextDocument* self);
 void XTextDocument_redo(XTextDocument* self);
+/** @brief baseUrlChanged() 信号（文档源 URL 变化时发射）。 */
+void* XTextDocument_baseUrlChanged_signal(XTextDocument* self);
+/** @brief cursorPositionChanged() 信号（光标移动时发射）。 */
+void* XTextDocument_cursorPositionChanged_signal(XTextDocument* self);
+/** @brief documentLayoutChanged() 信号（文档结构变化时发射）。 */
+void* XTextDocument_documentLayoutChanged_signal(XTextDocument* self);
+/** @brief redoAvailable(bool) 信号（重做可用性变化时发射）。 */
+void* XTextDocument_redoAvailable_signal(XTextDocument* self, bool available);
+/** @brief undoAvailable(bool) 信号（撤销可用性变化时发射）。 */
+void* XTextDocument_undoAvailable_signal(XTextDocument* self, bool available);
+/** @brief undoCommandAdded() 信号（新增撤销命令时发射）。 */
+void* XTextDocument_undoCommandAdded_signal(XTextDocument* self);
 void XTextDocument_setHtmlEnhanced(XTextDocument* self, const char* html);
 char* XTextDocument_toHtmlEnhanced(const XTextDocument* self);
 #endif /* XTEXTDOCUMENT_ON */

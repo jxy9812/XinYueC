@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XBackingStore.h
  * @brief      XBackingStore 后备存储类（对标 Qt 6.8 QBackingStore，实现
  *             全部公开 API）。
@@ -37,6 +37,9 @@ extern "C" {
 #include "XMemory.h"
 #include "XTypes.h"
 #include "XGeometry.h"
+#if XPAINTDEVICE_ON
+typedef struct XPaintDevice XPaintDevice; /* 前向声明。 */
+#endif
 #if XWINDOW_ON
 #include "XWindow.h"
 #else /* !XWINDOW_ON */
@@ -133,12 +136,23 @@ XBackingStore* XBackingStore_create_ex(XMemoryType memory, XWindow* window);
 XWindow* XBackingStore_window(const XBackingStore* self);
 
 /**
- * @brief      返回可绘制设备（对标 QBackingStore::paintDevice）。
+ * @brief      返回可绘制设备图像（对标 QBackingStore::paintDevice 的
+ *             缓冲语义）。
  * @details    返回内部 XImage 软件缓冲，配合 XPainter_begin_image 绘制；
  *             只能在 beginPaint 之后、endPaint 之前使用。
  * @return     内部 XImage 借用指针；不可用返回 NULL（所有权归本对象）。
  */
-XImage* XBackingStore_paintDevice(XBackingStore* self);
+XImage* XBackingStore_paintImage(XBackingStore* self);
+
+#if XPAINTDEVICE_ON
+/**
+ * @brief      返回可绘制设备描述（对标 QBackingStore::paintDevice 的
+ *             QPaintDevice 语义；度量由内部活动缓冲提供）。
+ * @param      self 目标后备存储。
+ * @return     绘制设备借用指针；不可用返回 NULL。
+ */
+XPaintDevice* XBackingStore_paintDevice(XBackingStore* self);
+#endif /* XPAINTDEVICE_ON */
 
 /** @brief 获取并准备下一块待绘制 tile；成功后 paintDevice() 指向该 tile。 */
 bool XBackingStore_nextTile(XBackingStore* self, XRect* tileRect);

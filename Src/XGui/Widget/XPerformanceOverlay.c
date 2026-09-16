@@ -586,7 +586,7 @@ static void VXPerformanceOverlay_paintEvent(XWidget* self, XEvent* event)
     XPoint offset;
     XPainter painter;
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

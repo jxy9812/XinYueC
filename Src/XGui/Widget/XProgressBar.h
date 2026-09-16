@@ -361,59 +361,11 @@ void XProgressBar_text(const XProgressBar* self, char* out, int outSize);
  * @param      self 进度条对象；可为 NULL。
  * @return     不透明信号标识；返回值不指向可释放对象，也不得解引用。
  */
-void* XProgressBar_valueChanged_signal(XProgressBar* self);
+void* XProgressBar_valueChanged_signal(XProgressBar* self, int value);
 
 #ifdef __cplusplus
 }
 #endif
 #endif /* XWIDGET_ON && XPROGRESSBAR_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XProgress条set文本可见2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_setTextVisible_2(XProgressBar* self);
-/** @brief XProgress条is文本可见2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_isTextVisible_2(XProgressBar* self);
-/** @brief XProgress条set反转外观3（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_setInvertedAppearance_3(XProgressBar* self);
-/** @brief XProgress条inverted外观2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_invertedAppearance_2(XProgressBar* self);
-/** @brief XProgress条set对齐2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_setAlignment_2(XProgressBar* self);
-/** @brief XProgress条alignment2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_alignment_2(XProgressBar* self);
-/** @brief XProgress条minimum2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_minimum_2(XProgressBar* self);
-/** @brief XProgress条maximum2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_maximum_2(XProgressBar* self);
-/** @brief XProgress条value2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XProgressBar_value_2(XProgressBar* self);
 #endif /* XPROGRESSBAR_H */

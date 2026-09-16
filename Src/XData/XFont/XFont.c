@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XFont.c
  * @brief      XFont 字体类实现（对标 Qt 6.8 QFont）
  * @author     XinYueC 团队
@@ -517,22 +517,21 @@ static void VXFont_copy(XFont* dest, const XFont* src)
     if (XClassIsVtableNull(src)) return;
     if (XClassIsVtableNull(dest))
         XFont_init(dest);
-    /* copy_base 要求目标已有生命周期；复制前释放目标的字符串资源。 */
-    XString_delete_base((XClass*)dest->m_family);
-    XString_delete_base((XClass*)dest->m_styleName);
-    dest->m_family = NULL;
-    dest->m_styleName = NULL;
-    /* 复制家族字符串 */
-    if (src->m_family) {
-        dest->m_family = XString_create_copy(src->m_family);
-    } else {
-        dest->m_family = NULL;
-    }
-    /* 复制样式名称 */
-    if (src->m_styleName) {
-        dest->m_styleName = XString_create_copy(src->m_styleName);
-    } else {
-        dest->m_styleName = NULL;
+    /* copy_base 要求目标已有生命周期。先复制源、再释放旧字符串：
+       目标与源可能共享同一 XString（浅值拷贝共享 refcount），若先释放
+       旧字符串会令 src 悬空（Task 2.18 排查 XStyleSheetStyle UAF）。 */
+    {
+        XString* oldFamily = dest->m_family;
+        XString* oldStyle = dest->m_styleName;
+        dest->m_family = src->m_family
+                             ? XString_create_copy(src->m_family) : NULL;
+        dest->m_styleName = src->m_styleName
+                                ? XString_create_copy(src->m_styleName)
+                                : NULL;
+        if (oldFamily && oldFamily != dest->m_family)
+            XString_delete_base((XClass*)oldFamily);
+        if (oldStyle && oldStyle != dest->m_styleName)
+            XString_delete_base((XClass*)oldStyle);
     }
     /* 复制值字段 */
     dest->m_pointSizeF = src->m_pointSizeF;

@@ -82,19 +82,35 @@ bool XAreaSeries_pointsVisible(const XAreaSeries* self);
 void XAreaSeries_setPointLabelsVisible(XAreaSeries* self, bool visible);
 /** @brief 查询点标签可见。 @param self 目标序列指针。 @return 可见返回 true。 */
 bool XAreaSeries_pointLabelsVisible(const XAreaSeries* self);
-/** @brief 设置点标签格式。 @param self 目标序列指针。 @param format 格式串（UTF-8）。 @return 无返回值。 */
-void XAreaSeries_setPointLabelsFormat(XAreaSeries* self, const char* format);
-/** @brief 查询点标签格式。 @param self 目标序列指针。 @return 格式串。 */
-const char* XAreaSeries_pointLabelsFormat(const XAreaSeries* self);
+/** @brief 设置点标签格式（XString 主版本）。
+ * @param self 目标序列指针。
+ * @param format 借用 XString*；可为 NULL（恢复默认 "@xPoint, @yPoint"）。
+ * @return 无返回值。 */
+void XAreaSeries_setPointLabelsFormat(XAreaSeries* self, const XString* format);
+/** @brief 设置点标签格式（UTF-8 兼容重载，转发主版本）。 */
+void XAreaSeries_setPointLabelsFormat_2(XAreaSeries* self, const char* format);
+/** @brief 查询点标签格式（内部借用 XString*；不得释放）。 */
+const XString* XAreaSeries_pointLabelsFormat(const XAreaSeries* self);
+/** @brief 查询点标签格式（UTF-8 借用）。 */
+const char* XAreaSeries_pointLabelsFormat_2(const XAreaSeries* self);
 /** @brief 设置点标签颜色。 @param self 目标序列指针。 @param color ARGB。 @return 无返回值。 */
 void XAreaSeries_setPointLabelsColor(XAreaSeries* self, uint32_t color);
 /** @brief 查询点标签颜色。 @param self 目标序列指针。 @return ARGB。 */
 uint32_t XAreaSeries_pointLabelsColor(const XAreaSeries* self);
-/** @brief 设置点标签字体。 @param self 目标序列指针。 @param family 字体族（NULL 保持）。 @param pointSize 字号（0 保持）。 @return 无返回值。 */
-void XAreaSeries_setPointLabelsFont(XAreaSeries* self, const char* family,
+/** @brief 设置点标签字体（XString 主版本）。
+ * @param self 目标序列指针。
+ * @param family 借用 XString*；NULL 保持。
+ * @param pointSize 字号（0 保持）。
+ * @return 无返回值。 */
+void XAreaSeries_setPointLabelsFont(XAreaSeries* self, const XString* family,
                                     int pointSize);
-/** @brief 查询点标签字体族。 @param self 目标序列指针。 @return 字体族。 */
-const char* XAreaSeries_pointLabelsFontFamily(const XAreaSeries* self);
+/** @brief 设置点标签字体（UTF-8 兼容重载，转发主版本）。 */
+void XAreaSeries_setPointLabelsFont_2(XAreaSeries* self, const char* family,
+                                      int pointSize);
+/** @brief 查询点标签字体族（内部借用 XString*；不得释放）。 */
+const XString* XAreaSeries_pointLabelsFontFamily(const XAreaSeries* self);
+/** @brief 查询点标签字体族（UTF-8 借用）。 */
+const char* XAreaSeries_pointLabelsFontFamily_2(const XAreaSeries* self);
 /** @brief 查询点标签字号。 @param self 目标序列指针。 @return 字号（磅）。 */
 int XAreaSeries_pointLabelsFontSize(const XAreaSeries* self);
 /** @brief 设置点标签裁剪。 @param self 目标序列指针。 @param clip true 裁剪。 @return 无返回值。 */
@@ -105,10 +121,17 @@ bool XAreaSeries_pointLabelsClipping(const XAreaSeries* self);
 void XAreaSeries_setBaseValue(XAreaSeries* self, double base);
 /** @brief 设置填充色。 @param self 目标序列指针。 @param color ARGB。 @return 无返回值。 */
 void XAreaSeries_setColor(XAreaSeries* self, uint32_t color);
-/** @brief 设置序列名。 @param self 目标序列指针。 @param name UTF-8 名称。 @return 无返回值。 */
-void XAreaSeries_setName(XAreaSeries* self, const char* name);
-/** @brief 读取序列名。 @param self 目标序列指针。 @return 序列名（UTF-8）。 */
-const char* XAreaSeries_name(const XAreaSeries* self);
+/** @brief 设置序列名（XString 主版本，委托 QAbstractSeries）。
+ * @param self 目标序列指针。
+ * @param name 借用 XString*；可为 NULL。
+ * @return 无返回值。 */
+void XAreaSeries_setName(XAreaSeries* self, const XString* name);
+/** @brief 设置序列名（UTF-8 兼容重载，转发主版本）。 */
+void XAreaSeries_setName_2(XAreaSeries* self, const char* name);
+/** @brief 读取序列名（内部借用 XString*；不得释放）。 */
+const XString* XAreaSeries_name(const XAreaSeries* self);
+/** @brief 读取序列名（UTF-8 借用）。 */
+const char* XAreaSeries_name_2(const XAreaSeries* self);
 
 /** @brief 查询填充色。 @param self 目标序列指针。 @return ARGB（0=主题色）。 */
 uint32_t XAreaSeries_color(const XAreaSeries* self);
@@ -121,8 +144,10 @@ void XAreaSeries_pen(const XAreaSeries* self, uint32_t* color,
 void XAreaSeries_setBrush(XAreaSeries* self, uint32_t color);
 /** @brief 读取画刷颜色（对标 brush()）。 @param self 目标序列指针。 @return ARGB。 */
 uint32_t XAreaSeries_brush(const XAreaSeries* self);
-/** @brief 读取点标签字体族（别名：对标 pointLabelsFont()）。 @param self 目标序列指针。 @return 字体族。 */
-const char* XAreaSeries_pointLabelsFont(const XAreaSeries* self);
+/** @brief 读取点标签字体（别名：内部借用 XString*）。 */
+const XString* XAreaSeries_pointLabelsFont(const XAreaSeries* self);
+/** @brief 读取点标签字体（UTF-8 借用）。 */
+const char* XAreaSeries_pointLabelsFont_2(const XAreaSeries* self);
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

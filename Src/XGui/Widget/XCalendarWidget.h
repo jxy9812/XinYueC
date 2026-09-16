@@ -68,6 +68,11 @@ typedef struct XCalendarWidget
     bool m_gridVisible;    /**< 网格线（默认 false）。 */
     bool m_navBarVisible;  /**< 导航栏（默认 true）。 */
     int m_selectionMode;   /**< 选择模式。 */
+    bool m_dateEditEnabled; /**< 日期编辑框（默认 false；存储）。 */
+    bool m_showTodayDate;   /**< 今日按钮（默认 true）。 */
+    int m_verticalHeaderFormat; /**< 垂直表头格式（0=ISO 周数，1=无）。 */
+    int m_headerTextFormat; /**< 表头文本格式位（0=默认；预留 QTextCharFormat 简化）。 */
+    int m_weekdayTextFormat; /**< 周几文本格式位（预留）。 */
 } XCalendarWidget;
 
 /** @brief X日历控件classinit（对标 Qt 同名接口）。
@@ -150,6 +155,68 @@ bool XCalendarWidget_isNavigationBarVisible(const XCalendarWidget* self);
  * @brief      设置导航栏可见。
  */
 void XCalendarWidget_setNavigationBarVisible(XCalendarWidget* self, bool visible);
+/** @brief 设置日期编辑框（存储；对标 setDateEditEnabled）。
+ * @param self 目标控件。
+ * @param enable true 启用。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable);
+/** @brief 查询日期编辑框。 @param self 目标控件。 @return 启用返回 true。 */
+bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self);
+/** @brief 计算日期所在周数（对标 QCalendarWidget::weekNumber；简化：ISO 周 1..53 估算）。
+ * @param self 目标控件。
+ * @param date 日期借用指针。
+ * @return 周数；参数无效返回 -1。
+ */
+int XCalendarWidget_weekNumber(const XCalendarWidget* self,
+                               const XDate* date);
+/** @brief 设置表头文本格式位（QTextCharFormat 简化为位集）。
+ * @param self 目标控件。
+ * @param fmt 格式位。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int fmt);
+/** @brief 设置周几文本格式位。
+ * @param self 目标控件。
+ * @param fmt 格式位。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int fmt);
+/** @brief 查询日期是否被选中（对标 isDateSelected）。
+ * @param self 目标控件。
+ * @param date 日期借用指针。
+ * @return 选中返回 true。
+ */
+bool XCalendarWidget_isDateSelected(const XCalendarWidget* self,
+                                    const XDate* date);
+/** @brief 设置今日按钮可见（对标 setShowTodayDate）。
+ * @param self 目标控件。
+ * @param show true 显示。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show);
+/** @brief 查询今日按钮可见。 @param self 目标控件。 @return 显示返回 true。 */
+bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self);
+/** @brief 设置垂直表头格式（对标 setVerticalHeaderFormat）。
+ * @param self 目标控件。
+ * @param format 格式码（0=ISO 周数，1=无）。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self,
+                                             int format);
+/** @brief 查询垂直表头格式。 @param self 目标控件。 @return 格式码。 */
+int XCalendarWidget_verticalHeaderFormat(const XCalendarWidget* self);
+/** @brief 今日日期（对标 QCalendarWidget::todayDate）。
+ * @param self 目标控件。
+ * @param out 输出日期。
+ * @return 成功返回 true。
+ */
+bool XCalendarWidget_todayDate(const XCalendarWidget* self, XDate* out);
+/** @brief 跳转今日页（对标 showToday）。
+ * @param self 目标控件。
+ * @return 无返回值。
+ */
+void XCalendarWidget_showTodayPage(XCalendarWidget* self);
 /**
  * @brief      获取选择模式。
  */
@@ -180,172 +247,4 @@ void* XCalendarWidget_currentPageChanged_signal(XCalendarWidget* self, int year,
 
 #endif /* XWIDGET_ON && XCALENDARWIDGET_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief X日历控件set日期Edit启用（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param enable bool 开关：true 启用。
- * @return 无返回值。
- */
-void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable);
-/** @brief X日历控件is日期Edit启用（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self);
-/** @brief X日历控件set日期EditAccept延迟（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param delay 延时毫秒。
- * @return 无返回值。
- */
-void XCalendarWidget_setDateEditAcceptDelay(XCalendarWidget* self, int delay);
-/** @brief X日历控件dateEditAccept延迟（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XCalendarWidget_dateEditAcceptDelay(const XCalendarWidget* self);
-/** @brief X日历控件weekNumber（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param date 日期指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XCalendarWidget_weekNumber(const XCalendarWidget* self, const XDate* date);
-/** @brief X日历控件set表头文本Format（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param format int 参数。
- * @return 无返回值。
- */
-void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int format);
-/** @brief X日历控件header文本Format（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XCalendarWidget_headerTextFormat(const XCalendarWidget* self);
-/** @brief X日历控件setWeekday文本Format（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param day int 参数。
- * @param format int 参数。
- * @return 无返回值。
- */
-void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int day, int format);
-/** @brief X日历控件weekday文本Format（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param day int 参数。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self, int day);
-/** @brief X日历控件setFirstDayOfWeek2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param day int 参数。
- * @return 无返回值。
- */
-void XCalendarWidget_setFirstDayOfWeek_2(XCalendarWidget* self, int day);
-/** @brief X日历控件is日期选中（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XCalendarWidget_isDateSelected(const XCalendarWidget* self);
-/** @brief X日历控件setShowToday日期（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param show bool 参数。
- * @return 无返回值。
- */
-void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show);
-/** @brief X日历控件isShowToday日期（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self);
-/** @brief X日历控件today日期（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应值。
- */
-XDate XCalendarWidget_todayDate(const XCalendarWidget* self);
-/** @brief X日历控件setVertical表头Format（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param format int 参数。
- * @return 无返回值。
- */
-void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self, int format);
-/** @brief X日历控件set选中日期2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setSelectedDate_2(XCalendarWidget* self);
-/** @brief X日历控件set日期范围2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setDateRange_2(XCalendarWidget* self);
-/** @brief X日历控件set当前页2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setCurrentPage_2(XCalendarWidget* self);
-/** @brief X日历控件showToday页（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_showTodayPage(XCalendarWidget* self);
-/** @brief X日历控件setWeekday文本Format2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setWeekdayTextFormat_2(XCalendarWidget* self);
-/** @brief X日历控件set表头Format2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setHeaderFormat_2(XCalendarWidget* self);
-/** @brief X日历控件setVertical表头Format2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setVerticalHeaderFormat_2(XCalendarWidget* self);
-/** @brief X日历控件setSelection模式2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setSelectionMode_2(XCalendarWidget* self);
-/** @brief X日历控件selection模式2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_selectionMode_2(XCalendarWidget* self);
-/** @brief X日历控件set网格可见2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setGridVisible_2(XCalendarWidget* self);
-/** @brief X日历控件setNavigation条可见2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setNavigationBarVisible_2(XCalendarWidget* self);
-/** @brief X日历控件firstDayOfWeek2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_firstDayOfWeek_2(XCalendarWidget* self);
-/** @brief X日历控件set日期Edit启用2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setDateEditEnabled_2(XCalendarWidget* self);
-/** @brief X日历控件is日期Edit启用2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_isDateEditEnabled_2(XCalendarWidget* self);
-/** @brief X日历控件set日期EditAccept延迟2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_setDateEditAcceptDelay_2(XCalendarWidget* self);
-/** @brief X日历控件dateEditAccept延迟2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XCalendarWidget_dateEditAcceptDelay_2(XCalendarWidget* self);
 #endif /* XCALENDARWIDGET_H */

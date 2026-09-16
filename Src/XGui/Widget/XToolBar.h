@@ -63,6 +63,9 @@ typedef struct XToolBar
     XVector* m_actions;      /**< 动作数组（XAction*；内部创建的归工具栏）。 */
     XVector* m_buttons;      /**< 与动作顺序对应的按钮（XToolButton*）。 */
     XVector* m_bridges;      /**< 与动作顺序对应的桥（XTBBridge*，拥有）。 */
+    XVector* m_widgets;      /**< 与动作顺序对应的附加控件（XWidget*，借用；
+                                  平行数组，无控件位为 NULL）。 */
+    XAction* m_toggleAction; /**< 显示/隐藏工具栏的动作（对标 toggleViewAction）。 */
     bool m_movable;          /**< 可移动（默认 true）。 */
     bool m_floatable;        /**< 可浮动（默认 true）。 */
     int m_orientation;       /**< 方向（1=水平 2=垂直，默认水平）。 */
@@ -119,11 +122,30 @@ void XToolBar_addAction(XToolBar* self, XAction* action);
 XAction* XToolBar_addAction_2(XToolBar* self, const char* utf8);
 /** @brief 追加分隔条（对标 addSeparator；返回分隔动作）。 */
 XAction* XToolBar_addSeparator(XToolBar* self);
+/** @brief 在 before 动作之前插入分隔条（对标 insertSeparator；before 为
+ *         NULL 时等价追加）。 */
+/**
+ * @brief      插入分隔条。
+ */
+XAction* XToolBar_insertSeparator(XToolBar* self, XAction* before);
 /** @brief 追加控件（对标 addWidget；控件归调用方）。 */
 /**
  * @brief      添加控件。
  */
 void XToolBar_addWidget(XToolBar* self, XWidget* widget);
+/** @brief 在 before 动作之前插入控件（对标 insertWidget；before 为 NULL
+ *         时等价追加；控件归调用方，占位动作归工具栏）。 */
+/**
+ * @brief      插入控件。
+ */
+void XToolBar_insertWidget(XToolBar* self, XAction* before,
+                           XWidget* widget);
+/** @brief 查询与动作关联的附加控件（对标 widgetForAction；仅返回经
+ *         addWidget/insertWidget 登记的控件，动作按钮无关联控件）。 */
+/**
+ * @brief      查询动作关联控件。
+ */
+XWidget* XToolBar_widgetForAction(XToolBar* self, XAction* action);
 /** @brief 移除动作（对标 removeAction）。 */
 void XToolBar_removeAction(XToolBar* self, XAction* action);
 /** @brief 清空全部动作与控件（对标 clear）。 */
@@ -135,6 +157,24 @@ void XToolBar_clear(XToolBar* self);
 int XToolBar_actionCount(const XToolBar* self);
 /** @brief 查询指定索引的动作；越界返回 NULL。 */
 XAction* XToolBar_action(const XToolBar* self, int index);
+/** @brief 返回局部坐标处的动作（对标 QToolBar::actionAt）。
+ * @param self 目标工具栏；可为 NULL。
+ * @param pos 局部坐标借用指针；可为 NULL。
+ * @return 命中返回对应动作；未命中或参数无效返回 NULL。
+ */
+XAction* XToolBar_actionAt(const XToolBar* self, const XPoint* pos);
+/** @brief 返回动作在局部坐标中的几何（对标 QToolBar::actionGeometry）。
+ * @param self 目标工具栏；可为 NULL。
+ * @param action 目标动作借用指针；可为 NULL。
+ * @return 命中返回动作矩形；未命中返回空矩形 (0,0,0,0)。
+ */
+XRect XToolBar_actionGeometry(const XToolBar* self, XAction* action);
+/** @brief 显示/隐藏工具栏的开关动作（对标 QToolBar::toggleViewAction；
+ *         动作由工具栏拥有，触发时切换可见性）。 */
+/**
+ * @brief      获取切换可见性动作。
+ */
+XAction* XToolBar_toggleViewAction(XToolBar* self);
 
 /* ==================== 信号 ==================== */
 
@@ -158,24 +198,13 @@ void* XToolBar_movableChanged_signal(XToolBar* self, bool movable);
  *             对象，也不得解引用。
  */
 void* XToolBar_visibilityChanged_signal(XToolBar* self, bool visible);
+/** @brief iconSizeChanged(int,int) 信号（对标 QToolBar::iconSizeChanged；
+ *         载荷：宽,高；当前为方边尺寸 size×size）。 */
+void* XToolBar_iconSizeChanged_signal(XToolBar* self, int width, int height);
 
 #ifdef __cplusplus
 }
 #endif
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */
 
-#ifdef __cplusplus
-}
-#endif
-
-void* XToolBar_allowedAreasChanged_signal(XToolBar* self);
-void* XToolBar_iconSizeChanged_signal(XToolBar* self);
-void* XToolBar_toolButtonStyleChanged_signal(XToolBar* self);
-void* XToolBar_topLevelChanged_signal(XToolBar* self);
-bool XToolBar_isAreaAllowed(const XToolBar* self, int area);
-bool XToolBar_isFloating(const XToolBar* self);
-void XToolBar_setAllowedAreas_2(XToolBar* self, int areas);
-void XToolBar_setFloatable_2(XToolBar* self, bool floatable);
-void XToolBar_setMovable_2(XToolBar* self, bool movable);
-void XToolBar_setOrientation_2(XToolBar* self, int orientation);
 #endif /* XTOOLBAR_H */

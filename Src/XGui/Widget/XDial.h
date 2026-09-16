@@ -91,12 +91,12 @@ int XDial_notchSize(const XDial* self);
 #define XDial_invertedControls(self) XAbstractSlider_invertedControls((const XAbstractSlider*)(self))
 #define XDial_setInvertedControls(self, i) XAbstractSlider_setInvertedControls((XAbstractSlider*)(self), (i))
 #define XDial_triggerAction(self, a) XAbstractSlider_triggerAction((XAbstractSlider*)(self), (a))
-#define XDial_valueChanged_signal(self) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self))
+#define XDial_valueChanged_signal(self, value) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self), (value))
 #define XDial_sliderPressed_signal(self) XAbstractSlider_sliderPressed_signal((XAbstractSlider*)(self))
-#define XDial_sliderMoved_signal(self) XAbstractSlider_sliderMoved_signal((XAbstractSlider*)(self))
+#define XDial_sliderMoved_signal(self, position) XAbstractSlider_sliderMoved_signal((XAbstractSlider*)(self), (position))
 #define XDial_sliderReleased_signal(self) XAbstractSlider_sliderReleased_signal((XAbstractSlider*)(self))
-#define XDial_rangeChanged_signal(self) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self))
-#define XDial_actionTriggered_signal(self) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self))
+#define XDial_rangeChanged_signal(self, min, max) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self), (min), (max))
+#define XDial_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
 
 #ifdef __cplusplus
 }

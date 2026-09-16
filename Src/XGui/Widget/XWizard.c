@@ -1,4 +1,5 @@
 ﻿#include "XWizard.h"
+#include "XStringList.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -241,7 +242,7 @@ static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
     char buf[256];
     XWizardPage* page;
     if (!wiz || !event) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -295,7 +296,24 @@ static void VX_wizard_deinit(XWizard* self)
         if (self->m_buttonTexts[bi]) {
             XString_delete_base(self->m_buttonTexts[bi]);
             self->m_buttonTexts[bi] = NULL;
+
+    {
+        int fi;
+        for (fi = 0; fi < self->m_fieldCount; ++fi) {
+            if (self->m_fields[fi].name)
+                XString_delete_base(self->m_fields[fi].name);
+            if (self->m_fields[fi].value)
+                XString_delete_base(self->m_fields[fi].value);
+            self->m_fields[fi].name = NULL;
+            self->m_fields[fi].value = NULL;
         }
+        self->m_fieldCount = 0;
+    }
+    if (self->m_pixmap) {
+        XString_delete_base(self->m_pixmap);
+        self->m_pixmap = NULL;
+    }
+}
     }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
@@ -316,6 +334,11 @@ void XWizard_init(XWizard* self, XWidget* parent, XWidgetFlags flags)
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XWizard);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
+    self->m_fieldCount = 0;
+    self->m_pixmap = XString_create();
+    self->m_buttonLayout = 0;
+    self->m_titleFormat = 0;
+    self->m_subTitleFormat = 0;
     {
         int bi;
         for (bi = 0; bi < XWizardButton_NStandardButtons; ++bi)
@@ -592,47 +615,183 @@ void* XWizard_helpRequested_signal(XWizard* self)
 }
 
 
-void* XWizard_completeChanged_signal(XWizard* self)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void* XWizardPage_completeChanged_signal(XWizardPage* self)
 {
     (void)self;
-    return (void*)(size_t)XWizard_completeChanged_signal;
+    return (void*)(size_t)XWizardPage_completeChanged_signal;
 }
-void* XWizard_customButtonClicked_signal(XWizard* self)
+
+void* XWizard_customButtonClicked_signal(XWizard* self, int which)
 {
-    (void)self;
+    (void)self; (void)which;
     return (void*)(size_t)XWizard_customButtonClicked_signal;
 }
 
-void XWizard_setPixmap(XWizard* self, int which, const char* path) { (void)self; (void)which; (void)path; }
-const char* XWizard_pixmap(const XWizard* self, int which) { (void)self; (void)which; return ""; }
-void XWizard_setField_2(XWizard* self, const char* name, const char* value) { (void)self; (void)name; (void)value; }
-const char* XWizard_field(const XWizard* self, const char* name) { (void)self; (void)name; return ""; }
-void XWizard_setSideWidget(XWizard* self, XWidget* widget) { (void)self; (void)widget; }
-XWidget* XWizard_sideWidget(const XWizard* self) { (void)self; return NULL; }
-int XWizard_visitedIds_count(const XWizard* self)
-{ int i; int c=0; if(!self) return 0; for(i=0;i<self->m_pageCount;++i) if(self->m_visited[i]) ++c; return c; }
-bool XWizard_validateCurrentPage(XWizard* self)
-{ XWizardPage* p; if(!self) return false; p=XWizard_currentPage(self); return p?XWizardPage_isComplete(p):true; }
-void XWizard_setButtonLayout(XWizard* self, const int* layout, int count) { (void)self; (void)layout; (void)count; }
-void XWizard_setButton_2(XWizard* self, XWizardButton which, XPushButton* button) { (void)self; (void)which; (void)button; }
-void XWizard_setTitleFormat(XWizard* self, int format) { (void)self; (void)format; }
-int XWizard_titleFormat(const XWizard* self) { (void)self; return 0; }
-void XWizard_setSubTitleFormat(XWizard* self, int format) { (void)self; (void)format; }
-int XWizard_subTitleFormat(const XWizard* self) { (void)self; return 0; }
-void XWizard_done(XWizard* self, int result) { XDialog_done((XDialog*)self, result); }
-void XWizard_cleanupPage(XWizard* self) { (void)self; }
-void XWizard_initializePage(XWizard* self) { (void)self; }
-void XWizard_setField_3(XWizard* self) { (void)self; }
-void XWizard_field_2(XWizard* self) { (void)self; }
-void XWizard_setPixmap_2(XWizard* self) { (void)self; }
-void XWizard_pixmap_2(XWizard* self) { (void)self; }
-void XWizard_setSideWidget_2(XWizard* self) { (void)self; }
-void XWizard_sideWidget_2(XWizard* self) { (void)self; }
-void XWizard_currentId_2(XWizard* self) { (void)self; }
-void XWizard_setStartId_2(XWizard* self) { (void)self; }
-void XWizard_startId_2(XWizard* self) { (void)self; }
-void XWizard_setDefaultProperty(XWizard* self) { (void)self; }
-void XWizard_validateCurrentPage_2(XWizard* self) { (void)self; }
-void XWizard_nextId(XWizard* self) { (void)self; }
-void XWizard_setVisible_2(XWizard* self) { (void)self; }
+/* ==================== Task 2.6：字段/侧边/布局/格式/导航 ==================== */
+
+void XWizard_setPixmap(XWizard* self, int which, const XString* path)
+{
+    (void)which;
+    if (!self) return;
+    if (!self->m_pixmap) self->m_pixmap = XString_create();
+    if (self->m_pixmap) {
+        if (path)
+            XString_assign(self->m_pixmap, path);
+        else
+            XString_assign_utf8(self->m_pixmap, "");
+    }
+}
+void XWizard_setPixmap_2(XWizard* self, int which, const char* path)
+{
+    XString* tmp = NULL;
+    if (path) {
+        tmp = XString_create_utf8(path);
+        if (!tmp) return;
+    }
+    XWizard_setPixmap(self, which, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XWizard_field(const XWizard* self, const XString* name)
+{
+    int i;
+    if (!self || !name) return NULL;
+    for (i = 0; i < self->m_fieldCount; ++i) {
+        if (self->m_fields[i].name &&
+            XString_equals(self->m_fields[i].name, name,
+                           XChar_CaseSensitive))
+            return self->m_fields[i].value;
+    }
+    return NULL;
+}
+const char* XWizard_field_2(const XWizard* self, const char* name)
+{
+    XString* tmp = NULL;
+    const XString* v;
+    const char* out;
+    if (!name) return NULL;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return NULL;
+    v = XWizard_field(self, tmp);
+    out = v ? XString_toUtf8(v) : NULL;
+    XString_delete_base(tmp);
+    return out;
+}
+
+void XWizard_setField(XWizard* self, const XString* name,
+                      const XString* value)
+{
+    int i;
+    if (!self || !name) return;
+    for (i = 0; i < self->m_fieldCount; ++i) {
+        if (self->m_fields[i].name &&
+            XString_equals(self->m_fields[i].name, name,
+                           XChar_CaseSensitive)) {
+            if (value)
+                XString_assign(self->m_fields[i].value, value);
+            else
+                XString_assign_utf8(self->m_fields[i].value, "");
+            return;
+        }
+    }
+    if (self->m_fieldCount >= 32) return;
+    self->m_fields[self->m_fieldCount].name =
+        XString_create_copy(name);
+    self->m_fields[self->m_fieldCount].value =
+        value ? XString_create_copy(value) : XString_create();
+    self->m_fieldCount++;
+}
+void XWizard_setField_2(XWizard* self, const char* name, const char* value)
+{
+    XString* tn = NULL;
+    XString* tv = NULL;
+    if (name) {
+        tn = XString_create_utf8(name);
+        if (!tn) return;
+    }
+    if (value) {
+        tv = XString_create_utf8(value);
+        if (!tv) { if (tn) XString_delete_base(tn); return; }
+    }
+    XWizard_setField(self, tn, tv);
+    if (tv) XString_delete_base(tv);
+    if (tn) XString_delete_base(tn);
+}
+
+void XWizard_setSideWidget(XWizard* self, XWidget* widget)
+{ if (self) self->m_sideWidget = widget; }
+XWidget* XWizard_sideWidget(const XWizard* self)
+{ return self ? self->m_sideWidget : NULL; }
+
+void XWizard_setButtonLayout(XWizard* self, int layout)
+{ if (self) self->m_buttonLayout = layout; }
+void XWizard_setTitleFormat(XWizard* self, int format)
+{ if (self) self->m_titleFormat = format; }
+void XWizard_setSubTitleFormat(XWizard* self, int format)
+{ if (self) self->m_subTitleFormat = format; }
+
+void XWizard_cleanupPage(XWizard* self)
+{
+    (void)self;
+}
+
+void XWizard_initializePage(XWizard* self)
+{
+    (void)self;
+}
+
+bool XWizard_validateCurrentPage(const XWizard* self)
+{
+    if (!self || self->m_currentIndex < 0 ||
+        self->m_currentIndex >= self->m_pageCount)
+        return true;
+    return self->m_pages[self->m_currentIndex]->m_complete;
+}
+
+int XWizard_nextId(const XWizard* self)
+{
+    if (!self) return -1;
+    if (self->m_currentIndex + 1 >= self->m_pageCount) return -1;
+    return self->m_currentIndex + 1;
+}
+
+void XWizard_done(XWizard* self, int result)
+{
+    if (!self) return;
+    XDialog_done((XDialog*)self, result);
+}
+
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */

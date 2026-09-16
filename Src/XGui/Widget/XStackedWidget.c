@@ -17,40 +17,8 @@
 /* ==================== 信号转发槽 ==================== */
 
 /** @brief 布局 currentChanged → 控件 currentChanged 转发。 */
-static void xsw_layoutCurrentChangedSlot(XObject* receiver, XVarList* args)
-{
-    XStackedWidget* self = (XStackedWidget*)receiver;
-    XVarList* out;
-    if (!self || !args) return;
-    /* XVarList_args_1 以 const 局部变量定义 index，勿提前声明。 */
-    XVarList_args_1(args, int, index);
-    out = XVarList_Create(XVar(int, index));
-    if (!out) return;
-    if (((XObject*)self)->m_signalSlot)
-        XObject_emitSignal((XObject*)self,
-                           (size_t)XStackedWidget_currentChanged_signal,
-                           out, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-    else
-        XVarList_delete(out);
-}
 
 /** @brief 布局 widgetRemoved → 控件 widgetRemoved 转发。 */
-static void xsw_layoutWidgetRemovedSlot(XObject* receiver, XVarList* args)
-{
-    XStackedWidget* self = (XStackedWidget*)receiver;
-    XVarList* out;
-    if (!self || !args) return;
-    /* XVarList_args_1 以 const 局部变量定义 index，勿提前声明。 */
-    XVarList_args_1(args, int, index);
-    out = XVarList_Create(XVar(int, index));
-    if (!out) return;
-    if (((XObject*)self)->m_signalSlot)
-        XObject_emitSignal((XObject*)self,
-                           (size_t)XStackedWidget_widgetRemoved_signal,
-                           out, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-    else
-        XVarList_delete(out);
-}
 
 /* ==================== 生命周期与虚表 ==================== */
 
@@ -81,28 +49,16 @@ void XStackedWidget_init(XStackedWidget* self, XWidget* parent,
     /* 内部堆叠布局挂到本控件（对标 QStackedWidget 持有 QStackedLayout）。 */
     XStackedLayout_init(&self->m_layout);
     XWidget_setLayout((XWidget*)self, (XLayout*)&self->m_layout);
-    XObject_connect_1((XObject*)&self->m_layout,
-                      XSignal(XStackedLayout_currentChanged_signal),
-                      (XObject*)self, xsw_layoutCurrentChangedSlot,
-                      XConnectionType_Direct);
-    XObject_connect_1((XObject*)&self->m_layout,
-                      XSignal(XStackedLayout_widgetRemoved_signal),
-                      (XObject*)self, xsw_layoutWidgetRemovedSlot,
-                      XConnectionType_Direct);
+    /* 注意：XStackedLayout 继承链为 XLayout→XLayoutItem→XClass，不含
+     * XObject 信号槽，不能作为信号发送方连接。currentChanged/
+     * widgetRemoved 由本控件（XObject 派生）在 setCurrentIndex/
+     * removeWidget 操作路径自行发射（见下）。 */
 }
 
 /** @brief 析构：先释放内嵌布局，再交父类。 */
 static void VX_stackedWidget_deinit(XStackedWidget* self)
 {
     if (!self) return;
-    /* 先断开布局信号转发：布局析构（releaseItems/takeAt）会发射
-       widgetRemoved/currentChanged，转发槽随后访问半析构的宿主对象。 */
-    XObject_disconnect_1((XObject*)&self->m_layout,
-                         XSignal(XStackedLayout_currentChanged_signal),
-                         (XObject*)self, xsw_layoutCurrentChangedSlot);
-    XObject_disconnect_1((XObject*)&self->m_layout,
-                         XSignal(XStackedLayout_widgetRemoved_signal),
-                         (XObject*)self, xsw_layoutWidgetRemovedSlot);
     XStackedLayout_deinit_base(&self->m_layout);
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
 }
@@ -135,8 +91,12 @@ int XStackedWidget_insertWidget(XStackedWidget* self, int index,
 
 void XStackedWidget_removeWidget(XStackedWidget* self, XWidget* widget)
 {
+    int index;
     if (!self || !widget) return;
+    index = XLayout_indexOf((const XLayout*)&self->m_layout, widget);
+    if (index < 0) return;
     XStackedLayout_removeWidget(&self->m_layout, widget);
+    XStackedWidget_widgetRemoved_signal(self, index);
 }
 
 int XStackedWidget_currentIndex(const XStackedWidget* self)
@@ -166,14 +126,21 @@ int XStackedWidget_count(const XStackedWidget* self)
 
 void XStackedWidget_setCurrentIndex(XStackedWidget* self, int index)
 {
+    int old;
     if (!self) return;
+    old = XStackedLayout_currentIndex(&self->m_layout);
+    if (old == index) return;
     XStackedLayout_setCurrentIndex(&self->m_layout, index);
+    XStackedWidget_currentChanged_signal(self, index);
 }
 
 void XStackedWidget_setCurrentWidget(XStackedWidget* self, XWidget* widget)
 {
+    int index;
     if (!self || !widget) return;
-    XStackedLayout_setCurrentWidget(&self->m_layout, widget);
+    index = XLayout_indexOf((const XLayout*)&self->m_layout, widget);
+    if (index < 0) return;
+    XStackedWidget_setCurrentIndex(self, index);
 }
 
 /* ==================== 信号 ==================== */

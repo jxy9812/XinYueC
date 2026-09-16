@@ -147,7 +147,7 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
     windowText = xdial_color(dial, XPaletteColorRole_WindowText);
     base       = xdial_color(dial, XPaletteColorRole_Base);
 
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

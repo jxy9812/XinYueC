@@ -63,12 +63,12 @@ extern "C" {
 #define XSlider_stepBy_base(self, s) XAbstractSlider_stepBy_base((XAbstractSlider*)(self), (s))
 #define XSlider_sliderChange_base(self, c) XAbstractSlider_sliderChange_base((XAbstractSlider*)(self), (c))
 #define XSlider_stepEnabled_base(self) XAbstractSlider_stepEnabled_base((XAbstractSlider*)(self))
-#define XSlider_valueChanged_signal(self) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self))
+#define XSlider_valueChanged_signal(self, value) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self), (value))
 #define XSlider_sliderPressed_signal(self) XAbstractSlider_sliderPressed_signal((XAbstractSlider*)(self))
-#define XSlider_sliderMoved_signal(self) XAbstractSlider_sliderMoved_signal((XAbstractSlider*)(self))
+#define XSlider_sliderMoved_signal(self, position) XAbstractSlider_sliderMoved_signal((XAbstractSlider*)(self), (position))
 #define XSlider_sliderReleased_signal(self) XAbstractSlider_sliderReleased_signal((XAbstractSlider*)(self))
-#define XSlider_rangeChanged_signal(self) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self))
-#define XSlider_actionTriggered_signal(self) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self))
+#define XSlider_rangeChanged_signal(self, min, max) XAbstractSlider_rangeChanged_signal((XAbstractSlider*)(self), (min), (max))
+#define XSlider_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
 
 /** @brief 刻度位置（对标 QSlider::TickPosition，数值一致）。 */
 typedef enum XSliderTickPosition

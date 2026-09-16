@@ -66,6 +66,23 @@ static void xmsg_rejectedSlot(XObject* receiver, XVarList* args)
     if (box) box->m_inExec = false;
 }
 
+/** @brief 按钮盒 clicked → 记录 clickedButton 并发射 buttonClicked。 */
+static void xmsg_clickedSlot(XObject* receiver, XVarList* args)
+{
+    XMessageBox* box = (XMessageBox*)receiver;
+    if (!box || !args) return;
+    XVarList_args_1(args, XAbstractButton*, button);
+    box->m_clicked = (XAbstractButton*)button;
+    if (box && ((XObject*)box)->m_signalSlot) {
+        XVarList* out = XVarList_Create(XVar(XAbstractButton*, button));
+        if (out) {
+            XObject_emitSignal((XObject*)box,
+                               (size_t)XMessageBox_buttonClicked_signal,
+                               out, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        }
+    }
+}
+
 /* ==================== 生命周期与虚表 ==================== */
 
 static void VXMessageBox_deinit(XMessageBox* self)
@@ -78,6 +95,18 @@ static void VXMessageBox_deinit(XMessageBox* self)
     if (self->m_title) {
         XString_delete_base(self->m_title);
         self->m_title = NULL;
+    }
+    if (self->m_detailedText) {
+        XString_delete_base(self->m_detailedText);
+        self->m_detailedText = NULL;
+    }
+    if (self->m_informativeText) {
+        XString_delete_base(self->m_informativeText);
+        self->m_informativeText = NULL;
+    }
+        if (self->m_standards) {
+        XVector_delete_base(self->m_standards);
+        self->m_standards = NULL;
     }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
@@ -105,6 +134,9 @@ void XMessageBox_init(XMessageBox* self, XWidget* parent,
     self->m_inExec = false;
     self->m_text = XString_create();
     self->m_title = XString_create();
+    self->m_detailedText = XString_create();
+    self->m_informativeText = XString_create();
+    self->m_options = 0;
 #if XDIALOGBUTTONBOX_ON
     self->m_buttonBox = XDialogButtonBox_create(self, 0);
     if (self->m_buttonBox) {
@@ -114,6 +146,10 @@ void XMessageBox_init(XMessageBox* self, XWidget* parent,
         XObject_connect_1((XObject*)self->m_buttonBox,
             (size_t)XDialogButtonBox_rejected_signal(self->m_buttonBox),
             (XObject*)self, xmsg_rejectedSlot, XConnectionType_Direct);
+        XObject_connect_1((XObject*)self->m_buttonBox,
+            (size_t)XDialogButtonBox_clicked_signal(
+                self->m_buttonBox, NULL),
+            (XObject*)self, xmsg_clickedSlot, XConnectionType_Direct);
     }
     self->m_standards = XVector_Create(int);
 #endif
@@ -286,42 +322,199 @@ void XMessageBox_about(XWidget* parent, const char* title,
                    (int)XMessageBoxIcon_Information);
 }
 
-void XMessageBox_setDetailedText(XMessageBox* self, const char* text) { (void)self; (void)text; }
-const char* XMessageBox_detailedText(const XMessageBox* self) { (void)self; return ""; }
-void XMessageBox_setInformativeText(XMessageBox* self, const char* text) { (void)self; (void)text; }
-const char* XMessageBox_informativeText(const XMessageBox* self) { (void)self; return ""; }
-void XMessageBox_addButton(XMessageBox* self, XAbstractButton* button) { (void)self; (void)button; }
-void XMessageBox_setDefaultButton(XMessageBox* self, int button) { (void)self; (void)button; }
-int XMessageBox_defaultButton(const XMessageBox* self) { (void)self; return 0; }
-void XMessageBox_setEscapeButton(XMessageBox* self, int button) { (void)self; (void)button; }
-int XMessageBox_escapeButton(const XMessageBox* self) { (void)self; return 0; }
-void XMessageBox_setTextFormat(XMessageBox* self, int format) { (void)self; (void)format; }
-int XMessageBox_textFormat(const XMessageBox* self) { (void)self; return 0; }
-void XMessageBox_setTextInteractionFlags(XMessageBox* self, int flags) { (void)self; (void)flags; }
-int XMessageBox_textInteractionFlags(const XMessageBox* self) { (void)self; return 0; }
-void XMessageBox_setCheckBox_2(XMessageBox* self, bool checked) { (void)self; (void)checked; }
-bool XMessageBox_checkBox(const XMessageBox* self) { (void)self; return false; }
-void XMessageBox_open_2(XMessageBox* self) { XWidget_show((XWidget*)self); }
-void XMessageBox_reject_2(XMessageBox* self) { XDialog_reject((XDialog*)self); }
-static void XMessageBox_warning_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
-static void XMessageBox_critical_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
-static void XMessageBox_information_2(XMessageBox* self, const char* title, const char* text) { (void)self; (void)title; (void)text; }
-void XMessageBox_setButtonText_2(XMessageBox* self, int button, const char* text) { (void)self; (void)button; (void)text; }
-void XMessageBox_setIconPixmap(XMessageBox* self) { (void)self; }
-void XMessageBox_iconPixmap(XMessageBox* self) { (void)self; }
-void XMessageBox_standardButtons_2(XMessageBox* self) { (void)self; }
-void XMessageBox_button_2(XMessageBox* self) { (void)self; }
-void XMessageBox_buttonRole(XMessageBox* self) { (void)self; }
-void XMessageBox_removeButton_2(XMessageBox* self) { (void)self; }
-void XMessageBox_setText_2(XMessageBox* self) { (void)self; }
-void XMessageBox_text_2(XMessageBox* self) { (void)self; }
-void XMessageBox_setCheckBox_3(XMessageBox* self) { (void)self; }
-void XMessageBox_checkBox_2(XMessageBox* self) { (void)self; }
-void XMessageBox_setDefaultButton_2(XMessageBox* self) { (void)self; }
-void XMessageBox_defaultButton_2(XMessageBox* self) { (void)self; }
-void XMessageBox_setEscapeButton_2(XMessageBox* self) { (void)self; }
-void XMessageBox_escapeButton_2(XMessageBox* self) { (void)self; }
-void XMessageBox_setTextFormat_2(XMessageBox* self) { (void)self; }
-void XMessageBox_textFormat_2(XMessageBox* self) { (void)self; }
-void XMessageBox_setTextInteractionFlags_2(XMessageBox* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ==================== 补充文本 ==================== */
+
+void XMessageBox_setDetailedText(XMessageBox* self, const char* utf8)
+{
+    if (!self) return;
+    if (!self->m_detailedText) self->m_detailedText = XString_create();
+    if (self->m_detailedText)
+        XString_assign_utf8(self->m_detailedText, utf8 ? utf8 : "");
+}
+
+const char* XMessageBox_detailedText(const XMessageBox* self)
+{
+    if (!self || !self->m_detailedText) return "";
+    return XString_toUtf8(self->m_detailedText);
+}
+
+void XMessageBox_setInformativeText(XMessageBox* self, const char* utf8)
+{
+    if (!self) return;
+    if (!self->m_informativeText)
+        self->m_informativeText = XString_create();
+    if (self->m_informativeText)
+        XString_assign_utf8(self->m_informativeText, utf8 ? utf8 : "");
+}
+
+const char* XMessageBox_informativeText(const XMessageBox* self)
+{
+    if (!self || !self->m_informativeText) return "";
+    return XString_toUtf8(self->m_informativeText);
+}
+
+/* ==================== 按钮管理 ==================== */
+
+void XMessageBox_addButton(XMessageBox* self, XAbstractButton* button,
+                           int role)
+{
+    if (!self || !self->m_buttonBox || !button) return;
+    XDialogButtonBox_addButton(self->m_buttonBox, button, role);
+}
+
+XAbstractButton* XMessageBox_addButton_2(XMessageBox* self,
+                                         const char* text, int role)
+{
+    XPushButton* btn;
+    if (!self || !self->m_buttonBox || !text) return NULL;
+    btn = XDialogButtonBox_addButton_2(self->m_buttonBox, text, role);
+    return (XAbstractButton*)btn;
+}
+
+XAbstractButton* XMessageBox_addButton_3(XMessageBox* self, int button)
+{
+    if (!self || !self->m_buttonBox) return NULL;
+    return (XAbstractButton*)XDialogButtonBox_addButton_3(
+        self->m_buttonBox, button);
+}
+
+void XMessageBox_setDefaultButton(XMessageBox* self,
+                                  XAbstractButton* button)
+{
+    if (self) self->m_defaultButton = button;
+}
+
+void XMessageBox_setDefaultButton_2(XMessageBox* self, int button)
+{
+    XAbstractButton* btn;
+    if (!self) return;
+    btn = (XAbstractButton*)XDialogButtonBox_button(self->m_buttonBox,
+                                                    button);
+    if (!btn && self->m_buttonBox) {
+        XDialogButtonBox_addButton_3(self->m_buttonBox, button);
+        btn = (XAbstractButton*)XDialogButtonBox_button(self->m_buttonBox,
+                                                        button);
+    }
+    if (btn) self->m_defaultButton = btn;
+}
+
+XAbstractButton* XMessageBox_defaultButton(const XMessageBox* self)
+{ return self ? self->m_defaultButton : NULL; }
+
+void XMessageBox_setEscapeButton(XMessageBox* self, XAbstractButton* button)
+{
+    if (self) self->m_escapeButton = button;
+}
+
+void XMessageBox_setEscapeButton_2(XMessageBox* self, int button)
+{
+    XAbstractButton* btn;
+    if (!self) return;
+    btn = (XAbstractButton*)XDialogButtonBox_button(self->m_buttonBox,
+                                                    button);
+    if (!btn && self->m_buttonBox) {
+        XDialogButtonBox_addButton_3(self->m_buttonBox, button);
+        btn = (XAbstractButton*)XDialogButtonBox_button(self->m_buttonBox,
+                                                        button);
+    }
+    if (btn) self->m_escapeButton = btn;
+}
+
+XAbstractButton* XMessageBox_escapeButton(const XMessageBox* self)
+{ return self ? self->m_escapeButton : NULL; }
+
+XVector* XMessageBox_buttons(const XMessageBox* self)
+{
+    const XVector* src;
+    XVector* out;
+    size_t i;
+    size_t n;
+    if (!self || !self->m_buttonBox) return NULL;
+    src = XDialogButtonBox_buttons(self->m_buttonBox);
+    if (!src) return NULL;
+    n = XVector_size_base((const XContainer*)src);
+    out = XVector_Create(XAbstractButton*);
+    if (!out) return NULL;
+    for (i = 0; i < n; ++i) {
+        XAbstractButton* b = XVector_At_Base(src, (int64_t)i,
+                                             XAbstractButton*);
+        XVector_push_back_1_base(out, &b);
+    }
+    return out;
+}
+
+int XMessageBox_standardButton(const XMessageBox* self,
+                               XAbstractButton* button)
+{
+    int i;
+    int n;
+    if (!self || !button || !self->m_standards) return 0;
+    n = (int)XVector_size_base((const XContainer*)self->m_standards);
+    for (i = 0; i < n; ++i) {
+        int st = XVector_At_Base(self->m_standards, (int64_t)i, int);
+        XAbstractButton* b = (XAbstractButton*)XDialogButtonBox_button(
+            self->m_buttonBox, st);
+        if (b == button) return st;
+    }
+    return XDialogButtonBoxStandard_NoButton;
+}
+
+void XMessageBox_setOptions(XMessageBox* self, int options)
+{
+    if (self) self->m_options = options;
+}
+
+int XMessageBox_options(const XMessageBox* self)
+{ return self ? self->m_options : 0; }
+
+bool XMessageBox_testOption(const XMessageBox* self, int option)
+{
+    return self ? ((self->m_options & option) != 0) : false;
+}
+
+void* XMessageBox_buttonClicked_signal(XMessageBox* self,
+                                       XAbstractButton* button)
+{
+    (void)self; (void)button;
+    return (void*)(size_t)XMessageBox_buttonClicked_signal;
+}
+
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */

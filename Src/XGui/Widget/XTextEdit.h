@@ -36,6 +36,18 @@ typedef struct XTextEdit
     bool m_underline;       /**< 当前下划线格式。 */
     uint32_t m_textColor;   /**< 当前文字颜色（ARGB）。 */
     int m_alignment;        /**< 当前对齐。 */
+    XString* m_fontFamily;  /**< 当前字体族（对象拥有）。 */
+    int m_fontWeight;       /**< 当前字重（默认 400）。 */
+    double m_fontPointSize; /**< 当前字号（磅；默认 10）。 */
+    double m_tabStopDistance; /**< 制表位距（默认 80）。 */
+    int m_cursorWidth;      /**< 光标宽（像素；默认 1）。 */
+    int m_lineWrapMode;     /**< 换行模式（默认 WidgetWidth）。 */
+    int m_wordWrapMode;     /**< 单词换行策略（默认 WrapAtWordBoundaryOrAnywhere）。 */
+    bool m_acceptRichText;  /**< 接受富文本（默认 true）。 */
+    int m_autoFormatting;   /**< 自动格式化位集（默认 0）。 */
+    bool m_centerOnScroll;  /**< 滚动居中（默认 false）。 */
+    XString* m_documentTitle; /**< 文档标题（对象拥有）。 */
+    uint32_t m_textBackgroundColor; /**< 文本背景色（ARGB；0=默认）。 */
 } XTextEdit;
 
 /** @brief X文本Editclassinit（对标 Qt 同名接口）。
@@ -118,6 +130,10 @@ char* XTextEdit_toHtml(const XTextEdit* self);
  * @brief      文本变化信号（真发射）。
  */
 void* XTextEdit_textChanged_signal(XTextEdit* self);
+
+/** @brief currentCharFormatChanged() 信号（对标 QTextEdit::currentCharFormatChanged；
+ *         光标格式变化时触发，Task 2.3 接线）。 */
+void* XTextEdit_currentCharFormatChanged_signal(XTextEdit* self);
 
 #endif /* XTEXTEDIT_ON */
 

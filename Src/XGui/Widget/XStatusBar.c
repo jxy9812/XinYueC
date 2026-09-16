@@ -109,7 +109,7 @@ static void VX_statusBar_paintEvent(XWidget* self, XEvent* event)
     w = XWidget_width(self);
     h = XWidget_height(self);
     if (w <= 0 || h <= 0) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -130,6 +130,7 @@ static void VX_statusBar_paintEvent(XWidget* self, XEvent* event)
         XRect_init(&msgRect, 4, 1, w - 8, h - 2);
         XPainter_drawText(&painter, 4, h - 6,
                           XString_toUtf8(sb->m_currentMessage), text);
+        XFont_deinit_base(&font);
     }
     (void)msgRect;
     XPainter_deinit(&painter);
@@ -149,6 +150,21 @@ static void VX_statusBar_timerEvent(XObject* object, XTimerEvent* event)
 
 /* ==================== 生命周期与虚表 ==================== */
 
+static void xstatusbar_freeItems(XVector* v)
+{
+    int64_t i;
+    int64_t n;
+    if (!v) return;
+    n = XVector_size_base((const XContainer*)v);
+    for (i = 0; i < n; ++i) {
+        XStatusBarItem** it = (XStatusBarItem**)XVector_at_base(
+            (const XContainer*)v, i);
+        if (it && *it)
+            XFree_System(*it);
+    }
+    XVector_delete_base(v);
+}
+
 static void VXStatusBar_deinit(XStatusBar* self)
 {
     if (!self) return;
@@ -156,6 +172,10 @@ static void VXStatusBar_deinit(XStatusBar* self)
         XString_delete_base(self->m_currentMessage);
         self->m_currentMessage = NULL;
     }
+    xstatusbar_freeItems(self->m_items);
+    xstatusbar_freeItems(self->m_permanents);
+    self->m_items = NULL;
+    self->m_permanents = NULL;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -348,12 +368,12 @@ void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text)
     return (void*)(size_t)XStatusBar_messageChanged_signal;
 }
 
-void XStatusBar_setSizeGripEnabled_3(XStatusBar* self) { (void)self; }
-void XStatusBar_isSizeGripEnabled_2(XStatusBar* self) { (void)self; }
-void XStatusBar_clearMessage_2(XStatusBar* self) { (void)self; }
-void XStatusBar_currentMessage_2(XStatusBar* self) { (void)self; }
-void XStatusBar_showMessage_2(XStatusBar* self) { (void)self; }
-void XStatusBar_addWidget_2(XStatusBar* self) { (void)self; }
-void XStatusBar_insertWidget_2(XStatusBar* self) { (void)self; }
-void XStatusBar_removeWidget_2(XStatusBar* self) { (void)self; }
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XSTATUSBAR_ON */

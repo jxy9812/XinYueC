@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XMainWindow.h
  * @brief      XMainWindow 主窗口控件（对标 Qt 6.8 QMainWindow 核心
  *             公共 API）。
@@ -62,6 +62,14 @@ typedef struct XMainWindow
     int m_iconSize;              /**< 工具栏图标尺寸。 */
     int m_toolButtonStyle;       /**< 全局工具按钮样式（XToolButtonStyle 取值）。 */
     XWidget* m_activeTabifiedDock; /**< 最近激活的标签化停靠面板（借用）。 */
+    bool m_documentMode;       /**< 文档模式（对标 documentMode）。 */
+    bool m_animated;           /**< 动画（对标 animated）。 */
+    bool m_dockNestingEnabled; /**< 停靠嵌套（对标 dockNestingEnabled）。 */
+    bool m_unifiedTitleAndToolBarOnMac; /**< 统一标题栏（属性存储）。 */
+    int m_tabPosition;         /**< 页签位置（对标 tabPosition）。 */
+    int m_tabShape;            /**< 页签形状（对标 tabShape）。 */
+    bool m_separator;          /**< 工具栏分隔线（对标 setSeparator）。 */
+    int m_corner;              /**< 角控件位置位集（对标 corner）。 */
 } XMainWindow;
 
 /** @brief XMainWindowclassinit（对标 Qt 同名接口）。
@@ -136,276 +144,121 @@ void XMainWindow_setDockOptions(XMainWindow* self, int options);
  */
 int XMainWindow_dockOptions(const XMainWindow* self);
 
-#endif /* XWIDGET_ON && XMAINWINDOW_ON */
+/** @brief iconSizeChanged(int,int) 信号（对标 QMainWindow::iconSizeChanged；
+ *         载荷：宽,高；setIconSize 接线见 Task 2.4）。 */
+/* ==================== Task 2.4：QMainWindow 布局 API ==================== */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XMainWindowtool条区域（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param toolbar 工具栏指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+/** @brief 查询工具栏停靠区域（对标 QMainWindow::toolBarArea）。
+ * @param self 目标主窗口。
+ * @param toolbar 工具栏借用指针。
+ * @return 区域码；未登记返回 0。
  */
-int XMainWindow_toolBarArea(const XMainWindow* self, XToolBar* toolbar);
-/** @brief XMainWindowdock控件区域（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param dock 停靠窗指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+int XMainWindow_toolBarArea(const XMainWindow* self, const XWidget* toolbar);
+/** @brief 查询停靠面板区域（对标 QMainWindow::dockWidgetArea）。
+ * @param self 目标主窗口。
+ * @param dock 停靠面板借用指针。
+ * @return 区域码；未登记返回 0。
  */
-int XMainWindow_dockWidgetArea(const XMainWindow* self, XDockWidget* dock);
-/** @brief XMainWindowadd工具条Break（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param area 区域枚举。
+int XMainWindow_dockWidgetArea(const XMainWindow* self,
+                               const XWidget* dock);
+/** @brief 设置工具栏分隔线（对标 QMainWindow::setSeparator）。
+ * @param self 目标主窗口。
+ * @param sep true 显示分隔线。
  * @return 无返回值。
  */
-void XMainWindow_addToolBarBreak(XMainWindow* self, int area);
-/** @brief XMainWindowset文档模式（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param mode bool 模式开关。
+void XMainWindow_setSeparator(XMainWindow* self, bool sep);
+/** @brief 设置文档模式（对标 setDocumentMode）。
+ * @param self 目标主窗口。
+ * @param enable true 开启。
  * @return 无返回值。
  */
-void XMainWindow_setDocumentMode(XMainWindow* self, bool mode);
-/** @brief XMainWindowdocument模式（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
+void XMainWindow_setDocumentMode(XMainWindow* self, bool enable);
+/** @brief 查询文档模式。 @param self 目标主窗口。 @return 开启返回 true。 */
 bool XMainWindow_documentMode(const XMainWindow* self);
-/** @brief XMainWindowset图标尺寸（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param size 尺寸（像素）。
+/** @brief 设置停靠动画（对标 setAnimated）。
+ * @param self 目标主窗口。
+ * @param enable true 开启。
  * @return 无返回值。
  */
-void XMainWindow_setIconSize(XMainWindow* self, int size);
-/** @brief XMainWindowicon尺寸（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XMainWindow_iconSize(const XMainWindow* self);
-/** @brief XMainWindowset角落（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param corner int 参数。
- * @param area 区域枚举。
+void XMainWindow_setAnimated(XMainWindow* self, bool enable);
+/** @brief 查询停靠动画。 @param self 目标主窗口。 @return 开启返回 true。 */
+bool XMainWindow_isAnimated(const XMainWindow* self);
+/** @brief 设置停靠嵌套（对标 setDockNestingEnabled）。
+ * @param self 目标主窗口。
+ * @param enable true 开启。
  * @return 无返回值。
  */
-void XMainWindow_setCorner(XMainWindow* self, int corner, int area);
-/** @brief XMainWindowcorner（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param corner int 参数。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XMainWindow_corner(const XMainWindow* self, int corner);
-/** @brief XMainWindowset页签位置（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param area 区域枚举。
- * @param position int 参数。
+void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enable);
+/** @brief 查询停靠嵌套。 @param self 目标主窗口。 @return 开启返回 true。 */
+bool XMainWindow_isDockNestingEnabled(const XMainWindow* self);
+/** @brief 设置统一标题栏（属性存储；对标 setUnifiedTitleAndToolBarOnMac）。
+ * @param self 目标主窗口。
+ * @param enable true 开启。
  * @return 无返回值。
  */
-void XMainWindow_setTabPosition(XMainWindow* self, int area, int position);
-/** @brief XMainWindowtab位置（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param area 区域枚举。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+void XMainWindow_setUnifiedTitleAndToolBarOnMac(XMainWindow* self,
+                                                bool enable);
+/** @brief 查询统一标题栏。 @param self 目标主窗口。 @return 开启返回 true。 */
+bool XMainWindow_isUnifiedTitleAndToolBarOnMac(const XMainWindow* self);
+/** @brief 设置页签位置（对标 setTabPosition）。
+ * @param self 目标主窗口。
+ * @param position 位置码。
+ * @return 无返回值。
  */
-int XMainWindow_tabPosition(const XMainWindow* self, int area);
-/** @brief XMainWindowset页签形状（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param shape 形状枚举。
+void XMainWindow_setTabPosition(XMainWindow* self, int position);
+/** @brief 查询页签位置。 @param self 目标主窗口。 @return 位置码。 */
+int XMainWindow_tabPosition(const XMainWindow* self);
+/** @brief 设置页签形状（对标 setTabShape）。
+ * @param self 目标主窗口。
+ * @param shape 形状码。
  * @return 无返回值。
  */
 void XMainWindow_setTabShape(XMainWindow* self, int shape);
-/** @brief XMainWindowtab形状（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
+/** @brief 查询页签形状。 @param self 目标主窗口。 @return 形状码。 */
 int XMainWindow_tabShape(const XMainWindow* self);
-/** @brief XMainWindowsetUnified标题And工具条OnMac（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param set bool 参数。
+/** @brief 设置角控件位置（对标 setCorner）。
+ * @param self 目标主窗口。
+ * @param corner 角位码（Qt::Corner）。
+ * @param area 停靠区域码。
  * @return 无返回值。
  */
-void XMainWindow_setUnifiedTitleAndToolBarOnMac(XMainWindow* self, bool set);
-/** @brief XMainWindowisUnified标题And工具条OnMac（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XMainWindow_isUnifiedTitleAndToolBarOnMac(const XMainWindow* self);
-/** @brief XMainWindowsetAnimated（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param enabled bool 开关：true 启用。
+void XMainWindow_setCorner(XMainWindow* self, int corner, int area);
+/** @brief 查询角控件位置。 @param self 目标主窗口。 @param corner 角位码。 @return 区域码。 */
+int XMainWindow_corner(const XMainWindow* self, int corner);
+/** @brief 工具栏中断（对标 addToolBarBreak）。
+ * @param self 目标主窗口。
  * @return 无返回值。
  */
-void XMainWindow_setAnimated(XMainWindow* self, bool enabled);
-/** @brief XMainWindowisAnimated（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XMainWindow_isAnimated(const XMainWindow* self);
-/** @brief XMainWindowset停靠Nesting启用（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param enabled bool 开关：true 启用。
+void XMainWindow_addToolBarBreak(XMainWindow* self);
+/** @brief 插入工具栏（对标 insertToolBar）。
+ * @param self 目标主窗口。
+ * @param before 插入基准工具栏借用指针。
+ * @param toolbar 待插入工具栏借用指针。
  * @return 无返回值。
  */
-void XMainWindow_setDockNestingEnabled(XMainWindow* self, bool enabled);
-/** @brief XMainWindowis停靠Nesting启用（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XMainWindow_isDockNestingEnabled(const XMainWindow* self);
-/** @brief XMainWindowsetSeparator（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param area 区域枚举。
+void XMainWindow_insertToolBar(XMainWindow* self, XWidget* before,
+                               XWidget* toolbar);
+/** @brief 移除工具栏（对标 removeToolBar；不删除对象）。
+ * @param self 目标主窗口。
+ * @param toolbar 工具栏借用指针。
  * @return 无返回值。
  */
-void XMainWindow_setSeparator(XMainWindow* self, int area);
-/** @brief XMainWindowinsert工具条（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param before 参考位置对象指针。
- * @param toolbar 工具栏指针。
- * @return 无返回值。
+void XMainWindow_removeToolBar(XMainWindow* self, XWidget* toolbar);
+/** @brief 保存窗口布局状态（对标 QMainWindow::saveState；返回新建
+ *         XString* 布局快照，调用方负责 delete_base）。
+ * @param self 目标主窗口。
+ * @return 新建 XString*；失败返回 NULL。
  */
-void XMainWindow_insertToolBar(XMainWindow* self, XToolBar* before, XToolBar* toolbar);
-/** @brief XMainWindowremove工具条（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param toolbar 工具栏指针。
- * @return 无返回值。
+XString* XMainWindow_saveState(const XMainWindow* self);
+/** @brief 恢复窗口布局状态（对标 QMainWindow::restoreState）。
+ * @param self 目标主窗口。
+ * @param state 借用 XString* 快照；可为 NULL（重置）。
+ * @return 恢复成功返回 true。
  */
-void XMainWindow_removeToolBar(XMainWindow* self, XToolBar* toolbar);
-/** @brief XMainWindowicon尺寸变更 信号地址（发射经 XObject_emitSignal）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_iconSizeChanged_signal(XMainWindow* self);
+bool XMainWindow_restoreState(XMainWindow* self, const XString* state);
 
-/**
- * @brief      发射 toolButtonStyleChanged(Qt::ToolButtonStyle) 信号
- *             （对标 QMainWindow::toolButtonStyleChanged）。
- * @details    setToolButtonStyle 改变全局工具按钮样式时真发射；
- *             self 非 NULL 且有已连接槽时经 XObject_emitSignal 同步
- *             通知，否则只返回信号标识。
- * @param      self 目标主窗口指针；可为 NULL。
- * @param      toolButtonStyle 新的工具按钮样式（XToolButtonStyle 取值）。
- * @return     不透明的 toolButtonStyleChanged 信号标识；返回值不指向
- *             可释放对象，也不得解引用。
- */
-void* XMainWindow_toolButtonStyleChanged_signal(XMainWindow* self, int toolButtonStyle);
+void* XMainWindow_iconSizeChanged_signal(XMainWindow* self, int width, int height);
 
-/**
- * @brief      发射 tabifiedDockWidgetActivated(QDockWidget*) 信号
- *             （对标 QMainWindow::tabifiedDockWidgetActivated）。
- * @details    某停靠面板被激活并带出同组标签化停靠面板时真发射；
- *             本实现中停靠面板暂无标签化分组，信号保留 API 且仅在
- *             显式调用时发射。self 非 NULL 且有已连接槽时经
- *             XObject_emitSignal 同步通知，否则只返回信号标识。
- * @param      self 目标主窗口指针；可为 NULL。
- * @param      dockWidget 被激活的停靠面板；可为 NULL。
- * @return     不透明的 tabifiedDockWidgetActivated 信号标识；返回值
- *             不指向可释放对象，也不得解引用。
- */
-void* XMainWindow_tabifiedDockWidgetActivated_signal(XMainWindow* self, XWidget* dockWidget);
+#endif /* XWIDGET_ON && XMAINWINDOW_ON */
 
-/**
- * @brief      设置全局工具按钮样式并发射 toolButtonStyleChanged
- *             （对标 QMainWindow::setToolButtonStyle）。
- * @param      self 目标主窗口指针；NULL 时无操作。
- * @param      toolButtonStyle 工具按钮样式（XToolButtonStyle 取值）。
- * @return     无返回值。
- */
-void XMainWindow_setToolButtonStyle(XMainWindow* self, int toolButtonStyle);
-
-/**
- * @brief      读取全局工具按钮样式（对标 QMainWindow::toolButtonStyle）。
- * @param      self 目标主窗口指针；NULL 时返回 IconOnly。
- * @return     工具按钮样式（XToolButtonStyle 取值）。
- */
-int XMainWindow_toolButtonStyle(const XMainWindow* self);
-/** @brief XMainWindowinsert工具条Break2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_insertToolBarBreak_2(XMainWindow* self);
-/** @brief XMainWindowremove工具条Break（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_removeToolBarBreak(XMainWindow* self);
-/** @brief XMainWindowisSeparator2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_isSeparator_2(XMainWindow* self);
-/** @brief XMainWindowremove工具条2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_removeToolBar_2(XMainWindow* self);
-/** @brief XMainWindowsetCentral控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_setCentralWidget_2(XMainWindow* self);
-/** @brief XMainWindowset菜单条2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_setMenuBar_2(XMainWindow* self);
-/** @brief XMainWindowset状态条2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_setStatusBar_2(XMainWindow* self);
-/** @brief XMainWindowset停靠Options2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_setDockOptions_2(XMainWindow* self);
-/** @brief XMainWindowtakeCentral控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_takeCentralWidget_2(XMainWindow* self);
-/** @brief XMainWindowcentral控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_centralWidget_2(XMainWindow* self);
-/** @brief XMainWindowmenu条2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_menuBar_2(XMainWindow* self);
-/** @brief XMainWindowstatus条2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_statusBar_2(XMainWindow* self);
-/** @brief XMainWindowadd停靠控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_addDockWidget_2(XMainWindow* self);
-/** @brief XMainWindowremove停靠控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_removeDockWidget_2(XMainWindow* self);
-/** @brief XMainWindowset停靠控件区域（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_setDockWidgetArea(XMainWindow* self);
-/** @brief XMainWindowdockOptions2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_dockOptions_2(XMainWindow* self);
-/** @brief XMainWindowadd工具条3（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_addToolBar_3(XMainWindow* self);
-/** @brief XMainWindowicon尺寸变更signal2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XMainWindow_iconSizeChanged_signal_2(XMainWindow* self);
 #endif /* XMAINWINDOW_H */

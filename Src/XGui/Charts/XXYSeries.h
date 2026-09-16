@@ -126,11 +126,20 @@ uint32_t XXYSeries_selectedColor(const XXYSeries* self);
 void XXYSeries_setPointLabelsClipping(XXYSeries* self, bool clip);
 /** @brief 查询点标签裁剪。 @param self 目标序列指针。 @return 裁剪返回 true。 */
 bool XXYSeries_pointLabelsClipping(const XXYSeries* self);
-/** @brief 设置点标签字体（C 参数化：字体族+字号）。 @param self 目标序列指针。 @param family 字体族（UTF-8；NULL 保持默认）。 @param pointSize 字号（磅；0 保持默认）。 @return 无返回值。 */
-void XXYSeries_setPointLabelsFont(XXYSeries* self, const char* family,
+/** @brief 设置点标签字体（XString 主版本：字体族+字号）。
+ * @param self 目标序列指针。
+ * @param family 借用 XString*；NULL 保持默认。
+ * @param pointSize 字号（磅；0 保持默认）。
+ * @return 无返回值。 */
+void XXYSeries_setPointLabelsFont(XXYSeries* self, const XString* family,
                                   int pointSize);
-/** @brief 读取点标签字体族。 @param self 目标序列指针。 @return 字体族；未设置空串。 */
-const char* XXYSeries_pointLabelsFontFamily(const XXYSeries* self);
+/** @brief 设置点标签字体（UTF-8 兼容重载，转发主版本）。 */
+void XXYSeries_setPointLabelsFont_2(XXYSeries* self, const char* family,
+                                    int pointSize);
+/** @brief 读取点标签字体族（内部借用 XString*；不得释放）。 */
+const XString* XXYSeries_pointLabelsFontFamily(const XXYSeries* self);
+/** @brief 读取点标签字体族（UTF-8 借用；未设置空串）。 */
+const char* XXYSeries_pointLabelsFontFamily_2(const XXYSeries* self);
 /** @brief 读取点标签字号。 @param self 目标序列指针。 @return 字号（磅）。 */
 int XXYSeries_pointLabelsFontSize(const XXYSeries* self);
 /** @brief 批量读取全部点（对标 points()）。 @param self 目标序列指针。 @param out 输出缓冲（至少 count 项）。 @param maxCount 缓冲容量。 @return 实际点数。 */
@@ -154,10 +163,17 @@ double XXYSeries_markerSize(const XXYSeries* self);
 void XXYSeries_setPointsVisible(XXYSeries* self, bool visible);
 /** @brief 查询点标记可见。 @param self 目标序列指针。 @return 可见返回 true。 */
 bool XXYSeries_pointsVisible(const XXYSeries* self);
-/** @brief 设置点标签格式。 @param self 目标序列指针。 @param format 格式串（UTF-8）。 @return 无返回值。 */
-void XXYSeries_setPointLabelsFormat(XXYSeries* self, const char* format);
-/** @brief 查询点标签格式。 @param self 目标序列指针。 @return 格式串。 */
-const char* XXYSeries_pointLabelsFormat(const XXYSeries* self);
+/** @brief 设置点标签格式（XString 主版本）。
+ * @param self 目标序列指针。
+ * @param format 借用 XString*；可为 NULL（恢复默认 "@xPoint, @yPoint"）。
+ * @return 无返回值。 */
+void XXYSeries_setPointLabelsFormat(XXYSeries* self, const XString* format);
+/** @brief 设置点标签格式（UTF-8 兼容重载，转发主版本）。 */
+void XXYSeries_setPointLabelsFormat_2(XXYSeries* self, const char* format);
+/** @brief 查询点标签格式（内部借用 XString*；不得释放）。 */
+const XString* XXYSeries_pointLabelsFormat(const XXYSeries* self);
+/** @brief 查询点标签格式（UTF-8 借用）。 */
+const char* XXYSeries_pointLabelsFormat_2(const XXYSeries* self);
 /** @brief 设置点标签可见。 @param self 目标序列指针。 @param visible true 显示。 @return 无返回值。 */
 void XXYSeries_setPointLabelsVisible(XXYSeries* self, bool visible);
 /** @brief 查询点标签可见。 @param self 目标序列指针。 @return 可见返回 true。 */
@@ -228,6 +244,50 @@ void* XXYSeries_pointAdded_signal(XXYSeries* self, int index);
 void* XXYSeries_pointsReplaced_signal(XXYSeries* self);
 /** @brief colorChanged 信号地址（载荷：颜色）。 */
 void* XXYSeries_colorChanged_signal(XXYSeries* self, uint32_t color);
+/** @brief selectedColorChanged 信号地址（载荷：颜色；Qt 6.2+）。 */
+void* XXYSeries_selectedColorChanged_signal(XXYSeries* self, uint32_t color);
+/** @brief pointsRemoved 信号地址（载荷：起始下标, 数量）。 */
+void* XXYSeries_pointsRemoved_signal(XXYSeries* self, int index, int count);
+/** @brief penChanged 信号地址（载荷：颜色, 线宽）。 */
+void* XXYSeries_penChanged_signal(XXYSeries* self, uint32_t color,
+                                  double width);
+/** @brief selectedPointsChanged 信号地址（无载荷）。 */
+void* XXYSeries_selectedPointsChanged_signal(XXYSeries* self);
+/** @brief pointLabelsFormatChanged 信号地址（载荷：格式串）。 */
+void* XXYSeries_pointLabelsFormatChanged_signal(XXYSeries* self,
+                                                const char* format);
+/** @brief pointLabelsVisibilityChanged 信号地址（载荷：可见性）。 */
+void* XXYSeries_pointLabelsVisibilityChanged_signal(XXYSeries* self,
+                                                    bool visible);
+/** @brief pointLabelsFontChanged 信号地址（载荷：字体族, 字号）。 */
+void* XXYSeries_pointLabelsFontChanged_signal(XXYSeries* self,
+                                              const char* family,
+                                              int pointSize);
+/** @brief pointLabelsColorChanged 信号地址（载荷：颜色）。 */
+void* XXYSeries_pointLabelsColorChanged_signal(XXYSeries* self,
+                                               uint32_t color);
+/** @brief pointLabelsClippingChanged 信号地址（载荷：裁剪）。 */
+void* XXYSeries_pointLabelsClippingChanged_signal(XXYSeries* self,
+                                                  bool clipping);
+/** @brief lightMarkerChanged 信号地址（载荷：图像；Qt 6.2+）。 */
+void* XXYSeries_lightMarkerChanged_signal(XXYSeries* self,
+                                          const XPixmap* marker);
+/** @brief selectedLightMarkerChanged 信号地址（载荷：图像；Qt 6.2+）。 */
+void* XXYSeries_selectedLightMarkerChanged_signal(XXYSeries* self,
+                                                  const XPixmap* marker);
+/** @brief markerSizeChanged 信号地址（载荷：尺寸；Qt 6.2+）。 */
+void* XXYSeries_markerSizeChanged_signal(XXYSeries* self, double size);
+/** @brief bestFitLineVisibilityChanged 信号地址（载荷：可见性；Qt 6.2+）。 */
+void* XXYSeries_bestFitLineVisibilityChanged_signal(XXYSeries* self,
+                                                    bool visible);
+/** @brief bestFitLinePenChanged 信号地址（载荷：颜色, 线宽；Qt 6.2+）。 */
+void* XXYSeries_bestFitLinePenChanged_signal(XXYSeries* self,
+                                             uint32_t color, double width);
+/** @brief bestFitLineColorChanged 信号地址（载荷：颜色；Qt 6.2+）。 */
+void* XXYSeries_bestFitLineColorChanged_signal(XXYSeries* self,
+                                               uint32_t color);
+/** @brief pointsConfigurationChanged 信号地址（无载荷；Qt 6.2+，配置哈希载荷在 C 中省略）。 */
+void* XXYSeries_pointsConfigurationChanged_signal(XXYSeries* self);
 
 /* ==================== 画笔/字体/标记/点配置（参数化补全） ==================== */
 
@@ -237,8 +297,10 @@ void XXYSeries_setBestFitLinePen(XXYSeries* self, uint32_t color,
 /** @brief 读取最佳拟合线画笔（参数化）。 @param self 目标序列指针。 @param color 输出颜色。 @param width 输出线宽。 @return 无返回值。 */
 void XXYSeries_bestFitLinePen(const XXYSeries* self, uint32_t* color,
                               double* width);
-/** @brief 读取点标签字体（别名：返回字体族）。 @param self 目标序列指针。 @return 字体族。 */
-const char* XXYSeries_pointLabelsFont(const XXYSeries* self);
+/** @brief 读取点标签字体（别名：内部借用 XString*）。 */
+const XString* XXYSeries_pointLabelsFont(const XXYSeries* self);
+/** @brief 读取点标签字体（UTF-8 借用）。 */
+const char* XXYSeries_pointLabelsFont_2(const XXYSeries* self);
 /** @brief 设置普通点标记图像（对标 setLightMarker(QImage)）。 @param self 目标序列指针。 @param marker 图像指针（可空=清除）。 @return 无返回值。 */
 void XXYSeries_setLightMarker(XXYSeries* self, const XPixmap* marker);
 /** @brief 读取普通点标记图像。 @param self 目标序列指针。 @return 图像指针；无标记返回 NULL。 */

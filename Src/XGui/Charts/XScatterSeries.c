@@ -29,7 +29,7 @@ void XScatterSeries_init(XScatterSeries* self)
     XMemset(self, 0, sizeof(*self));
     XXYSeries_init(&self->m_base);
     XClassSetVtable(self, XScatterSeries);
-    XAbstractSeries_setName(&self->m_base.m_base, "scatter");
+    XAbstractSeries_setName_2(&self->m_base.m_base, "scatter");
     self->m_markerShape = XScatterSeriesMarkerShape_Circle;
     self->m_base.m_base.m_type = XChartSeriesType_Scatter;
 }

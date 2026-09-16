@@ -237,12 +237,14 @@ static void VXAbstractSlider_stepBy(XAbstractSlider* self, int steps)
     self->m_position = newValue;
     if (self->m_sliderDown)
         xslider_emitIntSignal(self,
-                              (size_t)XAbstractSlider_sliderMoved_signal(self),
+                              (size_t)XAbstractSlider_sliderMoved_signal(
+                                  self, newValue),
                               newValue);
     XAbstractSlider_sliderChange_base(
         self, XAbstractSliderSliderChange_ValueChange);
     xslider_emitIntSignal(self,
-                          (size_t)XAbstractSlider_valueChanged_signal(self),
+                          (size_t)XAbstractSlider_valueChanged_signal(
+                              self, newValue),
                           newValue);
     XWidget_update((XWidget*)self);
 }
@@ -460,7 +462,8 @@ void XAbstractSlider_setRange(XAbstractSlider* self, int min, int max)
         XAbstractSlider_sliderChange_base(
             self, XAbstractSliderSliderChange_RangeChange);
         xslider_emitInt2Signal(self,
-                               (size_t)XAbstractSlider_rangeChanged_signal(self),
+                               (size_t)XAbstractSlider_rangeChanged_signal(
+                                   self, self->m_min, self->m_max),
                                self->m_min, self->m_max);
         XAbstractSlider_setValue(self, self->m_value); /* 重新钳位 */
     }
@@ -545,7 +548,8 @@ void XAbstractSlider_setSliderPosition(XAbstractSlider* self, int position)
     if (!self->m_tracking) XWidget_update((XWidget*)self);
     if (self->m_sliderDown)
         xslider_emitIntSignal(self,
-                              (size_t)XAbstractSlider_sliderMoved_signal(self),
+                              (size_t)XAbstractSlider_sliderMoved_signal(
+                                  self, position),
                               position);
     if (self->m_tracking && !self->m_blockTracking)
         XAbstractSlider_triggerAction(self, XAbstractSliderSliderAction_Move);
@@ -591,14 +595,16 @@ void XAbstractSlider_setValue(XAbstractSlider* self, int value)
         self->m_position = value;
         if (self->m_sliderDown)
             xslider_emitIntSignal(
-                self, (size_t)XAbstractSlider_sliderMoved_signal(self),
+                self, (size_t)XAbstractSlider_sliderMoved_signal(
+                    self, self->m_position),
                 self->m_position);
     }
     XAbstractSlider_sliderChange_base(
         self, XAbstractSliderSliderChange_ValueChange);
     if (emitValueChanged)
         xslider_emitIntSignal(self,
-                              (size_t)XAbstractSlider_valueChanged_signal(self),
+                              (size_t)XAbstractSlider_valueChanged_signal(
+                                  self, value),
                               value);
 }
 
@@ -641,7 +647,8 @@ void XAbstractSlider_triggerAction(XAbstractSlider* self, int action)
         break;
     }
     xslider_emitIntSignal(self,
-                          (size_t)XAbstractSlider_actionTriggered_signal(self),
+                          (size_t)XAbstractSlider_actionTriggered_signal(
+                              self, action),
                           action);
     self->m_blockTracking = false;
     /* 位置提交到值（发射 valueChanged）。 */
@@ -697,9 +704,10 @@ int XAbstractSlider_stepEnabled_base(XAbstractSlider* self)
 
 /* ==================== 信号 ==================== */
 
-void* XAbstractSlider_valueChanged_signal(XAbstractSlider* self)
+void* XAbstractSlider_valueChanged_signal(XAbstractSlider* self, int value)
 {
     (void)self;
+    (void)value;
     return (void*)(size_t)XAbstractSlider_valueChanged_signal;
 }
 
@@ -709,9 +717,10 @@ void* XAbstractSlider_sliderPressed_signal(XAbstractSlider* self)
     return (void*)(size_t)XAbstractSlider_sliderPressed_signal;
 }
 
-void* XAbstractSlider_sliderMoved_signal(XAbstractSlider* self)
+void* XAbstractSlider_sliderMoved_signal(XAbstractSlider* self, int position)
 {
     (void)self;
+    (void)position;
     return (void*)(size_t)XAbstractSlider_sliderMoved_signal;
 }
 
@@ -721,15 +730,20 @@ void* XAbstractSlider_sliderReleased_signal(XAbstractSlider* self)
     return (void*)(size_t)XAbstractSlider_sliderReleased_signal;
 }
 
-void* XAbstractSlider_rangeChanged_signal(XAbstractSlider* self)
+void* XAbstractSlider_rangeChanged_signal(XAbstractSlider* self,
+                                           int min, int max)
 {
     (void)self;
+    (void)min;
+    (void)max;
     return (void*)(size_t)XAbstractSlider_rangeChanged_signal;
 }
 
-void* XAbstractSlider_actionTriggered_signal(XAbstractSlider* self)
+void* XAbstractSlider_actionTriggered_signal(XAbstractSlider* self,
+                                              int action)
 {
     (void)self;
+    (void)action;
     return (void*)(size_t)XAbstractSlider_actionTriggered_signal;
 }
 

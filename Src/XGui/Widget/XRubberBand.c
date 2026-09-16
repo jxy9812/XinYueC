@@ -32,7 +32,7 @@ static void XRubberBand_paintEvent(XWidget* self, XEvent* event)
     if (!rb || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

@@ -15,6 +15,10 @@ extern "C" {
 
 typedef struct XPainter XPainter;
 typedef struct XWidget XWidget;
+typedef struct XPixmap XPixmap;
+typedef struct XIcon XIcon;
+typedef struct XFont XFont;
+typedef struct XPalette XPalette;
 
 XCLASS_DEFINE_BEGING(XStyle)
 XCLASS_DEFINE_ENUM(XStyle, DrawPrimitive) = XCLASS_VTABLE_GET_SIZE(XObject),
@@ -24,15 +28,31 @@ XCLASS_DEFINE_ENUM(XStyle, PixelMetric),
 XCLASS_DEFINE_ENUM(XStyle, SizeFromContents),
 XCLASS_DEFINE_ENUM(XStyle, Polish),
 XCLASS_DEFINE_ENUM(XStyle, Unpolish),
+XCLASS_DEFINE_ENUM(XStyle, StyleHint),
+XCLASS_DEFINE_ENUM(XStyle, SubElementRect),
+XCLASS_DEFINE_ENUM(XStyle, SubControlRect),
+XCLASS_DEFINE_ENUM(XStyle, HitTestComplexControl),
+XCLASS_DEFINE_ENUM(XStyle, StandardPixmap),
+XCLASS_DEFINE_ENUM(XStyle, StandardIcon),
+XCLASS_DEFINE_ENUM(XStyle, GeneratedIconPixmap),
+XCLASS_DEFINE_ENUM(XStyle, LayoutSpacing),
+XCLASS_DEFINE_ENUM(XStyle, DrawItemText),
+XCLASS_DEFINE_ENUM(XStyle, DrawItemPixmap),
+XCLASS_DEFINE_ENUM(XStyle, ItemTextRect),
+XCLASS_DEFINE_ENUM(XStyle, ItemPixmapRect),
+XCLASS_DEFINE_ENUM(XStyle, StandardPalette),
 XCLASS_DEFINE_END(XStyle)
 
 /**
  * @brief 样式引擎基类（对标 Qt 6.8 QStyle）。
  *
  *        定义 drawPrimitive/drawControl/drawComplexControl/pixelMetric/
- *        sizeFromContents/polish 虚表槽位；XCommonStyle 提供公共实现，
- *        XFusionStyle 提供 Fusion 主题。控件绘制通过
- *        XStyle_drawControl/drawPrimitive 分派。
+ *        sizeFromContents/styleHint/subElementRect/subControlRect/
+ *        hitTestComplexControl/standardPixmap/standardIcon/
+ *        generatedIconPixmap/layoutSpacing/drawItemText/drawItemPixmap/
+ *        itemTextRect/itemPixmapRect/standardPalette/polish/unpolish
+ *        虚表槽位；XCommonStyle 提供公共实现，XFusionStyle 提供 Fusion
+ *        主题。控件绘制通过 XStyle_drawControl/drawPrimitive 分派。
  */
 typedef struct XStyle
 {
@@ -120,7 +140,7 @@ int XStyle_pixelMetric(XStyle* self, int pm, const XStyleOption* option);
  * @brief 计算内容尺寸（分派 sizeFromContents）。
  *
  * @param self 目标样式指针。
- * @param ct 内容类型（0 按钮/1 复选/2 单选/3 输入框/4 页签/5 菜单项）。
+ * @param ct XStyleContentsType 枚举。
  * @param option 样式选项。
  * @param contentSize 内容尺寸。
  * @return 总尺寸。
@@ -146,6 +166,252 @@ void XStyle_polish(XStyle* self, XWidget* widget);
  * @return 无返回值。
  */
 void XStyle_unpolish(XStyle* self, XWidget* widget);
+
+/**
+ * @brief 查询样式提示（分派 styleHint，对标 QStyle::styleHint）。
+ *
+ * @param self 目标样式指针。
+ * @param hint XStyleStyleHint 枚举。
+ * @param option 样式选项（可空）。
+ * @param widget 关联控件（可空，借用）。
+ * @return 提示值（int 语义按枚举而定）。
+ */
+int XStyle_styleHint(XStyle* self, int hint, const XStyleOption* option,
+                     const XWidget* widget);
+
+/**
+ * @brief 计算子元素矩形（分派 subElementRect）。
+ *
+ * @param self 目标样式指针。
+ * @param subElement XStyleSubElement 枚举。
+ * @param option 样式选项。
+ * @param widget 关联控件（可空，借用）。
+ * @return 子元素矩形。
+ */
+XRect XStyle_subElementRect(XStyle* self, int subElement,
+                            const XStyleOption* option,
+                            const XWidget* widget);
+
+/**
+ * @brief 计算复杂控件子控件矩形（分派 subControlRect）。
+ *
+ * @param self 目标样式指针。
+ * @param cc XStyleComplexControl 枚举。
+ * @param option 样式选项。
+ * @param sc XStyleSubControl 位标志。
+ * @param widget 关联控件（可空，借用）。
+ * @return 子控件矩形。
+ */
+XRect XStyle_subControlRect(XStyle* self, int cc,
+                            const XStyleOption* option, int sc,
+                            const XWidget* widget);
+
+/**
+ * @brief 命中测试复杂控件（分派 hitTestComplexControl）。
+ *
+ * @param self 目标样式指针。
+ * @param cc XStyleComplexControl 枚举。
+ * @param option 样式选项。
+ * @param x 命中点 X。
+ * @param y 命中点 Y。
+ * @param widget 关联控件（可空，借用）。
+ * @return XStyleSubControl 位标志。
+ */
+int XStyle_hitTestComplexControl(XStyle* self, int cc,
+                                 const XStyleOption* option, int x, int y,
+                                 const XWidget* widget);
+
+/**
+ * @brief 生成标准位图（分派 standardPixmap；返回新对象，调用方删除）。
+ *
+ * @param self 目标样式指针。
+ * @param sp XStyleStandardPixmap 枚举。
+ * @param option 样式选项（可空）。
+ * @param widget 关联控件（可空，借用）。
+ * @return 新位图对象（NULL=无）。
+ */
+XPixmap* XStyle_standardPixmap(XStyle* self, int sp,
+                               const XStyleOption* option,
+                               const XWidget* widget);
+
+/**
+ * @brief 生成标准图标（分派 standardIcon；返回新对象，调用方删除）。
+ *
+ * @param self 目标样式指针。
+ * @param sp XStyleStandardPixmap 枚举。
+ * @param option 样式选项（可空）。
+ * @param widget 关联控件（可空，借用）。
+ * @return 新图标对象（NULL=无）。
+ */
+XIcon* XStyle_standardIcon(XStyle* self, int sp,
+                           const XStyleOption* option,
+                           const XWidget* widget);
+
+/**
+ * @brief 生成图标位图（分派 generatedIconPixmap；返回新对象，调用方删除）。
+ *
+ * @param self 目标样式指针。
+ * @param mode 图标模式（XIconMode：0 正常/1 禁用/2 活动/3 选中）。
+ * @param pixmap 源位图。
+ * @param option 样式选项（可空）。
+ * @return 新位图对象（NULL=无）。
+ */
+XPixmap* XStyle_generatedIconPixmap(XStyle* self, int mode,
+                                    const XPixmap* pixmap,
+                                    const XStyleOption* option);
+
+/**
+ * @brief 查询布局间距（分派 layoutSpacing）。
+ *
+ * @param self 目标样式指针。
+ * @param control1 控制类型 1（XSizePolicy 控制位）。
+ * @param control2 控制类型 2。
+ * @param orientation 方向：0 水平/1 垂直。
+ * @param option 样式选项（可空）。
+ * @param widget 关联控件（可空，借用）。
+ * @return 间距；-1=使用布局默认。
+ */
+int XStyle_layoutSpacing(XStyle* self, int control1, int control2,
+                         int orientation, const XStyleOption* option,
+                         const XWidget* widget);
+
+/**
+ * @brief 绘制对齐文本（分派 drawItemText）。
+ *
+ * @param self 目标样式指针。
+ * @param painter 目标画家。
+ * @param rect 目标矩形。
+ * @param alignment XAlignment 位组合。
+ * @param palette 调色板（借用）。
+ * @param enabled 是否启用。
+ * @param text UTF-8 文本（可空）。
+ * @param textRole XPaletteColorRole 文本角色。
+ * @return 无返回值。
+ */
+void XStyle_drawItemText(XStyle* self, XPainter* painter,
+                         const XRect* rect, int alignment,
+                         const XPalette* palette, bool enabled,
+                         const char* text, int textRole);
+
+/**
+ * @brief 绘制对齐位图（分派 drawItemPixmap）。
+ *
+ * @param self 目标样式指针。
+ * @param painter 目标画家。
+ * @param rect 目标矩形。
+ * @param alignment XAlignment 位组合。
+ * @param pixmap 源位图（借用）。
+ * @return 无返回值。
+ */
+void XStyle_drawItemPixmap(XStyle* self, XPainter* painter,
+                           const XRect* rect, int alignment,
+                           const XPixmap* pixmap);
+
+/**
+ * @brief 计算文本矩形（分派 itemTextRect；字体度量用 XFont 近似）。
+ *
+ * @param self 目标样式指针。
+ * @param font 字体（借用；NULL 用画布默认）。
+ * @param rect 目标矩形。
+ * @param alignment XAlignment 位组合。
+ * @param enabled 是否启用。
+ * @param text UTF-8 文本（可空）。
+ * @return 文本矩形。
+ */
+XRect XStyle_itemTextRect(XStyle* self, const XFont* font,
+                          const XRect* rect, int alignment, bool enabled,
+                          const char* text);
+
+/**
+ * @brief 计算位图矩形（分派 itemPixmapRect）。
+ *
+ * @param self 目标样式指针。
+ * @param rect 目标矩形。
+ * @param alignment XAlignment 位组合。
+ * @param pixmap 源位图（借用）。
+ * @return 位图矩形。
+ */
+XRect XStyle_itemPixmapRect(XStyle* self, const XRect* rect,
+                            int alignment, const XPixmap* pixmap);
+
+/**
+ * @brief 读取标准调色板（分派 standardPalette）。
+ *
+ * @param self 目标样式指针。
+ * @return 标准调色板（按值返回）。
+ */
+XPalette XStyle_standardPalette(XStyle* self);
+
+/* ==================== 静态工具（对标 QStyle 静态函数） ==================== */
+
+/**
+ * @brief 布局方向视觉矩形转换（对标 QStyle::visualRect）。
+ *
+ * @param direction 布局方向：0 左到右/1 右到左。
+ * @param boundingRect 包围矩形。
+ * @param logicalRect 逻辑矩形。
+ * @return 视觉矩形。
+ */
+XRect XStyle_visualRect(int direction, const XRect* boundingRect,
+                        const XRect* logicalRect);
+
+/**
+ * @brief 布局方向视觉坐标转换（对标 QStyle::visualPos）。
+ *
+ * @param direction 布局方向：0 左到右/1 右到左。
+ * @param boundingRect 包围矩形。
+ * @param logicalPos 逻辑坐标。
+ * @return 视觉坐标。
+ */
+XPoint XStyle_visualPos(int direction, const XRect* boundingRect,
+                        const XPoint* logicalPos);
+
+/**
+ * @brief 滑块逻辑值 → 像素位置（对标 QStyle::sliderPositionFromValue）。
+ *
+ * @param min 最小值。
+ * @param max 最大值。
+ * @param logicalValue 逻辑值。
+ * @param span 像素跨度。
+ * @param upsideDown 是否反向。
+ * @return 像素位置。
+ */
+int XStyle_sliderPositionFromValue(int min, int max, int logicalValue,
+                                   int span, bool upsideDown);
+
+/**
+ * @brief 滑块像素位置 → 逻辑值（对标 QStyle::sliderValueFromPosition）。
+ *
+ * @param min 最小值。
+ * @param max 最大值。
+ * @param pos 像素位置。
+ * @param span 像素跨度。
+ * @param upsideDown 是否反向。
+ * @return 逻辑值。
+ */
+int XStyle_sliderValueFromPosition(int min, int max, int pos, int span,
+                                   bool upsideDown);
+
+/**
+ * @brief 布局方向对齐转换（对标 QStyle::visualAlignment）。
+ *
+ * @param direction 布局方向：0 左到右/1 右到左。
+ * @param alignment XAlignment 位组合。
+ * @return 转换后对齐位。
+ */
+int XStyle_visualAlignment(int direction, int alignment);
+
+/**
+ * @brief 计算对齐矩形（对标 QStyle::alignedRect）。
+ *
+ * @param direction 布局方向：0 左到右/1 右到左。
+ * @param alignment XAlignment 位组合。
+ * @param size 内容尺寸。
+ * @param rectangle 目标矩形。
+ * @return 对齐后矩形。
+ */
+XRect XStyle_alignedRect(int direction, int alignment, const XSize* size,
+                         const XRect* rectangle);
 
 /* ==================== 全局默认样式 ==================== */
 

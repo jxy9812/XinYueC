@@ -10,6 +10,7 @@
 extern "C" {
 #endif
 #include <stdbool.h>
+#include "XString.h"
 #include "XGuiConfig.h"
 #include "XMemory.h"
 #if XPLATFORMINTEGRATION_ON
@@ -19,7 +20,8 @@ XPlatformServices* XPlatformServices_create_ex(XMemoryType memory);
     XPlatformServices_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 void XPlatformServices_destroy(XPlatformServices* self);
 bool XPlatformServices_isAvailable(const XPlatformServices* self);
-bool XPlatformServices_openUrl(XPlatformServices* self, const char* url);
+bool XPlatformServices_openUrl(XPlatformServices* self, const XString* url);
+bool XPlatformServices_openUrl_2(XPlatformServices* self, const char* url);
 bool XPlatformServicesDriver_isAvailable(void);
 bool XPlatformServicesDriver_openUrl(const char* url);
 #endif

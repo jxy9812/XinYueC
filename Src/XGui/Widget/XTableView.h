@@ -9,7 +9,7 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XAbstractItemView.h"
 
-#if XTABLEWIDGET_ON || 1
+#if XWIDGET_ON && XTABLEWIDGET_ON
 
 XCLASS_DEFINE_BEGING(XTableView)
 XCLASS_DEFINE_EXTEND_END(XTableView, XAbstractItemView)
@@ -97,7 +97,7 @@ void XTableView_selectRow(XTableView* self, int row);
 /** @brief 选择整列。 @param self 目标视图指针。 @param column 列号。 @return 无返回值。 */
 void XTableView_selectColumn(XTableView* self, int column);
 
-#endif /* XTABLEWIDGET_ON || 1 */
+#endif /* XWIDGET_ON && XTABLEWIDGET_ON */
 #ifdef __cplusplus
 }
 #endif

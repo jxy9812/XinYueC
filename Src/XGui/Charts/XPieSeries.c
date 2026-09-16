@@ -88,12 +88,12 @@ void XPieSeries_init(XPieSeries* self)
     XMemset(self, 0, sizeof(*self));
     XAbstractSeries_init(&self->m_base);
     XClassSetVtable(self, XPieSeries);
-    XAbstractSeries_setName(&self->m_base, "pie");
+    XAbstractSeries_setName_2(&self->m_base, "pie");
     self->m_base.m_type = XChartSeriesType_Pie;
     self->m_horizontalPosition = 0.5;
     self->m_verticalPosition = 0.5;
     self->m_pieSize = 0.7;
-    self->m_pieStartAngle = 90.0;
+    self->m_pieStartAngle = 0.0;
     self->m_pieEndAngle = 360.0;
     self->m_labelsVisible = false;
 }
@@ -209,7 +209,7 @@ bool XPieSeries_appendSlice(XPieSeries* self, XPieSlice* slice)
     return true;
 }
 
-XPieSlice* XPieSeries_append(XPieSeries* self, const char* label, double value)
+XPieSlice* XPieSeries_append(XPieSeries* self, const XString* label, double value)
 {
     XPieSlice* slice;
     if (!self) return NULL;
@@ -219,6 +219,17 @@ XPieSlice* XPieSeries_append(XPieSeries* self, const char* label, double value)
         XPieSlice_delete_base(slice);
         return NULL;
     }
+    return slice;
+}
+XPieSlice* XPieSeries_append_2(XPieSeries* self, const char* label, double value)
+{
+    XString* tmp = NULL;
+    XPieSlice* slice;
+    if (!label) return NULL;
+    tmp = XString_create_utf8(label);
+    if (!tmp) return NULL;
+    slice = XPieSeries_append(self, tmp, value);
+    XString_delete_base(tmp);
     return slice;
 }
 
@@ -302,8 +313,10 @@ void XPieSeries_setHoleSize(XPieSeries* self, double hole)
 {
     if (!self) return;
     if (hole < 0) hole = 0;
-    if (hole > 0.9) hole = 0.9;
+    if (hole > 1.0) hole = 1.0;
     self->m_holeSize = hole;
+    /* 对标 Qt setSizes(hole, max(pieSize, hole))：饼外径不小于孔径。 */
+    if (self->m_pieSize < hole) self->m_pieSize = hole;
 }
 
 double XPieSeries_holeSize(const XPieSeries* self)
@@ -337,6 +350,9 @@ void XPieSeries_setPieSize(XPieSeries* self, double relativeSize)
     if (relativeSize < 0.0) relativeSize = 0.0;
     if (relativeSize > 1.0) relativeSize = 1.0;
     self->m_pieSize = relativeSize;
+    /* 对标 Qt setSizes(min(hole, size), size)：孔径不超出外径。 */
+    if (self->m_holeSize > relativeSize)
+        self->m_holeSize = relativeSize;
 }
 
 double XPieSeries_pieSize(const XPieSeries* self)

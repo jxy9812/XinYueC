@@ -57,6 +57,9 @@ typedef struct XAbstractScrollArea
     XWidget* m_cornerWidget;   /**< 右下角控件（借用）。 */
     int m_contentWidth;        /**< 内容宽度（驱动水平滚动范围）。 */
     int m_contentHeight;       /**< 内容高度（驱动垂直滚动范围）。 */
+    XWidget* m_sbWidgets[8];   /**< 附加滚动条控件（对标 addScrollBarWidget；借用）。 */
+    int m_sbWidgetAligns[8];   /**< 附加控件对齐位（XAlignment 位掩码）。 */
+    int m_sbWidgetCount;       /**< 附加控件数量。 */
 } XAbstractScrollArea;
 
 /* ==================== 生命周期 ==================== */
@@ -128,6 +131,57 @@ XWidget* XAbstractScrollArea_cornerWidget(const XAbstractScrollArea* self);
  */
 void XAbstractScrollArea_setContentSize(XAbstractScrollArea* self,
                                         int width, int height);
+/** @brief 替换垂直滚动条（对标 setVerticalScrollBar；接管新条所有权并
+ *         删除旧条；NULL 表示删除现有条）。 */
+/**
+ * @brief      替换垂直滚动条。
+ */
+void XAbstractScrollArea_setVerticalScrollBar(XAbstractScrollArea* self,
+                                              XScrollBar* scrollbar);
+/** @brief 替换水平滚动条（对标 setHorizontalScrollBar；语义同上）。 */
+/**
+ * @brief      替换水平滚动条。
+ */
+void XAbstractScrollArea_setHorizontalScrollBar(XAbstractScrollArea* self,
+                                                XScrollBar* scrollbar);
+/** @brief 在滚动条旁附加控件（对标 addScrollBarWidget；控件归调用方）。
+ * @param self 目标滚动区域。
+ * @param widget 附加控件；NULL 忽略。
+ * @param alignment XAlignment 位掩码（Left/Right/Top/Bottom 决定挂靠边）。
+ * @return 无返回值。
+ */
+void XAbstractScrollArea_addScrollBarWidget(XAbstractScrollArea* self,
+                                            XWidget* widget, int alignment);
+/** @brief 查询附加滚动条控件（对标 scrollBarWidgets）。
+ * @param self 目标滚动区域。
+ * @param alignment XAlignment 位掩码（仅存储信息，不参与过滤）。
+ * @return 借用指针数组（XWidget*，最多 8 个，末尾 NULL）；无效返回 NULL。
+ */
+const XWidget** XAbstractScrollArea_scrollBarWidgets(
+    const XAbstractScrollArea* self, int alignment);
+/** @brief 替换视口控件（对标 setViewport；接管新视口所有权并删除旧视口）。
+ * @param self 目标滚动区域。
+ * @param widget 新视口；NULL 忽略。
+ * @return 无返回值。
+ */
+void XAbstractScrollArea_setViewport(XAbstractScrollArea* self,
+                                     XWidget* widget);
+/** @brief 视口最大可用尺寸（对标 maximumViewportSize）。
+ * @param self 目标滚动区域。
+ * @return 建议最大视口尺寸。
+ */
+XSize XAbstractScrollArea_maximumViewportSize(
+    const XAbstractScrollArea* self);
+/** @brief 尺寸提示（对标 sizeHint）。
+ * @param self 目标滚动区域。
+ * @return 建议尺寸。
+ */
+XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self);
+/** @brief 最小尺寸提示（对标 minimumSizeHint）。
+ * @param self 目标滚动区域。
+ * @return 建议最小尺寸。
+ */
+XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self);
 
 /* ==================== 保护槽入口（对标 protected scrollContentsBy） ==== */
 
@@ -140,14 +194,4 @@ void XAbstractScrollArea_scrollContentsBy_base(XAbstractScrollArea* self,
 #endif
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON */
 
-#ifdef __cplusplus
-}
-#endif
-void XAbstractScrollArea_addScrollBarWidget(XAbstractScrollArea* self, XWidget* widget);
-int XAbstractScrollArea_sizeAdjustPolicy(const XAbstractScrollArea* self);
-void XAbstractScrollArea_setSizeAdjustPolicy(XAbstractScrollArea* self, int policy);
-void XAbstractScrollArea_setCornerWidget(XAbstractScrollArea* self, XWidget* widget);
-XWidget* XAbstractScrollArea_cornerWidget(const XAbstractScrollArea* self);
-int XAbstractScrollArea_maximumViewportSize_height(const XAbstractScrollArea* self);
-void XAbstractScrollArea_setViewport(XAbstractScrollArea* self, XWidget* widget);
 #endif /* XABSTRACTSCROLLAREA_H */

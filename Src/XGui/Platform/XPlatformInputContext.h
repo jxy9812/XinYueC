@@ -247,7 +247,9 @@ XString* XPlatformInputContext_locale(const XPlatformInputContext* self);
  * @param      locale UTF-8 IETF 语言标签；NULL 按 "C" 处理。
  */
 void XPlatformInputContext_setLocale(XPlatformInputContext* self,
-                                     const char* locale);
+                                     const XString* locale);
+void XPlatformInputContext_setLocale_2(XPlatformInputContext* self,
+                                       const char* locale);
 
 /**
  * @brief      通知区域语言变化（对标 emitLocaleChanged）。

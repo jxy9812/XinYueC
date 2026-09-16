@@ -23,7 +23,7 @@ typedef struct XPieSeries
     XPieSlice** m_slices;     /**< 切片指针数组（堆；对象拥有切片）。 */
     int m_count;              /**< 切片数。 */
     int m_capacity;           /**< 容量。 */
-    double m_holeSize;        /**< 中心孔径比例 0-0.9（0=实心饼）。 */
+    double m_holeSize;        /**< 中心孔径比例 0-1（0=实心饼，默认 0）。 */
     double m_horizontalPosition; /**< 水平位置（0-1；对标 horizontalPosition）。 */
     double m_verticalPosition;   /**< 垂直位置（0-1；对标 verticalPosition）。 */
     double m_pieSize;            /**< 饼图尺寸比例（0-1；对标 pieSize）。 */
@@ -62,8 +62,14 @@ XPieSeries* XPieSeries_create_ex(XMemoryType memory);
 /** @brief 追加切片对象（接管所有权；对标 append(QPieSlice*)）。 @param self 目标序列指针。 @param slice 切片指针。 @return 成功返回 true。 */
 bool XPieSeries_appendSlice(XPieSeries* self, XPieSlice* slice);
 
-/** @brief 追加切片（按标签与值创建；对标 append(label, value)）。 @param self 目标序列指针。 @param label 切片标签。 @param value 切片值。 @return 切片指针；失败返回 NULL。 */
-XPieSlice* XPieSeries_append(XPieSeries* self, const char* label, double value);
+/** @brief 追加切片（XString 主版本；对标 append(label, value)）。
+ * @param self 目标序列指针。
+ * @param label 借用 XString*；不能为 NULL。
+ * @param value 切片值。
+ * @return 切片指针；失败返回 NULL。 */
+XPieSlice* XPieSeries_append(XPieSeries* self, const XString* label, double value);
+/** @brief 追加切片（UTF-8 兼容重载，转发主版本）。 */
+XPieSlice* XPieSeries_append_2(XPieSeries* self, const char* label, double value);
 
 /** @brief 在指定位置插入切片（接管所有权；对标 insert）。 @param self 目标序列指针。 @param index 插入下标。 @param slice 切片指针。 @return 成功返回 true。 */
 bool XPieSeries_insert(XPieSeries* self, int index, XPieSlice* slice);
@@ -90,7 +96,7 @@ double XPieSeries_sum(const XPieSeries* self);
 
 /* ==================== 几何属性（对标 QPieSeries 属性） ==================== */
 
-/** @brief 设置中心孔径比例。 @param self 目标序列指针。 @param hole 0-0.9（0=实心）。 @return 无返回值。 */
+/** @brief 设置中心孔径比例。 @param self 目标序列指针。 @param hole 0-1（0=实心，默认 0）。 @return 无返回值。 */
 void XPieSeries_setHoleSize(XPieSeries* self, double hole);
 /** @brief 读取中心孔径比例。 @param self 目标序列指针。 @return 孔径比例。 */
 double XPieSeries_holeSize(const XPieSeries* self);

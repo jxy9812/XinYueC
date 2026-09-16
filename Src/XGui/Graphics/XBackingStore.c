@@ -126,12 +126,24 @@ XWindow* XBackingStore_window(const XBackingStore* self)
     return (self && self->m_data) ? self->m_data->m_window : NULL;
 }
 
-XImage* XBackingStore_paintDevice(XBackingStore* self)
+XImage* XBackingStore_paintImage(XBackingStore* self)
 {
     XPlatformBackingStore* platform = XBackingStore_handle(self);
     if (!platform) return NULL;
     return XPlatformBackingStore_paintDevice(platform);
 }
+
+#if XPAINTDEVICE_ON
+XPaintDevice* XBackingStore_paintDevice(XBackingStore* self)
+{
+    XPlatformBackingStore* platform = XBackingStore_handle(self);
+    XImage* image;
+    if (!platform) return NULL;
+    image = XPlatformBackingStore_paintDevice(platform);
+    if (!image) return NULL;
+    return XImage_paintDevice(image);
+}
+#endif /* XPAINTDEVICE_ON */
 
 bool XBackingStore_nextTile(XBackingStore* self, XRect* tileRect)
 {

@@ -466,7 +466,7 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
     button = spinbox_color(spin, XPaletteColorRole_Button);
     dark   = spinbox_color(spin, XPaletteColorRole_Dark);
 
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -1113,19 +1113,19 @@ void* XSpinBox_textChanged_signal(XSpinBox* self)
     return (void*)(size_t)XSpinBox_textChanged_signal;
 }
 
-int XSpinBox_decimals(const XSpinBox* self) { return 0; }
-void XSpinBox_setDecimals(XSpinBox* self, int decimals) { (void)self; (void)decimals; }
-void XSpinBox_setRange_2(XSpinBox* self) { (void)self; }
-void XSpinBox_minimum_2(XSpinBox* self) { (void)self; }
-void XSpinBox_maximum_2(XSpinBox* self) { (void)self; }
-void XSpinBox_value_2(XSpinBox* self) { (void)self; }
-void XSpinBox_setValue_2(XSpinBox* self) { (void)self; }
-void XSpinBox_setPrefix_2(XSpinBox* self) { (void)self; }
-void XSpinBox_prefix_2(XSpinBox* self) { (void)self; }
-void XSpinBox_setSuffix_2(XSpinBox* self) { (void)self; }
-void XSpinBox_suffix_2(XSpinBox* self) { (void)self; }
-void XSpinBox_setSingleStep_2(XSpinBox* self) { (void)self; }
-void XSpinBox_singleStep_2(XSpinBox* self) { (void)self; }
-void XSpinBox_setWrapping_2(XSpinBox* self) { (void)self; }
-void XSpinBox_wrapping_2(XSpinBox* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */

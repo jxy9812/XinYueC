@@ -67,13 +67,14 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
 /* ==================== 虚表与生命周期 ==================== */
 
 /** @brief scrollContentsBy：按滚动条值平移内容控件（第一版简化：
- *         直接按绝对值定位）。 */
+ *         直接按绝对值定位；平移后刷新视口暴露区域）。 */
 static void VX_scrollArea_scrollContentsBy(XAbstractScrollArea* self,
                                            int dx, int dy)
 {
     XScrollArea* area = (XScrollArea*)self;
     XScrollBar* vsb;
     XScrollBar* hsb;
+    XWidget* viewport;
     int vx = 0;
     int vy = 0;
     (void)dx;
@@ -90,6 +91,9 @@ static void VX_scrollArea_scrollContentsBy(XAbstractScrollArea* self,
         XRect_init(&r, vx, vy, cw, ch);
         XWidget_setGeometryRect(area->m_widget, &r);
     }
+    /* 暴露区域重绘：内容平移后刷新视口。 */
+    viewport = XAbstractScrollArea_viewport(self);
+    if (viewport) XWidget_update(viewport);
 }
 
 static void VX_scrollArea_deinit(XScrollArea* self)
@@ -218,19 +222,31 @@ void XScrollArea_ensureWidgetVisible(XScrollArea* self,
     XScrollArea_ensureVisible(self, geom.x, geom.y, xmargin, ymargin);
 }
 
-void XScrollArea_viewportSizeHint(XScrollArea* self, int* w, int* h)
+XSize XScrollArea_sizeHint(const XScrollArea* self)
 {
-    if (w) *w = XWidget_width((XWidget*)self);
-    if (h) *h = XWidget_height((XWidget*)self);
+    XWidget* viewport;
+    XSize out;
+    if (!self) return XAbstractScrollArea_sizeHint(
+                       (const XAbstractScrollArea*)self);
+    viewport = XAbstractScrollArea_viewport(
+        (const XAbstractScrollArea*)self);
+    if (viewport) {
+        out = XWidget_sizeHint(viewport);
+        if (out.width > 0 && out.height > 0) return out;
+    }
+    return XAbstractScrollArea_sizeHint(
+        (const XAbstractScrollArea*)self);
 }
-void XScrollArea_setAlignment_3(XScrollArea* self) { (void)self; }
-void XScrollArea_alignment_2(XScrollArea* self) { (void)self; }
-void XScrollArea_setWidgetResizable_2(XScrollArea* self) { (void)self; }
-void XScrollArea_isWidgetResizable_2(XScrollArea* self) { (void)self; }
-void XScrollArea_setWidget_2(XScrollArea* self) { (void)self; }
-void XScrollArea_widget_2(XScrollArea* self) { (void)self; }
-void XScrollArea_takeWidget_2(XScrollArea* self) { (void)self; }
-void XScrollArea_widgetResizable_2(XScrollArea* self) { (void)self; }
-void XScrollArea_ensureVisible_2(XScrollArea* self) { (void)self; }
-void XScrollArea_ensureWidgetVisible_2(XScrollArea* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && XSCROLLAREA_ON */

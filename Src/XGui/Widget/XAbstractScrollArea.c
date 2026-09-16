@@ -14,6 +14,7 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XAlignment.h"
 
 #if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON
 
@@ -57,6 +58,35 @@ static void xasa_hScrollChangedSlot(XObject* receiver, XVarList* args)
     if (!self || !args) return;
     (void)args;
     XAbstractScrollArea_scrollContentsBy_base(self, 1, 0);
+}
+
+/** @brief 连接滚动条 valueChanged → 内容滚动虚槽。 */
+static void xasa_connectBar(XAbstractScrollArea* self, XScrollBar* bar,
+                            bool horizontal)
+{
+    if (!self || !bar) return;
+    if (horizontal)
+        XObject_connect_1((XObject*)bar,
+                          (size_t)XScrollBar_valueChanged_signal(bar, 0),
+                          (XObject*)self, xasa_hScrollChangedSlot,
+                          XConnectionType_Direct);
+    else
+        XObject_connect_1((XObject*)bar,
+                          (size_t)XScrollBar_valueChanged_signal(bar, 0),
+                          (XObject*)self, xasa_vScrollChangedSlot,
+                          XConnectionType_Direct);
+}
+
+/** @brief 断开滚动条连接（替换滚动条前调用）。 */
+static void xasa_disconnectBar(XAbstractScrollArea* self, XScrollBar* bar,
+                               bool horizontal)
+{
+    if (!self || !bar) return;
+    XObject_disconnect_1((XObject*)bar,
+                         (size_t)XScrollBar_valueChanged_signal(bar, 0),
+                         (XObject*)self,
+                         horizontal ? xasa_hScrollChangedSlot
+                                    : xasa_vScrollChangedSlot);
 }
 
 /** @brief 依据策略与内容尺寸更新滚动条可见性与范围。 */
@@ -117,6 +147,39 @@ static void VX_asa_resizeEvent(XWidget* self, XEvent* event)
         XRect_init(&r, 0, h - sbw, showV ? w - sbw : w, sbw);
         XWidget_setGeometryRect((XWidget*)area->m_hScrollBar, &r);
     }
+    /* 右下角控件：仅当两个滚动条都显示时可见。 */
+    if (area->m_cornerWidget) {
+        if (showV && showH) {
+            XRect_init(&r, w - sbw, h - sbw, sbw, sbw);
+            XWidget_setGeometryRect(area->m_cornerWidget, &r);
+            XWidget_setVisible(area->m_cornerWidget, true);
+        } else {
+            XWidget_setVisible(area->m_cornerWidget, false);
+        }
+    }
+    /* 附加滚动条控件（addScrollBarWidget）：按对齐位挂靠边缘；
+     * 简化排布：覆盖在对应边缘，不参与视口尺寸计算（头文件注明）。 */
+    {
+        int i;
+        for (i = 0; i < area->m_sbWidgetCount; ++i) {
+            XWidget* sw = area->m_sbWidgets[i];
+            int al = area->m_sbWidgetAligns[i];
+            if (!sw) continue;
+            if (al & (int)XAlignment_Top) {
+                XRect_init(&r, 0, 0, w, sbw);
+                XWidget_setGeometryRect(sw, &r);
+            } else if (al & (int)XAlignment_Bottom) {
+                XRect_init(&r, 0, h - sbw, w, sbw);
+                XWidget_setGeometryRect(sw, &r);
+            } else if (al & (int)XAlignment_Left) {
+                XRect_init(&r, 0, 0, sbw, h);
+                XWidget_setGeometryRect(sw, &r);
+            } else { /* Right（含默认） */
+                XRect_init(&r, w - sbw, 0, sbw, h);
+                XWidget_setGeometryRect(sw, &r);
+            }
+        }
+    }
     xasa_updateScrollBars(area);
 }
 
@@ -133,7 +196,7 @@ static void VX_asa_paintEvent(XWidget* self, XEvent* event)
     if (!area || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -240,17 +303,11 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
     self->m_hPolicy = (int)XScrollBarPolicy_AsNeeded;
     XWidget_setVisible((XWidget*)self->m_vScrollBar, false);
     XWidget_setVisible((XWidget*)self->m_hScrollBar, false);
-    XObject_connect_1((XObject*)self->m_vScrollBar,
-                      XSignal(XScrollBar_valueChanged_signal(self)),
-                      (XObject*)self, xasa_vScrollChangedSlot,
-                      XConnectionType_Direct);
-    XObject_connect_1((XObject*)self->m_hScrollBar,
-                      XSignal(XScrollBar_valueChanged_signal(self)),
-                      (XObject*)self, xasa_hScrollChangedSlot,
-                      XConnectionType_Direct);
+    xasa_connectBar(self, self->m_vScrollBar, false);
+    xasa_connectBar(self, self->m_hScrollBar, true);
     XWidget_resize(self, 200, 150);
-    hint.width = 200;
-    hint.height = 150;
+    hint.width = 256;
+    hint.height = 192;
     XWidget_setSizeHint((XWidget*)self, &hint);
 }
 
@@ -336,11 +393,135 @@ void XAbstractScrollArea_setContentSize(XAbstractScrollArea* self,
     xasa_updateScrollBars(self);
 }
 
-void XAbstractScrollArea_addScrollBarWidget(XAbstractScrollArea* self, XWidget* widget)
-{ (void)self; (void)widget; }
-int XAbstractScrollArea_sizeAdjustPolicy(const XAbstractScrollArea* self) { (void)self; return 0; }
-void XAbstractScrollArea_setSizeAdjustPolicy(XAbstractScrollArea* self, int policy) { (void)self; (void)policy; }
-int XAbstractScrollArea_maximumViewportSize_height(const XAbstractScrollArea* self)
-{ return XWidget_height((XWidget*)self); }
-void XAbstractScrollArea_setViewport(XAbstractScrollArea* self, XWidget* widget) { (void)self; (void)widget; }
+/* ==================== Task 2.9：滚动条/视口替换与尺寸 API ========== */
+
+void XAbstractScrollArea_setVerticalScrollBar(XAbstractScrollArea* self,
+                                              XScrollBar* scrollbar)
+{
+    if (!self) return;
+    if (self->m_vScrollBar == scrollbar) return;
+    if (self->m_vScrollBar) {
+        xasa_disconnectBar(self, self->m_vScrollBar, false);
+        XWidget_delete_base((XWidget*)self->m_vScrollBar);
+    }
+    self->m_vScrollBar = scrollbar;
+    if (scrollbar) {
+        XWidget_setParent((XWidget*)scrollbar, (XWidget*)self, 0);
+        xasa_connectBar(self, scrollbar, false);
+    }
+    VX_asa_resizeEvent((XWidget*)self, NULL);
+}
+
+void XAbstractScrollArea_setHorizontalScrollBar(XAbstractScrollArea* self,
+                                                XScrollBar* scrollbar)
+{
+    if (!self) return;
+    if (self->m_hScrollBar == scrollbar) return;
+    if (self->m_hScrollBar) {
+        xasa_disconnectBar(self, self->m_hScrollBar, true);
+        XWidget_delete_base((XWidget*)self->m_hScrollBar);
+    }
+    self->m_hScrollBar = scrollbar;
+    if (scrollbar) {
+        XWidget_setParent((XWidget*)scrollbar, (XWidget*)self, 0);
+        xasa_connectBar(self, scrollbar, true);
+    }
+    VX_asa_resizeEvent((XWidget*)self, NULL);
+}
+
+void XAbstractScrollArea_addScrollBarWidget(XAbstractScrollArea* self,
+                                            XWidget* widget, int alignment)
+{
+    int i;
+    if (!self || !widget) return;
+    for (i = 0; i < self->m_sbWidgetCount; ++i)
+        if (self->m_sbWidgets[i] == widget) return; /* 去重 */
+    if (self->m_sbWidgetCount >= 8) return;
+    XWidget_setParent(widget, (XWidget*)self, 0);
+    self->m_sbWidgets[self->m_sbWidgetCount] = widget;
+    self->m_sbWidgetAligns[self->m_sbWidgetCount] = alignment;
+    ++self->m_sbWidgetCount;
+    VX_asa_resizeEvent((XWidget*)self, NULL);
+}
+
+const XWidget** XAbstractScrollArea_scrollBarWidgets(
+    const XAbstractScrollArea* self, int alignment)
+{
+    (void)alignment;
+    if (!self) return NULL;
+    return (const XWidget**)self->m_sbWidgets;
+}
+
+void XAbstractScrollArea_setViewport(XAbstractScrollArea* self,
+                                     XWidget* widget)
+{
+    if (!self || !widget) return;
+    if (self->m_viewport == widget) return;
+    if (self->m_viewport)
+        XWidget_delete_base((XWidget*)self->m_viewport);
+    self->m_viewport = widget;
+    XWidget_setParent(widget, (XWidget*)self, 0);
+    VX_asa_resizeEvent((XWidget*)self, NULL);
+}
+
+XSize XAbstractScrollArea_maximumViewportSize(
+    const XAbstractScrollArea* self)
+{
+    XSize out;
+    int w;
+    int h;
+    int sbw = 16;
+    bool showV;
+    bool showH;
+    if (!self) {
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    w = XWidget_width((XWidget*)self);
+    h = XWidget_height((XWidget*)self);
+    showV = self->m_vScrollBar &&
+            (self->m_vPolicy == XScrollBarPolicy_AlwaysOn ||
+             XWidget_isVisible((XWidget*)self->m_vScrollBar));
+    showH = self->m_hScrollBar &&
+            (self->m_hPolicy == XScrollBarPolicy_AlwaysOn ||
+             XWidget_isVisible((XWidget*)self->m_hScrollBar));
+    XSize_init(&out, showV ? w - sbw : w, showH ? h - sbw : h);
+    if (out.width < 0) out.width = 0;
+    if (out.height < 0) out.height = 0;
+    return out;
+}
+
+XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
+{
+    return XWidget_sizeHint((const XWidget*)self);
+}
+
+XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self)
+{
+    XSize out;
+    int vsbExt = 15; /* XScrollBar 默认尺寸提示 15x15。 */
+    int hsbExt = 15;
+    int extra = 0;
+    if (!self) {
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    if (self->m_vScrollBar) {
+        XSize s = XWidget_sizeHint((XWidget*)self->m_vScrollBar);
+        if (s.width > 0) vsbExt = s.width;
+    }
+    if (self->m_hScrollBar) {
+        XSize s = XWidget_sizeHint((XWidget*)self->m_hScrollBar);
+        if (s.height > 0) hsbExt = s.height;
+    }
+    extra = 2 * XFrame_frameWidth((const XFrame*)self);
+    XSize_init(&out, vsbExt + extra, hsbExt + extra);
+    return out;
+}
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON */

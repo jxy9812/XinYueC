@@ -45,8 +45,20 @@ typedef struct XMenuBar
     XVector* m_menus;       /**< 与动作顺序关联的菜单（XMenu*，借用）。 */
     XAction* m_activeAction;/**< 当前激活动作（借用）。 */
     bool m_defaultUp;       /**< 弹出菜单默认向上（默认 false）。 */
+    bool m_nativeMenuBar;   /**< 原生菜单栏（对标 isNativeMenuBar）。 */
+    XWidget* m_cornerWidgetL; /**< 左上角控件（对标 cornerWidget(TopLeft)）。 */
+    XWidget* m_cornerWidgetR; /**< 右上角控件（对标 cornerWidget(TopRight)）。 */
     XSize m_cachedHint;     /**< 尺寸提示缓存。 */
 } XMenuBar;
+
+/** @brief 菜单栏角落位置（对标 Qt::Corner，数值一致）。 */
+typedef enum XMenuBarCorner
+{
+    XMenuBarCorner_TopLeft = 0x1,      /**< 左上角。 */
+    XMenuBarCorner_TopRight = 0x2,     /**< 右上角。 */
+    XMenuBarCorner_BottomLeft = 0x3,   /**< 左下角。 */
+    XMenuBarCorner_BottomRight = 0x4   /**< 右下角。 */
+} XMenuBarCorner;
 
 /* ==================== 生命周期 ==================== */
 
@@ -88,6 +100,70 @@ bool XMenuBar_isDefaultUp(const XMenuBar* self);
 void XMenuBar_setDefaultUp(XMenuBar* self, bool up);
 /** @brief 查询动作总数（动作+分隔条）。 */
 int XMenuBar_actionCount(const XMenuBar* self);
+
+/* ==================== 几何/角落/尺寸（对标 QMenuBar public API） ==== */
+
+/** @brief 返回局部坐标处的动作（对标 QMenuBar::actionAt）。
+ * @param self 目标菜单栏；可为 NULL。
+ * @param pos 局部坐标借用指针；可为 NULL。
+ * @return 命中返回对应动作；未命中或参数无效返回 NULL。
+ */
+XAction* XMenuBar_actionAt(const XMenuBar* self, const XPoint* pos);
+/** @brief 返回动作在局部坐标中的几何（对标 QMenuBar::actionGeometry）。
+ * @note 几何按统一布局模型（文本宽+16 或固定 60px 间距）计算，与无样式
+ *       绘制的固定间距存在轻微视觉偏差，头文件已注明简化。
+ * @param self 目标菜单栏；可为 NULL。
+ * @param action 目标动作借用指针；可为 NULL。
+ * @return 命中返回动作矩形；未命中返回空矩形 (0,0,0,0)。
+ */
+XRect XMenuBar_actionGeometry(const XMenuBar* self, XAction* action);
+/** @brief 查询角落控件（对标 QMenuBar::cornerWidget）。
+ * @param self 目标菜单栏；可为 NULL。
+ * @param corner 角落位置（XMenuBarCorner）。
+ * @return 借用指针；未设置返回 NULL。
+ */
+XWidget* XMenuBar_cornerWidget(const XMenuBar* self, int corner);
+/** @brief 设置角落控件（对标 QMenuBar::setCornerWidget；控件归调用方）。
+ * @param self 目标菜单栏；可为 NULL。
+ * @param widget 角落控件；可为 NULL 表示清除。
+ * @param corner 角落位置（XMenuBarCorner）。
+ * @return 无返回值。
+ */
+void XMenuBar_setCornerWidget(XMenuBar* self, XWidget* widget, int corner);
+/** @brief 给定宽度下的期望高度（对标 QMenuBar::heightForWidth）。
+ * @param self 目标菜单栏；可为 NULL。
+ * @param width 宽度（忽略，菜单栏高度固定）。
+ * @return 期望高度。
+ */
+int XMenuBar_heightForWidth(const XMenuBar* self, int width);
+/** @brief 尺寸提示（对标 QMenuBar::sizeHint）。
+ * @param self 目标菜单栏；可为 NULL。
+ * @return 建议尺寸。
+ */
+XSize XMenuBar_sizeHint(const XMenuBar* self);
+/** @brief 最小尺寸提示（对标 QMenuBar::minimumSizeHint）。
+ * @param self 目标菜单栏；可为 NULL。
+ * @return 建议最小尺寸。
+ */
+XSize XMenuBar_minimumSizeHint(const XMenuBar* self);
+/** @brief 查询原生菜单栏开关（对标 QMenuBar::isNativeMenuBar）。
+ * @param self 目标菜单栏；可为 NULL。
+ * @return 启用返回 true。
+ */
+bool XMenuBar_isNativeMenuBar(const XMenuBar* self);
+/** @brief 设置原生菜单栏（对标 QMenuBar::setNativeMenuBar）。
+ * @note 本项目为软件渲染控件树，原生菜单栏仅作存储位。
+ * @param self 目标菜单栏；可为 NULL。
+ * @param nativeMenuBar true 启用。
+ * @return 无返回值。
+ */
+void XMenuBar_setNativeMenuBar(XMenuBar* self, bool nativeMenuBar);
+/** @brief 查询平台菜单栏句柄（对标 QMenuBar::platformMenuBar）。
+ * @note 本项目无平台菜单栏概念，恒返回 NULL。
+ * @param self 目标菜单栏；可为 NULL。
+ * @return NULL。
+ */
+void* XMenuBar_platformMenuBar(const XMenuBar* self);
 
 /* ==================== 信号 ==================== */
 

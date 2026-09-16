@@ -19,6 +19,7 @@ static const struct
     { "border", XCssProperty_Border },
     { "border-color", XCssProperty_BorderColor },
     { "border-width", XCssProperty_BorderWidth },
+    { "border-style", XCssProperty_BorderStyle },
     { "border-radius", XCssProperty_BorderRadius },
     { "padding", XCssProperty_Padding },
     { "padding-left", XCssProperty_PaddingLeft },
@@ -169,46 +170,43 @@ static XCssSelector* xcss_appendSelectorSlot(XCssStyleRule* rule)
     return sel;
 }
 
-/** @brief 向选择器链追加一个基础段（relation 为与前段的关系）。 */
+/** @brief 向选择器链追加一个基础段（relation 为与前段的关系）。
+ *
+ *  element/id/attrName/attrValue 为 XString 拥有型 token（可为 NULL）；
+ *  成功后由选择器接管所有权，失败时本函数负责释放。
+ */
 static bool xcss_appendBasic(XCssSelector* sel, XCssRelation rel,
-                             const char* element, size_t elen,
-                             const char* id, size_t idlen,
+                             XString* element, XString* id,
                              uint32_t pseudos,
-                             const char* attrName, size_t anlen,
-                             const char* attrValue, size_t avlen,
+                             XString* attrName, XString* attrValue,
                              XCssValueMatch match)
 {
     XCssBasicSelector* b;
+    size_t elen = element ? XString_toUtf8_length(element) : 0;
+    size_t idlen = id ? XString_toUtf8_length(id) : 0;
+    size_t anlen = attrName ? XString_toUtf8_length(attrName) : 0;
     if (sel->m_basicCount % 4 == 0) {
         int cap = sel->m_basicCount + 4;
         XCssBasicSelector* grown = (XCssBasicSelector*)XRealloc_System(
             sel->m_basics, sizeof(XCssBasicSelector) * (size_t)cap);
-        if (!grown) return false;
+        if (!grown) {
+            if (element) XString_delete_base(element);
+            if (id) XString_delete_base(id);
+            if (attrName) XString_delete_base(attrName);
+            if (attrValue) XString_delete_base(attrValue);
+            return false;
+        }
         sel->m_basics = grown;
     }
     b = &sel->m_basics[sel->m_basicCount];
     XMemset(b, 0, sizeof(*b));
     b->m_relationToPrev = rel;
-    if (elen) {
-        b->m_elementName = XString_create_with_length_utf8(element, elen);
-        if (!b->m_elementName) return false;
-    }
-    if (idlen) {
-        b->m_id = XString_create_with_length_utf8(id, idlen);
-        if (!b->m_id) return false;
-    }
+    b->m_elementName = element;
+    b->m_id = id;
     b->m_pseudoClasses = pseudos;
-    if (anlen) {
-        b->m_attribute.m_name = XString_create_with_length_utf8(attrName,
-                                                                anlen);
-        if (!b->m_attribute.m_name) return false;
-        if (avlen) {
-            b->m_attribute.m_value = XString_create_with_length_utf8(
-                attrValue, avlen);
-            if (!b->m_attribute.m_value) return false;
-        }
-        b->m_attribute.m_match = match;
-    }
+    b->m_attribute.m_name = attrName;
+    b->m_attribute.m_value = attrValue;
+    b->m_attribute.m_match = match;
     sel->m_basicCount++;
     sel->m_specificity += (idlen ? 100 : 0) + (pseudos ? 10 : 0) +
                           (elen ? 1 : 0);
@@ -284,20 +282,19 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
             if (!rule) return false;
             sel = xcss_appendSelectorSlot(rule);
             if (!sel) return false;
-            /* 基础选择器链：element#id[pseudo][attr]，段间空格(后代)/>(子代)。 */
+            /* 基础选择器链：element#id[pseudo][attr]，段间空格(后代)/
+             * >(子代)。token 缓冲 XString 化（Task 2.12 子批 4）。 */
             for (;;) {
-                char element[64];
-                char idbuf[64];
-                char attrN[64];
-                char attrV[64];
+                XString* element = NULL;
+                XString* idbuf = NULL;
+                XString* attrN = NULL;
+                XString* attrV = NULL;
                 size_t elen = 0;
                 size_t idlen = 0;
                 size_t anlen = 0;
                 size_t avlen = 0;
                 uint32_t pseudos = 0;
                 XCssValueMatch match = XCssValueMatch_NoMatch;
-                const char* beforeWs = p;
-                element[0] = idbuf[0] = attrN[0] = attrV[0] = '\0';
                 p = xcss_skipWs(p, end);
                 if (p >= end || *p == '{' || *p == '}' || *p == ',') break;
                 /* 前导关系符（兜底）：'>' 子代。 */
@@ -305,7 +302,6 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                     rel = XCssRelation_Parent;
                     p = xcss_skipWs(p + 1, end);
                 }
-                (void)beforeWs;
                 /* 元素名（.ClassName 亦视为元素名）。 */
                 {
                     const char* n = p;
@@ -313,13 +309,13 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                                        *p == '_' || *p == '-' || *p == '.'))
                         ++p;
                     elen = (size_t)(p - n);
-                    if (elen >= sizeof(element)) elen = sizeof(element) - 1;
-                    XMemcpy(element, n, elen);
-                    element[elen] = '\0';
-                    if (elen && element[0] == '.') {
-                        XMemmove(element, element + 1, elen);
+                    if (elen > 0 && n[0] == '.') {
+                        ++n;
                         --elen;
-                        element[elen] = '\0';
+                    }
+                    if (elen > 0) {
+                        element = XString_create_with_length_utf8(n, elen);
+                        if (!element) return false;
                     }
                 }
                 p = xcss_skipWs(p, end);
@@ -332,9 +328,13 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                                        *p == '_' || *p == '-'))
                         ++p;
                     idlen = (size_t)(p - n);
-                    if (idlen >= sizeof(idbuf)) idlen = sizeof(idbuf) - 1;
-                    XMemcpy(idbuf, n, idlen);
-                    idbuf[idlen] = '\0';
+                    if (idlen > 0) {
+                        idbuf = XString_create_with_length_utf8(n, idlen);
+                        if (!idbuf) {
+                            if (element) XString_delete_base(element);
+                            return false;
+                        }
+                    }
                     p = xcss_skipWs(p, end);
                 }
                 /* 属性选择器：[name]、[name=value]、[name~=v]、[name|=v]、
@@ -352,9 +352,14 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                     while (anlen > 0 &&
                            XIsSpace((unsigned char)n[anlen - 1]))
                         --anlen;
-                    if (anlen >= sizeof(attrN)) anlen = sizeof(attrN) - 1;
-                    XMemcpy(attrN, n, anlen);
-                    attrN[anlen] = '\0';
+                    if (anlen > 0) {
+                        attrN = XString_create_with_length_utf8(n, anlen);
+                        if (!attrN) {
+                            if (element) XString_delete_base(element);
+                            if (idbuf) XString_delete_base(idbuf);
+                            return false;
+                        }
+                    }
                     /* 操作符。 */
                     if (p < end && (*p == '~' || *p == '|' || *p == '^' ||
                                     *p == '$' || *p == '*')) {
@@ -388,10 +393,16 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                                 ++p;
                             avlen = (size_t)(p - v);
                         }
-                        if (avlen >= sizeof(attrV))
-                            avlen = sizeof(attrV) - 1;
-                        XMemcpy(attrV, v, avlen);
-                        attrV[avlen] = '\0';
+                        if (avlen > 0) {
+                            attrV = XString_create_with_length_utf8(v,
+                                                                    avlen);
+                            if (!attrV) {
+                                if (element) XString_delete_base(element);
+                                if (idbuf) XString_delete_base(idbuf);
+                                if (attrN) XString_delete_base(attrN);
+                                return false;
+                            }
+                        }
                     }
                     while (p < end && *p != ']') ++p;
                     if (p < end) ++p;
@@ -399,10 +410,13 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                 }
                 /* 伪类。 */
                 p = xcss_parsePseudos(p, end, &pseudos);
-                if (!xcss_appendBasic(sel, rel, element, elen, idbuf, idlen,
-                                      pseudos, attrN, anlen, attrV, avlen,
-                                      match))
+                if (!xcss_appendBasic(sel, rel, element, idbuf, pseudos,
+                                      attrN, attrV, match))
                     return false;
+                element = NULL;
+                idbuf = NULL;
+                attrN = NULL;
+                attrV = NULL;
                 /* 段尾关系：空白由 p[-1] 判定（伪类解析已跳过空白，
                  * 不能再用 skipWs 前后比较）。 */
                 {

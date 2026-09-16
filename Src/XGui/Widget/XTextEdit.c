@@ -43,7 +43,7 @@ static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
     if (!te || !event) return;
     doc = te->m_textDoc;
     if (!doc || !doc->m_blocks) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -71,6 +71,7 @@ static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
             if (f->fmt.bold) {
                 /* 粗体：加深颜色模拟 */
                 color = 0xFF000000u;
+            XFont_deinit_base(&font);
             }
             XPainter_setPen(&painter, color);
             XPainter_drawText(&painter, xStart, y + 14, f->text, color);
@@ -89,7 +90,7 @@ static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
         XImage* image;
         XPainter painter;
         XPoint offset;
-        image = XWidget_paintDevice(self);
+        image = XWidget_paintImage(self);
         if (!image) return;
         XPainter_init(&painter, NULL);
         if (!XPainter_begin_image(&painter, image)) return;
@@ -103,12 +104,35 @@ static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
 #endif
 }
 
+static void VXTextEdit_deinit(XTextEdit* self)
+{
+    if (!self) return;
+    if (self->m_textDoc) {
+        XClass_delete_base((XClass*)self->m_textDoc);
+        self->m_textDoc = NULL;
+    }
+    if (self->m_fontFamily) {
+        XString_delete_base(self->m_fontFamily);
+        self->m_fontFamily = NULL;
+    }
+    if (self->m_documentTitle) {
+        XString_delete_base(self->m_documentTitle);
+        self->m_documentTitle = NULL;
+    }
+    if (self->m_editor) {
+        XClass_delete_base((XClass*)self->m_editor);
+        self->m_editor = NULL;
+    }
+    XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
+}
+
 XVtable* XTextEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTextEdit)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_textEdit_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_textEdit_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTextEdit_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -129,6 +153,19 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     Set_Class_IsHeap(self, false);
     self->m_textColor = 0xFF000000u;
     self->m_alignment = 1; /* AlignLeft */
+
+    self->m_fontFamily = XString_create();
+    self->m_documentTitle = XString_create();
+    self->m_fontWeight = 400;
+    self->m_fontPointSize = 10.0;
+    self->m_tabStopDistance = 80.0;
+    self->m_cursorWidth = 1;
+    self->m_lineWrapMode = 0;
+    self->m_wordWrapMode = 1;
+    self->m_acceptRichText = true;
+    self->m_autoFormatting = 0;
+    self->m_centerOnScroll = false;
+    self->m_textBackgroundColor = 0;
 }
 
 XTextEdit* XTextEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -276,47 +313,67 @@ void XTextEdit_paste_2(XTextEdit* self) { XPlainTextEdit_paste(&self->m_editor->
 void XTextEdit_clear_2(XTextEdit* self) { XPlainTextEdit_clear(&self->m_editor->m_base); }
 void XTextEdit_selectAll_2(XTextEdit* self) { XPlainTextEdit_selectAll(&self->m_editor->m_base); }
 bool XTextEdit_canPaste(XTextEdit* self) { return XPlainTextEdit_isReadOnly(&self->m_editor->m_base) ? false : true; }
-void XTextEdit_setAcceptRichText(XTextEdit* self, bool accept) { (void)self; (void)accept; }
-bool XTextEdit_acceptRichText(const XTextEdit* self) { (void)self; return true; }
-void XTextEdit_setTextBackgroundColor(XTextEdit* self, uint32_t color) { (void)self; (void)color; }
-uint32_t XTextEdit_textBackgroundColor(const XTextEdit* self) { (void)self; return 0xFFFFFFFFu; }
-void XTextEdit_setFontFamily(XTextEdit* self, const char* family) { (void)self; (void)family; }
-const char* XTextEdit_fontFamily(const XTextEdit* self) { (void)self; return ""; }
-void XTextEdit_setFontWeight(XTextEdit* self, int weight) { (void)self; (void)weight; }
-int XTextEdit_fontWeight(const XTextEdit* self) { (void)self; return 400; }
-void XTextEdit_setFontPointSize(XTextEdit* self, double size) { (void)self; (void)size; }
-double XTextEdit_fontPointSize(const XTextEdit* self) { (void)self; return 12.0; }
-void XTextEdit_setCurrentFont(XTextEdit* self, const char* family) { (void)self; (void)family; }
-void XTextEdit_zoomIn(XTextEdit* self, int range) { (void)self; (void)range; }
-void XTextEdit_zoomOut(XTextEdit* self, int range) { (void)self; (void)range; }
-void XTextEdit_setTabStopDistance(XTextEdit* self, double distance) { (void)self; (void)distance; }
-double XTextEdit_tabStopDistance(const XTextEdit* self) { (void)self; return 80.0; }
-void XTextEdit_setAutoFormatting(XTextEdit* self, int features) { (void)self; (void)features; }
-int XTextEdit_autoFormatting(const XTextEdit* self) { (void)self; return 0; }
-void XTextEdit_setTabChangesFocus(XTextEdit* self, bool b) { (void)self; (void)b; }
+void XTextEdit_setAcceptRichText(XTextEdit* self, bool accept) { if (self) self->m_acceptRichText = accept; }
+bool XTextEdit_acceptRichText(const XTextEdit* self) { return self ? self->m_acceptRichText : true; }
+void XTextEdit_setTextBackgroundColor(XTextEdit* self, uint32_t color) { if (self) self->m_textBackgroundColor = color; }
+uint32_t XTextEdit_textBackgroundColor(const XTextEdit* self) { return self ? self->m_textBackgroundColor : 0; }
+void XTextEdit_setFontFamily(XTextEdit* self, const char* family)
+{
+    if (!self) return;
+    if (!self->m_fontFamily) self->m_fontFamily = XString_create();
+    if (self->m_fontFamily)
+        XString_assign_utf8(self->m_fontFamily, family ? family : "");
+}
+const char* XTextEdit_fontFamily(const XTextEdit* self)
+{
+    if (!self || !self->m_fontFamily) return "";
+    return XString_toUtf8(self->m_fontFamily);
+}
+void XTextEdit_setFontWeight(XTextEdit* self, int weight) { if (self && weight > 0) self->m_fontWeight = weight; }
+int XTextEdit_fontWeight(const XTextEdit* self) { return self ? self->m_fontWeight : 400; }
+void XTextEdit_setFontPointSize(XTextEdit* self, double size) { if (self && size > 0) self->m_fontPointSize = size; }
+double XTextEdit_fontPointSize(const XTextEdit* self) { return self ? self->m_fontPointSize : 10.0; }
+void XTextEdit_setCurrentFont(XTextEdit* self, const char* family) { XTextEdit_setFontFamily(self, family); }
+void XTextEdit_zoomIn(XTextEdit* self, int range) { if (self) { self->m_fontPointSize += (range > 0 ? range : 1); if (self->m_fontPointSize > 100) self->m_fontPointSize = 100; } }
+void XTextEdit_zoomOut(XTextEdit* self, int range) { if (self) { self->m_fontPointSize -= (range > 0 ? range : 1); if (self->m_fontPointSize < 1) self->m_fontPointSize = 1; } }
+void XTextEdit_setTabStopDistance(XTextEdit* self, double distance) { if (self && distance >= 0) self->m_tabStopDistance = distance; }
+double XTextEdit_tabStopDistance(const XTextEdit* self) { return self ? self->m_tabStopDistance : 80.0; }
+void XTextEdit_setAutoFormatting(XTextEdit* self, int features) { if (self) self->m_autoFormatting = features; }
+int XTextEdit_autoFormatting(const XTextEdit* self) { return self ? self->m_autoFormatting : 0; }
+void XTextEdit_setTabChangesFocus(XTextEdit* self, bool b) { (void)self; (void)b; /* 键盘焦点链由 XWidget 统一管理；存储位预留。 */ }
 bool XTextEdit_tabChangesFocus(const XTextEdit* self) { (void)self; return false; }
-void XTextEdit_setDocumentTitle(XTextEdit* self, const char* title) { (void)self; (void)title; }
-const char* XTextEdit_documentTitle(const XTextEdit* self) { (void)self; return ""; }
+void XTextEdit_setDocumentTitle(XTextEdit* self, const char* title)
+{
+    if (!self) return;
+    if (!self->m_documentTitle) self->m_documentTitle = XString_create();
+    if (self->m_documentTitle)
+        XString_assign_utf8(self->m_documentTitle, title ? title : "");
+}
+const char* XTextEdit_documentTitle(const XTextEdit* self)
+{
+    if (!self || !self->m_documentTitle) return "";
+    return XString_toUtf8(self->m_documentTitle);
+}
 void XTextEdit_setUndoRedoEnabled_2(XTextEdit* self, bool enable) { XPlainTextEdit_setUndoRedoEnabled(&self->m_editor->m_base, enable); }
 bool XTextEdit_isUndoRedoEnabled_2(const XTextEdit* self) { return XPlainTextEdit_isUndoRedoEnabled(&self->m_editor->m_base); }
-void XTextEdit_setLineWrapMode(XTextEdit* self, int mode) { (void)self; (void)mode; }
-int XTextEdit_lineWrapMode(const XTextEdit* self) { (void)self; return 1; }
-void XTextEdit_setWordWrapMode(XTextEdit* self, int policy) { (void)self; (void)policy; }
-int XTextEdit_wordWrapMode(const XTextEdit* self) { (void)self; return 0; }
+void XTextEdit_setLineWrapMode(XTextEdit* self, int mode) { if (self) self->m_lineWrapMode = mode; }
+int XTextEdit_lineWrapMode(const XTextEdit* self) { return self ? self->m_lineWrapMode : 0; }
+void XTextEdit_setWordWrapMode(XTextEdit* self, int policy) { if (self) self->m_wordWrapMode = policy; }
+int XTextEdit_wordWrapMode(const XTextEdit* self) { return self ? self->m_wordWrapMode : 1; }
 void XTextEdit_setReadOnly_2(XTextEdit* self, bool ro) { XPlainTextEdit_setReadOnly(&self->m_editor->m_base, ro); }
 bool XTextEdit_isReadOnly_2(const XTextEdit* self) { return XPlainTextEdit_isReadOnly(&self->m_editor->m_base); }
 void XTextEdit_setPlaceholderText_2(XTextEdit* self, const char* text) { XPlainTextEdit_setPlaceholderText(&self->m_editor->m_base, text); }
 const char* XTextEdit_placeholderText_2(const XTextEdit* self) { return XPlainTextEdit_placeholderText(&self->m_editor->m_base); }
 void XTextEdit_ensureCursorVisible_2(XTextEdit* self) { XPlainTextEdit_ensureCursorVisible(&self->m_editor->m_base); }
-void XTextEdit_setCenterOnScroll(XTextEdit* self, bool enabled) { (void)self; (void)enabled; }
-bool XTextEdit_centerOnScroll(const XTextEdit* self) { (void)self; return false; }
+void XTextEdit_setCenterOnScroll(XTextEdit* self, bool enabled) { if (self) self->m_centerOnScroll = enabled; }
+bool XTextEdit_centerOnScroll(const XTextEdit* self) { return self ? self->m_centerOnScroll : false; }
 void XTextEdit_setExtraSelections(XTextEdit* self, void* selections) { (void)self; (void)selections; }
 void XTextEdit_setBackgroundVisible(XTextEdit* self, bool visible) { (void)self; (void)visible; }
 bool XTextEdit_backgroundVisible(const XTextEdit* self) { (void)self; return false; }
 void XTextEdit_setTextCursor_2(XTextEdit* self, void* cursor) { (void)self; (void)cursor; }
 void* XTextEdit_textCursor(const XTextEdit* self) { (void)self; return NULL; }
-void XTextEdit_setCursorWidth(XTextEdit* self, int width) { (void)self; (void)width; }
-int XTextEdit_cursorWidth(const XTextEdit* self) { (void)self; return 1; }
+void XTextEdit_setCursorWidth(XTextEdit* self, int width) { if (self && width > 0) self->m_cursorWidth = width; }
+int XTextEdit_cursorWidth(const XTextEdit* self) { return self ? self->m_cursorWidth : 1; }
 bool XTextEdit_find_2(XTextEdit* self, const char* exp, int flags) { (void)self; (void)exp; (void)flags; return false; }
 void XTextEdit_print(XTextEdit* self, void* printer) { (void)self; (void)printer; }
 void* XTextEdit_createStandardContextMenu(XTextEdit* self) { (void)self; return NULL; }
@@ -327,4 +384,10 @@ bool XTextEdit_overwriteMode(const XTextEdit* self) { (void)self; return false; 
 int XTextEdit_cursorRect_width(const XTextEdit* self) { (void)self; return 1; }
 void XTextEdit_moveCursor_2(XTextEdit* self, int operation, int mode) { (void)self; (void)operation; (void)mode; }
 bool XTextEdit_cursorCanPaste(const XTextEdit* self) { (void)self; return false; }
+void* XTextEdit_currentCharFormatChanged_signal(XTextEdit* self)
+{
+    (void)self;
+    return (void*)(size_t)XTextEdit_currentCharFormatChanged_signal;
+}
+
 #endif /* XTEXTEDIT_ON */

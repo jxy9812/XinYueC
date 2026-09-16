@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XDialogButtonBox.h
  * @brief      XDialogButtonBox 对话框按钮排布控件（对标 Qt 6.8
  *             QDialogButtonBox 全部公共 API）。
@@ -235,22 +235,4 @@ void* XDialogButtonBox_rejected_signal(XDialogButtonBox* self);
 #endif
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XDIALOGBUTTONBOX_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XDialog按钮盒clear2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialogButtonBox_clear_2(XDialogButtonBox* self);
-/** @brief XDialog按钮盒button2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialogButtonBox_button_2(XDialogButtonBox* self);
-/** @brief XDialog按钮盒standardButtons2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDialogButtonBox_standardButtons_2(XDialogButtonBox* self);
 #endif /* XDIALOGBUTTONBOX_H */

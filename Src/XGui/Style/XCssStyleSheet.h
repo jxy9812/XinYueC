@@ -24,6 +24,7 @@ typedef enum XCssProperty
     XCssProperty_Border,
     XCssProperty_BorderColor,
     XCssProperty_BorderWidth,
+    XCssProperty_BorderStyle,
     XCssProperty_BorderRadius,
     XCssProperty_Padding,
     XCssProperty_PaddingLeft,

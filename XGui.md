@@ -460,6 +460,38 @@ PC 的软件光栅、X11
 和 Win32 窗口/后备存储路径已经有真实实现；嵌入式在这些能力关闭时保留安全
 退化语义，不伪造平台句柄。
 
+## 11b. 已知偏差清单（Task 2.20 收口，2026-09-15）
+
+以下差异在头文件 @note 或本清单正式声明，属架构裁剪/平台边界，不视为漏实现：
+
+- **XPaintDevice 体系**：XPaintDevice/XPaintEngine 为公开类全量实现（枚举
+  数值对齐 QPaintDevice/QPaintEngine，查询 API 齐全）；XPaintEngine 的绘制
+  命令接口（begin/end/draw* 纯虚）由 XPainter 承担，不建重复引擎；
+  QImage 在 Qt 中不继承 QPaintDevice，XGui 的 XImage/XPixmap/XBitmap/
+  XPicture 统一接入 XPaintDevice 属项目决策（D3）。
+- **QIcon 路径字符串映射**：图标以路径字符串（XString）承载，等价于
+  QIcon 的 QIconEngine 资源寻址；无 QIconEngine 插件动态加载，内置
+  XSvgIconEngine 插件经 XIconEnginePlugin 注册表按后缀选择。
+- **setIconSize(int) 单值**：图标尺寸以单 int 方边值承载（Qt 为
+  QSize），宽高不等场景需自行换算；头文件已注明。
+- **QLayout 默认边距/间距 0 vs Qt 样式**：XGui 布局默认边距/间距为 0，
+  Qt 由样式提供默认值（9/6 等）；显式设置后一致。
+- **XMovie 手动驱动**：定时驱动为正式裁剪项，调用方按帧延迟自行驱动。
+- **富文本子集边界**：XTextDocument 为纯 C 子集，不做完整 Qt 富文本
+  引擎；行为差异头文件已声明。
+- **XStackedLayout 信号决策**：布局自身不发射 currentChanged，信号
+  所有权在 XStackedWidget（Task 0.5 裁决）。
+- **XPainter 路径裁剪近似**：setClipPath 按路径包围矩形裁剪，精确
+  路径光栅裁剪未实现；clipPath() 返回空路径（Task 2.11）。
+- **XColorSpace ICC 承载**：ICC 字节以固定 1024 缓冲透明承载，超过
+  截断；ICC 不解析为矩阵/LUT（Task 2.11）。
+- **XTouchEvent 单点**：触摸事件承载首个触点，完整多点列表未实现
+  （Task 2.13）。
+- **XPaintEngine 类型**：XPaintEngineType 数值对齐 QPaintEngine::Type；
+  XGui 统一使用 Raster 引擎语义。
+- **XMenuBar 几何模型**：actionGeometry/actionAt 用统一布局模型
+  （文本宽+16），与无样式绘制的固定 60px 间距存在轻微偏差（Task 2.10）。
+
 ## 12. 约束（沿用项目约定）
 
 - 头文件详细中文注释；风格严格遵守

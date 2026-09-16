@@ -360,6 +360,23 @@ void XWindow_setSurfaceType(XWindow* self, XWindowSurfaceType surfaceType);
 XWindowSurfaceType XWindow_surfaceType(const XWindow* self);
 
 /**
+ * @brief      设置 Vulkan 实例句柄（对标 QWindow::setVulkanInstance）。
+ * @note       XGui 的 Vulkan 后端在 XGpuRenderDriver_vulkan 中；本句柄为
+ *             借用存储，不参与生命周期管理。
+ * @param      self 目标窗口；可为 NULL。
+ * @param      instance Vulkan 实例句柄；可为 NULL 表示清除。
+ * @return     无返回值。
+ */
+void XWindow_setVulkanInstance(XWindow* self, void* instance);
+
+/**
+ * @brief      返回 Vulkan 实例句柄（对标 QWindow::vulkanInstance）。
+ * @param      self 目标窗口；可为 NULL。
+ * @return     借用句柄；未设置返回 NULL。
+ */
+void* XWindow_vulkanInstance(const XWindow* self);
+
+/**
  * @brief      返回窗口表面类别（对标 QSurface::surfaceClass）。
  * @param      self 目标窗口；可为 NULL。
  * @return     Window 表面类别。

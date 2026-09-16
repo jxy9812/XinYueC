@@ -312,7 +312,7 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
     button    = xslider_color(slider, XPaletteColorRole_Button);
     handlePos = xslider_valueToPos(slider, base->m_value);
 
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

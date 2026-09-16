@@ -40,6 +40,8 @@ extern "C" {
 /** @brief XWidget 控件前向声明；XApplication 只持借用指针，实体 API 由
  *  XWidget.h 提供。 */
 typedef struct XWidget XWidget;
+/** @brief XStyle 样式前向声明（Task 1.4 style()/setStyle() 使用）。 */
+typedef struct XStyle XStyle;
 
 #if XGUIAPPLICATION_ON && !XSTYLEHINTS_ON
 /** @brief XStyleHints 前向声明回退（开关关闭时交互参数接口返回默认值）。 */
@@ -72,6 +74,9 @@ typedef struct XApplication
     XWidget* m_focusWidget;          /**< 焦点控件（借用）。 */
     XWidget* m_activeModalWidget;    /**< 模态控件（借用）。 */
     XWidget* m_activePopupWidget;    /**< 弹出控件（借用）。 */
+    bool m_autoSipEnabled;           /**< 自动 SIP 开关（对标 autoSipEnabled）。 */
+    int  m_effectEnabled;            /**< 效果使能位集（对标 setEffectEnabled）。 */
+    XString* m_styleSheet;           /**< 应用级样式表文本（对象拥有）。 */
 } XApplication;
 
 /**
@@ -93,7 +98,8 @@ XVtable* XApplication_class_init(void);
 void XApplication_init(XApplication* self, int argc, char** argv);
 
 /** @brief 使用默认内存类型创建唯一 XApplication；已存在其它应用时返回 NULL。 */
-#define XApplication_create() XApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+#define XApplication_create() \
+    XApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL)
 
 /**
  * @brief      使用指定内存类型创建唯一 XApplication（对标 QApplication 构造）。
@@ -228,6 +234,65 @@ void XApplication_setCursorFlashTime(int ms);
 /** @brief 查询/设置键盘输入间隔（毫秒；对标 QApplication::keyboardInputInterval）。 */
 int  XApplication_keyboardInputInterval(void);
 void XApplication_setKeyboardInputInterval(int ms);
+
+/* ==================== Task 1.4：QApplication 应用级 API ==================== */
+
+/** @brief 应用级样式对象（对标 QApplication::style）。
+ * @return 全局默认样式（XStyle_defaultStyle；懒创建）。 */
+XStyle* XApplication_style(void);
+/** @brief 设置应用级样式（对标 QApplication::setStyle）。
+ * @param style 样式对象指针；替换旧默认样式（所有权转交）。
+ * @return 无返回值。
+ */
+void XApplication_setStyle(XStyle* style);
+/** @brief focusChanged(XWidget*,XWidget*) 信号（对标 QApplication::focusChanged；
+ *         载荷：旧焦点控件,新焦点控件）。 */
+void* XApplication_focusChanged_signal(XApplication* self,
+                                       XWidget* old, XWidget* now);
+/** @brief 全部顶层控件（返回新建 XVector<XWidget*> 借用副本，调用方 delete）。
+ * @return 新建 XVector；无实例返回 NULL。 */
+XVector* XApplication_allWidgets(void);
+/** @brief 顶层控件命中（对标 QApplication::topLevelAt）。
+ * @param point 屏幕坐标点。
+ * @return 命中的顶层控件借用指针；未命中返回 NULL。 */
+XWidget* XApplication_topLevelAt(const XPoint* point);
+/** @brief 系统提示音（对标 QApplication::beep；无平台实现时为空操作）。 */
+void XApplication_beep(void);
+/** @brief 闪烁告警（对标 QApplication::alert；简化实现仅记录）。
+ * @param widget 目标控件。
+ * @param duration 持续时间（毫秒；0=默认）。
+ * @return 无返回值。
+ */
+void XApplication_alert(XWidget* widget, int duration);
+/** @brief 查询效果使能（对标 QApplication::isEffectEnabled）。
+ * @param effect 效果码。
+ * @return 使能返回 true（默认 true）。 */
+bool XApplication_isEffectEnabled(int effect);
+/** @brief 设置效果使能（对标 QApplication::setEffectEnabled）。
+ * @param effect 效果码。
+ * @param enable true 使能。
+ * @return 无返回值。
+ */
+void XApplication_setEffectEnabled(int effect, bool enable);
+/** @brief 关闭全部顶层控件（对标 QApplication::closeAllWindows）。 */
+void XApplication_closeAllWindows(void);
+/** @brief 关于 Qt 对话框（对标 QApplication::aboutQt；无对话框实现，空操作）。 */
+void XApplication_aboutQt(void);
+/** @brief 读取应用级样式表（内部借用 XString*；不得释放）。
+ * @return 样式表文本；未设置返回 NULL。 */
+const XString* XApplication_styleSheet(void);
+/** @brief 读取应用级样式表（UTF-8 借用）。 */
+const char* XApplication_styleSheet_2(void);
+/** @brief 设置应用级样式表（XString 主版本；对标 setStyleSheet，内部经
+ *         XStyle_installStyleSheet 应用）。 */
+void XApplication_setStyleSheet(const XString* css);
+/** @brief 设置应用级样式表（UTF-8 兼容重载，转发主版本）。 */
+void XApplication_setStyleSheet_2(const char* css);
+/** @brief 查询自动 SIP 开关（对标 QApplication::autoSipEnabled）。
+ * @return 开启返回 true（默认 false）。 */
+bool XApplication_autoSipEnabled(void);
+/** @brief 设置自动 SIP 开关。 @param enabled true 开启。 */
+void XApplication_setAutoSipEnabled(bool enabled);
 
 #endif /* XAPPLICATION_ON && XGUIAPPLICATION_ON */
 

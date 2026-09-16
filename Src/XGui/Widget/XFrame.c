@@ -489,7 +489,7 @@ static void VXFrame_paintEvent(XWidget* self, XEvent* event)
 #if XPAINTER_CLIP_ON
     pe = (XPaintEvent*)event;
 #endif
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return; /* 未上屏/未创建后备存储时无绘制目标。 */
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -867,15 +867,15 @@ static void XFrame_updateFrameWidth(XFrame* self)
     XFrame_setFrameRect(self, &fr);
 }
 
-void XFrame_setFrameShape_2(XFrame* self) { (void)self; }
-void XFrame_frameShape_2(XFrame* self) { (void)self; }
-void XFrame_setFrameShadow_2(XFrame* self) { (void)self; }
-void XFrame_frameShadow_2(XFrame* self) { (void)self; }
-void XFrame_setLineWidth_2(XFrame* self) { (void)self; }
-void XFrame_lineWidth_2(XFrame* self) { (void)self; }
-void XFrame_setMidLineWidth_2(XFrame* self) { (void)self; }
-void XFrame_midLineWidth_2(XFrame* self) { (void)self; }
-void XFrame_frameWidth_2(XFrame* self) { (void)self; }
-void XFrame_frameRect_2(XFrame* self) { (void)self; }
-void XFrame_setFrameRect_2(XFrame* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XFRAME_ON */

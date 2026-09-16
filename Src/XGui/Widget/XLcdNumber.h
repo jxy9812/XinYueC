@@ -224,17 +224,4 @@ void* XLcdNumber_overflow_signal(XLcdNumber* self);
 #endif
 #endif /* XWIDGET_ON && XFRAME_ON && XLCDNUMBER_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XLcdNumbercheckOverflow2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XLcdNumber_checkOverflow_2(XLcdNumber* self);
-/** @brief XLcdNumberoverflow2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XLcdNumber_overflow_2(XLcdNumber* self);
 #endif /* XLCDNUMBER_H */

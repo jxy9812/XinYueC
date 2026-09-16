@@ -82,7 +82,7 @@ bool XScrollBarTest_runAll(void)
     {
         sb_valueChangedCount = 0;
         XObject_connect_2((XObject*)sb,
-            XSignal(XScrollBar_valueChanged_signal(sb)), sb_valueChangedSlot);
+            (size_t)XScrollBar_valueChanged_signal(sb, 0), sb_valueChangedSlot);
         XScrollBar_setValue(sb, 50);
         sb_expect(sb_valueChangedCount == 1, "setValue(50) 触发一次");
         XScrollBar_setValue(sb, 50);

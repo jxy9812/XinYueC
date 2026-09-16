@@ -504,8 +504,9 @@ static void xlineedit_refreshDisplay(XLineEdit* self)
     char* updated;
     if (!self) return;
     if (!self->m_text) {
-        if (!self->m_displayBuf)
-            self->m_displayBuf = (char*)XMalloc_System(1);
+        /* 无文本时保持 displayBuf 为 NULL 或清空已分配缓存；
+           paintEvent 对 NULL 回退空串。不在析构链的 focusOut 路径
+           再分配（否则 deinit 后泄漏 1B）。 */
         if (self->m_displayBuf) self->m_displayBuf[0] = '\0';
         return;
     }
@@ -594,7 +595,7 @@ static void xlineedit_updateViewOffset(XLineEdit* self)
     size_t curChars;
     if (!self || !self->m_text) return;
     {
-        XFont font = XWidget_font((XWidget*)self);
+        const XFont* font = &((XWidget*)self)->m_font;
         chars = xlineedit_charCount(self->m_text);
         curChars = xlineedit_charCountPrefix(self->m_text, self->m_cursor);
         textStart = (self->m_frame ? 4 : 2) + self->m_textMargins.left;
@@ -605,12 +606,13 @@ static void xlineedit_updateViewOffset(XLineEdit* self)
         visibleW = textEnd - textStart;
         /* 总宽/光标位都用真实字体宽度（逐字符累计，中文双宽正确），
            与 drawText 渲染、posToCursor/cursorRect 同度量。 */
-        textW = xlineedit_displayWidth(&font, self->m_text, chars);
+        textW = xlineedit_displayWidth(font, self->m_text, chars);
         if (textW <= visibleW) {
             self->m_viewOffset = 0;
             return;
+
         }
-        cursorX = xlineedit_displayWidth(&font, self->m_text, curChars);
+        cursorX = xlineedit_displayWidth(font, self->m_text, curChars);
         lo = cursorX - visibleW + 1;
         if (lo < 0) lo = 0;
         hi = textW - visibleW;
@@ -705,7 +707,7 @@ static void xlineedit_paintActions(const XLineEdit* self, XPainter* painter,
 
 static size_t xlineedit_posToCursor(const XLineEdit* self, int x)
 {
-    XFont font;
+    const XFont* font;
     int textStart;
     int clickX;
     size_t chars;
@@ -713,7 +715,7 @@ static size_t xlineedit_posToCursor(const XLineEdit* self, int x)
     int prevWidth;
     const char* p;
     if (!self || !self->m_text) return 0;
-    font = XWidget_font((XWidget*)self);
+    font = &((XWidget*)self)->m_font;
     textStart = xlineedit_textStartX(self);
     clickX = x - textStart + self->m_viewOffset;
     chars = xlineedit_charCount(self->m_text);
@@ -728,7 +730,7 @@ static size_t xlineedit_posToCursor(const XLineEdit* self, int x)
         int charW;
         ++next;
         while ((self->m_text[next] & 0xC0u) == 0x80u) ++next;
-        charW = XPainter_textWidthRange(&font, self->m_text,
+        charW = XPainter_textWidthRange(font, self->m_text,
                                         (int)boundary, (int)next);
         if (prevWidth + charW / 2 > clickX)
             return boundary;
@@ -1312,7 +1314,7 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
     highlight       = xlineedit_color(edit, XPaletteColorRole_Highlight);
     highlightedText = xlineedit_color(edit, XPaletteColorRole_HighlightedText);
 
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -1325,8 +1327,9 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
     /* 绘制字体 = 控件字体（与光标/点击的文本度量同一来源，否则
        估算与渲染错位随输入增长）。 */
     {
-        XFont paintFont = XWidget_font(self);
-        XPainter_setFont(&painter, &paintFont);
+        const XFont* paintFont = &((XWidget*)self)->m_font;
+        XPainter_setFont(&painter, paintFont);
+
     }
 
     if (edit->m_frame) {
@@ -1375,15 +1378,16 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
     display = (edit->m_displayBuf) ? edit->m_displayBuf : "";
     tx = xlineedit_textStartX(edit);
     {
-        XFont font = XWidget_font(self);
-        int ascent = XPainter_textAscent(&font);
-        int descent = XPainter_textDescent(&font);
+        const XFont* font = &((XWidget*)self)->m_font;
+        int ascent = XPainter_textAscent(font);
+        int descent = XPainter_textDescent(font);
         lineH = ascent + descent; /* 字形盒高（不含行距）。 */
         if (lineH < 14) lineH = 14;
         /* 行盒垂直居中：ty 为行顶部；绘制基线 = 顶部 + 上伸高度。 */
         ty = (r.height - lineH) / 2;
         baseline = ty + ascent;
         editBaseline = 1;
+
     }
     if (!editBaseline)
         baseline = ty + 12; /* 回退：无字体时的固定基线偏移 */
@@ -1395,7 +1399,7 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
 
     if (edit->m_text && edit->m_text[0]) {
         int baseX = tx - edit->m_viewOffset;
-        XFont font = XWidget_font(self);
+        const XFont* font = &((XWidget*)self)->m_font;
         if (hasSel) {
             char* seg0;
             char* seg1;
@@ -1413,9 +1417,9 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
                 if (c1 > 0) {
                     /* 选区/分段定位用真实字体宽度（display 逐字符累计），
                        中文双宽与西文单宽都与 drawText 渲染对齐。 */
-                    int selX = baseX + xlineedit_displayWidth(&font, display, c0);
-                    int selW = xlineedit_displayWidth(&font, display, c0 + c1) -
-                               xlineedit_displayWidth(&font, display, c0);
+                    int selX = baseX + xlineedit_displayWidth(font, display, c0);
+                    int selW = xlineedit_displayWidth(font, display, c0 + c1) -
+                               xlineedit_displayWidth(font, display, c0);
                     XRect selRect;
                     selRect.x = selX;
                     selRect.y = ty + 1;
@@ -1427,12 +1431,12 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
                     XPainter_drawText(&painter, baseX, baseline, seg0, text);
                 if (seg1[0])
                     XPainter_drawText(&painter,
-                                      baseX + xlineedit_displayWidth(&font,
+                                      baseX + xlineedit_displayWidth(font,
                                           display, c0),
                                       baseline, seg1, highlightedText);
                 if (seg2[0])
                     XPainter_drawText(&painter,
-                                      baseX + xlineedit_displayWidth(&font,
+                                      baseX + xlineedit_displayWidth(font,
                                           display, c0 + c1),
                                       baseline, seg2, text);
             }
@@ -1441,6 +1445,7 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
             XFree_System(seg2);
         } else {
             XPainter_drawText(&painter, baseX, baseline, display, text);
+
         }
         /* 光标：按前缀真实文本宽度定位（与绘制同字体，焦点内常显）。
            K = 光标前对应的显示字符数；displayWidth 按 display 逐字符
@@ -1449,14 +1454,15 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
            textWidthRange，中文（3 字节/字符、双宽）随输入越来越多地
            落后于文字。 */
         if (XWidget_hasFocus(self)) {
-            XFont font = XWidget_font(self);
+            const XFont* font = &((XWidget*)self)->m_font;
             int cx = baseX;
             cx += xlineedit_displayWidth(
-                &font, display,
+                font, display,
                 xlineedit_charCountPrefix(edit->m_text, edit->m_cursor));
             if (cx >= r.x + 1 && cx <= r.x + r.width - 1) {
                 XRect cursor = { cx, ty, XLINEEDIT_CURSOR_W, lineH };
                 XPainter_fillRect(&painter, &cursor, text);
+
             }
         }
     } else if (edit->m_placeholder &&
@@ -1950,18 +1956,20 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
         }
         /* 首选宽度按真实字体度量（取文本与 placeholder 中较宽者），
            中文双宽不再被按 8px 低估。 */
-        XFont font = XWidget_font((const XWidget*)self);
+        const XFont* font = &((XWidget*)self)->m_font;
         const char* textPtr = self->m_text ? self->m_text : "";
         const char* phPtr = phText ? phText : "";
-        int textW = xlineedit_displayWidth(&font, textPtr, chars);
+        int textW = xlineedit_displayWidth(font, textPtr, chars);
         int phW = (phText && phText[0])
-                      ? xlineedit_displayWidth(&font, phPtr,
+                      ? xlineedit_displayWidth(font, phPtr,
                                                xlineedit_charCount(phPtr))
                       : 0;
+
         int contentW = textW > phW ? textW : phW;
         w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
                   self->m_textMargins.right + contentW +
                   ((self->m_clearButtonEnabled) ? 18 : 0));
+
     }
     if (w < 40) w = 40;
     h = 14 + self->m_textMargins.top + self->m_textMargins.bottom +
@@ -1997,9 +2005,9 @@ XRect XLineEdit_cursorRect(const XLineEdit* self)
     XMemset(&rect, 0, sizeof(rect));
     if (!self) return rect;
     {
-        XFont font = XWidget_font((XWidget*)self);
-        int lineH = XPainter_textHeight(&font);
-        int ascent = XPainter_textAscent(&font);
+        const XFont* font = &((XWidget*)self)->m_font;
+        int lineH = XPainter_textHeight(font);
+        int ascent = XPainter_textAscent(font);
         if (lineH < 14) lineH = 14;
         ty = (XWidget_height((XWidget*)self) - lineH) / 2;
         tx = xlineedit_textStartX(self);
@@ -2009,8 +2017,9 @@ XRect XLineEdit_cursorRect(const XLineEdit* self)
                字节偏移：直接传 m_cursor。旧实现把「字符数」当「字节偏移」
                传入，中文（3 字节/字符、双宽字形）下光标随输入越来越多地
                落后于文字。 */
-            cx += XPainter_textWidthRange(&font, self->m_text, 0,
+            cx += XPainter_textWidthRange(font, self->m_text, 0,
                                           (int)self->m_cursor);
+
         }
         rect.x = cx;
         rect.y = ty + 1;

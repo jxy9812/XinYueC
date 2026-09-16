@@ -578,6 +578,7 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
         XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
         font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
+        XFont_deinit_base(&font);
         n = self->m_actions
                 ? (int64_t)XVector_size_base((const XContainer*)self->m_actions)
                 : 0;
@@ -622,6 +623,7 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
     XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
+    XFont_deinit_base(&font);
     count = self->m_actions
                 ? (int64_t)XVector_size_base(
                       (const XContainer*)self->m_actions)
@@ -697,7 +699,7 @@ static void VXMenu_paintEvent(XWidget* self, XEvent* event)
 
     if (!menu || !event || XEvent_type(event) != XEVENT_TYPE_PAINT)
         return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image)
         return;
     XPainter_init(&painter, NULL);
@@ -1110,24 +1112,216 @@ void* XMenu_hovered_signal(XMenu* self, XAction* action)
     return (void*)(size_t)XMenu_hovered_signal;
 }
 
-void XMenu_setDefaultAction_2(XMenu* self, XAction* action) { (void)self; (void)action; }
-XAction* XMenu_defaultAction_2(const XMenu* self) { (void)self; return NULL; }
-void XMenu_setToolTipsVisible_2(XMenu* self, bool visible) { (void)self; (void)visible; }
-bool XMenu_toolTipsVisible_2(const XMenu* self) { (void)self; return false; }
-int XMenu_columnCount_2(const XMenu* self) { (void)self; return 1; }
-void XMenu_setNoReplay_2(XMenu* self) { (void)self; }
-void XMenu_noReplay(XMenu* self) { (void)self; }
-void XMenu_setIcon_2(XMenu* self) { (void)self; }
-void XMenu_icon_2(XMenu* self) { (void)self; }
-void XMenu_clear_2(XMenu* self) { (void)self; }
-void XMenu_addSeparator_2(XMenu* self) { (void)self; }
-void XMenu_removeAction_2(XMenu* self) { (void)self; }
-void XMenu_title_2(XMenu* self) { (void)self; }
-void XMenu_setTearOffEnabled_2(XMenu* self) { (void)self; }
-void XMenu_isTearOffEnabled_2(XMenu* self) { (void)self; }
-void XMenu_isTearOffMenuVisible_2(XMenu* self) { (void)self; }
-void XMenu_hideTearOffMenu_2(XMenu* self) { (void)self; }
-void XMenu_menuAction_2(XMenu* self) { (void)self; }
-void XMenu_isEmpty_2(XMenu* self) { (void)self; }
-void XMenu_setMinimumWidth_2(XMenu* self) { (void)self; }
+/* ==================== Task 2.10：节/插入/几何/平台 API ============== */
+
+/** @brief 查找动作在菜单列表中的索引；未找到返回 -1。 */
+static int xmenu_findIndex(const XMenu* self, XAction* action)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !self->m_actions || !action) return -1;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions,
+                                       i);
+        if (item && *item == action) return (int)i;
+    }
+    return -1;
+}
+
+/** @brief 连接动作信号并在指定位置插入；index<0 或越界时追加。 */
+static XAction* xmenu_insertActionInternal(XMenu* self, XAction* action,
+                                           int index)
+{
+    int64_t n;
+    if (!self || !action || !self->m_actions) return NULL;
+    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+                      (XObject*)self, xmenu_actionTriggeredSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)action, XSignal(XObject_destroyed_signal),
+                      (XObject*)self, xmenu_actionDestroyedSlot,
+                      XConnectionType_Direct);
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    if (index < 0 || index >= (int)n)
+        XVector_push_back_1_base(self->m_actions, &action);
+    else
+        XVector_Insert(self->m_actions, index, XAction*, action);
+    XWidget_updateGeometry((XWidget*)self);
+    XWidget_update((XWidget*)self);
+    return action;
+}
+
+XAction* XMenu_addSection(XMenu* self, const XString* text)
+{
+    XAction* action;
+    if (!self) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    if (text) XAction_setText(action, text);
+    /* Qt 的节标题动作禁用且不可选中。 */
+    XAction_setDisabled(action, true);
+    return xmenu_insertActionInternal(self, action, -1);
+}
+
+XAction* XMenu_addSection_2(XMenu* self, const char* utf8)
+{
+    XAction* action;
+    if (!self) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                               utf8 ? utf8 : "");
+    if (!action) return NULL;
+    XAction_setDisabled(action, true);
+    return xmenu_insertActionInternal(self, action, -1);
+}
+
+XAction* XMenu_insertSeparator(XMenu* self, XAction* before)
+{
+    XAction* action;
+    int index;
+    if (!self) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    XAction_setSeparator(action, true);
+    index = xmenu_findIndex(self, before);
+    return xmenu_insertActionInternal(self, action, index);
+}
+
+XAction* XMenu_insertMenu(XMenu* self, XAction* before, XMenu* menu)
+{
+    XAction* action;
+    XString* title;
+    int index;
+    if (!self) return NULL;
+    if (!menu) return XMenu_insertSeparator(self, before);
+    XWidget_setParent((XWidget*)menu, (XWidget*)self, 0);
+    menu->m_parentMenu = self;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    title = XMenu_title(menu);
+    if (title) {
+        XAction_setText(action, title);
+        XString_delete_base((XClass*)title);
+    }
+    XAction_setMenu(action, menu);
+    index = xmenu_findIndex(self, before);
+    return xmenu_insertActionInternal(self, action, index);
+}
+
+XAction* XMenu_insertSection(XMenu* self, XAction* before,
+                             const XString* text)
+{
+    XAction* action;
+    int index;
+    if (!self) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    if (text) XAction_setText(action, text);
+    XAction_setDisabled(action, true);
+    index = xmenu_findIndex(self, before);
+    return xmenu_insertActionInternal(self, action, index);
+}
+
+XAction* XMenu_insertSection_2(XMenu* self, XAction* before,
+                               const char* utf8)
+{
+    XAction* action;
+    int index;
+    if (!self) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL,
+                               utf8 ? utf8 : "");
+    if (!action) return NULL;
+    XAction_setDisabled(action, true);
+    index = xmenu_findIndex(self, before);
+    return xmenu_insertActionInternal(self, action, index);
+}
+
+XRect XMenu_actionGeometry(const XMenu* self, XAction* action)
+{
+    XRect rect;
+    XRect out;
+    int64_t i;
+    int64_t n;
+    int ah;
+    if (!self || !action || !self->m_actions) {
+        XRect_init(&out, 0, 0, 0, 0);
+        return out;
+    }
+    rect = XWidget_rect((XWidget*)self);
+    ah = self->m_actionHeight > 0 ? self->m_actionHeight : 1;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions,
+                                       i);
+        if (item && *item == action) {
+            XRect_init(&out, rect.x, rect.y + (int)i * ah,
+                       rect.width, ah);
+            return out;
+        }
+    }
+    XRect_init(&out, 0, 0, 0, 0);
+    return out;
+}
+
+void XMenu_setNoReplayFor(XMenu* self, XWidget* widget)
+{
+    if (self) self->m_noReplayFor = widget;
+}
+
+void XMenu_setPlatformMenu(XMenu* self, void* platformMenu)
+{
+    if (self) self->m_platformMenu = platformMenu;
+}
+
+void* XMenu_platformMenu(const XMenu* self)
+{
+    return self ? self->m_platformMenu : NULL;
+}
+
+void XMenu_setAsDockMenu(XMenu* self)
+{
+    /* 跨平台裁剪：无 macOS Dock 概念，仅记录调用。 */
+    if (self) self->m_platformMenu = (void*)(size_t)1;
+}
+
+void XMenu_showTearOffMenu(XMenu* self)
+{
+    if (!self) return;
+    self->m_tearOffMenuVisible = true;
+    XWidget_update((XWidget*)self);
+}
+
+void XMenu_hideTearOffMenu(XMenu* self)
+{
+    if (!self) return;
+    self->m_tearOffMenuVisible = false;
+    XWidget_update((XWidget*)self);
+}
+
+bool XMenu_isTearOffMenuVisible(const XMenu* self)
+{
+    return self ? self->m_tearOffMenuVisible : false;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XMENU_ON */

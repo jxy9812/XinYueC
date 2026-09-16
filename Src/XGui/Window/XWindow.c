@@ -113,6 +113,8 @@ struct XWindowPrivate
 #endif
     int m_alertMsec;                    /**< 最近一次 alert() 的毫秒数。 */
     bool m_updateRequested;             /**< requestUpdate() 待更新标志。 */
+    void* m_vulkanInstance;             /**< Vulkan 实例句柄（借用；对标
+                                             QWindow::vulkanInstance）。 */
 #if XACCESSIBLE_ON
     XAccessible* m_accessibleRoot;      /**< 窗口可访问根节点（拥有）。 */
 #endif
@@ -721,6 +723,7 @@ static void VXWindow_copy(XWindow* self, const XWindow* other)
     target->m_sizeIncrement = source->m_sizeIncrement;
     target->m_alertMsec = source->m_alertMsec;
     target->m_updateRequested = source->m_updateRequested;
+    target->m_vulkanInstance = source->m_vulkanInstance;
  #if XACCESSIBLE_ON
     if (target->m_accessibleRoot)
         target->m_accessibleRoot->m_window = self;
@@ -805,6 +808,16 @@ XWindowSurfaceType XWindow_surfaceType(const XWindow* self)
 {
     return self && self->m_data ? self->m_data->m_surfaceType
                                 : XWindowSurface_Raster;
+}
+
+void XWindow_setVulkanInstance(XWindow* self, void* instance)
+{
+    if (self && self->m_data) self->m_data->m_vulkanInstance = instance;
+}
+
+void* XWindow_vulkanInstance(const XWindow* self)
+{
+    return (self && self->m_data) ? self->m_data->m_vulkanInstance : NULL;
 }
 
 XWindowSurfaceClass XWindow_surfaceClass(const XWindow* self)
@@ -967,9 +980,10 @@ XWindow* XWindow_parent(const XWindow* self, XWindowAncestorMode mode)
 
 bool XWindow_isTopLevel(const XWindow* self)
 {
+    /* 对齐 Qt QWindow::isTopLevel：仅普通父窗口为 NULL 即顶层；
+       瞬态父不影响顶层判定。 */
     if (!self || !self->m_data) return false;
-    return self->m_data->m_parentWindow == NULL &&
-           self->m_data->m_transientParent == NULL;
+    return self->m_data->m_parentWindow == NULL;
 }
 
 bool XWindow_isAncestorOf(const XWindow* self, const XWindow* child,

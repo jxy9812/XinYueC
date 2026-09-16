@@ -63,6 +63,9 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
+#if XPAINTDEVICE_ON
+#include "XPaintDevice.h"
+#endif
 #include "XClass.h"
 #include "XObject.h"
 #include "XMemory.h"
@@ -103,6 +106,9 @@ typedef struct XApplication XApplication;
 typedef struct XImage XImage;
 /** @brief XPainter 前向声明（内容缓存绘制回调；具体 API 由 XPainter.h 提供）。 */
 typedef struct XPainter XPainter;
+/** @brief XGraphicsEffect 前向声明（graphicsEffect/setGraphicsEffect；
+ *  完整定义见 XGraphicsEffect.h，避免 XWidget/XGraphicsEffect 循环包含）。 */
+typedef struct XGraphicsEffect XGraphicsEffect;
 /** @brief XWidget 控件对象前向声明（XWidgetEventSlot / 虚表枚举早于完整定义）。 */
 typedef struct XWidget XWidget;
 /** @brief XWidgetWindow 顶层桥接窗口前向声明（XWindow 子类，内部实现）。 */
@@ -537,6 +543,16 @@ typedef struct XWidget
                                                 *   对标 QWidgetPrivate::layout；
                                                 *   控件销毁不释放布局对象）。 */
 #endif /* XLAYOUT_ON */
+#if XPAINTDEVICE_ON
+    XPaintDevice            m_paintDevice;     /**< 绘制设备描述（内嵌；对标
+                                                *   QWidget 作为 QPaintDevice
+                                                *   的度量来源）。 */
+#endif /* XPAINTDEVICE_ON */
+    XGraphicsEffect*        m_graphicsEffect;  /**< 图形效果（拥有；对标
+                                                *   QWidget::graphicsEffect；
+                                                *   setGraphicsEffect 时旧效果
+                                                *   释放，控件销毁一并释放；
+                                                *   渲染应用为后续扩展）。 */
 } XWidget;
 
 /* ==================== 类与实例生命周期 ==================== */
@@ -1348,6 +1364,8 @@ const XString* XWidget_styleSheet(const XWidget* self);
 /** @brief 设置样式表文本（对标 QWidget::setStyleSheet；只存储不解释）。 */
 void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet);
 /** @brief 返回控件字体副本（对标 QWidget::font）。 */
+/** @brief 返回控件字体（对标 QWidget::font；借用语义浅拷贝，调用方
+ *        不得修改/释放返回值；需要独立副本用 XWidget_font_const）。 */
 XFont XWidget_font(const XWidget* self);
 /** @brief 设置控件字体（对标 QWidget::setFont）。 */
 void XWidget_setFont(XWidget* self, const XFont* font);
@@ -1431,6 +1449,25 @@ XLayout* XWidget_layout(const XWidget* self);
 void XWidget_setLayout(XWidget* self, XLayout* layout);
 #endif /* XLAYOUT_ON */
 
+/* ==================== 图形效果（对标 QWidget::graphicsEffect） ==================== */
+
+/**
+ * @brief      获取控件当前的图形效果（对标 QWidget::graphicsEffect）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     效果借用指针；未设置或无效返回 NULL。
+ */
+XGraphicsEffect* XWidget_graphicsEffect(const XWidget* self);
+/**
+ * @brief      设置控件图形效果（对标 QWidget::setGraphicsEffect）。
+ * @details    若已有不同效果，先释放旧效果（Qt：QWidget 删除已装效果后
+ *             安装新效果并取得所有权）；同一效果重复设置不动作。渲染应用
+ *             为后续扩展（见 XGraphicsEffect.h @note）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      effect 新效果指针；可为 NULL（仅清除旧效果）。
+ * @return     无返回值。
+ */
+void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect);
+
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 
 /**
@@ -1459,226 +1496,4 @@ void* XWidget_customContextMenuRequested_signal(XWidget* self, const XPoint* pos
 
 #endif /* XWIDGET_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief X控件add动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param action 动作指针。
- * @return 无返回值。
- */
-void XWidget_addAction_2(XWidget* self, XAction* action);
-/** @brief X控件remove动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param action 动作指针。
- * @return 无返回值。
- */
-void XWidget_removeAction_2(XWidget* self, XAction* action);
-/** @brief X控件setWindow标题2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param utf8 UTF-8 文本。
- * @return 无返回值。
- */
-void XWidget_setWindowTitle_2(XWidget* self, const char* utf8);
-/** @brief X控件set工具提示2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param utf8 UTF-8 文本。
- * @return 无返回值。
- */
-void XWidget_setToolTip_2(XWidget* self, const char* utf8);
-/** @brief X控件tool提示2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回 UTF-8 文本；无效时返回空串。
- */
-const char* XWidget_toolTip_2(const XWidget* self);
-/** @brief X控件set状态提示2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param utf8 UTF-8 文本。
- * @return 无返回值。
- */
-void XWidget_setStatusTip_2(XWidget* self, const char* utf8);
-/** @brief X控件setWhatsThis2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param utf8 UTF-8 文本。
- * @return 无返回值。
- */
-void XWidget_setWhatsThis_2(XWidget* self, const char* utf8);
-/** @brief X控件setAccessibleName2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param utf8 UTF-8 文本。
- * @return 无返回值。
- */
-void XWidget_setAccessibleName_2(XWidget* self, const char* utf8);
-/** @brief X控件setAccessibleDescription2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param utf8 UTF-8 文本。
- * @return 无返回值。
- */
-void XWidget_setAccessibleDescription_2(XWidget* self, const char* utf8);
-/** @brief X控件clear焦点2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_clearFocus_2(XWidget* self);
-/** @brief X控件scroll2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param dx X 方向增量。
- * @param dy Y 方向增量。
- * @return 无返回值。
- */
-void XWidget_scroll_2(XWidget* self, int dx, int dy);
-/** @brief X控件setAttribute2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param attribute int 参数。
- * @param on bool：true 开启。
- * @return 无返回值。
- */
-void XWidget_setAttribute_2(XWidget* self, int attribute, bool on);
-/** @brief X控件testAttribute2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param attribute int 参数。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XWidget_testAttribute_2(const XWidget* self, int attribute);
-/** @brief X控件setGraphicsEffect（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param effect void 参数。
- * @return 无返回值。
- */
-void XWidget_setGraphicsEffect(XWidget* self, void* effect);
-/** @brief X控件actions（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对象指针；无效时返回 NULL。
- */
-const XVector* XWidget_actions(const XWidget* self);
-/** @brief X控件add动作3（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_addAction_3(XWidget* self);
-/** @brief X控件addActions2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_addActions_2(XWidget* self);
-/** @brief X控件remove动作3（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_removeAction_3(XWidget* self);
-/** @brief X控件insert动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_insertAction_2(XWidget* self);
-/** @brief X控件setLocale2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setLocale_2(XWidget* self);
-/** @brief X控件unset光标2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_unsetCursor_2(XWidget* self);
-/** @brief X控件set焦点策略2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setFocusPolicy_2(XWidget* self);
-/** @brief X控件focus策略2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_focusPolicy_2(XWidget* self);
-/** @brief X控件setWindow图标2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setWindowIcon_2(XWidget* self);
-/** @brief X控件setWindowRole2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setWindowRole_2(XWidget* self);
-/** @brief X控件setWindowFilePath2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setWindowFilePath_2(XWidget* self);
-/** @brief X控件windowFilePath2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_windowFilePath_2(XWidget* self);
-/** @brief X控件set调色板2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setPalette_2(XWidget* self);
-/** @brief X控件set字体2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setFont_2(XWidget* self);
-/** @brief X控件set样式Sheet2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setStyleSheet_2(XWidget* self);
-/** @brief X控件styleSheet2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_styleSheet_2(XWidget* self);
-/** @brief X控件set遮罩2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setMask_2(XWidget* self);
-/** @brief X控件clear遮罩2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_clearMask_2(XWidget* self);
-/** @brief X控件setParent3（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setParent_3(XWidget* self);
-/** @brief X控件isHidden2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_isHidden_2(XWidget* self);
-/** @brief X控件isWindow2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_isWindow_2(XWidget* self);
-/** @brief X控件isModal2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_isModal_2(XWidget* self);
-/** @brief X控件setWindowModified2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setWindowModified_2(XWidget* self);
-/** @brief X控件setFixed尺寸2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setFixedSize_2(XWidget* self);
-/** @brief X控件setFixed宽2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setFixedWidth_2(XWidget* self);
-/** @brief X控件setFixed高2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XWidget_setFixedHeight_2(XWidget* self);
 #endif /* XWIDGET_H */

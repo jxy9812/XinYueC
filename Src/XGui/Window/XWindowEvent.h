@@ -137,6 +137,17 @@ XCLASS_DEFINE_EXTEND_END(XDropEvent, XEvent)
  *          数据均为 UTF-8 字符串，适配 `text/uri-list`、`text/plain` 等
  *          桌面互操作格式。字符串由事件拥有。
  */
+/** @brief 拖放动作（对标 Qt::DropAction，数值一致）。 */
+typedef enum XDropAction
+{
+    XDropAction_IgnoreAction = 0x0,   /**< 忽略（无操作）。 */
+    XDropAction_CopyAction = 0x1,     /**< 复制。 */
+    XDropAction_MoveAction = 0x2,     /**< 移动。 */
+    XDropAction_LinkAction = 0x4,     /**< 链接。 */
+    XDropAction_ActionMask = 0xff,    /**< 动作掩码。 */
+    XDropAction_TargetMoveAction = 0x8002 /**< 目标移动（内部）。 */
+} XDropAction;
+
 typedef struct XDropEvent
 {
     XEvent   m_class;
@@ -144,6 +155,8 @@ typedef struct XDropEvent
     XPoint   m_globalPosition;
     XString* m_mimeType;
     XString* m_data;
+    int      m_dropAction;      /**< 当前放置动作（对标 QDropEvent::dropAction）。 */
+    int      m_possibleActions; /**< 可用动作位组合（对标 proposedActions/possibleActions）。 */
 } XDropEvent;
 
 XVtable* XDropEvent_class_init(void);
@@ -162,6 +175,14 @@ XPoint XDropEvent_position(const XDropEvent* event);
 XPoint XDropEvent_globalPosition(const XDropEvent* event);
 XString* XDropEvent_mimeType(const XDropEvent* event);
 XString* XDropEvent_data(const XDropEvent* event);
+/** @brief 获取当前放置动作（对标 QDropEvent::dropAction）。 */
+int XDropEvent_dropAction(const XDropEvent* event);
+/** @brief 设置当前放置动作（对标 setDropAction）。 */
+void XDropEvent_setDropAction(XDropEvent* event, int action);
+/** @brief 获取可用动作位组合（对标 QDropEvent::possibleActions）。 */
+int XDropEvent_possibleActions(const XDropEvent* event);
+/** @brief 设置可用动作位组合。 */
+void XDropEvent_setPossibleActions(XDropEvent* event, int actions);
 #define XDropEvent_delete_base XEvent_delete_base
 #define XDropEvent_deinit_base XEvent_deinit_base
 
@@ -171,6 +192,9 @@ XString* XDropEvent_data(const XDropEvent* event);
 /** @brief 声明 XResizeEvent 虚函数枚举：继承 XEvent（新增 Clone）。 */
 XCLASS_DEFINE_BEGING(XResizeEvent)
 XCLASS_DEFINE_EXTEND_END(XResizeEvent, XEvent)
+
+/** @brief 初始化 XResizeEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XResizeEvent_class_init(void);
 
 /** @brief 调整大小事件对象；m_class 必须为第一个成员。 */
 typedef struct XResizeEvent
@@ -222,6 +246,9 @@ XSize XResizeEvent_normalOldSize(const XResizeEvent* event);
 XCLASS_DEFINE_BEGING(XExposeEvent)
 XCLASS_DEFINE_EXTEND_END(XExposeEvent, XEvent)
 
+/** @brief 初始化 XExposeEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XExposeEvent_class_init(void);
+
 /** @brief 暴露事件对象；m_class 必须为第一个成员。 */
 typedef struct XExposeEvent
 {
@@ -265,6 +292,9 @@ XRegion XExposeEvent_region(const XExposeEvent* event);
 /** @brief 声明 XPaintEvent 虚函数枚举：继承 XEvent（新增 Clone/Deinit）。 */
 XCLASS_DEFINE_BEGING(XPaintEvent)
 XCLASS_DEFINE_EXTEND_END(XPaintEvent, XEvent)
+
+/** @brief 初始化 XPaintEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XPaintEvent_class_init(void);
 
 /** @brief 绘制事件对象；m_class 必须为第一个成员。 */
 typedef struct XPaintEvent
@@ -311,6 +341,9 @@ XRect XPaintEvent_rect(const XPaintEvent* event);
 XCLASS_DEFINE_BEGING(XCloseEvent)
 XCLASS_DEFINE_EXTEND_END(XCloseEvent, XEvent)
 
+/** @brief 初始化 XCloseEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XCloseEvent_class_init(void);
+
 /** @brief 关闭事件对象；m_class 必须为第一个成员。 */
 typedef struct XCloseEvent
 {
@@ -339,6 +372,9 @@ void XCloseEvent_init(XCloseEvent* event, XEventType type);
 XCLASS_DEFINE_BEGING(XShowEvent)
 XCLASS_DEFINE_EXTEND_END(XShowEvent, XEvent)
 
+/** @brief 初始化 XShowEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XShowEvent_class_init(void);
+
 /** @brief 显示事件对象；m_class 必须为第一个成员。 */
 typedef struct XShowEvent
 {
@@ -366,6 +402,9 @@ void XShowEvent_init(XShowEvent* event, XEventType type);
 XCLASS_DEFINE_BEGING(XHideEvent)
 XCLASS_DEFINE_EXTEND_END(XHideEvent, XEvent)
 
+/** @brief 初始化 XHideEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XHideEvent_class_init(void);
+
 /** @brief 隐藏事件对象；m_class 必须为第一个成员。 */
 typedef struct XHideEvent
 {
@@ -392,6 +431,9 @@ void XHideEvent_init(XHideEvent* event, XEventType type);
 /** @brief 声明 XFocusEvent 虚函数枚举：继承 XEvent（新增 Clone）。 */
 XCLASS_DEFINE_BEGING(XFocusEvent)
 XCLASS_DEFINE_EXTEND_END(XFocusEvent, XEvent)
+
+/** @brief 初始化 XFocusEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XFocusEvent_class_init(void);
 
 /** @brief 焦点事件对象；m_class 必须为第一个成员。 */
 typedef struct XFocusEvent
@@ -431,6 +473,27 @@ void XFocusEvent_setReason(XFocusEvent* event, XFocusReason reason);
 XCLASS_DEFINE_BEGING(XWheelEvent)
 XCLASS_DEFINE_EXTEND_END(XWheelEvent, XEvent)
 
+/** @brief 初始化 XWheelEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XWheelEvent_class_init(void);
+
+/** @brief 滚动阶段（对标 Qt::ScrollPhase，数值一致）。 */
+typedef enum XWheelEventPhase
+{
+    XWheelEventPhase_NoScrollPhase = 0, /**< 无阶段（普通刻度滚轮）。 */
+    XWheelEventPhase_ScrollBegin = 1,   /**< 手势滚动开始。 */
+    XWheelEventPhase_ScrollUpdate = 2,  /**< 手势滚动更新。 */
+    XWheelEventPhase_ScrollEnd = 3      /**< 手势滚动结束。 */
+} XWheelEventPhase;
+
+/** @brief 滚轮事件来源（对标 Qt::MouseEventSource，数值一致）。 */
+typedef enum XWheelEventSource
+{
+    XWheelEventSource_NotSynthesized = 0,      /**< 真实鼠标设备。 */
+    XWheelEventSource_SynthesizedBySystem = 1, /**< 系统合成。 */
+    XWheelEventSource_SynthesizedByQt = 2,     /**< Qt 合成。 */
+    XWheelEventSource_SynthesizedByApplication = 3 /**< 应用合成。 */
+} XWheelEventSource;
+
 /** @brief 滚轮事件对象；m_class 必须为第一个成员。 */
 typedef struct XWheelEvent
 {
@@ -438,6 +501,10 @@ typedef struct XWheelEvent
     XPoint m_position;            /**< 事件源对象局部坐标（对标 QWheelEvent::position）。 */
     XPoint m_globalPosition;      /**< 屏幕全局坐标（对标 QWheelEvent::globalPosition）。 */
     XPoint m_angleDelta;          /**< 滚动角度增量；垂直滚轮 ±120/格，水平滚轮在 x 轴（对标 QWheelEvent::angleDelta）。 */
+    XPoint m_pixelDelta;          /**< 像素增量（对标 QWheelEvent::pixelDelta；非平滑滚轮由角度换算）。 */
+    int m_phase;                  /**< 滚动阶段（XWheelEventPhase）。 */
+    bool m_inverted;              /**< 是否反向（对标 QWheelEvent::inverted）。 */
+    int m_source;                 /**< 事件来源（XWheelEventSource）。 */
     XMouseButton m_buttons;       /**< 事件发生时按下的鼠标按键位掩码。 */
     XKeyboardModifiers m_modifiers; /**< 事件发生时按下的键盘修饰键。 */
 } XWheelEvent;
@@ -479,6 +546,22 @@ XPoint XWheelEvent_angleDelta(const XWheelEvent* event);
 XMouseButton XWheelEvent_buttons(const XWheelEvent* event);
 /** @brief 获取键盘修饰键（对标 QWheelEvent::modifiers）。 */
 XKeyboardModifiers XWheelEvent_modifiers(const XWheelEvent* event);
+/** @brief 获取像素增量（对标 QWheelEvent::pixelDelta）。 */
+XPoint XWheelEvent_pixelDelta(const XWheelEvent* event);
+/** @brief 设置像素增量（供平台层填充；非平滑滚轮可按角度换算）。 */
+void XWheelEvent_setPixelDelta(XWheelEvent* event, const XPoint* delta);
+/** @brief 获取滚动阶段（对标 QWheelEvent::phase）。 */
+int XWheelEvent_phase(const XWheelEvent* event);
+/** @brief 设置滚动阶段（XWheelEventPhase）。 */
+void XWheelEvent_setPhase(XWheelEvent* event, int phase);
+/** @brief 获取是否反向（对标 QWheelEvent::inverted）。 */
+bool XWheelEvent_inverted(const XWheelEvent* event);
+/** @brief 设置是否反向。 */
+void XWheelEvent_setInverted(XWheelEvent* event, bool inverted);
+/** @brief 获取事件来源（对标 QWheelEvent::source）。 */
+int XWheelEvent_source(const XWheelEvent* event);
+/** @brief 设置事件来源（XWheelEventSource）。 */
+void XWheelEvent_setSource(XWheelEvent* event, int source);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XWheelEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
@@ -491,6 +574,9 @@ XKeyboardModifiers XWheelEvent_modifiers(const XWheelEvent* event);
 XCLASS_DEFINE_BEGING(XEnterEvent)
 XCLASS_DEFINE_EXTEND_END(XEnterEvent, XEvent)
 
+/** @brief 初始化 XEnterEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XEnterEvent_class_init(void);
+
 /** @brief 指针进入事件对象；m_class 必须为第一个成员。
  *         指针离开（XEVENT_TYPE_LEAVE）无负载，直接投递普通 XEvent。 */
 typedef struct XEnterEvent
@@ -498,6 +584,7 @@ typedef struct XEnterEvent
     XEvent m_class;          /**< 继承 XEvent；必须为第一个成员。 */
     XPoint m_position;       /**< 事件源对象局部坐标（对标 QEnterEvent::position）。 */
     XPoint m_globalPosition; /**< 屏幕全局坐标（对标 QEnterEvent::globalPosition）。 */
+    XPoint m_scenePosition;  /**< 场景坐标（对标 QEnterEvent::scenePosition）。 */
 } XEnterEvent;
 
 /**
@@ -518,6 +605,10 @@ void XEnterEvent_init(XEnterEvent* event, XEventType type,
 XPoint XEnterEvent_position(const XEnterEvent* event);
 /** @brief 获取屏幕全局坐标（对标 QEnterEvent::globalPosition）。 */
 XPoint XEnterEvent_globalPosition(const XEnterEvent* event);
+/** @brief 获取场景坐标（对标 QEnterEvent::scenePosition）。 */
+XPoint XEnterEvent_scenePosition(const XEnterEvent* event);
+/** @brief 设置场景坐标（平台层填充；默认与 position 相同）。 */
+void XEnterEvent_setScenePosition(XEnterEvent* event, const XPoint* pos);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
 #define XEnterEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
@@ -537,6 +628,9 @@ typedef enum XContextMenuReason
 /** @brief 声明 XContextMenuEvent 虚函数枚举：继承 XEvent（无新增槽）。 */
 XCLASS_DEFINE_BEGING(XContextMenuEvent)
 XCLASS_DEFINE_EXTEND_END(XContextMenuEvent, XEvent)
+
+/** @brief 初始化 XContextMenuEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XContextMenuEvent_class_init(void);
 
 /** @brief 上下文菜单事件对象；m_class 必须为第一个成员。 */
 typedef struct XContextMenuEvent
@@ -609,6 +703,153 @@ XKeyboardModifiers XContextMenuEvent_modifiers(const XContextMenuEvent* event);
 #define XEnterEvent_create(...) XEnterEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
 #undef XContextMenuEvent_create
 #define XContextMenuEvent_create(...) XContextMenuEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
+
+/* ========================================================================== */
+/*              XMoveEvent 移动事件（对标 QMoveEvent）                         */
+/* ========================================================================== */
+/** @brief 声明 XMoveEvent 虚函数枚举：继承 XEvent（无新增槽）。 */
+XCLASS_DEFINE_BEGING(XMoveEvent)
+XCLASS_DEFINE_EXTEND_END(XMoveEvent, XEvent)
+
+/** @brief 初始化 XMoveEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XMoveEvent_class_init(void);
+
+/** @brief 移动事件对象；m_class 必须为第一个成员。 */
+typedef struct XMoveEvent
+{
+    XEvent m_class;    /**< 继承 XEvent；必须为第一个成员。 */
+    XPoint m_position; /**< 新位置（对标 QMoveEvent::pos）。 */
+    XPoint m_oldPosition; /**< 旧位置（对标 QMoveEvent::oldPos）。 */
+} XMoveEvent;
+
+/** @brief 创建移动事件（对标 QMoveEvent(pos, oldPos)）。
+ * @param memory 内存类型。
+ * @param type 事件类型；通常为 XEVENT_TYPE_MOVE。
+ * @param position 新位置；可为 NULL（按 0,0）。
+ * @param oldPosition 旧位置；可为 NULL（按 0,0）。
+ * @return 新事件对象；分配失败返回 NULL。
+ */
+XMoveEvent* XMoveEvent_create_ex(XMemoryType memory, XEventType type,
+                                 const XPoint* position,
+                                 const XPoint* oldPosition);
+#define XMoveEvent_create(...) XMoveEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
+/** @brief 初始化调用者提供的移动事件存储（参数语义同 create_ex）。 */
+void XMoveEvent_init(XMoveEvent* event, XEventType type,
+                     const XPoint* position, const XPoint* oldPosition);
+/** @brief 获取新位置（对标 QMoveEvent::pos）。 */
+XPoint XMoveEvent_position(const XMoveEvent* event);
+/** @brief 获取旧位置（对标 QMoveEvent::oldPos）。 */
+XPoint XMoveEvent_oldPosition(const XMoveEvent* event);
+#define XMoveEvent_delete_base XEvent_delete_base
+#define XMoveEvent_deinit_base XEvent_deinit_base
+
+/* ========================================================================== */
+/*        XTouchEvent 触摸事件（对标 QTouchEvent 最小负载）                    */
+/* ========================================================================== */
+/** @brief 声明 XTouchEvent 虚函数枚举：继承 XEvent（无新增槽）。 */
+XCLASS_DEFINE_BEGING(XTouchEvent)
+XCLASS_DEFINE_EXTEND_END(XTouchEvent, XEvent)
+
+/** @brief 初始化 XTouchEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XTouchEvent_class_init(void);
+
+/** @brief 触摸事件对象（最小负载；完整触点列表为后续扩展）。
+ * @note 本实现承载首个触点坐标与计数，对标 QTouchEvent::points 的常用
+ *       单点场景；多点触控完整列表登记为已知偏差（Task 2.20）。 */
+typedef struct XTouchEvent
+{
+    XEvent m_class;          /**< 继承 XEvent；必须为第一个成员。 */
+    XPoint m_position;       /**< 首个触点局部坐标。 */
+    XPoint m_globalPosition; /**< 首个触点屏幕坐标。 */
+    int    m_pointCount;     /**< 触点数量（>=1）。 */
+} XTouchEvent;
+
+/** @brief 创建触摸事件。
+ * @param memory 内存类型。
+ * @param type 事件类型；XEVENT_TYPE_TOUCH_BEGIN/UPDATE/END。
+ * @param position 首个触点局部坐标；可为 NULL。
+ * @param globalPosition 首个触点屏幕坐标；可为 NULL。
+ * @param pointCount 触点数量。
+ * @return 新事件对象；分配失败返回 NULL。
+ */
+XTouchEvent* XTouchEvent_create_ex(XMemoryType memory, XEventType type,
+                                   const XPoint* position,
+                                   const XPoint* globalPosition,
+                                   int pointCount);
+#define XTouchEvent_create(...) XTouchEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
+/** @brief 初始化调用者提供的触摸事件存储（参数语义同 create_ex）。 */
+void XTouchEvent_init(XTouchEvent* event, XEventType type,
+                      const XPoint* position, const XPoint* globalPosition,
+                      int pointCount);
+/** @brief 获取首个触点局部坐标。 */
+XPoint XTouchEvent_position(const XTouchEvent* event);
+/** @brief 获取首个触点屏幕坐标。 */
+XPoint XTouchEvent_globalPosition(const XTouchEvent* event);
+/** @brief 获取触点数量。 */
+int XTouchEvent_pointCount(const XTouchEvent* event);
+#define XTouchEvent_delete_base XEvent_delete_base
+#define XTouchEvent_deinit_base XEvent_deinit_base
+
+/* ========================================================================== */
+/*        XTabletEvent 数位板事件（对标 QTabletEvent 最小负载）                */
+/* ========================================================================== */
+/** @brief 数位板指针类型（对标 QTabletEvent::PointerType，数值一致）。 */
+typedef enum XTabletPointerType
+{
+    XTabletPointerType_Unknown = 0, /**< 未知。 */
+    XTabletPointerType_Pen = 1,     /**< 笔。 */
+    XTabletPointerType_Eraser = 2,  /**< 橡皮。 */
+    XTabletPointerType_Cursor = 3,  /**< 光标。 */
+    XTabletPointerType_Lens = 4,    /**< 透镜。 */
+    XTabletPointerType_Mouse = 5,   /**< 鼠标。 */
+    XTabletPointerType_Puck = 6     /**< 定位器。 */
+} XTabletPointerType;
+
+/** @brief 声明 XTabletEvent 虚函数枚举：继承 XEvent（无新增槽）。 */
+XCLASS_DEFINE_BEGING(XTabletEvent)
+XCLASS_DEFINE_EXTEND_END(XTabletEvent, XEvent)
+
+/** @brief 初始化 XTabletEvent 类虚函数表。 @return 共享虚函数表指针。 */
+XVtable* XTabletEvent_class_init(void);
+
+/** @brief 数位板事件对象（最小负载）。 */
+typedef struct XTabletEvent
+{
+    XEvent m_class;          /**< 继承 XEvent；必须为第一个成员。 */
+    XPoint m_position;       /**< 局部坐标。 */
+    XPoint m_globalPosition; /**< 屏幕坐标。 */
+    float  m_pressure;       /**< 压力（0.0~1.0）。 */
+    int    m_pointerType;    /**< 指针类型（XTabletPointerType）。 */
+} XTabletEvent;
+
+/** @brief 创建数位板事件。
+ * @param memory 内存类型。
+ * @param type 事件类型；XEVENT_TYPE_TABLET_MOVE/PRESS/RELEASE。
+ * @param position 局部坐标；可为 NULL。
+ * @param globalPosition 屏幕坐标；可为 NULL。
+ * @param pressure 压力（0.0~1.0）。
+ * @param pointerType 指针类型（XTabletPointerType）。
+ * @return 新事件对象；分配失败返回 NULL。
+ */
+XTabletEvent* XTabletEvent_create_ex(XMemoryType memory, XEventType type,
+                                     const XPoint* position,
+                                     const XPoint* globalPosition,
+                                     float pressure, int pointerType);
+#define XTabletEvent_create(...) XTabletEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
+/** @brief 初始化调用者提供的数位板事件存储（参数语义同 create_ex）。 */
+void XTabletEvent_init(XTabletEvent* event, XEventType type,
+                       const XPoint* position, const XPoint* globalPosition,
+                       float pressure, int pointerType);
+/** @brief 获取局部坐标。 */
+XPoint XTabletEvent_position(const XTabletEvent* event);
+/** @brief 获取屏幕坐标。 */
+XPoint XTabletEvent_globalPosition(const XTabletEvent* event);
+/** @brief 获取压力（0.0~1.0）。 */
+float XTabletEvent_pressure(const XTabletEvent* event);
+/** @brief 获取指针类型（XTabletPointerType）。 */
+int XTabletEvent_pointerType(const XTabletEvent* event);
+#define XTabletEvent_delete_base XEvent_delete_base
+#define XTabletEvent_deinit_base XEvent_deinit_base
 
 #endif /* XWINDOWEVENT_ON */
 

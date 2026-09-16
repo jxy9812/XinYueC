@@ -125,6 +125,7 @@
 #include "XValueAxis.h"
 #include "XLineSeries.h"
 #include "XBarSeries.h"
+#include "XBarSet.h"
 #include "XScatterSeries.h"
 #include "XAreaSeries.h"
 #include "XSplineSeries.h"
@@ -218,6 +219,7 @@
 #include "XValueAxis.h"
 #include "XLineSeries.h"
 #include "XBarSeries.h"
+#include "XBarSet.h"
 #include "XScatterSeries.h"
 #include "XAreaSeries.h"
 #include "XSplineSeries.h"
@@ -265,7 +267,7 @@ static void VDemoStatusLabel_paintEvent(XWidget* self, XEvent* event)
     XPainter painter;
     XRect rect;
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -715,7 +717,7 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     width = XWidget_width(&self->m_base);
     height = XWidget_height(&self->m_base);
     if (width <= 0 || height <= 0) return;
-    device = XWidget_paintDevice(&self->m_base);
+    device = XWidget_paintImage(&self->m_base);
     if (!device) return;
     offset = XWidget_paintOffset(&self->m_base);
     if (event && XEvent_type(event) == XEVENT_TYPE_PAINT)
@@ -984,7 +986,7 @@ static bool demo_framePump(void* userData)
         }
         else if (demo->m_autoTestFrames >= 5) {
             {
-                XImage* device = XWidget_paintDevice(&demo->m_base);
+                XImage* device = XWidget_paintImage(&demo->m_base);
                 if (device && XImage_save_2(device, "/tmp/demo_autotest_after.png",
                                             "PNG", 95))
                     XPrintf("XGuiAutoTest: 交互后截图 /tmp/demo_autotest_after.png\n");
@@ -1032,7 +1034,7 @@ static bool demo_framePump(void* userData)
             }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
             {
-                XImage* device = XWidget_paintDevice(&demo->m_base);
+                XImage* device = XWidget_paintImage(&demo->m_base);
                 if (device) {
                     XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
                             demo->m_screenshotPath);
@@ -2117,7 +2119,7 @@ static DemoWin* DemoWin_create(void)
     demo_set_widget_default_font((XWidget*)&self->m_slider);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_slider, 0, 100);
     XObject_connect_1((XObject*)&self->m_slider,
-                      (size_t)XSlider_valueChanged_signal(&self->m_slider),
+                      (size_t)XSlider_valueChanged_signal(&self->m_slider, 0),
                       (XObject*)self, demo_input_sliderChangedSlot,
                       XConnectionType_Direct);
 
@@ -2152,17 +2154,17 @@ static DemoWin* DemoWin_create(void)
         /* 页一：下拉框。 */
         XComboBox_init(&self->m_comboBox, (XWidget*)&self->m_tabWidget, 0);
         demo_set_widget_default_font((XWidget*)&self->m_comboBox);
-        XComboBox_addItem(&self->m_comboBox, "Option 1");
-        XComboBox_addItem(&self->m_comboBox, "Option 2");
-        XComboBox_addItem(&self->m_comboBox, "Option 3");
+        XComboBox_addItem_2(&self->m_comboBox, "Option 1");
+        XComboBox_addItem_2(&self->m_comboBox, "Option 2");
+        XComboBox_addItem_2(&self->m_comboBox, "Option 3");
         XComboBox_setCurrentIndex(&self->m_comboBox, 0);
         XWidget_setGeometry((XWidget*)&self->m_comboBox, 10, 10, 150, 26);
         XObject_connect_1((XObject*)&self->m_comboBox,
                           (size_t)XComboBox_currentTextChanged_signal(
-                              &self->m_comboBox),
+                              &self->m_comboBox, 0),
                           (XObject*)self, demo_tab_comboSlot,
                           XConnectionType_Direct);
-        (void)XTabWidget_insertTab(&self->m_tabWidget, 0,
+        (void)XTabWidget_insertTab_2(&self->m_tabWidget, 0,
                                    demo_wrapTabPage(self, (XWidget*)&self->m_comboBox),
                                    "\xE4\xB8\x8B\xE6\x8B\x89"); /* 下拉 */
     }
@@ -2180,7 +2182,7 @@ static DemoWin* DemoWin_create(void)
             XAbstractSlider_setValue((XAbstractSlider*)&self->m_dial, 40);
             XWidget_setGeometry((XWidget*)&self->m_dial, 10, 10, 60, 60);
             XObject_connect_1((XObject*)&self->m_dial,
-                              (size_t)XDial_valueChanged_signal(&self->m_dial),
+                              (size_t)XDial_valueChanged_signal(&self->m_dial, 0),
                               (XObject*)self, demo_tab_dialSlot,
                               XConnectionType_Direct);
             XProgressBar_init(&self->m_dialProgress, page, 0);
@@ -2189,7 +2191,7 @@ static DemoWin* DemoWin_create(void)
             XProgressBar_setValue(&self->m_dialProgress, 40);
             XWidget_setGeometry((XWidget*)&self->m_dialProgress, 80, 25, 120, 20);
             XWidget_show(page);
-            (void)XTabWidget_insertTab(&self->m_tabWidget, 1, page,
+            (void)XTabWidget_insertTab_2(&self->m_tabWidget, 1, page,
                                        "\xE6\x97\x8B\xE9\x92\xAE"); /* 旋钮 */
         }
     }
@@ -2204,9 +2206,9 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_scrollBar, 10, 80, 24, 180);
     /* 数码管直插（铺满）：包裹容器下其分段绘制缓存偏移与清屏错位
      * （reparent 后 paintOffset 失效问题），先恢复直插保证完整渲染。 */
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 2,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 2,
                                (XWidget*)&self->m_lcd, "数码管");
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 3,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 3,
                                demo_wrapTabPage(self, (XWidget*)&self->m_scrollBar), "滚动条");
 #endif
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON && XFRAME_ON && XLABEL_ON
@@ -2219,7 +2221,7 @@ static DemoWin* DemoWin_create(void)
         XWidget_resize(big, 260, 200);
         XScrollArea_setWidget(&self->m_scrollArea, (XWidget*)big);
     }
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 4,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 4,
                                (XWidget*)&self->m_scrollArea, "滚动");
 #endif
 #if XSPLITTER_ON && XFRAME_ON && XLABEL_ON
@@ -2236,7 +2238,7 @@ static DemoWin* DemoWin_create(void)
         XWidget_show((XWidget*)left);
         XWidget_show((XWidget*)right);
     }
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 5,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 5,
                                (XWidget*)&self->m_splitter, "分割");
 #endif
 #if XTOOLBOX_ON && XFRAME_ON && XLABEL_ON
@@ -2253,7 +2255,7 @@ static DemoWin* DemoWin_create(void)
         XWidget_show((XWidget*)a);
         XWidget_show((XWidget*)b);
     }
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 6,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 6,
                                (XWidget*)&self->m_toolBox, "工具箱");
 #endif
 #if XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON
@@ -2262,7 +2264,7 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_buttonBox, 10, 10, 300, 40);
     XDialogButtonBox_setStandardButtons(&self->m_buttonBox,
         (int)XDialogButtonBoxStandard_Ok | (int)XDialogButtonBoxStandard_Cancel);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 7,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 7,
                                demo_wrapTabPage(self, (XWidget*)&self->m_buttonBox), "按钮盒");
 #endif
 #if XMENUBAR_ON && XMENU_ON && XTOOLBAR_ON && XACTION_ON
@@ -2286,7 +2288,7 @@ static DemoWin* DemoWin_create(void)
             XWidget_setGeometry((XWidget*)&self->m_toolBar, 0, 30, 300, 34);
             XWidget_show((XWidget*)&self->m_toolBar);
             XWidget_setGeometry(mbPage, 0, 0, 400, 220);
-            (void)XTabWidget_insertTab(&self->m_tabWidget, 8, mbPage, "菜单工具栏");
+            (void)XTabWidget_insertTab_2(&self->m_tabWidget, 8, mbPage, "菜单工具栏");
         }
     }
 #endif
@@ -2295,7 +2297,7 @@ static DemoWin* DemoWin_create(void)
     XPlainTextEdit_init(&self->m_plainEdit, (XWidget*)&self->m_tabWidget, 0);
     XWidget_setGeometry((XWidget*)&self->m_plainEdit, 10, 10, 300, 150);
     XPlainTextEdit_setPlainText(&self->m_plainEdit, "多行编辑\n第二行\n第三行");
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 9,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 9,
                                (XWidget*)&self->m_plainEdit, "多行编辑");
 #endif
 #if XDATETIMEEDIT_ON && XFONTCOMBOBOX_ON
@@ -2305,16 +2307,16 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 200, 26);
     XWidget_setGeometry((XWidget*)&self->m_dtEdit, 10, 10, 250, 28);
     XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 220, 28);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 10,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 10,
                                demo_wrapTabPage(self, (XWidget*)&self->m_dtEdit), "日期时间");
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 11,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 11,
                                demo_wrapTabPage(self, (XWidget*)&self->m_fontCombo), "字体");
 #endif
 #if XCALENDARWIDGET_ON
     /* 页十一：XCalendarWidget。 */
     XCalendarWidget_init(&self->m_calendar, (XWidget*)&self->m_tabWidget, 0);
     XWidget_setGeometry((XWidget*)&self->m_calendar, 10, 10, 280, 200);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 12,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 12,
                                demo_wrapTabPage(self, (XWidget*)&self->m_calendar), "日历");
 #endif
 #if XTEXTBROWSER_ON
@@ -2323,7 +2325,7 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_textBrowser, 10, 10, 300, 150);
     XPlainTextEdit_setPlainText(self->m_textBrowser.m_base.m_editor,
         "帮助内容\n第二段\n第三段");
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 13,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 13,
                                (XWidget*)&self->m_textBrowser, "浏览器");
 #endif
 #if XMDIAREA_ON && XFRAME_ON && XLABEL_ON
@@ -2340,7 +2342,7 @@ static DemoWin* DemoWin_create(void)
         XWidget_show((XWidget*)m0);
         XWidget_show((XWidget*)m1);
     }
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 14,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 14,
                                (XWidget*)&self->m_mdiArea, "MDI");
 #endif
 #if XSTATUSBAR_ON && XLABEL_ON
@@ -2350,7 +2352,7 @@ static DemoWin* DemoWin_create(void)
     XLabel_init(&self->m_sbLabel, (XWidget*)&self->m_sb, 0);
     XLabel_setText_2(&self->m_sbLabel, "普通区标签");
     XStatusBar_addWidget(&self->m_sb, (XWidget*)&self->m_sbLabel, 1);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 15,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 15,
                                (XWidget*)&self->m_sb, "状态栏");
 #endif
 #if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON && XLAYOUT_STACKED_ON
@@ -2390,7 +2392,7 @@ static DemoWin* DemoWin_create(void)
     XWizard_addPage(&self->m_wizard, &self->m_wizPage0);
     XWizard_addPage(&self->m_wizard, &self->m_wizPage1);
     XWizard_addPage(&self->m_wizard, &self->m_wizPage2);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 17,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 17,
                                (XWidget*)&self->m_wizard, "Wizard");
 #endif
 #if XTABLEWIDGET_ON
@@ -2420,7 +2422,7 @@ static DemoWin* DemoWin_create(void)
     }
     XTableWidget_setCurrentCell(&self->m_tableWidget, 0, 0);
     XWidget_show((XWidget*)&self->m_tableWidget);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 19,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 19,
                                (XWidget*)&self->m_tableWidget, "表格");
 #endif
 #if XCHARTS_ON
@@ -2433,18 +2435,18 @@ static DemoWin* DemoWin_create(void)
         XLineSeries* line = XLineSeries_create();
         XPieSeries* pie = XPieSeries_create();
         int i;
-        XChart_setTitle(chart, "XinYueC Charts");
+        XChart_setTitle_2(chart, "XinYueC Charts");
         if (line) {
-            XAbstractSeries_setName(&line->m_base.m_base, "销量");
+            XAbstractSeries_setName_2(&line->m_base.m_base, "销量");
             for (i = 0; i < 7; ++i)
                 XXYSeries_append(line, i, (i * 37) % 50 + 10);
             XChart_addLineSeries(chart, line);
         }
         if (pie) {
-            XAbstractSeries_setName((XAbstractSeries*)&pie->m_base, "占比");
-            XPieSeries_append(pie, "A", 30);
-            XPieSeries_append(pie, "B", 20);
-            XPieSeries_append(pie, "C", 50);
+            XAbstractSeries_setName_2((XAbstractSeries*)&pie->m_base, "占比");
+            XPieSeries_append_2(pie, "A", 30);
+            XPieSeries_append_2(pie, "B", 20);
+            XPieSeries_append_2(pie, "C", 50);
             /* 饼图与折线共用坐标系会互相遮挡：饼图保留但默认从 demo
                主视图分离（第一版只演示折线/柱状/散点/面积/样条）。 */
             XPieSeries_delete_base(pie);
@@ -2455,14 +2457,21 @@ static DemoWin* DemoWin_create(void)
             XAreaSeries* area = XAreaSeries_create();
             XSplineSeries* sp = XSplineSeries_create();
             if (bar) {
-                XAbstractSeries_setName(&bar->m_base.m_base, "月销");
-                XAbstractBarSeries_append(bar, "一月", 20);
-                XAbstractBarSeries_append(bar, "二月", 45);
-                XAbstractBarSeries_append(bar, "三月", 30);
+                XAbstractSeries_setName_2(&bar->m_base.m_base, "月销");
+                {
+                    XBarSet* bset = XBarSet_create_ex_2(
+                        XCLASS_DEFAULT_MEMORY_TYPE, "月销");
+                    if (bset) {
+                        XBarSet_append(bset, 20);
+                        XBarSet_append(bset, 45);
+                        XBarSet_append(bset, 30);
+                        XAbstractBarSeries_append(bar, bset);
+                    }
+                }
                 XChart_addBarSeries(chart, bar);
             }
             if (sc) {
-                XAbstractSeries_setName(&sc->m_base.m_base, "离散点");
+                XAbstractSeries_setName_2(&sc->m_base.m_base, "离散点");
                 XXYSeries_append(sc, 0.5, 45);
                 XXYSeries_append(sc, 2.5, 25);
                 XXYSeries_append(sc, 4.5, 55);
@@ -2470,7 +2479,7 @@ static DemoWin* DemoWin_create(void)
                 XChart_addScatterSeries(chart, sc);
             }
             if (area) {
-                XAreaSeries_setName(area, "面积");
+                XAreaSeries_setName_2(area, "面积");
                 XAreaSeries_setBaseValue(area, 0);
                 XXYSeries_append(XAreaSeries_upperSeries(area), 3, 15);
                 XXYSeries_append(XAreaSeries_upperSeries(area), 4, 28);
@@ -2479,7 +2488,7 @@ static DemoWin* DemoWin_create(void)
                 XChart_addAreaSeries(chart, area);
             }
             if (sp) {
-                XAbstractSeries_setName(&sp->m_base.m_base, "平滑线");
+                XAbstractSeries_setName_2(&sp->m_base.m_base, "平滑线");
                 XXYSeries_append(sp, 1, 40);
                 XXYSeries_append(sp, 2, 22);
                 XXYSeries_append(sp, 3, 48);
@@ -2535,7 +2544,7 @@ static DemoWin* DemoWin_create(void)
     }
     /* 图表视图下移给按钮留位。 */
     XWidget_setGeometry((XWidget*)&self->m_chartView, 0, 30, 568, 232);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 20,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 20,
                                (XWidget*)&self->m_chartView, "图表");
 #endif
 #if XERRORMESSAGE_ON
@@ -2544,10 +2553,10 @@ static DemoWin* DemoWin_create(void)
     XErrorMessage_showMessage(&self->m_errMsg, "Test error message");
     XWidget_setGeometry((XWidget*)&self->m_errMsg, 10, 10, 300, 120);
     XWidget_show((XWidget*)&self->m_errMsg);
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 18,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 18,
                                demo_wrapTabPage(self, (XWidget*)&self->m_errMsg), "Error");
 #endif
-    (void)XTabWidget_insertTab(&self->m_tabWidget, 16,
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 16,
                                demo_wrapTabPage(self, (XWidget*)&self->m_stackedW), "堆叠+按钮组");
 #endif
 

@@ -1778,6 +1778,59 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
     return true;
 }
 
+/* ========== 画刷标准图案（Qt 8x8 位表，MonoLSB） ========== */
+
+/* Qt 6.8 qt_patternForBrush() 的 8x8 位图案（qbrush.cpp）：每行一个
+   字节，bit(x&7) 置位=画刷色。索引 = XPainterBrushStyle - Dense1Pattern。 */
+static const uint8_t kBrushPatterns[13][8] = {
+    { 0x00, 0x44, 0x00, 0x00, 0x00, 0x44, 0x00, 0x00 }, /* dense1 */
+    { 0x88, 0x00, 0x22, 0x00, 0x88, 0x00, 0x22, 0x00 }, /* dense2 */
+    { 0xaa, 0x44, 0xaa, 0x11, 0xaa, 0x44, 0xaa, 0x11 }, /* dense3 */
+    { 0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa }, /* dense4 */
+    { 0x55, 0xbb, 0x55, 0xee, 0x55, 0xbb, 0x55, 0xee }, /* dense5 */
+    { 0x77, 0xff, 0xdd, 0xff, 0x77, 0xff, 0xdd, 0xff }, /* dense6 */
+    { 0xff, 0xbb, 0xff, 0xff, 0xff, 0xbb, 0xff, 0xff }, /* dense7 */
+    { 0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff }, /* hor */
+    { 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef, 0xef }, /* ver */
+    { 0xef, 0xef, 0xef, 0x00, 0xef, 0xef, 0xef, 0xef }, /* cross */
+    { 0x7f, 0xbf, 0xdf, 0xef, 0xf7, 0xfb, 0xfd, 0xfe }, /* bdiag */
+    { 0xfe, 0xfd, 0xfb, 0xf7, 0xef, 0xdf, 0xbf, 0x7f }, /* fdiag */
+    { 0x7e, 0xbd, 0xdb, 0xe7, 0xe7, 0xdb, 0xbd, 0x7e }, /* dcross */
+};
+
+/** @brief 当前画刷是否为标准图案样式（Dense1..DiagCross）。 */
+static bool painterPatternActive(const XPainter* self)
+{
+#if XPAINTER_BRUSH_ON
+    int s;
+    if (!self) return false;
+    s = (int)self->m_state.m_brush.m_style;
+    return s >= (int)XPainterBrushStyle_Dense1Pattern &&
+           s <= (int)XPainterBrushStyle_DiagCrossPattern;
+#else
+    (void)self;
+    return false;
+#endif /* XPAINTER_BRUSH_ON */
+}
+
+/** @brief 设备坐标 (x,y) 处图案位；非图案画刷恒返回 true（全画）。 */
+static bool painterPatternBit(const XPainter* self, int x, int y)
+{
+#if XPAINTER_BRUSH_ON
+    int s;
+    if (!self) return true;
+    s = (int)self->m_state.m_brush.m_style;
+    if (s < (int)XPainterBrushStyle_Dense1Pattern ||
+        s > (int)XPainterBrushStyle_DiagCrossPattern)
+        return true;
+    return (kBrushPatterns[s - (int)XPainterBrushStyle_Dense1Pattern]
+                [y & 7] >> (x & 7)) & 1u;
+#else
+    (void)self; (void)x; (void)y;
+    return true;
+#endif /* XPAINTER_BRUSH_ON */
+}
+
 /**
  * @brief      软件光栅填充矩形。
  * @note       恒等变换且不透明/源替换时可走 XImage_fillRect 快速路径；
@@ -1841,6 +1894,9 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
                合成不一致（回归要求精确整值）：半透明色一律局部提交。 */
             if (compOk && ((color >> 24) != 0xffu))
                 compOk = false;
+            /* 标准图案画刷无 GPU 原语：强制软件局部提交。 */
+            if (painterPatternActive(self))
+                compOk = false;
             if (clipOk && compOk)
             {
 #if XPAINTER_CLIP_ON
@@ -1884,6 +1940,7 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
 #if XPAINTER_CLIP_ON
         && !state->m_hasClip
 #endif /* XPAINTER_CLIP_ON */
+        && !painterPatternActive(self)
        )
     {
         if (state->m_compositionMode == XPainterCompositionMode_Source ||
@@ -1917,7 +1974,12 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
                     ux < (float)rect->x + rect->width &&
                     uy >= (float)rect->y &&
                     uy < (float)rect->y + rect->height)
+                {
+                    /* 标准图案画刷：图案位为 0 的像素保留目标。 */
+                    if (!painterPatternBit(self, px, py))
+                        continue;
                     painterRaster_putPixel(self, px, py, effective);
+                }
             }
         }
     }
@@ -2798,14 +2860,16 @@ XPainterBackgroundMode XPainter_backgroundMode(const XPainter* self)
  * @param outCount 输出模式段数。
  * @return 实线样式返回 false（无需拆分）；NoPen 或无效样式也返回 false。
  */
-static bool painterDashPattern(XPainterPenStyle style,
+static bool painterDashPattern(const XPainter* self,
                                const float** outPattern, int* outCount)
 {
     static const float kDash[2]      = { 4.0f, 3.0f };
     static const float kDot[2]       = { 1.0f, 2.0f };
     static const float kDashDot[4]   = { 4.0f, 2.0f, 1.0f, 2.0f };
     static const float kDashDotDot[6]= { 4.0f, 2.0f, 1.0f, 2.0f, 1.0f, 2.0f };
-    if (!outPattern || !outCount) return false;
+    XPainterPenStyle style;
+    if (!self || !outPattern || !outCount) return false;
+    style = self->m_state.m_penStyle;
     switch (style)
     {
         case XPainterPenStyle_DashLine:      *outPattern = kDash;      *outCount = 2; return true;
@@ -2813,9 +2877,15 @@ static bool painterDashPattern(XPainterPenStyle style,
         case XPainterPenStyle_DashDotLine:   *outPattern = kDashDot;   *outCount = 4; return true;
         case XPainterPenStyle_DashDotDotLine:*outPattern = kDashDotDot;*outCount = 6; return true;
         case XPainterPenStyle_CustomDashLine:
-            /* 未提供 QPen::setDashPattern 的动态数组时，使用 Qt 默认
-               DashLine 的节距作为可裁剪后端的确定性近似。 */
-            *outPattern = kDash; *outCount = 2; return true;
+            /* 优先使用 QPen::setDashPattern 提供的动态数组；未提供时
+               使用 Qt 默认 DashLine 的节距作为确定性近似。 */
+            if (self->m_state.m_dashCount > 0) {
+                *outPattern = self->m_state.m_dashPattern;
+                *outCount = self->m_state.m_dashCount;
+            } else {
+                *outPattern = kDash; *outCount = 2;
+            }
+            return true;
         default:
             return false;
     }
@@ -2842,7 +2912,7 @@ static bool painterDrawLineStyled(XPainter* self, int x1, int y1,
         return false;
     if (self->m_state.m_penStyle == XPainterPenStyle_NoPen)
         return true;
-    if (!painterDashPattern(self->m_state.m_penStyle, &pat, &patCount))
+    if (!painterDashPattern(self, &pat, &patCount))
         return self->m_drawLine(self, x1, y1, x2, y2);
     dxf = (float)(x2 - x1);
     dyf = (float)(y2 - y1);
@@ -3349,6 +3419,9 @@ static bool painterScanFillDevice(XPainter* self, int n,
                     (self->m_state.m_compositionMode ==
                          XPainterCompositionMode_SourceOver &&
                      ((solidColor >> 24) & 255u) == 255u);
+        /* 标准图案画刷逐像素采样，禁用整段快速填充。 */
+        if (painterPatternActive(self))
+            bulkSolid = false;
     }
     for (py = py0; py <= py1; ++py)
     {
@@ -3487,6 +3560,8 @@ static bool painterScanFillDevice(XPainter* self, int n,
                     fc = gradient ? painterApplyOpacity(color,
                                                         self->m_state.m_opacity)
                                   : solidColor;
+                if (!painterPatternBit(self, px, py))
+                    continue;
                 painterRaster_putPixel(self, px, py, fc);
             }
         }
@@ -4460,6 +4535,9 @@ bool XPainter_end(XPainter* self)
 #endif
     self->m_replaying = false;
     painterDefaultState(&self->m_state);
+    /* defaultState 创建了新字体（含 XString）：end 后不再有持有者，
+       释放避免泄漏（下次 begin 时状态会被重建）。 */
+    XFont_deinit_base(&self->m_state.m_font);
     return wasActive;
 }
 
@@ -6805,10 +6883,18 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
     if (self && self->m_gpuActive)
     {
-        if (painterGpuDrawText(self, x, baselineY, utf8, color))
+        /* 下划线/删除线/上划线：GPU 文本快速路径（painterGpuDrawText）
+           只画字形、不渲染装饰线（对称于 QFont 语义）；带装饰的文本
+           一律走软件光栅局部提交，保证三后端一致（Phase 3.2 GPU 回归
+           [C1-FAIL] QSS 下划线修复）。 */
+        bool hasDecoration = XFont_underline(&self->m_state.m_font) ||
+                             XFont_strikeOut(&self->m_state.m_font) ||
+                             XFont_overline(&self->m_state.m_font);
+        if (!hasDecoration &&
+            painterGpuDrawText(self, x, baselineY, utf8, color))
             return true;
-        /* GPU 文本快速路径不支持的形态（复杂变换/多矩形裁剪）：
-           软件光栅局部提交。 */
+        /* GPU 文本快速路径不支持的形态（复杂变换/多矩形裁剪/
+           字体装饰）：软件光栅局部提交。 */
         {
             PainterGpuTextArgs args;
             args.m_x = x;
@@ -8328,6 +8414,35 @@ XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self)
 }
 #endif /* XPAINTER_PENSTYLE_ON */
 
+#if XPAINTER_PENSTYLE_ON
+void XPainter_setDashPattern(XPainter* self, const float* pattern,
+                             int count)
+{
+    int i;
+    if (!self || self->m_deviceKind == XPainterDevice_None) return;
+    if (!pattern || count <= 0) {
+        self->m_state.m_dashCount = 0;
+        return;
+    }
+    if (count > 16) count = 16;
+    for (i = 0; i < count; ++i)
+        self->m_state.m_dashPattern[i] = pattern[i];
+    self->m_state.m_dashCount = count;
+    painterRecord_penState(self);
+}
+
+int XPainter_dashPattern(const XPainter* self, float* out, int capacity)
+{
+    int i;
+    if (!self) return 0;
+    if (out && capacity > 0) {
+        for (i = 0; i < self->m_state.m_dashCount && i < capacity; ++i)
+            out[i] = self->m_state.m_dashPattern[i];
+    }
+    return self->m_state.m_dashCount;
+}
+#endif /* XPAINTER_PENSTYLE_ON */
+
 #if XPAINTER_BRUSH_ON
 void XPainterGradient_initLinear(XPainterGradient* g, float x1, float y1,
                                  float x2, float y2)
@@ -9628,5 +9743,112 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
         XPainter_restore(self);
 #endif /* XPAINTER_CLIP_ON */
     return true;
+}
+#endif /* XPAINTER_TEXTLAYOUT_ON */
+
+/* ==================== Task 2.11：路径裁剪与文本包围矩形 ============== */
+
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+/** @brief 计算路径元素集合的包围矩形（曲线按控制点+端点近似）。 */
+static void xpainterPathBounds(const XPainterPath* path, XRect* out)
+{
+    float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+    bool first = true;
+    int i;
+    XRect_init(out, 0, 0, 0, 0);
+    if (!path || !out) return;
+    for (i = 0; i < path->m_elementCount; ++i)
+    {
+        const XPainterPathElement* e = &path->m_elements[i];
+        float pts[8];
+        int n = 0;
+        if (!e) continue;
+        pts[n++] = e->m_x1; pts[n++] = e->m_y1;
+        /* 仅曲线元素带控制点/终点坐标；LineTo 的 m_x2..m_y3 未初始化。 */
+        if (e->m_type == XPainterPathElement_CurveTo ||
+            e->m_type == XPainterPathElement_CurveToData)
+        {
+            pts[n++] = e->m_x2; pts[n++] = e->m_y2;
+            pts[n++] = e->m_x3; pts[n++] = e->m_y3;
+        }
+        {
+            int k;
+            for (k = 0; k < n; k += 2)
+            {
+                if (first)
+                {
+                    minX = maxX = pts[k];
+                    minY = maxY = pts[k + 1];
+                    first = false;
+                }
+                else
+                {
+                    if (pts[k] < minX) minX = pts[k];
+                    if (pts[k] > maxX) maxX = pts[k];
+                    if (pts[k + 1] < minY) minY = pts[k + 1];
+                    if (pts[k + 1] > maxY) maxY = pts[k + 1];
+                }
+            }
+        }
+    }
+    if (first)
+    {
+        XRect_init(out, 0, 0, 0, 0);
+        return;
+    }
+    XRect_init(out, (int)floorf(minX), (int)floorf(minY),
+               (int)ceilf(maxX - minX), (int)ceilf(maxY - minY));
+}
+
+void XPainter_setClipPath(XPainter* self, const XPainterPath* path,
+                          XPainterClipOperation operation)
+{
+    XRect bounds;
+    if (!self || !path) return;
+    xpainterPathBounds(path, &bounds);
+    XPainter_setClipRect(self, &bounds, operation);
+}
+
+void XPainter_clipPath(const XPainter* self, XPainterPath* out)
+{
+    (void)self;
+    if (!out) return;
+    XPainterPath_init(out);
+}
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+
+#if XPAINTER_TEXTLAYOUT_ON
+void XPainter_boundingRect(XPainter* self, const XRect* rect, int flags,
+                           const char* utf8, XRect* out)
+{
+    int w;
+    int h;
+    int x = 0;
+    int y = 0;
+    int rw = 0;
+    int rh = 0;
+    if (!out) return;
+    XRect_init(out, 0, 0, 0, 0);
+    if (!self) return;
+    w = XPainter_textWidth(&self->m_state.m_font, utf8 ? utf8 : "");
+    h = XPainter_textHeight(&self->m_state.m_font);
+    if (rect)
+    {
+        rw = rect->width;
+        rh = rect->height;
+        if (flags & XPAINTER_TEXT_ALIGN_RIGHT)
+            x = rect->x + rw - w;
+        else if (flags & XPAINTER_TEXT_ALIGN_HCENTER)
+            x = rect->x + (rw - w) / 2;
+        else
+            x = rect->x;
+        if (flags & XPAINTER_TEXT_ALIGN_BOTTOM)
+            y = rect->y + rh - h;
+        else if (flags & XPAINTER_TEXT_ALIGN_VCENTER)
+            y = rect->y + (rh - h) / 2;
+        else
+            y = rect->y;
+    }
+    XRect_init(out, x, y, w, h);
 }
 #endif /* XPAINTER_TEXTLAYOUT_ON */

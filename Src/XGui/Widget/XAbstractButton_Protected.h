@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XAbstractButton_Protected.h
  * @brief      XAbstractButton 保护接口（仅供子类与内部实现使用）。
  * @details    本文件集中声明对标 Qt 6.8 QAbstractButton protected API 的

@@ -8,6 +8,8 @@
 #include "XAlgorithm.h"
 #include "XString.h"
 #include "XMemory.h"
+#include "XFont.h"
+#include "XClass.h"
 
 #if XPLATFORMINTEGRATION_ON
 struct XPlatformFontDatabase { XVector* m_families; bool m_valid; };
@@ -65,7 +67,7 @@ XVector* XPlatformFontDatabase_families(const XPlatformFontDatabase* self)
 }
 
 bool XPlatformFontDatabase_hasFamily(const XPlatformFontDatabase* self,
-                                     const char* family)
+                                     const XString* family)
 {
     size_t i, n;
     if (!self || !self->m_families || !family) return false;
@@ -73,9 +75,48 @@ bool XPlatformFontDatabase_hasFamily(const XPlatformFontDatabase* self,
     for (i = 0; i < n; ++i) {
         XString* const* item = (XString* const*)XVector_at_base(
             self->m_families, (int64_t)i);
-        if (item && *item && XStrcmp(XString_toUtf8(*item), family) == 0)
+        if (item && *item && XString_equals(*item, family, XChar_CaseSensitive))
             return true;
     }
     return false;
 }
+
+bool XPlatformFontDatabase_hasFamily_2(const XPlatformFontDatabase* self,
+                                       const char* family)
+{
+    XString* tmp = NULL;
+    bool ok;
+    if (!family) return false;
+    tmp = XString_create_utf8(family);
+    if (!tmp) return false;
+    ok = XPlatformFontDatabase_hasFamily(self, tmp);
+    XString_delete_base(tmp);
+    return ok;
+}
 #endif
+
+/* ==================== Task 2.16：默认字体与标准字号 ==================== */
+
+XFont XPlatformFontDatabase_defaultFont(const XPlatformFontDatabase* self)
+{
+    XFont out;
+    (void)self;
+    XFont_init(&out);
+    return out;
+}
+
+XVector* XPlatformFontDatabase_standardSizes(
+        const XPlatformFontDatabase* self)
+{
+    static const int sizes[] = { 6, 7, 8, 9, 10, 11, 12, 14, 16, 18,
+                                 20, 22, 24, 26, 28, 32, 36, 40, 44, 48,
+                                 54, 60, 66, 72, 80, 88, 96 };
+    XVector* list;
+    size_t i;
+    (void)self;
+    list = XVector_create(sizeof(int));
+    if (!list) return NULL;
+    for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i)
+        XVector_push_back_1_base(list, &sizes[i]);
+    return list;
+}

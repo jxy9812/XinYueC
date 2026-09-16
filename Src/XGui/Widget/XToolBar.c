@@ -158,9 +158,24 @@ static void xtb_relayout(XToolBar* bar)
     n = XVector_size_base((const XContainer*)bar->m_buttons);
     if (horiz && bw < 4) return;
     for (i = 0; i < n; ++i) {
-        XToolButton** btn =
-            (XToolButton**)XVector_at_base(bar->m_buttons, i);
+        XWidget* wid = NULL;
+        XToolButton** btn;
         XRect r;
+        if (bar->m_widgets && i < (int64_t)XVector_size_base(
+                                  (const XContainer*)bar->m_widgets))
+            wid = *(XWidget**)XVector_at_base(
+                      (const XContainer*)bar->m_widgets, i);
+        if (wid) {
+            int ww = XWidget_width(wid);
+            if (horiz)
+                XRect_init(&r, x, y, ww, bh);
+            else
+                XRect_init(&r, y, x, bh, ww);
+            XWidget_setGeometryRect(wid, &r);
+            x += ww + 4;
+            continue;
+        }
+        btn = (XToolButton**)XVector_at_base(bar->m_buttons, i);
         if (!btn || !*btn) continue;
         if (horiz)
             XRect_init(&r, x, y, bw, bh);
@@ -193,7 +208,7 @@ static void VX_toolBar_paintEvent(XWidget* self, XEvent* event)
     if (!bar || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -279,6 +294,26 @@ static void VX_toolBar_deinit(XToolBar* self)
         XVector_delete_base(self->m_buttons);
         self->m_buttons = NULL;
     }
+    if (self->m_bridges) {
+        n = XVector_size_base((const XContainer*)self->m_bridges);
+        for (i = 0; i < n; ++i) {
+            XTBBridge** b =
+                (XTBBridge**)XVector_at_base(self->m_bridges, i);
+            if (b && *b)
+                XClass_delete_base((XClass*)*b);
+        }
+        XVector_delete_base(self->m_bridges);
+        self->m_bridges = NULL;
+    }
+    if (self->m_widgets) {
+        /* 附加控件归调用方，仅释放容器。 */
+        XVector_delete_base(self->m_widgets);
+        self->m_widgets = NULL;
+    }
+    if (self->m_toggleAction) {
+        XAction_delete_base(self->m_toggleAction);
+        self->m_toggleAction = NULL;
+    }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -326,6 +361,7 @@ void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_actions = XVector_Create(XAction*);
     self->m_buttons = XVector_Create(XToolButton*);
     self->m_bridges = XVector_Create(XTBBridge*);
+    self->m_widgets = XVector_Create(XWidget*);
     self->m_movable = true;
     self->m_floatable = true;
     self->m_orientation = 1;
@@ -407,6 +443,15 @@ void XToolBar_setIconSize(XToolBar* self, int size)
     if (!self || size <= 0 || self->m_iconSize == size) return;
     self->m_iconSize = size;
     xtb_relayout(self);
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XVarList* args = XVarList_Create(XVar(int, size), XVar(int, size));
+        if (args) {
+            XObject_emitSignal((XObject*)self,
+                               (size_t)XToolBar_iconSizeChanged_signal(
+                                   self, size, size),
+                               args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        }
+    }
 }
 
 int XToolBar_iconSize(const XToolBar* self)
@@ -427,37 +472,78 @@ int XToolBar_toolButtonStyle(const XToolBar* self)
 
 /* ==================== 动作与控件管理 ==================== */
 
-void XToolBar_addAction(XToolBar* self, XAction* action)
+/** @brief 查找动作索引；未找到返回 -1。 */
+static int xtb_findIndex(const XToolBar* self, XAction* action)
 {
-    XTBBridge* bridge;
-    XToolButton* button;
-    int zero = 0;
-    if (!self || !action || !self->m_actions || !self->m_buttons) return;
-    bridge = xtb_bridgeCreate(self, action);
-    if (!bridge) return;
-    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
-                      (XObject*)bridge, xtb_bridgeTriggeredSlot,
-                      XConnectionType_Direct);
-    XObject_connect_1((XObject*)action, XSignal(XAction_hovered_signal),
-                      (XObject*)bridge, xtb_bridgeHoveredSlot,
-                      XConnectionType_Direct);
-    XVector_push_back_1_base(self->m_actions, &action);
-    button = XToolButton_create(self, 0);
-    if (button) {
-        XToolButton_setDefaultAction(button, action);
-        /* 确保 toolbutton 从 action 获取文字 */
-        {
-            const XString* atext = XAction_text_const(action);
+    int64_t i;
+    int64_t n;
+    if (!self || !self->m_actions || !action) return -1;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base(self->m_actions, i);
+        if (item && *item == action) return (int)i;
+    }
+    return -1;
+}
+
+/** @brief 在指定位置插入 (action, button, bridge, widget) 平行元组；
+ *         index<0 或越界时追加。widget 非 NULL 时不创建按钮/桥
+ *         （占位动作，对标 QToolBar::insertWidget）。 */
+static void xtb_insertAt(XToolBar* self, int index, XAction* action,
+                         XWidget* widget)
+{
+    XToolButton* button = NULL;
+    XTBBridge* bridge = NULL;
+    int64_t n;
+    if (!self || !action || !self->m_actions || !self->m_buttons ||
+        !self->m_bridges || !self->m_widgets)
+        return;
+    if (widget == NULL) {
+        button = XToolButton_create(self, 0);
+        if (button) {
+            const XString* atext;
+            XToolButton_setDefaultAction(button, action);
+            atext = XAction_text_const(action);
             if (atext && XString_length_base(atext) > 0) {
                 XAbstractButton_setText_2((XAbstractButton*)button,
                                           XString_toUtf8(atext));
             }
         }
+        bridge = xtb_bridgeCreate(self, action);
+        if (bridge) {
+            XObject_connect_1((XObject*)action,
+                              XSignal(XAction_triggered_signal),
+                              (XObject*)bridge, xtb_bridgeTriggeredSlot,
+                              XConnectionType_Direct);
+            XObject_connect_1((XObject*)action,
+                              XSignal(XAction_hovered_signal),
+                              (XObject*)bridge, xtb_bridgeHoveredSlot,
+                              XConnectionType_Direct);
+        }
     }
-    XVector_push_back_1_base(self->m_buttons, &button);
-    XVector_push_back_1_base(self->m_bridges, &bridge);
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    if (index < 0 || index >= (int)n) {
+        XVector_push_back_1_base(self->m_actions, &action);
+        XVector_push_back_1_base(self->m_buttons, &button);
+        XVector_push_back_1_base(self->m_bridges, &bridge);
+        XVector_push_back_1_base(self->m_widgets, &widget);
+    } else {
+        XVector_Insert(self->m_actions, index, XAction*, action);
+        XVector_Insert(self->m_buttons, index, XToolButton*, button);
+        XVector_Insert(self->m_bridges, index, XTBBridge*, bridge);
+        XVector_Insert(self->m_widgets, index, XWidget*, widget);
+    }
+    if (widget)
+        XWidget_setParent(widget, (XWidget*)self, 0);
+    xtb_relayout(self);
 }
 
+void XToolBar_addAction(XToolBar* self, XAction* action)
+{
+    if (!self || !action) return;
+    xtb_insertAt(self, -1, action, NULL);
+}
 
 /* ==================== 追加动作与控件管理 ==================== */
 
@@ -483,14 +569,53 @@ XAction* XToolBar_addSeparator(XToolBar* self)
     return action;
 }
 
+XAction* XToolBar_insertSeparator(XToolBar* self, XAction* before)
+{
+    XAction* action;
+    int index;
+    if (!self) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    XAction_setSeparator(action, true);
+    index = xtb_findIndex(self, before);
+    xtb_insertAt(self, index, action, NULL);
+    return action;
+}
+
 void XToolBar_addWidget(XToolBar* self, XWidget* widget)
 {
-    XToolButton* button;
+    XToolBar_insertWidget(self, NULL, widget);
+}
+
+void XToolBar_insertWidget(XToolBar* self, XAction* before,
+                           XWidget* widget)
+{
+    XAction* placeholder;
+    int index;
     if (!self || !widget) return;
-    button = XToolButton_create(self, 0);
-    if (!button) return;
-    XWidget_setParent(widget, (XWidget*)self, 0);
-    xtb_relayout(self);
+    placeholder = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!placeholder) return;
+    index = xtb_findIndex(self, before);
+    xtb_insertAt(self, index, placeholder, widget);
+}
+
+XWidget* XToolBar_widgetForAction(XToolBar* self, XAction* action)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !action || !self->m_actions || !self->m_widgets)
+        return NULL;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base(self->m_actions, i);
+        if (item && *item == action) {
+            XWidget** w = (XWidget**)XVector_at_base(
+                (const XContainer*)self->m_widgets, i);
+            return w ? *w : NULL;
+        }
+    }
+    return NULL;
 }
 
 void XToolBar_removeAction(XToolBar* self, XAction* action)
@@ -503,7 +628,21 @@ void XToolBar_removeAction(XToolBar* self, XAction* action)
         XAction** item =
             (XAction**)XVector_at_base(self->m_actions, i);
         if (item && *item == action) {
+            XToolButton** btn =
+                (XToolButton**)XVector_at_base(self->m_buttons, i);
+            XTBBridge** b =
+                (XTBBridge**)XVector_at_base(self->m_bridges, i);
+            if (btn && *btn)
+                XClass_delete_base((XClass*)*btn);
+            if (b && *b)
+                XClass_delete_base((XClass*)*b);
             XVector_remove_base(self->m_actions, i, 1);
+            XVector_remove_base(self->m_buttons, i, 1);
+            XVector_remove_base(self->m_bridges, i, 1);
+            if (self->m_widgets &&
+                i < (int64_t)XVector_size_base(
+                        (const XContainer*)self->m_widgets))
+                XVector_remove_base(self->m_widgets, i, 1);
             XAction_delete_base(action);
             xtb_relayout(self);
             return;
@@ -529,6 +668,19 @@ void XToolBar_clear(XToolBar* self)
     if (self->m_buttons) {
         XVector_clear_base(self->m_buttons);
     }
+    if (self->m_bridges) {
+        n = XVector_size_base((const XContainer*)self->m_bridges);
+        for (i = 0; i < n; ++i) {
+            XTBBridge** b =
+                (XTBBridge**)XVector_at_base(self->m_bridges, i);
+            if (b && *b)
+                XClass_delete_base((XClass*)*b);
+        }
+        XVector_clear_base(self->m_bridges);
+    }
+    if (self->m_widgets) {
+        XVector_clear_base(self->m_widgets);
+    }
     xtb_relayout(self);
 }
 
@@ -549,6 +701,132 @@ XAction* XToolBar_action(const XToolBar* self, int index)
         return NULL;
     item = (XAction**)XVector_at_base(self->m_actions, index);
     return item ? *item : NULL;
+}
+
+/* ==================== Task 2.10：几何与开关动作 ===================== */
+
+/** @brief 计算第 index 项的逻辑矩形（与 relayout 同一模型）。 */
+static XRect xtb_actionRectAt(const XToolBar* bar, int64_t index)
+{
+    XRect out;
+    int64_t i;
+    int64_t n;
+    int x = 2;
+    int y = 2;
+    int horiz = bar->m_orientation != 2;
+    int h = XWidget_height((XWidget*)bar);
+    int w = XWidget_width((XWidget*)bar);
+    int cross = horiz ? h : w;
+    int bh = cross > 6 ? cross - 6 : 20;
+    XRect_init(&out, 0, 0, 0, 0);
+    if (!bar || !bar->m_buttons) return out;
+    n = XVector_size_base((const XContainer*)bar->m_buttons);
+    if (index < 0 || index >= n) return out;
+    for (i = 0; i <= index; ++i) {
+        XWidget* wid = NULL;
+        int iw = 48;
+        if (bar->m_widgets && i < (int64_t)XVector_size_base(
+                                  (const XContainer*)bar->m_widgets))
+            wid = *(XWidget**)XVector_at_base(
+                      (const XContainer*)bar->m_widgets, i);
+        if (wid) iw = XWidget_width(wid);
+        if (i == index) {
+            XRect_init(&out, x, y, iw, bh);
+            return out;
+        }
+        x += iw + 4;
+    }
+    return out;
+}
+
+XAction* XToolBar_actionAt(const XToolBar* self, const XPoint* pos)
+{
+    int64_t i;
+    int64_t n;
+    int x = 2;
+    int y = 2;
+    int horiz;
+    int h;
+    int w;
+    int cross;
+    int bh;
+    if (!self || !pos || !self->m_buttons) return NULL;
+    horiz = self->m_orientation != 2;
+    h = XWidget_height((XWidget*)self);
+    w = XWidget_width((XWidget*)self);
+    cross = horiz ? h : w;
+    bh = cross > 6 ? cross - 6 : 20;
+    if (pos->y < 0 || pos->y >= h) return NULL;
+    n = XVector_size_base((const XContainer*)self->m_buttons);
+    for (i = 0; i < n; ++i) {
+        XWidget* wid = NULL;
+        XToolButton** btn;
+        int iw = 48;
+        if (self->m_widgets && i < (int64_t)XVector_size_base(
+                                    (const XContainer*)self->m_widgets))
+            wid = *(XWidget**)XVector_at_base(
+                      (const XContainer*)self->m_widgets, i);
+        if (wid) iw = XWidget_width(wid);
+        if (pos->x >= x && pos->x < x + iw) {
+            if (wid) {
+                XAction** item = (XAction**)XVector_at_base(
+                    (const XContainer*)self->m_actions, i);
+                return item ? *item : NULL;
+            }
+            btn = (XToolButton**)XVector_at_base(self->m_buttons, i);
+            if (btn && *btn) {
+                XAction** item = (XAction**)XVector_at_base(
+                    (const XContainer*)self->m_actions, i);
+                return item ? *item : NULL;
+            }
+            return NULL;
+        }
+        x += iw + 4;
+    }
+    (void)y;
+    (void)bh;
+    return NULL;
+}
+
+XRect XToolBar_actionGeometry(const XToolBar* self, XAction* action)
+{
+    int64_t i;
+    int64_t n;
+    XRect out;
+    XRect_init(&out, 0, 0, 0, 0);
+    if (!self || !action || !self->m_actions) return out;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base(self->m_actions, i);
+        if (item && *item == action)
+            return xtb_actionRectAt(self, i);
+    }
+    return out;
+}
+
+/** @brief toggleViewAction 槽：切换工具栏可见性。 */
+static void xtb_toggleVisibilitySlot(XObject* receiver, XVarList* args)
+{
+    XToolBar* bar = (XToolBar*)receiver;
+    (void)args;
+    if (!bar) return;
+    XWidget_setVisible((XWidget*)bar, !XWidget_isVisible((XWidget*)bar));
+}
+
+XAction* XToolBar_toggleViewAction(XToolBar* self)
+{
+    if (!self) return NULL;
+    if (!self->m_toggleAction) {
+        self->m_toggleAction =
+            XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+        if (!self->m_toggleAction) return NULL;
+        XObject_connect_1((XObject*)self->m_toggleAction,
+                          XSignal(XAction_triggered_signal),
+                          (XObject*)self, xtb_toggleVisibilitySlot,
+                          XConnectionType_Direct);
+    }
+    return self->m_toggleAction;
 }
 
 /* ==================== 信号 ==================== */
@@ -582,26 +860,10 @@ void* XToolBar_movableChanged_signal(XToolBar* self, bool movable)
 }
 
 
-void* XToolBar_allowedAreasChanged_signal(XToolBar* self)
-{
-    (void)self;
-    return (void*)(size_t)XToolBar_allowedAreasChanged_signal;
-}
-void* XToolBar_iconSizeChanged_signal(XToolBar* self)
-{
-    (void)self;
-    return (void*)(size_t)XToolBar_iconSizeChanged_signal;
-}
-void* XToolBar_toolButtonStyleChanged_signal(XToolBar* self)
-{
-    (void)self;
-    return (void*)(size_t)XToolBar_toolButtonStyleChanged_signal;
-}
-void* XToolBar_topLevelChanged_signal(XToolBar* self)
-{
-    (void)self;
-    return (void*)(size_t)XToolBar_topLevelChanged_signal;
-}
+
+
+
+
 
 /**
  * @brief      发射 visibilityChanged(bool) 信号（对标 QToolBar::
@@ -621,12 +883,16 @@ void* XToolBar_visibilityChanged_signal(XToolBar* self, bool visible)
     xtb_emitBool(self, (size_t)XToolBar_visibilityChanged_signal, visible);
     return (void*)(size_t)XToolBar_visibilityChanged_signal;
 }
+void* XToolBar_iconSizeChanged_signal(XToolBar* self, int width, int height)
+{
+    (void)self; (void)width; (void)height;
+    return (void*)(size_t)XToolBar_iconSizeChanged_signal;
+}
 
-bool XToolBar_isAreaAllowed(const XToolBar* self, int area)
-{ return self ? (self->m_allowedAreas & area) != 0 : false; }
-bool XToolBar_isFloating(const XToolBar* self) { (void)self; return false; }
-void XToolBar_setAllowedAreas_2(XToolBar* self, int areas) { if (self) self->m_allowedAreas = areas; }
-void XToolBar_setFloatable_2(XToolBar* self, bool floatable) { if (self) self->m_floatable = floatable; }
-void XToolBar_setMovable_2(XToolBar* self, bool movable) { if (self) self->m_movable = movable; }
-void XToolBar_setOrientation_2(XToolBar* self, int orientation) { if (self) self->m_orientation = orientation; }
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XWidget_Protected.h
  * @brief      XWidget 基类保护接口（仅供子类与内部实现使用）。
  * @details    本文件集中声明 Qt QWidget 中属于 protected 的事件虚函数、
@@ -13,6 +13,10 @@ extern "C" {
 #endif
 
 #include "XWidget.h"
+
+#if XPAINTDEVICE_ON
+typedef struct XPaintDevice XPaintDevice; /* 前向声明；完整定义见 XPaintDevice.h。 */
+#endif
 
 /* ==================== 尺寸提示/高度回调（对标 Qt protected 子类重载） ==================== */
 
@@ -51,7 +55,16 @@ void XWidget_setHeightForWidthHandler(XWidget* self,
  *             后备存储返回 NULL。只能在后备存储 beginPaint/endPaint
  *             之间使用。
  */
-XImage* XWidget_paintDevice(const XWidget* self);
+XImage* XWidget_paintImage(const XWidget* self);
+#if XPAINTDEVICE_ON
+/**
+ * @brief      返回控件绘制设备描述（对标 QWidget 作为 QPaintDevice 的
+ *             度量入口：width/height/dpr/dpi 等）。
+ * @param      self 目标控件指针。
+ * @return     绘制设备借用指针；无效返回 NULL。
+ */
+XPaintDevice* XWidget_paintDevice(const XWidget* self);
+#endif /* XPAINTDEVICE_ON */
 /**
  * @brief      返回控件在顶层后备存储中的原点偏移（像素）。
  * @details    供 paintEvent 内 XPainter_translate 使用，把子控件本地坐标

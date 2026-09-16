@@ -28,7 +28,7 @@
 
 typedef struct XPlatformFunctionEntry
 {
-    char* m_name;     /**< 函数名（对象拥有）。 */
+    XString* m_name;  /**< 函数名（对象拥有）。 */
     void* m_function; /**< 函数指针值（不拥有）。 */
 } XPlatformFunctionEntry;
 
@@ -53,7 +53,7 @@ static void VXPlatformNativeInterface_deinit(XPlatformNativeInterface* self)
     if (self->m_data) {
         for (i = 0; i < XPLATFORMNATIVEINTERFACE_MAX_FUNCTIONS; ++i) {
             if (self->m_data->m_functions[i].m_name)
-                XFree_System(self->m_data->m_functions[i].m_name);
+                XString_delete_base(self->m_data->m_functions[i].m_name);
         }
         XFree_System(self->m_data);
         self->m_data = NULL;
@@ -106,47 +106,76 @@ XPlatformIntegration* XPlatformNativeInterface_integration(const XPlatformNative
 /* ==================== 原生资源查询 ==================== */
 
 void* XPlatformNativeInterface_nativeResourceForIntegration(
-        const XPlatformNativeInterface* self, const char* resource)
+        const XPlatformNativeInterface* self, const XString* resource)
 {
+    const char* resource_utf8 = resource ? XString_toUtf8(resource) : NULL;
     if (!self || !self->m_data) return NULL;
-    if (resourceMatch(resource, "integration") ||
-        resourceMatch(resource, "integration-handle"))
+    if (resourceMatch(resource_utf8, "integration") ||
+        resourceMatch(resource_utf8, "integration-handle"))
         return (void*)self->m_data->m_integration;
 #if XPLATFORMNATIVEWINDOW_ON
     /* 真实原生连接句柄：X11 返回 Display*，Win32 返回 HINSTANCE；
        未连接窗口系统时返回 NULL（对标 QPlatformNativeInterface 的
        nativeResourceForIntegration("display")）。 */
-    if (resourceMatch(resource, "display") ||
-        resourceMatch(resource, "hinstance") ||
-        resourceMatch(resource, "native-connection"))
+    if (resourceMatch(resource_utf8, "display") ||
+        resourceMatch(resource_utf8, "hinstance") ||
+        resourceMatch(resource_utf8, "native-connection"))
         return XPlatformNativeWindow_nativeConnection(NULL);
 #endif /* XPLATFORMNATIVEWINDOW_ON */
     return NULL;
 }
+void* XPlatformNativeInterface_nativeResourceForIntegration_2(
+        const XPlatformNativeInterface* self, const char* resource)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceForIntegration(self, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceForWindow(
-        const XPlatformNativeInterface* self, const char* resource, XWindow* window)
+        const XPlatformNativeInterface* self, const XString* resource, XWindow* window)
 {
+    const char* resource_utf8 = resource ? XString_toUtf8(resource) : NULL;
     (void)self;
-    if (!resource || !window) return NULL;
-    if (resourceMatch(resource, "window"))
+    if (!resource_utf8 || !window) return NULL;
+    if (resourceMatch(resource_utf8, "window"))
         return (void*)window;
 #if XWINDOW_ON
-    if (resourceMatch(resource, "window-handle"))
+    if (resourceMatch(resource_utf8, "window-handle"))
         return (void*)XWindow_handle(window);
-    if (resourceMatch(resource, "native-window-id"))
+    if (resourceMatch(resource_utf8, "native-window-id"))
         return (void*)(uintptr_t)XWindow_winId(window);
 #endif /* XWINDOW_ON */
     return NULL;
 }
+void* XPlatformNativeInterface_nativeResourceForWindow_2(
+        const XPlatformNativeInterface* self, const char* resource, XWindow* window)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceForWindow(self, tmp, window);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceForScreen(
-        const XPlatformNativeInterface* self, const char* resource, XScreen* screen)
+        const XPlatformNativeInterface* self, const XString* resource, XScreen* screen)
 {
+    const char* resource_utf8 = resource ? XString_toUtf8(resource) : NULL;
     XScreen* target;
     (void)self;
-    if (!resource) return NULL;
-    if (!resourceMatch(resource, "screen") && !resourceMatch(resource, "screen-handle"))
+    if (!resource_utf8) return NULL;
+    if (!resourceMatch(resource_utf8, "screen") && !resourceMatch(resource_utf8, "screen-handle"))
         return NULL;
     target = screen;
 #if XSCREEN_ON
@@ -157,91 +186,214 @@ void* XPlatformNativeInterface_nativeResourceForScreen(
 #endif /* XSCREEN_ON */
     return (void*)target;
 }
+void* XPlatformNativeInterface_nativeResourceForScreen_2(
+        const XPlatformNativeInterface* self, const char* resource, XScreen* screen)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceForScreen(self, tmp, screen);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceForBackingStore(
-        const XPlatformNativeInterface* self, const char* resource, void* backingStore)
+        const XPlatformNativeInterface* self, const XString* resource, void* backingStore)
 {
+    const char* resource_utf8 = resource ? XString_toUtf8(resource) : NULL;
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
-    if (!self || !resource) return NULL;
+    if (!self || !resource_utf8) return NULL;
     /* 资源名 "paintdevice"：返回后端内部 XImage 绘制设备（对标 Qt 栅格
      * 后备存储的 nativeResourceForBackingStore("paintdevice")）。 */
-    if (!resourceMatch(resource, "paintdevice"))
+    if (!resourceMatch(resource_utf8, "paintdevice"))
         return NULL;
     return (void*)XPlatformBackingStore_paintDevice(
             (XPlatformBackingStore*)backingStore);
 #else /* !XBACKINGSTORE_ON || !XPLATFORMBACKINGSTORE_ON */
-    (void)self; (void)resource; (void)backingStore;
+    (void)self; (void)resource_utf8; (void)backingStore;
     return NULL;
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 }
+void* XPlatformNativeInterface_nativeResourceForBackingStore_2(
+        const XPlatformNativeInterface* self, const char* resource, void* backingStore)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceForBackingStore(self, tmp, backingStore);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceForCursor(
-        const XPlatformNativeInterface* self, const char* resource, XCursor* cursor)
+        const XPlatformNativeInterface* self, const XString* resource, XCursor* cursor)
 {
+    const char* resource_utf8 = resource ? XString_toUtf8(resource) : NULL;
     /* 嵌入式无系统光标句柄，恒 NULL。 */
-    (void)self; (void)resource; (void)cursor;
+    (void)self; (void)resource_utf8; (void)cursor;
     return NULL;
 }
+void* XPlatformNativeInterface_nativeResourceForCursor_2(
+        const XPlatformNativeInterface* self, const char* resource, XCursor* cursor)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceForCursor(self, tmp, cursor);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceFunctionForIntegration(
-        const XPlatformNativeInterface* self, const char* resource)
+        const XPlatformNativeInterface* self, const XString* resource)
 {
     return XPlatformNativeInterface_platformFunction(self, resource);
 }
+void* XPlatformNativeInterface_nativeResourceFunctionForIntegration_2(
+        const XPlatformNativeInterface* self, const char* resource)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceFunctionForIntegration(self, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceFunctionForScreen(
-        const XPlatformNativeInterface* self, const char* resource)
+        const XPlatformNativeInterface* self, const XString* resource)
 {
     return XPlatformNativeInterface_platformFunction(self, resource);
 }
+void* XPlatformNativeInterface_nativeResourceFunctionForScreen_2(
+        const XPlatformNativeInterface* self, const char* resource)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceFunctionForScreen(self, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceFunctionForWindow(
-        const XPlatformNativeInterface* self, const char* resource)
+        const XPlatformNativeInterface* self, const XString* resource)
 {
     return XPlatformNativeInterface_platformFunction(self, resource);
 }
+void* XPlatformNativeInterface_nativeResourceFunctionForWindow_2(
+        const XPlatformNativeInterface* self, const char* resource)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceFunctionForWindow(self, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceFunctionForBackingStore(
-        const XPlatformNativeInterface* self, const char* resource)
+        const XPlatformNativeInterface* self, const XString* resource)
 {
     return XPlatformNativeInterface_platformFunction(self, resource);
 }
+void* XPlatformNativeInterface_nativeResourceFunctionForBackingStore_2(
+        const XPlatformNativeInterface* self, const char* resource)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceFunctionForBackingStore(self, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_nativeResourceFunctionForCursor(
-        const XPlatformNativeInterface* self, const char* resource)
+        const XPlatformNativeInterface* self, const XString* resource)
 {
     return XPlatformNativeInterface_platformFunction(self, resource);
 }
+void* XPlatformNativeInterface_nativeResourceFunctionForCursor_2(
+        const XPlatformNativeInterface* self, const char* resource)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!resource) return NULL;
+    tmp = XString_create_utf8(resource);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_nativeResourceFunctionForCursor(self, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 void* XPlatformNativeInterface_platformFunction(
-        const XPlatformNativeInterface* self, const char* name)
+        const XPlatformNativeInterface* self, const XString* name)
 {
+    const char* name_utf8 = name ? XString_toUtf8(name) : NULL;
     int i;
-    if (!self || !self->m_data || !name || !name[0]) return NULL;
+    if (!self || !self->m_data || !name_utf8 || !name_utf8[0]) return NULL;
     for (i = 0; i < XPLATFORMNATIVEINTERFACE_MAX_FUNCTIONS; ++i) {
         if (self->m_data->m_functions[i].m_name &&
-            XStrcmp(self->m_data->m_functions[i].m_name, name) == 0)
+            XString_equals_utf8(self->m_data->m_functions[i].m_name,
+                                name_utf8, XChar_CaseSensitive))
             return self->m_data->m_functions[i].m_function;
     }
     return NULL;
 }
+void* XPlatformNativeInterface_platformFunction_2(
+        const XPlatformNativeInterface* self, const char* name)
+{
+    XString* tmp = NULL;
+    void* result = NULL;
+    if (!name) return NULL;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_platformFunction(self, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 bool XPlatformNativeInterface_registerPlatformFunction(
-        XPlatformNativeInterface* self, const char* name, void* function)
+        XPlatformNativeInterface* self, const XString* name, void* function)
 {
+    const char* name_utf8 = name ? XString_toUtf8(name) : NULL;
     int i;
     int freeSlot = -1;
-    char* copy;
-    if (!self || !self->m_data || !name || !name[0]) return false;
+    XString* copy;
+    if (!self || !self->m_data || !name_utf8 || !name_utf8[0]) return false;
     for (i = 0; i < XPLATFORMNATIVEINTERFACE_MAX_FUNCTIONS; ++i) {
         XPlatformFunctionEntry* entry = &self->m_data->m_functions[i];
         if (!entry->m_name) {
             if (freeSlot < 0) freeSlot = i;
             continue;
         }
-        if (XStrcmp(entry->m_name, name) != 0) continue;
+        if (!XString_equals_utf8(entry->m_name, name_utf8,
+                                  XChar_CaseSensitive)) continue;
         if (!function) {
-            XFree_System(entry->m_name);
+            XString_delete_base(entry->m_name);
             entry->m_name = NULL;
             entry->m_function = NULL;
         } else {
@@ -251,12 +403,25 @@ bool XPlatformNativeInterface_registerPlatformFunction(
     }
     if (!function) return true; /* 注销不存在条目与 Qt 无命中语义一致。 */
     if (freeSlot < 0) return false;
-    copy = XMemory_strdup(name);
+    copy = XString_create_utf8(name_utf8);
     if (!copy) return false;
     self->m_data->m_functions[freeSlot].m_name = copy;
     self->m_data->m_functions[freeSlot].m_function = function;
     return true;
 }
+bool XPlatformNativeInterface_registerPlatformFunction_2(
+        XPlatformNativeInterface* self, const char* name, void* function)
+{
+    XString* tmp = NULL;
+    bool result = false;
+    if (!name) return false;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return false;
+    result = XPlatformNativeInterface_registerPlatformFunction(self, tmp, function);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 /* ==================== 窗口原生属性 ==================== */
 
@@ -270,16 +435,30 @@ XVariantHashMap* XPlatformNativeInterface_windowProperties(
 
 XVariant* XPlatformNativeInterface_windowProperty(
         const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
-        const char* name)
+        const XString* name)
 {
     (void)self;
     if (!platformWindow) return NULL;
     return XPlatformWindow_property(platformWindow, name);
 }
-
 XVariant* XPlatformNativeInterface_windowProperty_2(
         const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
-        const char* name, const XVariant* defaultValue)
+        const char* name)
+{
+    XString* tmp = NULL;
+    XVariant* result = NULL;
+    if (!name) return NULL;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_windowProperty(self, platformWindow, tmp);
+    XString_delete_base(tmp);
+    return result;
+}
+
+
+XVariant* XPlatformNativeInterface_windowProperty_default(
+        const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
+        const XString* name, const XVariant* defaultValue)
 {
     XVariant* stored;
     (void)self;
@@ -289,6 +468,20 @@ XVariant* XPlatformNativeInterface_windowProperty_2(
         return XVariant_create_copy(stored);
     return defaultValue ? XVariant_create_copy(defaultValue) : NULL;
 }
+XVariant* XPlatformNativeInterface_windowProperty_default_2(
+        const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
+        const char* name, const XVariant* defaultValue)
+{
+    XString* tmp = NULL;
+    XVariant* result = NULL;
+    if (!name) return NULL;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return NULL;
+    result = XPlatformNativeInterface_windowProperty_default(self, platformWindow, tmp, defaultValue);
+    XString_delete_base(tmp);
+    return result;
+}
+
 
 /** @brief 发射信号并管理参数列表生命周期（与 XGuiApplication/XWindow 相同模式）。 */
 static void platformNativeInterface_emit(XPlatformNativeInterface* self,
@@ -302,16 +495,25 @@ static void platformNativeInterface_emit(XPlatformNativeInterface* self,
 
 void XPlatformNativeInterface_setWindowProperty(
         XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
-        const char* name, const XVariant* value)
+        const XString* name, const XVariant* value)
 {
-    XString* key;
     if (!self || !platformWindow || !name) return;
     XPlatformWindow_setProperty(platformWindow, name, value);
-    key = XString_create_utf8(name);
-    if (!key) return;
-    XPlatformNativeInterface_windowPropertyChanged_signal(self, platformWindow, key);
-    XString_delete_base((XClass*)key);
+    XPlatformNativeInterface_windowPropertyChanged_signal(self, platformWindow,
+                                                          name);
 }
+void XPlatformNativeInterface_setWindowProperty_2(
+        XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
+        const char* name, const XVariant* value)
+{
+    XString* tmp = NULL;
+    if (!name) return;
+    tmp = XString_create_utf8(name);
+    if (!tmp) return;
+    XPlatformNativeInterface_setWindowProperty(self, platformWindow, tmp, value);
+    XString_delete_base(tmp);
+}
+
 
 void* XPlatformNativeInterface_windowPropertyChanged_signal(
         XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
@@ -326,3 +528,35 @@ void* XPlatformNativeInterface_windowPropertyChanged_signal(
 }
 
 #endif /* XPLATFORMNATIVEINTERFACE_ON */
+
+/* ==================== Task 2.16：上下文原生资源 ==================== */
+
+void* XPlatformNativeInterface_nativeResourceForContext(
+        const XPlatformNativeInterface* self, const XString* resource,
+        XWindow* context)
+{
+    (void)self; (void)resource; (void)context;
+    return NULL;
+}
+
+void* XPlatformNativeInterface_nativeResourceForContext_2(
+        const XPlatformNativeInterface* self, const char* resource,
+        XWindow* context)
+{
+    (void)self; (void)resource; (void)context;
+    return NULL;
+}
+
+void* XPlatformNativeInterface_nativeResourceFunctionForContext(
+        const XPlatformNativeInterface* self, const XString* resource)
+{
+    (void)self; (void)resource;
+    return NULL;
+}
+
+void* XPlatformNativeInterface_nativeResourceFunctionForContext_2(
+        const XPlatformNativeInterface* self, const char* resource)
+{
+    (void)self; (void)resource;
+    return NULL;
+}

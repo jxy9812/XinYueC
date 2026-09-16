@@ -11,11 +11,13 @@ extern "C" {
 
 #include "XIconEngine.h"
 #include "XObject.h"
+#include "XStringList.h"
 
 #define XICONENGINEPLUGIN_IID "org.qt-project.Qt.QIconEngineFactoryInterface"
 
 XCLASS_DEFINE_BEGING(XIconEnginePlugin)
 XCLASS_DEFINE_ENUM(XIconEnginePlugin, Create) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XIconEnginePlugin, Keys),
 XCLASS_DEFINE_END(XIconEnginePlugin)
 
 typedef struct XIconEnginePlugin
@@ -92,6 +94,36 @@ XIconEngine* XIconEnginePlugin_create_base(XIconEnginePlugin* self,
  */
 XIconEngine* XIconEnginePlugin_create_2_base(XIconEnginePlugin* self,
                                              const char* fileName);
+/**
+ * @brief 返回插件支持的键列表（对标 QIconEnginePlugin::keys；
+ *        键为后缀/格式名，如 "svg"）。
+ * @param self 插件指针。
+ * @return 新建的键列表（调用方释放）。
+ */
+XStringList* XIconEnginePlugin_keys_base(const XIconEnginePlugin* self);
+
+/* ==================== 插件注册表（Task 2.15） ==================== */
+
+/**
+ * @brief 注册图标引擎插件（全局注册表；插件借用，不取得所有权）。
+ * @param plugin 插件指针；NULL 忽略。
+ * @return 无返回值。
+ */
+void XIconEnginePlugin_registerPlugin(XIconEnginePlugin* plugin);
+/**
+ * @brief 注销图标引擎插件。
+ * @param plugin 插件指针；NULL 忽略。
+ * @return 无返回值。
+ */
+void XIconEnginePlugin_unregisterPlugin(XIconEnginePlugin* plugin);
+/**
+ * @brief 按文件名选择注册插件并创建引擎（对标 Qt 插件工厂路径）。
+ * @details 按文件后缀匹配插件 keys（大小写不敏感）；未注册插件或
+ *          无匹配返回 NULL。
+ * @param fileName UTF-8 文件名；可为 NULL。
+ * @return 新建图标引擎指针（调用方拥有）；无匹配返回 NULL。
+ */
+XIconEngine* XIconEnginePlugin_createEngineForFile(const char* fileName);
 
 #ifdef __cplusplus
 }

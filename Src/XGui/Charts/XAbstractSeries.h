@@ -88,10 +88,17 @@ XAbstractSeries* XAbstractSeries_create_ex(XMemoryType memory);
 
 /* ==================== 公共属性（对标 QAbstractSeries） ==================== */
 
-/** @brief 设置序列名。 @param self 目标序列指针。 @param name UTF-8 名称。 @return 无返回值。 */
-void XAbstractSeries_setName(XAbstractSeries* self, const char* name);
-/** @brief 读取序列名。 @param self 目标序列指针。 @return 序列名（UTF-8）。 */
-const char* XAbstractSeries_name(const XAbstractSeries* self);
+/** @brief 设置序列名（XString 主版本；对标 QAbstractSeries::setName）。
+ * @param self 目标序列指针。
+ * @param name 借用 XString*；可为 NULL（清空）。
+ * @return 无返回值。 */
+void XAbstractSeries_setName(XAbstractSeries* self, const XString* name);
+/** @brief 设置序列名（UTF-8 兼容重载，转发主版本）。 */
+void XAbstractSeries_setName_2(XAbstractSeries* self, const char* name);
+/** @brief 读取序列名（内部借用 XString*；对标 QAbstractSeries::name，不得释放）。 */
+const XString* XAbstractSeries_name(const XAbstractSeries* self);
+/** @brief 读取序列名（UTF-8 借用；未设置返回空串）。 */
+const char* XAbstractSeries_name_2(const XAbstractSeries* self);
 /** @brief 设置可见性。 @param self 目标序列指针。 @param visible true 显示。 @return 无返回值。 */
 void XAbstractSeries_setVisible(XAbstractSeries* self, bool visible);
 /** @brief 查询可见性。 @param self 目标序列指针。 @return 可见返回 true。 */
@@ -104,10 +111,25 @@ double XAbstractSeries_opacity(const XAbstractSeries* self);
 void XAbstractSeries_setUseOpenGL(XAbstractSeries* self, bool enable);
 /** @brief 查询 OpenGL 加速开关。 @param self 目标序列指针。 @return 启用返回 true。 */
 bool XAbstractSeries_useOpenGL(const XAbstractSeries* self);
+/** @brief 显示序列（对标 show()；等价 setVisible(true)）。 @param self 目标序列指针。 @return 无返回值。 */
+void XAbstractSeries_show(XAbstractSeries* self);
+/** @brief 隐藏序列（对标 hide()；等价 setVisible(false)）。 @param self 目标序列指针。 @return 无返回值。 */
+void XAbstractSeries_hide(XAbstractSeries* self);
 /** @brief 查询所属图表。 @param self 目标序列指针。 @return 图表指针；未挂载返回 NULL。 */
 XChart* XAbstractSeries_chart(const XAbstractSeries* self);
 /** @brief 查询序列类型（对标 QAbstractSeries::type）。 @param self 目标序列指针。 @return XChartSeriesType 枚举。 */
 int XAbstractSeries_type(const XAbstractSeries* self);
+
+/* ==================== 信号（对标 QAbstractSeries Q_SIGNALS） ==================== */
+
+/** @brief nameChanged 信号地址（无载荷）。 */
+void* XAbstractSeries_nameChanged_signal(XAbstractSeries* self);
+/** @brief visibleChanged 信号地址（无载荷）。 */
+void* XAbstractSeries_visibleChanged_signal(XAbstractSeries* self);
+/** @brief opacityChanged 信号地址（无载荷）。 */
+void* XAbstractSeries_opacityChanged_signal(XAbstractSeries* self);
+/** @brief useOpenGLChanged 信号地址（无载荷）。 */
+void* XAbstractSeries_useOpenGLChanged_signal(XAbstractSeries* self);
 
 /* ==================== 轴挂接（对标 QAbstractSeries） ==================== */
 

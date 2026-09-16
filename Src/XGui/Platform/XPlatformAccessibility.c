@@ -104,3 +104,21 @@ void XPlatformAccessibility_notifyWidget(XAccessibleEvent event, XWidget* widget
 }
 
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
+
+/* ==================== Task 2.16：setActive/initialize/cleanup =========== */
+
+void XPlatformAccessibility_setActive(const XPlatformAccessibility* self,
+                                      bool active)
+{
+    (void)self; (void)active;
+}
+
+void XPlatformAccessibility_initialize(const XPlatformAccessibility* self)
+{
+    (void)self;
+}
+
+void XPlatformAccessibility_cleanup(const XPlatformAccessibility* self)
+{
+    (void)self;
+}

@@ -126,7 +126,7 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
     highlightedText = xcombo_color(combo, XPaletteColorRole_HighlightedText);
     button = xcombo_color(combo, XPaletteColorRole_Button);
 
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -194,7 +194,7 @@ xcombo_style_text: {}
         if (combo->m_currentIndex >= 0 && combo->m_currentIndex < combo->m_itemCount &&
             combo->m_items[combo->m_currentIndex]) {
             XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
-                              combo->m_items[combo->m_currentIndex], text);
+                              XString_toUtf8(combo->m_items[combo->m_currentIndex]), text);
         } else if (combo->m_placeholderText &&
                    XString_toUtf8(combo->m_placeholderText) &&
                    XString_toUtf8(combo->m_placeholderText)[0]) {
@@ -219,7 +219,7 @@ xcombo_style_text: {}
                 XPainter_fillRect(&painter, &row, highlight);
             if (combo->m_items[i])
                 XPainter_drawText(&painter, row.x + 4, row.y + 14,
-                                  combo->m_items[i],
+                                  XString_toUtf8(combo->m_items[i]),
                                   i == combo->m_currentIndex ? highlightedText
                                                              : text);
         }
@@ -253,10 +253,11 @@ static void VXComboBox_mousePressEvent(XWidget* self, XEvent* event)
         int idx = xcombo_popupItemAt(combo, &pos);
         if (idx >= 0) {
             XComboBox_setCurrentIndex(combo, idx);
-            xcombo_emitInt(combo, (size_t)XComboBox_activated_signal(combo), idx);
+            xcombo_emitInt(combo, (size_t)XComboBox_activated_signal(combo, idx), idx);
             xcombo_emitText(combo,
-                            (size_t)XComboBox_textActivated_signal(combo),
-                            XComboBox_itemText(combo, idx));
+                            (size_t)XComboBox_textActivated_signal(
+                                combo, XComboBox_itemText_2(combo, idx)),
+                            XComboBox_itemText_2(combo, idx));
         }
         XComboBox_hidePopup_base(combo);
         XEvent_accept(event);
@@ -356,11 +357,34 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
 
 static void VXComboBox_deinit(XComboBox* self)
 {
+    int i;
     if (!self) return;
     if (self->m_placeholderText) {
         XString_delete_base(self->m_placeholderText);
         self->m_placeholderText = NULL;
     }
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (self->m_items[i]) XString_delete_base(self->m_items[i]);
+        if (self->m_itemData && self->m_itemData[i])
+            XString_delete_base(self->m_itemData[i]);
+        if (self->m_itemIcons && self->m_itemIcons[i])
+            XString_delete_base(self->m_itemIcons[i]);
+        self->m_items[i] = NULL;
+    }
+    if (self->m_items) {
+        XFree_System(self->m_items);
+        self->m_items = NULL;
+    }
+    if (self->m_itemData) {
+        XFree_System(self->m_itemData);
+        self->m_itemData = NULL;
+    }
+    if (self->m_itemIcons) {
+        XFree_System(self->m_itemIcons);
+        self->m_itemIcons = NULL;
+    }
+    self->m_itemCount = 0;
+    self->m_itemCapacity = 0;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -384,15 +408,19 @@ XVtable* XComboBox_class_init(void)
 void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
+    XMemset(self, 0, sizeof(*self));
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XComboBox);
 
     self->m_items = NULL;
+    self->m_itemData = NULL;
+    self->m_itemIcons = NULL;
     self->m_itemCount = 0;
     self->m_itemCapacity = 0;
     self->m_currentIndex = -1;
     self->m_maxCount = 2147483647;
     self->m_maxVisibleItems = 10;
+    self->m_iconSize = 16;
     self->m_duplicatesEnabled = false;
     self->m_editable = false;
     self->m_lineEdit = NULL;
@@ -470,22 +498,36 @@ void XComboBox_setMinimumContentsLength(XComboBox* self, int characters)
 {
     if (self && characters >= 0) self->m_minimumContentsLength = characters;
 }
-const char* XComboBox_placeholderText(const XComboBox* self)
+XString* XComboBox_placeholderText(const XComboBox* self)
+{
+    if (!self || !self->m_placeholderText) return NULL;
+    return XString_create_copy(self->m_placeholderText);
+}
+const char* XComboBox_placeholderText_2(const XComboBox* self)
 {
     const char* text;
     if (!self || !self->m_placeholderText) return "";
     text = XString_toUtf8(self->m_placeholderText);
     return (text && text[0]) ? text : "";
 }
-void XComboBox_setPlaceholderText(XComboBox* self, const char* placeholderText)
+void XComboBox_setPlaceholderText(XComboBox* self, const XString* placeholderText)
+{
+    if (!self) return;
+    if (!self->m_placeholderText)
+        self->m_placeholderText = XString_create();
+    if (self->m_placeholderText)
+        XString_assign_utf8(self->m_placeholderText,
+                            placeholderText ? XString_toUtf8(placeholderText) : "");
+    XWidget_update((XWidget*)self);
+}
+void XComboBox_setPlaceholderText_2(XComboBox* self, const char* placeholderText)
 {
     if (!self) return;
     if (!placeholderText) placeholderText = "";
     if (!self->m_placeholderText)
         self->m_placeholderText = XString_create();
     if (self->m_placeholderText)
-        XString_assign_utf8(self->m_placeholderText,
-                            placeholderText ? placeholderText : "");
+        XString_assign_utf8(self->m_placeholderText, placeholderText);
     XWidget_update((XWidget*)self);
 }
 bool XComboBox_isEditable(const XComboBox* self)
@@ -528,25 +570,50 @@ int XComboBox_currentIndex(const XComboBox* self)
 {
     return self ? self->m_currentIndex : -1;
 }
-const char* XComboBox_currentText(const XComboBox* self)
+XString* XComboBox_currentText(const XComboBox* self)
 {
     if (self && self->m_currentIndex >= 0 &&
         self->m_currentIndex < self->m_itemCount && self->m_items[self->m_currentIndex])
-        return self->m_items[self->m_currentIndex];
+        return XString_create_copy(self->m_items[self->m_currentIndex]);
+    return XString_create();
+}
+const char* XComboBox_currentText_2(const XComboBox* self)
+{
+    if (self && self->m_currentIndex >= 0 &&
+        self->m_currentIndex < self->m_itemCount && self->m_items[self->m_currentIndex])
+        return XString_toUtf8(self->m_items[self->m_currentIndex]);
     return "";
 }
-const char* XComboBox_itemText(const XComboBox* self, int index)
+XString* XComboBox_itemText(const XComboBox* self, int index)
 {
     if (self && index >= 0 && index < self->m_itemCount && self->m_items[index])
-        return self->m_items[index];
+        return XString_create_copy(self->m_items[index]);
+    return NULL;
+}
+const char* XComboBox_itemText_2(const XComboBox* self, int index)
+{
+    if (self && index >= 0 && index < self->m_itemCount && self->m_items[index])
+        return XString_toUtf8(self->m_items[index]);
     return "";
 }
-int XComboBox_findText(const XComboBox* self, const char* text)
+int XComboBox_findText(const XComboBox* self, const XString* text)
 {
     int i;
     if (!self || !text) return -1;
     for (i = 0; i < self->m_itemCount; ++i)
-        if (self->m_items[i] && XStrcmp(self->m_items[i], text) == 0) return i;
+        if (self->m_items[i] && XString_equals(self->m_items[i], text,
+                                               XChar_CaseSensitive))
+            return i;
+    return -1;
+}
+int XComboBox_findText_2(const XComboBox* self, const char* text)
+{
+    int i;
+    if (!self || !text) return -1;
+    for (i = 0; i < self->m_itemCount; ++i)
+        if (self->m_items[i] && XString_equals_utf8(self->m_items[i], text,
+                                                    XChar_CaseSensitive))
+            return i;
     return -1;
 }
 
@@ -559,13 +626,14 @@ void XComboBox_setCurrentIndex(XComboBox* self, int index)
     old = self->m_currentIndex;
     if (index == old) return;
     self->m_currentIndex = index;
-    xcombo_emitInt(self, (size_t)XComboBox_currentIndexChanged_signal(self), index);
-    xcombo_emitText(self, (size_t)XComboBox_currentTextChanged_signal(self),
-                    XComboBox_currentText(self));
+    xcombo_emitInt(self, (size_t)XComboBox_currentIndexChanged_signal(self, index), index);
+    xcombo_emitText(self, (size_t)XComboBox_currentTextChanged_signal(
+                            self, XComboBox_currentText_2(self)),
+                    XComboBox_currentText_2(self));
     XWidget_update((XWidget*)self);
 }
 
-void XComboBox_setCurrentText(XComboBox* self, const char* text)
+void XComboBox_setCurrentText(XComboBox* self, const XString* text)
 {
     int idx;
     if (!self || !text) return;
@@ -573,20 +641,33 @@ void XComboBox_setCurrentText(XComboBox* self, const char* text)
     if (idx >= 0) XComboBox_setCurrentIndex(self, idx);
     else if (self->m_editable) XComboBox_setEditText(self, text);
 }
+void XComboBox_setCurrentText_2(XComboBox* self, const char* text)
+{
+    int idx;
+    if (!self || !text) return;
+    idx = XComboBox_findText_2(self, text);
+    if (idx >= 0) XComboBox_setCurrentIndex(self, idx);
+    else if (self->m_editable) XComboBox_setEditText_2(self, text);
+}
 
 void XComboBox_clearEditText(XComboBox* self)
 {
     if (self && self->m_lineEdit) XLineEdit_clear(self->m_lineEdit);
 }
-void XComboBox_setEditText(XComboBox* self, const char* text)
+void XComboBox_setEditText(XComboBox* self, const XString* text)
+{
+    if (self && self->m_lineEdit && text)
+        XLineEdit_setText(self->m_lineEdit, XString_toUtf8(text));
+}
+void XComboBox_setEditText_2(XComboBox* self, const char* text)
 {
     if (self && self->m_lineEdit) XLineEdit_setText(self->m_lineEdit, text);
 }
 
-void XComboBox_insertItem(XComboBox* self, int index, const char* text)
+void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
 {
-    char** grown;
-    size_t len;
+    XString** grown;
+    XString* copy;
     if (!self || !text) return;
     /* 对标 Qt：index = qBound(0, index, itemCount)（负数插到最前、
        超出项数则追加到尾部）。 */
@@ -594,25 +675,38 @@ void XComboBox_insertItem(XComboBox* self, int index, const char* text)
     if (index > self->m_itemCount) index = self->m_itemCount;
     if (self->m_itemCount >= self->m_itemCapacity) {
         int newCap = self->m_itemCapacity > 0 ? self->m_itemCapacity * 2 : 8;
-        grown = (char**)XRealloc_System(self->m_items,
-                                        sizeof(char*) * (size_t)newCap);
+        grown = (XString**)XRealloc_System(self->m_items,
+                                           sizeof(XString*) * (size_t)newCap);
         if (!grown) return;
         self->m_items = grown;
+        if (self->m_itemData) {
+            XString** g2 = (XString**)XRealloc_System(
+                self->m_itemData, sizeof(XString*) * (size_t)newCap);
+            if (!g2) return;
+            self->m_itemData = g2;
+        }
+        if (self->m_itemIcons) {
+            XString** g3 = (XString**)XRealloc_System(
+                self->m_itemIcons, sizeof(XString*) * (size_t)newCap);
+            if (!g3) return;
+            self->m_itemIcons = g3;
+        }
         self->m_itemCapacity = newCap;
     }
-    len = XStrlen(text) + 1;
-    {
-        /* 对标 Qt 模型插入：先在堆上复制文本，右移腾位后挂到 index。
-           （此前"尾部占位再搬回"的写法会 memmove 覆盖占位指针，
-           导致所有项变成第 0 项副本。） */
-        char* copy = (char*)XMalloc_System(len);
-        if (!copy) return;
-        XMemcpy(copy, text, len);
-        XMemmove(&self->m_items[index + 1], &self->m_items[index],
-                sizeof(char*) * (size_t)(self->m_itemCount - index));
-        self->m_items[index] = copy;
-        ++self->m_itemCount;
-    }
+    copy = XString_create_copy(text);
+    if (!copy) return;
+    XMemmove(&self->m_items[index + 1], &self->m_items[index],
+             sizeof(XString*) * (size_t)(self->m_itemCount - index));
+    if (self->m_itemData)
+        XMemmove(&self->m_itemData[index + 1], &self->m_itemData[index],
+                 sizeof(XString*) * (size_t)(self->m_itemCount - index));
+    if (self->m_itemIcons)
+        XMemmove(&self->m_itemIcons[index + 1], &self->m_itemIcons[index],
+                 sizeof(XString*) * (size_t)(self->m_itemCount - index));
+    self->m_items[index] = copy;
+    if (self->m_itemData) self->m_itemData[index] = NULL;
+    if (self->m_itemIcons) self->m_itemIcons[index] = NULL;
+    ++self->m_itemCount;
     /* 对标 Qt：插入后超出 maxCount 时从尾部裁剪。 */
     if (self->m_itemCount > self->m_maxCount) {
         while (self->m_itemCount > self->m_maxCount)
@@ -624,59 +718,95 @@ void XComboBox_insertItem(XComboBox* self, int index, const char* text)
     if (index <= self->m_currentIndex) ++self->m_currentIndex;
     XWidget_update((XWidget*)self);
 }
+void XComboBox_insertItem_2(XComboBox* self, int index, const char* text)
+{
+    XString_Init_Utf8(tmp, text ? text : "");
+    XComboBox_insertItem(self, index, tmp);
+    XString_deinit_base(tmp);
+}
 
-void XComboBox_insertItems(XComboBox* self, int index, const char* const* texts)
+void XComboBox_insertItems(XComboBox* self, int index, const XStringList* texts)
+{
+    int i, n;
+    if (!self || !texts) return;
+    n = (int)XVector_size_base((const XVector*)texts);
+    for (i = 0; i < n; ++i) {
+        XString* s = *(XString**)XStringList_at_base(texts, i);
+        XComboBox_insertItem(self, index, s);
+        if (index >= 0) ++index;
+    }
+}
+void XComboBox_insertItems_2(XComboBox* self, int index, const char* const* texts)
 {
     int i;
     if (!texts) return;
     for (i = 0; texts[i]; ++i) {
-        XComboBox_insertItem(self, index, texts[i]);
+        XComboBox_insertItem_2(self, index, texts[i]);
         if (index >= 0) ++index;
     }
 }
 
-void XComboBox_addItem(XComboBox* self, const char* text)
+void XComboBox_addItem(XComboBox* self, const XString* text)
 {
     /* 对标 Qt addItem：追加到尾部。 */
     XComboBox_insertItem(self, self ? self->m_itemCount : 0, text);
 }
+void XComboBox_addItem_2(XComboBox* self, const char* text)
+{
+    XComboBox_insertItem_2(self, self ? self->m_itemCount : 0, text);
+}
 
-void XComboBox_addItems(XComboBox* self, const char* const* texts)
+void XComboBox_addItems(XComboBox* self, const XStringList* texts)
 {
     /* 对标 Qt addItems：从当前项数处顺序追加。 */
     XComboBox_insertItems(self, self ? self->m_itemCount : 0, texts);
 }
+void XComboBox_addItems_2(XComboBox* self, const char* const* texts)
+{
+    XComboBox_insertItems_2(self, self ? self->m_itemCount : 0, texts);
+}
 
 void XComboBox_insertSeparator(XComboBox* self, int index)
 {
-    XComboBox_insertItem(self, index, "---------");
+    XComboBox_insertItem_2(self, index, "---------");
 }
 
 void XComboBox_removeItem(XComboBox* self, int index)
 {
-    char* removed;
+    XString* removed;
     if (!self || index < 0 || index >= self->m_itemCount) return;
     removed = self->m_items[index];
     XMemmove(&self->m_items[index], &self->m_items[index + 1],
-            sizeof(char*) * (size_t)(self->m_itemCount - index - 1));
+             sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
+    if (self->m_itemData) {
+        if (self->m_itemData[index])
+            XString_delete_base(self->m_itemData[index]);
+        XMemmove(&self->m_itemData[index], &self->m_itemData[index + 1],
+                 sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
+    }
+    if (self->m_itemIcons) {
+        if (self->m_itemIcons[index])
+            XString_delete_base(self->m_itemIcons[index]);
+        XMemmove(&self->m_itemIcons[index], &self->m_itemIcons[index + 1],
+                 sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
+    }
     --self->m_itemCount;
-    XFree_System(removed);
+    XString_delete_base(removed);
     if (self->m_currentIndex >= self->m_itemCount)
         self->m_currentIndex = self->m_itemCount - 1;
     XWidget_update((XWidget*)self);
 }
 
-void XComboBox_setItemText(XComboBox* self, int index, const char* text)
+void XComboBox_setItemText(XComboBox* self, int index, const XString* text)
 {
-    char* replaced;
-    size_t len;
     if (!self || !text || index < 0 || index >= self->m_itemCount) return;
-    replaced = self->m_items[index];
-    len = XStrlen(text) + 1;
-    self->m_items[index] = (char*)XMalloc_System(len);
-    if (!self->m_items[index]) { self->m_items[index] = replaced; return; }
-    XMemcpy(self->m_items[index], text, len);
-    XFree_System(replaced);
+    XString_assign(self->m_items[index], text);
+    XWidget_update((XWidget*)self);
+}
+void XComboBox_setItemText_2(XComboBox* self, int index, const char* text)
+{
+    if (!self || !text || index < 0 || index >= self->m_itemCount) return;
+    XString_assign_utf8(self->m_items[index], text);
     XWidget_update((XWidget*)self);
 }
 
@@ -684,8 +814,17 @@ void XComboBox_clear(XComboBox* self)
 {
     int i;
     if (!self) return;
-    for (i = 0; i < self->m_itemCount; ++i)
-        if (self->m_items[i]) XFree_System(self->m_items[i]);
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (self->m_items[i]) XString_delete_base(self->m_items[i]);
+        if (self->m_itemData && self->m_itemData[i]) {
+            XString_delete_base(self->m_itemData[i]);
+            self->m_itemData[i] = NULL;
+        }
+        if (self->m_itemIcons && self->m_itemIcons[i]) {
+            XString_delete_base(self->m_itemIcons[i]);
+            self->m_itemIcons[i] = NULL;
+        }
+    }
     self->m_itemCount = 0;
     self->m_currentIndex = -1;
     XWidget_update((XWidget*)self);
@@ -737,32 +876,39 @@ bool XComboBox_popupVisible(const XComboBox* self)
 
 /* ==================== 信号 ==================== */
 
-void* XComboBox_activated_signal(XComboBox* self)
+void* XComboBox_activated_signal(XComboBox* self, int index)
 {
+    (void)index;
     return (void*)(size_t)XComboBox_activated_signal;
 }
-void* XComboBox_textActivated_signal(XComboBox* self)
+void* XComboBox_textActivated_signal(XComboBox* self, const char* text)
 {
+    (void)text;
     return (void*)(size_t)XComboBox_textActivated_signal;
 }
-void* XComboBox_highlighted_signal(XComboBox* self)
+void* XComboBox_highlighted_signal(XComboBox* self, int index)
 {
+    (void)index;
     return (void*)(size_t)XComboBox_highlighted_signal;
 }
-void* XComboBox_textHighlighted_signal(XComboBox* self)
+void* XComboBox_textHighlighted_signal(XComboBox* self, const char* text)
 {
+    (void)text;
     return (void*)(size_t)XComboBox_textHighlighted_signal;
 }
-void* XComboBox_currentIndexChanged_signal(XComboBox* self)
+void* XComboBox_currentIndexChanged_signal(XComboBox* self, int index)
 {
+    (void)index;
     return (void*)(size_t)XComboBox_currentIndexChanged_signal;
 }
-void* XComboBox_currentTextChanged_signal(XComboBox* self)
+void* XComboBox_currentTextChanged_signal(XComboBox* self, const char* text)
 {
+    (void)text;
     return (void*)(size_t)XComboBox_currentTextChanged_signal;
 }
-void* XComboBox_editTextChanged_signal(XComboBox* self)
+void* XComboBox_editTextChanged_signal(XComboBox* self, const char* text)
 {
+    (void)text;
     return (void*)(size_t)XComboBox_editTextChanged_signal;
 }
 void* XComboBox_popupShown_signal(XComboBox* self)
@@ -774,20 +920,148 @@ void* XComboBox_popupHidden_signal(XComboBox* self)
     return (void*)(size_t)XComboBox_popupHidden_signal;
 }
 
-int XComboBox_findData(const XComboBox* self, const char* data) { (void)self; (void)data; return -1; }
-void XComboBox_setItemIcon(XComboBox* self, int index, const char* icon) { (void)self; (void)index; (void)icon; }
-void XComboBox_setItemData(XComboBox* self, int index, const char* data) { (void)self; (void)index; (void)data; }
-const char* XComboBox_itemData(const XComboBox* self, int index) { (void)self; (void)index; return ""; }
-void XComboBox_showPopup_2(XComboBox* self) { XComboBox_showPopup_base(self); }
-void XComboBox_hidePopup_2(XComboBox* self) { XComboBox_hidePopup_base(self); }
-void XComboBox_setCompleter(XComboBox* self, void* completer) { (void)self; (void)completer; }
-void XComboBox_setItemText_2(XComboBox* self) { (void)self; }
-void XComboBox_maxCount_2(XComboBox* self) { (void)self; }
-void XComboBox_setMaxCount_2(XComboBox* self) { (void)self; }
-void XComboBox_setInsertPolicy_2(XComboBox* self) { (void)self; }
-void XComboBox_insertPolicy_2(XComboBox* self) { (void)self; }
-void XComboBox_setSizeAdjustPolicy_2(XComboBox* self) { (void)self; }
-void XComboBox_sizeAdjustPolicy_2(XComboBox* self) { (void)self; }
-void XComboBox_setIconSize_3(XComboBox* self) { (void)self; }
-void XComboBox_iconSize_2(XComboBox* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ==================== Task 2.8：图标/数据/补全器 ==================== */
+
+static XString** xcombo_ensureParallel(XString*** slot, int capacity)
+{
+    XString** arr;
+    if (!slot) return NULL;
+    if (!*slot) {
+        arr = (XString**)XCalloc_System((size_t)(capacity > 0 ? capacity : 8),
+                                        sizeof(XString*));
+        if (arr) *slot = arr;
+        return *slot;
+    }
+    return *slot;
+}
+
+void XComboBox_setItemIcon(XComboBox* self, int index, const XString* path)
+{
+    XString* repl;
+    if (!self || index < 0 || index >= self->m_itemCount) return;
+    if (!self->m_itemIcons)
+        xcombo_ensureParallel(&self->m_itemIcons, self->m_itemCapacity);
+    if (!self->m_itemIcons) return;
+    repl = path ? XString_create_copy(path) : NULL;
+    if (path && !repl) return;
+    if (self->m_itemIcons[index])
+        XString_delete_base(self->m_itemIcons[index]);
+    self->m_itemIcons[index] = repl;
+    XWidget_update((XWidget*)self);
+}
+void XComboBox_setItemIcon_2(XComboBox* self, int index, const char* path)
+{
+    XString* tmp = NULL;
+    if (path) {
+        tmp = XString_create_utf8(path);
+        if (!tmp) return;
+    }
+    XComboBox_setItemIcon(self, index, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+const XString* XComboBox_itemIcon(const XComboBox* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_itemCount ||
+        !self->m_itemIcons)
+        return NULL;
+    return self->m_itemIcons[index];
+}
+const char* XComboBox_itemIcon_2(const XComboBox* self, int index)
+{
+    const XString* s;
+    s = XComboBox_itemIcon(self, index);
+    return s ? XString_toUtf8(s) : "";
+}
+
+void XComboBox_setItemData(XComboBox* self, int index, const XString* data)
+{
+    XString* repl;
+    if (!self || index < 0 || index >= self->m_itemCount) return;
+    if (!self->m_itemData)
+        xcombo_ensureParallel(&self->m_itemData, self->m_itemCapacity);
+    if (!self->m_itemData) return;
+    repl = data ? XString_create_copy(data) : NULL;
+    if (data && !repl) return;
+    if (self->m_itemData[index])
+        XString_delete_base(self->m_itemData[index]);
+    self->m_itemData[index] = repl;
+}
+void XComboBox_setItemData_2(XComboBox* self, int index, const char* data)
+{
+    XString* tmp = NULL;
+    if (data) {
+        tmp = XString_create_utf8(data);
+        if (!tmp) return;
+    }
+    XComboBox_setItemData(self, index, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+const XString* XComboBox_itemData(const XComboBox* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_itemCount ||
+        !self->m_itemData)
+        return NULL;
+    return self->m_itemData[index];
+}
+const char* XComboBox_itemData_2(const XComboBox* self, int index)
+{
+    const XString* s;
+    s = XComboBox_itemData(self, index);
+    return s ? XString_toUtf8(s) : "";
+}
+
+int XComboBox_findData(const XComboBox* self, const XString* data)
+{
+    int i;
+    if (!self || !data) return -1;
+    for (i = 0; i < self->m_itemCount; ++i) {
+        if (self->m_itemData && self->m_itemData[i] &&
+            XString_equals(self->m_itemData[i], data, XChar_CaseSensitive))
+            return i;
+    }
+    return -1;
+}
+int XComboBox_findData_2(const XComboBox* self, const char* data)
+{
+    XString* tmp = NULL;
+    int out;
+    if (!data) return -1;
+    tmp = XString_create_utf8(data);
+    if (!tmp) return -1;
+    out = XComboBox_findData(self, tmp);
+    XString_delete_base(tmp);
+    return out;
+}
+
+void XComboBox_setCompleter(XComboBox* self, XCompleter* completer)
+{ if (self) self->m_completer = completer; }
+XCompleter* XComboBox_completer(const XComboBox* self)
+{ return self ? self->m_completer : NULL; }
+
+void XComboBox_setIconSize(XComboBox* self, int size)
+{
+    if (self && size > 0) {
+        self->m_iconSize = size;
+        XWidget_update((XWidget*)self);
+    }
+}
+int XComboBox_iconSize(const XComboBox* self)
+{ return self ? self->m_iconSize : 0; }
+
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */

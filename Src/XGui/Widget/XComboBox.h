@@ -34,7 +34,10 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XWidget.h"
 #include "XString.h"
+#include "XStringList.h"
 #include "XLineEdit.h"
+/** @brief XCompleter 前向声明（补全类见 Task 2.19）。 */
+typedef struct XCompleter XCompleter;
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
 
@@ -82,7 +85,11 @@ XCLASS_DEFINE_EXTEND_END(XComboBox, XWidget)
 typedef struct XComboBox
 {
     XWidget m_base;                    /**< 基类成员；必须是第一个。 */
-    char**  m_items;                   /**< 项文本数组（每项拥有）。 */
+    XString** m_items;                 /**< 项文本数组（每项 XString* 拥有）。 */
+    XString** m_itemData;              /**< 项数据数组（平行；对象拥有）。 */
+    XString** m_itemIcons;             /**< 项图标路径数组（平行；对象拥有）。 */
+    XCompleter* m_completer;           /**< 补全器（借用；可为 NULL）。 */
+    int m_iconSize;                    /**< 图标尺寸（方边像素；默认 16）。 */
     int     m_itemCount;               /**< 当前项数。 */
     int     m_itemCapacity;            /**< 数组容量。 */
     int     m_currentIndex;            /**< 当前项索引（-1 无）。 */
@@ -204,13 +211,28 @@ void XComboBox_setMinimumContentsLength(XComboBox* self, int characters);
  * @param self 目标控件指针。
  * @return 返回 UTF-8 文本；无效时返回空串。
  */
-const char* XComboBox_placeholderText(const XComboBox* self);
-/** @brief XCombo盒set占位文本（对标 Qt 同名接口）。
+/** @brief 读取占位文本（返回新建 XString*，调用方负责 delete_base；对标 QComboBox::placeholderText）。
  * @param self 目标控件指针。
- * @param placeholderText const char 参数。
+ * @return 新建 XString*；self 为 NULL 或未设置时返回 NULL。
+ */
+XString* XComboBox_placeholderText(const XComboBox* self);
+/** @brief 读取占位文本（UTF-8 借用，对标 QComboBox::placeholderText）。
+ * @param self 目标控件指针。
+ * @return 内部 UTF-8 借用指针；未设置时返回空串，不得释放或修改。
+ */
+const char* XComboBox_placeholderText_2(const XComboBox* self);
+/** @brief 设置占位文本（XString 主版本；对标 QComboBox::setPlaceholderText）。
+ * @param self 目标控件指针。
+ * @param placeholderText 借用 XString*；可为 NULL（按空串处理）。
  * @return 无返回值。
  */
-void XComboBox_setPlaceholderText(XComboBox* self, const char* placeholderText);
+void XComboBox_setPlaceholderText(XComboBox* self, const XString* placeholderText);
+/** @brief 设置占位文本（UTF-8 兼容重载，转发主版本；对标 QComboBox::setPlaceholderText）。
+ * @param self 目标控件指针。
+ * @param placeholderText UTF-8 文本；可为 NULL（按空串处理）。
+ * @return 无返回值。
+ */
+void XComboBox_setPlaceholderText_2(XComboBox* self, const char* placeholderText);
 /** @brief XCombo盒is可编辑（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 条件成立返回 true，否则返回 false。
@@ -232,49 +254,92 @@ XLineEdit* XComboBox_lineEdit(const XComboBox* self);
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
  */
 int XComboBox_currentIndex(const XComboBox* self);
-/** @brief XCombo盒current文本（对标 Qt 同名接口）。
+/** @brief 读取当前项文本（返回新建 XString*，调用方负责 delete_base；对标 QComboBox::currentText）。
  * @param self 目标控件指针。
- * @return 返回 UTF-8 文本；无效时返回空串。
+ * @return 新建 XString*；无当前项时返回空 XString*。
  */
-const char* XComboBox_currentText(const XComboBox* self);
-/** @brief XCombo盒item文本（对标 Qt 同名接口）。
+XString* XComboBox_currentText(const XComboBox* self);
+/** @brief 读取当前项文本（UTF-8 借用；对标 QComboBox::currentText）。
  * @param self 目标控件指针。
- * @param index 索引（0 起）。
- * @return 返回 UTF-8 文本；无效时返回空串。
+ * @return 内部 UTF-8 借用指针；无当前项时返回空串，不得释放或修改。
  */
-const char* XComboBox_itemText(const XComboBox* self, int index);
-/** @brief XCombo盒find文本（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param text UTF-8 文本。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XComboBox_findText(const XComboBox* self, const char* text);
-/** @brief XCombo盒insert项（对标 Qt 同名接口）。
+const char* XComboBox_currentText_2(const XComboBox* self);
+/** @brief 读取指定项文本（返回新建 XString*，调用方负责 delete_base；对标 QComboBox::itemText）。
  * @param self 目标控件指针。
  * @param index 索引（0 起）。
- * @param text UTF-8 文本。
- * @return 无返回值。
+ * @return 新建 XString*；参数无效时返回 NULL。
  */
-void XComboBox_insertItem(XComboBox* self, int index, const char* text);
-/** @brief XCombo盒insertItems（对标 Qt 同名接口）。
+XString* XComboBox_itemText(const XComboBox* self, int index);
+/** @brief 读取指定项文本（UTF-8 借用；对标 QComboBox::itemText）。
  * @param self 目标控件指针。
  * @param index 索引（0 起）。
- * @param texts const char* const 参数。
- * @return 无返回值。
+ * @return 内部 UTF-8 借用指针；参数无效时返回空串，不得释放或修改。
  */
-void XComboBox_insertItems(XComboBox* self, int index, const char* const* texts);
-/** @brief XCombo盒add项（对标 Qt 同名接口）。
+const char* XComboBox_itemText_2(const XComboBox* self, int index);
+/** @brief 查找文本所在项（XString 主版本；对标 QComboBox::findText）。
  * @param self 目标控件指针。
- * @param text UTF-8 文本。
- * @return 无返回值。
+ * @param text 借用 XString*；不能为 NULL。
+ * @return 匹配项索引；未命中或参数无效时返回 -1。
  */
-void XComboBox_addItem(XComboBox* self, const char* text);
-/** @brief XCombo盒addItems（对标 Qt 同名接口）。
+int XComboBox_findText(const XComboBox* self, const XString* text);
+/** @brief 查找文本所在项（UTF-8 兼容重载；对标 QComboBox::findText）。
  * @param self 目标控件指针。
- * @param texts const char* const 参数。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @return 匹配项索引；未命中或参数无效时返回 -1。
+ */
+int XComboBox_findText_2(const XComboBox* self, const char* text);
+/** @brief 在指定索引插入项（XString 主版本；对标 QComboBox::insertItem）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param text 借用 XString*；不能为 NULL。
  * @return 无返回值。
  */
-void XComboBox_addItems(XComboBox* self, const char* const* texts);
+void XComboBox_insertItem(XComboBox* self, int index, const XString* text);
+/** @brief 在指定索引插入项（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_insertItem_2(XComboBox* self, int index, const char* text);
+/** @brief 在指定索引批量插入项（XStringList 主版本；对标 QComboBox::insertItems）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param texts 借用 XStringList*（元素为 XString*）；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_insertItems(XComboBox* self, int index, const XStringList* texts);
+/** @brief 在指定索引批量插入项（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param texts NULL 结尾的 UTF-8 字符串数组；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_insertItems_2(XComboBox* self, int index, const char* const* texts);
+/** @brief 尾部追加项（XString 主版本；对标 QComboBox::addItem）。
+ * @param self 目标控件指针。
+ * @param text 借用 XString*；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_addItem(XComboBox* self, const XString* text);
+/** @brief 尾部追加项（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_addItem_2(XComboBox* self, const char* text);
+/** @brief 批量追加项（XStringList 主版本；对标 QComboBox::addItems）。
+ * @param self 目标控件指针。
+ * @param texts 借用 XStringList*（元素为 XString*）；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_addItems(XComboBox* self, const XStringList* texts);
+/** @brief 批量追加项（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param texts NULL 结尾的 UTF-8 字符串数组；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_addItems_2(XComboBox* self, const char* const* texts);
 /** @brief XCombo盒insertSeparator（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param index 索引（0 起）。
@@ -287,13 +352,20 @@ void XComboBox_insertSeparator(XComboBox* self, int index);
  * @return 无返回值。
  */
 void XComboBox_removeItem(XComboBox* self, int index);
-/** @brief XCombo盒set项文本（对标 Qt 同名接口）。
+/** @brief 设置指定项文本（XString 主版本；对标 QComboBox::setItemText）。
  * @param self 目标控件指针。
  * @param index 索引（0 起）。
- * @param text UTF-8 文本。
+ * @param text 借用 XString*；不能为 NULL。
  * @return 无返回值。
  */
-void XComboBox_setItemText(XComboBox* self, int index, const char* text);
+void XComboBox_setItemText(XComboBox* self, int index, const XString* text);
+/** @brief 设置指定项文本（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param index 索引（0 起）。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_setItemText_2(XComboBox* self, int index, const char* text);
 /** @brief XCombo盒clear（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
@@ -319,57 +391,123 @@ bool XComboBox_popupVisible(const XComboBox* self);
  * @return 无返回值。
  */
 void XComboBox_setCurrentIndex(XComboBox* self, int index);
-/** @brief XCombo盒set当前文本（对标 Qt 同名接口）。
+/** @brief 设置当前文本（XString 主版本；对标 QComboBox::setCurrentText）。
  * @param self 目标控件指针。
- * @param text UTF-8 文本。
+ * @param text 借用 XString*；不能为 NULL。
  * @return 无返回值。
  */
-void XComboBox_setCurrentText(XComboBox* self, const char* text);
+void XComboBox_setCurrentText(XComboBox* self, const XString* text);
+/** @brief 设置当前文本（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_setCurrentText_2(XComboBox* self, const char* text);
 /** @brief XCombo盒clearEdit文本（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
  */
 void XComboBox_clearEditText(XComboBox* self);
-/** @brief XCombo盒setEdit文本（对标 Qt 同名接口）。
+/** @brief 设置可编辑框文本（XString 主版本；对标 QComboBox::setEditText）。
  * @param self 目标控件指针。
- * @param text UTF-8 文本。
+ * @param text 借用 XString*；不能为 NULL。
  * @return 无返回值。
  */
-void XComboBox_setEditText(XComboBox* self, const char* text);
+void XComboBox_setEditText(XComboBox* self, const XString* text);
+/** @brief 设置可编辑框文本（UTF-8 兼容重载，转发主版本）。
+ * @param self 目标控件指针。
+ * @param text UTF-8 文本；不能为 NULL。
+ * @return 无返回值。
+ */
+void XComboBox_setEditText_2(XComboBox* self, const char* text);
+/** @brief 设置项图标路径（XString 主版本；对标 QComboBox::setItemIcon 的路径简化）。
+ * @param self 目标控件。
+ * @param index 项索引。
+ * @param path 借用 XString*；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XComboBox_setItemIcon(XComboBox* self, int index, const XString* path);
+/** @brief 设置项图标路径（UTF-8 兼容重载）。 */
+void XComboBox_setItemIcon_2(XComboBox* self, int index, const char* path);
+/** @brief 读取项图标路径（内部借用 XString*；不得释放）。 */
+const XString* XComboBox_itemIcon(const XComboBox* self, int index);
+/** @brief 读取项图标路径（UTF-8 借用）。 */
+const char* XComboBox_itemIcon_2(const XComboBox* self, int index);
+/** @brief 设置项数据（XString 主版本；对标 QComboBox::setItemData 的字符串简化）。
+ * @param self 目标控件。
+ * @param index 项索引。
+ * @param data 借用 XString*；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XComboBox_setItemData(XComboBox* self, int index, const XString* data);
+/** @brief 设置项数据（UTF-8 兼容重载）。 */
+void XComboBox_setItemData_2(XComboBox* self, int index, const char* data);
+/** @brief 读取项数据（内部借用 XString*；不得释放）。
+ * @param self 目标控件。
+ * @param index 项索引。
+ * @return 借用 XString*；未设置返回 NULL。
+ */
+const XString* XComboBox_itemData(const XComboBox* self, int index);
+/** @brief 读取项数据（UTF-8 借用）。 */
+const char* XComboBox_itemData_2(const XComboBox* self, int index);
+/** @brief 按数据查找项（XString 主版本；对标 QComboBox::findData）。
+ * @param self 目标控件。
+ * @param data 借用 XString*；不能为 NULL。
+ * @return 项索引；未命中 -1。
+ */
+int XComboBox_findData(const XComboBox* self, const XString* data);
+/** @brief 按数据查找项（UTF-8 兼容重载）。 */
+int XComboBox_findData_2(const XComboBox* self, const char* data);
+/** @brief 设置补全器（对标 QComboBox::setCompleter；借用，不拥有）。
+ * @param self 目标控件。
+ * @param completer 补全器借用指针；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XComboBox_setCompleter(XComboBox* self, XCompleter* completer);
+/** @brief 查询补全器。 @param self 目标控件。 @return 借用指针。 */
+XCompleter* XComboBox_completer(const XComboBox* self);
+/** @brief 设置图标尺寸（对标 setIconSize 的方边简化）。
+ * @param self 目标控件。
+ * @param size 方边像素（>0）。
+ * @return 无返回值。
+ */
+void XComboBox_setIconSize(XComboBox* self, int size);
+/** @brief 查询图标尺寸。 @param self 目标控件。 @return 方边像素。 */
+int XComboBox_iconSize(const XComboBox* self);
 
 /* ==================== 信号 ==================== */
 
-void* XComboBox_activated_signal(XComboBox* self);
+void* XComboBox_activated_signal(XComboBox* self, int index);
 /** @brief XCombo盒text激活 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
-void* XComboBox_textActivated_signal(XComboBox* self);
+void* XComboBox_textActivated_signal(XComboBox* self, const char* text);
 /** @brief XCombo盒highlighted 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
-void* XComboBox_highlighted_signal(XComboBox* self);
+void* XComboBox_highlighted_signal(XComboBox* self, int index);
 /** @brief XCombo盒textHighlighted 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
-void* XComboBox_textHighlighted_signal(XComboBox* self);
+void* XComboBox_textHighlighted_signal(XComboBox* self, const char* text);
 /** @brief XCombo盒current索引变更 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
-void* XComboBox_currentIndexChanged_signal(XComboBox* self);
+void* XComboBox_currentIndexChanged_signal(XComboBox* self, int index);
 /** @brief XCombo盒current文本变更 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
-void* XComboBox_currentTextChanged_signal(XComboBox* self);
+void* XComboBox_currentTextChanged_signal(XComboBox* self, const char* text);
 /** @brief XCombo盒edit文本变更 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
-void* XComboBox_editTextChanged_signal(XComboBox* self);
+void* XComboBox_editTextChanged_signal(XComboBox* self, const char* text);
 /** @brief XCombo盒popupShown 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
@@ -386,94 +524,4 @@ void* XComboBox_popupHidden_signal(XComboBox* self);
 #endif
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XCombo盒find数据（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param data const char 参数。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XComboBox_findData(const XComboBox* self, const char* data);
-/** @brief XCombo盒set项图标（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param index 索引（0 起）。
- * @param icon 图标路径。
- * @return 无返回值。
- */
-void XComboBox_setItemIcon(XComboBox* self, int index, const char* icon);
-/** @brief XCombo盒set项数据（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param index 索引（0 起）。
- * @param data const char 参数。
- * @return 无返回值。
- */
-void XComboBox_setItemData(XComboBox* self, int index, const char* data);
-/** @brief XCombo盒item数据（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param index 索引（0 起）。
- * @return 返回 UTF-8 文本；无效时返回空串。
- */
-const char* XComboBox_itemData(const XComboBox* self, int index);
-/** @brief XCombo盒showPopup2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_showPopup_2(XComboBox* self);
-/** @brief XCombo盒hidePopup2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_hidePopup_2(XComboBox* self);
-/** @brief XCombo盒setCompleter（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param completer 补全器指针。
- * @return 无返回值。
- */
-void XComboBox_setCompleter(XComboBox* self, void* completer);
-/** @brief XCombo盒set项文本2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_setItemText_2(XComboBox* self);
-/** @brief XCombo盒max数量2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_maxCount_2(XComboBox* self);
-/** @brief XCombo盒setMax数量2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_setMaxCount_2(XComboBox* self);
-/** @brief XCombo盒set插入策略2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_setInsertPolicy_2(XComboBox* self);
-/** @brief XCombo盒insert策略2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_insertPolicy_2(XComboBox* self);
-/** @brief XCombo盒set尺寸Adjust策略2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_setSizeAdjustPolicy_2(XComboBox* self);
-/** @brief XCombo盒sizeAdjust策略2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_sizeAdjustPolicy_2(XComboBox* self);
-/** @brief XCombo盒set图标尺寸3（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_setIconSize_3(XComboBox* self);
-/** @brief XCombo盒icon尺寸2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XComboBox_iconSize_2(XComboBox* self);
 #endif /* XCOMBOBOX_H */

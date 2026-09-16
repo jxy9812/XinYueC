@@ -336,7 +336,7 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
     int firstVisible;
     int lastVisible;
     if (!edit || !event) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -361,6 +361,7 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
     {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
+        XFont_deinit_base(&font);
     }
     if (count == 0 && edit->m_placeholder &&
         XString_toUtf8(edit->m_placeholder) &&
@@ -442,6 +443,10 @@ static void VX_plainTextEdit_deinit(XPlainTextEdit* self)
     if (self->m_placeholder) {
         XString_delete_base(self->m_placeholder);
         self->m_placeholder = NULL;
+    }
+    if (self->m_textDoc) {
+        XClass_delete_base((XClass*)self->m_textDoc);
+        self->m_textDoc = NULL;
     }
     XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
 }
@@ -793,92 +798,68 @@ void* XPlainTextEdit_cursorPositionChanged_signal(XPlainTextEdit* self)
 }
 
 
-void* XPlainTextEdit_blockCountChanged_signal(XPlainTextEdit* self)
-{
-    (void)self;
-    return (void*)(size_t)XPlainTextEdit_blockCountChanged_signal;
-}
-void* XPlainTextEdit_copyAvailable_signal(XPlainTextEdit* self)
-{
-    (void)self;
-    return (void*)(size_t)XPlainTextEdit_copyAvailable_signal;
-}
-void* XPlainTextEdit_modificationChanged_signal(XPlainTextEdit* self)
-{
-    (void)self;
-    return (void*)(size_t)XPlainTextEdit_modificationChanged_signal;
-}
-void* XPlainTextEdit_redoAvailable_signal(XPlainTextEdit* self)
-{
-    (void)self;
-    return (void*)(size_t)XPlainTextEdit_redoAvailable_signal;
-}
-void* XPlainTextEdit_selectionChanged_signal(XPlainTextEdit* self)
-{
-    (void)self;
-    return (void*)(size_t)XPlainTextEdit_selectionChanged_signal;
-}
-void* XPlainTextEdit_undoAvailable_signal(XPlainTextEdit* self)
-{
-    (void)self;
-    return (void*)(size_t)XPlainTextEdit_undoAvailable_signal;
-}
 
-void XPlainTextEdit_setTextBackgroundColor_2(XPlainTextEdit* self, uint32_t color) { (void)self; (void)color; }
-uint32_t XPlainTextEdit_textBackgroundColor_2(const XPlainTextEdit* self) { (void)self; return 0xFFFFFFFFu; }
-void XPlainTextEdit_setFontFamily_2(XPlainTextEdit* self, const char* family) { (void)self; (void)family; }
-const char* XPlainTextEdit_fontFamily_2(const XPlainTextEdit* self) { (void)self; return ""; }
-void XPlainTextEdit_setFontWeight_2(XPlainTextEdit* self, int weight) { (void)self; (void)weight; }
-int XPlainTextEdit_fontWeight_2(const XPlainTextEdit* self) { (void)self; return 400; }
-void XPlainTextEdit_setFontPointSize_2(XPlainTextEdit* self, double size) { (void)self; (void)size; }
-double XPlainTextEdit_fontPointSize_2(const XPlainTextEdit* self) { (void)self; return 12.0; }
-void XPlainTextEdit_zoomIn_2(XPlainTextEdit* self, int range) { (void)self; (void)range; }
-void XPlainTextEdit_zoomOut_2(XPlainTextEdit* self, int range) { (void)self; (void)range; }
-void XPlainTextPrint_setCenterOnScroll_2(XPlainTextEdit* self, bool enabled) { (void)self; (void)enabled; }
-bool XPlainTextEdit_centerOnScroll_2(const XPlainTextEdit* self) { (void)self; return false; }
-int XPlainTextEdit_blockCount_2(const XPlainTextEdit* self) { return self ? self->m_cursorLine + 1 : 0; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 int XPlainTextEdit_characterCount_2(const XPlainTextEdit* self) { int i,n,total=0; if(!self||!self->m_lines)return 0; n=(int)XVector_size_base((const XContainer*)self->m_lines); for(i=0;i<n;++i){char**l=(char**)XVector_at_base(self->m_lines,i); if(l&&*l) total+=(int)XStrlen(*l);} return total; }
-void XPlainTextEdit_setExtraSelections_2(XPlainTextEdit* self, void* selections) { (void)self; (void)selections; }
-void XPlainTextEdit_setWordWrapMode_2(XPlainTextEdit* self, int policy) { (void)self; (void)policy; }
-int XPlainTextEdit_wordWrapMode_2(const XPlainTextEdit* self) { (void)self; return 0; }
-void XPlainTextEdit_setCursorWidth_2(XPlainTextEdit* self, int width) { (void)self; (void)width; }
-int XPlainTextEdit_cursorWidth_2(const XPlainTextEdit* self) { (void)self; return 1; }
-void XPlainTextEdit_setTabStopDistance_2(XPlainTextEdit* self, double distance) { (void)self; (void)distance; }
-double XPlainTextEdit_tabStopDistance_2(const XPlainTextEdit* self) { (void)self; return 80.0; }
-void* XPlainTextEdit_anchorAt(XPlainTextEdit* self, int x, int y) { (void)self; (void)x; (void)y; return NULL; }
-void XPlainTextEdit_setBackgroundVisible_2(XPlainTextEdit* self, bool visible) { (void)self; (void)visible; }
-bool XPlainTextEdit_backgroundVisible_2(const XPlainTextEdit* self) { (void)self; return false; }
-void XPlainTextEdit_setTabChangesFocus_2(XPlainTextEdit* self, bool b) { (void)self; (void)b; }
-bool XPlainTextEdit_tabChangesFocus_2(const XPlainTextEdit* self) { (void)self; return false; }
-int XPlainTextEdit_blockBoundingRect_y(const XPlainTextEdit* self, int block) { (void)self; return block*16; }
-void XPlainTextEdit_setMaximumBlockCount_2(XPlainTextEdit* self, int maximum) { XPlainTextEdit_setMaximumBlockCount(self,maximum); }
-int XPlainTextEdit_maximumBlockCount_2(const XPlainTextEdit* self) { return XPlainTextEdit_maximumBlockCount(self); }
-bool XPlainTextEdit_find_2(XPlainTextEdit* self, const char* exp, int flags) { (void)self; (void)exp; (void)flags; return false; }
-void XPlainTextEdit_setTextInteractionFlags_2(XPlainTextEdit* self, int flags) { (void)self; (void)flags; }
-int XPlainTextEdit_textInteractionFlags_2(const XPlainTextEdit* self) { (void)self; return 0; }
-void XPlainTextEdit_print_2(XPlainTextEdit* self, void* printer) { (void)self; (void)printer; }
-void* XPlainTextEdit_createStandardContextMenu_2(XPlainTextEdit* self) { (void)self; return NULL; }
-void XPlainTextEdit_moveCursor_3(XPlainTextEdit* self, int operation, int mode) { (void)self; (void)operation; (void)mode; }
-int XPlainTextEdit_cursorRect_width_2(const XPlainTextEdit* self) { (void)self; return 1; }
-void XPlainTextEdit_centerCursor(XPlainTextEdit* self) { (void)self; }
-bool XPlainTextEdit_cursorCanPaste_2(const XPlainTextEdit* self) { (void)self; return false; }
-void XPlainTextEdit_setOverwriteMode_2(XPlainTextEdit* self, bool overwrite) { (void)self; (void)overwrite; }
-bool XPlainTextEdit_overwriteMode_2(const XPlainTextEdit* self) { (void)self; return false; }
-int XPlainTextEdit_lineWidth_2(const XPlainTextEdit* self) { (void)self; return 0; }
-int XPlainTextEdit_cursorX(const XPlainTextEdit* self) { return self?self->m_cursorCol:0; }
-int XPlainTextEdit_cursorY(const XPlainTextEdit* self) { return self?self->m_cursorLine*16:0; }
-void XPlainTextEdit_setPlainTextMargins(XPlainTextEdit* self, int left, int top, int right, int bottom) { (void)self; (void)left; (void)top; (void)right; (void)bottom; }
-int XPlainTextEdit_cursorHeight(const XPlainTextEdit* self) { (void)self; return 16; }
-int XPlainTextEdit_contentOffsetY(const XPlainTextEdit* self) { (void)self; return 0; }
-int XPlainTextEdit_lineSpacing(const XPlainTextEdit* self) { (void)self; return 16; }
-int XPlainTextEdit_fontAscent(const XPlainTextEdit* self) { (void)self; return 12; }
-int XPlainTextEdit_lineHeight2(const XPlainTextEdit* self) { (void)self; return 16; }
-int XPlainTextEdit_blockHeight(const XPlainTextEdit* self, int blockIndex) { (void)self; (void)blockIndex; return 16; }
-int XPlainTextEdit_visibleBlockCount(const XPlainTextEdit* self) { (void)self; return 0; }
-int XPlainTextEdit_firstVisibleBlock(const XPlainTextEdit* self) { (void)self; return 0; }
-int XPlainTextEdit_lastVisibleBlock(const XPlainTextEdit* self) { (void)self; return 0; }
-void XPlainTextEdit_setTabStopWidth(XPlainTextEdit* self, int width) { (void)self; (void)width; }
-int XPlainTextEdit_tabStopWidth(const XPlainTextEdit* self) { (void)self; return 80; }
-int XPlainTextEdit_cursorWordLeft(const XPlainTextEdit* self) { (void)self; return 0; }
-int XPlainTextEdit_cursorWordRight(const XPlainTextEdit* self) { (void)self; return 0; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON */

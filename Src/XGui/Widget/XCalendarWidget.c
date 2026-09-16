@@ -106,7 +106,7 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
     if (!cal || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -204,6 +204,7 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
     {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
+        XFont_deinit_base(&font);
     }
     for (i = 0; i < 7; ++i) {
         int dx = i * w / 7 + w / 14 - 4;
@@ -344,6 +345,12 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
     hint.width = 280;
     hint.height = 200;
     XWidget_setSizeHint((XWidget*)self, &hint);
+
+    self->m_dateEditEnabled = false;
+    self->m_showTodayDate = true;
+    self->m_verticalHeaderFormat = 0;
+    self->m_headerTextFormat = 0;
+    self->m_weekdayTextFormat = 0;
 }
 
 XCalendarWidget* XCalendarWidget_create_ex(XMemoryType memory,
@@ -517,36 +524,102 @@ void* XCalendarWidget_currentPageChanged_signal(XCalendarWidget* self, int year,
     return (void*)(size_t)XCalendarWidget_currentPageChanged_signal;
 }
 
-void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable) { (void)self; (void)enable; }
-bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self) { (void)self; return false; }
-void XCalendarWidget_setDateEditAcceptDelay(XCalendarWidget* self, int delay) { (void)self; (void)delay; }
-int XCalendarWidget_dateEditAcceptDelay(const XCalendarWidget* self) { (void)self; return 0; }
-int XCalendarWidget_weekNumber(const XCalendarWidget* self, const XDate* date) { (void)self; (void)date; return 0; }
-void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int format) { (void)self; (void)format; }
-int XCalendarWidget_headerTextFormat(const XCalendarWidget* self) { (void)self; return 0; }
-void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int day, int format) { (void)self; (void)day; (void)format; }
-int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self, int day) { (void)self; (void)day; return 0; }
-void XCalendarWidget_setFirstDayOfWeek_2(XCalendarWidget* self, int day) { if(self) self->m_firstDayOfWeek = day; }
-bool XCalendarWidget_isDateSelected(const XCalendarWidget* self) { (void)self; return false; }
-void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show) { (void)self; (void)show; }
-bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self) { (void)self; return false; }
-XDate XCalendarWidget_todayDate(const XCalendarWidget* self)
-{ XDate d; XMemset(&d,0,sizeof(d)); XDate_setDate(&d,2026,9,9); return d; }
-void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self, int format) { (void)self; (void)format; }
-void XCalendarWidget_setSelectedDate_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setDateRange_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setCurrentPage_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_showTodayPage(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setWeekdayTextFormat_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setHeaderFormat_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setVerticalHeaderFormat_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setSelectionMode_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_selectionMode_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setGridVisible_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setNavigationBarVisible_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_firstDayOfWeek_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setDateEditEnabled_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_isDateEditEnabled_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_setDateEditAcceptDelay_2(XCalendarWidget* self) { (void)self; }
-void XCalendarWidget_dateEditAcceptDelay_2(XCalendarWidget* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ==================== Task 2.5：日历补充 API ==================== */
+
+void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable)
+{ if (self) self->m_dateEditEnabled = enable; }
+bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self)
+{ return self ? self->m_dateEditEnabled : false; }
+
+int XCalendarWidget_weekNumber(const XCalendarWidget* self,
+                               const XDate* date)
+{
+    int doy;
+    if (!self || !date) return -1;
+    doy = XDate_dayOfYear(date);
+    if (doy < 0) return -1;
+    return (doy + 6) / 7; /* 简化 ISO 周估算。 */
+}
+
+void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int fmt)
+{ if (self) self->m_headerTextFormat = fmt; }
+void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int fmt)
+{ if (self) self->m_weekdayTextFormat = fmt; }
+
+bool XCalendarWidget_isDateSelected(const XCalendarWidget* self,
+                                    const XDate* date)
+{
+    if (!self || !date) return false;
+    return XDate_compare(date, &self->m_selected) == 0;
+}
+
+void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show)
+{
+    if (self) {
+        self->m_showTodayDate = show;
+        XWidget_update((XWidget*)self);
+    }
+}
+bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self)
+{ return self ? self->m_showTodayDate : true; }
+
+void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self,
+                                             int format)
+{
+    if (self) {
+        self->m_verticalHeaderFormat = format;
+        XWidget_update((XWidget*)self);
+    }
+}
+int XCalendarWidget_verticalHeaderFormat(const XCalendarWidget* self)
+{ return self ? self->m_verticalHeaderFormat : 0; }
+
+bool XCalendarWidget_todayDate(const XCalendarWidget* self, XDate* out)
+{
+    if (!self || !out) return false;
+    *out = XDate_currentDate();
+    return true;
+}
+
+void XCalendarWidget_showTodayPage(XCalendarWidget* self)
+{
+    XDate today;
+    if (!self) return;
+    today = XDate_currentDate();
+    XCalendarWidget_setCurrentPage(self, XDate_year(&today),
+                                   XDate_month(&today));
+    XCalendarWidget_setSelectedDate(self, &today);
+}
+
 #endif /* XWIDGET_ON && XCALENDARWIDGET_ON */

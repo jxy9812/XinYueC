@@ -19,10 +19,13 @@ static const char* xtd_fragText(const XTDFragment* frag);
 
 /* ==================== 生命周期 ==================== */
 
+static void VX_td_deinit(XTextDocument* self);
+
 XVtable* XTextDocument_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTextDocument)
     XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_td_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -198,16 +201,22 @@ static void xtd_changed(XTextDocument* self)
 
 void XTextDocument_clear(XTextDocument* self)
 {
+    int b;
     int j;
     if (!self) return;
     if (self->m_blocks) {
-        for (j = 0; j < self->m_blocks[0].fragmentCount; ++j)
-            xtd_fragClear(&self->m_blocks[0].fragments[j]);
-        if (self->m_blocks[0].blockFormat) {
-            XString_delete_base(self->m_blocks[0].blockFormat);
-            self->m_blocks[0].blockFormat = NULL;
+        /* 释放全部已用块（含 setHtml 填充的多块），不止 block0：
+           此前只清 block0 导致多块 fragment text 泄漏（Phase 3.2）。 */
+        for (b = 0; b < self->m_blockCount && b < self->m_capacity; ++b) {
+            XTDBlock* blk = &self->m_blocks[b];
+            for (j = 0; j < blk->fragmentCount; ++j)
+                xtd_fragClear(&blk->fragments[j]);
+            if (blk->blockFormat) {
+                XString_delete_base(blk->blockFormat);
+                blk->blockFormat = NULL;
+            }
+            XMemset(blk, 0, sizeof(XTDBlock));
         }
-        XMemset(&self->m_blocks[0], 0, sizeof(XTDBlock));
     }
     self->m_blockCount = 1;
     xtd_changed(self);
@@ -273,6 +282,8 @@ void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
     int blockIdx = 0;
     if (!self) return;
     XTextDocument_clear(self);
+    xtd_emitVoid(self, (size_t)XTextDocument_documentLayoutChanged_signal);
+    xtd_emitVoid(self, (size_t)XTextDocument_undoCommandAdded_signal);
     if (!utf8 || !utf8[0]) return;
     p = utf8;
     while (*p) {
@@ -633,6 +644,18 @@ void* XTextDocument_blockCountChanged_signal(XTextDocument* self, int newCount)
 { (void)self; (void)newCount; return (void*)(size_t)XTextDocument_blockCountChanged_signal; }
 void* XTextDocument_modificationChanged_signal(XTextDocument* self, bool modified)
 { (void)self; (void)modified; return (void*)(size_t)XTextDocument_modificationChanged_signal; }
+void* XTextDocument_baseUrlChanged_signal(XTextDocument* self)
+{ (void)self; return (void*)(size_t)XTextDocument_baseUrlChanged_signal; }
+void* XTextDocument_cursorPositionChanged_signal(XTextDocument* self)
+{ (void)self; return (void*)(size_t)XTextDocument_cursorPositionChanged_signal; }
+void* XTextDocument_documentLayoutChanged_signal(XTextDocument* self)
+{ (void)self; return (void*)(size_t)XTextDocument_documentLayoutChanged_signal; }
+void* XTextDocument_redoAvailable_signal(XTextDocument* self, bool available)
+{ (void)self; (void)available; return (void*)(size_t)XTextDocument_redoAvailable_signal; }
+void* XTextDocument_undoAvailable_signal(XTextDocument* self, bool available)
+{ (void)self; (void)available; return (void*)(size_t)XTextDocument_undoAvailable_signal; }
+void* XTextDocument_undoCommandAdded_signal(XTextDocument* self)
+{ (void)self; return (void*)(size_t)XTextDocument_undoCommandAdded_signal; }
 
 
 /* ==================== 撤销/重做栈 ==================== */
@@ -763,6 +786,52 @@ void XTextDocument_setFragmentFontSize(XTextDocument* self, int bi, int fi, int 
 }
 
 /* ==================== 撤销/重做公共 API ==================== */
+
+void XTextDocument_setCursorPosition(XTextDocument* self, int position)
+{
+    if (!self) return;
+    if (position < 0) position = 0;
+    if (self->m_cursorPosition == position) return;
+    self->m_cursorPosition = position;
+    xtd_emitVoid(self, (size_t)XTextDocument_cursorPositionChanged_signal);
+}
+
+int XTextDocument_cursorPosition(const XTextDocument* self)
+{ return self ? self->m_cursorPosition : 0; }
+
+int XTextDocument_find(const XTextDocument* self, const char* text)
+{
+    char* plain;
+    const char* hit;
+    int result;
+    if (!self || !text) return -1;
+    plain = XTextDocument_toPlainText(self);
+    if (!plain) return -1;
+    hit = XStrstr(plain, text);
+    if (!hit) {
+        XFree_System(plain);
+        return -1;
+    }
+    result = (int)(hit - plain);
+    XFree_System(plain);
+    return result;
+}
+
+char XTextDocument_characterAt(const XTextDocument* self, int position)
+{
+    char* plain;
+    char result;
+    if (!self || position < 0) return '\0';
+    plain = XTextDocument_toPlainText(self);
+    if (!plain) return '\0';
+    if (position >= (int)XStrlen(plain)) {
+        XFree_System(plain);
+        return '\0';
+    }
+    result = plain[position];
+    XFree_System(plain);
+    return result;
+}
 
 void XTextDocument_undo(XTextDocument* self)
 {

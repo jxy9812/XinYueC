@@ -144,7 +144,8 @@ XString* XClipboard_text(XClipboard* self, XClipboardMode mode);
  * @param      mode    目标模式。
  * @return     与 XClipboard_text 相同的堆拷贝文本；调用方释放。
  */
-XString* XClipboard_text_2(XClipboard* self, XString** subtype, XClipboardMode mode);
+XString* XClipboard_text_subtype(XClipboard* self, XString** subtype,
+                              XClipboardMode mode);
 
 /**
  * @brief      设置指定模式的纯文本（对标 QClipboard::setText）。

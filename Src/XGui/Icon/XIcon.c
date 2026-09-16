@@ -555,9 +555,8 @@ void XIcon_init_file(XIcon* self, const XString* fileName)
         XContainer_isEmpty_base((const XContainer*)fileName))
         return;
     /* Qt QIcon(fileName) 只把文件加入引擎，像素在第一次取图时再加载
-       （qicon.cpp:764-785）。名称要与引擎分开保存，便于 name() 在
-       加载失败时仍保持调用方传入的文件名语义。 */
-    XIconPrivate_setName_2(self->m_data, fileName);
+       （qicon.cpp:764-785）。对齐 Qt：文件图标不设 name（name() 返回
+       空串，Task 2.15 修正）；主题图标才经 fromTheme 设置名称。 */
     XIconPrivate_addFileEntries(self->m_data, fileName, XIconMode_Normal,
                                 XIconState_Off);
     XIconPrivate_addAtNx(self->m_data, fileName, -1, -1,

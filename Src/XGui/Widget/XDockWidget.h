@@ -149,66 +149,10 @@ void* XDockWidget_allowedAreasChanged_signal(XDockWidget* self, int areas);
  * @return 返回对象指针；无效时返回 NULL。
  */
 void* XDockWidget_visibilityChanged_signal(XDockWidget* self, bool visible);
+/** @brief dockLocationChanged(int) 信号（对标 QDockWidget::dockLocationChanged；
+ *         载荷：停靠区域码；主窗口布局回写后由 Task 2.4 完善）。 */
+void* XDockWidget_dockLocationChanged_signal(XDockWidget* self, int area);
 
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */
 
-#ifdef __cplusplus
-}
-#endif
-
-/** @brief X停靠控件dockLocation变更 信号地址（发射经 XObject_emitSignal）。
- * @param self 目标控件指针。
- * @return 返回对象指针；无效时返回 NULL。
- */
-void* XDockWidget_dockLocationChanged_signal(XDockWidget* self);
-/** @brief X停靠控件set标题条控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_setTitleBarWidget_2(XDockWidget* self);
-/** @brief X停靠控件title条控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_titleBarWidget_2(XDockWidget* self);
-/** @brief X停靠控件set控件2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_setWidget_2(XDockWidget* self);
-/** @brief X停靠控件widget2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_widget_2(XDockWidget* self);
-/** @brief X停靠控件setFeatures2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_setFeatures_2(XDockWidget* self);
-/** @brief X停靠控件features2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_features_2(XDockWidget* self);
-/** @brief X停靠控件setFloating2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_setFloating_2(XDockWidget* self);
-/** @brief X停靠控件isFloating2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_isFloating_2(XDockWidget* self);
-/** @brief X停靠控件setAllowedAreas2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_setAllowedAreas_2(XDockWidget* self);
-/** @brief X停靠控件allowedAreas2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XDockWidget_allowedAreas_2(XDockWidget* self);
 #endif /* XDOCKWIDGET_H */

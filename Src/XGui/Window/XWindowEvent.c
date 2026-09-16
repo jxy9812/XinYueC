@@ -23,14 +23,31 @@
 
 /* ==================== 虚函数实现（Clone / Deinit） ==================== */
 
+/** @brief 复制 XEvent 基类值字段（克隆辅助；不含 XClass 管理字段）。 */
+static void xevent_clone_base(XEvent* dst, const XEvent* src)
+{
+    dst->type = src->type;
+    dst->reserved = src->reserved;
+    dst->accepted = src->accepted;
+    dst->spontaneous = src->spontaneous;
+    dst->posted = src->posted;
+    dst->input_event = src->input_event;
+    dst->pointer_event = src->pointer_event;
+    dst->single_point_event = src->single_point_event;
+}
+
 static XEvent* VXResizeEvent_clone(const XResizeEvent* event)
 {
     XResizeEvent* copy = XClass_Malloc(XResizeEvent);
-    if (copy) {
-        XMemcpy(copy, event, sizeof(XResizeEvent));
-        Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
-        Set_Class_IsHeap(copy, true);
-    }
+    if (!copy) return NULL;
+    XClassSetVtable(copy, XResizeEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    copy->m_size = event->m_size;
+    copy->m_oldSize = event->m_oldSize;
+    copy->m_normalSize = event->m_normalSize;
+    copy->m_normalOldSize = event->m_normalOldSize;
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
@@ -46,12 +63,12 @@ static XEvent* VXExposeEvent_clone(const XExposeEvent* event)
 {
     XExposeEvent* copy = XClass_Malloc(XExposeEvent);
     if (!copy) return NULL;
-    XMemcpy(copy, event, sizeof(XExposeEvent));
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
-    /* memcpy 复制了源的 rects 指针，必须重新初始化后再深拷贝，
-     * 避免副本 deinit 时误释放源区域。 */
+    XClassSetVtable(copy, XExposeEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    /* 区域为动态资源：初始化后深拷贝，保证副本 deinit 不误释放源。 */
     XRegion_init(&copy->m_region);
     XRegion_copy(&event->m_region, &copy->m_region);
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -67,11 +84,12 @@ static XEvent* VXPaintEvent_clone(const XPaintEvent* event)
 {
     XPaintEvent* copy = XClass_Malloc(XPaintEvent);
     if (!copy) return NULL;
-    XMemcpy(copy, event, sizeof(XPaintEvent));
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    XClassSetVtable(copy, XPaintEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
     XRegion_init(&copy->m_region);
     XRegion_copy(&event->m_region, &copy->m_region);
-    /* m_rect 为值类型，memcpy 已复制，无需重建。 */
+    copy->m_rect = event->m_rect; /* 值类型，显式复制。 */
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -79,44 +97,45 @@ static XEvent* VXPaintEvent_clone(const XPaintEvent* event)
 static XEvent* VXCloseEvent_clone(const XCloseEvent* event)
 {
     XCloseEvent* copy = XClass_Malloc(XCloseEvent);
-    if (copy) {
-        XMemcpy(copy, event, sizeof(XCloseEvent));
-        Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
-        Set_Class_IsHeap(copy, true);
-    }
+    if (!copy) return NULL;
+    XClassSetVtable(copy, XCloseEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
 static XEvent* VXShowEvent_clone(const XShowEvent* event)
 {
     XShowEvent* copy = XClass_Malloc(XShowEvent);
-    if (copy) {
-        XMemcpy(copy, event, sizeof(XShowEvent));
-        Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
-        Set_Class_IsHeap(copy, true);
-    }
+    if (!copy) return NULL;
+    XClassSetVtable(copy, XShowEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
 static XEvent* VXHideEvent_clone(const XHideEvent* event)
 {
     XHideEvent* copy = XClass_Malloc(XHideEvent);
-    if (copy) {
-        XMemcpy(copy, event, sizeof(XHideEvent));
-        Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
-        Set_Class_IsHeap(copy, true);
-    }
+    if (!copy) return NULL;
+    XClassSetVtable(copy, XHideEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
 static XEvent* VXFocusEvent_clone(const XFocusEvent* event)
 {
     XFocusEvent* copy = XClass_Malloc(XFocusEvent);
-    if (copy) {
-        XMemcpy(copy, event, sizeof(XFocusEvent));
-        Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
-        Set_Class_IsHeap(copy, true);
-    }
+    if (!copy) return NULL;
+    XClassSetVtable(copy, XFocusEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    copy->m_reason = event->m_reason;
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
@@ -165,6 +184,8 @@ static XEvent* VXDropEvent_clone(const XDropEvent* event)
     XDropEvent_init(copy, event->m_class.type, &event->m_position,
                     &event->m_globalPosition, event->m_mimeType,
                     event->m_data);
+    copy->m_dropAction = event->m_dropAction;
+    copy->m_possibleActions = event->m_possibleActions;
     Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
@@ -551,6 +572,8 @@ void XDropEvent_init(XDropEvent* event, XEventType type,
     event->m_mimeType = mimeType ? XString_create_copy(mimeType) :
                         XString_create_utf8("");
     event->m_data = data ? XString_create_copy(data) : XString_create_utf8("");
+    event->m_dropAction = XDropAction_IgnoreAction;
+    event->m_possibleActions = 0;
 }
 
 XPoint XDropEvent_position(const XDropEvent* event)
@@ -561,6 +584,26 @@ XString* XDropEvent_mimeType(const XDropEvent* event)
 { return event && event->m_mimeType ? XString_create_copy(event->m_mimeType) : XString_create_utf8(""); }
 XString* XDropEvent_data(const XDropEvent* event)
 { return event && event->m_data ? XString_create_copy(event->m_data) : XString_create_utf8(""); }
+
+int XDropEvent_dropAction(const XDropEvent* event)
+{
+    return event ? event->m_dropAction : XDropAction_IgnoreAction;
+}
+
+void XDropEvent_setDropAction(XDropEvent* event, int action)
+{
+    if (event) event->m_dropAction = action;
+}
+
+int XDropEvent_possibleActions(const XDropEvent* event)
+{
+    return event ? event->m_possibleActions : 0;
+}
+
+void XDropEvent_setPossibleActions(XDropEvent* event, int actions)
+{
+    if (event) event->m_possibleActions = actions;
+}
 
 void XFocusEvent_setReason(XFocusEvent* event, XFocusReason reason)
 {
@@ -579,6 +622,10 @@ static void VXWheelEvent_copy(XWheelEvent* dest, const XWheelEvent* src)
     dest->m_position = src->m_position;
     dest->m_globalPosition = src->m_globalPosition;
     dest->m_angleDelta = src->m_angleDelta;
+    dest->m_pixelDelta = src->m_pixelDelta;
+    dest->m_phase = src->m_phase;
+    dest->m_inverted = src->m_inverted;
+    dest->m_source = src->m_source;
     dest->m_buttons = src->m_buttons;
     dest->m_modifiers = src->m_modifiers;
 }
@@ -636,6 +683,12 @@ void XWheelEvent_init(XWheelEvent* event, XEventType type,
     if (angleDelta) event->m_angleDelta = *angleDelta;
     event->m_buttons = buttons;
     event->m_modifiers = modifiers;
+    /* 扩展字段默认值：像素增量按角度换算，非平滑滚轮 120 度≈1 格。 */
+    event->m_pixelDelta.x = event->m_angleDelta.x / 120;
+    event->m_pixelDelta.y = event->m_angleDelta.y / 120;
+    event->m_phase = XWheelEventPhase_NoScrollPhase;
+    event->m_inverted = false;
+    event->m_source = XWheelEventSource_NotSynthesized;
 }
 
 XPoint XWheelEvent_position(const XWheelEvent* event)
@@ -663,6 +716,46 @@ XKeyboardModifiers XWheelEvent_modifiers(const XWheelEvent* event)
     return event ? event->m_modifiers : XKeyboardModifier_NoModifier;
 }
 
+XPoint XWheelEvent_pixelDelta(const XWheelEvent* event)
+{
+    return event ? event->m_pixelDelta : (XPoint){0, 0};
+}
+
+void XWheelEvent_setPixelDelta(XWheelEvent* event, const XPoint* delta)
+{
+    if (event && delta) event->m_pixelDelta = *delta;
+}
+
+int XWheelEvent_phase(const XWheelEvent* event)
+{
+    return event ? event->m_phase : XWheelEventPhase_NoScrollPhase;
+}
+
+void XWheelEvent_setPhase(XWheelEvent* event, int phase)
+{
+    if (event) event->m_phase = phase;
+}
+
+bool XWheelEvent_inverted(const XWheelEvent* event)
+{
+    return event ? event->m_inverted : false;
+}
+
+void XWheelEvent_setInverted(XWheelEvent* event, bool inverted)
+{
+    if (event) event->m_inverted = inverted;
+}
+
+int XWheelEvent_source(const XWheelEvent* event)
+{
+    return event ? event->m_source : XWheelEventSource_NotSynthesized;
+}
+
+void XWheelEvent_setSource(XWheelEvent* event, int source)
+{
+    if (event) event->m_source = source;
+}
+
 /* ==================== XEnterEvent ==================== */
 
 /** @brief XEnterEvent 的 Copy 实现：先复制基类部分，再复制坐标字段。 */
@@ -673,6 +766,7 @@ static void VXEnterEvent_copy(XEnterEvent* dest, const XEnterEvent* src)
         (XEvent*)dest, (const XEvent*)src);
     dest->m_position = src->m_position;
     dest->m_globalPosition = src->m_globalPosition;
+    dest->m_scenePosition = src->m_scenePosition;
 }
 
 /** @brief XEnterEvent 的 Clone 实现：分配 + 继承虚表 + 经 Copy 虚槽深拷贝。 */
@@ -719,6 +813,7 @@ void XEnterEvent_init(XEnterEvent* event, XEventType type,
     event->m_class.single_point_event = true;
     if (position) event->m_position = *position;
     if (globalPosition) event->m_globalPosition = *globalPosition;
+    event->m_scenePosition = event->m_globalPosition;
 }
 
 XPoint XEnterEvent_position(const XEnterEvent* event)
@@ -729,6 +824,16 @@ XPoint XEnterEvent_position(const XEnterEvent* event)
 XPoint XEnterEvent_globalPosition(const XEnterEvent* event)
 {
     return event ? event->m_globalPosition : (XPoint){0, 0};
+}
+
+XPoint XEnterEvent_scenePosition(const XEnterEvent* event)
+{
+    return event ? event->m_scenePosition : (XPoint){0, 0};
+}
+
+void XEnterEvent_setScenePosition(XEnterEvent* event, const XPoint* pos)
+{
+    if (event && pos) event->m_scenePosition = *pos;
 }
 
 /* ==================== XContextMenuEvent（对标 QContextMenuEvent） ==================== */
@@ -792,3 +897,154 @@ XKeyboardModifiers XContextMenuEvent_modifiers(const XContextMenuEvent* event)
 }
 
 #endif /* XWINDOWEVENT_ON */
+
+/* ==================== XMoveEvent（Task 2.13） ==================== */
+
+XVtable* XMoveEvent_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XMoveEvent)
+    XVTABLE_INHERIT_XCLASS(XEvent);
+    return XVTABLE_DEFAULT;
+}
+
+XMoveEvent* XMoveEvent_create_ex(XMemoryType memory, XEventType type,
+                                 const XPoint* position,
+                                 const XPoint* oldPosition)
+{
+    XMoveEvent* event = XMemory_malloc(sizeof(XMoveEvent), memory);
+    if (!event) return NULL;
+    XMoveEvent_init(event, type, position, oldPosition);
+    Set_Class_Memory(event, memory);
+    Set_Class_IsHeap(event, true);
+    return event;
+}
+
+void XMoveEvent_init(XMoveEvent* event, XEventType type,
+                     const XPoint* position, const XPoint* oldPosition)
+{
+    if (!event) return;
+    XEvent_init((XEvent*)event, type);
+    XClassGetVtable(event) = XMoveEvent_class_init();
+    if (position) event->m_position = *position;
+    if (oldPosition) event->m_oldPosition = *oldPosition;
+}
+
+XPoint XMoveEvent_position(const XMoveEvent* event)
+{
+    return event ? event->m_position : (XPoint){0, 0};
+}
+
+XPoint XMoveEvent_oldPosition(const XMoveEvent* event)
+{
+    return event ? event->m_oldPosition : (XPoint){0, 0};
+}
+
+/* ==================== XTouchEvent（Task 2.13） ==================== */
+
+XVtable* XTouchEvent_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XTouchEvent)
+    XVTABLE_INHERIT_XCLASS(XEvent);
+    return XVTABLE_DEFAULT;
+}
+
+XTouchEvent* XTouchEvent_create_ex(XMemoryType memory, XEventType type,
+                                   const XPoint* position,
+                                   const XPoint* globalPosition,
+                                   int pointCount)
+{
+    XTouchEvent* event = XMemory_malloc(sizeof(XTouchEvent), memory);
+    if (!event) return NULL;
+    XTouchEvent_init(event, type, position, globalPosition, pointCount);
+    Set_Class_Memory(event, memory);
+    Set_Class_IsHeap(event, true);
+    return event;
+}
+
+void XTouchEvent_init(XTouchEvent* event, XEventType type,
+                      const XPoint* position, const XPoint* globalPosition,
+                      int pointCount)
+{
+    if (!event) return;
+    XEvent_init((XEvent*)event, type);
+    XClassGetVtable(event) = XTouchEvent_class_init();
+    event->m_class.input_event = true;
+    event->m_class.pointer_event = true;
+    if (position) event->m_position = *position;
+    if (globalPosition) event->m_globalPosition = *globalPosition;
+    event->m_pointCount = pointCount > 0 ? pointCount : 1;
+}
+
+XPoint XTouchEvent_position(const XTouchEvent* event)
+{
+    return event ? event->m_position : (XPoint){0, 0};
+}
+
+XPoint XTouchEvent_globalPosition(const XTouchEvent* event)
+{
+    return event ? event->m_globalPosition : (XPoint){0, 0};
+}
+
+int XTouchEvent_pointCount(const XTouchEvent* event)
+{
+    return event ? event->m_pointCount : 0;
+}
+
+/* ==================== XTabletEvent（Task 2.13） ==================== */
+
+XVtable* XTabletEvent_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XTabletEvent)
+    XVTABLE_INHERIT_XCLASS(XEvent);
+    return XVTABLE_DEFAULT;
+}
+
+XTabletEvent* XTabletEvent_create_ex(XMemoryType memory, XEventType type,
+                                     const XPoint* position,
+                                     const XPoint* globalPosition,
+                                     float pressure, int pointerType)
+{
+    XTabletEvent* event = XMemory_malloc(sizeof(XTabletEvent), memory);
+    if (!event) return NULL;
+    XTabletEvent_init(event, type, position, globalPosition, pressure,
+                      pointerType);
+    Set_Class_Memory(event, memory);
+    Set_Class_IsHeap(event, true);
+    return event;
+}
+
+void XTabletEvent_init(XTabletEvent* event, XEventType type,
+                       const XPoint* position, const XPoint* globalPosition,
+                       float pressure, int pointerType)
+{
+    if (!event) return;
+    XEvent_init((XEvent*)event, type);
+    XClassGetVtable(event) = XTabletEvent_class_init();
+    event->m_class.input_event = true;
+    event->m_class.pointer_event = true;
+    event->m_class.single_point_event = true;
+    if (position) event->m_position = *position;
+    if (globalPosition) event->m_globalPosition = *globalPosition;
+    event->m_pressure = pressure;
+    event->m_pointerType = pointerType;
+}
+
+XPoint XTabletEvent_position(const XTabletEvent* event)
+{
+    return event ? event->m_position : (XPoint){0, 0};
+}
+
+XPoint XTabletEvent_globalPosition(const XTabletEvent* event)
+{
+    return event ? event->m_globalPosition : (XPoint){0, 0};
+}
+
+float XTabletEvent_pressure(const XTabletEvent* event)
+{
+    return event ? event->m_pressure : 0.0f;
+}
+
+int XTabletEvent_pointerType(const XTabletEvent* event)
+{
+    return event ? event->m_pointerType : XTabletPointerType_Unknown;
+}

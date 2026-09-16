@@ -58,6 +58,7 @@ typedef enum XPaletteColorRole
     XPaletteColorRole_ToolTipBase,         /**< 工具提示底色。 */
     XPaletteColorRole_ToolTipText,         /**< 工具提示文本色。 */
     XPaletteColorRole_PlaceholderText,     /**< 输入占位符文本色。 */
+    XPaletteColorRole_Accent,              /**< 强调色（对标 QPalette::Accent，Qt 6.8）。 */
     XPaletteColorRole_NColorRoles          /**< 颜色角色总数（内部使用）。 */
 } XPaletteColorRole;
 

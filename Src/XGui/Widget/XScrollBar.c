@@ -146,7 +146,7 @@ static void VX_scrollBar_paintEvent(XWidget* self, XEvent* event)
     XRect r;
     if (!sb || !event) return;
     if (w <= 2 || h <= 2) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

@@ -572,5 +572,59 @@ bool XColorSpace_equals(const XColorSpace* left, const XColorSpace* right)
         left->m_transferFunction == XColorSpaceTransfer_Gamma22 ||
         left->m_transferFunction == XColorSpaceTransfer_Gamma28)
         return fabsf(left->m_gamma - right->m_gamma) <= gammaTolerance;
+    if (left->m_iccSize != right->m_iccSize)
+        return false;
+    if (left->m_iccSize > 0 &&
+        XMemcmp(left->m_iccData, right->m_iccData,
+                (size_t)left->m_iccSize) != 0)
+        return false;
     return true;
+}
+
+/* ==================== ICC 透明承载（Task 2.11） ==================== */
+
+#define XCOLORSPACE_ICC_CAPACITY 1024
+
+void XColorSpace_fromIccProfile(XColorSpace* out, const uint8_t* data,
+                                int size)
+{
+    if (!out) return;
+    XMemset(out, 0, sizeof(*out));
+    out->m_primaries = XColorSpacePrimaries_Custom;
+    out->m_transferFunction = XColorSpaceTransfer_Custom;
+    out->m_transformModel = XColorSpaceTransform_ThreeComponentMatrix;
+    out->m_colorModel = XColorSpaceModel_Rgb;
+    out->m_valid = true;
+    if (data && size > 0) {
+        if (size > XCOLORSPACE_ICC_CAPACITY)
+            size = XCOLORSPACE_ICC_CAPACITY;
+        XMemcpy(out->m_iccData, data, (size_t)size);
+        out->m_iccSize = size;
+    }
+}
+
+bool XColorSpace_hasIccProfile(const XColorSpace* self)
+{
+    return self && self->m_iccSize > 0;
+}
+
+int XColorSpace_iccProfile(const XColorSpace* self, uint8_t* out,
+                           int capacity)
+{
+    if (!self || self->m_iccSize <= 0) return 0;
+    if (out && capacity > 0) {
+        int n = self->m_iccSize < capacity ? self->m_iccSize : capacity;
+        XMemcpy(out, self->m_iccData, (size_t)n);
+    }
+    return self->m_iccSize;
+}
+
+XColorTransform XColorSpace_transformationToColorSpace(
+    const XColorSpace* self, const XColorSpace* target)
+{
+    XColorTransform result;
+    XMemset(&result, 0, sizeof(result));
+    if (self) result.m_source = *self;
+    if (target) result.m_target = *target;
+    return result;
 }

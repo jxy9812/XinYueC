@@ -130,13 +130,16 @@ XString* XAccessible_name(const XAccessible* self)
     if (self->m_name) return XString_create_copy(self->m_name);
 #if XWIDGET_ON
     if (self->m_widget) {
-        const XString* title = XWidget_windowTitle(self->m_widget);
-        if (title && XString_toUtf8_length(title) > 0)
-            return XString_create_copy(title);
-        title = XObject_objectName((const XObject*)self->m_widget);
-        if (title) return XString_create_copy(title);
-        title = XWidget_toolTip(self->m_widget);
-        return title ? XString_create_copy(title) : XString_create_utf8("");
+        const XString* name = XWidget_accessibleName(self->m_widget);
+        if (name && XString_toUtf8_length(name) > 0)
+            return XString_create_copy(name);
+        name = XWidget_windowTitle(self->m_widget);
+        if (name && XString_toUtf8_length(name) > 0)
+            return XString_create_copy(name);
+        name = XObject_objectName((const XObject*)self->m_widget);
+        if (name) return XString_create_copy(name);
+        name = XWidget_toolTip(self->m_widget);
+        return name ? XString_create_copy(name) : XString_create_utf8("");
     }
 #endif
     return XWindow_title(self->m_window);
@@ -148,7 +151,19 @@ void XAccessible_setName(XAccessible* self, const XString* name)
     self->m_name = name ? XString_create_copy(name) : NULL;
 }
 XString* XAccessible_description(const XAccessible* self)
-{ return self && self->m_description ? XString_create_copy(self->m_description) : XString_create_utf8(""); }
+{
+    if (!XAccessible_isValid(self)) return XString_create_utf8("");
+    if (self->m_description)
+        return XString_create_copy(self->m_description);
+#if XWIDGET_ON
+    if (self->m_widget) {
+        const XString* desc = XWidget_accessibleDescription(self->m_widget);
+        if (desc && XString_toUtf8_length(desc) > 0)
+            return XString_create_copy(desc);
+    }
+#endif
+    return XString_create_utf8("");
+}
 void XAccessible_setDescription(XAccessible* self, const XString* description)
 {
     if (!self) return;

@@ -4,6 +4,10 @@
  * @details    XMovie 使用 XImageReader 读取图像帧，并通过 XObject 信号
  *             报告状态和帧变化。GIF 在启用 XIMAGECODEC_GIF_ANIM_ON 时提供
  *             多帧、延迟与循环次数；其它格式保持单帧或已知多帧语义。
+ * @note       定时驱动为正式裁剪项（Task 2.11 裁决）：本项目不启动
+ *             自动定时器推进帧；调用方按帧延迟自行驱动（每帧延迟由
+ *             帧元数据提供），或仅在状态查询中使用。该差异记录于
+ *             XGui.md 已知偏差清单。
  */
 #ifndef XMOVIE_H
 #define XMOVIE_H

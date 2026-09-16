@@ -112,9 +112,9 @@ XMenu* XScrollBar_createStandardContextMenu(XScrollBar* self);
 #define XScrollBar_sizeHint(self) XWidget_sizeHint((const XWidget*)(self))
 #define XScrollBar_isSliderDown(self) XAbstractSlider_isSliderDown((const XAbstractSlider*)(self))
 #define XScrollBar_setSliderDown(self, d) XAbstractSlider_setSliderDown((XAbstractSlider*)(self), (d))
-#define XScrollBar_valueChanged_signal(self) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self))
-#define XScrollBar_sliderMoved_signal(self) XAbstractSlider_sliderMoved_signal((XAbstractSlider*)(self))
-#define XScrollBar_actionTriggered_signal(self) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self))
+#define XScrollBar_valueChanged_signal(self, value) XAbstractSlider_valueChanged_signal((XAbstractSlider*)(self), (value))
+#define XScrollBar_sliderMoved_signal(self, position) XAbstractSlider_sliderMoved_signal((XAbstractSlider*)(self), (position))
+#define XScrollBar_actionTriggered_signal(self, action) XAbstractSlider_actionTriggered_signal((XAbstractSlider*)(self), (action))
 
 #ifdef __cplusplus
 }

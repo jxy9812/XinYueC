@@ -154,8 +154,21 @@ typedef struct XChart
     int m_areaCount;          /**< 面积序列数。 */
     XSplineSeries* m_splineSeries[4]; /**< 样条序列集合。 */
     int m_splineCount;        /**< 样条序列数。 */
-    uint32_t m_theme[8];      /**< 当前主题序列色板缓存（ARGB）。 */
+    uint32_t m_theme[8];      /**< 当前主题序列色板缓存（ARGB；对标 seriesColors）。 */
     XChart_ChartTheme m_themeId; /**< 当前主题 ID（对标 theme()）。 */
+    uint32_t m_themeBgStart;  /**< 主题背景渐变起点色（ARGB；对标 chartBackgroundGradient stop 0）。 */
+    uint32_t m_themeBgEnd;    /**< 主题背景渐变终点色（ARGB；对标 chartBackgroundGradient stop 1）。 */
+    uint32_t m_themeLabelBrush; /**< 主题标签画刷色（ARGB；对标 labelBrush）。 */
+    uint32_t m_themeAxisLinePen; /**< 主题轴线画笔色（ARGB；对标 axisLinePen）。 */
+    int m_themeAxisLineWidth; /**< 主题轴线画笔宽（像素）。 */
+    uint32_t m_themeGridPen;  /**< 主题网格线画笔色（ARGB；对标 gridLinePen）。 */
+    int m_themeGridLineWidth; /**< 主题网格线画笔宽（像素）。 */
+    uint32_t m_themeMinorGridPen; /**< 主题次网格线画笔色（ARGB；对标 minorGridLinePen）。 */
+    int m_themeMinorGridLineWidth; /**< 主题次网格线画笔宽（像素）。 */
+    uint32_t m_themeOutlinePen; /**< 主题轮廓画笔色（ARGB；对标 outlinePen）。 */
+    int m_themeOutlineWidth;  /**< 主题轮廓画笔宽（像素）。 */
+    uint32_t m_themeShadesBrush; /**< 主题阴影带画刷色（ARGB；0=无；对标 backgroundShadesBrush）。 */
+    int m_themeShadesMode;    /**< 主题阴影带模式（0 无/1 垂直/2 水平/3 双向；对标 BackgroundShadesMode）。 */
     XString* m_titleFamily;   /**< 标题字体家族（对象拥有；对标 setTitleFont().family()）。 */
     int m_titlePixelSize;     /**< 标题字号（像素；<=0 用视图默认）。 */
     uint32_t m_titleBrush;    /**< 标题画刷色（ARGB；0=跟随窗口文本色）。 */
@@ -214,10 +227,17 @@ XChart* XChart_create_ex(XMemoryType memory);
 /** @brief 析构：释放轴与全部序列。 @param self 目标图表指针。 @return 无返回值。 */
 void XChart_deinit(XChart* self);
 
-/** @brief 设置标题文本。 @param self 目标图表指针。 @param title UTF-8 标题。 @return 无返回值。 */
-void XChart_setTitle(XChart* self, const char* title);
-/** @brief 读取标题文本。 @param self 目标图表指针。 @return 标题（UTF-8）。 */
-const char* XChart_title(const XChart* self);
+/** @brief 设置标题文本（XString 主版本；对标 QChart::setTitle）。
+ * @param self 目标图表指针。
+ * @param title 借用 XString*；可为 NULL（清空）。
+ * @return 无返回值。 */
+void XChart_setTitle(XChart* self, const XString* title);
+/** @brief 设置标题文本（UTF-8 兼容重载，转发主版本）。 */
+void XChart_setTitle_2(XChart* self, const char* title);
+/** @brief 读取标题文本（内部借用 XString*；对标 QChart::title，不得释放）。 */
+const XString* XChart_title(const XChart* self);
+/** @brief 读取标题文本（UTF-8 借用；未设置返回空串）。 */
+const char* XChart_title_2(const XChart* self);
 /** @brief 设置标题可见性。 @param self 目标图表指针。 @param visible true 显示。 @return 无返回值。 */
 void XChart_setTitleVisible(XChart* self, bool visible);
 /** @brief 查询标题可见性。 @param self 目标图表指针。 @return 可见返回 true。 */
@@ -295,10 +315,18 @@ void XChart_createDefaultAxes(XChart* self);
 void XChart_setTheme(XChart* self, XChart_ChartTheme theme);
 /** @brief 查询当前主题。 @param self 目标图表指针。 @return 主题枚举。 */
 XChart_ChartTheme XChart_theme(const XChart* self);
-/** @brief 设置标题字体（对标 setTitleFont；家族 + 像素字号子集）。 @param self 目标图表指针。 @param family UTF-8 家族名。 @param pixelSize 像素字号；<=0 用默认。 @return 无返回值。 */
-void XChart_setTitleFont(XChart* self, const char* family, int pixelSize);
-/** @brief 读取标题字体家族。 @param self 目标图表指针。 @return 家族名（UTF-8）；空串表示默认。 */
-const char* XChart_titleFontFamily(const XChart* self);
+/** @brief 设置标题字体（XString 主版本；对标 setTitleFont；家族 + 像素字号子集）。
+ * @param self 目标图表指针。
+ * @param family 借用 XString*；可为 NULL（清空）。
+ * @param pixelSize 像素字号；<=0 用默认。
+ * @return 无返回值。 */
+void XChart_setTitleFont(XChart* self, const XString* family, int pixelSize);
+/** @brief 设置标题字体（UTF-8 兼容重载，转发主版本）。 */
+void XChart_setTitleFont_2(XChart* self, const char* family, int pixelSize);
+/** @brief 读取标题字体家族（内部借用 XString*；不得释放）。 */
+const XString* XChart_titleFontFamily(const XChart* self);
+/** @brief 读取标题字体家族（UTF-8 借用；空串表示默认）。 */
+const char* XChart_titleFontFamily_2(const XChart* self);
 /** @brief 读取标题字号。 @param self 目标图表指针。 @return 像素字号；<=0 表示默认。 */
 int XChart_titlePixelSize(const XChart* self);
 /** @brief 设置标题画刷色。 @param self 目标图表指针。 @param brush ARGB 颜色；0 跟随窗口文本色。 @return 无返回值。 */
@@ -385,10 +413,17 @@ bool XChart_isPlotAreaBackgroundVisible(const XChart* self);
 void XChart_setLocalizeNumbers(XChart* self, bool localize);
 /** @brief 查询数字本地化开关。 @param self 目标图表指针。 @return 本地化返回 true。 */
 bool XChart_localizeNumbers(const XChart* self);
-/** @brief 设置区域名称。 @param self 目标图表指针。 @param locale BCP-47 名称（UTF-8）。 @return 无返回值。 */
-void XChart_setLocale(XChart* self, const char* locale);
-/** @brief 读取区域名称。 @param self 目标图表指针。 @return BCP-47 名称（UTF-8）。 */
-const char* XChart_locale(const XChart* self);
+/** @brief 设置区域名称（XString 主版本；对标 QChart::setLocale）。
+ * @param self 目标图表指针。
+ * @param locale 借用 XString*；可为 NULL（清空）。
+ * @return 无返回值。 */
+void XChart_setLocale(XChart* self, const XString* locale);
+/** @brief 设置区域名称（UTF-8 兼容重载，转发主版本）。 */
+void XChart_setLocale_2(XChart* self, const char* locale);
+/** @brief 读取区域名称（内部借用 XString*；不得释放）。 */
+const XString* XChart_locale(const XChart* self);
+/** @brief 读取区域名称（UTF-8 借用）。 */
+const char* XChart_locale_2(const XChart* self);
 
 /* ==================== 坐标映射（对标 mapToValue/mapToPosition） ==================== */
 
@@ -473,6 +508,16 @@ int XChart_splineSeriesCount(const XChart* self);
 XSplineSeries* XChart_splineSeries(const XChart* self, int index);
 /** @brief 取主题系列色（下标越界回环）。 @param self 目标图表指针。 @param index 序列下标。 @return ARGB 颜色。 */
 uint32_t XChart_themeColor(const XChart* self, int index);
+/** @brief 按主题序列渐变取色（对标 ChartThemeManager::colorAt(seriesGradients, pos)）。
+ * @param self 目标图表指针。
+ * @param index 序列下标（越界回环）。
+ * @param pos 渐变位置 0-1（0=渐变起点，1=渐变终点；越界钳位）。
+ * @return ARGB 颜色。 */
+uint32_t XChart_themeGradientColor(const XChart* self, int index, double pos);
+/** @brief 读取主题背景渐变起点色。 @param self 目标图表指针。 @return ARGB 颜色。 */
+uint32_t XChart_themeBackgroundStart(const XChart* self);
+/** @brief 读取主题背景渐变终点色。 @param self 目标图表指针。 @return ARGB 颜色。 */
+uint32_t XChart_themeBackgroundEnd(const XChart* self);
 
 /** @brief 读取图例系列（对标 seriesList 便捷：按下标取泛型系列）。 @param self 目标图表指针。 @param index 下标。 @return 序列指针；越界返回 NULL。 */
 void* XChart_series(const XChart* self, int index);
@@ -485,8 +530,10 @@ int XChart_axes(const XChart* self, XValueAxis** out, int maxCount);
 /** @brief 数据域坐标映射到视图坐标（对标 mapToPosition）。 @param self 目标图表指针。 @param valueX 数据 X。 @param valueY 数据 Y。 @param outX 输出视图 X。 @param outY 输出视图 Y。 @return 无返回值。 */
 void XChart_mapToPosition(const XChart* self, double valueX, double valueY,
                           int* outX, int* outY);
-/** @brief 读取标题字体族（titleFont 便捷同义）。 @param self 目标图表指针。 @return 字体族。 */
-const char* XChart_titleFont(const XChart* self);
+/** @brief 读取标题字体族（titleFont 便捷同义；内部借用 XString*）。 */
+const XString* XChart_titleFont(const XChart* self);
+/** @brief 读取标题字体族（UTF-8 借用）。 */
+const char* XChart_titleFont_2(const XChart* self);
 
 #endif /* XCHARTS_ON */
 

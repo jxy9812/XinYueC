@@ -4,6 +4,8 @@
 #include "XMemory.h"
 #include "XClass.h"
 #include "XPainter.h"
+#include "XPalette.h"
+#include "XAlignment.h"
 #include <math.h>
 
 #if XSTYLE_ON
@@ -584,6 +586,266 @@ static void xcs_drawTabShape(XStyle* self, const XStyleOption* option,
     }
 }
 
+/** @brief 绘制进度块（PE_IndicatorProgressChunk：Highlight 色填充，
+ *         水平时上下各留 3px，垂直时左右各留 2px）。 */
+static void xcs_drawProgressChunk(XStyle* self, const XStyleOption* option,
+                                  XPainter* painter)
+{
+    uint32_t hl;
+    XRect r;
+    bool vertical;
+    (void)self;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    hl = xcs_color(option, XPaletteColorRole_Highlight);
+    if (hl == 0) hl = 0xFF2A82DAu;
+    vertical = !(option->m_state & XStyleState_Horizontal);
+    if (!vertical) {
+        XPainter_fillRect(painter,
+            &(XRect){r.x, r.y + 3, r.width - 2, r.height - 6}, hl);
+    } else {
+        XPainter_fillRect(painter,
+            &(XRect){r.x + 2, r.y, r.width - 6, r.height - 2}, hl);
+    }
+}
+
+/** @brief 绘制凸起面板（对标 qDrawShadePanel sunken=false）。 */
+static void xcs_drawShadePanel(XStyle* self, const XStyleOption* option,
+                               XPainter* painter, int lineWidth)
+{
+    uint32_t button;
+    uint32_t light;
+    uint32_t dark;
+    XRect r;
+    int i;
+    (void)self;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    button = xcs_color(option, XPaletteColorRole_Button);
+    light = xcs_color(option, XPaletteColorRole_Light);
+    dark = xcs_color(option, XPaletteColorRole_Dark);
+    if (button == 0) button = 0xFFCFCFCFu;
+    if (light == 0) light = 0xFFE0E0E0u;
+    if (dark == 0) dark = 0xFF808080u;
+    if (lineWidth < 1) lineWidth = 1;
+    if (r.width <= lineWidth * 2 || r.height <= lineWidth * 2) return;
+    XPainter_fillRect(painter, &r, button);
+    for (i = 0; i < lineWidth; ++i) {
+        XPainter_fillRect(painter,
+            &(XRect){r.x + i, r.y + i, r.width - i * 2, 1}, light);
+        XPainter_fillRect(painter,
+            &(XRect){r.x + i, r.y + i, 1, r.height - i * 2}, light);
+        XPainter_fillRect(painter,
+            &(XRect){r.x + i, r.y + r.height - 1 - i,
+                     r.width - i * 2, 1}, dark);
+        XPainter_fillRect(painter,
+            &(XRect){r.x + r.width - 1 - i, r.y + i,
+                     1, r.height - i * 2}, dark);
+    }
+}
+
+/** @brief 绘制工具栏把手（PE_IndicatorToolBarHandle：两段凸起面板）。 */
+static void xcs_drawToolBarHandle(XStyle* self,
+                                  const XStyleOption* option,
+                                  XPainter* painter)
+{
+    XRect r;
+    XStyleOption sub;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    sub = *option;
+    if (option->m_state & XStyleState_Horizontal) {
+        int x = r.width / 3;
+        if (r.height > 4) {
+            XRect_init(&sub.m_rect, r.x + x, r.y + 2, 3, r.height - 4);
+            xcs_drawShadePanel(self, &sub, painter, 1);
+            sub.m_rect.x = r.x + x + 3;
+            xcs_drawShadePanel(self, &sub, painter, 1);
+        }
+    } else if (r.width > 4) {
+        int y = r.height / 3;
+        XRect_init(&sub.m_rect, r.x + 2, r.y + y, r.width - 4, 3);
+        xcs_drawShadePanel(self, &sub, painter, 1);
+        sub.m_rect.y = r.y + y + 3;
+        xcs_drawShadePanel(self, &sub, painter, 1);
+    }
+}
+
+/** @brief 绘制工具栏分隔线（PE_IndicatorToolBarSeparator：
+ *         凹陷暗线 + 亮线偏移，对标 qDrawShadeLine）。 */
+static void xcs_drawToolBarSeparator(XStyle* self,
+                                     const XStyleOption* option,
+                                     XPainter* painter)
+{
+    uint32_t dark;
+    uint32_t light;
+    XRect r;
+    bool horizontal;
+    (void)self;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    dark = xcs_color(option, XPaletteColorRole_Dark);
+    light = xcs_color(option, XPaletteColorRole_Light);
+    if (dark == 0) dark = 0xFF808080u;
+    if (light == 0) light = 0xFFE0E0E0u;
+    horizontal = (option->m_state & XStyleState_Horizontal) != 0;
+    /* 画笔色覆盖为 dark；偏移线用 light 重画（对标 qDrawShadeLine）。 */
+    XPainter_setPen(painter, dark);
+    if (horizontal)
+        XPainter_drawLine(painter, r.x + r.width / 2, r.y,
+                          r.x + r.width / 2, r.y + r.height);
+    else
+        XPainter_drawLine(painter, r.x, r.y + r.height / 2,
+                          r.x + r.width, r.y + r.height / 2);
+    XPainter_setPen(painter, light);
+    if (horizontal)
+        XPainter_drawLine(painter, r.x + r.width / 2 + 1, r.y,
+                          r.x + r.width / 2 + 1, r.y + r.height);
+    else
+        XPainter_drawLine(painter, r.x, r.y + r.height / 2 + 1,
+                          r.x + r.width, r.y + r.height / 2 + 1);
+}
+
+/** @brief 绘制树分支指示（PE_IndicatorBranch：9x9 展开框 +
+ *         Dense4Pattern 连线，完整对标 QCommonStyle）。 */
+static void xcs_drawBranch(XStyle* self, const XStyleOption* option,
+                           XPainter* painter)
+{
+    static const int decoration_size = 9;
+    int mid_h;
+    int mid_v;
+    int bef_h;
+    int bef_v;
+    int aft_h;
+    int aft_v;
+    uint32_t dark;
+    XRect r;
+    (void)self;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    dark = xcs_color(option, XPaletteColorRole_Dark);
+    if (dark == 0) dark = 0xFF808080u;
+    mid_h = r.x + r.width / 2;
+    mid_v = r.y + r.height / 2;
+    bef_h = mid_h;
+    bef_v = mid_v;
+    aft_h = mid_h;
+    aft_v = mid_v;
+    if (option->m_state & XStyleState_Children) {
+        int delta = decoration_size / 2;
+        bef_h -= delta;
+        bef_v -= delta;
+        aft_h += delta;
+        aft_v += delta;
+        XPainter_drawLine(painter, bef_h + 2, bef_v + 4,
+                          bef_h + 6, bef_v + 4);
+        if (!(option->m_state & XStyleState_Open))
+            XPainter_drawLine(painter, bef_h + 4, bef_v + 2,
+                              bef_h + 4, bef_v + 6);
+        XPainter_setPen(painter, dark);
+        XPainter_drawLine(painter, bef_h, bef_v,
+                          bef_h + decoration_size - 1, bef_v);
+        XPainter_drawLine(painter, bef_h + decoration_size - 1, bef_v,
+                          bef_h + decoration_size - 1,
+                          bef_v + decoration_size - 1);
+        XPainter_drawLine(painter, bef_h + decoration_size - 1,
+                          bef_v + decoration_size - 1, bef_h,
+                          bef_v + decoration_size - 1);
+        XPainter_drawLine(painter, bef_h, bef_v + decoration_size - 1,
+                          bef_h, bef_v);
+    }
+    /* Dense4Pattern 连线（XPAINTER_BRUSH_ON 裁剪时退化为纯色填充，
+     * 与 XPainter 图案刷裁剪行为一致）。 */
+#if XPAINTER_BRUSH_ON
+    XPainter_setBrush_2(painter, XPainterBrushStyle_Dense4Pattern);
+    XPainter_setPen(painter, dark);
+#else
+    XPainter_setPen(painter, dark);
+#endif
+    if (option->m_state & XStyleState_Item) {
+        XPainter_fillRect(painter,
+            &(XRect){aft_h, mid_v, r.x + r.width - aft_h, 1}, dark);
+    }
+    if (option->m_state & XStyleState_Sibling) {
+        XPainter_fillRect(painter,
+            &(XRect){mid_h, aft_v, 1, r.y + r.height - aft_v}, dark);
+    }
+    if (option->m_state &
+        (XStyleState_Open | XStyleState_Children | XStyleState_Item |
+         XStyleState_Sibling)) {
+        XPainter_fillRect(painter,
+            &(XRect){mid_h, r.y, 1, bef_v - r.y}, dark);
+    }
+#if XPAINTER_BRUSH_ON
+    XPainter_setBrush_2(painter, XPainterBrushStyle_SolidPattern);
+#endif
+}
+
+/** @brief 绘制条目视图项面板（PE_PanelItemViewItem：选中高亮）。 */
+static void xcs_drawPanelItemViewItem(XStyle* self,
+                                      const XStyleOption* option,
+                                      XPainter* painter,
+                                      const XWidget* widget)
+{
+    uint32_t hl;
+    bool selected;
+    (void)self;
+    (void)widget;
+    if (!option || !painter) return;
+    hl = xcs_color(option, XPaletteColorRole_Highlight);
+    if (hl == 0) hl = 0xFF2A82DAu;
+    selected = (option->m_state & XStyleState_Selected) != 0;
+    if (option->m_showDecorationSelected && selected) {
+        XPainter_fillRect(painter, &option->m_rect, hl);
+    } else if (selected) {
+        XRect textRect = XStyle_subElementRect((XStyle*)self,
+                                               XStyleSE_ItemViewItemText,
+                                               option, widget);
+        XPainter_fillRect(painter, &textRect, hl);
+    }
+}
+
+/** @brief 绘制条目勾选框（PE_IndicatorItemViewItemCheck：委托复选指示器）。 */
+static void xcs_drawItemViewItemCheck(XStyle* self,
+                                      const XStyleOption* option,
+                                      XPainter* painter)
+{
+    XStyleOption cb = *option;
+    cb.m_type = XStylePE_IndicatorCheckBox;
+    xcs_drawIndicatorCheckBox(self, &cb, painter);
+}
+
+/** @brief 绘制分组框边框（PE_FrameGroupBox：Flat 顶线 / 凹陷矩形）。 */
+static void xcs_drawFrameGroupBox(XStyle* self,
+                                  const XStyleOption* option,
+                                  XPainter* painter)
+{
+    uint32_t dark;
+    uint32_t light;
+    XRect r;
+    (void)self;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    dark = xcs_color(option, XPaletteColorRole_Dark);
+    light = xcs_color(option, XPaletteColorRole_Light);
+    if (dark == 0) dark = 0xFF808080u;
+    if (light == 0) light = 0xFFE0E0E0u;
+    if (option->m_flat) {
+        XPainter_fillRect(painter, &(XRect){r.x, r.y + 1, r.width, 1}, dark);
+    } else {
+        XPainter_fillRect(painter, &(XRect){r.x, r.y, r.width, 1}, dark);
+        XPainter_fillRect(painter, &(XRect){r.x, r.y, 1, r.height}, dark);
+        XPainter_fillRect(painter, &(XRect){r.x + 1, r.y + 1,
+                                            r.width - 2, 1}, light);
+        XPainter_fillRect(painter, &(XRect){r.x + 1, r.y + 1,
+                                            1, r.height - 2}, light);
+        XPainter_fillRect(painter, &(XRect){r.x, r.y + r.height - 1,
+                                            r.width, 1}, light);
+        XPainter_fillRect(painter, &(XRect){r.x + r.width - 1, r.y,
+                                            1, r.height}, light);
+    }
+}
+
 static void VXCommonStyle_drawPrimitive(XStyle* self, int pe,
                                         const XStyleOption* option,
                                         XPainter* painter,
@@ -595,6 +857,9 @@ static void VXCommonStyle_drawPrimitive(XStyle* self, int pe,
     case XStylePE_FrameButtonBevel:
         xcs_drawFrame(self, option, painter);
         break;
+    case XStylePE_FrameGroupBox:
+        xcs_drawFrameGroupBox(self, option, painter);
+        break;
     case XStylePE_PanelButtonCommand:
     case XStylePE_PanelButtonBevel:
     case XStylePE_PanelButtonTool:
@@ -603,8 +868,26 @@ static void VXCommonStyle_drawPrimitive(XStyle* self, int pe,
     case XStylePE_IndicatorCheckBox:
         xcs_drawIndicatorCheckBox(self, option, painter);
         break;
+    case XStylePE_IndicatorItemViewItemCheck:
+        xcs_drawItemViewItemCheck(self, option, painter);
+        break;
     case XStylePE_IndicatorRadioButton:
         xcs_drawIndicatorRadioButton(self, option, painter);
+        break;
+    case XStylePE_IndicatorProgressChunk:
+        xcs_drawProgressChunk(self, option, painter);
+        break;
+    case XStylePE_IndicatorToolBarHandle:
+        xcs_drawToolBarHandle(self, option, painter);
+        break;
+    case XStylePE_IndicatorToolBarSeparator:
+        xcs_drawToolBarSeparator(self, option, painter);
+        break;
+    case XStylePE_IndicatorBranch:
+        xcs_drawBranch(self, option, painter);
+        break;
+    case XStylePE_PanelItemViewItem:
+        xcs_drawPanelItemViewItem(self, option, painter, widget);
         break;
     case XStylePE_IndicatorArrowDown:
         xcs_drawArrow(self, option, painter, 0);
@@ -638,6 +921,9 @@ static void VXCommonStyle_drawPrimitive(XStyle* self, int pe,
         break;
     case XStylePE_PanelMenuBar:
     case XStylePE_PanelToolBar:
+        xcs_drawBarPanel(self, option, painter);
+        break;
+    case XStylePE_PanelMenu:
         xcs_drawBarPanel(self, option, painter);
         break;
     default:
@@ -1906,6 +2192,179 @@ static void xcs_drawHeaderLabel(XStyle* self, const XStyleOption* option,
     }
 }
 
+/** @brief 绘制进度条标签（CE_ProgressBarLabel：居中文本，对标
+ *         QCommonStyle 的 Qt::AlignCenter）。 */
+static void xcs_drawProgressBarLabel(XStyle* self,
+                                     const XStyleOption* option,
+                                     XPainter* painter)
+{
+    uint32_t textColor;
+    XRect r;
+    int textW;
+    int textH;
+    (void)self;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    if (!option->m_text || !option->m_text[0]) return;
+    textColor = option->m_textColor;
+    if (textColor == 0)
+        textColor = xcs_color(option, XPaletteColorRole_HighlightedText);
+    if (textColor == 0) textColor = 0xFFFFFFFFu;
+    textW = XPainter_textWidth(XPainter_font(painter), option->m_text);
+    textH = XPainter_textHeight(XPainter_font(painter));
+    if (textH < 14) textH = 14;
+    XPainter_drawText(painter, r.x + (r.width - textW) / 2,
+                      r.y + (r.height - textH) / 2 + textH - 4,
+                      option->m_text, textColor);
+}
+
+/** @brief 绘制进度条控件（CE_ProgressBar：槽 + 内容 + 可选标签，
+ *         完整对标 QCommonStyle）。 */
+static void xcs_drawProgressBar(XStyle* self, const XStyleOption* option,
+                                XPainter* painter, const XWidget* widget)
+{
+    XStyleOption sub;
+    if (!option || !painter) return;
+    sub = *option;
+    sub.m_type = XStyleCE_ProgressBarGroove;
+    sub.m_rect = XStyle_subElementRect((XStyle*)self,
+                                       XStyleSE_ProgressBarGroove,
+                                       option, widget);
+    xcs_drawProgressGroove(self, &sub, painter);
+    sub.m_type = XStyleCE_ProgressBarContents;
+    sub.m_rect = XStyle_subElementRect((XStyle*)self,
+                                       XStyleSE_ProgressBarContents,
+                                       option, widget);
+    xcs_drawProgressContents(self, &sub, painter);
+    if (option->m_progressTextVisible) {
+        sub.m_type = XStyleCE_ProgressBarLabel;
+        sub.m_rect = XStyle_subElementRect((XStyle*)self,
+                                           XStyleSE_ProgressBarLabel,
+                                           option, widget);
+        xcs_drawProgressBarLabel(self, &sub, painter);
+    }
+}
+
+/** @brief 绘制表头控件（CE_Header：段 + 标签，对标 QCommonStyle 子集）。 */
+static void xcs_drawHeader(XStyle* self, const XStyleOption* option,
+                           XPainter* painter, const XWidget* widget)
+{
+    XStyleOption sub;
+    if (!option || !painter) return;
+    sub = *option;
+    sub.m_type = XStyleCE_HeaderSection;
+    sub.m_rect = option->m_rect;
+    xcs_drawHeaderSection(self, &sub, painter, widget);
+    sub.m_type = XStyleCE_HeaderLabel;
+    sub.m_rect = XStyle_subElementRect((XStyle*)self, XStyleSE_HeaderLabel,
+                                       option, widget);
+    if (sub.m_rect.width > 0 && sub.m_rect.height > 0)
+        xcs_drawHeaderLabel(self, &sub, painter, widget);
+}
+
+/** @brief 绘制工具栏控件（CE_ToolBar：面板 + 顶层工具栏分隔线，
+ *         对标 QCommonStyle）。 */
+static void xcs_drawToolBar(XStyle* self, const XStyleOption* option,
+                            XPainter* painter, const XWidget* widget)
+{
+    XStyleOption panel;
+    (void)widget;
+    if (!option || !painter) return;
+    panel = *option;
+    panel.m_type = XStylePE_PanelToolBar;
+    xcs_drawBarPanel(self, &panel, painter);
+}
+
+/** @brief 绘制组合框标签（CE_ComboBoxLabel：左对齐文本）。 */
+static void xcs_drawComboBoxLabel(XStyle* self,
+                                  const XStyleOption* option,
+                                  XPainter* painter)
+{
+    uint32_t textColor;
+    XRect r;
+    int textH;
+    (void)self;
+    if (!option || !painter) return;
+    r = option->m_rect;
+    if (!option->m_text || !option->m_text[0]) return;
+    textColor = option->m_textColor;
+    if (textColor == 0)
+        textColor = xcs_color(option, XPaletteColorRole_ButtonText);
+    if (textColor == 0) textColor = 0xFF000000u;
+    textH = XPainter_textHeight(XPainter_font(painter));
+    if (textH < 14) textH = 14;
+    XPainter_drawText(painter, r.x + 2,
+                      r.y + (r.height - textH) / 2 + textH - 4,
+                      option->m_text, textColor);
+}
+
+/** @brief 绘制条目视图项（CE_ItemViewItem：面板 + 勾选 + 文本 + 焦点，
+ *         完整对标 QCommonStyle 子集）。 */
+static void xcs_drawItemViewItem(XStyle* self, const XStyleOption* option,
+                                 XPainter* painter, const XWidget* widget)
+{
+    XRect checkRect;
+    XRect iconRect;
+    XRect textRect;
+    uint32_t textColor;
+    int textH;
+    if (!option || !painter) return;
+    checkRect = XStyle_subElementRect((XStyle*)self,
+                                      XStyleSE_ItemViewItemCheckIndicator,
+                                      option, widget);
+    iconRect = XStyle_subElementRect((XStyle*)self,
+                                     XStyleSE_ItemViewItemDecoration,
+                                     option, widget);
+    textRect = XStyle_subElementRect((XStyle*)self,
+                                     XStyleSE_ItemViewItemText,
+                                     option, widget);
+    xcs_drawPanelItemViewItem(self, option, painter, widget);
+    /* 勾选指示。 */
+    if ((option->m_viewFeatures & 0x1) && checkRect.width > 0) {
+        XStyleOption check = *option;
+        check.m_type = XStylePE_IndicatorItemViewItemCheck;
+        check.m_rect = checkRect;
+        check.m_state &= ~(uint32_t)XStyleState_HasFocus;
+        if (option->m_checkState2 == 2)
+            check.m_state |= XStyleState_On;
+        else if (option->m_checkState2 == 1)
+            check.m_state |= XStyleState_NoChange;
+        else
+            check.m_state |= XStyleState_Off;
+        xcs_drawItemViewItemCheck(self, &check, painter);
+    }
+    /* 图标：XGui 条目视图当前经 m_icon 借用 XIcon，绘制由控件层
+     * 完成（Ruling：见 Task 2.12 报告，QIcon::paint 未在此处接线）。 */
+    (void)iconRect;
+    /* 文本。 */
+    if (option->m_text && option->m_text[0] && textRect.width > 0) {
+        if (option->m_state & XStyleState_Selected)
+            textColor = xcs_color(option, XPaletteColorRole_HighlightedText);
+        else
+            textColor = xcs_color(option, XPaletteColorRole_Text);
+        if (textColor == 0)
+            textColor = (option->m_state & XStyleState_Selected)
+                ? 0xFFFFFFFFu : 0xFF000000u;
+        if (!(option->m_state & XStyleState_Enabled))
+            textColor = xcs_color(option, XPaletteColorRole_Mid);
+        textH = XPainter_textHeight(XPainter_font(painter));
+        if (textH < 14) textH = 14;
+        XPainter_drawText(painter, textRect.x,
+                          textRect.y + (textRect.height - textH) / 2 +
+                              textH - 4,
+                          option->m_text, textColor);
+    }
+    /* 焦点框。 */
+    if (option->m_state & XStyleState_HasFocus) {
+        XStyleOption foc = *option;
+        foc.m_type = XStylePE_FrameFocusRect;
+        foc.m_rect = XStyle_subElementRect((XStyle*)self,
+                                           XStyleSE_ItemViewItemFocusRect,
+                                           option, widget);
+        xcs_drawFocusRect(self, &foc, painter);
+    }
+}
+
 static void VXCommonStyle_drawControl(XStyle* self, int ce,
                                       const XStyleOption* option,
                                       XPainter* painter,
@@ -1922,11 +2381,17 @@ static void VXCommonStyle_drawControl(XStyle* self, int ce,
     case XStyleCE_RadioButton:
         xcs_drawCheckable(self, XStyleCE_RadioButton, option, painter);
         break;
+    case XStyleCE_ProgressBar:
+        xcs_drawProgressBar(self, option, painter, widget);
+        break;
     case XStyleCE_ProgressBarGroove:
         xcs_drawProgressGroove(self, option, painter);
         break;
     case XStyleCE_ProgressBarContents:
         xcs_drawProgressContents(self, option, painter);
+        break;
+    case XStyleCE_ProgressBarLabel:
+        xcs_drawProgressBarLabel(self, option, painter);
         break;
     case XStyleCE_TabBarTabShape:
         xcs_drawTabShape(self, option, painter);
@@ -1961,6 +2426,31 @@ static void VXCommonStyle_drawControl(XStyle* self, int ce,
     case XStyleCE_HeaderLabel:
         xcs_drawHeaderLabel(self, option, painter, widget);
         break;
+    case XStyleCE_Header:
+        xcs_drawHeader(self, option, painter, widget);
+        break;
+    case XStyleCE_ToolBar:
+        xcs_drawToolBar(self, option, painter, widget);
+        break;
+    case XStyleCE_ItemViewItem:
+        xcs_drawItemViewItem(self, option, painter, widget);
+        break;
+    case XStyleCE_ComboBoxLabel:
+        xcs_drawComboBoxLabel(self, option, painter);
+        break;
+    case XStyleCE_MenuBarEmptyArea:
+    case XStyleCE_HeaderEmptyArea:
+    case XStyleCE_ScrollBarAddLine:
+    case XStyleCE_ScrollBarSubLine:
+    case XStyleCE_ScrollBarAddPage:
+    case XStyleCE_ScrollBarSubPage:
+    case XStyleCE_ScrollBarSlider:
+    case XStyleCE_ScrollBarFirst:
+    case XStyleCE_ScrollBarLast:
+        /* 对标 Qt：QCommonStyle::drawControl 不处理 CE_ScrollBar* 与
+         * 空区元素，滚动条经 CC_ScrollBar 复杂控件绘制；此处显式
+         * 列出以覆盖计划清单，保持与 Qt 一致的空操作。 */
+        break;
     default:
         break;
     }
@@ -1970,56 +2460,983 @@ static int VXCommonStyle_pixelMetric(XStyle* self, int pm,
                                      const XStyleOption* option)
 {
     (void)self;
-    (void)option;
     switch (pm) {
-    case XStylePM_ButtonMargin: return 6;
-    case XStylePM_ButtonIconSize: return 16;
-    case XStylePM_ButtonShiftHorizontal: return 0;
-    case XStylePM_ButtonShiftVertical: return 0;
-    case XStylePM_CheckBoxLabelSpacing: return 6;
-    case XStylePM_RadioButtonLabelSpacing: return 6;
-    case XStylePM_IndicatorWidth: return 13;
-    case XStylePM_IndicatorHeight: return 13;
-    case XStylePM_DefaultFrameWidth: return 2;
-    case XStylePM_ProgressBarChunkWidth: return 9;
-    case XStylePM_MenuBarItemSpacing: return 0;
-    case XStylePM_ToolBarHandleExtent: return 10;
-    case XStylePM_ToolBarSeparatorExtent: return 6;
-    case XStylePM_ToolBarItemSpacing: return 1;
-    case XStylePM_TabBarTabOverlap: return 0;
-    case XStylePM_TabBarBaseHeight: return 2;
-    case XStylePM_TabBarTabHSpace: return 12;
-    case XStylePM_TabBarTabVSpace: return 6;
-    case XStylePM_ScrollBarExtent: return 16;
-    case XStylePM_SplitterWidth: return 5;
-    case XStylePM_DockWidgetTitleBarButtonMargin: return 4;
-    default: return 0;
+    case XStylePM_ButtonMargin:
+        return 6;
+    case XStylePM_DockWidgetTitleBarButtonMargin:
+        return 2;
+    case XStylePM_ButtonDefaultIndicator:
+        return 0;
+    case XStylePM_MenuButtonIndicator:
+        return 12;
+    case XStylePM_ButtonShiftHorizontal:
+    case XStylePM_ButtonShiftVertical:
+    case XStylePM_DefaultFrameWidth:
+        return 2;
+    case XStylePM_ComboBoxFrameWidth:
+    case XStylePM_SpinBoxFrameWidth:
+    case XStylePM_MenuPanelWidth:
+    case XStylePM_TabBarBaseOverlap:
+    case XStylePM_TabBarBaseHeight:
+        return XStyle_pixelMetric((XStyle*)self, XStylePM_DefaultFrameWidth,
+                                  option);
+    case XStylePM_ScrollBarExtent:
+        return 16;
+    case XStylePM_ScrollBarSliderMin:
+        return 9;
+    case XStylePM_SliderThickness:
+        return 16;
+    case XStylePM_SliderLength:
+        return 16;
+    case XStylePM_DockWidgetSeparatorExtent:
+        return 6;
+    case XStylePM_DockWidgetHandleExtent:
+        return 8;
+    case XStylePM_DockWidgetFrameWidth:
+        return 1;
+    case XStylePM_DockWidgetTitleMargin:
+        return 0;
+    case XStylePM_SpinBoxSliderHeight:
+    case XStylePM_MenuBarPanelWidth:
+        return 2;
+    case XStylePM_MenuBarItemSpacing:
+        return 0;
+    case XStylePM_ToolBarFrameWidth:
+        return 1;
+    case XStylePM_ToolBarItemMargin:
+        return 0;
+    case XStylePM_ToolBarItemSpacing:
+        return 4;
+    case XStylePM_ToolBarHandleExtent:
+        return 8;
+    case XStylePM_ToolBarSeparatorExtent:
+        return 6;
+    case XStylePM_ToolBarExtensionExtent:
+        return 12;
+    case XStylePM_TabBarTabOverlap:
+        return 3;
+    case XStylePM_TabBarTabHSpace:
+        return 24;
+    case XStylePM_TabBarTabShiftHorizontal:
+        return 0;
+    case XStylePM_TabBarTabShiftVertical:
+        return 2;
+    case XStylePM_TabBarTabVSpace:
+        /* RoundedNorth/South/West/East=8；TriangularWest/East=3；其余 2。 */
+        if (option &&
+            (option->m_tabPosition == 0 || option->m_tabPosition == 1))
+            return 8;
+        if (option && option->m_tabPosition >= 2) return 3;
+        return 2;
+    case XStylePM_ProgressBarChunkWidth:
+        return 9;
+    case XStylePM_IndicatorWidth:
+        return 13;
+    case XStylePM_IndicatorHeight:
+        return 13;
+    case XStylePM_ExclusiveIndicatorWidth:
+        return 12;
+    case XStylePM_ExclusiveIndicatorHeight:
+        return 12;
+    case XStylePM_MenuTearoffHeight:
+        return 10;
+    case XStylePM_MenuScrollerHeight:
+        return 10;
+    case XStylePM_MenuDesktopFrameWidth:
+    case XStylePM_MenuHMargin:
+    case XStylePM_MenuVMargin:
+        return 0;
+    case XStylePM_HeaderMargin:
+        return 4;
+    case XStylePM_HeaderMarkSize:
+        return 16;
+    case XStylePM_HeaderGripMargin:
+        return 4;
+    case XStylePM_HeaderDefaultSectionSizeHorizontal:
+        return 100;
+    case XStylePM_HeaderDefaultSectionSizeVertical:
+        return 30;
+    case XStylePM_TabBarScrollButtonWidth:
+        return 16;
+    case XStylePM_ToolBarIconSize:
+        return 24;
+    case XStylePM_ButtonIconSize:
+    case XStylePM_SmallIconSize:
+        return 16;
+    case XStylePM_LargeIconSize:
+        return 32;
+    case XStylePM_LineEditIconSize:
+        return 16;
+    case XStylePM_LineEditIconMargin:
+        return 4;
+    case XStylePM_ToolTipLabelFrameWidth:
+        return 1;
+    case XStylePM_CheckBoxLabelSpacing:
+    case XStylePM_RadioButtonLabelSpacing:
+        return 6;
+    case XStylePM_SizeGripSize:
+        return 13;
+    case XStylePM_MessageBoxIconSize:
+        return 32;
+    case XStylePM_TabBarIconSize:
+        return 16;
+    case XStylePM_TextCursorWidth:
+        return 1;
+    case XStylePM_TabBar_ScrollButtonOverlap:
+        return 1;
+    case XStylePM_TabCloseIndicatorWidth:
+    case XStylePM_TabCloseIndicatorHeight:
+        return 16;
+    case XStylePM_ScrollView_ScrollBarSpacing:
+        return 2 * XStyle_pixelMetric((XStyle*)self,
+                                      XStylePM_DefaultFrameWidth, option);
+    case XStylePM_ScrollView_ScrollBarOverlap:
+        return 0;
+    case XStylePM_SubMenuOverlap:
+        return -XStyle_pixelMetric((XStyle*)self, XStylePM_MenuPanelWidth,
+                                   option);
+    case XStylePM_TreeViewIndentation:
+        return 20;
+    case XStylePM_TitleBarHeight:
+        return 18;
+    case XStylePM_TitleBarButtonSize:
+        return 16;
+    case XStylePM_TitleBarButtonIconSize:
+        return 16;
+    case XStylePM_LayoutLeftMargin:
+    case XStylePM_LayoutTopMargin:
+    case XStylePM_LayoutRightMargin:
+    case XStylePM_LayoutBottomMargin:
+        return (option && (option->m_state & XStyleState_Window)) ? 11 : 9;
+    case XStylePM_LayoutHorizontalSpacing:
+    case XStylePM_LayoutVerticalSpacing:
+        return 6;
+    case XStylePM_FocusFrameVMargin:
+    case XStylePM_FocusFrameHMargin:
+        return 2;
+    case XStylePM_MdiSubWindowFrameWidth:
+        return 4;
+    case XStylePM_MdiSubWindowMinimizedWidth:
+        return 196;
+    case XStylePM_MaximumDragDistance:
+        return 60;
+    case XStylePM_ListViewIconSize:
+    case XStylePM_IconViewIconSize:
+        return 24;
+    case XStylePM_SliderControlThickness:
+    case XStylePM_SliderTickmarkOffset:
+    case XStylePM_SliderSpaceAvailable:
+        return 0;
+    case XStylePM_SplitterWidth:
+        return 0; /* QCommonStyle 无定义；XWindowsStyle 覆盖为 4。 */
+    default:
+        return 0;
     }
 }
+
+/* ==================== 尺寸计算（对标 QCommonStyle::sizeFromContents） ==================== */
 
 static XSize VXCommonStyle_sizeFromContents(XStyle* self, int ct,
                                             const XStyleOption* option,
                                             XSize contentSize)
 {
-    XSize result;
-    int margin = 0;
+    XSize size;
     (void)self;
+    size = contentSize;
     switch (ct) {
-    case 0: /* 按钮 */
-        margin = XStyle_pixelMetric((XStyle*)self, XStylePM_ButtonMargin,
-                                    option);
+    case XStyleCT_PushButton:
+        if (option) {
+            int width = contentSize.width;
+            int height = contentSize.height;
+            int buttonMargin = XStyle_pixelMetric((XStyle*)self,
+                                                  XStylePM_ButtonMargin,
+                                                  option);
+            int defaultFrameWidth = XStyle_pixelMetric(
+                (XStyle*)self, XStylePM_DefaultFrameWidth, option) * 2;
+            width += buttonMargin + defaultFrameWidth;
+            height += buttonMargin + defaultFrameWidth;
+            if (option->m_checkable) { /* 复用 m_checkable 传
+                                            AutoDefaultButton 特性。 */
+                int buttonIndicator = XStyle_pixelMetric(
+                    (XStyle*)self, XStylePM_ButtonDefaultIndicator,
+                    option) * 2;
+                width += buttonIndicator;
+                height += buttonIndicator;
+            }
+            XSize_init(&size, width, height);
+        }
         break;
-    case 1: /* 复选 */
-    case 2: /* 单选 */
-        margin = XStyle_pixelMetric((XStyle*)self,
-                                    XStylePM_CheckBoxLabelSpacing, option);
+    case XStyleCT_RadioButton:
+    case XStyleCT_CheckBox:
+        if (option) {
+            bool isRadio = (ct == XStyleCT_RadioButton);
+            int width = XStyle_pixelMetric(
+                (XStyle*)self,
+                isRadio ? XStylePM_ExclusiveIndicatorWidth
+                        : XStylePM_IndicatorWidth, option);
+            int height = XStyle_pixelMetric(
+                (XStyle*)self,
+                isRadio ? XStylePM_ExclusiveIndicatorHeight
+                        : XStylePM_IndicatorHeight, option);
+            int margins = 0;
+            if (option->m_text && option->m_text[0]) {
+                margins = 4 + XStyle_pixelMetric(
+                    (XStyle*)self,
+                    isRadio ? XStylePM_RadioButtonLabelSpacing
+                            : XStylePM_CheckBoxLabelSpacing, option);
+            }
+            size.width += width + margins;
+            size.height += 4;
+            if (size.height < height) size.height = height;
+        }
+        break;
+    case XStyleCT_ToolButton:
+        size.width += 6;
+        size.height += 5;
+        break;
+    case XStyleCT_ComboBox:
+        if (option) {
+            int frameWidth = option->m_spinFrame
+                ? XStyle_pixelMetric((XStyle*)self,
+                                     XStylePM_ComboBoxFrameWidth,
+                                     option) * 2 : 0;
+            int textMargins = 2 * (XStyle_pixelMetric(
+                (XStyle*)self, XStylePM_FocusFrameHMargin, option) + 1);
+            int other = 23 > 2 * textMargins + XStyle_pixelMetric(
+                (XStyle*)self, XStylePM_ScrollBarExtent, option)
+                ? 23 : 2 * textMargins + XStyle_pixelMetric(
+                (XStyle*)self, XStylePM_ScrollBarExtent, option);
+            size.width += frameWidth + other;
+            size.height += frameWidth;
+        }
+        break;
+    case XStyleCT_HeaderSection:
+        if (option) {
+            int margin = XStyle_pixelMetric((XStyle*)self,
+                                            XStylePM_HeaderMargin, option);
+            int iconSize = option->m_icon
+                ? XStyle_pixelMetric((XStyle*)self, XStylePM_SmallIconSize,
+                                     option) : 0;
+            int textW = option->m_text
+                ? (int)XStrlen(option->m_text) * 8 : 0; /* 近似字宽。 */
+            int textH = 14;
+            size.height = margin +
+                (iconSize > textH ? iconSize : textH) + margin;
+            size.width = (option->m_icon ? margin : 0) + iconSize +
+                (option->m_text ? margin : 0) + textW + margin;
+        }
+        break;
+    case XStyleCT_TabWidget:
+        size.width += 4;
+        size.height += 4;
+        break;
+    case XStyleCT_LineEdit:
+        if (option) {
+            int lw = option->m_spinFrame ? 1 : 0;
+            size.width += 2 * lw;
+            size.height += 2 * lw;
+        }
+        break;
+    case XStyleCT_GroupBox:
+        if (option && !option->m_flat)
+            size.width += 16;
+        break;
+    case XStyleCT_SpinBox:
+        if (option) {
+            int frameWidth = option->m_spinFrame
+                ? XStyle_pixelMetric((XStyle*)self,
+                                     XStylePM_SpinBoxFrameWidth, option) : 0;
+            size.width += 2 * frameWidth;
+            size.height += 2 * frameWidth;
+            if (option->m_spinSymbols != 2) { /* NoButtons=2。 */
+                int h = size.height / 2 - frameWidth;
+                if (h < 8) h = 8;
+                int bw = 16;
+                int maxbw = h * 8 / 5;
+                if (maxbw > size.width / 3) maxbw = size.width / 3;
+                if (bw > maxbw) bw = maxbw;
+                if (bw < 16) bw = 16;
+                size.width += bw;
+            }
+        }
+        break;
+    case XStyleCT_ScrollBar:
+    case XStyleCT_MenuBar:
+    case XStyleCT_Menu:
+    case XStyleCT_MenuBarItem:
+    case XStyleCT_Slider:
+    case XStyleCT_ProgressBar:
+    case XStyleCT_TabBarTab:
+    default:
+        break;
+    }
+    return size;
+}
+
+/* ==================== 样式提示（对标 QCommonStyle::styleHint 子集） ==================== */
+
+static int VXCommonStyle_styleHint(XStyle* self, int sh,
+                                   const XStyleOption* opt,
+                                   const XWidget* widget)
+{
+    (void)self;
+    switch (sh) {
+    case XStyleSH_Menu_KeyboardSearch:
+        return 0;
+    case XStyleSH_Slider_AbsoluteSetButtons:
+        return 0x00000010; /* Qt::MiddleButton。 */
+    case XStyleSH_Slider_PageSetButtons:
+        return 0x00000001; /* Qt::LeftButton。 */
+    case XStyleSH_ScrollBar_ContextMenu:
+        return 1;
+    case XStyleSH_GroupBox_TextLabelVerticalAlignment:
+        return XAlignment_VCenter;
+    case XStyleSH_GroupBox_TextLabelColor:
+        if (opt) {
+            XColor c = XPalette_color((XPalette*)&opt->m_palette,
+                                      XPaletteColorGroup_Current,
+                                      XPaletteColorRole_Text);
+            return (int)XColor_rgba(&c);
+        }
+        return 0;
+    case XStyleSH_ListViewExpand_SelectMouseType:
+    case XStyleSH_TabBar_SelectMouseType:
+        return 0; /* QEvent::MouseButtonPress=0。 */
+    case XStyleSH_TabBar_Alignment:
+        return XAlignment_Left;
+    case XStyleSH_Header_ArrowAlignment:
+        return XAlignment_Right | XAlignment_VCenter;
+    case XStyleSH_TitleBar_AutoRaise:
+        return 0;
+    case XStyleSH_Menu_SubMenuPopupDelay:
+        return 256;
+    case XStyleSH_Menu_SloppySubMenus:
+        return 1;
+    case XStyleSH_Menu_SubMenuUniDirection:
+        return 0;
+    case XStyleSH_Menu_SubMenuUniDirectionFailCount:
+        return 1;
+    case XStyleSH_Menu_SubMenuSloppySelectOtherActions:
+        return 1;
+    case XStyleSH_Menu_SubMenuSloppyCloseTimeout:
+        return 1000;
+    case XStyleSH_Menu_SubMenuResetWhenReenteringParent:
+        return 0;
+    case XStyleSH_Menu_SubMenuDontStartSloppyOnLeave:
+        return 0;
+    case XStyleSH_ProgressDialog_TextLabelAlignment:
+        return XAlignment_Center;
+    case XStyleSH_BlinkCursorWhenTextSelected:
+        return 1;
+    case XStyleSH_Table_GridLineColor:
+        if (opt) {
+            XColor c = XPalette_color((XPalette*)&opt->m_palette,
+                                      XPaletteColorGroup_Current,
+                                      XPaletteColorRole_Mid);
+            return (int)XColor_rgba(&c);
+        }
+        return -1;
+    case XStyleSH_LineEdit_PasswordCharacter:
+        return 0x25CF; /* U+25CF ●（对标平台默认）。 */
+    case XStyleSH_LineEdit_PasswordMaskDelay:
+        return 1000;
+    case XStyleSH_ToolBox_SelectedPageTitleBold:
+        return 1;
+    case XStyleSH_UnderlineShortcut:
+        return 0;
+    case XStyleSH_SpinBox_ClickAutoRepeatRate:
+        return 150;
+    case XStyleSH_SpinBox_ClickAutoRepeatThreshold:
+        return 500;
+    case XStyleSH_ToolTipLabel_Opacity:
+        return 255;
+    case XStyleSH_SpinControls_DisableOnBounds:
+        return 1;
+    case XStyleSH_Dial_BackgroundRole:
+        return XPaletteColorRole_Window;
+    case XStyleSH_ComboBox_LayoutDirection:
+        return opt ? opt->m_direction : 0;
+    case XStyleSH_ItemView_ShowDecorationSelected:
+        (void)widget;
+        return 0;
+    case XStyleSH_ItemView_ActivateItemOnSingleClick:
+        return 0;
+    case XStyleSH_ScrollBar_RollBetweenButtons:
+        return 0;
+    case XStyleSH_Menu_SelectionWrap:
+        return 0;
+    case XStyleSH_TabWidget_DefaultTabPosition:
+        return 0; /* QTabWidget::North=0。 */
+    case XStyleSH_ToolBar_Movable:
+        return 1;
+    case XStyleSH_ComboBox_UseNativePopup:
+        return 0;
+    case XStyleSH_TabBar_ChangeCurrentDelay:
+        return 0;
+    case XStyleSH_Widget_Animate:
+        return 0;
+    case XStyleSH_Splitter_OpaqueResize:
+        return 1;
+    case XStyleSH_Widget_Animation_Duration:
+        return 250;
+    case XStyleSH_ComboBox_AllowWheelScrolling:
+        return 1;
+    case XStyleSH_SpinBox_ButtonsInsideFrame:
+        return 1;
+    case XStyleSH_SpinBox_StepModifier:
+        return 0; /* Qt::ControlModifier=0x04000000 于 Qt6 为 0x02000000；
+                     简化记录为 0。 */
+    case XStyleSH_TabBar_AllowWheelScrolling:
+        return 0;
+    case XStyleSH_Table_AlwaysDrawLeftTopGridLines:
+        return 0;
+    case XStyleSH_SpinBox_SelectOnStep:
+        return 1;
+    case XStyleSH_DialogButtonBox_ButtonsHaveIcons:
+        return 0;
+    case XStyleSH_Menu_SupportsSections:
+        return 0;
+    case XStyleSH_ToolTip_WakeUpDelay:
+        return 0;
+    case XStyleSH_ToolTip_FallAsleepDelay:
+        return 0;
+    case XStyleSH_ScrollBar_Transient:
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+/* ==================== 子元素矩形（对标 QCommonStyle::subElementRect 子集） ==================== */
+
+static XRect VXCommonStyle_subElementRect(XStyle* self, int sr,
+                                          const XStyleOption* opt,
+                                          const XWidget* widget)
+{
+    XRect r;
+    XRect_init(&r, 0, 0, 0, 0);
+    (void)widget;
+    if (!opt) return r;
+    switch (sr) {
+    case XStyleSE_PushButtonContents: {
+        int dx1 = XStyle_pixelMetric((XStyle*)self,
+                                     XStylePM_DefaultFrameWidth, opt);
+        if (opt->m_checkable) /* AutoDefaultButton 特性复用。 */
+            dx1 += XStyle_pixelMetric((XStyle*)self,
+                                      XStylePM_ButtonDefaultIndicator, opt);
+        XRect_init(&r, opt->m_rect.x + dx1, opt->m_rect.y + dx1,
+                   opt->m_rect.width - dx1 * 2,
+                   opt->m_rect.height - dx1 * 2);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_PushButtonFocusRect: {
+        int dbw1 = 0;
+        if (opt->m_checkable)
+            dbw1 = XStyle_pixelMetric((XStyle*)self,
+                                      XStylePM_ButtonDefaultIndicator, opt);
+        int dfw1 = XStyle_pixelMetric((XStyle*)self,
+                                      XStylePM_DefaultFrameWidth, opt) + 1;
+        XRect_init(&r, opt->m_rect.x + dfw1 + dbw1,
+                   opt->m_rect.y + dfw1 + dbw1,
+                   opt->m_rect.width - dfw1 * 2 - dbw1 * 2,
+                   opt->m_rect.height - dfw1 * 2 - dbw1 * 2);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_PushButtonBevel:
+        r = opt->m_rect;
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    case XStyleSE_CheckBoxIndicator: {
+        int h = XStyle_pixelMetric((XStyle*)self, XStylePM_IndicatorHeight,
+                                   opt);
+        XRect_init(&r, opt->m_rect.x,
+                   opt->m_rect.y + (opt->m_rect.height - h) / 2,
+                   XStyle_pixelMetric((XStyle*)self, XStylePM_IndicatorWidth,
+                                      opt), h);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_CheckBoxContents: {
+        XRect ir = VXCommonStyle_subElementRect(
+            self, XStyleSE_CheckBoxIndicator, opt, widget);
+        int spacing = XStyle_pixelMetric((XStyle*)self,
+                                         XStylePM_CheckBoxLabelSpacing, opt);
+        XRect_init(&r, ir.x + ir.width + spacing, opt->m_rect.y,
+                   opt->m_rect.width - ir.width - spacing,
+                   opt->m_rect.height);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_CheckBoxFocusRect: {
+        XRect cr = VXCommonStyle_subElementRect(
+            self, XStyleSE_CheckBoxContents, opt, widget);
+        int tw = opt->m_text ? (int)XStrlen(opt->m_text) * 8 : 0;
+        if (tw <= 0) {
+            r = VXCommonStyle_subElementRect(
+                self, XStyleSE_CheckBoxIndicator, opt, widget);
+            r = XRect_adjusted(&r, 1, 1, -1, -1);
+            break;
+        }
+        XRect_init(&r, cr.x - 3, cr.y - 2,
+                   (tw > cr.width ? cr.width : tw) + 6,
+                   cr.height + 4);
+        r = XRect_intersected(&r, &opt->m_rect);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_CheckBoxClickRect: {
+        XRect f = VXCommonStyle_subElementRect(
+            self, XStyleSE_CheckBoxFocusRect, opt, widget);
+        XRect i = VXCommonStyle_subElementRect(
+            self, XStyleSE_CheckBoxIndicator, opt, widget);
+        r = XRect_united(&f, &i);
+        break;
+    }
+    case XStyleSE_RadioButtonIndicator: {
+        int h = XStyle_pixelMetric((XStyle*)self,
+                                   XStylePM_ExclusiveIndicatorHeight, opt);
+        XRect_init(&r, opt->m_rect.x,
+                   opt->m_rect.y + (opt->m_rect.height - h) / 2,
+                   XStyle_pixelMetric((XStyle*)self,
+                                      XStylePM_ExclusiveIndicatorWidth,
+                                      opt), h);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_RadioButtonContents: {
+        XRect ir = VXCommonStyle_subElementRect(
+            self, XStyleSE_RadioButtonIndicator, opt, widget);
+        int spacing = XStyle_pixelMetric((XStyle*)self,
+                                         XStylePM_RadioButtonLabelSpacing,
+                                         opt);
+        XRect_init(&r, ir.x + ir.width + spacing, opt->m_rect.y,
+                   opt->m_rect.width - ir.width - spacing,
+                   opt->m_rect.height);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_RadioButtonFocusRect: {
+        XRect cr = VXCommonStyle_subElementRect(
+            self, XStyleSE_RadioButtonContents, opt, widget);
+        int tw = opt->m_text ? (int)XStrlen(opt->m_text) * 8 : 0;
+        if (tw <= 0) {
+            r = VXCommonStyle_subElementRect(
+                self, XStyleSE_RadioButtonIndicator, opt, widget);
+            r = XRect_adjusted(&r, 1, 1, -1, -1);
+            break;
+        }
+        XRect_init(&r, cr.x - 3, cr.y - 2,
+                   (tw > cr.width ? cr.width : tw) + 6,
+                   cr.height + 4);
+        r = XRect_intersected(&r, &opt->m_rect);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_RadioButtonClickRect: {
+        XRect f = VXCommonStyle_subElementRect(
+            self, XStyleSE_RadioButtonFocusRect, opt, widget);
+        XRect i = VXCommonStyle_subElementRect(
+            self, XStyleSE_RadioButtonIndicator, opt, widget);
+        r = XRect_united(&f, &i);
+        break;
+    }
+    case XStyleSE_ComboBoxFocusRect: {
+        int margin = opt->m_spinFrame ? 3 : 0;
+        XRect_init(&r, opt->m_rect.x + margin, opt->m_rect.y + margin,
+                   opt->m_rect.width - 2 * margin - 16,
+                   opt->m_rect.height - 2 * margin);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_SliderFocusRect: {
+        XRect_init(&r, opt->m_rect.x, opt->m_rect.y,
+                   opt->m_rect.width, opt->m_rect.height);
+        r = XRect_intersected(&r, &opt->m_rect);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_ProgressBarGroove:
+    case XStyleSE_ProgressBarContents:
+    case XStyleSE_ProgressBarLabel: {
+        int textw = 0;
+        bool vertical = !(opt->m_state & XStyleState_Horizontal);
+        if (!vertical && opt->m_progressTextVisible && opt->m_text)
+            textw = ((int)XStrlen(opt->m_text) > 4
+                     ? (int)XStrlen(opt->m_text) : 4) * 8 + 6;
+        if (sr == XStyleSE_ProgressBarLabel) {
+            if (textw > 0)
+                XRect_init(&r, opt->m_rect.x + opt->m_rect.width - textw,
+                           opt->m_rect.y, textw, opt->m_rect.height);
+            else
+                r = opt->m_rect;
+        } else {
+            if (textw > 0)
+                XRect_init(&r, opt->m_rect.x, opt->m_rect.y,
+                           opt->m_rect.width - textw, opt->m_rect.height);
+            else
+                r = opt->m_rect;
+        }
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_HeaderLabel: {
+        int margin = XStyle_pixelMetric((XStyle*)self, XStylePM_HeaderMargin,
+                                        opt);
+        XRect_init(&r, opt->m_rect.x + margin, opt->m_rect.y + margin,
+                   opt->m_rect.width - margin * 2,
+                   opt->m_rect.height - margin * 2);
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_HeaderArrow: {
+        int h = opt->m_rect.height;
+        int w = opt->m_rect.width;
+        int margin = XStyle_pixelMetric((XStyle*)self, XStylePM_HeaderMargin,
+                                        opt);
+        if (opt->m_state & XStyleState_Horizontal) {
+            int horiz_size = h / 2;
+            XRect_init(&r, opt->m_rect.x + w - margin * 2 - horiz_size,
+                       opt->m_rect.y + 5, horiz_size,
+                       h - margin * 2 - 5);
+        } else {
+            int vert_size = w / 2;
+            XRect_init(&r, opt->m_rect.x + 5,
+                       opt->m_rect.y + h - margin * 2 - vert_size,
+                       w - margin * 2 - 5, vert_size);
+        }
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_ItemViewItemCheckIndicator:
+    case XStyleSE_ItemViewItemDecoration:
+    case XStyleSE_ItemViewItemText:
+    case XStyleSE_ItemViewItemFocusRect: {
+        int checkW = 13;
+        int margin = 2;
+        int decoW = 16;
+        XRect_init(&r, opt->m_rect.x + margin, opt->m_rect.y + margin,
+                   opt->m_rect.width - margin * 2,
+                   opt->m_rect.height - margin * 2);
+        if (sr == XStyleSE_ItemViewItemCheckIndicator) {
+            XRect_init(&r, opt->m_rect.x, opt->m_rect.y,
+                       checkW, opt->m_rect.height);
+        } else if (sr == XStyleSE_ItemViewItemDecoration) {
+            XRect_init(&r, opt->m_rect.x + checkW + margin, opt->m_rect.y,
+                       decoW, opt->m_rect.height);
+        } else if (sr == XStyleSE_ItemViewItemText) {
+            XRect_init(&r, opt->m_rect.x + checkW + decoW + margin * 2,
+                       opt->m_rect.y,
+                       opt->m_rect.width - checkW - decoW - margin * 2,
+                       opt->m_rect.height);
+        } else {
+            XRect_init(&r, opt->m_rect.x + 1, opt->m_rect.y + 1,
+                       opt->m_rect.width - 2, opt->m_rect.height - 2);
+        }
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    }
+    case XStyleSE_LineEditContents:
+    case XStyleSE_FrameContents:
+        r = opt->m_rect;
+        r = XStyle_visualRect(opt->m_direction, &opt->m_rect, &r);
+        break;
+    case XStyleSE_TabBarTabText:
+        r = opt->m_rect;
+        break;
+    case XStyleSE_ToolBarHandle: {
+        XRect_init(&r, 0, 0, 3,
+                   opt->m_rect.height > 0 ? opt->m_rect.height : 1);
+        break;
+    }
+    default:
+        r = opt->m_rect;
+        break;
+    }
+    return r;
+}
+
+/* ==================== 子控件矩形（对标 QCommonStyle::subControlRect 子集） ==================== */
+
+static XRect VXCommonStyle_subControlRect(XStyle* self, int cc,
+                                          const XStyleOption* opt, int sc,
+                                          const XWidget* widget)
+{
+    XRect ret;
+    XRect_init(&ret, 0, 0, 0, 0);
+    (void)widget;
+    if (!opt) return ret;
+    switch (cc) {
+    case XStyleCC_Slider: {
+        int len = XStyle_pixelMetric((XStyle*)self, XStylePM_SliderLength,
+                                     opt);
+        bool horizontal = opt->m_horizontal;
+        if (sc == XStyleSC_SliderHandle) {
+            int sliderPos = XStyle_sliderPositionFromValue(
+                opt->m_sliderMin, opt->m_sliderMax, opt->m_sliderValue,
+                (horizontal ? opt->m_rect.width : opt->m_rect.height) - len,
+                false);
+            if (horizontal)
+                XRect_init(&ret, opt->m_rect.x + sliderPos, opt->m_rect.y,
+                           len, opt->m_rect.height);
+            else
+                XRect_init(&ret, opt->m_rect.x, opt->m_rect.y + sliderPos,
+                           opt->m_rect.width, len);
+        } else if (sc == XStyleSC_SliderGroove) {
+            if (horizontal)
+                XRect_init(&ret, opt->m_rect.x, opt->m_rect.y,
+                           opt->m_rect.width, opt->m_rect.height);
+            else
+                XRect_init(&ret, opt->m_rect.x, opt->m_rect.y,
+                           opt->m_rect.width, opt->m_rect.height);
+        }
+        ret = XStyle_visualRect(opt->m_direction, &opt->m_rect, &ret);
+        break;
+    }
+    case XStyleCC_ScrollBar: {
+        int sbextent = XStyle_pixelMetric((XStyle*)self,
+                                          XStylePM_ScrollBarExtent, opt);
+        int maxlen = (opt->m_horizontal ? opt->m_rect.width
+                                        : opt->m_rect.height) - sbextent * 2;
+        int sliderlen;
+        int sliderstart;
+        int range = opt->m_sliderMax - opt->m_sliderMin;
+        if (range != 0) {
+            sliderlen = (int)((int64_t)opt->m_sliderPageStep * maxlen /
+                              (range + opt->m_sliderPageStep));
+            {
+                int slidermin = XStyle_pixelMetric(
+                    (XStyle*)self, XStylePM_ScrollBarSliderMin, opt);
+                if (sliderlen < slidermin) sliderlen = slidermin;
+                if (sliderlen > maxlen) sliderlen = maxlen;
+            }
+        } else {
+            sliderlen = maxlen;
+        }
+        sliderstart = sbextent + XStyle_sliderPositionFromValue(
+            opt->m_sliderMin, opt->m_sliderMax, opt->m_sliderValue,
+            maxlen - sliderlen, false);
+        if (opt->m_horizontal) {
+            switch (sc) {
+            case XStyleSC_ScrollBarSubLine: {
+                int bw = opt->m_rect.width / 2 < sbextent
+                    ? opt->m_rect.width / 2 : sbextent;
+                XRect_init(&ret, 0, 0, bw, opt->m_rect.height);
+                break;
+            }
+            case XStyleSC_ScrollBarAddLine: {
+                int bw = opt->m_rect.width / 2 < sbextent
+                    ? opt->m_rect.width / 2 : sbextent;
+                XRect_init(&ret, opt->m_rect.width - bw, 0, bw,
+                           opt->m_rect.height);
+                break;
+            }
+            case XStyleSC_ScrollBarSubPage:
+                XRect_init(&ret, sbextent, 0, sliderstart - sbextent,
+                           opt->m_rect.height);
+                break;
+            case XStyleSC_ScrollBarAddPage:
+                XRect_init(&ret, sliderstart + sliderlen, 0,
+                           maxlen - sliderstart - sliderlen + sbextent,
+                           opt->m_rect.height);
+                break;
+            case XStyleSC_ScrollBarGroove:
+                XRect_init(&ret, sbextent, 0,
+                           opt->m_rect.width - sbextent * 2,
+                           opt->m_rect.height);
+                break;
+            case XStyleSC_ScrollBarSlider:
+                XRect_init(&ret, sliderstart, 0, sliderlen,
+                           opt->m_rect.height);
+                break;
+            default:
+                break;
+            }
+        } else {
+            switch (sc) {
+            case XStyleSC_ScrollBarSubLine: {
+                int bh = opt->m_rect.height / 2 < sbextent
+                    ? opt->m_rect.height / 2 : sbextent;
+                XRect_init(&ret, 0, 0, opt->m_rect.width, bh);
+                break;
+            }
+            case XStyleSC_ScrollBarAddLine: {
+                int bh = opt->m_rect.height / 2 < sbextent
+                    ? opt->m_rect.height / 2 : sbextent;
+                XRect_init(&ret, 0, opt->m_rect.height - bh,
+                           opt->m_rect.width, bh);
+                break;
+            }
+            case XStyleSC_ScrollBarSubPage:
+                XRect_init(&ret, 0, sbextent, opt->m_rect.width,
+                           sliderstart - sbextent);
+                break;
+            case XStyleSC_ScrollBarAddPage:
+                XRect_init(&ret, 0, sliderstart + sliderlen,
+                           opt->m_rect.width,
+                           maxlen - sliderstart - sliderlen + sbextent);
+                break;
+            case XStyleSC_ScrollBarGroove:
+                XRect_init(&ret, 0, sbextent, opt->m_rect.width,
+                           opt->m_rect.height - sbextent * 2);
+                break;
+            case XStyleSC_ScrollBarSlider:
+                XRect_init(&ret, 0, sliderstart, opt->m_rect.width,
+                           sliderlen);
+                break;
+            default:
+                break;
+            }
+        }
+        ret = XStyle_visualRect(opt->m_direction, &opt->m_rect, &ret);
+        break;
+    }
+    case XStyleCC_SpinBox: {
+        int fw = opt->m_spinFrame
+            ? XStyle_pixelMetric((XStyle*)self, XStylePM_SpinBoxFrameWidth,
+                                 opt) : 0;
+        int bh = opt->m_rect.height / 2 - fw;
+        int bw;
+        int x;
+        int y;
+        int lx;
+        int rx;
+        if (bh < 8) bh = 8;
+        bw = bh * 8 / 5;
+        if (bw < 16) bw = 16;
+        if (bw > opt->m_rect.width / 4) bw = opt->m_rect.width / 4;
+        y = fw + opt->m_rect.y;
+        x = opt->m_rect.x + opt->m_rect.width - fw - bw;
+        lx = fw;
+        rx = x - fw;
+        switch (sc) {
+        case XStyleSC_SpinBoxUp:
+            if (opt->m_spinSymbols == 2) break; /* NoButtons。 */
+            XRect_init(&ret, x, y, bw, bh);
+            break;
+        case XStyleSC_SpinBoxDown:
+            if (opt->m_spinSymbols == 2) break;
+            XRect_init(&ret, x, y + bh, bw, bh);
+            break;
+        case XStyleSC_SpinBoxEditField:
+            if (opt->m_spinSymbols == 2)
+                XRect_init(&ret, lx, fw, opt->m_rect.width - 2 * fw,
+                           opt->m_rect.height - 2 * fw);
+            else
+                XRect_init(&ret, lx, fw, rx,
+                           opt->m_rect.height - 2 * fw);
+            break;
+        case XStyleSC_SpinBoxFrame:
+            ret = opt->m_rect;
+            break;
+        default:
+            break;
+        }
+        ret = XStyle_visualRect(opt->m_direction, &opt->m_rect, &ret);
+        break;
+    }
+    case XStyleCC_ComboBox: {
+        int margin = opt->m_spinFrame ? 3 : 0;
+        int bmarg = opt->m_spinFrame ? 2 : 0;
+        int xpos = opt->m_rect.x + opt->m_rect.width - bmarg - 16;
+        switch (sc) {
+        case XStyleSC_ComboBoxFrame:
+            ret = opt->m_rect;
+            break;
+        case XStyleSC_ComboBoxArrow:
+            XRect_init(&ret, xpos, opt->m_rect.y + bmarg, 16,
+                       opt->m_rect.height - 2 * bmarg);
+            break;
+        case XStyleSC_ComboBoxEditField:
+            XRect_init(&ret, opt->m_rect.x + margin,
+                       opt->m_rect.y + margin,
+                       opt->m_rect.width - 2 * margin - 16,
+                       opt->m_rect.height - 2 * margin);
+            break;
+        case XStyleSC_ComboBoxListBoxPopup:
+            ret = opt->m_rect;
+            break;
+        default:
+            break;
+        }
+        ret = XStyle_visualRect(opt->m_direction, &opt->m_rect, &ret);
+        break;
+    }
+    case XStyleCC_ToolButton: {
+        int mbi = XStyle_pixelMetric((XStyle*)self,
+                                     XStylePM_MenuButtonIndicator, opt);
+        ret = opt->m_rect;
+        if (sc == XStyleSC_ToolButton) {
+            if (opt->m_checkState == 1) /* MenuButtonPopup 特性复用。 */
+                ret.width -= mbi;
+        } else if (sc == XStyleSC_ToolButtonMenu) {
+            if (opt->m_checkState == 1) {
+                ret.x += ret.width - mbi;
+                ret.width = mbi;
+            } else {
+                XRect_init(&ret, 0, 0, 0, 0);
+            }
+        } else {
+            XRect_init(&ret, 0, 0, 0, 0);
+        }
+        ret = XStyle_visualRect(opt->m_direction, &opt->m_rect, &ret);
+        break;
+    }
+    default:
+        break;
+    }
+    return ret;
+}
+
+/* ==================== 复杂控件命中测试（对标 QCommonStyle 子集） ==================== */
+
+static int VXCommonStyle_hitTestComplexControl(XStyle* self, int cc,
+                                               const XStyleOption* opt,
+                                               int x, int y,
+                                               const XWidget* widget)
+{
+    int sc = XStyleSC_None;
+    uint32_t ctrl;
+    switch (cc) {
+    case XStyleCC_Slider:
+    case XStyleCC_ScrollBar:
+    case XStyleCC_SpinBox:
+    case XStyleCC_ComboBox:
+    case XStyleCC_ToolButton:
+        ctrl = (cc == XStyleCC_Slider) ? XStyleSC_SliderHandle
+             : (cc == XStyleCC_ComboBox) ? XStyleSC_ComboBoxArrow
+             : (cc == XStyleCC_ToolButton) ? XStyleSC_ToolButton
+             : (cc == XStyleCC_SpinBox) ? XStyleSC_SpinBoxUp
+             : XStyleSC_ScrollBarAddLine;
+        while (ctrl != 0) {
+            XRect r = VXCommonStyle_subControlRect(self, cc, opt, (int)ctrl,
+                                                   widget);
+            if (r.width > 0 && r.height > 0 &&
+                XRect_contains(&r, x, y)) {
+                sc = (int)ctrl;
+                break;
+            }
+            if (cc == XStyleCC_Slider) {
+                if (ctrl == XStyleSC_SliderHandle)
+                    ctrl = XStyleSC_SliderGroove;
+                else
+                    ctrl = 0;
+            } else if (cc == XStyleCC_ComboBox || cc == XStyleCC_ToolButton) {
+                ctrl >>= 1;
+            } else if (cc == XStyleCC_SpinBox) {
+                ctrl <<= 1;
+                if (ctrl > XStyleSC_SpinBoxEditField) ctrl = 0;
+            } else {
+                ctrl <<= 1;
+                if (ctrl > XStyleSC_ScrollBarGroove) ctrl = 0;
+            }
+        }
         break;
     default:
         break;
     }
-    XSize_init(&result, contentSize.width + margin * 2,
-               contentSize.height + margin);
-    return result;
+    return sc;
 }
 
 XVtable* XCommonStyle_class_init(void)
@@ -2036,6 +3453,14 @@ XVtable* XCommonStyle_class_init(void)
                              VXCommonStyle_sizeFromContents);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawComplexControl,
                              VXCommonStyle_drawComplexControl);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_StyleHint,
+                             VXCommonStyle_styleHint);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_SubElementRect,
+                             VXCommonStyle_subElementRect);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_SubControlRect,
+                             VXCommonStyle_subControlRect);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_HitTestComplexControl,
+                             VXCommonStyle_hitTestComplexControl);
     return XVTABLE_DEFAULT;
 }
 

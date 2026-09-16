@@ -434,7 +434,7 @@ static void VXToolButton_paintEvent(XWidget* self, XEvent* event)
 
     if (!tb || !event || XEvent_type(event) != XEVENT_TYPE_PAINT)
         return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image)
         return;
     XPainter_init(&painter, NULL);
@@ -722,10 +722,10 @@ void* XToolButton_triggered_signal(XToolButton* self, XAction* action)
     return (void*)(size_t)XToolButton_triggered_signal;
 }
 
-void XToolButton_setMenu_2(XToolButton* self) { (void)self; }
-void XToolButton_menu_2(XToolButton* self) { (void)self; }
-void XToolButton_setPopupMode_2(XToolButton* self) { (void)self; }
-void XToolButton_popupMode_2(XToolButton* self) { (void)self; }
-void XToolButton_setToolButtonStyle_2(XToolButton* self) { (void)self; }
-void XToolButton_toolButtonStyle_2(XToolButton* self) { (void)self; }
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */

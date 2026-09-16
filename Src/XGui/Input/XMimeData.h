@@ -94,6 +94,13 @@ void XMimeData_clear(XMimeData* self);
  * @return     存在返回 true。
  */
 bool XMimeData_hasFormat(const XMimeData* self, const char* mimeType);
+/** @brief 是否含 URL 列表（对标 QMimeData::hasUrls）。 */
+bool XMimeData_hasUrls(const XMimeData* self);
+/** @brief 返回 URL 列表（对标 QMimeData::urls；URL 以字符串承载）。
+ * @return 新建列表（调用方释放）；未设置返回空列表。 */
+XStringList* XMimeData_urls(const XMimeData* self);
+/** @brief 设置 URL 列表（对标 QMimeData::setUrls；深拷贝）。 */
+void XMimeData_setUrls(XMimeData* self, const XStringList* urls);
 
 /**
  * @brief      返回全部可用格式名（对标 QMimeData::formats）。

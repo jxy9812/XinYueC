@@ -406,7 +406,7 @@ static void VXProgressBar_paintEvent(XWidget* self, XEvent* event)
     XPoint offset;
     XPainter painter;
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -692,8 +692,9 @@ void XProgressBar_text(const XProgressBar* self, char* out, int outSize)
 
 /* ==================== 信号 ==================== */
 
-void* XProgressBar_valueChanged_signal(XProgressBar* self)
+void* XProgressBar_valueChanged_signal(XProgressBar* self, int value)
 {
+    (void)value;
     if (!self)
         return (void*)(size_t)XProgressBar_valueChanged_signal;
     xprogressbar_emitInt(self, (size_t)XProgressBar_valueChanged_signal,
@@ -701,13 +702,13 @@ void* XProgressBar_valueChanged_signal(XProgressBar* self)
     return (void*)(size_t)XProgressBar_valueChanged_signal;
 }
 
-void XProgressBar_setTextVisible_2(XProgressBar* self) { (void)self; }
-void XProgressBar_isTextVisible_2(XProgressBar* self) { (void)self; }
-void XProgressBar_setInvertedAppearance_3(XProgressBar* self) { (void)self; }
-void XProgressBar_invertedAppearance_2(XProgressBar* self) { (void)self; }
-void XProgressBar_setAlignment_2(XProgressBar* self) { (void)self; }
-void XProgressBar_alignment_2(XProgressBar* self) { (void)self; }
-void XProgressBar_minimum_2(XProgressBar* self) { (void)self; }
-void XProgressBar_maximum_2(XProgressBar* self) { (void)self; }
-void XProgressBar_value_2(XProgressBar* self) { (void)self; }
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XPROGRESSBAR_ON */

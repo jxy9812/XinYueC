@@ -63,6 +63,7 @@
 #include "XGuiApplication.h"
 #include "XImage.h"
 #include "XPainter.h"
+#include "XPaintDevice.h"
 #include "XCoreApplication.h"
 #include "XBackingStore.h"
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
@@ -81,6 +82,7 @@
 #if XCURSOR_ON
 #include "XCursor.h"
 #endif /* XCURSOR_ON */
+#include "XGraphicsEffect.h"
 
 #if XWIDGET_ON
 
@@ -140,6 +142,11 @@ static XFocusProxyEntry* g_focusProxyEntries = NULL;
 static void XWidget_attrSet(XWidgetAttributes* bits, XWidgetAttribute attr, bool on);
 /** @brief 查询属性位（对标 QWidget::testAttribute 内部实现）。 */
 static bool XWidget_attrTest(const XWidgetAttributes* bits, XWidgetAttribute attr);
+
+#if XPAINTDEVICE_ON
+/** @brief 控件绘制设备度量回调（定义见文件后部）。 */
+static int xwidget_paintDeviceMetric(void* userData, int metric);
+#endif /* XPAINTDEVICE_ON */
 
 static void VXWidget_deinit(XWidget* self);
 static void VXWidget_copy(XWidget* self, const XWidget* other);
@@ -1056,7 +1063,7 @@ static void XWidget_paintEvent_default(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     rect.x += offset.x;
     rect.y += offset.y;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (image)
         XImage_fillRect(image, &rect, XColor_rgba(&color));
 #endif /* XPALETTE_ON */
@@ -1304,6 +1311,11 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_contentCache = NULL;
     self->m_contentCacheDirty = true;
     XRegion_init(&self->m_mask);
+#if XPAINTDEVICE_ON
+    XPaintDevice_init(&self->m_paintDevice, XPaintDeviceType_Widget, self,
+                      xwidget_paintDeviceMetric, XPaintEngineType_Raster,
+                      (uint32_t)XPaintEngineFeature_AllFeatures);
+#endif
     if (parent) {
         XObject_setParent(&self->m_class, (XObject*)parent);
         self->m_isWindow = (self->m_windowFlags &
@@ -1494,6 +1506,10 @@ static void VXWidget_deinit(XWidget* self)
         self->m_backingStore = NULL;
     }
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
+    if (self->m_graphicsEffect) {
+        XGraphicsEffect_delete_base(self->m_graphicsEffect);
+        self->m_graphicsEffect = NULL;
+    }
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
@@ -1543,6 +1559,12 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     }
 #endif /* XCURSOR_ON */
     self->m_cursor = NULL;
+    /* 图形效果为控件独占资源：拷贝前释放自身效果，拷贝不继承效果
+       （对标 Qt：QWidget 拷贝不复制 graphicsEffect）。 */
+    if (self->m_graphicsEffect) {
+        XGraphicsEffect_delete_base(self->m_graphicsEffect);
+        self->m_graphicsEffect = NULL;
+    }
     XWidget_freeContentCache(self);
     /* 复制字段（m_class 基类、m_windowHandle、m_backingStore 不复制）。 */
     self->m_windowFlags = other->m_windowFlags;
@@ -1651,6 +1673,8 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #if XCURSOR_ON
     self->m_cursor = other->m_cursor;           other->m_cursor = NULL;
 #endif /* XCURSOR_ON */
+    self->m_graphicsEffect = other->m_graphicsEffect;
+    other->m_graphicsEffect = NULL;
     self->m_windowHandle = other->m_windowHandle; other->m_windowHandle = NULL;
     self->m_backingStore = other->m_backingStore; other->m_backingStore = NULL;
     self->m_contentCache = other->m_contentCache;
@@ -4052,6 +4076,9 @@ void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet)
 
 XFont XWidget_font(const XWidget* self)
 {
+    /* 深拷贝语义（Phase 3.2 裁定）：XFont 值拷贝共享 XString 指针且
+       无引用计数，浅拷贝会在任一持有方 deinit 后留下悬空指针（UAF）。
+       返回独立副本，调用方使用后必须 XFont_deinit_base。 */
     XFont out;
     XFont_init(&out);
     if (!self)
@@ -4304,7 +4331,7 @@ XBackingStore* XWidget_backingStore(const XWidget* self)
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
 }
 
-XImage* XWidget_paintDevice(const XWidget* self)
+XImage* XWidget_paintImage(const XWidget* self)
 {
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     XWidget* top;
@@ -4313,12 +4340,44 @@ XImage* XWidget_paintDevice(const XWidget* self)
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (!top) return NULL;
     store = top->m_backingStore;
-    return store ? XBackingStore_paintDevice(store) : NULL;
+    return store ? XBackingStore_paintImage(store) : NULL;
 #else
     (void)self;
     return NULL;
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
 }
+
+#if XPAINTDEVICE_ON
+/** @brief XWidget 绘制设备度量回调（实时读取控件几何）。 */
+static int xwidget_paintDeviceMetric(void* userData, int metric)
+{
+    XWidget* w = (XWidget*)userData;
+    if (!w) return 0;
+    switch (metric)
+    {
+        case XPaintDeviceMetric_PdmWidth: return XWidget_width(w);
+        case XPaintDeviceMetric_PdmHeight: return XWidget_height(w);
+        case XPaintDeviceMetric_PdmWidthMM: return XWidget_width(w) * 25 / 96;
+        case XPaintDeviceMetric_PdmHeightMM: return XWidget_height(w) * 25 / 96;
+        case XPaintDeviceMetric_PdmNumColors: return 0;
+        case XPaintDeviceMetric_PdmDepth: return 32;
+        case XPaintDeviceMetric_PdmDpiX:
+        case XPaintDeviceMetric_PdmDpiY:
+        case XPaintDeviceMetric_PdmPhysicalDpiX:
+        case XPaintDeviceMetric_PdmPhysicalDpiY:
+            return 96;
+        case XPaintDeviceMetric_PdmDevicePixelRatio: return 1;
+        case XPaintDeviceMetric_PdmDevicePixelRatioScaled: return 256;
+        default: return 0;
+    }
+}
+
+XPaintDevice* XWidget_paintDevice(const XWidget* self)
+{
+    if (!self) return NULL;
+    return (XPaintDevice*)&((XWidget*)self)->m_paintDevice;
+}
+#endif /* XPAINTDEVICE_ON */
 
 XPoint XWidget_paintOffset(const XWidget* self)
 {
@@ -4546,7 +4605,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     if (whole.count > 0) {
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
            paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
-        if (!XBackingStore_paintDevice(store)) {
+        if (!XBackingStore_paintImage(store)) {
             XWidget_paintTree(top, &whole);
         }
         else {
@@ -4676,6 +4735,26 @@ XWIDGET_VT_DISPATCH(showEvent, EXWidget_ShowEvent)
 XWIDGET_VT_DISPATCH(hideEvent, EXWidget_HideEvent)
 XWIDGET_VT_DISPATCH(changeEvent, EXWidget_ChangeEvent)
 
+/* ==================== 图形效果（对标 QWidget::graphicsEffect） ==================== */
+
+XGraphicsEffect* XWidget_graphicsEffect(const XWidget* self)
+{
+    return self ? self->m_graphicsEffect : NULL;
+}
+
+void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
+{
+    if (!self) return;
+    if (self->m_graphicsEffect == effect) return;
+    /* Qt：已有效果先删除再安装新效果，控件取得新效果所有权；
+       渲染应用为后续扩展（XGraphicsEffect.h @note）。 */
+    if (self->m_graphicsEffect) {
+        XGraphicsEffect_delete_base(self->m_graphicsEffect);
+        self->m_graphicsEffect = NULL;
+    }
+    self->m_graphicsEffect = effect;
+}
+
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 
 /** @brief 信号发射助手：未连接槽时释放参数列表，防止泄漏。 */
@@ -4791,45 +4870,54 @@ void XWidget_applyWindowVisibility(XWidget* self, bool visible)
     XWidget_propagateVisibility(self, oldVisible);
 }
 
-void XWidget_addAction_2(XWidget* self, XAction* action) { (void)self; (void)action; }
-void XWidget_removeAction_2(XWidget* self, XAction* action) { (void)self; (void)action; }
-void XWidget_setWindowTitle_2(XWidget* self, const char* utf8) { XWidget_setWindowTitle(self, utf8); }
-void XWidget_setToolTip_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
-const char* XWidget_toolTip_2(const XWidget* self) { (void)self; return ""; }
-void XWidget_setStatusTip_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
-void XWidget_setWhatsThis_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
-void XWidget_setAccessibleName_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
-void XWidget_setAccessibleDescription_2(XWidget* self, const char* utf8) { (void)self; (void)utf8; }
-void XWidget_clearFocus_2(XWidget* self) { XWidget_clearFocusBase(self, 0); }
-void XWidget_scroll_2(XWidget* self, int dx, int dy) { (void)self; (void)dx; (void)dy; }
-void XWidget_setAttribute_2(XWidget* self, int attribute, bool on) { XWidget_attrSet(&self->m_attributes, attribute, on); }
-bool XWidget_testAttribute_2(const XWidget* self, int attribute) { return XWidget_attrTest(&self->m_attributes, attribute); }
-void XWidget_setGraphicsEffect(XWidget* self, void* effect) { (void)self; (void)effect; }
-const XVector* XWidget_actions(const XWidget* self) { (void)self; return NULL; }
-void XWidget_addAction_3(XWidget* self) { (void)self; }
-void XWidget_addActions_2(XWidget* self) { (void)self; }
-void XWidget_removeAction_3(XWidget* self) { (void)self; }
-void XWidget_insertAction_2(XWidget* self) { (void)self; }
-void XWidget_setLocale_2(XWidget* self) { (void)self; }
-void XWidget_unsetCursor_2(XWidget* self) { (void)self; }
-void XWidget_setFocusPolicy_2(XWidget* self) { (void)self; }
-void XWidget_focusPolicy_2(XWidget* self) { (void)self; }
-void XWidget_setWindowIcon_2(XWidget* self) { (void)self; }
-void XWidget_setWindowRole_2(XWidget* self) { (void)self; }
-void XWidget_setWindowFilePath_2(XWidget* self) { (void)self; }
-void XWidget_windowFilePath_2(XWidget* self) { (void)self; }
-void XWidget_setPalette_2(XWidget* self) { (void)self; }
-void XWidget_setFont_2(XWidget* self) { (void)self; }
-void XWidget_setStyleSheet_2(XWidget* self) { (void)self; }
-void XWidget_styleSheet_2(XWidget* self) { (void)self; }
-void XWidget_setMask_2(XWidget* self) { (void)self; }
-void XWidget_clearMask_2(XWidget* self) { (void)self; }
-void XWidget_setParent_3(XWidget* self) { (void)self; }
-void XWidget_isHidden_2(XWidget* self) { (void)self; }
-void XWidget_isWindow_2(XWidget* self) { (void)self; }
-void XWidget_isModal_2(XWidget* self) { (void)self; }
-void XWidget_setWindowModified_2(XWidget* self) { (void)self; }
-void XWidget_setFixedSize_2(XWidget* self) { (void)self; }
-void XWidget_setFixedWidth_2(XWidget* self) { (void)self; }
-void XWidget_setFixedHeight_2(XWidget* self) { (void)self; }
+
+
+void XWidget_setWindowTitle_2(XWidget* self, const char* utf8)
+{
+    XString* tmp = NULL;
+    if (utf8) {
+        tmp = XString_create_utf8(utf8);
+        if (!tmp) return;
+    }
+    XWidget_setWindowTitle(self, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON */

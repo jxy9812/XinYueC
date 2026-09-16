@@ -115,99 +115,10 @@ void* XTextBrowser_forwardAvailable_signal(XTextBrowser* self, bool available);
  */
 void* XTextBrowser_historyChanged_signal(XTextBrowser* self);
 
+/** @brief anchorClicked(const char*) 信号（对标 QTextBrowser::anchorClicked；
+ *         载荷：链接 URL UTF-8；链接点击接线见 Task 2.3）。 */
+void* XTextBrowser_anchorClicked_signal(XTextBrowser* self, const char* url);
+
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON */
-
-#ifdef __cplusplus
-}
-#endif
-
 /* ==================== 信号 ==================== */
-
-void* XTextBrowser_anchorClicked_signal(XTextBrowser* self);
-/** @brief X文本Browserhighlighted 信号地址（发射经 XObject_emitSignal）。
- * @param self 目标控件指针。
- * @return 返回对象指针；无效时返回 NULL。
- */
-void* XTextBrowser_highlighted_signal(XTextBrowser* self);
-/** @brief X文本Browserclear历史（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_clearHistory(XTextBrowser* self);
-/** @brief X文本Browserbackward历史数量（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XTextBrowser_backwardHistoryCount(const XTextBrowser* self);
-/** @brief X文本Browserforward历史数量（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XTextBrowser_forwardHistoryCount(const XTextBrowser* self);
-/** @brief X文本Browserset源2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param url URL。
- * @return 无返回值。
- */
-void XTextBrowser_setSource_2(XTextBrowser* self, const char* url);
-/** @brief X文本Browserset源3（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_setSource_3(XTextBrowser* self);
-/** @brief X文本BrowserdoSet源（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_doSetSource(XTextBrowser* self);
-/** @brief X文本Browserhighlighted2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_highlighted_2(XTextBrowser* self);
-/** @brief X文本BrowsersetOpenExternalLinks（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_setOpenExternalLinks(XTextBrowser* self);
-/** @brief X文本BrowseropenExternalLinks（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_openExternalLinks(XTextBrowser* self);
-/** @brief X文本BrowsersetSearchPaths（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_setSearchPaths(XTextBrowser* self);
-/** @brief X文本BrowserloadResource2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_loadResource_2(XTextBrowser* self);
-/** @brief X文本Browseris后退Available2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_isBackwardAvailable_2(XTextBrowser* self);
-/** @brief X文本Browseris前进Available2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_isForwardAvailable_2(XTextBrowser* self);
-/** @brief X文本Browserbackward2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_backward_2(XTextBrowser* self);
-/** @brief X文本Browserforward2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_forward_2(XTextBrowser* self);
-/** @brief X文本Browserhome2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XTextBrowser_home_2(XTextBrowser* self);
 #endif /* XTEXTBROWSER_H */

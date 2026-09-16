@@ -131,6 +131,8 @@ XPlatformIntegration* XPlatformNativeInterface_integration(const XPlatformNative
  * @return     进程内借用句柄；未知资源/入参非法返回 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceForIntegration(
+        const XPlatformNativeInterface* self, const XString* resource);
+void* XPlatformNativeInterface_nativeResourceForIntegration_2(
         const XPlatformNativeInterface* self, const char* resource);
 
 /**
@@ -140,6 +142,8 @@ void* XPlatformNativeInterface_nativeResourceForIntegration(
  * @return     进程内借用句柄；未知资源/入参非法返回 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceForWindow(
+        const XPlatformNativeInterface* self, const XString* resource, XWindow* window);
+void* XPlatformNativeInterface_nativeResourceForWindow_2(
         const XPlatformNativeInterface* self, const char* resource, XWindow* window);
 
 /**
@@ -149,6 +153,8 @@ void* XPlatformNativeInterface_nativeResourceForWindow(
  * @return     进程内借用句柄；未知资源返回 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceForScreen(
+        const XPlatformNativeInterface* self, const XString* resource, XScreen* screen);
+void* XPlatformNativeInterface_nativeResourceForScreen_2(
         const XPlatformNativeInterface* self, const char* resource, XScreen* screen);
 
 /**
@@ -160,6 +166,8 @@ void* XPlatformNativeInterface_nativeResourceForScreen(
  * @return     进程内借用句柄；未知资源或不可用返回 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceForBackingStore(
+        const XPlatformNativeInterface* self, const XString* resource, void* backingStore);
+void* XPlatformNativeInterface_nativeResourceForBackingStore_2(
         const XPlatformNativeInterface* self, const char* resource, void* backingStore);
 
 /**
@@ -168,6 +176,8 @@ void* XPlatformNativeInterface_nativeResourceForBackingStore(
  * @return     恒 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceForCursor(
+        const XPlatformNativeInterface* self, const XString* resource, XCursor* cursor);
+void* XPlatformNativeInterface_nativeResourceForCursor_2(
         const XPlatformNativeInterface* self, const char* resource, XCursor* cursor);
 
 /**
@@ -175,6 +185,8 @@ void* XPlatformNativeInterface_nativeResourceForCursor(
  * @return     已注册函数指针或 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceFunctionForIntegration(
+        const XPlatformNativeInterface* self, const XString* resource);
+void* XPlatformNativeInterface_nativeResourceFunctionForIntegration_2(
         const XPlatformNativeInterface* self, const char* resource);
 
 /**
@@ -182,6 +194,36 @@ void* XPlatformNativeInterface_nativeResourceFunctionForIntegration(
  * @return     已注册函数指针或 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceFunctionForScreen(
+        const XPlatformNativeInterface* self, const XString* resource);
+void* XPlatformNativeInterface_nativeResourceFunctionForScreen_2(
+        const XPlatformNativeInterface* self, const char* resource);
+
+/**
+ * @brief      查询窗口上下文原生资源（对标 QPlatformNativeInterface::
+ *             nativeResourceForContext；当前未注册时返回 NULL）。
+ * @param      self 目标接口。
+ * @param      resource 资源名（XString 主版本）。
+ * @param      context 窗口上下文。
+ * @return     资源句柄；未注册返回 NULL。
+ */
+void* XPlatformNativeInterface_nativeResourceForContext(
+        const XPlatformNativeInterface* self, const XString* resource,
+        XWindow* context);
+/** @brief UTF-8 资源名重载（语义同主版本）。 */
+void* XPlatformNativeInterface_nativeResourceForContext_2(
+        const XPlatformNativeInterface* self, const char* resource,
+        XWindow* context);
+/**
+ * @brief      查询窗口上下文原生资源函数（对标 QPlatformNativeInterface::
+ *             nativeResourceFunctionForContext；当前未注册时返回 NULL）。
+ * @param      self 目标接口。
+ * @param      resource 资源名（XString 主版本）。
+ * @return     函数指针；未注册返回 NULL。
+ */
+void* XPlatformNativeInterface_nativeResourceFunctionForContext(
+        const XPlatformNativeInterface* self, const XString* resource);
+/** @brief UTF-8 资源名重载（语义同主版本）。 */
+void* XPlatformNativeInterface_nativeResourceFunctionForContext_2(
         const XPlatformNativeInterface* self, const char* resource);
 
 /**
@@ -189,6 +231,8 @@ void* XPlatformNativeInterface_nativeResourceFunctionForScreen(
  * @return     已注册函数指针或 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceFunctionForWindow(
+        const XPlatformNativeInterface* self, const XString* resource);
+void* XPlatformNativeInterface_nativeResourceFunctionForWindow_2(
         const XPlatformNativeInterface* self, const char* resource);
 
 /**
@@ -196,6 +240,8 @@ void* XPlatformNativeInterface_nativeResourceFunctionForWindow(
  * @return     已注册函数指针或 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceFunctionForBackingStore(
+        const XPlatformNativeInterface* self, const XString* resource);
+void* XPlatformNativeInterface_nativeResourceFunctionForBackingStore_2(
         const XPlatformNativeInterface* self, const char* resource);
 
 /**
@@ -203,6 +249,8 @@ void* XPlatformNativeInterface_nativeResourceFunctionForBackingStore(
  * @return     已注册函数指针或 NULL。
  */
 void* XPlatformNativeInterface_nativeResourceFunctionForCursor(
+        const XPlatformNativeInterface* self, const XString* resource);
+void* XPlatformNativeInterface_nativeResourceFunctionForCursor_2(
         const XPlatformNativeInterface* self, const char* resource);
 
 /**
@@ -212,6 +260,8 @@ void* XPlatformNativeInterface_nativeResourceFunctionForCursor(
  * @return     已注册函数指针或 NULL。
  */
 void* XPlatformNativeInterface_platformFunction(
+        const XPlatformNativeInterface* self, const XString* name);
+void* XPlatformNativeInterface_platformFunction_2(
         const XPlatformNativeInterface* self, const char* name);
 
 /**
@@ -224,6 +274,8 @@ void* XPlatformNativeInterface_platformFunction(
  * @return     true 注册/覆盖/注销成功；false 参数非法或注册表已满。
  */
 bool XPlatformNativeInterface_registerPlatformFunction(
+        XPlatformNativeInterface* self, const XString* name, void* function);
+bool XPlatformNativeInterface_registerPlatformFunction_2(
         XPlatformNativeInterface* self, const char* name, void* function);
 
 /* ==================== 窗口原生属性（对标 QPlatformNativeInterface） ==================== */
@@ -246,6 +298,9 @@ XVariantHashMap* XPlatformNativeInterface_windowProperties(
  */
 XVariant* XPlatformNativeInterface_windowProperty(
         const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
+        const XString* name);
+XVariant* XPlatformNativeInterface_windowProperty_2(
+        const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
         const char* name);
 
 /**
@@ -259,7 +314,10 @@ XVariant* XPlatformNativeInterface_windowProperty(
  * @param      defaultValue 默认值借用指针；可为 NULL（此时不存在返回 NULL）。
  * @return     新建 XVariant（命中拷贝或默认值拷贝）；参数非法返回 NULL。
  */
-XVariant* XPlatformNativeInterface_windowProperty_2(
+XVariant* XPlatformNativeInterface_windowProperty_default(
+        const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
+        const XString* name, const XVariant* defaultValue);
+XVariant* XPlatformNativeInterface_windowProperty_default_2(
         const XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
         const char* name, const XVariant* defaultValue);
 
@@ -273,6 +331,9 @@ XVariant* XPlatformNativeInterface_windowProperty_2(
  * @param      value 属性值借用指针；可为 NULL（删除）。
  */
 void XPlatformNativeInterface_setWindowProperty(
+        XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
+        const XString* name, const XVariant* value);
+void XPlatformNativeInterface_setWindowProperty_2(
         XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
         const char* name, const XVariant* value);
 

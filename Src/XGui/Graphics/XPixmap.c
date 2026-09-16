@@ -750,6 +750,10 @@ void XPixmap_trueMatrix_2(float m00, float m01, float m02, float m10, float m11,
 void XPixmap_toImage(const XPixmap* self, XImage* out)
 {
     if (!out) return;
+    /* 安全替换：先释放 out 既有数据再重建（XImage_init 直接 XMemset
+       会丢弃旧 m_data 造成泄漏；out 须为已初始化对象，与 XImage_scaled
+       的输出契约一致）。 */
+    XImage_deinit_base(out);
     XImage_init(out);
     if (!self || !self->m_data) return;
     XCopy(out, &self->m_data->m_image);
@@ -1131,3 +1135,14 @@ void XPixmap_fromImageInPlace(XImage* image, uint32_t flags, XPixmap* out)
     if (!image || XImage_isNull(image)) return;
     XPixmap_setData(out, XPlatformPixmap_createFromImage(image, flags, false));
 }
+
+#if XPAINTDEVICE_ON
+XPaintDevice* XPixmap_paintDevice(XPixmap* self)
+{
+    XPlatformPixmap* d;
+    if (!self) return NULL;
+    d = self->m_data;
+    if (!d) return NULL;
+    return XImage_paintDevice(&d->m_image);
+}
+#endif /* XPAINTDEVICE_ON */

@@ -53,7 +53,7 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
     int w;
     if (!dock || !event) return;
     w = XWidget_width(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -203,6 +203,8 @@ void XDockWidget_setFloating(XDockWidget* self, bool floating)
     self->m_floating = floating;
     xdw_emitBool(self, (size_t)XDockWidget_topLevelChanged_signal,
                  floating);
+    xdw_emitInt(self,
+                (size_t)XDockWidget_dockLocationChanged_signal(self, 0), 0);
 }
 
 bool XDockWidget_isFloating(const XDockWidget* self)
@@ -267,22 +269,23 @@ void* XDockWidget_visibilityChanged_signal(XDockWidget* self, bool visible)
     (void)self; (void)visible;
     return (void*)(size_t)XDockWidget_visibilityChanged_signal;
 }
-
-
-void* XDockWidget_dockLocationChanged_signal(XDockWidget* self)
+void* XDockWidget_dockLocationChanged_signal(XDockWidget* self, int area)
 {
-    (void)self;
+    (void)self; (void)area;
     return (void*)(size_t)XDockWidget_dockLocationChanged_signal;
 }
 
-void XDockWidget_setTitleBarWidget_2(XDockWidget* self) { (void)self; }
-void XDockWidget_titleBarWidget_2(XDockWidget* self) { (void)self; }
-void XDockWidget_setWidget_2(XDockWidget* self) { (void)self; }
-void XDockWidget_widget_2(XDockWidget* self) { (void)self; }
-void XDockWidget_setFeatures_2(XDockWidget* self) { (void)self; }
-void XDockWidget_features_2(XDockWidget* self) { (void)self; }
-void XDockWidget_setFloating_2(XDockWidget* self) { (void)self; }
-void XDockWidget_isFloating_2(XDockWidget* self) { (void)self; }
-void XDockWidget_setAllowedAreas_2(XDockWidget* self) { (void)self; }
-void XDockWidget_allowedAreas_2(XDockWidget* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */

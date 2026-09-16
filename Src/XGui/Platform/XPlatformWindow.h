@@ -179,7 +179,8 @@ XVariantHashMap* XPlatformWindow_properties(const XPlatformWindow* self);
  * @param      name UTF-8 属性名；可为 NULL。
  * @return     内部存储的 XVariant 借用指针；不存在或入参非法返回 NULL。
  */
-XVariant* XPlatformWindow_property(const XPlatformWindow* self, const char* name);
+XVariant* XPlatformWindow_property(const XPlatformWindow* self, const XString* name);
+XVariant* XPlatformWindow_property_2(const XPlatformWindow* self, const char* name);
 
 /**
  * @brief      写入原生属性（对标 setWindowProperty）。
@@ -188,8 +189,10 @@ XVariant* XPlatformWindow_property(const XPlatformWindow* self, const char* name
  * @param      name UTF-8 属性名；可为 NULL。
  * @param      value 属性值；可为 NULL（删除）。
  */
-void XPlatformWindow_setProperty(XPlatformWindow* self, const char* name,
+void XPlatformWindow_setProperty(XPlatformWindow* self, const XString* name,
                                  const XVariant* value);
+void XPlatformWindow_setProperty_2(XPlatformWindow* self, const char* name,
+                                   const XVariant* value);
 
 /**
  * @brief      删除原生属性。
@@ -197,7 +200,8 @@ void XPlatformWindow_setProperty(XPlatformWindow* self, const char* name,
  * @param      name UTF-8 属性名；可为 NULL。
  * @return     true 表示原本存在并已删除；false 表示不存在或入参非法。
  */
-bool XPlatformWindow_removeProperty(XPlatformWindow* self, const char* name);
+bool XPlatformWindow_removeProperty(XPlatformWindow* self, const XString* name);
+bool XPlatformWindow_removeProperty_2(XPlatformWindow* self, const char* name);
 
 #ifdef __cplusplus
 }

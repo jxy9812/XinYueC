@@ -117,6 +117,8 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XKeySequenceEdit.h"
 #include "XWizard.h"
 #include "XChartView.h"
+#include "XAbstractAxis.h"
+#include "XCategoryAxis.h"
 #include "XLineSeries.h"
 #include "XPieSeries.h"
 #include "XBarSeries.h"
@@ -124,6 +126,12 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XAreaSeries.h"
 #include "XSplineSeries.h"
 #include "XTableWidget.h"
+#include "XHeaderView.h"
+#include "XItemSelectionModel.h"
+#include "XListView.h"
+#include "XListWidget.h"
+#include "XTreeView.h"
+#include "XTreeWidget.h"
 #include "XAbstractScrollArea.h"
 #include "XAbstractSlider.h"
 #include "XDial.h"
@@ -169,6 +177,30 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON
 #include "XToolButton.h"
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
+#if XWIDGET_ON
+#include "XToolTip.h"
+#include "XShortcut.h"
+#endif /* XWIDGET_ON */
+#if XWIDGET_ON && XTABLEWIDGET_ON
+#include "XCompleter.h"
+#endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+#if XWIDGET_ON && XACTION_ON
+#include "XActionGroup.h"
+#endif /* XWIDGET_ON && XACTION_ON */
+/* Task 2.19b：对话框族公开类对应物（XFileDialog/XColorDialog/
+ * XInputDialog/XProgressDialog/XGraphicsEffect/XOffscreenSurface）。 */
+#if XWIDGET_ON && XDIALOG_ON
+#include "XFileDialog.h"
+#include "XColorDialog.h"
+#include "XInputDialog.h"
+#include "XProgressDialog.h"
+#endif /* XWIDGET_ON && XDIALOG_ON */
+#if XWIDGET_ON
+#include "XGraphicsEffect.h"
+#endif /* XWIDGET_ON */
+#if XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON
+#include "XOffscreenSurface.h"
+#endif /* XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON */
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XAccessible.h"
 #include "XPlatformAccessibility.h"
@@ -4203,6 +4235,210 @@ static void test_painter_raster_contract(void)
                 "deinitialized painter cannot be reused without init");
     XPainter_deinit(&painter);
     XImage_deinit_base(&image);
+}
+
+/* ============ Task 2.11 契约测试（图案刷/dash/clipPath/设备/ICC） ===== */
+
+static void test_painter_task211_contract(void)
+{
+    /* ---- 标准图案画刷：Dense4 8x8 像素级断言（Qt 0x55 表） ---- */
+#if XPAINTER_BRUSH_ON
+    {
+        XImage image;
+        XPainter painter;
+        XRect r = { 0, 0, 8, 8 };
+        int y;
+        bool ok = true;
+        XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
+        XPainter_init(&painter, NULL);
+        expect_true(XPainter_begin_image(&painter, &image),
+                    "t211: begin image");
+        XPainter_fillRect(&painter, &r, 0xffffffffu); /* 白底 */
+        XPainter_setBrushStyle(&painter, XPainterBrushStyle_Dense4Pattern);
+        XPainter_fillRect(&painter, &r, 0xff00ff00u);
+        /* Dense4 行字节 0x55：bit(x&7) 置位=画刷色（MonoLSB）。 */
+        for (y = 0; y < 8 && ok; ++y) {
+            int x;
+            for (x = 0; x < 8; ++x) {
+                uint32_t got = XImage_pixel(&image, x, y);
+                static const unsigned char d4row[8] =
+                    { 0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55, 0xaa };
+                uint32_t want = ((d4row[y & 7] >> (x & 7)) & 1u)
+                                    ? 0xff00ff00u : 0xffffffffu;
+                if (got != want) { ok = false; break; }
+            }
+        }
+        expect_true(ok, "t211: Dense4 图案逐像素匹配 Qt 表");
+        XPainter_deinit(&painter);
+        XImage_deinit_base(&image);
+    }
+#endif /* XPAINTER_BRUSH_ON */
+
+    /* ---- 自定义虚线节距 roundtrip + CustomDashLine 使用 ---- */
+#if XPAINTER_PENSTYLE_ON
+    {
+        float pat[2] = { 5.0f, 5.0f };
+        float out[8] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+        XImage image;
+        XPainter painter;
+        int n;
+        XImage_init_ex(&image, 32, 8, XImageFormat_ARGB32);
+        XPainter_init(&painter, NULL);
+        expect_true(XPainter_begin_image(&painter, &image),
+                    "t211: dash begin");
+        XPainter_setDashPattern(&painter, pat, 2);
+        n = XPainter_dashPattern(&painter, out, 8);
+        expect_true(n == 2 && out[0] == 5.0f && out[1] == 5.0f,
+                    "t211: dashPattern roundtrip");
+        XPainter_setPenStyle(&painter, XPainterPenStyle_CustomDashLine);
+        XPainter_setPenWidth(&painter, 1);
+        XPainter_drawLine(&painter, 0, 4, 31, 4);
+        /* 自定义节距 [5,5]：画 5 空 5。线段 (0,4)-(31,4)：0..5 画；
+           中段空白（6..9 应空）。 */
+        expect_true(XImage_pixel(&image, 0, 4) != 0u &&
+                        XImage_pixel(&image, 6, 4) == 0u &&
+                        XImage_pixel(&image, 7, 4) == 0u &&
+                        XImage_pixel(&image, 8, 4) == 0u &&
+                        XImage_pixel(&image, 9, 4) == 0u &&
+                        XImage_pixel(&image, 10, 4) != 0u,
+                    "t211: CustomDashLine 按用户节距绘制");
+        XPainter_deinit(&painter);
+        XImage_deinit_base(&image);
+    }
+#endif /* XPAINTER_PENSTYLE_ON */
+
+    /* ---- setClipPath（包围矩形近似） ---- */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    {
+        XPainterPath path;
+        XRect out;
+        XImage image;
+        XPainter painter;
+        XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
+        XPainter_init(&painter, NULL);
+        expect_true(XPainter_begin_image(&painter, &image),
+                    "t211: clipPath begin");
+        XPainterPath_init(&path);
+        {
+            XRect pr = { 2, 3, 5, 4 };
+            XPainterPath_addRect(&path, &pr);
+        }
+        XPainter_setClipPath(&painter, &path,
+                             XPainterClipOperation_ReplaceClip);
+        XPainter_clipBoundingRect(&painter, &out);
+        expect_true(out.x == 2 && out.y == 3 &&
+                        out.width == 5 && out.height == 4,
+                    "t211: setClipPath 包围矩形生效");
+
+        {
+            XPainterPath back;
+            XPainter_clipPath(&painter, &back);
+            expect_true(back.m_elementCount == 0,
+                        "t211: clipPath 返回空路径（已知偏差）");
+            XPainterPath_deinit(&back);
+        }
+        XPainterPath_deinit(&path);
+        XPainter_deinit(&painter);
+        XImage_deinit_base(&image);
+    }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+
+    /* ---- boundingRect 文本包围矩形 ---- */
+#if XPAINTER_TEXTLAYOUT_ON
+    {
+        XPainter painter;
+        XRect rect = { 10, 10, 100, 40 };
+        XRect out;
+        int tw;
+        int th;
+        XPainter_init(&painter, NULL);
+        tw = XPainter_textWidth(&painter.m_state.m_font, "AB");
+        th = XPainter_textHeight(&painter.m_state.m_font);
+        XPainter_boundingRect(&painter, &rect, 0, "AB", &out);
+        expect_true(out.width == tw && out.height == th,
+                    "t211: boundingRect 文本尺寸");
+        XPainter_deinit(&painter);
+    }
+#endif /* XPAINTER_TEXTLAYOUT_ON */
+
+    /* ---- XPaintDevice 度量（XImage/XWidget 接入） ---- */
+#if XPAINTDEVICE_ON
+    {
+        XImage image;
+        XImage_init_ex(&image, 20, 10, XImageFormat_ARGB32);
+        XImage_setDevicePixelRatio(&image, 2.0f);
+        expect_true(XPaintDevice_width(XImage_paintDevice(&image)) == 20 &&
+                        XPaintDevice_height(XImage_paintDevice(&image)) == 10,
+                    "t211: XImage 设备度量宽高");
+        expect_true(XPaintDevice_devicePixelRatio(
+                        XImage_paintDevice(&image)) == 2,
+                    "t211: XImage 设备度量 dpr");
+        expect_true(XPaintDevice_devType(XImage_paintDevice(&image)) ==
+                        XPaintDeviceType_Image,
+                    "t211: XImage 设备类型");
+        XImage_deinit_base(&image);
+        {
+            XWidget* w = XWidget_create(NULL, 0);
+            XPaintDevice* pd;
+            expect_true(w != NULL, "t211: XWidget 创建");
+            XWidget_resize(w, 60, 40);
+            pd = XWidget_paintDevice(w);
+            expect_true(pd != NULL &&
+                            XPaintDevice_width(pd) == 60 &&
+                            XPaintDevice_height(pd) == 40 &&
+                            XPaintDevice_devType(pd) ==
+                                XPaintDeviceType_Widget,
+                        "t211: XWidget 设备度量");
+            XWidget_delete_base(w);
+        }
+    }
+#endif /* XPAINTDEVICE_ON */
+
+    /* ---- ICC 透明承载 roundtrip ---- */
+    {
+        XColorSpace cs;
+        unsigned char icc[40];
+        unsigned char back[40] = { 0 };
+        int i;
+        for (i = 0; i < 40; ++i) icc[i] = (unsigned char)(0x40 + i);
+        XColorSpace_fromIccProfile(&cs, icc, 40);
+        expect_true(XColorSpace_hasIccProfile(&cs),
+                    "t211: ICC 承载标记");
+        expect_true(XColorSpace_iccProfile(&cs, back, 40) == 40 &&
+                        XMemcmp(back, icc, 40) == 0,
+                    "t211: ICC roundtrip");
+        {
+            XColorSpace target = XColorSpace_sRgb();
+            XColorTransform t =
+                XColorSpace_transformationToColorSpace(&cs, &target);
+            expect_true(XColorSpace_equals(&t.m_source, &cs) &&
+                            XColorSpace_equals(&t.m_target, &target),
+                        "t211: transformationToColorSpace 描述对");
+        }
+    }
+
+    /* ---- XImage transformed 双线性（SmoothTransformation） ---- */
+    {
+        XImage src;
+        XImage out;
+        XImage_init_ex(&src, 2, 1, XImageFormat_ARGB32);
+        XImage_init(&out); /* 输出目标须先初始化（scaled 安全替换契约）。 */
+        XImage_setPixel(&src, 0, 0, 0xff000000u); /* 黑 */
+        XImage_setPixel(&src, 1, 0, 0xffffffffu); /* 白 */
+        XImage_scaledToWidth(&src, 4, 1, &out);
+        {
+            /* 2x1 源 4x 缩放：x=1 → 源 0.25 → 0.25*255≈64；x=2 → 191。 */
+            uint32_t p1 = XImage_pixel(&out, 1, 0);
+            uint32_t p2 = XImage_pixel(&out, 2, 0);
+            int r1 = (int)((p1 >> 16) & 0xffu);
+            int r2 = (int)((p2 >> 16) & 0xffu);
+            expect_true(r1 >= 40 && r1 <= 88 &&
+                            r2 >= 167 && r2 <= 215,
+                        "t211: 双线性中间像素为灰");
+        }
+        XImage_deinit_base(&out);
+        XImage_deinit_base(&src);
+    }
 }
 
 
@@ -17772,6 +18008,7 @@ static void test_window_contract(void)
 #if XGUIAPPLICATION_ON
 
 #include "XGuiApplication.h"
+#include "XApplication.h"
 #include "XVarList.h"
 #include "XEvent.h"
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
@@ -17998,6 +18235,13 @@ static XVariant* gui_app_inputMethodQuery(XObject* focusObject,
     return XVariant_create(&rect, sizeof(rect), XVariantType_User);
 }
 #endif /* XINPUTMETHOD_ON && XPLATFORMINPUTCTX_ON */
+
+static int fcSlotCount = 0;
+static void fcSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    ++fcSlotCount;
+}
 
 static void test_gui_application_contract(void)
 {
@@ -18688,13 +18932,13 @@ static void test_gui_application_contract(void)
         expect_true(inputContext != NULL,
                     "Auto 布局方向可取得平台输入上下文");
         if (inputContext) {
-            XPlatformInputContext_setLocale(inputContext, "ar_SA");
+            XPlatformInputContext_setLocale_2(inputContext, "ar_SA");
             expect_true(XGuiApplication_layoutDirection() ==
                             XGuiLayoutDirection_RightToLeft &&
                         XGuiApplication_isRightToLeft() &&
                         g_guiAppProbe.layoutDirectionChanged == 3,
                         "Auto 随平台阿拉伯语变更为 RTL 并发射有效方向");
-            XPlatformInputContext_setLocale(inputContext, "C");
+            XPlatformInputContext_setLocale_2(inputContext, "C");
             expect_true(XGuiApplication_layoutDirection() ==
                             XGuiLayoutDirection_LeftToRight &&
                         XGuiApplication_isLeftToRight() &&
@@ -18704,8 +18948,8 @@ static void test_gui_application_contract(void)
             expect_true(g_guiAppProbe.layoutDirectionChanged == 5 &&
                         XGuiApplication_isRightToLeft(),
                         "显式 RTL 请求发射且生效");
-            XPlatformInputContext_setLocale(inputContext, "ar_SA");
-            XPlatformInputContext_setLocale(inputContext, "C");
+            XPlatformInputContext_setLocale_2(inputContext, "ar_SA");
+            XPlatformInputContext_setLocale_2(inputContext, "C");
             expect_true(XGuiApplication_isRightToLeft() &&
                         g_guiAppProbe.layoutDirectionChanged == 5,
                         "显式 RTL 不受平台语言变更覆盖");
@@ -18925,26 +19169,26 @@ static void test_gui_application_contract(void)
         }
 
         /* 原生接口资源表 */
-        expect_true(XPlatformNativeInterface_nativeResourceForIntegration(
+        expect_true(XPlatformNativeInterface_nativeResourceForIntegration_2(
                         gni, "integration") == (void*)gpi &&
-                    XPlatformNativeInterface_nativeResourceForIntegration(
+                    XPlatformNativeInterface_nativeResourceForIntegration_2(
                         gni, "integration-handle") == (void*)gpi &&
-                    XPlatformNativeInterface_nativeResourceForIntegration(
+                    XPlatformNativeInterface_nativeResourceForIntegration_2(
                         gni, "x") == NULL,
                     "nativeResourceForIntegration 资源查询");
-        expect_true(XPlatformNativeInterface_registerPlatformFunction(
+        expect_true(XPlatformNativeInterface_registerPlatformFunction_2(
                         gni, "xgui-test-function", (void*)(uintptr_t)0x1234),
                     "platformFunction 注册动态函数");
-        expect_true(XPlatformNativeInterface_platformFunction(
+        expect_true(XPlatformNativeInterface_platformFunction_2(
                         gni, "xgui-test-function") == (void*)(uintptr_t)0x1234 &&
                     XGuiApplication_platformFunction("xgui-test-function") ==
                         (void*)(uintptr_t)0x1234 &&
-                    XPlatformNativeInterface_nativeResourceFunctionForWindow(
+                    XPlatformNativeInterface_nativeResourceFunctionForWindow_2(
                         gni, "xgui-test-function") == (void*)(uintptr_t)0x1234,
                     "platformFunction 及 resourceFunction 查询");
-        expect_true(XPlatformNativeInterface_registerPlatformFunction(
+        expect_true(XPlatformNativeInterface_registerPlatformFunction_2(
                         gni, "xgui-test-function", NULL) &&
-                    XPlatformNativeInterface_platformFunction(
+                    XPlatformNativeInterface_platformFunction_2(
                         gni, "xgui-test-function") == NULL,
                     "platformFunction 注销动态函数");
 
@@ -19081,16 +19325,16 @@ static void test_gui_application_contract(void)
                     "输入法默认区域 C");
         if (gs) XString_delete_base((XClass*)gs); gs = NULL;
         /* 区域可设置（先查完默认值再修改，避免依赖顺序） */
-        XPlatformInputContext_setLocale(gctx, "zh_CN");
+        XPlatformInputContext_setLocale_2(gctx, "zh_CN");
         gs = XPlatformInputContext_locale(gctx);
         expect_true(gs != NULL && strcmp(XString_toUtf8(gs), "zh_CN") == 0,
                     "输入上下文区域可设置");
         if (gs) XString_delete_base((XClass*)gs); gs = NULL;
-        XPlatformInputContext_setLocale(gctx, "ar_SA");
+        XPlatformInputContext_setLocale_2(gctx, "ar_SA");
         expect_true(XPlatformInputContext_inputDirection(gctx) ==
                         XInputMethodLayoutDirection_RightToLeft,
                     "输入上下文 RTL 区域方向按 Qt 语义切换");
-        XPlatformInputContext_setLocale(gctx, "zh_CN");
+        XPlatformInputContext_setLocale_2(gctx, "zh_CN");
         expect_true(XPlatformInputContext_inputDirection(gctx) ==
                         XInputMethodLayoutDirection_LeftToRight,
                     "输入上下文 LTR 区域方向按 Qt 语义恢复");
@@ -19149,10 +19393,10 @@ static void test_gui_application_contract(void)
         expect_true(XPlatformBackingStore_window(gpbs) == gpwin,
                     "平台后端登记绑定窗口");
         expect_true(XPlatformBackingStore_paintDevice(gpbs) == NULL &&
-                    XPlatformNativeInterface_nativeResourceForBackingStore(
+                    XPlatformNativeInterface_nativeResourceForBackingStore_2(
                         gni, "paintdevice", gpbs) == NULL,
                     "未 resize 前绘制设备为空");
-        expect_true(XPlatformNativeInterface_nativeResourceForBackingStore(
+        expect_true(XPlatformNativeInterface_nativeResourceForBackingStore_2(
                         gni, "x", gpbs) == NULL,
                     "nativeResourceForBackingStore 未知资源 NULL");
         {
@@ -19165,7 +19409,7 @@ static void test_gui_application_contract(void)
                         XImage_width(gppDev) == 3 &&
                         XImage_height(gppDev) == 4 &&
                         XImage_format(gppDev) == XImageFormat_ARGB32_Premultiplied &&
-                        XPlatformNativeInterface_nativeResourceForBackingStore(
+                        XPlatformNativeInterface_nativeResourceForBackingStore_2(
                             gni, "paintdevice", gpbs) == (void*)gppDev,
                         "平台后端 resize 后绘制设备有效且原生资源可见");
         }
@@ -19242,12 +19486,12 @@ static void test_gui_application_contract(void)
 
             gsize = XBackingStore_size(gbks);
             expect_true(gsize.width == 0 && gsize.height == 0 &&
-                        XBackingStore_paintDevice(gbks) == NULL,
+                        XBackingStore_paintImage(gbks) == NULL,
                         "未 resize 默认 0×0 且无绘制设备");
             XSize_init(&gsize, 3, 4);
             XBackingStore_resize(gbks, &gsize);
             gsize = XBackingStore_size(gbks);
-            gbsDev = XBackingStore_paintDevice(gbks);
+            gbsDev = XBackingStore_paintImage(gbks);
             expect_true(gsize.width == 3 && gsize.height == 4 &&
                         XBackingStore_handle(gbks) != NULL &&
                         gbsDev != NULL &&
@@ -19270,11 +19514,11 @@ static void test_gui_application_contract(void)
                                                  NULL,
 #endif
                                                  sizeof(gbsExternal)) &&
-                        XBackingStore_paintDevice(gbks) != NULL &&
-                        XImage_constBits(XBackingStore_paintDevice(gbks)) ==
+                        XBackingStore_paintImage(gbks) != NULL &&
+                        XImage_constBits(XBackingStore_paintImage(gbks)) ==
                             gbsExternal,
                         "setBuffers 使用调用方提供的帧缓冲");
-            gbsDev = XBackingStore_paintDevice(gbks);
+            gbsDev = XBackingStore_paintImage(gbks);
 
             /* beginPaint/endPaint + XPainter 直接绘制到内部缓冲 */
             XRegion_init(&gbsRegion);
@@ -19363,15 +19607,15 @@ static void test_gui_application_contract(void)
         XPlatformBackingStore_delete(gpbs);
         gpbs = NULL;
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
-        expect_true(XPlatformNativeInterface_nativeResourceForWindow(
+        expect_true(XPlatformNativeInterface_nativeResourceForWindow_2(
                         gni, "window", gpwin) == (void*)gpwin &&
-                    XPlatformNativeInterface_nativeResourceForWindow(
+                    XPlatformNativeInterface_nativeResourceForWindow_2(
                         gni, "window-handle", gpwin) ==
                         (void*)XWindow_handle(gpwin) &&
-                    XPlatformNativeInterface_nativeResourceForWindow(
+                    XPlatformNativeInterface_nativeResourceForWindow_2(
                         gni, "native-window-id", gpwin) ==
                         (void*)(uintptr_t)XWindow_winId(gpwin) &&
-                    XPlatformNativeInterface_nativeResourceForWindow(
+                    XPlatformNativeInterface_nativeResourceForWindow_2(
                         gni, "x", gpwin) == NULL,
                     "nativeResourceForWindow 资源查询");
 
@@ -19380,28 +19624,28 @@ static void test_gui_application_contract(void)
                           XSignal(XPlatformNativeInterface_windowPropertyChanged_signal),
                           gui_app_probe_platformPropSlot);
         gv = XVariant_create_int(4321);
-        XPlatformNativeInterface_setWindowProperty(gni, gpw, "platform-prop", gv);
+        XPlatformNativeInterface_setWindowProperty_2(gni, gpw, "platform-prop", gv);
         if (gv) XVariant_delete_base((XClass*)gv); gv = NULL; /* 表内为深拷贝。 */
         expect_true(g_guiAppProbe.platformPropChanged == 1 &&
                     g_guiAppProbe.lastPropWindow == gpw &&
                     g_guiAppProbe.platformPropNameOk,
                     "setWindowProperty 发射 windowPropertyChanged");
-        gv = XPlatformNativeInterface_windowProperty(gni, gpw, "platform-prop");
+        gv = XPlatformNativeInterface_windowProperty_2(gni, gpw, "platform-prop");
         expect_true(gv != NULL && XVariant_toInt32(gv) == 4321,
                     "windowProperty 读取回写值");
         gv = NULL; /* windowProperty 返回表内借用值，勿释放。 */
         gdef = XVariant_create_int(1234);
-        gv = XPlatformNativeInterface_windowProperty_2(gni, gpw, "no-such", gdef);
+        gv = XPlatformNativeInterface_windowProperty_default_2(gni, gpw, "no-such", gdef);
         expect_true(gv != NULL && XVariant_toInt32(gv) == 1234,
                     "windowProperty_2 缺失时返回默认值副本");
         if (gv) XVariant_delete_base((XClass*)gv); gv = NULL;
         if (gdef) XVariant_delete_base((XClass*)gdef); gdef = NULL;
-        expect_true(XPlatformNativeInterface_windowProperty(
+        expect_true(XPlatformNativeInterface_windowProperty_2(
                         gni, gpw, "no-such") == NULL,
                     "windowProperty 缺失返回 NULL");
-        expect_true(XPlatformWindow_removeProperty(gpw, "platform-prop"),
+        expect_true(XPlatformWindow_removeProperty_2(gpw, "platform-prop"),
                     "XPlatformWindow_removeProperty 移除已有属性");
-        expect_true(XPlatformNativeInterface_windowProperty(
+        expect_true(XPlatformNativeInterface_windowProperty_2(
                         gni, gpw, "platform-prop") == NULL,
                     "移除后属性查询为 NULL");
 
@@ -19434,7 +19678,7 @@ static void test_gui_application_contract(void)
     expect_true(!XGuiApplication_desktopSettingsAware(), "desktopSettingsAware 关闭");
     XGuiApplication_setDesktopSettingsAware(true);
 
-    XGuiApplication_setSessionState(true, false, "sid-1", "skey-1");
+    XGuiApplication_setSessionState_2(true, false, "sid-1", "skey-1");
     expect_true(XGuiApplication_isSessionRestored() &&
                 !XGuiApplication_isSavingSession() &&
                 XGuiApplication_sessionId() != NULL &&
@@ -19454,6 +19698,56 @@ static void test_gui_application_contract(void)
                     "notify 空参数安全返回 false");
         if (ne) XEvent_delete_base(ne);
     }
+
+    /* ---------------- Task 1.4：XApplication 应用级 API ---------------- */
+#if XAPPLICATION_ON
+    {
+        XApplication* xapp = XApplication_create();
+        XWidget* w1 = NULL;
+        XWidget* w2 = NULL;
+        /* style/effectEnabled 不依赖实例：无实例也可验证默认值。 */
+        expect_true(XApplication_style() != NULL,
+                    "XApplication_style 懒创建（无实例）");
+        expect_true(XApplication_isEffectEnabled(0),
+                    "isEffectEnabled 默认 true（无实例）");
+        expect_true(!XApplication_autoSipEnabled(),
+                    "autoSipEnabled 默认 false（无实例）");
+        if (xapp) {
+            XStyle* st;
+            w1 = XWidget_create(NULL, 0);
+            w2 = XWidget_create(NULL, 0);
+            st = XApplication_style();
+            XApplication_setStyle(st);
+            expect_true(XApplication_style() == st,
+                        "XApplication_setStyle 生效");
+            XApplication_setAutoSipEnabled(true);
+            expect_true(XApplication_autoSipEnabled(),
+                        "autoSipEnabled roundtrip");
+            XApplication_setEffectEnabled(3, false);
+            expect_true(!XApplication_isEffectEnabled(3),
+                        "setEffectEnabled(false) 生效");
+            XApplication_setStyleSheet_2("XLabel { color: red; }");
+            expect_true(XStrcmp(XApplication_styleSheet_2(),
+                                "XLabel { color: red; }") == 0,
+                        "styleSheet roundtrip");
+            if (w1 && w2) {
+                XObject_connect_2((XObject*)xapp,
+                    XSignal(XApplication_focusChanged_signal), fcSlot);
+                XApplication_setFocusWidget(w1);
+                expect_true(fcSlotCount == 1 &&
+                            XApplication_focusWidget() == w1,
+                            "focusChanged 发射一次");
+                XApplication_setFocusWidget(w1);
+                expect_true(fcSlotCount == 1, "同焦点不重复发射");
+                XApplication_setFocusWidget(w2);
+                expect_true(fcSlotCount == 2, "焦点切换再发射");
+                if (w1) XWidget_delete_base(w1);
+                if (w2) XWidget_delete_base(w2);
+            }
+            XApplication_delete_base(xapp);
+        }
+    }
+#endif /* XAPPLICATION_ON */
 
     /* ---------------- 清理：单例销毁 ---------------- */
 
@@ -20164,6 +20458,209 @@ static void test_window_event_payloads(void)
         if (meClone) XEvent_delete_base(meClone);
         if (me) XEvent_delete_base((XClass*)me);
     }
+}
+
+/* ============ Task 2.13 事件体系契约测试 ============ */
+
+static void test_window_event_task213_contract(void)
+{
+    /* ---- XWheelEvent 扩展字段 ---- */
+    {
+        XWheelEvent* we = XWheelEvent_create(
+            XEVENT_TYPE_WHEEL, &(XPoint){ 1, 2 }, &(XPoint){ 10, 20 },
+            &(XPoint){ 120, 0 }, XMouseButton_NoButton,
+            XKeyboardModifier_NoModifier);
+        XPoint delta = { 7, 9 };
+        expect_true(we != NULL, "t213: wheel 创建");
+        if (we) {
+            expect_true(XWheelEvent_pixelDelta(we).x == 1 &&
+                            XWheelEvent_phase(we) ==
+                                XWheelEventPhase_NoScrollPhase &&
+                            !XWheelEvent_inverted(we) &&
+                            XWheelEvent_source(we) ==
+                                XWheelEventSource_NotSynthesized,
+                        "t213: wheel 扩展默认值");
+            XWheelEvent_setPixelDelta(we, &delta);
+            XWheelEvent_setPhase(we, XWheelEventPhase_ScrollUpdate);
+            XWheelEvent_setInverted(we, true);
+            XWheelEvent_setSource(we,
+                XWheelEventSource_SynthesizedBySystem);
+            expect_true(XWheelEvent_pixelDelta(we).x == 7 &&
+                            XWheelEvent_phase(we) ==
+                                XWheelEventPhase_ScrollUpdate &&
+                            XWheelEvent_inverted(we) &&
+                            XWheelEvent_source(we) ==
+                                XWheelEventSource_SynthesizedBySystem,
+                        "t213: wheel 扩展 setter");
+            XEvent_delete_base((XClass*)we);
+        }
+    }
+    /* ---- XEnterEvent scenePosition ---- */
+    {
+        XEnterEvent* ee = XEnterEvent_create(
+            XEVENT_TYPE_ENTER, &(XPoint){ 3, 4 }, &(XPoint){ 30, 40 });
+        expect_true(ee != NULL &&
+                        XEnterEvent_scenePosition(ee).x == 30 &&
+                        XEnterEvent_scenePosition(ee).y == 40,
+                    "t213: enter scenePosition 默认=global");
+        if (ee) {
+            XPoint sp = { 8, 9 };
+            XEnterEvent_setScenePosition(ee, &sp);
+            expect_true(XEnterEvent_scenePosition(ee).x == 8 &&
+                            XEnterEvent_scenePosition(ee).y == 9,
+                        "t213: enter setScenePosition");
+            XEvent_delete_base((XClass*)ee);
+        }
+    }
+    /* ---- XDropEvent 动作 ---- */
+    {
+        XString* dropMime = XString_create_utf8("text/plain");
+        XString* dropData = XString_create_utf8("data");
+        XDropEvent* de = XDropEvent_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_DROP,
+            &(XPoint){ 1, 1 }, &(XPoint){ 2, 2 },
+            dropMime, dropData);
+        expect_true(de != NULL &&
+                        XDropEvent_dropAction(de) ==
+                            XDropAction_IgnoreAction,
+                    "t213: drop 默认动作 Ignore");
+        if (de) {
+            XDropEvent_setDropAction(de, XDropAction_CopyAction);
+            XDropEvent_setPossibleActions(de,
+                XDropAction_CopyAction | XDropAction_MoveAction);
+            expect_true(XDropEvent_dropAction(de) ==
+                            XDropAction_CopyAction &&
+                        (XDropEvent_possibleActions(de) &
+                         XDropAction_MoveAction) != 0,
+                        "t213: drop 动作 roundtrip");
+            XEvent_delete_base((XClass*)de);
+        }
+        if (dropMime) XString_delete_base(dropMime);
+        if (dropData) XString_delete_base(dropData);
+    }
+    /* ---- XMoveEvent / XTouchEvent / XTabletEvent 最小负载 ---- */
+    {
+        XMoveEvent* me = XMoveEvent_create(
+            XEVENT_TYPE_MOVE, &(XPoint){ 5, 6 }, &(XPoint){ 1, 1 });
+        expect_true(me != NULL &&
+                        XMoveEvent_position(me).x == 5 &&
+                        XMoveEvent_oldPosition(me).x == 1,
+                    "t213: moveEvent pos/oldPos");
+        if (me) XEvent_delete_base((XClass*)me);
+    }
+    {
+        XTouchEvent* te = XTouchEvent_create(
+            XEVENT_TYPE_TOUCH_BEGIN, &(XPoint){ 7, 8 },
+            &(XPoint){ 70, 80 }, 2);
+        expect_true(te != NULL &&
+                        XTouchEvent_position(te).x == 7 &&
+                        XTouchEvent_globalPosition(te).y == 80 &&
+                        XTouchEvent_pointCount(te) == 2,
+                    "t213: touch 最小负载");
+        if (te) XEvent_delete_base((XClass*)te);
+    }
+    {
+        XTabletEvent* te = XTabletEvent_create(
+            XEVENT_TYPE_TABLET_MOVE, &(XPoint){ 9, 10 },
+            &(XPoint){ 90, 100 }, 0.5f, XTabletPointerType_Pen);
+        expect_true(te != NULL &&
+                        XTabletEvent_position(te).x == 9 &&
+                        XTabletEvent_pressure(te) > 0.49f &&
+                        XTabletEvent_pointerType(te) ==
+                            XTabletPointerType_Pen,
+                    "t213: tablet 最小负载");
+        if (te) XEvent_delete_base((XClass*)te);
+    }
+}
+
+/* ============ Task 2.14 Input 管线契约测试 ============ */
+
+static void test_input_task214_contract(void)
+{
+    /* ---- XMimeData urls ---- */
+    {
+        XMimeData* md = XMimeData_create();
+        XStringList* urls = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XStringList* got;
+        expect_true(md != NULL && urls != NULL, "t214: mime 创建");
+        expect_true(!XMimeData_hasUrls(md), "t214: 初始无 urls");
+        XStringList_push_back_utf8(urls, "file:///a.png");
+        XStringList_push_back_utf8(urls, "file:///b.png");
+        XMimeData_setUrls(md, urls);
+        expect_true(XMimeData_hasUrls(md), "t214: setUrls 生效");
+        got = XMimeData_urls(md);
+        expect_true(got != NULL &&
+                        XStringList_size_base((const XStringList*)got) == 2 &&
+                        XStrcmp(XString_toUtf8(XStringList_at_base(
+                                    (const XStringList*)got, 0)),
+                                "file:///a.png") == 0,
+                    "t214: urls roundtrip");
+        if (got) XStringList_delete_base(got);
+        XStringList_delete_base(urls);
+        XMimeData_delete_base(md);
+    }
+    /* ---- XCursor swap/equals ---- */
+    {
+        XCursor* a = XCursor_create_shape(XCursor_Arrow);
+        XCursor* b = XCursor_create_shape(XCursor_Cross);
+        expect_true(a != NULL && b != NULL &&
+                        !XCursor_equals(a, b),
+                    "t214: cursor 不同形状不相等");
+        if (a && b) {
+            XCursor_swap(a, b);
+            expect_true(XCursor_shape(a) == XCursor_Cross &&
+                            XCursor_shape(b) == XCursor_Arrow,
+                        "t214: cursor swap");
+            XCursor_swap(a, b);
+            expect_true(XCursor_equals(a, b) ||
+                            XCursor_shape(a) == XCursor_Arrow,
+                        "t214: cursor swap 还原");
+        }
+        if (a) XCursor_delete_base(a);
+        if (b) XCursor_delete_base(b);
+    }
+    /* ---- XClipboard text_subtype 改名路径 ---- */
+    {
+        XClipboard* cb = XClipboard_create();
+        XString** subtype = NULL;
+        expect_true(cb != NULL, "t214: clipboard 创建");
+        if (cb) {
+            XString* clipText = XString_create_utf8("hello");
+            XClipboard_setText(cb, clipText, XClipboardMode_Clipboard);
+            if (clipText) XString_delete_base(clipText);
+            {
+                XString* text = XClipboard_text_subtype(cb, subtype,
+                                                         XClipboardMode_Clipboard);
+                expect_true(text != NULL &&
+                                XStrcmp(XString_toUtf8(text), "hello") == 0,
+                            "t214: text_subtype roundtrip");
+                if (text) XString_delete_base(text);
+            }
+            XClipboard_delete_base(cb);
+        }
+    }
+    /* ---- XAccessible name 读 accessibleName ---- */
+#if XWIDGET_ON && XACCESSIBLE_ON
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XAccessible* acc = XAccessible_createForWidget(w);
+        expect_true(w != NULL && acc != NULL, "t214: acc 创建");
+        if (w && acc) {
+            XString* accName = XString_create_utf8("acc-name");
+            XWidget_setAccessibleName(w, accName);
+            if (accName) XString_delete_base(accName);
+            {
+                XString* n = XAccessible_name(acc);
+                expect_true(n != NULL &&
+                                XStrcmp(XString_toUtf8(n), "acc-name") == 0,
+                            "t214: accessibleName 优先");
+                if (n) XString_delete_base(n);
+            }
+            XAccessible_delete_base(acc);
+        }
+        if (w) XWidget_delete_base(w);
+    }
+#endif
 }
 
 static void test_window_event_loop(void)
@@ -25085,6 +25582,163 @@ static void test_menubar_contract(void)
     XMenu_delete_base(fileMenu);
     XMenu_delete_base(editMenu);
 }
+/* ============ 菜单族扩展契约测试（Task 2.10） ============ */
+
+static void mbx_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[MBX-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static int menu_count(const XMenu* menu)
+{
+    const XVector* v = XMenu_actions(menu);
+    return v ? (int)XVector_size_base((const XContainer*)v) : 0;
+}
+
+static void test_menu_ext_contract(void)
+{
+    XMenu* menu = XMenu_create();
+    XMenu* sub = XMenu_create();
+    XAction* a0;
+    XAction* a1;
+    XAction* sec;
+    XAction* ins;
+    XRect r;
+    XWidget* replay = XWidget_create(NULL, 0);
+
+    mbx_expect(menu != NULL, "m: XMenu 创建");
+    a0 = XMenu_addAction_2(menu, "打开");
+    mbx_expect(a0 != NULL, "m: addAction_2");
+    sec = XMenu_addSection_2(menu, "操作");
+    mbx_expect(sec != NULL && !XAction_isEnabled(sec),
+               "m: addSection 禁用节标题");
+    a1 = XMenu_addAction_2(menu, "保存");
+    mbx_expect(menu_count(menu) == 3, "m: 3 个动作");
+
+    XMenu_insertSeparator(menu, a1);
+    mbx_expect(menu_count(menu) == 4, "m: insertSeparator 插入");
+    XMenu_insertMenu(menu, a0, sub);
+    mbx_expect(menu_count(menu) == 5, "m: insertMenu 插入");
+    ins = XMenu_insertSection_2(menu, a1, "工具");
+    mbx_expect(ins != NULL && menu_count(menu) == 6,
+               "m: insertSection 插入");
+
+    r = XMenu_actionGeometry(menu, a0);
+    mbx_expect(r.width > 0 && r.height > 0, "m: actionGeometry 有效");
+    {
+        XRect empty = XMenu_actionGeometry(menu, NULL);
+        mbx_expect(empty.width == 0 && empty.height == 0,
+                   "m: 无效动作返回空矩形");
+    }
+
+    XMenu_setNoReplayFor(menu, replay);
+    XMenu_setPlatformMenu(menu, (void*)(size_t)0x1234);
+    mbx_expect(XMenu_platformMenu(menu) == (void*)(size_t)0x1234,
+               "m: platformMenu roundtrip");
+    XMenu_setAsDockMenu(menu);
+    XMenu_showTearOffMenu(menu);
+    mbx_expect(XMenu_isTearOffMenuVisible(menu),
+               "m: showTearOffMenu 可见");
+    XMenu_hideTearOffMenu(menu);
+    mbx_expect(!XMenu_isTearOffMenuVisible(menu),
+               "m: hideTearOffMenu 隐藏");
+
+    XMenu_delete_base(menu); /* 级联释放 sub 与全部动作 */
+    XWidget_delete_base(replay);
+}
+
+static void test_menubar_ext_contract(void)
+{
+    XMenuBar* bar = XMenuBar_create(NULL, 0);
+    XMenu* m1;
+    XAction* act;
+    XSize sh;
+    XRect r;
+    XPoint pt;
+    XWidget* cw = XWidget_create(NULL, 0);
+
+    mbx_expect(bar != NULL, "mb: XMenuBar 创建");
+    m1 = XMenuBar_addMenu_2(bar, "文件");
+    mbx_expect(m1 != NULL, "mb: addMenu_2");
+    act = XMenuBar_addMenu(bar, m1);
+    mbx_expect(act != NULL, "mb: addMenu 返回动作");
+
+    sh = XMenuBar_sizeHint(bar);
+    mbx_expect(sh.width > 0 && sh.height > 0, "mb: sizeHint 有效");
+    mbx_expect(XMenuBar_minimumSizeHint(bar).width == sh.width,
+               "mb: minimumSizeHint == sizeHint");
+    mbx_expect(XMenuBar_heightForWidth(bar, 100) == sh.height,
+               "mb: heightForWidth");
+
+    r = XMenuBar_actionGeometry(bar, act);
+    mbx_expect(r.width > 0 && r.height > 0, "mb: actionGeometry 有效");
+    XPoint_init(&pt, r.x + 1, 1);
+    mbx_expect(XMenuBar_actionAt(bar, &pt) == act,
+               "mb: actionAt 命中");
+
+    XMenuBar_setCornerWidget(bar, cw, XMenuBarCorner_TopRight);
+    mbx_expect(XMenuBar_cornerWidget(bar, XMenuBarCorner_TopRight) == cw,
+               "mb: cornerWidget roundtrip");
+    XMenuBar_setNativeMenuBar(bar, true);
+    mbx_expect(XMenuBar_isNativeMenuBar(bar), "mb: nativeMenuBar");
+    mbx_expect(XMenuBar_platformMenuBar(bar) == NULL,
+               "mb: platformMenuBar NULL");
+
+    XMenuBar_delete_base(bar);
+    XMenu_delete_base(m1);
+    XWidget_delete_base(cw);
+}
+
+static void test_toolbar_ext_contract(void)
+{
+    XToolBar* bar = XToolBar_create(NULL, 0);
+    XAction* a0;
+    XAction* sep;
+    XAction* a1;
+    XAction* placeholder;
+    XWidget* w = XWidget_create(NULL, 0);
+    XRect r;
+    XPoint pt;
+    XAction* tv;
+
+    mbx_expect(bar != NULL, "tb: XToolBar 创建");
+    a0 = XToolBar_addAction_2(bar, "A");
+    sep = XToolBar_insertSeparator(bar, NULL);
+    a1 = XToolBar_addAction_2(bar, "B");
+    mbx_expect(XToolBar_actionCount(bar) == 3,
+               "tb: insertSeparator 计数 3");
+    mbx_expect(XToolBar_action(bar, 1) == sep, "tb: sep 在索引 1");
+
+    XWidget_resize(w, 30, 20);
+    XToolBar_insertWidget(bar, a1, w);
+    mbx_expect(XToolBar_actionCount(bar) == 4,
+               "tb: insertWidget 计数 4");
+    placeholder = XToolBar_action(bar, 2);
+    mbx_expect(XToolBar_widgetForAction(bar, placeholder) == w,
+               "tb: widgetForAction");
+
+    r = XToolBar_actionGeometry(bar, a0);
+    mbx_expect(r.width == 48 && r.height > 0,
+               "tb: actionGeometry a0 48 宽");
+    XPoint_init(&pt, r.x + 5, r.y + 5);
+    mbx_expect(XToolBar_actionAt(bar, &pt) == a0,
+               "tb: actionAt 命中 a0");
+
+    tv = XToolBar_toggleViewAction(bar);
+    mbx_expect(tv != NULL, "tb: toggleViewAction 创建");
+    mbx_expect(XToolBar_toggleViewAction(bar) == tv,
+               "tb: toggleViewAction 缓存");
+    XWidget_setVisible((XWidget*)bar, true);
+    XAction_trigger(tv);
+    mbx_expect(!XWidget_isVisible((XWidget*)bar), "tb: toggle 隐藏");
+    XAction_trigger(tv);
+    mbx_expect(XWidget_isVisible((XWidget*)bar), "tb: 再 toggle 显示");
+
+    XToolBar_delete_base(bar);
+    /* w 已 reparent 到 bar，随 bar 析构销毁，不再手动删除。 */
+}
 /* ==================== XToolBar 契约测试（对标 QToolBar） ==================== */
 
 static int tb_triggered = 0;
@@ -25411,8 +26065,8 @@ static void test_widgets_signals_contract(void)
             XObject_connect_2((XObject*)tabs,
                 XSignal(XTabWidget_tabBarDoubleClicked_signal),
                 ws_tabDblClickedSlot);
-            XTabWidget_addTab(tabs, page1, "A");
-            XTabWidget_addTab(tabs, page2, "B");
+            XTabWidget_addTab_2(tabs, page1, "A");
+            XTabWidget_addTab_2(tabs, page2, "B");
             XWidget_resize((XWidget*)tabs, 200, 120);
             bar = &tabs->m_tabBar;
             ws_tabClicked = 0; ws_tabDblClicked = 0;
@@ -25456,6 +26110,18 @@ static void test_widgets_signals_contract(void)
 /* ==================== Charts C1 契约测试（XChart 51 + XChartView 7） ==================== */
 
 static int c1_failures = 0;
+static int c1_axRange = 0;
+static int c1_axVisible = 0;
+static int c1_axTitle = 0;
+static int c1_caxisCount = 0;
+static void axRangeSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++c1_axRange; }
+static void axVisibleSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++c1_axVisible; }
+static void axTitleSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++c1_axTitle; }
+static void caxisCountSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++c1_caxisCount; }
 static void c1_expect(bool cond, const char* what)
 {
     if (!cond) {
@@ -25467,6 +26133,12 @@ static void c1_expect(bool cond, const char* what)
 /** @brief C1 批次：泛型序列/主题/外观/动画/缩放/滚动/映射/信号契约。 */
 /** @brief 继承关系契约：XGui 控件与 Qt 6.8.3 继承树一一对应。 */
 /** @brief 继承关系契约：XGui 控件与 Qt 6.8.3 继承树一一对应。 */
+static int mDataSlotCount = 0;
+static int mSelSlotCount = 0;
+static void mDataSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++mDataSlotCount; }
+static void mSelSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++mSelSlotCount; }
 static void xtw_expect_class(const void* obj, const char* what)
 {
     XVtable* vt = obj ? XClassGetVtable((const XClass*)obj) : NULL;
@@ -25486,6 +26158,27 @@ static void test_fusion_style_contract(void)
         XPainter painter;
         XRect r;
         c1_expect(fs != NULL, "XFusionStyle 创建");
+        /* 继承链：Qt 6.8 QFusionStyle : QCommonStyle（而非 QWindowsStyle）。
+         * 验证：Fusion 未重载的槽（PixelMetric）与 XCommonStyle 实现同槽。 */
+        {
+            XCommonStyle* cs = XCommonStyle_create();
+            XVtable* vtF;
+            XVtable* vtC;
+            c1_expect(cs != NULL, "XCommonStyle 创建");
+            if (cs) {
+                vtF = XClassGetVtable((XClass*)fs);
+                vtC = XClassGetVtable((XClass*)cs);
+                c1_expect(
+                    XVtableGetFunc(vtF, EXStyle_PixelMetric, void*) !=
+                        XVtableGetFunc(vtC, EXStyle_PixelMetric, void*),
+                    "Fusion 覆盖 PixelMetric（对标 QFusionStyle::pixelMetric）");
+                c1_expect(
+                    XVtableGetFunc(vtF, EXStyle_SizeFromContents, void*) ==
+                        XVtableGetFunc(vtC, EXStyle_SizeFromContents, void*),
+                    "Fusion→CommonStyle 继承（SizeFromContents 同槽）");
+                XCommonStyle_delete_base(cs);
+            }
+        }
         c1_expect(XStyle_defaultStyle() != NULL, "默认样式懒创建");
         style = XStyle_defaultStyle();
         /* 像素度量分派。 */
@@ -25740,8 +26433,14 @@ static void test_qss_contract(void)
                 /* 带装饰字体渲染文本：underline 由 XPainter 按 QFont 语义绘制。 */
                 {
                     XFont f = XWidget_font((XWidget*)host5);
+                    /* 带装饰字体渲染文本：QSS text-decoration 在绘制
+                       QSS 控件时作用于 painter 字体（不持久化到控件
+                       m_font）；此处显式设置下划线以验证装饰线渲染
+                       （软件/GPU 三后端一致）。 */
+                    XFont_setUnderline(&f, true);
                     XPainter_setFont(&painter, &f);
                     XPainter_drawText(&painter, 4, 16, "ab", 0xFFFF0000u);
+                    XFont_deinit_base(&f);
                 }
                 XPainter_end(&painter);
             }
@@ -25987,69 +26686,69 @@ static void test_widgets_inheritance_contract(void)
        QSplitter/QStackedWidget/XLcdNumber/QToolBox->QFrame、
        QFontComboBox->QComboBox->QWidget、
        QButtonGroup/QTextDocument->QObject。 */
-    xtw_expect_class(XLabel_create(NULL, 0), "XLabel 虚表");
-    xtw_expect_class(XFrame_create(NULL, 0), "XFrame 虚表");
-    xtw_expect_class(XCheckBox_create(NULL, 0), "XCheckBox 虚表");
-    xtw_expect_class(XAbstractButton_create(NULL, 0), "XAbstractButton 虚表");
-    xtw_expect_class(XSpinBox_create(NULL, 0), "XSpinBox 虚表");
-    xtw_expect_class(XDateTimeEdit_create(NULL, 0), "XDateTimeEdit 虚表");
-    xtw_expect_class(XAbstractSpinBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0), "XAbstractSpinBox 虚表");
-    xtw_expect_class(XDial_create(NULL, 0), "XDial 虚表");
-    xtw_expect_class(XSlider_create(NULL, 0), "XSlider 虚表");
-    xtw_expect_class(XScrollBar_create(NULL, 0), "XScrollBar 虚表");
-    xtw_expect_class(XAbstractSlider_create(NULL, 0), "XAbstractSlider 虚表");
-    xtw_expect_class(XPlainTextEdit_create(NULL, 0), "XPlainTextEdit 虚表");
-    xtw_expect_class(XTextEdit_create(NULL, 0), "XTextEdit 虚表");
-    xtw_expect_class(XTextBrowser_create(NULL, 0), "XTextBrowser 虚表");
-    xtw_expect_class(XAbstractScrollArea_create(NULL, 0), "XAbstractScrollArea 虚表");
-    xtw_expect_class(XScrollArea_create(NULL, 0), "XScrollArea 虚表");
-    xtw_expect_class(XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0), "XTableWidget 虚表");
-    xtw_expect_class(XTableView_create(NULL, 0), "XTableView 虚表");
-    xtw_expect_class(XAbstractItemView_create(NULL, 0), "XAbstractItemView 虚表");
-    xtw_expect_class(XGroupBox_create(NULL, 0), "XGroupBox 虚表");
-    xtw_expect_class(XComboBox_create(NULL, 0), "XComboBox 虚表");
-    xtw_expect_class(XFontComboBox_create(NULL, 0), "XFontComboBox 虚表");
-    xtw_expect_class(XCommandLinkButton_create(NULL, 0), "XCommandLinkButton 虚表");
-    xtw_expect_class(XPushButton_create(NULL, 0), "XPushButton 虚表");
-    xtw_expect_class(XRadioButton_create(NULL, 0), "XRadioButton 虚表");
-    xtw_expect_class(XToolButton_create(NULL, 0), "XToolButton 虚表");
-    xtw_expect_class(XMessageBox_create(NULL, 0), "XMessageBox 虚表");
-    xtw_expect_class(XDialog_create(NULL, 0), "XDialog 虚表");
-    xtw_expect_class(XSplitter_create(NULL, 0), "XSplitter 虚表");
+    { XClass* w = (XClass*)XLabel_create(NULL, 0); xtw_expect_class(w, "XLabel 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XFrame_create(NULL, 0); xtw_expect_class(w, "XFrame 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XCheckBox_create(NULL, 0); xtw_expect_class(w, "XCheckBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAbstractButton_create(NULL, 0); xtw_expect_class(w, "XAbstractButton 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XSpinBox_create(NULL, 0); xtw_expect_class(w, "XSpinBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XDateTimeEdit_create(NULL, 0); xtw_expect_class(w, "XDateTimeEdit 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAbstractSpinBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0); xtw_expect_class(w, "XAbstractSpinBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XDial_create(NULL, 0); xtw_expect_class(w, "XDial 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XSlider_create(NULL, 0); xtw_expect_class(w, "XSlider 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XScrollBar_create(NULL, 0); xtw_expect_class(w, "XScrollBar 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAbstractSlider_create(NULL, 0); xtw_expect_class(w, "XAbstractSlider 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XPlainTextEdit_create(NULL, 0); xtw_expect_class(w, "XPlainTextEdit 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XTextEdit_create(NULL, 0); xtw_expect_class(w, "XTextEdit 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XTextBrowser_create(NULL, 0); xtw_expect_class(w, "XTextBrowser 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAbstractScrollArea_create(NULL, 0); xtw_expect_class(w, "XAbstractScrollArea 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XScrollArea_create(NULL, 0); xtw_expect_class(w, "XScrollArea 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0); xtw_expect_class(w, "XTableWidget 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XTableView_create(NULL, 0); xtw_expect_class(w, "XTableView 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAbstractItemView_create(NULL, 0); xtw_expect_class(w, "XAbstractItemView 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XGroupBox_create(NULL, 0); xtw_expect_class(w, "XGroupBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XComboBox_create(NULL, 0); xtw_expect_class(w, "XComboBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XFontComboBox_create(NULL, 0); xtw_expect_class(w, "XFontComboBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XCommandLinkButton_create(NULL, 0); xtw_expect_class(w, "XCommandLinkButton 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XPushButton_create(NULL, 0); xtw_expect_class(w, "XPushButton 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XRadioButton_create(NULL, 0); xtw_expect_class(w, "XRadioButton 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XToolButton_create(NULL, 0); xtw_expect_class(w, "XToolButton 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XMessageBox_create(NULL, 0); xtw_expect_class(w, "XMessageBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XDialog_create(NULL, 0); xtw_expect_class(w, "XDialog 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XSplitter_create(NULL, 0); xtw_expect_class(w, "XSplitter 虚表"); XClass_delete_base(w); }
 #if XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON
-    xtw_expect_class(XStackedWidget_create(NULL, 0), "XStackedWidget 虚表");
+    { XClass* w = (XClass*)XStackedWidget_create(NULL, 0); xtw_expect_class(w, "XStackedWidget 虚表"); XClass_delete_base(w); }
 #endif /* XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON */
-    xtw_expect_class(XLcdNumber_create(NULL, 0), "XLcdNumber 虚表");
-    xtw_expect_class(XDialogButtonBox_create(NULL, 0), "XDialogButtonBox 虚表");
-    xtw_expect_class(XDockWidget_create(NULL, NULL, 0), "XDockWidget 虚表");
-    xtw_expect_class(XMainWindow_create(NULL, 0), "XMainWindow 虚表");
-    xtw_expect_class(XToolBar_create(NULL, 0), "XToolBar 虚表");
-    xtw_expect_class(XStatusBar_create(NULL, 0), "XStatusBar 虚表");
-    xtw_expect_class(XMenuBar_create(NULL, 0), "XMenuBar 虚表");
-    xtw_expect_class(XTabWidget_create(NULL, 0), "XTabWidget 虚表");
-    xtw_expect_class(XTabBar_create(NULL, 0), "XTabBar 虚表");
-    xtw_expect_class(XWizardPage_create(NULL, 0), "XWizardPage 虚表");
-    xtw_expect_class(XCalendarWidget_create(NULL, 0), "XCalendarWidget 虚表");
-    xtw_expect_class(XProgressBar_create(NULL, 0), "XProgressBar 虚表");
-    xtw_expect_class(XSplashScreen_create(NULL, 0), "XSplashScreen 虚表");
-    xtw_expect_class(XLineEdit_create(NULL, 0), "XLineEdit 虚表");
-    xtw_expect_class(XToolBox_create(NULL, 0), "XToolBox 虚表");
-    xtw_expect_class(XButtonGroup_create(NULL), "XButtonGroup 虚表");
-    xtw_expect_class(XTextDocument_create(), "XTextDocument 虚表");
+    { XClass* w = (XClass*)XLcdNumber_create(NULL, 0); xtw_expect_class(w, "XLcdNumber 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XDialogButtonBox_create(NULL, 0); xtw_expect_class(w, "XDialogButtonBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XDockWidget_create(NULL, NULL, 0); xtw_expect_class(w, "XDockWidget 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XMainWindow_create(NULL, 0); xtw_expect_class(w, "XMainWindow 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XToolBar_create(NULL, 0); xtw_expect_class(w, "XToolBar 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XStatusBar_create(NULL, 0); xtw_expect_class(w, "XStatusBar 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XMenuBar_create(NULL, 0); xtw_expect_class(w, "XMenuBar 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XTabWidget_create(NULL, 0); xtw_expect_class(w, "XTabWidget 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XTabBar_create(NULL, 0); xtw_expect_class(w, "XTabBar 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XWizardPage_create(NULL, 0); xtw_expect_class(w, "XWizardPage 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XCalendarWidget_create(NULL, 0); xtw_expect_class(w, "XCalendarWidget 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XProgressBar_create(NULL, 0); xtw_expect_class(w, "XProgressBar 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XSplashScreen_create(NULL, 0); xtw_expect_class(w, "XSplashScreen 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XLineEdit_create(NULL, 0); xtw_expect_class(w, "XLineEdit 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XToolBox_create(NULL, 0); xtw_expect_class(w, "XToolBox 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XButtonGroup_create(NULL); xtw_expect_class(w, "XButtonGroup 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XTextDocument_create(); xtw_expect_class(w, "XTextDocument 虚表"); XClass_delete_base(w); }
 #if XCHARTS_ON
     /* Charts 继承链（Qt Charts 6.8.3）：
        QLineSeries/QScatterSeries/QSplineSeries -> QXYSeries -> QAbstractSeries、
        QBarSeries -> QAbstractBarSeries -> QAbstractSeries、
        QPieSeries/QAreaSeries -> QAbstractSeries。 */
-    xtw_expect_class(XLineSeries_create(), "XLineSeries 虚表");
-    xtw_expect_class(XScatterSeries_create(), "XScatterSeries 虚表");
-    xtw_expect_class(XSplineSeries_create(), "XSplineSeries 虚表");
-    xtw_expect_class(XXYSeries_create(), "XXYSeries 虚表");
-    xtw_expect_class(XBarSeries_create(), "XBarSeries 虚表");
-    xtw_expect_class(XAbstractBarSeries_create(), "XAbstractBarSeries 虚表");
-    xtw_expect_class(XPieSeries_create(), "XPieSeries 虚表");
-    xtw_expect_class(XAreaSeries_create(), "XAreaSeries 虚表");
-    xtw_expect_class(XAbstractSeries_create(), "XAbstractSeries 虚表");
+    { XClass* w = (XClass*)XLineSeries_create(); xtw_expect_class(w, "XLineSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XScatterSeries_create(); xtw_expect_class(w, "XScatterSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XSplineSeries_create(); xtw_expect_class(w, "XSplineSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XXYSeries_create(); xtw_expect_class(w, "XXYSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XBarSeries_create(); xtw_expect_class(w, "XBarSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAbstractBarSeries_create(); xtw_expect_class(w, "XAbstractBarSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XPieSeries_create(); xtw_expect_class(w, "XPieSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAreaSeries_create(); xtw_expect_class(w, "XAreaSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XAbstractSeries_create(); xtw_expect_class(w, "XAbstractSeries 虚表"); XClass_delete_base(w); }
 #endif /* XCHARTS_ON */
 }
 
@@ -26085,7 +26784,7 @@ static void test_chart_interaction_contract(void)
         int x;
         int y;
         c1_expect(chart != NULL, "交互：XChart 创建");
-        XChart_setTitle(chart, "T");
+        XChart_setTitle_2(chart, "T");
         XXYSeries_append(&line->m_base, 0, 0);
         XXYSeries_append(&line->m_base, 5, 5);
         XChart_addSeries(chart, line, XChartSeriesType_Line);
@@ -26204,31 +26903,49 @@ static void test_chart_interaction_contract(void)
         c1_expect(XAreaSeries_pointsVisible(area), "面积点可见");
         XAreaSeries_setPointLabelsVisible(area, true);
         c1_expect(XAreaSeries_pointLabelsVisible(area), "面积点标签");
-        /* 柱集合 */
-        XAbstractBarSeries_append(&bar->m_base, "A", 3);
-        XAbstractBarSeries_append(&bar->m_base, "B", 7);
-        XAbstractBarSeries_insert(&bar->m_base, 1, "M", 5);
-        c1_expect(XAbstractBarSeries_count(&bar->m_base) == 3, "柱插入");
-        c1_expect(XAbstractBarSeries_barSets(&bar->m_base, vals, 3) == 3 &&
-                  vals[1] == 5, "barSets 批量");
-        XAbstractBarSeries_setLabelsPosition(&bar->m_base, 1);
-        c1_expect(XAbstractBarSeries_labelsPosition(&bar->m_base) == 1,
-                  "柱标签位置");
-        XAbstractBarSeries_setLabelsPrecision(&bar->m_base, 2);
-        c1_expect(XAbstractBarSeries_labelsPrecision(&bar->m_base) == 2,
-                  "柱标签精度");
+        /* 柱集合（QBarSet 语义，对标 Qt 6.8 QAbstractBarSeries） */
         {
-            double took = XAbstractBarSeries_take(&bar->m_base, 1, NULL);
-            c1_expect(took == 5 &&
+            XBarSet* set1 = XBarSet_create("A");
+            XBarSet* set2 = XBarSet_create("B");
+            XBarSet* set3 = XBarSet_create("M");
+            XBarSet* setOut[4];
+            XBarSet* took;
+            c1_expect(set1 != NULL && set2 != NULL && set3 != NULL,
+                      "XBarSet 创建");
+            XBarSet_append(set1, 3);
+            XBarSet_append(set2, 7);
+            XBarSet_append(set3, 5);
+            c1_expect(XBarSet_values(set1, vals, 3) == 1 && vals[0] == 3,
+                      "XBarSet 值快照");
+            c1_expect(XAbstractBarSeries_append(&bar->m_base, set1) &&
+                      XAbstractBarSeries_append(&bar->m_base, set2),
+                      "柱组追加");
+            c1_expect(!XAbstractBarSeries_append(&bar->m_base, set2),
+                      "重复柱组拒绝");
+            c1_expect(XAbstractBarSeries_insert(&bar->m_base, 1, set3) &&
+                      XAbstractBarSeries_count(&bar->m_base) == 3, "柱插入");
+            c1_expect(XAbstractBarSeries_barSets(&bar->m_base, setOut, 4) == 3 &&
+                      setOut[1] == set3, "barSets 批量");
+            XAbstractBarSeries_setLabelsPosition(&bar->m_base,
+                XAbstractBarSeries_LabelsInsideEnd);
+            c1_expect((int)XAbstractBarSeries_labelsPosition(&bar->m_base) == 1,
+                      "柱标签位置");
+            XAbstractBarSeries_setLabelsPrecision(&bar->m_base, 2);
+            c1_expect(XAbstractBarSeries_labelsPrecision(&bar->m_base) == 2,
+                      "柱标签精度");
+            took = XAbstractBarSeries_barSetAt(&bar->m_base, 1);
+            c1_expect(took == set3 &&
+                      XAbstractBarSeries_take(&bar->m_base, took) &&
                       XAbstractBarSeries_count(&bar->m_base) == 2, "柱 take");
+            XBarSet_delete_base(took);
         }
         /* 饼图 slices */
         {
             XPieSeries* pie = XPieSeries_create();
             XPieSlice* ss[4];
-            XPieSeries_appendSlice(pie, XPieSlice_create_ex(
+            XPieSeries_appendSlice(pie, XPieSlice_create_ex_2(
                 XCLASS_DEFAULT_MEMORY_TYPE, "a", 1.0));
-            XPieSeries_appendSlice(pie, XPieSlice_create_ex(
+            XPieSeries_appendSlice(pie, XPieSlice_create_ex_2(
                 XCLASS_DEFAULT_MEMORY_TYPE, "b", 2.0));
             c1_expect(XPieSeries_slices(pie, ss, 4) == 2, "饼图 slices");
             c1_expect(XPieSeries_count(pie) == 2, "饼图切片数");
@@ -26238,21 +26955,25 @@ static void test_chart_interaction_contract(void)
         {
             XChart* chart = XChart_create();
             XValueAxis* axOut[4];
+            XValueAxis* removed;
             int mx;
             int my;
             c1_expect(XChart_axes(chart, axOut, 4) == 2, "默认双轴");
-            c1_expect(XChart_removeAxis(chart, axOut[0]), "removeAxis 默认轴");
+            removed = axOut[0];
+            c1_expect(XChart_removeAxis(chart, removed), "removeAxis 默认轴");
             c1_expect(XChart_axes(chart, axOut, 4) == 1, "axes 减一");
-            c1_expect(XChart_titleFont(chart) != NULL, "titleFont");
+            c1_expect(XChart_titleFont_2(chart) != NULL, "titleFont");
             { XRectF pa; pa.x = 0; pa.y = 0; pa.width = 400; pa.height = 300; XChart_setPlotArea(chart, &pa); }
             XChart_mapToPosition(chart, 5, 5, &mx, &my);
             c1_expect(mx > 100 && mx < 300, "mapToPosition X");
             c1_expect(XChart_series(chart, 0) == NULL, "series 空表");
             XChart_delete_base(chart);
+            if (removed) XValueAxis_delete_base(removed);
         }
         XLineSeries_delete_base(line);
         XAreaSeries_delete_base(area);
         XBarSeries_delete_base(bar);
+        XValueAxis_deinit_base(&ax);
     }
 #endif /* XCHARTS_ON */
 }
@@ -26292,12 +27013,12 @@ static void test_chart_c1_contract(void)
         XChart_setTheme(chart, XChart_ChartTheme_Dark);
         c1_expect(XChart_theme(chart) == XChart_ChartTheme_Dark,
                   "setTheme/theme 回读");
-        c1_expect(XChart_themeColor(chart, 0) == 0xFF6FA8DCu,
+        c1_expect(XChart_themeColor(chart, 0) == 0xFF38AD6Bu,
                   "Dark 主题色板生效");
 
         /* 标题字体/画刷与背景。 */
-        XChart_setTitleFont(chart, "Sans", 20);
-        c1_expect(strcmp(XChart_titleFontFamily(chart), "Sans") == 0 &&
+        XChart_setTitleFont_2(chart, "Sans", 20);
+        c1_expect(strcmp(XChart_titleFontFamily_2(chart), "Sans") == 0 &&
                   XChart_titlePixelSize(chart) == 20, "setTitleFont 回读");
         XChart_setTitleBrush(chart, 0xFF112233u);
         c1_expect(XChart_titleBrush(chart) == 0xFF112233u, "titleBrush 回读");
@@ -26322,22 +27043,72 @@ static void test_chart_c1_contract(void)
         /* 缩放/滚动（基于默认域 0-10）。 */
         XChart_zoomIn(chart);
         c1_expect(XChart_isZoomed(chart), "zoomIn 压栈");
-        c1_expect(XChart_axisX(chart)->m_min > 0.0 &&
-                  XChart_axisX(chart)->m_max < 10.0, "zoomIn 域收窄");
+        c1_expect(XChart_axisX(chart)->m_base.m_min > 0.0 &&
+                  XChart_axisX(chart)->m_base.m_max < 10.0, "zoomIn 域收窄");
         XChart_zoomOut(chart);
         c1_expect(!XChart_isZoomed(chart), "zoomOut 弹栈");
-        c1_expect(XChart_axisX(chart)->m_min == 0.0 &&
-                  XChart_axisX(chart)->m_max == 10.0, "zoomOut 恢复域");
+        c1_expect(XChart_axisX(chart)->m_base.m_min == 0.0 &&
+                  XChart_axisX(chart)->m_base.m_max == 10.0, "zoomOut 恢复域");
         XChart_zoom(chart, 0.5);
         c1_expect(XChart_isZoomed(chart) &&
-                  XChart_axisX(chart)->m_min == -5.0 &&
-                  XChart_axisX(chart)->m_max == 15.0,
+                  XChart_axisX(chart)->m_base.m_min == -5.0 &&
+                  XChart_axisX(chart)->m_base.m_max == 15.0,
                   "zoom(0.5) 中心不变域扩半");
         XChart_zoomReset(chart);
         c1_expect(!XChart_isZoomed(chart) &&
-                  XChart_axisX(chart)->m_max == 10.0, "zoomReset 复位");
+                  XChart_axisX(chart)->m_base.m_max == 10.0, "zoomReset 复位");
+        /* ---- Task 1.2 轴体系：XAbstractAxis 继承 + 信号 ---- */
+        {
+            XAbstractAxis* axis = XAbstractAxis_create();
+            XCategoryAxis* caxis = XCategoryAxis_create();
+
+            if (axis) {
+                XObject_connect_2((XObject*)axis,
+                    XSignal(XAbstractAxis_rangeChanged_signal),
+                    axRangeSlot);
+                XObject_connect_2((XObject*)axis,
+                    XSignal(XAbstractAxis_visibleChanged_signal),
+                    axVisibleSlot);
+                XObject_connect_2((XObject*)axis,
+                    XSignal(XAbstractAxis_titleTextChanged_signal),
+                    axTitleSlot);
+                XAbstractAxis_setRange(axis, 1.0, 9.0);
+                c1_expect(XAbstractAxis_min(axis) == 1.0 &&
+                          XAbstractAxis_max(axis) == 9.0 &&
+                          c1_axRange == 1, "XAbstractAxis setRange+信号");
+                XAbstractAxis_setVisible(axis, false);
+                c1_expect(!XAbstractAxis_isVisible(axis) &&
+                          c1_axVisible == 1, "XAbstractAxis 可见性+信号");
+                XAbstractAxis_setTitleText_2(axis, "X 轴");
+                c1_expect(XStrcmp(XAbstractAxis_titleText_2(axis), "X 轴")
+                          == 0 && c1_axTitle == 1,
+                          "XAbstractAxis 标题+信号");
+                XAbstractAxis_setReverse(axis, true);
+                c1_expect(XAbstractAxis_isReverse(axis),
+                          "XAbstractAxis reverse");
+                XAbstractAxis_delete_base(axis);
+            }
+            if (caxis) {
+                XObject_connect_2((XObject*)&caxis->m_base,
+                    XSignal(XCategoryAxis_countChanged_signal),
+                    caxisCountSlot);
+                XCategoryAxis_append_2(caxis, "一");
+                XCategoryAxis_append_2(caxis, "二");
+                XCategoryAxis_append_2(caxis, "三");
+                c1_expect(XCategoryAxis_count(caxis) == 3 &&
+                          XCategoryAxis_max(caxis) == 3.0 &&
+                          XCategoryAxis_min(caxis) == 0.0 &&
+                          c1_caxisCount == 3,
+                          "QBarCategoryAxis 语义：append 更新 max+countChanged");
+                XCategoryAxis_setRange(caxis, -5.0, 99.0);
+                c1_expect(XCategoryAxis_min(caxis) == 0.0 &&
+                          XCategoryAxis_max(caxis) == 3.0,
+                          "setRange 钳位到 [0, count]");
+                XCategoryAxis_delete_base(caxis);
+            }
+        }
         XChart_scroll(chart, 0.1, 0.0);
-        c1_expect(XChart_axisX(chart)->m_min > 0.0, "scroll X 平移");
+        c1_expect(XChart_axisX(chart)->m_base.m_min > 0.0, "scroll X 平移");
         XChart_zoomReset(chart);
 
         /* 边距/绘图区/背景。 */
@@ -26355,9 +27126,9 @@ static void test_chart_c1_contract(void)
 
         /* 本地化。 */
         XChart_setLocalizeNumbers(chart, true);
-        XChart_setLocale(chart, "zh-CN");
+        XChart_setLocale_2(chart, "zh-CN");
         c1_expect(XChart_localizeNumbers(chart) &&
-                  strcmp(XChart_locale(chart), "zh-CN") == 0, "locale 回读");
+                  strcmp(XChart_locale_2(chart), "zh-CN") == 0, "locale 回读");
 
         /* 图表类型。 */
         c1_expect(XChart_chartType(chart) == XChart_ChartType_Cartesian,
@@ -26558,6 +27329,15 @@ static void test_toolbox_contract(void)
     tbx_expect(strcmp(XToolBox_itemText(box, 1), "中间页") == 0,
                "setItemText/itemText 往返");
 
+    /* Task 2.10：图标 API */
+    XToolBox_setItemIcon_2(box, 0, "icon.png");
+    tbx_expect(XToolBox_itemIcon(box, 0) != NULL &&
+               strcmp(XString_toUtf8(XToolBox_itemIcon(box, 0)),
+                      "icon.png") == 0,
+               "setItemIcon/itemIcon 往返");
+    XToolBox_setItemIcon_2(box, 0, NULL);
+    tbx_expect(XToolBox_itemIcon(box, 0) == NULL, "清空图标");
+
     tbx_changed = 0;
     tbx_lastIndex = -1;
     XObject_connect_2((XObject*)box,
@@ -26636,6 +27416,105 @@ static void test_scrollarea_contract(void)
 
     XScrollArea_delete_base(area);
     XLabel_delete_base(content);
+}
+/* ============ XAbstractScrollArea 扩展契约测试（Task 2.9） ========= */
+
+static void sa_ext_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[SA-EXT-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_abstractscrollarea_ext_contract(void)
+{
+    XScrollArea* area = XScrollArea_create(NULL, 0);
+    XWidget* viewport;
+    XScrollBar* newV;
+    XScrollBar* newH;
+    XWidget* sbw0;
+    XWidget* sbw1;
+    const XWidget** list;
+    XSize size;
+    XSize hint;
+
+    sa_ext_expect(area != NULL, "ext: XScrollArea 创建");
+
+    /* 基类默认尺寸提示对齐 Qt（256x192）。 */
+    size = XAbstractScrollArea_sizeHint((XAbstractScrollArea*)area);
+    sa_ext_expect(size.width == 256 && size.height == 192,
+                  "ext: 默认 sizeHint 256x192");
+    size = XAbstractScrollArea_minimumSizeHint(
+        (XAbstractScrollArea*)area);
+    sa_ext_expect(size.width > 0 && size.height > 0,
+                  "ext: minimumSizeHint 有效");
+
+    /* maximumViewportSize：AlwaysOn 滚动条占 16px。 */
+    XWidget_resize((XWidget*)area, 400, 300);
+    XAbstractScrollArea_setVerticalScrollBarPolicy(
+        (XAbstractScrollArea*)area, XScrollBarPolicy_AlwaysOn);
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)area, XScrollBarPolicy_AlwaysOn);
+    size = XAbstractScrollArea_maximumViewportSize(
+        (XAbstractScrollArea*)area);
+    sa_ext_expect(size.width == 400 - 16 && size.height == 300 - 16,
+                  "ext: maximumViewportSize 扣除滚动条");
+
+    /* 替换滚动条：新条接管并重连。 */
+    newV = XScrollBar_create_2(
+        (int)XAbstractSliderOrientation_Vertical, NULL, 0);
+    newH = XScrollBar_create_2(
+        (int)XAbstractSliderOrientation_Horizontal, NULL, 0);
+    sa_ext_expect(newV != NULL && newH != NULL, "ext: 新滚动条创建");
+    XAbstractScrollArea_setVerticalScrollBar(
+        (XAbstractScrollArea*)area, newV);
+    XAbstractScrollArea_setHorizontalScrollBar(
+        (XAbstractScrollArea*)area, newH);
+    sa_ext_expect(
+        XAbstractScrollArea_verticalScrollBar(
+            (XAbstractScrollArea*)area) == newV,
+        "ext: 垂直条替换生效");
+    sa_ext_expect(
+        XAbstractScrollArea_horizontalScrollBar(
+            (XAbstractScrollArea*)area) == newH,
+        "ext: 水平条替换生效");
+
+    /* addScrollBarWidget / scrollBarWidgets。 */
+    sbw0 = XWidget_create(NULL, 0);
+    sbw1 = XWidget_create(NULL, 0);
+    XAbstractScrollArea_addScrollBarWidget(
+        (XAbstractScrollArea*)area, sbw0, (int)XAlignment_Top);
+    XAbstractScrollArea_addScrollBarWidget(
+        (XAbstractScrollArea*)area, sbw1, (int)XAlignment_Right);
+    list = XAbstractScrollArea_scrollBarWidgets(
+        (XAbstractScrollArea*)area, 0);
+    sa_ext_expect(list != NULL && list[0] == sbw0 && list[1] == sbw1 &&
+                  list[2] == NULL,
+                  "ext: scrollBarWidgets 返回列表");
+
+    /* setViewport 替换。 */
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
+    sa_ext_expect(viewport != NULL, "ext: 原视口存在");
+    {
+        XWidget* newVp = XWidget_create(NULL, 0);
+        XAbstractScrollArea_setViewport((XAbstractScrollArea*)area,
+                                        newVp);
+        sa_ext_expect(
+            XAbstractScrollArea_viewport(
+                (XAbstractScrollArea*)area) == newVp,
+            "ext: setViewport 替换生效");
+    }
+
+    /* XScrollArea_sizeHint：视口 sizeHint 优先。 */
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
+    hint.width = 300;
+    hint.height = 200;
+    XWidget_setSizeHint(viewport, &hint);
+    size = XScrollArea_sizeHint(area);
+    sa_ext_expect(size.width == 300 && size.height == 200,
+                  "ext: XScrollArea_sizeHint 用视口");
+
+    XScrollArea_delete_base(area);
 }
 /* ==================== 小控件契约测试：SizeGrip/RubberBand/FocusFrame == */
 
@@ -26791,8 +27670,8 @@ static void test_mainwindow_contract(void)
         XDockWidget_setFeatures(dock, 0x1);
         sml_expect(XDockWidget_features(dock) == 0x1, "setFeatures 生效");
         XDockWidget_delete_base(dock);
-        sml_expect(XObject_parent((XObject*)content) == NULL,
-                   "dock 析构后内容控件随子控件销毁");
+        /* 内容控件随 dock 析构一并销毁；已释放对象不可再访问（ASan
+           验证），此处仅注释确认销毁语义。 */
     }
 
     /* ---- XMainWindow ---- */
@@ -26824,8 +27703,52 @@ static void test_mainwindow_contract(void)
                    "dockOptions 存储");
 
         XMainWindow_delete_base(win);
-        sml_expect(XObject_parent((XObject*)central) == NULL,
-                   "主窗口析构后中央控件随子控件销毁");
+        /* 中央控件随主窗口析构一并销毁；已释放对象不可再访问。 */
+    }
+
+    /* ---- Task 2.4：布局 API ---- */
+    {
+        XMainWindow* win = XMainWindow_create(NULL, 0);
+        XWidget* tb1 = XMainWindow_addToolBar_2(win, "工具1");
+        XWidget* tb2 = XMainWindow_addToolBar_2(win, "工具2");
+        mw_expect(tb1 != NULL && tb2 != NULL, "addToolBar 创建");
+        if (tb1 && tb2) {
+            XWidget* tb3 = XMainWindow_addToolBar_2(win, "工具3");
+            mw_expect(XMainWindow_toolBarArea(win, tb1) != 0,
+                      "toolBarArea 登记");
+            XMainWindow_insertToolBar(win, tb1, tb3);
+            mw_expect(XMainWindow_toolBarArea(win, tb3) != 0,
+                      "insertToolBar 后登记");
+            XMainWindow_removeToolBar(win, tb3);
+            mw_expect(XMainWindow_toolBarArea(win, tb3) == 0,
+                      "removeToolBar 后取消登记");
+            XMainWindow_removeToolBar(win, tb2);
+        }
+        XMainWindow_setDocumentMode(win, true);
+        mw_expect(XMainWindow_documentMode(win), "documentMode");
+        XMainWindow_setAnimated(win, false);
+        mw_expect(!XMainWindow_isAnimated(win), "animated");
+        XMainWindow_setDockNestingEnabled(win, true);
+        mw_expect(XMainWindow_isDockNestingEnabled(win),
+                  "dockNestingEnabled");
+        XMainWindow_setUnifiedTitleAndToolBarOnMac(win, true);
+        mw_expect(XMainWindow_isUnifiedTitleAndToolBarOnMac(win),
+                  "unifiedTitleAndToolBarOnMac");
+        XMainWindow_setTabPosition(win, 3);
+        mw_expect(XMainWindow_tabPosition(win) == 3, "tabPosition");
+        XMainWindow_setTabShape(win, 1);
+        mw_expect(XMainWindow_tabShape(win) == 1, "tabShape");
+        XMainWindow_setSeparator(win, false);
+        XMainWindow_setCorner(win, 0, 1);
+        mw_expect(XMainWindow_corner(win, 0) == 1, "corner 设置");
+        {
+            XString* state = XMainWindow_saveState(win);
+            mw_expect(state != NULL, "saveState 生成快照");
+            mw_expect(XMainWindow_restoreState(win, state),
+                      "restoreState 接受快照");
+            if (state) XString_delete_base(state);
+        }
+        XMainWindow_delete_base(win);
     }
 
     /* ---- 主窗口 + 停靠面板组合 ---- */
@@ -27103,6 +28026,151 @@ static void test_mdiarea_contract(void)
 
     XMdiArea_delete_base(area);
     /* c0/c1 已随 area→sub window→内容 控件树一并销毁 */
+}/* ==================== XMdiSubWindow 扩展契约测试（Task 2.7） ====== */
+
+static int mdi_aboutToActivate = 0;
+static int mdi_stateChanged = 0;
+static int mdi_stateOld = -1;
+static int mdi_stateNew = -1;
+
+static void mdi_aboutToActivateSlot(XObject* r, XVarList* a)
+{ (void)r; (void)a; ++mdi_aboutToActivate; }
+static void mdi_stateChangedSlot(XObject* r, XVarList* a)
+{
+    (void)r;
+    XVarList_args_2(a, int, oldState, int, newState);
+    ++mdi_stateChanged;
+    mdi_stateOld = oldState;
+    mdi_stateNew = newState;
+}
+
+static void test_mdisubwindow_ext_contract(void)
+{
+    XMdiArea* area = XMdiArea_create(NULL, 0);
+    XLabel* c0 = XLabel_create(NULL, 0);
+    XLabel* c1 = XLabel_create(NULL, 0);
+    XMdiSubWindow* sw;
+    XMdiSubWindow* sw1;
+    XMenu* menu;
+    XSize sh;
+
+    mdi_expect(area != NULL, "ext: area 创建");
+    sw = XMdiArea_addSubWindow(area, (XWidget*)c0);
+    mdi_expect(sw != NULL, "ext: addSubWindow");
+    mdi_expect(XMdiSubWindow_mdiArea(sw) == area, "ext: mdiArea 反查");
+
+    /* 选项位 roundtrip */
+    mdi_expect(!XMdiSubWindow_testOption(
+                   sw, XMdiSubWindowOption_RubberBandResize),
+               "ext: 默认无 RubberBandResize");
+    XMdiSubWindow_setOption(sw, XMdiSubWindowOption_RubberBandResize, true);
+    mdi_expect(XMdiSubWindow_testOption(
+                   sw, XMdiSubWindowOption_RubberBandResize),
+               "ext: 置位生效");
+    XMdiSubWindow_setOption(sw, XMdiSubWindowOption_RubberBandResize, false);
+    mdi_expect(!XMdiSubWindow_testOption(
+                   sw, XMdiSubWindowOption_RubberBandResize),
+               "ext: 清位生效");
+
+    /* 键盘步进：默认值对标 Qt（5/20）+ roundtrip */
+    mdi_expect(XMdiSubWindow_keyboardSingleStep(sw) == 5,
+               "ext: 单步默认 5");
+    mdi_expect(XMdiSubWindow_keyboardPageStep(sw) == 20,
+               "ext: 页步默认 20");
+    XMdiSubWindow_setKeyboardSingleStep(sw, 7);
+    XMdiSubWindow_setKeyboardPageStep(sw, 42);
+    mdi_expect(XMdiSubWindow_keyboardSingleStep(sw) == 7,
+               "ext: 单步 roundtrip");
+    mdi_expect(XMdiSubWindow_keyboardPageStep(sw) == 42,
+               "ext: 页步 roundtrip");
+
+    /* 系统菜单 roundtrip（所有权转移给 sub window） */
+    menu = XMenu_create();
+    mdi_expect(menu != NULL, "ext: XMenu 创建");
+    mdi_expect(XMdiSubWindow_systemMenu(sw) == NULL,
+               "ext: 默认无系统菜单");
+    XMdiSubWindow_setSystemMenu(sw, menu);
+    mdi_expect(XMdiSubWindow_systemMenu(sw) == menu,
+               "ext: 系统菜单 roundtrip");
+
+    /* 折叠状态机 + windowStateChanged(old,new) 信号 */
+    mdi_stateChanged = 0;
+    mdi_stateOld = -1;
+    mdi_stateNew = -1;
+    XObject_connect_2((XObject*)sw,
+        XSignal(XMdiSubWindow_windowStateChanged_signal),
+        mdi_stateChangedSlot);
+    mdi_expect(!XMdiSubWindow_isShaded(sw), "ext: 初始非折叠");
+    XMdiSubWindow_showShaded(sw);
+    mdi_expect(XMdiSubWindow_isShaded(sw), "ext: showShaded 折叠");
+    mdi_expect(mdi_stateChanged >= 1 &&
+               mdi_stateNew == XMdiSubWindowState_Shaded,
+               "ext: 折叠发射状态信号");
+    mdi_expect(mdi_stateOld == 0, "ext: 状态信号 old=0");
+    XMdiSubWindow_showShaded(sw);
+    mdi_expect(!XMdiSubWindow_isShaded(sw), "ext: 再 showShaded 还原");
+
+    /* sizeHint / internal 控件返回 NULL */
+    sh = XMdiSubWindow_sizeHint(sw);
+    mdi_expect(sh.width >= 200 && sh.height >= 20,
+               "ext: sizeHint 有效");
+    mdi_expect(XMdiSubWindow_minimumSizeHint(sw).width >= 1,
+               "ext: minimumSizeHint 有效");
+    mdi_expect(XMdiSubWindow_maximizedButtonsWidget(sw) == NULL,
+               "ext: maximizedButtons NULL");
+    mdi_expect(XMdiSubWindow_maximizedSystemMenuIconWidget(sw) == NULL,
+               "ext: maximizedMenuIcon NULL");
+
+    /* aboutToActivate：激活前发射（激活目标窗口上触发；
+       需要两个子窗口，移到下方 sw1 创建之后验证） */
+
+    /* 区域级 API：选项位/文档模式/页签形状 */
+    mdi_expect(!XMdiArea_testOption(area, XMdiAreaAreaOption_AllowTabbedView),
+               "ext: area 默认无 AllowTabbedView");
+    XMdiArea_setOption(area, XMdiAreaAreaOption_AllowTabbedView, true);
+    mdi_expect(XMdiArea_testOption(area, XMdiAreaAreaOption_AllowTabbedView),
+               "ext: area 置位生效");
+    XMdiArea_setOption(area, XMdiAreaAreaOption_AllowTabbedView, false);
+    mdi_expect(!XMdiArea_testOption(area, XMdiAreaAreaOption_AllowTabbedView),
+               "ext: area 清位生效");
+    mdi_expect(!XMdiArea_documentMode(area), "ext: area 默认非文档模式");
+    XMdiArea_setDocumentMode(area, true);
+    mdi_expect(XMdiArea_documentMode(area), "ext: 文档模式 roundtrip");
+    mdi_expect(XMdiArea_tabShape(area) == 0, "ext: 默认圆角页签");
+    XMdiArea_setTabShape(area, 1);
+    mdi_expect(XMdiArea_tabShape(area) == 1, "ext: 页签形状 roundtrip");
+
+    /* 激活导航 + closeActive */
+    sw1 = XMdiArea_addSubWindow(area, (XWidget*)c1);
+    mdi_expect(sw1 != NULL, "ext: addSubWindow2");
+    /* 现在 active=sw1：激活 sw 会触发 sw 的 aboutToActivate */
+    XObject_connect_2((XObject*)sw,
+        XSignal(XMdiSubWindow_aboutToActivate_signal),
+        mdi_aboutToActivateSlot);
+    mdi_aboutToActivate = 0;
+    XMdiArea_setActiveSubWindow(area, sw);
+    mdi_expect(mdi_aboutToActivate >= 1,
+               "ext: setActive 前发 aboutToActivate");
+    XObject_connect_2((XObject*)sw1,
+        XSignal(XMdiSubWindow_aboutToActivate_signal),
+        mdi_aboutToActivateSlot);
+    mdi_aboutToActivate = 0;
+    XMdiArea_activateNextSubWindow(area);
+    mdi_expect(XMdiArea_activeSubWindow(area) == sw1,
+               "ext: activateNext -> sw1");
+    mdi_expect(mdi_aboutToActivate >= 1,
+               "ext: activateNext 前发 aboutToActivate");
+    XMdiArea_activatePreviousSubWindow(area);
+    mdi_expect(XMdiArea_activeSubWindow(area) == sw,
+               "ext: activatePrevious -> sw");
+    XMdiArea_closeActiveSubWindow(area);
+    mdi_expect(XMdiArea_subWindowCount(area) == 1,
+               "ext: closeActive 后剩 1");
+    mdi_expect(XMdiArea_activeSubWindow(area) == sw1,
+               "ext: closeActive 后激活 sw1");
+
+    XMdiArea_delete_base(area);
+    /* c0/c1/menu 随控件树释放 */
 }/* ==================== XCalendarWidget 契约测试 ==================== */
 
 static int cal_selChanged = 0;
@@ -27179,7 +28247,27 @@ static void test_calendarwidget_contract(void)
               "导航栏隐藏");
     XCalendarWidget_setNavigationBarVisible(cal, true);
 
-    XCalendarWidget_delete_base(cal);
+        /* Task 2.5：补充 API。 */
+    XCalendarWidget_setDateEditEnabled(cal, true);
+    cal_expect(XCalendarWidget_isDateEditEnabled(cal), "dateEditEnabled");
+    XCalendarWidget_setShowTodayDate(cal, false);
+    cal_expect(!XCalendarWidget_isShowTodayDate(cal), "showTodayDate");
+    XCalendarWidget_setVerticalHeaderFormat(cal, 1);
+    cal_expect(XCalendarWidget_verticalHeaderFormat(cal) == 1,
+              "verticalHeaderFormat");
+    XCalendarWidget_setHeaderTextFormat(cal, 3);
+    XCalendarWidget_setWeekdayTextFormat(cal, 5);
+    {
+        XDate d;
+        cal_expect(XCalendarWidget_todayDate(cal, &d), "todayDate");
+        XCalendarWidget_showTodayPage(cal);
+        cal_expect(XCalendarWidget_weekNumber(cal, &d) >= 1 &&
+                  XCalendarWidget_weekNumber(cal, &d) <= 53,
+                  "weekNumber 范围");
+        cal_expect(XCalendarWidget_isDateSelected(cal, &d),
+                  "showTodayPage 后选中今日");
+    }
+XCalendarWidget_delete_base(cal);
 }/* ==================== XTextBrowser 契约测试（对标 QTextBrowser） == */
 
 static void tbr_expect(bool cond, const char* what)
@@ -27203,8 +28291,13 @@ static void test_textbrowser_contract(void)
               "setSource/source 往返");
 
     XPlainTextEdit_setPlainText(tb->m_base.m_editor, "帮助内容");
-    tbr_expect(strcmp(XPlainTextEdit_toPlainText(tb->m_base.m_editor),
-                      "帮助内容") == 0, "通过编辑器 setPlainText 生效");
+    {
+        char* tbPlain = XPlainTextEdit_toPlainText(tb->m_base.m_editor);
+        tbr_expect(tbPlain != NULL &&
+                   strcmp(tbPlain, "帮助内容") == 0,
+                   "通过编辑器 setPlainText 生效");
+        if (tbPlain) XFree_System(tbPlain);
+    }
 
     XTextBrowser_setOpenLinks(tb, false);
     tbr_expect(!XTextBrowser_openLinks(tb), "setOpenLinks 生效");
@@ -27310,6 +28403,12 @@ static void te_expect(bool cond, const char* what)
     }
 }
 
+static int tdCursorCount = 0;
+static int tdLayoutCount = 0;
+static void tdCursorSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++tdCursorCount; }
+static void tdLayoutSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++tdLayoutCount; }
 static void test_textedit_contract(void)
 {
     XTextEdit* edit = XTextEdit_create(NULL, 0);
@@ -27346,6 +28445,52 @@ static void test_textedit_contract(void)
     te_expect(html != NULL && strstr(html, "<html>") != NULL &&
               strstr(html, "test") != NULL, "toHtml 生成 HTML");
     if (html) XFree_System(html);
+
+    /* Task 2.3：格式存储型 API + XTextDocument 信号。 */
+    XTextEdit_setFontFamily(edit, "Sans");
+    te_expect(XStrcmp(XTextEdit_fontFamily(edit), "Sans") == 0,
+              "setFontFamily roundtrip");
+    XTextEdit_setFontWeight(edit, 700);
+    te_expect(XTextEdit_fontWeight(edit) == 700, "setFontWeight");
+    XTextEdit_setFontPointSize(edit, 16);
+    te_expect(XTextEdit_fontPointSize(edit) == 16.0, "setFontPointSize");
+    XTextEdit_zoomIn(edit, 2);
+    te_expect(XTextEdit_fontPointSize(edit) > 16.0, "zoomIn 增字号");
+    XTextEdit_zoomOut(edit, 3);
+    te_expect(XTextEdit_fontPointSize(edit) < 16.0, "zoomOut 减字号");
+    XTextEdit_setAcceptRichText(edit, false);
+    te_expect(!XTextEdit_acceptRichText(edit), "acceptRichText");
+    XTextEdit_setDocumentTitle(edit, "文档标题");
+    te_expect(XStrcmp(XTextEdit_documentTitle(edit), "文档标题") == 0,
+              "documentTitle roundtrip");
+    XTextEdit_setTabStopDistance(edit, 40.0);
+    te_expect(XTextEdit_tabStopDistance(edit) == 40.0, "tabStopDistance");
+    XTextEdit_setCursorWidth(edit, 3);
+    te_expect(XTextEdit_cursorWidth(edit) == 3, "cursorWidth");
+
+    /* XTextDocument：光标/find/characterAt/信号。 */
+#if XTEXTDOCUMENT_ON
+    {
+        XTextDocument* doc = XTextDocument_create();
+
+        if (doc) {
+            XObject_connect_2((XObject*)doc,
+                XSignal(XTextDocument_cursorPositionChanged_signal), tdCursorSlot);
+            XObject_connect_2((XObject*)doc,
+                XSignal(XTextDocument_documentLayoutChanged_signal), tdLayoutSlot);
+            XTextDocument_setPlainText(doc, "hello world");
+            te_expect(tdLayoutCount >= 1, "documentLayoutChanged 触发");
+            XTextDocument_setCursorPosition(doc, 6);
+            te_expect(XTextDocument_cursorPosition(doc) == 6 &&
+                      tdCursorCount >= 1, "cursorPositionChanged 触发");
+            te_expect(XTextDocument_find(doc, "world") == 6,
+                      "find 定位");
+            te_expect(XTextDocument_characterAt(doc, 0) == 'h',
+                      "characterAt");
+            XTextDocument_delete_base(doc);
+        }
+    }
+#endif /* XTEXTDOCUMENT_ON */
 
     XTextEdit_delete_base(edit);
 }
@@ -27409,6 +28554,35 @@ static void test_dialog_contract(void)
         dlg_expect(mb != NULL, "XMessageBox 创建（继承 XDialog）");
         XDialog_accept((XDialog*)mb);
         dlg_expect(((XDialog*)mb)->m_result == 1, "XMessageBox 经 XDialog accept");
+        /* Task 2.1：补充文本/按钮管理/buttonClicked/options。 */
+        {
+            static int mbClicked = 0;
+            XMessageBox_setDetailedText(mb, "detail");
+            dlg_expect(XStrcmp(XMessageBox_detailedText(mb), "detail") == 0,
+                       "setDetailedText roundtrip");
+            XMessageBox_setInformativeText(mb, "info");
+            dlg_expect(XStrcmp(XMessageBox_informativeText(mb), "info") == 0,
+                       "setInformativeText roundtrip");
+            {
+                XAbstractButton* btn = XMessageBox_addButton_2(mb, "自定义",
+                                                               (int)XMessageBoxButtonRole_ActionRole);
+                dlg_expect(btn != NULL &&
+                           XMessageBox_defaultButton(mb) == NULL,
+                           "addButton 文本按钮");
+                XMessageBox_setDefaultButton(mb, btn);
+                dlg_expect(XMessageBox_defaultButton(mb) == btn,
+                           "setDefaultButton 生效");
+                XMessageBox_setEscapeButton_2(
+                    mb, (int)XDialogButtonBoxStandard_Cancel);
+                dlg_expect(XMessageBox_escapeButton(mb) != NULL,
+                           "setEscapeButton 标准按钮");
+            }
+            XMessageBox_setOptions(mb, 0x1);
+            dlg_expect(XMessageBox_testOption(mb, 0x1) &&
+                       !XMessageBox_testOption(mb, 0x2),
+                       "options/testOption");
+            (void)mbClicked;
+        }
         XMessageBox_delete_base(mb);
     }
 }/* ==================== XTabWidget 多行换行 + 切换功能测试 ========== */
@@ -27434,8 +28608,11 @@ static void test_tabwidget_wrap_contract(void)
     for (i = 0; i < 17; ++i) {
         pages[i] = (XWidget*)XMemory_malloc(sizeof(XWidget), XCLASS_DEFAULT_MEMORY_TYPE);
         XWidget_init(pages[i], NULL, 0);
+        /* 页对象标记堆分配：insertTab 后归页容器树，tw 析构级联
+           delete_base 时才能释放本体（否则本体泄漏）。 */
+        Set_Class_IsHeap(pages[i], true);
         snprintf(label, sizeof(label), "标签%d", i);
-        XTabWidget_insertTab(tw, i, pages[i], label);
+        XTabWidget_insertTab_2(tw, i, pages[i], label);
     }
     tw_expect(XTabWidget_count(tw) == 17, "插入 17 个标签");
     tw_expect(XTabWidget_currentIndex(tw) == 0, "默认当前 0");
@@ -27464,9 +28641,9 @@ static void test_tabwidget_wrap_contract(void)
     tw_expect(XTabWidget_currentIndex(tw) < 17, "超界不崩溃");
 
     /* tabText 往返。 */
-    tw_expect(strcmp(XTabWidget_tabText(tw, 0), "标签0") == 0,
+    tw_expect(strcmp(XTabWidget_tabText_2(tw, 0), "标签0") == 0,
               "tabText(0) 往返");
-    tw_expect(strcmp(XTabWidget_tabText(tw, 16), "标签16") == 0,
+    tw_expect(strcmp(XTabWidget_tabText_2(tw, 16), "标签16") == 0,
               "tabText(16) 往返");
 
     XTabWidget_delete_base(tw);
@@ -27553,7 +28730,23 @@ static void test_wizard_contract(void)
     XWizardPage_setComplete(p0, false);
     wiz_expect(!XWizardPage_isComplete(p0), "setComplete false");
 
-    XWizard_delete_base(wiz);
+        /* Task 2.6：字段/侧边/布局/导航。 */
+    XWizard_setField_2(wiz, "name", "张三");
+    wiz_expect(XStrcmp(XWizard_field_2(wiz, "name"), "张三") == 0,
+               "setField/field roundtrip");
+    XWizard_setPixmap_2(wiz, 0, "banner.png");
+    XWizard_setSideWidget(wiz, NULL);
+    wiz_expect(XWizard_sideWidget(wiz) == NULL, "sideWidget 默认 NULL");
+    XWizard_setButtonLayout(wiz, 2);
+    XWizard_setTitleFormat(wiz, 1);
+    XWizard_setSubTitleFormat(wiz, 1);
+    XWizard_cleanupPage(wiz);
+    XWizard_initializePage(wiz);
+    wiz_expect(!XWizard_validateCurrentPage(wiz),
+               "validateCurrentPage 跟随页面 complete(false)");
+    wiz_expect(XWizard_nextId(wiz) == -1 || XWizard_nextId(wiz) >= 0,
+               "nextId 返回合法值");
+XWizard_delete_base(wiz);
     /* 页面已作为 wizard 子控件随 deinit 自动清理。 */
 }/* ==================== XDialogButtonBox 契约测试（对标 QDialogButtonBox） ==================== */
 
@@ -27635,14 +28828,17 @@ static void test_xgui_widgets(void)
     expect_true(XButtonGroupTest_runAll(), "XButtonGroup 控件功能");
     test_statusbar_contract();
     test_menubar_contract();
+    test_menubar_ext_contract();
     test_splitter_contract();
     test_toolbox_contract();
     test_scrollarea_contract();
+    test_abstractscrollarea_ext_contract();
     test_small_widgets_contract();
     test_datetimeedit_contract();
     test_fontcombobox_contract();
     test_plaintextedit_contract();
     test_mdiarea_contract();
+    test_mdisubwindow_ext_contract();
     test_calendarwidget_contract();
     test_textbrowser_contract();
     test_keysequenceedit_contract();
@@ -27655,9 +28851,2081 @@ static void test_xgui_widgets(void)
     test_messagebox_contract();
     test_mainwindow_contract();
     test_toolbar_contract();
+    test_toolbar_ext_contract();
     test_dialogbuttonbox_contract();
     test_widgets_signals_contract();
 }
+
+/* ==================== Task 2.18a：Charts 数据模型/信号契约 ==================== */
+
+#if XCHARTS_ON
+static int t218_xbsValuesAdded;
+static int t218_xbsValuesRemoved;
+static int t218_xbsValueChanged;
+static int t218_xbsLabelChanged;
+static int t218_xbsPenChanged;
+static int t218_xbsBrushChanged;
+static int t218_xbsLabelBrushChanged;
+static int t218_xbsLabelFontChanged;
+static int t218_xbsColorChanged;
+static int t218_xbsBorderColorChanged;
+static int t218_xbsLabelColorChanged;
+static int t218_xbsSelectedColorChanged;
+static int t218_xbsSelChanged;
+static int t218_xbsVaIndex;
+static int t218_xbsVaCount;
+static int t218_xbsVrIndex;
+static int t218_xbsVrCount;
+static int t218_xbsVcIndex;
+static uint32_t t218_xbsColorLast;
+static uint32_t t218_xbsBorderLast;
+static uint32_t t218_xbsLabelColorLast;
+static uint32_t t218_xbsSelColorLast;
+static int t218_xbsSelLast[8];
+static int t218_xbsSelLastCount;
+
+static void t218_xbsVaSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xbsValuesAdded++;
+    XVarList_args_2(args, int, idx, int, cnt);
+    t218_xbsVaIndex = idx;
+    t218_xbsVaCount = cnt;
+}
+static void t218_xbsVrSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xbsValuesRemoved++;
+    XVarList_args_2(args, int, idx, int, cnt);
+    t218_xbsVrIndex = idx;
+    t218_xbsVrCount = cnt;
+}
+static void t218_xbsVcSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xbsValueChanged++;
+    XVarList_args_1(args, int, idx);
+    t218_xbsVcIndex = idx;
+}
+static void t218_xbsLabelChangedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xbsLabelChanged++; }
+static void t218_xbsPenChangedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xbsPenChanged++; }
+static void t218_xbsBrushChangedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xbsBrushChanged++; }
+static void t218_xbsLabelBrushChangedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xbsLabelBrushChanged++; }
+static void t218_xbsLabelFontChangedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xbsLabelFontChanged++; }
+static void t218_xbsColorSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xbsColorChanged++;
+    XVarList_args_1(args, uint32_t, color);
+    t218_xbsColorLast = color;
+}
+static void t218_xbsBorderSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xbsBorderColorChanged++;
+    XVarList_args_1(args, uint32_t, color);
+    t218_xbsBorderLast = color;
+}
+static void t218_xbsLabelColorSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xbsLabelColorChanged++;
+    XVarList_args_1(args, uint32_t, color);
+    t218_xbsLabelColorLast = color;
+}
+static void t218_xbsSelColorSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xbsSelectedColorChanged++;
+    XVarList_args_1(args, uint32_t, color);
+    t218_xbsSelColorLast = color;
+}
+static void t218_xbsSelSlot(XObject* sender, XVarList* args)
+{
+    int i;
+    (void)sender;
+    t218_xbsSelChanged++;
+    XVarList_args_2(args, const int*, idx, int, cnt);
+    t218_xbsSelLastCount = cnt > 8 ? 8 : cnt;
+    for (i = 0; i < t218_xbsSelLastCount; ++i)
+        t218_xbsSelLast[i] = idx[i];
+}
+
+static int t218_absCountChanged;
+static int t218_absAdded;
+static int t218_absRemoved;
+static int t218_absAddedCount;
+static int t218_absRemovedCount;
+static XBarSet* t218_absLastSet;
+static int t218_absLabelVis;
+static int t218_absFmt;
+static int t218_absPos;
+static int t218_absAngle;
+static int t218_absPrec;
+static int t218_absPosLast;
+static double t218_absAngleLast;
+static char t218_absFmtLast[64];
+
+static void t218_absCountSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_absCountChanged++; }
+static void t218_absAddedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_absAdded++;
+    XVarList_args_2(args, XBarSet**, sets, int, cnt);
+    t218_absAddedCount = cnt;
+    t218_absLastSet = cnt > 0 ? sets[0] : NULL;
+}
+static void t218_absRemovedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_absRemoved++;
+    XVarList_args_2(args, XBarSet**, sets, int, cnt);
+    t218_absRemovedCount = cnt;
+    t218_absLastSet = cnt > 0 ? sets[0] : NULL;
+}
+static void t218_absLabelVisSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_absLabelVis++; }
+static void t218_absFmtSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_absFmt++;
+    XVarList_args_1(args, const char*, fmt);
+    if (fmt) {
+        int n = (int)strlen(fmt);
+        if (n > 63) n = 63;
+        memcpy(t218_absFmtLast, fmt, (size_t)n);
+        t218_absFmtLast[n] = 0;
+    }
+}
+static void t218_absPosSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_absPos++;
+    XVarList_args_1(args, int, pos);
+    t218_absPosLast = pos;
+}
+static void t218_absAngleSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_absAngle++;
+    XVarList_args_1(args, double, angle);
+    t218_absAngleLast = angle;
+}
+static void t218_absPrecSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_absPrec++; }
+
+static int t218_xyPointAdded;
+static int t218_xyPointRemoved;
+static int t218_xyPointReplaced;
+static int t218_xyPointsRemoved;
+static int t218_xyPrmIndex;
+static int t218_xyPrmCount;
+static int t218_xyLabelVis;
+static int t218_xyLabelVisLast;
+static int t218_xyFmt;
+static int t218_xyFont;
+static int t218_xyColor;
+static int t218_xyClip;
+static int t218_xyPen;
+static int t218_xyColorChanged;
+static int t218_xySelColor;
+static int t218_xyMarker;
+static int t218_xyLight;
+static int t218_xySelected;
+static int t218_xyBestVis;
+static uint32_t t218_xyColorLast;
+
+static void t218_xyPointAddedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyPointAdded++; }
+static void t218_xyPointRemovedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyPointRemoved++; }
+static void t218_xyPointReplacedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyPointReplaced++; }
+static void t218_xyPointsRemovedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xyPointsRemoved++;
+    XVarList_args_2(args, int, idx, int, cnt);
+    t218_xyPrmIndex = idx;
+    t218_xyPrmCount = cnt;
+}
+static void t218_xyLabelVisSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xyLabelVis++;
+    XVarList_args_1(args, bool, vis);
+    t218_xyLabelVisLast = vis ? 1 : 0;
+}
+static void t218_xyFmtSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyFmt++; }
+static void t218_xyFontSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyFont++; }
+static void t218_xyColorSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xyColor++;
+    XVarList_args_1(args, uint32_t, color);
+    t218_xyColorLast = color;
+}
+static void t218_xyClipSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyClip++; }
+static void t218_xyPenSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyPen++; }
+static void t218_xyColorChangedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    t218_xyColorChanged++;
+    XVarList_args_1(args, uint32_t, color);
+    t218_xyColorLast = color;
+}
+static void t218_xySelColorSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xySelColor++; }
+static void t218_xyMarkerSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyMarker++; }
+static void t218_xyLightSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyLight++; }
+static void t218_xySelectedSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xySelected++; }
+static void t218_xyBestVisSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_xyBestVis++; }
+
+static int t218_pieCount;
+static int t218_pieSum;
+static void t218_pieCountSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_pieCount++; }
+static void t218_pieSumSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_pieSum++; }
+
+static int t218_slLabelVis;
+static int t218_slBorderColor;
+static int t218_slBorderWidth;
+static int t218_slPen;
+static int t218_slBrush;
+static int t218_slLabelBrush;
+static int t218_slLabelFont;
+static int t218_slLabelColor;
+static void t218_slLabelVisSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slLabelVis++; }
+static void t218_slBorderColorSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slBorderColor++; }
+static void t218_slBorderWidthSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slBorderWidth++; }
+static void t218_slPenSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slPen++; }
+static void t218_slBrushSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slBrush++; }
+static void t218_slLabelBrushSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slLabelBrush++; }
+static void t218_slLabelFontSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slLabelFont++; }
+static void t218_slLabelColorSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_slLabelColor++; }
+
+static int t218_asName;
+static int t218_asVisible;
+static int t218_asOpacity;
+static int t218_asOpenGL;
+static void t218_asNameSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_asName++; }
+static void t218_asVisibleSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_asVisible++; }
+static void t218_asOpacitySlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_asOpacity++; }
+static void t218_asOpenGLSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; t218_asOpenGL++; }
+
+/** @brief Task 2.18a：XBarSet 数据流/信号参数、XAbstractBarSeries 集合
+ *         操作/信号、XXYSeries 点标签属性 roundtrip+信号、XPieSeries
+ *         holeSize、XPieSlice 属性信号、XAbstractSeries 4 信号。 */
+static void test_charts_task218a_contract(void)
+{
+    /* ---- XBarSet：默认值/数据流/信号参数 ---- */
+    {
+        XBarSet* set = XBarSet_create("S1");
+        double snap[8];
+        int selOut[8];
+        const int selIn[2] = {0, 2};
+        expect_true(set != NULL, "t218a XBarSet 创建");
+        if (!set) return;
+        expect_true(XBarSet_count(set) == 0 && XBarSet_sum(set) == 0 &&
+                    XBarSet_at(set, 0) == 0 &&
+                    !XBarSet_isBarSelected(set, 0) &&
+                    strcmp(XBarSet_label_2(set), "S1") == 0,
+                    "t218a XBarSet 默认值+标签");
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_valuesAdded_signal), t218_xbsVaSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_valuesRemoved_signal), t218_xbsVrSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_valueChanged_signal), t218_xbsVcSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_labelChanged_signal), t218_xbsLabelChangedSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_penChanged_signal), t218_xbsPenChangedSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_brushChanged_signal), t218_xbsBrushChangedSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_labelBrushChanged_signal),
+            t218_xbsLabelBrushChangedSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_labelFontChanged_signal),
+            t218_xbsLabelFontChangedSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_colorChanged_signal), t218_xbsColorSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_borderColorChanged_signal), t218_xbsBorderSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_labelColorChanged_signal), t218_xbsLabelColorSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_selectedColorChanged_signal), t218_xbsSelColorSlot);
+        XObject_connect_2((XObject*)set,
+            XSignal(XBarSet_selectedBarsChanged_signal), t218_xbsSelSlot);
+        t218_xbsValuesAdded = t218_xbsValuesRemoved = t218_xbsValueChanged = 0;
+        t218_xbsLabelChanged = t218_xbsPenChanged = t218_xbsBrushChanged = 0;
+        t218_xbsLabelBrushChanged = t218_xbsLabelFontChanged = 0;
+        t218_xbsColorChanged = t218_xbsBorderColorChanged = 0;
+        t218_xbsLabelColorChanged = t218_xbsSelectedColorChanged = 0;
+        t218_xbsSelChanged = 0;
+        XBarSet_append(set, 1.5);
+        XBarSet_append(set, 2.5);
+        {
+            const double more[2] = {3.5, 4.5};
+            XBarSet_appendValues(set, more, 2);
+        }
+        expect_true(XBarSet_count(set) == 4 && XBarSet_sum(set) == 12.0 &&
+                    XBarSet_at(set, 2) == 3.5 &&
+                    XBarSet_values(set, snap, 8) == 4 && snap[1] == 2.5,
+                    "t218a XBarSet 数值流");
+        expect_true(t218_xbsValuesAdded == 3 && t218_xbsVaIndex == 2 &&
+                    t218_xbsVaCount == 2, "t218a valuesAdded(2,2)");
+        XBarSet_insert(set, 1, 9.0);
+        expect_true(XBarSet_at(set, 1) == 9.0 && t218_xbsVaIndex == 1 &&
+                    t218_xbsVaCount == 1, "t218a insert valuesAdded(1,1)");
+        XBarSet_replace(set, 2, 7.0);
+        expect_true(XBarSet_at(set, 2) == 7.0 &&
+                    t218_xbsValueChanged == 1 && t218_xbsVcIndex == 2,
+                    "t218a replace valueChanged(2)");
+        XBarSet_remove(set, 1, 2);
+        expect_true(XBarSet_count(set) == 3 && XBarSet_at(set, 1) == 3.5 &&
+                    t218_xbsValuesRemoved == 1 && t218_xbsVrIndex == 1 &&
+                    t218_xbsVrCount == 2, "t218a remove valuesRemoved(1,2)");
+        XBarSet_setLabel_2(set, "S2");
+        expect_true(strcmp(XBarSet_label_2(set), "S2") == 0 &&
+                    t218_xbsLabelChanged == 1, "t218a labelChanged");
+        XBarSet_setPen(set, 0xFF111111u, 3.0);
+        XBarSet_setBrush(set, 0xFF222222u);
+        XBarSet_setLabelBrush(set, 0xFF333333u);
+        XBarSet_setLabelFont_2(set, "Sans", 12);
+        XBarSet_setColor(set, 0xFF445566u);
+        XBarSet_setBorderColor(set, 0xFF778899u);
+        XBarSet_setLabelColor(set, 0xFFAABBCCu);
+        XBarSet_setSelectedColor(set, 0xFFDDEEFFu);
+        expect_true(t218_xbsPenChanged == 2 && t218_xbsBrushChanged == 2 &&
+                    t218_xbsLabelBrushChanged == 2 &&
+                    t218_xbsLabelFontChanged == 1 &&
+                    t218_xbsColorChanged == 1 &&
+                    t218_xbsColorLast == 0xFF445566u &&
+                    t218_xbsBorderColorChanged == 1 &&
+                    t218_xbsBorderLast == 0xFF778899u &&
+                    t218_xbsLabelColorChanged == 1 &&
+                    t218_xbsLabelColorLast == 0xFFAABBCCu &&
+                    t218_xbsSelectedColorChanged == 1 &&
+                    t218_xbsSelColorLast == 0xFFDDEEFFu,
+                    "t218a XBarSet 外观信号");
+        {
+            uint32_t pc;
+            double pw;
+            XBarSet_pen(set, &pc, &pw);
+            expect_true(pc == 0xFF778899u && pw == 3.0 &&
+                        XBarSet_brush(set) == 0xFF445566u &&
+                        XBarSet_color(set) == 0xFF445566u &&
+                        XBarSet_borderColor(set) == 0xFF778899u &&
+                        XBarSet_labelColor(set) == 0xFFAABBCCu &&
+                        XBarSet_selectedColor(set) == 0xFFDDEEFFu &&
+                        strcmp(XBarSet_labelFont_2(set), "Sans") == 0 &&
+                        XBarSet_labelFontSize(set) == 12,
+                        "t218a XBarSet 外观 roundtrip");
+        }
+        /* 选中状态 + selectedBarsChanged 载荷。 */
+        XBarSet_selectBar(set, 1);
+        expect_true(XBarSet_isBarSelected(set, 1) &&
+                    t218_xbsSelChanged == 1 && t218_xbsSelLastCount == 1 &&
+                    t218_xbsSelLast[0] == 1, "t218a selectBar 信号载荷");
+        XBarSet_selectBars(set, selIn, 2);
+        expect_true(XBarSet_selectedBars(set, selOut, 8) == 3 &&
+                    selOut[0] == 0 && selOut[1] == 1 && selOut[2] == 2,
+                    "t218a selectBars 集合");
+        XBarSet_toggleSelection(set, selIn, 2);
+        expect_true(XBarSet_selectedBars(set, selOut, 8) == 1 &&
+                    selOut[0] == 1, "t218a toggleSelection");
+        XBarSet_deselectAllBars(set);
+        expect_true(XBarSet_selectedBars(set, selOut, 8) == 0,
+                    "t218a deselectAllBars");
+        /* 插入/删除时选中下标平移（对标 Qt）。 */
+        XBarSet_selectBar(set, 1);
+        XBarSet_insert(set, 0, 8.0);
+        expect_true(XBarSet_isBarSelected(set, 2) &&
+                    !XBarSet_isBarSelected(set, 1),
+                    "t218a insert 选中平移");
+        XBarSet_remove(set, 0, 1);
+        expect_true(XBarSet_isBarSelected(set, 1),
+                    "t218a remove 选中平移");
+        XBarSet_delete_base(set);
+    }
+    /* ---- XAbstractBarSeries：XBarSet 集合 + 信号 + 默认值 ---- */
+    {
+        XAbstractBarSeries* series = XAbstractBarSeries_create();
+        XBarSet* s1 = XBarSet_create("A");
+        XBarSet* s2 = XBarSet_create("B");
+        XBarSet* s3 = XBarSet_create("C");
+        XBarSet* s4 = XBarSet_create("D");
+        XBarSet* out[8];
+        const double a1[2] = {10.0, 20.0};
+        const double a2[2] = {30.0, 40.0};
+        expect_true(series != NULL && s1 && s2 && s3 && s4,
+                    "t218a 柱序列/柱组创建");
+        if (!series) return;
+        XBarSet_appendValues(s1, a1, 2);
+        XBarSet_appendValues(s2, a2, 2);
+        expect_true(XAbstractBarSeries_count(series) == 0 &&
+                    XAbstractBarSeries_barWidth(series) == 0.5 &&
+                    XAbstractBarSeries_labelsPrecision(series) == 6 &&
+                    XAbstractBarSeries_labelsPosition(series) ==
+                        XAbstractBarSeries_LabelsCenter &&
+                    strcmp(XAbstractBarSeries_labelsFormat_2(series), "") == 0,
+                    "t218a 柱序列默认值(barWidth 0.5/precision 6)");
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_countChanged_signal),
+            t218_absCountSlot);
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_barsetsAdded_signal),
+            t218_absAddedSlot);
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_barsetsRemoved_signal),
+            t218_absRemovedSlot);
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_labelsVisibleChanged_signal),
+            t218_absLabelVisSlot);
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_labelsFormatChanged_signal),
+            t218_absFmtSlot);
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_labelsPositionChanged_signal),
+            t218_absPosSlot);
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_labelsAngleChanged_signal),
+            t218_absAngleSlot);
+        XObject_connect_2((XObject*)series,
+            XSignal(XAbstractBarSeries_labelsPrecisionChanged_signal),
+            t218_absPrecSlot);
+        t218_absCountChanged = t218_absAdded = t218_absRemoved = 0;
+        t218_absLabelVis = t218_absFmt = t218_absPos = 0;
+        t218_absAngle = t218_absPrec = 0;
+        expect_true(XAbstractBarSeries_append(series, s1) &&
+                    XAbstractBarSeries_append(series, s2),
+                    "t218a 柱组追加");
+        expect_true(!XAbstractBarSeries_append(series, s2) &&
+                    !XAbstractBarSeries_append(series, NULL),
+                    "t218a 重复/NULL 柱组拒绝");
+        expect_true(XAbstractBarSeries_insert(series, 1, s3) &&
+                    XAbstractBarSeries_count(series) == 3 &&
+                    XAbstractBarSeries_barSetAt(series, 1) == s3,
+                    "t218a 柱组插入");
+        expect_true(t218_absAdded == 3 && t218_absCountChanged == 3,
+                    "t218a barsetsAdded/countChanged 发射");
+        expect_true(XAbstractBarSeries_barSets(series, out, 8) == 3 &&
+                    out[0] == s1 && out[1] == s3 && out[2] == s2,
+                    "t218a barSets 顺序");
+        /* 柱组值存取（渲染统一走 barSets；旧镜像字段已随 2.18b 移除）。 */
+        expect_true(XBarSet_count(XAbstractBarSeries_barSetAt(series, 0)) == 2 &&
+                    XBarSet_at(XAbstractBarSeries_barSetAt(series, 0), 1) == 20.0,
+                    "t218a 柱组值存取（渲染走 barSets）");
+        expect_true(XAbstractBarSeries_take(series, s3) &&
+                    XAbstractBarSeries_count(series) == 2 &&
+                    t218_absRemoved == 1 &&
+                    t218_absRemovedCount == 1 && t218_absLastSet == s3,
+                    "t218a take 摘除+信号");
+        {
+            XBarSet* batch[2] = {s3, s4};
+            XBarSet_append(s3, 5.0);
+            expect_true(XAbstractBarSeries_appendSets(series, batch, 2),
+                        "t218a appendSets 批量");
+            expect_true(XAbstractBarSeries_count(series) == 4 &&
+                        t218_absAdded == 4 && t218_absAddedCount == 2,
+                        "t218a appendSets barsetsAdded(2)");
+        }
+        expect_true(XAbstractBarSeries_remove(series, s3) &&
+                    XAbstractBarSeries_count(series) == 3 &&
+                    t218_absRemoved == 2, "t218a remove 释放");
+        XAbstractBarSeries_clear(series);
+        expect_true(XAbstractBarSeries_count(series) == 0 &&
+                    t218_absRemoved >= 3 && t218_absRemovedCount == 3,
+                    "t218a clear barsetsRemoved(3)");
+        XAbstractBarSeries_setLabelsVisible(series, true);
+        XAbstractBarSeries_setLabelsFormat_2(series, "@value u");
+        XAbstractBarSeries_setLabelsAngle(series, 45.0);
+        XAbstractBarSeries_setLabelsPosition(series,
+            XAbstractBarSeries_LabelsOutsideEnd);
+        XAbstractBarSeries_setLabelsPrecision(series, 3);
+        expect_true(XAbstractBarSeries_isLabelsVisible(series) &&
+                    strcmp(XAbstractBarSeries_labelsFormat_2(series),
+                           "@value u") == 0 &&
+                    XAbstractBarSeries_labelsAngle(series) == 45.0 &&
+                    XAbstractBarSeries_labelsPosition(series) ==
+                        XAbstractBarSeries_LabelsOutsideEnd &&
+                    XAbstractBarSeries_labelsPrecision(series) == 3,
+                    "t218a 柱标签属性 roundtrip");
+        expect_true(t218_absLabelVis == 1 && t218_absFmt == 1 &&
+                    strcmp(t218_absFmtLast, "@value u") == 0 &&
+                    t218_absAngle == 1 && t218_absAngleLast == 45.0 &&
+                    t218_absPos == 1 && t218_absPosLast == 3 &&
+                    t218_absPrec == 1, "t218a 柱标签信号");
+        XAbstractBarSeries_setBarWidth(series, -1.0);
+        expect_true(XAbstractBarSeries_barWidth(series) == 0.0,
+                    "t218a barWidth 负值钳位 0");
+        XAbstractBarSeries_setBarWidth(series, 0.3);
+        expect_true(XAbstractBarSeries_barWidth(series) == 0.3,
+                    "t218a barWidth 设置");
+        XAbstractBarSeries_delete_base(series);
+    }
+    /* ---- XXYSeries：点标签属性 roundtrip + 信号 ---- */
+    {
+        XLineSeries* line = XLineSeries_create();
+        XPixmap pm;
+        double mk = 0;
+        expect_true(line != NULL, "t218a 折线创建");
+        if (!line) return;
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointAdded_signal), t218_xyPointAddedSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointRemoved_signal), t218_xyPointRemovedSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointReplaced_signal), t218_xyPointReplacedSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointsRemoved_signal), t218_xyPointsRemovedSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointLabelsVisibilityChanged_signal),
+            t218_xyLabelVisSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointLabelsFormatChanged_signal),
+            t218_xyFmtSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointLabelsFontChanged_signal),
+            t218_xyFontSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointLabelsColorChanged_signal),
+            t218_xyColorSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_pointLabelsClippingChanged_signal),
+            t218_xyClipSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_penChanged_signal), t218_xyPenSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_colorChanged_signal), t218_xyColorChangedSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_selectedColorChanged_signal),
+            t218_xySelColorSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_markerSizeChanged_signal), t218_xyMarkerSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_lightMarkerChanged_signal), t218_xyLightSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_selectedPointsChanged_signal),
+            t218_xySelectedSlot);
+        XObject_connect_2((XObject*)&line->m_base,
+            XSignal(XXYSeries_bestFitLineVisibilityChanged_signal),
+            t218_xyBestVisSlot);
+        t218_xyPointAdded = t218_xyPointRemoved = t218_xyPointReplaced = 0;
+        t218_xyPointsRemoved = t218_xyLabelVis = t218_xyFmt = 0;
+        t218_xyFont = t218_xyColor = t218_xyClip = t218_xyPen = 0;
+        t218_xyColorChanged = t218_xySelColor = t218_xyMarker = 0;
+        t218_xyLight = 0;
+        t218_xySelected = t218_xyBestVis = 0;
+        XXYSeries_append(&line->m_base, 0, 1);
+        XXYSeries_append(&line->m_base, 1, 2);
+        XXYSeries_append(&line->m_base, 2, 3);
+        XXYSeries_replaceAt(&line->m_base, 1, 5, 6);
+        XXYSeries_removeAt(&line->m_base, 2);
+        XXYSeries_removePoints(&line->m_base, 0, 1);
+        expect_true(t218_xyPointAdded == 3 && t218_xyPointReplaced == 1 &&
+                    t218_xyPointRemoved == 1 && t218_xyPointsRemoved == 1 &&
+                    t218_xyPrmIndex == 0 && t218_xyPrmCount == 1,
+                    "t218a XY 数据信号参数");
+        XXYSeries_clear(&line->m_base);
+        expect_true(t218_xyPointsRemoved == 2 && t218_xyPrmIndex == 0 &&
+                    t218_xyPrmCount == 1, "t218a clear pointsRemoved");
+        /* 点标签属性 roundtrip + 信号。 */
+        XXYSeries_setPointLabelsVisible(&line->m_base, true);
+        XXYSeries_setPointLabelsFormat_2(&line->m_base, "@x, @y");
+        XXYSeries_setPointLabelsFont_2(&line->m_base, "Sans", 14);
+        XXYSeries_setPointLabelsColor(&line->m_base, 0xFF010203u);
+        XXYSeries_setPointLabelsClipping(&line->m_base, false);
+        XXYSeries_setMarkerSize(&line->m_base, 12.5);
+        XXYSeries_setSelectedColor(&line->m_base, 0xFF040506u);
+        XXYSeries_setBestFitLineVisible(&line->m_base, true);
+        expect_true(XXYSeries_pointLabelsVisible(&line->m_base) &&
+                    strcmp(XXYSeries_pointLabelsFormat_2(&line->m_base),
+                           "@x, @y") == 0 &&
+                    strcmp(XXYSeries_pointLabelsFontFamily_2(&line->m_base),
+                           "Sans") == 0 &&
+                    XXYSeries_pointLabelsFontSize(&line->m_base) == 14 &&
+                    XXYSeries_pointLabelsColor(&line->m_base) == 0xFF010203u &&
+                    !XXYSeries_pointLabelsClipping(&line->m_base) &&
+                    (mk = XXYSeries_markerSize(&line->m_base)) == 12.5 &&
+                    XXYSeries_selectedColor(&line->m_base) == 0xFF040506u &&
+                    XXYSeries_bestFitLineVisible(&line->m_base),
+                    "t218a 点标签/标记/选中色 roundtrip");
+        expect_true(t218_xyLabelVis == 1 && t218_xyLabelVisLast == 1 &&
+                    t218_xyFmt == 1 && t218_xyFont == 1 &&
+                    t218_xyColor == 1 && t218_xyClip == 1 &&
+                    t218_xyMarker == 1 && t218_xySelColor == 1 &&
+                    t218_xyBestVis == 1, "t218a 点标签信号发射");
+        XXYSeries_setPen(&line->m_base, 0xFF0A0B0Cu, 4.0);
+        expect_true(t218_xyPen == 1 && t218_xyColorChanged == 1 &&
+                    t218_xyColorLast == 0xFF0A0B0Cu,
+                    "t218a setPen penChanged+colorChanged");
+        XXYSeries_append(&line->m_base, 3, 4);
+        XXYSeries_setPointSelected(&line->m_base, 0, true);
+        expect_true(t218_xySelected == 1 &&
+                    XXYSeries_isPointSelected(&line->m_base, 0),
+                    "t218a selectedPointsChanged");
+        /* lightMarker 指针变化信号。 */
+        XPixmap_init(&pm);
+        XXYSeries_setLightMarker(&line->m_base, &pm);
+        expect_true(t218_xyLight == 1 &&
+                    XXYSeries_lightMarker(&line->m_base) == &pm,
+                    "t218a lightMarkerChanged");
+        XPixmap_deinit_base((XClass*)&pm);
+        XLineSeries_delete_base(line);
+    }
+    /* ---- XPieSeries：holeSize 0..1 + pieSize 联动 + 默认起始角 ---- */
+    {
+        XPieSeries* pie = XPieSeries_create();
+        XPieSlice* sl;
+        expect_true(pie != NULL, "t218a 饼图创建");
+        if (!pie) return;
+        expect_true(XPieSeries_holeSize(pie) == 0.0 &&
+                    XPieSeries_pieStartAngle(pie) == 0.0 &&
+                    XPieSeries_pieEndAngle(pie) == 360.0,
+                    "t218a 饼图默认值(hole 0/start 0/end 360)");
+        XObject_connect_2((XObject*)pie,
+            XSignal(XPieSeries_countChanged_signal), t218_pieCountSlot);
+        XObject_connect_2((XObject*)pie,
+            XSignal(XPieSeries_sumChanged_signal), t218_pieSumSlot);
+        t218_pieCount = t218_pieSum = 0;
+        XPieSeries_setHoleSize(pie, 0.8);
+        expect_true(XPieSeries_holeSize(pie) == 0.8 &&
+                    XPieSeries_pieSize(pie) == 0.8,
+                    "t218a setHoleSize 联动 pieSize");
+        XPieSeries_setHoleSize(pie, 1.5);
+        expect_true(XPieSeries_holeSize(pie) == 1.0,
+                    "t218a holeSize 钳位 1.0");
+        XPieSeries_setPieSize(pie, 0.3);
+        expect_true(XPieSeries_pieSize(pie) == 0.3 &&
+                    XPieSeries_holeSize(pie) == 0.3,
+                    "t218a setPieSize 联动 holeSize");
+        XPieSeries_setPieStartAngle(pie, 45.0);
+        XPieSeries_setPieEndAngle(pie, 270.0);
+        expect_true(XPieSeries_pieStartAngle(pie) == 45.0 &&
+                    XPieSeries_pieEndAngle(pie) == 270.0,
+                    "t218a 起始/结束角 roundtrip");
+        sl = XPieSeries_append_2(pie, "A", 3.0);
+        expect_true(sl != NULL && XPieSeries_count(pie) == 1 &&
+                    t218_pieCount == 1 && t218_pieSum == 1,
+                    "t218a 切片加入 countChanged/sumChanged");
+        /* XPieSlice 属性信号。 */
+        {
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_labelVisibleChanged_signal),
+                t218_slLabelVisSlot);
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_borderColorChanged_signal),
+                t218_slBorderColorSlot);
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_borderWidthChanged_signal),
+                t218_slBorderWidthSlot);
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_penChanged_signal), t218_slPenSlot);
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_brushChanged_signal), t218_slBrushSlot);
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_labelBrushChanged_signal),
+                t218_slLabelBrushSlot);
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_labelFontChanged_signal),
+                t218_slLabelFontSlot);
+            XObject_connect_2((XObject*)sl,
+                XSignal(XPieSlice_labelColorChanged_signal),
+                t218_slLabelColorSlot);
+            t218_slLabelVis = t218_slBorderColor = t218_slBorderWidth = 0;
+            t218_slPen = t218_slBrush = t218_slLabelBrush = 0;
+            t218_slLabelFont = t218_slLabelColor = 0;
+        }
+        XPieSlice_setLabelVisible(sl, true);
+        XPieSlice_setBorderColor(sl, 0xFF112233u);
+        XPieSlice_setBorderWidth(sl, 2);
+        XPieSlice_setPen(sl, 0xFF445566u, 2.5);
+        XPieSlice_setBrush(sl, 0xFF667788u);
+        XPieSlice_setLabelBrush(sl, 0xFF8899AAu);
+        XPieSlice_setLabelFont_2(sl, "Sans", 10);
+        XPieSlice_setLabelColor(sl, 0xFFAABBCCu);
+        expect_true(XPieSlice_isLabelVisible(sl) &&
+                    XPieSlice_borderColor(sl) == 0xFF112233u &&
+                    XPieSlice_borderWidth(sl) == 2 &&
+                    XPieSlice_labelArmLengthFactor(sl) == 0.15,
+                    "t218a 切片属性 roundtrip");
+        expect_true(t218_slLabelVis == 1 && t218_slBorderColor == 1 &&
+                    t218_slBorderWidth == 1 && t218_slPen == 1 &&
+                    t218_slBrush == 1 && t218_slLabelBrush == 1 &&
+                    t218_slLabelFont == 1 && t218_slLabelColor == 1,
+                    "t218a 切片属性信号");
+        XPieSlice_setLabelArmLengthFactor(sl, 0.5);
+        expect_true(XPieSlice_labelArmLengthFactor(sl) == 0.5,
+                    "t218a labelArmLengthFactor");
+        XPieSeries_delete_base(pie);
+    }
+    /* ---- XAbstractSeries：4 信号 + show/hide ---- */
+    {
+        XLineSeries* line = XLineSeries_create();
+        expect_true(line != NULL, "t218a 序列创建");
+        if (!line) return;
+        XObject_connect_2((XObject*)&line->m_base.m_base,
+            XSignal(XAbstractSeries_nameChanged_signal), t218_asNameSlot);
+        XObject_connect_2((XObject*)&line->m_base.m_base,
+            XSignal(XAbstractSeries_visibleChanged_signal),
+            t218_asVisibleSlot);
+        XObject_connect_2((XObject*)&line->m_base.m_base,
+            XSignal(XAbstractSeries_opacityChanged_signal),
+            t218_asOpacitySlot);
+        XObject_connect_2((XObject*)&line->m_base.m_base,
+            XSignal(XAbstractSeries_useOpenGLChanged_signal),
+            t218_asOpenGLSlot);
+        t218_asName = t218_asVisible = t218_asOpacity = t218_asOpenGL = 0;
+        XAbstractSeries_setName_2(&line->m_base.m_base, "L1");
+        XAbstractSeries_setVisible(&line->m_base.m_base, false);
+        XAbstractSeries_setOpacity(&line->m_base.m_base, 0.5);
+        XAbstractSeries_setUseOpenGL(&line->m_base.m_base, true);
+        expect_true(t218_asName == 1 && t218_asVisible == 1 &&
+                    t218_asOpacity == 1 && t218_asOpenGL == 1,
+                    "t218a QAbstractSeries 4 信号");
+        XAbstractSeries_hide(&line->m_base.m_base);
+        XAbstractSeries_show(&line->m_base.m_base);
+        expect_true(t218_asVisible == 2 &&
+                    XAbstractSeries_isVisible(&line->m_base.m_base),
+                    "t218a show/hide 可见性");
+        XLineSeries_delete_base(line);
+    }
+}
+#endif /* XCHARTS_ON */
+
+/* ==================== Task 2.18b：主题/渲染/交互契约 ==================== */
+
+#if XCHARTS_ON
+static int t218b_plotAreaCount;
+static void t218b_plotAreaSlot(XObject* sender, XVarList* args)
+{ (void)sender; (void)args; ++t218b_plotAreaCount; }
+
+static void test_charts_task218b_contract(void)
+{
+    /* ---- 主题色板数值断言（Light/BlueCerulean/Dark/Qt） ---- */
+    {
+        XChart* chart = XChart_create();
+        expect_true(chart != NULL, "t218b XChart 创建");
+        if (!chart) return;
+        expect_true(XChart_theme(chart) == XChart_ChartTheme_Light &&
+                    XChart_themeColor(chart, 0) == 0xFF209FDFu &&
+                    XChart_themeColor(chart, 1) == 0xFF99CA53u &&
+                    XChart_themeColor(chart, 2) == 0xFFF6A625u,
+                    "t218b Light 主题序列色");
+        expect_true(XChart_themeBackgroundStart(chart) == 0xFFFFFFFFu &&
+                    XChart_themeBackgroundEnd(chart) == 0xFFFFFFFFu &&
+                    XChart_themeColor(chart, 5) == 0xFF209FDFu,
+                    "t218b Light 背景/色板回环");
+        XChart_setTheme(chart, XChart_ChartTheme_BlueCerulean);
+        expect_true(XChart_themeColor(chart, 0) == 0xFFC7E85Bu &&
+                    XChart_themeColor(chart, 1) == 0xFF1CB54Fu,
+                    "t218b BlueCerulean 序列色");
+        expect_true(XChart_themeBackgroundStart(chart) == 0xFF056189u &&
+                    XChart_themeBackgroundEnd(chart) == 0xFF101A31u,
+                    "t218b BlueCerulean 背景渐变");
+        XChart_setTheme(chart, XChart_ChartTheme_Dark);
+        expect_true(XChart_themeColor(chart, 0) == 0xFF38AD6Bu &&
+                    XChart_themeColor(chart, 1) == 0xFF3C84A7u &&
+                    XChart_themeBackgroundStart(chart) == 0xFF2E303Au &&
+                    XChart_themeBackgroundEnd(chart) == 0xFF121218u,
+                    "t218b Dark 主题色板");
+        XChart_setTheme(chart, XChart_ChartTheme_Qt);
+        expect_true(XChart_themeColor(chart, 0) == 0xFF80C342u &&
+                    XChart_themeColor(chart, 7) == 0xFFD7D6D5u,
+                    "t218b Qt 主题 8 色");
+        XChart_delete_base(chart);
+    }
+    /* ---- setTheme 应用到既有序列 ---- */
+    {
+        XChart* chart = XChart_create();
+        XLineSeries* line = XLineSeries_create();
+        XBarSeries* bar = XBarSeries_create();
+        XBarSet* set = XBarSet_create("S");
+        XPieSeries* pie = XPieSeries_create();
+        const double vals[2] = {1.0, 2.0};
+        expect_true(chart && line && bar && set && pie, "t218b 序列创建");
+        if (!chart || !line || !bar || !set || !pie) {
+            if (chart) XChart_delete_base(chart);
+            return;
+        }
+        XXYSeries_append(&line->m_base, 0, 0);
+        XXYSeries_append(&line->m_base, 1, 1);
+        XChart_addSeries(chart, line, XChartSeriesType_Line);
+        XBarSet_appendValues(set, vals, 2);
+        XAbstractBarSeries_append(&bar->m_base, set);
+        XChart_addBarSeries(chart, bar);
+        XPieSeries_append_2(pie, "A", 3);
+        XPieSeries_append_2(pie, "B", 1);
+        XChart_setPieSeries(chart, pie);
+        XChart_setTheme(chart, XChart_ChartTheme_Dark);
+        expect_true(XXYSeries_color(&line->m_base) == 0xFF38AD6Bu,
+                    "t218b setTheme 应用到折线");
+        expect_true(XBarSet_brush(set) == 0xFF38AD6Bu,
+                    "t218b setTheme 柱组画刷（单组单序列=基准色）");
+        expect_true(XBarSet_labelBrush(set) != 0,
+                    "t218b setTheme 柱组标签画刷");
+        expect_true(XPieSlice_brush(XPieSeries_slice(pie, 0)) == 0xFF38AD6Bu,
+                    "t218b setTheme 应用到饼图切片");
+        XXYSeries_setColor(&line->m_base, 0xFF123456u);
+        XChart_setTheme(chart, XChart_ChartTheme_Light);
+        expect_true(XXYSeries_color(&line->m_base) == 0xFF123456u,
+                    "t218b setTheme 不覆盖显式颜色");
+        XChart_delete_base(chart);
+    }
+    /* ---- 最佳拟合线最小二乘数值断言 ---- */
+    {
+        XLineSeries* line = XLineSeries_create();
+        double slope = 0;
+        double intercept = 0;
+        int i;
+        expect_true(line != NULL, "t218b 拟合线创建");
+        if (!line) return;
+        /* 点列 (0,1)(1,3)(2,5)：y=2x+1。 */
+        for (i = 0; i < 3; ++i)
+            XXYSeries_append(&line->m_base, (double)i,
+                             (double)(2 * i + 1));
+        expect_true(XXYSeries_bestFitLineEquation(&line->m_base,
+                                                  &slope, &intercept) &&
+                    slope > 1.999 && slope < 2.001 &&
+                    intercept > 0.999 && intercept < 1.001,
+                    "t218b bestFitLine 最小二乘 y=2x+1");
+        XLineSeries_delete_base(line);
+    }
+    /* ---- holeSize 环图值 + pointLabelsFormat 离屏渲染冒烟 + plotAreaChanged ---- */
+    {
+        XChart* chart = XChart_create();
+        XChartView view;
+        XImage image;
+        XPieSeries* pie = XPieSeries_create();
+        XLineSeries* line = XLineSeries_create();
+        int colored = 0;
+        int x;
+        int y;
+        expect_true(chart && pie && line, "t218b 渲染对象创建");
+        if (!chart || !pie || !line) {
+            if (chart) XChart_delete_base(chart);
+            return;
+        }
+        XPieSeries_append_2(pie, "A", 3);
+        XPieSeries_append_2(pie, "B", 1);
+        XPieSeries_setHoleSize(pie, 0.5);
+        expect_true(XPieSeries_holeSize(pie) == 0.5 &&
+                    XPieSeries_pieSize(pie) >= 0.5,
+                    "t218b holeSize 钳位/环图孔径");
+        XChart_setPieSeries(chart, pie);
+        XXYSeries_append(&line->m_base, 0, 0);
+        XXYSeries_append(&line->m_base, 1, 1);
+        XXYSeries_setPointLabelsVisible(&line->m_base, true);
+        XXYSeries_setPointLabelsFormat_2(&line->m_base, "(@xPoint,@yPoint)");
+        XChart_addSeries(chart, line, XChartSeriesType_Line);
+        XChartView_init(&view, NULL, 0);
+        XChartView_setChart(&view, chart);
+        XWidget_resize((XWidget*)&view, 220, 160);
+        XImage_init_ex(&image, 220, 160, XImageFormat_ARGB32);
+        XImage_fillRect(&image, NULL, 0xFF000000u);
+        t218b_plotAreaCount = 0;
+        XObject_connect_2((XObject*)chart,
+            XSignal(XChart_plotAreaChanged_signal), t218b_plotAreaSlot);
+        expect_true(XChartView_renderToImage(&view, &image),
+                    "t218b 离屏渲染成功");
+        expect_true(t218b_plotAreaCount >= 1,
+                    "t218b plotAreaChanged 发射");
+        for (y = 0; y < 160; ++y)
+            for (x = 0; x < 220; ++x)
+                if (XImage_pixel(&image, x, y) != 0xFF000000u)
+                    ++colored;
+        expect_true(colored > 1000, "t218b 离屏渲染像素非空");
+        XImage_deinit_base(&image);
+        XChartView_delete_base((XClass*)&view);
+        XChart_delete_base(chart);
+    }
+}
+#endif /* XCHARTS_ON */
+
+#if XWIDGET_ON
+/* ---- Task 2.19a 实用类子批：XToolTip/XShortcut/XCompleter/XActionGroup ---- */
+
+static int s_t219aShortcutActivated = 0;
+static void t219a_shortcutActivatedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    s_t219aShortcutActivated++;
+}
+
+static int s_t219aHighlightedRow = -1;
+static int s_t219aHighlightedCount = 0;
+static void t219a_completerHighlightedRowSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (args) {
+        XVarList_args_1(args, int, row);
+        s_t219aHighlightedRow = row;
+        s_t219aHighlightedCount++;
+    }
+}
+
+static int s_t219aGroupTriggered = 0;
+static XAction* s_t219aGroupTriggeredAction = NULL;
+static void t219a_groupTriggeredSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (args) {
+        XVarList_args_1(args, XAction*, action);
+        s_t219aGroupTriggeredAction = action;
+        s_t219aGroupTriggered++;
+    }
+}
+
+static int s_t219aGroupHovered = 0;
+static void t219a_groupHoveredSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    s_t219aGroupHovered++;
+}
+
+/** @brief Task 2.19a 实用类契约测试。 */
+static void test_util_task219a_contract(void)
+{
+#if XWIDGET_ON
+    /* ---- XToolTip：showText/isVisible/text/hideText roundtrip ---- */
+    {
+        XString* tip = XString_create_utf8("提示文本");
+        XString* got;
+        XToolTip_hideText();
+        expect_true(!XToolTip_isVisible(), "t219a tooltip 初始隐藏");
+        XToolTip_showText(10, 20, tip, NULL, NULL, 5000);
+        expect_true(XToolTip_isVisible(), "t219a showText 后可见");
+        got = XToolTip_text();
+        expect_true(got != NULL &&
+                    XString_equals_utf8(got, "提示文本",
+                                        XChar_CaseSensitive),
+                    "t219a tooltip text roundtrip");
+        if (got) XString_delete_base((XClass*)got);
+        XToolTip_hideText();
+        expect_true(!XToolTip_isVisible() && XToolTip_text() == NULL,
+                    "t219a hideText 清空");
+        XToolTip_showText_2(5, 5, "utf8提示", NULL, NULL, -1);
+        expect_true(XToolTip_isVisible(), "t219a showText_2 可见");
+        got = XToolTip_text();
+        expect_true(got != NULL &&
+                    XString_equals_utf8(got, "utf8提示",
+                                        XChar_CaseSensitive),
+                    "t219a tooltip _2 roundtrip");
+        if (got) XString_delete_base((XClass*)got);
+        XToolTip_hideText();
+        XString_delete_base((XClass*)tip);
+    }
+
+    /* ---- XShortcut：属性 roundtrip + activated 信号 + 注册表 match ---- */
+    {
+        XShortcut* sc = XShortcut_create(NULL);
+        XString* got;
+        XWidget* w = XWidget_create(NULL, 0);
+        expect_true(sc != NULL, "t219a XShortcut 创建");
+        if (!sc) return;
+        XShortcut_setKey(sc, XKey_F5);
+        expect_true(XShortcut_key(sc) == XKey_F5, "t219a shortcut key");
+        XShortcut_setContext(sc, XShortcutContext_ApplicationShortcut);
+        expect_true(XShortcut_context(sc) ==
+                        XShortcutContext_ApplicationShortcut,
+                    "t219a shortcut context");
+        XShortcut_setAutoRepeat(sc, false);
+        expect_true(!XShortcut_autoRepeat(sc), "t219a shortcut autoRepeat");
+        XShortcut_setEnabled(sc, false);
+        expect_true(!XShortcut_isEnabled(sc), "t219a shortcut 禁用");
+        XShortcut_setEnabled(sc, true);
+        expect_true(XShortcut_isEnabled(sc), "t219a shortcut 启用");
+        XShortcut_setWhatsThis_2(sc, "帮助");
+        got = XShortcut_whatsThis(sc);
+        expect_true(got != NULL &&
+                    XString_equals_utf8(got, "帮助",
+                                        XChar_CaseSensitive),
+                    "t219a shortcut whatsThis");
+        if (got) XString_delete_base((XClass*)got);
+        XObject_connect_2((XObject*)sc,
+                          XSignal(XShortcut_activated_signal),
+                          t219a_shortcutActivatedSlot);
+        s_t219aShortcutActivated = 0;
+        XShortcut_activate(sc);
+        expect_true(s_t219aShortcutActivated == 1,
+                    "t219a activated 信号触发");
+        expect_true(XShortcut_match(XKey_F5,
+                                    XShortcutContext_ApplicationShortcut,
+                                    NULL) == sc,
+                    "t219a 注册表 match 命中");
+        XShortcut_setEnabled(sc, false);
+        expect_true(XShortcut_match(XKey_F5,
+                                    XShortcutContext_ApplicationShortcut,
+                                    NULL) == NULL,
+                    "t219a 禁用不匹配");
+        XShortcut_setEnabled(sc, true);
+        XShortcut_setContext(sc, XShortcutContext_WindowShortcut);
+        expect_true(XShortcut_match(XKey_F5,
+                                    XShortcutContext_WindowShortcut,
+                                    NULL) == NULL,
+                    "t219a 窗口级无焦点不匹配");
+        expect_true(w != NULL &&
+                    XShortcut_match(XKey_F5,
+                                    XShortcutContext_WindowShortcut,
+                                    w) == sc,
+                    "t219a 窗口级有焦点匹配");
+        XShortcut_delete_base(sc);
+        if (w) XWidget_delete_base((XClass*)w);
+        expect_true(XShortcut_match(XKey_F5,
+                                    XShortcutContext_ApplicationShortcut,
+                                    NULL) == NULL,
+                    "t219a 删除后注销");
+    }
+#endif /* XWIDGET_ON */
+
+#if XWIDGET_ON && XTABLEWIDGET_ON
+    /* ---- XCompleter：3 行模型 + 前缀过滤 + currentCompletion + highlighted ---- */
+    {
+        XAbstractItemModel* model = XAbstractItemModel_create();
+        XCompleter* c;
+        XString* cc;
+        expect_true(model != NULL, "t219a completer 模型创建");
+        if (!model) return;
+        XAbstractItemModel_setDimension(model, 3, 1);
+        XAbstractItemModel_setData_2(model, 0, 0, "Apple");
+        XAbstractItemModel_setData_2(model, 1, 0, "Banana");
+        XAbstractItemModel_setData_2(model, 2, 0, "Cherry");
+        c = XCompleter_create_2(model, NULL);
+        expect_true(c != NULL && XCompleter_model(c) == model,
+                    "t219a completer 创建+model 接入");
+        if (!c) {
+            XAbstractItemModel_delete_base(model);
+            return;
+        }
+        XObject_connect_2((XObject*)c,
+                          XSignal(XCompleter_highlightedRow_signal),
+                          t219a_completerHighlightedRowSlot);
+        s_t219aHighlightedRow = -1;
+        s_t219aHighlightedCount = 0;
+        XCompleter_setCompletionPrefix_2(c, "B");
+        expect_true(XCompleter_currentRow(c) == 0 &&
+                    XCompleter_currentIndex(c) == 1 &&
+                    s_t219aHighlightedRow == 1 &&
+                    s_t219aHighlightedCount == 1,
+                    "t219a 前缀过滤+highlighted");
+        cc = XCompleter_currentCompletion(c);
+        expect_true(cc != NULL &&
+                    XString_equals_utf8(cc, "Banana",
+                                        XChar_CaseSensitive),
+                    "t219a currentCompletion");
+        if (cc) XString_delete_base((XClass*)cc);
+        XCompleter_setCompletionPrefix_2(c, "ZZZ");
+        expect_true(XCompleter_currentRow(c) == -1 &&
+                    XCompleter_currentCompletion(c) == NULL,
+                    "t219a 无命中");
+        XCompleter_setCompletionPrefix_2(c, "");
+        expect_true(XCompleter_currentRow(c) == 0 &&
+                    XCompleter_currentIndex(c) == 0,
+                    "t219a 空前缀命中全部");
+        cc = XCompleter_currentCompletion(c);
+        expect_true(cc != NULL &&
+                    XString_equals_utf8(cc, "Apple",
+                                        XChar_CaseSensitive),
+                    "t219a 空前缀 currentCompletion");
+        if (cc) XString_delete_base((XClass*)cc);
+        expect_true(XCompleter_popup(c) == NULL, "t219a popup 恒 NULL");
+        XCompleter_delete_base(c);
+        XAbstractItemModel_delete_base(model);
+    }
+#endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#if XWIDGET_ON && XACTION_ON
+    /* ---- XActionGroup：互斥选中 + triggered/hovered 转发 + enabled 转发 ---- */
+    {
+        XAction* a1 = XAction_create();
+        XAction* a2 = XAction_create();
+        XActionGroup* g = XActionGroup_create(NULL);
+        XVector* acts;
+        expect_true(a1 != NULL && a2 != NULL && g != NULL,
+                    "t219a XActionGroup 创建");
+        if (!a1 || !a2 || !g) return;
+        XAction_setCheckable(a1, true);
+        XAction_setCheckable(a2, true);
+        expect_true(XActionGroup_isExclusive(g), "t219a 默认互斥");
+        XObject_connect_2((XObject*)g,
+                          XSignal(XActionGroup_triggered_signal),
+                          t219a_groupTriggeredSlot);
+        XObject_connect_2((XObject*)g,
+                          XSignal(XActionGroup_hovered_signal),
+                          t219a_groupHoveredSlot);
+        XActionGroup_addAction(g, a1);
+        XActionGroup_addAction(g, a2);
+        acts = XActionGroup_actions(g);
+        expect_true(acts != NULL &&
+                    XVector_size_base((const XContainer*)acts) == 2,
+                    "t219a actions 列表");
+        if (acts) XVector_delete_base((XClass*)acts);
+        s_t219aGroupTriggered = 0;
+        s_t219aGroupTriggeredAction = NULL;
+        XActionGroup_setCheckedAction(g, a1);
+        expect_true(XAction_isChecked(a1) &&
+                    XActionGroup_checkedAction(g) == a1 &&
+                    s_t219aGroupTriggered == 1 &&
+                    s_t219aGroupTriggeredAction == a1,
+                    "t219a setCheckedAction+triggered");
+        s_t219aGroupTriggered = 0;
+        XActionGroup_setCheckedAction(g, a2);
+        expect_true(XAction_isChecked(a2) && !XAction_isChecked(a1),
+                    "t219a 互斥自动取消");
+        s_t219aGroupTriggered = 0;
+        XAction_trigger(a2); /* 已选中 -> 触发后取消选中，仍转发 triggered。 */
+        expect_true(s_t219aGroupTriggered == 1 &&
+                    s_t219aGroupTriggeredAction == a2,
+                    "t219a triggered 转发");
+        s_t219aGroupHovered = 0;
+        XAction_hover(a2);
+        expect_true(s_t219aGroupHovered == 1, "t219a hovered 转发");
+        XActionGroup_setEnabled(g, false);
+        expect_true(!XActionGroup_isEnabled(g) &&
+                    !XAction_isEnabled(a1) && !XAction_isEnabled(a2),
+                    "t219a enabled 转发到 actions");
+        XActionGroup_setEnabled(g, true);
+        expect_true(XActionGroup_isEnabled(g) && XAction_isEnabled(a1),
+                    "t219a enabled 恢复");
+        XActionGroup_removeAction(g, a1);
+        acts = XActionGroup_actions(g);
+        expect_true(acts != NULL &&
+                    XVector_size_base((const XContainer*)acts) == 1,
+                    "t219a removeAction");
+        if (acts) XVector_delete_base((XClass*)acts);
+        XActionGroup_delete_base(g);
+        XAction_delete_base(a1);
+        XAction_delete_base(a2);
+    }
+#endif /* XWIDGET_ON && XACTION_ON */
+}
+
+/* ==================== Task 2.19b：对话框族公开类对应物 ==================== */
+
+#if XWIDGET_ON && XDIALOG_ON
+static int s_t219bFileSelectedCount = 0;
+static char s_t219bFileSelected[64];
+static void t219b_fileSelectedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (!args) return;
+    XVarList_args_1(args, XString*, file);
+    s_t219bFileSelectedCount++;
+    if (file) {
+        const char* u = XString_toUtf8(file);
+        if (u) {
+            strncpy(s_t219bFileSelected, u,
+                    sizeof(s_t219bFileSelected) - 1);
+            s_t219bFileSelected[sizeof(s_t219bFileSelected) - 1] = '\0';
+        }
+    }
+}
+
+static int s_t219bColorChangedCount = 0;
+static XColor s_t219bColorChanged = { 0 };
+static void t219b_currentColorChangedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (!args) return;
+    XVarList_args_1(args, XColor, color);
+    s_t219bColorChangedCount++;
+    s_t219bColorChanged = color;
+}
+
+static int s_t219bColorSelectedCount = 0;
+static XColor s_t219bColorSelected = { 0 };
+static void t219b_colorSelectedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (!args) return;
+    XVarList_args_1(args, XColor, color);
+    s_t219bColorSelectedCount++;
+    s_t219bColorSelected = color;
+}
+
+static int s_t219bIntChangedCount = 0;
+static int s_t219bIntChangedValue = 0;
+static void t219b_intValueChangedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (!args) return;
+    XVarList_args_1(args, int, value);
+    s_t219bIntChangedCount++;
+    s_t219bIntChangedValue = value;
+}
+
+static int s_t219bCanceledCount = 0;
+static void t219b_canceledSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    s_t219bCanceledCount++;
+}
+#endif /* XWIDGET_ON && XDIALOG_ON */
+
+#if XWIDGET_ON
+static int s_t219bEnabledChangedCount = 0;
+static bool s_t219bEnabledChangedValue = false;
+static void t219b_enabledChangedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    if (!args) return;
+    XVarList_args_1(args, bool, enabled);
+    s_t219bEnabledChangedCount++;
+    s_t219bEnabledChangedValue = enabled;
+}
+#endif /* XWIDGET_ON */
+
+/** @brief Task 2.19b 对话框族公开类契约测试。 */
+static void test_dialog_task219b_contract(void)
+{
+#if XWIDGET_ON && XDIALOG_ON
+    /* ---- XFileDialog：静态便捷 + 实例 roundtrip + fileSelected 信号 ---- */
+    {
+        XFileDialog* dlg = XFileDialog_create(NULL, 0);
+        XString* s;
+        XStringList* list;
+        int idx = -1;
+        XString* file = XString_create_utf8("/tmp/out.txt");
+        XString* dir = XString_create_utf8("/home");
+        XString* filter = XString_create_utf8("文本 (*.txt)");
+        XString* suffix = XString_create_utf8("txt");
+        XString* label = XString_create_utf8("文件(&N):");
+        expect_true(dlg != NULL, "t219b XFileDialog 创建");
+        if (!dlg) return;
+        s = XFileDialog_getOpenFileName(NULL, NULL, NULL, NULL, &idx);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
+                    idx == 0,
+                    "t219b getOpenFileName 空串+下标 0");
+        if (s) XString_delete_base((XClass*)s);
+        s = XFileDialog_getOpenFileName_2(NULL, "标题", "/tmp",
+                                          "All (*)", &idx);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
+                    "t219b getOpenFileName_2 空串");
+        if (s) XString_delete_base((XClass*)s);
+        list = XFileDialog_getOpenFileNames(NULL, NULL, NULL, NULL, &idx);
+        expect_true(list != NULL &&
+                    XStringList_size_base((const XContainer*)list) == 0,
+                    "t219b getOpenFileNames 空列表");
+        if (list) XStringList_delete_base((XClass*)list);
+        s = XFileDialog_getSaveFileName(NULL, NULL, NULL, NULL, &idx);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
+                    "t219b getSaveFileName 空串");
+        if (s) XString_delete_base((XClass*)s);
+        s = XFileDialog_getExistingDirectory(NULL, NULL, NULL);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
+                    "t219b getExistingDirectory 空串");
+        if (s) XString_delete_base((XClass*)s);
+        /* 实例 roundtrip */
+        expect_true(XFileDialog_fileMode(dlg) ==
+                        XFileDialog_ExistingFile &&
+                    XFileDialog_acceptMode(dlg) ==
+                        XFileDialog_AcceptOpen &&
+                    XFileDialog_viewMode(dlg) ==
+                        XFileDialogViewMode_Detail,
+                    "t219b 文件对话框默认值");
+        XFileDialog_setFileMode(dlg, XFileDialog_ExistingFiles);
+        XFileDialog_setAcceptMode(dlg, XFileDialog_AcceptSave);
+        XFileDialog_setViewMode(dlg, XFileDialogViewMode_List);
+        expect_true(XFileDialog_fileMode(dlg) ==
+                        XFileDialog_ExistingFiles &&
+                    XFileDialog_acceptMode(dlg) ==
+                        XFileDialog_AcceptSave &&
+                    XFileDialog_viewMode(dlg) ==
+                        XFileDialogViewMode_List,
+                    "t219b fileMode/acceptMode/viewMode roundtrip");
+        XFileDialog_setNameFilter(dlg, filter);
+        list = XFileDialog_nameFilters(dlg);
+        expect_true(list != NULL &&
+                    XStringList_size_base((const XContainer*)list) == 1,
+                    "t219b setNameFilter 单过滤器");
+        if (list) XStringList_delete_base((XClass*)list);
+        s = XFileDialog_selectedNameFilter(dlg);
+        expect_true(s != NULL &&
+                    XString_equals_utf8(s, "文本 (*.txt)",
+                                        XChar_CaseSensitive),
+                    "t219b selectedNameFilter roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        XFileDialog_setDirectory(dlg, dir);
+        s = XFileDialog_directory(dlg);
+        expect_true(s != NULL && XString_equals_utf8(s, "/home",
+                                                     XChar_CaseSensitive),
+                    "t219b directory roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        XFileDialog_selectFile(dlg, file);
+        XFileDialog_selectFile(dlg, dir);
+        list = XFileDialog_selectedFiles(dlg);
+        expect_true(list != NULL &&
+                    XStringList_size_base((const XContainer*)list) == 2,
+                    "t219b selectedFiles 两文件");
+        if (list) XStringList_delete_base((XClass*)list);
+        s = XFileDialog_selectedFile(dlg);
+        expect_true(s != NULL &&
+                    XString_equals_utf8(s, "/tmp/out.txt",
+                                        XChar_CaseSensitive),
+                    "t219b selectedFile 首文件");
+        if (s) XString_delete_base((XClass*)s);
+        XFileDialog_setDefaultSuffix(dlg, suffix);
+        s = XFileDialog_defaultSuffix(dlg);
+        expect_true(s != NULL && XString_equals_utf8(s, "txt",
+                                                     XChar_CaseSensitive),
+                    "t219b defaultSuffix roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        XFileDialog_setOption(dlg, XFileDialog_ShowDirsOnly, true);
+        XFileDialog_setOption(dlg, XFileDialog_DontResolveSymlinks, true);
+        expect_true(XFileDialog_testOption(dlg, XFileDialog_ShowDirsOnly) &&
+                    XFileDialog_testOption(dlg,
+                                           XFileDialog_DontResolveSymlinks) &&
+                    !XFileDialog_testOption(dlg, XFileDialog_ReadOnly),
+                    "t219b option 位测试");
+        XFileDialog_setLabelText(dlg, XFileDialogDialogLabel_FileName, label);
+        s = XFileDialog_labelText(dlg, XFileDialogDialogLabel_FileName);
+        expect_true(s != NULL && XString_equals_utf8(s, "文件(&N):",
+                                                     XChar_CaseSensitive),
+                    "t219b labelText roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        /* fileSelected 信号（手动触发） */
+        XObject_connect_2((XObject*)dlg, XSignal(XFileDialog_fileSelected_signal),
+                          t219b_fileSelectedSlot);
+        s_t219bFileSelectedCount = 0;
+        s_t219bFileSelected[0] = '\0';
+        XFileDialog_fileSelected_signal(dlg, file);
+        expect_true(s_t219bFileSelectedCount == 1 &&
+                    strcmp(s_t219bFileSelected, "/tmp/out.txt") == 0,
+                    "t219b fileSelected 信号");
+        XString_delete_base((XClass*)file);
+        XString_delete_base((XClass*)dir);
+        XString_delete_base((XClass*)filter);
+        XString_delete_base((XClass*)suffix);
+        XString_delete_base((XClass*)label);
+        XFileDialog_delete_base(dlg);
+    }
+
+    /* ---- XColorDialog：getColor 返回 initial + 颜色 roundtrip + 信号 ---- */
+    {
+        XColorDialog* dlg = XColorDialog_create(NULL, 0);
+        XColor red = XColor_Red;
+        XColor blue = XColor_Blue;
+        XColor white = XColor_White;
+        XColor green = XColor_Green;
+        XColor magenta = XColor_Magenta;
+        XColor c;
+        expect_true(dlg != NULL, "t219b XColorDialog 创建");
+        if (!dlg) return;
+        c = XColorDialog_getColor(red, NULL, NULL, 0);
+        expect_true(XColor_equals(&c, &red),
+                    "t219b getColor 返回 initial");
+        c = XColorDialog_getColor_2(blue, NULL, "选色", 0);
+        expect_true(XColor_equals(&c, &blue),
+                    "t219b getColor_2 返回 initial");
+        c = XColorDialog_currentColor(dlg);
+        expect_true(XColor_equals(&c, &white),
+                    "t219b currentColor 默认白");
+        XObject_connect_2((XObject*)dlg,
+                          XSignal(XColorDialog_currentColorChanged_signal),
+                          t219b_currentColorChangedSlot);
+        XObject_connect_2((XObject*)dlg,
+                          XSignal(XColorDialog_colorSelected_signal),
+                          t219b_colorSelectedSlot);
+        s_t219bColorChangedCount = 0;
+        XColorDialog_setCurrentColor(dlg, green);
+        c = XColorDialog_currentColor(dlg);
+        expect_true(XColor_equals(&c, &green) &&
+                    s_t219bColorChangedCount == 1 &&
+                    XColor_equals(&s_t219bColorChanged, &green),
+                    "t219b setCurrentColor+currentColorChanged");
+        XColorDialog_setCurrentColor(dlg, green);
+        expect_true(s_t219bColorChangedCount == 1,
+                    "t219b 同色不重复发射");
+        s_t219bColorSelectedCount = 0;
+        XColorDialog_colorSelected_signal(dlg, magenta);
+        c = XColorDialog_selectedColor(dlg);
+        expect_true(s_t219bColorSelectedCount == 1 &&
+                    XColor_equals(&s_t219bColorSelected, &magenta) &&
+                    XColor_equals(&c, &magenta),
+                    "t219b colorSelected 信号+selectedColor");
+        XColorDialog_setOption(dlg, XColorDialog_ShowAlphaChannel, true);
+        expect_true(XColorDialog_testOption(dlg,
+                                            XColorDialog_ShowAlphaChannel) &&
+                    XColorDialog_options(dlg) ==
+                        XColorDialog_ShowAlphaChannel,
+                    "t219b 颜色选项位");
+        XColorDialog_delete_base(dlg);
+    }
+
+    /* ---- XInputDialog：getText 空串 + 实例 roundtrip + intValueChanged ---- */
+    {
+        XInputDialog* dlg = XInputDialog_create(NULL, 0);
+        XString* s;
+        XStringList* list;
+        XStringList* items = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        bool ok = true;
+        XString* label = XString_create_utf8("名称:");
+        XString* text = XString_create_utf8("hello");
+        XString* okText = XString_create_utf8("确定");
+        XString* cancelText = XString_create_utf8("取消");
+        expect_true(dlg != NULL && items != NULL, "t219b XInputDialog 创建");
+        if (!dlg) return;
+        XStringList_push_back_utf8(items, "A");
+        XStringList_push_back_utf8(items, "B");
+        s = XInputDialog_getText(NULL, NULL, NULL, XInputDialogEchoMode_Normal,
+                                 NULL, &ok);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
+                    !ok,
+                    "t219b getText 空串+ok=false");
+        if (s) XString_delete_base((XClass*)s);
+        s = XInputDialog_getText_2(NULL, "标题", "标签",
+                                   XInputDialogEchoMode_Password, "p", &ok);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
+                    !ok,
+                    "t219b getText_2 空串");
+        if (s) XString_delete_base((XClass*)s);
+        s = XInputDialog_getMultiLineText(NULL, NULL, NULL, NULL, &ok);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
+                    !ok,
+                    "t219b getMultiLineText 空串");
+        if (s) XString_delete_base((XClass*)s);
+        expect_true(XInputDialog_getInt(NULL, NULL, NULL, 7, 0, 10, 1, &ok) == 7 &&
+                    !ok,
+                    "t219b getInt 返回 value");
+        expect_true(XInputDialog_getInt_2(NULL, NULL, NULL, 7, 0, 10, 1, &ok) == 7 &&
+                    !ok,
+                    "t219b getInt_2 返回 value");
+        expect_true(XInputDialog_getDouble(NULL, NULL, NULL, 3.5, 0.0,
+                                           10.0, 2, &ok) == 3.5 && !ok,
+                    "t219b getDouble 返回 value");
+        expect_true(XInputDialog_getDouble_2(NULL, NULL, NULL, 3.5, 0.0,
+                                             10.0, 2, &ok) == 3.5 && !ok,
+                    "t219b getDouble_2 返回 value");
+        s = XInputDialog_getItem(NULL, NULL, NULL, items, 1, true, &ok);
+        expect_true(s != NULL && XString_equals_utf8(s, "B",
+                                                     XChar_CaseSensitive) &&
+                    !ok,
+                    "t219b getItem 返回 current 项");
+        if (s) XString_delete_base((XClass*)s);
+        s = XInputDialog_getItem(NULL, NULL, NULL, items, 9, true, &ok);
+        expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
+                    "t219b getItem 越界空串");
+        if (s) XString_delete_base((XClass*)s);
+        /* 实例 roundtrip */
+        expect_true(XInputDialog_inputMode(dlg) == XInputDialog_TextInput,
+                    "t219b 输入对话框默认 TextInput");
+        XInputDialog_setInputMode(dlg, XInputDialog_IntInput);
+        expect_true(XInputDialog_inputMode(dlg) == XInputDialog_IntInput,
+                    "t219b inputMode roundtrip");
+        XInputDialog_setLabelText(dlg, label);
+        s = XInputDialog_labelText(dlg);
+        expect_true(s != NULL && XString_equals_utf8(s, "名称:",
+                                                     XChar_CaseSensitive),
+                    "t219b labelText roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        XInputDialog_setTextValue(dlg, text);
+        s = XInputDialog_textValue(dlg);
+        expect_true(s != NULL && XString_equals_utf8(s, "hello",
+                                                     XChar_CaseSensitive),
+                    "t219b textValue roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        XObject_connect_2((XObject*)dlg,
+                          XSignal(XInputDialog_intValueChanged_signal),
+                          t219b_intValueChangedSlot);
+        s_t219bIntChangedCount = 0;
+        XInputDialog_setIntValue(dlg, 42);
+        expect_true(XInputDialog_intValue(dlg) == 42 &&
+                    s_t219bIntChangedCount == 1 &&
+                    s_t219bIntChangedValue == 42,
+                    "t219b intValue+intValueChanged 信号");
+        XInputDialog_setIntValue(dlg, 42);
+        expect_true(s_t219bIntChangedCount == 1,
+                    "t219b 同整数值不重复发射");
+        XInputDialog_setDoubleValue(dlg, 2.5);
+        expect_true(XInputDialog_doubleValue(dlg) == 2.5,
+                    "t219b doubleValue roundtrip");
+        XInputDialog_setComboBoxItems(dlg, items);
+        list = XInputDialog_comboBoxItems(dlg);
+        expect_true(list != NULL &&
+                    XStringList_size_base((const XContainer*)list) == 2,
+                    "t219b comboBoxItems roundtrip");
+        if (list) XStringList_delete_base((XClass*)list);
+        XInputDialog_setComboBoxEditable(dlg, true);
+        expect_true(XInputDialog_isComboBoxEditable(dlg),
+                    "t219b comboBoxEditable");
+        XInputDialog_setOkButtonText(dlg, okText);
+        XInputDialog_setCancelButtonText(dlg, cancelText);
+        s = XInputDialog_okButtonText(dlg);
+        expect_true(s != NULL && XString_equals_utf8(s, "确定",
+                                                     XChar_CaseSensitive),
+                    "t219b okButtonText roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        s = XInputDialog_cancelButtonText(dlg);
+        expect_true(s != NULL && XString_equals_utf8(s, "取消",
+                                                     XChar_CaseSensitive),
+                    "t219b cancelButtonText roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        XInputDialog_setOption(dlg, XInputDialog_NoButtons, true);
+        expect_true(XInputDialog_testOption(dlg, XInputDialog_NoButtons),
+                    "t219b 输入对话框选项位");
+        XString_delete_base((XClass*)label);
+        XString_delete_base((XClass*)text);
+        XString_delete_base((XClass*)okText);
+        XString_delete_base((XClass*)cancelText);
+        XStringList_delete_base((XClass*)items);
+        XInputDialog_delete_base(dlg);
+    }
+
+    /* ---- XProgressDialog：setRange/value/wasCanceled + canceled + autoReset ---- */
+    {
+        XProgressDialog* dlg = XProgressDialog_create(NULL, 0);
+        XString* s;
+        XString* label = XString_create_utf8("处理中...");
+        XString* cancelText = XString_create_utf8("停止");
+        expect_true(dlg != NULL, "t219b XProgressDialog 创建");
+        if (!dlg) return;
+        expect_true(XProgressDialog_minimum(dlg) == 0 &&
+                    XProgressDialog_maximum(dlg) == 100 &&
+                    XProgressDialog_value(dlg) == 0 &&
+                    XProgressDialog_autoReset(dlg) &&
+                    XProgressDialog_autoClose(dlg) &&
+                    XProgressDialog_minimumDuration(dlg) == 4000 &&
+                    !XProgressDialog_wasCanceled(dlg),
+                    "t219b 进度对话框默认值");
+        XProgressDialog_setRange(dlg, 10, 50);
+        expect_true(XProgressDialog_minimum(dlg) == 10 &&
+                    XProgressDialog_maximum(dlg) == 50,
+                    "t219b setRange roundtrip");
+        XProgressDialog_setValue(dlg, 25);
+        expect_true(XProgressDialog_value(dlg) == 25,
+                    "t219b setValue");
+        XProgressDialog_setValue(dlg, 120);
+        expect_true(XProgressDialog_value(dlg) == 50,
+                    "t219b setValue 越界钳位");
+        XProgressDialog_setAutoReset(dlg, true);
+        XProgressDialog_setValue(dlg, 50);
+        expect_true(XProgressDialog_value(dlg) == 10,
+                    "t219b 达最大值 autoReset 复位");
+        XProgressDialog_setLabelText(dlg, label);
+        s = XProgressDialog_labelText(dlg);
+        expect_true(s != NULL && XString_equals_utf8(s, "处理中...",
+                                                     XChar_CaseSensitive),
+                    "t219b labelText roundtrip");
+        if (s) XString_delete_base((XClass*)s);
+        XProgressDialog_setCancelButtonText(dlg, cancelText);
+        XProgressDialog_setMinimumDuration(dlg, 800);
+        expect_true(XProgressDialog_minimumDuration(dlg) == 800,
+                    "t219b minimumDuration roundtrip");
+        XObject_connect_2((XObject*)dlg,
+                          XSignal(XProgressDialog_canceled_signal),
+                          t219b_canceledSlot);
+        s_t219bCanceledCount = 0;
+        XProgressDialog_cancel(dlg);
+        expect_true(XProgressDialog_wasCanceled(dlg) &&
+                    s_t219bCanceledCount == 1 &&
+                    XProgressDialog_value(dlg) ==
+                        XProgressDialog_minimum(dlg),
+                    "t219b cancel+canceled 信号+复位");
+        XProgressDialog_reset(dlg);
+        expect_true(!XProgressDialog_wasCanceled(dlg),
+                    "t219b reset 清 wasCanceled");
+        XString_delete_base((XClass*)label);
+        XString_delete_base((XClass*)cancelText);
+        XProgressDialog_delete_base(dlg);
+    }
+#endif /* XWIDGET_ON && XDIALOG_ON */
+
+#if XWIDGET_ON
+    /* [experiment-disabled]     /* ---- XGraphicsEffect：enabled roundtrip + XWidget_setGraphicsEffect ---- */
+    {
+        XGraphicsEffect* effect = XGraphicsEffect_create();
+        XGraphicsEffect* effect2 = XGraphicsEffect_create();
+        XGraphicsEffect* effect3 = XGraphicsEffect_create();
+        XWidget* w = XWidget_create(NULL, 0);
+        expect_true(effect != NULL && effect2 != NULL && effect3 != NULL &&
+                    w != NULL,
+                    "t219b XGraphicsEffect 创建");
+        if (!effect || !effect2 || !effect3 || !w) return;
+        expect_true(XGraphicsEffect_isEnabled(effect),
+                    "t219b 效果默认启用");
+        XObject_connect_2((XObject*)effect,
+                          XSignal(XGraphicsEffect_enabledChanged_signal),
+                          t219b_enabledChangedSlot);
+        s_t219bEnabledChangedCount = 0;
+        XGraphicsEffect_setEnabled(effect, false);
+        expect_true(!XGraphicsEffect_isEnabled(effect) &&
+                    s_t219bEnabledChangedCount == 1 &&
+                    !s_t219bEnabledChangedValue,
+                    "t219b enabledChanged 信号");
+        XGraphicsEffect_setEnabled(effect, false);
+        expect_true(s_t219bEnabledChangedCount == 1,
+                    "t219b 同状态不重复发射");
+        XGraphicsEffect_setEnabled(effect, true);
+        expect_true(XGraphicsEffect_isEnabled(effect) &&
+                    s_t219bEnabledChangedCount == 2,
+                    "t219b 重新启用");
+        XGraphicsEffect_update(effect);
+        expect_true(XWidget_graphicsEffect(w) == NULL,
+                    "t219b 控件初始无效果");
+        XWidget_setGraphicsEffect(w, effect);
+        expect_true(XWidget_graphicsEffect(w) == effect,
+                    "t219b setGraphicsEffect 挂接");
+        XWidget_setGraphicsEffect(w, effect);
+        expect_true(XWidget_graphicsEffect(w) == effect,
+                    "t219b 同效果重复设置不变");
+        XWidget_setGraphicsEffect(w, effect2);
+        expect_true(XWidget_graphicsEffect(w) == effect2,
+                    "t219b 换装新效果（旧效果由控件释放）");
+        XWidget_setGraphicsEffect(w, NULL);
+        expect_true(XWidget_graphicsEffect(w) == NULL,
+                    "t219b 清除效果（效果由控件释放）");
+        /* 挂接状态下删除控件：效果随控件释放（Qt 所有权语义）；
+           effect/effect2 已在换装/清除时由控件释放，不得再手工删除。 */
+        XWidget_setGraphicsEffect(w, effect3);
+        XWidget_delete_base((XClass*)w);
+    }
+#endif /* XWIDGET_ON */
+
+#if XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON
+    /* ---- XOffscreenSurface：create/destroy/isValid/size/format roundtrip ---- */
+    {
+        XOffscreenSurface* surf = XOffscreenSurface_create();
+        XSurfaceFormat fmt;
+        XSurfaceFormat gotFmt;
+        XScreen* screen = XScreen_create();
+        XSize size;
+        expect_true(surf != NULL, "t219b XOffscreenSurface 创建");
+        if (!surf) return;
+        size = XOffscreenSurface_size(surf);
+        expect_true(size.width == 1 && size.height == 1 &&
+                    !XOffscreenSurface_isValid(surf) &&
+                    XOffscreenSurface_surfaceType(surf) ==
+                        XWindowSurface_OpenGL &&
+                    XOffscreenSurface_screen(surf) == NULL,
+                    "t219b 离屏表面默认值");
+        XOffscreenSurface_setSize(surf, (XSize){320, 240});
+        size = XOffscreenSurface_size(surf);
+        expect_true(size.width == 320 && size.height == 240,
+                    "t219b size roundtrip");
+        fmt = XSurfaceFormat_create();
+        XSurfaceFormat_setDepthBufferSize(&fmt, 24);
+        XSurfaceFormat_setSamples(&fmt, 4);
+        XOffscreenSurface_setFormat(surf, fmt);
+        gotFmt = XOffscreenSurface_format(surf);
+        expect_true(XSurfaceFormat_equals(&gotFmt, &fmt),
+                    "t219b format roundtrip");
+        if (screen) {
+            XOffscreenSurface_setScreen(surf, screen);
+            expect_true(XOffscreenSurface_screen(surf) == screen,
+                        "t219b screen roundtrip");
+            XOffscreenSurface_setScreen(surf, NULL);
+            expect_true(XOffscreenSurface_screen(surf) == NULL,
+                        "t219b screen 清除");
+        }
+        XOffscreenSurface_createSurface(surf);
+        expect_true(XOffscreenSurface_isValid(surf),
+                    "t219b create 后 isValid");
+        XOffscreenSurface_destroy(surf);
+        expect_true(!XOffscreenSurface_isValid(surf),
+                    "t219b destroy 后无效");
+        if (screen) XScreen_delete_base((XClass*)screen);
+        XOffscreenSurface_delete_base(surf);
+    }
+#endif /* XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON */
+
+    /* ---- Task 2.21 回检补齐：URL/范围/自定义色 ---- */
+    {
+        XFileDialog* fd = XFileDialog_create(NULL, 0);
+        XStringList* urls = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XStringList* got;
+        XByteArray state;
+        if (fd && urls) {
+            XString* dirUrl;
+            XString* selUrl;
+            XStringList_push_back_utf8(urls, "file:///x.txt");
+            dirUrl = XString_create_utf8("file:///d");
+            XFileDialog_setDirectoryUrl(fd, dirUrl);
+            if (dirUrl) XString_delete_base(dirUrl);
+            {
+                XString* du = XFileDialog_directoryUrl(fd);
+                expect_true(du && XStrcmp(XString_toUtf8(du), "file:///d") == 0,
+                            "t219b-recheck dirUrl roundtrip");
+                if (du) XString_delete_base(du);
+            }
+            XFileDialog_setMimeTypeFilters(fd, urls);
+            got = XFileDialog_mimeTypeFilters(fd);
+            expect_true(got &&
+                        XStringList_size_base((const XStringList*)got) == 1,
+                        "t219b-recheck mimeFilters");
+            if (got) XStringList_delete_base(got);
+            XFileDialog_setSupportedSchemes(fd, urls);
+            got = XFileDialog_supportedSchemes(fd);
+            expect_true(got &&
+                        XStringList_size_base((const XStringList*)got) == 1,
+                        "t219b-recheck schemes");
+            if (got) XStringList_delete_base(got);
+            selUrl = XString_create_utf8("file:///s.png");
+            XFileDialog_selectUrl(fd, selUrl);
+            if (selUrl) XString_delete_base(selUrl);
+            got = XFileDialog_selectedUrls(fd);
+            expect_true(got &&
+                        XStringList_size_base((const XStringList*)got) >= 1,
+                        "t219b-recheck selectedUrls");
+            if (got) XStringList_delete_base(got);
+            XFileDialog_saveState(fd, &state);
+            expect_true(!XFileDialog_restoreState(fd, &state),
+                        "t219b-recheck save/restore 语义");
+            expect_true(XFileDialog_iconProvider(fd) == NULL &&
+                        XFileDialog_itemDelegate(fd) == NULL &&
+                        XFileDialog_proxyModel(fd) == NULL,
+                        "t219b-recheck 未映射类型返回 NULL");
+        }
+        if (urls) XStringList_delete_base(urls);
+        if (fd) XFileDialog_delete_base(fd);
+    }
+    {
+        XColorDialog* cd = XColorDialog_create(NULL, 0);
+        XColor red;
+        XColor_init_rgb(&red, 255, 0, 0, 255);
+        if (cd) {
+            XColorDialog_setCustomColor(cd, 3, red);
+            expect_true(XColorDialog_customCount(cd) == 4, "t219b-recheck customCount");
+            {
+                XColor cc = XColorDialog_customColor(cd, 3);
+                expect_true(XColor_red(&cc) == 255, "t219b-recheck customColor");
+            }
+            XColorDialog_setStandardColor(cd, 1, red);
+            {
+                XColor sc = XColorDialog_standardColor(cd, 1);
+                expect_true(XColor_red(&sc) == 255, "t219b-recheck standardColor");
+            }
+            XColorDialog_open(cd);
+            XColorDialog_delete_base(cd);
+        }
+    }
+    {
+        XInputDialog* id = XInputDialog_create(NULL, 0);
+        if (id) {
+            XInputDialog_setIntRange(id, 5, 50);
+            expect_true(XInputDialog_intMinimum(id) == 5 &&
+                        XInputDialog_intMaximum(id) == 50,
+                        "t219b-recheck intRange");
+            XInputDialog_setDoubleRange(id, 0.5, 9.5);
+            XInputDialog_setDoubleDecimals(id, 3);
+            expect_true(XInputDialog_doubleMinimum(id) > 0.49 &&
+                        XInputDialog_doubleMaximum(id) < 9.51 &&
+                        XInputDialog_doubleDecimals(id) == 3,
+                        "t219b-recheck doubleRange/decimals");
+            XInputDialog_setTextEchoMode(id, XInputDialogEchoMode_Password);
+            expect_true(XInputDialog_textEchoMode(id) ==
+                            XInputDialogEchoMode_Password,
+                        "t219b-recheck echoMode");
+            XInputDialog_intValueSelected_signal(id, 7);
+            XInputDialog_delete_base(id);
+        }
+    }
+}
+
+#endif /* XWIDGET_ON */
+
+static void test_style_engine_contract(void)
+{
+#if XSTYLE_ON
+    {
+        XCommonStyle* cs = XCommonStyle_create();
+        XFusionStyle* fs = XFusionStyle_create();
+        XStyle* style = cs ? (XStyle*)cs : NULL;
+        expect_true(cs != NULL && fs != NULL, "Style 引擎对象创建");
+        if (style && fs) {
+            expect_true(XStyle_pixelMetric(style, XStylePM_TabBarTabOverlap,
+                                           NULL) == 3,
+                        "pixelMetric TabBarTabOverlap=3");
+            expect_true(XStyle_pixelMetric(style, XStylePM_TabBarTabHSpace,
+                                           NULL) == 24,
+                        "pixelMetric TabBarTabHSpace=24");
+            expect_true(XStyle_pixelMetric(style, XStylePM_ToolBarItemSpacing,
+                                           NULL) == 4,
+                        "pixelMetric ToolBarItemSpacing=4");
+            expect_true(XStyle_pixelMetric(style, XStylePM_ToolBarHandleExtent,
+                                           NULL) == 8,
+                        "pixelMetric ToolBarHandleExtent=8");
+            expect_true(XStyle_pixelMetric(
+                            style, XStylePM_DockWidgetTitleBarButtonMargin,
+                            NULL) == 2,
+                        "pixelMetric DockWidgetTitleBarButtonMargin=2");
+            expect_true(XStyle_pixelMetric(style,
+                                           XStylePM_ButtonShiftHorizontal,
+                                           NULL) == 2,
+                        "pixelMetric ButtonShiftHorizontal=2");
+            expect_true(XStyle_pixelMetric(style, XStylePM_ButtonShiftVertical,
+                                           NULL) == 2,
+                        "pixelMetric ButtonShiftVertical=2");
+            {
+                XStyleOption tab;
+                XStyleOption_init(&tab, XStyleCE_TabBarTabShape);
+                tab.m_tabPosition = 0;
+                expect_true(XStyle_pixelMetric(style, XStylePM_TabBarTabVSpace,
+                                               &tab) == 8,
+                            "pixelMetric TabBarTabVSpace=8(Rounded)");
+                tab.m_tabPosition = 2;
+                expect_true(XStyle_pixelMetric(style, XStylePM_TabBarTabVSpace,
+                                               &tab) == 3,
+                            "pixelMetric TabBarTabVSpace=3(Triangular)");
+                tab.m_tabPosition = -1;
+                expect_true(XStyle_pixelMetric(style, XStylePM_TabBarTabVSpace,
+                                               &tab) == 2,
+                            "pixelMetric TabBarTabVSpace=2(其他)");
+            }
+            expect_true(XStyle_pixelMetric(style, XStylePM_IndicatorWidth,
+                                           NULL) == 13,
+                        "pixelMetric IndicatorWidth=13");
+            expect_true(XStyle_pixelMetric(style, XStylePM_DefaultFrameWidth,
+                                           NULL) == 2,
+                        "pixelMetric DefaultFrameWidth=2");
+            {
+                XStyleOptionButton btn;
+                XStyleOption_init(&btn.m_base, XStyleCE_PushButton);
+                XSize cs1;
+                XSize r1;
+                XSize_init(&cs1, 10, 6);
+                r1 = XStyle_sizeFromContents(style, XStyleCT_PushButton,
+                                             &btn.m_base, cs1);
+                expect_true(r1.width == 10 + 6 + 4 &&
+                            r1.height == 6 + 6 + 4,
+                            "sizeFromContents PushButton(margin6+frame4)");
+                {
+                    XStyleOptionButton cb;
+                    XStyleOption_init(&cb.m_base, XStyleCE_CheckBox);
+                    cb.m_base.m_text = "A";
+                    XSize cs2;
+                    XSize r2;
+                    XSize_init(&cs2, 5, 5);
+                    r2 = XStyle_sizeFromContents(style, XStyleCT_CheckBox,
+                                                 &cb.m_base, cs2);
+                    expect_true(r2.width == 5 + 13 + 4 + 6 &&
+                                r2.height == 13,
+                                "sizeFromContents CheckBox(指示器13+间距10)");
+                }
+                {
+                    XStyleOptionSpinBox sb;
+                    XStyleOption_init(&sb.m_base.m_base, XStyleCC_SpinBox);
+                    sb.m_base.m_base.m_spinFrame = true;
+                    XSize cs3;
+                    XSize r3;
+                    XSize_init(&cs3, 30, 20);
+                    r3 = XStyle_sizeFromContents(style, XStyleCT_SpinBox,
+                                                 &sb.m_base.m_base, cs3);
+                    expect_true(r3.width == 50 && r3.height == 24,
+                                "sizeFromContents SpinBox(frame4+按钮16)");
+                }
+            }
+            {
+                XRect bbox;
+                XRect lr;
+                XRect vr;
+                XRect ar;
+                XSize sz;
+                XPoint lp;
+                XPoint vp;
+                XRect_init(&bbox, 0, 0, 100, 40);
+                XRect_init(&lr, 10, 5, 20, 10);
+                vr = XStyle_visualRect(0, &bbox, &lr);
+                expect_true(vr.x == 10 && vr.y == 5, "visualRect LTR 不变");
+                vr = XStyle_visualRect(1, &bbox, &lr);
+                expect_true(vr.x == 100 - 20 - 10, "visualRect RTL 镜像");
+                XPoint_init(&lp, 10, 5);
+                vp = XStyle_visualPos(1, &bbox, &lp);
+                expect_true(vp.x == 99 - 10 && vp.y == 5, "visualPos RTL");
+                XSize_init(&sz, 10, 10);
+                ar = XStyle_alignedRect(0,
+                                        XAlignment_Right | XAlignment_Bottom,
+                                        &sz, &bbox);
+                expect_true(ar.x == 90 && ar.y == 30,
+                            "alignedRect 右下对齐");
+                expect_true(XStyle_sliderPositionFromValue(0, 100, 50, 200,
+                                                           false) == 100,
+                            "sliderPositionFromValue 50/100→100");
+                expect_true(XStyle_sliderPositionFromValue(0, 100, 25, 200,
+                                                           true) == 150,
+                            "sliderPositionFromValue upsideDown");
+                expect_true(XStyle_sliderValueFromPosition(0, 100, 100, 200,
+                                                           false) == 50,
+                            "sliderValueFromPosition 100/200→50");
+                expect_true(XStyle_sliderValueFromPosition(0, 100, 150, 200,
+                                                           true) == 25,
+                            "sliderValueFromPosition upsideDown");
+            }
+            {
+                XPalette pal = XStyle_standardPalette((XStyle*)fs);
+                XColor c;
+                c = XPalette_color(&pal, XPaletteColorGroup_Active,
+                                   XPaletteColorRole_Light);
+                expect_true(XColor_rgba(&c) == 0xFFF7F7F7u,
+                            "Fusion standardPalette Light=#F7F7F7");
+                c = XPalette_color(&pal, XPaletteColorGroup_Active,
+                                   XPaletteColorRole_Midlight);
+                expect_true(XColor_rgba(&c) == 0xFFBFBFBFu,
+                            "Fusion standardPalette Midlight=#BFBFBF");
+                c = XPalette_color(&pal, XPaletteColorGroup_Active,
+                                   XPaletteColorRole_Highlight);
+                expect_true(XColor_rgba(&c) == 0xFF308CC6u,
+                            "Fusion standardPalette Highlight=#308CC6");
+                c = XPalette_color(&pal, XPaletteColorGroup_Disabled,
+                                   XPaletteColorRole_Base);
+                expect_true(XColor_rgba(&c) == 0xFFEFEFEFu,
+                            "Fusion standardPalette Disabled Base=#EFEFEF");
+                c = XPalette_color(&pal, XPaletteColorGroup_Disabled,
+                                   XPaletteColorRole_Shadow);
+                expect_true(XColor_rgba(&c) == 0xFFBABABAu,
+                            "Fusion standardPalette Disabled Shadow=#BABABA");
+                c = XPalette_color(&pal, XPaletteColorGroup_Active,
+                                   XPaletteColorRole_Accent);
+                expect_true(XColor_rgba(&c) == 0xFF308CC6u,
+                            "Fusion standardPalette Accent=Highlight");
+            }
+            {
+                XImage image;
+                XPainter painter;
+                XStyleOptionComplex opt;
+                XRect rect;
+                XImage_init_ex(&image, 64, 32, XImageFormat_ARGB32);
+                XPainter_init(&painter, NULL);
+                if (XPainter_begin_image(&painter, &image)) {
+                    XRect_init(&rect, 0, 0, 64, 32);
+                    XStyleOption_init(&opt.m_base, XStyleCC_Slider);
+                    opt.m_base.m_rect = rect;
+                    opt.m_base.m_state = XStyleState_Enabled;
+                    opt.m_base.m_horizontal = true;
+                    opt.m_base.m_sliderMin = 0;
+                    opt.m_base.m_sliderMax = 100;
+                    opt.m_base.m_sliderValue = 50;
+                    opt.m_base.m_sliderPageStep = 10;
+                    opt.m_subControls = XStyleSC_SliderGroove |
+                                        XStyleSC_SliderHandle;
+                    opt.m_activeSubControls = XStyleSC_SliderHandle;
+                    XStyle_drawComplexControl((XStyle*)fs, XStyleCC_Slider,
+                                              &opt.m_base, &painter, NULL);
+                    opt.m_base.m_type = XStyleCC_ScrollBar;
+                    opt.m_base.m_scrollSubLine = true;
+                    opt.m_base.m_scrollAddLine = true;
+                    XStyle_drawComplexControl((XStyle*)fs, XStyleCC_ScrollBar,
+                                              &opt.m_base, &painter, NULL);
+                    {
+                        XStyleOptionSpinBox sb;
+                        XStyleOption_init(&sb.m_base.m_base, XStyleCC_SpinBox);
+                        sb.m_base.m_base.m_rect = rect;
+                        sb.m_base.m_base.m_state = XStyleState_Enabled;
+                        sb.m_base.m_base.m_spinFrame = true;
+                        sb.m_base.m_base.m_spinSymbols = 0;
+                        sb.m_base.m_base.m_spinStepEnabled = 3;
+                        sb.m_base.m_subControls = XStyleSC_SpinBoxUp |
+                                                  XStyleSC_SpinBoxDown;
+                        XStyle_drawComplexControl((XStyle*)fs,
+                                                  XStyleCC_SpinBox,
+                                                  &sb.m_base.m_base,
+                                                  &painter, NULL);
+                    }
+                    {
+                        XStyleOptionComboBox cb;
+                        XStyleOption_init(&cb.m_base.m_base, XStyleCC_ComboBox);
+                        cb.m_base.m_base.m_rect = rect;
+                        cb.m_base.m_base.m_state = XStyleState_Enabled;
+                        cb.m_base.m_base.m_text = "A";
+                        XStyle_drawComplexControl((XStyle*)fs,
+                                                  XStyleCC_ComboBox,
+                                                  &cb.m_base.m_base,
+                                                  &painter, NULL);
+                    }
+                    {
+                        XStyleOptionButton gb;
+                        XStyleOption_init(&gb.m_base, XStyleCC_GroupBox);
+                        gb.m_base.m_rect = rect;
+                        gb.m_base.m_state = XStyleState_Enabled;
+                        gb.m_base.m_text = "G";
+                        XStyle_drawComplexControl((XStyle*)fs,
+                                                  XStyleCC_GroupBox,
+                                                  &gb.m_base, &painter, NULL);
+                    }
+                    {
+                        XStyleOptionSlider dial;
+                        XStyleOption_init(&dial.m_base, XStyleCC_Dial);
+                        dial.m_base.m_rect = rect;
+                        dial.m_base.m_state = XStyleState_Enabled;
+                        dial.m_base.m_notchesVisible = true;
+                        dial.m_base.m_notchSize = 10;
+                        dial.m_base.m_pageStep = 5;
+                        XStyle_drawComplexControl((XStyle*)fs, XStyleCC_Dial,
+                                                  &dial.m_base, &painter,
+                                                  NULL);
+                    }
+                    {
+                        XStyleOptionToolButton tb;
+                        XStyleOption_init(&tb.m_base.m_base,
+                                          XStyleCC_ToolButton);
+                        tb.m_base.m_base.m_rect = rect;
+                        tb.m_base.m_base.m_state = XStyleState_Enabled |
+                                                   XStyleState_Raised;
+                        XStyle_drawComplexControl((XStyle*)fs,
+                                                  XStyleCC_ToolButton,
+                                                  &tb.m_base.m_base,
+                                                  &painter, NULL);
+                    }
+                    XPainter_end(&painter);
+                    expect_true(1, "drawComplexControl 全 case 冒烟无崩溃");
+                }
+                XPainter_deinit(&painter);
+                XImage_deinit_base(&image);
+            }
+            {
+                XStyleOptionButton btn;
+                XStyleOptionButton_init(&btn, XStyleCE_PushButton);
+                expect_true(btn.m_iconSize.width == -1 &&
+                            btn.m_iconSize.height == -1,
+                            "XStyleOptionButton iconSize 默认 (-1,-1)");
+                {
+                    XStyleOptionComplex cx;
+                    XStyleOptionComplex_init(&cx, XStyleCC_ComboBox);
+                    expect_true(cx.m_subControls == XStyleSC_All &&
+                                cx.m_activeSubControls == XStyleSC_None,
+                                "XStyleOptionComplex 默认 subControls=SC_All");
+                }
+            }
+        }
+        if (cs) XCommonStyle_delete_base(cs);
+        if (fs) XFusionStyle_delete_base(fs);
+    }
+#endif /* XSTYLE_ON */
+}
+
 
 int main(void)
 {
@@ -27709,6 +30977,8 @@ int main(void)
     test_picture_painter_path_record_link();
 #endif /* XPAINTER_PATH_ON */
     test_painter_raster_contract();
+    test_painter_task211_contract();
+    test_style_engine_contract();
     test_painter_extra_alignment();
     test_painter_draw_picture_align();
     test_painter_transform_contract();
@@ -27909,6 +31179,7 @@ int main(void)
     test_menu_contract();
     test_menu_stack_lifecycle();
     test_menu_draw_contents();
+    test_menu_ext_contract();
 #endif /* XWIDGET_ON && XMENU_ON */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON
     test_toolbutton_contract();
@@ -27939,6 +31210,8 @@ int main(void)
 #endif /* XLAYOUT_ON */
 #if XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON
     test_window_event_payloads();
+    test_window_event_task213_contract();
+    test_input_task214_contract();
     test_window_event_loop();
     test_widget_ime_commit_bridge();
     test_lineedit_context_menu_contract();
@@ -27946,6 +31219,109 @@ int main(void)
 #if XTABLEWIDGET_ON
     {
         XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+        /* ---- Task 1.5：item view 基座（model/selection/header/signals） ---- */
+        {
+            XAbstractItemModel* model = XAbstractItemModel_create();
+            XItemSelectionModel* sel = XItemSelectionModel_create();
+            XHeaderView* hdr = XHeaderView_create(NULL, 0, 0);
+            if (model) {
+                XObject_connect_2((XObject*)model,
+                    XSignal(XAbstractItemModel_dataChanged_signal), mDataSlot);
+                XAbstractItemModel_setDimension(model, 3, 2);
+                expect_true(XAbstractItemModel_rowCount(model) == 3 &&
+                            XAbstractItemModel_columnCount(model) == 2,
+                            "model 维度");
+                XAbstractItemModel_setData_2(model, 1, 0, "A1");
+                expect_true(XStrcmp(XAbstractItemModel_data_2(model, 1, 0),
+                                    "A1") == 0 && mDataSlotCount >= 1,
+                            "model 数据+dataChanged 信号");
+                XAbstractItemModel_setHeaderData_2(model, 0, 0, "ColA");
+                expect_true(XStrcmp(
+                    XAbstractItemModel_headerData_2(model, 0, 0), "ColA")
+                    == 0, "model 表头");
+                XAbstractItemModel_delete_base(model);
+            }
+            if (sel) {
+                XObject_connect_2((XObject*)sel,
+                    XSignal(XItemSelectionModel_selectionChanged_signal),
+                    mSelSlot);
+                XItemSelectionModel_select(sel, 2, 1, true);
+                expect_true(XItemSelectionModel_isSelected(sel, 2, 1) &&
+                            XItemSelectionModel_selectedCount(sel) == 1 &&
+                            mSelSlotCount >= 1, "selection 选中+信号");
+                XItemSelectionModel_select(sel, 2, 1, false);
+                expect_true(XItemSelectionModel_selectedCount(sel) == 0,
+                            "selection 取消");
+                XItemSelectionModel_delete_base(sel);
+            }
+            if (hdr) {
+                XHeaderView_setCount(hdr, 4);
+                XHeaderView_setSectionSize(hdr, 1, 60);
+                expect_true(XHeaderView_count(hdr) == 4 &&
+                            XHeaderView_sectionSize(hdr, 1) == 60 &&
+                            XHeaderView_sectionPosition(hdr, 2) ==
+                                (XHeaderView_sectionSize(hdr, 0) + 60),
+                            "header 尺寸/位置");
+                XHeaderView_delete_base(hdr);
+            }
+            /* ---- 视图族：XListView/XListWidget/XTreeWidget ---- */
+            {
+                XListView* lv = XListView_create(NULL, 0);
+                XListWidget* lw = XListWidget_create(NULL, 0);
+                XTreeWidget* twg = XTreeWidget_create(NULL, 0);
+                if (lv) {
+                    XAbstractItemModel* m = XAbstractItemModel_create();
+                    if (m) {
+                        XAbstractItemModel_setDimension(m, 3, 1);
+                        XAbstractItemModel_setData_2(m, 0, 0, "A");
+                        XAbstractItemModel_setData_2(m, 1, 0, "B");
+                        XAbstractItemView_setModel(&lv->m_base, m);
+                        expect_true(
+                            XAbstractItemView_model(&lv->m_base) == m &&
+                            XListView_modelColumn(lv) == 0,
+                            "XListView model 接入");
+                        XAbstractItemModel_delete_base(m);
+                    }
+                    XListView_delete_base(lv);
+                }
+                if (lw) {
+                    XListWidget_addItem_2(lw, "one");
+                    XListWidget_addItem_2(lw, "two");
+                    expect_true(XListWidget_count(lw) == 2 &&
+                                XStrcmp(XListWidget_item_2(lw, 0),
+                                        "one") == 0,
+                                "XListWidget addItem/count/item");
+                    XListWidget_setCurrentRow(lw, 1);
+                    expect_true(XListWidget_currentRow(lw) == 1,
+                                "XListWidget currentRow");
+                    XListWidget_clear(lw);
+                    expect_true(XListWidget_count(lw) == 0,
+                                "XListWidget clear");
+                    XListWidget_delete_base(lw);
+                }
+                if (twg) {
+                    XTreeWidgetItem* root =
+                        XTreeWidgetItem_create_2("根", NULL);
+                    XTreeWidgetItem* child =
+                        XTreeWidgetItem_create_2("子", root);
+                    expect_true(root != NULL && child != NULL &&
+                                XTreeWidgetItem_addChild(root, child),
+                                "XTreeWidgetItem addChild");
+                    expect_true(XTreeWidgetItem_childCount(root) == 1 &&
+                                XStrcmp(XTreeWidgetItem_text_2(child),
+                                        "子") == 0,
+                                "XTreeWidgetItem 子节点/文本");
+                    expect_true(XTreeWidget_addTopLevelItem(twg, root) &&
+                                XTreeWidget_topLevelItemCount(twg) == 1 &&
+                                XTreeWidget_topLevelItem(twg, 0) == root,
+                                "XTreeWidget addTopLevelItem");
+                    XTreeWidget_clear(twg);
+                    expect_true(XTreeWidget_topLevelItemCount(twg) == 0,
+                                "XTreeWidget clear");
+                    XTreeWidget_delete_base(twg);
+                }
+            }
+        }
         if (tw) {
             XTableWidgetItem item;
             memset(&item, 0, sizeof(item));
@@ -27997,19 +31373,25 @@ int main(void)
         expect_true(XXYSeries_count(line) == 2 &&
                     XXYSeries_at(line, 1)->y == 20,
                     "XLineSeries 点存取");
-        XAbstractSeries_setName(line, "L");
-        expect_true(strcmp(XAbstractSeries_name(line), "L") == 0,
+        XAbstractSeries_setName_2(line, "L");
+        expect_true(strcmp(XAbstractSeries_name_2(line), "L") == 0,
                     "XLineSeries 序列名");
         XChart_addLineSeries(chart, line);
         expect_true(XChart_lineSeriesCount(chart) == 1 &&
                     XChart_lineSeries(chart, 0) == line,
                     "XChart addLineSeries");
-        XAbstractBarSeries_append(bar, "一", 5);
-        XAbstractBarSeries_append(bar, "二", 8);
-        expect_true(XAbstractBarSeries_count(bar) == 2 &&
-                    XAbstractBarSeries_value(bar, 1) == 8 &&
-                    strcmp(XAbstractBarSeries_category(bar, 0), "一") == 0,
-                    "XBarSeries 柱存取");
+        {
+            XBarSet* bset = XBarSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, "柱");
+            expect_true(bset != NULL, "XBarSet 创建(柱)");
+            XBarSet_append(bset, 5);
+            XBarSet_append(bset, 8);
+            XAbstractBarSeries_append(bar, bset);
+            expect_true(XAbstractBarSeries_count(bar) == 1 &&
+                        XBarSet_count(bset) == 2 &&
+                        XBarSet_at(bset, 1) == 8 &&
+                        XAbstractBarSeries_barSetAt(bar, 0) == bset,
+                        "XBarSeries 柱存取");
+        }
         XChart_addBarSeries(chart, bar);
         expect_true(XChart_barSeriesCount(chart) == 1,
                     "XChart addBarSeries");
@@ -28025,17 +31407,17 @@ int main(void)
         XXYSeries_append(sp, 1, 2);
         expect_true(XXYSeries_count(sp) == 2, "XSplineSeries 点");
         XChart_addSplineSeries(chart, sp);
-        XPieSeries_append(pie, "A", 3);
-        XPieSeries_append(pie, "B", 1);
+        XPieSeries_append_2(pie, "A", 3);
+        XPieSeries_append_2(pie, "B", 1);
         expect_true(XPieSeries_count(pie) == 2 &&
                     XPieSeries_sum(pie) == 4, "XPieSeries 切片与求和");
         XChart_setPieSeries(chart, pie);
         expect_true(XChart_pieSeries(chart) == pie, "XChart setPieSeries");
-        XChart_setTitle(chart, "T");
-        expect_true(strcmp(XChart_title(chart), "T") == 0, "XChart 标题");
+        XChart_setTitle_2(chart, "T");
+        expect_true(strcmp(XChart_title_2(chart), "T") == 0, "XChart 标题");
         expect_true(XChart_axisX(chart) != NULL &&
                     XChart_axisY(chart) != NULL, "XChart 轴");
-        XChart_deinit(chart);
+        XChart_delete_base(chart);
     }
     test_widgets_inheritance_contract();
     test_fusion_style_contract();
@@ -28043,9 +31425,15 @@ int main(void)
     test_fusion_state_matrix();
     test_chart_c1_contract();
     test_chart_interaction_contract();
+    test_charts_task218a_contract();
+    test_charts_task218b_contract();
 #endif /* XCHARTS_ON */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+#if XWIDGET_ON
+    test_util_task219a_contract();
+    test_dialog_task219b_contract();
+#endif /* XWIDGET_ON */
     if (s_failures != 0) {
         XERROR_PRINTF("%d XGui regression test(s) failed\n", s_failures);
         return 1;

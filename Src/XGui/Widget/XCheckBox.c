@@ -486,7 +486,7 @@ static void VXCheckBox_paintEvent(XWidget* self, XEvent* event)
 #if XPAINTER_CLIP_ON
     pe = (XPaintEvent*)event;
 #endif
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -587,13 +587,9 @@ XCheckBox* XCheckBox_create_ex(XMemoryType memory, XWidget* parent,
 }
 
 
-void* XCheckBox_stateChanged_signal(XCheckBox* self)
-{
-    (void)self;
-    return (void*)(size_t)XCheckBox_stateChanged_signal;
-}
 
-void XCheckBox_setCheckState_2(XCheckBox* self) { (void)self; }
-void XCheckBox_checkState_2(XCheckBox* self) { (void)self; }
-void XCheckBox_nextCheckState_2(XCheckBox* self) { (void)self; }
+
+
+
+
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */

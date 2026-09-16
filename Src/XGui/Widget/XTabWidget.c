@@ -106,7 +106,8 @@ static void xtabwidget_emitIntForward(XTabWidget* self)
     if (!arguments) return;
     if (((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self,
-                           (size_t)XTabWidget_currentChanged_signal(self),
+                           (size_t)XTabWidget_currentChanged_signal(
+                               self, self->m_currentIndex),
                            arguments, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     } else {
         XVarList_delete(arguments);
@@ -214,6 +215,32 @@ static void VXTabWidget_move(XTabWidget* self, XTabWidget* other)
 
 /* ==================== 生命周期 ==================== */
 
+static void VXTabWidget_deinit(XTabWidget* self)
+{
+    int i;
+    if (!self) return;
+    if (self->m_pages) {
+        /* 页容器为 XWidget_init 的嵌入式堆对象（对齐 removeTab 惯例：
+           deinit_base + XFree_System，而非 delete_base——delete_base
+           仅对 IsHeap=true 的对象释放存储，测试的 XMemory_malloc+init
+           页对象会泄漏本体）。 */
+        for (i = 0; i < self->m_count; ++i) {
+            if (self->m_pages[i]) {
+                XWidget_deinit_base(self->m_pages[i]);
+                XFree_System(self->m_pages[i]);
+                self->m_pages[i] = NULL;
+            }
+        }
+        XFree_System(self->m_pages);
+        self->m_pages = NULL;
+    }
+    if (self->m_clients) {
+        XFree_System(self->m_clients);
+        self->m_clients = NULL;
+    }
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 XVtable* XTabWidget_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTabWidget)
@@ -221,6 +248,7 @@ XVtable* XTabWidget_class_init(void)
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXTabWidget_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabWidget_changeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTabWidget_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXTabWidget_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTabWidget_move);
 
@@ -244,13 +272,16 @@ void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
     XTabBar_init(&self->m_tabBar, (XWidget*)self, 0);
     XWidget_show((XWidget*)&self->m_tabBar);
     XObject_connect_2((XObject*)&self->m_tabBar,
-                      (size_t)XTabBar_currentChanged_signal(&self->m_tabBar),
+                      (size_t)XTabBar_currentChanged_signal(
+                          &self->m_tabBar, 0),
                       xtabwidget_currentChangedForward);
     XObject_connect_2((XObject*)&self->m_tabBar,
-                      (size_t)XTabBar_tabClicked_signal(&self->m_tabBar),
+                      (size_t)XTabBar_tabBarClicked_signal(
+                          &self->m_tabBar, 0),
                       xtabwidget_tabBarClickedForward);
     XObject_connect_2((XObject*)&self->m_tabBar,
-                      (size_t)XTabBar_tabBarDoubleClicked_signal(&self->m_tabBar),
+                      (size_t)XTabBar_tabBarDoubleClicked_signal(
+                          &self->m_tabBar, 0),
                       xtabwidget_tabBarDoubleClickedForward);
 }
 
@@ -266,13 +297,18 @@ XTabWidget* XTabWidget_create_ex(XMemoryType memory, XWidget* parent,
 
 /* ==================== API ==================== */
 
-int XTabWidget_addTab(XTabWidget* self, XWidget* page, const char* label)
+int XTabWidget_addTab(XTabWidget* self, XWidget* page, const XString* label)
 {
     return XTabWidget_insertTab(self, self ? self->m_count : 0, page, label);
 }
 
+int XTabWidget_addTab_2(XTabWidget* self, XWidget* page, const char* label)
+{
+    return XTabWidget_insertTab_2(self, self ? self->m_count : 0, page, label);
+}
+
 int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
-                         const char* label)
+                         const XString* label)
 {
     if (!self || !page || !label) return -1;
     if (index < 0) index = 0;
@@ -320,6 +356,15 @@ int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
         else xtabwidget_showCurrent(self);
         return index;
     }
+}
+
+int XTabWidget_insertTab_2(XTabWidget* self, int index, XWidget* page,
+                           const char* label)
+{
+    XString_Init_Utf8(tmp, label ? label : "");
+    index = XTabWidget_insertTab(self, index, page, tmp);
+    XString_deinit_base(tmp);
+    return index;
 }
 
 void XTabWidget_removeTab(XTabWidget* self, int index)
@@ -375,14 +420,24 @@ int XTabWidget_indexOf(const XTabWidget* self, const XWidget* page)
     return -1;
 }
 
-const char* XTabWidget_tabText(const XTabWidget* self, int index)
+XString* XTabWidget_tabText(const XTabWidget* self, int index)
 {
-    return self ? XTabBar_tabText(&self->m_tabBar, index) : "";
+    return self ? XTabBar_tabText(&self->m_tabBar, index) : NULL;
 }
 
-void XTabWidget_setTabText(XTabWidget* self, int index, const char* text)
+const char* XTabWidget_tabText_2(const XTabWidget* self, int index)
+{
+    return self ? XTabBar_tabText_2(&self->m_tabBar, index) : "";
+}
+
+void XTabWidget_setTabText(XTabWidget* self, int index, const XString* text)
 {
     if (self) XTabBar_setTabText(&self->m_tabBar, index, text);
+}
+
+void XTabWidget_setTabText_2(XTabWidget* self, int index, const char* text)
+{
+    if (self) XTabBar_setTabText_2(&self->m_tabBar, index, text);
 }
 
 bool XTabWidget_isTabEnabled(const XTabWidget* self, int index)
@@ -403,6 +458,74 @@ XTabBar* XTabWidget_tabBar(const XTabWidget* self)
 {
     return self ? (XTabBar*)&((XTabWidget*)self)->m_tabBar : NULL;
 }
+void XTabWidget_setCurrentWidget(XTabWidget* self, XWidget* page)
+{
+    int index;
+    if (!self || !page) return;
+    index = XTabWidget_indexOf(self, page);
+    if (index >= 0) XTabWidget_setCurrentIndex(self, index);
+}
+
+void XTabWidget_setTabIcon(XTabWidget* self, int index, const XString* path)
+{
+    if (self) XTabBar_setTabIcon(&self->m_tabBar, index, path);
+}
+void XTabWidget_setTabIcon_2(XTabWidget* self, int index, const char* path)
+{
+    if (self) XTabBar_setTabIcon_2(&self->m_tabBar, index, path);
+}
+const XString* XTabWidget_tabIcon(const XTabWidget* self, int index)
+{
+    return self ? XTabBar_tabIcon(&self->m_tabBar, index) : NULL;
+}
+const char* XTabWidget_tabIcon_2(const XTabWidget* self, int index)
+{
+    return self ? XTabBar_tabIcon_2(&self->m_tabBar, index) : "";
+}
+
+void XTabWidget_setTabToolTip(XTabWidget* self, int index, const XString* tip)
+{
+    if (self) XTabBar_setTabToolTip(&self->m_tabBar, index, tip);
+}
+void XTabWidget_setTabToolTip_2(XTabWidget* self, int index, const char* tip)
+{
+    if (self) XTabBar_setTabToolTip_2(&self->m_tabBar, index, tip);
+}
+
+void XTabWidget_setTabWhatsThis(XTabWidget* self, int index,
+                                const XString* text)
+{
+    /* 帮助文本无独立槽位：与提示共用存储（项目简化）。 */
+    if (self) XTabBar_setTabToolTip(&self->m_tabBar, index, text);
+}
+void XTabWidget_setTabWhatsThis_2(XTabWidget* self, int index,
+                                  const char* text)
+{
+    if (self) XTabBar_setTabToolTip_2(&self->m_tabBar, index, text);
+}
+
+void XTabWidget_setTabVisible(XTabWidget* self, int index, bool visible)
+{
+    if (self) XTabBar_setTabVisible(&self->m_tabBar, index, visible);
+}
+bool XTabWidget_isTabVisible(const XTabWidget* self, int index)
+{
+    return self ? XTabBar_isTabVisible(&self->m_tabBar, index) : true;
+}
+
+void XTabWidget_setTabBarAutoHide(XTabWidget* self, bool enable)
+{
+    if (self) {
+        self->m_tabBar.m_autoHide = enable;
+        XWidget_setVisible((XWidget*)&self->m_tabBar,
+                           !enable || XTabBar_count(&self->m_tabBar) > 1);
+    }
+}
+bool XTabWidget_tabBarAutoHide(const XTabWidget* self)
+{
+    return self ? self->m_tabBar.m_autoHide : false;
+}
+
 
 int XTabWidget_tabPosition(const XTabWidget* self)
 {
@@ -442,8 +565,9 @@ void XTabWidget_setMovable(XTabWidget* self, bool movable)
 
 /* ==================== 信号 ==================== */
 
-void* XTabWidget_currentChanged_signal(XTabWidget* self)
+void* XTabWidget_currentChanged_signal(XTabWidget* self, int index)
 {
+    (void)index;
     return (void*)(size_t)XTabWidget_currentChanged_signal;
 }
 void* XTabWidget_tabClicked_signal(XTabWidget* self)
@@ -452,11 +576,7 @@ void* XTabWidget_tabClicked_signal(XTabWidget* self)
 }
 
 
-void* XTabWidget_tabCloseRequested_signal(XTabWidget* self)
-{
-    (void)self;
-    return (void*)(size_t)XTabWidget_tabCloseRequested_signal;
-}
+
 
 void* XTabWidget_tabBarClicked_signal(XTabWidget* self)
 {
@@ -500,22 +620,21 @@ void* XTabWidget_tabBarDoubleClicked_signal(XTabWidget* self)
     return (void*)(size_t)XTabWidget_tabBarDoubleClicked_signal;
 }
 
-void XTabWidget_clear(XTabWidget* self)
-{ while (XTabWidget_count(self) > 0) XTabWidget_removeTab(self, XTabWidget_count(self)-1); }
-void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner) { (void)self; (void)widget; (void)corner; }
-XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner) { (void)self; (void)corner; return NULL; }
-void XTabWidget_setElideMode(XTabWidget* self, int mode) { (void)self; (void)mode; }
-int XTabWidget_elideMode(const XTabWidget* self) { (void)self; return 0; }
-void XTabWidget_setDocumentMode(XTabWidget* self, bool mode) { (void)self; (void)mode; }
-bool XTabWidget_documentMode(const XTabWidget* self) { (void)self; return false; }
-bool XTabWidget_isTabsClosable(const XTabWidget* self) { (void)self; return false; }
-void XTabWidget_setTabShape(XTabWidget* self, int shape) { (void)self; (void)shape; }
-int XTabWidget_tabShape(const XTabWidget* self) { (void)self; return 0; }
-void XTabWidget_setIconSize(XTabWidget* self, int size) { (void)self; (void)size; }
-int XTabWidget_iconSize(const XTabWidget* self) { (void)self; return 16; }
-void XTabWidget_setUsesScrollButtons(XTabWidget* self, bool useButtons) { (void)self; (void)useButtons; }
-bool XTabWidget_usesScrollButtons(const XTabWidget* self) { (void)self; return false; }
-void XTabWidget_setTabTextColor(XTabWidget* self, int index, uint32_t color) { (void)self; (void)index; (void)color; }
-uint32_t XTabWidget_tabTextColor(const XTabWidget* self, int index) { (void)self; (void)index; return 0; }
-void XTabWidget_setTabToolTip(XTabWidget* self, int index, const char* tip) { (void)self; (void)index; (void)tip; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON */

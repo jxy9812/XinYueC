@@ -363,3 +363,11 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out)
     XBitmap_fromImage(&img, 0, out);
     XImage_deinit_base(&img);
 }
+
+#if XPAINTDEVICE_ON
+XPaintDevice* XBitmap_paintDevice(XBitmap* self)
+{
+    if (!self) return NULL;
+    return XPixmap_paintDevice((XPixmap*)self);
+}
+#endif /* XPAINTDEVICE_ON */

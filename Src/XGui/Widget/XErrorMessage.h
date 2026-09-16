@@ -73,33 +73,4 @@ bool XErrorMessage_isDoneShown(const XErrorMessage* self);
 
 #endif /* XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XError消息done（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param result int 参数。
- * @return 无返回值。
- */
-void XErrorMessage_done(XErrorMessage* self, int result);
-/** @brief XError消息setDoneShown2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XErrorMessage_setDoneShown_2(XErrorMessage* self);
-/** @brief XError消息isDoneShown2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XErrorMessage_isDoneShown_2(XErrorMessage* self);
-/** @brief XError消息show消息2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XErrorMessage_showMessage_2(XErrorMessage* self);
-/** @brief XError消息current消息2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XErrorMessage_currentMessage_2(XErrorMessage* self);
 #endif /* XERRORMESSAGE_H */

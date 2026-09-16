@@ -315,70 +315,24 @@ int XAbstractSlider_stepEnabled_base(XAbstractSlider* self);
 
 /* ==================== 信号 ==================== */
 
-/** @brief valueChanged(int) 信号标识（值变化时发射）。 */
-void* XAbstractSlider_valueChanged_signal(XAbstractSlider* self);
+/** @brief valueChanged(int) 信号标识（值变化时发射；载荷：新值）。 */
+void* XAbstractSlider_valueChanged_signal(XAbstractSlider* self, int value);
 /** @brief sliderPressed() 信号标识（按下时发射）。 */
 void* XAbstractSlider_sliderPressed_signal(XAbstractSlider* self);
-/** @brief sliderMoved(int) 信号标识（按下期间位置变化时发射）。 */
-void* XAbstractSlider_sliderMoved_signal(XAbstractSlider* self);
+/** @brief sliderMoved(int) 信号标识（按下期间位置变化时发射；载荷：位置）。 */
+void* XAbstractSlider_sliderMoved_signal(XAbstractSlider* self, int position);
 /** @brief sliderReleased() 信号标识（释放时发射）。 */
 void* XAbstractSlider_sliderReleased_signal(XAbstractSlider* self);
-/** @brief rangeChanged(int,int) 信号标识（范围变化时发射）。 */
-void* XAbstractSlider_rangeChanged_signal(XAbstractSlider* self);
-/** @brief actionTriggered(int) 信号标识（动作触发时发射）。 */
-void* XAbstractSlider_actionTriggered_signal(XAbstractSlider* self);
+/** @brief rangeChanged(int,int) 信号标识（范围变化时发射；载荷：min,max）。 */
+void* XAbstractSlider_rangeChanged_signal(XAbstractSlider* self,
+                                          int min, int max);
+/** @brief actionTriggered(int) 信号标识（动作触发时发射；载荷：动作码）。 */
+void* XAbstractSlider_actionTriggered_signal(XAbstractSlider* self,
+                                             int action);
 
 #ifdef __cplusplus
 }
 #endif
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XAbstractSliderinverted外观2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XAbstractSlider_invertedAppearance_2(const XAbstractSlider* self);
-/** @brief XAbstractSliderinverted控制2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XAbstractSlider_invertedControls_2(const XAbstractSlider* self);
-/** @brief XAbstractSliderslider位置2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
- */
-int XAbstractSlider_sliderPosition_2(const XAbstractSlider* self);
-/** @brief XAbstractSliderhas跟踪2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XAbstractSlider_hasTracking_2(const XAbstractSlider* self);
-/** @brief XAbstractSliderset反转外观2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XAbstractSlider_setInvertedAppearance_2(XAbstractSlider* self);
-/** @brief XAbstractSliderset反转控制2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XAbstractSlider_setInvertedControls_2(XAbstractSlider* self);
-/** @brief XAbstractSlidersetSlider位置2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XAbstractSlider_setSliderPosition_2(XAbstractSlider* self);
-/** @brief XAbstractSliderset跟踪2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XAbstractSlider_setTracking_2(XAbstractSlider* self);
-/** @brief XAbstractSlidertrigger动作2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XAbstractSlider_triggerAction_2(XAbstractSlider* self);
 #endif /* XABSTRACTSLIDER_H */

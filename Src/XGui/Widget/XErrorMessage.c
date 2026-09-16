@@ -18,7 +18,7 @@ static void VX_errMsg_paintEvent(XWidget* self, XEvent* event)
     XRect r;
     uint32_t text;
     if (!em || !event) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -120,12 +120,9 @@ bool XErrorMessage_isDoneShown(const XErrorMessage* self)
     return self ? self->m_doneShown : false;
 }
 
-void XErrorMessage_done(XErrorMessage* self, int result)
-{
-    XDialog_done((XDialog*)self, result);
-}
-void XErrorMessage_setDoneShown_2(XErrorMessage* self) { (void)self; }
-void XErrorMessage_isDoneShown_2(XErrorMessage* self) { (void)self; }
-void XErrorMessage_showMessage_2(XErrorMessage* self) { (void)self; }
-void XErrorMessage_currentMessage_2(XErrorMessage* self) { (void)self; }
+
+
+
+
+
 #endif /* XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON */

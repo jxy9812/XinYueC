@@ -360,6 +360,17 @@ void XGuiApplication_setApplicationDisplayName(const XString* name)
     if (changed) XGuiApplication_applicationDisplayNameChanged_signal(app);
 }
 
+void XGuiApplication_setApplicationDisplayName_2(const char* name)
+{
+    XString* tmp = NULL;
+    if (name) {
+        tmp = XString_create_utf8(name);
+        if (!tmp) return;
+    }
+    XGuiApplication_setApplicationDisplayName(tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
 const XString* XGuiApplication_applicationDisplayName(void)
 {
     XGuiApplication* app = XGuiApplication_instance();
@@ -379,6 +390,17 @@ void XGuiApplication_setDesktopFileName(const XString* name)
     if (name && !replacement) return;
     if (app->m_desktopFileName) { XString_delete_base(app->m_desktopFileName); app->m_desktopFileName = NULL; }
     app->m_desktopFileName = replacement;
+}
+
+void XGuiApplication_setDesktopFileName_2(const char* name)
+{
+    XString* tmp = NULL;
+    if (name) {
+        tmp = XString_create_utf8(name);
+        if (!tmp) return;
+    }
+    XGuiApplication_setDesktopFileName(tmp);
+    if (tmp) XString_delete_base(tmp);
 }
 
 const XString* XGuiApplication_desktopFileName(void)
@@ -997,7 +1019,7 @@ void* XGuiApplication_platformFunction(const char* functionName)
     if (!app || !app->m_platformIntegration) return NULL;
     ni = XPlatformIntegration_nativeInterface(app->m_platformIntegration);
     if (!ni) return NULL;
-    return XPlatformNativeInterface_platformFunction(ni, functionName);
+    return XPlatformNativeInterface_platformFunction_2(ni, functionName);
 #else /* !(XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEINTERFACE_ON) */
     (void)app; (void)functionName;
     return NULL;
@@ -1122,7 +1144,7 @@ bool XGuiApplication_isSavingSession(void)
 }
 
 void XGuiApplication_setSessionState(bool restored, bool saving,
-                                     const char* id, const char* key)
+                                     const XString* id, const XString* key)
 {
     XGuiApplication* app = XGuiApplication_instance();
     XString* replacementId = NULL;
@@ -1130,11 +1152,11 @@ void XGuiApplication_setSessionState(bool restored, bool saving,
     if (!app) return;
 
     if (id) {
-        replacementId = XString_create_utf8(id);
+        replacementId = XString_create_copy(id);
         if (!replacementId) return;
     }
     if (key) {
-        replacementKey = XString_create_utf8(key);
+        replacementKey = XString_create_copy(key);
         if (!replacementKey) {
             if (replacementId) XString_delete_base(replacementId);
             return;
@@ -1147,6 +1169,24 @@ void XGuiApplication_setSessionState(bool restored, bool saving,
     if (app->m_sessionKey) { XString_delete_base(app->m_sessionKey); app->m_sessionKey = NULL; }
     app->m_sessionId = replacementId;
     app->m_sessionKey = replacementKey;
+}
+
+void XGuiApplication_setSessionState_2(bool restored, bool saving,
+                                       const char* id, const char* key)
+{
+    XString* tmpId = NULL;
+    XString* tmpKey = NULL;
+    if (id) {
+        tmpId = XString_create_utf8(id);
+        if (!tmpId) return;
+    }
+    if (key) {
+        tmpKey = XString_create_utf8(key);
+        if (!tmpKey) { if (tmpId) XString_delete_base(tmpId); return; }
+    }
+    XGuiApplication_setSessionState(restored, saving, tmpId, tmpKey);
+    if (tmpKey) XString_delete_base(tmpKey);
+    if (tmpId) XString_delete_base(tmpId);
 }
 
 /* ==================== 同步 ==================== */

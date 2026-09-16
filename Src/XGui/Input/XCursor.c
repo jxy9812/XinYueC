@@ -255,3 +255,28 @@ bool XCursor_isShapeCursor(const XCursor* self)
 }
 
 #endif /* XCURSOR_ON */
+
+void XCursor_swap(XCursor* a, XCursor* b)
+{
+    XCursor tmp;
+    if (!a || !b || a == b) return;
+    tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+bool XCursor_equals(const XCursor* a, const XCursor* b)
+{
+    if (a == b) return true;
+    if (!a || !b) return false;
+    if (a->m_shape != b->m_shape) return false;
+    if (a->m_hasHotSpot != b->m_hasHotSpot) return false;
+    if (a->m_hasHotSpot &&
+        (a->m_hotSpot.x != b->m_hotSpot.x ||
+         a->m_hotSpot.y != b->m_hotSpot.y))
+        return false;
+    if (a->m_bitmap != b->m_bitmap) return false;
+    if (a->m_mask != b->m_mask) return false;
+    if (a->m_pixmap != b->m_pixmap) return false;
+    return true;
+}

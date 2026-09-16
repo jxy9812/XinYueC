@@ -180,7 +180,7 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
     if (!edit || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -219,6 +219,7 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
         XPainter_drawText(&painter, 6, h / 2 + 5, display, textCol);
+        XFont_deinit_base(&font);
     }
     XPainter_deinit(&painter);
 }
@@ -326,7 +327,7 @@ void* XKeySequenceEdit_editingFinished_signal(XKeySequenceEdit* self)
     return (void*)(size_t)XKeySequenceEdit_editingFinished_signal;
 }
 
-void XKeySequenceEdit_setFinishingKeyCombinations_2(XKeySequenceEdit* self) { (void)self; }
-void XKeySequenceEdit_finishingKeyCombinations(XKeySequenceEdit* self) { (void)self; }
-void XKeySequenceEdit_clear_2(XKeySequenceEdit* self) { (void)self; }
+
+
+
 #endif /* XWIDGET_ON && XKEYSEQUENCEEDIT_ON */

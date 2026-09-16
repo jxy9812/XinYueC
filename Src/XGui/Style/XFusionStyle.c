@@ -4,6 +4,8 @@
 #include "XMemory.h"
 #include "XClass.h"
 #include "XPainter.h"
+#include "XPalette.h"
+#include "XColor.h"
 
 #if XSTYLE_ON
 
@@ -111,13 +113,20 @@ static void xfs_drawPanelButtonCommand(XFusionStyle* self,
         }
     }
     (void)base;
-    /* 圆角边框：上下边 + 左右边（矩形近似）。 */
+    /* 圆角边框（XPAINTER_SHAPE_ON 真实圆角 2px；裁剪时矩形近似）。 */
+#if XPAINTER_SHAPE_ON
+    {
+        XRect rr = r;
+        XPainter_drawRoundedRect(painter, &rr, 2, 2);
+    }
+#else
     XPainter_fillRect(painter, &(XRect){r.x, r.y, r.width, 1}, border);
     XPainter_fillRect(painter, &(XRect){r.x, r.y + r.height - 1,
                                         r.width, 1}, border);
     XPainter_fillRect(painter, &(XRect){r.x, r.y, 1, r.height}, border);
     XPainter_fillRect(painter, &(XRect){r.x + r.width - 1, r.y,
                                         1, r.height}, border);
+#endif
     /* 悬停：高亮顶边。 */
     if (hover && !sunken) {
         XPainter_fillRect(painter, &(XRect){r.x + 1, r.y + 1,
@@ -263,7 +272,7 @@ static void VXFusionStyle_drawPrimitive(XStyle* self, int pe,
         break;
     default:
         /* 其余走公共实现。 */
-        XClass_Parent(XWindowsStyle, EXStyle_DrawPrimitive,
+        XClass_Parent(XCommonStyle, EXStyle_DrawPrimitive,
                       void(*)(XStyle*, int, const XStyleOption*,
                               XPainter*, const XWidget*))(
             (XStyle*)self, pe, option, painter, widget);
@@ -277,20 +286,212 @@ static void VXFusionStyle_drawControl(XStyle* self, int ce,
                                       const XWidget* widget)
 {
     /* 控件整体走公共实现（其内部基元分派走 Fusion 覆盖）。 */
-    XClass_Parent(XWindowsStyle, EXStyle_DrawControl,
+    XClass_Parent(XCommonStyle, EXStyle_DrawControl,
                   void(*)(XStyle*, int, const XStyleOption*,
                           XPainter*, const XWidget*))(
         (XStyle*)self, ce, option, painter, widget);
 }
 
+static void VXFusionStyle_drawComplexControl(XStyle* self, int cc,
+                                             const XStyleOption* option,
+                                             XPainter* painter,
+                                             const XWidget* widget)
+{
+    /* 复杂控件几何/视觉（Slider/ScrollBar/SpinBox/ComboBox/GroupBox/
+     * Dial/ToolButton）由 XCommonStyle 的 Fusion 风味实现承担
+     * （xcs_drawScrollBar 等完整对标 QFusionStyle 非 transient 路径），
+     * Fusion 层保持与 Qt 相同的覆盖点并回落父类。 */
+    XClass_Parent(XCommonStyle, EXStyle_DrawComplexControl,
+                  void(*)(XStyle*, int, const XStyleOption*,
+                          XPainter*, const XWidget*))(
+        (XStyle*)self, cc, option, painter, widget);
+}
+
+/* ==================== Fusion 度量（对标 QFusionStyle::pixelMetric） ==================== */
+
+static int VXFusionStyle_pixelMetric(XStyle* self, int metric,
+                                     const XStyleOption* option)
+{
+    switch (metric) {
+    case XStylePM_SliderTickmarkOffset: return 4;
+    case XStylePM_HeaderMargin: return 2;
+    case XStylePM_ToolTipLabelFrameWidth: return 2;
+    case XStylePM_ButtonDefaultIndicator: return 0;
+    case XStylePM_ButtonShiftHorizontal: return 0;
+    case XStylePM_ButtonShiftVertical: return 0;
+    case XStylePM_MessageBoxIconSize: return 48;
+    case XStylePM_ListViewIconSize: return 24;
+    case XStylePM_ScrollBarSliderMin: return 26;
+    case XStylePM_TitleBarHeight: return 24;
+    case XStylePM_ScrollBarExtent: return 14;
+    case XStylePM_SliderThickness: return 15;
+    case XStylePM_SliderLength: return 15;
+    case XStylePM_DockWidgetTitleMargin: return 1;
+    case XStylePM_SpinBoxFrameWidth: return 3;
+    case XStylePM_MenuVMargin: return 0;
+    case XStylePM_MenuHMargin: return 0;
+    case XStylePM_MenuPanelWidth: return 0;
+    case XStylePM_MenuBarItemSpacing: return 6;
+    case XStylePM_MenuBarVMargin: return 0;
+    case XStylePM_MenuBarHMargin: return 0;
+    case XStylePM_MenuBarPanelWidth: return 0;
+    case XStylePM_ToolBarHandleExtent: return 9;
+    case XStylePM_ToolBarItemSpacing: return 1;
+    case XStylePM_ToolBarFrameWidth: return 2;
+    case XStylePM_ToolBarItemMargin: return 2;
+    case XStylePM_SmallIconSize: return 16;
+    case XStylePM_ButtonIconSize: return 16;
+    case XStylePM_DockWidgetTitleBarButtonMargin: return 2;
+    case XStylePM_TitleBarButtonSize: return 19;
+    case XStylePM_MaximumDragDistance: return -1;
+    case XStylePM_TabCloseIndicatorWidth: return 20;
+    case XStylePM_TabCloseIndicatorHeight: return 20;
+    case XStylePM_TabBarTabVSpace: return 12;
+    case XStylePM_TabBarTabOverlap: return 1;
+    case XStylePM_TabBarBaseOverlap: return 2;
+    case XStylePM_SubMenuOverlap: return -1;
+    case XStylePM_DockWidgetHandleExtent: return 4;
+    case XStylePM_SplitterWidth: return 4;
+    case XStylePM_IndicatorHeight: return 14;
+    case XStylePM_IndicatorWidth: return 14;
+    case XStylePM_ExclusiveIndicatorHeight: return 14;
+    case XStylePM_ExclusiveIndicatorWidth: return 14;
+    case XStylePM_ScrollView_ScrollBarSpacing: return 0;
+    case XStylePM_ScrollView_ScrollBarOverlap: return 0;
+    case XStylePM_DefaultFrameWidth: return 1;
+    default:
+        return XClass_Parent(XCommonStyle, EXStyle_PixelMetric,
+                             int(*)(XStyle*, int, const XStyleOption*))(
+            (XStyle*)self, metric, option);
+    }
+}
+
+/* ==================== Fusion 标准调色板（对标 qt_fusionPalette；
+ *    数值按 Task 2.12 计划常量：Light=#F7F7F7、Midlight=#BFBFBF、
+ *    Highlight=#308CC6、Disabled Base=#EFEFEF、Disabled Shadow=#BABABA、
+ *    Accent=Highlight）。 ==================== */
+
+#define XFS_PAL_WINDOWTEXT  0xFF000000u
+#define XFS_PAL_BACKGROUND  0xFFEFEFEFu
+#define XFS_PAL_LIGHT       0xFFF7F7F7u
+#define XFS_PAL_MIDLIGHT    0xFFBFBFBFu
+#define XFS_PAL_DARK        0xFF9E9E9Eu
+#define XFS_PAL_MID         0xFFB7B7B7u
+#define XFS_PAL_TEXT        0xFF000000u
+#define XFS_PAL_BASE        0xFFFFFFFFu
+#define XFS_PAL_HIGHLIGHT   0xFF308CC6u
+#define XFS_PAL_HIGHLIGHTED 0xFFFFFFFFu
+#define XFS_PAL_DISABLEDTEXT 0xFFBEBEBEu
+#define XFS_PAL_DISABLEDBASE 0xFFEFEFEFu
+#define XFS_PAL_DISABLEDARK 0xFFBEBEBEu
+#define XFS_PAL_DISABLEDSHADOW 0xFFBABABAu
+#define XFS_PAL_DISABLEDHIGHLIGHT 0xFF919191u
+#define XFS_PAL_SHADOW      0xFF6D6D6Du
+#define XFS_PAL_PLACEHOLDER  0x80000000u
+
+static XPalette VXFusionStyle_standardPalette(XStyle* self)
+{
+    XPalette pal;
+    XColor c;
+    int g;
+    (void)self;
+    XMemset(&pal, 0, sizeof(pal));
+    XColor_setRgba(&c, XFS_PAL_WINDOWTEXT);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_WindowText, c);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Text, c);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_ButtonText, c);
+    XColor_setRgba(&c, XFS_PAL_BACKGROUND);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Window, c);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Button, c);
+    XColor_setRgba(&c, XFS_PAL_LIGHT);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Light, c);
+    XColor_setRgba(&c, XFS_PAL_MIDLIGHT);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Midlight, c);
+    XColor_setRgba(&c, XFS_PAL_DARK);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Dark, c);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Shadow, c);
+    XColor_setRgba(&c, XFS_PAL_MID);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Mid, c);
+    XColor_setRgba(&c, XFS_PAL_BASE);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Base, c);
+    XColor_setRgba(&c, XFS_PAL_HIGHLIGHT);
+    for (g = XPaletteColorGroup_Active; g < XPaletteColorGroup_NColorGroups;
+         ++g) {
+        XPalette_setColor(&pal, (XPaletteColorGroup)g,
+                          XPaletteColorRole_Highlight, c);
+        XPalette_setColor(&pal, (XPaletteColorGroup)g,
+                          XPaletteColorRole_Accent, c);
+    }
+    XColor_setRgba(&c, XFS_PAL_HIGHLIGHTED);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_HighlightedText, c);
+    XColor_setRgba(&c, XFS_PAL_SHADOW);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_Shadow, c);
+    /* 禁用组。 */
+    XColor_setRgba(&c, XFS_PAL_DISABLEDTEXT);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_Text, c);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_WindowText, c);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_ButtonText, c);
+    XColor_setRgba(&c, XFS_PAL_DISABLEDBASE);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_Base, c);
+    XColor_setRgba(&c, XFS_PAL_DISABLEDARK);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_Dark, c);
+    XColor_setRgba(&c, XFS_PAL_DISABLEDSHADOW);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_Shadow, c);
+    XColor_setRgba(&c, XFS_PAL_DISABLEDHIGHLIGHT);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_Highlight, c);
+    XPalette_setColor(&pal, XPaletteColorGroup_Disabled,
+                      XPaletteColorRole_Accent, c);
+    XColor_setRgba(&c, XFS_PAL_PLACEHOLDER);
+    XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                      XPaletteColorRole_PlaceholderText, c);
+    return pal;
+}
+
+/* ==================== Fusion polish（对标 QFusionStyle::polish 子集：
+ *    hover 由控件层承担，这里仅回落父类） ==================== */
+
+static void VXFusionStyle_polish(XStyle* self, XWidget* widget)
+{
+    XClass_Parent(XCommonStyle, EXStyle_Polish,
+                  void(*)(XStyle*, XWidget*))((XStyle*)self, widget);
+}
+
 XVtable* XFusionStyle_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFusionStyle)
-    XVTABLE_INHERIT_XCLASS(XWindowsStyle);
+    XVTABLE_INHERIT_XCLASS(XCommonStyle);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawPrimitive,
                              VXFusionStyle_drawPrimitive);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawControl,
                              VXFusionStyle_drawControl);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_DrawComplexControl,
+                             VXFusionStyle_drawComplexControl);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_PixelMetric,
+                             VXFusionStyle_pixelMetric);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_StandardPalette,
+                             VXFusionStyle_standardPalette);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_Polish,
+                             VXFusionStyle_polish);
     return XVTABLE_DEFAULT;
 }
 
@@ -298,7 +499,7 @@ void XFusionStyle_init(XFusionStyle* self)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
-    XWindowsStyle_init(&self->m_base);
+    XCommonStyle_init(&self->m_base);
     XClassSetVtable(self, XFusionStyle);
 }
 

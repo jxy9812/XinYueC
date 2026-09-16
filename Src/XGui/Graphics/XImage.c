@@ -10,6 +10,7 @@
 #include "XImageCodec.h"
 #include "XImageCodecInternal.h"
 #include "XImageFormat.h"
+#include "XPaintDevice.h"
 #include "XAtomic.h"
 #include "XClass.h"
 #include "XVtable.h"
@@ -199,6 +200,9 @@ typedef struct XImageData
     XStringList      m_textKeys;         /**< 文本元数据键列表 */
     XStringList      m_textValues;       /**< 文本元数据值列表 */
     XString          m_textAll;          /**< 空键聚合文本缓存（对标 text("") 的稳定返回） */
+#if XPAINTDEVICE_ON
+    XPaintDevice     m_paintDevice;      /**< 绘制设备描述（内嵌，供 paintDevice() 查询）。 */
+#endif
 }XImageData;
 
 static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
@@ -436,6 +440,47 @@ static XString* XImageData_buildAllText(const XImageData* d)
  * @param cleanupInfo   清理回调参数
  * @return 图像数据指针，失败返回 NULL
  */
+#if XPAINTDEVICE_ON
+/** @brief XImage 绘制设备度量回调（对标 QImage 的 QPaintDevice 度量）。
+ *  DPI 换算与 Qt qimage.cpp 一致：dpi = dpm × 0.0254（整数 254/10000）。 */
+static int ximage_paintDeviceMetric(void* userData, int metric)
+{
+    XImageData* d = (XImageData*)userData;
+    if (!d) return 0;
+    switch (metric)
+    {
+        case XPaintDeviceMetric_PdmWidth: return d->m_width;
+        case XPaintDeviceMetric_PdmHeight: return d->m_height;
+        case XPaintDeviceMetric_PdmWidthMM:
+            return d->m_dpmX > 0
+                       ? (int)((int64_t)d->m_width * 1000 / d->m_dpmX) : 0;
+        case XPaintDeviceMetric_PdmHeightMM:
+            return d->m_dpmY > 0
+                       ? (int)((int64_t)d->m_height * 1000 / d->m_dpmY) : 0;
+        case XPaintDeviceMetric_PdmNumColors: return d->m_colorCount;
+        case XPaintDeviceMetric_PdmDepth: return d->m_depth;
+        case XPaintDeviceMetric_PdmDpiX:
+            return d->m_dpmX > 0
+                       ? (int)((int64_t)d->m_dpmX * 254 / 10000) : 0;
+        case XPaintDeviceMetric_PdmDpiY:
+            return d->m_dpmY > 0
+                       ? (int)((int64_t)d->m_dpmY * 254 / 10000) : 0;
+        case XPaintDeviceMetric_PdmPhysicalDpiX:
+            return d->m_dpmX > 0
+                       ? (int)((int64_t)d->m_dpmX * 254 / 10000) : 0;
+        case XPaintDeviceMetric_PdmPhysicalDpiY:
+            return d->m_dpmY > 0
+                       ? (int)((int64_t)d->m_dpmY * 254 / 10000) : 0;
+        case XPaintDeviceMetric_PdmDevicePixelRatio:
+            return (int)d->m_devicePixelRatio;
+        case XPaintDeviceMetric_PdmDevicePixelRatioScaled:
+            return (int)(d->m_devicePixelRatio * 256.0f);
+        default:
+            return 0;
+    }
+}
+#endif /* XPAINTDEVICE_ON */
+
 static XImageData* XImageData_create(int width, int height, XImageFormat format,
                                      int64_t bytesPerLine, uint8_t* data,
                                      void (*cleanupFunc)(void*), void* cleanupInfo)
@@ -475,6 +520,11 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
     d->m_dpmX = XImage_defaultDotsPerMeter();
     d->m_dpmY = XImage_defaultDotsPerMeter();
     d->m_devicePixelRatio = 1.0f;
+#if XPAINTDEVICE_ON
+    XPaintDevice_init(&d->m_paintDevice, XPaintDeviceType_Image, d,
+                      ximage_paintDeviceMetric, XPaintEngineType_Raster,
+                      (uint32_t)XPaintEngineFeature_AllFeatures);
+#endif
     d->m_cleanupFunc = cleanupFunc;
     d->m_cleanupInfo = cleanupInfo;
 
@@ -4434,7 +4484,7 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
         {
             int srcX = (int)((int64_t)x * sw / targetWidth), srcY = (int)((int64_t)y * sh / targetHeight);
             uint32_t color = XImage_readColorValue(self->m_data, srcX, srcY);
-            if (smooth && !(srcX == sw - 1 && srcY == sh - 1))
+            if (smooth)
             {
                 double fx = ((double)x + 0.5) * sw / targetWidth - 0.5;
                 double fy = ((double)y + 0.5) * sh / targetHeight - 0.5;
@@ -4602,8 +4652,9 @@ void XImage_transformed(const XImage* self, const XImageTransform* matrix,
     XSize size;
     float transform[9];
     float inverse[9];
-    (void)mode;
+    bool smooth;
     if (!out) return;
+    smooth = (mode != 0u); /* 1=SmoothTransformation（双线性），0=Fast（最近邻）。 */
     /* QImage::transformed returns a value; preserve the source when the C
      * output parameter aliases it. */
     if (self == out && self)
@@ -4643,14 +4694,91 @@ void XImage_transformed(const XImage* self, const XImageTransform* matrix,
             if (fabsf(sourceW) < 1.0e-8f || !isfinite(sourceW)) continue;
             sourceX = (inverse[0] * tx + inverse[1] * ty + inverse[2]) / sourceW - 0.5f;
             sourceY = (inverse[3] * tx + inverse[4] * ty + inverse[5]) / sourceW - 0.5f;
-            int sx = (int)floorf(sourceX + 0.5f);
-            int sy = (int)floorf(sourceY + 0.5f);
-            if (sx >= 0 && sy >= 0 && sx < self->m_data->m_width && sy < self->m_data->m_height)
+            if (smooth &&
+                self->m_data->m_format != XImageFormat_Indexed8 &&
+                self->m_data->m_format != XImageFormat_Mono &&
+                self->m_data->m_format != XImageFormat_MonoLSB)
             {
-                if (self->m_data->m_format == XImageFormat_Indexed8 || self->m_data->m_format == XImageFormat_Mono || self->m_data->m_format == XImageFormat_MonoLSB)
-                    XImage_writePixelIndex(out->m_data, x, y, (uint32_t)XImage_pixelIndex(self, sx, sy));
-                else
-                    XImage_writePixelValue(out->m_data, x, y, XImage_pixel(self, sx, sy));
+                /* 双线性：四邻像素按小数权重逐通道混合（对标
+                   Qt::SmoothTransformation；索引/单色保持最近邻）。 */
+                int x0 = (int)floorf(sourceX);
+                int y0 = (int)floorf(sourceY);
+                float fx = sourceX - (float)x0;
+                float fy = sourceY - (float)y0;
+                int x1 = x0 + 1;
+                int y1 = y0 + 1;
+                uint32_t c00 = 0;
+                uint32_t c01 = 0;
+                uint32_t c10 = 0;
+                uint32_t c11 = 0;
+                if (x0 >= 0 && y0 >= 0 &&
+                    x0 < self->m_data->m_width &&
+                    y0 < self->m_data->m_height)
+                    c00 = XImage_pixel(self, x0, y0);
+                if (x1 >= 0 && y0 >= 0 &&
+                    x1 < self->m_data->m_width &&
+                    y0 < self->m_data->m_height)
+                    c01 = XImage_pixel(self, x1, y0);
+                if (x0 >= 0 && y1 >= 0 &&
+                    x0 < self->m_data->m_width &&
+                    y1 < self->m_data->m_height)
+                    c10 = XImage_pixel(self, x0, y1);
+                if (x1 >= 0 && y1 >= 0 &&
+                    x1 < self->m_data->m_width &&
+                    y1 < self->m_data->m_height)
+                    c11 = XImage_pixel(self, x1, y1);
+                {
+                    /* 越界邻采样视为与边界像素同色（fx/fy 权重保持）。 */
+                    if (x0 < 0) { c01 = c00; x1 = x0; }
+                    if (x1 >= self->m_data->m_width) { c01 = c00; x1 = x0; }
+                    if (y0 < 0) { c10 = c00; y1 = y0; }
+                    if (y1 >= self->m_data->m_height) { c10 = c00; y1 = y0; }
+                    (void)x1; (void)y1;
+                }
+                {
+                    int a00 = (int)((c00 >> 24) & 0xffu);
+                    int r00 = (int)((c00 >> 16) & 0xffu);
+                    int g00 = (int)((c00 >> 8) & 0xffu);
+                    int b00 = (int)(c00 & 0xffu);
+                    int a01 = (int)((c01 >> 24) & 0xffu);
+                    int r01 = (int)((c01 >> 16) & 0xffu);
+                    int g01 = (int)((c01 >> 8) & 0xffu);
+                    int b01 = (int)(c01 & 0xffu);
+                    int a10 = (int)((c10 >> 24) & 0xffu);
+                    int r10 = (int)((c10 >> 16) & 0xffu);
+                    int g10 = (int)((c10 >> 8) & 0xffu);
+                    int b10 = (int)(c10 & 0xffu);
+                    int a11 = (int)((c11 >> 24) & 0xffu);
+                    int r11 = (int)((c11 >> 16) & 0xffu);
+                    int g11 = (int)((c11 >> 8) & 0xffu);
+                    int b11 = (int)(c11 & 0xffu);
+                    int w00 = (int)((1.0f - fx) * (1.0f - fy) * 256.0f);
+                    int w01 = (int)(fx * (1.0f - fy) * 256.0f);
+                    int w10 = (int)((1.0f - fx) * fy * 256.0f);
+                    int w11 = (int)(fx * fy * 256.0f);
+                    int a = (a00 * w00 + a01 * w01 + a10 * w10 + a11 * w11) >> 8;
+                    int r = (r00 * w00 + r01 * w01 + r10 * w10 + r11 * w11) >> 8;
+                    int g = (g00 * w00 + g01 * w01 + g10 * w10 + g11 * w11) >> 8;
+                    int b = (b00 * w00 + b01 * w01 + b10 * w10 + b11 * w11) >> 8;
+                    if (a > 255) a = 255; if (r > 255) r = 255;
+                    if (g > 255) g = 255; if (b > 255) b = 255;
+                    XImage_writePixelValue(
+                        out->m_data, x, y,
+                        ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+                        ((uint32_t)g << 8) | (uint32_t)b);
+                }
+            }
+            else
+            {
+                int sx = (int)floorf(sourceX + 0.5f);
+                int sy = (int)floorf(sourceY + 0.5f);
+                if (sx >= 0 && sy >= 0 && sx < self->m_data->m_width && sy < self->m_data->m_height)
+                {
+                    if (self->m_data->m_format == XImageFormat_Indexed8 || self->m_data->m_format == XImageFormat_Mono || self->m_data->m_format == XImageFormat_MonoLSB)
+                        XImage_writePixelIndex(out->m_data, x, y, (uint32_t)XImage_pixelIndex(self, sx, sy));
+                    else
+                        XImage_writePixelValue(out->m_data, x, y, XImage_pixel(self, sx, sy));
+                }
             }
         }
 }
@@ -5629,3 +5757,11 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
     }
     XImageData_markDirty(self->m_data);
 }
+
+#if XPAINTDEVICE_ON
+XPaintDevice* XImage_paintDevice(XImage* self)
+{
+    if (!self || !self->m_data) return NULL;
+    return &self->m_data->m_paintDevice;
+}
+#endif /* XPAINTDEVICE_ON */

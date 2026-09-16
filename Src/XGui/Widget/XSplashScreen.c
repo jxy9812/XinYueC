@@ -19,11 +19,18 @@
 
 #if XWIDGET_ON && XSPLASHSCREEN_ON
 
+/** @brief argsDel 回调：释放 XString 载荷（对齐 XObject 信号惯例）。 */
+static void xsp2_str_args_del(XVarList* list)
+{
+    XVarList_args_1(list, XString*, val);
+    if (val) XString_delete_base((XClass*)val);
+}
+
 static void xsp2_emitMessageChanged(XSplashScreen* self, const char* text)
 {
     XVarList* args;
     XString* value;
-    if (!self || !((XObject*)self)->m_signalSlot) return;
+    if (!self) return;
     value = XString_create_utf8(text ? text : "");
     if (!value) return;
     args = XVarList_Create(XVar(XString*, value));
@@ -31,9 +38,14 @@ static void xsp2_emitMessageChanged(XSplashScreen* self, const char* text)
         XString_delete_base((XClass*)value);
         return;
     }
-    XObject_emitSignal((XObject*)self,
-                       (size_t)XSplashScreen_messageChanged_signal, args,
-                       NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XSplashScreen_messageChanged_signal, args,
+                           xsp2_str_args_del, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_setArgsDel(args, xsp2_str_args_del);
+        XVarList_delete(args);
+    }
 }
 
 static void VX_splash_paintEvent(XWidget* self, XEvent* event)
@@ -47,7 +59,7 @@ static void VX_splash_paintEvent(XWidget* self, XEvent* event)
     if (!sp || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -57,16 +69,17 @@ static void VX_splash_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
-#if XPIXMAP_ON
+#if XPIXMAP_ON && XPAINTER_PIXMAP_ON
     if (sp->m_pixmap)
         XPainter_drawPixmap(&painter, sp->m_pixmap, 0, 0);
-#endif /* XPIXMAP_ON */
+#endif /* XPIXMAP_ON && XPAINTER_PIXMAP_ON */
     if (sp->m_message && XString_toUtf8(sp->m_message) &&
         XString_toUtf8(sp->m_message)[0] != '\0') {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
         XPainter_drawText(&painter, 8, h - 12,
                           XString_toUtf8(sp->m_message), sp->m_color);
+        XFont_deinit_base(&font);
     }
     (void)w;
     (void)h;

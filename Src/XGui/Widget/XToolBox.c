@@ -8,6 +8,7 @@
 
 #include "XToolBox.h"
 #include "XStringUtils.h"
+#include "XString.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XMemory.h"
@@ -26,7 +27,8 @@
 typedef struct XToolBoxItem
 {
     XWidget* widget;   /**< 页面控件（借用，归调用方/容器）。 */
-    char text[128];    /**< 页头文本。 */
+    XString* text;     /**< 页头文本（对象拥有）。 */
+    XString* icon;     /**< 页头图标路径（对象拥有；可为 NULL）。 */
     bool enabled;      /**< 条目启用。 */
 } XToolBoxItem;
 
@@ -37,14 +39,23 @@ static XToolBoxItem* xtb2_itemCreate(XWidget* widget, const char* text)
     if (!item) return NULL;
     item->widget = widget;
     item->enabled = true;
-    XStrncpy(item->text, text ? text : "", sizeof(item->text) - 1);
-    item->text[sizeof(item->text) - 1] = '\0';
+    item->text = XString_create_utf8(text ? text : "");
+    item->icon = NULL;
     return item;
 }
 
 static void xtb2_itemDestroy(XToolBoxItem* item)
 {
-    if (item) XFree_System(item);
+    if (!item) return;
+    if (item->text) {
+        XString_delete_base(item->text);
+        item->text = NULL;
+    }
+    if (item->icon) {
+        XString_delete_base(item->icon);
+        item->icon = NULL;
+    }
+    XFree_System(item);
 }
 
 static int xtb2_currentIndexOf(const XToolBox* self)
@@ -110,7 +121,7 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
     int y = 0;
     int w = XWidget_width(self);
     if (!box || !event) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -157,7 +168,8 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
                 if ((int)i == box->m_currentIndex)
                     opt.m_state |= XStyleState_Selected;
                 opt.m_tabSelected = ((int)i == box->m_currentIndex);
-                opt.m_text = (*item)->text;
+                opt.m_text = (*item)->text
+                    ? XString_toUtf8((*item)->text) : "";
 #if XPALETTE_ON
                 opt.m_palette = XWidget_palette((XWidget*)box);
 #endif
@@ -173,7 +185,9 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
                 XPainter_fillRect(&painter, &head, highlight);
             else
                 XPainter_fillRect(&painter, &head, mid);
-            XPainter_drawText(&painter, 6, y + 15, (*item)->text,
+            XPainter_drawText(&painter, 6, y + 15,
+                              (*item)->text
+                                  ? XString_toUtf8((*item)->text) : "",
                               windowText);
             y += 22;
             XRect_init(&line, 0, y - 1, w, 1);
@@ -347,9 +361,10 @@ void XToolBox_setItemText(XToolBox* self, int index, const char* utf8)
         return;
     item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
     if (item && *item) {
-        XStrncpy((*item)->text, utf8 ? utf8 : "",
-                sizeof((*item)->text) - 1);
-        (*item)->text[sizeof((*item)->text) - 1] = '\0';
+        if (!(*item)->text)
+            (*item)->text = XString_create();
+        if ((*item)->text)
+            XString_assign_utf8((*item)->text, utf8 ? utf8 : "");
         XWidget_update((XWidget*)self);
     }
 }
@@ -361,7 +376,56 @@ const char* XToolBox_itemText(const XToolBox* self, int index)
         index >= (int)XVector_size_base((const XContainer*)self->m_items))
         return "";
     item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
-    return (item && *item) ? (*item)->text : "";
+    if (!item || !*item || !(*item)->text) return "";
+    return XString_toUtf8((*item)->text);
+}
+
+/* ==================== Task 2.10：图标 API ==================== */
+
+void XToolBox_setItemIcon(XToolBox* self, int index, const XString* path)
+{
+    XToolBoxItem** item;
+    if (!self || !self->m_items || index < 0 ||
+        index >= (int)XVector_size_base((const XContainer*)self->m_items))
+        return;
+    item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
+    if (!item || !*item) return;
+    if (!path) {
+        if ((*item)->icon) {
+            XString_delete_base((*item)->icon);
+            (*item)->icon = NULL;
+        }
+    } else {
+        XString* copy = XString_create_copy(path);
+        if (!copy) return;
+        if ((*item)->icon)
+            XString_delete_base((*item)->icon);
+        (*item)->icon = copy;
+    }
+    XWidget_update((XWidget*)self);
+}
+
+void XToolBox_setItemIcon_2(XToolBox* self, int index, const char* utf8)
+{
+    XString* tmp;
+    if (!utf8) {
+        XToolBox_setItemIcon(self, index, NULL);
+        return;
+    }
+    tmp = XString_create_utf8(utf8);
+    if (!tmp) return;
+    XToolBox_setItemIcon(self, index, tmp);
+    XString_delete_base(tmp);
+}
+
+const XString* XToolBox_itemIcon(const XToolBox* self, int index)
+{
+    XToolBoxItem** item;
+    if (!self || !self->m_items || index < 0 ||
+        index >= (int)XVector_size_base((const XContainer*)self->m_items))
+        return NULL;
+    item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
+    return (item && *item) ? (*item)->icon : NULL;
 }
 
 void XToolBox_setItemEnabled(XToolBox* self, int index, bool enabled)
@@ -447,10 +511,10 @@ void* XToolBox_currentChanged_signal(XToolBox* self, int index)
     return (void*)(size_t)XToolBox_currentChanged_signal;
 }
 
-const char* XToolBox_itemToolTip(const XToolBox* self, int index) { (void)self; (void)index; return ""; }
-void XToolBox_setItemIcon(XToolBox* self, int index, const char* icon) { (void)self; (void)index; (void)icon; }
-void XToolBox_setItemToolTip(XToolBox* self, int index, const char* tip) { (void)self; (void)index; (void)tip; }
-void XToolBox_setItemIcon_2(XToolBox* self) { (void)self; }
-void XToolBox_setItemEnabled_2(XToolBox* self) { (void)self; }
-void XToolBox_isItemEnabled_2(XToolBox* self) { (void)self; }
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON */

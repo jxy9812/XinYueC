@@ -193,6 +193,10 @@ static void VXTableWidget_deinit(XTableWidget* self)
         XFree_System(self->m_vHeaders);
         self->m_vHeaders = NULL;
     }
+    if (self->m_model) {
+        XClass_delete_base((XClass*)self->m_model);
+        self->m_model = NULL;
+    }
     XClass_Deinit_Parent(XTableView, (XTableView*)self);
 }
 
@@ -201,6 +205,9 @@ void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags)
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XTableView_init(&self->m_base, parent, flags);
+    self->m_model = XAbstractItemModel_create();
+    if (self->m_model)
+        XAbstractItemView_setModel(&self->m_base.m_base, self->m_model);
     XClassSetVtable(self, XTableWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
@@ -229,6 +236,11 @@ XTableWidget* XTableWidget_create_ex(XMemoryType memory, XWidget* parent,
 }
 
 /* ==================== 尺寸 ==================== */
+
+XAbstractItemModel* XTableWidget_model(const XTableWidget* self)
+{
+    return self ? self->m_model : NULL;
+}
 
 void XTableWidget_setRowCount(XTableWidget* self, int rows)
 {
@@ -266,6 +278,9 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
     self->m_columns = columns;
     if (self->m_base.m_base.m_currentColumn >= columns) self->m_base.m_base.m_currentColumn = columns - 1;
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
+                                        self->m_columns);
 }
 
 int XTableWidget_columnCount(const XTableWidget* self) { return self ? self->m_columns : 0; }
@@ -281,6 +296,9 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
     self->m_cells[row] = xtw_newRow(self->m_base.m_colCapacity);
     self->m_rows++;
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
+                                        self->m_columns);
 }
 
 void XTableWidget_insertColumn(XTableWidget* self, int column)
@@ -289,6 +307,9 @@ void XTableWidget_insertColumn(XTableWidget* self, int column)
     self->m_columns++;
     xtw_ensureCols(self, self->m_columns);
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
+                                        self->m_columns);
 }
 
 void XTableWidget_removeRow(XTableWidget* self, int row)
@@ -304,6 +325,9 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
     }
     self->m_rows--;
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
+                                        self->m_columns);
 }
 
 void XTableWidget_removeColumn(XTableWidget* self, int column)
@@ -311,6 +335,9 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
     if (!self || column < 0 || column >= self->m_columns) return;
     self->m_columns--;
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
+                                        self->m_columns);
 }
 
 /* ==================== 单元格 ==================== */
@@ -331,6 +358,8 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
     cell->background = item->background;
     cell->checkState = item->checkState;
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setData(self->m_model, row, column, item->text);
 }
 
 const XTableWidgetItem* XTableWidget_item(const XTableWidget* self,
@@ -351,6 +380,8 @@ void XTableWidget_setText(XTableWidget* self, int row, int column,
                        row, column);
     xtw_emitItemSignal(self, (size_t)XTableWidget_itemChanged_signal, cell);
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setData_2(self->m_model, row, column, utf8);
 }
 
 const char* XTableWidget_text(const XTableWidget* self, int row, int column)
@@ -405,6 +436,9 @@ void XTableWidget_setHorizontalHeaderLabels(XTableWidget* self,
             self->m_hHeaders[i] = XString_create();
         if (self->m_hHeaders[i])
             XString_assign_utf8(self->m_hHeaders[i], labels[i]);
+        if (self->m_model)
+            XAbstractItemModel_setHeaderData_2(self->m_model, i, 0,
+                                               labels[i]);
     }
     XWidget_update((XWidget*)self);
 }
@@ -486,7 +520,27 @@ void XTableWidget_sortItems(XTableWidget* self, int column, int order)
 
 void XTableWidget_clear(XTableWidget* self)
 {
+    int i;
     if (!self) return;
+    if (self->m_cells) {
+        /* 只遍历有效行（m_rows 内）；容量区的行指针未初始化，
+           不得访问（xtw_ensureRows 未清零新指针区）。 */
+        for (i = 0; i < self->m_rows; ++i) {
+            int k;
+            if (!self->m_cells[i]) continue;
+            for (k = 0; k < self->m_base.m_colCapacity; ++k) {
+                if (self->m_cells[i][k].text) {
+                    XString_delete_base(self->m_cells[i][k].text);
+                    self->m_cells[i][k].text = NULL;
+                }
+            }
+            XFree_System(self->m_cells[i]);
+            self->m_cells[i] = NULL;
+        }
+        XFree_System(self->m_cells);
+        self->m_cells = NULL;
+        self->m_rowCapacity = 0;
+    }
     self->m_rows = 0;
     self->m_columns = 0;
     self->m_base.m_base.m_currentRow = -1;
@@ -511,6 +565,9 @@ void XTableWidget_clearContents(XTableWidget* self)
                sizeof(XTableWidgetItem) * (size_t)self->m_base.m_colCapacity);
     }
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
+                                        self->m_columns);
 }
 
 void XTableWidget_scrollToItem(XTableWidget* self, int row, int column)
@@ -611,7 +668,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     w = XWidget_width(self);
     h = XWidget_height(self);
     if (w <= 2 || h <= 2) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

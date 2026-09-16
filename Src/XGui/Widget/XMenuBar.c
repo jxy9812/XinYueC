@@ -138,7 +138,7 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
     int x = 4;
     uint32_t text;
     if (!bar || !event) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -194,6 +194,7 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                     XStyle_drawControl(style, XStyleCE_MenuBarItem, &mi,
                                        &painter, self);
                     x += mi.m_rect.width;
+                XFont_deinit_base(&font);
                 }
             }
         }
@@ -218,6 +219,7 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                 } else {
                     x += 12;
                 }
+            XFont_deinit_base(&font);
             }
         }
     }
@@ -460,6 +462,182 @@ void* XMenuBar_hovered_signal(XMenuBar* self, XAction* action)
     (void)self;
     (void)action;
     return (void*)(size_t)XMenuBar_hovered_signal;
+}
+
+/* ==================== Task 2.10：几何/角落/尺寸 API ================== */
+
+/** @brief 是否处于样式接管模式（决定条目宽度公式）。 */
+static bool xmenubar_styleMode(const XMenuBar* bar)
+{
+#if XSTYLE_ON
+    (void)bar;
+    return XStyle_defaultStyle() != NULL;
+#else
+    (void)bar;
+    return false;
+#endif
+}
+
+/** @brief 条目逻辑宽度：样式模式=文本宽+16（空 24），否则固定 60（空 12）。 */
+static int xmenubar_itemWidth(const XMenuBar* bar, const XAction* action)
+{
+    const XString* text;
+    XFont font;
+    if (!action) return xmenubar_styleMode(bar) ? 24 : 12;
+    text = XAction_text_const(action);
+    if (!text || XString_length_base(text) <= 0)
+        return xmenubar_styleMode(bar) ? 24 : 12;
+    if (xmenubar_styleMode(bar)) {
+        int w;
+        font = XWidget_font((XWidget*)bar);
+        w = XPainter_textWidth(&font, XString_toUtf8(text)) + 16;
+        XFont_deinit_base(&font);
+        return w;
+    }
+    return 60;
+}
+
+/** @brief 计算第 index 个动作的逻辑矩形（与绘制同一累加模型）。 */
+static XRect xmenubar_actionRectAt(const XMenuBar* bar, int64_t index)
+{
+    XRect out;
+    int64_t i;
+    int64_t n;
+    int x = 4;
+    int h;
+    XRect_init(&out, 0, 0, 0, 0);
+    if (!bar || !bar->m_actions) return out;
+    n = XVector_size_base((const XContainer*)bar->m_actions);
+    if (index < 0 || index >= n) return out;
+    h = XWidget_height((XWidget*)bar);
+    for (i = 0; i <= index; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)bar->m_actions,
+                                       i);
+        int w = xmenubar_itemWidth(bar, item ? *item : NULL);
+        if (i == index) {
+            XRect_init(&out, x, 0, w, h);
+            return out;
+        }
+        x += w;
+    }
+    return out;
+}
+
+XAction* XMenuBar_actionAt(const XMenuBar* self, const XPoint* pos)
+{
+    int64_t i;
+    int64_t n;
+    int x;
+    if (!self || !pos || !self->m_actions) return NULL;
+    if (pos->y < 0 || pos->y >= XWidget_height((XWidget*)self))
+        return NULL;
+    x = 4;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions,
+                                       i);
+        int w = xmenubar_itemWidth(self, item ? *item : NULL);
+        if (pos->x >= x && pos->x < x + w)
+            return item ? *item : NULL;
+        x += w;
+    }
+    return NULL;
+}
+
+XRect XMenuBar_actionGeometry(const XMenuBar* self, XAction* action)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !action || !self->m_actions) {
+        XRect out;
+        XRect_init(&out, 0, 0, 0, 0);
+        return out;
+    }
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base((const XContainer*)self->m_actions,
+                                       i);
+        if (item && *item == action)
+            return xmenubar_actionRectAt(self, i);
+    }
+    {
+        XRect out;
+        XRect_init(&out, 0, 0, 0, 0);
+        return out;
+    }
+}
+
+XWidget* XMenuBar_cornerWidget(const XMenuBar* self, int corner)
+{
+    if (!self) return NULL;
+    return corner == (int)XMenuBarCorner_TopLeft ? self->m_cornerWidgetL
+                                                 : self->m_cornerWidgetR;
+}
+
+void XMenuBar_setCornerWidget(XMenuBar* self, XWidget* widget, int corner)
+{
+    if (!self) return;
+    if (corner == (int)XMenuBarCorner_TopLeft)
+        self->m_cornerWidgetL = widget;
+    else
+        self->m_cornerWidgetR = widget;
+    XWidget_update((XWidget*)self);
+}
+
+int XMenuBar_heightForWidth(const XMenuBar* self, int width)
+{
+    XSize hint;
+    (void)width;
+    if (!self) return 0;
+    hint = XMenuBar_sizeHint(self);
+    return hint.height;
+}
+
+XSize XMenuBar_sizeHint(const XMenuBar* self)
+{
+    XSize out;
+    int64_t i;
+    int64_t n;
+    int w = 8;
+    if (!self) {
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    if (self->m_actions) {
+        n = XVector_size_base((const XContainer*)self->m_actions);
+        for (i = 0; i < n; ++i) {
+            XAction** item =
+                (XAction**)XVector_at_base((const XContainer*)self->m_actions,
+                                           i);
+            w += xmenubar_itemWidth(self, item ? *item : NULL);
+        }
+    }
+    XSize_init(&out, w > 8 ? w : 8, 30);
+    return out;
+}
+
+XSize XMenuBar_minimumSizeHint(const XMenuBar* self)
+{
+    return XMenuBar_sizeHint(self);
+}
+
+bool XMenuBar_isNativeMenuBar(const XMenuBar* self)
+{
+    return self ? self->m_nativeMenuBar : false;
+}
+
+void XMenuBar_setNativeMenuBar(XMenuBar* self, bool nativeMenuBar)
+{
+    if (self) self->m_nativeMenuBar = nativeMenuBar;
+}
+
+void* XMenuBar_platformMenuBar(const XMenuBar* self)
+{
+    (void)self;
+    return NULL;
 }
 
 #endif /* XWIDGET_ON && XMENU_ON && XMENUBAR_ON */

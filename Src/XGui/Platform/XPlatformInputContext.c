@@ -335,17 +335,17 @@ XString* XPlatformInputContext_locale(const XPlatformInputContext* self)
 }
 
 void XPlatformInputContext_setLocale(XPlatformInputContext* self,
-                                     const char* locale)
+                                     const XString* locale)
 {
+    const char* utf8;
     XString* old;
     XString* value = NULL;
     if (!self || !self->m_data) return;
-    value = locale ? XString_create_utf8(locale)
-                   : XString_create_utf8("C");
+    utf8 = locale ? XString_toUtf8(locale) : NULL;
+    value = XString_create_utf8(utf8 && utf8[0] ? utf8 : "C");
     if (!value) return;
     if (self->m_data->m_locale &&
-        XString_equals_utf8(self->m_data->m_locale, locale ? locale : "C",
-                            XChar_CaseSensitive)) {
+        XString_equals(self->m_data->m_locale, value, XChar_CaseSensitive)) {
         XString_delete_base(value);
         return;
     }
@@ -355,9 +355,21 @@ void XPlatformInputContext_setLocale(XPlatformInputContext* self,
     XPlatformInputContext_emitLocaleChanged(self);
     /* 按 Qt QLocale::textDirection 语义在区域变化时重估输入方向。 */
     XPlatformInputContext_setInputDirection(
-        self, xplatform_localeIsRtl(locale ? locale : "C")
+        self, xplatform_localeIsRtl(utf8 && utf8[0] ? utf8 : "C")
             ? XInputMethodLayoutDirection_RightToLeft
             : XInputMethodLayoutDirection_LeftToRight);
+}
+
+void XPlatformInputContext_setLocale_2(XPlatformInputContext* self,
+                                       const char* locale)
+{
+    XString* tmp = NULL;
+    if (locale && locale[0]) {
+        tmp = XString_create_utf8(locale);
+        if (!tmp) return;
+    }
+    XPlatformInputContext_setLocale(self, tmp);
+    if (tmp) XString_delete_base(tmp);
 }
 
 void XPlatformInputContext_emitLocaleChanged(XPlatformInputContext* self)

@@ -57,7 +57,7 @@ XVtable* XButtonGroup_class_init(void);
 void XButtonGroup_init(XButtonGroup* self, XObject* parent);
 #define XButtonGroup_create(parent) XButtonGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent))
 XButtonGroup* XButtonGroup_create_ex(XMemoryType memory, XObject* parent);
-#define XButtonGroup_deinit_base(self) XObject_deinit_base((XObject*)(self))
+#define XButtonGroup_deinit_base(self) XClass_deinit_base((XClass*)(self))
 #define XButtonGroup_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 成员与属性（对标 QButtonGroup public API） ==================== */

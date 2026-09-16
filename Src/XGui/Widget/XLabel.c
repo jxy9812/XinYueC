@@ -906,6 +906,7 @@ static void label_textBlockSize(const XLabel* self, int layoutWidth,
         XFont font = XWidget_font((XWidget*)self);
         n = label_layout(utf8, layoutWidth, wrap, &font, &lines);
         XFont_deinit_base(&font);
+        XFont_deinit_base(&font);
     }
     for (i = 0; i < n; ++i)
         if (lines[i].m_width > w) w = lines[i].m_width;
@@ -1041,6 +1042,7 @@ static void label_computeLayout(const XLabel* self, const XRect* cr,
                                         self->m_wordWrap, &font,
                                         &out->m_lines);
         XFont_deinit_base(&font);
+        XFont_deinit_base(&font);
     }
     textH = out->m_lineCount * label_lineHeight(self);
     out->m_rect.x = cr->x;
@@ -1166,6 +1168,7 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
         XFont font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
         XFont_deinit_base(&font);
+        XFont_deinit_base(&font);
     }
     utf16pos = 0;
     for (i = 0; i < layout.m_lineCount; ++i) {
@@ -1245,6 +1248,7 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
                 cursor += glyphWidth;
                 byteAt += glyphLen;
                 ++glyphIndex;
+            XFont_deinit_base(&font);
             }
             XFont_deinit_base(&font);
         }
@@ -1367,6 +1371,7 @@ static int label_posToUtf16(const XLabel* self, const XPoint* pos)
             cursor += glyphWidth;
             p += glyphLen;
             ++glyphIndex;
+        XFont_deinit_base(&font);
         }
         XFont_deinit_base(&font);
         if (glyphIndex > lineGlyphs) glyphIndex = lineGlyphs;
@@ -1619,7 +1624,7 @@ static void VXLabel_paintEvent(XWidget* self, XEvent* event)
 #if XPAINTER_CLIP_ON
     pe = (XPaintEvent*)event;
 #endif
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {

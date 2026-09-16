@@ -68,28 +68,29 @@ XVtable* XPieSlice_class_init(void);
  */
 void XPieSlice_init(XPieSlice* self);
 
-/**
- * @brief 初始化并设置标签与值（对标 QPieSlice(label, value)）。
- *
+/** @brief 初始化并设置标签与值（XString 主版本；对标 QPieSlice(label, value)）。
  * @param self  目标切片指针。
- * @param label UTF-8 标签。
+ * @param label 借用 XString*；可为 NULL（空标签）。
  * @param value 切片值。
  * @return 无返回值。
  */
-void XPieSlice_init_2(XPieSlice* self, const char* label, double value);
+void XPieSlice_init_ex(XPieSlice* self, const XString* label, double value);
+/** @brief 初始化并设置标签与值（UTF-8 兼容重载，转发主版本）。 */
+void XPieSlice_init_ex_2(XPieSlice* self, const char* label, double value);
 
-/**
- * @brief 堆上创建切片对象。
- *
+/** @brief 堆上创建切片对象（XString 主版本）。
  * @param memory 内存类型。
- * @param label  UTF-8 标签；可为 NULL（空标签）。
+ * @param label  借用 XString*；可为 NULL（空标签）。
  * @param value  切片值。
  * @return 切片指针；分配失败返回 NULL。
  */
-XPieSlice* XPieSlice_create_ex(XMemoryType memory, const char* label,
+XPieSlice* XPieSlice_create_ex(XMemoryType memory, const XString* label,
                                double value);
+/** @brief 堆上创建切片对象（UTF-8 兼容重载，转发主版本）。 */
+XPieSlice* XPieSlice_create_ex_2(XMemoryType memory, const char* label,
+                                 double value);
 #define XPieSlice_create(label, value) \
-    XPieSlice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, label, value)
+    XPieSlice_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, label, value)
 
 /** @brief 析构入口（查表分派父类析构）。 */
 #define XPieSlice_deinit_base(self) XClass_deinit_base((XClass*)(self))
@@ -99,10 +100,18 @@ XPieSlice* XPieSlice_create_ex(XMemoryType memory, const char* label,
 
 /* ==================== 属性（对标 QPieSlice 公共 API） ==================== */
 
-/** @brief 设置标签。 @param self 目标切片指针。 @param label UTF-8 标签。 @return 无返回值。 */
-void XPieSlice_setLabel(XPieSlice* self, const char* label);
-/** @brief 读取标签。 @param self 目标切片指针。 @return 标签（UTF-8）。 */
-const char* XPieSlice_label(const XPieSlice* self);
+/** @brief 设置标签（XString 主版本；对标 QPieSlice::setLabel）。
+ * @param self 目标切片指针。
+ * @param label 借用 XString*；可为 NULL（清空）。
+ * @return 无返回值。
+ */
+void XPieSlice_setLabel(XPieSlice* self, const XString* label);
+/** @brief 设置标签（UTF-8 兼容重载，转发主版本）。 */
+void XPieSlice_setLabel_2(XPieSlice* self, const char* label);
+/** @brief 读取标签（内部借用 XString*；不得释放）。 */
+const XString* XPieSlice_label(const XPieSlice* self);
+/** @brief 读取标签（UTF-8 借用）。 */
+const char* XPieSlice_label_2(const XPieSlice* self);
 /** @brief 设置切片值。 @param self 目标切片指针。 @param value 切片值。 @return 无返回值。 */
 void XPieSlice_setValue(XPieSlice* self, double value);
 /** @brief 读取切片值。 @param self 目标切片指针。 @return 切片值。 */
@@ -237,6 +246,54 @@ void* XPieSlice_colorChanged_signal(XPieSlice* self);
 void* XPieSlice_borderColorChanged_signal(XPieSlice* self);
 
 /**
+ * @brief 发射边框宽变化信号。
+ *
+ * @param self 切片指针；NULL 返回信号标识。
+ * @return 信号标识指针。
+ */
+void* XPieSlice_borderWidthChanged_signal(XPieSlice* self);
+
+/**
+ * @brief 发射画笔变化信号。
+ *
+ * @param self 切片指针；NULL 返回信号标识。
+ * @return 信号标识指针。
+ */
+void* XPieSlice_penChanged_signal(XPieSlice* self);
+
+/**
+ * @brief 发射画刷变化信号。
+ *
+ * @param self 切片指针；NULL 返回信号标识。
+ * @return 信号标识指针。
+ */
+void* XPieSlice_brushChanged_signal(XPieSlice* self);
+
+/**
+ * @brief 发射标签画刷变化信号。
+ *
+ * @param self 切片指针；NULL 返回信号标识。
+ * @return 信号标识指针。
+ */
+void* XPieSlice_labelBrushChanged_signal(XPieSlice* self);
+
+/**
+ * @brief 发射标签字体变化信号。
+ *
+ * @param self 切片指针；NULL 返回信号标识。
+ * @return 信号标识指针。
+ */
+void* XPieSlice_labelFontChanged_signal(XPieSlice* self);
+
+/**
+ * @brief 发射标签色变化信号。
+ *
+ * @param self 切片指针；NULL 返回信号标识。
+ * @return 信号标识指针。
+ */
+void* XPieSlice_labelColorChanged_signal(XPieSlice* self);
+
+/**
  * @brief 发射占比变化信号。
  *
  * @param self 切片指针；NULL 返回信号标识。
@@ -274,11 +331,21 @@ uint32_t XPieSlice_brush(const XPieSlice* self);
 void XPieSlice_setLabelBrush(XPieSlice* self, uint32_t color);
 /** @brief 读取标签画刷颜色。 @param self 目标切片指针。 @return ARGB。 */
 uint32_t XPieSlice_labelBrush(const XPieSlice* self);
-/** @brief 设置标签字体（字体族+字号，对标 setLabelFont(QFont)）。 @param self 目标切片指针。 @param family 字体族（NULL 保持）。 @param pointSize 字号（0 保持）。 @return 无返回值。 */
-void XPieSlice_setLabelFont(XPieSlice* self, const char* family,
+/** @brief 设置标签字体（XString 主版本；对标 setLabelFont(QFont)）。
+ * @param self 目标切片指针。
+ * @param family 借用 XString*；NULL 保持。
+ * @param pointSize 字号（0 保持）。
+ * @return 无返回值。
+ */
+void XPieSlice_setLabelFont(XPieSlice* self, const XString* family,
                             int pointSize);
-/** @brief 读取标签字体族（对标 labelFont()）。 @param self 目标切片指针。 @return 字体族。 */
-const char* XPieSlice_labelFont(const XPieSlice* self);
+/** @brief 设置标签字体（UTF-8 兼容重载，转发主版本）。 */
+void XPieSlice_setLabelFont_2(XPieSlice* self, const char* family,
+                              int pointSize);
+/** @brief 读取标签字体族（内部借用 XString*；不得释放）。 */
+const XString* XPieSlice_labelFont(const XPieSlice* self);
+/** @brief 读取标签字体族（UTF-8 借用）。 */
+const char* XPieSlice_labelFont_2(const XPieSlice* self);
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

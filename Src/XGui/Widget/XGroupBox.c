@@ -404,7 +404,7 @@ static void VXGroupBox_paintEvent(XWidget* self, XEvent* event)
     XPoint offset;
     XPainter painter;
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -627,13 +627,13 @@ void* XGroupBox_toggled_signal(XGroupBox* self, bool checked)
     return (void*)(size_t)XGroupBox_toggled_signal;
 }
 
-void XGroupBox_setAlignment_3(XGroupBox* self) { (void)self; }
-void XGroupBox_alignment_2(XGroupBox* self) { (void)self; }
-void XGroupBox_setFlat_2(XGroupBox* self) { (void)self; }
-void XGroupBox_isFlat_2(XGroupBox* self) { (void)self; }
-void XGroupBox_setCheckable_2(XGroupBox* self) { (void)self; }
-void XGroupBox_isCheckable_2(XGroupBox* self) { (void)self; }
-void XGroupBox_isChecked_2(XGroupBox* self) { (void)self; }
-void XGroupBox_setChecked_2(XGroupBox* self) { (void)self; }
-void XGroupBox_contentsRect_2(XGroupBox* self) { (void)self; }
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XGROUPBOX_ON */

@@ -61,7 +61,7 @@ static void VXTabBar_mouseDoubleClickEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
-    xtabbar_emitInt(bar, (size_t)XTabBar_tabBarDoubleClicked_signal(bar),
+    xtabbar_emitInt(bar, (size_t)XTabBar_tabBarDoubleClicked_signal(bar, idx),
                     idx);
     XEvent_accept(event);
 }
@@ -108,17 +108,56 @@ static void xtabbar_emitInt2(XTabBar* self, size_t signal, int a, int b)
 /** @brief 确保容量（按需倍增）。 */
 static bool xtabbar_ensureCapacity(XTabBar* self, int need)
 {
-    char** titles;
+    XString** titles;
     bool* enabled;
+    uint32_t* colors;
+    bool* visible;
+    XString** tips;
+    XString** icons;
+    XString** datas;
+    XAbstractButton** buttons;
     int cap = self->m_capacity > 0 ? self->m_capacity : 4;
+    int i;
     while (cap < need) cap *= 2;
     if (need <= self->m_capacity) return true;
-    titles = (char**)XRealloc_System(self->m_titles, sizeof(char*) * (size_t)cap);
+    titles = (XString**)XRealloc_System(self->m_titles, sizeof(XString*) * (size_t)cap);
     if (!titles) return false;
     self->m_titles = titles;
     enabled = (bool*)XRealloc_System(self->m_enabled, sizeof(bool) * (size_t)cap);
     if (!enabled) return false;
     self->m_enabled = enabled;
+    colors = (uint32_t*)XRealloc_System(self->m_tabTextColors,
+                                        sizeof(uint32_t) * (size_t)cap);
+    if (!colors) return false;
+    self->m_tabTextColors = colors;
+    visible = (bool*)XRealloc_System(self->m_tabVisible,
+                                     sizeof(bool) * (size_t)cap);
+    if (!visible) return false;
+    self->m_tabVisible = visible;
+    tips = (XString**)XRealloc_System(self->m_tabToolTips,
+                                      sizeof(XString*) * (size_t)cap);
+    if (!tips) return false;
+    self->m_tabToolTips = tips;
+    icons = (XString**)XRealloc_System(self->m_tabIcons,
+                                       sizeof(XString*) * (size_t)cap);
+    if (!icons) return false;
+    self->m_tabIcons = icons;
+    datas = (XString**)XRealloc_System(self->m_tabData,
+                                       sizeof(XString*) * (size_t)cap);
+    if (!datas) return false;
+    self->m_tabData = datas;
+    buttons = (XAbstractButton**)XRealloc_System(
+        self->m_tabButtons, sizeof(XAbstractButton*) * (size_t)cap);
+    if (!buttons) return false;
+    self->m_tabButtons = buttons;
+    for (i = self->m_capacity; i < cap; ++i) {
+        self->m_tabTextColors[i] = 0;
+        self->m_tabVisible[i] = true;
+        self->m_tabToolTips[i] = NULL;
+        self->m_tabIcons[i] = NULL;
+        self->m_tabData[i] = NULL;
+        self->m_tabButtons[i] = NULL;
+    }
     self->m_capacity = cap;
     return true;
 }
@@ -191,7 +230,7 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
     windowText = xtabbar_color(bar, XPaletteColorRole_WindowText);
     disabled = xtabbar_color(bar, XPaletteColorRole_Mid);
 
-    image = XWidget_paintDevice(self);
+    image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -233,7 +272,7 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                         opt.m_state |= XStyleState_HasFocus;
                     opt.m_tabSelected = isCur;
                     opt.m_tabIndex = i;
-                    opt.m_text = bar->m_titles[i] ? bar->m_titles[i] : "";
+                    opt.m_text = bar->m_titles[i] ? XString_toUtf8(bar->m_titles[i]) : "";
 #if XPALETTE_ON
                     opt.m_palette = XWidget_palette(self);
 #endif
@@ -254,7 +293,7 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                                   isCur ? highlight : button);
                 if (bar->m_titles[i])
                     XPainter_drawText(&painter, tab.x + 4, tab.y + 16,
-                                      bar->m_titles[i],
+                                      XString_toUtf8(bar->m_titles[i]),
                                       isCur ? highlightedText
                                             : (bar->m_enabled[i] ? windowText
                                                                  : disabled));
@@ -286,13 +325,12 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     idx = xtabbar_tabAt(bar, &pos);
     if (idx < 0) { XEvent_ignore(event); return; }
-    xtabbar_emitInt2(bar, (size_t)XTabBar_tabClicked_signal(bar), idx, 0);
-    xtabbar_emitInt(bar, (size_t)XTabBar_tabBarClicked_signal(bar), idx);
+    xtabbar_emitInt(bar, (size_t)XTabBar_tabBarClicked_signal(bar, idx), idx);
     if (!bar->m_enabled[idx]) { XEvent_ignore(event); return; }
     if (idx != bar->m_currentIndex) {
         int old = bar->m_currentIndex;
         bar->m_currentIndex = idx;
-        xtabbar_emitInt(bar, (size_t)XTabBar_currentChanged_signal(bar), idx);
+        xtabbar_emitInt(bar, (size_t)XTabBar_currentChanged_signal(bar, idx), idx);
         (void)old;
     }
     XWidget_update(self);
@@ -329,13 +367,25 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
     for (i = 0; i < self->m_count; ++i)
-        if (self->m_titles[i]) XFree_System(self->m_titles[i]);
+        if (self->m_titles[i]) XString_delete_base(self->m_titles[i]);
     self->m_titles = other->m_titles;
     self->m_enabled = other->m_enabled;
+    self->m_tabTextColors = other->m_tabTextColors;
+    self->m_tabVisible = other->m_tabVisible;
+    self->m_tabToolTips = other->m_tabToolTips;
+    self->m_tabIcons = other->m_tabIcons;
+    self->m_tabData = other->m_tabData;
+    self->m_tabButtons = other->m_tabButtons;
     self->m_count = other->m_count;
     self->m_capacity = other->m_capacity;
     other->m_titles = NULL;
     other->m_enabled = NULL;
+    other->m_tabTextColors = NULL;
+    other->m_tabVisible = NULL;
+    other->m_tabToolTips = NULL;
+    other->m_tabIcons = NULL;
+    other->m_tabData = NULL;
+    other->m_tabButtons = NULL;
     other->m_count = 0;
     other->m_capacity = 0;
     self->m_currentIndex = other->m_currentIndex;
@@ -348,6 +398,59 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
 
 /* ==================== 生命周期 ==================== */
 
+/** @brief 反初始化：释放全部页签标题与数组。 */
+static void VXTabBar_deinit(XTabBar* self)
+{
+    int i;
+    if (!self) return;
+    for (i = 0; i < self->m_count; ++i) {
+        if (self->m_titles[i]) XString_delete_base(self->m_titles[i]);
+        self->m_titles[i] = NULL;
+    }
+    if (self->m_titles) {
+        XFree_System(self->m_titles);
+        self->m_titles = NULL;
+    }
+    if (self->m_enabled) {
+        XFree_System(self->m_enabled);
+        self->m_enabled = NULL;
+    }
+    if (self->m_tabTextColors) {
+        XFree_System(self->m_tabTextColors);
+        self->m_tabTextColors = NULL;
+    }
+    if (self->m_tabVisible) {
+        XFree_System(self->m_tabVisible);
+        self->m_tabVisible = NULL;
+    }
+    if (self->m_tabToolTips) {
+        for (i = 0; i < self->m_count; ++i)
+            if (self->m_tabToolTips[i])
+                XString_delete_base(self->m_tabToolTips[i]);
+        XFree_System(self->m_tabToolTips);
+        self->m_tabToolTips = NULL;
+    }
+    if (self->m_tabIcons) {
+        for (i = 0; i < self->m_count; ++i)
+            if (self->m_tabIcons[i]) XString_delete_base(self->m_tabIcons[i]);
+        XFree_System(self->m_tabIcons);
+        self->m_tabIcons = NULL;
+    }
+    if (self->m_tabData) {
+        for (i = 0; i < self->m_count; ++i)
+            if (self->m_tabData[i]) XString_delete_base(self->m_tabData[i]);
+        XFree_System(self->m_tabData);
+        self->m_tabData = NULL;
+    }
+    if (self->m_tabButtons) {
+        XFree_System(self->m_tabButtons);
+        self->m_tabButtons = NULL;
+    }
+    self->m_count = 0;
+    self->m_capacity = 0;
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 XVtable* XTabBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTabBar)
@@ -357,6 +460,7 @@ XVtable* XTabBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXTabBar_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXTabBar_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabBar_changeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTabBar_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXTabBar_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTabBar_move);
 
@@ -366,16 +470,30 @@ XVtable* XTabBar_class_init(void)
 void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
+    XMemset(self, 0, sizeof(*self));
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XTabBar);
 
     self->m_titles = NULL;
     self->m_enabled = NULL;
+    self->m_tabTextColors = NULL;
+    self->m_tabVisible = NULL;
+    self->m_tabToolTips = NULL;
+    self->m_tabIcons = NULL;
+    self->m_tabData = NULL;
+    self->m_tabButtons = NULL;
     self->m_count = 0;
     self->m_capacity = 0;
     self->m_currentIndex = -1;
     self->m_tabsClosable = false;
     self->m_movable = false;
+    self->m_autoHide = false;
+    self->m_expanding = true;
+    self->m_elideMode = 1; /* Qt::ElideRight */
+    self->m_selectionBehavior = 0;
+    self->m_usesScrollButtons = false;
+    self->m_documentMode = false;
+    self->m_drawBase = true;
 }
 
 XTabBar* XTabBar_create_ex(XMemoryType memory, XWidget* parent,
@@ -390,44 +508,110 @@ XTabBar* XTabBar_create_ex(XMemoryType memory, XWidget* parent,
 
 /* ==================== API ==================== */
 
-int XTabBar_addTab(XTabBar* self, const char* text)
+int XTabBar_addTab(XTabBar* self, const XString* text)
 {
     return XTabBar_insertTab(self, self ? self->m_count : 0, text);
 }
-
-int XTabBar_insertTab(XTabBar* self, int index, const char* text)
+int XTabBar_addTab_2(XTabBar* self, const char* text)
 {
-    size_t len;
+    return XTabBar_insertTab_2(self, self ? self->m_count : 0, text);
+}
+
+int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
+{
+    XString* copy;
     if (!self || !text) return -1;
     if (index < 0) index = 0;
     if (index > self->m_count) index = self->m_count;
     if (!xtabbar_ensureCapacity(self, self->m_count + 1)) return -1;
-    len = XStrlen(text) + 1;
-    {
-        char* copy = (char*)XMalloc_System(len);
-        if (!copy) return -1;
-        XMemcpy(copy, text, len);
-        XMemmove(&self->m_titles[index + 1], &self->m_titles[index],
-                sizeof(char*) * (size_t)(self->m_count - index));
-        XMemmove(&self->m_enabled[index + 1], &self->m_enabled[index],
-                sizeof(bool) * (size_t)(self->m_count - index));
-        self->m_titles[index] = copy;
-        self->m_enabled[index] = true;
-        ++self->m_count;
-    }
+    copy = XString_create_copy(text);
+    if (!copy) return -1;
+    XMemmove(&self->m_titles[index + 1], &self->m_titles[index],
+             sizeof(XString*) * (size_t)(self->m_count - index));
+    XMemmove(&self->m_enabled[index + 1], &self->m_enabled[index],
+             sizeof(bool) * (size_t)(self->m_count - index));
+    if (self->m_tabTextColors)
+        XMemmove(&self->m_tabTextColors[index + 1],
+                 &self->m_tabTextColors[index],
+                 sizeof(uint32_t) * (size_t)(self->m_count - index));
+    if (self->m_tabVisible)
+        XMemmove(&self->m_tabVisible[index + 1],
+                 &self->m_tabVisible[index],
+                 sizeof(bool) * (size_t)(self->m_count - index));
+    if (self->m_tabToolTips)
+        XMemmove(&self->m_tabToolTips[index + 1],
+                 &self->m_tabToolTips[index],
+                 sizeof(XString*) * (size_t)(self->m_count - index));
+    if (self->m_tabIcons)
+        XMemmove(&self->m_tabIcons[index + 1], &self->m_tabIcons[index],
+                 sizeof(XString*) * (size_t)(self->m_count - index));
+    if (self->m_tabData)
+        XMemmove(&self->m_tabData[index + 1], &self->m_tabData[index],
+                 sizeof(XString*) * (size_t)(self->m_count - index));
+    if (self->m_tabButtons)
+        XMemmove(&self->m_tabButtons[index + 1],
+                 &self->m_tabButtons[index],
+                 sizeof(XAbstractButton*) * (size_t)(self->m_count - index));
+    self->m_titles[index] = copy;
+    self->m_enabled[index] = true;
+    if (self->m_tabTextColors) self->m_tabTextColors[index] = 0;
+    if (self->m_tabVisible) self->m_tabVisible[index] = true;
+    if (self->m_tabToolTips) self->m_tabToolTips[index] = NULL;
+    if (self->m_tabIcons) self->m_tabIcons[index] = NULL;
+    if (self->m_tabData) self->m_tabData[index] = NULL;
+    if (self->m_tabButtons) self->m_tabButtons[index] = NULL;
+    ++self->m_count;
     if (self->m_currentIndex < 0) self->m_currentIndex = index;
     XWidget_update((XWidget*)self);
+    return index;
+}
+int XTabBar_insertTab_2(XTabBar* self, int index, const char* text)
+{
+    XString_Init_Utf8(tmp, text ? text : "");
+    index = XTabBar_insertTab(self, index, tmp);
+    XString_deinit_base(tmp);
     return index;
 }
 
 void XTabBar_removeTab(XTabBar* self, int index)
 {
     if (!self || index < 0 || index >= self->m_count) return;
-    if (self->m_titles[index]) XFree_System(self->m_titles[index]);
+    if (self->m_titles[index]) XString_delete_base(self->m_titles[index]);
+    if (self->m_tabToolTips && self->m_tabToolTips[index]) {
+        XString_delete_base(self->m_tabToolTips[index]);
+        self->m_tabToolTips[index] = NULL;
+    }
+    if (self->m_tabIcons && self->m_tabIcons[index]) {
+        XString_delete_base(self->m_tabIcons[index]);
+        self->m_tabIcons[index] = NULL;
+    }
+    if (self->m_tabData && self->m_tabData[index]) {
+        XString_delete_base(self->m_tabData[index]);
+        self->m_tabData[index] = NULL;
+    }
     XMemmove(&self->m_titles[index], &self->m_titles[index + 1],
-            sizeof(char*) * (size_t)(self->m_count - index - 1));
+             sizeof(XString*) * (size_t)(self->m_count - index - 1));
     XMemmove(&self->m_enabled[index], &self->m_enabled[index + 1],
-            sizeof(bool) * (size_t)(self->m_count - index - 1));
+             sizeof(bool) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabTextColors)
+        XMemmove(&self->m_tabTextColors[index],
+                 &self->m_tabTextColors[index + 1],
+                 sizeof(uint32_t) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabVisible)
+        XMemmove(&self->m_tabVisible[index], &self->m_tabVisible[index + 1],
+                 sizeof(bool) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabToolTips)
+        XMemmove(&self->m_tabToolTips[index], &self->m_tabToolTips[index + 1],
+                 sizeof(XString*) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabIcons)
+        XMemmove(&self->m_tabIcons[index], &self->m_tabIcons[index + 1],
+                 sizeof(XString*) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabData)
+        XMemmove(&self->m_tabData[index], &self->m_tabData[index + 1],
+                 sizeof(XString*) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabButtons)
+        XMemmove(&self->m_tabButtons[index], &self->m_tabButtons[index + 1],
+                 sizeof(XAbstractButton*) * (size_t)(self->m_count - index - 1));
     --self->m_count;
     if (self->m_currentIndex >= self->m_count)
         self->m_currentIndex = self->m_count - 1;
@@ -445,26 +629,33 @@ void XTabBar_setCurrentIndex(XTabBar* self, int index)
     if (!self || index < 0 || index >= self->m_count) return;
     if (index == self->m_currentIndex) return;
     self->m_currentIndex = index;
-    xtabbar_emitInt(self, (size_t)XTabBar_currentChanged_signal(self), index);
+    xtabbar_emitInt(self, (size_t)XTabBar_currentChanged_signal(self, index), index);
     XWidget_update((XWidget*)self);
 }
 
-const char* XTabBar_tabText(const XTabBar* self, int index)
+XString* XTabBar_tabText(const XTabBar* self, int index)
 {
     if (self && index >= 0 && index < self->m_count && self->m_titles[index])
-        return self->m_titles[index];
+        return XString_create_copy(self->m_titles[index]);
+    return NULL;
+}
+const char* XTabBar_tabText_2(const XTabBar* self, int index)
+{
+    if (self && index >= 0 && index < self->m_count && self->m_titles[index])
+        return XString_toUtf8(self->m_titles[index]);
     return "";
 }
 
-void XTabBar_setTabText(XTabBar* self, int index, const char* text)
+void XTabBar_setTabText(XTabBar* self, int index, const XString* text)
 {
-    size_t len;
     if (!self || !text || index < 0 || index >= self->m_count) return;
-    len = XStrlen(text) + 1;
-    if (self->m_titles[index]) XFree_System(self->m_titles[index]);
-    self->m_titles[index] = (char*)XMalloc_System(len);
-    if (!self->m_titles[index]) return;
-    XMemcpy(self->m_titles[index], text, len);
+    XString_assign(self->m_titles[index], text);
+    XWidget_update((XWidget*)self);
+}
+void XTabBar_setTabText_2(XTabBar* self, int index, const char* text)
+{
+    if (!self || !text || index < 0 || index >= self->m_count) return;
+    XString_assign_utf8(self->m_titles[index], text);
     XWidget_update((XWidget*)self);
 }
 
@@ -500,82 +691,364 @@ void XTabBar_setMovable(XTabBar* self, bool movable)
 
 /* ==================== 信号 ==================== */
 
-void* XTabBar_currentChanged_signal(XTabBar* self)
+void* XTabBar_currentChanged_signal(XTabBar* self, int index)
 {
+    (void)index;
     return (void*)(size_t)XTabBar_currentChanged_signal;
-}
-void* XTabBar_tabClicked_signal(XTabBar* self)
-{
-    return (void*)(size_t)XTabBar_tabClicked_signal;
 }
 void* XTabBar_tabCloseRequested_signal(XTabBar* self)
 {
     return (void*)(size_t)XTabBar_tabCloseRequested_signal;
 }
-
-
-void* XTabBar_tabBarClicked_signal(XTabBar* self)
+void* XTabBar_tabBarClicked_signal(XTabBar* self, int index)
 {
     (void)self;
+    (void)index;
     return (void*)(size_t)XTabBar_tabBarClicked_signal;
 }
-void* XTabBar_tabBarDoubleClicked_signal(XTabBar* self)
+
+void* XTabBar_tabBarDoubleClicked_signal(XTabBar* self, int index)
 {
     (void)self;
+    (void)index;
     return (void*)(size_t)XTabBar_tabBarDoubleClicked_signal;
 }
-void* XTabBar_tabMoved_signal(XTabBar* self)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void* XTabBar_tabMoved_signal(XTabBar* self, int from, int to)
 {
-    (void)self;
+    (void)self; (void)from; (void)to;
     return (void*)(size_t)XTabBar_tabMoved_signal;
 }
 
-void XTabBar_setAutoHide(XTabBar* self, bool hide) { if(self) self->m_autoHide=hide; }
-bool XTabBar_autoHide(const XTabBar* self) { return self?self->m_autoHide:false; }
-void XTabBar_setDocumentMode(XTabBar* self, bool mode) { (void)self; (void)mode; }
-bool XTabBar_documentMode(const XTabBar* self) { (void)self; return false; }
-void XTabBar_setElideMode(XTabBar* self, int mode) { (void)self; (void)mode; }
-int XTabBar_elideMode(const XTabBar* self) { (void)self; return 0; }
-void XTabBar_setExpanding(XTabBar* self, bool expanding) { (void)self; (void)expanding; }
-bool XTabBar_isExpanding(const XTabBar* self) { (void)self; return false; }
-void XTabBar_setSelectionBehaviorOnRemove(XTabBar* self, int behavior) { (void)self; (void)behavior; }
-int XTabBar_selectionBehaviorOnRemove(const XTabBar* self) { (void)self; return 0; }
-void XTabBar_setUsesScrollButtons(XTabBar* self, bool useButtons) { (void)self; (void)useButtons; }
-bool XTabBar_usesScrollButtons(const XTabBar* self) { (void)self; return false; }
-void XTabBar_setTabButton(XTabBar* self, int index, int position, XWidget* widget) { (void)self; (void)index; (void)position; (void)widget; }
-XWidget* XTabBar_tabButton(const XTabBar* self, int index, int position) { (void)self; (void)index; (void)position; return NULL; }
-void XTabBar_setTabTextColor(XTabBar* self, int index, uint32_t color) { (void)self; (void)index; (void)color; }
-uint32_t XTabBar_tabTextColor(const XTabBar* self, int index) { (void)self; (void)index; return 0; }
-void XTabBar_setTabToolTip(XTabBar* self, int index, const char* tip) { (void)self; (void)index; (void)tip; }
-const char* XTabBar_tabToolTip(const XTabBar* self, int index) { (void)self; (void)index; return ""; }
-void XTabBar_setTabWhatsThis(XTabBar* self, int index, const char* text) { (void)self; (void)index; (void)text; }
-const char* XTabBar_tabWhatsThis(const XTabBar* self, int index) { (void)self; (void)index; return ""; }
-void XTabBar_setTabIcon(XTabBar* self, int index, const char* icon) { (void)self; (void)index; (void)icon; }
-bool XTabBar_expanding(const XTabBar* self) { return self?self->m_expanding:false; }
-bool XTabBar_drawBase(const XTabBar* self) { (void)self; return false; }
-void XTabBar_setDrawBase(XTabBar* self, bool drawBase) { (void)self; (void)drawBase; }
-void XTabBar_accessibleTabName(XTabBar* self) { (void)self; }
-void XTabBar_setChangeCurrentOnDrag(XTabBar* self) { (void)self; }
-void XTabBar_changeCurrentOnDrag(XTabBar* self) { (void)self; }
-void XTabBar_tabAt_2(XTabBar* self) { (void)self; }
-void XTabBar_tabRect(XTabBar* self) { (void)self; }
-void XTabBar_tabWidth(XTabBar* self) { (void)self; }
-void XTabBar_tabHeight(XTabBar* self) { (void)self; }
-void XTabBar_tabPosition_2(XTabBar* self) { (void)self; }
-void XTabBar_tabIndexAt(XTabBar* self) { (void)self; }
-void XTabBar_isTabVisible(XTabBar* self) { (void)self; }
-void XTabBar_isEmpty(XTabBar* self) { (void)self; }
-void XTabBar_moveTab(XTabBar* self) { (void)self; }
-void XTabBar_removeTab_2(XTabBar* self) { (void)self; }
-void XTabBar_isTabEnabled_2(XTabBar* self) { (void)self; }
-void XTabBar_setTabEnabled_2(XTabBar* self) { (void)self; }
-void XTabBar_setCurrentIndex_2(XTabBar* self) { (void)self; }
-void XTabBar_currentIndex_2(XTabBar* self) { (void)self; }
-void XTabBar_tabText_2(XTabBar* self) { (void)self; }
-void XTabBar_setTabText_2(XTabBar* self) { (void)self; }
-void XTabBar_setTabIcon_2(XTabBar* self) { (void)self; }
-void XTabBar_shape_2(XTabBar* self) { (void)self; }
-void XTabBar_setShape_2(XTabBar* self) { (void)self; }
-void XTabBar_setIconSize_2(XTabBar* self) { (void)self; }
-void XTabBar_iconSize_2(XTabBar* self) { (void)self; }
+/* ==================== Task 2.2：外观/几何/项属性 ==================== */
+
+void XTabBar_setDocumentMode(XTabBar* self, bool enable)
+{ if (self) self->m_documentMode = enable; }
+bool XTabBar_documentMode(const XTabBar* self)
+{ return self ? self->m_documentMode : false; }
+
+void XTabBar_setElideMode(XTabBar* self, int mode)
+{ if (self) self->m_elideMode = mode; }
+int XTabBar_elideMode(const XTabBar* self)
+{ return self ? self->m_elideMode : 0; }
+
+void XTabBar_setExpanding(XTabBar* self, bool enable)
+{ if (self) self->m_expanding = enable; }
+bool XTabBar_expanding(const XTabBar* self)
+{ return self ? self->m_expanding : true; }
+
+void XTabBar_setUsesScrollButtons(XTabBar* self, bool enable)
+{ if (self) self->m_usesScrollButtons = enable; }
+bool XTabBar_usesScrollButtons(const XTabBar* self)
+{ return self ? self->m_usesScrollButtons : false; }
+
+void XTabBar_setDrawBase(XTabBar* self, bool enable)
+{ if (self) self->m_drawBase = enable; }
+bool XTabBar_drawBase(const XTabBar* self)
+{ return self ? self->m_drawBase : true; }
+
+bool XTabBar_tabRect(const XTabBar* self, int index, XRect* out)
+{
+    int cols, rows, tabW, totalH;
+    int row, col;
+    if (!self || !out || index < 0 || index >= self->m_count) return false;
+    xtabbar_wrapLayout(self, &cols, &rows, &tabW, &totalH);
+    row = index / cols;
+    col = index % cols;
+    XRect_init(out, col * tabW, row * XTABBAR_TAB_H, tabW, XTABBAR_TAB_H);
+    return true;
+}
+
+int XTabBar_tabAt(const XTabBar* self, const XPoint* pos)
+{
+    return xtabbar_tabAt(self, pos);
+}
+
+int XTabBar_tabWidth(const XTabBar* self)
+{
+    int cols, rows, tabW, totalH;
+    if (!self) return 0;
+    xtabbar_wrapLayout(self, &cols, &rows, &tabW, &totalH);
+    return tabW;
+}
+
+int XTabBar_tabHeight(const XTabBar* self)
+{
+    (void)self;
+    return XTABBAR_TAB_H;
+}
+
+int XTabBar_tabIndexAt(const XTabBar* self, int x, int y)
+{
+    XPoint pos;
+    XPoint_init(&pos, x, y);
+    return XTabBar_tabAt(self, &pos);
+}
+
+bool XTabBar_isEmpty(const XTabBar* self)
+{ return self ? (self->m_count == 0) : true; }
+
+void XTabBar_setTabIcon(XTabBar* self, int index, const XString* path)
+{
+    XString* repl;
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabIcons)
+        return;
+    repl = path ? XString_create_copy(path) : NULL;
+    if (path && !repl) return;
+    if (self->m_tabIcons[index]) XString_delete_base(self->m_tabIcons[index]);
+    self->m_tabIcons[index] = repl;
+    XWidget_update((XWidget*)self);
+}
+
+void XTabBar_setTabIcon_2(XTabBar* self, int index, const char* path)
+{
+    XString* tmp = NULL;
+    if (path) {
+        tmp = XString_create_utf8(path);
+        if (!tmp) return;
+    }
+    XTabBar_setTabIcon(self, index, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XTabBar_tabIcon(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabIcons)
+        return NULL;
+    return self->m_tabIcons[index];
+}
+
+const char* XTabBar_tabIcon_2(const XTabBar* self, int index)
+{
+    const XString* s;
+    s = XTabBar_tabIcon(self, index);
+    return s ? XString_toUtf8(s) : "";
+}
+
+void XTabBar_setTabTextColor(XTabBar* self, int index, uint32_t color)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabTextColors)
+        return;
+    self->m_tabTextColors[index] = color;
+    XWidget_update((XWidget*)self);
+}
+
+uint32_t XTabBar_tabTextColor(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabTextColors)
+        return 0;
+    return self->m_tabTextColors[index];
+}
+
+void XTabBar_setTabToolTip(XTabBar* self, int index, const XString* tip)
+{
+    XString* repl;
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabToolTips)
+        return;
+    repl = tip ? XString_create_copy(tip) : NULL;
+    if (tip && !repl) return;
+    if (self->m_tabToolTips[index])
+        XString_delete_base(self->m_tabToolTips[index]);
+    self->m_tabToolTips[index] = repl;
+}
+
+void XTabBar_setTabToolTip_2(XTabBar* self, int index, const char* tip)
+{
+    XString* tmp = NULL;
+    if (tip) {
+        tmp = XString_create_utf8(tip);
+        if (!tmp) return;
+    }
+    XTabBar_setTabToolTip(self, index, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XTabBar_tabToolTip(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabToolTips)
+        return NULL;
+    return self->m_tabToolTips[index];
+}
+
+const char* XTabBar_tabToolTip_2(const XTabBar* self, int index)
+{
+    const XString* s;
+    s = XTabBar_tabToolTip(self, index);
+    return s ? XString_toUtf8(s) : "";
+}
+
+void XTabBar_setTabButton(XTabBar* self, int index,
+                          XAbstractButton* button)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabButtons)
+        return;
+    self->m_tabButtons[index] = button;
+    XWidget_update((XWidget*)self);
+}
+
+XAbstractButton* XTabBar_tabButton(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabButtons)
+        return NULL;
+    return self->m_tabButtons[index];
+}
+
+void XTabBar_setTabData(XTabBar* self, int index, const XString* data)
+{
+    XString* repl;
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabData)
+        return;
+    repl = data ? XString_create_copy(data) : NULL;
+    if (data && !repl) return;
+    if (self->m_tabData[index]) XString_delete_base(self->m_tabData[index]);
+    self->m_tabData[index] = repl;
+}
+
+void XTabBar_setTabData_2(XTabBar* self, int index, const char* data)
+{
+    XString* tmp = NULL;
+    if (data) {
+        tmp = XString_create_utf8(data);
+        if (!tmp) return;
+    }
+    XTabBar_setTabData(self, index, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XTabBar_tabData(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabData)
+        return NULL;
+    return self->m_tabData[index];
+}
+
+const char* XTabBar_tabData_2(const XTabBar* self, int index)
+{
+    const XString* s;
+    s = XTabBar_tabData(self, index);
+    return s ? XString_toUtf8(s) : "";
+}
+
+void XTabBar_setTabVisible(XTabBar* self, int index, bool visible)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabVisible)
+        return;
+    self->m_tabVisible[index] = visible;
+    XWidget_update((XWidget*)self);
+}
+
+bool XTabBar_isTabVisible(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabVisible)
+        return true;
+    return self->m_tabVisible[index];
+}
+
+void XTabBar_moveTab(XTabBar* self, int from, int to)
+{
+    XString* title;
+    bool enabled;
+    uint32_t color;
+    bool visible;
+    XString* tip;
+    XString* icon;
+    XString* data;
+    XAbstractButton* button;
+    int i;
+    int step;
+    if (!self || from < 0 || from >= self->m_count || to < 0 ||
+        to >= self->m_count || from == to)
+        return;
+    title = self->m_titles[from];
+    enabled = self->m_enabled[from];
+    color = self->m_tabTextColors ? self->m_tabTextColors[from] : 0;
+    visible = self->m_tabVisible ? self->m_tabVisible[from] : true;
+    tip = self->m_tabToolTips ? self->m_tabToolTips[from] : NULL;
+    icon = self->m_tabIcons ? self->m_tabIcons[from] : NULL;
+    data = self->m_tabData ? self->m_tabData[from] : NULL;
+    button = self->m_tabButtons ? self->m_tabButtons[from] : NULL;
+    step = (from < to) ? 1 : -1;
+    for (i = from; i != to; i += step) {
+        self->m_titles[i] = self->m_titles[i + step];
+        self->m_enabled[i] = self->m_enabled[i + step];
+        if (self->m_tabTextColors)
+            self->m_tabTextColors[i] = self->m_tabTextColors[i + step];
+        if (self->m_tabVisible)
+            self->m_tabVisible[i] = self->m_tabVisible[i + step];
+        if (self->m_tabToolTips)
+            self->m_tabToolTips[i] = self->m_tabToolTips[i + step];
+        if (self->m_tabIcons)
+            self->m_tabIcons[i] = self->m_tabIcons[i + step];
+        if (self->m_tabData)
+            self->m_tabData[i] = self->m_tabData[i + step];
+        if (self->m_tabButtons)
+            self->m_tabButtons[i] = self->m_tabButtons[i + step];
+    }
+    self->m_titles[to] = title;
+    self->m_enabled[to] = enabled;
+    if (self->m_tabTextColors) self->m_tabTextColors[to] = color;
+    if (self->m_tabVisible) self->m_tabVisible[to] = visible;
+    if (self->m_tabToolTips) self->m_tabToolTips[to] = tip;
+    if (self->m_tabIcons) self->m_tabIcons[to] = icon;
+    if (self->m_tabData) self->m_tabData[to] = data;
+    if (self->m_tabButtons) self->m_tabButtons[to] = button;
+    if (self->m_currentIndex == from) self->m_currentIndex = to;
+    else if (self->m_currentIndex > from && self->m_currentIndex <= to)
+        self->m_currentIndex--;
+    else if (self->m_currentIndex < from && self->m_currentIndex >= to)
+        self->m_currentIndex++;
+    xtabbar_emitInt2(self, (size_t)XTabBar_tabMoved_signal(self, from, to),
+                     from, to);
+    XWidget_update((XWidget*)self);
+}
+
 #endif /* XWIDGET_ON && XTABBAR_ON */

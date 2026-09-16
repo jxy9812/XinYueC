@@ -13,6 +13,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "XGuiConfig.h"
 #include "XImageFormat.h"
 #include "XColorSpace.h"
 #include "XGeometry.h"
@@ -22,6 +23,10 @@ extern "C" {
 #include "XTypes.h"
 #include "XMemory.h"
 #include "XStringList.h"
+
+#if XPAINTDEVICE_ON
+typedef struct XPaintDevice XPaintDevice; /* 前向声明；完整定义见 XPaintDevice.h。 */
+#endif
 
 
 /* ========== XImage 虚函数表枚举 ========== */
@@ -504,6 +509,17 @@ void XImage_clear(XImage* self, const XRect* rect, uint32_t color);
  * @param mode 反转 RGB，或反转包括 Alpha 在内的所有分量
  */
 void XImage_invertPixels(XImage* self, XImageInvertMode mode);
+
+#if XPAINTDEVICE_ON
+/**
+ * @brief      返回绘制设备描述（XPaintDevice；XGui 专有访问器，供
+ *             度量查询 width/height/dpr/dpi 等，对标 QImage 作为
+ *             绘制目标的能力描述）。
+ * @param      self 目标图像指针。
+ * @return     绘制设备借用指针；无效返回 NULL。
+ */
+XPaintDevice* XImage_paintDevice(XImage* self);
+#endif /* XPAINTDEVICE_ON */
 
 /* ========== 像素数据访问 ========== */
 

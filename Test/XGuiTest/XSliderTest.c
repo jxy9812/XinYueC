@@ -169,7 +169,7 @@ bool XSliderTest_runAll(void)
 
     /* 2. setValue 钳位 + valueChanged 计数。 */
     XObject_connect_2((XObject*)s,
-                      (size_t)XAbstractSlider_valueChanged_signal(base),
+                      (size_t)XAbstractSlider_valueChanged_signal(base, 0),
                       sl_valueChangedSlot);
     XAbstractSlider_setValue(base, 50);
     sl_expect(XAbstractSlider_value(base) == 50 &&
@@ -186,7 +186,7 @@ bool XSliderTest_runAll(void)
 
     /* 3. setRange/setMinimum/setMaximum：Qt 联动收敛语义。 */
     XObject_connect_2((XObject*)s,
-                      (size_t)XAbstractSlider_rangeChanged_signal(base),
+                      (size_t)XAbstractSlider_rangeChanged_signal(base, 0, 0),
                       sl_rangeChangedSlot);
     XAbstractSlider_setRange(base, 10, 0);
     /* Qt qMax 语义：min 超过 max 时 max 收敛为 min。 */
@@ -276,7 +276,7 @@ bool XSliderTest_runAll(void)
 
     /* 8. sliderPosition/setSliderPosition：tracking 开关两种语义。 */
     XObject_connect_2((XObject*)s,
-                      (size_t)XAbstractSlider_sliderMoved_signal(base),
+                      (size_t)XAbstractSlider_sliderMoved_signal(base, 0),
                       sl_sliderMovedSlot);
     XAbstractSlider_setValue(base, 40);
     XAbstractSlider_setSliderPosition(base, 40);
@@ -305,7 +305,7 @@ bool XSliderTest_runAll(void)
 
     /* 9. triggerAction：全部动作 + actionTriggered。 */
     XObject_connect_2((XObject*)s,
-                      (size_t)XAbstractSlider_actionTriggered_signal(base),
+                      (size_t)XAbstractSlider_actionTriggered_signal(base, 0),
                       sl_actionTriggeredSlot);
     sl_actionCount = 0;
     XAbstractSlider_setSingleStep(base, 2);

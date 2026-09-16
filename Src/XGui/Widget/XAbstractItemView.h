@@ -8,8 +8,10 @@ extern "C" {
 #include <stdbool.h>
 #include "XGuiConfig.h"
 #include "XAbstractScrollArea.h"
+#include "XAbstractItemModel.h"
+#include "XItemSelectionModel.h"
 
-#if XTABLEWIDGET_ON || 1
+#if XWIDGET_ON && XTABLEWIDGET_ON
 
 /**
  * @brief      编辑触发（对标 Qt 6.8 QAbstractItemView::EditTrigger 位组合）。
@@ -48,7 +50,8 @@ typedef enum XAbstractItemViewSelectionBehavior
 } XAbstractItemViewSelectionBehavior;
 
 XCLASS_DEFINE_BEGING(XAbstractItemView)
-XCLASS_DEFINE_EXTEND_END(XAbstractItemView, XAbstractScrollArea)
+XCLASS_DEFINE_ENUM(XAbstractItemView, IndexAt) = XCLASS_VTABLE_GET_SIZE(XAbstractScrollArea),
+XCLASS_DEFINE_END(XAbstractItemView)
 
 /**
  * @brief 抽象条目视图基类（对标 Qt 6.8 QAbstractItemView）。
@@ -66,6 +69,12 @@ typedef struct XAbstractItemView
     int m_editTriggers;              /**< XAbstractItemViewEditTrigger 位组合。 */
     bool m_alternatingRowColors;     /**< 交替行色（默认 false）。 */
     bool m_autoScroll;               /**< 自动滚动（默认 true）。 */
+    XAbstractItemModel* m_model;     /**< 数据模型（借用；可为 NULL）。 */
+    XItemSelectionModel* m_selectionModel; /**< 选择模型（对象拥有；懒创建）。 */
+    int m_rootRow;                   /**< 根索引行（预留树；默认 -1=根）。 */
+    int m_rootCol;                   /**< 根索引列（预留树；默认 -1=根）。 */
+    int m_iconW;                     /**< 图标尺寸宽（默认 16）。 */
+    int m_iconH;                     /**< 图标尺寸高（默认 16）。 */
 } XAbstractItemView;
 
 XVtable* XAbstractItemView_class_init(void);
@@ -149,7 +158,93 @@ bool XAbstractItemView_hasAutoScroll(const XAbstractItemView* self);
 /** @brief 滚动到指定单元格（对标 QAbstractItemView::scrollTo）。 @param self 目标视图指针。 @param row 行号。 @param column 列号。 @return 无返回值。 */
 void XAbstractItemView_scrollTo(XAbstractItemView* self, int row, int column);
 
-#endif /* XTABLEWIDGET_ON || 1 */
+/* ==================== 模型与选择（对标 QAbstractItemView） ==================== */
+
+/** @brief 读取数据模型。 @param self 目标视图指针。 @return 模型借用指针；未设置 NULL。 */
+XAbstractItemModel* XAbstractItemView_model(const XAbstractItemView* self);
+/** @brief 设置数据模型（借用；视图重绘并同步选择模型维度）。
+ * @param self 目标视图指针。
+ * @param model 模型借用指针；可为 NULL（清空）。
+ * @return 无返回值。
+ */
+void XAbstractItemView_setModel(XAbstractItemView* self,
+                                XAbstractItemModel* model);
+/** @brief 读取选择模型。 @param self 目标视图指针。 @return 选择模型借用指针。 */
+XItemSelectionModel* XAbstractItemView_selectionModel(
+    const XAbstractItemView* self);
+/** @brief 设置选择模型（替换旧模型并接管所有权）。
+ * @param self 目标视图指针。
+ * @param selectionModel 选择模型；可为 NULL（重新懒创建）。
+ * @return 无返回值。
+ */
+void XAbstractItemView_setSelectionModel(XAbstractItemView* self,
+                                         XItemSelectionModel* selectionModel);
+/** @brief 读取根索引行（预留树）。 @param self 目标视图指针。 @return 根行；-1=根。 */
+int XAbstractItemView_rootRow(const XAbstractItemView* self);
+/** @brief 读取根索引列。 @param self 目标视图指针。 @return 根列；-1=根。 */
+int XAbstractItemView_rootColumn(const XAbstractItemView* self);
+/** @brief 设置根索引（预留树；当前扁平模型仅存根偏移）。
+ * @param self 目标视图指针。
+ * @param row 根行；-1=根。
+ * @param col 根列；-1=根。
+ * @return 无返回值。
+ */
+void XAbstractItemView_setRootIndex(XAbstractItemView* self, int row, int col);
+/** @brief 命中测试：视图坐标 → (row,col)（对标 indexAt；虚槽分派入口）。
+ * @param self 目标视图指针。
+ * @param x 视图坐标 X。
+ * @param y 视图坐标 Y。
+ * @param outRow 输出行号（未命中置 -1）。
+ * @param outCol 输出列号（未命中置 -1）。
+ * @return 命中返回 true。
+ */
+bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x, int y,
+                                    int* outRow, int* outCol);
+/** @brief 条目几何：单元格 → 视图矩形（对标 visualRect；未实现时返回 false）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @param out 输出矩形。
+ * @return 计算成功返回 true。
+ */
+bool XAbstractItemView_visualRect(const XAbstractItemView* self,
+                                  int row, int col, XRect* out);
+/** @brief 设置图标尺寸（对标 setIconSize(QSize)）。
+ * @param self 目标视图指针。
+ * @param w 宽（像素）。
+ * @param h 高（像素）。
+ * @return 无返回值（变化时发射 iconSizeChanged）。
+ */
+void XAbstractItemView_setIconSize(XAbstractItemView* self, int w, int h);
+/** @brief 查询图标宽。 @param self 目标视图指针。 @return 宽。 */
+int XAbstractItemView_iconWidth(const XAbstractItemView* self);
+/** @brief 查询图标高。 @param self 目标视图指针。 @return 高。 */
+int XAbstractItemView_iconHeight(const XAbstractItemView* self);
+
+/* ==================== 信号（对标 QAbstractItemView） ==================== */
+
+/** @brief pressed(row,col) 信号（按下时发射）。 */
+void* XAbstractItemView_pressed_signal(XAbstractItemView* self,
+                                       int row, int col);
+/** @brief clicked(row,col) 信号（点击释放时发射）。 */
+void* XAbstractItemView_clicked_signal(XAbstractItemView* self,
+                                       int row, int col);
+/** @brief doubleClicked(row,col) 信号（双击时发射）。 */
+void* XAbstractItemView_doubleClicked_signal(XAbstractItemView* self,
+                                             int row, int col);
+/** @brief activated(row,col) 信号（激活时发射；当前为单击激活）。 */
+void* XAbstractItemView_activated_signal(XAbstractItemView* self,
+                                         int row, int col);
+/** @brief entered(row,col) 信号（悬停进入时发射）。 */
+void* XAbstractItemView_entered_signal(XAbstractItemView* self,
+                                       int row, int col);
+/** @brief viewportEntered() 信号（悬停进入视口时发射）。 */
+void* XAbstractItemView_viewportEntered_signal(XAbstractItemView* self);
+/** @brief iconSizeChanged(int,int) 信号（图标尺寸变化时发射）。 */
+void* XAbstractItemView_iconSizeChanged_signal(XAbstractItemView* self,
+                                               int width, int height);
+
+#endif /* XWIDGET_ON && XTABLEWIDGET_ON */
 #ifdef __cplusplus
 }
 #endif

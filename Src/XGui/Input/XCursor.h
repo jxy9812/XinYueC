@@ -210,6 +210,18 @@ void XCursor_setPos_point(const XPoint* pos);
  * @return     shape 不在 Bitmap/Custom 范围内时返回 true。
  */
 bool XCursor_isShapeCursor(const XCursor* self);
+/** @brief 交换两个光标（对标 QCursor::swap）。
+ * @param a 第一个光标；可为 NULL。
+ * @param b 第二个光标；可为 NULL。
+ * @return 无返回值。
+ */
+void XCursor_swap(XCursor* a, XCursor* b);
+/** @brief 比较两个光标是否等价（对标 QCursor::operator==）。
+ * @param a 第一个光标；可为 NULL。
+ * @param b 第二个光标；可为 NULL。
+ * @return 形状/资源一致返回 true。
+ */
+bool XCursor_equals(const XCursor* a, const XCursor* b);
 
 #endif /* XCURSOR_ON */
 

@@ -122,22 +122,4 @@ void* XKeySequenceEdit_editingFinished_signal(XKeySequenceEdit* self);
 
 #endif /* XWIDGET_ON && XKEYSEQUENCEEDIT_ON */
 
-#ifdef __cplusplus
-}
-#endif
-/** @brief XKeySequenceEditsetFinishingKeyCombinations2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XKeySequenceEdit_setFinishingKeyCombinations_2(XKeySequenceEdit* self);
-/** @brief XKeySequenceEditfinishingKeyCombinations（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XKeySequenceEdit_finishingKeyCombinations(XKeySequenceEdit* self);
-/** @brief XKeySequenceEditclear2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 无返回值。
- */
-void XKeySequenceEdit_clear_2(XKeySequenceEdit* self);
 #endif /* XKEYSEQUENCEEDIT_H */

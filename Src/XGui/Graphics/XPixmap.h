@@ -9,6 +9,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "XGuiConfig.h"
+typedef struct XPaintDevice XPaintDevice; /* 前向声明；完整定义见 XPaintDevice.h。 */
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -532,6 +534,16 @@ void XPixmap_deviceIndependentSize(const XPixmap* self, XSizeF* out);
  * @param out   输出像素图指针
  */
 void XPixmap_fromImageInPlace(XImage* image, uint32_t flags, XPixmap* out);
+
+#if XPAINTDEVICE_ON
+/**
+ * @brief      返回绘制设备描述（XPaintDevice；复用内部 XImage 的度量，
+ *             devType 为 XPaintDeviceType_Image，详见头文件 @note）。
+ * @param      self 目标像素图指针。
+ * @return     绘制设备借用指针；无效返回 NULL。
+ */
+XPaintDevice* XPixmap_paintDevice(XPixmap* self);
+#endif /* XPAINTDEVICE_ON */
 
 #ifdef __cplusplus
 }

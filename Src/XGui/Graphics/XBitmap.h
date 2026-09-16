@@ -14,8 +14,13 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "XGuiConfig.h"
 #include "XPixmap.h"
 #include "XClass.h"
+
+#if XPAINTDEVICE_ON
+typedef struct XPaintDevice XPaintDevice; /* 前向声明。 */
+#endif
 
 /** @brief XVariant 前向声明，用于 QBitmap/QVariant 兼容适配。 */
 typedef struct XVariant XVariant;
@@ -193,6 +198,15 @@ void XBitmap_fromData(const XSize* size, const uint8_t* bits, XImageFormat monoF
  * @param out    输出位图指针；源为现有一位 XBitmap 时共享底层数据，否则抖动转换
  */
 void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out);
+
+#if XPAINTDEVICE_ON
+/**
+ * @brief      返回绘制设备描述（XPaintDevice；转调内部 XPixmap）。
+ * @param      self 目标位图指针。
+ * @return     绘制设备借用指针；无效返回 NULL。
+ */
+XPaintDevice* XBitmap_paintDevice(XBitmap* self);
+#endif /* XPAINTDEVICE_ON */
 
 #ifdef __cplusplus
 }

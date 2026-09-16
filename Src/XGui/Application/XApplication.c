@@ -15,6 +15,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XApplication.h"
+#include "XStyle.h"
 
 #include "XAlgorithm.h"
 #if XWIDGET_ON
@@ -177,6 +178,10 @@ XWidget* XApplication_activeWindow(void)
     return app ? app->m_activeWindow : NULL;
 }
 
+/** @brief 发射 focusChanged 信号（前向声明，实现在文件尾）。 */
+static void xapp_emitFocusChanged(XApplication* self, XWidget* old,
+                                  XWidget* now);
+
 void XApplication_setActiveWindow(XWidget* widget)
 {
     XApplication* app = g_xapp;
@@ -188,7 +193,16 @@ void XApplication_setActiveWindow(XWidget* widget)
         XApplication_registerTopLevelWidget(widget);
 #endif /* XWIDGET_ON */
     }
-    app->m_activeWindow = widget;
+    {
+        XWidget* oldFocus = app->m_focusWidget;
+        app->m_activeWindow = widget;
+        if (widget && !app->m_focusWidget) {
+            /* 激活窗口时若无焦点控件，则移交焦点到窗口内（若有）。 */
+            app->m_focusWidget = widget;
+        }
+        if (app->m_focusWidget != oldFocus)
+            xapp_emitFocusChanged(app, oldFocus, app->m_focusWidget);
+    }
 #if XWIDGET_ON
     XGuiApplication_setFocusWindow(
         (XWindow*)XWidget_nativeWindow(widget), NULL);
@@ -204,7 +218,12 @@ XWidget* XApplication_focusWidget(void)
 void XApplication_setFocusWidget(XWidget* widget)
 {
     XApplication* app = g_xapp;
-    if (app) app->m_focusWidget = widget;
+    XWidget* old;
+    if (!app) return;
+    old = app->m_focusWidget;
+    if (old == widget) return;
+    app->m_focusWidget = widget;
+    xapp_emitFocusChanged(app, old, widget);
 }
 
 XWidget* XApplication_activeModalWidget(void)
@@ -351,6 +370,187 @@ void XApplication_setKeyboardInputInterval(int ms)
 #else
     (void)ms;
 #endif
+}
+
+
+/* ==================== Task 1.4：QApplication 应用级 API ==================== */
+
+XStyle* XApplication_style(void)
+{
+#if XSTYLE_ON
+    return XStyle_defaultStyle();
+#else
+    return NULL;
+#endif
+}
+
+void XApplication_setStyle(XStyle* style)
+{
+#if XSTYLE_ON
+    XStyle_setDefaultStyle(style);
+#else
+    (void)style;
+#endif
+}
+
+/** @brief 发射 focusChanged 信号（XApplication 继承 XObject 信号槽）。 */
+static void xapp_emitFocusChanged(XApplication* self, XWidget* old,
+                                  XWidget* now)
+{
+    XVarList* args;
+    if (!self || !((XObject*)self)->m_signalSlot) return;
+    args = XVarList_Create(XVar(XWidget*, old), XVar(XWidget*, now));
+    if (!args) return;
+    XObject_emitSignal((XObject*)self,
+                       (size_t)XApplication_focusChanged_signal,
+                       args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XApplication_focusChanged_signal(XApplication* self,
+                                       XWidget* old, XWidget* now)
+{
+    (void)old; (void)now;
+    return (void*)(size_t)XApplication_focusChanged_signal;
+}
+
+XVector* XApplication_allWidgets(void)
+{
+    XApplication* app = g_xapp;
+    size_t n;
+    XVector* out;
+    if (!app || !app->m_topLevelWidgets) return NULL;
+    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    out = XVector_Create(XWidget*);
+    if (!out) return NULL;
+    for (size_t i = 0; i < n; ++i) {
+        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*);
+        if (w) XVector_push_back_1_base(out, &w);
+    }
+    return out;
+}
+
+XWidget* XApplication_topLevelAt(const XPoint* point)
+{
+    XApplication* app = g_xapp;
+    size_t n;
+    if (!app || !point || !app->m_topLevelWidgets) return NULL;
+#if XWIDGET_ON
+    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    for (size_t i = n; i > 0; --i) {
+        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)(i - 1), XWidget*);
+        if (w && XWidget_isVisible(w)) {
+            XRect g = XWidget_geometry(w);
+            if (XRect_contains(&g, point->x, point->y)) return w;
+        }
+    }
+#else
+    (void)n;
+#endif
+    return NULL;
+}
+
+void XApplication_beep(void)
+{
+    /* 无平台音频后端：空操作（嵌入式不引入依赖）。 */
+}
+
+void XApplication_alert(XWidget* widget, int duration)
+{
+    (void)widget; (void)duration;
+    /* 简化实现：仅记录告警目标（无闪烁动画后端）。 */
+}
+
+bool XApplication_isEffectEnabled(int effect)
+{
+    XApplication* app = g_xapp;
+    if (!app) return true;
+    return ((app->m_effectEnabled >> effect) & 1) != 0;
+}
+
+void XApplication_setEffectEnabled(int effect, bool enable)
+{
+    XApplication* app = g_xapp;
+    if (!app || effect < 0 || effect >= 31) return;
+    if (enable) app->m_effectEnabled |= (1 << effect);
+    else app->m_effectEnabled &= ~(1 << effect);
+}
+
+void XApplication_closeAllWindows(void)
+{
+    XApplication* app = g_xapp;
+    size_t n;
+    size_t i;
+    if (!app || !app->m_topLevelWidgets) return;
+#if XWIDGET_ON
+    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    for (i = 0; i < n; ++i) {
+        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*);
+        if (w) XWidget_close(w);
+    }
+#else
+    (void)n;
+#endif
+}
+
+void XApplication_aboutQt(void)
+{
+    /* 无 Qt 对话框实现：空操作（文档说明）。 */
+}
+
+const XString* XApplication_styleSheet(void)
+{
+    XApplication* app = g_xapp;
+    return (app && app->m_styleSheet) ? app->m_styleSheet : NULL;
+}
+
+const char* XApplication_styleSheet_2(void)
+{
+    XApplication* app = g_xapp;
+    return (app && app->m_styleSheet) ? XString_toUtf8(app->m_styleSheet) : "";
+}
+
+void XApplication_setStyleSheet(const XString* css)
+{
+    XApplication* app = g_xapp;
+    const char* utf8;
+    if (!app) return;
+    if (!app->m_styleSheet) app->m_styleSheet = XString_create();
+    if (!app->m_styleSheet) return;
+    if (css)
+        XString_assign(app->m_styleSheet, css);
+    else
+        XString_assign_utf8(app->m_styleSheet, "");
+    utf8 = XString_toUtf8(app->m_styleSheet);
+#if XSTYLE_ON
+    XStyle_installStyleSheet(utf8 ? utf8 : "");
+#else
+    (void)utf8;
+#endif
+}
+
+void XApplication_setStyleSheet_2(const char* css)
+{
+    XApplication* app = g_xapp;
+    XString* tmp = NULL;
+    if (!app) return;
+    if (css) {
+        tmp = XString_create_utf8(css);
+        if (!tmp) return;
+    }
+    XApplication_setStyleSheet(tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+bool XApplication_autoSipEnabled(void)
+{
+    XApplication* app = g_xapp;
+    return app ? app->m_autoSipEnabled : false;
+}
+
+void XApplication_setAutoSipEnabled(bool enabled)
+{
+    XApplication* app = g_xapp;
+    if (app) app->m_autoSipEnabled = enabled;
 }
 
 #endif /* XAPPLICATION_ON && XGUIAPPLICATION_ON */

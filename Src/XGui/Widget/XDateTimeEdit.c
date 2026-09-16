@@ -198,6 +198,9 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     /* 以当前时间刷新编辑框文本（无信号）。 */
     (void)now;
     xdt_refreshText(self);
+
+    self->m_calendarPopup = true;
+    self->m_timeSpec = 0;
 }
 
 XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
@@ -371,34 +374,42 @@ void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
     return (void*)(size_t)XDateTimeEdit_timeChanged_signal;
 }
 
-void XDateTimeEdit_clear(XDateTimeEdit* self)
-{ (void)self; }
-void XDateTimeEdit_clearMaximumDate(XDateTimeEdit* self)
-{ (void)self; }
-void XDateTimeEdit_clearMaximumTime(XDateTimeEdit* self)
-{ (void)self; }
-void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self)
-{ XDateTimeEdit_clearMaximumDate(self); XDateTimeEdit_clearMaximumTime(self); }
-void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self)
-{ (void)self; }
-void XDateTimeEdit_clearMinimumTime(XDateTimeEdit* self)
-{ (void)self; }
-void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self)
-{ XDateTimeEdit_clearMinimumDate(self); XDateTimeEdit_clearMinimumTime(self); }
-bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self) { (void)self; return false; }
-void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup) { (void)self; (void)popup; }
-void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec) { (void)self; (void)spec; }
-int XDateTimeEdit_timeSpec(const XDateTimeEdit* self) { (void)self; return 0; }
-void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index) { (void)self; (void)index; }
-int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self) { (void)self; return 0; }
-void XDateTimeEdit_setDateRange(XDateTimeEdit* self, const XDate* min, const XDate* max)
-{ (void)self; }
-void XDateTimeEdit_setTimeRange(XDateTimeEdit* self, const XTime* min, const XTime* max)
-{ (void)self; }
-void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self, const XDateTime* min, const XDateTime* max)
-{ (void)self; }
-void XDateTimeEdit_setDisplayFormat_2(XDateTimeEdit* self, const char* fmt)
-{ (void)self; }
-XTime XDateTimeEdit_minimumTime(const XDateTimeEdit* self)
-{ XTime t; XMemset(&t,0,sizeof(t)); return t; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ==================== Task 2.5：日历弹出/时区/分段 ==================== */
+
+void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup)
+{ if (self) self->m_calendarPopup = popup; }
+bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self)
+{ return self ? self->m_calendarPopup : true; }
+
+void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec)
+{ if (self) self->m_timeSpec = spec; }
+int XDateTimeEdit_timeSpec(const XDateTimeEdit* self)
+{ return self ? self->m_timeSpec : 0; }
+
+void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index)
+{
+    if (self && index >= 0) {
+        self->m_currentSection = index;
+        XWidget_update((XWidget*)self);
+    }
+}
+
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */

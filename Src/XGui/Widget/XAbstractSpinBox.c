@@ -824,29 +824,29 @@ void* XAbstractSpinBox_editingFinished_signal(XAbstractSpinBox* self)
     return (void*)(size_t)XAbstractSpinBox_editingFinished_signal;
 }
 
-void XAbstractSpinBox_clear_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_isSelected_2(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setKeyboardStep_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_stepUp_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_stepDown_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_selectAll_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_interpretText_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_isAccelerated_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setAccelerated_3(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setReadOnly_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_isReadOnly_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setSpecialValueText_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_specialValueText_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setWrapping_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_wrapping_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setAlignment_5(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_alignment_5(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setButtonSymbols_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_buttonSymbols_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setCorrectionMode_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_correctionMode_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setFrame_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_hasFrame_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_setKeyboardTracking_4(XAbstractSpinBox* self) { (void)self; }
-void XAbstractSpinBox_keyboardTracking_4(XAbstractSpinBox* self) { (void)self; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON */
