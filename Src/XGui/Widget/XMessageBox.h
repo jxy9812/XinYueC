@@ -85,7 +85,13 @@ XCLASS_DEFINE_EXTEND_END(XMessageBox, XDialog)
 
 typedef struct XMessageBox
 {
-    XWidget m_base;              /**< 基类成员；必须是第一个。 */
+    XDialog m_base;              /**< 基类成员；必须是第一个；XMessageBox 继承
+                                  *   XDialog（与 class_init 的 INHERIT_XCLASS、
+                                  *   init/deinit 的父类调用保持一致）。此前误写为
+                                  *   XWidget，x86 下 XDialog 尾部的 m_result/
+                                  *   m_modal/m_inExec/m_sizeGripEnabled 八字节会
+                                  *   按别名覆盖 m_textLabel 与 m_buttonBox 低
+                                  *   字节，accept/done 后按钮盒变野指针。 */
     XLabel* m_textLabel;         /**< 消息文本标签（拥有）。 */
 #if XDIALOGBUTTONBOX_ON
     XDialogButtonBox* m_buttonBox; /**< 按钮盒（拥有）。 */

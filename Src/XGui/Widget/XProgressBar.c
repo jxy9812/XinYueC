@@ -265,6 +265,9 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
     windowText  = xprogressbar_color(self, XPaletteColorRole_WindowText);
     bw = r.width;
     bh = r.height;
+    /* 风格分支与非风格分支都依赖 range 计算百分比；必须在两个分支之前
+       赋值，否则 /RTC1 下经风格绘制首帧即触发未初始化使用快速失败。 */
+    range = self->m_max - self->m_min;
 
 #if XSTYLE_ON
     if (XStyle_defaultStyle() != NULL) {
@@ -327,7 +330,6 @@ void XProgressBar_drawControl(const XProgressBar* self, XPainter* painter)
     }
 
     /* 2) 进度块（内缩 1px，Highlight 色）。 */
-    range = self->m_max - self->m_min;
     filled = (range > 0)
         ? ((int64_t)(self->m_value - self->m_min) * 100 + range / 2) / range
         : 0;

@@ -60,6 +60,13 @@ const char* XSystem_platformEnvironment(const char* name);
  */
 bool XSystem_platformHasEnvironment(const char* name);
 
+/**
+ * @brief 调用当前平台的进程标识读取实现。
+ * @return 当前进程的 PID；平台无进程概念时返回 0。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用。
+ */
+int64_t XSystem_platformPid(void);
+
 #ifdef __cplusplus
 }
 #endif

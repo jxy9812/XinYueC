@@ -109,4 +109,9 @@ bool XSystem_platformHasEnvironment(const char* name)
     return GetEnvironmentVariableA(name, NULL, 0) != 0;
 }
 
+int64_t XSystem_platformPid(void)
+{
+    return (int64_t)GetCurrentProcessId();
+}
+
 #endif /* defined(_WIN32) */

@@ -16,6 +16,7 @@
 #include "XTimer.h"
 #include "XMultiPool.h"
 #include "XAbstractNativeEventFilter.h"
+#include "XSystem.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -257,11 +258,7 @@ const XString* XCoreApplication_applicationFilePath(void)
 
 int64_t XCoreApplication_applicationPid(void)
 {
-#ifdef _WIN32
-    return (int64_t)GetCurrentProcessId();
-#else
-    return (int64_t)getpid();
-#endif
+    return XSystem_pid();
 }
 
 /* ==================== 事件循环控制 ==================== */
