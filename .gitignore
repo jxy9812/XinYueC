@@ -393,3 +393,4 @@ XCTemplate.zip
 
 # TinyUSB 下载缓存（源码已解压到 Library/tinyusb/src/）
 Library/tinyusb/*.zip
+.tmpdbg/

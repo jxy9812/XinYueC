@@ -320,12 +320,22 @@ PC 的软件光栅、X11
   富文本子集边界不做。
 - **XDateTimeEdit 分段承载（2026-09-17 Phase 3.1）**：currentSectionIndex
   与 currentSection 共用同一字段（分段序号/分段码不分），宏别名已注明。
+- **XHeaderView 继承链（2026-09-17 审计登记）**：XHeaderView → XWidget，
+  Qt 为 QHeaderView → QAbstractItemView 派生；因 XGui 视图基类
+  XAbstractItemView 以行/列平铺模型承载、表头仅需段尺寸/隐藏状态，
+  改派生收益低且牵动 XTableWidget 集成，暂登记为偏差；改造列入
+  视图族 P3 深化评估（14.76/14.79）。
 
 ## 12. 约束（沿用项目约定）
 
 - 头文件详细中文注释；风格严格遵守
   `代码风格，类的创建，虚函数的重载注意，api命名风格和注意事项.md`；
 - 纯 C99，**不引入任何后台/平台 API**，嵌入式可用；
+- **（2026-09-17 用户明令）原则上 `Src/` 目录下的代码不允许直接调用平台
+  API**：平台调用（X11/Win32/POSIX/DBus/GL/Vulkan/fontconfig 等）只允许
+  出现在 `Drive/` 平台适配层，Src 侧一律经由公共抽象层（如
+  XPlatformNativeWindow/XPlatformBackingStore 等）间接到达；新增代码违者
+  打回，存量违规按审计清单分批收敛；
 - 布局开关裁剪语义：关闭开关后公共 API 硬裁剪（头文件保护壳保留，引用
   触发“类型未声明”），.c 整段不编译；
 - 提交前 `git diff --cached --check`；不 push（除非用户明确要求）。
@@ -735,3 +745,160 @@ XProgressBar、XSlider、XScrollBar、XSpinBox、XComboBox、XTabWidget、XStyle
 本计划只记录推荐路线，不表示上述模块已经实现；后续每个模块仍需按现有约定补充配置开关、C99 API、回归测试、裁剪构建验证和 Qt 6.8.3 行为边界说明。
 
 ---
+
+### 14.73 滚动条黑条根因修复：xcs_darker 溢出与语义反转（2026-09-17 第二十八轮）
+
+- **遗留问题 A 关闭**：滚动条演示页交互黑竖条。插桩回读定位：
+  `xcs_darker(0xFFEFEFEF, 105)` 输出 `0xFF0B0B0B`——旧实现
+  `v*factor/100` 对 255 输入得 267 溢出字节（267&0xFF=0x0B），
+  且语义与 Qt 相反（Qt darker(factor) = v*100/factor，factor>100
+  变暗）。修复为 Qt 语义（XCommonStyle.c xcs_darker，factor<=0
+  保护），groove 恢复浅灰渐变（ee/f2），滑块/边框正常。调用点
+  全部为 factor>100 变暗语义，修正安全；XFusionStyle 无此函数。
+- **遗留问题 B 关闭**：悬停瞬间页签文字不可见系 lerp 溢出污染的
+  同源表现，darker/lerp 修复后悬停采样文字笔画正常，无需另改。
+- 回归全绿；检视截图确认滚动条页交互渲染正确。
+
+### 14.74 平台 API 约束落地 + standardIcon 图标生成 + 双库陷阱（2026-09-17 第二十九轮）
+
+- **新约束（用户明令，已入第 12 节）**：原则上 `Src/` 下代码不允许直接调用
+  平台 API，平台调用只允许在 `Drive/` 适配层，Src 侧经公共抽象层间接到达。
+- **全量审计**：DBus/fontconfig/X11 调用全部已在 Drive 层（合规）；唯一
+  违规 `Src/XGui/Graphics/XGpuRenderDriver_vulkan.c(+shaders.h)` 已
+  git mv 至 `Drive/Posix/Graphics/`（vulkan.h 为跨平台 SDK 核心头，文件内
+  无 X11/Win32/POSIX 调用，X11 surface 由 Drive 层创建后句柄传入；
+  CMake GLOB_RECURSE 自动收集，重建零改动）。time.h/errno.h 等 C 标准
+  头不属平台 API。
+- **standardIcon 图标生成（遗留关闭）**：XCommonStyle 实现
+  EXStyle_StandardIcon 虚槽——几何绘制 48x48 透明位图经
+  XImage→XPixmap→XIcon_init_pixmap 产出，覆盖消息框 4、文件夹/文件 4、
+  标题栏按钮 5、对话框圆钮 7、箭头 6、媒体 3 等 29 个 SP 枚举；
+  `XMessageBox_standardIcon` 实测返回有效图标（此前恒 NULL）。
+- **双库陷阱记录**：build/ 为 Debug 配置，实际产物是 `libXinYueCSd.a`；
+  根目录曾有不参与构建的陈旧 `libXinYueCS.a`（9/16 孤儿，误导链路与
+  排查），已删除。今后探针/手工链接一律用 `libXinYueCSd.a`。
+- 回归全绿；`XGui.md` 精简版文档结构稳定。
+
+### 14.75 弹出列表部件化第一批（2026-09-17 心跳 22:20，单线程）
+
+- XComboBox 新增 9 个 API（对标 QComboBox view/model 族）：view/setView
+  （懒创建内置 XListView，安装外部视图取所有权）、model/setModel
+  （懒创建内置 XAbstractItemModel 并随条目同步，setModel 取所有权）、
+  modelColumn/setModelColumn、rootModelIndex/setRootModelIndex
+  （(row,col) 平铺承载，XGui 无 QModelIndex）、validator/setValidator
+  （不透明指针承载，XValidator 体系未建，头文件注明）、
+  inputMethodQuery（简化承载：仅编辑文本类查询，返回新建 XString）。
+- 生命周期：deinit 释放 popupView/model；setView/setModel 断开旧引用
+  后释放旧对象。条目增删改后访问 view/model 时懒同步。
+- 回归新增 6 断言全绿。**下一心跳继续**：Popup 容器承载
+  （参照 XMenu.c:1080 XWindowType_Popup）+ activated 联动选择 +
+  show/hidePopup 切换到部件路径。
+
+#### 14.75 续（22:40 心跳：弹窗承载与联动闭环完成）
+
+- showPopup_base 重写为部件路径：懒建视图设为顶层 Popup 窗口
+  （参照 XMenu，X11 下 override-redirect），mapToGlobal 定位组合框
+  正下方，行高 XCOMBOBOX_ITEM_H、高度 = 可见行数×行高+2；
+  show+raise+flushBackingStore 主动首帧上屏；hidePopup_base 隐藏视图。
+- 内嵌假弹出路径删除（grabMouse 拉高自身、paintEvent 列表覆盖绘制、
+  popupItemAt/g_comboPopupOffset）；自身点击 = 弹出/收起切换。
+- 联动闭环：视图 activated(row) 信号 → 选中条目 + activated/
+  textActivated 信号 + 收起弹窗；回归新增断言（弹出可见 → 发
+  activated(1) → currentIndex==1 且弹窗收起）全绿。
+- demo 实测：弹窗作为独立窗口在组合框下方正确显示（高亮跟随选中）。
+- **遗留（下轮）**：点击弹窗外部自动收起（需 grab 或失焦检测，
+  当前可用再次点击组合框收起替代）。
+
+#### 14.76 视图族 P3 启动：XHeaderView 段管理第一批（23:00 心跳,单线程收尾）
+
+- XHeaderView 新增 16 项（对标 QHeaderView 段族）：hideSection/
+  showSection/isSectionHidden/hiddenSectionCount（新增 bool* 平行
+  隐藏表,setCount/copy/move 全同步）、setSectionsClickable/Movable
+  及 getter、swapSections/moveSection（尺寸与隐藏状态随移）、
+  setSortIndicator（发射 sortIndicatorChanged 信号）/
+  sortIndicatorSection/Order、setSortIndicatorShown/isShown、
+  sectionClicked/sortIndicatorChanged 两信号句柄。
+- 排序方向枚举 XHeaderViewSortOrder（数值对齐 Qt::SortOrder）。
+- 回归新增 10 断言全绿。下一心跳:并发模式起派矩阵(剩余代理任务)。
+
+### 14.77 并发矩阵首跑：四代理并行批次（2026-09-17 23:00 心跳）
+
+- **代理B(树展开族)**:XTreeView 新增 22 项——expand/collapse/isExpanded/
+  setExpanded/expandAll/collapseAll/expandToDepth(@note 平铺模型简化)、
+  双击展开/可展开/装饰/排序/等高开关族、列隐藏/列宽状态数组、
+  expanded/collapsed 信号；copy/move 挂虚表,状态数组随模型行数惰性同步。
+- **代理C(combo 收尾)**:弹窗外部点击自动收起——本地子类
+  XComboPopupView(extends XListView,越界按下/释放吞掉并收起)；
+  XMenu 同款模态抓取(grabMouse+1ms 精确定时器后平台抓取)；
+  itemDelegate/setItemDelegate 不透明承载。遗留关闭。
+- **代理D(样式图标+日历)**:standardIcon case 补足至 **38**（新增
+  Desktop/Computer/Trash/DriveHD/FD/CD/DVD/Net/DirHome 9 个几何图标）；
+  QDateTimeEdit calendarWidget 族(懒创建内置日历+selectedDate 联动
+  setDate+setCalendarWidget 取所有权)；附带修复 deinit 缺 (XClass*)
+  强转。
+- **代理E(只读审计)**:报告归档 docs/xgui-audit/2026-09-17/
+  inheritance-legacy-audit-2300.md。核心结论：83 项继承链对照,
+  硬偏差仅 1 处(XHeaderView→XWidget,Qt 为 QAbstractItemView 派生,
+  待后续批次评估)；死声明 32 个(声明无定义,调用即链接错)列入
+  清理候选；空实现 7 处均为降级桩非清理对象。
+- **审核与合入**：主会话统一构建零错误；补合入断言(树安全操作/
+  列隐藏/根装饰默认、calendarWidget 幂等、standardIcon 非空)；
+  修正空树展开断言语义(0 行树为无操作)；回归全绿。
+
+#### 下轮建议
+
+- XHeaderView 继承链硬偏差评估(→XAbstractItemView 派生改造或
+  登记偏差)；死声明 32 个分批处置(补实现或删声明)；
+  弹出列表部件化收尾核对；视图族 P3 继续(QListView/QTableView 批次)。
+
+### 14.78 并发批次二：死声明清理 + QListView/QTableView 状态族（2026-09-17 23:20 心跳）
+
+- **死声明清理 30/30**：XWidget.h 14 项（saveGeometry/restoreGeometry/
+  windowIcon 族/winId 四族/screen 族/style 族/ensurePolished/actions）、
+  XImage.h 2 项（setPixelFast/markDirty）、XLineEdit.h 3 项（completer
+  族）、XMenu.h 1 项（menuInAction）——审计确认全仓零定义零调用方，
+  删除后不再有"调用即链接错误"的陷阱；相关孤儿横幅一并清理。
+- **XListView 状态族 18 项**：flow/gridSize 双函数/wrapping/viewMode
+  （IconMode 联动 wrapping+flow）/resizeMode/layoutMode/batchSize/
+  itemAlignment/selectionRectVisible/wordWrap/rowHidden（绘制与命中
+  联动跳过隐藏行）；4 个数值对齐枚举；itemAlignment/wordWrap 走
+  drawTextRect 换行路径。
+- **XTableView 状态族 22 项**：gridStyle 枚举（DASH 真实虚线绘制）+
+  showGrid 联动不变式、wordWrap/cornerButton、rowAt/columnAt 几何
+  反查、行/列隐藏族与便捷族、clearSpans(@note 平铺模型)；为此给
+  XTableView 虚表补挂 EXClass_Copy/EXClass_Move（原先未注册）。
+- 附带修复：XListView/XTableView 既有缺包含（XWidget_Protected.h/
+  XStringUtils.h）——隔离编译必报错项。
+- **验证**：回归全绿（新增 QListView/QTableView 状态族断言 12 条）；
+  -DXGUI_ON=0 全裁剪构建通过；demo 冒烟通过。
+
+#### 下轮建议
+
+- XHeaderView 继承硬偏差评估（→XAbstractItemView 派生或登记 11b）；
+- 死声明清理模式扩展到"守卫外声明 20 头"复核；
+- 视图族继续（QTreeView 深化/QTableWidget 便捷族）；
+- 弹出列表部件化核对（分类报告 C 类清零确认）。
+
+### 14.79 并发批次三：表格便捷族 + 菜单栏动作所有权（2026-09-17 23:40 心跳）
+
+- **代理D'(QTableWidget 便捷族 6 项)**:findItems(双输出 int 数组,
+  库侧零分配)、itemAt(表头/滚动偏移感知反查)、sortItems(补声明——
+  实现已存在但头文件一直未声明,不可达公共 API)、selectedIndexes
+  (单选语义收窄注明)、clearSpans(转发基类无操作)、takeItem
+  (所有权移交调用方)。
+- **代理F'(XMenuBar 动作所有权)**:insertAction(借用注入,移动
+  语义)/removeAction(仅摘除不释放);新增 m_actionOwned 平行向量
+  逐项记录拥有/借用,deinit/clear 只销毁拥有项(对齐 Qt 语义);
+  addAction 族已存在,对接进新登记机制。
+- **代理C'(XTreeWidget 便捷族)**:因速率限制未启动,下轮接续
+  (findItems/sortItems/itemAt/visualItemRect/setHeaderLabels)。
+- **审核记录**:合入断言时修正 2 处(枚举名 XTABLEVIEW_GRID_*、
+  setItem 应为 setText 传单元格对象);崩溃栈定位为测试误用非库缺陷。
+- **11b 登记**:XHeaderView 继承链偏差(见上)。
+- **验证**:回归全绿;顺带确认 XTableWidget 渲染正常(表格 tab 走查)。
+
+#### 下轮建议
+
+- 代理C'(XTreeWidget 便捷族)接续;守卫外声明 20 头复核;
+- 视图族 P3 继续(XTableWidget findItems 断言已进回归,扩展到
+  QHeaderView visualIndex 族);分类报告 C 类清零确认。

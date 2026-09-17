@@ -12,6 +12,7 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XLineEdit.h"
+#include "XCalendarWidget.h"
 #include "XGuiConfig.h"
 
 #include "XAlgorithm.h"
@@ -154,9 +155,16 @@ static void VXDateTimeEdit_deinit(XDateTimeEdit* self)
 {
     if (!self) return;
     if (self->m_displayFormat) {
-        XString_delete_base(self->m_displayFormat);
+        XString_delete_base((XClass*)self->m_displayFormat);
         self->m_displayFormat = NULL;
     }
+#if XCALENDARWIDGET_ON
+    /* 释放内置/接管的日历控件（对象由本控件拥有）。 */
+    if (self->m_calendar) {
+        XCalendarWidget_delete_base((XClass*)self->m_calendar);
+        self->m_calendar = NULL;
+    }
+#endif
     XClass_Deinit_Parent(XAbstractSpinBox, (XAbstractSpinBox*)self);
 }
 
@@ -538,6 +546,68 @@ void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup)
 { if (self) self->m_calendarPopup = popup; }
 bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self)
 { return self ? self->m_calendarPopup : true; }
+
+#if XCALENDARWIDGET_ON
+
+/* ==================== calendarWidget 族（对标 QDateTimeEdit::
+ *                     calendarWidget / setCalendarWidget；聚合思路
+ *                     与 QComboBox::view/setView 一致） ==================== */
+
+/** @brief 日历选中变化联动槽：把日历选中日期回填到编辑框（单向同步，
+ *         setDate 不回写日历，故无回环）。 */
+static void xdt_calendarSelectionSlot(XObject* receiver, XVarList* args)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)receiver;
+    XDate d;
+    (void)args;
+    if (!edit || !edit->m_calendar) return;
+    d = XCalendarWidget_selectedDate(edit->m_calendar);
+    XDateTimeEdit_setDate(edit, &d);
+}
+
+XCalendarWidget* XDateTimeEdit_calendarWidget(const XDateTimeEdit* self)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)self;
+    XCalendarWidget* cal;
+    if (!edit) return NULL;
+    if (edit->m_calendar) return edit->m_calendar;
+    /* 懒创建：保持 NULL 父控件（对象由本控件持有，deinit 释放）。 */
+    cal = XCalendarWidget_create(NULL, 0);
+    if (!cal) return NULL;
+    edit->m_calendar = cal;
+    /* 以当前日期初始化日历选中态（不触发编辑框信号）。 */
+    XCalendarWidget_setSelectedDate(cal, &edit->m_dateTime.m_date);
+    /* 连接日历选中信号 → setDate 联动槽。 */
+    XObject_connect_1((XObject*)cal,
+        (size_t)XCalendarWidget_selectionChanged_signal(cal),
+        (XObject*)edit, xdt_calendarSelectionSlot,
+        XConnectionType_Direct);
+    return cal;
+}
+
+void XDateTimeEdit_setCalendarWidget(XDateTimeEdit* self,
+                                     XCalendarWidget* calendar)
+{
+    if (!self || calendar == self->m_calendar) return;
+    /* 取得所有权：先释放旧的内置/接管日历。 */
+    if (self->m_calendar) {
+        XCalendarWidget_delete_base((XClass*)self->m_calendar);
+        self->m_calendar = NULL;
+    }
+    self->m_calendar = calendar;
+    if (calendar) {
+        /* 以外部日历的选中日期回填本控件（触发 dateChanged 等信号）。 */
+        XDate d = XCalendarWidget_selectedDate(calendar);
+        XDateTimeEdit_setDate(self, &d);
+        /* 连接选中信号 → setDate 联动槽。 */
+        XObject_connect_1((XObject*)calendar,
+            (size_t)XCalendarWidget_selectionChanged_signal(calendar),
+            (XObject*)self, xdt_calendarSelectionSlot,
+            XConnectionType_Direct);
+    }
+}
+
+#endif /* XCALENDARWIDGET_ON */
 
 void XDateTimeEdit_setTimeSpec(XDateTimeEdit* self, int spec)
 { if (self) self->m_timeSpec = spec; }

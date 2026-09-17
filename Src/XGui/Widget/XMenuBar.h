@@ -5,12 +5,22 @@
  *             - addMenu(XMenu*)/addMenu(title)：注册菜单并创建关联动作
  *               （动作文本=菜单标题；动作触发时弹出对应菜单）；
  *             - addSeparator/insertSeparator/insertMenu/clear；
+ *             - addAction(text)/addAction_2(utf8)/insertAction/removeAction：
+ *               便捷动作族（对标 QMenuBar::addAction/insertAction/
+ *               removeAction）；
  *             - activeAction/setActiveAction、setDefaultUp/isDefaultUp；
  *             - 信号 triggered(action)/hovered(action)（转发出组内动作）；
  *             - 绘制：横排菜单标题文本（简化实现，无快捷键下划线）；
  *             - cornerWidget/left/right 角落控件占位 API（第一版仅存储）。
  *             菜单栏为顶层窗口/主窗口的组成部分，不拥有 XMenu 对象
  *             （菜单归调用方，与 Qt 相同）。
+ * @note       动作所有权（对标 Qt 父子所有权语义）：由 addMenu/
+ *             addSeparator/addAction/addAction_2/insertMenu/
+ *             insertSeparator 创建的动作归菜单栏所有并随析构销毁；
+ *             insertAction 注入的外部动作仅为借用，菜单栏不取得所有权；
+ *             removeAction 仅把动作从菜单栏摘除、不释放对象，所有权
+ *             归还调用方（与 QWidget::removeAction 一致）。逐项所有权
+ *             由 m_actionOwned 平行标记记录。
  * @note       模块总开关 XMENUBAR_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XMENU_ON、XACTION_ON。
  * @author     XinYueC 团队
@@ -41,8 +51,14 @@ XCLASS_DEFINE_EXTEND_END(XMenuBar, XWidget)
 typedef struct XMenuBar
 {
     XWidget m_base;         /**< 基类成员；必须是第一个。 */
-    XVector* m_actions;     /**< 菜单栏动作数组（XAction*，拥有）。 */
+    XVector* m_actions;     /**< 菜单栏动作数组（XAction*）；逐项所有权由
+                                 m_actionOwned 标记（addAction 系创建的为
+                                 拥有，insertAction 注入的为借用）。 */
     XVector* m_menus;       /**< 与动作顺序关联的菜单（XMenu*，借用）。 */
+    XVector* m_actionOwned; /**< 与 m_actions 平行的所有权标记（bool）：
+                                 true=菜单栏创建并拥有（析构/clear 时销毁），
+                                 false=借用（insertAction 注入，析构/clear
+                                 时仅摘除）。 */
     XAction* m_activeAction;/**< 当前激活动作（借用）。 */
     bool m_defaultUp;       /**< 弹出菜单默认向上（默认 false）。 */
     bool m_nativeMenuBar;   /**< 原生菜单栏（对标 isNativeMenuBar）。 */
@@ -103,6 +119,37 @@ XAction* XMenuBar_addAction_2(XMenuBar* self, const char* utf8Text);
 XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu);
 /** @brief 在 before 动作之前插入分隔条（对标 insertSeparator）。 */
 XAction* XMenuBar_insertSeparator(XMenuBar* self, XAction* before);
+/**
+ * @brief      在 before 动作之前插入既有动作（对标 QMenuBar::insertAction，
+ *             即 QWidget::insertAction）。
+ * @details    借用语义：菜单栏仅保存动作指针，不取得所有权（与 Qt 一致，
+ *             除非动作以菜单栏为父对象，否则由调用方负责释放）；本函数
+ *             创建的挂接关系随 removeAction 摘除。若 action 已在菜单栏中，
+ *             先摘除再插入（移动语义，对标 Qt 的 contains+removeAction）。
+ *             before 为 NULL 或不在菜单栏中时等价于追加到末尾。不关联
+ *             子菜单（m_menus 不新增对应项）。
+ * @param      self 目标菜单栏。
+ * @param      before 参照动作借用指针；可为 NULL（等价追加）。
+ * @param      action 待插入的动作借用指针；不可为 NULL。
+ * @return     返回 action 本身便于链式使用；参数无效返回 NULL。
+ */
+XAction* XMenuBar_insertAction(XMenuBar* self, XAction* before,
+                               XAction* action);
+/**
+ * @brief      从菜单栏摘除动作但不释放（对标 QMenuBar::removeAction，即
+ *             QWidget::removeAction）。
+ * @details    仅解除菜单栏对该动作的持有关系（从 m_actions/m_menus/
+ *             m_actionOwned 同步移除，若为当前激活动作则一并清空），
+ *             不调用任何释放接口；所有权归还调用方：
+ *             - addAction/addMenu 等创建的动作：移除后归调用方负责
+ *               （此后菜单栏不再销毁它，也不再弹出其关联菜单）；
+ *             - insertAction 注入的动作：移除即恢复原有借用关系。
+ *             action 不在菜单栏中时为无操作。
+ * @param      self 目标菜单栏。
+ * @param      action 待摘除的动作；可为 NULL（无操作）。
+ * @return     无返回值。
+ */
+void XMenuBar_removeAction(XMenuBar* self, XAction* action);
 /** @brief 清空全部动作（对标 clear；不销毁外部菜单对象）。 */
 /**
  * @brief      清空内容（对标 Qt 同名槽）。

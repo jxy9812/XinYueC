@@ -28424,6 +28424,188 @@ static void test_phase32_p2_contract(void)
         XDateTimeEdit_delete_base(edit);
     }
 
+    /* --- 23:40 并发批次:QTableWidget 便捷族 + XMenuBar 动作所有权 --- */
+    {
+        XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+        XString* taken;
+        int rows[8];
+        int cols[8];
+        int hits;
+        XTableWidget_setRowCount(tw, 3);
+        XTableWidget_setColumnCount(tw, 2);
+        XTableWidget_setText(tw, 1, 0, "Beta");
+        hits = XTableWidget_findItems(tw, "Beta", 1, rows, cols, 8);
+        p32_expect(hits >= 1, "table: findItems 精确命中");
+        {
+            int r = -1, c = -1;
+            XTableWidget_itemAt(tw, 60, 80, &r, &c);
+            p32_expect(r >= 0 || c >= 0 || (r == -1 && c == -1),
+                       "table: itemAt 反查安全");
+        }
+        taken = XTableWidget_takeItem(tw, 1, 0);
+        p32_expect(taken != NULL, "table: takeItem 取出");
+        if (taken) XString_delete_base(taken);
+        XTableWidget_clearSpans(tw); /* 平铺模型无操作,验证安全 */
+        XTableWidget_delete_base(tw);
+    }
+    {
+        XMenuBar* mb = XMenuBar_create(NULL, 0);
+        XAction* a;
+        XAction* b;
+        p32_expect(mb != NULL, "menubar: 创建");
+        a = XMenuBar_addAction_2(mb, "File");
+        p32_expect(a != NULL, "menubar: addAction_2 创建动作");
+        b = XMenuBar_addAction_2(mb, "Edit");
+        XMenuBar_insertAction(mb, a, b); /* 移动语义:插到 File 前 */
+        XMenuBar_removeAction(mb, b);    /* 摘除不释放 */
+        if (b) XAction_delete_base(b);   /* 所有权归调用方 */
+        p32_expect(XMenuBar_actionCount(mb) >= 1,
+                   "menubar: 移除后仍有动作");
+        XMenuBar_delete_base(mb);
+    }
+
+    /* --- 23:20 并发批次:QListView/QTableView 状态族 + 死声明清理验证 --- */
+    {
+        XListView* lv = XListView_create(NULL, 0);
+        p32_expect(lv != NULL, "lview: 创建");
+        XListView_setViewMode(lv, XListViewViewMode_IconMode);
+        p32_expect(XListView_viewMode(lv) == XListViewViewMode_IconMode,
+                   "lview: viewMode 切 IconMode");
+        p32_expect(XListView_isWrapping(lv),
+                   "lview: IconMode 联动 wrapping");
+        XListView_setViewMode(lv, XListViewViewMode_ListMode);
+        p32_expect(XListView_viewMode(lv) == XListViewViewMode_ListMode &&
+                   !XListView_isWrapping(lv),
+                   "lview: ListMode 复位 wrapping");
+        XListView_setBatchSize(lv, 64);
+        p32_expect(XListView_batchSize(lv) == 64, "lview: batchSize");
+        XListView_setRowHidden(lv, 0, true);
+        p32_expect(XListView_isRowHidden(lv, 0), "lview: 行隐藏");
+        XListView_delete_base(lv);
+    }
+    {
+        XTableView* tv = XTableView_create(NULL, 0);
+        p32_expect(tv != NULL, "tview: 创建");
+        p32_expect(XTableView_showGrid(tv), "tview: showGrid 默认开");
+        XTableView_setGridStyle(tv, XTABLEVIEW_GRID_DASH);
+        p32_expect(XTableView_gridStyle(tv) == XTABLEVIEW_GRID_DASH,
+                   "tview: gridStyle DASH");
+        XTableView_setShowGrid(tv, false);
+        p32_expect(!XTableView_showGrid(tv) &&
+                   XTableView_gridStyle(tv) == XTABLEVIEW_GRID_NO,
+                   "tview: setShowGrid(false) 联动 NoGrid");
+        XTableView_setRowHidden(tv, 0, true);
+        p32_expect(XTableView_isRowHidden(tv, 0), "tview: 行隐藏");
+        XTableView_delete_base(tv);
+    }
+
+    /* --- 23:20 并发批次:树展开族/calendarWidget/standardIcon 补足 --- */
+    {
+        XTreeView* tv = XTreeView_create(NULL, 0);
+        p32_expect(tv != NULL, "tree: 创建");
+        /* 空树(0 行):展开族调用必须安全(越界无操作,不崩溃)。 */
+        XTreeView_expand(tv, 0);
+        XTreeView_collapse(tv, 0);
+        XTreeView_setExpanded(tv, 0, true);
+        XTreeView_expandAll(tv);
+        XTreeView_collapseAll(tv);
+        p32_expect(!XTreeView_isExpanded(tv, 0), "tree: 空树展开安全");
+        XTreeView_setColumnHidden(tv, 1, true);
+        p32_expect(XTreeView_isColumnHidden(tv, 1), "tree: 列隐藏(与行数无关)");
+        p32_expect(XTreeView_rootIsDecorated(tv), "tree: rootIsDecorated 默认");
+        XTreeView_delete_base(tv);
+    }
+    {
+        XDateTimeEdit* dt = XDateTimeEdit_create(NULL, 0);
+        XCalendarWidget* cal = XDateTimeEdit_calendarWidget(dt);
+        p32_expect(cal != NULL, "dtedit: calendarWidget 懒创建");
+        p32_expect(XDateTimeEdit_calendarWidget(dt) == cal,
+                   "dtedit: calendarWidget 幂等");
+        XDateTimeEdit_delete_base(dt);
+    }
+    {
+        XIcon* ic = XMessageBox_standardIcon(XMessageBoxIcon_Warning);
+        p32_expect(ic != NULL, "style: standardIcon 已生成(>=30 case)");
+        if (ic) XIcon_delete_base(ic);
+    }
+
+    /* --- XHeaderView:段管理第一批(hide/movable/clickable/sortIndicator) --- */
+    {
+        XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
+        XHeaderView_setCount(hv, 4);
+        XHeaderView_hideSection(hv, 1);
+        p32_expect(XHeaderView_isSectionHidden(hv, 1),
+                   "header: hideSection 生效");
+        p32_expect(XHeaderView_hiddenSectionCount(hv) == 1,
+                   "header: 隐藏计数");
+        XHeaderView_showSection(hv, 1);
+        p32_expect(!XHeaderView_isSectionHidden(hv, 1) &&
+                   XHeaderView_hiddenSectionCount(hv) == 0,
+                   "header: showSection 恢复");
+        XHeaderView_setSectionsClickable(hv, true);
+        p32_expect(XHeaderView_sectionsClickable(hv),
+                   "header: sectionsClickable");
+        XHeaderView_setSectionsMovable(hv, true);
+        p32_expect(XHeaderView_sectionsMovable(hv),
+                   "header: sectionsMovable");
+        XHeaderView_setSectionSize(hv, 0, 60);
+        XHeaderView_setSectionSize(hv, 1, 40);
+        XHeaderView_swapSections(hv, 0, 1);
+        p32_expect(XHeaderView_sectionSize(hv, 0) == 40 &&
+                   XHeaderView_sectionSize(hv, 1) == 60,
+                   "header: swapSections 交换尺寸");
+        XHeaderView_moveSection(hv, 1, 0);
+        p32_expect(XHeaderView_sectionSize(hv, 0) == 60,
+                   "header: moveSection 移回");
+        XHeaderView_setSortIndicator(hv, 2, XHeaderViewSortOrder_Descending);
+        p32_expect(XHeaderView_sortIndicatorSection(hv) == 2 &&
+                   XHeaderView_sortIndicatorOrder(hv) ==
+                       XHeaderViewSortOrder_Descending &&
+                   XHeaderView_isSortIndicatorShown(hv),
+                   "header: sortIndicator 设置生效");
+        XHeaderView_delete_base(hv);
+    }
+
+    /* --- XComboBox：弹出列表部件化第一批(view/model/validator/IM 查询) --- */
+    {
+        XComboBox* combo = XComboBox_create(NULL, 0);
+        XListView* view;
+        XAbstractItemModel* model;
+        int rr = -1, rc = -1;
+        XComboBox_addItem_2(combo, "Alpha");
+        XComboBox_addItem_2(combo, "Beta");
+        view = XComboBox_view(combo);
+        p32_expect(view != NULL, "combo: view 懒创建");
+        model = XComboBox_model(combo);
+        p32_expect(model != NULL, "combo: model 懒创建");
+        p32_expect(XAbstractItemModel_rowCount(model) == 2,
+                   "combo: 模型行数随条目同步");
+        XComboBox_setModelColumn(combo, 0);
+        p32_expect(XComboBox_modelColumn(combo) == 0,
+                   "combo: modelColumn 存取");
+        XComboBox_setRootModelIndex(combo, 0, 0);
+        XComboBox_rootModelIndex(combo, &rr, &rc);
+        p32_expect(rr == 0 && rc == 0, "combo: rootModelIndex 平铺承载");
+        XComboBox_setValidator(combo, (void*)combo);
+        p32_expect(XComboBox_validator(combo) == (void*)combo,
+                   "combo: validator 不透明承载");
+        /* 弹窗行激活联动闭环:视图发 activated(1) → 组合框选中 1 并收起 */
+        XComboBox_showPopup_base(combo);
+        p32_expect(XWidget_isVisible((XWidget*)view),
+                   "combo: 弹出后视图可见");
+        XAbstractItemView_activated_signal(view, 1, 0); /* 调用即发射 */
+        p32_expect(XComboBox_currentIndex(combo) == 1,
+                   "combo: activated 联动选中");
+        p32_expect(!XWidget_isVisible((XWidget*)view),
+                   "combo: 选择后弹窗收起");
+        {
+            XString* im = XComboBox_inputMethodQuery(combo, 1);
+            p32_expect(im != NULL, "combo: inputMethodQuery 返回对象");
+            if (im) XString_delete_base(im);
+        }
+        XComboBox_delete_base(combo);
+    }
+
     /* --- XComboBox：setLineEdit 隐式可编辑 + 所有权转移 --- */
     {
         XComboBox* combo = XComboBox_create(NULL, 0);

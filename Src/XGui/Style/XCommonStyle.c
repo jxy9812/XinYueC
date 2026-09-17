@@ -6,6 +6,9 @@
 #include "XPainter.h"
 #include "XPalette.h"
 #include "XAlignment.h"
+#include "XImage.h"
+#include "XPixmap.h"
+#include "XIcon.h"
 #include <math.h>
 
 #if XSTYLE_ON
@@ -20,6 +23,9 @@ static void xcs_drawComboBox(XStyle* self, const XStyleOption* option,
                              XPainter* painter, const XWidget* widget);
 static void xcs_drawArrow(XStyle* self, const XStyleOption* option,
                           XPainter* painter, int dir);
+static XIcon* xcs_standardIcon(XStyle* self, int sp,
+                               const XStyleOption* option,
+                               const XWidget* widget);
 
 /* 调色板角色取色（option 内嵌调色板）。 */
 
@@ -42,13 +48,18 @@ static uint32_t xcs_lighter(uint32_t c, int factor)
            ((uint32_t)g << 8) | (uint32_t)b;
 }
 
-/** @brief 变暗（对标 QColor::darker(factor)：每通道 v*f/100）。 */
+/** @brief 变暗（对标 QColor::darker(factor)：每通道 v*100/factor，
+ *         factor > 100 时变暗；旧实现 v*f/100 对 255 输入会溢出字节） */
 static uint32_t xcs_darker(uint32_t c, int factor)
 {
-    int r = ((c >> 16) & 0xFF) * factor / 100;
-    int g = ((c >> 8) & 0xFF) * factor / 100;
-    int b = (c & 0xFF) * factor / 100;
+    int r = ((c >> 16) & 0xFF);
+    int g = ((c >> 8) & 0xFF);
+    int b = (c & 0xFF);
     int a = (c >> 24) & 0xFF;
+    if (factor <= 0) return c;
+    r = r * 100 / factor;
+    g = g * 100 / factor;
+    b = b * 100 / factor;
     return ((uint32_t)a << 24) | ((uint32_t)r << 16) |
            ((uint32_t)g << 8) | (uint32_t)b;
 }
@@ -1586,15 +1597,6 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
     hover = (option->m_state & XStyleState_MouseOver) != 0;
     buttonC    = xcs_color(option, XPaletteColorRole_Button);
     windowC    = xcs_color(option, XPaletteColorRole_Window);
-    {
-        static int sbDbg = 0;
-        if (sbDbg < 3) {
-            ++sbDbg;
-            fprintf(stderr, "[sbdbg] buttonC=%08x windowC=%08x horiz=%d rect=%d,%d %dx%d\n",
-                    buttonC, windowC, horizontal, rect.x, rect.y,
-                    rect.width, rect.height);
-        }
-    }
     if (buttonC == 0) buttonC = 0xFFCFCFCFu;
     if (windowC == 0) windowC = 0xFFCFCFCFu;
     buttonColor = xcs_buttonColor(buttonC);
@@ -3444,6 +3446,438 @@ static int VXCommonStyle_hitTestComplexControl(XStyle* self, int cc,
     return sc;
 }
 
+/* ==================== 标准图标生成(对标 QCommonStyle::standardIcon) ==================== */
+
+/** @brief 标准图标位图边长(px,正方形)。 */
+#define XCSI_ICON_SIZE 48
+
+/** @brief 图标绘制回调(原点坐标系 0..size)。 */
+typedef void (*XcsiIconPainter)(XPainter* painter, int size);
+
+/** @brief 实心圆(扫描线逐行填充)。 */
+static void xcsi_fillCircle(XPainter* painter, int cx, int cy, int r,
+                            uint32_t color)
+{
+    int dy;
+    for (dy = -r; dy <= r; ++dy) {
+        int dx = (int)(sqrt((double)r * r - (double)dy * dy) + 0.5);
+        XRect row;
+        XRect_init(&row, cx - dx, cy + dy, dx * 2, 1);
+        XPainter_fillRect(painter, &row, color);
+    }
+}
+
+/** @brief 粗线段(纵向堆叠 width 条 1px 线近似)。 */
+static void xcsi_line(XPainter* painter, int x1, int y1, int x2, int y2,
+                      int width, uint32_t color)
+{
+    int i;
+    int lo = -(width - 1) / 2;
+    for (i = lo; i < lo + width; ++i)
+        XPainter_drawLine(painter, x1, y1 + i, x2, y2 + i);
+}
+
+/** @brief 实心三角形。 */
+static void xcsi_fillTri(XPainter* painter, int x1, int y1, int x2, int y2,
+                         int x3, int y3, uint32_t color)
+{
+    XPoint pts[3];
+    pts[0].x = (short)x1; pts[0].y = (short)y1;
+    pts[1].x = (short)x2; pts[1].y = (short)y2;
+    pts[2].x = (short)x3; pts[2].y = (short)y3;
+    XPainter_setBrush(painter, color);
+    XPainter_setPen_2(painter, XPainterPenStyle_NoPen);
+    XPainter_drawPolygon(painter, pts, 3, XPainterFillRule_OddEven);
+}
+
+/** @brief 实心矩形。 */
+static void xcsi_rect(XPainter* painter, int x, int y, int w, int h,
+                      uint32_t color)
+{
+    XRect r;
+    XRect_init(&r, x, y, w, h);
+    XPainter_fillRect(painter, &r, color);
+}
+
+/** @brief 空心矩形(1px 边框)。 */
+static void xcsi_frame(XPainter* painter, int x, int y, int w, int h,
+                       uint32_t color)
+{
+    XPainter_setPen(painter, color);
+    XPainter_drawLine(painter, x, y, x + w - 1, y);
+    XPainter_drawLine(painter, x, y + h - 1, x + w - 1, y + h - 1);
+    XPainter_drawLine(painter, x, y, x, y + h - 1);
+    XPainter_drawLine(painter, x + w - 1, y, x + w - 1, y + h - 1);
+}
+
+/** @brief 圆底消息图标:实心圆 + 居中字形(几何线画,不依赖字体)。 */
+static void xcsi_circleGlyph(XPainter* painter, uint32_t bg, uint32_t fg,
+                             char glyph)
+{
+    int s = XCSI_ICON_SIZE;
+    int cx = s / 2, cy = s / 2;
+    xcsi_fillCircle(painter, cx, cy, s * 5 / 12, bg);
+    switch (glyph) {
+    case 'i':
+        xcsi_rect(painter, cx - 2, (int)(s * 0.40), 4, (int)(s * 0.32), fg);
+        xcsi_rect(painter, cx - 2, (int)(s * 0.22), 4, 4, fg);
+        break;
+    case '!':
+        xcsi_rect(painter, cx - 2, (int)(s * 0.28), 4, (int)(s * 0.34), fg);
+        xcsi_rect(painter, cx - 2, (int)(s * 0.70), 4, 4, fg);
+        break;
+    case 'x':
+        xcsi_line(painter, (int)(s * 0.32), (int)(s * 0.32),
+                  (int)(s * 0.68), (int)(s * 0.68), 4, fg);
+        xcsi_line(painter, (int)(s * 0.68), (int)(s * 0.32),
+                  (int)(s * 0.32), (int)(s * 0.68), 4, fg);
+        break;
+    case 'v':
+        xcsi_line(painter, (int)(s * 0.28), (int)(s * 0.52),
+                  (int)(s * 0.44), (int)(s * 0.66), 5, fg);
+        xcsi_line(painter, (int)(s * 0.44), (int)(s * 0.66),
+                  (int)(s * 0.72), (int)(s * 0.32), 5, fg);
+        break;
+    default:
+        break;
+    }
+}
+
+/* ---- 各标准图标绘制回调 ---- */
+
+static void xcsi_p_msgInfo(XPainter* painter, int size)
+{ (void)size; xcsi_circleGlyph(painter, 0xFF2A82DAu, 0xFFFFFFFFu, 'i'); }
+
+static void xcsi_p_msgWarning(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_fillTri(painter, 24, 5, 3, 41, 45, 41, 0xFFFFC845u);
+    xcsi_rect(painter, 22, 18, 4, 12, 0xFF303030u);
+    xcsi_rect(painter, 22, 33, 4, 4, 0xFF303030u);
+}
+
+static void xcsi_p_msgCritical(XPainter* painter, int size)
+{ (void)size; xcsi_circleGlyph(painter, 0xFFCC2020u, 0xFFFFFFFFu, 'x'); }
+
+static void xcsi_p_msgQuestion(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_circleGlyph(painter, 0xFF2A82DAu, 0xFFFFFFFFu, 0);
+    XPainter_setPen(painter, 0xFFFFFFFFu);
+    XPainter_drawText(painter, 19, 32, "?", 0xFFFFFFFFu);
+}
+
+static void xcsi_p_dirClosed(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 6, 14, 24, 6, 0xFFFFD870u);   /* 顶盖 */
+    xcsi_rect(painter, 6, 19, 36, 20, 0xFFF0B840u);  /* 主体 */
+    xcsi_rect(painter, 6, 19, 36, 2, 0xFFFFE9A8u);   /* 高光边 */
+}
+
+static void xcsi_p_dirOpen(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 6, 12, 24, 6, 0xFFFFD870u);
+    xcsi_rect(painter, 6, 17, 36, 8, 0xFFF0B840u);
+    xcsi_fillTri(painter, 12, 25, 44, 25, 38, 41, 0xFFFFC845u);
+    xcsi_fillTri(painter, 12, 25, 38, 41, 12, 41, 0xFFF0B840u);
+}
+
+static void xcsi_p_file(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 12, 6, 22, 34, 0xFFF8F8F8u);
+    xcsi_frame(painter, 12, 6, 22, 34, 0xFF9A9A9Au);
+    xcsi_fillTri(painter, 26, 6, 34, 14, 26, 14, 0xFFC8C8C8u); /* 折角 */
+    xcsi_rect(painter, 15, 18, 16, 2, 0xFFB0B0B0u);
+    xcsi_rect(painter, 15, 23, 16, 2, 0xFFB0B0B0u);
+    xcsi_rect(painter, 15, 28, 12, 2, 0xFFB0B0B0u);
+}
+
+static void xcsi_p_titleMin(XPainter* painter, int size)
+{ (void)size; xcsi_line(painter, 12, 34, 36, 34, 4, 0xFF404040u); }
+
+static void xcsi_p_titleMax(XPainter* painter, int size)
+{ (void)size; xcsi_frame(painter, 12, 12, 24, 24, 0xFF404040u); }
+
+static void xcsi_p_titleClose(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_line(painter, 14, 14, 34, 34, 4, 0xFF404040u);
+    xcsi_line(painter, 34, 14, 14, 34, 4, 0xFF404040u);
+}
+
+static void xcsi_p_titleNormal(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_frame(painter, 10, 16, 22, 18, 0xFF404040u);
+    xcsi_frame(painter, 16, 10, 22, 18, 0xFF404040u);
+}
+
+static void xcsi_p_titleMenu(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_line(painter, 12, 16, 36, 16, 3, 0xFF404040u);
+    xcsi_line(painter, 12, 24, 36, 24, 3, 0xFF404040u);
+    xcsi_line(painter, 12, 32, 36, 32, 3, 0xFF404040u);
+}
+
+static void xcsi_p_arrow(XPainter* painter, int size, int dir)
+{
+    uint32_t c = 0xFF404040u;
+    switch (dir) {
+    case 0: xcsi_fillTri(painter, 24, 8, 8, 28, 40, 28, c); break;    /* 上 */
+    case 1: xcsi_fillTri(painter, 24, 40, 8, 20, 40, 20, c); break;   /* 下 */
+    case 2: xcsi_fillTri(painter, 8, 24, 28, 8, 28, 40, c); break;    /* 左 */
+    default: xcsi_fillTri(painter, 40, 24, 20, 8, 20, 40, c); break;  /* 右 */
+    }
+}
+
+static void xcsi_p_mediaPlay(XPainter* painter, int size)
+{ (void)size; xcsi_fillTri(painter, 14, 8, 14, 40, 42, 24, 0xFF208040u); }
+
+static void xcsi_p_mediaStop(XPainter* painter, int size)
+{ (void)size; xcsi_rect(painter, 12, 12, 24, 24, 0xFF208040u); }
+
+static void xcsi_p_skipFwd(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_fillTri(painter, 12, 10, 12, 38, 32, 24, 0xFF404040u);
+    xcsi_rect(painter, 34, 10, 5, 28, 0xFF404040u);
+}
+
+/* ---- 设备与场所类图标（桌面/电脑/回收站/驱动器/主目录） ---- */
+
+/** @brief 桌面图标：蓝色屏幕 + 支架 + 底座线。 */
+static void xcsi_p_desktop(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 8, 8, 32, 22, 0xFF2A82DAu);   /* 蓝色屏幕 */
+    xcsi_frame(painter, 8, 8, 32, 22, 0xFF202020u);
+    xcsi_rect(painter, 8, 8, 32, 2, 0xFF5AA6F0u);    /* 顶部高光 */
+    xcsi_rect(painter, 22, 30, 4, 6, 0xFF404040u);   /* 支架 */
+    xcsi_line(painter, 14, 39, 34, 39, 4, 0xFF404040u); /* 底座线 */
+}
+
+/** @brief 电脑图标：显示器（屏幕+支架）+ 立式主机。 */
+static void xcsi_p_computer(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 6, 6, 26, 20, 0xFFBFE0F8u);   /* 显示器屏幕 */
+    xcsi_frame(painter, 6, 6, 26, 20, 0xFF404040u);
+    xcsi_rect(painter, 16, 26, 6, 4, 0xFF404040u);   /* 支架 */
+    xcsi_rect(painter, 10, 30, 18, 3, 0xFF404040u);  /* 底盘 */
+    xcsi_rect(painter, 36, 8, 8, 30, 0xFF909090u);   /* 主机机箱 */
+    xcsi_frame(painter, 36, 8, 8, 30, 0xFF404040u);
+    xcsi_rect(painter, 38, 12, 4, 2, 0xFF505050u);   /* 光驱槽 */
+    xcsi_rect(painter, 38, 18, 4, 2, 0xFF505050u);   /* 软驱槽 */
+    xcsi_rect(painter, 38, 32, 3, 3, 0xFF30C040u);   /* 电源灯 */
+}
+
+/** @brief 回收站图标：灰色桶身 + 桶盖提手。 */
+static void xcsi_p_trash(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 20, 6, 8, 3, 0xFF606468u);    /* 提手 */
+    xcsi_line(painter, 11, 11, 37, 11, 3, 0xFF8A8F98u); /* 桶盖 */
+    xcsi_rect(painter, 14, 13, 20, 26, 0xFF9AA0A6u); /* 灰色桶身 */
+    xcsi_rect(painter, 14, 13, 20, 2, 0xFFC4C9CFu);  /* 口沿高光 */
+    xcsi_rect(painter, 20, 17, 2, 18, 0xFF7A8088u);  /* 竖纹 */
+    xcsi_rect(painter, 26, 17, 2, 18, 0xFF7A8088u);
+}
+
+/** @brief 硬盘驱动器图标：硬驱方盒 + 状态指示灯。 */
+static void xcsi_p_driveHD(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 6, 16, 36, 18, 0xFF787E86u);  /* 驱动方盒 */
+    xcsi_frame(painter, 6, 16, 36, 18, 0xFF404040u);
+    xcsi_rect(painter, 6, 16, 36, 2, 0xFFA8AEB6u);   /* 顶部高光 */
+    xcsi_rect(painter, 10, 22, 20, 2, 0xFF50555Cu);  /* 读写槽 */
+    xcsi_rect(painter, 34, 27, 4, 4, 0xFF30C040u);   /* 状态指示灯 */
+}
+
+/** @brief 软盘驱动器图标：盘体 + 金属滑片 + 标签。 */
+static void xcsi_p_driveFD(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 8, 8, 32, 32, 0xFF3060A8u);   /* 盘体 */
+    xcsi_frame(painter, 8, 8, 32, 32, 0xFF203860u);
+    xcsi_rect(painter, 15, 8, 16, 11, 0xFFC8C8C8u);  /* 金属滑片 */
+    xcsi_rect(painter, 26, 10, 4, 7, 0xFF404040u);   /* 读写孔 */
+    xcsi_rect(painter, 14, 25, 20, 15, 0xFFF0F0F0u); /* 标签 */
+    xcsi_rect(painter, 17, 29, 14, 2, 0xFFB0B0B0u);
+    xcsi_rect(painter, 17, 33, 14, 2, 0xFFB0B0B0u);
+}
+
+/** @brief 光盘驱动器图标：圆盘 + 中心孔 + 盘面反光。 */
+static void xcsi_p_driveCD(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_fillCircle(painter, 24, 24, 17, 0xFFB8C4D0u); /* 外圈银盘 */
+    xcsi_fillCircle(painter, 24, 24, 13, 0xFFDCE6EEu); /* 内圈高光 */
+    xcsi_fillCircle(painter, 24, 24, 6, 0xFFB8C4D0u);
+    xcsi_fillCircle(painter, 24, 24, 3, 0xFF303030u);  /* 中心孔 */
+    xcsi_fillTri(painter, 14, 12, 22, 8, 12, 20, 0xFFF4FAFFu); /* 反光 */
+}
+
+/** @brief DVD 图标：同 CD 几何，紫罗兰配色区分。 */
+static void xcsi_p_driveDVD(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_fillCircle(painter, 24, 24, 17, 0xFFC090D8u);
+    xcsi_fillCircle(painter, 24, 24, 13, 0xFFEDDCF4u);
+    xcsi_fillCircle(painter, 24, 24, 6, 0xFFC090D8u);
+    xcsi_fillCircle(painter, 24, 24, 3, 0xFF303030u);
+    xcsi_fillTri(painter, 14, 12, 22, 8, 12, 20, 0xFFF8EEFCu);
+}
+
+/** @brief 网络驱动器图标：驱动方盒 + 网线连至远端节点。 */
+static void xcsi_p_driveNet(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_rect(painter, 6, 26, 24, 14, 0xFF787E86u);  /* 驱动方盒 */
+    xcsi_frame(painter, 6, 26, 24, 14, 0xFF404040u);
+    xcsi_rect(painter, 10, 31, 12, 2, 0xFF50555Cu);
+    xcsi_rect(painter, 24, 32, 3, 3, 0xFF30C040u);   /* 指示灯 */
+    xcsi_line(painter, 30, 33, 38, 33, 2, 0xFF404040u); /* 网线 */
+    xcsi_line(painter, 38, 33, 38, 16, 2, 0xFF404040u);
+    xcsi_fillCircle(painter, 38, 12, 5, 0xFF2A82DAu); /* 远端节点 */
+    xcsi_fillCircle(painter, 38, 12, 2, 0xFFFFFFFFu);
+}
+
+/** @brief 主目录图标：三角屋顶 + 方形房身 + 门。 */
+static void xcsi_p_dirHome(XPainter* painter, int size)
+{
+    (void)size;
+    xcsi_fillTri(painter, 24, 6, 6, 22, 42, 22, 0xFFC0504Du); /* 屋顶 */
+    xcsi_rect(painter, 10, 22, 28, 20, 0xFFE8C06Au); /* 房身 */
+    xcsi_frame(painter, 10, 22, 28, 20, 0xFF8A6A30u);
+    xcsi_rect(painter, 20, 30, 8, 12, 0xFF8A5A2Au);  /* 门 */
+}
+
+static void xcsi_p_dialogOk(XPainter* painter, int size)
+{ (void)size; xcsi_circleGlyph(painter, 0xFF2E9E4Fu, 0xFFFFFFFFu, 'v'); }
+
+static void xcsi_p_arrowUp(XPainter* painter, int size)
+{ xcsi_p_arrow(painter, size, 0); }
+
+static void xcsi_p_arrowDown(XPainter* painter, int size)
+{ xcsi_p_arrow(painter, size, 1); }
+
+static void xcsi_p_arrowLeft(XPainter* painter, int size)
+{ xcsi_p_arrow(painter, size, 2); }
+
+static void xcsi_p_arrowRight(XPainter* painter, int size)
+{ xcsi_p_arrow(painter, size, 3); }
+
+/** @brief 组装:绘制回调 → XImage → XPixmap → XIcon(调用方 delete_base)。 */
+static XIcon* xcsi_build(XcsiIconPainter fn)
+{
+    XImage img;
+    XPixmap pm;
+    XIcon* icon = NULL;
+    XPainter painter;
+    XImage_init(&img);
+    XImage_init_ex(&img, XCSI_ICON_SIZE, XCSI_ICON_SIZE,
+                   XImageFormat_ARGB32);
+    XPainter_init(&painter, NULL);
+    if (XPainter_begin_image(&painter, &img)) {
+        fn(&painter, XCSI_ICON_SIZE);
+        XPainter_end(&painter);
+        XPixmap_init(&pm);
+        XPixmap_init_image(&pm, &img, 0);
+        icon = XIcon_create();
+        if (icon) XIcon_init_pixmap(icon, &pm);
+        XPixmap_deinit_base(&pm);
+    }
+    XPainter_deinit(&painter);
+    XImage_deinit_base(&img);
+    return icon;
+}
+
+/** @brief 标准图标生成(分派到几何绘制;未知值返回 NULL)。 */
+static XIcon* xcs_standardIcon(XStyle* self, int sp,
+                               const XStyleOption* option,
+                               const XWidget* widget)
+{
+    (void)self; (void)option; (void)widget;
+    switch (sp) {
+    case XStyleSP_MessageBoxInformation:
+        return xcsi_build(xcsi_p_msgInfo);
+    case XStyleSP_MessageBoxWarning:
+        return xcsi_build(xcsi_p_msgWarning);
+    case XStyleSP_MessageBoxCritical:
+        return xcsi_build(xcsi_p_msgCritical);
+    case XStyleSP_MessageBoxQuestion:
+        return xcsi_build(xcsi_p_msgQuestion);
+    case XStyleSP_DirClosedIcon:
+    case XStyleSP_DirIcon:
+        return xcsi_build(xcsi_p_dirClosed);
+    case XStyleSP_DirOpenIcon:
+        return xcsi_build(xcsi_p_dirOpen);
+    case XStyleSP_FileIcon:
+        return xcsi_build(xcsi_p_file);
+    case XStyleSP_TitleBarMinButton:
+        return xcsi_build(xcsi_p_titleMin);
+    case XStyleSP_TitleBarMaxButton:
+        return xcsi_build(xcsi_p_titleMax);
+    case XStyleSP_TitleBarCloseButton:
+        return xcsi_build(xcsi_p_titleClose);
+    case XStyleSP_TitleBarNormalButton:
+        return xcsi_build(xcsi_p_titleNormal);
+    case XStyleSP_TitleBarMenuButton:
+        return xcsi_build(xcsi_p_titleMenu);
+    case XStyleSP_DialogOkButton:
+    case XStyleSP_DialogYesButton:
+    case XStyleSP_DialogApplyButton:
+        return xcsi_build(xcsi_p_dialogOk);
+    case XStyleSP_DialogCancelButton:
+    case XStyleSP_DialogCloseButton:
+    case XStyleSP_DialogNoButton:
+        return xcsi_build(xcsi_p_msgCritical);
+    case XStyleSP_DialogHelpButton:
+        return xcsi_build(xcsi_p_msgQuestion);
+    case XStyleSP_ArrowUp:
+        return xcsi_build(xcsi_p_arrowUp);
+    case XStyleSP_ArrowDown:
+        return xcsi_build(xcsi_p_arrowDown);
+    case XStyleSP_ArrowLeft:
+    case XStyleSP_ArrowBack:
+        return xcsi_build(xcsi_p_arrowLeft);
+    case XStyleSP_ArrowRight:
+    case XStyleSP_ArrowForward:
+        return xcsi_build(xcsi_p_arrowRight);
+    case XStyleSP_MediaPlay:
+        return xcsi_build(xcsi_p_mediaPlay);
+    case XStyleSP_MediaStop:
+        return xcsi_build(xcsi_p_mediaStop);
+    case XStyleSP_MediaSkipForward:
+        return xcsi_build(xcsi_p_skipFwd);
+    case XStyleSP_DesktopIcon:
+        return xcsi_build(xcsi_p_desktop);
+    case XStyleSP_ComputerIcon:
+        return xcsi_build(xcsi_p_computer);
+    case XStyleSP_TrashIcon:
+        return xcsi_build(xcsi_p_trash);
+    case XStyleSP_DriveHDIcon:
+        return xcsi_build(xcsi_p_driveHD);
+    case XStyleSP_DriveFDIcon:
+        return xcsi_build(xcsi_p_driveFD);
+    case XStyleSP_DriveCDIcon:
+        return xcsi_build(xcsi_p_driveCD);
+    case XStyleSP_DriveDVDIcon:
+        return xcsi_build(xcsi_p_driveDVD);
+    case XStyleSP_DriveNetIcon:
+        return xcsi_build(xcsi_p_driveNet);
+    case XStyleSP_DirHomeIcon:
+        return xcsi_build(xcsi_p_dirHome);
+    default:
+        return NULL;
+    }
+}
+
 XVtable* XCommonStyle_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XCommonStyle)
@@ -3466,6 +3900,8 @@ XVtable* XCommonStyle_class_init(void)
                              VXCommonStyle_subControlRect);
     XVTABLE_OVERLOAD_DEFAULT(EXStyle_HitTestComplexControl,
                              VXCommonStyle_hitTestComplexControl);
+    XVTABLE_OVERLOAD_DEFAULT(EXStyle_StandardIcon,
+                             xcs_standardIcon);
     return XVTABLE_DEFAULT;
 }
 

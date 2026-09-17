@@ -82,6 +82,11 @@ XCLASS_DEFINE_EXTEND_END(XComboBox, XWidget)
  *             - m_popupVisible：弹出状态（内部）。
  *             调用者不得手工修改字段；一律走公开 API。
  */
+/** @brief XListView 前向声明（弹出列表视图）。 */
+typedef struct XListView XListView;
+/** @brief XAbstractItemModel 前向声明（弹出列表数据模型）。 */
+typedef struct XAbstractItemModel XAbstractItemModel;
+
 typedef struct XComboBox
 {
     XWidget m_base;                    /**< 基类成员；必须是第一个。 */
@@ -104,6 +109,15 @@ typedef struct XComboBox
     bool    m_frame;                   /**< 边框开关（默认 true）。 */    XString* m_placeholderText;             /**< 字符串字段（对象拥有）。 */
     bool    m_popupVisible;            /**< 弹出可见（内部）。 */
     int     m_savedHeight;             /**< 弹出前高度（展开/收起恢复）。 */
+    XListView* m_popupView;            /**< 弹出列表视图（对象拥有；懒创建；对标 view）。 */
+    XAbstractItemModel* m_model;       /**< 条目数据模型（对象拥有；懒创建并随条目同步）。 */
+    int     m_modelColumn;             /**< 模型显示列（对标 modelColumn）。 */
+    int     m_rootRow;                 /**< 根索引行（Qt QModelIndex 的平铺简化承载）。 */
+    int     m_rootCol;                 /**< 根索引列。 */
+    void*   m_validator;               /**< 校验器不透明指针（XValidator 体系未建，仅承载）。 */
+    void*   m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载）。 */
+    XTimerId m_grabTimer;              /**< 弹出后延迟执行平台鼠标抓取的定时器；无效时为
+                                            XTIMER_INVALID_ID，仅供内部使用。 */
 } XComboBox;
 
 /* ==================== 生命周期 ==================== */
@@ -260,6 +274,118 @@ XLineEdit* XComboBox_lineEdit(const XComboBox* self);
  * @return     无返回值。
  */
 void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit);
+
+/* ==================== 弹出列表部件化（对标 view/model/validator 族） ==================== */
+
+/**
+ * @brief      查询弹出列表视图（对标 QComboBox::view）。
+ * @details    首次访问懒创建内置 XListView，并以组合框条目初始化其
+ *             数据模型；视图由组合框拥有。
+ * @param      self 目标控件指针；NULL 返回 NULL。
+ * @return     借用指针，属于组合框内部存储，不能释放。
+ */
+XListView* XComboBox_view(XComboBox* self);
+/**
+ * @brief      安装自定义弹出列表视图（对标 QComboBox::setView）。
+ * @details    组合框取得视图所有权：旧视图被释放；原数据模型自动
+ *             设置到新视图。调用方之后不得重复释放传入的视图。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      view 新视图；不能为 NULL；可带任意父控件，安装后归
+ *             组合框管理。
+ * @return     无返回值。
+ */
+void XComboBox_setView(XComboBox* self, XListView* view);
+/**
+ * @brief      查询条目数据模型（对标 QComboBox::model）。
+ * @details    首次访问懒创建内置模型并随组合框条目同步（增删改条目
+ *             后再次访问时刷新）。
+ * @param      self 目标控件指针；NULL 返回 NULL。
+ * @return     借用指针，属于组合框内部存储，不能释放。
+ */
+XAbstractItemModel* XComboBox_model(XComboBox* self);
+/**
+ * @brief      安装外部数据模型（对标 QComboBox::setModel）。
+ * @details    组合框取得模型所有权（模型须为堆对象）；旧模型被释放，
+ *             弹出视图（若已创建）切换到新模型。安装后条目数以模型为
+ *             准的联动为简化承载：组合框条目数组仍是数据源。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      model 新模型；NULL 仅清除并释放当前模型。
+ * @return     无返回值。
+ */
+void XComboBox_setModel(XComboBox* self, XAbstractItemModel* model);
+/**
+ * @brief      查询模型显示列（对标 QComboBox::modelColumn）。 @param self 目标控件。 @return 列号（默认 0）。
+ */
+int XComboBox_modelColumn(const XComboBox* self);
+/**
+ * @brief      设置模型显示列（对标 QComboBox::setModelColumn）。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      column 列号；越界由视图侧按模型列数钳制。
+ * @return     无返回值。
+ */
+void XComboBox_setModelColumn(XComboBox* self, int column);
+/**
+ * @brief      设置根模型索引（对标 QComboBox::setRootModelIndex）。
+ * @details    XGui 无 QModelIndex，以 (row, col) 平铺承载；当前模型
+ *             为平铺列表时 (0,0) 即全量根。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      row 根行号。
+ * @param      col 根列号。
+ * @return     无返回值。
+ */
+void XComboBox_setRootModelIndex(XComboBox* self, int row, int col);
+/**
+ * @brief      查询根模型索引（对标 QComboBox::rootModelIndex）。
+ * @param      self 目标控件；NULL 时输出 0。
+ * @param      row 输出根行号；可 NULL 忽略（调用方提供存储）。
+ * @param      col 输出根列号；可 NULL 忽略。
+ * @return     无返回值。
+ */
+void XComboBox_rootModelIndex(const XComboBox* self, int* row, int* col);
+/**
+ * @brief      设置输入校验器（对标 QComboBox::setValidator）。
+ * @details    XValidator 体系未建立：validator 以不透明指针承载，
+ *             当前版本仅保存状态不参与输入过滤（头文件已注明）。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      validator 校验器对象；NULL 清除；仅承载不取得所有权。
+ * @return     无返回值。
+ */
+void XComboBox_setValidator(XComboBox* self, void* validator);
+/**
+ * @brief      查询输入校验器（对标 QComboBox::validator）。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @return     不透明指针；未设置返回 NULL。
+ */
+void* XComboBox_validator(const XComboBox* self);
+/**
+ * @brief      设置条目委托（对标 QComboBox::setItemDelegate）。
+ * @details    XGui 尚未建立委托（item delegate）类体系：delegate 以
+ *             不透明指针承载，当前版本仅保存状态，不参与弹出行绘制
+ *             或编辑（头文件已注明）。委托为借用语义，组合框不取得
+ *             所有权，调用方负责其生命周期。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      delegate 委托对象指针；NULL 清除；仅承载不取得所有权。
+ * @return     无返回值。
+ */
+void XComboBox_setItemDelegate(XComboBox* self, void* delegate);
+/**
+ * @brief      查询条目委托（对标 QComboBox::itemDelegate）。
+ * @details    XGui 委托体系未建：仅返回 setItemDelegate 保存的不透明
+ *             指针，未设置时返回 NULL。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @return     不透明指针；未设置返回 NULL；借用语义，不得释放。
+ */
+void* XComboBox_itemDelegate(const XComboBox* self);
+/**
+ * @brief      输入法查询（对标 QComboBox::inputMethodQuery，简化承载）。
+ * @details    当前仅支持返回编辑文本类查询：可编辑模式返回行编辑框
+ *             内容，只读模式返回当前项文本；其余查询返回空文本。
+ * @param      self 目标控件；NULL 返回 NULL。
+ * @param      query 查询类别（Qt::InputMethodQuery 数值）。
+ * @return     新建 XString*（空文本也返回对象）；调用方负责
+ *             XString_delete_base 释放。
+ */
+XString* XComboBox_inputMethodQuery(XComboBox* self, int query);
 /** @brief XCombo盒current索引（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。

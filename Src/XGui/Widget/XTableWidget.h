@@ -337,6 +337,102 @@ void XTableWidget_clearContents(XTableWidget* self);
  */
 void XTableWidget_scrollToItem(XTableWidget* self, int row, int column);
 
+/* ==================== 便捷查找/排序/选择（对标 QTableWidget 便捷族） ==================== */
+
+/**
+ * @brief 查找文本匹配的单元格（对标 findItems）。
+ *
+ *        按行优先顺序扫描全部单元格；命中坐标以“行号数组 + 列号
+ *        数组”双 int 数组形式输出（两数组同下标对应同一命中项）。
+ *        缓冲区由调用方分配（栈数组/静态数组均可），库侧不分配
+ *        内存，调用方无需向库归还。
+ *
+ * @param self        目标表格控件指针。
+ * @param text        待查找文本（UTF-8）；NULL 按空串处理。
+ * @param flags       匹配方式：1=精确相等（对标 MatchExactly）；
+ *                    0=包含子串（对标 MatchContains）；其余值按 0 处理。
+ * @param outRows     命中行号输出数组（调用方分配）；可为 NULL。
+ * @param outColumns  命中列号输出数组（调用方分配）；可为 NULL。
+ * @param maxCount    输出数组各自容量；<=0 表示只统计不写出。
+ * @return 命中总数（写出条数不超过 maxCount）；返回值大于 maxCount
+ *         说明输出被截断。self 为 NULL 返回 0。
+ */
+int XTableWidget_findItems(const XTableWidget* self, const char* text,
+                           int flags, int* outRows, int* outColumns,
+                           int maxCount);
+
+/**
+ * @brief 坐标反查单元格（对标 itemAt）。
+ *
+ *        基于表头尺寸/行高/列宽与滚动偏移换算，与鼠标事件同坐标系；
+ *        表头区与数据区之外返回 -1/-1。
+ *
+ * @param self   目标表格控件指针。
+ * @param x      横向坐标（控件本地，像素）。
+ * @param y      纵向坐标（控件本地，像素）。
+ * @param row    命中行号输出；越界输出 -1；可为 NULL。
+ * @param column 命中列号输出；越界输出 -1；可为 NULL。
+ * @return 无返回值。
+ */
+void XTableWidget_itemAt(const XTableWidget* self, int x, int y,
+                         int* row, int* column);
+
+/**
+ * @brief 按列文本排序（对标 sortItems）。
+ *
+ *        依据第 column 列单元格文本整行重排（其余各列随行移动）；
+ *        空文本按空串参与比较；排序后记录最近排序列/排序序。
+ *
+ * @param self   目标表格控件指针。
+ * @param column 排序列号；越界忽略。
+ * @param order  0=升序；非 0（含 1）=降序。
+ * @return 无返回值。
+ */
+void XTableWidget_sortItems(XTableWidget* self, int column, int order);
+
+/**
+ * @brief 输出全部选中单元格坐标（对标 selectedIndexes）。
+ *
+ *        平铺模型为单选语义：统计带 per-cell selected 标记的单元格；
+ *        若当前跟踪选区（setCurrentCell/点击/键盘设置）未被标记覆盖
+ *        则追加一条。输出形式与 findItems 相同的双 int 数组（调用方
+ *        分配，库侧不分配内存，无需归还）。
+ *
+ * @param self        目标表格控件指针。
+ * @param outRows     选中行号输出数组（调用方分配）；可为 NULL。
+ * @param outColumns  选中列号输出数组（调用方分配）；可为 NULL。
+ * @param maxCount    输出数组各自容量；<=0 表示只统计不写出。
+ * @return 选中单元格总数；返回值大于 maxCount 说明输出被截断。
+ *         self 为 NULL 返回 0。
+ */
+int XTableWidget_selectedIndexes(const XTableWidget* self, int* outRows,
+                                 int* outColumns, int maxCount);
+
+/**
+ * @brief 清除全部跨行/跨列合并（对标 QTableWidget::clearSpans）。
+ *
+ *        便捷转发基类 XTableView_clearSpans；平铺模型无合并能力，
+ *        本接口为无操作（基类亦不提供 setSpan）。
+ *
+ * @param self 目标表格控件指针。
+ * @return 无返回值。
+ */
+void XTableWidget_clearSpans(XTableWidget* self);
+
+/**
+ * @brief 取出单元格文本并置空（对标 takeItem）。
+ *
+ *        单元格 text 所有权转移给调用方（表格对象不再持有）；
+ *        取出后发射 cellChanged/itemChanged 并同步内建模型为空串。
+ *
+ * @param self   目标表格控件指针。
+ * @param row    行号。
+ * @param column 列号。
+ * @return 被取出的文本对象（调用方以 XString_delete_base 释放）；
+ *         越界或单元格无文本返回 NULL（不发射信号、不同步模型）。
+ */
+XString* XTableWidget_takeItem(XTableWidget* self, int row, int column);
+
 /* ==================== 信号（仅返回自身地址；发射经 emitSignal） ==================== */
 
 /**

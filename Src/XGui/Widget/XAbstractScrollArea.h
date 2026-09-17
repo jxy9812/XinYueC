@@ -200,6 +200,9 @@ XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self);
 /**
  * @brief 读取尺寸自适应策略（对标 sizeAdjustPolicy）。
  *
+ *        @note AdjustToContents 的自适应布局（内容变化自动重设控件
+ *        尺寸）未接：策略当前仅承载状态，仅影响 sizeHint 查询。
+ *
  * @param self 目标滚动区域；可为 NULL。
  * @return 当前策略；self 为 NULL 时返回 AdjustIgnored。
  */
@@ -211,6 +214,9 @@ XAbstractScrollAreaSizeAdjustPolicy XAbstractScrollArea_sizeAdjustPolicy(
  *
  *        策略变化后清除尺寸提示缓存并请求重新布局（对标 Qt 的
  *        `d->sizeHint = QSize(); updateGeometry();`）。
+ *
+ *        @note AdjustToContents 的自适应布局（内容变化自动重设控件
+ *        尺寸）未接：策略当前仅承载状态，仅影响 sizeHint 查询。
  *
  * @param self 目标滚动区域。
  * @param policy 新策略（XAbstractScrollAreaSizeAdjustPolicy）。

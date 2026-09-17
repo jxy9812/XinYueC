@@ -28,6 +28,9 @@ static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
                                             int dx, int dy);
 /** @brief 调色板取色助手。 */
 static uint32_t xtw_color(const XTableWidget* self, XPaletteColorRole role);
+/** @brief 坐标 → 单元格（返回行列；表头/越界返回 -1）。 */
+static void xtw_cellAt(const XTableWidget* self, int x, int y,
+                       int* row, int* col);
 
 /** @brief 确保行指针数组容量（保留现有行内容）。 */
 static void xtw_ensureRows(XTableWidget* self, int rows)
@@ -586,6 +589,117 @@ void XTableWidget_scrollToItem(XTableWidget* self, int row, int column)
     y = self->m_headerHeight + row * self->m_base.m_rowHeight;
     XAbstractSlider_setValue((XAbstractSlider*)vbar,
                              y - self->m_headerHeight);
+}
+
+/* ==================== 便捷族（对标 QTableWidget 便捷接口） ==================== */
+
+/** @brief 命中坐标写入调用方双数组（行/列同下标推进；容量受限）。 */
+static bool xtw_storeIndex(int row, int col, int* outRows, int* outColumns,
+                           int maxCount, int* written)
+{
+    if (*written >= maxCount || (!outRows && !outColumns)) return false;
+    if (outRows) outRows[*written] = row;
+    if (outColumns) outColumns[*written] = col;
+    ++(*written);
+    return true;
+}
+
+int XTableWidget_findItems(const XTableWidget* self, const char* text,
+                           int flags, int* outRows, int* outColumns,
+                           int maxCount)
+{
+    int total = 0;
+    int written = 0;
+    int row;
+    int col;
+    if (!self) return 0;
+    for (row = 0; row < self->m_rows; ++row) {
+        for (col = 0; col < self->m_columns; ++col) {
+            const XTableWidgetItem* cell = xtw_cell(self, row, col);
+            const char* cellText = "";
+            bool hit;
+            if (cell && cell->text) {
+                const char* s = XString_toUtf8(cell->text);
+                if (s) cellText = s;
+            }
+            if (flags == 1) /* 精确相等（对标 Qt::MatchExactly）。 */
+                hit = (XStrcmp(cellText, text ? text : "") == 0);
+            else            /* 包含子串（对标 Qt::MatchContains）。 */
+                hit = (XStrstr(cellText, text ? text : "") != NULL);
+            if (!hit) continue;
+            xtw_storeIndex(row, col, outRows, outColumns, maxCount, &written);
+            ++total;
+        }
+    }
+    return total;
+}
+
+void XTableWidget_itemAt(const XTableWidget* self, int x, int y,
+                         int* row, int* column)
+{
+    int hitRow = -1;
+    int hitCol = -1;
+    if (row) *row = -1;
+    if (column) *column = -1;
+    if (!self) return;
+    xtw_cellAt(self, x, y, &hitRow, &hitCol);
+    if (row) *row = hitRow;
+    if (column) *column = hitCol;
+}
+
+int XTableWidget_selectedIndexes(const XTableWidget* self, int* outRows,
+                                 int* outColumns, int maxCount)
+{
+    int total = 0;
+    int written = 0;
+    int row;
+    int col;
+    bool trackedListed = false;
+    if (!self) return 0;
+    /* 1) per-cell selected 标记（setItem 拷入时保留）。 */
+    for (row = 0; row < self->m_rows; ++row) {
+        for (col = 0; col < self->m_columns; ++col) {
+            const XTableWidgetItem* cell = xtw_cell(self, row, col);
+            if (!cell || !cell->selected) continue;
+            if (row == self->m_selectionRow &&
+                col == self->m_selectionColumn)
+                trackedListed = true;
+            xtw_storeIndex(row, col, outRows, outColumns, maxCount, &written);
+            ++total;
+        }
+    }
+    /* 2) 当前跟踪选区未被标记覆盖时补录（点击/键盘选择路径）。 */
+    if (!trackedListed && self->m_selectionRow >= 0 &&
+        self->m_selectionRow < self->m_rows &&
+        self->m_selectionColumn >= 0 &&
+        self->m_selectionColumn < self->m_columns) {
+        xtw_storeIndex(self->m_selectionRow, self->m_selectionColumn,
+                       outRows, outColumns, maxCount, &written);
+        ++total;
+    }
+    return total;
+}
+
+void XTableWidget_clearSpans(XTableWidget* self)
+{
+    if (!self) return;
+    XTableView_clearSpans((XTableView*)self);
+}
+
+XString* XTableWidget_takeItem(XTableWidget* self, int row, int column)
+{
+    XTableWidgetItem* cell = xtw_cell(self, row, column);
+    XString* taken;
+    if (!cell || !cell->text) return NULL;
+    taken = cell->text;
+    cell->text = NULL; /* 所有权移交调用方（以 XString_delete_base 释放）。 */
+    xtw_emitCellSignal(self, (size_t)XTableWidget_cellChanged_signal,
+                       row, column);
+    xtw_emitItemSignal(self, (size_t)XTableWidget_itemChanged_signal, cell);
+    XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setData_2(self->m_model, row, column, "");
+    return taken;
 }
 
 /* ==================== 信号 ==================== */

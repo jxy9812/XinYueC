@@ -705,47 +705,6 @@ void XLineEdit_setTextMargins_2(XLineEdit* self, const XMargins* margins);
  */
 XMargins XLineEdit_textMargins(const XLineEdit* self);
 
-/* ==================== 补全器（对标 QLineEdit completer API） ==================== */
-
-/**
- * @brief      安装补全器（对标 QLineEdit::setCompleter）。
- * @details    补全器为借用指针，本控件不拥有、不释放；安装时把补全器的
- *             widget 关联设为本编辑框（若补全器尚未关联控件），并立即用
- *             当前文本同步一次补全前缀。此后每次用户编辑（键盘输入、
- *             粘贴、清除按钮等）都会重新同步：Popup/UnfilteredPopup 模式
- *             只更新 completionPrefix 与候选；InlineCompletion 模式还会
- *             把候选余下部分写入文本并选中该部分（对齐 Qt 内联补全）。
- *             重复安装同一指针无操作；安装新补全器时清除旧补全器与本
- *             控件的关联（不删除旧补全器）。@note Qt 只在获得焦点时接线
- *             补全器，本实现安装即同步一次，便于无焦点环境下测试。
- * @param      self 目标编辑框；可为 NULL（无操作）。
- * @param      completer 补全器借用指针；可为 NULL（仅卸载）。
- * @return     无返回值。
- */
-void XLineEdit_setCompleter(XLineEdit* self, XCompleter* completer);
-
-/**
- * @brief      查询当前补全器（对标 QLineEdit::completer）。
- * @param      self 编辑框对象借用指针；可为 NULL。
- * @return     已安装的补全器借用指针；未安装或 self 为 NULL 返回 NULL。
- */
-XCompleter* XLineEdit_completer(const XLineEdit* self);
-
-/**
- * @brief      查询输入法属性（对标 QLineEdit::inputMethodQuery 的退化实现）。
- * @details    Qt 依据 query 返回 QVariant（ImEnabled/ImCursorRectangle/
- *             ImSurroundingText 等）。XGui 本版没有以控件为单位、返回
- *             变体的输入法查询体系（XWidget 层未提供该虚槽），故本函数
- *             为文档化退化实现：忽略 query，恒返回 0（假值）。需要真实
- *             输入法属性的调用方请经 XGuiApplication_inputMethod() 的
- *             XInputMethodQueryHandler 查询焦点对象（见
- *             docs/xgui-audit/2026-09-15/Input.md）。
- * @param      self 编辑框对象借用指针；当前实现不使用；可为 NULL。
- * @param      query 查询项编号（取值见 XInputMethodQuery）；当前忽略。
- * @return     恒返回 0（假值）。
- */
-int XLineEdit_inputMethodQuery(const XLineEdit* self, int query);
-
 /* ==================== 信号（对标 QLineEdit signals） ==================== */
 
 /**

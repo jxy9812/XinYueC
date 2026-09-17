@@ -345,16 +345,6 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos);
  */
 XAction* XMenu_menuAction(XMenu* self);
 
-/**
- * @brief      返回动作所承载的菜单（对标 QMenu::menuInAction）。
- * @details    Qt 的静态辅助等价于 `action->menu()`：动作不作为子菜单入口
- *             时返回 NULL。XGui 中动作经 XAction_setMenu 关联菜单
- *             （对标 QAction::setMenu）。
- * @param      action 目标动作借用指针；可为 NULL。
- * @return     动作承载的菜单借用指针；无关联时返回 NULL。
- */
-XMenu* XMenu_menuInAction(const XAction* action);
-
 /* ==================== 属性（对标 QMenu） ==================== */
 
 /**

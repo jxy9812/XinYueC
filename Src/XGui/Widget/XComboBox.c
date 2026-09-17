@@ -22,8 +22,12 @@
 #include "XStyleOption.h"
 #include "XString.h"
 #include "XWidget_Protected.h"
+#include "XListView.h"
+#include "XAbstractItemModel.h"
+#include "XAbstractItemView.h"
 #include "XMemory.h"
 #include "XEvent.h"
+#include "XWindow.h"
 #include "XCoreApplication.h"
 #include "XColor.h"
 #include <stdio.h>
@@ -40,6 +44,8 @@ static void  VXComboBox_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void  VXComboBox_changeEvent(XWidget* self, XEvent* event);
 static void  VXComboBox_copy(XComboBox* self, const XComboBox* other);
 static void  VXComboBox_move(XComboBox* self, XComboBox* other);
+static void  VXComboBox_timerEvent(XObject* object, XTimerEvent* event);
+static void  xcombo_releaseGrab(XComboBox* self);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -83,21 +89,6 @@ static void xcombo_emitText(XComboBox* self, size_t signal, const char* text)
         XVarList_delete(arguments);
     }
 }
-
-/** @brief 鼠标位置 → 弹出列表项索引（-1 = 无）。 */
-static int xcombo_popupItemAt(const XComboBox* self, const XPoint* pos)
-{
-    int idx;
-    if (!pos || pos->x < 0 || pos->x > XWidget_width((XWidget*)self)) return -1;
-    idx = pos->y / XCOMBOBOX_ITEM_H;
-    if (idx < 0 || idx >= self->m_itemCount) return -1;
-    return idx;
-}
-
-/* ==================== 弹出状态（内嵌绘制） ==================== */
-
-/** @brief 当前弹出的显示偏移（项多时滚动，内部）。 */
-static int g_comboPopupOffset = 0;
 
 /* ==================== 虚槽实现 ==================== */
 
@@ -189,8 +180,8 @@ static void VXComboBox_paintEvent(XWidget* self, XEvent* event)
     }
 xcombo_style_text: {}
     /* style 分支与原路径共用：当前项文本在下方绘制。 */
-    /* 当前项文本（弹出时列表替代文本显示）。 */
-    if (!combo->m_popupVisible) {
+    /* 当前项文本（部件化后列表由独立弹出视图承载，自身恒画文本）。 */
+    {
         if (combo->m_currentIndex >= 0 && combo->m_currentIndex < combo->m_itemCount &&
             combo->m_items[combo->m_currentIndex]) {
             XPainter_drawText(&painter, 6, (r.height - 14) / 2 + 12,
@@ -203,27 +194,6 @@ xcombo_style_text: {}
                               xcombo_color(combo, XPaletteColorRole_Mid));
         }
     }
-    else {
-        /* 弹出列表：覆盖绘制项行（当前项高亮）。 */
-        XRect list = r;
-        int rows = combo->m_itemCount;
-        int i;
-        if (rows > combo->m_maxVisibleItems) rows = combo->m_maxVisibleItems;
-        list.height = rows * XCOMBOBOX_ITEM_H + 2;
-        XPainter_fillRect(&painter, &list, base);
-        for (i = g_comboPopupOffset; i < g_comboPopupOffset + rows &&
-                                     i < combo->m_itemCount; ++i) {
-            XRect row = { r.x, (i - g_comboPopupOffset) * XCOMBOBOX_ITEM_H,
-                          r.width - XCOMBOBOX_BUTTON_W, XCOMBOBOX_ITEM_H };
-            if (i == combo->m_currentIndex)
-                XPainter_fillRect(&painter, &row, highlight);
-            if (combo->m_items[i])
-                XPainter_drawText(&painter, row.x + 4, row.y + 14,
-                                  XString_toUtf8(combo->m_items[i]),
-                                  i == combo->m_currentIndex ? highlightedText
-                                                             : text);
-        }
-    }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 }
@@ -233,7 +203,6 @@ static void VXComboBox_mousePressEvent(XWidget* self, XEvent* event)
 {
     XComboBox* combo = (XComboBox*)self;
     XMouseEvent* me;
-    XPoint pos;
     if (!combo || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     me = (XMouseEvent*)event;
@@ -241,33 +210,15 @@ static void VXComboBox_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
-    pos = XMouseEvent_position(me);
-    if (combo->m_popupVisible) {
-        /* grabMouse 下点击超出自身边界 = 点击外部关闭弹出。 */
-        if (pos.x < 0 || pos.y < 0 ||
-            pos.x >= XWidget_width(self) || pos.y >= XWidget_height(self)) {
-            XComboBox_hidePopup_base(combo);
-            XEvent_accept(event);
-            return;
-        }
-        int idx = xcombo_popupItemAt(combo, &pos);
-        if (idx >= 0) {
-            XComboBox_setCurrentIndex(combo, idx);
-            xcombo_emitInt(combo, (size_t)XComboBox_activated_signal(combo, idx), idx);
-            xcombo_emitText(combo,
-                            (size_t)XComboBox_textActivated_signal(
-                                combo, XComboBox_itemText_2(combo, idx)),
-                            XComboBox_itemText_2(combo, idx));
-        }
+    /* 部件化弹窗：自身点击 = 弹出/收起切换；行选择由弹出视图的
+       activated 信号联动（xcombo_viewActivatedSlot）。 */
+    if (combo->m_popupVisible)
         XComboBox_hidePopup_base(combo);
-        XEvent_accept(event);
-        return;
-    }
-    XComboBox_showPopup_base(combo);
+    else
+        XComboBox_showPopup_base(combo);
     XEvent_accept(event);
 }
 
-/** @brief 弹出中移动：高亮跟随（重绘）。 */
 static void VXComboBox_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XComboBox* combo = (XComboBox*)self;
@@ -353,15 +304,53 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     for (i = 0; i < self->m_itemCount; ++i) { (void)0; }
 }
 
+/* ==================== 延迟抓取定时器（参照 XMenu） ==================== */
+
+/** @brief 弹出后的延迟抓取定时器：窗口映射完成后执行平台 XGrabPointer，
+ *  使点击弹窗外部的按键都送达弹窗（模态关闭）。 */
+static void VXComboBox_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XComboBox* self = (XComboBox*)object;
+    XTimerId id;
+    XWindow* handle;
+
+    if (self && event &&
+        XTimerEvent_timerId(event) == self->m_grabTimer) {
+        id = self->m_grabTimer;
+        self->m_grabTimer = XTIMER_INVALID_ID;
+        XObject_killTimer((XObject*)self, id);
+        /* 弹窗可能在定时器触发前已被收起：仅在仍弹出时启用平台抓取。 */
+        if (self->m_popupVisible && self->m_popupView) {
+            handle = XWidget_windowHandle((XWidget*)self->m_popupView);
+            if (handle)
+                XWindow_setMouseGrabEnabled(handle, true);
+        }
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    XClass_Parent(XObject, EXObject_TimerEvent,
+                  void (*)(XObject*, XTimerEvent*))(object, event);
+}
+
 /* ==================== 生命周期 ==================== */
 
 static void VXComboBox_deinit(XComboBox* self)
 {
     int i;
     if (!self) return;
+    /* 先解除弹窗模态抓取（内部引用弹窗指针，须先于删除视图执行）。 */
+    xcombo_releaseGrab(self);
     if (self->m_placeholderText) {
         XString_delete_base(self->m_placeholderText);
         self->m_placeholderText = NULL;
+    }
+    if (self->m_popupView) {
+        XListView_delete_base((XClass*)self->m_popupView);
+        self->m_popupView = NULL;
+    }
+    if (self->m_model) {
+        XAbstractItemModel_delete_base((XClass*)self->m_model);
+        self->m_model = NULL;
     }
     for (i = 0; i < self->m_itemCount; ++i) {
         if (self->m_items[i]) XString_delete_base(self->m_items[i]);
@@ -398,6 +387,7 @@ XVtable* XComboBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXComboBox_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXComboBox_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXComboBox_changeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXComboBox_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXComboBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXComboBox_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXComboBox_deinit);
@@ -430,6 +420,14 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_frame = true;
     self->m_placeholderText = XString_create();
     self->m_popupVisible = false;
+    self->m_popupView = NULL;
+    self->m_model = NULL;
+    self->m_modelColumn = 0;
+    self->m_rootRow = 0;
+    self->m_rootCol = 0;
+    self->m_validator = NULL;
+    self->m_itemDelegate = NULL;
+    self->m_grabTimer = XTIMER_INVALID_ID;
     self->m_savedHeight = 0;
 }
 
@@ -582,6 +580,281 @@ void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
                         XWidget_height((XWidget*)self) - 4);
     XWidget_show((XWidget*)edit);
     XWidget_update((XWidget*)self);
+}
+
+/* ==================== 弹出列表部件化 ==================== */
+
+/*
+ * 内置弹出列表子类（XComboPopupView）：XListView 不可直接修改，而
+ * XAbstractItemView 的 mousePress 依赖 indexAt 命中才发射 pressed，
+ * XListView 的 indexAt 对越界坐标（x 忽略、y/(行高) 向零截断、无上界
+ * 校验）会给出伪行号或不发射，无法在组合框侧以信号区分"外部点击"。
+ * 故参照 XMenu 的"mousePress 判断 pos 超界"方案，在本地子类覆写
+ * 按下/释放：位置超出视图几何即收起弹窗并吞掉事件；窗内事件原样
+ * 交给 XListView 处理（行选择、activated 联动不变）。
+ */
+XCLASS_DEFINE_BEGING(XComboPopupView)
+XCLASS_DEFINE_EXTEND_END(XComboPopupView, XListView)
+
+/** @brief 组合框内置弹出列表对象；m_base 必须是第一个成员。 */
+typedef struct XComboPopupView
+{
+    XListView  m_base;   /**< 基类成员（嵌 XListView）；必须是第一个。 */
+    XComboBox* m_owner;  /**< 属主组合框（借用；可为 NULL）。 */
+} XComboPopupView;
+
+static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event);
+static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event);
+
+/** @brief 判断弹出层本地坐标是否落在视图矩形内。 */
+static bool xcomboPopupView_contains(const XComboPopupView* view, int x, int y)
+{
+    XRect r;
+    if (!view) return false;
+    r = XWidget_rect((const XWidget*)view);
+    return x >= r.x && x < r.x + r.width &&
+           y >= r.y && y < r.y + r.height;
+}
+
+/** @brief 按下：越界（弹窗外部）点击收起弹窗；窗内交给 XListView。 */
+static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XComboPopupView* view = (XComboPopupView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    if (!view || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) {
+        XClass_Parent(XListView, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    if (!xcomboPopupView_contains(view, pos.x, pos.y)) {
+        /* 模态抓取期间转发到本窗口的弹窗外按下：一律收起并吞掉，
+           防止越界坐标被 indexAt 映射成伪行触发误选。 */
+        if (view->m_owner)
+            XComboBox_hidePopup_base(view->m_owner);
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XListView, EXWidget_MousePressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief 释放：越界释放吞掉（防止负坐标截断映射为 0 行误激活）。 */
+static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XComboPopupView* view = (XComboPopupView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    if (!view || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) {
+        XClass_Parent(XListView, EXWidget_MouseReleaseEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    if (!xcomboPopupView_contains(view, pos.x, pos.y)) {
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XListView, EXWidget_MouseReleaseEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief 弹出列表子类虚表：仅覆写按下/释放，其余继承 XListView。 */
+static XVtable* XComboPopupView_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XComboPopupView)
+    XVTABLE_INHERIT_XCLASS(XListView);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VXComboPopupView_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXComboPopupView_mouseReleaseEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 创建内置弹出列表（堆分配，属主由参数回指）。 */
+static XComboPopupView* xcomboPopupView_create(XComboBox* owner)
+{
+    XComboPopupView* view = (XComboPopupView*)XMemory_malloc(
+        sizeof(XComboPopupView), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!view) return NULL;
+    XMemset(view, 0, sizeof(*view));
+    XListView_init(&view->m_base, NULL, 0);
+    XClassSetVtable(view, XComboPopupView);
+    view->m_owner = owner;
+    Set_Class_Memory(view, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(view, true);
+    return view;
+}
+
+/** @brief 把组合框条目同步进数据模型（行数与文本对齐）。 */
+static void xcombo_syncModel(XComboBox* self)
+{
+    int i;
+    if (!self) return;
+    if (!self->m_model) {
+        self->m_model = XAbstractItemModel_create();
+        if (!self->m_model) return;
+    }
+    XAbstractItemModel_setDimension(self->m_model,
+        self->m_itemCount > 0 ? self->m_itemCount : 0, 1);
+    for (i = 0; i < self->m_itemCount; ++i) {
+        XAbstractItemModel_setData_2(self->m_model, i, self->m_modelColumn,
+            self->m_items[i] ? XString_toUtf8(self->m_items[i]) : "");
+    }
+}
+
+/** @brief 解除弹窗模态鼠标抓取：杀抓取定时器 + 公共层/平台解抓。 */
+static void xcombo_releaseGrab(XComboBox* self)
+{
+    XWindow* handle;
+    if (!self) return;
+    if (self->m_grabTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_grabTimer);
+        self->m_grabTimer = XTIMER_INVALID_ID;
+    }
+    if (self->m_popupView) {
+        XWidget_releaseMouse((XWidget*)self->m_popupView);
+        handle = XWidget_windowHandle((XWidget*)self->m_popupView);
+        if (handle)
+            XWindow_setMouseGrabEnabled(handle, false);
+    }
+}
+
+/** @brief 弹出视图行激活（单击）联动：选中条目、发射信号并收起弹窗。 */
+static void xcombo_viewActivatedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* combo = (XComboBox*)receiver;
+    int row = -1;
+    int col = -1;
+    if (!combo || !args) return;
+    row = XVarList_arg(args, int);
+    col = XVarList_arg(args, int);
+    if (row >= 0 && row < combo->m_itemCount) {
+        XComboBox_setCurrentIndex(combo, row);
+        xcombo_emitInt(combo,
+                       (size_t)XComboBox_activated_signal(combo, row), row);
+        xcombo_emitText(combo,
+                        (size_t)XComboBox_textActivated_signal(
+                            combo, XComboBox_itemText_2(combo, row)),
+                        XComboBox_itemText_2(combo, row));
+    }
+    XComboBox_hidePopup_base(combo);
+}
+
+XListView* XComboBox_view(XComboBox* self)
+{
+    if (!self) return NULL;
+    xcombo_syncModel(self);
+    if (!self->m_popupView) {
+        /* 内置弹窗使用本地子类：覆写按下/释放以支持"点击弹窗外部
+           自动收起"（XComboPopupView，仍是 XListView 派生对象）。 */
+        self->m_popupView = (XListView*)xcomboPopupView_create(self);
+        if (self->m_popupView) {
+            XAbstractItemView_setModel(
+                (XAbstractItemView*)self->m_popupView, self->m_model);
+            XListView_setModelColumn(self->m_popupView, self->m_modelColumn);
+            /* 行激活（单击）联动选择并收起弹窗。 */
+            XObject_connect_1((XObject*)self->m_popupView,
+                (size_t)XAbstractItemView_activated_signal(
+                    self->m_popupView, 0, 0),
+                (XObject*)self, xcombo_viewActivatedSlot,
+                XConnectionType_Direct);
+        }
+    }
+    return self->m_popupView;
+}
+
+void XComboBox_setView(XComboBox* self, XListView* view)
+{
+    if (!self || !view || view == self->m_popupView) return;
+    /* 弹出中换视图：先按常规路径收起，保证旧视图的抓取被解除。 */
+    if (self->m_popupVisible)
+        XComboBox_hidePopup_base(self);
+    if (self->m_model)
+        XAbstractItemView_setModel((XAbstractItemView*)view, self->m_model);
+    XListView_setModelColumn(view, self->m_modelColumn);
+    if (self->m_popupView)
+        XListView_delete_base((XClass*)self->m_popupView);
+    self->m_popupView = view;
+}
+
+XAbstractItemModel* XComboBox_model(XComboBox* self)
+{
+    if (self) xcombo_syncModel(self);
+    return self ? self->m_model : NULL;
+}
+
+void XComboBox_setModel(XComboBox* self, XAbstractItemModel* model)
+{
+    if (!self || self->m_model == model) return;
+    if (self->m_popupView)
+        XAbstractItemView_setModel((XAbstractItemView*)self->m_popupView,
+                                   model);
+    if (self->m_model)
+        XAbstractItemModel_delete_base((XClass*)self->m_model);
+    self->m_model = model;
+}
+
+int XComboBox_modelColumn(const XComboBox* self)
+{ return self ? self->m_modelColumn : 0; }
+
+void XComboBox_setModelColumn(XComboBox* self, int column)
+{
+    if (!self) return;
+    self->m_modelColumn = column;
+    if (self->m_popupView)
+        XListView_setModelColumn(self->m_popupView, column);
+}
+
+void XComboBox_setRootModelIndex(XComboBox* self, int row, int col)
+{
+    if (!self) return;
+    self->m_rootRow = row;
+    self->m_rootCol = col;
+}
+
+void XComboBox_rootModelIndex(const XComboBox* self, int* row, int* col)
+{
+    if (row) *row = self ? self->m_rootRow : 0;
+    if (col) *col = self ? self->m_rootCol : 0;
+}
+
+void XComboBox_setValidator(XComboBox* self, void* validator)
+{ if (self) self->m_validator = validator; }
+
+void* XComboBox_validator(const XComboBox* self)
+{ return self ? self->m_validator : NULL; }
+
+void XComboBox_setItemDelegate(XComboBox* self, void* delegate)
+{
+    /* 对标 QComboBox::setItemDelegate：委托体系未建，仅保存不透明
+       指针（借用语义，不取得所有权）。 */
+    if (self) self->m_itemDelegate = delegate;
+}
+
+void* XComboBox_itemDelegate(const XComboBox* self)
+{ return self ? self->m_itemDelegate : NULL; }
+
+XString* XComboBox_inputMethodQuery(XComboBox* self, int query)
+{
+    XString* out = XString_create();
+    if (!out) return NULL;
+    (void)query; /* 简化承载：仅编辑文本类查询；其余返回空文本。 */
+    if (self && self->m_editable && self->m_lineEdit)
+        XString_assign_utf8(out, XLineEdit_text(self->m_lineEdit));
+    else {
+        XString* cur = XComboBox_currentText(self);
+        if (cur) {
+            XString_assign(out, cur);
+            XString_delete_base(cur);
+        }
+    }
+    return out;
 }
 
 int XComboBox_currentIndex(const XComboBox* self)
@@ -852,39 +1125,57 @@ void XComboBox_clear(XComboBox* self)
 
 void XComboBox_showPopup_base(XComboBox* self)
 {
+    XListView* view;
+    XPoint origin;
+    XPoint g;
     int rows;
-    int newH;
+    XRect r;
     if (!self || self->m_popupVisible) return;
+    view = XComboBox_view(self);
+    if (!view) return;
+    xcombo_syncModel(self);
+    rows = self->m_itemCount < self->m_maxVisibleItems
+        ? (self->m_itemCount > 0 ? self->m_itemCount : 1)
+        : self->m_maxVisibleItems;
+    /* 顶层 Popup 窗口（参照 XMenu：无边框、覆盖式显示，X11 下
+       override-redirect）；定位在组合框正下方。 */
+    XWidget_setWindowFlags((XWidget*)view, (XWidgetFlags)XWindowType_Popup);
+    origin.x = 0;
+    origin.y = XWidget_height((XWidget*)self);
+    g = XWidget_mapToGlobal((XWidget*)self, &origin);
+    XListView_setRowHeight(view, XCOMBOBOX_ITEM_H);
+    XRect_init(&r, g.x, g.y,
+               XWidget_width((XWidget*)self),
+               rows * XCOMBOBOX_ITEM_H + 2);
+    XWidget_setGeometryRect((XWidget*)view, &r);
     self->m_popupVisible = true;
-    g_comboPopupOffset = 0;
-    /* 临时扩展高度以完整显示弹出列表（对标 QComboBox 弹出窗口）。 */
-    self->m_savedHeight = XWidget_height((XWidget*)self);
-    if (self->m_savedHeight < 20) self->m_savedHeight = 26;
-    rows = self->m_itemCount;
-    if (rows > self->m_maxVisibleItems) rows = self->m_maxVisibleItems;
-    if (rows < 1) rows = 1;
-    newH = rows * XCOMBOBOX_ITEM_H + 2;
-    if (newH > self->m_savedHeight)
-        XWidget_resize((XWidget*)self, XWidget_width((XWidget*)self), newH);
-    XWidget_grabMouse((XWidget*)self);
     xcombo_emitInt(self, (size_t)XComboBox_popupShown_signal(self), 0);
+    XWidget_show((XWidget*)view);
+    XWidget_raise((XWidget*)view);
+    /* 独立顶层窗口无宿主帧泵：主动完成首帧绘制上屏（参照 XMenu）。 */
+    XWidget_flushBackingStore((XWidget*)view, NULL);
+    /* 模态鼠标抓取（参照 XMenu）：公共层立即设置直投目标，使点击弹窗
+       外部的事件也路由到弹窗（由 XComboPopupView 判定越界并收起）；
+       平台 XGrabPointer 需要窗口完成映射，延迟到 1ms 精确定时器执行。 */
+    XWidget_grabMouse((XWidget*)view);
+    if (self->m_grabTimer == XTIMER_INVALID_ID) {
+        self->m_grabTimer = XObject_startTimer_ms(
+            (XObject*)self, 1u, XTimerType_PreciseTimer);
+    }
     XWidget_update((XWidget*)self);
 }
 
 void XComboBox_hidePopup_base(XComboBox* self)
 {
     if (!self || !self->m_popupVisible) return;
-    int rh;
-    XWidget* parent;
     self->m_popupVisible = false;
-    rh = self->m_savedHeight > 0 ? self->m_savedHeight : 26;
-    XWidget_resize((XWidget*)self, XWidget_width((XWidget*)self), rh);
-    XWidget_releaseMouse((XWidget*)self);
+    /* 解除模态抓取：杀延迟抓取定时器 + 公共层/平台解抓（选择收起
+       经 xcombo_viewActivatedSlot 亦走本路径）。 */
+    xcombo_releaseGrab(self);
+    if (self->m_popupView)
+        XWidget_hide((XWidget*)self->m_popupView);
     xcombo_emitInt(self, (size_t)XComboBox_popupHidden_signal(self), 0);
     XWidget_update((XWidget*)self);
-    /* 收缩后暴露的区域属于父控件，必须让父控件重绘清除残留。 */
-    parent = (XWidget*)XObject_parent((XObject*)self);
-    if (parent) XWidget_update(parent);
 }
 
 bool XComboBox_popupVisible(const XComboBox* self)

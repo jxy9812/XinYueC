@@ -15,7 +15,10 @@
  *               HH/mm/ss 占位符展开）；
  *             - stepBy：按当前分段增减（年/月/日/时/分/秒，含进位）；
  *             - 信号：dateTimeChanged(QDateTime*)/dateChanged/
- *               timeChanged（携带内部 XDateTime 指针，借用）。
+ *               timeChanged（携带内部 XDateTime 指针，借用）；
+ *             - calendarWidget 族：calendarWidget/setCalendarWidget
+ *               （内置日历懒创建、外部日历接管与 selectionChanged →
+ *               setDate 信号联动）。
  * @note       模块总开关 XDATETIMEEDIT_ON 定义于 XGuiConfig.h。
  * @author     XinYueC 团队
  */
@@ -49,6 +52,10 @@ typedef enum XDateTimeEditSection
 XCLASS_DEFINE_BEGING(XDateTimeEdit)
 XCLASS_DEFINE_EXTEND_END(XDateTimeEdit, XAbstractSpinBox)
 
+/** @brief XCalendarWidget 前向声明（内置日历弹出控件；完整定义见
+ *         XCalendarWidget.h）。 */
+typedef struct XCalendarWidget XCalendarWidget;
+
 typedef struct XDateTimeEdit
 {
     XAbstractSpinBox m_base;   /**< 基类成员；必须是第一个。 */
@@ -59,6 +66,10 @@ typedef struct XDateTimeEdit
     int m_currentSection;      /**< 当前编辑分段。 */
     bool m_calendarPopup;      /**< 日历弹出（默认 true）。 */
     int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime）。 */
+#if XCALENDARWIDGET_ON
+    XCalendarWidget* m_calendar; /**< 内置日历（懒创建；对象拥有，
+                                     setCalendarWidget 可整体接管）。 */
+#endif
 } XDateTimeEdit;
 
 XVtable* XDateTimeEdit_class_init(void);
@@ -76,6 +87,35 @@ XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
 void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup);
 /** @brief 查询日历弹出。 @param self 目标控件。 @return 弹出返回 true。 */
 bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self);
+#if XCALENDARWIDGET_ON
+/**
+ * @brief      获取内置日历控件（对标 QDateTimeEdit::calendarWidget）。
+ * @details    首次访问懒创建内置 XCalendarWidget（保持 NULL 父控件，
+ *             对象由本控件持有），并以当前日期初始化其选中态；随后把
+ *             日历的 selectionChanged 信号连接到本控件 setDate 联动槽
+ *             （对标 QComboBox::setView 的聚合思路）。注意：本函数为
+ *             const 接口但含懒创建副作用，与 Qt 的 const 语义对齐。
+ * @param      self 目标控件；传入 NULL 时返回 NULL。
+ * @return     内置日历控件指针（借用；所有权仍在 XDateTimeEdit，
+ *             调用方不得释放）。
+ */
+XCalendarWidget* XDateTimeEdit_calendarWidget(const XDateTimeEdit* self);
+/**
+ * @brief      挂接外部日历控件（对标 QDateTimeEdit::setCalendarWidget）。
+ * @details    取得所有权：先释放旧的内置/接管日历，再接管 calendar；
+ *             若 XCalendarWidget 提供选中信号（selectionChanged），则
+ *             将其连接到本控件的 setDate 联动槽，实现日历选区 → 编辑框
+ *             值的单向同步；传入 NULL 仅释放并清空当前日历（与 Qt 中
+ *             setCalendarWidget(NULL) 语义一致）。@note calendar 传入
+ *             后所有权归 XDateTimeEdit，调用方此后不得再释放该对象；
+ *             同一对象重复传入为幂等操作（不释放也不重连）。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      calendar 日历控件；取得所有权，可为 NULL。
+ * @return     无。
+ */
+void XDateTimeEdit_setCalendarWidget(XDateTimeEdit* self,
+                                     XCalendarWidget* calendar);
+#endif /* XCALENDARWIDGET_ON */
 /** @brief 设置时区规格（对标 setTimeSpec）。
  * @param self 目标控件。
  * @param spec 时区规格码（Qt::TimeSpec：0=LocalTime，1=UTC，2=OffsetFromUTC，3=TimeZone）。
