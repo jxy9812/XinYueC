@@ -9,18 +9,25 @@
 
 #if XSTYLE_ON
 
-/** @brief 颜色线性插值。 */
+/** @brief 颜色线性插值。
+ * @note    通道差值必须用有符号 int：uint32 下溢（如 247-255）会回绕成
+ *          巨大正数，乘 t 后截断出无关色，表现为按钮渐变横条纹。 */
 static uint32_t xfs_lerp(uint32_t a, uint32_t b, double t)
 {
-    uint32_t ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
-    uint32_t aa = (a >> 24) & 0xFF;
-    uint32_t br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
-    uint32_t ba = (b >> 24) & 0xFF;
-    uint32_t r = (uint32_t)(ar + (br - ar) * t);
-    uint32_t g = (uint32_t)(ag + (bg - ag) * t);
-    uint32_t bl = (uint32_t)(ab + (bb - ab) * t);
-    uint32_t al = (uint32_t)(aa + (ba - aa) * t);
-    return (al << 24) | (r << 16) | (g << 8) | bl;
+    int ar = (int)((a >> 16) & 0xFF), ag = (int)((a >> 8) & 0xFF);
+    int ab = (int)(a & 0xFF), aa = (int)((a >> 24) & 0xFF);
+    int br = (int)((b >> 16) & 0xFF), bg = (int)((b >> 8) & 0xFF);
+    int bb = (int)(b & 0xFF), ba = (int)((b >> 24) & 0xFF);
+    int r = ar + (int)((br - ar) * t + (t >= 0 ? 0.5 : -0.5));
+    int g = ag + (int)((bg - ag) * t + (t >= 0 ? 0.5 : -0.5));
+    int bl = ab + (int)((bb - ab) * t + (t >= 0 ? 0.5 : -0.5));
+    int al = aa + (int)((ba - aa) * t + (t >= 0 ? 0.5 : -0.5));
+    if (r < 0) r = 0; if (r > 255) r = 255;
+    if (g < 0) g = 0; if (g > 255) g = 255;
+    if (bl < 0) bl = 0; if (bl > 255) bl = 255;
+    if (al < 0) al = 0; if (al > 255) al = 255;
+    return ((uint32_t)al << 24) | ((uint32_t)r << 16) |
+           ((uint32_t)g << 8) | (uint32_t)bl;
 }
 
 /* Fusion 主题色（对标 qfusionstyle.cpp FusionStyle 默认调色板）。 */

@@ -73,6 +73,16 @@ const char* XFontComboBox_currentFamily(const XFontComboBox* self);
  */
 void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family);
 
+/** @brief 查询当前字体（对标 QFontComboBox::currentFont；宏别名复用
+ *         XFontComboBox_currentFamily，以 UTF-8 族名承载 QFont）。
+ * @param self 目标控件；可为 NULL。
+ * @return 当前字体族名（UTF-8）；借用内部缓存，禁止释放。
+ */
+#define XFontComboBox_currentFont(self) XFontComboBox_currentFamily((self))
+/** @brief 按字体族名选中条目（对标 QFontComboBox::setCurrentFont；
+ *         以 UTF-8 族名承载 QFont；转发 setCurrentFamily）。 */
+void XFontComboBox_setCurrentFont(XFontComboBox* self, const char* family);
+
 /** @brief currentFontChanged(const char*) 信号（对标 QFontComboBox::currentFontChanged；
  *         载荷：字体家族 UTF-8）。 */
 void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self,

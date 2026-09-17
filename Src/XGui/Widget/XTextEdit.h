@@ -97,6 +97,21 @@ void XTextEdit_setUnderline(XTextEdit* self, bool underline);
  * @brief      获取下划线格式。
  */
 bool XTextEdit_isUnderline(const XTextEdit* self);
+
+/** @brief 查询斜体（对标 QTextEdit::fontItalic 属性 READ；宏别名复用
+ *         XTextEdit_isItalic）。 */
+#define XTextEdit_fontItalic(self) XTextEdit_isItalic((self))
+/** @brief 设置斜体（对标 QTextEdit::setFontItalic；宏别名复用
+ *         XTextEdit_setItalic）。 */
+#define XTextEdit_setFontItalic(self, italic) \
+    XTextEdit_setItalic((self), (italic))
+/** @brief 查询下划线（对标 QTextEdit::fontUnderline 属性 READ；宏别名
+ *         复用 XTextEdit_isUnderline）。 */
+#define XTextEdit_fontUnderline(self) XTextEdit_isUnderline((self))
+/** @brief 设置下划线（对标 QTextEdit::setFontUnderline；宏别名复用
+ *         XTextEdit_setUnderline）。 */
+#define XTextEdit_setFontUnderline(self, underline) \
+    XTextEdit_setUnderline((self), (underline))
 /**
  * @brief      设置文字颜色。
  */

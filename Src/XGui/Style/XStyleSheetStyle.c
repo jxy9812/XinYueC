@@ -1047,6 +1047,8 @@ void XStyleSheetStyle_setSourceStyle(XStyleSheetStyle* self, XStyle* source)
     if (!self) return;
     self->m_source = source;
     self->m_sourceOwned = false;
+    /* 对标 QStyleSheetStyle：被包装样式即代理样式（QStyle::proxy）。 */
+    ((XStyle*)self)->m_proxy = source;
 }
 void XStyleSheetStyle_setSourceStyle_move(XStyleSheetStyle* self, XStyle* source)
 {
@@ -1055,6 +1057,8 @@ void XStyleSheetStyle_setSourceStyle_move(XStyleSheetStyle* self, XStyle* source
         XStyle_delete_base(self->m_source);
     self->m_source = source;
     self->m_sourceOwned = (source != NULL);
+    /* 对标 QStyleSheetStyle：被包装样式即代理样式（QStyle::proxy）。 */
+    ((XStyle*)self)->m_proxy = source;
 }
 
 int XStyleSheetStyle_ruleCount(const XStyleSheetStyle* self)

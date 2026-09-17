@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XMenu.h
  * @brief      XMenu 弹出菜单公开 API（对标 Qt 6.8 QMenu）。
  * @details    XMenu 继承 XWidget，实现 QMenu 的核心语义：
@@ -64,6 +64,7 @@ typedef struct XMenu
 {
     XWidget      m_base;                  /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
     XString*     m_title;                 /**< 菜单标题（对标 QMenu::title）；对象拥有。 */
+    XString*     m_icon;                  /**< 菜单图标路径（对标 QMenu::icon）；对象拥有；可为 NULL。 */
     XVector*     m_actions;               /**< 动作列表（XAction*，对标 QMenu::actions）；对象拥有。 */
     XAction*     m_menuAction;            /**< 代表本菜单的动作（对标 QMenu::menuAction）；懒创建。 */
     XMenu*       m_parentMenu;            /**< 父菜单借用指针；NULL 表示顶层菜单。 */
@@ -344,6 +345,16 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos);
  */
 XAction* XMenu_menuAction(XMenu* self);
 
+/**
+ * @brief      返回动作所承载的菜单（对标 QMenu::menuInAction）。
+ * @details    Qt 的静态辅助等价于 `action->menu()`：动作不作为子菜单入口
+ *             时返回 NULL。XGui 中动作经 XAction_setMenu 关联菜单
+ *             （对标 QAction::setMenu）。
+ * @param      action 目标动作借用指针；可为 NULL。
+ * @return     动作承载的菜单借用指针；无关联时返回 NULL。
+ */
+XMenu* XMenu_menuInAction(const XAction* action);
+
 /* ==================== 属性（对标 QMenu） ==================== */
 
 /**
@@ -377,6 +388,30 @@ void XMenu_setTitle(XMenu* self, const XString* title);
  * @return     无返回值。
  */
 void XMenu_setTitle_2(XMenu* self, const char* utf8);
+
+/**
+ * @brief      设置菜单图标（对标 QMenu::setIcon；XString 主版本）。
+ * @details    图标以路径字符串承载；当前渲染层暂未消费该图标，
+ *             仅存储状态供上层使用。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      icon 图标路径借用指针；NULL 清除图标。
+ * @return     无返回值。
+ */
+void XMenu_setIcon(XMenu* self, const XString* icon);
+/**
+ * @brief      设置菜单图标（UTF-8 路径兼容重载，转发 XString 主版本）。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      utf8 图标路径（UTF-8）；NULL 清除图标。
+ * @return     无返回值。
+ */
+void XMenu_setIcon_2(XMenu* self, const char* utf8);
+/**
+ * @brief      查询菜单图标（对标 QMenu::icon）。
+ * @param      self 菜单对象借用指针；可为 NULL。
+ * @return     借用内部 XString 指针；未设置或 self 为 NULL 时返回
+ *             NULL；禁止释放或修改。
+ */
+const XString* XMenu_icon(const XMenu* self);
 
 /**
  * @brief      查询默认动作（对标 QMenu::defaultAction）。
@@ -444,6 +479,9 @@ void XMenu_setToolTipsVisible(XMenu* self, bool visible);
  * @return     允许返回 true；self 为 NULL 时返回 false。
  */
 bool XMenu_tearOffEnabled(const XMenu* self);
+/** @brief 查询是否允许撕离（对标 QMenu::isTearOffEnabled 属性访问器；
+ *         宏别名复用 XMenu_tearOffEnabled）。 */
+#define XMenu_isTearOffEnabled(self) XMenu_tearOffEnabled((self))
 
 /**
  * @brief      设置是否允许撕离（对标 QMenu::setTearOffEnabled）。

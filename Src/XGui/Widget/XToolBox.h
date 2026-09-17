@@ -126,6 +126,27 @@ void XToolBox_setItemIcon_2(XToolBox* self, int index, const char* utf8);
  * @return 借用指针；未设置或越界返回 NULL。
  */
 const XString* XToolBox_itemIcon(const XToolBox* self, int index);
+/** @brief 设置条目提示（对标 QToolBox::setItemToolTip；XString 主版本）。
+ * @details 仅存储状态；提示展示层尚未接入。
+ * @param self 目标工具箱；传入 NULL 时函数不执行任何操作。
+ * @param index 条目索引；越界时忽略。
+ * @param tip 提示文本借用指针；NULL 清除提示。
+ * @return 无返回值。
+ */
+void XToolBox_setItemToolTip(XToolBox* self, int index, const XString* tip);
+/** @brief 设置条目提示（UTF-8 兼容重载，转发 XString 主版本）。
+ * @param self 目标工具箱；传入 NULL 时函数不执行任何操作。
+ * @param index 条目索引；越界时忽略。
+ * @param utf8 提示文本（UTF-8）；NULL 清除提示。
+ * @return 无返回值。
+ */
+void XToolBox_setItemToolTip_2(XToolBox* self, int index, const char* utf8);
+/** @brief 查询条目提示（对标 QToolBox::itemToolTip）。
+ * @param self 目标工具箱；传入 NULL 或越界时返回 NULL。
+ * @param index 条目索引。
+ * @return 借用内部 XString 指针；未设置返回 NULL；禁止释放或修改。
+ */
+const XString* XToolBox_itemToolTip(const XToolBox* self, int index);
 
 /* ==================== 当前页槽 ==================== */
 

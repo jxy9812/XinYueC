@@ -72,6 +72,8 @@ typedef struct XToolBar
     int m_allowedAreas;      /**< 允许停靠区域（默认全部）。 */
     int m_iconSize;          /**< 图标尺寸（默认 16）。 */
     int m_buttonStyle;       /**< 按钮风格（默认 IconOnly；文本绘制用）。 */
+    bool m_floating;         /**< 是否浮动（对标 QToolBar::isFloating；
+                                  停靠体系未建，默认 false 仅存储位）。 */
 } XToolBar;
 
 /** @brief 设置工具栏标题（对标 QToolBar::setWindowTitle；存于 XWidget 窗口标题）。 @param self 目标工具栏指针。 @param utf8 标题（UTF-8）。 @return 无返回值。 */
@@ -105,6 +107,18 @@ void XToolBar_setAllowedAreas(XToolBar* self, int areas);
  * @brief      获取允许停靠区域。
  */
 int XToolBar_allowedAreas(const XToolBar* self);
+/** @brief 查询指定停靠区是否允许（对标 QToolBar::isAreaAllowed）。
+ * @param self 目标工具栏指针；传入 NULL 时返回 false。
+ * @param area 停靠区位掩码（单个位）。
+ * @return area 在 allowedAreas 位掩码内返回 true。
+ */
+bool XToolBar_isAreaAllowed(const XToolBar* self, int area);
+/** @brief 查询是否浮动（对标 QToolBar::isFloating）。
+ * @details 停靠体系未建立，当前恒为存储位默认 false。
+ * @param self 目标工具栏指针；传入 NULL 时返回 false。
+ * @return 浮动返回 true。
+ */
+bool XToolBar_isFloating(const XToolBar* self);
 void XToolBar_setIconSize(XToolBar* self, int size);
 int XToolBar_iconSize(const XToolBar* self);
 void XToolBar_setToolButtonStyle(XToolBar* self, int style);
@@ -185,6 +199,18 @@ void* XToolBar_actionTriggered_signal(XToolBar* self, XAction* action);
 void* XToolBar_actionHovered_signal(XToolBar* self, XAction* action);
 void* XToolBar_orientationChanged_signal(XToolBar* self, int orientation);
 void* XToolBar_movableChanged_signal(XToolBar* self, bool movable);
+/** @brief 允许停靠区变化信号（对标 QToolBar::allowedAreasChanged）。
+ * @param self 目标工具栏指针；可为 NULL。
+ * @param areas 新的允许停靠区位掩码。
+ * @return 信号函数标识；供 XObject_connect 使用。
+ */
+void* XToolBar_allowedAreasChanged_signal(XToolBar* self, int areas);
+/** @brief 按钮风格变化信号（对标 QToolBar::toolButtonStyleChanged）。
+ * @param self 目标工具栏指针；可为 NULL。
+ * @param style 新的按钮风格码。
+ * @return 信号函数标识；供 XObject_connect 使用。
+ */
+void* XToolBar_toolButtonStyleChanged_signal(XToolBar* self, int style);
 
 /**
  * @brief      可见性变化信号（真发射；show/hide 事件驱动，对标

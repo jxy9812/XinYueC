@@ -310,6 +310,48 @@ void XMenu_setTitle(XMenu* self, const XString* title)
     XWidget_update((XWidget*)self);
 }
 
+void XMenu_setIcon(XMenu* self, const XString* icon)
+{
+    XString* copy;
+
+    if (!self)
+        return;
+    if (!icon) {
+        if (self->m_icon) {
+            XString_delete_base((XClass*)self->m_icon);
+            self->m_icon = NULL;
+        }
+        return;
+    }
+    copy = XString_create_copy(icon);
+    if (!copy)
+        return;
+    if (self->m_icon)
+        XString_delete_base((XClass*)self->m_icon);
+    self->m_icon = copy;
+}
+
+void XMenu_setIcon_2(XMenu* self, const char* utf8)
+{
+    XString tmp;
+
+    if (!self)
+        return;
+    if (!utf8) {
+        XMenu_setIcon(self, NULL);
+        return;
+    }
+    XString_init(&tmp);
+    XString_assign_utf8(&tmp, utf8);
+    XMenu_setIcon(self, &tmp);
+    XString_deinit_base(&tmp);
+}
+
+const XString* XMenu_icon(const XMenu* self)
+{
+    return self ? self->m_icon : NULL;
+}
+
 void XMenu_setTitle_2(XMenu* self, const char* utf8)
 {
     XString* text;
@@ -889,6 +931,12 @@ static void VXMenu_copy(XMenu* self, const XMenu* other)
     }
     self->m_title = other->m_title ? XString_create_copy(other->m_title)
                                    : NULL;
+    if (self->m_icon) {
+        XString_delete_base((XClass*)self->m_icon);
+        self->m_icon = NULL;
+    }
+    self->m_icon = other->m_icon ? XString_create_copy(other->m_icon)
+                                 : NULL;
     self->m_separatorsCollapsible = other->m_separatorsCollapsible;
     self->m_toolTipsVisible = other->m_toolTipsVisible;
     self->m_tearOffEnabled = other->m_tearOffEnabled;
@@ -938,6 +986,8 @@ static void VXMenu_move(XMenu* self, XMenu* other)
     }
     self->m_title = other->m_title;
     other->m_title = NULL;
+    self->m_icon = other->m_icon;
+    other->m_icon = NULL;
     self->m_actions = other->m_actions;
     other->m_actions = XVector_create(sizeof(XAction*));
     self->m_menuAction = other->m_menuAction;
@@ -987,6 +1037,10 @@ static void VXMenu_deinit(XMenu* self)
     if (self->m_title) {
         XString_delete_base((XClass*)self->m_title);
         self->m_title = NULL;
+    }
+    if (self->m_icon) {
+        XString_delete_base((XClass*)self->m_icon);
+        self->m_icon = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }

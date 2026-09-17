@@ -163,6 +163,17 @@ void XLayout_init(XLayout* self);
 void XLayout_addItem_base(XLayout* self, XLayoutItem* item);
 
 /**
+ * @brief      向布局追加控件（对标 QLayout::addWidget）。
+ * @details    内部把控件包装为控件条目后经 addItem 虚槽挂入布局，
+ *             具体追加语义由子类决定；条目对象由布局体系管理。
+ *             XBoxLayout/XGridLayout 等子类有各自的 addWidget 重载时
+ *             优先使用子类版本（支持 stretch/alignment 参数）。
+ * @param      self 目标布局；可为 NULL。
+ * @param      widget 控件借用指针；可为 NULL（忽略）。
+ */
+void XLayout_addWidget(XLayout* self, XWidget* widget);
+
+/**
  * @brief      返回指定索引的条目（对标 QLayout::itemAt）。
  * @param      self 目标布局；可为 NULL。
  * @param      index 条目索引，从 0 开始。

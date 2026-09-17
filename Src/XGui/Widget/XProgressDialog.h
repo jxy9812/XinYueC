@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XProgressDialog.h
  * @brief      XProgressDialog 进度对话框控件（对标 Qt 6.8 QProgressDialog
  *            : QDialog）。
@@ -37,6 +37,11 @@ extern "C" {
 
 /** @brief XProgressBar 前向声明（setBar 借用指针；完整定义见 XProgressBar.h）。 */
 typedef struct XProgressBar XProgressBar;
+/** @brief XLabel 前向声明（setLabel 所有权转移；完整定义见 XLabel.h）。 */
+typedef struct XLabel XLabel;
+/** @brief XPushButton 前向声明（setCancelButton 所有权转移；完整定义见
+ *         XPushButton.h）。 */
+typedef struct XPushButton XPushButton;
 
 XCLASS_DEFINE_BEGING(XProgressDialog)
 XCLASS_DEFINE_EXTEND_END(XProgressDialog, XDialog)
@@ -59,6 +64,8 @@ typedef struct XProgressDialog
     XString* m_labelText;        /**< 提示文本（拥有）。 */
     XString* m_cancelButtonText; /**< 取消按钮文本（拥有）。 */
     XProgressBar* m_bar;         /**< 进度条（借用；setBar 简化存储）。 */
+    XLabel* m_label;             /**< 自定义标签控件（拥有；对标 setLabel）。 */
+    XPushButton* m_cancelButton; /**< 自定义取消按钮（拥有；对标 setCancelButton）。 */
 } XProgressDialog;
 
 /**
@@ -189,6 +196,45 @@ XString* XProgressDialog_labelText(const XProgressDialog* self);
  */
 void XProgressDialog_setCancelButtonText(XProgressDialog* self,
                                          const XString* text);
+
+#if XFRAME_ON && XLABEL_ON
+/**
+ * @brief      设置自定义标签控件（对标 QProgressDialog::setLabel）。
+ * @details    Qt 语义：对话框接管标签所有权，旧标签被删除；传入 NULL
+ *             清除自定义标签（回到内建文本承载）。标签成为对话框子控件
+ *             并显示在顶部文本行。
+ * @param      self 目标对话框。
+ * @param      label 新标签（所有权转移给对话框）；可为 NULL 清除。
+ * @return     无返回值。
+ */
+void XProgressDialog_setLabel(XProgressDialog* self, XLabel* label);
+/**
+ * @brief      获取自定义标签控件（对标 QProgressDialog::label）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     标签借用指针；未设置自定义标签时为 NULL。
+ */
+XLabel* XProgressDialog_label(const XProgressDialog* self);
+#endif /* XFRAME_ON && XLABEL_ON */
+
+#if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
+/**
+ * @brief      设置自定义取消按钮（对标 QProgressDialog::setCancelButton）。
+ * @details    Qt 语义：对话框接管按钮所有权，旧按钮被删除；按钮 clicked
+ *             经内部槽调用 cancel()（等价 Qt 的 clicked→canceled→cancel
+ *             链路）；传入 NULL 表示不再显示取消按钮（无法取消）。
+ * @param      self 目标对话框。
+ * @param      button 新取消按钮（所有权转移给对话框）；可为 NULL 移除。
+ * @return     无返回值。
+ */
+void XProgressDialog_setCancelButton(XProgressDialog* self,
+                                     XPushButton* button);
+/**
+ * @brief      获取自定义取消按钮（对标 QProgressDialog::cancelButton）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     按钮借用指针；未设置自定义取消按钮时为 NULL。
+ */
+XPushButton* XProgressDialog_cancelButton(const XProgressDialog* self);
+#endif /* XABSTRACTBUTTON_ON && XPUSHBUTTON_ON */
 /**
  * @brief      设置进度条（对标 QProgressDialog::setBar；简化：仅存储借用
  *             指针，不建立真实布局）。

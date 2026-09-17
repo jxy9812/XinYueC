@@ -292,6 +292,146 @@ void XDateTimeEdit_setMaximumDateTime(XDateTimeEdit* self,
     xdt_clamp(self);
 }
 
+XDate XDateTimeEdit_minimumDate(const XDateTimeEdit* self)
+{
+    XDate d;
+    XMemset(&d, 0, sizeof(d));
+    if (self) d = XDateTime_date(&self->m_minimum);
+    return d;
+}
+
+void XDateTimeEdit_setMinimumDate(XDateTimeEdit* self, const XDate* date)
+{
+    XDateTime tmp;
+    if (!self || !date) return;
+    tmp = self->m_minimum;
+    XDateTime_setDate(&tmp, *date);
+    XDateTimeEdit_setMinimumDateTime(self, &tmp);
+}
+
+XDate XDateTimeEdit_maximumDate(const XDateTimeEdit* self)
+{
+    XDate d;
+    XMemset(&d, 0, sizeof(d));
+    if (self) d = XDateTime_date(&self->m_maximum);
+    return d;
+}
+
+void XDateTimeEdit_setMaximumDate(XDateTimeEdit* self, const XDate* date)
+{
+    XDateTime tmp;
+    if (!self || !date) return;
+    tmp = self->m_maximum;
+    XDateTime_setDate(&tmp, *date);
+    XDateTimeEdit_setMaximumDateTime(self, &tmp);
+}
+
+XTime XDateTimeEdit_minimumTime(const XDateTimeEdit* self)
+{
+    XTime t;
+    XMemset(&t, 0, sizeof(t));
+    if (self) t = XDateTime_time(&self->m_minimum);
+    return t;
+}
+
+void XDateTimeEdit_setMinimumTime(XDateTimeEdit* self, const XTime* time)
+{
+    XDateTime tmp;
+    if (!self || !time) return;
+    tmp = self->m_minimum;
+    XDateTime_setTime(&tmp, *time);
+    XDateTimeEdit_setMinimumDateTime(self, &tmp);
+}
+
+XTime XDateTimeEdit_maximumTime(const XDateTimeEdit* self)
+{
+    XTime t;
+    XMemset(&t, 0, sizeof(t));
+    if (self) t = XDateTime_time(&self->m_maximum);
+    return t;
+}
+
+void XDateTimeEdit_setMaximumTime(XDateTimeEdit* self, const XTime* time)
+{
+    XDateTime tmp;
+    if (!self || !time) return;
+    tmp = self->m_maximum;
+    XDateTime_setTime(&tmp, *time);
+    XDateTimeEdit_setMaximumDateTime(self, &tmp);
+}
+
+void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self)
+{
+    XDate d;
+    if (!self) return;
+    XDate_setDate(&d, 1900, 1, 1);
+    XDateTimeEdit_setMinimumDate(self, &d);
+}
+
+void XDateTimeEdit_clearMaximumDate(XDateTimeEdit* self)
+{
+    XDate d;
+    if (!self) return;
+    XDate_setDate(&d, 2999, 12, 31);
+    XDateTimeEdit_setMaximumDate(self, &d);
+}
+
+void XDateTimeEdit_clearMinimumTime(XDateTimeEdit* self)
+{
+    XTime t;
+    if (!self) return;
+    XTime_setHMS(&t, 0, 0, 0, 0);
+    XDateTimeEdit_setMinimumTime(self, &t);
+}
+
+void XDateTimeEdit_clearMaximumTime(XDateTimeEdit* self)
+{
+    XTime t;
+    if (!self) return;
+    XTime_setHMS(&t, 23, 59, 59, 999);
+    XDateTimeEdit_setMaximumTime(self, &t);
+}
+
+void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self)
+{
+    XDateTime dt;
+    if (!self) return;
+    XDate_setDate(&dt.m_date, 1900, 1, 1);
+    XTime_setHMS(&dt.m_time, 0, 0, 0, 0);
+    XDateTimeEdit_setMinimumDateTime(self, &dt);
+}
+
+void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self)
+{
+    XDateTime dt;
+    if (!self) return;
+    XDate_setDate(&dt.m_date, 2999, 12, 31);
+    XTime_setHMS(&dt.m_time, 23, 59, 59, 999);
+    XDateTimeEdit_setMaximumDateTime(self, &dt);
+}
+
+void XDateTimeEdit_setDateRange(XDateTimeEdit* self, const XDate* min,
+                                const XDate* max)
+{
+    if (min) XDateTimeEdit_setMinimumDate(self, min);
+    if (max) XDateTimeEdit_setMaximumDate(self, max);
+}
+
+void XDateTimeEdit_setTimeRange(XDateTimeEdit* self, const XTime* min,
+                                const XTime* max)
+{
+    if (min) XDateTimeEdit_setMinimumTime(self, min);
+    if (max) XDateTimeEdit_setMaximumTime(self, max);
+}
+
+void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self,
+                                    const XDateTime* min,
+                                    const XDateTime* max)
+{
+    if (min) XDateTimeEdit_setMinimumDateTime(self, min);
+    if (max) XDateTimeEdit_setMaximumDateTime(self, max);
+}
+
 void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
                                     const char* utf8)
 {
@@ -411,5 +551,145 @@ void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index)
         XWidget_update((XWidget*)self);
     }
 }
+
+/* ==================== 分段查询族 ==================== */
+
+/** @brief 分段记号（内部解析产物）。 */
+typedef struct XdtSectionTok
+{
+    int code;    /**< 分段枚举值（XDateTimeEditSection）。 */
+    int width;   /**< 渲染宽度：年份 4 位，其余 2 位。 */
+} XdtSectionTok;
+
+/** @brief 解析 displayFormat 中可识别的分段记号（与 xdt_refreshText
+ *         记号集一致；最多 8 个）。返回记号个数。 */
+static int xdt_parseSections(const char* fmt, XdtSectionTok* out, int max)
+{
+    int n = 0;
+    size_t i = 0;
+    if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
+    while (fmt[i] != '\0' && n < max) {
+        if (XStrncmp(&fmt[i], "yyyy", 4) == 0) {
+            out[n].code = (int)XDateTimeEditSection_YearSection;
+            out[n++].width = 4;
+            i += 4;
+        } else if (XStrncmp(&fmt[i], "MM", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_MonthSection;
+            out[n++].width = 2;
+            i += 2;
+        } else if (XStrncmp(&fmt[i], "dd", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_DaySection;
+            out[n++].width = 2;
+            i += 2;
+        } else if (XStrncmp(&fmt[i], "HH", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_HourSection;
+            out[n++].width = 2;
+            i += 2;
+        } else if (XStrncmp(&fmt[i], "mm", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_MinuteSection;
+            out[n++].width = 2;
+            i += 2;
+        } else if (XStrncmp(&fmt[i], "ss", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_SecondSection;
+            out[n++].width = 2;
+            i += 2;
+        } else {
+            ++i;
+        }
+    }
+    return n;
+}
+
+/** @brief 取控件当前生效格式串（NULL 控件/格式时回退默认格式）。 */
+static const char* xdt_effectiveFormat(const XDateTimeEdit* self)
+{
+    const char* fmt = (self && self->m_displayFormat)
+        ? XString_toUtf8(self->m_displayFormat) : NULL;
+    return fmt ? fmt : "yyyy-MM-dd HH:mm:ss";
+}
+
+int XDateTimeEdit_sectionCount(const XDateTimeEdit* self)
+{
+    XdtSectionTok toks[8];
+    if (!self) return 0;
+    return xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+}
+
+int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index)
+{
+    XdtSectionTok toks[8];
+    int n;
+    if (!self || index < 0) return (int)XDateTimeEditSection_NoSection;
+    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    if (index >= n) return (int)XDateTimeEditSection_NoSection;
+    return toks[index].code;
+}
+
+XString* XDateTimeEdit_sectionText(const XDateTimeEdit* self, int section)
+{
+    XString* out;
+    XdtSectionTok toks[8];
+    int n;
+    int i;
+    int value = 0;
+    bool found = false;
+    int width = 2;
+    char buf[16];
+    out = XString_create();
+    if (!out) return NULL;
+    if (!self) {
+        XString_assign_utf8(out, "");
+        return out;
+    }
+    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    for (i = 0; i < n; ++i) {
+        if (toks[i].code == section) {
+            found = true;
+            width = toks[i].width;
+            break;
+        }
+    }
+    if (found) {
+        switch ((XDateTimeEditSection)section) {
+        case XDateTimeEditSection_YearSection:
+            value = XDate_year(&self->m_dateTime.m_date); break;
+        case XDateTimeEditSection_MonthSection:
+            value = XDate_month(&self->m_dateTime.m_date); break;
+        case XDateTimeEditSection_DaySection:
+            value = XDate_day(&self->m_dateTime.m_date); break;
+        case XDateTimeEditSection_HourSection:
+            value = XTime_hour(&self->m_dateTime.m_time); break;
+        case XDateTimeEditSection_MinuteSection:
+            value = XTime_minute(&self->m_dateTime.m_time); break;
+        case XDateTimeEditSection_SecondSection:
+            value = XTime_second(&self->m_dateTime.m_time); break;
+        default:
+            found = false; break;
+        }
+    }
+    if (found)
+        XSnprintf(buf, sizeof(buf), "%0*d", width, value);
+    else
+        XSnprintf(buf, sizeof(buf), "");
+    XString_assign_utf8(out, buf);
+    return out;
+}
+
+void XDateTimeEdit_setSelectedSection(XDateTimeEdit* self, int section)
+{
+    XdtSectionTok toks[8];
+    int n;
+    int i;
+    if (!self) return;
+    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    for (i = 0; i < n; ++i) {
+        if (toks[i].code == section) {
+            self->m_currentSection = section;
+            XWidget_update((XWidget*)self);
+            return;
+        }
+    }
+}
+
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */

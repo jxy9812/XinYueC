@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XProgressDialog.c
  * @brief      进度对话框控件实现（对标 Qt 6.8 QProgressDialog 公共 API）。
  * @details    与同名头文件的公共 API 一一对应。setValue 钳位后按 Qt 语义
@@ -18,6 +18,12 @@
 
 #include "XProgressDialog.h"
 #include "XWidget_Protected.h"
+#if XFRAME_ON && XLABEL_ON
+#include "XLabel.h"
+#endif
+#if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
+#include "XPushButton.h"
+#endif
 
 /* ==================== 内部辅助 ==================== */
 
@@ -64,12 +70,67 @@ static int xprogressdialog_clamp(const XProgressDialog* self, int value)
 
 /* ==================== 类与实例生命周期 ==================== */
 
+/** @brief 按当前尺寸重排自定义标签与取消按钮（顶部文本行 + 右下按钮，
+ *         对标 Qt 进度对话框的子控件布局）。 */
+static void xprogressdialog_relayout(XProgressDialog* self)
+{
+    int w;
+    int h;
+    if (!self) return;
+    w = XWidget_width((XWidget*)self);
+    h = XWidget_height((XWidget*)self);
+#if XFRAME_ON && XLABEL_ON
+    if (self->m_label) {
+        int lw = w - 32;
+        if (lw < 0) lw = 0;
+        XWidget_setGeometry((XWidget*)self->m_label, 16, 12, lw, 20);
+    }
+#endif
+#if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
+    if (self->m_cancelButton)
+        XWidget_setGeometry((XWidget*)self->m_cancelButton,
+                            w - 84, h - 34, 80, 26);
+#endif
+}
+
+/** @brief 尺寸变化后重排自定义子控件（对标 Qt 的布局更新）。 */
+static void VXProgressDialog_resizeEvent(XWidget* self, XEvent* event)
+{
+    XProgressDialog* dlg = (XProgressDialog*)self;
+    (void)event;
+    if (!dlg) return;
+    xprogressdialog_relayout(dlg);
+}
+
+#if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
+/** @brief 自定义取消按钮 clicked → cancel()（对标 Qt 的
+ *         clicked→canceled→cancel 链路，XGui 合并为一次 cancel 调用）。 */
+static void xprogressdialog_cancelClickedSlot(XObject* receiver, XVarList* args)
+{
+    XProgressDialog* self = (XProgressDialog*)receiver;
+    (void)args;
+    if (self) XProgressDialog_cancel(self);
+}
+#endif
+
 /** @brief 释放对话框自有拥有字段，再委托父类。 */
 static void VXProgressDialog_deinit(XProgressDialog* self)
 {
     if (!self) return;
     xprogressdialog_freeString(&self->m_labelText);
     xprogressdialog_freeString(&self->m_cancelButtonText);
+#if XFRAME_ON && XLABEL_ON
+    if (self->m_label) {
+        XLabel_delete_base((XClass*)self->m_label);
+        self->m_label = NULL;
+    }
+#endif
+#if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
+    if (self->m_cancelButton) {
+        XPushButton_delete_base((XClass*)self->m_cancelButton);
+        self->m_cancelButton = NULL;
+    }
+#endif
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -78,6 +139,7 @@ XVtable* XProgressDialog_class_init(void)
     XVTABLE_INIT_DEFAULT(XProgressDialog)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXProgressDialog_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXProgressDialog_resizeEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -185,22 +247,97 @@ void XProgressDialog_reset(XProgressDialog* self)
 void XProgressDialog_setLabelText(XProgressDialog* self, const XString* text)
 {
     if (!self) return;
+#if XFRAME_ON && XLABEL_ON
+    /* 对标 Qt：存在自定义标签时文本转发给标签。 */
+    if (self->m_label) {
+        XLabel_setText(self->m_label, text);
+        return;
+    }
+#endif
     xprogressdialog_freeString(&self->m_labelText);
     self->m_labelText = xprogressdialog_dupString(text);
 }
 
 XString* XProgressDialog_labelText(const XProgressDialog* self)
 {
-    return self ? xprogressdialog_dupString(self->m_labelText) : XString_create();
+    if (!self) return XString_create();
+#if XFRAME_ON && XLABEL_ON
+    if (self->m_label)
+        return xprogressdialog_dupString(XLabel_text(self->m_label));
+#endif
+    return xprogressdialog_dupString(self->m_labelText);
 }
 
 void XProgressDialog_setCancelButtonText(XProgressDialog* self,
                                          const XString* text)
 {
     if (!self) return;
+#if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
+    /* 对标 Qt：存在自定义取消按钮时文本转发给按钮。 */
+    if (self->m_cancelButton) {
+        XAbstractButton_setText((XAbstractButton*)self->m_cancelButton, text);
+        return;
+    }
+#endif
     xprogressdialog_freeString(&self->m_cancelButtonText);
     self->m_cancelButtonText = xprogressdialog_dupString(text);
 }
+
+#if XFRAME_ON && XLABEL_ON
+void XProgressDialog_setLabel(XProgressDialog* self, XLabel* label)
+{
+    if (!self || self->m_label == label) return;
+    /* 对标 Qt setLabel：删除旧标签并接管新标签所有权。 */
+    if (self->m_label) {
+        XLabel_delete_base((XClass*)self->m_label);
+        self->m_label = NULL;
+    }
+    self->m_label = label;
+    if (self->m_label) {
+        XWidget_setParentPlain((XWidget*)self->m_label, (XWidget*)self);
+        XWidget_show((XWidget*)self->m_label);
+        xprogressdialog_relayout(self);
+    }
+}
+
+XLabel* XProgressDialog_label(const XProgressDialog* self)
+{ return self ? self->m_label : NULL; }
+#endif /* XFRAME_ON && XLABEL_ON */
+
+#if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
+void XProgressDialog_setCancelButton(XProgressDialog* self,
+                                     XPushButton* button)
+{
+    if (!self || self->m_cancelButton == button) return;
+    /* 对标 Qt setCancelButton：删除旧按钮、接管新按钮所有权并接线
+     * clicked → cancel()。 */
+    if (self->m_cancelButton) {
+        XObject_disconnect_1((XObject*)self->m_cancelButton,
+                             XSignal(XAbstractButton_clicked_signal),
+                             (XObject*)self, xprogressdialog_cancelClickedSlot);
+        XPushButton_delete_base((XClass*)self->m_cancelButton);
+        self->m_cancelButton = NULL;
+    }
+    self->m_cancelButton = button;
+    if (self->m_cancelButton) {
+        XWidget_setParentPlain((XWidget*)self->m_cancelButton, (XWidget*)self);
+        XWidget_show((XWidget*)self->m_cancelButton);
+        if (self->m_cancelButtonText) {
+            XAbstractButton_setText((XAbstractButton*)self->m_cancelButton,
+                                    self->m_cancelButtonText);
+        }
+        XObject_connect_1((XObject*)self->m_cancelButton,
+                          XSignal(XAbstractButton_clicked_signal),
+                          (XObject*)self,
+                          xprogressdialog_cancelClickedSlot,
+                          XConnectionType_Direct);
+        xprogressdialog_relayout(self);
+    }
+}
+
+XPushButton* XProgressDialog_cancelButton(const XProgressDialog* self)
+{ return self ? self->m_cancelButton : NULL; }
+#endif /* XABSTRACTBUTTON_ON && XPUSHBUTTON_ON */
 
 void XProgressDialog_setBar(XProgressDialog* self, XProgressBar* bar)
 { if (self) self->m_bar = bar; }

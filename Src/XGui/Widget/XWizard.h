@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XWizard.h
  * @brief      XWizard 向导对话框 + XWizardPage 向导页控件
  *             （对标 Qt 6.8 QWizard / QWizardPage 核心公共 API）。
@@ -77,15 +77,33 @@ typedef enum XWizardButton
 
 /* ==================== XWizardPage ==================== */
 
+/**
+ * @brief XWizardPage 虚函数表枚举。
+ * @details 4 个新槽位从 XCLASS_VTABLE_GET_SIZE(XWidget) 开始追加，
+ *          分别对标 QWizardPage 的公开虚函数 initializePage /
+ *          cleanupPage / validatePage / nextId；默认实现由
+ *          XWizardPage_class_init 注册（空操作 / true / -1）。
+ */
 XCLASS_DEFINE_BEGING(XWizardPage)
-XCLASS_DEFINE_EXTEND_END(XWizardPage, XWidget)
+XCLASS_DEFINE_ENUM(XWizardPage, InitializePage) = XCLASS_VTABLE_GET_SIZE(XWidget),
+XCLASS_DEFINE_ENUM(XWizardPage, CleanupPage),
+XCLASS_DEFINE_ENUM(XWizardPage, ValidatePage),
+XCLASS_DEFINE_ENUM(XWizardPage, NextId),
+XCLASS_DEFINE_END(XWizardPage)
 
 typedef struct XWizardPage
 {
     XWidget m_base;        /**< 基类成员；必须是第一个。 */
     XString* m_title;     /**< 页面标题（对象拥有）。 */
     XString* m_subTitle;  /**< 页面子标题（对象拥有）。 */
+    XString* m_pixmap;    /**< 页面图片路径（对标 QWizardPage::setPixmap；
+                               对象拥有；可为 NULL；which 参数保留）。 */
+    XString* m_buttonTexts[XWizardButton_NStandardButtons];
+                          /**< 自定义按钮文本（对标 QWizardPage::setButtonText；
+                               对象拥有；NULL 表示用向导默认文本）。 */
     bool m_complete;       /**< 是否完成（默认 true）。 */
+    bool m_commitPage;     /**< 是否提交页（对标 QWizardPage::isCommitPage）。 */
+    bool m_finalPage;      /**< 是否强制末页（对标 QWizardPage::isFinalPage）。 */
 } XWizardPage;
 
 /** @brief XWizard页classinit（对标 Qt 同名接口）。
@@ -145,6 +163,67 @@ void XWizardPage_setComplete(XWizardPage* self, bool complete);
  * @return 条件成立返回 true，否则返回 false。
  */
 bool XWizardPage_isComplete(const XWizardPage* self);
+/** @brief 设置页面自定义按钮文本（对标 QWizardPage::setButtonText）。
+ * @details 覆盖向导级按钮文本的页面级显示；渲染层接入前仅存储状态。
+ * @param self 目标页面指针；传入 NULL 或 which 越界时忽略。
+ * @param which 按钮枚举（XWizardButton）。
+ * @param utf8 按钮文本（UTF-8）；NULL 恢复默认文本。
+ * @return 无返回值。
+ */
+void XWizardPage_setButtonText(XWizardPage* self, XWizardButton which,
+                               const char* utf8);
+/** @brief 查询页面自定义按钮文本（对标 QWizardPage::buttonText）。
+ * @param self 目标页面指针；传入 NULL 或 which 越界时返回空串。
+ * @param which 按钮枚举（XWizardButton）。
+ * @return 自定义文本（UTF-8）；未设置返回空串；借用内部缓存，禁止释放。
+ */
+const char* XWizardPage_buttonText(const XWizardPage* self,
+                                   XWizardButton which);
+/** @brief 标记为提交页（对标 QWizardPage::setCommitPage）。
+ * @details 仅存储状态；按钮布局策略未接入该标志。
+ * @param self 目标页面指针；传入 NULL 时忽略。
+ * @param commitPage true 设为提交页。
+ * @return 无返回值。
+ */
+void XWizardPage_setCommitPage(XWizardPage* self, bool commitPage);
+/** @brief 查询是否提交页（对标 QWizardPage::isCommitPage）。
+ * @param self 目标页面指针；传入 NULL 时返回 false。
+ * @return 提交页返回 true。
+ */
+bool XWizardPage_isCommitPage(const XWizardPage* self);
+/** @brief 标记为强制末页（对标 QWizardPage::setFinalPage）。
+ * @details 仅存储状态；按钮布局策略未接入该标志。
+ * @param self 目标页面指针；传入 NULL 时忽略。
+ * @param finalPage true 设为强制末页。
+ * @return 无返回值。
+ */
+void XWizardPage_setFinalPage(XWizardPage* self, bool finalPage);
+/** @brief 查询是否强制末页（对标 QWizardPage::isFinalPage）。
+ * @param self 目标页面指针；传入 NULL 时返回 false。
+ * @return 强制末页返回 true。
+ */
+bool XWizardPage_isFinalPage(const XWizardPage* self);
+/** @brief 设置页面图片（对标 QWizardPage::setPixmap；XString 主版本；
+ *         which 参数保留，当前单图承载）。
+ * @param self 目标页面指针；传入 NULL 时忽略。
+ * @param which 图片类型（对标 QWizard::WizardPixmap；当前保留）。
+ * @param path 图片路径借用指针；NULL 清除。
+ * @return 无返回值。
+ */
+void XWizardPage_setPixmap(XWizardPage* self, int which, const XString* path);
+/** @brief 设置页面图片（UTF-8 路径兼容重载）。
+ * @param self 目标页面指针；传入 NULL 时忽略。
+ * @param which 图片类型（当前保留）。
+ * @param utf8 图片路径（UTF-8）；NULL 清除。
+ * @return 无返回值。
+ */
+void XWizardPage_setPixmap_2(XWizardPage* self, int which, const char* utf8);
+/** @brief 查询页面图片路径（对标 QWizardPage::pixmap）。
+ * @param self 目标页面指针；传入 NULL 时返回 NULL。
+ * @param which 图片类型（当前保留）。
+ * @return 借用内部 XString 指针；未设置返回 NULL；禁止释放或修改。
+ */
+const XString* XWizardPage_pixmap(const XWizardPage* self, int which);
 
 /* ==================== XWizard ==================== */
 
@@ -241,6 +320,27 @@ XWizardPage* XWizard_currentPage(const XWizard* self);
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
  */
 int XWizard_currentIndex(const XWizard* self);
+/** @brief 跳转到指定页（对标 QWizard::setCurrentId；currentId 属性
+ *         WRITE 访问器）。
+ * @details 切换可见页、登记已访问并发射 currentIdChanged；越界索引
+ *          忽略，索引等于当前页时无操作。
+ * @param self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param index 目标页索引（0 起）。
+ * @return 无返回值。
+ */
+void XWizard_setCurrentIndex(XWizard* self, int index);
+/** @brief 查询当前页 id（对标 QWizard::currentId 属性 READ；
+ *         宏别名复用 XWizard_currentIndex）。 */
+#define XWizard_currentId(self) XWizard_currentIndex((self))
+/** @brief 设置当前页 id（对标 QWizard::setCurrentId；
+ *         宏别名复用 XWizard_setCurrentIndex）。 */
+#define XWizard_setCurrentId(self, id) XWizard_setCurrentIndex((self), (id))
+/** @brief 查询起始页 id（对标 QWizard::startId 属性 READ；
+ *         宏别名复用 XWizard_startIndex）。 */
+#define XWizard_startId(self) XWizard_startIndex((self))
+/** @brief 设置起始页 id（对标 QWizard::setStartId；
+ *         宏别名复用 XWizard_setStartIndex）。 */
+#define XWizard_setStartId(self, id) XWizard_setStartIndex((self), (id))
 /** @brief XWizardnext（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 无返回值。
@@ -358,6 +458,13 @@ void* XWizard_pageRemoved_signal(XWizard* self, int index);
 void XWizard_setPixmap(XWizard* self, int which, const XString* path);
 /** @brief 设置向导横幅图（UTF-8 兼容重载）。 */
 void XWizard_setPixmap_2(XWizard* self, int which, const char* path);
+/** @brief 查询向导图片路径（对标 QWizard::pixmap）。
+ * @details 当前单图承载，which 参数保留。
+ * @param self 目标向导；传入 NULL 时返回 NULL。
+ * @param which 图类型码（对标 QWizard::WizardPixmap；当前保留）。
+ * @return 借用内部 XString 指针；未设置返回 NULL；禁止释放或修改。
+ */
+const XString* XWizard_pixmap(const XWizard* self, int which);
 /** @brief 读取字段值（对标 QWizard::field；XString 借用）。
  * @param self 目标向导。
  * @param name 借用 XString*；不能为 NULL。
@@ -397,12 +504,22 @@ void XWizard_setButtonLayout(XWizard* self, int layout);
  * @return 无返回值。
  */
 void XWizard_setTitleFormat(XWizard* self, int format);
+/** @brief 查询标题格式（对标 QWizard::titleFormat）。
+ * @param self 目标向导；传入 NULL 时返回 0。
+ * @return 格式码（对标 Qt::TextFormat：0=PlainText，1=RichText）。
+ */
+int XWizard_titleFormat(const XWizard* self);
 /** @brief 设置子标题格式（对标 setSubTitleFormat）。
  * @param self 目标向导。
  * @param format 格式码。
  * @return 无返回值。
  */
 void XWizard_setSubTitleFormat(XWizard* self, int format);
+/** @brief 查询子标题格式（对标 QWizard::subTitleFormat）。
+ * @param self 目标向导；传入 NULL 时返回 0。
+ * @return 格式码（对标 Qt::TextFormat：0=PlainText，1=RichText）。
+ */
+int XWizard_subTitleFormat(const XWizard* self);
 /** @brief 清理当前页（对标 cleanupPage；当前为文档回调占位）。
  * @param self 目标向导。
  * @return 无返回值。

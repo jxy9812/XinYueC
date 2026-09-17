@@ -26,6 +26,8 @@ typedef struct XDialog
     int m_result;      /**< 对标 result()；accepted=1/rejected=0。 */
     bool m_modal;      /**< 对标 modal 属性（默认 true）。 */
     bool m_inExec;     /**< exec() 循环标志。 */
+    bool m_sizeGripEnabled; /**< 对标 QDialog::sizeGripEnabled；仅存储位
+                                （XSizeGrip 控件未自动嵌入）。 */
 } XDialog;
 
 /** @brief XDialogclassinit（对标 Qt 同名接口）。
@@ -82,6 +84,28 @@ void XDialog_setModal(XDialog* self, bool modal);
  * @brief      获取模态标志（对标 QDialog::isModal）。
  */
 bool XDialog_isModal(const XDialog* self);
+/**
+ * @brief      以窗口模态方式显示对话框并立即返回（对标 QDialog::open）。
+ * @details    与 Qt 语义一致：设置模态后显示窗口，不进入本地事件
+ *             循环（XGui 无嵌套 exec，由调用方事件循环驱动）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @return     无返回值。
+ */
+void XDialog_open(XDialog* self);
+/**
+ * @brief      设置尺寸手柄开关（对标 QDialog::setSizeGripEnabled）。
+ * @details    仅存储状态；XSizeGrip 控件未自动嵌入窗口边角。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      enable true 显示尺寸手柄。
+ * @return     无返回值。
+ */
+void XDialog_setSizeGripEnabled(XDialog* self, bool enable);
+/**
+ * @brief      查询尺寸手柄开关（对标 QDialog::isSizeGripEnabled）。
+ * @param      self 目标控件指针；传入 NULL 时返回 false。
+ * @return     开启返回 true。
+ */
+bool XDialog_isSizeGripEnabled(const XDialog* self);
 
 /* ==================== 信号 ==================== */
 

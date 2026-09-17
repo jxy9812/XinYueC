@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XLineEdit.c
  * @brief      XLineEdit 单行编辑控件实现（对标 Qt 6.8 QLineEdit 全部公共 API）。
  * @details    内部表示：文本为 UTF-8 动态缓冲（NUL 结尾），光标/选区锚点
@@ -59,6 +59,10 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
+/* 补全器与 XAbstractItemModel 同受 XTABLEWIDGET_ON 门控；关闭时不接线。 */
+#if XTABLEWIDGET_ON
+#include "XCompleter.h"
+#endif /* XTABLEWIDGET_ON */
 
 /** @brief 当前聚焦的 XLineEdit（全局；IME CommitString 直投目标）。 */
 static XLineEdit* g_focusedLineEdit = NULL;
@@ -83,6 +87,12 @@ static void  VXLineEdit_deinit(XLineEdit* self);
 static void  VXLineEdit_copy(XLineEdit* self, const XLineEdit* other);
 static void  VXLineEdit_move(XLineEdit* self, XLineEdit* other);
 static void  xlineedit_updateSizeHints(XLineEdit* self);
+static void  xlineedit_syncCompleter(XLineEdit* self);
+/** @brief 替换行编辑框全部内容（定义在 setText 系列之后，被多处先行
+ *         调用；无前置声明时 C 隐式声明与 static 定义冲突）。 */
+static void  xlineedit_setContent(XLineEdit* self, const char* newText,
+                                 size_t newCursor, bool userEdited,
+                                 bool clearHistory, bool emitChanged);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -796,6 +806,80 @@ static void xlineedit_setSelectionRange(XLineEdit* self, size_t anchor,
 
 /* ==================== 文本提交核心 ==================== */
 
+#if XTABLEWIDGET_ON
+/**
+ * @brief 把当前编辑文本同步给已安装的补全器（用户编辑后调用）。
+ * @details 对齐 Qt QWidgetLineControl::complete()：
+ *          - readOnly 或非 Normal 回显模式时不补全；
+ *          - Popup/UnfilteredPopup 模式用整段文本作前缀，只刷新
+ *            completionPrefix 与候选（弹出列表为自绘，不在此展开）；
+ *          - InlineCompletion 模式用选区前文本作前缀，若候选以该前缀
+ *            开头则把余下部分写入文本并选中（内联补全）；
+ *          - m_completerSyncing 为重入保护：内联写回会再次触发文本变化
+ *            通知，此时直接返回。
+ * @param self 目标编辑框；可为 NULL（无操作）。
+ * @return 无返回值。
+ */
+static void xlineedit_syncCompleter(XLineEdit* self)
+{
+    XCompleterCompletionMode mode;
+    const char* text;
+    size_t prefixLen;
+    XString* prefix;
+    if (!self || !self->m_completer || self->m_completerSyncing) return;
+    if (self->m_readOnly || self->m_echoMode != XLineEditEchoMode_Normal)
+        return;
+    text = self->m_text ? self->m_text : "";
+    mode = XCompleter_completionMode(self->m_completer);
+    prefixLen = XStrlen(text);
+    if (mode == XCompleterCompletionMode_InlineCompletion &&
+        xlineedit_hasSelection(self))
+        prefixLen = xlineedit_selStart(self); /* Qt：内联模式取选区前文本。 */
+    prefix = XString_create();
+    if (!prefix) return;
+    if (prefixLen > 0 &&
+        !XString_assign_with_length_utf8(prefix, text, prefixLen)) {
+        XString_delete_base((XClass*)prefix);
+        return;
+    }
+    /* setCompletionPrefix 内部会重建候选列表（等价 Qt complete()）。 */
+    XCompleter_setCompletionPrefix(self->m_completer, prefix);
+    if (mode == XCompleterCompletionMode_InlineCompletion) {
+        XString* completion = XCompleter_currentCompletion(self->m_completer);
+        if (completion) {
+            const char* c = XString_toUtf8(completion);
+            size_t cLen = c ? XStrlen(c) : 0;
+            if (c && cLen > prefixLen &&
+                XString_startsWith(completion, prefix,
+                                   XCompleter_caseSensitivity(
+                                       self->m_completer))) {
+                char* newText = (char*)XMalloc_System(cLen + 1);
+                if (newText) {
+                    XMemcpy(newText, c, cLen + 1);
+                    self->m_completerSyncing = true;
+                    xlineedit_setContent(self, newText, cLen, true, false,
+                                         true);
+                    self->m_completerSyncing = false;
+                    /* 选中补全追加的余下字符（start 为字节偏移，长度为
+                       字符数，与 setSelection 语义一致）。 */
+                    XLineEdit_setSelection(self, (int)prefixLen,
+                                           (int)xlineedit_charCount(
+                                               c + prefixLen));
+                    XFree_System(newText);
+                }
+            }
+            XString_delete_base((XClass*)completion);
+        }
+    }
+    XString_delete_base((XClass*)prefix);
+}
+#else
+static void xlineedit_syncCompleter(XLineEdit* self)
+{
+    (void)self; /* XTABLEWIDGET_ON=0：无补全器体系。 */
+}
+#endif /* XTABLEWIDGET_ON */
+
 /**
  * @brief 提交新文本并统一更新状态。
  * @param newText 新文本（可借用，函数内部复制）。
@@ -851,6 +935,10 @@ static void xlineedit_setContent(XLineEdit* self, const char* newText,
     xlineedit_updateViewOffset(self);
     xlineedit_updateSizeHints(self);
     XWidget_update((XWidget*)self);
+    /* 用户编辑后同步补全器（程序化 setText/撤销重做不触发，对齐 Qt
+       只在编辑键与内联补全写回时推进补全状态）。 */
+    if (userEdited)
+        xlineedit_syncCompleter(self);
 }
 
 /**

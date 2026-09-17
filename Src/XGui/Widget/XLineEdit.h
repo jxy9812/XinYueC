@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XLineEdit.h
  * @brief      XLineEdit 单行文本编辑控件（对标 Qt 6.8 QLineEdit 全部公共 API）。
  * @details    功能范围：
@@ -18,6 +18,12 @@
  *               （绘制时按掩码过滤显示、输入按掩码逐字符校验）；
  *             - 光标竖线（焦点内常显，闪烁为后续扩展）；文本超宽时
  *               水平滚动跟随光标（简化估算度量）；
+ *             - 补全器：setCompleter/completer（借用 XCompleter，不拥有）；
+ *               安装后把补全器的 widget 关联到本编辑框，并在用户编辑
+ *               文本时同步 completionPrefix（InlineCompletion 模式下
+ *               额外把补全余下部分写入文本并保持选中，对齐 Qt 内联补全）；
+ *             - 输入法查询：inputMethodQuery 为文档化退化实现（恒 0，
+ *               输入法属性查询走 XInputMethod 的焦点对象回调）；
  *             - 信号：textChanged(const char*)、textEdited(const char*)、
  *               cursorPositionChanged(int,int)、returnPressed()、
  *               editingFinished()、selectionChanged()、inputRejected()。
@@ -45,6 +51,9 @@ extern "C" {
 #if XMENU_ON
 #include "XMenu.h"
 #endif /* XMENU_ON */
+
+/** @brief XCompleter 前向声明（补全器见 XCompleter.h；借用，不拥有）。 */
+typedef struct XCompleter XCompleter;
 
 #if XWIDGET_ON && XLINEEDIT_ON
 
@@ -140,7 +149,10 @@ XCLASS_DEFINE_EXTEND_END(XLineEdit, XWidget)
  *             - m_undoStack/m_redoStack/m_undoCount/m_redoCount：
  *               撤销/重做栈（每项为文本快照，栈深 XLINEEDIT_UNDO_DEPTH）；
  *             - m_clipboardText：剪贴板回退缓冲（系统剪贴板不可用时用）；
- *             - m_clearButtonRect：清除按钮命中矩形（绘制时记录）。
+ *             - m_clearButtonRect：清除按钮命中矩形（绘制时记录）；
+ *             - m_completer：补全器借用指针（不拥有）；安装后用户编辑
+ *               文本时同步补全前缀；
+ *             - m_completerSyncing：补全器同步重入保护（内部使用）。
  *             调用者不得手工修改字段；一律走公开 API。
  */
 typedef struct XLineEdit
@@ -175,6 +187,8 @@ typedef struct XLineEdit
     XAction* m_actions[XLINEEDIT_MAX_ACTIONS]; /**< 内置 action 槽（借用指针）。 */
     uint8_t  m_actionPositions[XLINEEDIT_MAX_ACTIONS]; /**< 各 action 位置。 */
     uint8_t  m_actionCount;          /**< 已注册 action 数。 */
+    XCompleter* m_completer;         /**< 补全器（借用，不拥有；默认 NULL）。 */
+    bool     m_completerSyncing;     /**< 补全器同步重入保护（内部使用）。 */
 } XLineEdit;
 
 /* ==================== 生命周期 ==================== */
@@ -690,6 +704,47 @@ void XLineEdit_setTextMargins_2(XLineEdit* self, const XMargins* margins);
  * @return     当前边距值拷贝；self 为 NULL 返回零边距。
  */
 XMargins XLineEdit_textMargins(const XLineEdit* self);
+
+/* ==================== 补全器（对标 QLineEdit completer API） ==================== */
+
+/**
+ * @brief      安装补全器（对标 QLineEdit::setCompleter）。
+ * @details    补全器为借用指针，本控件不拥有、不释放；安装时把补全器的
+ *             widget 关联设为本编辑框（若补全器尚未关联控件），并立即用
+ *             当前文本同步一次补全前缀。此后每次用户编辑（键盘输入、
+ *             粘贴、清除按钮等）都会重新同步：Popup/UnfilteredPopup 模式
+ *             只更新 completionPrefix 与候选；InlineCompletion 模式还会
+ *             把候选余下部分写入文本并选中该部分（对齐 Qt 内联补全）。
+ *             重复安装同一指针无操作；安装新补全器时清除旧补全器与本
+ *             控件的关联（不删除旧补全器）。@note Qt 只在获得焦点时接线
+ *             补全器，本实现安装即同步一次，便于无焦点环境下测试。
+ * @param      self 目标编辑框；可为 NULL（无操作）。
+ * @param      completer 补全器借用指针；可为 NULL（仅卸载）。
+ * @return     无返回值。
+ */
+void XLineEdit_setCompleter(XLineEdit* self, XCompleter* completer);
+
+/**
+ * @brief      查询当前补全器（对标 QLineEdit::completer）。
+ * @param      self 编辑框对象借用指针；可为 NULL。
+ * @return     已安装的补全器借用指针；未安装或 self 为 NULL 返回 NULL。
+ */
+XCompleter* XLineEdit_completer(const XLineEdit* self);
+
+/**
+ * @brief      查询输入法属性（对标 QLineEdit::inputMethodQuery 的退化实现）。
+ * @details    Qt 依据 query 返回 QVariant（ImEnabled/ImCursorRectangle/
+ *             ImSurroundingText 等）。XGui 本版没有以控件为单位、返回
+ *             变体的输入法查询体系（XWidget 层未提供该虚槽），故本函数
+ *             为文档化退化实现：忽略 query，恒返回 0（假值）。需要真实
+ *             输入法属性的调用方请经 XGuiApplication_inputMethod() 的
+ *             XInputMethodQueryHandler 查询焦点对象（见
+ *             docs/xgui-audit/2026-09-15/Input.md）。
+ * @param      self 编辑框对象借用指针；当前实现不使用；可为 NULL。
+ * @param      query 查询项编号（取值见 XInputMethodQuery）；当前忽略。
+ * @return     恒返回 0（假值）。
+ */
+int XLineEdit_inputMethodQuery(const XLineEdit* self, int query);
 
 /* ==================== 信号（对标 QLineEdit signals） ==================== */
 

@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XWidget.h
  * @brief      XWidget 控件基类（对标 Qt 6.8 QWidget 的嵌入式 C 适配）。
  * @details    XWidget 继承 XObject，是整个控件体系的基类，提供已覆盖的
@@ -98,6 +98,9 @@ typedef struct XBackingStore XBackingStore;
 #include "XPalette.h"
 #include "XIcon.h"
 #include "XCursor.h"
+#if XINPUTMETHOD_ON
+#include "XInputMethod.h"
+#endif /* XINPUTMETHOD_ON */
 
 /* ==================== 依赖类型前向声明（避免循环包含） ==================== */
 /** @brief XApplication 前向声明；XWidget.c 内部完成焦点登记联动。 */
@@ -113,6 +116,25 @@ typedef struct XGraphicsEffect XGraphicsEffect;
 typedef struct XWidget XWidget;
 /** @brief XWidgetWindow 顶层桥接窗口前向声明（XWindow 子类，内部实现）。 */
 typedef struct XWidgetWindow XWidgetWindow;
+/** @brief XAction 前向声明（actions/addAction 动作列表元素；XWidget 只借用
+ *  指针、不拥有动作；完整定义见 XAction.h）。 */
+typedef struct XAction XAction;
+/** @brief XStyle 前向声明（style/setStyle 借用指针；完整定义见 XStyle.h）。 */
+typedef struct XStyle XStyle;
+/** @brief XScreen 前向声明（screen/setScreen 借用指针；完整定义见
+ *  XScreen.h，避免 XWidget 头文件拉入 XImage/XPixmap 依赖链）。 */
+typedef struct XScreen XScreen;
+/** @brief XPixmap 前向声明（grab 返回类型；完整定义见 XPixmap.h）。 */
+typedef struct XPixmap XPixmap;
+/** @brief XByteArray 前向声明（saveGeometry/restoreGeometry 的承载类型；
+ *  完整定义见 XByteArray.h）。 */
+typedef struct XByteArray XByteArray;
+/** @brief XFontMetrics 不透明占位类型（本仓库未建立字体度量类；
+ *  fontMetrics 恒返回 NULL，见该接口 @note）。 */
+typedef struct XFontMetrics XFontMetrics;
+/** @brief XFontInfo 不透明占位类型（本仓库未建立字体信息类；
+ *  fontInfo 恒返回 NULL，见该接口 @note）。 */
+typedef struct XFontInfo XFontInfo;
 
 /** @brief 控件按宽度计算高度的回调（对标 QWidget::heightForWidth）。 */
 typedef int (*XWidgetHeightForWidthHandler)(XWidget* widget, int width,
@@ -466,7 +488,14 @@ XCLASS_DEFINE_END(XWidget)
  *             - m_palette：控件调色板（值类型；仅 m_paletteSet=1 时覆盖应用调色板）；
  *             - m_dirty：待重绘区域；m_staticContents：静态内容区域；
  *             - m_windowHandle：顶层控件内嵌 XWidgetWindow（拥有，内部类）；
- *             - m_backingStore：顶层控件离屏后备存储（拥有）。
+ *             - m_backingStore：顶层控件离屏后备存储（拥有）；
+ *             - m_actions：动作列表容器（拥有容器、借用 XAction* 元素）；
+ *             - m_style：控件级样式（借用；NULL=默认样式）；
+ *             - m_associatedScreen：显式关联屏幕（借用；仅顶层控件）；
+ *             - m_locale/m_localeSet：显式区域设置名称与设置位（拥有/状态位）；
+ *             - m_offscreenTarget/m_offscreenOrigin：render/grab 期间的离屏
+ *               渲染目标与原点偏移（借用；调用结束即复位，见 XWidget_render）；
+ *             - m_polished/m_styleSet：ensurePolished 与 setStyle 的状态位。
  *             调用方不得手工修改任何字段；几何/属性读写一律走公开 API。
  */
 typedef struct XWidget
@@ -490,6 +519,9 @@ typedef struct XWidget
     uint32_t                m_mouseTracking : 1;     /**< 鼠标跟踪（无需按键即发移动事件）。 */
     uint32_t                m_tabletTracking : 1;    /**< 板绘跟踪。 */
     uint32_t                m_acceptDrops : 1;       /**< 接受拖放。 */
+    uint32_t                m_localeSet : 1;         /**< 已显式设置区域设置（对标 WA_SetLocale）。 */
+    uint32_t                m_styleSet : 1;          /**< 已设置控件级样式（对标 WA_SetStyle）。 */
+    uint32_t                m_polished : 1;          /**< 已完成 ensurePolished（对标 QWidgetPrivate::polished）。 */
     XRect                   m_windowRect;      /**< 几何矩形（父坐标系）。 */
     XRect                   m_contentsRect;    /**< 客户区（自身坐标）。 */
     XMargins                m_contentsMargins; /**< 内容边距（对标 QWidget::contentsMargins）。 */
@@ -517,6 +549,15 @@ typedef struct XWidget
     XString*                m_accessibleDescription; /**< 无障碍描述（拥有）。 */
     XString*                m_windowRole;      /**< 窗口角色（拥有；仅桌面 X11 有效）。 */
     XString*                m_styleSheet;      /**< 样式表文本（拥有；嵌入式只存储不解释）。 */
+    XString*                m_locale;          /**< 显式区域设置名称（拥有；NULL=未显式设置，
+                                                *   查询时沿父链解析，对标 QWidget::locale）。 */
+    XVector*                m_actions;         /**< 动作列表（元素为 XAction* 借用指针；容器惰性创建、
+                                                *   由控件拥有，动作对象本身不归控件所有，
+                                                *   对标 QWidget::actions）。 */
+    XStyle*                 m_style;           /**< 控件级样式（借用；NULL 表示使用 XStyle_defaultStyle，
+                                                *   对标 QWidget::setStyle/style）。 */
+    XScreen*                m_associatedScreen;/**< 显式关联屏幕（借用；仅顶层控件有效，
+                                                *   对标 QWidget::setScreen/screen）。 */
     XInputMethodHints       m_inputMethodHints;/**< 输入法提示位（默认 0，对标 inputMethodHints）。 */
     XCursor*                m_cursor;          /**< 自定义光标（拥有；仅 XCURSOR_ON）。 */
     XIcon                   m_icon;            /**< 窗口图标（值类型 refcount 共享）。 */
@@ -530,6 +571,12 @@ typedef struct XWidget
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
     XBackingStore*          m_backingStore;    /**< 顶层后备存储（拥有）。 */
     XImage*                 m_contentCache;    /**< 控件内容离屏缓存（拥有；NULL=未启用/未分配）。 */
+    XImage*                 m_offscreenTarget; /**< 离屏渲染目标图像（借用；仅 render/grab 调用期间非 NULL，
+                                                *   生效时子树绘制重定向到该图像，坐标系原点为本控件
+                                                *   局部原点 + m_offscreenOrigin）。 */
+    XPoint                  m_offscreenOrigin; /**< 离屏渲染原点偏移（m_offscreenTarget 有效时叠加到
+                                                *   子树绘制偏移；render 为 targetOffset，grab 为
+                                                *   -rectangle.topLeft()）。 */
     XAtomic_int32_t         m_paintEventPosted; /**< 内部：PAINT 事件已占位/已投递。 */
     bool                    m_contentCacheDirty; /**< 内容或几何变更后置脏，等待重建。 */
     XWidgetHeightForWidthHandler m_heightForWidthHandler; /**< hfw 回调（借用）。 */
@@ -782,6 +829,45 @@ void XWidget_setFixedHeight(XWidget* self, int height);
  * @return     无返回值；没有有效提示且没有子控件时保持当前尺寸。
  */
 void XWidget_adjustSize(XWidget* self);
+
+/* ==================== 几何保存与恢复（对标 QWidget::saveGeometry/restoreGeometry） ==================== */
+
+/**
+ * @brief      把控件几何与窗口状态序列化为不透明字节块（对标
+ *             QWidget::saveGeometry）。
+ * @details    字节格式与 Qt 6.8 QWidget::saveGeometry 逐字段一致（大端序，
+ *             便于与 Qt 端存档互通）：magic(quint32 0x01D9D0CB) +
+ *             major(quint16 3) + minor(quint16 0) + frameGeometry(4×qint32) +
+ *             normalGeometry(4×qint32) + screenNumber(qint32) +
+ *             maximized(quint8) + fullScreen(quint8) + screenWidth(qint32) +
+ *             geometry(4×qint32)，共 66 字节。screenNumber 为控件屏幕在
+ *             XScreen_screens() 注册表中的序号（不在表中记 0）；
+ *             screenWidth 取该屏幕 XScreen_geometry 的宽度；
+ *             frameGeometry 与 geometry 在本实现中同值（XGui 顶层控件由
+ *             平台后端装饰，控件侧无边框几何）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     新建的 XByteArray（调用方用 XByteArray_delete_base 释放）；
+ *             控件为 NULL 或分配失败返回 NULL。
+ * @note       返回值归调用方所有；内容为不透明字节块，调用方不得解释，
+ *             只应回传给 XWidget_restoreGeometry。
+ */
+XByteArray* XWidget_saveGeometry(const XWidget* self);
+
+/**
+ * @brief      恢复 XWidget_saveGeometry 保存的几何与窗口状态（对标
+ *             QWidget::restoreGeometry）。
+ * @details    解析失败（长度不足 / magic 不匹配 / major 版本高于 3 /
+ *             屏幕宽度比例超出 [0.8, 1.25]）返回 false 且不改变控件；
+ *             成功时按保存值设置几何、正常态几何与最大化/全屏状态
+ *             （其他窗口状态位保持并清除 Maximized/FullScreen 后再合并）。
+ *             保存的几何超出可用屏幕时按 Qt 规则内缩/平移回屏幕内。
+ * @param      self 目标控件；可为 NULL。
+ * @param      geometry 由 XWidget_saveGeometry 产生的字节块；可为 NULL。
+ * @return     恢复成功返回 true；入参无效或数据不合法返回 false。
+ * @note       屏幕宽度比例校验依赖 XScreen_screens()；无屏幕注册表时
+ *             跳过该比例校验（不因缺少屏幕信息误判失败）。
+ */
+bool XWidget_restoreGeometry(XWidget* self, const XByteArray* geometry);
 
 /* ==================== 尺寸约束与提示（对标 QWidget） ==================== */
 
@@ -1124,6 +1210,86 @@ bool XWidget_isWindowModified(const XWidget* self);
 /** @brief 设置窗口已修改标志（对标 QWidget::setWindowModified）。 */
 void XWidget_setWindowModified(XWidget* self, bool modified);
 
+/* ==================== 窗口标识与屏幕（对标 QWidget winId/screen 族） ==================== */
+
+/**
+ * @brief      返回控件的窗口系统标识（对标 QWidget::winId）。
+ * @details    XGui 的平台桥接只建立顶层窗口（XWidgetWindow，内部 XWindow
+ *             子类），因此本接口仅对顶层控件（isWindow 为真）返回标识：
+ *             桥接窗口不存在时先惰性创建，再取 XWindow_winId（未创建平台
+ *             句柄时由 XWindow 按需创建；无平台后端时返回占位的虚拟 id）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     顶层控件的窗口标识；非顶层控件或创建失败返回 0。
+ * @note       子控件不创建原生子窗口，winId() 恒返回 0（Qt 会为子控件
+ *             创建原生子窗口）；需要“子控件所属顶层窗口的标识”请改用
+ *             XWidget_effectiveWinId。该差异属 XGui 平台边界，不伪造句柄。
+ *             与 Qt 相同，本调用可能触发平台窗口创建（有副作用）。
+ */
+XWindowId XWidget_winId(XWidget* self);
+
+/**
+ * @brief      强制创建控件的平台窗口资源（对标 QWidget::createWinId）。
+ * @details    顶层控件：惰性创建桥接窗口并调用 XWindow_createHandle 建立
+ *             平台窗口资源（等价于 winId() 的创建路径，但不返回标识）；
+ *             非顶层控件不创建原生子窗口，为空操作。
+ * @param      self 目标控件；可为 NULL。
+ * @return     无返回值。
+ * @note       与 Qt 一致，本接口只保证窗口资源已创建，不改变可见性；
+ *             子控件场景为空操作（XGui 平台边界，见 winId 的 @note）。
+ */
+void XWidget_createWinId(XWidget* self);
+
+/**
+ * @brief      返回控件自身的窗口标识（对标 QWidget::internalWinId）。
+ * @details    仅查询、不创建：顶层控件在桥接窗口已建立且已挂接平台句柄
+ *             时返回 XWindow_winId；其余情况返回 0。
+ * @param      self 目标控件；可为 NULL。
+ * @return     已建立的窗口标识；未创建或非顶层控件返回 0。
+ * @note       XWindow 未暴露“是否已创建”的只读查询，本实现以平台句柄
+ *             （XWindow_handle）是否存在作为“已创建”判据，故纯软件虚拟
+ *             WId 模式下即使 XWindow_winId 能返回占位 id，本接口仍返回 0；
+ *             需要占位 id 请用 XWidget_winId。子控件恒返回 0。
+ */
+XWindowId XWidget_internalWinId(const XWidget* self);
+
+/**
+ * @brief      返回控件的有效窗口标识（对标 QWidget::effectiveWinId）。
+ * @details    控件自身已有窗口标识时返回该标识；否则返回其最近的原生
+ *             祖先（XGui 中即所属顶层控件）的标识。
+ * @param      self 目标控件；可为 NULL。
+ * @return     有效窗口标识；无任何已创建窗口时返回 0。
+ * @note       与 XWidget_internalWinId 同源，同样不触发窗口创建；
+ *             返回值可能在运行期变化，不应持久保存。
+ */
+XWindowId XWidget_effectiveWinId(const XWidget* self);
+
+/**
+ * @brief      返回控件所在屏幕（对标 QWidget::screen）。
+ * @details    显式设置过屏幕（XWidget_setScreen）时返回该屏幕；否则返回
+ *             所属顶层控件的屏幕（顶层控件有桥接窗口时取 XWindow_screen，
+ *             未显式设置时其已回落主屏幕）；再无结果时返回
+ *             XScreen_primaryScreen()。
+ * @param      self 目标控件；可为 NULL。
+ * @return     屏幕借用指针；XSCREEN_ON=0 或无任何屏幕时返回 NULL。
+ * @note       返回指针归 XScreen 注册表/调用方所有，XWidget 不拥有；
+ *             与 Qt 一致，本接口不因缺少屏幕注册表而伪造屏幕对象。
+ */
+XScreen* XWidget_screen(const XWidget* self);
+
+/**
+ * @brief      设置控件应显示在的屏幕（对标 QWidget::setScreen）。
+ * @details    只有顶层控件可以设置屏幕（Qt 语义：非窗口控件设置屏幕是
+ *             空操作）；传入 NULL 表示回落主屏幕。屏幕对象按借用指针保存
+ *             并同步到桥接窗口（已存在时调用 XWindow_setScreen）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      screen 屏幕借用指针；可为 NULL（回落主屏幕）。
+ * @return     无返回值；非顶层控件或 XSCREEN_ON=0 时不执行操作。
+ * @note       XWidget 不拥有屏幕对象，屏幕销毁前须由拥有者调用本接口清除
+ *             或保证其生命周期覆盖控件；与 Qt 相同，本接口不会把窗口
+ *             自动移动到该屏幕。
+ */
+void XWidget_setScreen(XWidget* self, XScreen* screen);
+
 /* ==================== 可用性与焦点（对标 QWidget） ==================== */
 
 /**
@@ -1381,6 +1547,197 @@ void XWidget_setBackgroundRole(XWidget* self, XPaletteColorRole role);
 XPaletteColorRole XWidget_foregroundRole(const XWidget* self);
 /** @brief 设置前景颜色角色（对标 QWidget::setForegroundRole）。 */
 void XWidget_setForegroundRole(XWidget* self, XPaletteColorRole role);
+
+/* ==================== 样式引擎与打磨（对标 QWidget::style/setStyle/ensurePolished） ==================== */
+
+/**
+ * @brief      返回控件当前使用的样式引擎（对标 QWidget::style）。
+ * @details    已设置控件级样式（XWidget_setStyle）时返回该样式；否则返回
+ *             进程默认样式 XStyle_defaultStyle()（首次调用会惰性创建默认
+ *             XCommonStyle，等价 Qt 的 QApplication::style() 语义）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     样式借用指针；XSTYLE_ON=0 时返回 NULL。
+ * @note       返回指针归样式对象拥有者（XWidget_setStyle 的调用方或默认
+ *             样式单例），XWidget 只借用、不释放；不得用它替代
+ *             XStyle_setDefaultStyle 修改全局默认样式。
+ */
+XStyle* XWidget_style(const XWidget* self);
+
+/**
+ * @brief      设置控件级样式（对标 QWidget::setStyle）。
+ * @details    样式对象所有权不转移（Qt 语义）；样式按借用指针保存并置
+ *             WA_SetStyle 位；传入 NULL 表示清除控件级样式、回落默认样式。
+ *             与 Qt 一致，设置控件样式不影响现存/后续子控件（子控件各自
+ *             查询到的是自身或默认样式）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      style 样式借用指针；可为 NULL 清除。
+ * @return     无返回值；XSTYLE_ON=0 时为空实现。
+ * @note       调用方必须在控件销毁前保证样式对象存活；控件销毁不释放它。
+ */
+void XWidget_setStyle(XWidget* self, XStyle* style);
+
+/**
+ * @brief      确保控件（及其子控件）已完成打磨（对标 QWidget::ensurePolished）。
+ * @details    每个控件只执行一次：先发送 XEVENT_TYPE_POLISH 事件（子类可
+ *             借此重算自身外观，如 XFrame 重算边框宽度），再调用当前样式的
+ *             XStyle_polish（XCommonStyle 缺省为空操作，XFusionStyle 只回落
+ *             父类，因此不会改变控件外观），最后按 Qt 顺序递归打磨子控件。
+ * @param      self 目标控件；可为 NULL。
+ * @return     无返回值；已打磨过或参数无效时为空操作。
+ * @note       XGui 无 Qt 的 PolishRequest 事件队列（XEVENT_TYPE_POLISH_REQUEST
+ *             不被 XWidget 处理），本接口为同步打磨入口，可安全重复调用。
+ */
+void XWidget_ensurePolished(XWidget* self);
+
+/* ==================== 动作列表（对标 QWidget actions/addAction 族） ==================== */
+
+/**
+ * @brief      返回控件动作列表（对标 QWidget::actions）。
+ * @details    列表元素为 XAction*（借用指针），顺序即 QWidget::actions()
+ *             顺序；控件未持有任何动作时返回空列表（容器可能为 NULL）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     动作列表借用指针；self 为 NULL 时返回 NULL。
+ * @note       返回容器归控件所有，调用方不得修改或释放；其中的 XAction*
+ *             是借用指针（控件不拥有动作），动作被销毁时控件会自动把该
+ *             指针从列表中摘除，但调用方仍应在动作存活期内使用它。
+ */
+const XVector* XWidget_actions(const XWidget* self);
+
+/**
+ * @brief      向动作列表尾部追加动作（对标 QWidget::addAction(QAction*)）。
+ * @details    等价 insertAction(NULL, action)；同一动作已在列表中时先移除
+ *             旧位置再追加（Qt：一个控件同一动作只保留一份）。追加后与
+ *             动作的 destroyed 信号建立内部连接，并在本控件上派发
+ *             XEVENT_TYPE_ACTION_ADDED 事件。
+ * @param      self 目标控件；可为 NULL。
+ * @param      action 动作借用指针；NULL 时不执行操作（Qt 打印告警后返回）。
+ * @return     无返回值；动作所有权仍归调用方（控件不释放它）。
+ */
+void XWidget_addAction(XWidget* self, XAction* action);
+
+/**
+ * @brief      创建动作并追加到动作列表（对标 QWidget::addAction(const QString&)）。
+ * @details    新建 XAction 并以其文本初始化，随后等价 addAction(action)；
+ *             与 Qt 一致，新建动作以本控件为 QObject 父对象（随控件销毁），
+ *             其所有权由控件承担。
+ * @param      self 目标控件；可为 NULL。
+ * @param      text 动作文本；可为 NULL（空文本动作）。
+ * @return     新建并已加入列表的动作指针（借用）；self 为 NULL 或分配失败
+ *             返回 NULL。
+ * @note       返回指针的生命周期由控件（父对象）或调用方显式删除决定；
+ *             调用方删除后控件列表会自动摘除该指针。
+ */
+XAction* XWidget_addAction_2(XWidget* self, const XString* text);
+
+/**
+ * @brief      批量追加动作（对标 QWidget::addActions）。
+ * @details    按 actions 顺序逐个等价 addAction(action)。
+ * @param      self 目标控件；可为 NULL。
+ * @param      actions 动作指针向量（元素类型 XAction*）借用指针；可为 NULL。
+ * @return     无返回值；元素为 NULL 时跳过该元素。
+ */
+void XWidget_addActions(XWidget* self, const XVector* actions);
+
+/**
+ * @brief      在指定动作前插入动作（对标 QWidget::insertAction）。
+ * @details    before 为 NULL 或不在本控件列表中时追加到尾部（Qt 语义）；
+ *             同一动作已在列表中时先移除旧位置。插入后与动作的 destroyed
+ *             信号建立内部连接，并在本控件上派发 XEVENT_TYPE_ACTION_ADDED
+ *             事件。
+ * @param      self 目标控件；可为 NULL。
+ * @param      before 参照动作借用指针；NULL 表示追加到尾部。
+ * @param      action 待插入动作借用指针；NULL 时不执行操作。
+ * @return     无返回值；动作所有权仍归调用方。
+ * @note       XGui 的 XEvent 无动作负载字段（无 Qt 的 QActionEvent 等价类），
+ *             因此事件只携带类型（XEVENT_TYPE_ACTION_ADDED），子类无法从
+ *             事件中读取 action/before；需要动作对象可在事件处理中查询
+ *             XWidget_actions。
+ */
+void XWidget_insertAction(XWidget* self, XAction* before, XAction* action);
+
+/**
+ * @brief      批量插入动作（对标 QWidget::insertActions）。
+ * @details    按 actions 顺序逐个 insertAction(before, action)；由于每次
+ *             插入都在同一 before 之前，最终顺序与 actions 一致（Qt 行为）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      before 参照动作借用指针；NULL 表示追加到尾部。
+ * @param      actions 动作指针向量（元素类型 XAction*）借用指针；可为 NULL。
+ * @return     无返回值；元素为 NULL 时跳过该元素。
+ */
+void XWidget_insertActions(XWidget* self, XAction* before, const XVector* actions);
+
+/**
+ * @brief      从动作列表移除动作（对标 QWidget::removeAction）。
+ * @details    仅移除列表中的借用指针并断开内部 destroyed 连接，不释放动作
+ *             对象（Qt：QWidget 不拥有通过 addAction(QAction*) 加入的动作）；
+ *             移除成功后在本控件上派发 XEVENT_TYPE_ACTION_REMOVED 事件。
+ * @param      self 目标控件；可为 NULL。
+ * @param      action 待移除动作借用指针；NULL 或不在列表中时不派发事件。
+ * @return     无返回值。
+ */
+void XWidget_removeAction(XWidget* self, XAction* action);
+
+/* ==================== 输入法查询与区域设置（对标 QWidget inputMethodQuery/locale） ==================== */
+
+#if XINPUTMETHOD_ON
+/**
+ * @brief      查询输入法所需信息（对标 QWidget::inputMethodQuery）。
+ * @details    与 Qt 6.8 QWidget::inputMethodQuery 默认实现一致：
+ *             - XInputMethodQuery_ImCursorRectangle：返回 (width/2, 0, 1, height)
+ *               的矩形（XRectF 承载，类型 XVariantType_User）；
+ *             - XInputMethodQuery_ImInputItemClipRectangle：返回控件矩形的
+ *               浮点副本（XRectF 承载，类型 XVariantType_User）；
+ *             - XInputMethodQuery_ImHints：返回 inputMethodHints() 的整型值；
+ *             - XInputMethodQuery_ImEnabled：返回 true；
+ *             - 其余查询项返回 NULL（等价 Qt 的无效 QVariant）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      query 查询项（XInputMethodQuery 取值与 Qt::InputMethodQuery 一致）。
+ * @return     新建的 XVariant（调用方用 XVariant_delete_base 释放）；不支持的
+ *             查询项、控件为 NULL 或分配失败返回 NULL。
+ * @note       与 Qt 的差异：ImFont 返回 NULL（XGui 未建立字体变体类型）、
+ *             ImAnchorPosition 不回落 ImCursorPosition（无光标位置概念的
+ *             基类控件）、ImEnabled 在基类返回 true 而非无效变体。XGui 的
+ *             平台输入法路径经 XInputMethodQueryHandler 回调（XInputMethod.h），
+ *             集成方可在回调中按 focusObject 是否控件转发到本接口。
+ */
+XVariant* XWidget_inputMethodQuery(const XWidget* self, XInputMethodQuery query);
+#endif /* XINPUTMETHOD_ON */
+
+/**
+ * @brief      查询控件生效的区域设置（对标 QWidget::locale）。
+ * @details    XGui 未建立 XLocale 类型，区域设置以 BCP 47 / POSIX 名称
+ *             字符串承载：显式设置过（XWidget_setLocale）时返回该名称；
+ *             否则沿父链返回父控件解析结果（Qt：未设 WA_SetLocale 时继承
+ *             父控件区域设置）；顶层控件未设置时返回 NULL（等价 Qt 的
+ *             默认构造 QLocale，表示系统区域）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     区域设置名称借用指针；未设置且无父控件设置时返回 NULL。
+ * @note       返回值可能属于本控件或某祖先控件，调用方不得修改/释放；
+ *             需要长期保存请自行 XString_create_copy。
+ */
+const XString* XWidget_locale(const XWidget* self);
+
+/**
+ * @brief      设置控件区域设置（对标 QWidget::setLocale）。
+ * @details    按深拷贝保存名称并置 WA_SetLocale 位；随后向本控件派发
+ *             XEVENT_TYPE_LOCALE_CHANGE（进入 changeEvent）并把新区域设置
+ *             传播给未显式设置区域的子控件（Qt 语义）。locale 为 NULL 时
+ *             等价 XWidget_unsetLocale。
+ * @param      self 目标控件；可为 NULL。
+ * @param      locale 区域设置名称借用指针；可为 NULL（清除显式设置）。
+ * @return     无返回值；与当前值相同时不动作。
+ */
+void XWidget_setLocale(XWidget* self, const XString* locale);
+
+/**
+ * @brief      清除显式区域设置（对标 QWidget::unsetLocale）。
+ * @details    清除 WA_SetLocale 位与保存的名称，重新按父链解析区域设置，
+ *             并向未显式设置区域的子控件传播（Qt：unsetLocale 后子控件
+ *             跟随父控件）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     无返回值；未显式设置过区域时不动作。
+ */
+void XWidget_unsetLocale(XWidget* self);
 
 /* ==================== 绘制闭环（对标 QWidget update/repaint） ==================== */
 

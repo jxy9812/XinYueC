@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XGraphicsEffect.c
  * @brief      图形效果基类实现（对标 Qt 6.8 QGraphicsEffect 公共 API）。
  * @details    与同名头文件的公共 API 一一对应。setEnabled 在状态实际变化
@@ -16,6 +16,7 @@
 #if XWIDGET_ON
 
 #include "XGraphicsEffect.h"
+#include "XWidget.h"
 
 /* ==================== 内部辅助 ==================== */
 
@@ -82,6 +83,50 @@ void XGraphicsEffect_update(XGraphicsEffect* self)
 {
     /* 占位：XGui 渲染管线尚未接入效果绘制（见头文件 @note）。 */
     (void)self;
+}
+
+/* ==================== 效果源与包围盒 ==================== */
+
+XWidget* XGraphicsEffect_source(const XGraphicsEffect* self)
+{ return self ? self->m_source : NULL; }
+
+void XGraphicsEffect_setSource(XGraphicsEffect* self, XWidget* source)
+{
+    if (self) self->m_source = source;
+}
+
+XRectF XGraphicsEffect_boundingRectFor(const XGraphicsEffect* self,
+                                       const XRectF* sourceRect)
+{
+    XRectF out;
+    (void)self;
+    if (!sourceRect) {
+        out.x = 0.0f;
+        out.y = 0.0f;
+        out.width = 0.0f;
+        out.height = 0.0f;
+        return out;
+    }
+    /* 对标 Qt QGraphicsEffect::boundingRectFor 基类实现：原样返回。 */
+    return *sourceRect;
+}
+
+XRectF XGraphicsEffect_boundingRect(const XGraphicsEffect* self)
+{
+    XRectF out;
+    if (!self || !self->m_source) {
+        out.x = 0.0f;
+        out.y = 0.0f;
+        out.width = 0.0f;
+        out.height = 0.0f;
+        return out;
+    }
+    /* 对标 Qt：有源时对其源矩形求效果包围盒（XGui 源为承载控件几何）。 */
+    out.x = (float)XWidget_x(self->m_source);
+    out.y = (float)XWidget_y(self->m_source);
+    out.width = (float)XWidget_width(self->m_source);
+    out.height = (float)XWidget_height(self->m_source);
+    return XGraphicsEffect_boundingRectFor(self, &out);
 }
 
 /* ==================== 信号 ==================== */

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XKeySequenceEdit.c
  * @brief      快捷键捕获控件实现（对标 Qt 6.8 QKeySequenceEdit 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -129,6 +129,22 @@ static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
+    /* 对标 Qt 6.8：结束键组合（默认 Tab/Backtab）结束编辑并发射
+     * editingFinished()。 */
+    {
+        int fi;
+        for (fi = 0; fi < edit->m_finishingCount; ++fi) {
+            if (edit->m_finishing[fi].key == key &&
+                edit->m_finishing[fi].modifiers == mods) {
+                if (edit->m_sequence.count > 0) {
+                    edit->m_oldSequence = edit->m_sequence;
+                    xkse_emitFinished(edit);
+                }
+                XEvent_accept(event);
+                return;
+            }
+        }
+    }
     /* 对标 Qt：Return/Enter 确认序列。 */
     if (key == (int)XKey_Return || key == (int)XKey_Enter) {
         if (edit->m_sequence.count > 0) {
@@ -248,6 +264,12 @@ void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
     self->m_maxLength = XKEYSEQUENCEEDIT_MAX_LENGTH;
     self->m_clearButton = false;
     self->m_capturing = false;
+    /* 对标 Qt 6.8：默认结束键组合 {Qt::Key_Tab, Qt::Key_Backtab}。 */
+    self->m_finishingCount = 2;
+    self->m_finishing[0].modifiers = XKeyboardModifier_NoModifier;
+    self->m_finishing[0].key = (int)XKey_Tab;
+    self->m_finishing[1].modifiers = XKeyboardModifier_NoModifier;
+    self->m_finishing[1].key = (int)XKey_Backtab;
     XWidget_resize(self, 120, 26);
     hint.width = 120;
     hint.height = 26;
@@ -310,6 +332,37 @@ void XKeySequenceEdit_setClearButtonEnabled(XKeySequenceEdit* self, bool enable)
     if (!self) return;
     self->m_clearButton = enable;
     XWidget_update((XWidget*)self);
+}
+
+/* ============ 结束键组合（对标 Qt 6.8 finishingKeyCombinations） ============ */
+
+int XKeySequenceEdit_finishingKeyCombinationCount(
+    const XKeySequenceEdit* self)
+{
+    return self ? self->m_finishingCount : 0;
+}
+
+const XKeyCombination* XKeySequenceEdit_finishingKeyCombinations(
+    const XKeySequenceEdit* self)
+{
+    return self ? self->m_finishing : NULL;
+}
+
+void XKeySequenceEdit_setFinishingKeyCombinations(
+    XKeySequenceEdit* self, const XKeyCombination* combos, int count)
+{
+    int i;
+    if (!self) return;
+    if (!combos || count <= 0) {
+        self->m_finishingCount = 0;
+        XMemset(self->m_finishing, 0, sizeof(self->m_finishing));
+        return;
+    }
+    if (count > XKEYSEQUENCEEDIT_MAX_FINISHING)
+        count = XKEYSEQUENCEEDIT_MAX_FINISHING;
+    for (i = 0; i < count; ++i)
+        self->m_finishing[i] = combos[i];
+    self->m_finishingCount = count;
 }
 
 /* ==================== 信号 ==================== */

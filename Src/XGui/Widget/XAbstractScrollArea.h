@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XAbstractScrollArea.h
  * @brief      XAbstractScrollArea 滚动区域基类（对标 Qt 6.8
  *             QAbstractScrollArea 全部公共 API）。
@@ -39,6 +39,14 @@ typedef enum XScrollBarPolicy
     XScrollBarPolicy_AlwaysOn = 2    /**< 永远显示。 */
 } XScrollBarPolicy;
 
+/** @brief 尺寸自适应策略（对标 QAbstractScrollArea::SizeAdjustPolicy，数值一致）。 */
+typedef enum XAbstractScrollAreaSizeAdjustPolicy
+{
+    XAbstractScrollAreaSizeAdjustPolicy_AdjustIgnored = 0, /**< 不随视口内容调整（用控件尺寸提示）。 */
+    XAbstractScrollAreaSizeAdjustPolicy_AdjustToContentsOnFirstShow = 1, /**< 首次显示时按内容调整。 */
+    XAbstractScrollAreaSizeAdjustPolicy_AdjustToContents = 2 /**< 每次查询都按内容调整。 */
+} XAbstractScrollAreaSizeAdjustPolicy;
+
 XCLASS_DEFINE_BEGING(XAbstractScrollArea)
 XCLASS_DEFINE_ENUM(XAbstractScrollArea, ScrollContentsBy) = XCLASS_VTABLE_GET_SIZE(XFrame),
 XCLASS_DEFINE_END(XAbstractScrollArea)
@@ -60,6 +68,10 @@ typedef struct XAbstractScrollArea
     XWidget* m_sbWidgets[8];   /**< 附加滚动条控件（对标 addScrollBarWidget；借用）。 */
     int m_sbWidgetAligns[8];   /**< 附加控件对齐位（XAlignment 位掩码）。 */
     int m_sbWidgetCount;       /**< 附加控件数量。 */
+    int m_sizeAdjustPolicy;    /**< 尺寸自适应策略（XAbstractScrollAreaSizeAdjustPolicy；
+                                    默认 AdjustIgnored）。 */
+    XSize m_sizeHintCache;     /**< AdjustToContentsOnFirstShow 的尺寸提示缓存（内部）。 */
+    bool m_sizeHintCached;     /**< 尺寸提示缓存是否有效（内部）。 */
 } XAbstractScrollArea;
 
 /* ==================== 生命周期 ==================== */
@@ -182,6 +194,30 @@ XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self);
  * @return 建议最小尺寸。
  */
 XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self);
+
+/* ==================== 尺寸自适应策略（对标 SizeAdjustPolicy） ========== */
+
+/**
+ * @brief 读取尺寸自适应策略（对标 sizeAdjustPolicy）。
+ *
+ * @param self 目标滚动区域；可为 NULL。
+ * @return 当前策略；self 为 NULL 时返回 AdjustIgnored。
+ */
+XAbstractScrollAreaSizeAdjustPolicy XAbstractScrollArea_sizeAdjustPolicy(
+    const XAbstractScrollArea* self);
+
+/**
+ * @brief 设置尺寸自适应策略（对标 setSizeAdjustPolicy）。
+ *
+ *        策略变化后清除尺寸提示缓存并请求重新布局（对标 Qt 的
+ *        `d->sizeHint = QSize(); updateGeometry();`）。
+ *
+ * @param self 目标滚动区域。
+ * @param policy 新策略（XAbstractScrollAreaSizeAdjustPolicy）。
+ * @return 无返回值。
+ */
+void XAbstractScrollArea_setSizeAdjustPolicy(
+    XAbstractScrollArea* self, XAbstractScrollAreaSizeAdjustPolicy policy);
 
 /* ==================== 保护槽入口（对标 protected scrollContentsBy） ==== */
 

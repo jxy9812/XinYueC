@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XMenuBar.h
  * @brief      XMenuBar 菜单栏控件（对标 Qt 6.8 QMenuBar 全部公共 API）。
  * @details    功能范围：
@@ -80,6 +80,24 @@ XAction* XMenuBar_addMenu(XMenuBar* self, XMenu* menu);
 XMenu* XMenuBar_addMenu_2(XMenuBar* self, const char* utf8Title);
 /** @brief 追加分隔条动作（对标 addSeparator）。 */
 XAction* XMenuBar_addSeparator(XMenuBar* self);
+/**
+ * @brief      以文本创建动作并追加（对标 QMenuBar::addAction(const QString&)）。
+ * @details    Qt 6.8 中 QMenuBar 重载了 QWidget::addAction：创建带文本的
+ *             新动作、加入菜单栏并返回该动作；XGui 中动作归菜单栏所有，
+ *             该动作不关联子菜单（m_menus 不含对应项，与 addSeparator
+ *             同一约定）。
+ * @param      self 目标菜单栏。
+ * @param      text 动作文本；可为 NULL（空文本）。
+ * @return     新建动作借用指针（归菜单栏所有）；失败返回 NULL。
+ */
+XAction* XMenuBar_addAction(XMenuBar* self, const XString* text);
+/**
+ * @brief      以 UTF-8 文本创建动作并追加（对标 addAction 的字符串重载）。
+ * @param      self 目标菜单栏。
+ * @param      utf8Text UTF-8 动作文本；可为 NULL（空文本）。
+ * @return     新建动作借用指针（归菜单栏所有）；失败返回 NULL。
+ */
+XAction* XMenuBar_addAction_2(XMenuBar* self, const char* utf8Text);
 /** @brief 在 before 动作之前插入菜单（对标 insertMenu；before 为 NULL
  *         时等价追加）。 */
 XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu);

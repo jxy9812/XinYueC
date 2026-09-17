@@ -44,6 +44,15 @@ extern "C" {
 
 #if XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON
 
+/** @brief XImage 前向声明（iconPixmap 承载自定义图标位图）。 */
+typedef struct XImage XImage;
+/** @brief XIcon 前向声明（standardIcon 返回标准图标）。 */
+typedef struct XIcon XIcon;
+#if XCHECKBOX_ON
+/** @brief XCheckBox 前向声明（checkBox 消息框复选框）。 */
+typedef struct XCheckBox XCheckBox;
+#endif
+
 /** @brief 消息图标（对标 QMessageBox::Icon，数值一致）。 */
 typedef enum XMessageBoxIcon
 {
@@ -91,6 +100,10 @@ typedef struct XMessageBox
     XAbstractButton* m_clicked;  /**< 最近点击的按钮（exec 结果）。 */
     XAbstractButton* m_defaultButton; /**< 默认按钮（借用；对标 defaultButton）。 */
     XAbstractButton* m_escapeButton;  /**< 转义按钮（借用；对标 escapeButton）。 */
+#if XCHECKBOX_ON
+    XCheckBox* m_checkBox;       /**< 复选框（对象拥有；NULL 表示未设置；对标 checkBox）。 */
+#endif
+    XImage* m_iconPixmap;        /**< 自定义图标位图（对象拥有；对标 iconPixmap；暂不参与绘制）。 */
     bool m_inExec;               /**< exec 循环进行中。 */
 } XMessageBox;
 
@@ -290,11 +303,157 @@ int XMessageBox_options(const XMessageBox* self);
  * @return 置位返回 true。
  */
 bool XMessageBox_testOption(const XMessageBox* self, int option);
+/** @brief 设置/清除单个选项位（对标 QMessageBox::setOption）。
+ * @param self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param option 选项位。
+ * @param on true 置位该选项，false 清除该选项；其余选项位保持不变。
+ * @return 无返回值。
+ */
+void XMessageBox_setOption(XMessageBox* self, int option, bool on);
 
 /** @brief buttonClicked(XAbstractButton*) 信号（对标 QMessageBox::buttonClicked；
  *         载荷：被点击按钮）。 */
 void* XMessageBox_buttonClicked_signal(XMessageBox* self,
                                        XAbstractButton* button);
+
+/* ==================== 复选框 / 图标位图 / 文本呈现（对标 QCheckBox、
+ *                     iconPixmap、textFormat、textInteractionFlags） ==================== */
+
+#if XCHECKBOX_ON
+/**
+ * @brief      设置消息框复选框（对标 QMessageBox::setCheckBox）。
+ * @details    复选框所有权转移给消息框：旧复选框被释放；复选框显示在
+ *             消息文本与按钮盒之间。传入 NULL 仅清除并释放当前复选框。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      checkBox 新复选框；可为 NULL；可带任意父控件，设置后归
+ *             消息框管理（由消息框释放，调用方不得重复释放）。
+ * @return     无返回值。
+ */
+void XMessageBox_setCheckBox(XMessageBox* self, XCheckBox* checkBox);
+/**
+ * @brief      查询消息框复选框（对标 QMessageBox::checkBox）。
+ * @param      self 目标对话框；NULL 返回 NULL。
+ * @return     借用指针，属于消息框内部存储，不能释放；未设置返回 NULL。
+ */
+XCheckBox* XMessageBox_checkBox(const XMessageBox* self);
+#endif /* XCHECKBOX_ON */
+
+/**
+ * @brief      设置自定义图标位图（对标 QMessageBox::setIconPixmap）。
+ * @details    深拷贝存储；当前版本仅保存状态不参与绘制（绘制仍按
+ *             icon 枚举交给样式层），头文件与文档已注明。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      pixmap 位图源；NULL 清除当前位图；只借用，内部深拷贝。
+ * @return     无返回值。
+ */
+void XMessageBox_setIconPixmap(XMessageBox* self, const XImage* pixmap);
+/**
+ * @brief      查询自定义图标位图（对标 QMessageBox::iconPixmap）。
+ * @param      self 目标对话框；NULL 返回 NULL。
+ * @return     借用指针，属于对象内部存储，不能释放；未设置返回 NULL。
+ */
+const XImage* XMessageBox_iconPixmap(const XMessageBox* self);
+
+/**
+ * @brief      设置消息文本呈现格式（对标 QMessageBox::setTextFormat）。
+ * @details    转发给内部文本标签（XLabel_setTextFormat）；格式数值与
+ *             Qt::TextFormat 一致（PlainText/RichText/AutoText）。
+ * @param      self 目标对话框；传入 NULL 或标签被裁剪时函数不执行任何操作。
+ * @param      format 文本格式（XLabelTextFormat）。
+ * @return     无返回值。
+ */
+void XMessageBox_setTextFormat(XMessageBox* self, XLabelTextFormat format);
+/**
+ * @brief      查询消息文本呈现格式（对标 QMessageBox::textFormat）。
+ * @param      self 目标对话框；NULL 或无标签返回 AutoText（标签默认）。
+ * @return     当前文本格式。
+ */
+XLabelTextFormat XMessageBox_textFormat(const XMessageBox* self);
+/**
+ * @brief      设置文本交互标志（对标 QMessageBox::setTextInteractionFlags）。
+ * @details    转发给内部文本标签；标志位值与 Qt::TextInteractionFlag 一致。
+ * @param      self 目标对话框；传入 NULL 或标签被裁剪时函数不执行任何操作。
+ * @param      flags 交互标志位集。
+ * @return     无返回值。
+ */
+void XMessageBox_setTextInteractionFlags(XMessageBox* self,
+                                         XLabelTextInteractionFlags flags);
+/**
+ * @brief      查询文本交互标志（对标 QMessageBox::textInteractionFlags）。
+ * @param      self 目标对话框；NULL 或无标签返回 0。
+ * @return     当前交互标志位集。
+ */
+XLabelTextInteractionFlags XMessageBox_textInteractionFlags(
+    const XMessageBox* self);
+
+/* ==================== 按钮角色 / 移除 / 文本（对标 buttonRole、
+ *                     removeButton、buttonText、setButtonText） ==================== */
+
+/**
+ * @brief      查询按钮角色（对标 QMessageBox::buttonRole）。
+ * @param      self 目标对话框；传入 NULL 时返回 InvalidRole。
+ * @param      button 目标按钮；NULL 或不属于本框时返回 InvalidRole。
+ * @return     按钮角色（XMessageBoxButtonRole；数值与 XDialogButtonBox
+ *             Role 一致）。
+ */
+XMessageBoxButtonRole XMessageBox_buttonRole(const XMessageBox* self,
+                                             XAbstractButton* button);
+/**
+ * @brief      从按钮盒移除按钮（对标 QMessageBox::removeButton）。
+ * @details    只从按钮盒摘除，不释放按钮对象；默认/转义/最近点击指针
+ *             若指向该按钮则一并清空。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      button 待移除按钮；NULL 或不属于本框时保持原状。
+ * @return     无返回值。
+ */
+void XMessageBox_removeButton(XMessageBox* self, XAbstractButton* button);
+/**
+ * @brief      查询标准按钮文本（对标 QMessageBox::buttonText；Qt 中已弃用）。
+ * @param      self 目标对话框；传入 NULL 时返回 NULL。
+ * @param      button 标准按钮值（StandardButton 位标志单值）。
+ * @return     新建 XString*（找不到按钮时为空文本）；调用方负责
+ *             XString_delete_base 释放。
+ */
+XString* XMessageBox_buttonText(const XMessageBox* self, int button);
+/**
+ * @brief      设置标准按钮文本（对标 QMessageBox::setButtonText；Qt 中已
+ *             弃用；XString 主版本）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      button 标准按钮值。
+ * @param      text 新文本；NULL 按空文本处理；只借用，内部拷贝。
+ * @return     无返回值；按钮不存在时保持原状。
+ */
+void XMessageBox_setButtonText(XMessageBox* self, int button,
+                               const XString* text);
+/**
+ * @brief      设置标准按钮文本（UTF-8 兼容重载；对标 setButtonText）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      button 标准按钮值。
+ * @param      utf8 UTF-8 编码文本；NULL 按空文本处理。
+ * @return     无返回值；按钮不存在时保持原状。
+ */
+void XMessageBox_setButtonText_2(XMessageBox* self, int button,
+                                 const char* utf8);
+
+/* ==================== 静态便捷（对标 aboutQt、standardIcon） ==================== */
+
+/**
+ * @brief      显示“关于 Qt”对话框（对标静态 QMessageBox::aboutQt）。
+ * @details    与 XApplication_aboutQt 保持一致：XGui 无 Qt 运行时信息，
+ *             本实现为文档化空操作；参数仅保留 API 形状。
+ * @param      parent 父控件；可空；本实现不使用。
+ * @param      title 标题；可空；本实现不使用。
+ * @return     无返回值。
+ */
+void XMessageBox_aboutQt(XWidget* parent, const XString* title);
+/**
+ * @brief      生成消息框标准图标（对标静态 QMessageBox::standardIcon）。
+ * @details    按图标枚举映射 XStyleStandardPixmap（Information/Warning/
+ *             Critical/Question）并经当前应用样式生成。
+ * @param      icon 图标枚举（XMessageBoxIcon）；NoIcon/未知值返回 NULL。
+ * @return     新建 XIcon*（NULL=无）；调用方负责 XIcon_delete_base 释放。
+ */
+XIcon* XMessageBox_standardIcon(int icon);
 
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */
 

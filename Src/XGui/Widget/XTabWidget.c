@@ -563,6 +563,69 @@ void XTabWidget_setMovable(XTabWidget* self, bool movable)
     }
 }
 
+void XTabWidget_clear(XTabWidget* self)
+{
+    if (!self) return;
+    while (self->m_count > 0) XTabWidget_removeTab(self, self->m_count - 1);
+}
+
+void XTabWidget_setDocumentMode(XTabWidget* self, bool enable)
+{
+    if (self) XTabBar_setDocumentMode(&self->m_tabBar, enable);
+}
+bool XTabWidget_documentMode(const XTabWidget* self)
+{
+    return self ? XTabBar_documentMode(&self->m_tabBar) : false;
+}
+
+void XTabWidget_setElideMode(XTabWidget* self, int mode)
+{
+    if (self) XTabBar_setElideMode(&self->m_tabBar, mode);
+}
+int XTabWidget_elideMode(const XTabWidget* self)
+{
+    return self ? XTabBar_elideMode(&self->m_tabBar) : 0;
+}
+
+void XTabWidget_setTabShape(XTabWidget* self, int shape)
+{
+    if (self) XTabBar_setShape(&self->m_tabBar, shape);
+}
+int XTabWidget_tabShape(const XTabWidget* self)
+{
+    return self ? XTabBar_shape(&self->m_tabBar) : 0;
+}
+
+void XTabWidget_setUsesScrollButtons(XTabWidget* self, bool enable)
+{
+    if (self) XTabBar_setUsesScrollButtons(&self->m_tabBar, enable);
+}
+bool XTabWidget_usesScrollButtons(const XTabWidget* self)
+{
+    return self ? XTabBar_usesScrollButtons(&self->m_tabBar) : false;
+}
+
+void XTabWidget_setIconSize(XTabWidget* self, int size)
+{
+    if (self) XTabBar_setIconSize(&self->m_tabBar, size);
+}
+int XTabWidget_iconSize(const XTabWidget* self)
+{
+    return self ? XTabBar_iconSize(&self->m_tabBar) : 0;
+}
+
+const XString* XTabWidget_tabToolTip(const XTabWidget* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count) return NULL;
+    return XTabBar_tabToolTip(&self->m_tabBar, index);
+}
+
+const XString* XTabWidget_tabWhatsThis(const XTabWidget* self, int index)
+{
+    /* 帮助文本无独立槽位：与提示共用存储（项目简化）。 */
+    return XTabWidget_tabToolTip(self, index);
+}
+
 /* ==================== 信号 ==================== */
 
 void* XTabWidget_currentChanged_signal(XTabWidget* self, int index)

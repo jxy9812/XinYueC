@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XKeySequenceEdit.h
  * @brief      XKeySequenceEdit 快捷键捕获控件（对标 Qt 6.8
  *             QKeySequenceEdit 核心公共 API）。
@@ -33,6 +33,8 @@ extern "C" {
 
 /** @brief 快捷键序列最大长度（对标 QKeySequenceEdit 默认值 4）。 */
 #define XKEYSEQUENCEEDIT_MAX_LENGTH 4
+/** @brief 结束键组合最大条目数（对标 Qt 默认 2 项：Tab/Backtab；留余量）。 */
+#define XKEYSEQUENCEEDIT_MAX_FINISHING 8
 
 /** @brief 单组快捷键组合（修饰键 + 非修饰键）。 */
 typedef struct XKeyCombination
@@ -59,6 +61,9 @@ typedef struct XKeySequenceEdit
     int m_maxLength;         /**< 序列最大长度（默认 4）。 */
     bool m_clearButton;      /**< 清除按钮开关（默认 false）。 */
     bool m_capturing;        /**< 正在捕获（有部分输入）。 */
+    XKeyCombination m_finishing[XKEYSEQUENCEEDIT_MAX_FINISHING]; /**< 结束编辑的键组合
+                                  （对标 finishingKeyCombinations；默认 Tab/Backtab）。 */
+    int m_finishingCount;    /**< 结束键组合数量（默认 2）。 */
 } XKeySequenceEdit;
 
 /** @brief XKeySequenceEditclassinit（对标 Qt 同名接口）。
@@ -107,6 +112,46 @@ bool XKeySequenceEdit_isClearButtonEnabled(const XKeySequenceEdit* self);
  * @brief      设置清除按钮开关。
  */
 void XKeySequenceEdit_setClearButtonEnabled(XKeySequenceEdit* self, bool enable);
+
+/* ==================== 结束键组合（对标 Qt 6.8 finishingKeyCombinations） ==== */
+
+/**
+ * @brief      获取结束键组合数量（对标 finishingKeyCombinations().size()）。
+ *
+ * @param      self 目标控件；可为 NULL。
+ * @return     组合数量；self 为 NULL 时返回 0。
+ */
+int XKeySequenceEdit_finishingKeyCombinationCount(
+    const XKeySequenceEdit* self);
+
+/**
+ * @brief      获取结束键组合数组（对标 finishingKeyCombinations）。
+ *
+ * @details    XGui 无 QList：返回内部借用数组，元素个数由
+ *             XKeySequenceEdit_finishingKeyCombinationCount 给出；默认
+ *             为 Qt 的 {Tab, Backtab}（无修饰键）。任何命中该列表的组合
+ *             按下时结束编辑并发射 editingFinished()。
+ *
+ * @param      self 目标控件；可为 NULL。
+ * @return     借用只读数组指针；self 为 NULL 时返回 NULL。不得释放。
+ */
+const XKeyCombination* XKeySequenceEdit_finishingKeyCombinations(
+    const XKeySequenceEdit* self);
+
+/**
+ * @brief      设置结束键组合（对标 setFinishingKeyCombinations）。
+ *
+ * @details    XGui 无 QList<QKeyCombination>：以 (数组, 数量) 承载，超出
+ *             XKEYSEQUENCEEDIT_MAX_FINISHING 的条目被截断；count<=0 或
+ *             combos 为 NULL 时清空（此后仅 Return/Enter 结束编辑）。
+ *
+ * @param      self 目标控件。
+ * @param      combos 组合数组（借用读取，不接管所有权）；可为 NULL。
+ * @param      count 组合数量。
+ * @return     无返回值。
+ */
+void XKeySequenceEdit_setFinishingKeyCombinations(
+    XKeySequenceEdit* self, const XKeyCombination* combos, int count);
 
 /* ==================== 信号 ==================== */
 

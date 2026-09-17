@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XGraphicsEffect.h
  * @brief      XGraphicsEffect 图形效果基类（对标 Qt 6.8 QGraphicsEffect
  *            : QObject）。
@@ -24,8 +24,12 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XObject.h"
 #include "XClass.h"
+#include "XGeometry.h"
 
 #if XWIDGET_ON
+
+/** @brief XWidget 前向声明（效果源承载；完整定义见 XWidget.h）。 */
+typedef struct XWidget XWidget;
 
 XCLASS_DEFINE_BEGING(XGraphicsEffect)
 XCLASS_DEFINE_EXTEND_END(XGraphicsEffect, XObject)
@@ -38,6 +42,8 @@ typedef struct XGraphicsEffect
 {
     XObject m_class;   /**< 基类成员；必须是第一个。 */
     bool m_enabled;    /**< 启用标志；默认 true。 */
+    XWidget* m_source; /**< 效果源（对标 QGraphicsEffect 的 source；XGui 以挂接
+                            控件承载，借用指针，由 XWidget_setGraphicsEffect 设置）。 */
 } XGraphicsEffect;
 
 /**
@@ -92,6 +98,56 @@ void XGraphicsEffect_update(XGraphicsEffect* self);
  * @return     信号标识。
  */
 void* XGraphicsEffect_enabledChanged_signal(XGraphicsEffect* self, bool enabled);
+
+/* ==================== 效果源与包围盒（对标 source/boundingRect） ========== */
+
+/**
+ * @brief      获取效果源（对标 QGraphicsEffect::source）。
+ *
+ * @details    Qt 返回内部 QGraphicsEffectSource*；XGui 未建该来源抽象，
+ *             以挂接的效果承载控件（XWidget*，借用）作为源，由
+ *             XWidget_setGraphicsEffect 挂接时设置。
+ *
+ * @param      self 目标效果；可为 NULL。
+ * @return     效果源控件借用指针；无源时为 NULL。
+ */
+XWidget* XGraphicsEffect_source(const XGraphicsEffect* self);
+
+/**
+ * @brief      设置效果源（XGui 适配接口，非 Qt 公共 API）。
+ *
+ * @details    仅供 XWidget_setGraphicsEffect 挂接/摘除效果时调用，用于
+ *             维护 source() 的返回值；不转移所有权。
+ *
+ * @param      self 目标效果。
+ * @param      source 效果源控件借用指针；可为 NULL 清除。
+ * @return     无返回值。
+ */
+void XGraphicsEffect_setSource(XGraphicsEffect* self, XWidget* source);
+
+/**
+ * @brief      按源矩形计算效果包围盒（对标 QGraphicsEffect::boundingRectFor）。
+ *
+ * @details    基类实现原样返回源矩形（与 Qt 的 QGraphicsEffect 基类一致），
+ *             派生效果可覆盖语义。
+ *
+ * @param      self 目标效果；可为 NULL。
+ * @param      sourceRect 源矩形；为 NULL 时返回空矩形。
+ * @return     效果作用后的包围盒。
+ */
+XRectF XGraphicsEffect_boundingRectFor(const XGraphicsEffect* self,
+                                       const XRectF* sourceRect);
+
+/**
+ * @brief      获取效果包围盒（对标 QGraphicsEffect::boundingRect）。
+ *
+ * @details    有源时返回 boundingRectFor(源控件几何)；无源时返回空矩形，
+ *             与 Qt 的 `if (d->source) ... return QRectF();` 一致。
+ *
+ * @param      self 目标效果；可为 NULL。
+ * @return     效果包围盒（浮点矩形）。
+ */
+XRectF XGraphicsEffect_boundingRect(const XGraphicsEffect* self);
 
 #endif /* XWIDGET_ON */
 

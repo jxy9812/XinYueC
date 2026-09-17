@@ -111,6 +111,12 @@ void XDockWidget_setAllowedAreas(XDockWidget* self, int areas);
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
  */
 int XDockWidget_allowedAreas(const XDockWidget* self);
+/** @brief 查询指定停靠区是否允许（对标 QDockWidget::isAreaAllowed）。
+ * @param self 目标控件指针；传入 NULL 时返回 false。
+ * @param area 停靠区位掩码（XDockWidgetArea 单个位）。
+ * @return area 在 allowedAreas 位掩码内返回 true。
+ */
+bool XDockWidget_isAreaAllowed(const XDockWidget* self, int area);
 /** @brief X停靠控件set标题条控件（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param widget 子控件指针。

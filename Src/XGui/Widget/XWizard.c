@@ -18,6 +18,7 @@
 
 static void VXWizardPage_deinit(XWizardPage* self)
 {
+    int i;
     if (!self) return;
     if (self->m_title) {
         XString_delete_base(self->m_title);
@@ -26,6 +27,16 @@ static void VXWizardPage_deinit(XWizardPage* self)
     if (self->m_subTitle) {
         XString_delete_base(self->m_subTitle);
         self->m_subTitle = NULL;
+    }
+    if (self->m_pixmap) {
+        XString_delete_base(self->m_pixmap);
+        self->m_pixmap = NULL;
+    }
+    for (i = 0; i < XWizardButton_NStandardButtons; ++i) {
+        if (self->m_buttonTexts[i]) {
+            XString_delete_base(self->m_buttonTexts[i]);
+            self->m_buttonTexts[i] = NULL;
+        }
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -92,6 +103,77 @@ const char* XWizardPage_subTitle(const XWizardPage* self)
     if (!self || !self->m_subTitle) return "";
     text = XString_toUtf8(self->m_subTitle);
     return text ? text : "";
+}
+
+void XWizardPage_setButtonText(XWizardPage* self, XWizardButton which,
+                               const char* utf8)
+{
+    if (!self || which < 0 || which >= XWizardButton_NStandardButtons) return;
+    if (!utf8) {
+        if (self->m_buttonTexts[which]) {
+            XString_delete_base(self->m_buttonTexts[which]);
+            self->m_buttonTexts[which] = NULL;
+        }
+        return;
+    }
+    if (!self->m_buttonTexts[which])
+        self->m_buttonTexts[which] = XString_create();
+    if (self->m_buttonTexts[which])
+        XString_assign_utf8(self->m_buttonTexts[which], utf8);
+}
+
+const char* XWizardPage_buttonText(const XWizardPage* self,
+                                   XWizardButton which)
+{
+    const char* text;
+    if (!self || which < 0 || which >= XWizardButton_NStandardButtons)
+        return "";
+    if (!self->m_buttonTexts[which]) return "";
+    text = XString_toUtf8(self->m_buttonTexts[which]);
+    return text ? text : "";
+}
+
+void XWizardPage_setCommitPage(XWizardPage* self, bool commitPage)
+{ if (self) self->m_commitPage = commitPage; }
+bool XWizardPage_isCommitPage(const XWizardPage* self)
+{ return self ? self->m_commitPage : false; }
+
+void XWizardPage_setFinalPage(XWizardPage* self, bool finalPage)
+{ if (self) self->m_finalPage = finalPage; }
+bool XWizardPage_isFinalPage(const XWizardPage* self)
+{ return self ? self->m_finalPage : false; }
+
+void XWizardPage_setPixmap(XWizardPage* self, int which, const XString* path)
+{
+    (void)which;
+    if (!self) return;
+    if (!self->m_pixmap) self->m_pixmap = XString_create();
+    if (self->m_pixmap) {
+        if (path)
+            XString_assign(self->m_pixmap, path);
+        else
+            XString_assign_utf8(self->m_pixmap, "");
+    }
+}
+
+void XWizardPage_setPixmap_2(XWizardPage* self, int which, const char* utf8)
+{
+    XString tmp;
+    if (!self) return;
+    if (!utf8) {
+        XWizardPage_setPixmap(self, which, NULL);
+        return;
+    }
+    XString_init(&tmp);
+    XString_assign_utf8(&tmp, utf8);
+    XWizardPage_setPixmap(self, which, &tmp);
+    XString_deinit_base(&tmp);
+}
+
+const XString* XWizardPage_pixmap(const XWizardPage* self, int which)
+{
+    (void)which;
+    return self ? self->m_pixmap : NULL;
 }
 
 void XWizardPage_setComplete(XWizardPage* self, bool complete)
@@ -516,6 +598,12 @@ void XWizard_back(XWizard* self)
     xwiz_switchTo(self, self->m_currentIndex - 1);
 }
 
+void XWizard_setCurrentIndex(XWizard* self, int index)
+{
+    if (!self) return;
+    xwiz_switchTo(self, index);
+}
+
 void XWizard_restart(XWizard* self)
 {
     int i;
@@ -685,6 +773,12 @@ void XWizard_setPixmap_2(XWizard* self, int which, const char* path)
     if (tmp) XString_delete_base(tmp);
 }
 
+const XString* XWizard_pixmap(const XWizard* self, int which)
+{
+    (void)which;
+    return self ? self->m_pixmap : NULL;
+}
+
 const XString* XWizard_field(const XWizard* self, const XString* name)
 {
     int i;
@@ -760,8 +854,12 @@ void XWizard_setButtonLayout(XWizard* self, int layout)
 { if (self) self->m_buttonLayout = layout; }
 void XWizard_setTitleFormat(XWizard* self, int format)
 { if (self) self->m_titleFormat = format; }
+int XWizard_titleFormat(const XWizard* self)
+{ return self ? self->m_titleFormat : 0; }
 void XWizard_setSubTitleFormat(XWizard* self, int format)
 { if (self) self->m_subTitleFormat = format; }
+int XWizard_subTitleFormat(const XWizard* self)
+{ return self ? self->m_subTitleFormat : 0; }
 
 void XWizard_cleanupPage(XWizard* self)
 {

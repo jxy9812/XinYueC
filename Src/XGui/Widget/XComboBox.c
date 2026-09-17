@@ -566,6 +566,24 @@ XLineEdit* XComboBox_lineEdit(const XComboBox* self)
     return self ? self->m_lineEdit : NULL;
 }
 
+void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
+{
+    if (!self || !edit || edit == self->m_lineEdit) return;
+    if (!self->m_editable) self->m_editable = true;
+    if (self->m_lineEdit) {
+        XLineEdit_delete_base(self->m_lineEdit);
+        self->m_lineEdit = NULL;
+    }
+    self->m_lineEdit = edit;
+    XWidget_setParentPlain((XWidget*)edit, (XWidget*)self);
+    XWidget_setGeometry((XWidget*)edit, 2, 2,
+                        XWidget_width((XWidget*)self) -
+                            XCOMBOBOX_BUTTON_W - 4,
+                        XWidget_height((XWidget*)self) - 4);
+    XWidget_show((XWidget*)edit);
+    XWidget_update((XWidget*)self);
+}
+
 int XComboBox_currentIndex(const XComboBox* self)
 {
     return self ? self->m_currentIndex : -1;
@@ -1024,6 +1042,11 @@ const char* XComboBox_itemData_2(const XComboBox* self, int index)
     const XString* s;
     s = XComboBox_itemData(self, index);
     return s ? XString_toUtf8(s) : "";
+}
+
+const XString* XComboBox_currentData(const XComboBox* self)
+{
+    return XComboBox_itemData(self, XComboBox_currentIndex(self));
 }
 
 int XComboBox_findData(const XComboBox* self, const XString* data)

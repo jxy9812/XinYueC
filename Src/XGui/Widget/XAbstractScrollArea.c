@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XAbstractScrollArea.c
  * @brief      抽象滚动区域基类实现（对标 Qt 6.8 QAbstractScrollArea 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -493,7 +493,71 @@ XSize XAbstractScrollArea_maximumViewportSize(
 
 XSize XAbstractScrollArea_sizeHint(const XAbstractScrollArea* self)
 {
-    return XWidget_sizeHint((const XWidget*)self);
+    XSize out;
+    int frame;
+    int sbw = 0;
+    int sbh = 0;
+    bool vbarHidden;
+    bool hbarHidden;
+    if (!self) {
+        XSize_init(&out, 0, 0);
+        return out;
+    }
+    /* 对标 Qt QAbstractScrollArea::sizeHint：
+     * - AdjustIgnored：用控件自身尺寸提示（XGui 初始化为 256x192，
+     *   与 Qt 的固定返回值一致）；
+     * - AdjustToContents：每次查询都按 帧宽 + 滚动条 + 视口提示 重算；
+     * - AdjustToContentsOnFirstShow：首次计算后缓存（对标 Qt 的
+     *   d->sizeHint 缓存），策略变更时由 setSizeAdjustPolicy 清除。 */
+    if (self->m_sizeAdjustPolicy ==
+        XAbstractScrollAreaSizeAdjustPolicy_AdjustIgnored) {
+        return XWidget_sizeHint((const XWidget*)self);
+    }
+    if (self->m_sizeAdjustPolicy ==
+            XAbstractScrollAreaSizeAdjustPolicy_AdjustToContentsOnFirstShow &&
+        self->m_sizeHintCached) {
+        return self->m_sizeHintCache;
+    }
+    frame = 2 * XFrame_frameWidth((const XFrame*)self);
+    vbarHidden = !self->m_vScrollBar ||
+                 self->m_vPolicy == XScrollBarPolicy_AlwaysOff;
+    hbarHidden = !self->m_hScrollBar ||
+                 self->m_hPolicy == XScrollBarPolicy_AlwaysOff;
+    if (!vbarHidden) {
+        XSize s = XWidget_sizeHint((XWidget*)self->m_vScrollBar);
+        sbw = s.width > 0 ? s.width : 0;
+    }
+    if (!hbarHidden) {
+        XSize s = XWidget_sizeHint((XWidget*)self->m_hScrollBar);
+        sbh = s.height > 0 ? s.height : 0;
+    }
+    XSize_init(&out, frame + sbw + self->m_contentWidth,
+               frame + sbh + self->m_contentHeight);
+    if (self->m_sizeAdjustPolicy ==
+        XAbstractScrollAreaSizeAdjustPolicy_AdjustToContentsOnFirstShow) {
+        ((XAbstractScrollArea*)self)->m_sizeHintCache = out;
+        ((XAbstractScrollArea*)self)->m_sizeHintCached = true;
+    }
+    return out;
+}
+
+XAbstractScrollAreaSizeAdjustPolicy XAbstractScrollArea_sizeAdjustPolicy(
+    const XAbstractScrollArea* self)
+{
+    return self ? (XAbstractScrollAreaSizeAdjustPolicy)self->m_sizeAdjustPolicy
+                : XAbstractScrollAreaSizeAdjustPolicy_AdjustIgnored;
+}
+
+void XAbstractScrollArea_setSizeAdjustPolicy(
+    XAbstractScrollArea* self, XAbstractScrollAreaSizeAdjustPolicy policy)
+{
+    if (!self) return;
+    if (self->m_sizeAdjustPolicy == (int)policy) return;
+    self->m_sizeAdjustPolicy = (int)policy;
+    /* 对标 Qt：清缓存并请求重新布局。 */
+    self->m_sizeHintCached = false;
+    XSize_init(&self->m_sizeHintCache, 0, 0);
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self)

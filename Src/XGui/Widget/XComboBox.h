@@ -249,6 +249,17 @@ void XComboBox_setEditable(XComboBox* self, bool editable);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XLineEdit* XComboBox_lineEdit(const XComboBox* self);
+/**
+ * @brief      安装自定义行编辑框（对标 QComboBox::setLineEdit）。
+ * @details    组合框取得所有权：安装或组合框销毁时释放行编辑框；若组合
+ *             框当前不可编辑，先隐式置为可编辑（对标 Qt 安装编辑框的
+ *             可用性要求）。旧行编辑框被释放，调用方不得重复释放。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      edit 新行编辑框；不能为 NULL；可带任意父控件，安装后归
+ *             组合框管理。
+ * @return     无返回值。
+ */
+void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit);
 /** @brief XCombo盒current索引（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
@@ -450,6 +461,13 @@ void XComboBox_setItemData_2(XComboBox* self, int index, const char* data);
 const XString* XComboBox_itemData(const XComboBox* self, int index);
 /** @brief 读取项数据（UTF-8 借用）。 */
 const char* XComboBox_itemData_2(const XComboBox* self, int index);
+/** @brief 读取当前项数据（对标 QComboBox::currentData）。
+ * @details 等价于 itemData(currentIndex())。
+ * @param self 目标控件；传入 NULL 时返回 NULL。
+ * @return 借用内部 XString 指针；未设置或当前项无效返回 NULL；
+ *         禁止释放或修改。
+ */
+const XString* XComboBox_currentData(const XComboBox* self);
 /** @brief 按数据查找项（XString 主版本；对标 QComboBox::findData）。
  * @param self 目标控件。
  * @param data 借用 XString*；不能为 NULL。

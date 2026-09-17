@@ -1,4 +1,4 @@
-﻿#include "XStyle.h"
+#include "XStyle.h"
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -357,6 +357,49 @@ int XStyle_layoutSpacing(XStyle* self, int control1, int control2,
                 const XWidget*));
     if (fn) return fn(self, control1, control2, orientation, option, widget);
     return -1;
+}
+
+const char* XStyle_name(const XStyle* self)
+{
+    XVtable* vt;
+    const char* name;
+    if (!self) return "";
+    vt = XClassGetVtable((XClass*)self);
+    name = vt ? XVTABLE_GET_NAME(vt) : NULL;
+    return name ? name : "";
+}
+
+XStyle* XStyle_proxy(const XStyle* self)
+{
+    return self ? self->m_proxy : NULL;
+}
+
+int XStyle_combinedLayoutSpacing(XStyle* self, int controls1, int controls2,
+                                 int orientation, const XStyleOption* option,
+                                 const XWidget* widget)
+{
+    /* 对标 Qt QStyle::combinedLayoutSpacing：对两组控件类型位组合做
+     * 笛卡尔积逐对取 layoutSpacing，保留最大值（初始 0，故底层返回 -1
+     * 的“未实现”槽位不参与抬升，与 Qt 的 qMax(-1, 0) 结果一致）。 */
+    int maxSpacing = 0;
+    int i;
+    int j;
+    if (!self) return 0;
+    /* XWidgetSizePolicyControlType 共 15 个位（DefaultType..ToolButton），
+     * 与 Qt QSizePolicy::NControlTypes 一致。 */
+    for (i = 0; i < 15; ++i) {
+        int type1 = 1 << i;
+        if ((controls1 & type1) == 0) continue;
+        for (j = 0; j < 15; ++j) {
+            int type2 = 1 << j;
+            int spacing;
+            if ((controls2 & type2) == 0) continue;
+            spacing = XStyle_layoutSpacing(self, type1, type2, orientation,
+                                           option, widget);
+            if (spacing > maxSpacing) maxSpacing = spacing;
+        }
+    }
+    return maxSpacing;
 }
 
 void XStyle_drawItemText(XStyle* self, XPainter* painter,

@@ -12,6 +12,7 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XVector.h"
+#include "XStringUtils.h"
 #include "XGuiConfig.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
@@ -85,7 +86,8 @@ static bool xcompleter_matchText(const XCompleter* self,
     if (!text) return false;
     if (!self->m_prefix) return true; /* 空前缀命中全部非空单元格（Qt 语义）。 */
     prefix = self->m_prefix;
-    if (XString_size(prefix) == 0) return true; /* 空串前缀命中全部（Qt 语义）。 */
+    if (XString_size_base((const XContainer*)prefix) == 0)
+        return true; /* 空串前缀命中全部（Qt 语义）。 */
     cs = self->m_caseSensitivity;
     switch (self->m_filterMode) {
     case XCompleterFilterMode_Contains:
@@ -98,6 +100,107 @@ static bool xcompleter_matchText(const XCompleter* self,
     }
 }
 
+/**
+ * @brief 取 UTF-8 字节区间 [begin, begin+len) 新建 XString。
+ * @return 新建对象（调用方拥有）；参数无效或分配失败返回 NULL；len 为
+ *         0 时返回空串对象。
+ */
+static XString* xcompleter_subStringUtf8(const char* utf8, size_t begin,
+                                         size_t len)
+{
+    XString* s;
+    if (!utf8) return NULL;
+    s = XString_create();
+    if (!s) return NULL;
+    if (len == 0) return s; /* XString_create 已是空串。 */
+    if (!XString_assign_with_length_utf8(s, utf8 + begin, len)) {
+        XString_delete_base((XClass*)s);
+        return NULL;
+    }
+    return s;
+}
+
+/**
+ * @brief 排序模型下二分定位候选区间起点。
+ * @details 仅在 modelSorting 非 UnsortedModel、filterMode 为 StartsWith、
+ *          前缀非空且声明的大小写排序方式与 caseSensitivity 一致时调用
+ *          （对齐 Qt 关于大小写不一致无法加速的约束）。按 XString_compare
+ *          序找首个不小于前缀的行；大小写不敏感排序模型先对前缀与探测
+ *          单元格做 XString_toLower 再比较。探测到 NULL 单元格（破坏
+ *          有序假设）或分配失败时返回 false，调用方回退线性扫描。
+ * @param self 目标补全对象；不可为 NULL（调用方已校验）。
+ * @param rows 模型行数。
+ * @param outStart 输出二分起点行号（成功时写 0..rows）。
+ * @return 二分结果有效返回 true；应回退线性扫描返回 false。
+ */
+static bool xcompleter_sortedLowerBound(const XCompleter* self, int64_t rows,
+                                        int64_t* outStart)
+{
+    int64_t lo = 0;
+    int64_t hi = rows;
+    bool insensitive;
+    XString* prefixLower = NULL;
+    if (rows <= 0 || !outStart) return false;
+    insensitive = (self->m_modelSorting ==
+                   XCompleterModelSorting_CaseInsensitivelySortedModel);
+    if (insensitive) {
+        if (self->m_caseSensitivity != XChar_CaseInsensitive) return false;
+        prefixLower = XString_toLower(self->m_prefix);
+        if (!prefixLower) return false;
+    } else if (self->m_caseSensitivity != XChar_CaseSensitive) {
+        return false; /* Qt：与模型排序大小写不一致时不加速。 */
+    }
+    while (lo < hi) {
+        int64_t mid = lo + (hi - lo) / 2;
+        const XString* cell = XAbstractItemModel_data(
+            self->m_model, (int)mid, self->m_completionColumn);
+        int32_t cmp;
+        if (!cell) { /* 空洞破坏有序假设：放弃二分。 */
+            if (prefixLower) XString_delete_base((XClass*)prefixLower);
+            return false;
+        }
+        if (insensitive) {
+            XString* cellLower = XString_toLower(cell);
+            if (!cellLower) {
+                XString_delete_base((XClass*)prefixLower);
+                return false;
+            }
+            cmp = XString_compare(cellLower, prefixLower);
+            XString_delete_base((XClass*)cellLower);
+        } else {
+            cmp = XString_compare(cell, self->m_prefix);
+        }
+        if (cmp < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (prefixLower) XString_delete_base((XClass*)prefixLower);
+    *outStart = lo;
+    return true;
+}
+
+/**
+ * @brief 把完成列表当前行切换到 row 并同步 currentCompletion。
+ * @details row 应在 [0, 候选数) 内（调用方已归一）；越界或数据缺失时仅
+ *          置 currentRow 并清空 currentCompletion。
+ */
+static void xcompleter_applyCurrentRow(XCompleter* self, int row)
+{
+    int* item;
+    const XString* cell;
+    if (!self) return;
+    self->m_currentRow = row;
+    xcompleter_replaceString(&self->m_currentCompletion, NULL);
+    if (row < 0 || !self->m_matches) return;
+    item = (int*)XVector_at_base(self->m_matches, row);
+    if (!item) return;
+    if (!self->m_model) return;
+    cell = XAbstractItemModel_data(self->m_model, *item,
+                                   self->m_completionColumn);
+    if (cell) xcompleter_replaceString(&self->m_currentCompletion, cell);
+}
+
 /** @brief 重建完成列表；命中首项变化时发射 highlighted 系列信号。 */
 static void xcompleter_rebuild(XCompleter* self)
 {
@@ -105,9 +208,11 @@ static void xcompleter_rebuild(XCompleter* self)
     XString* oldCompletion;
     int64_t rows;
     int64_t i;
+    int64_t start = 0;
     int column;
     int firstRow = -1;
     bool hadOld;
+    bool sorted;
 
     if (!self || !self->m_matches) return;
     XVector_clear_base((XContainer*)self->m_matches);
@@ -125,17 +230,26 @@ static void xcompleter_rebuild(XCompleter* self)
     rows = XAbstractItemModel_rowCount(self->m_model);
     column = self->m_completionColumn;
     firstText = NULL;
-    for (i = 0; i < rows; ++i) {
+    /* 排序模型 + StartsWith + 前缀非空：二分定位候选区间起点。 */
+    sorted = false;
+    if (self->m_prefix &&
+        XString_size_base((const XContainer*)self->m_prefix) > 0 &&
+        self->m_filterMode == XCompleterFilterMode_StartsWith &&
+        self->m_modelSorting != XCompleterModelSorting_UnsortedModel) {
+        sorted = xcompleter_sortedLowerBound(self, rows, &start);
+    }
+    for (i = start; i < rows; ++i) {
         const XString* cell =
             XAbstractItemModel_data(self->m_model, (int)i, column);
-        if (!cell) continue;
-        if (xcompleter_matchText(self, cell)) {
+        if (cell && xcompleter_matchText(self, cell)) {
             int row = (int)i;
             XVector_push_back_1_base(self->m_matches, &row);
             if (firstRow < 0) {
                 firstRow = row;
                 firstText = cell;
             }
+        } else if (sorted) {
+            break; /* 有序模型命中区间连续：首个不命中即区间结束。 */
         }
     }
     if (firstText) {
@@ -199,10 +313,13 @@ void XCompleter_init(XCompleter* self, XObject* parent)
     Set_Class_IsHeap(self, false);
     self->m_completionMode = XCompleterCompletionMode_PopupCompletion;
     self->m_filterMode = XCompleterFilterMode_StartsWith;
+    self->m_modelSorting = XCompleterModelSorting_UnsortedModel;
     self->m_completionColumn = 0;
     self->m_completionRole = -1;
     self->m_caseSensitivity = XChar_CaseSensitive;
     self->m_maxVisibleItems = 7;
+    self->m_wrapAround = true; /* Qt 默认 true。 */
+    self->m_popup = NULL;
     self->m_currentRow = -1;
     self->m_matches = XVector_Create(int);
 }
@@ -327,6 +444,32 @@ XCompleterFilterMode XCompleter_filterMode(const XCompleter* self)
     return self ? self->m_filterMode : XCompleterFilterMode_StartsWith;
 }
 
+void XCompleter_setModelSorting(XCompleter* self,
+                                XCompleterModelSorting sorting)
+{
+    if (!self || self->m_modelSorting == sorting) return;
+    self->m_modelSorting = sorting;
+    /* Qt 切换排序假设时重建补全引擎；本实现等价地重建完成列表。 */
+    xcompleter_rebuild(self);
+}
+
+XCompleterModelSorting XCompleter_modelSorting(const XCompleter* self)
+{
+    return self ? self->m_modelSorting
+                : XCompleterModelSorting_UnsortedModel;
+}
+
+void XCompleter_setWrapAround(XCompleter* self, bool wrap)
+{
+    if (!self) return;
+    self->m_wrapAround = wrap;
+}
+
+bool XCompleter_wrapAround(const XCompleter* self)
+{
+    return self ? self->m_wrapAround : true;
+}
+
 void XCompleter_setMaxVisibleItems(XCompleter* self, int maxItems)
 {
     if (!self) return;
@@ -347,6 +490,13 @@ void XCompleter_setWidget(XCompleter* self, XWidget* widget)
 XWidget* XCompleter_widget(const XCompleter* self)
 {
     return self ? self->m_widget : NULL;
+}
+
+void XCompleter_setPopup(XCompleter* self, XWidget* popup)
+{
+    if (!self) return;
+    /* XGui 弹出列表为自绘非部件承载：仅保存借用指针，不做部件化接管。 */
+    self->m_popup = popup;
 }
 
 /* ==================== 补全结果（对标 QCompleter） ==================== */
@@ -376,10 +526,91 @@ int XCompleter_currentIndex(const XCompleter* self)
     return item ? *item : -1;
 }
 
+int XCompleter_completionCount(const XCompleter* self)
+{
+    if (!self || !self->m_matches) return 0;
+    return (int)XVector_size_base((const XContainer*)self->m_matches);
+}
+
+bool XCompleter_setCurrentRow(XCompleter* self, int row)
+{
+    int count;
+    if (!self) return false;
+    count = XCompleter_completionCount(self);
+    if (count <= 0) return false;
+    if (row < 0 || row >= count) {
+        if (!self->m_wrapAround) return false;
+        /* 环绕归一：负值从末项往前，超出从首项继续。 */
+        row %= count;
+        if (row < 0) row += count;
+    }
+    xcompleter_applyCurrentRow(self, row);
+    return true;
+}
+
+XAbstractItemModel* XCompleter_completionModel(const XCompleter* self)
+{
+    /* XGui 无补全代理模型：返回底层模型借用（见头文件 @note）。 */
+    return self ? self->m_model : NULL;
+}
+
+XString* XCompleter_pathFromIndex(const XCompleter* self, int row)
+{
+    const XString* cell;
+    if (!self || !self->m_model || row < 0) return NULL;
+    if (row >= XAbstractItemModel_rowCount(self->m_model)) return NULL;
+    cell = XAbstractItemModel_data(self->m_model, row,
+                                   self->m_completionColumn);
+    if (!cell) return NULL;
+    return XString_create_copy(cell);
+}
+
+void XCompleter_splitPath(const XCompleter* self, const XString* path,
+                          XString** dirOut, XString** fileOut)
+{
+    const char* utf8;
+    size_t len;
+    size_t i;
+    size_t slash;
+    size_t dirLen;
+    size_t fileStart;
+    (void)self; /* 保留 Qt 成员函数形态；XGui 无 QFileSystemModel 判定。 */
+    if (dirOut) *dirOut = NULL;
+    if (fileOut) *fileOut = NULL;
+    utf8 = path ? XString_toUtf8(path) : NULL;
+    if (!utf8) utf8 = "";
+    len = XStrlen(utf8);
+    slash = (size_t)-1;
+    for (i = len; i > 0; --i) {
+        if (utf8[i - 1] == '/') {
+            slash = i - 1;
+            break;
+        }
+    }
+    dirLen = (slash == (size_t)-1) ? 0 : slash;
+    fileStart = (slash == (size_t)-1) ? 0 : slash + 1;
+    if (dirOut)
+        *dirOut = xcompleter_subStringUtf8(utf8, 0, dirLen);
+    if (fileOut)
+        *fileOut = xcompleter_subStringUtf8(utf8, fileStart, len - fileStart);
+}
+
+void XCompleter_splitPath_2(const XCompleter* self, const char* path,
+                            XString** dirOut, XString** fileOut)
+{
+    XString* tmp;
+    if (!path) {
+        XCompleter_splitPath(self, NULL, dirOut, fileOut);
+        return;
+    }
+    tmp = XString_create_utf8(path);
+    XCompleter_splitPath(self, tmp, dirOut, fileOut);
+    if (tmp) XString_delete_base((XClass*)tmp);
+}
+
 XWidget* XCompleter_popup(const XCompleter* self)
 {
-    (void)self;
-    return NULL;
+    return self ? self->m_popup : NULL;
 }
 
 /* ==================== 信号 ==================== */

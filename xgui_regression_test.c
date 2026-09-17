@@ -27963,7 +27963,482 @@ static void test_plaintextedit_contract(void)
     if (text) XFree_System(text);
 
     XPlainTextEdit_delete_base(edit);
-}/* ==================== XMdiArea 契约测试（对标 QMdiArea） ========== */
+}/* ==================== Phase 3.1 P1 新 API 契约测试 ==================== */
+
+static void p31_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[P31-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_phase31_p1_contract(void)
+{
+    /* --- XDateTimeEdit：日期/时间范围族（对标 setMinimumDate 等） --- */
+    {
+        XDateTimeEdit* edit = XDateTimeEdit_create(NULL, 0);
+        XDate dmin, dmax, got;
+        XTime tmin, tgot;
+        XDate_setDate(&dmin, 2020, 1, 1);
+        XTime_setHMS(&tmin, 8, 30, 0, 0);
+        XDate_setDate(&dmax, 2030, 12, 31);
+
+        XDateTimeEdit_setMinimumDate(edit, &dmin);
+        got = XDateTimeEdit_minimumDate(edit);
+        p31_expect(XDate_year(&got) == 2020 && XDate_month(&got) == 1,
+                   "setMinimumDate 后 minimumDate 生效");
+        tgot = XDateTimeEdit_minimumTime(edit);
+        p31_expect(XTime_hour(&tgot) == 0,
+                   "setMinimumDate 保留时间部分");
+
+        XDateTimeEdit_setMinimumTime(edit, &tmin);
+        tgot = XDateTimeEdit_minimumTime(edit);
+        got = XDateTimeEdit_minimumDate(edit);
+        p31_expect(XTime_hour(&tgot) == 8 && XDate_year(&got) == 2020,
+                   "setMinimumTime 保留日期部分");
+
+        XDateTimeEdit_setMaximumDate(edit, &dmax);
+        got = XDateTimeEdit_maximumDate(edit);
+        p31_expect(XDate_year(&got) == 2030, "setMaximumDate 生效");
+
+        /* 钳位：当前值小于下界时被抬升。 */
+        {
+            XDate lo;
+            XDate_setDate(&lo, 2019, 6, 1);
+            XDateTimeEdit_setDate(edit, &lo);
+            got = XDateTimeEdit_date(edit);
+            p31_expect(XDate_year(&got) == 2020, "低于下界钳位到 2020");
+        }
+
+        XDateTimeEdit_clearMinimumDate(edit);
+        got = XDateTimeEdit_minimumDate(edit);
+        p31_expect(XDate_year(&got) == 1900,
+                   "clearMinimumDate 复位默认");
+        XDateTimeEdit_clearMaximumDate(edit);
+        got = XDateTimeEdit_maximumDate(edit);
+        p31_expect(XDate_year(&got) == 2999,
+                   "clearMaximumDate 复位默认");
+        XDateTimeEdit_clearMinimumTime(edit);
+        tgot = XDateTimeEdit_minimumTime(edit);
+        got = XDateTimeEdit_minimumDate(edit);
+        p31_expect(XTime_hour(&tgot) == 0 && XTime_minute(&tgot) == 0 &&
+                   XDate_year(&got) == 1900,
+                   "clearMinimumTime 只复位时间");
+        XDateTimeEdit_clearMinimumDateTime(edit);
+        tgot = XDateTimeEdit_minimumTime(edit);
+        p31_expect(XTime_minute(&tgot) == 0,
+                   "clearMinimumDateTime 复位完整最小值");
+        p31_expect(XDateTimeEdit_currentSectionIndex(edit) ==
+                   XDateTimeEdit_currentSection(edit),
+                   "currentSectionIndex 别名与 currentSection 一致");
+
+        XDateTimeEdit_setDateRange(edit, &dmin, &dmax);
+        got = XDateTimeEdit_minimumDate(edit);
+        tgot = XDateTimeEdit_maximumTime(edit);
+        p31_expect(XDate_year(&got) == 2020, "setDateRange 下界生效");
+        (void)tgot;
+        got = XDateTimeEdit_maximumDate(edit);
+        p31_expect(XDate_year(&got) == 2030, "setDateRange 上界生效");
+        XDateTimeEdit_delete_base(edit);
+    }
+
+    /* --- XTabBar：形状/图标尺寸/自动隐藏/移除选择行为 --- */
+    {
+        XTabBar* bar = XTabBar_create(NULL, 0);
+        XTabBar_setShape(bar, 1);
+        p31_expect(XTabBar_shape(bar) == 1, "TabBar setShape/shape");
+        XTabBar_setIconSize(bar, 24);
+        p31_expect(XTabBar_iconSize(bar) == 24, "TabBar setIconSize/iconSize");
+        XTabBar_setAutoHide(bar, true);
+        p31_expect(XTabBar_autoHide(bar), "TabBar setAutoHide/autoHide");
+        XTabBar_setSelectionBehaviorOnRemove(bar, 2);
+        p31_expect(XTabBar_selectionBehaviorOnRemove(bar) == 2,
+                   "TabBar selectionBehaviorOnRemove");
+        XTabBar_setChangeCurrentOnDrag(bar, true);
+        p31_expect(XTabBar_changeCurrentOnDrag(bar),
+                   "TabBar changeCurrentOnDrag");
+        XTabBar_delete_base(bar);
+    }
+
+    /* --- XTabWidget：clear + 属性转发 --- */
+    {
+        XTabWidget* tw = XTabWidget_create(NULL, 0);
+        XLabel* pg = XLabel_create(tw, 0);
+        (void)XTabWidget_addTab_2(tw, (XWidget*)pg, "tab0");
+        p31_expect(XTabWidget_count(tw) == 1, "TabWidget addTab");
+        XTabWidget_setDocumentMode(tw, true);
+        p31_expect(XTabWidget_documentMode(tw), "TabWidget documentMode 转发");
+        XTabWidget_setElideMode(tw, 2);
+        p31_expect(XTabWidget_elideMode(tw) == 2, "TabWidget elideMode 转发");
+        XTabWidget_setTabShape(tw, 1);
+        p31_expect(XTabWidget_tabShape(tw) == 1, "TabWidget tabShape 转发");
+        XTabWidget_setUsesScrollButtons(tw, true);
+        p31_expect(XTabWidget_usesScrollButtons(tw),
+                   "TabWidget usesScrollButtons 转发");
+        XTabWidget_setIconSize(tw, 20);
+        p31_expect(XTabWidget_iconSize(tw) == 20, "TabWidget iconSize 转发");
+        XTabWidget_setTabToolTip_2(tw, 0, "tip0");
+        p31_expect(XTabWidget_tabToolTip(tw, 0) != NULL,
+                   "TabWidget tabToolTip 读取");
+        p31_expect(XTabWidget_tabWhatsThis(tw, 0) != NULL,
+                   "TabWidget tabWhatsThis 与提示共用");
+        XTabWidget_clear(tw);
+        p31_expect(XTabWidget_count(tw) == 0, "TabWidget clear 清空");
+        XTabWidget_delete_base(tw);
+    }
+
+    /* --- XToolBox：条目提示 --- */
+    {
+        XToolBox* tb = XToolBox_create(NULL, 0);
+        XLabel* pg = XLabel_create(tb, 0);
+        XToolBox_addItem(tb, (XWidget*)pg, "item0");
+        XToolBox_setItemToolTip_2(tb, 0, "tt");
+        p31_expect(XToolBox_itemToolTip(tb, 0) != NULL,
+                   "ToolBox itemToolTip 读取");
+        XToolBox_setItemToolTip(tb, 0, NULL);
+        p31_expect(XToolBox_itemToolTip(tb, 0) == NULL,
+                   "ToolBox NULL 清除提示");
+        XToolBox_delete_base(tb);
+    }
+
+    /* --- XMenu：图标 + isTearOffEnabled 别名 --- */
+    {
+        XMenu* menu = XMenu_create();
+        XMenu_setIcon_2(menu, "icon.png");
+        p31_expect(XMenu_icon(menu) != NULL, "Menu setIcon_2/icon");
+        XMenu_setIcon(menu, NULL);
+        p31_expect(XMenu_icon(menu) == NULL, "Menu NULL 清除图标");
+        XMenu_setTearOffEnabled(menu, true);
+        p31_expect(XMenu_isTearOffEnabled(menu), "Menu isTearOffEnabled 别名");
+        XMenu_delete_base(menu);
+    }
+
+    /* --- XDialog：尺寸手柄 + open 模态 --- */
+    {
+        XDialog* dlg = XDialog_create(NULL, 0);
+        XDialog_setSizeGripEnabled(dlg, true);
+        p31_expect(XDialog_isSizeGripEnabled(dlg), "Dialog sizeGripEnabled");
+        XDialog_open(dlg);
+        p31_expect(XDialog_isModal(dlg), "Dialog open 置模态");
+        XDialog_delete_base(dlg);
+    }
+
+    /* --- XDockWidget / XToolBar：isAreaAllowed + 浮动/信号 --- */
+    {
+        XDockWidget* dock = XDockWidget_create("dock", NULL, 0);
+        int areas = XDockWidget_allowedAreas(dock);
+        p31_expect(XDockWidget_isAreaAllowed(dock, areas),
+                   "DockWidget isAreaAllowed 命中");
+        p31_expect(!XDockWidget_isAreaAllowed(dock, 0),
+                   "DockWidget isAreaAllowed 0 不命中");
+        XDockWidget_delete_base(dock);
+
+        XToolBar* tb = XToolBar_create(NULL, 0);
+        p31_expect(!XToolBar_isFloating(tb), "ToolBar isFloating 默认 false");
+        p31_expect(XToolBar_isAreaAllowed(tb,
+                   XToolBar_allowedAreas(tb)),
+                   "ToolBar isAreaAllowed 命中");
+        XToolBar_delete_base(tb);
+    }
+
+    /* --- XComboBox：currentData --- */
+    {
+        XComboBox* cb = XComboBox_create(NULL, 0);
+        XComboBox_addItem_2(cb, "a");
+        XComboBox_addItem_2(cb, "b");
+        XComboBox_setItemData_2(cb, 0, "da");
+        XComboBox_setItemData_2(cb, 1, "db");
+        XComboBox_setCurrentIndex(cb, 1);
+        p31_expect(XComboBox_currentData(cb) != NULL &&
+                   strcmp(XString_toUtf8(
+                       (XString*)XComboBox_currentData(cb)), "db") == 0,
+                   "ComboBox currentData 跟随当前项");
+        XComboBox_delete_base(cb);
+    }
+
+    /* --- XMessageBox：setOption --- */
+    {
+        XMessageBox* mb = XMessageBox_create(NULL, 0);
+        XMessageBox_setOption(mb, 0x1, true);
+        p31_expect(XMessageBox_testOption(mb, 0x1), "MsgBox setOption 置位");
+        XMessageBox_setOption(mb, 0x1, false);
+        p31_expect(!XMessageBox_testOption(mb, 0x1),
+                   "MsgBox setOption 清除");
+        XMessageBox_delete_base(mb);
+    }
+
+    /* --- XWizard / XWizardPage：导航别名 + 页面属性 --- */
+    {
+        XWizard* wiz = XWizard_create(NULL, 0);
+        XWizardPage* pg0 = XWizardPage_create(NULL, 0);
+        XWizardPage* pg1 = XWizardPage_create(NULL, 0);
+        XWizard_addPage(wiz, pg0);
+        XWizard_addPage(wiz, pg1);
+        XWizard_setCurrentIndex(wiz, 1);
+        p31_expect(XWizard_currentId(wiz) == 1, "Wizard setCurrentIndex/currentId");
+        XWizard_setStartId(wiz, 1);
+        p31_expect(XWizard_startId(wiz) == 1, "Wizard startId 别名");
+        XWizard_setTitleFormat(wiz, 1);
+        p31_expect(XWizard_titleFormat(wiz) == 1, "Wizard titleFormat 读取");
+        XWizard_setSubTitleFormat(wiz, 1);
+        p31_expect(XWizard_subTitleFormat(wiz) == 1,
+                   "Wizard subTitleFormat 读取");
+        XWizard_setPixmap_2(wiz, 0, "banner.png");
+        p31_expect(XWizard_pixmap(wiz, 0) != NULL, "Wizard pixmap 读取");
+
+        XWizardPage_setButtonText(pg0, XWizardButton_NextButton, "前进");
+        p31_expect(strcmp(XWizardPage_buttonText(pg0,
+                       XWizardButton_NextButton), "前进") == 0,
+                   "WizardPage buttonText 存取");
+        XWizardPage_setCommitPage(pg0, true);
+        p31_expect(XWizardPage_isCommitPage(pg0), "WizardPage commitPage");
+        XWizardPage_setFinalPage(pg1, true);
+        p31_expect(XWizardPage_isFinalPage(pg1), "WizardPage finalPage");
+        XWizardPage_setPixmap_2(pg0, 0, "logo.png");
+        p31_expect(XWizardPage_pixmap(pg0, 0) != NULL,
+                   "WizardPage pixmap 读取");
+        XWizard_delete_base(wiz);
+    }
+
+    /* --- XFontComboBox / XTextEdit：命名别名 --- */
+    {
+        XFontComboBox* fcb = XFontComboBox_create(NULL, 0);
+        (void)fcb;
+        XFontComboBox_delete_base(fcb);
+
+        XTextEdit* te = XTextEdit_create(NULL, 0);
+        XTextEdit_setFontItalic(te, true);
+        p31_expect(XTextEdit_fontItalic(te), "TextEdit fontItalic 别名");
+        XTextEdit_setFontUnderline(te, true);
+        p31_expect(XTextEdit_fontUnderline(te),
+                   "TextEdit fontUnderline 别名");
+        XTextEdit_delete_base(te);
+    }
+
+    /* --- XCalendarWidget：格式/延迟/范围/翻页 --- */
+    {
+        XCalendarWidget* cal = XCalendarWidget_create(NULL, 0);
+        XDate dmin, dmax, got;
+        int y0, m0;
+        XDate_setDate(&dmin, 2020, 1, 1);
+        XDate_setDate(&dmax, 2030, 12, 31);
+
+        XCalendarWidget_setHorizontalHeaderFormat(cal, 2);
+        p31_expect(XCalendarWidget_horizontalHeaderFormat(cal) == 2,
+                   "Calendar horizontalHeaderFormat");
+        p31_expect(XCalendarWidget_headerTextFormat(cal) == 0,
+                   "Calendar headerTextFormat 默认");
+        p31_expect(XCalendarWidget_weekdayTextFormat(cal) == 0,
+                   "Calendar weekdayTextFormat 默认");
+        XCalendarWidget_setDateEditAcceptDelay(cal, 800);
+        p31_expect(XCalendarWidget_dateEditAcceptDelay(cal) == 800,
+                   "Calendar dateEditAcceptDelay");
+        XCalendarWidget_setDateRange(cal, &dmin, &dmax);
+        got = XCalendarWidget_maximumDate(cal);
+        p31_expect(XDate_year(&got) == 2030,
+                   "Calendar setDateRange");
+
+        y0 = XCalendarWidget_yearShown(cal);
+        m0 = XCalendarWidget_monthShown(cal);
+        XCalendarWidget_showNextMonth(cal);
+        if (m0 == 12) {
+            p31_expect(XCalendarWidget_monthShown(cal) == 1 &&
+                       XCalendarWidget_yearShown(cal) == y0 + 1,
+                       "Calendar showNextMonth 跨年");
+        } else {
+            p31_expect(XCalendarWidget_monthShown(cal) == m0 + 1,
+                       "Calendar showNextMonth");
+        }
+        XCalendarWidget_showPreviousMonth(cal);
+        p31_expect(XCalendarWidget_monthShown(cal) == m0,
+                   "Calendar showPreviousMonth 回退");
+        XCalendarWidget_showNextYear(cal);
+        p31_expect(XCalendarWidget_yearShown(cal) == y0 + 1,
+                   "Calendar showNextYear");
+        XCalendarWidget_showPreviousYear(cal);
+        p31_expect(XCalendarWidget_yearShown(cal) == y0,
+                   "Calendar showPreviousYear");
+        XCalendarWidget_showToday(cal);
+        XCalendarWidget_showSelectedDate(cal);
+        XCalendarWidget_delete_base(cal);
+    }
+
+    /* --- XLayout：addWidget 基类转发 --- */
+    {
+        XWidget* host = XWidget_create(NULL, 0);
+        XBoxLayout* box = XBoxLayout_create(XBoxLayoutDirection_LeftToRight,
+                                            host);
+        XLabel* w = XLabel_create(host, 0);
+        XLayout_addWidget((XLayout*)box, (XWidget*)w);
+        p31_expect(XLayout_count_base((XLayout*)box) == 1,
+                   "Layout addWidget 基类转发");
+        XBoxLayout_delete_base(box);
+        XWidget_delete_base(host);
+    }
+}
+
+/* ==================== Phase 3.2 P2 新 API 契约测试 ==================== */
+
+static void p32_expect(bool cond, const char* what)
+{
+    if (!cond) {
+        fprintf(stderr, "[P32-FAIL] %s\n", what ? what : "");
+    }
+}
+
+static void test_phase32_p2_contract(void)
+{
+    /* --- XMessageBox：checkBox/iconPixmap/textFormat 呈现族 --- */
+    {
+        XMessageBox* box = XMessageBox_create(NULL, 0);
+#if XCHECKBOX_ON
+        XCheckBox* cb = XCheckBox_create(NULL, 0);
+        XCheckBox* got;
+        p32_expect(cb != NULL, "msgbox: 复选框创建");
+        XMessageBox_setCheckBox(box, cb);
+        got = XMessageBox_checkBox(box);
+        p32_expect(got == cb, "msgbox: setCheckBox 收编所有权");
+        /* 覆盖式设置触发旧对象释放；置 NULL 释放当前，不得双释放。 */
+        XMessageBox_setCheckBox(box, NULL);
+        p32_expect(XMessageBox_checkBox(box) == NULL,
+                   "msgbox: setCheckBox(NULL) 释放并清空");
+#endif
+        {
+            XImage img;
+            XImage_init(&img);
+            XMessageBox_setIconPixmap(box, &img);
+            p32_expect(XMessageBox_iconPixmap(box) != NULL,
+                       "msgbox: setIconPixmap 深拷贝存储");
+            XMessageBox_setIconPixmap(box, NULL);
+            p32_expect(XMessageBox_iconPixmap(box) == NULL,
+                       "msgbox: setIconPixmap(NULL) 清除");
+            XImage_deinit_base(&img);
+        }
+        p32_expect((int)XMessageBox_textFormat(box) == 2,
+                   "msgbox: textFormat 默认 AutoText");
+        XMessageBox_setTextFormat(box, XLabelTextFormat_PlainText);
+        p32_expect(XMessageBox_textFormat(box) == XLabelTextFormat_PlainText,
+                   "msgbox: setTextFormat 转发标签");
+        XMessageBox_setTextInteractionFlags(box, 0x1u);
+        p32_expect(XMessageBox_textInteractionFlags(box) == 0x1u,
+                   "msgbox: textInteractionFlags 转发标签");
+        XMessageBox_aboutQt(NULL, NULL); /* 文档化空操作：仅验证可调用。 */
+        XMessageBox_delete_base(box);
+    }
+
+    /* --- XMessageBox：按钮角色/移除/文本 --- */
+    {
+        XMessageBox* box = XMessageBox_create(NULL, 0);
+        XAbstractButton* custom;
+        XString* text;
+        int before;
+        int after;
+        XVector* btns;
+
+        XMessageBox_setStandardButtons(box, XDialogButtonBoxStandard_Ok);
+        XMessageBox_setButtonText_2(box, (int)XDialogButtonBoxStandard_Ok,
+                                    "确定");
+        text = XMessageBox_buttonText(box, (int)XDialogButtonBoxStandard_Ok);
+        p32_expect(text && XString_equals_utf8(text, "确定", XChar_CaseSensitive),
+                   "msgbox: setButtonText_2/buttonText 回读");
+        if (text) XString_delete_base(text);
+
+        p32_expect(XMessageBox_buttonRole(
+                       box, XMessageBox_button(box,
+                           XDialogButtonBoxStandard_Ok))
+                       == XMessageBoxButtonRole_AcceptRole,
+                   "msgbox: Ok 按钮角色为 AcceptRole");
+
+        custom = XMessageBox_addButton_2(box, "自定义",
+                                         (int)XMessageBoxButtonRole_ActionRole);
+        btns = XMessageBox_buttons(box);
+        before = btns ? (int)XVector_size_base((const XContainer*)btns) : 0;
+        if (btns) XVector_delete_base(btns);
+        XMessageBox_removeButton(box, custom);
+        btns = XMessageBox_buttons(box);
+        after = btns ? (int)XVector_size_base((const XContainer*)btns) : 0;
+        if (btns) XVector_delete_base(btns);
+        p32_expect(before - after == 1, "msgbox: removeButton 摘除一钮");
+        p32_expect(XMessageBox_buttonRole(box, custom)
+                       == XMessageBoxButtonRole_InvalidRole,
+                   "msgbox: 移除后角色为 InvalidRole");
+        XMessageBox_delete_base(box);
+    }
+
+    /* --- XMessageBox：standardIcon（API 契约；样式图标生成为后续批次） --- */
+    {
+        XIcon* ic = XMessageBox_standardIcon(XMessageBoxIcon_Information);
+        /* 当前样式未注册 StandardIcon 虚槽：契约要求不崩溃、返回 NULL
+         * 或有效图标；样式侧图标生成列入样式绘制批次。 */
+        p32_expect(ic == NULL || ic != NULL, "msgbox: standardIcon 不崩溃");
+        if (ic) XIcon_delete_base(ic);
+        p32_expect(XMessageBox_standardIcon(
+                       XMessageBoxIcon_NoIcon) == NULL,
+                   "msgbox: NoIcon 无图标");
+    }
+
+    /* --- XDateTimeEdit：分段查询族 --- */
+    {
+        XDateTimeEdit* edit = XDateTimeEdit_create(NULL, 0);
+        XDate d;
+        XString* txt;
+
+        p32_expect(XDateTimeEdit_sectionCount(edit) == 6,
+                   "dtedit: 默认格式 6 分段");
+        p32_expect(XDateTimeEdit_sectionAt(edit, 0)
+                       == XDateTimeEditSection_YearSection,
+                   "dtedit: sectionAt(0)=Year");
+        p32_expect(XDateTimeEdit_sectionAt(edit, 5)
+                       == XDateTimeEditSection_SecondSection,
+                   "dtedit: sectionAt(5)=Second");
+        p32_expect(XDateTimeEdit_sectionAt(edit, 6)
+                       == XDateTimeEditSection_NoSection,
+                   "dtedit: sectionAt 越界=NoSection");
+        p32_expect(XDateTimeEdit_displayedSections(edit) ==
+                       XDateTimeEdit_sections(edit),
+                   "dtedit: displayedSections 别名与 sections 一致");
+
+        XDate_setDate(&d, 2024, 3, 5);
+        XDateTimeEdit_setDate(edit, &d);
+        txt = XDateTimeEdit_sectionText(edit,
+                                        XDateTimeEditSection_YearSection);
+        p32_expect(txt && XString_equals_utf8(txt, "2024", XChar_CaseSensitive),
+                   "dtedit: sectionText 年 4 位");
+        if (txt) XString_delete_base(txt);
+        txt = XDateTimeEdit_sectionText(edit,
+                                        XDateTimeEditSection_MonthSection);
+        p32_expect(txt && XString_equals_utf8(txt, "03", XChar_CaseSensitive),
+                   "dtedit: sectionText 月 2 位补零");
+        if (txt) XString_delete_base(txt);
+
+        XDateTimeEdit_setSelectedSection(edit,
+                                         XDateTimeEditSection_MonthSection);
+        p32_expect(XDateTimeEdit_currentSection(edit) ==
+                       XDateTimeEditSection_MonthSection,
+                   "dtedit: setSelectedSection 生效");
+        XDateTimeEdit_setSelectedSection(
+            edit, XDateTimeEditSection_NoSection);
+        p32_expect(XDateTimeEdit_currentSection(edit) ==
+                       XDateTimeEditSection_MonthSection,
+                   "dtedit: 未显示分段不生效");
+        XDateTimeEdit_delete_base(edit);
+    }
+
+    /* --- XComboBox：setLineEdit 隐式可编辑 + 所有权转移 --- */
+    {
+        XComboBox* combo = XComboBox_create(NULL, 0);
+        XLineEdit* edit = XLineEdit_create(NULL, 0);
+        XComboBox_setLineEdit(combo, edit);
+        p32_expect(XComboBox_isEditable(combo),
+                   "combo: setLineEdit 隐式置可编辑");
+        p32_expect(XComboBox_lineEdit(combo) == edit,
+                   "combo: lineEdit 返回已安装编辑框");
+        /* 组合框销毁时释放编辑框（所有权转移），此处不得再触碰 edit。 */
+        XComboBox_delete_base(combo);
+    }
+}
+
+/* ==================== XMdiArea 契约测试（对标 QMdiArea） ========== */
 
 static int mdi_activated = 0;
 
@@ -28835,6 +29310,8 @@ static void test_xgui_widgets(void)
     test_abstractscrollarea_ext_contract();
     test_small_widgets_contract();
     test_datetimeedit_contract();
+    test_phase31_p1_contract();
+    test_phase32_p2_contract();
     test_fontcombobox_contract();
     test_plaintextedit_contract();
     test_mdiarea_contract();

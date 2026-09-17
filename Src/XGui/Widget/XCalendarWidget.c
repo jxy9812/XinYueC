@@ -351,6 +351,8 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
     self->m_verticalHeaderFormat = 0;
     self->m_headerTextFormat = 0;
     self->m_weekdayTextFormat = 0;
+    self->m_horizontalHeaderFormat = 1; /* Qt::ShortDayNames */
+    self->m_dateEditAcceptDelay = 1500; /* Qt 默认 1500ms */
 }
 
 XCalendarWidget* XCalendarWidget_create_ex(XMemoryType memory,
@@ -620,6 +622,97 @@ void XCalendarWidget_showTodayPage(XCalendarWidget* self)
     XCalendarWidget_setCurrentPage(self, XDate_year(&today),
                                    XDate_month(&today));
     XCalendarWidget_setSelectedDate(self, &today);
+}
+
+int XCalendarWidget_headerTextFormat(const XCalendarWidget* self)
+{
+    return self ? self->m_headerTextFormat : 0;
+}
+
+int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self)
+{
+    return self ? self->m_weekdayTextFormat : 0;
+}
+
+void XCalendarWidget_setHorizontalHeaderFormat(XCalendarWidget* self,
+                                               int format)
+{
+    if (self) self->m_horizontalHeaderFormat = format;
+}
+
+int XCalendarWidget_horizontalHeaderFormat(const XCalendarWidget* self)
+{
+    return self ? self->m_horizontalHeaderFormat : 1;
+}
+
+void XCalendarWidget_setDateEditAcceptDelay(XCalendarWidget* self, int delay)
+{
+    if (self) self->m_dateEditAcceptDelay = delay;
+}
+
+int XCalendarWidget_dateEditAcceptDelay(const XCalendarWidget* self)
+{
+    return self ? self->m_dateEditAcceptDelay : 0;
+}
+
+void XCalendarWidget_setDateRange(XCalendarWidget* self, const XDate* min,
+                                  const XDate* max)
+{
+    if (min) XCalendarWidget_setMinimumDate(self, min);
+    if (max) XCalendarWidget_setMaximumDate(self, max);
+}
+
+void XCalendarWidget_showNextMonth(XCalendarWidget* self)
+{
+    int year, month;
+    if (!self) return;
+    year = XCalendarWidget_yearShown(self);
+    month = XCalendarWidget_monthShown(self);
+    if (month == 12) XCalendarWidget_setCurrentPage(self, year + 1, 1);
+    else XCalendarWidget_setCurrentPage(self, year, month + 1);
+}
+
+void XCalendarWidget_showPreviousMonth(XCalendarWidget* self)
+{
+    int year, month;
+    if (!self) return;
+    year = XCalendarWidget_yearShown(self);
+    month = XCalendarWidget_monthShown(self);
+    if (month == 1) XCalendarWidget_setCurrentPage(self, year - 1, 12);
+    else XCalendarWidget_setCurrentPage(self, year, month - 1);
+}
+
+void XCalendarWidget_showNextYear(XCalendarWidget* self)
+{
+    if (!self) return;
+    XCalendarWidget_setCurrentPage(self,
+                                   XCalendarWidget_yearShown(self) + 1,
+                                   XCalendarWidget_monthShown(self));
+}
+
+void XCalendarWidget_showPreviousYear(XCalendarWidget* self)
+{
+    if (!self) return;
+    XCalendarWidget_setCurrentPage(self,
+                                   XCalendarWidget_yearShown(self) - 1,
+                                   XCalendarWidget_monthShown(self));
+}
+
+void XCalendarWidget_showSelectedDate(XCalendarWidget* self)
+{
+    XDate d;
+    if (!self) return;
+    d = XCalendarWidget_selectedDate(self);
+    XCalendarWidget_setCurrentPage(self, XDate_year(&d), XDate_month(&d));
+}
+
+void XCalendarWidget_showToday(XCalendarWidget* self)
+{
+    XDate today;
+    if (!self) return;
+    today = XDate_currentDate();
+    XCalendarWidget_setCurrentPage(self, XDate_year(&today),
+                                   XDate_month(&today));
 }
 
 #endif /* XWIDGET_ON && XCALENDARWIDGET_ON */

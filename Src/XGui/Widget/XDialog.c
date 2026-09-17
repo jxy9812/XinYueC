@@ -62,6 +62,7 @@ void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags)
     self->m_modal = true;
     self->m_result = 0;
     self->m_inExec = false;
+    self->m_sizeGripEnabled = false;
 }
 
 XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -113,6 +114,18 @@ int XDialog_result(const XDialog* self) { return self ? self->m_result : 0; }
 void XDialog_setResult(XDialog* self, int result) { if (self) self->m_result = result; }
 void XDialog_setModal(XDialog* self, bool modal) { if (self) self->m_modal = modal; }
 bool XDialog_isModal(const XDialog* self) { return self ? self->m_modal : false; }
+
+void XDialog_open(XDialog* self)
+{
+    if (!self) return;
+    XDialog_setModal(self, true);
+    XWidget_show((XWidget*)self);
+}
+
+void XDialog_setSizeGripEnabled(XDialog* self, bool enable)
+{ if (self) self->m_sizeGripEnabled = enable; }
+bool XDialog_isSizeGripEnabled(const XDialog* self)
+{ return self ? self->m_sizeGripEnabled : false; }
 
 void* XDialog_accepted_signal(XDialog* self)
 { (void)self; return (void*)(size_t)XDialog_accepted_signal; }

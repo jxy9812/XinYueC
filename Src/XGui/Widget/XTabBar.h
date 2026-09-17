@@ -42,6 +42,9 @@ bool    m_autoHide;              /**< 自动隐藏。 */
     bool    m_expanding;             /**< 扩展。 */
     int     m_elideMode;             /**< 省略模式。 */
     int     m_selectionBehavior;     /**< 移除行为。 */
+    int     m_shape;                 /**< 页签形状（Qt::TabShape；0=Rounded，1=Triangular）。 */
+    int     m_iconSize;              /**< 页签图标尺寸（单 int 方边值；0=默认）。 */
+    bool    m_changeCurrentOnDrag;   /**< 拖拽悬停切换（仅存状态；拖放切换未实现）。 */
     bool    m_usesScrollButtons;     /**< 滚动按钮。 */
     bool    m_documentMode;          /**< 文档模式（无边框）。 */
     bool    m_drawBase;              /**< 绘制基底（默认 true）。 */
@@ -223,6 +226,69 @@ bool XTabBar_usesScrollButtons(const XTabBar* self);
 void XTabBar_setDrawBase(XTabBar* self, bool enable);
 /** @brief 查询基底绘制。 @param self 目标控件。 @return 绘制返回 true。 */
 bool XTabBar_drawBase(const XTabBar* self);
+/** @brief 设置页签形状（对标 QTabBar::setShape）。
+ * @details 仅存储状态；当前渲染层对 Rounded/Triangular 采用同一外观。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param shape 形状码（对标 Qt::TabShape：0=Rounded，1=Triangular）。
+ * @return 无返回值。
+ */
+void XTabBar_setShape(XTabBar* self, int shape);
+/** @brief 查询页签形状（对标 QTabBar::shape）。
+ * @param self 目标控件；传入 NULL 时返回 0。
+ * @return 形状码（0=Rounded，1=Triangular）。
+ */
+int XTabBar_shape(const XTabBar* self);
+/** @brief 设置页签图标尺寸（对标 QTabBar::setIconSize）。
+ * @details 以单 int 方边值承载（Qt 为 QSize）；0 表示使用默认尺寸。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param size 方边像素值；0=默认。
+ * @return 无返回值。
+ */
+void XTabBar_setIconSize(XTabBar* self, int size);
+/** @brief 查询页签图标尺寸（对标 QTabBar::iconSize）。
+ * @param self 目标控件；传入 NULL 时返回 0。
+ * @return 方边像素值；0=默认。
+ */
+int XTabBar_iconSize(const XTabBar* self);
+/** @brief 设置自动隐藏（对标 QTabBar::setAutoHide）。
+ * @details 仅存储状态；单页自动隐藏行为尚未接入渲染/布局层。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param enable true 时仅一个页签自动隐藏页签条。
+ * @return 无返回值。
+ */
+void XTabBar_setAutoHide(XTabBar* self, bool enable);
+/** @brief 查询自动隐藏（对标 QTabBar::autoHide）。
+ * @param self 目标控件；传入 NULL 时返回 false。
+ * @return 自动隐藏返回 true。
+ */
+bool XTabBar_autoHide(const XTabBar* self);
+/** @brief 设置移除页签时的选择行为（对标
+ *         QTabBar::setSelectionBehaviorOnRemove）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param behavior 行为码（对标 SelectionBehavior：0=SelectLeftTab，
+ *        1=SelectRightTab，2=SelectPreviousTab）。
+ * @return 无返回值。
+ */
+void XTabBar_setSelectionBehaviorOnRemove(XTabBar* self, int behavior);
+/** @brief 查询移除页签时的选择行为（对标
+ *         QTabBar::selectionBehaviorOnRemove）。
+ * @param self 目标控件；传入 NULL 时返回 0。
+ * @return 行为码（0=SelectLeftTab，1=SelectRightTab，2=SelectPreviousTab）。
+ */
+int XTabBar_selectionBehaviorOnRemove(const XTabBar* self);
+/** @brief 设置拖拽悬停切换当前页签（对标
+ *         QTabBar::setChangeCurrentOnDrag）。
+ * @details 仅存储状态；拖放切换行为尚未实现。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param enable true 时拖拽悬停可切换当前页签。
+ * @return 无返回值。
+ */
+void XTabBar_setChangeCurrentOnDrag(XTabBar* self, bool enable);
+/** @brief 查询拖拽悬停切换（对标 QTabBar::changeCurrentOnDrag）。
+ * @param self 目标控件；传入 NULL 时返回 false。
+ * @return 开启返回 true。
+ */
+bool XTabBar_changeCurrentOnDrag(const XTabBar* self);
 /** @brief 页签矩形（对标 QTabBar::tabRect）。
  * @param self 目标控件。
  * @param index 页签号。

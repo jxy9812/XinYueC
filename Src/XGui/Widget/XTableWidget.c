@@ -456,6 +456,10 @@ void XTableWidget_setVerticalHeaderLabels(XTableWidget* self,
         vh = (XString**)XRealloc_System(self->m_vHeaders,
                                         sizeof(XString*) * (size_t)cap);
         if (!vh) return;
+        /* 新增区域必须清零：下方循环以 m_vHeaders[i] 是否为 NULL 判定
+           首次创建；realloc 的未初始化内存是野指针，直接复用会崩溃。 */
+        XMemset(vh + self->m_vHeaderCapacity, 0,
+                sizeof(XString*) * (size_t)(cap - self->m_vHeaderCapacity));
         self->m_vHeaders = vh;
         self->m_vHeaderCapacity = cap;
     }

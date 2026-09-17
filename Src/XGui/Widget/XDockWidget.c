@@ -225,6 +225,11 @@ int XDockWidget_allowedAreas(const XDockWidget* self)
     return self ? self->m_allowedAreas : 0;
 }
 
+bool XDockWidget_isAreaAllowed(const XDockWidget* self, int area)
+{
+    return self ? (self->m_allowedAreas & area) != 0 : false;
+}
+
 void XDockWidget_setTitleBarWidget(XDockWidget* self, XWidget* widget)
 {
     if (!self) return;

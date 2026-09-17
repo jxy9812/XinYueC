@@ -90,6 +90,11 @@ int XDateTimeEdit_timeSpec(const XDateTimeEdit* self);
  * @return 无返回值。
  */
 void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index);
+/** @brief 查询当前分段序号（对标 Q_PROPERTY currentSectionIndex READ；
+ *         宏别名复用 XDateTimeEdit_currentSection；项目简化：分段序号
+ *         与分段码共用同一字段）。 */
+#define XDateTimeEdit_currentSectionIndex(self) \
+    XDateTimeEdit_currentSection((self))
 #define XDateTimeEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
@@ -136,6 +141,141 @@ const XDateTime* XDateTimeEdit_maximumDateTime(const XDateTimeEdit* self);
 void XDateTimeEdit_setMaximumDateTime(XDateTimeEdit* self,
                                       const XDateTime* dateTime);
 /**
+ * @brief      获取最小日期（对标 QDateTimeEdit::minimumDate）。
+ * @details    返回最小值 m_minimum 的日期部分；时间部分由
+ *             minimumTime 查询。
+ * @param      self 目标控件；传入 NULL 时返回零值日期。
+ * @return     按值返回 XDate；self 为 NULL 时返回全零（无效）日期。
+ */
+XDate XDateTimeEdit_minimumDate(const XDateTimeEdit* self);
+/**
+ * @brief      设置最小日期（对标 QDateTimeEdit::setMinimumDate）。
+ * @details    保留当前最小时间部分，仅替换日期部分后经
+ *             setMinimumDateTime 应用并钳位当前值。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      date 最小日期；NULL 时保持原范围不变。
+ * @return     无。
+ */
+void XDateTimeEdit_setMinimumDate(XDateTimeEdit* self, const XDate* date);
+/**
+ * @brief      获取最大日期（对标 QDateTimeEdit::maximumDate）。
+ * @param      self 目标控件；传入 NULL 时返回零值日期。
+ * @return     按值返回 XDate；self 为 NULL 时返回全零（无效）日期。
+ */
+XDate XDateTimeEdit_maximumDate(const XDateTimeEdit* self);
+/**
+ * @brief      设置最大日期（对标 QDateTimeEdit::setMaximumDate）。
+ * @details    保留当前最大时间部分，仅替换日期部分后经
+ *             setMaximumDateTime 应用并钳位当前值。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      date 最大日期；NULL 时保持原范围不变。
+ * @return     无。
+ */
+void XDateTimeEdit_setMaximumDate(XDateTimeEdit* self, const XDate* date);
+/**
+ * @brief      获取最小时间（对标 QDateTimeEdit::minimumTime）。
+ * @param      self 目标控件；传入 NULL 时返回零值时间。
+ * @return     按值返回 XTime；self 为 NULL 时返回全零（无效）时间。
+ */
+XTime XDateTimeEdit_minimumTime(const XDateTimeEdit* self);
+/**
+ * @brief      设置最小时间（对标 QDateTimeEdit::setMinimumTime）。
+ * @details    保留当前最小日期部分，仅替换时间部分后经
+ *             setMinimumDateTime 应用并钳位当前值。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      time 最小时间；NULL 时保持原范围不变。
+ * @return     无。
+ */
+void XDateTimeEdit_setMinimumTime(XDateTimeEdit* self, const XTime* time);
+/**
+ * @brief      获取最大时间（对标 QDateTimeEdit::maximumTime）。
+ * @param      self 目标控件；传入 NULL 时返回零值时间。
+ * @return     按值返回 XTime；self 为 NULL 时返回全零（无效）时间。
+ */
+XTime XDateTimeEdit_maximumTime(const XDateTimeEdit* self);
+/**
+ * @brief      设置最大时间（对标 QDateTimeEdit::setMaximumTime）。
+ * @details    保留当前最大日期部分，仅替换时间部分后经
+ *             setMaximumDateTime 应用并钳位当前值。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      time 最大时间；NULL 时保持原范围不变。
+ * @return     无。
+ */
+void XDateTimeEdit_setMaximumTime(XDateTimeEdit* self, const XTime* time);
+/**
+ * @brief      复位最小日期为默认下界（对标 QDateTimeEdit::clearMinimumDate）。
+ * @details    恢复为本类 init 的默认最小日期 1900-01-01（时间部分不变）；
+ *             与 Qt 的 1752-09-14 下界不同，属 XGui 裁剪默认值。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ */
+void XDateTimeEdit_clearMinimumDate(XDateTimeEdit* self);
+/**
+ * @brief      复位最大日期为默认上界（对标 QDateTimeEdit::clearMaximumDate）。
+ * @details    恢复为本类 init 的默认最大日期 2999-12-31（时间部分不变）。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ */
+void XDateTimeEdit_clearMaximumDate(XDateTimeEdit* self);
+/**
+ * @brief      复位最小时间为 00:00:00.000（对标 QDateTimeEdit::clearMinimumTime）。
+ * @details    日期部分保持不变。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ */
+void XDateTimeEdit_clearMinimumTime(XDateTimeEdit* self);
+/**
+ * @brief      复位最大时间为 23:59:59.999（对标 QDateTimeEdit::clearMaximumTime）。
+ * @details    日期部分保持不变。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ */
+void XDateTimeEdit_clearMaximumTime(XDateTimeEdit* self);
+/**
+ * @brief      复位最小值为 init 默认（对标 QDateTimeEdit::clearMinimumDateTime）。
+ * @details    恢复为 1900-01-01 00:00:00.000 并钳位当前值。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ */
+void XDateTimeEdit_clearMinimumDateTime(XDateTimeEdit* self);
+/**
+ * @brief      复位最大值为 init 默认（对标 QDateTimeEdit::clearMaximumDateTime）。
+ * @details    恢复为 2999-12-31 23:59:59.999 并钳位当前值。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return     无。
+ */
+void XDateTimeEdit_clearMaximumDateTime(XDateTimeEdit* self);
+/**
+ * @brief      同时设置日期上下界（对标 QDateTimeEdit::setDateRange）。
+ * @details    等价于依次调用 setMinimumDate/setMaximumDate；NULL 参数的
+ *             处理与对应单值函数一致。
+ * @param      self 目标控件。
+ * @param      min 最小日期；借用，不取得所有权。
+ * @param      max 最大日期；借用，不取得所有权。
+ * @return     无。
+ */
+void XDateTimeEdit_setDateRange(XDateTimeEdit* self, const XDate* min,
+                                const XDate* max);
+/**
+ * @brief      同时设置时间上下界（对标 QDateTimeEdit::setTimeRange）。
+ * @param      self 目标控件。
+ * @param      min 最小时间；借用，不取得所有权。
+ * @param      max 最大时间；借用，不取得所有权。
+ * @return     无。
+ */
+void XDateTimeEdit_setTimeRange(XDateTimeEdit* self, const XTime* min,
+                                const XTime* max);
+/**
+ * @brief      同时设置日期时间上下界（对标 QDateTimeEdit::setDateTimeRange）。
+ * @param      self 目标控件。
+ * @param      min 最小日期时间；借用，不取得所有权。
+ * @param      max 最大日期时间；借用，不取得所有权。
+ * @return     无。
+ */
+void XDateTimeEdit_setDateTimeRange(XDateTimeEdit* self,
+                                    const XDateTime* min,
+                                    const XDateTime* max);
+/**
  * @brief      设置显示格式（yyyy-MM-dd HH:mm:ss）。
  */
 void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
@@ -156,6 +296,47 @@ void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section);
  * @brief      获取分段掩码。
  */
 int XDateTimeEdit_sections(const XDateTimeEdit* self);
+
+/* ==================== 分段查询族（对标 sectionCount、sectionAt、
+ *                     sectionText、displayedSections、setSelectedSection） ==================== */
+
+/** @brief displayedSections 别名：与 sections() 同一承载（显示分段掩码）。 */
+#define XDateTimeEdit_displayedSections(self) XDateTimeEdit_sections((self))
+/**
+ * @brief      查询显示分段数（对标 QDateTimeEdit::sectionCount）。
+ * @details    按 displayFormat 中可识别分段记号（yyyy/MM/dd/HH/mm/ss）
+ *             出现次数计数；格式为 NULL 时按默认格式 "yyyy-MM-dd HH:mm:ss"。
+ * @param      self 目标控件；NULL 返回 0。
+ * @return     分段个数（0~8）。
+ */
+int XDateTimeEdit_sectionCount(const XDateTimeEdit* self);
+/**
+ * @brief      查询指定位置的分段（对标 QDateTimeEdit::sectionAt）。
+ * @details    index 为分段在格式串中的出现序号（0 起，与 sectionCount
+ *             配套）；越界返回 NoSection。
+ * @param      self 目标控件；NULL 返回 NoSection。
+ * @param      index 分段位置序号（0 起）。
+ * @return     分段枚举值（XDateTimeEditSection）；越界为 NoSection(0)。
+ */
+int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index);
+/**
+ * @brief      查询指定分段的显示文本（对标 QDateTimeEdit::sectionText）。
+ * @details    按分段记号宽度渲染当前值（年份 4 位、其余 2 位）；分段未
+ *             在格式中出现时返回空文本。
+ * @param      self 目标控件；NULL 返回空文本对象。
+ * @param      section 分段枚举值（XDateTimeEditSection）。
+ * @return     新建 XString*；调用方负责 XString_delete_base 释放。
+ */
+XString* XDateTimeEdit_sectionText(const XDateTimeEdit* self, int section);
+/**
+ * @brief      设置选中分段（对标 QDateTimeEdit::setSelectedSection）。
+ * @details    仅当该分段确实出现在显示格式中才生效，否则保持原分段
+ *             不变（对齐 Qt 的有效性检查）。
+ * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param      section 分段枚举值（XDateTimeEditSection）。
+ * @return     无返回值。
+ */
+void XDateTimeEdit_setSelectedSection(XDateTimeEdit* self, int section);
 
 /* ==================== 信号 ==================== */
 

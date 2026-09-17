@@ -943,15 +943,11 @@ static void xcs_drawTabLabel(XStyle* self, const XStyleOption* option,
     (void)widget;
     if (!option || !painter) return;
     r = option->m_rect;
-    /* 选中页签用 HighlightedText，未选中用 WindowText（对标
-       QCommonStyle 的 foregroundRole + Selected 状态语义）。 */
-    if (option->m_tabSelected) {
-        textColor = xcs_color(option, XPaletteColorRole_HighlightedText);
-        if (textColor == 0) textColor = 0xFFFFFFFFu;
-    } else {
-        textColor = xcs_color(option, XPaletteColorRole_WindowText);
-        if (textColor == 0) textColor = 0xFF000000u;
-    }
+    /* 文本统一用 WindowText：选中页签形状以 Base 填充，若按
+       HighlightedText 取白字会白底白字不可见（对标 Qt Fusion：
+       选中也用 WindowText 文本）。 */
+    textColor = xcs_color(option, XPaletteColorRole_WindowText);
+    if (textColor == 0) textColor = 0xFF000000u;
     if (option->m_text && option->m_text[0]) {
         textW = XPainter_textWidth(XPainter_font(painter), option->m_text);
         textH = XPainter_textHeight(XPainter_font(painter));
@@ -1590,6 +1586,15 @@ static void xcs_drawScrollBar(XStyle* self, const XStyleOption* option,
     hover = (option->m_state & XStyleState_MouseOver) != 0;
     buttonC    = xcs_color(option, XPaletteColorRole_Button);
     windowC    = xcs_color(option, XPaletteColorRole_Window);
+    {
+        static int sbDbg = 0;
+        if (sbDbg < 3) {
+            ++sbDbg;
+            fprintf(stderr, "[sbdbg] buttonC=%08x windowC=%08x horiz=%d rect=%d,%d %dx%d\n",
+                    buttonC, windowC, horizontal, rect.x, rect.y,
+                    rect.width, rect.height);
+        }
+    }
     if (buttonC == 0) buttonC = 0xFFCFCFCFu;
     if (windowC == 0) windowC = 0xFFCFCFCFu;
     buttonColor = xcs_buttonColor(buttonC);

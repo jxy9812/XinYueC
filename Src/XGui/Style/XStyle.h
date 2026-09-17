@@ -1,4 +1,4 @@
-﻿#ifndef XSTYLE_H
+#ifndef XSTYLE_H
 #define XSTYLE_H
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +57,8 @@ XCLASS_DEFINE_END(XStyle)
 typedef struct XStyle
 {
     XObject m_base;   /**< 基类成员；必须是第一个。 */
+    struct XStyle* m_proxy; /**< 被代理的底层样式（对标 QStyle 私有成员 proxyStyle；
+                                 借用指针，包装样式（XStyleSheetStyle）设置，其余为 NULL）。 */
 } XStyle;
 
 XVtable* XStyle_class_init(void);
@@ -83,6 +85,31 @@ XStyle* XStyle_create_ex(XMemoryType memory);
 
 /** @brief 删除堆上样式（查表分派析构并释放内存）。 */
 #define XStyle_delete_base(self) XClass_delete_base((XClass*)(self))
+
+/* ==================== 样式标识与代理（对标 QStyle::name/proxy） ==================== */
+
+/**
+ * @brief 读取样式类名（对标 QStyle::name）。
+ *
+ *        Qt 的 name() 返回 metaObject()->className()，此处等价取虚表类名
+ *        （如 "XCommonStyle"/"XFusionStyle"/"XStyleSheetStyle"）；名称前缀
+ *        为 X（XGui 类名），语义与 Qt 一一对应。
+ *
+ * @param self 目标样式指针；可为 NULL。
+ * @return UTF-8 类名字符串（静态/虚表存储，不得释放）；self 为 NULL 时返回 ""。
+ */
+const char* XStyle_name(const XStyle* self);
+
+/**
+ * @brief 读取被代理的底层样式（对标 QStyle::proxy）。
+ *
+ *        多数样式无代理，返回 NULL；XStyleSheetStyle 包装底层样式时返回
+ *        被包装样式，与 Qt 的 QStyleSheetStyle::proxy() 语义一致。
+ *
+ * @param self 目标样式指针；可为 NULL。
+ * @return 被代理样式借用指针（不转移所有权）；无代理时为 NULL。
+ */
+XStyle* XStyle_proxy(const XStyle* self);
 
 /* ==================== 绘制分派（对标 QStyle） ==================== */
 
@@ -274,6 +301,26 @@ XPixmap* XStyle_generatedIconPixmap(XStyle* self, int mode,
 int XStyle_layoutSpacing(XStyle* self, int control1, int control2,
                          int orientation, const XStyleOption* option,
                          const XWidget* widget);
+
+/**
+ * @brief 查询两组控件类型之间的合并布局间距（对标
+ *        QStyle::combinedLayoutSpacing）。
+ *
+ *        按 Qt 语义对两组控件类型位组合做笛卡尔积，逐对调用
+ *        layoutSpacing 并取最大值（初始 0；因此无实现注册时返回 0，
+ *        与 Qt 的 qMax(-1, 0) 行为一致）。
+ *
+ * @param self 目标样式指针。
+ * @param controls1 第一组控件类型位组合（XWidgetSizePolicyControlType 位或）。
+ * @param controls2 第二组控件类型位组合（XWidgetSizePolicyControlType 位或）。
+ * @param orientation 方向：0 水平/1 垂直。
+ * @param option 样式选项（可空）。
+ * @param widget 关联控件（可空，借用）。
+ * @return 两组之间最大间距；任一组为空位组合时返回 0。
+ */
+int XStyle_combinedLayoutSpacing(XStyle* self, int controls1, int controls2,
+                                 int orientation, const XStyleOption* option,
+                                 const XWidget* widget);
 
 /**
  * @brief 绘制对齐文本（分派 drawItemText）。

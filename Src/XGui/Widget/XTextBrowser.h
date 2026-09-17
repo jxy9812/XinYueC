@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XTextBrowser.h
  * @brief      XTextBrowser 富文本浏览控件（对标 Qt 6.8 QTextBrowser
  *             核心公共 API）。
@@ -19,6 +19,7 @@ extern "C" {
 #if XPLAINTEXTEDIT_ON
 #include "XTextEdit.h"
 #endif
+#include "XStringList.h"
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON
 
@@ -36,7 +37,9 @@ typedef struct XTextBrowser
     int m_historyIndex;
     int m_historyCapacity;
     XString* m_source;      /**< 当前源 URL（对象拥有）。 */
+    XStringList* m_searchPaths; /**< 资源搜索路径列表（拥有；对标 searchPaths）。 */
     bool m_openLinks;       /**< 链接可点击（默认 true）。 */
+    bool m_openExternalLinks; /**< 外链自动打开开关（默认 false；对标 openExternalLinks）。 */
     bool m_backwardAvailable; /**< 上次发射的后退可用状态（变化才发信号）。 */
     bool m_forwardAvailable;  /**< 上次发射的前进可用状态（变化才发信号）。 */
 } XTextBrowser;

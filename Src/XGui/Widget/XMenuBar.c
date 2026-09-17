@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XMenuBar.c
  * @brief      菜单栏控件实现（对标 Qt 6.8 QMenuBar 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -349,6 +349,30 @@ XAction* XMenuBar_addSeparator(XMenuBar* self)
     action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
     if (!action) return NULL;
     XAction_setSeparator(action, true);
+    XVector_push_back_1_base(self->m_actions, &action);
+    XWidget_update((XWidget*)self);
+    return action;
+}
+
+XAction* XMenuBar_addAction(XMenuBar* self, const XString* text)
+{
+    XAction* action;
+    if (!self || !self->m_actions) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    if (text) XAction_setText(action, text);
+    XVector_push_back_1_base(self->m_actions, &action);
+    XWidget_update((XWidget*)self);
+    return action;
+}
+
+XAction* XMenuBar_addAction_2(XMenuBar* self, const char* utf8Text)
+{
+    XAction* action;
+    if (!self || !self->m_actions) return NULL;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    XAction_setText_2(action, utf8Text ? utf8Text : "");
     XVector_push_back_1_base(self->m_actions, &action);
     XWidget_update((XWidget*)self);
     return action;

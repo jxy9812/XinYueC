@@ -184,6 +184,48 @@ bool XTabWidget_tabsClosable(const XTabWidget* self);
 void XTabWidget_setTabsClosable(XTabWidget* self, bool closable);
 bool XTabWidget_isMovable(const XTabWidget* self);
 void XTabWidget_setMovable(XTabWidget* self, bool movable);
+/** @brief 移除全部页签（对标 QTabWidget::clear）。
+ * @details 等价于循环移除全部页；页控件按所有者规则一并释放，
+ *          用户内容控件仅解除借用记录。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return 无返回值。
+ */
+void XTabWidget_clear(XTabWidget* self);
+/** @brief 设置文档模式（对标 QTabWidget::setDocumentMode；转发页签条）。 */
+void XTabWidget_setDocumentMode(XTabWidget* self, bool enable);
+/** @brief 查询文档模式（对标 QTabWidget::documentMode；转发页签条）。 */
+bool XTabWidget_documentMode(const XTabWidget* self);
+/** @brief 设置省略模式（对标 QTabWidget::setElideMode；转发页签条）。 */
+void XTabWidget_setElideMode(XTabWidget* self, int mode);
+/** @brief 查询省略模式（对标 QTabWidget::elideMode；转发页签条）。 */
+int XTabWidget_elideMode(const XTabWidget* self);
+/** @brief 设置页签形状（对标 QTabWidget::setTabShape；转发页签条）。 */
+void XTabWidget_setTabShape(XTabWidget* self, int shape);
+/** @brief 查询页签形状（对标 QTabWidget::tabShape；转发页签条）。 */
+int XTabWidget_tabShape(const XTabWidget* self);
+/** @brief 设置滚动按钮（对标 QTabWidget::setUsesScrollButtons；转发页签条）。 */
+void XTabWidget_setUsesScrollButtons(XTabWidget* self, bool enable);
+/** @brief 查询滚动按钮（对标 QTabWidget::usesScrollButtons；转发页签条）。 */
+bool XTabWidget_usesScrollButtons(const XTabWidget* self);
+/** @brief 设置页签图标尺寸（对标 QTabWidget::setIconSize；转发页签条，
+ *         单 int 方边值承载）。
+ */
+void XTabWidget_setIconSize(XTabWidget* self, int size);
+/** @brief 查询页签图标尺寸（对标 QTabWidget::iconSize；转发页签条）。 */
+int XTabWidget_iconSize(const XTabWidget* self);
+/** @brief 查询页签提示（对标 QTabWidget::tabToolTip；转发页签条）。
+ * @param self 目标控件；传入 NULL 或页签号无效时返回 NULL。
+ * @param index 页签号。
+ * @return 借用内部 XString 指针；禁止释放或修改。
+ */
+const XString* XTabWidget_tabToolTip(const XTabWidget* self, int index);
+/** @brief 查询页签帮助文本（对标 QTabWidget::tabWhatsThis；转发页签条）。
+ * @details 项目简化：帮助文本与提示共用存储，返回值同 tabToolTip。
+ * @param self 目标控件；传入 NULL 或页签号无效时返回 NULL。
+ * @param index 页签号。
+ * @return 借用内部 XString 指针；禁止释放或修改。
+ */
+const XString* XTabWidget_tabWhatsThis(const XTabWidget* self, int index);
 
 /* ==================== 信号（转发页签条） ==================== */
 

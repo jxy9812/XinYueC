@@ -429,13 +429,24 @@ int XToolBar_orientation(const XToolBar* self)
 
 void XToolBar_setAllowedAreas(XToolBar* self, int areas)
 {
-    if (!self) return;
+    if (!self || self->m_allowedAreas == areas) return;
     self->m_allowedAreas = areas;
+    xtb_emitVoid(self, (size_t)XToolBar_allowedAreasChanged_signal, areas);
 }
 
 int XToolBar_allowedAreas(const XToolBar* self)
 {
     return self ? self->m_allowedAreas : 0;
+}
+
+bool XToolBar_isAreaAllowed(const XToolBar* self, int area)
+{
+    return self ? (self->m_allowedAreas & area) != 0 : false;
+}
+
+bool XToolBar_isFloating(const XToolBar* self)
+{
+    return self ? self->m_floating : false;
 }
 
 void XToolBar_setIconSize(XToolBar* self, int size)
@@ -463,6 +474,8 @@ void XToolBar_setToolButtonStyle(XToolBar* self, int style)
 {
     if (!self || self->m_buttonStyle == style) return;
     self->m_buttonStyle = style;
+    xtb_emitVoid(self, (size_t)XToolBar_toolButtonStyleChanged_signal,
+                 style);
 }
 
 int XToolBar_toolButtonStyle(const XToolBar* self)
@@ -857,6 +870,20 @@ void* XToolBar_movableChanged_signal(XToolBar* self, bool movable)
     (void)self;
     (void)movable;
     return (void*)(size_t)XToolBar_movableChanged_signal;
+}
+
+void* XToolBar_allowedAreasChanged_signal(XToolBar* self, int areas)
+{
+    (void)self;
+    (void)areas;
+    return (void*)(size_t)XToolBar_allowedAreasChanged_signal;
+}
+
+void* XToolBar_toolButtonStyleChanged_signal(XToolBar* self, int style)
+{
+    (void)self;
+    (void)style;
+    return (void*)(size_t)XToolBar_toolButtonStyleChanged_signal;
 }
 
 

@@ -1156,4 +1156,13 @@ void XLayout_invalidate(XLayout* self)
     XLayoutItem_invalidate_base((XLayoutItem*)self);
 }
 
+void XLayout_addWidget(XLayout* self, XWidget* widget)
+{
+    XLayoutItem* item;
+    if (!self || !widget) return;
+    item = XLayoutItem_createWidgetItem(widget);
+    if (!item) return;
+    XLayout_addItem_base(self, item);
+}
+
 #endif /* XLAYOUT_ON */

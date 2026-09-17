@@ -15,6 +15,14 @@
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XDialog.h"
+#include "XApplication.h"
+#include "XStyle.h"
+#include "XStyleOption.h"
+#include "XIcon.h"
+#include "XImage.h"
+#if XCHECKBOX_ON
+#include "XCheckBox.h"
+#endif
 
 #if XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON
 
@@ -28,6 +36,21 @@ static void xmsg_setupText(XMessageBox* self)
     XRect_init(&r, 16, 12, w > 32 ? w - 32 : 0, 60);
     XWidget_setGeometry((XWidget*)self->m_textLabel,
                         r.x, r.y, r.width, r.height);
+}
+
+static void xmsg_setupCheckBox(XMessageBox* self)
+{
+#if XCHECKBOX_ON
+    int w = XWidget_width((XWidget*)self);
+    int h = XWidget_height((XWidget*)self);
+    if (!self || !self->m_checkBox) return;
+    /* 复选框行固定位于消息文本（y=12,h=60）与按钮盒（底部 40）之间。 */
+    if (h > 76 + 20 + 40)
+        XWidget_setGeometry((XWidget*)self->m_checkBox, 16, 76,
+                            w > 32 ? w - 32 : 0, 20);
+#else
+    (void)self;
+#endif
 }
 
 static void xmsg_setupButtonBox(XMessageBox* self)
@@ -48,6 +71,7 @@ static void VX_messageBox_resizeEvent(XWidget* self, XEvent* event)
     (void)event;
     if (!box) return;
     xmsg_setupText(box);
+    xmsg_setupCheckBox(box);
     xmsg_setupButtonBox(box);
 }
 
@@ -108,6 +132,16 @@ static void VXMessageBox_deinit(XMessageBox* self)
         XVector_delete_base(self->m_standards);
         self->m_standards = NULL;
     }
+    if (self->m_iconPixmap) {
+        XImage_delete_base((XClass*)self->m_iconPixmap);
+        self->m_iconPixmap = NULL;
+    }
+#if XCHECKBOX_ON
+    if (self->m_checkBox) {
+        XCheckBox_delete_base((XClass*)self->m_checkBox);
+        self->m_checkBox = NULL;
+    }
+#endif
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -510,11 +544,176 @@ bool XMessageBox_testOption(const XMessageBox* self, int option)
     return self ? ((self->m_options & option) != 0) : false;
 }
 
+void XMessageBox_setOption(XMessageBox* self, int option, bool on)
+{
+    if (!self) return;
+    if (on) self->m_options |= option;
+    else self->m_options &= ~option;
+}
+
 void* XMessageBox_buttonClicked_signal(XMessageBox* self,
                                        XAbstractButton* button)
 {
     (void)self; (void)button;
     return (void*)(size_t)XMessageBox_buttonClicked_signal;
+}
+
+/* ==================== 复选框 / 图标位图 / 文本呈现 ==================== */
+
+#if XCHECKBOX_ON
+void XMessageBox_setCheckBox(XMessageBox* self, XCheckBox* checkBox)
+{
+    if (!self || self->m_checkBox == checkBox) return;
+    if (self->m_checkBox) {
+        XCheckBox_delete_base((XClass*)self->m_checkBox);
+        self->m_checkBox = NULL;
+    }
+    self->m_checkBox = checkBox;
+    if (self->m_checkBox) {
+        /* 收编：改为消息框子控件并显示在文本与按钮盒之间。 */
+        XWidget_setParentPlain((XWidget*)self->m_checkBox, (XWidget*)self);
+        XWidget_show((XWidget*)self->m_checkBox);
+        xmsg_setupCheckBox(self);
+    }
+}
+
+XCheckBox* XMessageBox_checkBox(const XMessageBox* self)
+{ return self ? self->m_checkBox : NULL; }
+#endif /* XCHECKBOX_ON */
+
+void XMessageBox_setIconPixmap(XMessageBox* self, const XImage* pixmap)
+{
+    if (!self) return;
+    if (!pixmap) {
+        if (self->m_iconPixmap) {
+            XImage_delete_base((XClass*)self->m_iconPixmap);
+            self->m_iconPixmap = NULL;
+        }
+        return;
+    }
+    if (!self->m_iconPixmap) {
+        self->m_iconPixmap = XImage_create();
+        if (!self->m_iconPixmap) return;
+    }
+    XCopy(self->m_iconPixmap, (const XClass*)pixmap);
+}
+
+const XImage* XMessageBox_iconPixmap(const XMessageBox* self)
+{ return self ? self->m_iconPixmap : NULL; }
+
+void XMessageBox_setTextFormat(XMessageBox* self, XLabelTextFormat format)
+{
+    if (!self || !self->m_textLabel) return;
+    XLabel_setTextFormat(self->m_textLabel, format);
+}
+
+XLabelTextFormat XMessageBox_textFormat(const XMessageBox* self)
+{
+    if (!self || !self->m_textLabel) return XLabelTextFormat_AutoText;
+    return XLabel_textFormat(self->m_textLabel);
+}
+
+void XMessageBox_setTextInteractionFlags(XMessageBox* self,
+                                         XLabelTextInteractionFlags flags)
+{
+    if (!self || !self->m_textLabel) return;
+    XLabel_setTextInteractionFlags(self->m_textLabel, flags);
+}
+
+XLabelTextInteractionFlags XMessageBox_textInteractionFlags(
+    const XMessageBox* self)
+{
+    if (!self || !self->m_textLabel) return 0;
+    return XLabel_textInteractionFlags(self->m_textLabel);
+}
+
+/* ==================== 按钮角色 / 移除 / 文本 ==================== */
+
+XMessageBoxButtonRole XMessageBox_buttonRole(const XMessageBox* self,
+                                             XAbstractButton* button)
+{
+    if (!self || !self->m_buttonBox || !button)
+        return XMessageBoxButtonRole_InvalidRole;
+    return (XMessageBoxButtonRole)XDialogButtonBox_buttonRole(
+        self->m_buttonBox, button);
+}
+
+void XMessageBox_removeButton(XMessageBox* self, XAbstractButton* button)
+{
+    if (!self || !self->m_buttonBox || !button) return;
+    XDialogButtonBox_removeButton(self->m_buttonBox, button);
+    if (self->m_defaultButton == button) self->m_defaultButton = NULL;
+    if (self->m_escapeButton == button) self->m_escapeButton = NULL;
+    if (self->m_clicked == button) self->m_clicked = NULL;
+    xmsg_setupButtonBox(self);
+}
+
+/** @brief 按标准按钮值取按钮盒中对应按钮（内部工具）。 */
+static XAbstractButton* xmsg_standardButtonAt(XMessageBox* self, int button)
+{
+    if (!self || !self->m_buttonBox) return NULL;
+    return (XAbstractButton*)XDialogButtonBox_button(
+        self->m_buttonBox, (XDialogButtonBoxStandardButton)button);
+}
+
+XString* XMessageBox_buttonText(const XMessageBox* self, int button)
+{
+    XString* out;
+    const XString* text;
+    XAbstractButton* btn = xmsg_standardButtonAt((XMessageBox*)self, button);
+    out = XString_create();
+    if (!out) return NULL;
+    text = btn ? XAbstractButton_text(btn) : NULL;
+    if (text) XString_assign(out, text);
+    else XString_assign_utf8(out, "");
+    return out;
+}
+
+void XMessageBox_setButtonText(XMessageBox* self, int button,
+                               const XString* text)
+{
+    XAbstractButton* btn = xmsg_standardButtonAt(self, button);
+    if (!btn) return;
+    if (text) XAbstractButton_setText(btn, text);
+    else XAbstractButton_setText_2(btn, "");
+}
+
+void XMessageBox_setButtonText_2(XMessageBox* self, int button,
+                                 const char* utf8)
+{
+    XAbstractButton* btn = xmsg_standardButtonAt(self, button);
+    if (!btn) return;
+    XAbstractButton_setText_2(btn, utf8 ? utf8 : "");
+}
+
+/* ==================== 静态便捷 ==================== */
+
+void XMessageBox_aboutQt(XWidget* parent, const XString* title)
+{
+    (void)parent;
+    (void)title;
+    /* 与 XApplication_aboutQt 一致：XGui 无 Qt 运行时信息，文档化空操作。 */
+}
+
+XIcon* XMessageBox_standardIcon(int icon)
+{
+    XStyle* style;
+    int sp;
+    switch (icon) {
+    case XMessageBoxIcon_Information:
+        sp = XStyleSP_MessageBoxInformation; break;
+    case XMessageBoxIcon_Warning:
+        sp = XStyleSP_MessageBoxWarning; break;
+    case XMessageBoxIcon_Critical:
+        sp = XStyleSP_MessageBoxCritical; break;
+    case XMessageBoxIcon_Question:
+        sp = XStyleSP_MessageBoxQuestion; break;
+    default:
+        return NULL;
+    }
+    style = XApplication_style();
+    if (!style) return NULL;
+    return XStyle_standardIcon(style, sp, NULL, NULL);
 }
 
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */

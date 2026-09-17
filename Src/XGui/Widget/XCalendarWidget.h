@@ -73,6 +73,8 @@ typedef struct XCalendarWidget
     int m_verticalHeaderFormat; /**< 垂直表头格式（0=ISO 周数，1=无）。 */
     int m_headerTextFormat; /**< 表头文本格式位（0=默认；预留 QTextCharFormat 简化）。 */
     int m_weekdayTextFormat; /**< 周几文本格式位（预留）。 */
+    int m_horizontalHeaderFormat; /**< 水平表头格式（对标 HorizontalHeaderFormat；默认 1=短名；仅存储）。 */
+    int m_dateEditAcceptDelay;  /**< 日期编辑确认延迟 ms（对标 dateEditAcceptDelay；默认 1500；仅存储）。 */
 } XCalendarWidget;
 
 /** @brief X日历控件classinit（对标 Qt 同名接口）。
@@ -217,6 +219,82 @@ bool XCalendarWidget_todayDate(const XCalendarWidget* self, XDate* out);
  * @return 无返回值。
  */
 void XCalendarWidget_showTodayPage(XCalendarWidget* self);
+/** @brief 查询表头文本格式位（对标 QCalendarWidget::headerTextFormat）。
+ * @param self 目标控件；传入 NULL 时返回 0。
+ * @return 格式位（QTextCharFormat 简化为位集；0=默认）。
+ */
+int XCalendarWidget_headerTextFormat(const XCalendarWidget* self);
+/** @brief 查询周几文本格式位（对标 QCalendarWidget::weekdayTextFormat）。
+ * @param self 目标控件；传入 NULL 时返回 0。
+ * @return 格式位（0=默认）。
+ */
+int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self);
+/** @brief 设置水平表头格式（对标 QCalendarWidget::setHorizontalHeaderFormat）。
+ * @details 仅存储状态；渲染层表头文本当前为固定样式。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param format 格式码（对标 HorizontalHeaderFormat：0=单字母，1=短名，
+ *        2=长名，3=不显示）。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setHorizontalHeaderFormat(XCalendarWidget* self,
+                                               int format);
+/** @brief 查询水平表头格式（对标 QCalendarWidget::horizontalHeaderFormat）。
+ * @param self 目标控件；传入 NULL 时返回 1（ShortDayNames 默认值）。
+ * @return 格式码。
+ */
+int XCalendarWidget_horizontalHeaderFormat(const XCalendarWidget* self);
+/** @brief 设置日期编辑确认延迟（对标 QCalendarWidget::setDateEditAcceptDelay）。
+ * @details 仅存储状态；编辑确认定时行为未接入。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param delay 延迟毫秒数。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setDateEditAcceptDelay(XCalendarWidget* self, int delay);
+/** @brief 查询日期编辑确认延迟（对标 QCalendarWidget::dateEditAcceptDelay）。
+ * @param self 目标控件；传入 NULL 时返回 0。
+ * @return 延迟毫秒数（默认 1500）。
+ */
+int XCalendarWidget_dateEditAcceptDelay(const XCalendarWidget* self);
+/** @brief 同时设置日期上下界（对标 QCalendarWidget::setDateRange）。
+ * @details 等价于依次调用 setMinimumDate/setMaximumDate；NULL 参数
+ *          的处理与对应单值函数一致。
+ * @param self 目标控件。
+ * @param min 最小日期借用指针；NULL 忽略。
+ * @param max 最大日期借用指针；NULL 忽略。
+ * @return 无返回值。
+ */
+void XCalendarWidget_setDateRange(XCalendarWidget* self, const XDate* min,
+                                  const XDate* max);
+/** @brief 显示下一个月（对标 QCalendarWidget::showNextMonth；不改选中）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return 无返回值。
+ */
+void XCalendarWidget_showNextMonth(XCalendarWidget* self);
+/** @brief 显示上一个月（对标 QCalendarWidget::showPreviousMonth；不改选中）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return 无返回值。
+ */
+void XCalendarWidget_showPreviousMonth(XCalendarWidget* self);
+/** @brief 显示下一年（对标 QCalendarWidget::showNextYear；不改选中）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return 无返回值。
+ */
+void XCalendarWidget_showNextYear(XCalendarWidget* self);
+/** @brief 显示上一年（对标 QCalendarWidget::showPreviousYear；不改选中）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return 无返回值。
+ */
+void XCalendarWidget_showPreviousYear(XCalendarWidget* self);
+/** @brief 显示选中日期所在月（对标 QCalendarWidget::showSelectedDate）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return 无返回值。
+ */
+void XCalendarWidget_showSelectedDate(XCalendarWidget* self);
+/** @brief 显示今日所在月（对标 QCalendarWidget::showToday；不改选中）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @return 无返回值。
+ */
+void XCalendarWidget_showToday(XCalendarWidget* self);
 /**
  * @brief      获取选择模式。
  */

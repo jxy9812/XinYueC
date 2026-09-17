@@ -491,6 +491,9 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_expanding = true;
     self->m_elideMode = 1; /* Qt::ElideRight */
     self->m_selectionBehavior = 0;
+    self->m_shape = 0; /* Qt::RoundedShape */
+    self->m_iconSize = 0; /* 0 = 默认尺寸 */
+    self->m_changeCurrentOnDrag = false;
     self->m_usesScrollButtons = false;
     self->m_documentMode = false;
     self->m_drawBase = true;
@@ -795,6 +798,35 @@ void XTabBar_setDrawBase(XTabBar* self, bool enable)
 { if (self) self->m_drawBase = enable; }
 bool XTabBar_drawBase(const XTabBar* self)
 { return self ? self->m_drawBase : true; }
+
+void XTabBar_setShape(XTabBar* self, int shape)
+{ if (self) self->m_shape = shape; }
+int XTabBar_shape(const XTabBar* self)
+{ return self ? self->m_shape : 0; }
+
+void XTabBar_setIconSize(XTabBar* self, int size)
+{
+    if (!self || size < 0 || size == self->m_iconSize) return;
+    self->m_iconSize = size;
+    XWidget_update((XWidget*)self);
+}
+int XTabBar_iconSize(const XTabBar* self)
+{ return self ? self->m_iconSize : 0; }
+
+void XTabBar_setAutoHide(XTabBar* self, bool enable)
+{ if (self) self->m_autoHide = enable; }
+bool XTabBar_autoHide(const XTabBar* self)
+{ return self ? self->m_autoHide : false; }
+
+void XTabBar_setSelectionBehaviorOnRemove(XTabBar* self, int behavior)
+{ if (self) self->m_selectionBehavior = behavior; }
+int XTabBar_selectionBehaviorOnRemove(const XTabBar* self)
+{ return self ? self->m_selectionBehavior : 0; }
+
+void XTabBar_setChangeCurrentOnDrag(XTabBar* self, bool enable)
+{ if (self) self->m_changeCurrentOnDrag = enable; }
+bool XTabBar_changeCurrentOnDrag(const XTabBar* self)
+{ return self ? self->m_changeCurrentOnDrag : false; }
 
 bool XTabBar_tabRect(const XTabBar* self, int index, XRect* out)
 {

@@ -29,6 +29,7 @@ typedef struct XToolBoxItem
     XWidget* widget;   /**< 页面控件（借用，归调用方/容器）。 */
     XString* text;     /**< 页头文本（对象拥有）。 */
     XString* icon;     /**< 页头图标路径（对象拥有；可为 NULL）。 */
+    XString* tooltip;  /**< 条目提示（对标 QToolBox itemToolTip；对象拥有；可为 NULL）。 */
     bool enabled;      /**< 条目启用。 */
 } XToolBoxItem;
 
@@ -41,6 +42,7 @@ static XToolBoxItem* xtb2_itemCreate(XWidget* widget, const char* text)
     item->enabled = true;
     item->text = XString_create_utf8(text ? text : "");
     item->icon = NULL;
+    item->tooltip = NULL;
     return item;
 }
 
@@ -54,6 +56,10 @@ static void xtb2_itemDestroy(XToolBoxItem* item)
     if (item->icon) {
         XString_delete_base(item->icon);
         item->icon = NULL;
+    }
+    if (item->tooltip) {
+        XString_delete_base(item->tooltip);
+        item->tooltip = NULL;
     }
     XFree_System(item);
 }
@@ -426,6 +432,52 @@ const XString* XToolBox_itemIcon(const XToolBox* self, int index)
         return NULL;
     item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
     return (item && *item) ? (*item)->icon : NULL;
+}
+
+void XToolBox_setItemToolTip(XToolBox* self, int index, const XString* tip)
+{
+    XToolBoxItem** item;
+    XString* copy;
+    if (!self || !self->m_items || index < 0 ||
+        index >= (int)XVector_size_base((const XContainer*)self->m_items))
+        return;
+    item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
+    if (!item || !*item) return;
+    if (!tip) {
+        if ((*item)->tooltip) {
+            XString_delete_base((*item)->tooltip);
+            (*item)->tooltip = NULL;
+        }
+    } else {
+        copy = XString_create_copy(tip);
+        if (!copy) return;
+        if ((*item)->tooltip)
+            XString_delete_base((*item)->tooltip);
+        (*item)->tooltip = copy;
+    }
+}
+
+void XToolBox_setItemToolTip_2(XToolBox* self, int index, const char* utf8)
+{
+    XString tmp;
+    if (!self || !utf8) {
+        XToolBox_setItemToolTip(self, index, NULL);
+        return;
+    }
+    XString_init(&tmp);
+    XString_assign_utf8(&tmp, utf8);
+    XToolBox_setItemToolTip(self, index, &tmp);
+    XString_deinit_base(&tmp);
+}
+
+const XString* XToolBox_itemToolTip(const XToolBox* self, int index)
+{
+    XToolBoxItem** item;
+    if (!self || !self->m_items || index < 0 ||
+        index >= (int)XVector_size_base((const XContainer*)self->m_items))
+        return NULL;
+    item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
+    return (item && *item) ? (*item)->tooltip : NULL;
 }
 
 void XToolBox_setItemEnabled(XToolBox* self, int index, bool enabled)
