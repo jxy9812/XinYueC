@@ -44,4 +44,9 @@ bool XSystem_platformHasEnvironment(const char* name)
     return false;
 }
 
+int64_t XSystem_platformPid(void)
+{
+    return 0;
+}
+
 #endif /* !defined(__linux__) && !defined(_WIN32) */

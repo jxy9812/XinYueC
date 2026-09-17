@@ -14,6 +14,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -166,6 +167,15 @@ const char* XSystem_environment(const char* name);
  * @note 与 XSystem_environment 使用同一平台后端，两者语义一致。
  */
 bool XSystem_hasEnvironment(const char* name);
+
+/**
+ * @brief 读取当前进程标识。
+ * @return 当前进程的 PID；当前平台无进程概念（裸机等）时返回 0。
+ * @note 本接口是上层模块获取进程 ID 的唯一入口，避免上层直接调用
+ *       GetCurrentProcessId/getpid 等平台 API；实现位于 Drive
+ *       （Posix/Windows/unsupported）。
+ */
+int64_t XSystem_pid(void);
 
 #ifdef __cplusplus
 }

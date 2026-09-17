@@ -53,8 +53,6 @@ XSystemResult XSystem_platformShutdown(void)
     return xsystem_posix_poweroff_now();
 }
 
-#endif /* defined(__linux__) */
-
 const char* XSystem_platformEnvironment(const char* name)
 {
     if (!name || !name[0]) return NULL;
@@ -66,3 +64,10 @@ bool XSystem_platformHasEnvironment(const char* name)
     if (!name || !name[0]) return false;
     return getenv(name) != NULL;
 }
+
+int64_t XSystem_platformPid(void)
+{
+    return (int64_t)getpid();
+}
+
+#endif /* defined(__linux__) */

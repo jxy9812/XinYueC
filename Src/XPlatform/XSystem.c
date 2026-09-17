@@ -98,3 +98,16 @@ bool XSystem_hasEnvironment(const char* name)
     return false;
 #endif
 }
+
+/**
+ * @brief 读取当前进程标识（公共分发）。
+ * @return 当前进程的 PID；无 OS 目标返回 0。
+ */
+int64_t XSystem_pid(void)
+{
+#if XPLATFORM_HAS_OS
+    return XSystem_platformPid();
+#else
+    return 0;
+#endif
+}
