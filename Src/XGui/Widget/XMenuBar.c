@@ -161,8 +161,17 @@ static void xmb_bridgeTriggeredSlot(XObject* receiver, XVarList* args)
     if (!bridge || !bridge->m_bar) return;
     bar = bridge->m_bar;
     menu = bridge->m_menu;
-    if (menu)
-        XMenu_popup(menu, NULL);
+    if (menu) {
+        /* 对标 QMenuBar:菜单弹出于触发动作的全局位置(动作矩形
+         * 左下角),而非屏幕原点(0,0)。 */
+        XRect r = XMenuBar_actionGeometry(bar, bridge->m_action);
+        XPoint local;
+        XPoint g;
+        local.x = r.x;
+        local.y = r.y + r.height;
+        g = XWidget_mapToGlobal((XWidget*)bar, &local);
+        XMenu_popup(menu, &g);
+    }
     if (args)
         XVarList_args_1(args, bool, checkedIgnored);
     xmb_emitAction(bar, (size_t)XMenuBar_triggered_signal,
@@ -323,11 +332,35 @@ static void VX_menuBar_deinit(XMenuBar* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/** @brief 按下：命中动作即触发（triggered 桥接负责弹出对应菜单）。
+ * @note  命中经 XMenuBar_actionAt 按条目宽度累计判定，与绘制布局
+ *        同口径；未命中动作时忽略事件。 */
+static void VX_menuBar_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XMenuBar* bar = (XMenuBar*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    XAction* action;
+    if (!bar || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    action = XMenuBar_actionAt(bar, &pos);
+    if (action) {
+        XAction_trigger(action);
+        XEvent_accept(event);
+        return;
+    }
+    XEvent_ignore(event);
+}
+
 XVtable* XMenuBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMenuBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_menuBar_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VX_menuBar_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_menuBar_deinit);
     return XVTABLE_DEFAULT;
 }

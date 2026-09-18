@@ -984,7 +984,8 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
         }
         if (!col0Hidden) {
             XPainter_setPen(&painter, 0xFF444444u);
-            XPainter_drawText(&painter, 4, XTREEVIEW_HEADER_H - 6, text, 0);
+            XPainter_drawText(&painter, 4, XTREEVIEW_HEADER_H - 6, text,
+                              0xFF444444u);
         }
     }
     rows = model->m_rows;
@@ -1023,7 +1024,8 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
                 int indent = (tv->m_indentation > 0)
                                  ? tv->m_indentation : 0;
                 XPainter_setPen(&painter, 0xFF000000u);
-                XPainter_drawText(&painter, indent + 12, y + rh - 6, text, 0);
+                XPainter_drawText(&painter, indent + 12, y + rh - 6, text,
+                              0xFF000000u);
             }
         }
         XPainter_setPen(&painter, 0xFFDDDDDDu);

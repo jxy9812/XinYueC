@@ -1,0 +1,169 @@
+XGui ↔ Qt 6.8.3 API 缺口清单（Phase 3.1 v2）
+生成脚本：tools/xgui_api_scan.py（python3 可直接运行，UTF-8 无 BOM）
+匹配规则：Qt 类自有公开 API（成员函数/Q_SIGNALS/public Q_SLOTS/Q_PROPERTY READ/WRITE）
+满足条件：XGui 本类或祖先链存在同名（或 _2/_3 双版本），或命中 RENAMED 改名表；豁免项见脚本 SKIP 表（含理由）。
+
+== QAccessible → XAccessible  (qaccessible_base.h)
+MISS [QAccessible] accessibleInterface
+MISS [QAccessible] cleanup
+MISS [QAccessible] deleteAccessibleInterface
+MISS [QAccessible] installActivationObserver
+MISS [QAccessible] installFactory
+MISS [QAccessible] installRootObjectHandler
+MISS [QAccessible] installUpdateHandler
+MISS [QAccessible] isActive
+MISS [QAccessible] qAccessibleTextBoundaryHelper
+MISS [QAccessible] queryAccessibleInterface
+MISS [QAccessible] registerAccessibleInterface
+MISS [QAccessible] removeActivationObserver
+MISS [QAccessible] removeFactory
+MISS [QAccessible] setActive
+MISS [QAccessible] setRootObject
+MISS [QAccessible] uniqueId
+MISS [QAccessible] updateAccessibility
+MISS [QAccessible] void
+
+== QActionGroup → XActionGroup  (qactiongroup.h)
+MISS [QActionGroup] exclusionPolicy
+MISS [QActionGroup] isVisible
+MISS [QActionGroup] setDisabled
+MISS [QActionGroup] setExclusionPolicy
+MISS [QActionGroup] setVisible
+
+== QBitmap → XBitmap  (qbitmap.h)
+MISS [QBitmap] QVariant
+
+== QIcon → XIcon  (qicon.h)
+MISS [QIcon] QVariant
+MISS [QIcon] data_ptr
+
+== QIconEngine → XIconEngine  (qiconengine.h)
+MISS [QIconEngine] virtual_hook
+
+== QImage → XImage  (qimage.h)
+MISS [QImage] QVariant
+MISS [QImage] colorTransformed
+MISS [QImage] convertTo
+MISS [QImage] convertedTo
+MISS [QImage] copy
+MISS [QImage] data_ptr
+MISS [QImage] devType
+MISS [QImage] fromHBITMAP
+MISS [QImage] fromHICON
+MISS [QImage] paintEngine
+MISS [QImage] toCGImage
+MISS [QImage] toHBITMAP
+MISS [QImage] toHICON
+MISS [QImage] toImageFormat
+MISS [QImage] toPixelFormat
+
+== QImageIOPlugin → XImageIOPlugin  (qimageiohandler.h)
+MISS [QImageIOPlugin] create
+
+== QMovie → XMovie  (qmovie.h)
+MISS [QMovie] bindableCacheMode
+MISS [QMovie] bindableSpeed
+
+== QPicture → XPicture  (qpicture.h)
+MISS [QPicture] data_ptr
+
+== QPixmap → XPixmap  (qpixmap.h)
+MISS [QPixmap] QVariant
+MISS [QPixmap] copy
+MISS [QPixmap] data_ptr
+MISS [QPixmap] handle
+
+== QPlatformAccessibility → XPlatformAccessibility  (qplatformaccessibility.h)
+MISS [QPlatformAccessibility] notifyAccessibilityUpdate
+MISS [QPlatformAccessibility] setRootObject
+
+== QPlatformIntegration → XPlatformIntegration  (qplatformintegration.h)
+MISS [QPlatformIntegration] call
+
+== QShortcut → XShortcut  (qshortcut.h)
+MISS [QShortcut] id
+MISS [QShortcut] keys
+MISS [QShortcut] parentWidget
+MISS [QShortcut] setKeys
+
+== QTextDocument → XTextDocument  (qtextdocument.h)
+MISS [QTextDocument] QVariant
+MISS [QTextDocument] addResource
+MISS [QTextDocument] adjustSize
+MISS [QTextDocument] allFormats
+MISS [QTextDocument] appendUndoItem
+MISS [QTextDocument] availableRedoSteps
+MISS [QTextDocument] availableUndoSteps
+MISS [QTextDocument] baseUrl
+MISS [QTextDocument] baselineOffset
+MISS [QTextDocument] begin
+MISS [QTextDocument] clearUndoRedoStacks
+MISS [QTextDocument] clone
+MISS [QTextDocument] contentsChange
+MISS [QTextDocument] defaultCursorMoveStyle
+MISS [QTextDocument] defaultFont
+MISS [QTextDocument] defaultResourceProvider
+MISS [QTextDocument] defaultStyleSheet
+MISS [QTextDocument] defaultTextOption
+MISS [QTextDocument] documentLayout
+MISS [QTextDocument] documentMargin
+MISS [QTextDocument] drawContents
+MISS [QTextDocument] end
+MISS [QTextDocument] findBlock
+MISS [QTextDocument] findBlockByLineNumber
+MISS [QTextDocument] findBlockByNumber
+MISS [QTextDocument] firstBlock
+MISS [QTextDocument] frameAt
+MISS [QTextDocument] idealWidth
+MISS [QTextDocument] indentWidth
+MISS [QTextDocument] isLayoutEnabled
+MISS [QTextDocument] isModified
+MISS [QTextDocument] lastBlock
+MISS [QTextDocument] lineCount
+MISS [QTextDocument] markContentsDirty
+MISS [QTextDocument] maximumBlockCount
+MISS [QTextDocument] object
+MISS [QTextDocument] objectForFormat
+MISS [QTextDocument] pageCount
+MISS [QTextDocument] pageSize
+MISS [QTextDocument] print
+MISS [QTextDocument] resource
+MISS [QTextDocument] resourceProvider
+MISS [QTextDocument] revision
+MISS [QTextDocument] rootFrame
+MISS [QTextDocument] setBaseUrl
+MISS [QTextDocument] setBaselineOffset
+MISS [QTextDocument] setDefaultCursorMoveStyle
+MISS [QTextDocument] setDefaultFont
+MISS [QTextDocument] setDefaultResourceProvider
+MISS [QTextDocument] setDefaultStyleSheet
+MISS [QTextDocument] setDefaultTextOption
+MISS [QTextDocument] setDocumentLayout
+MISS [QTextDocument] setDocumentMargin
+MISS [QTextDocument] setIndentWidth
+MISS [QTextDocument] setLayoutEnabled
+MISS [QTextDocument] setMarkdown
+MISS [QTextDocument] setMaximumBlockCount
+MISS [QTextDocument] setModified
+MISS [QTextDocument] setPageSize
+MISS [QTextDocument] setResourceProvider
+MISS [QTextDocument] setSubScriptBaseline
+MISS [QTextDocument] setSuperScriptBaseline
+MISS [QTextDocument] setTextWidth
+MISS [QTextDocument] setUseDesignMetrics
+MISS [QTextDocument] size
+MISS [QTextDocument] subScriptBaseline
+MISS [QTextDocument] superScriptBaseline
+MISS [QTextDocument] textWidth
+MISS [QTextDocument] toMarkdown
+MISS [QTextDocument] toRawText
+MISS [QTextDocument] useDesignMetrics
+
+== QWheelEvent → XWheelEvent  (qevent.h)
+MISS [QWheelEvent] pointingDevice
+
+================ 统计 ================
+映射类数        : 45
+总缺口数 (MISS) : 129
+豁免数   (SKIP) : 0
+满足数          : 545

@@ -858,7 +858,7 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
     if (!model) {
         /* 无模型：画空表头提示。 */
         XPainter_setPen(&painter, 0xFF888888u);
-        XPainter_drawText(&painter, 4, 16, "（无模型）", 0);
+        XPainter_drawText(&painter, 4, 16, "（无模型）", 0xFF888888u);
         XPainter_end(&painter);
         XPainter_deinit(&painter);
         return;
@@ -887,7 +887,8 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
                 text = buf;
             }
             XPainter_setPen(&painter, 0xFF444444u);
-            XPainter_drawText(&painter, x + 4, XTV_HEADER_H - 6, text, 0);
+            XPainter_drawText(&painter, x + 4, XTV_HEADER_H - 6, text,
+                              0xFF444444u);
             XPainter_setPen(&painter, 0xFFCCCCCCu);
             XPainter_drawLine(&painter, x + w - 1, 1, x + w - 1,
                               XTV_HEADER_H - 1);
@@ -950,7 +951,8 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
                 const char* text = XAbstractItemModel_data_2(model, row, col);
                 if (text && text[0]) {
                     XPainter_setPen(&painter, 0xFF000000u);
-                    XPainter_drawText(&painter, x + 4, y + cellH - 6, text, 0);
+                    XPainter_drawText(&painter, x + 4, y + cellH - 6, text,
+                                  0xFF000000u);
                 }
             }
             if (tv->m_gridVisible) {

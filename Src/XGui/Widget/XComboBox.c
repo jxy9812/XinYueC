@@ -606,14 +606,16 @@ typedef struct XComboPopupView
 static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event);
 
-/** @brief 判断弹出层本地坐标是否落在视图矩形内。 */
+/** @brief 判断弹出层本地坐标是否落在视图矩形内。
+ * @note  入参为事件相对弹层窗口的本地坐标，直接与弹层尺寸比较；
+ *        历史实现误用 XWidget_rect（父链/全局口径 (65,270)）比较，
+ *        弹层内点击恒判越界——按下即收起、永不激活选中（14.115）。 */
 static bool xcomboPopupView_contains(const XComboPopupView* view, int x, int y)
 {
-    XRect r;
     if (!view) return false;
-    r = XWidget_rect((const XWidget*)view);
-    return x >= r.x && x < r.x + r.width &&
-           y >= r.y && y < r.y + r.height;
+    return x >= 0 && y >= 0 &&
+           x < XWidget_width((const XWidget*)view) &&
+           y < XWidget_height((const XWidget*)view);
 }
 
 /** @brief 按下：越界（弹窗外部）点击收起弹窗；窗内交给 XListView。 */
@@ -642,7 +644,12 @@ static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
-/** @brief 释放：越界释放吞掉（防止负坐标截断映射为 0 行误激活）。 */
+/** @brief 释放：窗内按行直接激活（选择+收起经 activated 槽联动）；
+ *         越界释放吞掉（防止负坐标截断映射为 0 行误激活）。
+ * @note  不再转发基类释放：基类 activated 依赖 IndexAt 虚槽，弹层
+ *        子类虚表在该槽位解析不稳（xlv_indexAt 不被调用），故此处
+ *        本地按 XCOMBOBOX_ITEM_H 行高直接换算行号并显式发射
+ *        activated(row)，选择/收起仍经 xcombo_viewActivatedSlot。 */
 static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XComboPopupView* view = (XComboPopupView*)self;
@@ -660,8 +667,26 @@ static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
-    XClass_Parent(XListView, EXWidget_MouseReleaseEvent,
-                  void (*)(XWidget*, XEvent*))(self, event);
+    if (view->m_owner) {
+        int row = pos.y / XCOMBOBOX_ITEM_H;
+        if (row >= 0 && row < view->m_owner->m_itemCount) {
+            XVarList* args;
+            XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
+                                              row,
+                                              view->m_owner->m_modelColumn);
+            if (((XObject*)view)->m_signalSlot) {
+                args = XVarList_Create(XVar(int, row));
+                if (args) {
+                    XObject_emitSignal((XObject*)view,
+                        (size_t)XAbstractItemView_activated_signal(
+                            (XAbstractItemView*)view, row,
+                            view->m_owner->m_modelColumn),
+                        args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+                }
+            }
+        }
+    }
+    XEvent_accept(event);
 }
 
 /** @brief 弹出列表子类虚表：仅覆写按下/释放，其余继承 XListView。 */

@@ -29287,6 +29287,59 @@ static void test_phase32_p2_contract(void)
         XClass_delete_base((XClass*)doc);
     }
     {
+        /* 列表文字像素级验证(防 drawText color=0 透明文字回归)。 */
+        XListView* lv = XListView_create(NULL, 0);
+        XAbstractItemModel* m = XAbstractItemModel_create();
+        XImage* img;
+        XAbstractItemModel_setDimension(m, 3, 1);
+        XAbstractItemModel_setData_2(m, 0, 0, "RowA");
+        XAbstractItemModel_setData_2(m, 1, 0, "RowB");
+        XAbstractItemModel_setData_2(m, 2, 0, "RowC");
+        XAbstractItemView_setModel((XAbstractItemView*)lv, m);
+        XWidget_resize((XWidget*)lv, 200, 120);
+        XWidget_show((XWidget*)lv);
+        img = XWidget_grab((XWidget*)lv);
+        p32_expect(img != NULL, "lvtext: grab 快照");
+        if (img) {
+            const uint8_t* bits = XImage_bits(img);
+            int total = XImage_width(img) * XImage_height(img);
+            int dark = 0;
+            int i;
+            for (i = 0; i < total; ++i) {
+                const uint8_t* px = bits + (size_t)i * 4;
+                if (px[3] >= 0x80 && px[0] < 0x40 && px[1] < 0x40 &&
+                    px[2] < 0x40)
+                    ++dark;
+            }
+            p32_expect(dark > 20, "lvtext: 列表行文字像素可见");
+            XImage_delete_base(img);
+        }
+        XAbstractItemModel_delete_base(m);
+        XListView_delete_base(lv);
+    }
+    {
+        /* 弹层 indexAt 虚槽继承完整(防 XVTABLE 尾槽代际丢失回归):
+         * XComboPopupView 虚表须含 XListView 注册的 IndexAt 实现。 */
+        XComboBox* cbp = XComboBox_create(NULL, 0);
+        XListView* pv;
+        int row = -1;
+        int col = -1;
+        XComboBox_addItem_2(cbp, "A");
+        XComboBox_addItem_2(cbp, "B");
+        XComboBox_addItem_2(cbp, "C");
+        XComboBox_showPopup_base(cbp);
+        pv = XComboBox_view(cbp);
+        p32_expect(pv != NULL && XComboBox_popupVisible(cbp),
+                   "popup-idx: 弹层打开");
+        if (pv) {
+            XAbstractItemView_indexAt_base((XAbstractItemView*)pv,
+                                           75, 25, &row, &col);
+            p32_expect(row == 1, "popup-idx: indexAt 虚槽继承(行命中)");
+        }
+        XComboBox_hidePopup_base(cbp);
+        XComboBox_delete_base(cbp);
+    }
+    {
         /* anchorClicked/highlighted 真发射：经编辑器事件过滤器。 */
         XTextBrowser* tb = XTextBrowser_create(NULL, 0);
         XTextEdit* tbase = (XTextEdit*)tb; /* IS-A 上转型同地址。 */

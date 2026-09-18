@@ -53,11 +53,11 @@ OUT_PATH = os.path.join(REPO, "docs", "xgui-audit", "2026-09-16",
 # 每条注明依据（核实方式：对照 Src/XGui 对应头文件的声明与注释）。
 # ============================================================
 RENAMED = {
-    # 无 —— 截至本次复扫未发现需要登记的改名项；如后续出现，
-    # 以 "Qt类.方法名" 为键，值为 XGui 侧方法名，并注明依据。
-    # 示例（勿删格式）：
-    # "QComboBox.setView": {"to": "setPopupView",
-    #   "why": "XComboBox.h 注释：setView 与内部 m_view 字段访问器冲突"},
+    # "Qt类.方法名" → {"to": XGui 侧方法名, "why": 改名依据}
+    "QLCDNumber.checkOverflow": {
+        "to": "checkOverflowInt / checkOverflowDouble",
+        "why": "XLcdNumber 采用语义化重载命名（整型/浮点各一），"
+               "非 _2/_3 数字后缀约定（14.116 扫描映射修复）"},
 }
 
 # ============================================================
@@ -420,6 +420,14 @@ def ancestor_chain(cls, parents):
 
 MANUAL_QT_TO_XGUI = {
     "QWidget": "XWidget",   # 特例：QWidget → XWidget（非简单 Q→X 替换）
+    # 缩写类名特例：QLCDNumber(全大写缩写) → XLcdNumber(驼峰)，名称约定
+    # (X+Qt 去 Q)无法覆盖，需显式映射（14.116 扫描盲区修复）。
+    "QLCDNumber": "XLcdNumber",
+    # Qt 的 QDateEdit/QTimeEdit 即 QDateTimeEdit 的日期/时间便捷子类；
+    # XGui 以 XDateTimeEdit 统一承载（dateDisplay/timeDisplay 模式切换），
+    # 映射到同一实现类做 API 对齐核查（14.116）。
+    "QDateEdit": "XDateTimeEdit",
+    "QTimeEdit": "XDateTimeEdit",
 }
 
 

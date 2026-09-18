@@ -95,6 +95,36 @@ static void xdt_emitChanged(XDateTimeEdit* self)
     }
 }
 
+/** @brief 发射用户改期信号 userDateChanged(XDate*)（步进路径专用）。 */
+static void xdt_emitUserDate(XDateTimeEdit* self)
+{
+    XDate* ptr = &self->m_dateTime.m_date;
+    XVarList* args = XVarList_Create(XVar(XDate*, ptr));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XDateTimeEdit_userDateChanged_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief 发射用户改时信号 userTimeChanged(XTime*)（步进路径专用）。 */
+static void xdt_emitUserTime(XDateTimeEdit* self)
+{
+    XTime* ptr = &self->m_dateTime.m_time;
+    XVarList* args = XVarList_Create(XVar(XTime*, ptr));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XDateTimeEdit_userTimeChanged_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
 /* ==================== 虚槽重载 ==================== */
 
 static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
@@ -139,6 +169,12 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
     if (XDateTime_compare(&old, &edit->m_dateTime) != 0) {
         xdt_refreshText(edit);
         xdt_emitChanged(edit);
+        /* 用户编辑变体（对标 QDateEdit::userDateChanged/QTimeEdit::
+         * userTimeChanged）：按日期/时间部分是否变化分别发射。 */
+        if (XDate_compare(&old.m_date, &edit->m_dateTime.m_date) != 0)
+            xdt_emitUserDate(edit);
+        if (XTime_compare(&old.m_time, &edit->m_dateTime.m_time) != 0)
+            xdt_emitUserTime(edit);
     }
 }
 
@@ -520,6 +556,20 @@ void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
 {
     (void)self; (void)time;
     return (void*)(size_t)XDateTimeEdit_timeChanged_signal;
+}
+
+void* XDateTimeEdit_userDateChanged_signal(XDateTimeEdit* self,
+                                           const XDate* date)
+{
+    (void)self; (void)date;
+    return (void*)(size_t)XDateTimeEdit_userDateChanged_signal;
+}
+
+void* XDateTimeEdit_userTimeChanged_signal(XDateTimeEdit* self,
+                                           const XTime* time)
+{
+    (void)self; (void)time;
+    return (void*)(size_t)XDateTimeEdit_userTimeChanged_signal;
 }
 
 

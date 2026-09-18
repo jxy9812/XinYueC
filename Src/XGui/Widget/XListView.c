@@ -123,11 +123,13 @@ static void xlv_drawRowText(XPainter* painter, const XListView* lv,
                                    XPAINTER_TEXT_ALIGN_VERTICAL_MASK);
     if (lv->m_wordWrap) flags |= XPAINTER_TEXT_WORD_WRAP;
     if (flags == 0) {
-        /* 默认路径：与历史渲染一致（左缘 4px、基线 y+行高-6）。 */
+        /* 默认路径：与历史渲染一致（左缘 4px、基线 y+行高-6）。
+         * 颜色必须显式传不透明黑：XPainter_drawText 直接以该参数作
+         * ink（透明色写入=无像素），setPen 不影响此路径。 */
         XPainter_setPen(painter, 0xFF000000u);
         XPainter_drawText(painter, 4,
                           cell->y + xlv_effectiveRowHeight(lv) - 6,
-                          text, 0);
+                          text, 0xFF000000u);
         return;
     }
     if (!(flags & XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK))

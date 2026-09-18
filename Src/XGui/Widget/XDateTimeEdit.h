@@ -395,6 +395,18 @@ void* XDateTimeEdit_dateChanged_signal(XDateTimeEdit* self,
  */
 void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
                                        const XTime* time);
+/** @brief      用户改期信号（对标 QDateEdit::userDateChanged；真发射）。
+ * @details    仅用户经步进（方向键/箭头点击）修改日期部分时发射，
+ *             程序性 setDateTime/setDate 不发射；载荷为新日期。
+ */
+void* XDateTimeEdit_userDateChanged_signal(XDateTimeEdit* self,
+                                           const XDate* date);
+/** @brief      用户改时信号（对标 QTimeEdit::userTimeChanged；真发射）。
+ * @details    仅用户经步进修改时间部分时发射，程序性设置不发射；
+ *             载荷为新时间。
+ */
+void* XDateTimeEdit_userTimeChanged_signal(XDateTimeEdit* self,
+                                           const XTime* time);
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
 

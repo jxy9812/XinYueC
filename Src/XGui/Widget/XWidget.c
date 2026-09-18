@@ -4722,6 +4722,11 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
         if (!child || !child->is_widget) continue;
         w = (XWidget*)child;
         if (!w->m_visible || !w->m_updatesEnabled) continue;
+        /* 原生/弹出子窗口（isWindow）不随父级 paintTree 绘制：它们
+         * 拥有独立后备存储并经自身 repaint/flush 上屏（对标 Qt 跳过
+         * 原生子窗口）；混入父级遍历会以父链平移重写其自存储，导致
+         * Popup 弹层被覆盖为纯背景色（14.114 弹层文字消失根因）。 */
+        if (w->m_isWindow) continue;
         childRect = w->m_windowRect;
         XRegion_intersectRectInto(paintRegion, &childRect, &clipped);
         if (clipped.count > 0) {

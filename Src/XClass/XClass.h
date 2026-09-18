@@ -104,6 +104,8 @@ do { \
 		exit(-1); \
 	} \
 	XVtable_At(_xvtable, (Type)) = (Func); \
+	if ((Type) >= _xvtable->size) \
+		_xvtable->size = (Type) + 1; \
 } while (0)
 /** @brief 把函数指针数组追加到虚函数表，并检查静态表容量。 */
 #define XVTABLE_ADD_FUNC_LIST(Vtable, Table) \

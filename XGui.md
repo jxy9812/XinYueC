@@ -1698,7 +1698,188 @@ GPU 直通分支劫持);(2) XPutImage 成功但像素被覆盖。
 看返回值,或在 XPlatformNativeWindow_posix.c:2263/2268 两处
 XPutImage 前插 fprintf 定位是否到达。
 
+### 14.114 弹层不可见缺陷完全修复轮（2026-09-18 18:20 晚间单线程，用户实时反馈确认）
+
+**双层根因全部落网**(承接 14.112/14.113 的排除链):
+
+1. **列表行文字颜色参数为 0(全透明)**——xlv_drawRowText 快速路径
+   `XPainter_drawText(..., text, 0)` 末参 color=0,XPainter_drawText
+   直接以该参数作 ink(SoftwareAA 路径 painterApplyOpacity(0)→
+   alpha=0)→ SourceOver 写入等于无像素;drawText 返回 true、
+   drawRowText 也确实逐行调用,一切"正常"却零痕迹(潜伏 bug:demo
+   中唯一 XListView 即弹层,回归只断言模型不断言像素,故从未暴露)。
+   修复:显式传 0xFF000000u(对齐矩形路径既有写法)。
+2. **paintTree 遍历原生/弹出子窗**(14.112 第一层修复后暴露的覆盖
+   源):弹层(isWindow,父链挂在 combo 下)被主窗帧泵的
+   paintTree 递归当作普通子控件,按父链偏移 translate(24,182) 重画
+   进弹层**自己的**后备存储——整幅背景色覆盖 + 文字越界丢弃,
+   440FPS 永久压制弹层自身 flush 的正确内容。修复:paintTree 子级
+   遍历跳过 m_isWindow 子树(对标 Qt 跳过原生子窗口;XMenu 同受
+   此益)。修复前该遍历恰好让弹层内容经主窗缓冲"意外可见"(白盒
+   无文字,即用户最初报告的形态);修复后走正确通道。
+
+**验证**:ffmpeg x11grab 实屏捕获(注:xwd -root 在本机合成器下
+不含 OR 窗内容,14.113 的"不可见"部分判读失准)——弹层 Alpha/
+Beta/Gamma 三行黑字白底完整显示;全量回归真绿(4 处 FAIL 均为
+ime-dbg 输入法调试日志非测试失败)。
+
+**经验**:多因叠加时分步定位务必用"最终上屏像素"作唯一判据,
+中间缓冲快照与合成器外推都会误导;用户实时目视是最快的 oracle。
+
+**同款隐患全库清扫(14.114 续,19:30)**:按 color=0 透明文字模式
+全库排查,另发现并修复 5 处同款潜伏点——XTableView 三处(无模型
+占位/表头/单元格文字)与 XTreeView 两处(列头/条目文字),均为
+"setPen 设色后 drawText 传 0"的错配(standalone XTableView/
+XTreeView 直绘文字从未上屏;demo 表格页因走 XTableWidget 自绘
+带真实色而幸免)。回归新增 lvtext 像素级断言(XWidget_grab 全幅
+扫暗像素>20)锁定该约定;全库复扫零残留。
+
+### 14.115 弹层选择回路打通轮（2026-09-18 19:30 晚间单线程）
+
+**第三层根因落网——contains 坐标口径错配**:gdb 断点链
+(REL-FORWARD-INSIDE w=150 h=62 → 但 xlv_indexAt 从未被调用→
+ACTIVATED 未发射)证实:释放事件已转发基类,基类 indexAt(74,35)
+却返回 false 且未触碰出参——`xcomboPopupView_contains` 拿事件
+**弹层局部坐标**去比对 `XWidget_rect` 的**全局矩形 (65,270)**,
+弹层内点击恒判"越界":按下即收起、永不激活(与 14.114 白盒无字
+叠加,即"下拉框选项文字看不到"的完整形态)。
+
+- 修复:xcomboPopupView_contains 改为与弹层尺寸直接比较(局部
+  坐标口径)。
+- 修复后实测仍有断链:基类 activated 依赖 IndexAt 虚槽,弹层
+  子类(XComboPopupView)虚表在该槽位解析不稳(xlv_indexAt 从未
+  被调用,虚表槽位继承问题留档待查)。改为**确定性实现**:释放
+  处理内按 XCOMBOBOX_ITEM_H 行高本地换算行号,显式
+  setCurrentIndex + 发射 activated(row),选择/收起仍经
+  xcombo_viewActivatedSlot 既有链路。
+- **实机端到端验证**:点开弹层(Option 1/2/3 黑字白底)→点击
+  Option 2 →弹层收起+组合框标签更新为"Option 2" ✓(ffmpeg
+  实屏捕获前后对照);全量回归真绿零 FAIL。
+
+**弹层缺陷累计修复清单(14.112→14.115)**:m_isWindow 纳入 Popup
+(3 处判定点)/paintTree 跳过 isWindow 子树/drawRowText 颜色
+0→0xFF000000/contains 坐标口径/释放直接激活五项;XTableView
+三处+XTreeView 两处同款 color=0 清扫;lvtext 像素级回归断言。
+
+**虚表探针补记(20:40)**:gdb 全表扫描证实弹层虚表 0..33 中
+**不含 xlv_indexAt**(data[31]=noop/data[32]=VXFrame_changeEvent),
+而同表 EXWidget_PaintEvent 槽位继承正常——链路为 XObject(7)+
+XWidget(24)+XFrame(+1)+ASA(+1)+AIV(IndexAt)+XListView,EXAbstract
+ItemView_IndexAt 的槽位下标与 XListView 表尾写入位置存在错位嫌疑
+(XVTABLE_OVERLOAD 越界会 exit,未触发则可能写入位置并非派发读取
+位置);因选择回路已改直连,该虚表异常暂不阻断功能,但影响所有
+"对弹层调 indexAt_base"的外部路径。
+
+**虚表全表 dump 实测(20:55,弹层 34 槽)**:slot[10]=paintEvent
+(继承正常)、slot[25/26]=弹层鼠标重载(本次直连激活生效)、
+slot[31]=noop、slot[32]=VXFrame_changeEvent、slot[33]=ignore
+——EXAbstractItemView_IndexAt 期望位置无 xlv_indexAt,与扫描
+结论一致。链路含 XFrame 层(XAbstractScrollArea extends XFrame:
+ScrollContentsBy = XFrame 尺寸,ASA 后再 AIV/XListView),XFrame
+自身槽位数量决定 IndexAt 名义下标;gdb 实测与头文件推算存在
++1 量级的错位嫌疑(XVTABLE_OVERLOAD 越界即 exit 未触发,说明
+注册写入与派发读取的枚举值一致、均落在表内但不是 xlv_indexAt
+——即注册表与派发表使用了同一错误槽位,该槽实际为 noop 默认)。
+
+**根因终局+根修(21:10)**:XVTABLE_OVERLOAD 写槽不维护 size——
+AIV 在槽 34 注册 IndexAt 后 size 仍 34,下游 INHERIT 按 size 复制
+即代际丢失槽 34(XListView 自身因重写自己的槽 34 而幸免,弹出层
+继承链则彻底丢失)。根修:XVTABLE_OVERLOAD 写入越旧 size 时同步
+`size = Type + 1`(size=有效槽位数不变式),全量构建+回归真绿,
+实屏复测下拉框完整选择回路(开→点 Option 2→收起+标签回写)全通。
+回归锁:新增 popup-idx 断言(弹层打开后 indexAt_base(75,25) 须命中
+行 1)——锁定虚表尾槽继承,防 OVERLOAD size 维护回退;全裁剪
+(XGUI_ON=0)库目标构建零错误。
+
+XMenu 侧静态检查:其条目文字绘制传真实颜色(XMenu.c 无 color=0
+调用),同受五项修复惠及;菜单弹出实机目视验证因演示窗位置漂移
+致 xdotool 点击命中不可靠,转请用户日常使用中顺带目验。
+
+XMenuBar 侧:XMenuBar 经 bridge(动作 triggered→XMenu_popup)开
+菜单,点击文件未现弹窗(命中或触发链待查);演示窗已停在菜单页
+供用户直接目验菜单弹出与文字显示。
+
+**XMenuBar 点击开菜单修复(21:30)**:两处补齐——(1) XMenuBar
+虚表仅有 paint/deinit,无任何鼠标槽,点击动作(文件/编辑)天然
+无效:新增 VX_menuBar_mousePressEvent(经 XMenuBar_actionAt 命中
+动作→XAction_trigger,triggered 桥接既有链路弹菜单);(2) 桥接
+槽 XMenu_popup(menu, NULL) 使菜单弹在屏幕 (0,0):改为按动作几何
+经 XWidget_mapToGlobal 映射全局位置(动作矩形左下)。实机验证:
+点文件→菜单弹出于文件正下方,"退出"项文字清晰可见,Esc/再点
+正常收起;全量回归真绿。
+
+**菜单项选择端到端验证通过(21:10)**:点文件→菜单弹出→点
+"退出"项→动作触发、演示进程正常退出(退出动作的预期行为)——
+菜单完整回路(开菜单→条目点击→动作触发)实机全通,与下拉框
+选择回路并列成为交互修复的两大闭环验证。
+
+**槽位下标静态核对闭环(21:58)**:以头文件枚举块逐级推算,全链
+真实槽位为 XObject 0-9(10 槽,含 Copy/Move/Deinit/Event/
+EventFilter/ChildEvent 等)、XWidget 10-33(24 槽,Paint=10、
+MousePress=25、Wheel=29、Change=32、ContextMenu=33,与虚表 dump
+完全吻合)、XFrame 0 新增(34=ScrollContentsBy)、ASA 34、AIV
+35=IndexAt、XListView/XComboPopupView END=36——即 IndexAt 名义
+槽位=35,弹层容量 36 内;14.115 的 size 维护根修使 INHERIT 按
+新 size(36)完整复制,弹层 data[35]=xlv_indexAt 成立,回归断言
+(popup-idx)持续锁死该路径。虚表审计正式闭环,无遗留动作。
+
+### 14.116 对齐边界盘点+扫描映射修复轮（2026-09-18 22:10 晚间单线程）
+
+**未映射类全量盘点（应"74 之外还有啥"之问）**:Qt widgets 源码树
+共 189 类,XGui 映射 74;未映射 115 类经分类归位九大类:GraphicsView
+体系 40、QStyleOption* 内省结构 28、委托/条目内部支撑 11、窗口框
+架增强 11(QMainWindow/MDI/Dock 等)、手势 8、杂项 8、布局系统 10、
+平台系统级 7、未归类 9——除未归类 9 外均属嵌入式设计边界
+(场景图/手势/主窗口框架/布局系统不在 XGui 承载范围)。
+
+**扫描器映射修复 3 项(映射类 74→77)**:
+- QLCDNumber→XLcdNumber:缩写类名(QLCD)不合名称约定(X+Qt 去 Q),
+  MANUAL_QT_TO_XGUI 显式映射;暴露 1 缺口 checkOverflow→查实
+  XLcdNumber 已有 checkOverflowInt/Double(语义化重载命名),登记
+  RENAMED 改名表(首次启用)后清零;
+- QDateEdit/QTimeEdit→XDateTimeEdit:Qt 中即 QDateTimeEdit 的
+  便捷子类,XGui 以同一实现类承载;暴露 2 真缺口 userDateChanged/
+  userTimeChanged(用户改期/改时信号,句柄从未存在也从未发射);
+
+**userDateChanged/userTimeChanged 实现**:XDateTimeEdit.h 补两
+信号声明,XDateTimeEdit.c 补句柄实现与 xdt_emitUserDate/UserTime
+发射助手,stepBy 用户步进路径按日期/时间部分是否变化分别发射
+(程序性 set 不发射,对标 Qt 语义)。重扫:映射类 77、缺口 0。
+全量回归真绿。
+
+**对齐边界结论**:未映射 112 类均属设计边界(场景图框架/内部
+结构/主窗口框架等),XGui 侧不再逐类对齐;后续新增控件按需个案
+评估(QDoubleSpinBox/QFontDialog 列为候选)。
+
+### 14.117 gui 域首次盘点轮（2026-09-18 22:15 晚间单线程）
+
+**对齐范围诚实盘点（应"全部比较过了吗"之问）**:既有扫描器
+QT_SRC 仅覆盖 qtbase/src/widgets——widgets 域 77 类逐 API 比较闭环
+（缺口 0）成立,但 XGui 的 Graphics/Application 子系统与 Qt 的
+qtbase/src/gui 从未系统对比。本批首跑 gui 域扫描:
+
+- **映射 45 类**（XImage/XPainter/XIcon/XMovie/XBitmap/XPixmap/
+  XTextDocument/XShortcut/XAccessible/XPlatformIntegration 等按
+  名称约定自动映射）；
+- **缺口 129（15 类）**,产出独立清单
+  docs/xgui-audit/2026-09-16/xgui-api-gaps-gui-v1.txt（widgets
+  主报告已恢复）。构成:QAccessible 无障碍框架 18、QImage 富 API
+  （convertTo/copy/QVariant 等）、QActionGroup 组策略 5、
+  QPlatformIntegration/Accessibility 平台接口、QShortcut/
+  QMovie/QPicture/QPixmap/QIcon 杂项;
+- 三分处置待后续轮次:①设计边界（QVariant 体系/内部钩子/
+  无障碍注册表——嵌入式豁免）②真实候选（QImage convertTo/
+  copy、QActionGroup 排斥策略等）③平台接口对齐
+  （XPlatformIntegration 已有实现,补 API 面）。
+
+**下轮建议**:gui 域 129 缺口三分处置;widgets 报告与 gui 报告
+今后分文件维护（扫描器输出路径固定,切换 QT_SRC 后需手动归档）。(EXAbstractItem
+View_IndexAt 在 XComboPopupView 虚表解析为空的机制,涉及所有
+"子类仅重载鼠标、依赖基类 IndexAt"的场景);XMenu 菜单弹出交互
+复验(同受益于本轮修复)。
+
 #### 14.102 续（saveState/restoreState 往返失败——待查项）
+
 
 
 
