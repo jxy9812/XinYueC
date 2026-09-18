@@ -224,7 +224,8 @@ XImage* XWidget_contentCacheImage(const XWidget* self);
  * @param      height 缓存高度（像素）。
  * @return     可直接绑定 XPainter 的缓存图像（借用）；分配失败返回 NULL。
  */
-XImage* XWidget_beginContentCache(XWidget* self, int width, int height);
+XImage* XWidget_beginContentCacheFormat(XWidget* self, int width, int height,
+                                        XImageFormat format);
 /**
  * @brief      标记控件内容缓存已与当前控件外观同步。
  * @details    通常在控件把自身内容画入 XWidget_beginContentCache 返回的

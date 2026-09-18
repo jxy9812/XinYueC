@@ -84,6 +84,7 @@
 #endif /* XCURSOR_ON */
 #include "XGraphicsEffect.h"
 
+
 #if XWIDGET_ON
 
 /* ==================== 内部常量与私有结构 ==================== */
@@ -4597,12 +4598,14 @@ XImage* XWidget_contentCacheImage(const XWidget* self)
     return self ? self->m_contentCache : NULL;
 }
 
-XImage* XWidget_beginContentCache(XWidget* self, int width, int height)
+XImage* XWidget_beginContentCacheFormat(XWidget* self, int width, int height,
+                                        XImageFormat format)
 {
     if (!self || width <= 0 || height <= 0) return NULL;
     if (self->m_contentCache &&
         XImage_width(self->m_contentCache) == width &&
-        XImage_height(self->m_contentCache) == height)
+        XImage_height(self->m_contentCache) == height &&
+        XImage_format(self->m_contentCache) == format)
         return self->m_contentCache;
     /* 尺寸变化时复用已有离屏缓存对象：XImage_reinit_ex 先构造临时图像
        再移动替换，失败时保留旧内容，且不会重置堆对象的内存方法/所有权
@@ -4610,8 +4613,7 @@ XImage* XWidget_beginContentCache(XWidget* self, int width, int height)
        并清掉堆标记）。 */
     if (self->m_contentCache) {
         self->m_contentCacheDirty = true;
-        if (!XImage_reinit_ex(self->m_contentCache, width, height,
-                              XImageFormat_ARGB32))
+        if (!XImage_reinit_ex(self->m_contentCache, width, height, format))
             return NULL;
         self->m_contentCacheDirty = true;
         return self->m_contentCache;
@@ -4619,8 +4621,7 @@ XImage* XWidget_beginContentCache(XWidget* self, int width, int height)
     self->m_contentCache = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self->m_contentCache)
         return NULL;
-    if (!XImage_reinit_ex(self->m_contentCache, width, height,
-                          XImageFormat_ARGB32)) {
+    if (!XImage_reinit_ex(self->m_contentCache, width, height, format)) {
         XImage_delete_base(self->m_contentCache);
         self->m_contentCache = NULL;
         return NULL;
@@ -4644,11 +4645,20 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
     bool drawn;
     if (!self || !target || width <= 0 || height <= 0 || !drawContent)
         return false;
-    cache = XWidget_contentCacheImage(self);
-    if (XWidget_contentCacheUsable(self, width, height) && cache &&
-        !XImage_isNull(cache))
-        return XPainter_drawImage(target, cache, x, y);
-    cache = XWidget_beginContentCache(self, width, height);
+    /* 缓存像素格式必须与目标设备一致：不一致时 drawImage 走逐像素
+       转换+混合慢路径（180x54 实测约 2ms/帧），同格式才命中按行
+       memcpy 快速路径。 */
+    {
+        XImageFormat targetFormat = XImageFormat_ARGB32;
+        if (target->m_image) targetFormat = XImage_format(target->m_image);
+        cache = XWidget_contentCacheImage(self);
+        if (XWidget_contentCacheUsable(self, width, height) && cache &&
+            !XImage_isNull(cache) &&
+            XImage_format(cache) == targetFormat)
+            return XPainter_drawImage(target, cache, x, y);
+        cache = XWidget_beginContentCacheFormat(self, width, height,
+                                                targetFormat);
+    }
     if (cache)
     {
         XPainter cachePainter;
@@ -4804,6 +4814,11 @@ static bool xwidget_renderSubtree(XWidget* self, XImage* target,
     XRegion_deinit(&region);
     return true;
 }
+
+double g_xgui_paintTreeMs = 0.0;
+double g_xgui_flushMs = 0.0;
+double g_xgui_rootPaintMs = 0.0;
+long g_xgui_flushCount = 0;
 
 void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 {
@@ -5261,3 +5276,4 @@ void XWidget_setWindowTitle_2(XWidget* self, const char* utf8)
 
 
 #endif /* XWIDGET_ON */
+

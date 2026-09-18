@@ -2036,12 +2036,12 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
 /**
  * @brief      软件光栅绘制图像（最近邻采样，支持变换）。
  */
-static bool painterRaster_blitImageSameFormat(XPainter* self,
-                                              const XImage* image,
-                                              int x, int y,
-                                              int width, int height,
-                                              uint8_t opacity,
-                                              XPainterCompositionMode mode)
+static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
+                                          int sx0, int sy0,
+                                          int dx0, int dy0,
+                                          int cw, int ch,
+                                          uint8_t opacity,
+                                          XPainterCompositionMode mode)
 {
     XImageFormat srcFormat;
     XImageFormat dstFormat;
@@ -2051,14 +2051,9 @@ static bool painterRaster_blitImageSameFormat(XPainter* self,
     int dstBpl;
     int destW;
     int destH;
-    int sx0;
-    int sy0;
-    int dx0;
-    int dy0;
-    int cw;
-    int ch;
     int sy;
     if (!self || !self->m_image || !image) return false;
+    if (cw <= 0 || ch <= 0) return true;
     if (mode != XPainterCompositionMode_Source &&
         (mode != XPainterCompositionMode_SourceOver || opacity != 255u))
         return false;
@@ -2087,14 +2082,13 @@ static bool painterRaster_blitImageSameFormat(XPainter* self,
     dstBpl = XImage_bytesPerLine(self->m_image);
     destW = XImage_width(self->m_image);
     destH = XImage_height(self->m_image);
-    if (srcBpl < width * 4 || dstBpl < destW * 4) return false;
-    sx0 = 0; sy0 = 0; dx0 = x; dy0 = y;
-    cw = width; ch = height;
-    if (dx0 < 0) { sx0 = -dx0; cw += dx0; dx0 = 0; }
-    if (dy0 < 0) { sy0 = -dy0; ch += dy0; dy0 = 0; }
+    /* 与目标图像边界求交（源偏移同步平移，保证字节偏移不越界）。 */
+    if (dx0 < 0) { sx0 -= dx0; cw += dx0; dx0 = 0; }
+    if (dy0 < 0) { sy0 -= dy0; ch += dy0; dy0 = 0; }
     if (dx0 + cw > destW) cw = destW - dx0;
     if (dy0 + ch > destH) ch = destH - dy0;
     if (cw <= 0 || ch <= 0) return true;
+    if (srcBpl < (sx0 + cw) * 4 || dstBpl < (dx0 + cw) * 4) return false;
     for (sy = 0; sy < ch; ++sy)
     {
         const uint32_t* srcRow = (const uint32_t*)(src +
@@ -2105,6 +2099,35 @@ static bool painterRaster_blitImageSameFormat(XPainter* self,
             srcFormat == dstFormat)
         {
             XMemcpy(dstRow, srcRow, (size_t)cw * 4u);
+            continue;
+        }
+        /* 预乘 SourceOver 紧致混合循环（对标 Qt raster 的 blend 覆盖：
+           0/255 alpha 快速分支 + 中间 alpha 整数混合）。半透明源此前
+           逐像素退化为 putPixel 函数调用（180x54 实测约 2ms/帧）。 */
+        if (mode == XPainterCompositionMode_SourceOver &&
+            srcFormat == XImageFormat_ARGB32_Premultiplied &&
+            dstFormat == XImageFormat_ARGB32_Premultiplied)
+        {
+            int px;
+            for (px = 0; px < cw; ++px)
+            {
+                uint32_t s = srcRow[px];
+                uint32_t sa = (s >> 24u) & 0xffu;
+                if (sa == 255u)
+                    dstRow[px] = s;
+                else if (sa != 0u)
+                {
+                    uint32_t ia = 255u - sa;
+                    uint32_t d = dstRow[px];
+                    uint32_t dr = (((d >> 16u) & 0xffu) * ia + 127u) / 255u;
+                    uint32_t dg = (((d >> 8u) & 0xffu) * ia + 127u) / 255u;
+                    uint32_t db = ((d & 0xffu) * ia + 127u) / 255u;
+                    uint32_t r = ((s >> 16u) & 0xffu) + dr;
+                    uint32_t g = ((s >> 8u) & 0xffu) + dg;
+                    uint32_t b = (s & 0xffu) + db;
+                    dstRow[px] = 0xff000000u | (r << 16u) | (g << 8u) | b;
+                }
+            }
             continue;
         }
         {
@@ -2131,6 +2154,17 @@ static bool painterRaster_blitImageSameFormat(XPainter* self,
         }
     }
     return true;
+}
+
+/* 整图 blit：区域版以源 (0,0) 起点、目标 (x,y) 调用。 */
+static bool painterRaster_blitImageSameFormat(XPainter* self, const XImage* image,
+                                              int x, int y,
+                                              int width, int height,
+                                              uint8_t opacity,
+                                              XPainterCompositionMode mode)
+{
+    return painterRaster_blitImageRegion(self, image, 0, 0, x, y,
+                                         width, height, opacity, mode);
 }
 
 static bool painterRaster_drawImage(XPainter* self, const XImage* image,
@@ -2197,27 +2231,51 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
     if (!painterEffectiveTransform(state, &transform))
         return false;
     opacity = painterOpacityByte(state->m_opacity);
-    if (painterMatrixIsIdentity(&transform))
+    /* 恒等或整数平移 + 矩形裁剪：按行 memcpy 快速 blit（对标 Qt raster
+       引擎对平移贴图的 aligned-blit 路径）。此前仅"恒等且无裁剪"才走
+       blit，而控件 paintEvent 普遍 translate 到自身位置并裁剪到脏区，
+       导致缓存图贴图全部落入逐像素 putPixel 循环（180x54 约 2ms）。 */
+    float tx = 0.0f;
+    float ty = 0.0f;
+    if (painterMatrixIsIdentity(&transform) ||
+        painterMatrixTranslation(&transform, &tx, &ty))
     {
-        int sy;
+        int bx = x + (int)tx;
+        int by = y + (int)ty;
+        int cw = width;
+        int ch = height;
+        int sx0 = 0;
+        int sy0 = 0;
+        int fastBlit = 1;
 #if XPAINTER_CLIP_ON
-        if (!state->m_hasClip &&
-            painterRaster_blitImageSameFormat(self, image, x, y, width, height,
-                                              opacity,
-                                              state->m_compositionMode))
-            return true;
-#else
-        if (painterRaster_blitImageSameFormat(self, image, x, y, width, height,
-                                              opacity,
-                                              state->m_compositionMode))
-            return true;
-#endif
-        for (sy = 0; sy < height; ++sy)
+        if (state->m_hasClip)
         {
-            int sx;
-            for (sx = 0; sx < width; ++sx)
-                painterRaster_putPixel(self, x + sx, y + sy,
-                    painterApplyOpacityByte(XImage_pixel(image, sx, sy), opacity));
+            int cx0 = state->m_clipRect.x;
+            int cy0 = state->m_clipRect.y;
+            int cx1 = cx0 + state->m_clipRect.width;
+            int cy1 = cy0 + state->m_clipRect.height;
+            if (bx < cx0) { sx0 = cx0 - bx; cw -= sx0; bx = cx0; }
+            if (by < cy0) { sy0 = cy0 - by; ch -= sy0; by = cy0; }
+            if (bx + cw > cx1) cw = cx1 - bx;
+            if (by + ch > cy1) ch = cy1 - by;
+        }
+#endif /* XPAINTER_CLIP_ON */
+        if (cw > 0 && ch > 0 &&
+            painterRaster_blitImageRegion(self, image, sx0, sy0, bx, by,
+                                          cw, ch, opacity,
+                                          state->m_compositionMode))
+            return true;
+        /* 逐像素兜底：不透明度 <255、非 Source 系合成或多矩形裁剪等。 */
+        {
+            int sy;
+            for (sy = 0; sy < height; ++sy)
+            {
+                int sx;
+                for (sx = 0; sx < width; ++sx)
+                    painterRaster_putPixel(self, bx + sx, by + sy,
+                        painterApplyOpacityByte(XImage_pixel(image, sx, sy),
+                                                opacity));
+            }
         }
         return true;
     }
