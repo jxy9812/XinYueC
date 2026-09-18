@@ -295,17 +295,20 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
 
 /* ==================== 虚槽实现（对标 QRadioButton 保护钩子） ==================== */
 
-/** @brief 重载 hitButton 保护槽：indicator 外接矩形命中。 */
+/** @brief 重载 hitButton 保护槽：indicator + 标签整体命中
+ *         （对标 QRadioButton::hitButton 的 SE_RadioButtonClickRect =
+ *           SE_RadioButtonFocusRect | SE_RadioButtonIndicator）。
+ *         此前只命中最左 13px 竖条——点可见圆环/文字都无反应。 */
 static bool VXRadioButton_hitButton(const XAbstractButton* base,
                                     const XPoint* pos)
 {
     const XRadioButton* self = (const XRadioButton*)base;
-    XRect ind;
+    XRect click;
 
     if (!self || !pos)
         return false;
-    ind = radiobutton_indicatorRect(self);
-    return XRect_contains(&ind, pos->x, pos->y);
+    click = XWidget_rect((const XWidget*)self);
+    return XRect_contains(&click, pos->x, pos->y);
 }
 
 /** @brief 重载 ContentChanged 保护槽：文本/图标变化后刷新本类 sizeHint。 */

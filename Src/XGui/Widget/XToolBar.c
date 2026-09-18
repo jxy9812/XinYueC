@@ -472,8 +472,21 @@ int XToolBar_iconSize(const XToolBar* self)
 
 void XToolBar_setToolButtonStyle(XToolBar* self, int style)
 {
+    int64_t i;
+    int64_t n;
     if (!self || self->m_buttonStyle == style) return;
     self->m_buttonStyle = style;
+    /* 同步既有按钮（对标 QToolBar::setToolButtonStyle 更新全部按钮）。 */
+    if (self->m_buttons) {
+        n = XVector_size_base((const XContainer*)self->m_buttons);
+        for (i = 0; i < n; ++i) {
+            XToolButton** btn =
+                (XToolButton**)XVector_at_base(self->m_buttons, i);
+            if (btn && *btn)
+                XToolButton_setToolButtonStyle(*btn,
+                    (XToolButtonStyle)style);
+        }
+    }
     xtb_emitVoid(self, (size_t)XToolBar_toolButtonStyleChanged_signal,
                  style);
 }
@@ -516,6 +529,10 @@ static void xtb_insertAt(XToolBar* self, int index, XAction* action,
         button = XToolButton_create(self, 0);
         if (button) {
             const XString* atext;
+            /* 工具栏按钮样式下发（对标 QToolBar 创建按钮时应用
+             * toolButtonStyle）：默认 IconOnly 且无图标会画成空框。 */
+            XToolButton_setToolButtonStyle(button,
+                (XToolButtonStyle)self->m_buttonStyle);
             XToolButton_setDefaultAction(button, action);
             atext = XAction_text_const(action);
             if (atext && XString_length_base(atext) > 0) {

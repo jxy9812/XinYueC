@@ -1936,20 +1936,52 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
     if (!painterEffectiveTransform(state, &transform))
         return false;
     effective = painterApplyOpacity(color, state->m_opacity);
-    if (painterMatrixIsIdentity(&transform)
-#if XPAINTER_CLIP_ON
-        && !state->m_hasClip
-#endif /* XPAINTER_CLIP_ON */
-        && !painterPatternActive(self)
-       )
+    /* 纯色不透明填充的 span 快速路径：恒等/纯平移变换 + 单矩形裁剪
+       （或无裁剪）时用“填充矩形 ∩ 裁剪盒”直接整块填充，避免逐像素
+       逆映射与合成。多矩形裁剪区域仍走下方逐像素路径（由 putPixel
+       的区域判定兜底）。 */
     {
-        if (state->m_compositionMode == XPainterCompositionMode_Source ||
+        bool simpleTransform = painterMatrixIsIdentity(&transform);
+        float tx = 0.0f;
+        float ty = 0.0f;
+        if (!simpleTransform &&
+            painterMatrixTranslation(&transform, &tx, &ty))
+            simpleTransform = true;
+        if (simpleTransform && !painterPatternActive(self))
+    {
+        bool spanFill =
+            state->m_compositionMode == XPainterCompositionMode_Source ||
             (state->m_compositionMode == XPainterCompositionMode_SourceOver &&
-             ((effective >> 24) == 255u)))
+             ((effective >> 24) == 255u));
+#if XPAINTER_CLIP_ON
+        if (spanFill && state->m_hasClip)
         {
-            XImage_fillRect(self->m_image, rect, effective);
+#if XPAINTER_CLIP_REGION_ON
+            /* setClipRect 维护的区域恒为单矩形且等于 m_clipRect；
+               setClipRegion 的多矩形区域退回逐像素路径。 */
+            spanFill = state->m_clipRegion.count <= 1;
+#else
+            spanFill = true;
+#endif /* XPAINTER_CLIP_REGION_ON */
+        }
+#endif /* XPAINTER_CLIP_ON */
+        if (spanFill)
+        {
+            XRect target = *rect;
+            if (tx != 0.0f || ty != 0.0f)
+            {
+                target.x += (int)tx;
+                target.y += (int)ty;
+            }
+#if XPAINTER_CLIP_ON
+            if (state->m_hasClip)
+                target = XRect_intersected(&target, &state->m_clipRect);
+#endif /* XPAINTER_CLIP_ON */
+            if (target.width > 0 && target.height > 0)
+                XImage_fillRect(self->m_image, &target, effective);
             return true;
         }
+    }
     }
     if (!painterMapRectCorners(&transform, rect,
                                &minX, &minY, &maxX, &maxY))
@@ -1960,6 +1992,21 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
     py0 = painterFloorClamp(minY, XImage_height(self->m_image) - 1);
     px1 = painterCeilClamp(maxX, XImage_width(self->m_image));
     py1 = painterCeilClamp(maxY, XImage_height(self->m_image));
+#if XPAINTER_CLIP_ON
+    /* 裁剪激活时先把扫描范围收缩到裁剪包围盒（设备坐标）：多矩形区域
+       仍由 putPixel 的逐像素判定兜底，包围盒收缩只少不漏。对标 Qt
+       raster 引擎按裁剪盒截取填充扫描，大矩形填充不再对裁剪外像素
+       做逆映射与成员判定。 */
+    if (state->m_hasClip)
+    {
+        int cx1 = state->m_clipRect.x + state->m_clipRect.width;
+        int cy1 = state->m_clipRect.y + state->m_clipRect.height;
+        if (px0 < state->m_clipRect.x) px0 = state->m_clipRect.x;
+        if (py0 < state->m_clipRect.y) py0 = state->m_clipRect.y;
+        if (px1 > cx1) px1 = cx1;
+        if (py1 > cy1) py1 = cy1;
+    }
+#endif /* XPAINTER_CLIP_ON */
     {
         int py;
         for (py = py0; py < py1; ++py)

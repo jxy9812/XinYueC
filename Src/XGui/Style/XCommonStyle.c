@@ -166,6 +166,22 @@ static void xcs_drawTextInRect(XPainter* painter, const XRect* rect,
 #endif
 }
 
+/** @brief 矩形内垂直居中绘制单行文本（对标 Qt AlignLeft|AlignVCenter）。 */
+static void xcs_drawTextInRectVCenter(XPainter* painter, const XRect* rect,
+                                      const char* text, uint32_t color)
+{
+#if XPAINTER_TEXTLAYOUT_ON
+    XPainter_drawTextRect(painter, rect,
+                          XPAINTER_TEXT_ALIGN_VCENTER |
+                              XPAINTER_TEXT_ALIGN_LEFT |
+                              XPAINTER_TEXT_SINGLE_LINE,
+                          text, color);
+#else
+    XPainter_drawText(painter, rect->x + 2,
+                      rect->y + rect->height - 6, text, color);
+#endif
+}
+
 /** @brief 绘制普通边框（PE_Frame）。 */
 static void xcs_drawFrame(XStyle* self, const XStyleOption* option,
                           XPainter* painter)
@@ -296,21 +312,29 @@ static void xcs_drawIndicatorRadioButton(XStyle* self,
     cy = r.y + r.height / 2;
     rad = (r.width < r.height ? r.width : r.height) / 2;
     /* 圆底 + 圆边框 + 内点（drawEllipse 完整复刻；SHAPE 裁剪时
-       逐行填充回退，与关闭形状时的既有裁剪行为一致）。 */
-    XPainter_fillRect(painter, &r, base);
+       逐行填充回退，与关闭形状时的既有裁剪行为一致）。
+       对标 QFusionStyle PE_IndicatorRadioButton：环为不填充的
+       ellipse 描边（画笔色=fg），选中点为填充小圆（半径约环的
+       43%，Qt 用 outlineRadius/2.32），不再整块填 Base/方点。 */
+    XPainter_setPen(painter, fg);
+    XPainter_setBrush(painter, base);
 #if XPAINTER_SHAPE_ON
     {
         XRect circle;
         XRect_init(&circle, cx - rad, cy - rad, rad * 2, rad * 2);
         XPainter_drawEllipse(painter, &circle);
     }
+    XPainter_setBrush(painter, fg);
     if (on) {
-        int rr = rad / 3;
-        XRect dot;
-        XRect_init(&dot, cx - rr, cy - rr, rr * 2, rr * 2);
-        XPainter_drawEllipse(painter, &dot);
-        XPainter_fillRect(painter, &dot, fg);
+        int rr = rad * 43 / 100;
+        if (rr < 1) rr = 1;
+        {
+            XRect dot;
+            XRect_init(&dot, cx - rr, cy - rr, rr * 2, rr * 2);
+            XPainter_drawEllipse(painter, &dot);
+        }
     }
+    XPainter_setBrush(painter, 0u);
 #else
     {
         int i;
@@ -321,7 +345,8 @@ static void xcs_drawIndicatorRadioButton(XStyle* self,
                 &(XRect){cx - hw, cy - rad + i, hw * 2 + 1, 1}, fg);
         }
         if (on) {
-            int rr = rad / 3;
+            int rr = rad * 43 / 100;
+            if (rr < 1) rr = 1;
             for (i = 0; i < rr * 2 + 1; ++i) {
                 int hw = (int)(0.8 * (rr - i));
                 if (hw < 1) hw = 1;
@@ -543,6 +568,7 @@ static void xcs_drawCheckable(XStyle* self, int ce,
     indRect.width = indW;
     indRect.height = indW;
     if (indRect.y < option->m_rect.y) indRect.y = option->m_rect.y;
+    ind.m_rect = indRect;   /* 指示器子矩形：此前漏赋值，圆环画到了整按钮中心。 */
     if (ce == XStyleCE_CheckBox) {
         ind.m_type = XStylePE_IndicatorCheckBox;
         xcs_drawIndicatorCheckBox(self, &ind, painter);
@@ -556,7 +582,8 @@ static void xcs_drawCheckable(XStyle* self, int ce,
         labelRect.width -= indW + spacing;
         textColor = option->m_textColor;
         if (textColor == 0) textColor = xcs_buttonText(option);
-        xcs_drawTextInRect(painter, &labelRect, option->m_text, textColor);
+        xcs_drawTextInRectVCenter(painter, &labelRect, option->m_text,
+                                  textColor);
     }
 }
 

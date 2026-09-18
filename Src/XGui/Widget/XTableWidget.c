@@ -9,6 +9,7 @@
 #include "XWidget_Protected.h"
 #include "XEvent.h"
 #include "XPainter.h"
+#include "XWindowEvent.h"
 #include <stdio.h>
 
 #if XTABLEWIDGET_ON
@@ -37,6 +38,8 @@ static int xtw_colX(const XTableWidget* self, int col);
 /** @brief 滚动偏移（visualItemRect 使用；实现见渲染与交互节）。 */
 static int xtw_vOffset(const XTableWidget* self);
 static int xtw_hOffset(const XTableWidget* self);
+/** @brief 按当前行列尺寸同步滚动范围（对标 QTableViewPrivate::updateScrollBars）。 */
+static void xtw_updateContentSize(XTableWidget* self);
 /** @brief 确保垂直表头指针数组容量（新增区域清零）。 */
 static bool xtw_ensureVHeaders(XTableWidget* self, int count);
 /** @brief 挂载部件表：按 (row,col) 查找条目下标；无则返回 -1。 */
@@ -399,6 +402,7 @@ void XTableWidget_setRowCount(XTableWidget* self, int rows)
     if (rows < self->m_rows) xtw_cwTruncateRows(self, rows); /* 收缩：解除越界挂载。 */
     self->m_rows = rows;
     if (self->m_base.m_base.m_currentRow >= rows) self->m_base.m_base.m_currentRow = rows - 1;
+    xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -422,6 +426,7 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
     if (columns < self->m_columns) xtw_cwTruncateColumns(self, columns); /* 收缩：解除越界挂载。 */
     self->m_columns = columns;
     if (self->m_base.m_base.m_currentColumn >= columns) self->m_base.m_base.m_currentColumn = columns - 1;
+    xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -441,6 +446,7 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
     self->m_cells[row] = xtw_newRow(self->m_base.m_colCapacity);
     self->m_rows++;
     xtw_cwOnRowInserted(self, row); /* 挂载表随行号平移。 */
+    xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -453,6 +459,7 @@ void XTableWidget_insertColumn(XTableWidget* self, int column)
     self->m_columns++;
     xtw_ensureCols(self, self->m_columns);
     xtw_cwOnColumnInserted(self, column); /* 挂载表随列号平移。 */
+    xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -472,6 +479,7 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
     }
     self->m_rows--;
     xtw_cwOnRowRemoved(self, row); /* 挂载表随行号平移/解除。 */
+    xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -483,6 +491,7 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
     if (!self || column < 0 || column >= self->m_columns) return;
     self->m_columns--;
     xtw_cwOnColumnRemoved(self, column); /* 挂载表随列号平移/解除。 */
+    xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -847,16 +856,36 @@ void XTableWidget_clearContents(XTableWidget* self)
 
 void XTableWidget_scrollToItem(XTableWidget* self, int row, int column)
 {
-    /* 简化：滚动条值按单元格位置换算（首个参数对齐 Qt ScrollHint）。 */
+    /* EnsureVisible 语义（对标 QTableWidget::scrollToItem 默认提示）：
+       目标行已完整可见则不动；否则最小滚动使其贴视口顶/底，并把
+       偏移钳位到内容范围内。此前直接把 vo 设为 row*rowHeight，目标
+       行被顶到视口顶部、上一行压进表头带。 */
     XScrollBar* vbar;
-    int y;
+    int viewportH;
+    int rowTop;
+    int rowBottom;
+    int maxVo;
+    int vo;
+    (void)column;
     if (!self || row < 0) return;
     vbar = XAbstractScrollArea_verticalScrollBar(
         (XAbstractScrollArea*)self);
     if (!vbar) return;
-    y = self->m_headerHeight + row * self->m_base.m_rowHeight;
-    XAbstractSlider_setValue((XAbstractSlider*)vbar,
-                             y - self->m_headerHeight);
+    viewportH = XWidget_height((XWidget*)self) - self->m_headerHeight;
+    if (viewportH <= 0) return;
+    rowTop = self->m_headerHeight + row * self->m_base.m_rowHeight;
+    rowBottom = rowTop + self->m_base.m_rowHeight;
+    vo = xtw_vOffset(self);
+    if (rowBottom - vo > XWidget_height((XWidget*)self))
+        vo = rowBottom - XWidget_height((XWidget*)self);
+    if (rowTop - vo < self->m_headerHeight)
+        vo = rowTop - self->m_headerHeight;
+    /* 滚动条范围由内容尺寸驱动，是可滚范围的权威表达：内容不满时
+       max=0，本函数收敛为空操作（对标 Qt value 恒在 [0, max] 内）。 */
+    maxVo = XAbstractSlider_maximum((XAbstractSlider*)vbar);
+    if (vo > maxVo) vo = maxVo;
+    if (vo < 0) vo = 0;
+    XAbstractSlider_setValue((XAbstractSlider*)vbar, vo);
 }
 
 /* ==================== 便捷族（对标 QTableWidget 便捷接口） ==================== */
@@ -1265,6 +1294,23 @@ static int xtw_hOffset(const XTableWidget* self)
     return bar ? XAbstractSlider_value((XAbstractSlider*)bar) : 0;
 }
 
+/** @brief 按当前行列尺寸同步滚动范围。
+ *  @details 内容 = 表头带 + 全部行高 / 行号列 + 全部列宽。此前从不
+ *           上报内容尺寸：滚动条按需隐藏，但范围停留在默认 0..99，
+ *           滚轮仍可把内容滚出视口（内容未满也滚动、无滚动条可滚）。 */
+static void xtw_updateContentSize(XTableWidget* self)
+{
+    int w;
+    int h;
+    int i;
+    if (!self) return;
+    h = self->m_headerHeight + self->m_rows * self->m_base.m_rowHeight;
+    w = self->m_headerWidth;
+    for (i = 0; i < self->m_columns; ++i)
+        w += self->m_base.m_colWidths[i];
+    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)self, w, h);
+}
+
 /** @brief 绘制：表头 → 网格 → 单元格文本 → 选中高亮 → 当前框。 */
 static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
 {
@@ -1272,6 +1318,8 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     XPainter painter;
     XImage* image;
     XPoint offset;
+    XRect dirty;
+    XRect dataClip;
     uint32_t base;
     uint32_t dark;
     uint32_t light;
@@ -1308,9 +1356,18 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     button = xtw_color(tw, XPaletteColorRole_Button);
     vo = xtw_vOffset(tw);
     ho = xtw_hOffset(tw);
-    /* 1) 底色。 */
-    XPainter_fillRect(&painter,
-        &(XRect){0, 0, w, h}, base);
+    /* 脏区裁剪（对标 Qt drawWidget 的 systemClip）：非 PAINT 入口
+       （repaint/grab）按整控件处理。稳态小脏区刷新不再全表重绘。 */
+    if (XEvent_type(event) == XEVENT_TYPE_PAINT)
+        dirty = XPaintEvent_rect((const XPaintEvent*)event);
+    else
+        XRect_init(&dirty, 0, 0, w, h);
+#if XPAINTER_CLIP_ON
+    XPainter_setClipRect(&painter, &dirty,
+                         XPainterClipOperation_ReplaceClip);
+#endif /* XPAINTER_CLIP_ON */
+    /* 1) 底色（裁剪已把填充限制在脏区内）。 */
+    XPainter_fillRect(&painter, &dirty, base);
     /* 2) 水平表头。 */
     XPainter_fillRect(&painter,
         &(XRect){0, 0, w, tw->m_headerHeight}, button);
@@ -1349,17 +1406,21 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
         XPainter_drawLine(&painter, cx + cw - 1, 0,
                           cx + cw - 1, tw->m_headerHeight - 1);
     }
-    /* 3) 垂直表头 + 网格 + 单元格。 */
+    /* 3) 数据区：裁剪到表头带之下——滚出视口顶的行（部分行）只画
+       出表头以下部分，不得覆盖表头文字（对标 Qt 表头/内容分域）。 */
+    XRect_init(&dataClip, 0, tw->m_headerHeight, w,
+               h - tw->m_headerHeight);
+#if XPAINTER_CLIP_ON
+    if (dataClip.height > 0)
+        XPainter_setClipRect(&painter, &dataClip,
+                             XPainterClipOperation_IntersectClip);
+#endif /* XPAINTER_CLIP_ON */
+    if (dataClip.height > 0) {
     for (row = 0; row < tw->m_rows; ++row) {
         int cy = tw->m_headerHeight + row * tw->m_base.m_rowHeight - vo;
         XTableWidgetItem* vItem;
         if (cy + tw->m_base.m_rowHeight < tw->m_headerHeight || cy > h) continue;
         vItem = NULL;
-        XPainter_fillRect(&painter,
-            &(XRect){0, cy, tw->m_headerWidth, tw->m_base.m_rowHeight}, button);
-        XPainter_drawText(&painter, 4, cy + tw->m_base.m_rowHeight - 8,
-                          XTableWidget_verticalHeaderItem(tw, row),
-                          windowText);
         for (col = 0; col < tw->m_columns; ++col) {
             XTableWidgetItem* cell = xtw_cell(tw, row, col);
             int cx = xtw_colX(tw, col) - ho;
@@ -1395,8 +1456,16 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
                                   cellRect.y + cellRect.height - 1);
             }
         }
+        /* 垂直表头在单元格之后绘制：横向滚动时单元格平移不会盖住
+           行号列（行号列钉在内容区左缘，对标 Qt 表头子控件层级）。 */
+        XPainter_fillRect(&painter,
+            &(XRect){0, cy, tw->m_headerWidth, tw->m_base.m_rowHeight}, button);
+        XPainter_drawText(&painter, 4, cy + tw->m_base.m_rowHeight - 8,
+                          XTableWidget_verticalHeaderItem(tw, row),
+                          windowText);
         XPainter_drawLine(&painter, 0, cy + tw->m_base.m_rowHeight - 1,
                           tw->m_headerWidth - 1, cy + tw->m_base.m_rowHeight - 1);
+    }
     }
     XPainter_end(&painter);
     XPainter_deinit(&painter);

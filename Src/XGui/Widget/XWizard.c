@@ -371,6 +371,9 @@ typedef enum XWizardNavDirection
     XWizardNavDirection_Forward = 1   /**< 前进/跳转/重启进入目标页。 */
 } XWizardNavDirection;
 
+static int xwiz_bannerHeight(const XWizard* self);
+static void xwiz_layoutCurrentPage(XWizard* self);
+
 /**
  * @brief      切换到指定页面（隐藏旧页、触发虚槽、显示新页、更新按钮、
  *             发射 currentIdChanged）。
@@ -406,18 +409,14 @@ static void xwiz_switchTo(XWizard* self, int index,
         }
     }
     if (newPage) {
-        XRect r;
         if (!newPage->m_initialized) {
             newPage->m_initialized = true;
             XWizardPage_initializePage(newPage);
         }
         XWidget_setVisible((XWidget*)newPage, true);
-        XRect_init(&r, 0, 0,
-                   XWidget_width((XWidget*)self),
-                   XWidget_height((XWidget*)self) - 40);
-        XWidget_setGeometryRect((XWidget*)newPage, &r);
     }
     self->m_currentIndex = index;
+    xwiz_layoutCurrentPage(self);
     self->m_visited[index] = true;
     xwiz_updateButtons(self);
     xwiz_emitInt(self, (size_t)XWizard_currentIdChanged_signal, index);
@@ -453,6 +452,44 @@ static void xwiz_btnHelpSlot(XObject* receiver, XVarList* args)
 #endif
 
 /* ==================== XWizard 生命周期与虚表 ==================== */
+
+static void VX_wizard_paintEvent(XWidget* self, XEvent* event);
+
+/** @brief 当前横幅高度：当前页有副标题时两行（56），否则单行（32）。
+ *  @note  对标 QWizard ModernStyle 横幅（标题 + 副标题随内容伸缩）。 */
+static int xwiz_bannerHeight(const XWizard* self)
+{
+    XWizardPage* page;
+    if (!self || self->m_currentIndex < 0 ||
+        self->m_currentIndex >= self->m_pageCount)
+        return 32;
+    page = self->m_pages[self->m_currentIndex];
+    if (page) {
+        const char* sub = XWizardPage_subTitle(page);
+        if (sub && sub[0]) return 56;
+    }
+    return 32;
+}
+
+/** @brief 当前页几何 = 横幅之下、底部按钮带（40）之上。
+ *  @details 此前页面从 y=0 起盖住横幅区，页面内容（子控件）与横幅
+ *           标题叠印（demo "Step 1" 标签压在横幅标题上呈 "Stepp1"）。 */
+static void xwiz_layoutCurrentPage(XWizard* self)
+{
+    XRect r;
+    int bannerH;
+    int pageH;
+    if (!self || self->m_currentIndex < 0 ||
+        self->m_currentIndex >= self->m_pageCount)
+        return;
+    if (!self->m_pages[self->m_currentIndex]) return;
+    bannerH = xwiz_bannerHeight(self);
+    pageH = XWidget_height((XWidget*)self) - bannerH - 40;
+    if (pageH < 1) pageH = 1;
+    XRect_init(&r, 0, bannerH, XWidget_width((XWidget*)self), pageH);
+    XWidget_setGeometryRect((XWidget*)self->m_pages[self->m_currentIndex],
+                            &r);
+}
 
 static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
 {
@@ -496,13 +533,19 @@ static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
     r.height = XWidget_height(self);
     /* 白色背景。 */
     XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
-    /* 顶部标题栏。 */
+    /* 顶部标题栏（有副标题时两行，对标 QWizard 横幅结构）。 */
     page = XWizard_currentPage(wiz);
     if (page) {
-        XRect head = { 0, 0, r.width, 32 };
+        int bannerH = xwiz_bannerHeight(wiz);
+        XRect head = { 0, 0, r.width, bannerH };
+        const char* sub;
         XPainter_fillRect(&painter, &head, highlight);
         XSnprintf(buf, sizeof(buf), "%s", XWizardPage_title(page));
-        XPainter_drawText(&painter, 8, 20, buf, 0xFFFFFFFFu);
+        XPainter_drawText(&painter, 8, bannerH - (bannerH >= 56 ? 34 : 12),
+                          buf, 0xFFFFFFFFu);
+        sub = XWizardPage_subTitle(page);
+        if (sub && sub[0])
+            XPainter_drawText(&painter, 8, bannerH - 12, sub, 0xFFD8E8F8u);
     }
     /* 底部分隔线。 */
     {
@@ -596,13 +639,7 @@ static void VX_wizard_resizeEvent(XWidget* self, XEvent* event)
     XWizard* wiz = (XWizard*)self;
     if (!wiz || !event) return;
     xwiz_layoutButtons(wiz);
-    if (wiz->m_currentIndex >= 0 && wiz->m_currentIndex < wiz->m_pageCount) {
-        /* 当前页随新尺寸重排（与 xwiz_switchTo 同口径：高 -40 留按钮带）。 */
-        XRect r;
-        XRect_init(&r, 0, 0, XWidget_width(self), XWidget_height(self) - 40);
-        XWidget_setGeometryRect((XWidget*)wiz->m_pages[wiz->m_currentIndex],
-                                &r);
-    }
+    xwiz_layoutCurrentPage(wiz);
     XClass_Parent(XWidget, EXWidget_ResizeEvent,
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }

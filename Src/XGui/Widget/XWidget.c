@@ -2204,6 +2204,16 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
             XLayout_activate(self->m_layout);
 #endif /* XLAYOUT_ON */
     }
+    /* 新旧矩形一并失效（对标 Qt setGeometry_sys 的双失效语义）：
+       控件移动/缩放后，旧位置像素由父层背景重绘，不再留下残影。
+       此前只发事件不失效旧区域——按钮重排后旧位置文字长期残留。 */
+    {
+        XWidget* parent = XWidget_parentWidget(self);
+        if (parent) {
+            XRect dirty = XRect_united(&old, &self->m_windowRect);
+            XWidget_updateRect(parent, &dirty);
+        }
+    }
 }
 
 /** @brief 若为顶层且桥接窗口存在，同步平台窗口几何。 */

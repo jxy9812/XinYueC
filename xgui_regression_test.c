@@ -24876,7 +24876,8 @@ static void test_radiobutton_contract(void)
     XRadioButton first;
     XRadioButton second;
     XPoint inside = { 6, 11 };
-    XPoint outside = { 80, 11 };
+    XPoint onLabel = { 80, 11 };
+    XPoint outside = { 119, 25 };  /* y=25 超出 22 高（contains 右/下开区间） */
     memset(&parent, 0, sizeof(parent));
     memset(&first, 0, sizeof(first));
     memset(&second, 0, sizeof(second));
@@ -24888,8 +24889,9 @@ static void test_radiobutton_contract(void)
     expect_true(XRadioButton_isCheckable(&first) &&
                 XRadioButton_autoExclusive(&first) &&
                 XRadioButton_hitButton(&first, &inside) &&
+                XRadioButton_hitButton(&first, &onLabel) &&
                 !XRadioButton_hitButton(&first, &outside),
-                "XRadioButton 默认互斥且只命中 indicator");
+                "XRadioButton 默认互斥且命中区含标签（SE_RadioButtonClickRect）");
     XRadioButton_setChecked(&first, true);
     XRadioButton_setChecked(&second, true);
     expect_true(!XRadioButton_isChecked(&first) &&
@@ -27961,6 +27963,38 @@ static void test_plaintextedit_contract(void)
     text = XPlainTextEdit_toPlainText(edit);
     pe_expect(text != NULL && text[0] == '\0', "clear 后空文本");
     if (text) XFree_System(text);
+
+    /* UTF-8 码点边界：Backspace/Delete/左右键必须整码点操作。
+       此前按单字节删除中文，残缺 UTF-8 序列渲染成空白且光标测宽
+       错位（表现为光标"反方向"跳动）。 */
+    {
+        XKeyEvent ke;
+        XPlainTextEdit_setPlainText(edit, "多行");
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_End, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        pe_expect(XPlainTextEdit_cursorColumn(edit) == 6,
+                  "End 定位到行尾（UTF-8 字节偏移）");
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Backspace, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        pe_expect(XPlainTextEdit_cursorColumn(edit) == 3,
+                  "Backspace 整码点回退（3 字节中文）");
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Delete, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        pe_expect(XPlainTextEdit_cursorColumn(edit) == 3,
+                  "Delete 整码点前删且光标不动");
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Left, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        pe_expect(XPlainTextEdit_cursorColumn(edit) == 0,
+                  "Left 整码点左移到行首");
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Right, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        pe_expect(XPlainTextEdit_cursorColumn(edit) == 3,
+                  "Right 整码点右移");
+        text = XPlainTextEdit_toPlainText(edit);
+        pe_expect(text != NULL && strcmp(text, "多") == 0,
+                  "按码点编辑后残留文本完整");
+        if (text) XFree_System(text);
+    }
 
     XPlainTextEdit_delete_base(edit);
 }/* ==================== Phase 3.1 P1 新 API 契约测试 ==================== */

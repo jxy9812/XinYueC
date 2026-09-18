@@ -2252,8 +2252,9 @@ static DemoWin* DemoWin_create(void)
         XLabel_setText_2(b, "工具箱页二");
         XToolBox_addItem(&self->m_toolBox, (XWidget*)a, "页一");
         XToolBox_addItem(&self->m_toolBox, (XWidget*)b, "页二");
+        /* 页面显隐由 XToolBox 统一管理（对齐 QToolBox：非当前页隐藏），
+           外部不再 show 非当前页。 */
         XWidget_show((XWidget*)a);
-        XWidget_show((XWidget*)b);
     }
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 6,
                                (XWidget*)&self->m_toolBox, "工具箱");
@@ -2389,6 +2390,9 @@ static DemoWin* DemoWin_create(void)
     XWizardPage_setTitle(&self->m_wizPage0, "Step 1");
     XWizardPage_setTitle(&self->m_wizPage1, "Step 2");
     XWizardPage_setTitle(&self->m_wizPage2, "Finish");
+    XWizardPage_setSubTitle(&self->m_wizPage0, "基本信息");
+    XWizardPage_setSubTitle(&self->m_wizPage1, "高级选项");
+    XWizardPage_setSubTitle(&self->m_wizPage2, "完成向导");
     XWizard_addPage(&self->m_wizard, &self->m_wizPage0);
     XWizard_addPage(&self->m_wizard, &self->m_wizPage1);
     XWizard_addPage(&self->m_wizard, &self->m_wizPage2);

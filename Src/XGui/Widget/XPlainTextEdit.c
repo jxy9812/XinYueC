@@ -20,10 +20,12 @@
 
 #if XMENU_ON
 #include "XMenu.h"
+#include "XAction.h"
 #endif /* XMENU_ON */
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XWindowEvent.h"
 #include <stdio.h>
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON
@@ -199,6 +201,17 @@ static int xpe_utf8SeqLen(const char* s, int remain)
     return need;
 }
 
+/** @brief 光标前一码点边界（UTF-8 感知；对标 xlineedit_nextBoundary
+ *         的反向扫描：从 col-1 起跳过全部续字节）。 */
+static int xpe_prevBoundary(const char* s, int col)
+{
+    int start = col > 0 ? col - 1 : 0;
+    while (start > 0 &&
+           ((unsigned char)s[start] & 0xC0u) == 0x80u)
+        --start;
+    return start;
+}
+
 static void xpe_pushUndo(XPlainTextEdit* self)
 {
     char* snapshot;
@@ -280,8 +293,12 @@ static void xpe_backspace(XPlainTextEdit* self)
     if (col > 0) {
         len = XStrlen(line);
         if ((size_t)col <= len) {
-            XMemmove(line + col - 1, line + col, len - col + 1);
-            --self->m_cursorCol;
+            /* 按码点边界回退（对齐 xlineedit_nextBoundary 的反向语义）：
+               此前按单字节回退，中文一次只咬掉 1 字节，残缺 UTF-8 序列
+               渲染成空白且光标测宽错位（表现为光标"反方向"跳动）。 */
+            int prev = xpe_prevBoundary(line, col);
+            XMemmove(line + prev, line + col, len - (size_t)col + 1);
+            self->m_cursorCol = prev;
         }
         return;
     }
@@ -307,7 +324,11 @@ static void xpe_deleteChar(XPlainTextEdit* self)
     int col = self->m_cursorCol;
     size_t len = XStrlen(line);
     if ((size_t)col < len) {
-        XMemmove(line + col, line + col + 1, len - col);
+        /* 按码点边界前进删除：整码点移除，不留残缺续字节
+           （残序列渲染成空白、光标测宽错位，用户看到"光标反向"）。 */
+        int seq = xpe_utf8SeqLen(line + col, (int)len - col);
+        XMemmove(line + col, line + col + seq,
+                 len - (size_t)col - (size_t)seq + 1);
         return;
     }
     if (self->m_cursorLine + 1 < xpe_lineCount(self)) {
@@ -322,6 +343,77 @@ static void xpe_deleteChar(XPlainTextEdit* self)
         xpe_removeLineAt(self, self->m_cursorLine + 1);
     }
 }
+
+/** @brief 鼠标按下：聚焦并把点击坐标映射为光标位置
+ *         （对标 QPlainTextEdit 的点击定位 + XLineEdit 同款入口）。 */
+static void VX_plainTextEdit_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XPlainTextEdit* edit = (XPlainTextEdit*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    XPoint cur;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS)
+        return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    XWidget_setFocus(self);
+    cur = XPlainTextEdit_cursorForPosition(edit, &pos);
+    edit->m_cursorLine = cur.x;
+    edit->m_cursorCol = cur.y;
+    XWidget_update(self);
+    XEvent_accept(event);
+}
+
+/** @brief 焦点进出：重绘以显示/隐藏光标（对标 XLineEdit 焦点处理）。 */
+static void VX_plainTextEdit_focusEvent(XWidget* self, XEvent* event)
+{
+    if (!self || !event) return;
+    if (XEvent_type(event) == XEVENT_TYPE_FOCUS_IN ||
+        XEvent_type(event) == XEVENT_TYPE_FOCUS_OUT) {
+        XWidget_update(self);
+        XEvent_accept(event);
+    }
+}
+
+/** @brief 输入法事件：提交文本插入光标处（对标 QWidget::inputMethodEvent
+ *         的 commitString 处理，与 XLineEdit 同口径；中文输入经此进入）。 */
+static void VX_plainTextEdit_inputMethodEvent(XWidget* self, XEvent* event)
+{
+    XPlainTextEdit* edit = (XPlainTextEdit*)self;
+    XInputMethodEvent* ime;
+    const XString* commit;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_INPUT_METHOD) return;
+    ime = (XInputMethodEvent*)event;
+    commit = ime->m_commitString; /* 事件拥有，借用。 */
+    if (!commit || edit->m_readOnly) return;
+    XPlainTextEdit_insertPlainText(edit, XString_toUtf8(commit));
+    XEvent_accept(event);
+}
+
+#if XMENU_ON
+/** @brief 右键菜单事件：弹出标准编辑菜单（createStandardContextMenu
+ *         公开 API 此前未接线；popup 非阻塞 + DeleteOnClose 自删，
+ *         与 XLineEdit/Qt 语义一致）。 */
+static void VX_plainTextEdit_contextMenuEvent(XWidget* self, XEvent* event)
+{
+    XPlainTextEdit* edit = (XPlainTextEdit*)self;
+    XContextMenuEvent* ctx;
+    XMenu* menu;
+    XPoint global;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_CONTEXT_MENU) return;
+    ctx = (XContextMenuEvent*)event;
+    menu = XPlainTextEdit_createStandardContextMenu(edit);
+    if (!menu) return;
+    global = XContextMenuEvent_globalPosition(ctx);
+    XWidget_setAttribute((XWidget*)menu, XWidgetAttribute_DeleteOnClose,
+                         true);
+    XMenu_popup(menu, &global);
+    XEvent_accept(event);
+}
+#endif /* XMENU_ON */
 
 static void VX_plainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
@@ -373,20 +465,29 @@ static void VX_plainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
     }
     switch (key) {
     case XKey_Left:
-        if (edit->m_cursorCol > 0) --edit->m_cursorCol;
+        if (edit->m_cursorCol > 0) {
+            const char* line2 = xpe_lineAt(edit, edit->m_cursorLine);
+            edit->m_cursorCol = xpe_prevBoundary(line2, edit->m_cursorCol);
+        }
         else if (edit->m_cursorLine > 0) {
             --edit->m_cursorLine;
             edit->m_cursorCol =
                 (int)XStrlen(xpe_lineAt(edit, edit->m_cursorLine));
         }
         break;
-    case XKey_Right:
-        if (edit->m_cursorCol < lineLen) ++edit->m_cursorCol;
+    case XKey_Right: {
+        const char* line2 = xpe_lineAt(edit, edit->m_cursorLine);
+        int seq = (edit->m_cursorCol < lineLen)
+            ? xpe_utf8SeqLen(line2 + edit->m_cursorCol,
+                             lineLen - edit->m_cursorCol)
+            : 0;
+        if (seq > 0) edit->m_cursorCol += seq;
         else if (edit->m_cursorLine + 1 < lines) {
             ++edit->m_cursorLine;
             edit->m_cursorCol = 0;
         }
         break;
+    }
     case XKey_Up:
         if (edit->m_cursorLine > 0) --edit->m_cursorLine;
         break;
@@ -435,10 +536,26 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
     if (vsb) scroll = XScrollBar_value(vsb);
     text = xpe_color(edit, XPaletteColorRole_Text);
     placeholder = xpe_color(edit, XPaletteColorRole_Mid);
-    /* 背景：清屏防止父控件渲染透出。 */
     {
-        XRect bg = { 0, 0, XWidget_width(self), XWidget_height(self) };
-        XPainter_fillRect(&painter, &bg, 0xFFFFFFFFu);
+        int pw = XWidget_width(self);
+        int ph = XWidget_height(self);
+        /* 背景：清屏防止父控件渲染透出。 */
+        XPainter_fillRect(&painter, &(XRect){0, 0, pw, ph}, 0xFFFFFFFFu);
+        /* 边框：上/左 dark、下/右 light 的凹陷框
+           （对标 QAbstractScrollArea 默认 StyledPanel|Sunken，与
+           XLineEdit 手绘回退同款）。 */
+        {
+            uint32_t dark = xpe_color(edit, XPaletteColorRole_Dark);
+            uint32_t light = xpe_color(edit, XPaletteColorRole_Light);
+            if (dark == 0u) dark = 0xFF808080u;
+            if (light == 0u) light = 0xFFE0E0E0u;
+            XPainter_fillRect(&painter, &(XRect){0, 0, pw, 1}, dark);
+            XPainter_fillRect(&painter, &(XRect){0, 0, 1, ph}, dark);
+            XPainter_fillRect(&painter,
+                &(XRect){0, ph - 1, pw, 1}, light);
+            XPainter_fillRect(&painter,
+                &(XRect){pw - 1, 0, 1, ph}, light);
+        }
     }
     firstVisible = scroll / XPE_LINE_HEIGHT;
     lastVisible = firstVisible + XWidget_height(self) / XPE_LINE_HEIGHT + 1;
@@ -457,6 +574,13 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
     for (i = firstVisible; i < count && i <= lastVisible; ++i) {
         int y = i * XPE_LINE_HEIGHT - scroll;
         XPainter_drawText(&painter, 2, y + 13, xpe_lineAt(edit, i), text);
+    }
+    /* 光标：焦点内常显（与 XLineEdit 同策略），位置走 cursorRect
+       的同一度量口径；此前 m_cursorWidth 字段存在但从不绘制。 */
+    if (XWidget_hasFocus(self) && !edit->m_readOnly) {
+        XRect cr = XPlainTextEdit_cursorRect(edit);
+        if (cr.width > 0 && cr.height > 0)
+            XPainter_fillRect(&painter, &cr, text);
     }
     XPainter_deinit(&painter);
 }
@@ -551,6 +675,11 @@ XVtable* XPlainTextEdit_class_init(void)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VX_plainTextEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_plainTextEdit_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_plainTextEdit_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VX_plainTextEdit_focusEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VX_plainTextEdit_focusEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VX_plainTextEdit_inputMethodEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, VX_plainTextEdit_contextMenuEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy, VX_plainTextEdit_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_plainTextEdit_deinit);
     return XVTABLE_DEFAULT;
@@ -583,6 +712,9 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
     self->m_modified = false;
     self->m_charFormat = 0;
     self->m_extraSelections = XVector_Create(XPlainTextEditExtraSelection);
+    /* 对标 QPlainTextEditPrivate::init 的 StrongFocus（qplaintextedit.cpp:790）：
+       无焦点策略时键盘事件永远到不了控件，编辑功能名存实亡。 */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
     xpe_insertLineAt(self, 0, "");
 #if XTEXTDOCUMENT_ON
     self->m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);

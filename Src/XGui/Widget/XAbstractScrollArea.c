@@ -112,9 +112,17 @@ static void xasa_updateScrollBars(XAbstractScrollArea* self)
         range = self->m_contentHeight > vh ? self->m_contentHeight - vh : 0;
         XScrollBar_setRange(self->m_vScrollBar, 0, range);
     }
+    else {
+        /* 隐藏时同步清零范围：内容未超出视口时 value 恒为 0，滚轮与
+           编程接口都不能滚动（对标 Qt 滚动条 max=0 的不可滚语义）。 */
+        XScrollBar_setRange(self->m_vScrollBar, 0, 0);
+    }
     if (showH) {
         range = self->m_contentWidth > vw ? self->m_contentWidth - vw : 0;
         XScrollBar_setRange(self->m_hScrollBar, 0, range);
+    }
+    else {
+        XScrollBar_setRange(self->m_hScrollBar, 0, 0);
     }
 }
 

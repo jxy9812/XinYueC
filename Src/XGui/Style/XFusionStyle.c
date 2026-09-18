@@ -120,10 +120,16 @@ static void xfs_drawPanelButtonCommand(XFusionStyle* self,
         }
     }
     (void)base;
-    /* 圆角边框（XPAINTER_SHAPE_ON 真实圆角 2px；裁剪时矩形近似）。 */
+    /* 圆角边框（XPAINTER_SHAPE_ON 真实圆角 2px；裁剪时矩形近似）。
+       右/下内缩 1px：对齐 QFusionStyle 的 rect.adjusted(0,1,-1,0) +
+       translate(0.5,-0.5)——1px 描边须落在控件最外圈像素内。整数光栅
+       没有半像素平移，若按原矩形边界描边，右/下边框会落在控件矩形
+       之外，被 paintEvent 裁剪而整条缺失（顶边/左边正常）。 */
 #if XPAINTER_SHAPE_ON
     {
         XRect rr = r;
+        if (rr.width > 1) rr.width -= 1;
+        if (rr.height > 1) rr.height -= 1;
         XPainter_drawRoundedRect(painter, &rr, 2, 2);
     }
 #else

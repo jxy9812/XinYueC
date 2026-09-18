@@ -14,6 +14,7 @@
 #include "XMemory.h"
 #include "XPainter.h"
 #include "XWidget_Protected.h"
+#include "XWindowEvent.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -50,29 +51,32 @@ static uint32_t xcv_backgroundColor(const XChartView* self)
     return chart->m_themeBgStart;
 }
 
-/** @brief 把主题背景渐变（或纯色）应用到画刷并填充矩形。 */
+/** @brief 把主题背景渐变（或纯色）应用到画刷并填充矩形。
+ * @param anchor 渐变锚定矩形（整控件区域；渐变按绝对坐标采样，局部
+ *               脏区刷新时色带与全图绘制保持一致）。
+ * @param fill   实际填充矩形（脏区求交后的小块；无脏区时等于 anchor）。 */
 static void xcv_fillChartBackground(XChartView* self, XPainter* painter,
-                                    const XRect* rect)
+                                    const XRect* anchor, const XRect* fill)
 {
     XChart* chart = self->m_chart;
     if (!chart) return;
     if (chart->m_backgroundBrush != 0) {
-        XPainter_fillRect(painter, rect, chart->m_backgroundBrush);
+        XPainter_fillRect(painter, fill, chart->m_backgroundBrush);
         return;
     }
 #if XPAINTER_BRUSH_ON
     if (chart->m_themeBgStart != chart->m_themeBgEnd) {
         XPainterGradient gradient;
-        XPainterGradient_initLinear(&gradient, 0.0f, (float)rect->y,
-                                    0.0f, (float)(rect->y + rect->height));
+        XPainterGradient_initLinear(&gradient, 0.0f, (float)anchor->y,
+                                    0.0f, (float)(anchor->y + anchor->height));
         XPainterGradient_addStop(&gradient, 0.0f, chart->m_themeBgStart);
         XPainterGradient_addStop(&gradient, 1.0f, chart->m_themeBgEnd);
         XPainter_setBrushGradient(painter, &gradient);
-        XPainter_fillRect_2(painter, rect);
+        XPainter_fillRect_2(painter, fill);
         return;
     }
 #endif /* XPAINTER_BRUSH_ON */
-    XPainter_fillRect(painter, rect, chart->m_themeBgStart);
+    XPainter_fillRect(painter, fill, chart->m_themeBgStart);
 }
 
 /** @brief 数字格式化（对标 presenter numberToString 默认 'g' 精度 6）。 */
@@ -219,13 +223,26 @@ static void xcv_layout(const XChartView* self, XRect* titleR,
     if (legendR) XRect_init(legendR, w - 150, top + 8, 145, 20 * 4);
 }
 
+/** @brief 估算文本包围盒是否与脏区相交（NULL 脏区恒可见）。
+ * @details 对标 Qt systemClip 下光栅引擎按裁剪盒跳过整体在外的文本：
+ *          稳态小脏区刷新不再为绘图区外的轴标签/图例/标题做字形光栅化。 */
+static bool xcv_textVisible(const XRect* dirty, int x, int y, int textW)
+{
+    if (!dirty) return true;
+    return x < dirty->x + dirty->width &&
+           x + (textW > 0 ? textW : 1) > dirty->x &&
+           y - 2 < dirty->y + dirty->height &&
+           y + 18 > dirty->y;
+}
+
 /** @brief 绘制标题（居中；颜色=标题画刷或主题标签色）。 */
 static void xcv_paintTitle(XChartView* self, XPainter* painter,
-                           const XRect* titleR)
+                           const XRect* titleR, const XRect* dirty)
 {
     uint32_t text;
     XChart* chart = self->m_chart;
     XFont font = XWidget_font((XWidget*)self);
+    const char* title;
     if (!chart) return;
     text = chart->m_titleBrush != 0
         ? chart->m_titleBrush : xcv_color(self, XPaletteColorRole_WindowText);
@@ -236,17 +253,20 @@ static void xcv_paintTitle(XChartView* self, XPainter* painter,
         XFont_setPixelSize(&font, chart->m_titlePixelSize);
     XPainter_setFont(painter, &font);
     {
-        const char* title = XChart_title_2(chart);
-        XPainter_drawText(painter, titleR->x + titleR->width / 2 -
-                          (int)XStrlen(title) * 4,
-                          titleR->y + titleR->height - 8, title, text);
-    XFont_deinit_base(&font);
+        int tx;
+        int ty;
+        title = XChart_title_2(chart);
+        tx = titleR->x + titleR->width / 2 - (int)XStrlen(title) * 4;
+        ty = titleR->y + titleR->height - 8;
+        if (xcv_textVisible(dirty, tx, ty, (int)XStrlen(title) * 8))
+            XPainter_drawText(painter, tx, ty, title, text);
     }
+    XFont_deinit_base(&font);
 }
 
 /** @brief 绘制数值轴网格 + 刻度标签（颜色取自主题规格，轴级颜色可覆盖）。 */
 static void xcv_paintAxes(XChartView* self, XPainter* painter,
-                          const XRect* plotR)
+                          const XRect* plotR, const XRect* dirty)
 {
     XValueAxis* ax = self->m_chart->m_axisX;
     XValueAxis* ay = self->m_chart->m_axisY;
@@ -324,7 +344,9 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
 #endif /* XPAINTER_PENSTYLE_ON */
         }
         XSnprintf(buf, sizeof(buf), XString_toUtf8(ay->m_labelFormat), v);
-        XPainter_drawText(painter, plotR->x - 40, y + 6, buf, textY);
+        if (xcv_textVisible(dirty, plotR->x - 40, y + 6,
+                            (int)XStrlen(buf) * 8))
+            XPainter_drawText(painter, plotR->x - 40, y + 6, buf, textY);
     }
     ticks = ax->m_tickCount > 1 ? ax->m_tickCount : 2;
     for (i = 0; i < ticks; ++i) {
@@ -353,8 +375,11 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
 #endif /* XPAINTER_PENSTYLE_ON */
         }
         XSnprintf(buf, sizeof(buf), XString_toUtf8(ax->m_labelFormat), v);
-        XPainter_drawText(painter, x - 12,
-                          plotR->y + plotR->height + 16, buf, textX);
+        if (xcv_textVisible(dirty, x - 12,
+                            plotR->y + plotR->height + 16,
+                            (int)XStrlen(buf) * 8))
+            XPainter_drawText(painter, x - 12,
+                              plotR->y + plotR->height + 16, buf, textX);
     }
     XFont_deinit_base(&font);
 }
@@ -961,9 +986,9 @@ static void xcv_paintSpline(XChartView* self, XPainter* painter,
     }
 }
 
-/** @brief 绘制图例（色块 + 序列名）。 *//** @brief 绘制图例（色块 + 序列名）。 */
+/** @brief 绘制图例（色块 + 序列名；行包围盒与脏区不相交时跳过）。 */
 static void xcv_paintLegend(XChartView* self, XPainter* painter,
-                            const XRect* legendR)
+                            const XRect* legendR, const XRect* dirty)
 {
     int i;
     uint32_t text = xcv_color(self, XPaletteColorRole_WindowText);
@@ -974,10 +999,12 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
         XLineSeries* s = self->m_chart->m_lineSeries[i];
         uint32_t color = s->m_base.m_color != 0
             ? s->m_base.m_color : XChart_themeColor(self->m_chart, i);
-        XPainter_fillRect(painter,
-            &(XRect){legendR->x, y, 12, 12}, color);
-        XPainter_drawText(painter, legendR->x + 18, y + 10,
-                          XAbstractSeries_name_2(&s->m_base.m_base), text);
+        if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+            XPainter_fillRect(painter,
+                &(XRect){legendR->x, y, 12, 12}, color);
+            XPainter_drawText(painter, legendR->x + 18, y + 10,
+                              XAbstractSeries_name_2(&s->m_base.m_base), text);
+        }
         y += 20;
     XFont_deinit_base(&font);
     }
@@ -987,10 +1014,12 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
             XBarSeries* b = self->m_chart->m_barSeries[k];
             uint32_t color = b->m_color != 0
                 ? b->m_color : XChart_themeColor(self->m_chart, k);
-            XPainter_fillRect(painter,
-                &(XRect){legendR->x, y, 12, 12}, color);
-            XPainter_drawText(painter, legendR->x + 18, y + 10,
-                              XAbstractSeries_name_2(&b->m_base.m_base), text);
+            if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+                XPainter_fillRect(painter,
+                    &(XRect){legendR->x, y, 12, 12}, color);
+                XPainter_drawText(painter, legendR->x + 18, y + 10,
+                                  XAbstractSeries_name_2(&b->m_base.m_base), text);
+            }
             y += 20;
         }
     }
@@ -1000,10 +1029,12 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
             XScatterSeries* sc = self->m_chart->m_scatterSeries[k];
             uint32_t color = sc->m_base.m_color != 0
                 ? sc->m_base.m_color : XChart_themeColor(self->m_chart, k);
-            XPainter_fillRect(painter,
-                &(XRect){legendR->x, y, 12, 12}, color);
-            XPainter_drawText(painter, legendR->x + 18, y + 10,
-                              XAbstractSeries_name_2(&sc->m_base.m_base), text);
+            if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+                XPainter_fillRect(painter,
+                    &(XRect){legendR->x, y, 12, 12}, color);
+                XPainter_drawText(painter, legendR->x + 18, y + 10,
+                                  XAbstractSeries_name_2(&sc->m_base.m_base), text);
+            }
             y += 20;
         }
     }
@@ -1013,10 +1044,12 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
             XAreaSeries* ar = self->m_chart->m_areaSeries[k];
             uint32_t color = ar->m_color != 0
                 ? ar->m_color : XChart_themeColor(self->m_chart, k);
-            XPainter_fillRect(painter,
-                &(XRect){legendR->x, y, 12, 12}, color);
-            XPainter_drawText(painter, legendR->x + 18, y + 10,
-                              XAreaSeries_name_2(ar), text);
+            if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+                XPainter_fillRect(painter,
+                    &(XRect){legendR->x, y, 12, 12}, color);
+                XPainter_drawText(painter, legendR->x + 18, y + 10,
+                                  XAreaSeries_name_2(ar), text);
+            }
             y += 20;
         }
     }
@@ -1026,10 +1059,12 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
             XSplineSeries* sp = self->m_chart->m_splineSeries[k];
             uint32_t color = sp->m_base.m_color != 0
                 ? sp->m_base.m_color : XChart_themeColor(self->m_chart, k);
-            XPainter_fillRect(painter,
-                &(XRect){legendR->x, y, 12, 12}, color);
-            XPainter_drawText(painter, legendR->x + 18, y + 10,
-                              XAbstractSeries_name_2(&sp->m_base.m_base), text);
+            if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+                XPainter_fillRect(painter,
+                    &(XRect){legendR->x, y, 12, 12}, color);
+                XPainter_drawText(painter, legendR->x + 18, y + 10,
+                                  XAbstractSeries_name_2(&sp->m_base.m_base), text);
+            }
             y += 20;
         }
     }
@@ -1041,23 +1076,33 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
             uint32_t color = slice && XPieSlice_color(slice) != 0
                 ? XPieSlice_color(slice)
                 : XChart_themeColor(self->m_chart, k);
-            XPainter_fillRect(painter,
-                &(XRect){legendR->x, y, 12, 12}, color);
-            XPainter_drawText(painter, legendR->x + 18, y + 10,
-                              slice ? XPieSlice_label_2(slice) : "", text);
+            if (xcv_textVisible(dirty, legendR->x, y, 140)) {
+                XPainter_fillRect(painter,
+                    &(XRect){legendR->x, y, 12, 12}, color);
+                XPainter_drawText(painter, legendR->x + 18, y + 10,
+                                  slice ? XPieSlice_label_2(slice) : "", text);
+            }
             y += 20;
         }
     }
 }
 
-/** @brief 渲染整张图表到图像（paintEvent 与 renderToImage 共用管线）。 */
-static bool xcv_renderToImage(XChartView* cv, XImage* image)
+/** @brief 渲染整张图表到图像（paintEvent 与 renderToImage 共用管线）。
+ * @param dirty paintEvent 脏区（控件本地坐标）；NULL 表示全图离屏渲染。
+ * @details 对标 Qt QWidgetPrivate::drawWidget 在派发 paintEvent 前执行
+ *          setSystemClip(toBePainted) 的语义：稳态小脏区刷新（如性能
+ *          悬浮层重叠）只重绘脏区内容，不再全图重画。 */
+static bool xcv_renderToImage(XChartView* cv, XImage* image,
+                              const XRect* dirty)
 {
     XPainter painter;
     XPoint offset;
     XRect titleR;
     XRect plotR;
     XRect legendR;
+    XRect bounds;
+    XRect bgRect;
+    XRect paRect;
     if (!cv || !image || !cv->m_chart) return false;
     XPainter_init(&painter, NULL);
     if (!XPainter_begin_image(&painter, image)) {
@@ -1067,26 +1112,36 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image)
     offset = XWidget_paintOffset((XWidget*)cv);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+#if XPAINTER_CLIP_ON
+    if (dirty)
+        XPainter_setClipRect(&painter, dirty,
+                             XPainterClipOperation_ReplaceClip);
+#endif /* XPAINTER_CLIP_ON */
     xcv_layout(cv, &titleR, &plotR, &legendR);
     /* 绘图区同步到模型（对标 QChart::plotArea；变化时发 plotAreaChanged）。 */
     XChart_setPlotArea(cv->m_chart, &(XRectF){ (float)plotR.x, (float)plotR.y,
                                                (float)plotR.width,
                                                (float)plotR.height });
-    /* 背景：backgroundVisible + 主题渐变（或显式背景画刷）+ plotAreaBackground。 */
+    /* 背景：backgroundVisible + 主题渐变（或显式背景画刷）+ plotAreaBackground。
+       渐变逐像素求值，填充矩形先与脏区求交（裁剪只省合成不省求值）。 */
+    XRect_init(&bounds, 0, 0, XWidget_width((XWidget*)cv),
+               XWidget_height((XWidget*)cv));
+    bgRect = bounds;
+    if (dirty)
+        bgRect = XRect_intersected(&bgRect, dirty);
     if (cv->m_chart->m_backgroundVisible) {
-        xcv_fillChartBackground(cv, &painter,
-            &(XRect){0, 0, XWidget_width((XWidget*)cv),
-                     XWidget_height((XWidget*)cv)});
+        xcv_fillChartBackground(cv, &painter, &bounds, &bgRect);
         if (cv->m_chart->m_backgroundPen != 0) {
             XPainter_setPen(&painter, cv->m_chart->m_backgroundPen);
-            XPainter_drawRect(&painter,
-                &(XRect){0, 0, XWidget_width((XWidget*)cv),
-                         XWidget_height((XWidget*)cv)});
+            XPainter_drawRect(&painter, &bounds);
         }
     }
     if (cv->m_chart->m_plotAreaBackgroundVisible) {
+        paRect = plotR;
+        if (dirty)
+            paRect = XRect_intersected(&paRect, dirty);
         if (cv->m_chart->m_plotAreaBackgroundBrush != 0)
-            XPainter_fillRect(&painter, &plotR,
+            XPainter_fillRect(&painter, &paRect,
                               cv->m_chart->m_plotAreaBackgroundBrush);
         if (cv->m_chart->m_plotAreaBackgroundPen != 0) {
             XPainter_setPen(&painter, cv->m_chart->m_plotAreaBackgroundPen);
@@ -1094,12 +1149,13 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image)
         }
     }
     if (cv->m_chart->m_titleVisible)
-        xcv_paintTitle(cv, &painter, &titleR);
-    xcv_paintAxes(cv, &painter, &plotR);
+        xcv_paintTitle(cv, &painter, &titleR, dirty);
+    xcv_paintAxes(cv, &painter, &plotR, dirty);
     /* 序列域裁剪：样条过冲/散点越界不得溢出绘图区（对标 Qt Charts
-     * 的 domain 裁剪语义）；XPAINTER_CLIP_ON=0 的裁剪构建下不做裁剪。 */
+     * 的 domain 裁剪语义）；与脏区取交集（无脏区时等效原 ReplaceClip）。
+     * XPAINTER_CLIP_ON=0 的裁剪构建下不做裁剪。 */
 #if XPAINTER_CLIP_ON
-    XPainter_setClipRect(&painter, &plotR, XPainterClipOperation_ReplaceClip);
+    XPainter_setClipRect(&painter, &plotR, XPainterClipOperation_IntersectClip);
 #endif /* XPAINTER_CLIP_ON */
     xcv_paintLines(cv, &painter, &plotR);
     xcv_paintSpline(cv, &painter, &plotR);
@@ -1107,12 +1163,18 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image)
     xcv_paintBars(cv, &painter, &plotR);
     xcv_paintScatter(cv, &painter, &plotR);
 #if XPAINTER_CLIP_ON
-    XPainter_setClipRect(&painter, &plotR, XPainterClipOperation_NoClip);
+    /* 恢复脏区裁剪（饼图/图例/橡皮筋不被绘图域限制）；全图渲染保持 NoClip。 */
+    if (dirty)
+        XPainter_setClipRect(&painter, dirty,
+                             XPainterClipOperation_ReplaceClip);
+    else
+        XPainter_setClipRect(&painter, &plotR,
+                             XPainterClipOperation_NoClip);
 #endif /* XPAINTER_CLIP_ON */
     if (cv->m_chart->m_pieSeries)
         xcv_paintPie(cv, &painter, &plotR);
     if (cv->m_chart->m_legendVisible)
-        xcv_paintLegend(cv, &painter, &legendR);
+        xcv_paintLegend(cv, &painter, &legendR, dirty);
     /* 框选橡皮筋：拖拽中叠加半透明矩形 + 实线边框（对标 Qt 橡皮筋观感）。 */
     if (cv->m_dragging) {
         XRect* r = &cv->m_dragRect;
@@ -1128,20 +1190,27 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image)
     return true;
 }
 
-/** @brief paintEvent：委托离屏渲染管线。 */
+/** @brief paintEvent：取事件脏区委托离屏渲染管线（脏区外不重绘）。 */
 static void VX_chartView_paintEvent(XWidget* self, XEvent* event)
 {
     XChartView* cv = (XChartView*)self;
     XImage* image;
+    XRect dirty;
     if (!cv || !event) return;
     image = XWidget_paintImage(self);
     if (!image) return;
-    xcv_renderToImage(cv, image);
+    if (XEvent_type(event) == XEVENT_TYPE_PAINT) {
+        dirty = XPaintEvent_rect((const XPaintEvent*)event);
+        xcv_renderToImage(cv, image, &dirty);
+    }
+    else {
+        xcv_renderToImage(cv, image, NULL);
+    }
 }
 
 bool XChartView_renderToImage(XChartView* self, XImage* image)
 {
-    return xcv_renderToImage(self, image);
+    return xcv_renderToImage(self, image, NULL);
 }
 
 /* ==================== 框选缩放交互（对标 QChartView 鼠标语义） ==================== */

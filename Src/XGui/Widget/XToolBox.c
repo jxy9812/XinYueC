@@ -22,6 +22,8 @@
 
 #if XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON
 
+#define XTOOLBOX_HEADER_H 22  /**< 页头条高（paint/layout/mouse 共用）。 */
+
 /* ==================== 内部条目 ==================== */
 
 typedef struct XToolBoxItem
@@ -74,22 +76,36 @@ static int xtb2_currentIndexOf(const XToolBox* self)
     return self->m_currentIndex;
 }
 
-/** @brief 布局：当前页控件占满工具箱内容区（其余页隐藏）。 */
+/** @brief 布局：当前页控件占满工具箱内容区（其余页隐藏）。
+ *  @details 对齐 QToolBox::setCurrentIndex 的显隐语义：非当前页一律
+ *           setVisible(false)，防止外部 show() 绕过工具箱的页面管理
+ *           （Qt 中页面装在隐藏的 ScrollArea 容器内无此问题）。 */
 static void xtb2_layout(XToolBox* self)
 {
     XWidget* current;
     XRect r;
     int w = XWidget_width((XWidget*)self);
     int h = XWidget_height((XWidget*)self);
+    int64_t i;
+    int64_t n;
     if (!self) return;
+    n = self->m_items ? XVector_size_base((const XContainer*)self->m_items)
+                      : 0;
     current = XToolBox_currentWidget(self);
+    for (i = 0; i < n; ++i) {
+        XToolBoxItem** item =
+            (XToolBoxItem**)XVector_at_base(self->m_items, i);
+        XWidget* page;
+        if (!item || !*item) continue;
+        page = (*item)->widget;
+        if (!page) continue;
+        if (page != current && XWidget_isVisible(page))
+            XWidget_setVisible(page, false);
+    }
     if (!current) return;
     /* 内容 y 偏移 = 全部条目头总高（每个 22px），与 paint 一致。 */
     {
-        int64_t n = self->m_items
-                        ? XVector_size_base((const XContainer*)self->m_items)
-                        : 0;
-        int headerH = (int)n * 22;
+        int headerH = (int)n * XTOOLBOX_HEADER_H;
         int contentH = h > headerH ? h - headerH : 0;
         XRect_init(&r, 0, headerH, w, contentH);
     }
@@ -162,7 +178,7 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
             XToolBoxItem** item =
                 (XToolBoxItem**)XVector_at_base(box->m_items, i);
             if (!item || !*item) continue;
-            XRect_init(&head, 0, y, w, 22);
+            XRect_init(&head, 0, y, w, XTOOLBOX_HEADER_H);
 #if XSTYLE_ON
             if (XStyle_defaultStyle() != NULL) {
                 XStyle* style = XStyle_defaultStyle();
@@ -181,7 +197,7 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
 #endif
                 XStyle_drawControl(style, XStyleCE_ToolBoxTab, &opt,
                                    &painter, (XWidget*)box);
-                y += 22;
+                y += XTOOLBOX_HEADER_H;
                 XRect_init(&line, 0, y - 1, w, 1);
                 XPainter_fillRect(&painter, &line, windowText);
                 continue;
@@ -195,12 +211,37 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
                               (*item)->text
                                   ? XString_toUtf8((*item)->text) : "",
                               windowText);
-            y += 22;
+            y += XTOOLBOX_HEADER_H;
             XRect_init(&line, 0, y - 1, w, 1);
             XPainter_fillRect(&painter, &line, windowText);
         }
     }
     XPainter_deinit(&painter);
+}
+
+static void VX_toolBox_resizeEvent(XWidget* self, XEvent* event);
+
+/** @brief 页头点击：y 坐标 → 条目索引并切换（对标 QToolBoxButton
+ *         clicked → _q_buttonClicked → setCurrentIndex 链路）。 */
+static void VX_toolBox_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XToolBox* box = (XToolBox*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int index;
+    if (!box || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS)
+        return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    index = (int)(pos.y / XTOOLBOX_HEADER_H);
+    if (index < 0 || index >= (int)XVector_size_base(
+                          (const XContainer*)box->m_items)) {
+        XEvent_ignore(event);
+        return;
+    }
+    XToolBox_setCurrentIndex(box, index);
+    XEvent_accept(event);
 }
 
 static void VX_toolBox_resizeEvent(XWidget* self, XEvent* event)
@@ -235,6 +276,7 @@ XVtable* XToolBox_class_init(void)
     XVTABLE_INHERIT_XCLASS(XFrame);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_toolBox_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_toolBox_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_toolBox_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_toolBox_deinit);
     return XVTABLE_DEFAULT;
 }
