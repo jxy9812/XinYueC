@@ -1,4 +1,4 @@
-#ifndef XSTYLE_H
+﻿#ifndef XSTYLE_H
 #define XSTYLE_H
 #ifdef __cplusplus
 extern "C" {

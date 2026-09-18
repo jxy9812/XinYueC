@@ -1,5 +1,6 @@
 ﻿#include "XTableWidget.h"
 #include "XStringUtils.h"
+#include "XVector.h"
 
 #include "XAlgorithm.h"
 #include "XStyle.h"
@@ -31,6 +32,15 @@ static uint32_t xtw_color(const XTableWidget* self, XPaletteColorRole role);
 /** @brief 坐标 → 单元格（返回行列；表头/越界返回 -1）。 */
 static void xtw_cellAt(const XTableWidget* self, int x, int y,
                        int* row, int* col);
+/** @brief 列 x 起点（visualItemRect 使用；实现见渲染与交互节）。 */
+static int xtw_colX(const XTableWidget* self, int col);
+/** @brief 滚动偏移（visualItemRect 使用；实现见渲染与交互节）。 */
+static int xtw_vOffset(const XTableWidget* self);
+static int xtw_hOffset(const XTableWidget* self);
+/** @brief 确保垂直表头指针数组容量（新增区域清零）。 */
+static bool xtw_ensureVHeaders(XTableWidget* self, int count);
+/** @brief 挂载部件表：按 (row,col) 查找条目下标；无则返回 -1。 */
+static int xtw_cwFind(const XTableWidget* self, int row, int col);
 
 /** @brief 确保行指针数组容量（保留现有行内容）。 */
 static void xtw_ensureRows(XTableWidget* self, int rows)
@@ -83,12 +93,135 @@ static XTableWidgetItem* xtw_newRow(int cols)
     return row;
 }
 
+/** @brief 确保垂直表头指针数组容量（新增区域清零；成功 true）。 */
+static bool xtw_ensureVHeaders(XTableWidget* self, int count)
+{
+    int cap;
+    XString** vh;
+    if (count <= self->m_vHeaderCapacity) return true;
+    cap = self->m_vHeaderCapacity > 0 ? self->m_vHeaderCapacity : 256;
+    while (cap < count) cap *= 2;
+    vh = (XString**)XRealloc_System(self->m_vHeaders,
+                                    sizeof(XString*) * (size_t)cap);
+    if (!vh) return false;
+    /* 新增区域必须清零：调用方以 m_vHeaders[i] 是否为 NULL 判定
+       首次创建；realloc 的未初始化内存是野指针，直接复用会崩溃。 */
+    XMemset(vh + self->m_vHeaderCapacity, 0,
+            sizeof(XString*) * (size_t)(cap - self->m_vHeaderCapacity));
+    self->m_vHeaders = vh;
+    self->m_vHeaderCapacity = cap;
+    return true;
+}
+
 /** @brief 取单元格（越界返回 NULL）。 */
 static XTableWidgetItem* xtw_cell(const XTableWidget* self, int row, int col)
 {
     if (!self || row < 0 || row >= self->m_rows ||
         col < 0 || col >= self->m_columns || !self->m_cells) return NULL;
     return &self->m_cells[row][col];
+}
+
+/* ==================== 挂载部件表助手（借用语义） ==================== */
+
+/** @brief 按 (row,col) 查找挂载条目下标；无则返回 -1。 */
+static int xtw_cwFind(const XTableWidget* self, int row, int col)
+{
+    int i;
+    for (i = 0; i < self->m_cellWidgetCount; ++i)
+        if (self->m_cellWidgets[i].row == row &&
+            self->m_cellWidgets[i].column == col) return i;
+    return -1;
+}
+
+/** @brief 确保挂载条目容量至少 need（成功 true）。 */
+static bool xtw_cwReserve(XTableWidget* self, int need)
+{
+    XTableWidgetCellWidget* p;
+    int cap = self->m_cellWidgetCapacity > 0 ? self->m_cellWidgetCapacity : 4;
+    if (need <= self->m_cellWidgetCapacity) return true;
+    while (cap < need) cap *= 2;
+    p = (XTableWidgetCellWidget*)XRealloc_System(self->m_cellWidgets,
+        sizeof(XTableWidgetCellWidget) * (size_t)cap);
+    if (!p) return false;
+    self->m_cellWidgets = p;
+    self->m_cellWidgetCapacity = cap;
+    return true;
+}
+
+/** @brief 删除下标 i 处挂载条目（后续条目前移；借用部件不销毁）。 */
+static void xtw_cwRemoveAt(XTableWidget* self, int i)
+{
+    for (; i < self->m_cellWidgetCount - 1; ++i)
+        self->m_cellWidgets[i] = self->m_cellWidgets[i + 1];
+    self->m_cellWidgetCount--;
+}
+
+/** @brief 全部解除挂载（部件为借用，仅解除关联不销毁）。 */
+static void xtw_cwClear(XTableWidget* self)
+{
+    if (self) self->m_cellWidgetCount = 0;
+}
+
+/** @brief 行插入后平移挂载表：行号 >= row 的条目行号加一。 */
+static void xtw_cwOnRowInserted(XTableWidget* self, int row)
+{
+    int i;
+    if (!self) return;
+    for (i = 0; i < self->m_cellWidgetCount; ++i)
+        if (self->m_cellWidgets[i].row >= row) self->m_cellWidgets[i].row++;
+}
+
+/** @brief 列插入后平移挂载表：列号 >= column 的条目列号加一。 */
+static void xtw_cwOnColumnInserted(XTableWidget* self, int column)
+{
+    int i;
+    if (!self) return;
+    for (i = 0; i < self->m_cellWidgetCount; ++i)
+        if (self->m_cellWidgets[i].column >= column)
+            self->m_cellWidgets[i].column++;
+}
+
+/** @brief 行删除后平移挂载表：row 行条目解除，>row 行条目行号减一。 */
+static void xtw_cwOnRowRemoved(XTableWidget* self, int row)
+{
+    int i;
+    if (!self) return;
+    for (i = self->m_cellWidgetCount - 1; i >= 0; --i) {
+        if (self->m_cellWidgets[i].row == row) xtw_cwRemoveAt(self, i);
+        else if (self->m_cellWidgets[i].row > row)
+            self->m_cellWidgets[i].row--;
+    }
+}
+
+/** @brief 列删除后平移挂载表：column 列条目解除，>column 列条目列号减一。 */
+static void xtw_cwOnColumnRemoved(XTableWidget* self, int column)
+{
+    int i;
+    if (!self) return;
+    for (i = self->m_cellWidgetCount - 1; i >= 0; --i) {
+        if (self->m_cellWidgets[i].column == column) xtw_cwRemoveAt(self, i);
+        else if (self->m_cellWidgets[i].column > column)
+            self->m_cellWidgets[i].column--;
+    }
+}
+
+/** @brief 行数收缩：解除行号 >= keepRows 的挂载条目。 */
+static void xtw_cwTruncateRows(XTableWidget* self, int keepRows)
+{
+    int i;
+    if (!self) return;
+    for (i = self->m_cellWidgetCount - 1; i >= 0; --i)
+        if (self->m_cellWidgets[i].row >= keepRows) xtw_cwRemoveAt(self, i);
+}
+
+/** @brief 列数收缩：解除列号 >= keepColumns 的挂载条目。 */
+static void xtw_cwTruncateColumns(XTableWidget* self, int keepColumns)
+{
+    int i;
+    if (!self) return;
+    for (i = self->m_cellWidgetCount - 1; i >= 0; --i)
+        if (self->m_cellWidgets[i].column >= keepColumns)
+            xtw_cwRemoveAt(self, i);
 }
 
 /** @brief 发射 (int,int) 双整型信号（cellClicked/currentCellChanged）。 */
@@ -200,6 +333,13 @@ static void VXTableWidget_deinit(XTableWidget* self)
         XClass_delete_base((XClass*)self->m_model);
         self->m_model = NULL;
     }
+    if (self->m_cellWidgets) {
+        /* 条目数组本身归表格所有；widget 为借用，不在此删除。 */
+        XFree_System(self->m_cellWidgets);
+        self->m_cellWidgets = NULL;
+    }
+    self->m_cellWidgetCount = 0;
+    self->m_cellWidgetCapacity = 0;
     XClass_Deinit_Parent(XTableView, (XTableView*)self);
 }
 
@@ -256,6 +396,7 @@ void XTableWidget_setRowCount(XTableWidget* self, int rows)
             self->m_cells[i] = xtw_newRow(self->m_base.m_colCapacity > 0 ?
                                          self->m_base.m_colCapacity : 1);
     }
+    if (rows < self->m_rows) xtw_cwTruncateRows(self, rows); /* 收缩：解除越界挂载。 */
     self->m_rows = rows;
     if (self->m_base.m_base.m_currentRow >= rows) self->m_base.m_base.m_currentRow = rows - 1;
     XWidget_update((XWidget*)self);
@@ -278,6 +419,7 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
                    sizeof(XTableWidgetItem) * (size_t)(columns - self->m_columns));
         }
     }
+    if (columns < self->m_columns) xtw_cwTruncateColumns(self, columns); /* 收缩：解除越界挂载。 */
     self->m_columns = columns;
     if (self->m_base.m_base.m_currentColumn >= columns) self->m_base.m_base.m_currentColumn = columns - 1;
     XWidget_update((XWidget*)self);
@@ -298,6 +440,7 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
     for (i = self->m_rows; i > row; --i) self->m_cells[i] = self->m_cells[i-1];
     self->m_cells[row] = xtw_newRow(self->m_base.m_colCapacity);
     self->m_rows++;
+    xtw_cwOnRowInserted(self, row); /* 挂载表随行号平移。 */
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -309,6 +452,7 @@ void XTableWidget_insertColumn(XTableWidget* self, int column)
     if (!self || column < 0 || column > self->m_columns) return;
     self->m_columns++;
     xtw_ensureCols(self, self->m_columns);
+    xtw_cwOnColumnInserted(self, column); /* 挂载表随列号平移。 */
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -327,6 +471,7 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
         self->m_cells[self->m_rows - 1] = NULL;
     }
     self->m_rows--;
+    xtw_cwOnRowRemoved(self, row); /* 挂载表随行号平移/解除。 */
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -337,6 +482,7 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
 {
     if (!self || column < 0 || column >= self->m_columns) return;
     self->m_columns--;
+    xtw_cwOnColumnRemoved(self, column); /* 挂载表随列号平移/解除。 */
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -426,6 +572,61 @@ void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column)
 int XTableWidget_currentRow(const XTableWidget* self) { return self ? self->m_base.m_base.m_currentRow : -1; }
 int XTableWidget_currentColumn(const XTableWidget* self) { return self ? self->m_base.m_base.m_currentColumn : -1; }
 
+const XTableWidgetItem* XTableWidget_currentItem(const XTableWidget* self)
+{
+    if (!self) return NULL;
+    /* 行/列号为 -1（无当前）时 xtw_cell 直接返回 NULL。 */
+    return xtw_cell(self, self->m_base.m_base.m_currentRow,
+                    self->m_base.m_base.m_currentColumn);
+}
+
+void XTableWidget_setCurrentItem(XTableWidget* self, int row, int column)
+{
+    /* 目标格不存在（无 item）时忽略；存在则转发 setCurrentCell
+       （滚动可见并发射 currentCellChanged 等信号）。 */
+    if (!xtw_cell(self, row, column)) return;
+    XTableWidget_setCurrentCell(self, row, column);
+}
+
+/* ==================== 单元格部件挂载（借用语义） ==================== */
+
+void XTableWidget_setCellWidget(XTableWidget* self, int row, int column,
+                                XWidget* widget)
+{
+    int idx;
+    if (!self || !xtw_cell(self, row, column)) return;
+    idx = xtw_cwFind(self, row, column);
+    if (!widget) {
+        /* NULL 等价 removeCellWidget。 */
+        if (idx >= 0) xtw_cwRemoveAt(self, idx);
+        return;
+    }
+    if (idx >= 0) {
+        /* 重复挂载覆盖旧指针（旧部件仅解除关联，不被删除）。 */
+        self->m_cellWidgets[idx].widget = widget;
+        return;
+    }
+    if (!xtw_cwReserve(self, self->m_cellWidgetCount + 1)) return;
+    self->m_cellWidgets[self->m_cellWidgetCount].row = row;
+    self->m_cellWidgets[self->m_cellWidgetCount].column = column;
+    self->m_cellWidgets[self->m_cellWidgetCount].widget = widget;
+    self->m_cellWidgetCount++;
+}
+
+XWidget* XTableWidget_cellWidget(const XTableWidget* self, int row, int column)
+{
+    int idx = self ? xtw_cwFind(self, row, column) : -1;
+    return idx >= 0 ? self->m_cellWidgets[idx].widget : NULL;
+}
+
+void XTableWidget_removeCellWidget(XTableWidget* self, int row, int column)
+{
+    int idx;
+    if (!self) return;
+    idx = xtw_cwFind(self, row, column);
+    if (idx >= 0) xtw_cwRemoveAt(self, idx);
+}
+
 /* ==================== 表头 ==================== */
 
 void XTableWidget_setHorizontalHeaderLabels(XTableWidget* self,
@@ -451,21 +652,7 @@ void XTableWidget_setVerticalHeaderLabels(XTableWidget* self,
 {
     int i;
     if (!self || !labels) return;
-    if (count > self->m_vHeaderCapacity) {
-        int cap = self->m_vHeaderCapacity > 0
-            ? self->m_vHeaderCapacity : 256;
-        XString** vh;
-        while (cap < count) cap *= 2;
-        vh = (XString**)XRealloc_System(self->m_vHeaders,
-                                        sizeof(XString*) * (size_t)cap);
-        if (!vh) return;
-        /* 新增区域必须清零：下方循环以 m_vHeaders[i] 是否为 NULL 判定
-           首次创建；realloc 的未初始化内存是野指针，直接复用会崩溃。 */
-        XMemset(vh + self->m_vHeaderCapacity, 0,
-                sizeof(XString*) * (size_t)(cap - self->m_vHeaderCapacity));
-        self->m_vHeaders = vh;
-        self->m_vHeaderCapacity = cap;
-    }
+    if (!xtw_ensureVHeaders(self, count)) return;
     for (i = 0; i < count; ++i) {
         if (!self->m_vHeaders[i])
             self->m_vHeaders[i] = XString_create();
@@ -493,6 +680,64 @@ const char* XTableWidget_verticalHeaderItem(const XTableWidget* self, int row)
         return "";
     text = XString_toUtf8(self->m_vHeaders[row]);
     return text ? text : "";
+}
+
+void XTableWidget_setHorizontalHeaderItem(XTableWidget* self, int column,
+                                          const XString* text)
+{
+    const char* utf8;
+    if (!self || column < 0) return;
+    xtw_ensureCols(self, column + 1); /* 确保表头/列宽/单元格槽位容量。 */
+    if (column >= self->m_base.m_colCapacity || !self->m_hHeaders) return;
+    if (!self->m_hHeaders[column])
+        self->m_hHeaders[column] = XString_create();
+    if (!self->m_hHeaders[column]) return;
+    utf8 = text ? XString_toUtf8(text) : NULL; /* NULL 等价清空该列。 */
+    XString_assign_utf8(self->m_hHeaders[column], utf8 ? utf8 : "");
+    XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setHeaderData_2(self->m_model, column, 0,
+                                           utf8 ? utf8 : "");
+}
+
+void XTableWidget_setVerticalHeaderItem(XTableWidget* self, int row,
+                                        const XString* text)
+{
+    const char* utf8;
+    if (!self || row < 0) return;
+    if (!xtw_ensureVHeaders(self, row + 1)) return;
+    if (!self->m_vHeaders[row])
+        self->m_vHeaders[row] = XString_create();
+    if (!self->m_vHeaders[row]) return;
+    utf8 = text ? XString_toUtf8(text) : NULL; /* NULL 等价清空该行。 */
+    XString_assign_utf8(self->m_vHeaders[row], utf8 ? utf8 : "");
+    XWidget_update((XWidget*)self);
+}
+
+XString* XTableWidget_takeHorizontalHeaderItem(XTableWidget* self, int column)
+{
+    XString* taken;
+    if (!self || column < 0 || !self->m_hHeaders ||
+        column >= self->m_base.m_colCapacity || !self->m_hHeaders[column])
+        return NULL;
+    taken = self->m_hHeaders[column];
+    self->m_hHeaders[column] = NULL; /* 所有权移交调用方（XString_delete_base 释放）。 */
+    XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setHeaderData_2(self->m_model, column, 0, "");
+    return taken;
+}
+
+XString* XTableWidget_takeVerticalHeaderItem(XTableWidget* self, int row)
+{
+    XString* taken;
+    if (!self || row < 0 || !self->m_vHeaders ||
+        row >= self->m_vHeaderCapacity || !self->m_vHeaders[row])
+        return NULL;
+    taken = self->m_vHeaders[row];
+    self->m_vHeaders[row] = NULL; /* 所有权移交调用方（XString_delete_base 释放）。 */
+    XWidget_update((XWidget*)self);
+    return taken;
 }
 
 /* ==================== 行为 ==================== */
@@ -548,11 +793,34 @@ void XTableWidget_clear(XTableWidget* self)
         self->m_cells = NULL;
         self->m_rowCapacity = 0;
     }
+    /* 表头文本一并清空（对标 Qt clear()：同时移除表头）；
+       数组容量保留，文本指针置空。 */
+    if (self->m_hHeaders) {
+        for (i = 0; i < self->m_base.m_colCapacity; ++i) {
+            if (self->m_hHeaders[i]) {
+                XString_delete_base(self->m_hHeaders[i]);
+                self->m_hHeaders[i] = NULL;
+            }
+        }
+    }
+    if (self->m_vHeaders) {
+        for (i = 0; i < self->m_vHeaderCapacity; ++i) {
+            if (self->m_vHeaders[i]) {
+                XString_delete_base(self->m_vHeaders[i]);
+                self->m_vHeaders[i] = NULL;
+            }
+        }
+    }
     self->m_rows = 0;
     self->m_columns = 0;
     self->m_base.m_base.m_currentRow = -1;
     self->m_base.m_base.m_currentColumn = -1;
+    self->m_selectionRow = -1;      /* 选区跟踪一并复位。 */
+    self->m_selectionColumn = -1;
+    xtw_cwClear(self);              /* 挂载条目全部解除（借用部件不销毁）。 */
     XWidget_update((XWidget*)self);
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, 0, 0);
 }
 
 void XTableWidget_clearContents(XTableWidget* self)
@@ -680,6 +948,80 @@ int XTableWidget_selectedIndexes(const XTableWidget* self, int* outRows,
     return total;
 }
 
+int XTableWidget_selectedItems(const XTableWidget* self, int* outRows,
+                               int* outCols, int maxCount)
+{
+    /* 平铺模型每格恒有 item 记录（无独立 item 生命周期）：
+       selectedItems 与 selectedIndexes 语义重合，直接转发。 */
+    return XTableWidget_selectedIndexes(self, outRows, outCols, maxCount);
+}
+
+/** @brief 选中范围写入调用方四数组（同下标对应同一范围；容量受限）。 */
+static void xtw_writeRange(int idx, int top, int left, int bottom, int right,
+                           int* outTop, int* outLeft, int* outBottom,
+                           int* outRight, int maxCount)
+{
+    if (idx >= maxCount) return;
+    if (!outTop && !outLeft && !outBottom && !outRight) return;
+    if (outTop) outTop[idx] = top;
+    if (outLeft) outLeft[idx] = left;
+    if (outBottom) outBottom[idx] = bottom;
+    if (outRight) outRight[idx] = right;
+}
+
+int XTableWidget_selectedRanges(const XTableWidget* self, int* outTop,
+                                int* outLeft, int* outBottom, int* outRight,
+                                int maxCount)
+{
+    int total = 0;
+    int row;
+    int col;
+    bool trackedListed = false;
+    int lastLeft = -1;
+    int lastBottom = -2;
+    int lastRight = -1;
+    if (!self) return 0;
+    /* 1) per-cell selected 标记：逐行取 [最小,最大] 选中列为跨度，
+       行连续且跨度一致的范围原地合并（对标 QTableWidgetSelectionRange）。 */
+    for (row = 0; row < self->m_rows; ++row) {
+        int left = -1;
+        int right = -1;
+        for (col = 0; col < self->m_columns; ++col) {
+            const XTableWidgetItem* cell = xtw_cell(self, row, col);
+            if (!cell || !cell->selected) continue;
+            if (left < 0) left = col;
+            right = col;
+            if (row == self->m_selectionRow &&
+                col == self->m_selectionColumn)
+                trackedListed = true;
+        }
+        if (left < 0) continue;
+        if (lastBottom == row - 1 && lastLeft == left && lastRight == right) {
+            /* 与最近范围可合并：扩展结束行（已写出者同步改写）。 */
+            lastBottom = row;
+            if (outBottom && total - 1 < maxCount) outBottom[total - 1] = row;
+            continue;
+        }
+        lastLeft = left;
+        lastBottom = row;
+        lastRight = right;
+        xtw_writeRange(total, row, left, row, right,
+                       outTop, outLeft, outBottom, outRight, maxCount);
+        ++total;
+    }
+    /* 2) 当前跟踪选区未被标记覆盖时补录 1x1 范围（同 selectedIndexes 口径）。 */
+    if (!trackedListed && self->m_selectionRow >= 0 &&
+        self->m_selectionRow < self->m_rows &&
+        self->m_selectionColumn >= 0 &&
+        self->m_selectionColumn < self->m_columns) {
+        xtw_writeRange(total, self->m_selectionRow, self->m_selectionColumn,
+                       self->m_selectionRow, self->m_selectionColumn,
+                       outTop, outLeft, outBottom, outRight, maxCount);
+        ++total;
+    }
+    return total;
+}
+
 void XTableWidget_clearSpans(XTableWidget* self)
 {
     if (!self) return;
@@ -700,6 +1042,167 @@ XString* XTableWidget_takeItem(XTableWidget* self, int row, int column)
     if (self->m_model)
         XAbstractItemModel_setData_2(self->m_model, row, column, "");
     return taken;
+}
+
+int XTableWidget_indexFromItem(const XTableWidget* self,
+                               const XTableWidgetItem* item, int* column)
+{
+    int row;
+    int col;
+    if (column) *column = -1;
+    if (!self || !item || !self->m_cells) return -1;
+    /* 单元格内嵌存储：指针恒等于 &m_cells[row][col]，按地址查表定位。 */
+    for (row = 0; row < self->m_rows; ++row) {
+        if (!self->m_cells[row]) continue;
+        for (col = 0; col < self->m_columns; ++col) {
+            if (&self->m_cells[row][col] == item) {
+                if (column) *column = col;
+                return row;
+            }
+        }
+    }
+    return -1;
+}
+
+/* ==================== 索引反查/编辑（对标 row/column/editItem/itemFromIndex/items） ==================== */
+
+int XTableWidget_column(const XTableWidget* self, int column)
+{
+    if (!self || column < 0 || column >= self->m_columns) return -1;
+    return column; /* 恒等映射：索引即坐标（见头文件 @note）。 */
+}
+
+int XTableWidget_row(const XTableWidget* self, int row)
+{
+    if (!self || row < 0 || row >= self->m_rows) return -1;
+    return row; /* 恒等映射：索引即坐标（见头文件 @note）。 */
+}
+
+void XTableWidget_editItem(XTableWidget* self, int row, int column)
+{
+    /* 对齐 Qt editItem(item) → edit(index)：坐标有效时转发基类编辑
+       触发判定（编辑器体系未建，判定后预留返回，见 @note）；
+       坐标越界或该格不存在时整体忽略。 */
+    if (!self || !xtw_cell(self, row, column)) return;
+    (void)XAbstractItemView_edit(&self->m_base.m_base, row, column);
+}
+
+XString* XTableWidget_itemFromIndex(const XTableWidget* self, int row)
+{
+    const XTableWidgetItem* cell;
+    XString* copy;
+    if (!self || row < 0 || row >= self->m_rows) return NULL;
+    cell = xtw_cell(self, row, 0); /* “行文本”取该行首列（列 0）。 */
+    copy = XString_create();
+    if (!copy) return NULL;
+    if (cell && cell->text) {
+        const char* utf8 = XString_toUtf8(cell->text);
+        if (utf8) XString_assign_utf8(copy, utf8);
+    }
+    return copy;
+}
+
+XVector* XTableWidget_items(const XTableWidget* self, const char* text)
+{
+    XVector* rows;
+    int row;
+    int col;
+    if (!self) return NULL;
+    rows = XVector_create(sizeof(int));
+    if (!rows) return NULL;
+    for (row = 0; row < self->m_rows; ++row) {
+        for (col = 0; col < self->m_columns; ++col) {
+            const XTableWidgetItem* cell = xtw_cell(self, row, col);
+            const char* cellText = "";
+            int rowNo;
+            if (cell && cell->text) {
+                const char* s = XString_toUtf8(cell->text);
+                if (s) cellText = s;
+            }
+            /* 精确相等（区分大小写）；行内任一列命中即整行命中。 */
+            if (XStrcmp(cellText, text ? text : "") != 0) continue;
+            rowNo = row;
+            if (!XVector_push_back_1_base(rows, &rowNo)) {
+                /* 分配失败：容器归还调用方语义不成立，整体置空返回 NULL。 */
+                XVector_delete_base(rows);
+                return NULL;
+            }
+            break; /* 每行至多输出一次。 */
+        }
+    }
+    return rows;
+}
+
+/* ==================== 原型（体系未建：不透明承载） ==================== */
+
+const XTableWidgetItem* XTableWidget_itemPrototype(const XTableWidget* self)
+{
+    return self ? self->m_itemPrototype : NULL;
+}
+
+void XTableWidget_setItemPrototype(XTableWidget* self,
+                                   const XTableWidgetItem* prototype)
+{
+    /* 借用 + 不透明记录：不拷贝、不参与行为（详见头文件 @note）。 */
+    if (self) self->m_itemPrototype = prototype;
+}
+
+/* ==================== 视觉序与几何 ==================== */
+
+int XTableWidget_visualRow(const XTableWidget* self, int visualRow)
+{
+    (void)self;
+    return visualRow; /* 平铺模型无隐藏/重排映射：视觉序与逻辑序恒等。 */
+}
+
+int XTableWidget_visualColumn(const XTableWidget* self, int visualColumn)
+{
+    (void)self;
+    return visualColumn; /* 平铺模型无隐藏/重排映射：视觉序与逻辑序恒等。 */
+}
+
+XRect XTableWidget_visualItemRect(const XTableWidget* self,
+                                  const XTableWidgetItem* item)
+{
+    XRect rect;
+    int column = -1;
+    int row;
+    XRect_init(&rect, 0, 0, 0, 0);
+    if (!self || !item) return rect;
+    row = XTableWidget_indexFromItem(self, item, &column);
+    if (row < 0 || column < 0) return rect;
+    XRect_init(&rect,
+               xtw_colX(self, column) - xtw_hOffset(self),
+               self->m_headerHeight + row * self->m_base.m_rowHeight
+                   - xtw_vOffset(self),
+               self->m_base.m_colWidths[column],
+               self->m_base.m_rowHeight);
+    return rect;
+}
+
+void XTableWidget_setRangeSelected(XTableWidget* self, int topRow,
+                                   int leftCol, int bottomRow, int rightCol,
+                                   bool select)
+{
+    int tmp;
+    int row;
+    int col;
+    bool changed = false;
+    if (!self) return;
+    /* 归一化倒置范围（对标 QTableWidgetSelectionRange）。 */
+    if (topRow > bottomRow) { tmp = topRow; topRow = bottomRow; bottomRow = tmp; }
+    if (leftCol > rightCol) { tmp = leftCol; leftCol = rightCol; rightCol = tmp; }
+    for (row = topRow; row <= bottomRow; ++row) {
+        for (col = leftCol; col <= rightCol; ++col) {
+            XTableWidgetItem* cell = xtw_cell(self, row, col);
+            if (!cell || cell->selected == select) continue;
+            cell->selected = select;
+            changed = true;
+        }
+    }
+    if (!changed) return;
+    xtw_emit0(self, (size_t)XTableWidget_itemSelectionChanged_signal);
+    XWidget_update((XWidget*)self);
 }
 
 /* ==================== 信号 ==================== */

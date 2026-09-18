@@ -6,10 +6,15 @@
  *             空串（Qt SVG 引擎语义）；IsNull 按文件名是否为空判定。
  * @note       尺寸请求当前按解码固有尺寸返回（矢量按请求尺寸重新栅格化
  *             登记为已知偏差，Task 2.20）。
+ *             模块开关 XSVGICON_ON 定义于 XGuiConfig.h；置 0 时本文件
+ *             整体裁剪（引擎与插件全仓零外部引用，可独立裁剪，见
+ *             guard-review-0020 批次 1）。
  * @author     XinYueC 团队
  */
 #ifndef XSVGICONENGINE_H
 #define XSVGICONENGINE_H
+#include "XGuiConfig.h"
+#if XSVGICON_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,4 +57,5 @@ XSvgIconEngine* XSvgIconEngine_create_2(const char* utf8FileName);
 #ifdef __cplusplus
 }
 #endif
+#endif /* XSVGICON_ON */
 #endif /* XSVGICONENGINE_H */

@@ -4831,12 +4831,15 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
         dot = XStrrchr(base, '.');
         if (dot && dot[1])
             suffix = dot + 1;
+#if XIMAGECODEC_ON
+        /* 后缀优先分支依赖编解码格式表(XIMAGECODEC_ON)。 */
         if (suffix && XImageCodec_formatFromName_2(suffix) !=
                           XImageCodecFormat_Unknown) {
             result = XImage_loadFromData_2(
                 &decoded, XByteArray_data(bytes),
                 (int)XByteArray_size_base((const XContainer*)bytes), suffix);
         }
+#endif /* XIMAGECODEC_ON */
         if (!result) {
             /* 每次失败都将临时图像恢复为空，随后按内容探测；这也
                保持 XImage_loadFromData_2() 的失败失效契约。 */

@@ -3,8 +3,9 @@
  * @brief      XListView 列表视图实现（model 单列垂直渲染 + QListView
  *             状态族存取与轻量绘制联动）。
  * @details    状态族（flow/gridSize/wrapping/viewMode/resizeMode/
- *             layoutMode/batchSize/itemAlignment/selectionRectVisible/
- *             wordWrap）对标 Qt 6.8 QListView 同名属性：在平铺行模型下
+ *             layoutMode/movement/batchSize/uniformItemSizes/
+ *             itemAlignment/selectionRectVisible/wordWrap）对标
+ *             Qt 6.8 QListView 同名属性：在平铺行模型下
  *             以标量存储 + 触发重绘；其中网格高参与槽位高度、网格宽
  *             收缩条目单元、条目对齐/词换行参与文本绘制、行隐藏平行
  *             数组参与绘制与命中跳过（数组模式参照 XTreeView 行状态表）。
@@ -269,6 +270,8 @@ void XListView_init(XListView* self, XWidget* parent, XWidgetFlags flags)
     self->m_itemAlignment = 0;
     self->m_selectionRectVisible = false;
     self->m_wordWrap = false;
+    self->m_movement = XListViewMovement_Static;
+    self->m_uniformItemSizes = false;
     self->m_rowHidden = NULL;
     self->m_rowStateCount = 0;
 }
@@ -351,6 +354,16 @@ void XListView_setGridSize(XListView* self, int width, int height)
     XWidget_update((XWidget*)self);
 }
 
+void XListView_gridSize(const XListView* self, int* width, int* height)
+{
+    /* 双输出 getter：未启用维度（<=0，按 -1 存储）与对象无效均输出 -1，
+     * 任一输出指针可为 NULL（忽略该维）。 */
+    int w = self ? self->m_gridWidth : -1;
+    int h = self ? self->m_gridHeight : -1;
+    if (width) *width = w;
+    if (height) *height = h;
+}
+
 int XListView_gridSizeWidth(const XListView* self)
 { return self ? self->m_gridWidth : -1; }
 
@@ -415,6 +428,23 @@ void XListView_setLayoutMode(XListView* self, int mode)
 int XListView_layoutMode(const XListView* self)
 { return self ? self->m_layoutMode : XListViewLayoutMode_SinglePass; }
 
+void XListView_setMovement(XListView* self, int movement)
+{
+    if (!self) return;
+    if (movement != XListViewMovement_Static
+        && movement != XListViewMovement_Free
+        && movement != XListViewMovement_Snap)
+        return;
+    if (self->m_movement == movement) return;
+    self->m_movement = movement;
+    /* 对标 Qt：movement!=Static 联动 dragEnabled/acceptDrops 并延迟
+       重排；XGui 平铺行模型下仅存状态并触发重绘，拖动移动本体未接。 */
+    XWidget_update((XWidget*)self);
+}
+
+int XListView_movement(const XListView* self)
+{ return self ? self->m_movement : XListViewMovement_Static; }
+
 void XListView_setBatchSize(XListView* self, int batchSize)
 {
     /* 对标 Qt：非法批量（<=0）拒绝并保持原值。 */
@@ -424,6 +454,23 @@ void XListView_setBatchSize(XListView* self, int batchSize)
 
 int XListView_batchSize(const XListView* self)
 { return self ? self->m_batchSize : 0; }
+
+void XListView_setUniformItemSizes(XListView* self, bool enable)
+{
+    /* 对标 Qt：纯状态存取，不触发重排。 */
+    if (self) self->m_uniformItemSizes = enable;
+}
+
+bool XListView_uniformItemSizes(const XListView* self)
+{ return self ? self->m_uniformItemSizes : false; }
+
+void XListView_clearPropertyFlags(XListView* self)
+{
+    /* 对标 QListView::clearPropertyFlags：XGui 项目无属性标志
+       （modeProperties）体系，状态属性均为直接存取，无标志可清，
+       实现为无操作（对标接口存在性）。 */
+    (void)self;
+}
 
 void XListView_setItemAlignment(XListView* self, int alignment)
 {
@@ -468,6 +515,60 @@ void XListView_setRowHidden(XListView* self, int row, bool hide)
 bool XListView_isRowHidden(const XListView* self, int row)
 {
     return xlv_rowIsHidden(self, row);
+}
+
+/* ==================== 几何查询（对标 QListView::visualRect） ==================== */
+
+XRect XListView_visualRect(const XListView* self, int row)
+{
+    XRect r;
+    int rows;
+    int i;
+    int slotH;
+    int slotW;
+    int y;
+    r.x = 0;
+    r.y = 0;
+    r.width = 0;
+    r.height = 0;
+    if (!self || row < 0) return r;
+    rows = xlv_modelRows(self);
+    if (row >= rows) return r;
+    if (xlv_rowIsHidden(self, row)) return r;
+    /* 与绘制/命中同一口径：槽位高 = max(行高, 网格高)，
+       槽位宽 = 网格宽启用且小于视口宽时取网格宽（其余取视口宽）。 */
+    slotH = xlv_slotHeight(self);
+    slotW = xlv_slotWidth(self, XWidget_width((const XWidget*)self));
+    /* y 累计目标行之前各可见行槽位步进（隐藏行占高 0 跳过）。 */
+    y = 0;
+    for (i = 0; i < row; ++i) {
+        if (xlv_rowIsHidden(self, i)) continue;
+        y += slotH + self->m_spacing;
+    }
+    r.x = 0;
+    r.y = y;
+    r.width = slotW;
+    r.height = slotH;
+    return r;
+}
+
+/* ==================== 信号（对标 QListView::indexesMoved） ==================== */
+
+void* XListView_indexesMoved_signal(XListView* self, const int* rows,
+                                    int count)
+{
+    XVarList* args;
+    if (!rows || count < 0) count = 0;
+    args = XVarList_Create(XVar(const int*, rows), XVar(int, count));
+    if (!args) return (void*)(size_t)XListView_indexesMoved_signal;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XListView_indexesMoved_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+    return (void*)(size_t)XListView_indexesMoved_signal;
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */

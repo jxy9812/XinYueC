@@ -109,6 +109,46 @@ int XSplitter_count(const XSplitter* self);
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
  */
 int XSplitter_indexOf(const XSplitter* self, const XWidget* widget);
+/** @brief 替换既有子控件（对标 QSplitter::replaceWidget）。
+ * @details 所有权语义（对标 Qt）：新控件经 reparent 挂为分割器子控
+ *          件（与 addWidget 一致，归分割器父子链管理）；被替换的旧
+ *          控件解除父子关系交还调用方（不销毁，对标 Qt 的
+ *          setParent(nullptr)），并被隐藏。新控件继承旧控件的几何
+ *          与可见状态，随后重算布局。
+ * @param self 目标控件；传入 NULL 时返回 NULL。
+ * @param index 页序号（0 起；越界返回 NULL，不发生替换）。
+ * @param widget 新控件指针；为 NULL、与被替换控件相同、或已是本分
+ *        割器子控件时返回 NULL（Qt 同护栏语义），不发生替换。
+ * @return 被替换的旧控件指针（调用方接管）；失败时返回 NULL。
+ */
+XWidget* XSplitter_replaceWidget(XSplitter* self, int index,
+                                 XWidget* widget);
+/** @brief 查询分隔点几何矩形（对标 QSplitter::handle）。
+ * @details 分隔点 index 位于页 index 与页 index+1 之间（0 起，有效
+ *          范围 0..count-2，对标“handle 在页 index 右/下方”语义）。
+ * @note    内部无把手部件对象（Qt 为 QSplitterHandle*），故以几何
+ *          矩形承载：把手矩形取自页 index 几何之后、宽/高为
+ *          handleWidth 的条带；把手拖动事件路径为预留项。
+ * @param self 目标控件；传入 NULL 时返回 false。
+ * @param index 分隔点序号（0 起；越界返回 false）。
+ * @param out 输出把手矩形（本控件局部坐标）；可为 NULL（仅校验）。
+ * @return 成功返回 true；参数无效或该分隔点不存在返回 false。
+ */
+bool XSplitter_handle(const XSplitter* self, int index, XRect* out);
+/** @brief 查询分隔点拖动范围（对标 QSplitter::getRange）。
+ * @details 分隔点 index 介于页 index 与页 index+1 之间（有效范围
+ *          0..count-2）。min/max 为把手位置可达区间，以页内容坐标
+ *          （0..可用总长）表达（Qt 以 contentsRect 绝对坐标表达，
+ *          项目简化为 0 基相对坐标）；可折叠页最小贡献 0，不可折叠
+ *          页以当前尺寸作为最小值代理（项目无 minimumSizeHint 承
+ *          载，Qt 以 qSmartMinSize 计算）。
+ * @param self 目标控件；传入 NULL 时返回 false。
+ * @param index 分隔点序号（0 起；越界或页数不足 2 返回 false）。
+ * @param min 输出最小位置；可为 NULL（忽略）。
+ * @param max 输出最大位置；可为 NULL（忽略）。
+ * @return 成功返回 true；参数无效返回 false。
+ */
+bool XSplitter_getRange(const XSplitter* self, int index, int* min, int* max);
 
 /* ==================== 属性 ==================== */
 

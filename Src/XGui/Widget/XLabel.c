@@ -43,7 +43,9 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XPicture.h"
+#if XMOVIE_ON
 #include "XMovie.h"
+#endif /* XMOVIE_ON */
 #include "XCursor.h"
 #include "XFont8x16.h"
 
@@ -943,6 +945,7 @@ static XSize label_sizeForWidth(const XLabel* self, int w)
         br.height = XPixmap_height(&self->m_pixmap);
     } else if (self->m_picture && !XPicture_isNull(self->m_picture)) {
         XPicture_boundingRect(self->m_picture, &br);
+#if XMOVIE_ON
     } else if (self->m_movie) {
         XPixmap pm;
         XPixmap_init(&pm);
@@ -952,6 +955,7 @@ static XSize label_sizeForWidth(const XLabel* self, int w)
             br.height = XPixmap_height(&pm);
         }
         XPixmap_deinit_base(&pm);
+#endif /* XMOVIE_ON */
     } else if (self->m_isTextLabel) {
         m = self->m_indent;
         if (m < 0 && XFrame_frameWidth((XFrame*)self))
@@ -1558,6 +1562,7 @@ static void label_drawContent(XLabel* self, XPainter* painter)
     cr.y += self->m_margin;
     cr.width -= self->m_margin * 2;
     cr.height -= self->m_margin * 2;
+#if XMOVIE_ON
     if (self->m_movie) {
         XPixmap pm;
         XPixmap_init(&pm);
@@ -1565,7 +1570,9 @@ static void label_drawContent(XLabel* self, XPainter* painter)
         if (!XPixmap_isNull(&pm))
             label_drawPixmap(self, painter, &pm, &cr);
         XPixmap_deinit_base(&pm);
-    } else if (!XPixmap_isNull(&self->m_pixmap)) {
+    } else
+#endif /* XMOVIE_ON */
+    if (!XPixmap_isNull(&self->m_pixmap)) {
         label_drawPixmap(self, painter, &self->m_pixmap, &cr);
     } else if (self->m_picture && !XPicture_isNull(self->m_picture)) {
         XPicture_play(self->m_picture, painter);

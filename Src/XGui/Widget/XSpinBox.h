@@ -109,7 +109,9 @@ XSpinBox* XSpinBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags f
 #define XSpinBox_alignment(self) XAbstractSpinBox_alignment((const XAbstractSpinBox*)(self))
 #define XSpinBox_setAlignment(self, a) XAbstractSpinBox_setAlignment((XAbstractSpinBox*)(self), (a))
 #define XSpinBox_hasFrame(self) XAbstractSpinBox_hasFrame((const XAbstractSpinBox*)(self))
-#define XSpinBox_setFrame(self, on) XAbstractSpinBox_setFrame((XAbstractSpinBox*)(self), (on))
+/* setFrame 对标 Qt：置位后立即重绘（基类 setter 仅存字段，重绘在
+ * XSpinBox 转发层补齐；逗号表达式保持宏的表达式语义）。 */
+#define XSpinBox_setFrame(self, on) (XAbstractSpinBox_setFrame((XAbstractSpinBox*)(self), (on)), XWidget_update((XWidget*)(self)))
 #define XSpinBox_setAccelerated(self, on) XAbstractSpinBox_setAccelerated((XAbstractSpinBox*)(self), (on))
 #define XSpinBox_isAccelerated(self) XAbstractSpinBox_isAccelerated((const XAbstractSpinBox*)(self))
 #define XSpinBox_setGroupSeparatorShown(self, s) XAbstractSpinBox_setGroupSeparatorShown((XAbstractSpinBox*)(self), (s))

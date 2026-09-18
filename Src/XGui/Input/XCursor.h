@@ -235,6 +235,14 @@ typedef enum XCursorShape
 typedef struct XCursor
 {
     uint8_t m_disabled;
+    /* 回退态补全成员:XCursor.c 的 equals/赋值路径仍会按完整布局访问,
+       回退壳缺成员会在 XCURSOR_ON=0(含 XGUI_ON=0 连带)时编译失败。 */
+    XCursorShape m_shape;
+    bool m_hasHotSpot;
+    XPoint m_hotSpot;
+    void* m_bitmap;
+    void* m_mask;
+    void* m_pixmap;
 } XCursor;
 #endif /* !XCURSOR_ON */
 

@@ -29,6 +29,7 @@ static void xtabwidget_currentChangedForward(void* sender, XVarList* args);
 static void xtabwidget_emitIntForward(XTabWidget* self);
 static void xtabwidget_tabBarClickedForward(void* sender, XVarList* args);
 static void xtabwidget_tabBarDoubleClickedForward(void* sender, XVarList* args);
+static void xtabwidget_tabCloseRequestedForward(void* sender, XVarList* args);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -64,6 +65,32 @@ static void xtabwidget_layout(XTabWidget* self)
            事件永远到不了内容（对标 QStackedLayout 填满几何语义）。 */
         if (self->m_clients[i])
             XWidget_setGeometry(self->m_clients[i], 0, 0, w, pageH);
+    }
+    /* 角部件（对标 QTabWidget 角部件）：上两角置于页签条行内，按其
+       当前尺寸放置（超出时截断），高度以页签条高为上限；Qt 以
+       sizeHint 并在样式中为页签预留空间，此处未接入预留逻辑，页签
+       可能与角部件重叠。下两角为预留位：仅承载，不参与布局。 */
+    {
+        XWidget* tl = self->m_cornerWidgets[XTABWIDGET_CORNER_TOPLEFT];
+        XWidget* tr = self->m_cornerWidgets[XTABWIDGET_CORNER_TOPRIGHT];
+        int cw;
+        int ch;
+        if (tl) {
+            cw = XWidget_width(tl);
+            ch = XWidget_height(tl);
+            if (cw < 1) cw = 1;
+            if (cw > w) cw = w;
+            if (ch > barH) ch = barH;
+            XWidget_setGeometry(tl, 0, 0, cw, ch);
+        }
+        if (tr) {
+            cw = XWidget_width(tr);
+            ch = XWidget_height(tr);
+            if (cw < 1) cw = 1;
+            if (cw > w) cw = w;
+            if (ch > barH) ch = barH;
+            XWidget_setGeometry(tr, w - cw, 0, cw, ch);
+        }
     }
 }
 
@@ -169,6 +196,31 @@ static void xtabwidget_tabBarDoubleClickedForward(void* sender, XVarList* args)
                        arguments, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
+/** @brief 转发页签关闭请求（tabCloseRequested(int)）。
+ *  @note  发射点为“tabsClosable 且点击页签关闭按钮”，位于 XTabBar 侧
+ *         （对标 QTabBar::tabCloseRequested）。当前页签条关闭交互尚未
+ *         实现（tabsClosable 仅存状态），本转发为预留接线：页签条侧
+ *         一旦真发射，容器即同步通知订阅者。 */
+static void xtabwidget_tabCloseRequestedForward(void* sender, XVarList* args)
+{
+    XTabWidget* self = xtabwidget_ownerOf(sender);
+    int idx;
+    XVarList* arguments;
+
+    if (!self) return;
+    idx = 0;
+    if (args) {
+        XVarList_start(args);
+        idx = XVarList_arg(args, int);
+    }
+    if (!((XObject*)self)->m_signalSlot) return;
+    arguments = XVarList_Create(XVar(int, idx));
+    if (!arguments) return;
+    XObject_emitSignal((XObject*)self,
+                       (size_t)XTabWidget_tabCloseRequested_signal,
+                       arguments, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
 /* ==================== 虚槽实现 ==================== */
 
 static void VXTabWidget_resizeEvent(XWidget* self, XEvent* event)
@@ -187,6 +239,7 @@ static void VXTabWidget_changeEvent(XWidget* self, XEvent* event)
 
 static void VXTabWidget_copy(XTabWidget* self, const XTabWidget* other)
 {
+    int i;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XTabWidget_init(self, NULL, 0);
     XClass_Parent(XWidget, EXClass_Copy,
@@ -196,10 +249,13 @@ static void VXTabWidget_copy(XTabWidget* self, const XTabWidget* other)
     self->m_tabPosition = other->m_tabPosition;
     self->m_tabsClosable = other->m_tabsClosable;
     self->m_movable = other->m_movable;
+    /* 角部件为借用指针，不随 copy 转移：清空本侧登记，避免悬挂。 */
+    for (i = 0; i < 4; ++i) self->m_cornerWidgets[i] = NULL;
 }
 
 static void VXTabWidget_move(XTabWidget* self, XTabWidget* other)
 {
+    int i;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XTabWidget_init(self, NULL, 0);
     XClass_Parent(XWidget, EXClass_Move,
@@ -208,6 +264,11 @@ static void VXTabWidget_move(XTabWidget* self, XTabWidget* other)
     self->m_tabPosition = other->m_tabPosition;
     self->m_tabsClosable = other->m_tabsClosable;
     self->m_movable = other->m_movable;
+    /* 角部件借用指针随 move 整体转移，源侧清空防双持。 */
+    for (i = 0; i < 4; ++i) {
+        self->m_cornerWidgets[i] = other->m_cornerWidgets[i];
+        other->m_cornerWidgets[i] = NULL;
+    }
     other->m_tabPosition = 0;
     other->m_tabsClosable = false;
     other->m_movable = false;
@@ -237,6 +298,11 @@ static void VXTabWidget_deinit(XTabWidget* self)
     if (self->m_clients) {
         XFree_System(self->m_clients);
         self->m_clients = NULL;
+    }
+    /* 角部件为借用指针：仅解除登记，不销毁部件本体。 */
+    {
+        int c;
+        for (c = 0; c < 4; ++c) self->m_cornerWidgets[c] = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -269,6 +335,10 @@ void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_tabPosition = 0; /* North */
     self->m_tabsClosable = false;
     self->m_movable = false;
+    self->m_cornerWidgets[0] = NULL; /* TopLeft */
+    self->m_cornerWidgets[1] = NULL; /* TopRight */
+    self->m_cornerWidgets[2] = NULL; /* BottomLeft */
+    self->m_cornerWidgets[3] = NULL; /* BottomRight */
     XTabBar_init(&self->m_tabBar, (XWidget*)self, 0);
     XWidget_show((XWidget*)&self->m_tabBar);
     XObject_connect_2((XObject*)&self->m_tabBar,
@@ -283,6 +353,9 @@ void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
                       (size_t)XTabBar_tabBarDoubleClicked_signal(
                           &self->m_tabBar, 0),
                       xtabwidget_tabBarDoubleClickedForward);
+    XObject_connect_2((XObject*)&self->m_tabBar,
+                      (size_t)XTabBar_tabCloseRequested_signal(&self->m_tabBar),
+                      xtabwidget_tabCloseRequestedForward);
 }
 
 XTabWidget* XTabWidget_create_ex(XMemoryType memory, XWidget* parent,
@@ -626,6 +699,27 @@ const XString* XTabWidget_tabWhatsThis(const XTabWidget* self, int index)
     return XTabWidget_tabToolTip(self, index);
 }
 
+XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner)
+{
+    if (!self || corner < 0 || corner > 3) return NULL;
+    return self->m_cornerWidgets[corner];
+}
+
+void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner)
+{
+    XWidget* old;
+    if (!self || corner < 0 || corner > 3) return;
+    if (widget == (XWidget*)self) return;
+    /* 借用挂载：Qt 同语义——角部件尚未挂到本控件时先 reparent。 */
+    if (widget && XWidget_parentWidget(widget) != (XWidget*)self)
+        XWidget_setParent(widget, (XWidget*)self, 0);
+    old = self->m_cornerWidgets[corner];
+    if (old && old != widget)
+        XWidget_setVisible(old, false); /* 旧角部件隐藏（不销毁）。 */
+    self->m_cornerWidgets[corner] = widget;
+    xtabwidget_layout(self);
+}
+
 /* ==================== 信号 ==================== */
 
 void* XTabWidget_currentChanged_signal(XTabWidget* self, int index)
@@ -636,6 +730,15 @@ void* XTabWidget_currentChanged_signal(XTabWidget* self, int index)
 void* XTabWidget_tabClicked_signal(XTabWidget* self)
 {
     return (void*)(size_t)XTabWidget_tabClicked_signal;
+}
+
+void* XTabWidget_tabCloseRequested_signal(XTabWidget* self)
+{
+    /* 仅返回信号标识；真发射经 init 中 connect_2 的
+     * xtabwidget_tabCloseRequestedForward 转发（发射点在 XTabBar 侧，
+     * 当前为预留，见头文件 @note）。 */
+    (void)self;
+    return (void*)(size_t)XTabWidget_tabCloseRequested_signal;
 }
 
 

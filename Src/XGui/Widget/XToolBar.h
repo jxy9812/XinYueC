@@ -12,7 +12,8 @@
  *             - toggleViewAction()（显示/隐藏工具栏的动作）；
  *             - 信号：actionTriggered(action)/actionHovered(action)/
  *               orientationChanged(bool)/movableChanged(bool)/
- *               visibilityChanged(bool)；
+ *               visibilityChanged(bool)/topLevelChanged(bool)（停靠体系
+ *               未建，句柄预留）；
  *             - 布局：横排（水平）动作按钮与控件，竖排（垂直）竖列；
  *               按钮呈现复用 XToolButton + setDefaultAction。
  *             动作与按钮归工具栏所有；外部动作 add 后同样接管呈现，
@@ -227,6 +228,25 @@ void* XToolBar_visibilityChanged_signal(XToolBar* self, bool visible);
 /** @brief iconSizeChanged(int,int) 信号（对标 QToolBar::iconSizeChanged；
  *         载荷：宽,高；当前为方边尺寸 size×size）。 */
 void* XToolBar_iconSizeChanged_signal(XToolBar* self, int width, int height);
+
+/**
+ * @brief      浮动状态变化信号（对标 QToolBar::topLevelChanged）。
+ * @details    Qt 中工具栏被拖出停靠区成为独立顶层窗口时发射
+ *             topLevelChanged(true)，重新停靠时发射 false；发射点位于
+ *             停靠布局体系内部。本实现停靠/拖拽体系未建，isFloating
+ *             恒为默认 false，不存在内部自动发射路径；本函数按
+ *             visibilityChanged(bool) 相同的"真发射"句柄形态预留：
+ *             self 非 NULL 且有已连接槽时按传入值经 XObject_emitSignal
+ *             同步通知，否则只返回信号标识。
+ * @note       句柄预留：当前无内部发射点，供未来停靠体系接入时在
+ *             isFloating 变化路径调用，或由上层手动驱动；返回值不指向
+ *             可释放对象，也不得解引用。
+ * @param      self 目标工具栏指针；可为 NULL。
+ * @param      topLevel true 表示工具栏变为顶层（浮动），false 表示已
+ *             停靠。
+ * @return     不透明的 topLevelChanged 信号标识；供 XObject_connect 使用。
+ */
+void* XToolBar_topLevelChanged_signal(XToolBar* self, bool topLevel);
 
 #ifdef __cplusplus
 }

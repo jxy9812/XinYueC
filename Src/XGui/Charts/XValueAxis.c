@@ -75,7 +75,6 @@ bool XValueAxis_isGridVisible(const XValueAxis* self)
 void XValueAxis_setGridVisible(XValueAxis* self, bool visible)
 { if (self) XAbstractAxis_setGridLineVisible(&self->m_base, visible); }
 
-#endif /* XCHARTS_ON */
 void XValueAxis_deinit_impl(XValueAxis* self)
 {
     if (!self) return;
@@ -85,3 +84,5 @@ void XValueAxis_deinit_impl(XValueAxis* self)
     }
     XAbstractAxis_deinit_base(&self->m_base);
 }
+
+#endif /* XCHARTS_ON */

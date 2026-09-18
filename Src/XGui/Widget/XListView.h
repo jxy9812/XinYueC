@@ -5,9 +5,10 @@
  *             （XAbstractItemModel）按单列垂直列表渲染条目（行高
  *             24px），支持间隔 spacing、选中高亮；选择/信号/命中
  *             全部复用基类数据通路。状态族（flow/gridSize/wrapping/
- *             viewMode/resizeMode/layoutMode/batchSize/itemAlignment/
- *             selectionRectVisible/wordWrap/行隐藏）对标 QListView
- *             同名属性，在平铺行模型下为状态存取 + 轻量绘制联动
+ *             viewMode/resizeMode/layoutMode/movement/batchSize/
+ *             uniformItemSizes/itemAlignment/selectionRectVisible/
+ *             wordWrap/行隐藏）对标 QListView 同名属性，在平铺行
+ *             模型下为状态存取 + 轻量绘制联动
  *             （行隐藏跳过绘制与命中、网格高参与槽位、词换行与
  *             条目对齐参与文本绘制）。
  * @note       模块总开关 XTABLEWIDGET_ON；XListView 为 XWidget 派生链
@@ -77,6 +78,19 @@ typedef enum XListViewLayoutMode
     XListViewLayoutMode_Batched = 1     /**< 批式布局（对标 Batched）。 */
 } XListViewLayoutMode;
 
+/**
+ * @brief      条目移动模式（对标 QListView::Movement，数值逐项一致）。
+ * @details    Static 条目不可被用户移动（默认，拖放关闭）；Free 可自由
+ *             拖放移动；Snap 可拖放但对齐 gridSize 网格。XGui 平铺行
+ *             模型下仅存储状态，Free/Snap 拖动移动本体未接（@note）。
+ */
+typedef enum XListViewMovement
+{
+    XListViewMovement_Static = 0,   /**< 条目不可移动（对标 Static）。 */
+    XListViewMovement_Free = 1,     /**< 自由拖放移动（对标 Free）。 */
+    XListViewMovement_Snap = 2      /**< 拖放并吸附网格（对标 Snap）。 */
+} XListViewMovement;
+
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XListView)
 XCLASS_DEFINE_EXTEND_END(XListView, XAbstractItemView)
@@ -99,6 +113,8 @@ typedef struct XListView
     int m_itemAlignment;        /**< 条目对齐位掩码（Qt::Alignment 位值，默认 0）。 */
     bool m_selectionRectVisible; /**< 橡皮筋选择框可见（默认 false）。 */
     bool m_wordWrap;            /**< 文本按词换行（默认 false）。 */
+    int m_movement;             /**< 条目移动模式（XListViewMovement，默认 Static）。 */
+    bool m_uniformItemSizes;    /**< 均匀条目尺寸优化声明（默认 false）。 */
     bool* m_rowHidden;          /**< 行隐藏状态表（平行数组；对象拥有）。 */
     int m_rowStateCount;        /**< 行隐藏状态表长度（随模型行数同步）。 */
 } XListView;
@@ -153,6 +169,28 @@ void XListView_setRowHeight(XListView* self, int height);
 /** @brief 查询行高。 @param self 目标视图。 @return 行高。 */
 int XListView_rowHeight(const XListView* self);
 
+/* ==================== 几何查询（对标 QListView::visualRect） ==================== */
+
+/**
+ * @brief 查询行 row 的视觉矩形（对标 QListView::visualRect；平铺行
+ *        模型下条目即行，等价 QListWidget::visualItemRect 的行承载）。
+ *
+ * @param self 目标视图。
+ * @param row 行号。
+ * @return 控件坐标下的行单元矩形：y 为该行之前各可见行槽位
+ *         （max(行高, 网格高) + spacing）累计、x=0、高为槽位高度、
+ *         宽按网格宽收缩（网格宽启用且小于视口宽取网格宽，否则取
+ *         视口宽）；self 为空、无模型、row 越界或隐藏行返回空矩形
+ *         {0,0,0,0}。
+ *
+ * @note 与命中测试 indexAt/绘制同一几何口径（槽位步进一致，列固定
+ *       modelColumn）；当前无滚动偏移，行起点 y 与行号互逆。隐藏行
+ *       按默认可见口径查询（不触发状态表同步，同步入口仍在绘制/
+ *       命中前）；横向流式（LeftToRight/wrapping）重排布局未接，
+ *       矩形恒为 TopDown 槽位几何（@note）。
+ */
+XRect XListView_visualRect(const XListView* self, int row);
+
 /* ==================== 状态族（对标 QListView 状态属性） ==================== */
 
 /** @brief 设置排列方向（对标 QListView::setFlow）。
@@ -176,6 +214,17 @@ int XListView_flow(const XListView* self);
  *       网格宽收缩条目单元宽度；Qt 默认 QSize(-1,0) 的“未启用”语义一致。
  */
 void XListView_setGridSize(XListView* self, int width, int height);
+/**
+ * @brief 查询网格尺寸（双输出 getter；与 setGridSize 配对，C 无 QSize，
+ *        以双指针输出代替）。
+ * @param self 目标视图。
+ * @param width 网格宽输出（像素；可为 NULL 忽略该维）。
+ * @param height 网格高输出（像素；可为 NULL 忽略该维）。
+ * @return 无返回值。
+ * @note 未启用维度输出 -1（<=0 一律按 -1 存储，口径同 gridSizeWidth/
+ *       gridSizeHeight）；self 为 NULL 时同样输出 -1。
+ */
+void XListView_gridSize(const XListView* self, int* width, int* height);
 /** @brief 查询网格宽。
  * @param self 目标视图。
  * @return 网格宽（像素；<=0 表示未启用）。
@@ -233,6 +282,21 @@ void XListView_setLayoutMode(XListView* self, int mode);
  * @return XListViewLayoutMode 值；对象无效返回 0（SinglePass）。
  */
 int XListView_layoutMode(const XListView* self);
+/** @brief 设置条目移动模式（对标 QListView::setMovement）。
+ * @param self 目标视图。
+ * @param movement 移动模式（XListViewMovement 值；非法值忽略）。
+ * @return 无返回值。
+ * @note XGui 平铺行模型下仅存储状态并触发重绘；Qt 中 movement!=Static
+ *       会联动 dragEnabled/acceptDrops 并延迟重排，Free/Snap 拖动移动
+ *       本体未接（@note）；亦不实现 Qt 的 modeProperties 门控
+ *       （clearPropertyFlags 为无操作，setViewMode 不联动 movement）。
+ */
+void XListView_setMovement(XListView* self, int movement);
+/** @brief 查询条目移动模式。
+ * @param self 目标视图。
+ * @return XListViewMovement 值；对象无效返回 0（Static）。
+ */
+int XListView_movement(const XListView* self);
 /** @brief 设置批式布局批量（对标 QListView::setBatchSize）。
  * @param self 目标视图。
  * @param batchSize 每批条目数（>0；<=0 忽略，对标 Qt 拒绝非正值）。
@@ -244,6 +308,24 @@ void XListView_setBatchSize(XListView* self, int batchSize);
  * @return 每批条目数（默认 100）；对象无效返回 0。
  */
 int XListView_batchSize(const XListView* self);
+/** @brief 设置均匀条目尺寸（对标 QListView::setUniformItemSizes）。
+ * @param self 目标视图。
+ * @param enable true 声明所有条目尺寸相同。
+ * @return 无返回值。
+ * @note 默认 false；均匀尺寸布局优化未接，仅存储状态供接入层读取
+ *       （@note；Qt 侧该属性同样仅存取、不触发重排）。
+ */
+void XListView_setUniformItemSizes(XListView* self, bool enable);
+/** @brief 查询均匀条目尺寸。 @param self 目标视图。 @return 已启用返回 true。 */
+bool XListView_uniformItemSizes(const XListView* self);
+/** @brief 清空 QListView 专属属性标志（对标 QListView::clearPropertyFlags）。
+ * @param self 目标视图。
+ * @return 无返回值。
+ * @note XGui 项目无属性标志（modeProperties）体系：状态族各属性均为
+ *       直接存取、不记录“用户显式设置”位，故无标志可清；本接口为对标
+ *       存在性无操作（@note）。
+ */
+void XListView_clearPropertyFlags(XListView* self);
 /** @brief 设置条目对齐（对标 QListView::setItemAlignment；按位存取）。
  * @param self 目标视图。
  * @param alignment 对齐位掩码（Qt::Alignment 位值，可组合）。
@@ -290,6 +372,22 @@ void XListView_setRowHidden(XListView* self, int row, bool hide);
  * @return 已隐藏返回 true；越界、未同步或对象无效返回 false。
  */
 bool XListView_isRowHidden(const XListView* self, int row);
+
+/* ==================== 信号（对标 QListView） ==================== */
+
+/** @brief indexesMoved 信号（对标 QListView::indexesMoved；条目被拖动
+ *         移动完成后发射，携带被移动索引列表）。
+ * @param self 目标视图。
+ * @param rows 被移动行号数组（借用指针，仅在信号发射期间有效；可为 NULL）。
+ * @param count 行号数量（<0 或 rows 为 NULL 按 0 处理）。
+ * @return 信号句柄（函数地址，用作信号标识）。
+ * @note 参数对标 QModelIndexList：平铺行模型下列固定为 modelColumn，
+ *       以行号数组 + 数量传递。真实发射点（Qt 在 filterDropEvent 内部
+ *       拖动移动完成后经 emitIndexesMoved 发射）缺失：Free/Snap 拖动
+ *       移动本体未接，本句柄预留，可由接入层手工调用触发（@note）。
+ */
+void* XListView_indexesMoved_signal(XListView* self, const int* rows,
+                                    int count);
 
 #ifdef __cplusplus
 }

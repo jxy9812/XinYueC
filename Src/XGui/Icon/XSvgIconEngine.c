@@ -6,6 +6,10 @@
 
 #include "XSvgIconEngine.h"
 
+/* XSVGICON_ON=0 时整体裁剪：引擎无自动注册、全仓无外部引用，
+ * 关闭后仅损失 SVG 图标加载能力，不影响 XIcon 其它引擎路径。 */
+#if XSVGICON_ON
+
 #include "XAlgorithm.h"
 #include "XImage.h"
 #include "XPixmap.h"
@@ -110,4 +114,5 @@ XSvgIconEngine* XSvgIconEngine_create_2(const char* utf8FileName)
     XString_delete_base(name);
     return engine;
 }
+#endif /* XSVGICON_ON */
 

@@ -11,7 +11,13 @@
  */
 #ifndef XMOVIE_H
 #define XMOVIE_H
+#include "XGuiConfig.h"
 
+/* 模块开关 XMOVIE_ON 定义于 XGuiConfig.h；置 0 时本文件整体裁剪。
+ * 引用侧按 XBackingStore 回退模式退化：XLabel 的影片分支不参与尺寸
+ * 计算与绘制，movie()/setMovie() 保留借用指针语义（XLabel.h 自备
+ * XMovie 前向声明，头链不受影响，guard-review-0020 批次 2）。 */
+#if XMOVIE_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -447,5 +453,6 @@ void* XMovie_frameChanged_signal(XMovie* self, int frameNumber);
 
 #undef XMovie_create
 #define XMovie_create() XMovie_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+#endif /* XMOVIE_ON */
 
 #endif /* XMOVIE_H */

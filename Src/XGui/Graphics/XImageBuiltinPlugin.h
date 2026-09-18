@@ -4,9 +4,14 @@
  * @details    通过 XImageIOPlugin 接口把 XImageCodec 支持的 BMP/PNG/JPEG/
  *              GIF/PPM/XBM/SVG 统一暴露给 XImagePluginRegistry，使 XImageReader 与
  *              XImageWriter 可以像加载外部插件一样按注册表发现内置算法。
+ * @note       模块开关 XIMAGEIOPLUGIN_ON 定义于 XGuiConfig.h；置 0 时本
+ *             文件整体裁剪，注册表与 Reader/Writer 侧按同一开关降级
+ *             （guard-review-0020）。
  ******************************************************************************/
 #ifndef XIMAGEBUILTINPLUGIN_H
 #define XIMAGEBUILTINPLUGIN_H
+#include "XGuiConfig.h"
+#if XIMAGEIOPLUGIN_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +22,7 @@ extern "C" {
 /**
  * @brief 获取内置图像插件的全局单例。
  * @details 单例由本模块静态持有，调用方不得释放；注册表会自动加入该插件。
- *          当 XIMAGEIOPLUGIN_ON 或 XIMAGECODEC_ON 关闭时返回 NULL。
+ *          当 XIMAGECODEC_ON 关闭时返回 NULL。
  * @return 内置 XImageIOPlugin 指针；不可用时返回 NULL。
  */
 XImageIOPlugin* XImageBuiltinPlugin_instance(void);
@@ -25,5 +30,5 @@ XImageIOPlugin* XImageBuiltinPlugin_instance(void);
 #ifdef __cplusplus
 }
 #endif
-
+#endif /* XIMAGEIOPLUGIN_ON */
 #endif /* XIMAGEBUILTINPLUGIN_H */

@@ -50,6 +50,8 @@ bool    m_autoHide;              /**< 自动隐藏。 */
     bool    m_drawBase;              /**< 绘制基底（默认 true）。 */
     uint32_t* m_tabTextColors;       /**< 各项文本颜色（0=默认；平行数组）。 */
     XString** m_tabToolTips;         /**< 各项提示（平行数组；对象拥有）。 */
+    XString** m_tabWhatsThis;        /**< 各项帮助文本（平行数组；对象拥有）。 */
+    XString** m_tabAccessibleNames;  /**< 各项无障碍名称（平行数组；对象拥有）。 */
     XString** m_tabIcons;            /**< 各项图标路径（平行数组；对象拥有）。 */
     XString** m_tabData;             /**< 各项数据（平行数组；对象拥有）。 */
     XAbstractButton** m_tabButtons;  /**< 各项角按钮（平行数组；借用）。 */
@@ -350,6 +352,48 @@ void XTabBar_setTabToolTip_2(XTabBar* self, int index, const char* tip);
 const XString* XTabBar_tabToolTip(const XTabBar* self, int index);
 /** @brief 读取页签提示（UTF-8 借用）。 */
 const char* XTabBar_tabToolTip_2(const XTabBar* self, int index);
+/** @brief 设置页签帮助文本（XString 主版本；对标 QTabBar::setTabWhatsThis）。
+ * @details What's This 为逐项独立存储（平行数组 m_tabWhatsThis），
+ *          不与提示（tabToolTip）共用槽位。
+ * @param self 目标控件。
+ * @param index 页签号。
+ * @param text 借用 XString*；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XTabBar_setTabWhatsThis(XTabBar* self, int index, const XString* text);
+/** @brief 设置页签帮助文本（UTF-8 兼容重载，转发主版本）。 */
+void XTabBar_setTabWhatsThis_2(XTabBar* self, int index, const char* text);
+/** @brief 读取页签帮助文本（内部借用 XString*；不得释放）。
+ * @param self 目标控件；传入 NULL 或页签号无效时返回 NULL。
+ * @param index 页签号。
+ * @return 借用内部 XString 指针；无内容或参数无效时返回 NULL。
+ */
+const XString* XTabBar_tabWhatsThis(const XTabBar* self, int index);
+/** @brief 读取页签帮助文本（UTF-8 借用；无内容时返回空串）。 */
+const char* XTabBar_tabWhatsThis_2(const XTabBar* self, int index);
+/** @brief 设置页签无障碍名称（XString 主版本；对标
+ *         QTabBar::setAccessibleTabName）。
+ * @details 每页签独立的 accessibleName 承载（平行数组
+ *          m_tabAccessibleNames）；辅助功能桥接层未接入前仅作状态
+ *          存储（对标 Qt 的 NameChanged 无障碍事件暂不派发）。
+ * @param self 目标控件。
+ * @param index 页签号。
+ * @param name 借用 XString*；可为 NULL（清除）。
+ * @return 无返回值。
+ */
+void XTabBar_setAccessibleTabName(XTabBar* self, int index,
+                                  const XString* name);
+/** @brief 设置页签无障碍名称（UTF-8 兼容重载，转发主版本）。 */
+void XTabBar_setAccessibleTabName_2(XTabBar* self, int index,
+                                    const char* name);
+/** @brief 读取页签无障碍名称（内部借用 XString*；不得释放）。
+ * @param self 目标控件；传入 NULL 或页签号无效时返回 NULL。
+ * @param index 页签号。
+ * @return 借用内部 XString 指针；无内容或参数无效时返回 NULL。
+ */
+const XString* XTabBar_accessibleTabName(const XTabBar* self, int index);
+/** @brief 读取页签无障碍名称（UTF-8 借用；无内容时返回空串）。 */
+const char* XTabBar_accessibleTabName_2(const XTabBar* self, int index);
 /** @brief 设置页签角按钮（对标 setTabButton；借用，不拥有）。
  * @param self 目标控件。
  * @param index 页签号。

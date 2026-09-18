@@ -3,16 +3,20 @@
  * @brief      XImageIOPlugin 源码级注册表，对标 Qt 6.8 图像插件发现机制。
  * @details    提供固定容量插件注册表，并负责把插件声明的格式、MIME 类型与
  *             XImageIOHandler 工厂接入 XImageReader/XImageWriter。
+ * @note       模块开关 XIMAGEIOPLUGIN_ON 定义于 XGuiConfig.h；置 0 时本
+ *             文件整体裁剪，XImageReader/XImageWriter 走各自的内置单帧
+ *             回退路径（guard-review-0020）。
  */
 #ifndef XIMAGEPLUGINREGISTRY_H
 #define XIMAGEPLUGINREGISTRY_H
+#include "XGuiConfig.h"
+#if XIMAGEIOPLUGIN_ON
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <stdbool.h>
-#include "XGuiConfig.h"
 #include "XImageIOPlugin.h"
 #include "XIODevice.h"
 #include "XStringList.h"
@@ -206,5 +210,5 @@ XStringList* XImagePluginRegistry_imageFormatsForMimeType_2(const char* mimeType
 #ifdef __cplusplus
 }
 #endif
-
+#endif /* XIMAGEIOPLUGIN_ON */
 #endif /* XIMAGEPLUGINREGISTRY_H */

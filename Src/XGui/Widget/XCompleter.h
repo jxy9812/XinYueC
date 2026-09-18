@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XCompleter.h
  * @brief      XCompleter 补全对象（对标 Qt 6.8 QCompleter 核心公共 API；
  *             QCompleter : QObject，本类 XObject 派生）。

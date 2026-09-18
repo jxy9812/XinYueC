@@ -118,7 +118,6 @@ void* XCategoryAxis_countChanged_signal(XCategoryAxis* self, int count)
     return (void*)(size_t)XCategoryAxis_countChanged_signal;
 }
 
-#endif /* XCHARTS_ON */
 void XCategoryAxis_deinit_impl(XCategoryAxis* self)
 {
     int i;
@@ -135,3 +134,5 @@ void XCategoryAxis_deinit_impl(XCategoryAxis* self)
     }
     XAbstractAxis_deinit_base(&self->m_base);
 }
+
+#endif /* XCHARTS_ON */

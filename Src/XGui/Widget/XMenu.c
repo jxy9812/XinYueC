@@ -275,6 +275,16 @@ XAction* XMenu_menuAction(XMenu* self)
     return self->m_menuAction;
 }
 
+XMenu* XMenu_menuInAction(const XAction* action)
+{
+    /*
+     * 对标 QMenu::menuInAction：qobject_cast<QMenu*>(action->menuObject())。
+     * 本项目 XAction::m_menu 只承载 XMenu*，无第二对象类型，省去
+     * qobject_cast 鉴别，直接返回登记的菜单（未关联返回 NULL）。
+     */
+    return XAction_menu(action);
+}
+
 /* ==================== 属性（对标 QMenu） ==================== */
 
 XString* XMenu_title(const XMenu* self)

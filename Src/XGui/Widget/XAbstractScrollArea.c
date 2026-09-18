@@ -245,11 +245,14 @@ static void VX_asa_scrollContentsBy(XAbstractScrollArea* self, int dx, int dy)
 void XAbstractScrollArea_scrollContentsBy_base(XAbstractScrollArea* self,
                                                int dx, int dy)
 {
+    void (*fn)(XAbstractScrollArea*, int, int);
     if (!self) return;
     if (!XClassGetVtable(self)) return;
-    XClassGetVirtualFunc(self, EXAbstractScrollArea_ScrollContentsBy,
-                         void (*)(XAbstractScrollArea*, int, int))(
-        self, dx, dy);
+    fn = XClassGetVirtualFunc(self, EXAbstractScrollArea_ScrollContentsBy,
+                              void (*)(XAbstractScrollArea*, int, int));
+    /* 子类未覆盖时无默认实现：不调用，避免空槽指针崩溃。 */
+    if (!fn) return;
+    fn(self, dx, dy);
 }
 
 /* ==================== 生命周期与虚表 ==================== */

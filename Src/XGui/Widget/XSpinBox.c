@@ -490,7 +490,9 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
             opt.m_state |= XStyleState_HasFocus;
         if (XWidget_underMouse(self) && XWidget_isEnabled(self))
             opt.m_state |= XStyleState_MouseOver;
-        opt.m_spinFrame = true;
+        /* frame 对接基类属性（对标 Qt：setFrame(false) 时样式不再绘制
+         * 微调框边框；XStyle 按该标志裁剪边框绘制与 EditField 边距）。 */
+        opt.m_spinFrame = spin->m_base.m_frame;
         opt.m_spinSymbols = symbols ==
             XAbstractSpinBoxButtonSymbols_PlusMinus ? 1 : 0;
         opt.m_spinStepEnabled =
@@ -909,6 +911,9 @@ void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_prefix = NULL;
     self->m_suffix = NULL;
     self->m_textDirty = false;
+    /* 上/下按钮活动子控件标志清零（对标 activeSubControls，缺省无活动按钮）。 */
+    self->m_activeUp = false;
+    self->m_activeDown = false;
 
     edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
     if (edit) {

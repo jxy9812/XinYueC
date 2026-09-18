@@ -48,6 +48,12 @@ static void VXApplication_deinit(XApplication* self)
     self->m_focusWidget = NULL;
     self->m_activeModalWidget = NULL;
     self->m_activePopupWidget = NULL;
+    /* m_styleSheet 为对象拥有字段：析构时释放，防泄漏（与 init 的 NULL
+     * 初值配对）。 */
+    if (self->m_styleSheet) {
+        XString_delete_base((XClass*)self->m_styleSheet);
+        self->m_styleSheet = NULL;
+    }
     XClass_Deinit_Parent(XGuiApplication, (XGuiApplication*)self);
 }
 
@@ -72,6 +78,13 @@ void XApplication_init(XApplication* self, int argc, char** argv)
     self->m_focusWidget = NULL;
     self->m_activeModalWidget = NULL;
     self->m_activePopupWidget = NULL;
+    /* 与 XApplication_autoSipEnabled 缺省约定一致（头文件文档：默认 false）。 */
+    self->m_autoSipEnabled = false;
+    /* 效果使能位集缺省开（位 0 置位；对标 isEffectEnabled 默认 true）。 */
+    self->m_effectEnabled = 1;
+    /* 应用级样式表初始为 NULL（对象拥有；setStyleSheet 依赖 NULL 懒创建，
+     * 避免堆残留垃圾野指针）。 */
+    self->m_styleSheet = NULL;
     g_xapp = self;
 }
 
@@ -391,6 +404,29 @@ void XApplication_setStyle(XStyle* style)
 #else
     (void)style;
 #endif
+}
+
+XFont XApplication_fontMetrics(void)
+{
+    XFont font;
+    XFont* appFont;
+
+    /*
+     * 对标 QApplication::fontMetrics：Qt 返回以 QApplication::font()
+     * 构造的 QFontMetrics 只读度量对象；本仓库未建立度量类，按
+     * XWidget_fontMetrics 的 XFont 值拷贝方案返回应用默认字体副本，
+     * 调用方把它传入 XPainter_textWidth/XPainter_textHeight 等以
+     * XFont 为入参的测量接口完成度量。
+     */
+    XFont_init(&font);
+    appFont = XGuiApplication_font(); /* 应用未设置字体时返回 NULL。 */
+    if (appFont) {
+        XCopy(&font, appFont);
+        XFont_delete_base((XClass*)appFont);
+    }
+    /* 无实例或未设置字体：font 即 XFont_init 的默认构造字体（对齐
+       QApplication 默认字体回退与 XWidget_font 的默认值路径）。 */
+    return font;
 }
 
 /** @brief 发射 focusChanged 信号（XApplication 继承 XObject 信号槽）。 */

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XMenuBar.h
  * @brief      XMenuBar 菜单栏控件（对标 Qt 6.8 QMenuBar 全部公共 API）。
  * @details    功能范围：

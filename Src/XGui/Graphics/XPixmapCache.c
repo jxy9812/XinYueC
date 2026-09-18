@@ -12,6 +12,10 @@
  ******************************************************************************/
 #include "XPixmapCache.h"
 
+/* XPIXMAPCACHE_ON=0 时整体裁剪：全局像素图缓存不可用，引用侧
+ * （XIconScaledPixmapCache.c）按回退模式退化为永久未命中/拒绝插入。 */
+#if XPIXMAPCACHE_ON
+
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XCoreApplication.h"
@@ -623,3 +627,4 @@ void XPixmapCache_clear(void)
     g_cache.m_entryCount = 0;
     cacheLockRelease();
 }
+#endif /* XPIXMAPCACHE_ON */

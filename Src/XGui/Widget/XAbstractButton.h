@@ -6,6 +6,9 @@
  *             - 文本与图标：text/setText、icon/setIcon、iconSize/setIconSize；
  *             - 状态属性：checkable/checked、down、autoRepeat、
  *               autoExclusive；
+ *             - 快捷键与按钮组：setShortcut/shortcut（快捷键文本承载，
+ *               触发体系未建）、group（按钮组不透明承载，按钮组体系
+ *               未建）；
  *             - 激活行为：click、animateClick，以及鼠标/键盘按下与释放期间
  *               的状态和信号联动；
  *             - 保护虚函数：checkStateSet、nextCheckState、hitButton、以及
@@ -93,6 +96,8 @@ struct XAbstractButton
     int          m_autoRepeatInterval; /**< 自动重复间隔，单位为毫秒；由调用方整数保存。 */
     XTimerId     m_repeatTimer;        /**< 自动重复定时器；无效时为 XTIMER_INVALID_ID，仅供内部使用。 */
     XTimerId     m_animateTimer;       /**< animateClick 释放定时器；无效时为 XTIMER_INVALID_ID，仅供内部使用。 */
+    XString*     m_shortcut;           /**< 快捷键文本承载（对标 QAbstractButton::shortcut）；对象拥有，NULL 表示未设置。 */
+    void*        m_group;              /**< 所属按钮组不透明承载（对标 QAbstractButton::group）；按钮组体系未建，仅存储位。 */
 };
 
 /* ==================== 类初始化与生命周期 ==================== */
@@ -363,6 +368,60 @@ bool XAbstractButton_autoExclusive(const XAbstractButton* self);
  * @return     无返回值；self 为 NULL 时保持原标志不变。
  */
 void XAbstractButton_setAutoExclusive(XAbstractButton* self, bool exclusive);
+
+/* ==================== 快捷键与按钮组（对标 QAbstractButton::shortcut/group） ==================== */
+
+/**
+ * @brief      使用 XString 设置按钮快捷键文本（对标 QAbstractButton::setShortcut）。
+ * @details    函数深拷贝 shortcut，不取得调用方字符串所有权；Qt 中
+ *             setShortcut 同时通过 grabShortcut 注册全局快捷键并在按键
+ *             时触发按钮，本实现只保存快捷键文本承载位，不做任何注册
+ *             或触发。
+ * @note       快捷键触发体系未建：本接口按对标接口存在性提供，设置的
+ *             文本不参与事件分发；触发体系接入后由本类内部消费该承载。
+ * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
+ * @param      shortcut 快捷键文本借用指针；可为 NULL 表示清除，函数返回
+ *             后调用方仍可释放或修改源对象。
+ * @return     无返回值；内存分配失败或 self 为 NULL 时保持原快捷键文本
+ *             不变。
+ */
+void XAbstractButton_setShortcut(XAbstractButton* self,
+                                 const XString* shortcut);
+
+/**
+ * @brief      使用 UTF-8 字符串设置按钮快捷键文本（UTF-8 兼容重载）。
+ * @details    utf8 按 UTF-8 解码为 XString 后转发
+ *             XAbstractButton_setShortcut；NULL 按清除处理。
+ * @note       同 setShortcut：仅文本承载，快捷键触发体系未建。
+ * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
+ * @param      utf8 以 '\0' 结尾的 UTF-8 快捷键文本；可为 NULL 表示清除，
+ *             由调用方借用且函数不会修改。
+ * @return     无返回值；解码或内存分配失败时保持原快捷键文本不变。
+ */
+void XAbstractButton_setShortcut_2(XAbstractButton* self, const char* utf8);
+
+/**
+ * @brief      查询按钮快捷键文本（对标 QAbstractButton::shortcut）。
+ * @param      self 按钮对象的借用指针；可为 NULL。
+ * @return     内部快捷键文本借用指针；未设置或 self 为 NULL 时返回 NULL。
+ *             返回指针不能释放、不能修改，生命周期同 self 及下一次
+ *             setShortcut 前的对象状态。
+ */
+const XString* XAbstractButton_shortcut(const XAbstractButton* self);
+
+/**
+ * @brief      查询按钮所属按钮组（对标 QAbstractButton::group）。
+ * @details    Qt 中返回登记该按钮的 QButtonGroup（由 QButtonGroup 私有
+ *             回写）；本实现以 void* 不透明承载同一语义，返回值只允许
+ *             与登记方做指针比较，不得解引用为具体类型。
+ * @note       按钮组体系未建：XButtonGroup 目前未回写该承载位，按钮
+ *             未经登记时本接口返回 NULL；本声明按对标接口存在性提供，
+ *             待按钮组接入后由 XButtonGroup_addButton/removeButton 维护。
+ * @param      self 按钮对象的借用指针；可为 NULL。
+ * @return     所属按钮组的不透明承载指针；未登记或 self 为 NULL 返回
+ *             NULL。
+ */
+void* XAbstractButton_group(const XAbstractButton* self);
 
 /* ==================== 程序化点击（对标 QAbstractButton） ==================== */
 

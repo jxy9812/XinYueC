@@ -910,6 +910,27 @@ void* XToolBar_visibilityChanged_signal(XToolBar* self, bool visible)
     xtb_emitBool(self, (size_t)XToolBar_visibilityChanged_signal, visible);
     return (void*)(size_t)XToolBar_visibilityChanged_signal;
 }
+
+/**
+ * @brief      发射 topLevelChanged(bool) 信号（对标 QToolBar::
+ *             topLevelChanged）。
+ * @details    Qt 的发射点在停靠布局体系的 isFloating 变化路径；本实现
+ *             停靠/拖拽体系未建（m_floating 恒为存储位默认 false），
+ *             无内部自动发射路径，本函数作为句柄预留按"真发射"形态
+ *             实现：self 非 NULL 且有已连接槽时经 XObject_emitSignal
+ *             同步通知，否则只返回信号标识。
+ * @param      self 目标工具栏；可为 NULL。
+ * @param      topLevel true 表示变为顶层（浮动），false 表示已停靠。
+ * @return     不透明的 topLevelChanged 信号标识；返回值不指向可释放
+ *             对象，也不得解引用。
+ */
+void* XToolBar_topLevelChanged_signal(XToolBar* self, bool topLevel)
+{
+    if (!self)
+        return (void*)(size_t)XToolBar_topLevelChanged_signal;
+    xtb_emitBool(self, (size_t)XToolBar_topLevelChanged_signal, topLevel);
+    return (void*)(size_t)XToolBar_topLevelChanged_signal;
+}
 void* XToolBar_iconSizeChanged_signal(XToolBar* self, int width, int height)
 {
     (void)self; (void)width; (void)height;

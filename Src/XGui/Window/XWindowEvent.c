@@ -896,7 +896,6 @@ XKeyboardModifiers XContextMenuEvent_modifiers(const XContextMenuEvent* event)
     return event ? event->m_modifiers : XKeyboardModifier_NoModifier;
 }
 
-#endif /* XWINDOWEVENT_ON */
 
 /* ==================== XMoveEvent（Task 2.13） ==================== */
 
@@ -1048,3 +1047,5 @@ int XTabletEvent_pointerType(const XTabletEvent* event)
 {
     return event ? event->m_pointerType : XTabletPointerType_Unknown;
 }
+
+#endif /* XWINDOWEVENT_ON */

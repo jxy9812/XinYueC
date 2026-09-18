@@ -107,9 +107,30 @@ SKIP = {
     "QFileDialog.saveFileContent": "远程内容保存（依赖 QNetworkAccessManager）不做",
     "QFileDialog.urlSelected": "URL 承载族不做",
     "QFileDialog.urlsSelected": "URL 承载族不做",
+    # --- 死声明清理后登记（2026-09-17 夜）：原生句柄/屏幕/样式族 XGui 不做 ---
+    "QWidget.winId": "原生窗口句柄体系不做（嵌入式无原生句柄暴露；XWindow 层内部承载）",
+    "QWidget.createWinId": "同 winId，原生句柄体系不做",
+    "QWidget.internalWinId": "同 winId",
+    "QWidget.effectiveWinId": "同 winId",
+    "QWidget.screen": "屏幕对象体系未建（嵌入式单屏）；XWindow 层内部承载",
+    "QWidget.setScreen": "同 screen",
+    "QWidget.windowIcon": "窗口图标以 XWindow 层内部承载（XWidget 级不做 per-widget 图标）",
+    "QWidget.setWindowIcon": "同 windowIcon",
+    "QWidget.style": "per-widget 样式覆盖不做（全局样式 XApplication.style 承载，对标 Qt setStyle 反模式）",
+    "QWidget.setStyle": "同 style",
+    "QWidget.ensurePolished": "polish 生命周期由样式层内部处理，不暴露",
+    "QWidget.actions": "动作列表经 XAction 体系按需另批实现",
+    "QWidget.saveGeometry": "几何序列化（QByteArray 布局恢复）未建",
+    "QWidget.restoreGeometry": "同 saveGeometry",
     # --- Phase 3.2 P2 收口（2026-09-17）：QTimeZone 对象体系 ---
     "QDateTimeEdit.timeZone": "QTimeZone 对象体系未建（XGui 纯公历嵌入式边界）；时区规格由 setTimeSpec 承载，11b 偏差",
     "QDateTimeEdit.setTimeZone": "同 timeZone，QTimeZone 对象体系未建",
+    # --- Phase 3.1 尾部收敛（2026-09-18）：富文本格式子集与拖放 MIME 边界 ---
+    "QTextEdit.currentCharFormat": "QTextCharFormat 富文本格式对象未建模；能力由 currentFont/fontItalic 等字体属性访问器承载（纯文本模型边界）",
+    "QTextEdit.setCurrentCharFormat": "同 currentCharFormat，QTextCharFormat 未建模",
+    "QTextEdit.extraSelections": "QTextEdit::ExtraSelection 结构与覆盖绘制层未建模（字符级标注属富文本子集边界）",
+    "QTextEdit.setExtraSelections": "同 extraSelections",
+    "QListWidget.items": "拖放 MIME 数据→条目换算辅助（protected），依赖 DnD 体系；XListWidget 未建拖放",
 }
 
 # ------------------------------------------------------------

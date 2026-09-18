@@ -7,6 +7,8 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XIconStyleHelper.h"
+
+#if XGUI_ON
 #include "XGuiApplication.h"
 #include "XPalette.h"
 #include "XColor.h"
@@ -200,3 +202,5 @@ void XIconStyleHelper_apply(XIconMode mode, const XPixmap* base, XPixmap* out)
     XCopy(out, base);
 #endif
 }
+
+#endif /* XGUI_ON */

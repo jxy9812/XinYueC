@@ -160,7 +160,6 @@ void* XColorDialog_colorSelected_signal(XColorDialog* self, XColor color)
     return (void*)(size_t)XColorDialog_colorSelected_signal;
 }
 
-#endif /* XWIDGET_ON && XDIALOG_ON */
 
 /* ==================== Task 2.21 回检补齐：自定义/标准颜色 ============== */
 
@@ -206,3 +205,5 @@ void XColorDialog_open(XColorDialog* self)
     if (!self) return;
     XWidget_show((XWidget*)self);
 }
+
+#endif /* XWIDGET_ON && XDIALOG_ON */

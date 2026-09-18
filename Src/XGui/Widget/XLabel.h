@@ -29,7 +29,10 @@
  * @note       模块总开关 XLABEL_ON 定义于 XGuiConfig.h；XLABEL_ON=0 时
  *             裁剪整个 XLabel 公共 API。XLabel 依赖 XWIDGET_ON 与
  *             XFRAME_ON（父类能力）以及 XSTRING_ON（文本存储）；XPixmap
- *             /XPicture/XMovie 为可选显示内容，均可用空对象表达。
+ *             /XPicture/XMovie 为可选显示内容，均可用空对象表达；
+ *             影片显示能力还受 XMOVIE_ON（XGuiConfig.h）独立裁剪，
+ *             置 0 时 movie()/setMovie() 保留借用指针语义，影片分支
+ *             退出尺寸计算与绘制（guard-review-0020 批次 2）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XLABEL_H
@@ -268,12 +271,17 @@ XPicture* XLabel_picture(const XLabel* self);
  */
 void XLabel_setPicture(XLabel* self, const XPicture* picture);
 
-/** @brief 返回影片（对标 QLabel::movie；借用指针，无影片返回 NULL）。 */
+/** @brief 返回影片（对标 QLabel::movie；借用指针，无影片返回 NULL）。
+ *  @note  影片模块经 XMOVIE_ON（XGuiConfig.h）裁剪后本 API 保留：仅回
+ *         读 setMovie 登记的借用指针，帧绘制与尺寸贡献随模块一起关闭。 */
 XMovie* XLabel_movie(const XLabel* self);
 /**
  * @brief      设置影片（对标 QLabel::setMovie；借用，标签不持有）。
  * @details    清空旧内容（含文本）；movie 为 NULL 时仅清空。
  *             影片当前帧像素图经 XMovie_currentPixmap 获取并绘制。
+ * @note       XMOVIE_ON=0（影片模块裁剪）时本 API 保留借用指针登记
+ *             语义（回退模式，参照 XBackingStore 的不透明指针处理）：
+ *             无 XMovie 实现可创建，影片分支不参与尺寸计算与绘制。
  */
 void XLabel_setMovie(XLabel* self, XMovie* movie);
 

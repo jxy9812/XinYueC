@@ -5,6 +5,11 @@
  *             图像插件，供 XImagePluginRegistry 统一发现和创建处理器。
  ******************************************************************************/
 #include "XImageBuiltinPlugin.h"
+
+/* XIMAGEIOPLUGIN_ON=0 时整体裁剪：内置插件不参与构建，注册表与
+ * Reader/Writer 侧按同一开关降级（guard-review-0020）。 */
+#if XIMAGEIOPLUGIN_ON
+
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -15,8 +20,6 @@
 #include "XByteArray.h"
 #include "XStringList.h"
 #include "XMemory.h"
-
-#if XIMAGEIOPLUGIN_ON
 
 static const char* const g_builtinFormats[] =
     /* Qt 公共支持列表只列规范键；JPEG 别名和 PPM raw 子类型仍在
@@ -1132,13 +1135,6 @@ XImageIOPlugin* XImageBuiltinPlugin_instance(void)
 #else
     return NULL;
 #endif
-}
-
-#else /* XIMAGEIOPLUGIN_ON */
-
-XImageIOPlugin* XImageBuiltinPlugin_instance(void)
-{
-    return NULL;
 }
 
 #endif /* XIMAGEIOPLUGIN_ON */

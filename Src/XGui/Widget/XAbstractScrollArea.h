@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XAbstractScrollArea.h
  * @brief      XAbstractScrollArea 滚动区域基类（对标 Qt 6.8
  *             QAbstractScrollArea 全部公共 API）。

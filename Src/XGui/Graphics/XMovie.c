@@ -4,6 +4,11 @@
  */
 #include "XMovie.h"
 
+/* XMOVIE_ON=0 时整体裁剪：影片播放 API 不可见，XLabel 侧按回退模式
+ * 处理（影片分支不参与尺寸计算与绘制，movie()/setMovie() 保留
+ * 借用指针语义，见 XLabel.h）。 */
+#if XMOVIE_ON
+
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -808,3 +813,4 @@ void* XMovie_frameChanged_signal(XMovie* self, int frameNumber)
                 XVarList_Create(XVar(int, frameNumber)));
     return (void*)(size_t)XMovie_frameChanged_signal;
 }
+#endif /* XMOVIE_ON */

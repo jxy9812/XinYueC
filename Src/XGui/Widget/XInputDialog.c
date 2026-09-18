@@ -540,7 +540,6 @@ void* XInputDialog_comboBoxTextChanged_signal(XInputDialog* self,
     return (void*)(size_t)XInputDialog_comboBoxTextChanged_signal;
 }
 
-#endif /* XWIDGET_ON && XDIALOG_ON */
 
 /* ==================== Task 2.21 回检补齐：范围/回显/确认信号 =========== */
 
@@ -642,3 +641,5 @@ void* XInputDialog_comboBoxTextValueSelected_signal(XInputDialog* self,
     XInputDialog_comboBoxTextChanged_signal(self, text);
     return (void*)(size_t)XInputDialog_comboBoxTextValueSelected_signal;
 }
+
+#endif /* XWIDGET_ON && XDIALOG_ON */

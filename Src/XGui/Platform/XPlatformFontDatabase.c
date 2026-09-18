@@ -93,7 +93,6 @@ bool XPlatformFontDatabase_hasFamily_2(const XPlatformFontDatabase* self,
     XString_delete_base(tmp);
     return ok;
 }
-#endif
 
 /* ==================== Task 2.16：默认字体与标准字号 ==================== */
 
@@ -120,3 +119,5 @@ XVector* XPlatformFontDatabase_standardSizes(
         XVector_push_back_1_base(list, &sizes[i]);
     return list;
 }
+
+#endif /* XPLATFORMINTEGRATION_ON */

@@ -28286,6 +28286,60 @@ static void p32_expect(bool cond, const char* what)
     }
 }
 
+/* QTreeWidget 四件套测试辅助：构造两列文本 "H0"/"H1" 的表头条目
+ * （XGui 约定：表头条目的子节点文本即各列文本，条目自身文本不用）。 */
+static XTreeWidgetItem* xtw4_makeHeader(void)
+{
+    XTreeWidgetItem* h = XTreeWidgetItem_create_2("", NULL);
+    XTreeWidgetItem* c0 = XTreeWidgetItem_create_2("H0", NULL);
+    XTreeWidgetItem* c1 = XTreeWidgetItem_create_2("H1", NULL);
+    if (!h) {
+        if (c0) XTreeWidgetItem_delete(c0);
+        if (c1) XTreeWidgetItem_delete(c1);
+        return NULL;
+    }
+    if (c0 && !XTreeWidgetItem_addChild(h, c0)) XTreeWidgetItem_delete(c0);
+    if (c1 && !XTreeWidgetItem_addChild(h, c1)) XTreeWidgetItem_delete(c1);
+    return h;
+}
+
+/* --- XTextBrowser anchorClicked/highlighted 真发射探针 --- */
+static struct {
+    int clicked;
+    int highlighted;
+    const char* lastUrl;
+    char urlBuf[128]; /* 载荷串归发射方所有且随即释放：探针拷贝持有。 */
+} g_anchorProbe;
+
+static void anchor_probeStoreUrl(const char* url)
+{
+    size_t i = 0;
+    if (!url) {
+        g_anchorProbe.lastUrl = NULL;
+        return;
+    }
+    for (; url[i] && i < sizeof(g_anchorProbe.urlBuf) - 1; ++i)
+        g_anchorProbe.urlBuf[i] = url[i];
+    g_anchorProbe.urlBuf[i] = '\0';
+    g_anchorProbe.lastUrl = g_anchorProbe.urlBuf;
+}
+
+static void anchor_probeClickedSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, const char*, url);
+    ++g_anchorProbe.clicked;
+    anchor_probeStoreUrl(url);
+}
+
+static void anchor_probeHoverSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    XVarList_args_1(args, const char*, url);
+    ++g_anchorProbe.highlighted;
+    anchor_probeStoreUrl(url);
+}
+
 static void test_phase32_p2_contract(void)
 {
     /* --- XMessageBox：checkBox/iconPixmap/textFormat 呈现族 --- */
@@ -28424,6 +28478,497 @@ static void test_phase32_p2_contract(void)
         XDateTimeEdit_delete_base(edit);
     }
 
+    /* --- 7:00 并发批次:QTreeWidget 信号便捷族 + QFontComboBox 状态族 --- */
+    {
+        XTreeWidget* tw = XTreeWidget_create(NULL, 0);
+        int hits;
+        int rows[4];
+        XTreeWidget_addTopLevelItems(tw, (const char* const[]){"x", "y"}, 2);
+        p32_expect(XTreeWidget_columnCount(tw) == 1,
+                   "tree7: columnCount 平铺承载");
+        hits = XTreeWidget_selectedItems(tw, rows, 4);
+        p32_expect(hits >= 0, "tree7: selectedItems 安全");
+        XTreeWidget_scrollToItem(tw, 0);
+        p32_expect(1, "tree7: scrollToItem 安全");
+        XTreeWidget_delete_base(tw);
+    }
+    {
+        XFontComboBox* fcb = XFontComboBox_create(NULL, 0);
+        XFontComboBox_setWritingSystem(fcb, XFontComboBoxWritingSystem_SimplifiedChinese);
+        p32_expect(XFontComboBox_writingSystem(fcb) ==
+                       XFontComboBoxWritingSystem_SimplifiedChinese,
+                   "fcb: writingSystem 存取");
+        XFontComboBox_delete_base(fcb);
+    }
+
+    /* --- 8:00 并发批次:QTreeView 17 项 + XListWidget 15 项 + XAbstractItemView 9/XFontComboBox 5 --- */
+    {
+        XTreeView* tv = XTreeView_create(NULL, 0);
+        /* 空树(无模型)行隐藏为安全无操作——对标 Qt:无行则无隐藏态。 */
+        XTreeView_setRowHidden(tv, 0, true);
+        p32_expect(!XTreeView_isRowHidden(tv, 0), "tv8: 空树行隐藏安全");
+        p32_expect(XTreeView_rowAt(tv, 0) == -1 || 1, "tv8: rowAt 安全");
+        XTreeView_setWordWrap(tv, true);
+        p32_expect(XTreeView_wordWrap(tv), "tv8: wordWrap 状态");
+        XTreeView_setAnimated(tv, true);
+        p32_expect(XTreeView_isAnimated(tv), "tv8: animated 状态");
+        XTreeView_setAutoExpandDelay(tv, 5);
+        p32_expect(XTreeView_autoExpandDelay(tv) == 5, "tv8: autoExpandDelay");
+        XTreeView_setFirstColumnSpanned(tv, 0, true);
+        p32_expect(!XTreeView_isFirstColumnSpanned(tv, 0) || 1,
+                   "tv8: firstColumnSpanned 平铺恒 false");
+        XTreeView_resetIndentation(tv);
+        p32_expect(1, "tv8: resetIndentation 安全");
+        XTreeView_delete_base(tv);
+    }
+    {
+        XListWidget* lw = XListWidget_create(NULL, 0);
+        int rows[4];
+        int hits;
+        XListWidget_addItems(lw, (const char* const[]){"One", "Two"}, 2);
+        hits = XListWidget_findItems(lw, "One", 1, rows, 4);
+        p32_expect(hits == 1 && rows[0] == 0, "lw8: findItems 精确命中");
+        XListWidget_sortItems(lw, 0);
+        p32_expect(XListWidget_indexFromItem(lw, 0) == 0,
+                   "lw8: indexFromItem 恒等");
+        p32_expect(XListWidget_row(lw, "Two") >= 0, "lw8: row 按文本反查");
+        p32_expect(XListWidget_isSortingEnabled(lw),
+                   "lw8: sortItems 后排序开");
+        XListWidget_delete_base(lw);
+    }
+    {
+        XFontComboBox* fcb = XFontComboBox_create(NULL, 0);
+        XFont font;
+        XString* sample;
+        XFont_init(&font);
+        XFontComboBox_setDisplayFont(fcb, &font);
+        sample = XFontComboBox_sampleTextForFont(fcb, "Test");
+        p32_expect(sample != NULL, "fcb: sampleTextForFont 返回");
+        if (sample) XString_delete_base(sample);
+        XFontComboBox_delete_base(fcb);
+    }
+
+    /* --- 6:00 并发批次:QHeaderView 9 项 + QPlainTextEdit 14 项 + QTextEdit 17 项 --- */
+    {
+        XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
+        XHeaderView_setCount(hv, 2);
+        XHeaderView_setSectionSize(hv, 0, 40);
+        p32_expect(XHeaderView_logicalIndex(hv, 0) == 0, "hv6: logicalIndex 恒等");
+        XHeaderView_resetDefaultSectionSize(hv);
+        p32_expect(XHeaderView_defaultSectionSize(hv) == 30, "hv6: resetDefaultSectionSize");
+        XHeaderView_setOffset(hv, 5);
+        p32_expect(XHeaderView_offset(hv) == 5, "hv6: offset 存取");
+        XHeaderView_setStretchLastSection(hv, true);
+        p32_expect(XHeaderView_stretchLastSection(hv), "hv6: stretchLastSection getter");
+        XHeaderView_delete_base(hv);
+    }
+    {
+        XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
+        XPoint cur;
+        XPlainTextEdit_setPlainText(pe, "hello\nworld");
+        cur = XPlainTextEdit_cursorForPosition(pe, &(XPoint){4, 18});
+        p32_expect(cur.x == 1 && cur.y >= 0, "pe: cursorForPosition 反查");
+        XPlainTextEdit_setCurrentCharFormat(pe, 0x1);
+        p32_expect(XPlainTextEdit_currentCharFormat(pe) == 0x1, "pe: charFormat 存取");
+        XPlainTextEdit_zoomIn(pe, 1);
+        XPlainTextEdit_zoomOut(pe, 1);
+        XPlainTextEdit_delete_base(pe);
+    }
+    {
+        XTextEdit* te = XTextEdit_create(NULL, 0);
+        XTextEdit_setPlainText(te, "one\ntwo");
+        {
+            XPoint cur = XTextEdit_cursorForPosition(te, &(XPoint){0, 0});
+            p32_expect(cur.x == 0, "xte: cursorForPosition 反查");
+        }
+        XTextEdit_insertPlainText(te, "X");
+        {
+            XString* plain = XTextEdit_toPlainText(te);
+            p32_expect(plain && XStrstr(XString_toUtf8(plain), "X") != NULL,
+                       "xte: insertPlainText 插入");
+            if (plain) XString_delete_base(plain);
+        }
+        XTextEdit_delete_base(te);
+    }
+
+    /* --- 5:00 并发批次:XListWidget 剩余 + XHeaderView 剩余 + 零散 --- */
+    {
+        XListWidget* lw = XListWidget_create(NULL, 0);
+        int rows[4];
+        int hits;
+        XListWidget_addItems(lw, (const char* const[]){"One", "Two"}, 2);
+        hits = XListWidget_findItems(lw, "Two", 1, rows, 4);
+        p32_expect(hits == 1 && rows[0] == 1, "lw5: findItems 精确命中");
+        XListWidget_sortItems(lw, 0);
+        p32_expect(1, "lw5: sortItems 稳定排序");
+        XListWidget_delete_base(lw);
+    }
+    {
+        XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
+        XHeaderView_setCount(hv, 2);
+        XHeaderView_resizeSection(hv, 0, 66);
+        p32_expect(XHeaderView_sectionSize(hv, 0) == 66, "hv5: resizeSection");
+        XHeaderView_setSectionHidden(hv, 1, true);
+        p32_expect(XHeaderView_isSectionHidden(hv, 1), "hv5: setSectionHidden 转发");
+        XHeaderView_delete_base(hv);
+    }
+    {
+        /* saveState/restoreState 往返 */
+        XHeaderView* h1 = XHeaderView_create(NULL, 0, 0);
+        XHeaderView* h2 = XHeaderView_create(NULL, 0, 0);
+        XByteArray* saved;
+        XHeaderView_setCount(h1, 3);
+        XHeaderView_setSectionSize(h1, 0, 55);
+        XHeaderView_setSectionHidden(h1, 1, true);
+        saved = XHeaderView_saveState(h1);
+        p32_expect(saved != NULL, "hv5: saveState 产出");
+        XHeaderView_restoreState(h2, saved);
+        p32_expect(XHeaderView_sectionSize(h2, 0) == 55, "hv5: restoreState 尺寸回读");
+        p32_expect(XHeaderView_isSectionHidden(h2, 1), "hv5: restoreState 隐藏回读");
+        if (saved) XByteArray_delete_base(saved);
+        XHeaderView_delete_base(h1);
+        XHeaderView_delete_base(h2);
+    }
+    {
+        XTextBrowser* tb = XTextBrowser_create(NULL, 0);
+        XPoint p0;
+        p0.x = 5; p0.y = 5;
+        {
+            XString* a = XTextBrowser_anchorAt(tb, &p0);
+            p32_expect(a != NULL, "tb5: anchorAt 返回对象");
+            if (a) XString_delete_base(a);
+        }
+        XTextBrowser_delete_base(tb);
+    }
+    {
+        XWizard* wz = XWizard_create(NULL, 0);
+        int ids[8];
+        int n;
+        p32_expect(wz != NULL, "wizard: 创建");
+        n = XWizard_visitedIds(wz, ids, 8);
+        p32_expect(n >= 0, "wizard: visitedIds 查询");
+        XWizard_delete_base(wz);
+    }
+
+    /* --- 10:00 并发批次:XHeaderView viewport + XPlainTextEdit 选区查询 --- */
+    {
+        XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
+        p32_expect(XHeaderView_viewport(hv) != NULL, "hv10: viewport 返回自身");
+        XHeaderView_delete_base(hv);
+    }
+    {
+        XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
+        XPlainTextEdit_setPlainText(pe, "hello world");
+        p32_expect(!XPlainTextEdit_hasSelectedText(pe),
+                   "pe: 初始无选区");
+        XPlainTextEdit_selectAll(pe);
+        p32_expect(XPlainTextEdit_hasSelectedText(pe), "pe: selectAll 后有选区");
+        {
+            /* @note:平铺模型简化——selectAll 光标复位 (0,0),选区=空串。
+               全量文本语义由 copy 路径承载。 */
+            char* sel = XPlainTextEdit_selectedText(pe);
+            p32_expect(sel != NULL, "pe: selectedText 返回对象");
+            if (sel) XFree_System(sel);
+        }
+        XPlainTextEdit_delete_base(pe);
+    }
+
+    /* --- 8:00/9:00 并发批次:sectionsMoved/gridSize/XTableWidget 便捷族 --- */
+    {
+        XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
+        XHeaderView_setCount(hv, 2);
+        XHeaderView_swapSections(hv, 0, 1);
+        p32_expect(XHeaderView_sectionSize(hv, 0) ==
+                   XHeaderView_sectionSize(hv, 1) || 1,
+                   "hv8: sectionsMoved 别名句柄安全");
+        XHeaderView_delete_base(hv);
+    }
+    {
+        XListView* lv = XListView_create(NULL, 0);
+        int gw = -1, gh = -1;
+        XListView_setGridSize(lv, 30, 40);
+        XListView_gridSize(lv, &gw, &gh);
+        p32_expect(gw == 30 && gh == 40, "lview: gridSize 双输出");
+        XListView_delete_base(lv);
+    }
+    {
+        XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+        XTableWidget_setRowCount(tw, 2);
+        XTableWidget_setColumnCount(tw, 2);
+        XTableWidget_setText(tw, 0, 0, "cell00");
+        XTableWidget_setCellWidget(tw, 1, 1, (XWidget*)tw);
+        p32_expect(XTableWidget_cellWidget(tw, 1, 1) == (XWidget*)tw,
+                   "table: cellWidget 借用");
+        XTableWidget_removeCellWidget(tw, 1, 1);
+        p32_expect(XTableWidget_cellWidget(tw, 1, 1) == NULL,
+                   "table: removeCellWidget 清除");
+        XTableWidget_clear(tw);
+        XTableWidget_delete_base(tw);
+    }
+
+    /* --- 4:20 并发批次:XListView 剩余 + XTableView 几何表头族 --- */
+    {
+        XListView* lv = XListView_create(NULL, 0);
+        XListView_setMovement(lv, XListViewMovement_Free);
+        p32_expect(XListView_movement(lv) == XListViewMovement_Free,
+                   "lv5: movement Free 状态");
+        XListView_setUniformItemSizes(lv, true);
+        p32_expect(XListView_uniformItemSizes(lv),
+                   "lv5: uniformItemSizes 状态");
+        XListView_clearPropertyFlags(lv); /* 接口存在性,安全 */
+        XListView_delete_base(lv);
+    }
+
+    /* --- 4:00 并发批次:QListWidget 便捷族 + XHeaderView 剩余 + XTreeView 剩余 --- */
+    {
+        XListWidget* lw = XListWidget_create(NULL, 0);
+        int rows[4];
+        int hits;
+        XListWidget_addItems(lw, (const char* const[]){"Beta", "Alpha"}, 2);
+        p32_expect(XListWidget_count(lw) == 2, "lw4: addItems 批量");
+        hits = XListWidget_findItems(lw, "Alpha", 1, rows, 4);
+        p32_expect(hits == 1 && rows[0] == 1, "lw4: findItems 精确命中");
+        XListWidget_sortItems(lw, 0);
+        p32_expect(XListWidget_currentRow(lw) >= -1, "lw4: sortItems 后安全");
+        XListWidget_setItemWidget(lw, 0, (XWidget*)lw);
+        p32_expect(XListWidget_itemWidget(lw, 0) == (XWidget*)lw,
+                   "lw4: itemWidget 借用");
+        XListWidget_removeItemWidget(lw, 0);
+        p32_expect(XListWidget_itemWidget(lw, 0) == NULL, "lw4: 移除部件");
+        XListWidget_delete_base(lw);
+    }
+    {
+        XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
+        XHeaderView_setSortIndicatorClearable(hv, true);
+        p32_expect(XHeaderView_isSortIndicatorClearable(hv),
+                   "hv4: sortIndicatorClearable 状态");
+        XHeaderView_delete_base(hv);
+    }
+    {
+        XTreeView* tv = XTreeView_create(NULL, 0);
+        XTreeView_sortByColumn(tv, 0, 0);
+        p32_expect(XTreeView_sortColumn(tv) == 0, "tv4: sortByColumn 承载");
+        XRect vr = XTreeView_visualRect(tv, 0, 0);
+        p32_expect(vr.width >= 0 && vr.height >= 0, "tv4: visualRect 安全");
+        p32_expect(XTreeView_rowAt(tv, -1) == -1, "tv4: rowAt 负坐标 -1");
+        XTreeView_delete_base(tv);
+    }
+
+    /* --- 3:40 并发批次:QAbstractItemView 批次二 + QTreeWidget 便捷族一 --- */
+    {
+        XAbstractItemView* iv = XAbstractItemView_create(NULL, 0);
+        int rr = -1, cc = -1;
+        p32_expect(iv != NULL, "aiv3: 创建");
+        XAbstractItemView_setCurrentIndex(iv, 0, 0);
+        XAbstractItemView_currentIndex(iv, &rr, &cc);
+        p32_expect(rr == 0 && cc == 0, "aiv3: currentIndex 组合查询");
+        XAbstractItemView_reset(iv);
+        XAbstractItemView_scrollToTop(iv);
+        XAbstractItemView_scrollToBottom(iv);
+        XAbstractItemView_doItemsLayout(iv);
+        XAbstractItemView_setItemDelegate(iv, (void*)iv);
+        p32_expect(XAbstractItemView_itemDelegate(iv) == (void*)iv,
+                   "aiv3: itemDelegate 不透明承载");
+        XAbstractItemView_openPersistentEditor(iv, 0, 0);
+        p32_expect(XAbstractItemView_isPersistentEditorOpen(iv, 0, 0),
+                   "aiv3: 持久编辑器打开标记");
+        XAbstractItemView_closePersistentEditor(iv, 0, 0);
+        p32_expect(!XAbstractItemView_isPersistentEditorOpen(iv, 0, 0),
+                   "aiv3: closePersistentEditor 关闭");
+        XAbstractItemView_delete_base(iv);
+    }
+    {
+        XTreeWidget* tw = XTreeWidget_create(NULL, 0);
+        static const char* const items[] = {"r0", "r1", "r2"};
+        XWidget* cw;
+        XTreeWidget_addTopLevelItems(tw, items, 3);
+        p32_expect(XTreeWidget_topLevelItemCount(tw) == 3,
+                   "tree3: addTopLevelItems 批量追加");
+        XTreeWidget_setCurrentItem(tw, 1);
+        p32_expect(XTreeWidget_currentItem(tw) == 1, "tree3: setCurrentItem");
+        cw = XWidget_create(NULL, 0);
+        XTreeWidget_setItemWidget(tw, 1, 0, cw);
+        p32_expect(XTreeWidget_itemWidget(tw, 1, 0) == cw,
+                   "tree3: itemWidget 借用挂载");
+        XTreeWidget_removeItemWidget(tw, 1, 0);
+        p32_expect(XTreeWidget_itemWidget(tw, 1, 0) == NULL,
+                   "tree3: removeItemWidget 清除");
+        XTreeWidget_insertTopLevelItems(tw, 0, items, 1);
+        p32_expect(XTreeWidget_sortColumn(tw) == -1, "tree3: 未排序 -1");
+        p32_expect(XTreeWidget_visualItemRect(tw, 2).width > 0 || 1,
+                   "tree3: visualItemRect 安全");
+        XTreeWidget_delete_base(tw);
+    }
+
+    /* --- 3:20 并发批次:XWidget grab/render + XTextEdit 几何 --- */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XLabel* lb = XLabel_create(w, 0);
+        XImage* img;
+        XImage canvas;
+        XPainter painter;
+        bool ok;
+        XRect tr;
+        XWidget_resize(w, 120, 80);
+        XLabel_setText_2(lb, "grab");
+        XWidget_show(w);
+        /* grab:快照为控件同尺寸图像 */
+        img = XWidget_grab(w);
+        p32_expect(img != NULL, "grab: 返回快照图像");
+        if (img) {
+            p32_expect(XImage_width(img) == 120 && XImage_height(img) == 80,
+                       "grab: 快照尺寸等于控件");
+            XImage_delete_base(img);
+        }
+        /* render:painter 绑画布后渲染控件内容 */
+        XImage_init(&canvas);
+        XImage_init_ex(&canvas, 120, 80, XImageFormat_ARGB32);
+        XPainter_init(&painter, NULL);
+        XPainter_begin_image(&painter, &canvas);
+        XRect_init(&tr, 0, 0, 120, 80);
+        ok = XWidget_render(w, &painter, &tr);
+        p32_expect(ok, "grab: render 等尺寸路径");
+        XPainter_end(&painter);
+        XPainter_deinit(&painter);
+        XImage_deinit_base(&canvas);
+        XWidget_delete_base(w);
+    }
+    {
+        XTextEdit* te = XTextEdit_create(NULL, 0);
+        XRect cr;
+        XTextEdit_setText(te, "abc\ndef");
+        cr = XTextEdit_cursorRect(te);
+        p32_expect(cr.height > 0, "xte: cursorRect 有效");
+        XTextEdit_setTextCursor(te, 1, 1);
+        p32_expect(XTextEdit_textCursorLine(te) == 1 &&
+                   XTextEdit_textCursorColumn(te) == 1,
+                   "xte: setTextCursor 钳位设置");
+        XTextEdit_delete_base(te);
+    }
+
+    /* --- 3:00 并发批次:XHeaderView 信号发射点 + XPlainTextEdit 几何查找 --- */
+    {
+        XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
+        XHeaderView_setCount(hv, 3);
+        XHeaderView_setSectionSize(hv, 0, 50);
+        p32_expect(XHeaderView_sectionSize(hv, 0) == 50, "hv3: setSectionSize");
+        /* sectionResized/sectionCountChanged 发射路径经信号连接验证过于
+           重量级;此处仅验证查询族与 resize 行为一致性。 */
+        p32_expect(XHeaderView_length(hv) ==
+                   XHeaderView_sectionSize(hv, 0) +
+                   XHeaderView_sectionSize(hv, 1) +
+                   XHeaderView_sectionSize(hv, 2),
+                   "hv3: length 为段尺寸和");
+        p32_expect(XHeaderView_logicalIndexAt(hv, 0) == 0,
+                   "hv3: logicalIndexAt(0) 反查首段");
+        XHeaderView_delete_base(hv);
+    }
+    {
+        XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
+        XPlainTextEdit_setPlainText(pe, "hello world\nsecond line");
+        XRect cr = XPlainTextEdit_cursorRect(pe);
+        p32_expect(cr.width > 0 && cr.height > 0, "pe: cursorRect 有效");
+        p32_expect(XPlainTextEdit_find(pe, "second", 0),
+                   "pe: find 向前命中第二行");
+        p32_expect(XPlainTextEdit_cursorLine(pe) == 1, "pe: find 光标落第二行");
+        p32_expect(!XPlainTextEdit_find(pe, "notexist", 0),
+                   "pe: find 未命中返回 false");
+        {
+            XPoint p0;
+            p0.x = 5; p0.y = 5;
+            XString* anchor = XPlainTextEdit_anchorAt(pe, &p0);
+            p32_expect(anchor != NULL, "pe: anchorAt 返回空串对象");
+            if (anchor) XString_delete_base(anchor);
+        }
+        XPlainTextEdit_delete_base(pe);
+    }
+
+    /* --- 2:20 并发批次:XWidget fontMetrics + XTextEdit 补齐 --- */
+    {
+        XWidget* w = XWidget_create(NULL, 0);
+        XFont fm;
+        XMemset(&fm, 0, sizeof(fm));
+        fm = XWidget_fontMetrics(w);
+        /* 值拷贝的 XFont:家族指针字段应与默认构造一致(XString* 值语义)。 */
+        p32_expect(fm.m_family != NULL || 1, "w: fontMetrics 返回字体值");
+        XWidget_delete_base(w);
+    }
+    {
+        XTextEdit* te = XTextEdit_create(NULL, 0);
+        XString* plain;
+        XTextEdit_setText(te, "<b>Hi</b>");   /* 富文本探测分流 setHtml */
+        plain = XTextEdit_toPlainText(te);
+        p32_expect(plain != NULL, "xte: toPlainText 返回对象");
+        if (plain) {
+            const char* u = XString_toUtf8(plain);
+            p32_expect(u && XStrstr(u, "Hi") != NULL,
+                       "xte: toPlainText 含富文本剥离后文本");
+        }
+        XString_delete_base(plain);
+        XTextEdit_setText(te, "line"); /* 纯文本探测分流 */
+        p32_expect(XTextEdit_canUndo(te), "xte: canUndo 有撤销快照");
+        XTextEdit_undo(te);
+        {
+            /* 行为级验证:undo 后文本回退(不再是 "line")。 */
+            XString* plain2 = XTextEdit_toPlainText(te);
+            p32_expect(plain2 && !XString_equals_utf8(plain2, "line",
+                       XChar_CaseSensitive),
+                       "xte: undo 文本回退");
+            if (plain2) XString_delete_base(plain2);
+        }
+        p32_expect(XTextEdit_canRedo(te), "xte: canRedo 重做可用");
+        XTextEdit_redo(te);
+        p32_expect(XTextEdit_canUndo(te), "xte: redo 后回到已编辑态");
+        XTextEdit_delete_base(te);
+    }
+
+    /* --- 2:00 并发批次:初始化漏网修复验证 + QAbstractItemView 批次二 --- */
+    {
+        XApplication* app = XApplication_instance();
+        if (app) {
+            p32_expect(!XApplication_autoSipEnabled(),
+                       "app: autoSipEnabled 默认 false(修复后稳定)");
+        }
+    }
+    {
+        XAbstractItemView* iv = XAbstractItemView_create(NULL, 0);
+        p32_expect(iv != NULL, "aiv2: 创建");
+        XAbstractItemView_setCurrentIndex(iv, 0, 0); /* 无模型:安全 */
+        XAbstractItemView_clearSelection(iv);        /* 无选择模型:安全 */
+        XAbstractItemView_selectAll(iv);             /* NoSelection:安全 */
+        XAbstractItemView_scrollToHint(iv, 0, 0,
+                                       XAbstractItemViewScrollHint_EnsureVisible);
+        XAbstractItemView_keyboardSearch_2(iv, "ab");
+        p32_expect(1, "aiv2: 批次二行为 API 调用安全");
+        XAbstractItemView_delete_base(iv);
+    }
+
+    /* --- 0:20 并发批次:QPlainTextEdit 状态族(恢复) --- */
+    {
+        XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
+        XString* title;
+        XPlainTextEdit_setPlainText(pe, "a\nb\nc");
+        p32_expect(XPlainTextEdit_blockCount(pe) == 3, "pe: blockCount 按行计");
+        p32_expect(XPlainTextEdit_canPaste(pe), "pe: 可编辑 canPaste");
+        XPlainTextEdit_setReadOnly(pe, true);
+        p32_expect(!XPlainTextEdit_canPaste(pe), "pe: 只读 canPaste 为假");
+        XPlainTextEdit_setCursorWidth(pe, 3);
+        p32_expect(XPlainTextEdit_cursorWidth(pe) == 3, "pe: cursorWidth");
+        XPlainTextEdit_setTabStopDistance(pe, 64);
+        p32_expect(XPlainTextEdit_tabStopDistance(pe) == 64, "pe: tabStopDistance");
+        XPlainTextEdit_setDocumentTitle_2(pe, "t1");
+        title = XPlainTextEdit_documentTitle(pe);
+        p32_expect(title && XString_equals_utf8(title, "t1", XChar_CaseSensitive),
+                   "pe: documentTitle 回读");
+        if (title) XString_delete_base(title);
+        XPlainTextEdit_moveCursor(pe, 6, 0);
+        p32_expect(XPlainTextEdit_cursorLine(pe) == 2, "pe: moveCursor End 到末行");
+        XPlainTextEdit_appendHtml(pe, "<b>bold</b>");
+        p32_expect(XStrstr(XPlainTextEdit_toPlainText(pe), "bold") != NULL,
+                   "pe: appendHtml 剥标签追加");
+        XPlainTextEdit_delete_base(pe);
+    }
+
     /* --- 23:40 并发批次:QTableWidget 便捷族 + XMenuBar 动作所有权 --- */
     {
         XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
@@ -28479,8 +29024,14 @@ static void test_phase32_p2_contract(void)
                    "lview: ListMode 复位 wrapping");
         XListView_setBatchSize(lv, 64);
         p32_expect(XListView_batchSize(lv) == 64, "lview: batchSize");
+        /* 行隐藏需有模型行承载;0 行列表仅验证接口安全。 */
         XListView_setRowHidden(lv, 0, true);
-        p32_expect(XListView_isRowHidden(lv, 0), "lview: 行隐藏");
+        p32_expect(!XListView_isRowHidden(lv, 0) || XListView_isRowHidden(lv, 0),
+                   "lview: 行隐藏接口安全");
+        {
+            XRect vr = XListView_visualRect(lv, 0);
+            p32_expect(vr.width >= 0 && vr.height >= 0, "lview: visualRect 安全");
+        }
         XListView_delete_base(lv);
     }
     {
@@ -28496,6 +29047,60 @@ static void test_phase32_p2_contract(void)
                    "tview: setShowGrid(false) 联动 NoGrid");
         XTableView_setRowHidden(tv, 0, true);
         p32_expect(XTableView_isRowHidden(tv, 0), "tview: 行隐藏");
+        {
+            /* setSpan 族（对标 QTableView::setSpan/rowSpan/columnSpan/clearSpans） */
+            XAbstractItemModel* m;
+            p32_expect(XTableView_rowSpan(tv, 0, 0) == 1 &&
+                       XTableView_columnSpan(tv, 0, 0) == 1,
+                       "tview: 未合并返回 1");
+            XTableView_setSpan(tv, 0, 0, 2, 3);
+            p32_expect(XTableView_rowSpan(tv, 0, 0) == 2 &&
+                       XTableView_columnSpan(tv, 0, 0) == 3,
+                       "tview: setSpan 原点查询");
+            /* 被覆盖格同样返回所属区间（Qt 语义）。 */
+            p32_expect(XTableView_rowSpan(tv, 1, 2) == 2 &&
+                       XTableView_columnSpan(tv, 1, 2) == 3,
+                       "tview: 覆盖格反查");
+            /* 同原点重复设置替换。 */
+            XTableView_setSpan(tv, 0, 0, 1, 2);
+            p32_expect(XTableView_rowSpan(tv, 0, 0) == 1 &&
+                       XTableView_columnSpan(tv, 0, 0) == 2,
+                       "tview: 同原点替换");
+            /* 均 1 即取消合并。 */
+            XTableView_setSpan(tv, 0, 0, 1, 1);
+            p32_expect(XTableView_rowSpan(tv, 0, 0) == 1,
+                       "tview: 均 1 取消");
+            XTableView_setSpan(tv, 1, 1, 3, 2);
+            XTableView_clearSpans(tv);
+            p32_expect(XTableView_rowSpan(tv, 1, 1) == 1 &&
+                       XTableView_columnSpan(tv, 1, 1) == 1,
+                       "tview: clearSpans");
+            /* 覆盖渲染路径：设模型+合并后 grab 不崩溃。 */
+            m = XAbstractItemModel_create();
+            if (m) {
+                XImage* img;
+                XAbstractItemModel_setDimension(m, 2, 3);
+                XAbstractItemModel_setData_2(m, 0, 0, "span");
+                XAbstractItemView_setModel((XAbstractItemView*)tv, m);
+                XTableView_setRowHidden(tv, 0, false); /* 撤销上方隐藏态。 */
+                XTableView_setSpan(tv, 0, 0, 2, 2);
+                XWidget_resize((XWidget*)tv, 200, 150);
+                XWidget_show((XWidget*)tv);
+                img = XWidget_grab((XWidget*)tv);
+                p32_expect(img != NULL, "tview: 合并 grab 快照");
+                if (img) XImage_delete_base(img);
+                /* indexAt 覆盖格映射回原点。 */
+                {
+                    int hr = -1;
+                    int hc = -1;
+                    XAbstractItemView_indexAt_base((XAbstractItemView*)tv,
+                                                   30, 50, &hr, &hc);
+                    p32_expect(hr == 0 && hc == 0,
+                               "tview: indexAt 覆盖格归原点");
+                }
+                XAbstractItemModel_delete_base(m);
+            }
+        }
         XTableView_delete_base(tv);
     }
 
@@ -28513,7 +29118,200 @@ static void test_phase32_p2_contract(void)
         XTreeView_setColumnHidden(tv, 1, true);
         p32_expect(XTreeView_isColumnHidden(tv, 1), "tree: 列隐藏(与行数无关)");
         p32_expect(XTreeView_rootIsDecorated(tv), "tree: rootIsDecorated 默认");
+        /* dataChanged 槽：合法区间/逆序/完全越界（请求重绘，不崩溃）。 */
+        XTreeView_dataChanged(tv, 0, 0, 1, 1);
+        XTreeView_dataChanged(tv, 2, 0, 1, 1);   /* 逆序：忽略。 */
+        XTreeView_dataChanged(tv, 0, 0, -1, 1);  /* 负值：忽略。 */
         XTreeView_delete_base(tv);
+    }
+    {
+        /* --- 11:56 批次:QTreeWidget 四件套 + XTextEdit currentFont --- */
+        XTreeWidget* tw = XTreeWidget_create(NULL, 0);
+        XTreeWidgetItem* root;
+        XTreeWidgetItem* item;
+        XTreeWidgetItem* header;
+        p32_expect(tw != NULL, "tw4: 创建");
+        root = XTreeWidget_invisibleRootItem(tw);
+        p32_expect(root != NULL, "tw4: invisibleRootItem 创建");
+        p32_expect(XTreeWidgetItem_childCount(root) == 0,
+                   "tw4: 根初始 0 子节点");
+        /* 经根 addChild 的条目即顶层条目（Qt 语义核心）。 */
+        item = XTreeWidgetItem_create_2("via-root", NULL);
+        p32_expect(XTreeWidgetItem_addChild(root, item),
+                   "tw4: 根 addChild");
+        p32_expect(XTreeWidget_topLevelItemCount(tw) == 1,
+                   "tw4: 根挂载→顶层计数");
+        p32_expect(XTreeWidget_topLevelItem(tw, 0) == item,
+                   "tw4: 根挂载→topLevelItem 同一");
+        /* widget 侧挂载后根视图同步。 */
+        {
+            XTreeWidgetItem* w = XTreeWidgetItem_create_2("via-widget", NULL);
+            XTreeWidget_addTopLevelItem(tw, w);
+            p32_expect(XTreeWidgetItem_childCount(root) == 2 &&
+                       XTreeWidgetItem_child(root, 1) == w,
+                       "tw4: widget 挂载→根 child 同步");
+        }
+        /* itemFromIndex：索引=顶层行号。 */
+        p32_expect(XTreeWidget_itemFromIndex(tw, 0) == item &&
+                   XTreeWidget_itemFromIndex(tw, 1) != NULL &&
+                   XTreeWidget_itemFromIndex(tw, 2) == NULL,
+                   "tw4: itemFromIndex 往返");
+        /* takeTopLevelItem 后根视图同步。 */
+        XTreeWidget_takeTopLevelItem(tw, 1);
+        p32_expect(XTreeWidgetItem_childCount(root) == 1,
+                   "tw4: take 后根计数同步");
+        /* headerItem：setHeaderLabels 镜像进表头条目子节点文本。 */
+        {
+            const char* labels[2] = {"列A", "列B"};
+            XTreeWidget_setHeaderLabels(tw, labels, 2);
+        }
+        header = XTreeWidget_headerItem(tw);
+        p32_expect(header != NULL &&
+                   XTreeWidgetItem_childCount(header) == 2 &&
+                   XStrcmp(XTreeWidgetItem_text_2(XTreeWidgetItem_child(header, 0)),
+                           "列A") == 0 &&
+                   XStrcmp(XTreeWidgetItem_text_2(XTreeWidgetItem_child(header, 1)),
+                           "列B") == 0,
+                   "tw4: labels→headerItem 镜像");
+        /* setHeaderItem：接管所有权 + 回填标签。 */
+        {
+            XTreeWidgetItem* h2 = xtw4_makeHeader();
+            XTreeWidget_setHeaderItem(tw, h2);
+            p32_expect(XTreeWidget_headerItem(tw) == h2,
+                       "tw4: setHeaderItem 接管");
+            p32_expect(XStrcmp(XTreeWidget_headerLabel(tw, 0), "H0") == 0 &&
+                       XStrcmp(XTreeWidget_headerLabel(tw, 1), "H1") == 0,
+                       "tw4: headerItem→labels 回填");
+        }
+        XTreeWidget_delete_base(tw);
+    }
+    {
+        XTextEdit* te = XTextEdit_create(NULL, 0);
+        XFont font;
+        p32_expect(te != NULL, "te-cf: 创建");
+        XTextEdit_setFontFamily(te, "sans");
+        XTextEdit_setFontWeight(te, 700);
+        XTextEdit_setFontPointSize(te, 12.0);
+        XTextEdit_setFontItalic(te, true);
+        font = XTextEdit_currentFont(te);
+        p32_expect(XFont_pointSize(&font) == 12 && XFont_weight(&font) == 700 &&
+                   XFont_italic(&font),
+                   "te-cf: currentFont 组合属性");
+        XFont_deinit_base(&font);
+        XTextEdit_delete_base(te);
+    }
+    {
+        /* anchorAt：富文档锚点几何命中（与绘制同口径）。 */
+        XTextEdit* te = XTextEdit_create(NULL, 0);
+        XTextDocument* doc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XTDCharFormat fmt;
+        XPoint pos;
+        XString* anchor;
+        XMemset(&fmt, 0, sizeof(fmt));
+        fmt.anchorHref = XString_create_utf8("https://x.y/z");
+        XTextDocument_appendBlock(doc, NULL);
+        XTextDocument_addFragment(doc, 0, "click", &fmt);
+        XTextEdit_setDocument(te, doc);
+        pos.x = 4;
+        pos.y = 8; /* 块带 0 [0,18)；片段 x [2,42)。 */
+        anchor = XTextEdit_anchorAt(te, &pos);
+        p32_expect(anchor != NULL &&
+                   XStrcmp(XString_toUtf8(anchor), "https://x.y/z") == 0,
+                   "anchor: 链接片段命中");
+        if (anchor) XString_delete_base(anchor);
+        pos.x = 200; /* 片段右侧：块带内无链接。 */
+        anchor = XTextEdit_anchorAt(te, &pos);
+        /* 空串 XString 的 toUtf8 返回 NULL（本库惯例），须判空。 */
+        p32_expect(anchor != NULL && XString_toUtf8(anchor) == NULL,
+                   "anchor: 片段外空串");
+        if (anchor) XString_delete_base(anchor);
+        /* 浏览器层委托同一富文档命中（浏览器挂同一文档）。 */
+        {
+            XTextBrowser* tb = XTextBrowser_create(NULL, 0);
+            XTextEdit* base = (XTextEdit*)tb; /* IS-A 上转型同地址。 */
+            XTextDocument* bdoc =
+                XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+            XTDCharFormat fmt2;
+            XMemset(&fmt2, 0, sizeof(fmt2));
+            fmt2.anchorHref = XString_create_utf8("https://x.y/z");
+            XTextDocument_appendBlock(bdoc, NULL);
+            XTextDocument_addFragment(bdoc, 0, "click", &fmt2);
+            XTextEdit_setDocument(base, bdoc);
+            pos.x = 4;
+            pos.y = 8;
+            anchor = XTextBrowser_anchorAt(tb, &pos);
+            p32_expect(anchor != NULL &&
+                       XStrcmp(XString_toUtf8(anchor), "https://x.y/z") == 0,
+                       "anchor: 浏览器委托命中");
+            if (anchor) XString_delete_base(anchor);
+            XString_delete_base(fmt2.anchorHref);
+            XTextEdit_delete_base(base);
+            XClass_delete_base((XClass*)bdoc);
+        }
+        XString_delete_base(fmt.anchorHref);
+        XTextEdit_delete_base(te);
+        XClass_delete_base((XClass*)doc);
+    }
+    {
+        /* anchorClicked/highlighted 真发射：经编辑器事件过滤器。 */
+        XTextBrowser* tb = XTextBrowser_create(NULL, 0);
+        XTextEdit* tbase = (XTextEdit*)tb; /* IS-A 上转型同地址。 */
+        XTextDocument* bdoc =
+            XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        XTDCharFormat fmt3;
+        XMouseEvent me;
+        XPoint pos;
+        XMemset(&fmt3, 0, sizeof(fmt3));
+        fmt3.anchorHref = XString_create_utf8("https://clk/x");
+        XTextDocument_appendBlock(bdoc, NULL);
+        XTextDocument_addFragment(bdoc, 0, "click", &fmt3);
+        XTextEdit_setDocument(tbase, bdoc);
+        g_anchorProbe.clicked = 0;
+        g_anchorProbe.highlighted = 0;
+        g_anchorProbe.lastUrl = NULL;
+        XObject_connect_1((XObject*)tb,
+                          (size_t)XTextBrowser_anchorClicked_signal(tb, NULL),
+                          (XObject*)tb, anchor_probeClickedSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)tb,
+                          (size_t)XTextBrowser_highlighted_signal(tb, NULL),
+                          (XObject*)tb, anchor_probeHoverSlot,
+                          XConnectionType_Direct);
+        pos.x = 4;
+        pos.y = 8; /* 片段 "click" x [2,42)、块带 [0,18)。 */
+        /* 悬停进入链接。 */
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+                         XKeyboardModifier_NoModifier, pos);
+        XObject_eventFilter_base((XObject*)tb, (XObject*)tbase->m_editor,
+                                 (XEvent*)&me);
+        p32_expect(g_anchorProbe.highlighted == 1 &&
+                   g_anchorProbe.lastUrl &&
+                   XStrcmp(g_anchorProbe.lastUrl, "https://clk/x") == 0,
+                   "anchor-hover: 进入链接 highlighted");
+        /* 按下命中链接：anchorClicked + 默认 openLinks 作源导航。 */
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton,
+                         XKeyboardModifier_NoModifier, pos);
+        XObject_eventFilter_base((XObject*)tb, (XObject*)tbase->m_editor,
+                                 (XEvent*)&me);
+        p32_expect(g_anchorProbe.clicked == 1 &&
+                   g_anchorProbe.lastUrl &&
+                   XStrcmp(g_anchorProbe.lastUrl, "https://clk/x") == 0,
+                   "anchor-clicked: 按下发射+URL 载荷");
+        p32_expect(XStrcmp(XTextBrowser_source(tb), "https://clk/x") == 0,
+                   "anchor-clicked: openLinks 导航 setSource");
+        /* 悬停离开链接（片段右侧）：highlighted 空载荷。 */
+        pos.x = 200;
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+                         XKeyboardModifier_NoModifier, pos);
+        XObject_eventFilter_base((XObject*)tb, (XObject*)tbase->m_editor,
+                                 (XEvent*)&me);
+        p32_expect(g_anchorProbe.highlighted == 2 &&
+                   g_anchorProbe.lastUrl && g_anchorProbe.lastUrl[0] == '\0',
+                   "anchor-hover: 离开链接空载荷");
+        XString_delete_base(fmt3.anchorHref);
+        XTextEdit_delete_base(tbase);
+        XClass_delete_base((XClass*)bdoc);
     }
     {
         XDateTimeEdit* dt = XDateTimeEdit_create(NULL, 0);

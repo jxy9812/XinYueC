@@ -39,6 +39,9 @@ typedef struct XTabWidget
     int m_tabPosition;               /**< 页签位置（North=0，其余保留字段）。 */
     bool m_tabsClosable;             /**< 可关闭（转发页签条）。 */
     bool m_movable;                  /**< 可拖动（转发页签条）。 */
+    XWidget* m_cornerWidgets[4];     /**< 四角部件（借用，不拥有；下标对标
+                                          Qt::Corner：0=TopLeft，1=TopRight，
+                                          2=BottomLeft，3=BottomRight）。 */
 } XTabWidget;
 
 /* ==================== 生命周期 ==================== */
@@ -227,10 +230,53 @@ const XString* XTabWidget_tabToolTip(const XTabWidget* self, int index);
  */
 const XString* XTabWidget_tabWhatsThis(const XTabWidget* self, int index);
 
+/** @brief 角部件枚举码（对标 Qt::Corner）。
+ * @details 0=TopLeftCorner（左上），1=TopRightCorner（右上），
+ *          2=BottomLeftCorner（左下），3=BottomRightCorner（右下）。
+ *          Qt 仅布局上两角，下两角为预留位。
+ */
+#define XTABWIDGET_CORNER_TOPLEFT     0
+#define XTABWIDGET_CORNER_TOPRIGHT    1
+#define XTABWIDGET_CORNER_BOTTOMLEFT  2
+#define XTABWIDGET_CORNER_BOTTOMRIGHT 3
+
+/** @brief 读取指定角的角部件（对标 QTabWidget::cornerWidget；借用，不拥有）。
+ * @param self 目标控件；传入 NULL 时返回 NULL。
+ * @param corner 角部件枚举码（0..3，对标 Qt::Corner；越界返回 NULL）。
+ * @return 角部件借用指针；该角未设置时返回 NULL，不得释放。
+ */
+XWidget* XTabWidget_cornerWidget(const XTabWidget* self, int corner);
+/** @brief 设置指定角的角部件（对标 QTabWidget::setCornerWidget；借用挂载）。
+ * @details 角部件按借用语义挂到本控件（reparent 为子控件，本体生命期
+ *          归调用方管理）；同角旧部件被隐藏并解除登记（不销毁，Qt 同
+ *          语义）。widget 传 NULL 等价于清除该角。
+ * @note    内部几何放置：上两角在页签条行内按当前尺寸放置（左上贴
+ *          左缘、右上贴右缘，高度截到页签条高）；下两角为预留位，
+ *          仅承载不参与布局（若布局未接则仅承载）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param widget 角部件借用指针；可为 NULL（清除该角）。
+ * @param corner 角部件枚举码（0..3，对标 Qt::Corner；越界忽略）。
+ * @return 无返回值。
+ */
+void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner);
+
 /* ==================== 信号（转发页签条） ==================== */
 
 void* XTabWidget_currentChanged_signal(XTabWidget* self, int index);
 void* XTabWidget_tabClicked_signal(XTabWidget* self);
+/** @brief tabCloseRequested(int) 信号地址（对标 QTabWidget::
+ *         tabCloseRequested；载荷：页签索引）。
+ * @details 发射点为“tabsClosable 且点击页签关闭按钮”——发射路径在
+ *          XTabBar 侧（QTabBar::tabCloseRequested 对标位），本控件经
+ *          init 中的 connect_2 转发真发射。当前 XTabBar 关闭按钮交互
+ *          尚未实现（tabsClosable 仅存状态），故此句柄为预留：一旦
+ *          页签条侧接通发射，容器即同步转发，无需改动本文件以外的
+ *          连接关系。
+ * @param self 目标选项卡容器指针；可为 NULL。
+ * @return 不透明的 tabCloseRequested 信号标识；返回值不指向可释放
+ *         对象，也不得解引用。
+ */
+void* XTabWidget_tabCloseRequested_signal(XTabWidget* self);
 
 #ifdef __cplusplus
 }

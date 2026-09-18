@@ -127,3 +127,26 @@ PARTIAL/FULL 渲染变体回归全绿、`XGUI_ON=0` 全裁剪构建通过、GPU 
 - `/tmp/build-p31-FULL`、`/tmp/build-p31-PARTIAL`（渲染模式变体）：
   回归全绿。
 - `XGUI_RENDER_BACKEND=gpu ./bin/XGuiGpu_Test`：退出码 0，无 fail。
+
+## 七、夜间并发批次进度（2026-09-17 夜 ~ 09-18 凌晨,持续更新）
+
+> 缺口 546 → **389**(夜间四批心跳收敛 157 项;最新分布见每次扫描)。
+
+| 批次 | 收口内容 | 项数 |
+|---|---|---|
+| 22:00 单线程 | standardIcon 38 case(EXStyle_StandardIcon 虚槽) | 1(开启一批) |
+| 23:00 单线程收尾 | XHeaderView 段管理 16 项+visualIndex 族 6 项 | 22 |
+| 23:20 并发 B | XTreeView 展开族 22 项 | 22 |
+| 23:20 并发 C/D | XListView 状态族 18 + XTableView 状态族 22 | 40 |
+| 23:40 并发 D'/F' | XTableWidget 便捷族 6 + XMenuBar 动作所有权 2 | 8 |
+| 另 | XMainWindow 残余已确认全实现(旧清单误报) | 19 复核 |
+| 死声明清理 | 30 个死声明删除(XWidget14/XImage2/XLineEdit3/XMenu1) | -30 |
+
+剩余 389 分布:QAbstractItemView 48/QHeaderView 46/QPlainTextEdit 46/
+QTreeWidget 42/QListWidget 33/QTreeView 31/QTableWidget 27/QTextEdit 23/
+QWidget 21/QTableView 14/QTextBrowser 14/QListView 9/其余 ~36。
+
+后续批次建议:视图族按类继续(QAbstractItemView 基类能力 48 项为最大块:
+拖放/键盘搜索/持久编辑器/sizeHintForRow 等);文本族(QPlainTextEdit 46 +
+QTextEdit 23,多为 textCursor/document 交互);QWidget 21 项复核(部分
+已随 P1 实现可能为旧清单误报,需重扫核对)。

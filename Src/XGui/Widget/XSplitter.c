@@ -371,6 +371,100 @@ int XSplitter_indexOf(const XSplitter* self, const XWidget* widget)
     return -1;
 }
 
+/* ==================== 把手与替换（对标 QSplitter::handle/getRange/replaceWidget） ==================== */
+
+/** @brief 查询单页在拖动方向上的当前尺寸（水平取宽、垂直取高）。 */
+static int xsp_pageSize(const XSplitter* self, int index)
+{
+    XWidget* child = xsp_childAt(self, index);
+    if (!child) return 0;
+    return xsp_horiz(self) ? XWidget_width(child) : XWidget_height(child);
+}
+
+XWidget* XSplitter_replaceWidget(XSplitter* self, int index, XWidget* widget)
+{
+    XWidget* current;
+    XRect geom;
+    bool wasVisible;
+    XVector* children;
+    if (!self || !widget) return NULL;
+    if (index < 0 || index >= xsp_childCount(self)) return NULL;
+    current = xsp_childAt(self, index);
+    if (!current || current == widget) return NULL;
+    /* Qt 护栏：新控件已是本分割器子控件（兄弟）时不替换。 */
+    if (XSplitter_indexOf(self, widget) >= 0) return NULL;
+    geom = XWidget_geometry(current);
+    wasVisible = XWidget_isVisible(current);
+    /* 旧控件解除父子关系（自 children 向量移除）并隐藏，交还调用方
+       管理（不销毁，对标 Qt replaceWidget 的 setParent(nullptr)）。 */
+    XWidget_setParent(current, NULL, 0);
+    XWidget_setVisible(current, false);
+    /* 新控件经 reparent 挂为本控件子控件（追加到 children 末尾，
+       所有权归分割器父子链，与 addWidget 一致）。 */
+    XWidget_setParent(widget, (XWidget*)self, 0);
+    children = (XVector*)XObject_children((const XObject*)self);
+    if (children)
+        XVector_move(children,
+                     (int64_t)XVector_size_base((const XContainer*)children) - 1,
+                     index);
+    /* 继承被替换控件的几何与可见状态（对标 Qt）。 */
+    XWidget_setGeometryRect(widget, &geom);
+    XWidget_setVisible(widget, wasVisible);
+    xsp_layout(self);
+    return current;
+}
+
+bool XSplitter_handle(const XSplitter* self, int index, XRect* out)
+{
+    XWidget* child;
+    int count;
+    if (!self || index < 0) return false;
+    count = xsp_childCount(self);
+    /* 分隔点 index 位于页 index 与页 index+1 之间，有效 0..count-2。 */
+    if (count < 2 || index >= count - 1) return false;
+    child = xsp_childAt(self, index);
+    if (!child) return false;
+    if (out) {
+        /* 内部无把手部件对象（Qt 为 QSplitterHandle*）：以页 index
+           几何之后的 handleWidth 条带矩形承载（局部坐标）。 */
+        if (xsp_horiz(self))
+            XRect_init(out, XWidget_x(child) + XWidget_width(child), 0,
+                       self->m_handleWidth,
+                       XWidget_height((XWidget*)self));
+        else
+            XRect_init(out, 0, XWidget_y(child) + XWidget_height(child),
+                       XWidget_width((XWidget*)self),
+                       self->m_handleWidth);
+    }
+    return true;
+}
+
+bool XSplitter_getRange(const XSplitter* self, int index, int* min, int* max)
+{
+    int count;
+    int total;
+    int minPos = 0;
+    int maxPos;
+    int i;
+    if (!self) return false;
+    count = xsp_childCount(self);
+    if (index < 0 || count < 2 || index >= count - 1) return false;
+    total = xsp_contentLen(self);
+    /* 公开 getRange 含折叠语义（对标 Qt farMin/farMax）：可折叠页最
+       小贡献 0；不可折叠页以当前尺寸作为最小值代理（无
+       minimumSizeHint 承载，Qt 以 qSmartMinSize 计算）。 */
+    for (i = 0; i <= index; ++i)
+        if (!XSplitter_isCollapsible(self, i)) minPos += xsp_pageSize(self, i);
+    maxPos = total;
+    for (i = index + 1; i < count; ++i)
+        if (!XSplitter_isCollapsible(self, i)) maxPos -= xsp_pageSize(self, i);
+    if (maxPos < minPos) maxPos = minPos;
+    if (minPos < 0) minPos = 0;
+    if (min) *min = minPos;
+    if (max) *max = maxPos;
+    return true;
+}
+
 /* ==================== 属性 ==================== */
 
 void XSplitter_setOrientation(XSplitter* self, int orientation)

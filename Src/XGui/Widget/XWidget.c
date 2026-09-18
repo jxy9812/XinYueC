@@ -441,6 +441,49 @@ static XPoint XWidget_accumulateOffset(const XWidget* self)
     return out;
 }
 
+/**
+ * @brief 沿父链查找生效的离屏重定向控件（XWidget_render/XWidget_grab 期间）。
+ * @details XWidget_render/XWidget_grab 在绘制子树前把临时目标图像登记到
+ *          重定向控件的 m_offscreenTarget，调用结束即复位；绘制过程中子树
+ *          内任意控件经 XWidget_paintImage/XWidget_paintOffset 取绘制目标
+ *          与偏移时，沿父链找到最近的登记控件即可完成重定向。取最近者
+ *          保证快照流程内的嵌套 render/grab（对更深的子控件）语义正确。
+ * @param      self 起始控件；可为 NULL。
+ * @return     最近的离屏重定向控件；无重定向返回 NULL。
+ */
+static const XWidget* xwidget_redirectRoot(const XWidget* self)
+{
+    const XWidget* node = self;
+    while (node) {
+        if (node->m_offscreenTarget) return node;
+        node = (const XWidget*)XObject_parent((XObject*)node);
+    }
+    return NULL;
+}
+
+/**
+ * @brief 经典后备存储绘制偏移（accumulateOffset 减去后备存储绘制原点）。
+ * @details XWidget_paintOffset 的历史语义。XWidget_render/XWidget_grab
+ *          引入离屏重定向后，绘制期取偏移须走重定向分支；而 update() 折算
+ *          顶层脏区（XWidget_addDirtyRegion）在重定向期间也必须继续按
+ *          顶层后备存储坐标累计，因此脏区路径改用本函数固定旧行为。
+ * @param      self 目标控件；可为 NULL。
+ * @return     self 局部坐标到顶层后备存储坐标的平移量。
+ */
+static XPoint xwidget_backingPaintOffset(const XWidget* self)
+{
+    XPoint offset = XWidget_accumulateOffset(self);
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
+    XBackingStore* store = XWidget_backingStore(self);
+    if (store) {
+        XPoint origin = XBackingStore_paintOrigin(store);
+        offset.x -= origin.x;
+        offset.y -= origin.y;
+    }
+#endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
+    return offset;
+}
+
 /** @brief XRegion 内全部矩形平移（原地）。 */
 static void XRegion_translateInline(XRegion* region, int dx, int dy)
 {
@@ -621,7 +664,9 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     self->m_contentCacheDirty = true;
     top = XWidget_topLevel(self);
     if (!top) return;
-    offset = XWidget_paintOffset(self);
+    /* 脏区恒按顶层后备存储坐标折算：render/grab 重定向期间 paintEvent
+       内触发的 update() 也必须落到顶层真实脏区，而非临时快照坐标系。 */
+    offset = xwidget_backingPaintOffset(self);
     contents = self->m_contentsRect;
     source = region;
     copiedSource = false;
@@ -1249,8 +1294,10 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_windowFlags = flags;
     if (!parent && !(self->m_windowFlags & (XWindowFlags)XWindowType_Window))
         self->m_windowFlags |= (XWindowFlags)XWindowType_Window;
+    /* 对标 Qt：Qt::Popup 即窗口（见 init 有父分支同规则注释）。 */
     self->m_isWindow = (!parent ||
-                        (self->m_windowFlags & (XWindowFlags)XWindowType_Window)) ? 1 : 0;
+                        (self->m_windowFlags & (XWindowFlags)XWindowType_Window) ||
+                        (self->m_windowFlags & (XWindowFlags)XWindowType_Popup)) ? 1 : 0;
     self->m_focusPolicy = XWidgetFocusPolicy_NoFocus;
     /* Qt QWidget 的默认值是 DefaultContextMenu，不是 NoContextMenu。 */
     self->m_contextMenuPolicy = XWidgetContextMenuPolicy_DefaultContextMenu;
@@ -1318,8 +1365,13 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
 #endif
     if (parent) {
         XObject_setParent(&self->m_class, (XObject*)parent);
-        self->m_isWindow = (self->m_windowFlags &
-                            (XWindowFlags)XWindowType_Window) ? 1 : 0;
+        /* 对标 Qt：Qt::Popup 即窗口（isWindow() 为真）——弹出层须以
+         * 自身窗口承载后备存储，否则 flushBackingStore 顶层回溯落到
+         * 宿主窗，弹层永久透明（14.111 combo 弹层实测）。 */
+        self->m_isWindow =
+            (self->m_windowFlags &
+             ((XWindowFlags)XWindowType_Window |
+              (XWindowFlags)XWindowType_Popup)) ? 1 : 0;
     }
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     if (self->m_isWindow)
@@ -1941,8 +1993,11 @@ void XWidget_setWindowFlags(XWidget* self, XWidgetFlags flags)
     if (!self) return;
     wasWindow = self->m_isWindow != 0;
     self->m_windowFlags = flags;
+    /* 对标 Qt：Qt::Popup 即窗口（isWindow() 为真）——有父弹层同样以
+     * 自身窗口承载后备存储，见 XWidget_init 内同规则注释。 */
     self->m_isWindow = (!(XObject_parent((XObject*)self)) ||
-                        (flags & (XWidgetFlags)XWindowType_Window)) ? 1 : 0;
+                        (flags & (XWidgetFlags)XWindowType_Window) ||
+                        (flags & (XWidgetFlags)XWindowType_Popup)) ? 1 : 0;
     if (wasWindow && !self->m_isWindow) XWidget_destroyWindow(self);
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     if (!wasWindow && self->m_isWindow)
@@ -2598,8 +2653,10 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_windowFlags = flags;
     if (!parent && !(flags & (XWidgetFlags)XWindowType_Window))
         self->m_windowFlags |= (XWidgetFlags)XWindowType_Window;
+    /* 对标 Qt：Qt::Popup 即窗口（见 XWidget_init 同规则注释）。 */
     self->m_isWindow = (!parent ||
-                        (flags & (XWidgetFlags)XWindowType_Window)) ? 1 : 0;
+                        (flags & (XWidgetFlags)XWindowType_Window) ||
+                        (flags & (XWidgetFlags)XWindowType_Popup)) ? 1 : 0;
     /* 从顶层降级为子控件时释放其桥接窗口。 */
     if (wasWindow && !self->m_isWindow)
         XWidget_destroyWindow(self);
@@ -4098,6 +4155,28 @@ void XWidget_setFont(XWidget* self, const XFont* font)
     XWidget_update(self);
 }
 
+XFont XWidget_fontMetrics(const XWidget* self)
+{
+    /* 对标 QWidget::fontMetrics：Qt 返回以 widget->font() 构造的
+       QFontMetrics 只读度量对象；本仓库未建立度量类，XPainter_textWidth/
+       XPainter_textHeight 等测量接口直接以 XFont 为入参，故按值返回
+       字体拷贝作为测量凭据，调用方将其传入上述测量函数完成度量。
+       控件未显式 setFont 时即为 XWidget_font 的默认构造字体结果；
+       深拷贝契约与 XWidget_font 一致（使用完毕必须 XFont_deinit_base）。 */
+    return XWidget_font(self);
+}
+
+XFont XWidget_fontInfo(const XWidget* self)
+{
+    /* 对标 QWidget::fontInfo：Qt 返回以 widget->font() 交由字体子系统
+       解析后的 QFontInfo（反映实际匹配到的家族/样式）；本仓库未建立
+       字体替换/匹配引擎，XFont 即光栅化最终使用的字体描述，解析结果
+       与控件字体一致，故按 XWidget_fontMetrics 相同的 XFont 值拷贝
+       方案返回。深拷贝契约与 XWidget_font 一致（使用完毕必须
+       XFont_deinit_base）。 */
+    return XWidget_font(self);
+}
+
 XPalette XWidget_palette(const XWidget* self)
 {
     XPalette out;
@@ -4318,6 +4397,55 @@ XRegion XWidget_visibleRegion(const XWidget* self)
     return out;
 }
 
+void XWidget_scroll(XWidget* self, int dx, int dy)
+{
+    XRect view;       /* 滚动漫裁剪（控件局部，对标 Qt 的 q->rect()）。 */
+    XRect dest;       /* 平移后的裁剪区域：接收滚动内容的目标带。 */
+    XRect keep;       /* 视口随内容平移后仍留在视口内的矩形。 */
+    XRegion full;     /* 视口区域（求差集的被减数）。 */
+    XRegion kept;     /* 存留区域（差集的减数）。 */
+    XRegion exposed;  /* 滚动露出、必须重绘的区域。 */
+    XRegion dirty;    /* 最终并入脏区的区域：目标带 ∪ 露出带。 */
+    int i;
+
+    /* 对标 Qt 前置守卫：(!updatesEnabled && 无子控件) || !isVisible 时
+       直接返回；简化为更新禁用或不可见即返回（区域调度本就依赖更新
+       使能，Qt 的子控件例外来自 scrollChildren 仍需执行）。 */
+    if (!self || !self->m_updatesEnabled || !XWidget_isVisible(self))
+        return;
+    if (dx == 0 && dy == 0) return;
+    view = self->m_contentsRect;
+    if (XRect_isEmpty(&view)) return;
+    /* 对标 QWidgetPrivate::scroll_sys：Qt 经平台后备存储做像素 blit，
+       平移脏区并只重绘露出带；本适配按任务裁定简化为"平移裁剪区域 +
+       调度重绘"——XGui 绘制闭环由 paintEvent 从头重建、无像素 blit
+       通道，故把目标带与露出带一并并入脏区，由下一次 PAINT 事件重绘。
+       子控件不平移（Qt scrollChildren 语义未提供，见头文件 @note）。 */
+    dest = XRect_translated(&view, dx, dy);
+    dest = XRect_intersected(&dest, &view);
+    keep = XRect_translated(&view, -dx, -dy);
+    keep = XRect_intersected(&keep, &view);
+    XRegion_init(&full);
+    XRegion_init(&kept);
+    XRegion_init(&exposed);
+    XRegion_init(&dirty);
+    XRegion_addRect(&full, &view);
+    if (!XRect_isEmpty(&keep)) XRegion_addRect(&kept, &keep);
+    XRegion_subtracted(&full, &kept, &exposed);
+    if (!XRect_isEmpty(&dest)) XRegion_addRect(&dirty, &dest);
+    for (i = 0; i < exposed.count; ++i)
+        XRegion_addRect(&dirty, &exposed.rects[i]);
+    /* 已挂起在本控件的脏区随内容平移（对标 scrollRect 的脏区平移；
+       正常 update 路径脏区即时折算到顶层，此区域通常为空，仅保持
+       语义完整）。 */
+    XRegion_translateInline(&self->m_dirty, dx, dy);
+    XWidget_updateRegion(self, &dirty);
+    XRegion_deinit(&full);
+    XRegion_deinit(&kept);
+    XRegion_deinit(&exposed);
+    XRegion_deinit(&dirty);
+}
+
 XBackingStore* XWidget_backingStore(const XWidget* self)
 {
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
@@ -4331,8 +4459,41 @@ XBackingStore* XWidget_backingStore(const XWidget* self)
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
 }
 
+int XWidget_devType(const XWidget* self)
+{
+    /* 对标 QPaintDevice::devType 经 QWidget 的继承入口。任务裁定简化：
+       有效控件返回 1=Widget（与 XPixmap_devType"有效设备返回 1"的既有
+       约定一致）；精确的 XPaintDeviceType 码（内嵌设备为
+       XPaintDeviceType_Widget）可经 XWidget_paintDevice() 取设备后调
+       XPaintDevice_devType 查询。 */
+    return self ? 1 : 0;
+}
+
+void* XWidget_paintEngine(const XWidget* self)
+{
+    /* 对标 QPaintDevice::paintEngine：返回控件内嵌 XPaintDevice 的引擎
+       描述借用指针（初始化为 Raster 软件光栅 + 全能力位，见
+       XWidget_init）。XGui 的绘制命令由 XPainter 承担，该描述仅提供
+       type/isActive/hasFeature 查询；返回 void* 与
+       XPixmap_paintEngine/XPicture_paintEngine 的既有约定一致，
+       调用方按 XPaintEngine* 解释且不得释放。 */
+#if XPAINTDEVICE_ON
+    if (!self) return NULL;
+    return &((XWidget*)self)->m_paintDevice.m_engine;
+#else
+    (void)self;
+    return NULL;
+#endif /* XPAINTDEVICE_ON */
+}
+
 XImage* XWidget_paintImage(const XWidget* self)
 {
+    /* 离屏重定向优先：XWidget_render/XWidget_grab 绘制子树期间，重定向
+       控件的 m_offscreenTarget 即绘制目标，命中后不再回落后备存储。 */
+    {
+        const XWidget* redirect = xwidget_redirectRoot(self);
+        if (redirect) return redirect->m_offscreenTarget;
+    }
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     XWidget* top;
     XBackingStore* store;
@@ -4382,14 +4543,29 @@ XPaintDevice* XWidget_paintDevice(const XWidget* self)
 XPoint XWidget_paintOffset(const XWidget* self)
 {
     XPoint offset = XWidget_accumulateOffset(self);
-#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
-    XBackingStore* store = XWidget_backingStore(self);
-    if (store) {
-        XPoint origin = XBackingStore_paintOrigin(store);
-        offset.x -= origin.x;
-        offset.y -= origin.y;
+    /* 离屏重定向：绘制偏移换算为"相对重定向控件局部原点 + m_offscreenOrigin"。
+       render 的原点为目标绘制偏移 targetOffset；grab 的源矩形取控件全幅，
+       原点为 -rectangle.topLeft()（全幅快照时恒为 (0,0)）。命中重定向后
+       不再叠加后备存储 paintOrigin——临时快照图像没有绘制原点概念。 */
+    {
+        const XWidget* redirect = xwidget_redirectRoot(self);
+        if (redirect) {
+            XPoint base = XWidget_accumulateOffset(redirect);
+            offset.x += redirect->m_offscreenOrigin.x - base.x;
+            offset.y += redirect->m_offscreenOrigin.y - base.y;
+            return offset;
+        }
     }
-#endif
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
+    {
+        XBackingStore* store = XWidget_backingStore(self);
+        if (store) {
+            XPoint origin = XBackingStore_paintOrigin(store);
+            offset.x -= origin.x;
+            offset.y -= origin.y;
+        }
+    }
+#endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
     return offset;
 }
 
@@ -4547,6 +4723,72 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
     XRegion_deinit(&maskClipped);
 }
 
+/* ==================== 控件快照与离屏渲染（对标 QWidget grab/render） ==================== */
+
+/**
+ * @brief 创建指定尺寸的全透明快照画布（ARGB32_Premultiplied）。
+ * @details grab/render 的临时目标图像统一走此入口：ARGB32_Premultiplied
+ *          与后备存储内部缓冲同格式，软件光栅与 XPainter_drawImage 混合
+ *          无需转换。画布从全透明开始——只含控件自身与可见子树内容，
+ *          未覆盖像素保持 0（与 Qt grab 的透明底语义一致，控件背景由
+ *          autoFillBackground/paintEvent 自行负责）。
+ * @param      width 画布宽度；须大于 0。
+ * @param      height 画布高度；须大于 0。
+ * @return     新建 XImage（堆对象，调用方 XImage_delete_base 释放）；
+ *             失败返回 NULL。
+ */
+static XImage* xwidget_createSnapshotImage(int width, int height)
+{
+    XImage* image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!image) return NULL;
+    if (!XImage_reinit_ex(image, width, height,
+                          XImageFormat_ARGB32_Premultiplied)) {
+        XImage_delete_base(image);
+        return NULL;
+    }
+    /* 与 XWidget_drawContentCached 相同的语义：重渲染从全透明画布开始，
+       防止复用/实现变化时残留旧像素。 */
+    XImage_fillRect(image, NULL, 0u);
+    return image;
+}
+
+/**
+ * @brief 把 self 子树同步绘制到 target 图像（离屏重定向核心）。
+ * @details 登记重定向后走 XWidget_paintTree 正常绘制闭环：paintEvent
+ *          经虚表分派到各控件实现，其内部经 XWidget_paintImage 取到
+ *          target、经 XWidget_paintOffset 取到"相对 self 局部原点 +
+ *          (originX,originY)"的平移量，从而把整棵子树画进 target。
+ *          登记与复位严格成对；绘制复用 paintTree 的遮罩/裁剪/可见性
+ *          语义（隐藏子控件不绘制，updatesEnabled 关闭的控件跳过）。
+ * @param      self 重定向控件（子树根）；不可为 NULL。
+ * @param      target 目标图像；须为已初始化的有效图像。
+ * @param      originX self 局部 (0,0) 在 target 中的映射横坐标。
+ * @param      originY self 局部 (0,0) 在 target 中的映射纵坐标。
+ * @return     派发成功返回 true；参数非法返回 false。
+ */
+static bool xwidget_renderSubtree(XWidget* self, XImage* target,
+                                  int originX, int originY)
+{
+    XRegion region;
+    XRect rect;
+    if (!self || !target || XImage_isNull(target)) return false;
+    rect.x = 0;
+    rect.y = 0;
+    rect.width = XImage_width(target);
+    rect.height = XImage_height(target);
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    XRegion_init(&region);
+    XRegion_addRect(&region, &rect);
+    self->m_offscreenTarget = target;
+    self->m_offscreenOrigin.x = originX;
+    self->m_offscreenOrigin.y = originY;
+    XWidget_paintTree(self, &region);
+    self->m_offscreenTarget = NULL;
+    self->m_offscreenOrigin.x = 0;
+    self->m_offscreenOrigin.y = 0;
+    XRegion_deinit(&region);
+    return true;
+}
 
 void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 {
@@ -4688,6 +4930,89 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     (void)self;
     (void)region;
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
+}
+
+/* ==================== 快照与离屏渲染公开入口（对标 QWidget::grab/render） ==================== */
+
+bool XWidget_render(XWidget* self, XPainter* painter, const XRect* targetRect)
+{
+    XRect target;
+    XImage* image;
+    bool drawn;
+    int width;
+    int height;
+    if (!self || !painter) return false;
+    width = XWidget_width(self);
+    height = XWidget_height(self);
+    if (width <= 0 || height <= 0) return false;
+    if (targetRect) {
+        target = *targetRect;
+        /* 简化：仅支持与控件等尺寸的目标矩形（无平移缩放矩阵推导）。
+           尺寸不一致直接拒绝，由调用方先行 XImage_scaled 等缩放。 */
+        if (target.width != width || target.height != height) return false;
+    }
+    else
+    {
+        XRect_init(&target, 0, 0, width, height);
+    }
+    image = xwidget_createSnapshotImage(width, height);
+    if (!image) return false;
+    if (!xwidget_renderSubtree(self, image, 0, 0)) {
+        XImage_delete_base(image);
+        return false;
+    }
+    /* 经调用方绘制器输出：目标平移/裁剪/合成属性全部由 painter 现有
+       状态接管（源完全等尺寸，目标只需一个绘制原点）。 */
+    drawn = XPainter_drawImage(painter, image, target.x, target.y);
+    XImage_delete_base(image);
+    return drawn;
+}
+
+XImage* XWidget_grab(const XWidget* self)
+{
+    XWidget* widget = (XWidget*)self;
+    XImage* image;
+    int width;
+    int height;
+    if (!self) return NULL;
+    width = XWidget_width(widget);
+    height = XWidget_height(widget);
+    if (width <= 0 || height <= 0) return NULL;
+
+    /* 路径 1（已绘制顶层）：后备存储持有与本控件同尺寸的有效像素时
+       直接深拷贝，忠实还原最近一次上屏内容（含 PARTIAL 瓦片合成结果），
+       不触发任何重绘。仅对顶层控件生效——后备存储属于顶层控件，缓冲
+       覆盖整个窗口；子控件走路径 2 独立重绘。快照流程重定向期间跳过，
+       避免读到正在合成的中间状态。 */
+    if (widget->m_isWindow && !xwidget_redirectRoot(widget))
+    {
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
+        XBackingStore* store = XWidget_backingStore(widget);
+        XImage* paintImage = store ? XBackingStore_paintImage(store) : NULL;
+        if (paintImage && !XImage_isNull(paintImage) &&
+            XImage_width(paintImage) == width &&
+            XImage_height(paintImage) == height)
+        {
+            image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+            if (image)
+            {
+                if (XBackingStore_toImage(store, image))
+                    return image;
+                XImage_delete_base(image);
+            }
+        }
+#endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
+    }
+
+    /* 路径 2（同步重绘）：从未上屏、后备数据缺失/尺寸不匹配或子控件
+       场景下，创建临时画布并同步派发一次完整 paintEvent 子树绘制。 */
+    image = xwidget_createSnapshotImage(width, height);
+    if (!image) return NULL;
+    if (!xwidget_renderSubtree(widget, image, 0, 0)) {
+        XImage_delete_base(image);
+        return NULL;
+    }
+    return image;
 }
 
 /* ==================== 事件分派（对标 QWidget::event） ==================== */

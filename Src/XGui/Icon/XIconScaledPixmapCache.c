@@ -8,9 +8,12 @@
 
 #include "XAlgorithm.h"
 #include "XString.h"
+#if XPIXMAPCACHE_ON
 #include "XPixmapCache.h"
+#endif /* XPIXMAPCACHE_ON */
 #include <stdio.h>
 
+#if XPIXMAPCACHE_ON
 static bool cacheKeyBuild(char* out, size_t outSize, const char* prefix,
                           const char* sourceKey, uint64_t paletteKey,
                           XIconMode mode,
@@ -26,12 +29,14 @@ static bool cacheKeyBuild(char* out, size_t outSize, const char* prefix,
                        width, height, dprThousand);
     return written >= 0 && (size_t)written < outSize;
 }
+#endif /* XPIXMAPCACHE_ON */
 
 bool XIconScaledPixmapCache_find(const char* prefix, const char* sourceKey,
                                  uint64_t paletteKey, XIconMode mode,
                                  int width, int height, int dprThousand,
                                  XPixmap* out)
 {
+#if XPIXMAPCACHE_ON
     char keyBuffer[320];
     XString* key;
     XPixmap cached;
@@ -51,6 +56,14 @@ bool XIconScaledPixmapCache_find(const char* prefix, const char* sourceKey,
     XCopy(out, &cached);
     XPixmap_deinit_base(&cached);
     return true;
+#else /* !XPIXMAPCACHE_ON */
+    /* 像素图缓存裁剪（XPIXMAPCACHE_ON=0）时的回退路径：全局缓存不存在，
+     * 查找语义退化为永久未命中；调用方（XIcon/XIconThemeEngine）会按
+     * 未命中继续走正常的渲染与回退分支，功能不受损。 */
+    (void)prefix; (void)sourceKey; (void)paletteKey; (void)mode;
+    (void)width; (void)height; (void)dprThousand; (void)out;
+    return false;
+#endif /* XPIXMAPCACHE_ON */
 }
 
 bool XIconScaledPixmapCache_insert(const char* prefix, const char* sourceKey,
@@ -58,6 +71,7 @@ bool XIconScaledPixmapCache_insert(const char* prefix, const char* sourceKey,
                                    int width, int height, int dprThousand,
                                    const XPixmap* pixmap)
 {
+#if XPIXMAPCACHE_ON
     char keyBuffer[320];
     XString* key;
     bool inserted;
@@ -70,9 +84,20 @@ bool XIconScaledPixmapCache_insert(const char* prefix, const char* sourceKey,
     inserted = XPixmapCache_insert(key, pixmap);
     XString_delete_base((XClass*)key);
     return inserted;
+#else /* !XPIXMAPCACHE_ON */
+    /* 像素图缓存裁剪时的回退路径：无处缓存，插入语义退化为拒绝并返回
+     * false；像素图本身仍由 XIcon 缓存外的正常流程返回给调用方。 */
+    (void)prefix; (void)sourceKey; (void)paletteKey; (void)mode;
+    (void)width; (void)height; (void)dprThousand; (void)pixmap;
+    return false;
+#endif /* XPIXMAPCACHE_ON */
 }
 
 void XIconScaledPixmapCache_clear(void)
 {
+#if XPIXMAPCACHE_ON
     XPixmapCache_clear();
+#else /* !XPIXMAPCACHE_ON */
+    /* 像素图缓存裁剪时的回退路径：无缓存可清，退化为空操作。 */
+#endif /* XPIXMAPCACHE_ON */
 }

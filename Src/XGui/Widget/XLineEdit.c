@@ -1838,6 +1838,11 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
        的话 m_actionCount 为堆残留垃圾，首帧绘制会解引用野指针（Debug CRT
        cdcd 填充模式直接暴露）。撤销/重做栈同为成员指针数组，一并清零。 */
     self->m_actionCount = 0;
+    /* 补全器借用指针必须显式置空：堆残留垃圾会让 syncCompleter 解引用
+       野指针（与 m_actionCount 同类教训，ASan malloc_fill_byte=0xBE 下
+       必现）。 */
+    self->m_completer = NULL;
+    self->m_completerSyncing = false;
     XMemset(self->m_actions, 0, sizeof(self->m_actions));
     XMemset(self->m_actionPositions, 0, sizeof(self->m_actionPositions));
     XMemset(self->m_undoStack, 0, sizeof(self->m_undoStack));
@@ -2540,6 +2545,34 @@ XMargins XLineEdit_textMargins(const XLineEdit* self)
     XMargins_init(&m, 0, 0, 0, 0);
     if (self) m = self->m_textMargins;
     return m;
+}
+
+/* ==================== 补全器（对标 QLineEdit completer/setCompleter） ==================== */
+
+void XLineEdit_setCompleter(XLineEdit* self, XCompleter* completer)
+{
+    XCompleter* old;
+
+    if (!self || self->m_completer == completer) return;
+    old = self->m_completer;
+    self->m_completer = completer;
+#if XTABLEWIDGET_ON
+    /* 对标 Qt：安装时 completer->setWidget(this)，供弹出定位与焦点判断
+       使用；解绑/替换时把仍指向本编辑框的原补全器关联位清空，避免悬挂
+       借用指针。 */
+    if (completer) {
+        XCompleter_setWidget(completer, (XWidget*)self);
+    } else if (old && XCompleter_widget(old) == (XWidget*)self) {
+        XCompleter_setWidget(old, NULL);
+    }
+#else
+    (void)old; /* XTABLEWIDGET_ON=0：补全器体系关闭，仅保留承载位。 */
+#endif /* XTABLEWIDGET_ON */
+}
+
+XCompleter* XLineEdit_completer(const XLineEdit* self)
+{
+    return self ? self->m_completer : NULL;
 }
 
 /* ==================== 信号 ==================== */

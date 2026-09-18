@@ -1,5 +1,10 @@
 ﻿/** @file XPlatformAccessibility.c @brief 公共辅助功能桥接实现，无平台 API。 */
 #include "XPlatformAccessibility.h"
+
+/* 可达性桥接依赖 XWindow/XAccessible 类型体系;上游关闭时整个实现
+   无从谈起,整体不编译(类型本体在头文件同条件守卫内)。 */
+#if XWINDOW_ON && XACCESSIBLE_ON
+
 #include "XMemory.h"
 
 #include "XAlgorithm.h"
@@ -122,3 +127,5 @@ void XPlatformAccessibility_cleanup(const XPlatformAccessibility* self)
 {
     (void)self;
 }
+
+#endif /* XWINDOW_ON && XACCESSIBLE_ON */

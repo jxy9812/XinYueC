@@ -56,6 +56,21 @@
 #ifndef XIMAGEIOPLUGIN_ON
 #define XIMAGEIOPLUGIN_ON 1
 #endif
+/* 独立可裁剪的可选组件（guard-review-0020 批次 1/2）：置 0 裁剪对应
+ * 模块公共 API 与实现；引用侧按 XBackingStore 回退模式退化——
+ * XSVGICON_ON=0 裁剪 SVG 图标引擎/插件（全仓零外部引用）；
+ * XPIXMAPCACHE_ON=0 时 XIconScaledPixmapCache 退化为永久未命中/
+ * 拒绝插入/空清理；XMOVIE_ON=0 时 XLabel 的影片分支不参与尺寸
+ * 计算与绘制，movie()/setMovie() 保留借用指针语义。 */
+#ifndef XSVGICON_ON
+#define XSVGICON_ON 1
+#endif
+#ifndef XPIXMAPCACHE_ON
+#define XPIXMAPCACHE_ON 1
+#endif
+#ifndef XMOVIE_ON
+#define XMOVIE_ON 1
+#endif
 
 /* 平台集成与平台资源。 */
 #ifndef XPLATFORMINTEGRATION_ON
@@ -635,6 +650,12 @@
 #define XPALETTE_ON 0
 #undef XIMAGEIOPLUGIN_ON
 #define XIMAGEIOPLUGIN_ON 0
+#undef XSVGICON_ON
+#define XSVGICON_ON 0
+#undef XPIXMAPCACHE_ON
+#define XPIXMAPCACHE_ON 0
+#undef XMOVIE_ON
+#define XMOVIE_ON 0
 #undef XPLATFORMINTEGRATION_ON
 #define XPLATFORMINTEGRATION_ON 0
 #undef XPLATFORMNATIVEINTERFACE_ON

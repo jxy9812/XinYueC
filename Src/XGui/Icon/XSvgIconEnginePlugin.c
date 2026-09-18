@@ -7,6 +7,10 @@
 #include "XSvgIconEnginePlugin.h"
 #include "XSvgIconEngine.h"
 
+/* XSVGICON_ON=0 时整体裁剪：插件不参与自动注册（全仓无注册调用），
+ * 关闭后 SVG 键不再可用，图标引擎插件注册表行为不变。 */
+#if XSVGICON_ON
+
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XStringList.h"
@@ -66,4 +70,5 @@ XSvgIconEnginePlugin* XSvgIconEnginePlugin_create(void)
     Set_Class_IsHeap(self, true);
     return self;
 }
+#endif /* XSVGICON_ON */
 

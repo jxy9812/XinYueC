@@ -245,6 +245,26 @@ XStyle* XApplication_style(void);
  * @return 无返回值。
  */
 void XApplication_setStyle(XStyle* style);
+/**
+ * @brief      应用默认字体度量（对标 QApplication::fontMetrics 的 C 适配）。
+ * @details    Qt 中 QApplication::fontMetrics() 返回以应用默认字体
+ *             （QApplication::font()）构造的 QFontMetrics 只读度量对象；
+ *             本仓库未建立 QFontMetrics 等价类，字体测量由
+ *             XPainter_textWidth/XPainter_textHeight/XPainter_textAscent
+ *             等以 XFont 为入参的自由函数承担，故本接口按
+ *             XWidget_fontMetrics 相同的 XFont 值拷贝方案返回应用默认
+ *             字体副本作为测量凭据：应用经 setFont 显式设置过字体时
+ *             返回该字体副本，否则返回默认构造字体。
+ * @return     应用默认字体的独立 XFont 副本；无应用实例或应用未设置
+ *             字体时返回默认构造字体。
+ * @note       与 Qt 的承载差异：Qt 返回 QFontMetrics 对象并提供
+ *             width()/height()/ascent() 等度量成员，本适配返回 XFont
+ *             值拷贝，度量由调用方把副本传入 XPainter_textWidth 等测量
+ *             接口完成；副本拥有独立的家族/样式名字符串，使用完毕必须
+ *             调用 XFont_deinit_base 释放（与 XWidget_fontMetrics 相同的
+ *             深拷贝契约）。
+ */
+XFont XApplication_fontMetrics(void);
 /** @brief focusChanged(XWidget*,XWidget*) 信号（对标 QApplication::focusChanged；
  *         载荷：旧焦点控件,新焦点控件）。 */
 void* XApplication_focusChanged_signal(XApplication* self,

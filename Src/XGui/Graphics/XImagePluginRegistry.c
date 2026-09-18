@@ -3,6 +3,11 @@
  * @brief      XImageIOPlugin 源码级注册表实现。
  */
 #include "XImagePluginRegistry.h"
+
+/* XIMAGEIOPLUGIN_ON=0 时整体裁剪：插件注册表不可用，XImageReader/
+ * XImageWriter 走各自的内置单帧回退路径（guard-review-0020）。 */
+#if XIMAGEIOPLUGIN_ON
+
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -15,8 +20,6 @@
 #if XSYNC_ON && XMUTEX_ON
 #include "XMutex.h"
 #endif
-
-#if XIMAGEIOPLUGIN_ON
 
 static XImageIOPlugin* g_plugins[XIMAGEPLUGINREGISTRY_CAPACITY];
 static int g_pluginCount = 0;
@@ -1063,44 +1066,5 @@ XStringList* XImagePluginRegistry_imageFormatsForMimeType_2(const char* mimeType
     if (value) XString_delete_base((XClass*)value);
     return result;
 }
-
-#else
-
-void XImagePluginRegistry_setPluginDiscoveryCallback(
-    XImagePluginRegistryDiscoverCallback callback, void* userData)
-{ (void)callback; (void)userData; }
-
-void XImagePluginRegistry_clear(void) {}
-bool XImagePluginRegistry_addPlugin(XImageIOPlugin* plugin) { (void)plugin; return false; }
-bool XImagePluginRegistry_removePlugin(XImageIOPlugin* plugin) { (void)plugin; return false; }
-int XImagePluginRegistry_pluginCount(void) { return 0; }
-XImageIOPlugin* XImagePluginRegistry_pluginAt(int index) { (void)index; return NULL; }
-XImageIOHandler* XImagePluginRegistry_createReadHandler(XIODevice* device, const XString* format)
-{ (void)device; (void)format; return NULL; }
-XImageIOHandler* XImagePluginRegistry_createReadHandlerContentFallback(
-    XIODevice* device, const XString* rejectedFormat)
-{ (void)device; (void)rejectedFormat; return NULL; }
-XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
-    XIODevice* device, const XString* format,
-    bool autoDetectImageFormat, bool decideFormatFromContent)
-{ (void)device; (void)format; (void)autoDetectImageFormat; (void)decideFormatFromContent; return NULL; }
-XImageIOHandler* XImagePluginRegistry_createReadHandlerSuffix(
-    XIODevice* device, const XString* suffixFormat)
-{ (void)device; (void)suffixFormat; return NULL; }
-XImageIOHandler* XImagePluginRegistry_createWriteHandler(XIODevice* device, const XString* format)
-{ (void)device; (void)format; return NULL; }
-bool XImagePluginRegistry_supportsReadFormat(const XString* format) { (void)format; return false; }
-bool XImagePluginRegistry_supportsReadOption(const XString* format,
-                                             XImageIOHandlerOption option)
-{ (void)format; (void)option; return false; }
-bool XImagePluginRegistry_supportsWriteFormat(const XString* format) { (void)format; return false; }
-XString* XImagePluginRegistry_detectReadFormat(XIODevice* device)
-{ (void)device; return XString_create(); }
-XStringList* XImagePluginRegistry_supportedImageFormats(bool readOnly) { (void)readOnly; return XStringList_create(); }
-XStringList* XImagePluginRegistry_supportedMimeTypes(bool readOnly) { (void)readOnly; return XStringList_create(); }
-XStringList* XImagePluginRegistry_imageFormatsForMimeType(const XString* mimeType, bool readOnly)
-{ (void)mimeType; (void)readOnly; return XStringList_create(); }
-XStringList* XImagePluginRegistry_imageFormatsForMimeType_2(const char* mimeType, bool readOnly)
-{ (void)mimeType; (void)readOnly; return XStringList_create(); }
 
 #endif /* XIMAGEIOPLUGIN_ON */

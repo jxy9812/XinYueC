@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XKeySequenceEdit.h
  * @brief      XKeySequenceEdit 快捷键捕获控件（对标 Qt 6.8
  *             QKeySequenceEdit 核心公共 API）。

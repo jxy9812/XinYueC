@@ -565,6 +565,64 @@ void XAbstractButton_setAutoExclusive(XAbstractButton* self, bool exclusive)
         self->m_autoExclusive = exclusive;
 }
 
+/* ==================== 快捷键与按钮组 ==================== */
+
+void XAbstractButton_setShortcut(XAbstractButton* self,
+                                 const XString* shortcut)
+{
+    XString* copy;
+
+    if (!self)
+        return;
+    if (self->m_shortcut && shortcut &&
+        XString_equals(self->m_shortcut, shortcut, XChar_CaseSensitive)) {
+        return;
+    }
+
+    copy = shortcut ? XString_create_copy(shortcut) : NULL;
+    if (shortcut && !copy)
+        return; /* 分配失败保持原快捷键文本不变。 */
+    if (self->m_shortcut)
+        XString_delete_base((XClass*)self->m_shortcut);
+    self->m_shortcut = copy;
+    /*
+     * Qt 在此同时 grabShortcut 注册全局快捷键；本实现只保存文本承载，
+     * 不注册、不触发（快捷键触发体系未建），也无视觉变化需要刷新。
+     */
+}
+
+void XAbstractButton_setShortcut_2(XAbstractButton* self, const char* utf8)
+{
+    XString* shortcut;
+
+    if (!self)
+        return;
+    if (!utf8) {
+        XAbstractButton_setShortcut(self, NULL);
+        return;
+    }
+    shortcut = XString_create_utf8(utf8);
+    if (!shortcut)
+        return;
+    XAbstractButton_setShortcut(self, shortcut);
+    XString_delete_base((XClass*)shortcut);
+}
+
+const XString* XAbstractButton_shortcut(const XAbstractButton* self)
+{
+    return self ? self->m_shortcut : NULL;
+}
+
+void* XAbstractButton_group(const XAbstractButton* self)
+{
+    /*
+     * 对标 QAbstractButton::group()：返回登记该按钮的 QButtonGroup。
+     * 本实现以 void* 不透明承载；按钮组体系未建，XButtonGroup 尚未
+     * 回写 m_group，未经登记时恒为 NULL。
+     */
+    return self ? self->m_group : NULL;
+}
+
 void XAbstractButton_click(XAbstractButton* self)
 {
     abstractbutton_clickInternal(self, true);
@@ -950,6 +1008,16 @@ static void VXAbstractButton_copy(XAbstractButton* self,
     self->m_autoRepeatInterval = other->m_autoRepeatInterval;
     self->m_repeatTimer = XTIMER_INVALID_ID;
     self->m_animateTimer = XTIMER_INVALID_ID;
+    /* 快捷键文本为对象拥有，深拷贝；组承载为借用不透明指针，拷贝体
+     * 不继承登记关系（对齐 Qt：新按钮不属于任何 QButtonGroup）。 */
+    if (self->m_shortcut) {
+        XString_delete_base((XClass*)self->m_shortcut);
+        self->m_shortcut = NULL;
+    }
+    self->m_shortcut = other->m_shortcut
+                           ? XString_create_copy(other->m_shortcut)
+                           : NULL;
+    self->m_group = NULL;
 }
 
 static void VXAbstractButton_move(XAbstractButton* self,
@@ -988,6 +1056,10 @@ static void VXAbstractButton_move(XAbstractButton* self,
     self->m_autoRepeatInterval = other->m_autoRepeatInterval;
     self->m_repeatTimer = XTIMER_INVALID_ID;
     self->m_animateTimer = XTIMER_INVALID_ID;
+    /* 快捷键文本所有权随移动转移；组承载不随移动继承。 */
+    self->m_shortcut = other->m_shortcut;
+    other->m_shortcut = NULL;
+    self->m_group = NULL;
 
     other->m_checkable = false;
     other->m_checked = false;
@@ -1012,6 +1084,11 @@ static void VXAbstractButton_deinit(XAbstractButton* self)
         XString_delete_base((XClass*)self->m_text);
         self->m_text = NULL;
     }
+    if (self->m_shortcut) {
+        XString_delete_base((XClass*)self->m_shortcut);
+        self->m_shortcut = NULL;
+    }
+    self->m_group = NULL;
     XIcon_deinit_base(&self->m_icon);
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -1114,6 +1191,9 @@ void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
     self->m_autoRepeatInterval = 100;
     self->m_repeatTimer = XTIMER_INVALID_ID;
     self->m_animateTimer = XTIMER_INVALID_ID;
+    /* 快捷键文本承载默认未设置；按钮组承载默认未登记。 */
+    self->m_shortcut = NULL;
+    self->m_group = NULL;
     XWidget_setForegroundRole((XWidget*)self,
                               XPaletteColorRole_ButtonText);
     XWidget_setBackgroundRole((XWidget*)self, XPaletteColorRole_Button);

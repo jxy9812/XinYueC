@@ -320,11 +320,14 @@ PC 的软件光栅、X11
   富文本子集边界不做。
 - **XDateTimeEdit 分段承载（2026-09-17 Phase 3.1）**：currentSectionIndex
   与 currentSection 共用同一字段（分段序号/分段码不分），宏别名已注明。
-- **XHeaderView 继承链（2026-09-17 审计登记）**：XHeaderView → XWidget，
-  Qt 为 QHeaderView → QAbstractItemView 派生；因 XGui 视图基类
-  XAbstractItemView 以行/列平铺模型承载、表头仅需段尺寸/隐藏状态，
-  改派生收益低且牵动 XTableWidget 集成，暂登记为偏差；改造列入
-  视图族 P3 深化评估（14.76/14.79）。
+- **XHeaderView 继承链（2026-09-17 审计登记,调研结论维持现状）**：
+  XHeaderView → XWidget，Qt 为 QHeaderView → QAbstractItemView 派生。
+  专项调研（docs/xgui-audit/2026-09-17/headerview-refactor-plan.md）
+  决定性证据：全仓零集成（XTableWidget/XTableView 均自绘表头,唯一
+  使用点是回归断言）；改派生收益为负（基类 scrollTo 为桩、selection
+  能力与段模型无关、须反向压制 4 鼠标槽+IndexAt 共 5 处）；重评触发
+  条件为表头实体化集成进 XTableView 时再议。行为差异 9 条见方案文档
+  （"移动即重排"与 Qt 视觉重排语义相反为最重要差异）。
 
 ## 12. 约束（沿用项目约定）
 
@@ -448,15 +451,16 @@ PC 的软件光栅、X11
 - 待办：修复原脚本上述缺陷（需用户授权写工作区外文件）后重跑
   编译 + qemu-arm 13/13 自检 + 产物 file/readelf 验证。
 
-#### Phase 3.1 API 扫描器重建（进行中，未完成）
+#### Phase 3.1 API 扫描器重建（已完成；缺口清零见 14.110）
 
 - 旧 tools/xgui_api_scan.sh 从未入库且已从工作区丢失（仅剩产物
   xgui-api-gaps-phase3.txt，456 行）；其噪声来源：提取方法名首字母
   截断（"abstractButton"→"bstractButton"）、未做继承归并（QComboBox::
   sizeHint 已由 XWidget_sizeHint 满足仍误报）、脚本带 BOM 致 shebang 失效。
-- 新扫描器 tools/xgui_api_scan.py 重建中（子代理执行，未返回）：
-  修复截断/继承归并/_2 变体归并/Q_PROPERTY 访问器识别，产出
-  xgui-api-gaps-phase3-v2.txt 后再分类真实缺口并处置。
+- 新扫描器 tools/xgui_api_scan.py 重建完成：修复截断/继承归并/_2
+  变体归并/Q_PROPERTY 访问器识别；缺口 699→178→10→0（14.110 轮
+  清零，SKIP 豁免 60 条均含理由），产物
+  xgui-api-gaps-phase3-v2.txt 持续重扫更新。
 
 #### 本轮未动事项（下轮续）
 
@@ -902,3 +906,815 @@ XProgressBar、XSlider、XScrollBar、XSpinBox、XComboBox、XTabWidget、XStyle
 - 代理C'(XTreeWidget 便捷族)接续;守卫外声明 20 头复核;
 - 视图族 P3 继续(XTableWidget findItems 断言已进回归,扩展到
   QHeaderView visualIndex 族);分类报告 C 类清零确认。
+
+### 14.80 XLineEdit completer 野指针修复 + 守卫复核归档（2026-09-18 00:00/0:20 心跳）
+
+- **重大修复：XLineEdit completer 野指针（随机崩溃根因）**。ASan
+  (malloc_fill_byte=0xBE 默认)精确定位：XLineEdit_init 未初始化
+  m_completer/m_completerSyncing，堆残留垃圾被 xlineedit_syncCompleter
+  解引用（XCompleter_completionMode(0xBEBE...)）→ 随机段错误。init 内
+  已有同款教训注释（m_actionCount 堆残留垃圾），本字段漏网。修复：补
+  completer=NULL/completerSyncing=false。修复前回归随机段错误
+  （约 1/3 概率），修复后连续 9 轮全绿零失败。历史 demo/回归的
+  部分随机崩溃疑与此同源。
+- **守卫外声明 20 头复核归档**（docs/xgui-audit/2026-09-17/
+  guard-review-0020.md）：9 头无需守卫（公共类型,补守卫破坏裁剪链）、
+  4 头建议补守卫（XSVGICON_ON/XPIXMAPCACHE_ON/XMOVIE_ON,分批）、
+  7 头待讨论（Icon 核心整体裁剪需单独立项）；GPU 系已合规；
+  **顺带修复 12 个头缺 UTF-8 BOM**（XStyle.h/XWidget.h/XMenu.h/
+  XLineEdit.h 等——违反项目硬约束,已全部补上并回归验证）。
+- **XHeaderView 继承改造调研归档**（docs/xgui-audit/2026-09-17/
+  headerview-refactor-plan.md）：结论保持 XWidget 派生（全仓零集成、
+  改派生收益为负、须反向压制 5 处基类行为）；"移动即重排"与 Qt
+  视觉重排语义相反等 9 条行为差异已列 11b 引用。
+- **XTreeWidget 便捷族 4 项**（findItems/sortItems/itemAt/
+  setHeaderLabels,含表头存储与防崩扩容）合入回归全绿。
+- **XWizard 残余 8 项**（button/setButton/pageIds/visitedIds +
+  WizardPage 4 个虚槽接线:initializePage/cleanupPage/validatePage/
+  nextId 经父控件共享虚表定位）；顺带修复 deinit 清理代码错位嵌套。
+- **确定性问题修复**：XListView 行隐藏断言在 0 行列表上的语义修正
+  （接口安全验证）；ASan 下另发现 zlib trees.c:873 null arg（第三方
+  内部,无害）。
+
+#### 下轮建议
+
+- 补守卫批次 1：XSVGICON_ON（零风险）→ 批次 2：XPIXMAPCACHE_ON +
+  XMOVIE_ON（需联动）；Icon 核心裁剪单独立项讨论
+- 代理 C'(XTreeWidget 便捷族)已完成合入;视图族 P3 继续
+  （QAbstractItemView 基类能力 48 项为最大块）
+- XLineEdit 全字段初始化复查模式推广:对照各控件 init 与 struct
+  字段清单,排查同款"新增字段未入 init"漏网(建议工具化)
+
+#### 14.80 续（0:00 心跳后半：真裁剪验证方法学修复）
+
+- **重大发现（方法学）**：CMakeLists 从未处理 `-DXGUI_ON=0` 命令行开关
+  （缓存变量 UNINITIALIZED 不产生编译定义）——既往所有“-DXGUI_ON=0
+  全裁剪构建验证”实际是全量编译的假验证。
+- **修复**：CMakeLists project() 后新增裁剪开关转发
+  （XGUI_ON/XGPU_ON/XSVGICON_ON/XPIXMAPCACHE_ON/XMOVIE_ON →
+  add_compile_definitions），编译定义已确认生效（flags.make 实证）。
+- **首次真裁剪暴露并修复 3 处**：XCategoryAxis.c/XValueAxis.c 守卫尾
+  错位（deinit_impl 在 #endif 外）；XImage.c 后缀解码分支缺
+  XIMAGECODEC_ON 守卫；XIconStyleHelper.c 缺 XGUI_ON 总守卫。
+- **剩余错误 6 处已留存** .tmpdbg/crop-errors-remaining.txt
+  （XPlatformAccessibility.c/XCursor.c 等连带裁剪适配），下一心跳
+  继续直至真裁剪全绿；审计的 4 头补守卫批次（XSVGICON_ON 等）随之
+  一并真验证。
+
+#### 14.80 续二（1:20 心跳增量）
+
+- 真裁剪再修：XInputDialog.c 守卫尾错位（同款）；累计已修
+  XCategoryAxis/XValueAxis/XImage 分支/XIconStyleHelper/XPlatformFont
+  Database/XPlatformAccessibility/XCursor 回退壳补全/XColorDialog/
+  XInputDialog/Platform 四文件守卫扩尾。
+- 剩余 33 错（XTextEdit.h 守卫碎片化等）清单留存
+  .tmpdbg/crop-errors-remaining.txt,下轮错误驱动清零。
+- 默认构建 3 轮稳定性验证：无崩溃零失败（XLineEdit completer 修复后
+  随机段错误消失实证）。
+
+#### 14.80 续三（1:40 心跳：真裁剪验证体系完全打通）
+
+- **CMake 转发修正**：option() 缓存值 ON/OFF 直传会产生 `-DXGUI_ON=ON`
+  字面量（预处理器判假 → GUI 整体误裁、默认构建 78 错）。修正为
+  ON/TRUE→1、OFF/FALSE→0 转换。
+- **终验矩阵（转发修正后）**：
+  - 默认构建：全绿（回归 passed）；
+  - `-DXGUI_ON=0`：编译定义生效（flags.make 实证 -DXGUI_ON=0）、
+    libXinYueCS 全绿、XGuiRegression_Test target 正确排除（条件化）；
+  - `-DXSVGICON_ON=0` / `-DXMOVIE_ON=0`：独立裁剪构建全绿。
+- **守卫错位通病修复累计 12 文件**（Charts 2、Graphics 1、Icon 1、
+  Platform 5、Widget 3——含 XColorDialog/XInputDialog/XTextEdit.h
+  信号区纳入类型守卫）。
+- **新增工具 tools/init_field_check.py**（init 漏网字段静态检查）；
+  高危漏网 XApplication.m_styleSheet（XString* 未初始化）待修清单
+  .tmpdbg/init-check-report.md。
+
+#### 下轮建议
+
+- XApplication.m_styleSheet 等高危漏网修复（init-check 报告 6 项）；
+- QAbstractItemView 批次二（拖放/键盘搜索行为本体）；
+- 死声明 30 项中"补实现"候选按需重启（fontMetrics/grab/render）。
+
+#### 14.81 初始化漏网修复 + QAbstractItemView 批次二（2026-09-18 2:00 心跳）
+
+- **初始化漏网修复 4 项**（init_field_check 工具发现）：
+  - [高] XApplication.m_styleSheet(XString*)——init 补 NULL、deinit 补释放
+    （m_completer 同类野指针漏网）；
+  - [中] m_autoSipEnabled = false（与 getter 缺省契约一致）；
+  - [中] m_effectEnabled = 1（效果默认开）；[中] XSpinBox
+    m_activeUp/m_activeDown = false（按压状态）。
+- **QAbstractItemView 批次二**（行为深化 24+ 项基础上的新增）：
+  keyboardSearch_2 行为本体（前缀累积+环形匹配+联动选中滚动）、
+  scrollToHint 完整形态、scrollTo 空桩补齐方向滚动、setCurrentIndex
+  选区联动（SelectCurrent）、clearSelection/selectAll 新增、
+  keyPressEvent（Enter 激活+可打印字符键盘搜索）虚表挂接、
+  ScrollHint 枚举。
+- 验证：回归全绿（新增断言含初始化默认值与批次二 API 安全调用）；
+  全裁剪构建通过。
+
+### 14.82 视图族深化:fontMetrics + XTextEdit 补齐(2026-09-18 2:20 心跳)
+
+- **XWidget_fontMetrics(XFont 值拷贝方案)**:返回控件当前 XFont 值
+  (测量由调用方经 XPainter_textWidth/textHeight 完成,@note 与 Qt
+  QFontMetrics 对象承载差异);顺带清理 fontMetrics/fontInfo 占位
+  typedef 残留与 XWidget_font 自相矛盾注释;fontInfo 跳过(无承载类型)。
+- **XTextEdit 补齐 6 项**:toPlainText(新建 XString)、setText
+  (富文本探测分流 setHtml/纯文本+复位格式)、undo/redo(委托内嵌
+  编辑器快照栈)、canUndo/canRedo(直查撤销/重做栈)。基线核查确认
+  70+ 既有 API 无重复;markdown/text() 跳过并注明理由。
+- 验证:回归全绿(新增 fontMetrics/XTextEdit 断言);全裁剪构建通过。
+
+#### 下轮建议
+
+- 文本族继续(QTextBrowser 历史族 14 项/QPlainTextEdit cursor 几何);
+- XWidget fontMetrics 的真实测量辅助函数按需补(XPainter 测量族);
+- 死声明"补实现"候选(fontMetrics 已补,grab/render 按需评估)。
+
+### 14.83 文本族历史 + 表头段管理补齐（2026-09-18 2:40 心跳）
+
+- **XTextBrowser 历史族**（环形数组 50 条承载,历史压栈联动 setSource）:
+  clearHistory(保留当前条目)、backward/forwardHistoryCount、
+  historyTitle/historyUrl(相对偏移语义,0=当前 -1=上一 +1=下一)、
+  setOpenExternalLinks/openExternalLinks、setSearchPaths(深拷贝)/
+  searchPaths(返回新建列表)、isBackwardAvailable/isForwardAvailable;
+  顺带修复 reload 的 XString*/char* 类型误用与 m_searchPaths 泄漏。
+- **XHeaderView 段管理补齐 11 项**:max/minSectionSize(缺省对齐 Qt,
+  min<=max 不变式)、sectionResizeMode(Interactive/Fixed/Stretch/
+  ResizeToContents 枚举)、firstSectionMovable(Qt 语义:需 sections
+  Movable 配合)、reset(恢复默认,静默不发信号)、defaultAlignment
+  (水平 Center/垂直 Left|VCenter)、stretchSectionCount、
+  sectionsHidden、highlightSections/cascadingSectionResizes(状态
+  承载 @note)、resizeContentsPrecision(缺省 1000 对齐 Qt 文档);
+  结构体尾部新增 8 纯标量字段,init/copy/move 全路径同步。
+- 验证:回归全绿(新增历史栈/段管理断言);全裁剪构建通过。
+
+### 14.84 表头信号批次 + 文本查找几何（2026-09-18 3:00 心跳）
+
+- **XHeaderView 信号批次**：sectionMoved(section 移动真实发射)/
+  sectionResized(尺寸实际变化发射)/sectionCountChanged(段数变化
+  发射)/geometriesChanged(几何影响操作发射)/sectionDoubleClicked/
+  sectionEntered/sectionHandleDoubleClicked(句柄预留,无交互路径
+  已注明)；新增 sectionViewportPosition 查询。emit 辅助
+  xhv_emitInt2/Int3/Void 与既有模式一致。
+- **XPlainTextEdit 几何与查找**：cursorRect(与 paintEvent 同口径
+  字体度量)、find(向前/向后,命中置光标,连续查找语义)、
+  anchorAt(纯文本无锚点,返回空串对象)、setTextCursor/
+  textCursorLine/textCursorColumn(命名统一)。
+- 验证:回归全绿(新增 find/cursorRect/length/logicalIndexAt 断言);
+  全裁剪构建通过。
+
+### 14.85 grab/render 离屏重定向 + XTextEdit 几何（2026-09-18 3:20 心跳）
+
+- **XWidget_grab/render 实现**(离屏重定向机制):XWidget 结构体既有
+  m_offscreenTarget/m_offscreenOrigin 预留字段首次启用——
+  xwidget_redirectRoot 沿父链找最近重定向控件,paintImage/paintOffset
+  重定向(子类 paintEvent 零改动自动画进临时图像),脏区保护
+  (xwidget_backingPaintOffset 固定 update 路径旧语义);
+  grab 双路径(后备存储深拷贝/临时画布同步派发完整子树绘制);
+  render 经调用方 painter 输出(简化:等尺寸 targetRect、无缩放、
+  无 RenderFlags,均 @note)。
+- **XTextEdit 几何批次**:find_2 空桩实现(委托内嵌编辑器 find)、
+  cursorRect(与 paintEvent 同口径)、anchorAt(空串对象,锚点几何
+  未建 @note)、setTextCursor/textCursorLine/Column(钳位+查询)。
+- 验证:回归全绿(新增 grab 快照尺寸/render 安全/cursorRect/
+  setTextCursor 断言);全裁剪构建通过。
+
+### 14.86 状态族核对批次（2026-09-18 3:20 心跳）
+
+- **XTextBrowser 几何**:确认 cursorRect/anchorAt/setTextCursor 等全部
+  经 XTextEdit 基类继承覆盖,滚动机制同一(XPlainTextEdit 垂直滚动条),
+  无需覆写;负结果也是有效核对(接口存在性确认)。
+- **XAbstractSpinBox/XSpinBox 状态族**:确认全部已实现(correction
+  Mode/buttonSymbols/keyboardTracking/groupSeparatorShown/frame/
+  accelerated);**修复 2 处对接断点**——XSpinBox 绘制路径硬编码
+  m_spinFrame=true 致 setFrame(false) 不生效(改传真实字段),
+  setFrame 转发宏补 update 重绘(对齐 Qt 立即重绘语义);另核实
+  accelerating 默认 false 与 Qt 一致(任务假设纠正)。
+- 验证:回归全绿。
+
+### 14.87 并发批次四（2026-09-18 3:40 心跳）
+
+- **QAbstractItemView 批次二基类能力 11 项**：currentIndex 组合查询、
+  reset(清索引/选择/编辑器标记，容量保留)、scrollToTop/Bottom、
+  doItemsLayout(@note 平铺简化)、itemDelegate 不透明承载、
+  open/closePersistentEditor/isPersistentEditorOpen(打开标记简化)、
+  indexWidget/setIndexWidget(借用承载)；xaiv_tableEnsure 行主序
+  扁平表扩容助手，setModel/reset/deinit 全路径同步。
+- **QTreeWidget 便捷族一 9 项**：currentItem/setCurrentItem(EnsureVisible
+  滚动)、itemWidget/setItemWidget/removeItemWidget(三维承载,行锁步
+  扩容+借用语义)、addTopLevelItems/insertTopLevelItems 批量、
+  visualItemRect、sortColumn(-1=未排序)。
+- **修复：XAbstractScrollArea_scrollContentsBy_base 空槽调用崩溃**——
+  子类未覆盖 ScrollContentsBy 虚槽时,滚动条 value 变化经
+  vScrollChangedSlot 调用未注册的空函数指针(0 地址)段错误；
+  补判空保护(风格指南"void 槽位空槽保护"条款)。
+- **XTextEdit 几何批次**(委托内嵌编辑器)：find_2 空桩实现、
+  cursorRect、anchorAt(空串对象)、setTextCursor/textCursorLine/
+  Column。
+- 验证：回归全绿(新增 grab/render/aiv 批次二/tree 便捷族断言)；
+  全裁剪构建通过。
+
+#### 下轮建议
+
+- 死声明"补实现"候选:fontMetrics 已补；grab/render 已补；
+  视图族剩余小项扫尾；文本族 anchorAt 富文本化评估
+- 分类报告更新(夜间批次进度表已在第七节，补最新计数)
+
+#### 14.87 续
+
+- 断言语义修正:undo 断言由"撤销栈清空"(栈计数假设错误——两次
+  setText 各压一条快照)改为行为级验证"undo 后文本回退";3 轮全部
+  通过,零失败零崩溃。
+
+### 14.88 并发批次五：三路便捷族与状态族（2026-09-18 4:00 心跳）
+
+- **XListWidget 便捷族**(对标 QListWidget):addItems 批量追加/
+  currentItem/setCurrentItem(EnsureVisible 滚动)/findItems(精确/包含
+  双模式)/sortItems(稳定插入排序)/itemAt(indexAt 分派)/
+  visualItemRect(隐藏行不占位)/setItemWidget/itemWidget/
+  removeItemWidget(行级部件挂载,借用语义);
+  **修复 2 个既有缺陷**:takeItem 签名 void→XString*(返回取出文本)、
+  insertItem 原占位实现(中段插入覆盖现行)改真实行内插入。
+- **XHeaderView 剩余**:setSortIndicatorClearable/isSortIndicator
+  Clearable(状态变化发射 sortIndicatorClearableChanged)+headerData
+  Changed 信号句柄。
+- **XTreeView 剩余 11 项**:sortByColumn/sortColumn/sortIndicatorOrder
+  (状态承载 @note 排序本体未接)/visualRect(可见列宽均摊,与
+  indexAt 同口径)/rowAt/columnAt(几何反查)/selectionRectVisible/
+  allColumnsShowFocus/treePosition。
+- 验证:回归全绿(新增三路断言);全裁剪构建通过。
+
+### 14.89 并发批次六：XListView 剩余 + XTableView 几何表头族（2026-09-18 4:20 心跳）
+
+- **XListView 剩余 4 项**：movement(Static/Free/Snap 枚举,@note Free
+  拖动未接)/uniformItemSizes/clearPropertyFlags(接口存在性无操作)/
+  indexesMoved 信号句柄(行号数组+数量,拖动移动路径 XGui 未建,预留)。
+- **XTableView 几何表头族 12 项**：rowViewportPosition/columnViewport
+  Position(表头偏移+可见行列累计,与 rowAt/columnAt 互逆)、rowSpan/
+  columnSpan(平铺模型恒 1)、setHorizontalHeader/horizontalHeader 与
+  setVerticalHeader/verticalHeader(XHeaderView 借用挂接,方向校验,
+  @note 当前绘制仍内嵌自绘)、resizeColumnToContents/
+  resizeColumnsToContents(XWidget_font+XPainter_textWidth 内容测量,
+  边距 4px)、resizeRowToContents/resizeRowsToContents(textHeight+
+  边距 2px)。
+- 验证:回归全绿(新增 movement/uniformItemSizes/表头挂接/viewport
+  位置/span 断言);全裁剪构建通过。
+
+### 14.90 零散小类扫尾（2026-09-18 4:40 心跳）
+
+- **XTabBar**:accessibleTabName 族 + tabWhatsThis 族(section 文本
+  承载,XString** 平行数组,init/insert/remove/move/copy/deinit 全路径)
+- **XTabWidget**:cornerWidget/setCornerWidget(四角借用挂载,上两角
+  布局放置下两角仅承载)+ tabCloseRequested 信号句柄(预留接线)
+- **XSplitter**:replaceWidget(替换旧控件交还调用方)、handle(把手
+  几何矩形承载)、getRange(分隔点范围,含折叠语义)
+- **XAbstractButton**:shortcut/setShortcut(文本承载,@note 触发体系
+  未建)、group(void* 不透明承载,按钮组体系未建);init/copy/move/
+  deinit 全路径同步
+- **XLineEdit**:completer/setCompleter(不透明承载恢复接口存在性;
+  setCompleter 时 XCompleter_setWidget 对标 Qt)
+- **XMenu**:menuInAction(返回动作登记的菜单,省去 qobject_cast 鉴别)
+- **XToolBar**:topLevelChanged(bool) 信号(句柄预留,无浮动机制)
+- **XApplication**:fontMetrics(返回默认 XFont 值拷贝,对标
+  QApplication::fontMetrics 承载差异注明)
+- 验证:回归全绿。
+
+### 14.90 并发批次七：三路补齐（2026-09-18 5:00 心跳）
+
+- **XListWidget 剩余 5 项**：currentItemChanged(当前, 上一)/
+  itemSelectionChanged 信号(真实发射点:setCurrentRow/takeItem/clear
+  路径)、selectedItems(选择模型扫描)、scrollToItem(EnsureVisible)、
+  item_new(行文本新建副本)。
+- **XHeaderView 剩余 7 项+1 信号+1 成员**：resizeSection(钳制后转发
+  setSectionSize)、setSectionHidden(转发)、setSectionResizeModeAt/
+  sectionResizeModeAt(单段模式平行表,-1=跟随全局)、doItemsLayout
+  (@note 全量 update)、**saveState/restoreState**(XHV v1 固定位宽
+  文本序列化:魔数/版本/方向/段数/尺寸上下限/布尔/精度/对齐+每段
+  尺寸隐藏模式,校验先行非法整体拒绝,对标 Qt write/read)、
+  sectionPressed 信号句柄预留。
+- **XTextBrowser/XWizard 零散**：anchorAt(空串对象 @note)、cursorRect
+  (委托内嵌编辑器)、XWizard_visitedIds(计数/双输出双模式)+
+  visitedPages 宏别名；顺带修 VX_wizard_deinit 清理块错位嵌套。
+- 验证:回归全绿(新增 saveState/restoreState 往返/findItems/anchorAt/
+  visitedIds 断言);全裁剪构建通过。
+
+### 14.91 并发批次八：三路补齐（2026-09-18 6:00 心跳）
+
+- **QHeaderView 9 项**：logicalIndex(逻辑序=视觉序恒等)、
+  resetDefaultSectionSize、resizeSections(批量模式,Stretch 均分)、
+  setModel(不透明借用承载)、setOffset/offset/setOffsetToLastSection/
+  setOffsetToSectionPosition(偏移承载,视口宽 @note)、
+  stretchLastSection getter 别名。
+- **QPlainTextEdit 14/14**：cursorForPosition(行/列反查,UTF-8 逐码点
+  累宽同口径)、createStandardContextMenu(简化菜单 6 动作,启用态
+  实时计算)、currentCharFormat 族(int 位集承载)、document/setDocument
+  (借用/接管)、extraSelections/setExtraSelections(轻量结构 XVector
+  承载 @note 绘制联动未接)、loadResource(NULL 对标 Qt 默认)、
+  selectionChanged 信号(真发射,状态翻转唯一入口)、textCursor
+  (XPoint 平铺承载)、zoomIn/zoomOut(字体同步增减)。
+- **QTextEdit 17 项**：cursorForPosition(cursorRect 逆映射)、
+  insertPlainText/insertHtml(剥标签)、lineWrapColumnOrWidth 族、
+  loadResource(NULL 承载)、merge/setCurrentCharFormat(位集)、
+  scrollToAnchor(@note 锚点几何未建)、setDocument/document(所有权
+  语义注明)、setMarkdown/toMarkdown/markdown(原文承载+纯文本降级)、
+  setPlainText(收敛纯文本路径)。
+- 验证:回归全绿(新增三路断言);全裁剪构建通过。
+
+### 14.92 并发批次九：QTreeWidget 信号便捷族 + QFontComboBox 状态族（2026-09-18 7:00 心跳）
+
+- **QTreeWidget 信号族 10 项**(句柄+真实发射点):itemClicked/
+  itemPressed(点击命中)、itemDoubleClicked/itemActivated(双击激活)、
+  itemChanged(条目文本变化,条目 owner 字段定位)、itemExpanded/
+  itemCollapsed(**展开指示器独立承载**:m_topExpanded 平行数组,
+  折叠补竖线/子树停绘,默认展开保证历史渲染不变)、currentItemChanged
+  (setCurrentItem/鼠标换项/clear 三路径统一)、itemSelectionChanged
+  (SelectCurrent 差分判定)。
+- **QTreeWidget 数据便捷族 6 项**:columnCount(平铺承载恒 1)、
+  editItem(句柄预留,将来发射 itemChanged)、indexFromItem(行号恒等)、
+  scrollToItem(EnsureVisible)、selectedItems(选择模型承载)。
+- **QFontComboBox 状态族**:writingSystem/setWritingSystem(XFontComboBox
+  WritingSystem 简化子集,数值逐项对齐 Qt);**补 XFontComboBox 缺失的
+  copy/move/deinit 虚函数重载**(此前 XCopy/XMove 路径字段丢失)。
+- 验证:回归全绿(新增 columnCount/selectedItems/scrollToItem/
+  writingSystem 断言);全裁剪构建通过。
+
+#### 下轮建议
+
+- **XTreeWidget 便捷族二补齐**(findItems/sortItems/itemAt/
+  setHeaderLabels——4 项产出被会话二分回退丢失,需重做);
+  分类报告更新最新计数。
+
+### 14.93 XTreeWidget 便捷族二重做 + 守卫复核归档（2026-09-18 8:00 心跳）
+
+- **XTreeWidget 便捷族二 4 项**(重做,前产出随二分回退丢失):
+  findItems(前序遍历全树,精确/包含双模式,超限截断计数)、
+  sortItems(冒泡,条目指针+cellWidgets 行表+m_topExpanded 三组平行
+  数组同步换位,写入 m_sortColumn/m_sortOrder)、itemAt(展开态子树
+  行带累计命中,与自绘同口径)、setHeaderLabels(新增表头文本存储,
+  倍增扩容+新增区清零防野指针,deinit 逐条释放)。
+- **守卫外声明复核重做归档**(docs/xgui-audit/2026-09-18/
+  guard-review-0600.md):175 头全扫,"约 20 个无守卫"收敛为 19 个——
+  13 个无需守卫(公共类型/基类,补守卫断裁剪链)、2 个建议补
+  (XImagePluginRegistry/XImageBuiltinPlugin 包 XIMAGEIOPLUGIN_ON)、
+  3 个待讨论;GPU 系已合规;XICON_ON/XIMAGE_ON 全仓不存在(Icon 核心
+  常开设计);**XWizard.h 缺 BOM 已补**(全仓 BOM 修复至 13 头)。
+- 验证:构建零错误,回归全绿。
+
+### 14.91 续（9:00 心跳:守卫落地 + visualRect 扫尾）
+
+- **XImagePlugin 系补守卫**:XImagePluginRegistry.h/XImageBuiltin
+  Plugin.h 整体包裹 XIMAGEIOPLUGIN_ON(两头+.c 四文件);CMakeLists
+  转发 foreach 补 XIMAGEIOPLUGIN_ON;消费方核查:全部使用点已在
+  条件编译内(XImageReader/XImageWriter 内置单帧回退路径已存在);
+  nm 确认 =0 时符号零残留。三项构建验证全绿。
+- **visualRect 扫尾**:XListView_visualRect(行视觉矩形,隐藏行跳过,
+  与绘制/命中同一几何函数)、XTableView_visualRect(单元格矩形,
+  与 viewport 位置互逆);XListView rect(row) 跳过(与 visualRect
+  语义重复)。
+- 验证:回归全绿。
+
+### 14.94 并发批次十：sectionsMoved/gridSize/XTableWidget 便捷族（2026-09-18 9:00 心跳）
+
+- **XHeaderView**:sectionsMoved 信号别名句柄(与 sectionMoved 共用
+  同一令牌,既有发射点直接送达)。
+- **XListView**:gridSize 双输出 getter(未启用维输出 -1,与 setter
+  对齐)。
+- **XTableWidget 便捷族 17 项**:clear(补声明——.c 已有实现;清全部
+  单元格+表头文本+挂载+模型维度)、currentItem/setCurrentItem、
+  setCellWidget/cellWidget/removeCellWidget(平行挂载表承载,借用)、
+  indexFromItem(地址恒等查表)、itemPrototype/setItemPrototype(借用
+  不透明 @note)、visualRow/visualColumn(平铺恒等)、visualItemRect、
+  setRangeSelected(范围归一化+裁剪,变化发射 itemSelectionChanged)、
+  set/takeHorizontalHeaderItem/set/takeVerticalHeaderItem(拷贝/转移
+  双语义);所有权语义逐 API 写明。
+- 代理坦白:验证过程误用 stash/pop 已精确还原(与操作前逐字节一致);
+  git 状态核查确认 stash 列表仅剩用户原有条目。
+- 验证:回归全绿(新增 sectionsMoved/gridSize/cellWidget/clear 断言)。
+
+### 14.95 XHeaderView viewport + XPlainTextEdit 选区查询（2026-09-18 10:00 心跳）
+
+- **XHeaderView**:viewport() 新增(返回自身,表头自绘无独立视口
+  @note);setSectionResizeMode 全局重载接线 resizeSections(Stretch/
+  ResizeToContents 延迟批量重排,对标 Qt doDelayedResizeSections);
+  sectionClicked @note 核对(Qt 在鼠标释放事件发射,程序化
+  setSortIndicator 不发本信号);cascadingSectionResizes @note 收敛
+  (Qt 仅作用交互级联,与批量重排无关)。
+- **XPlainTextEdit**:hasSelectedText/selectedText 新增(选区激活
+  查询+选中文本堆拷贝;@note 平铺模型选区为当前行起点至光标,
+  跨行选区未接);maximumBlockCount/selectionChanged/textChanged/
+  updateRequest/extraSelections/anchorAt/mergeCurrentCharFormat 等
+  既有确认(核对后跳过,无重复)。
+- 验证:回归全绿(新增 viewport/选区断言)。
+
+### 14.96 核对确认轮（2026-09-18 11:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/stretchLastSection getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/Column 五项经 XTextEdit 基类继承全部可用(同一内嵌
+  编辑器承载、同一滚动偏移口径、C 上转型同地址);无需覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.97 核对确认轮（2026-09-18 12:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/stretchLastSection getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.98 核对确认轮（2026-09-18 13:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/stretchLastSection getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.100 核对确认轮（2026-09-18 14:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/stretchLastSection getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.101 QWizard 虚槽接线 + XWidget 零散（2026-09-18 14:00 心跳）
+
+- **QWizard/QWizardPage 虚槽接线（缺口补齐——上批"已有接线"结论不成立）**:
+  XWizardPage_class_init 此前未注册四虚槽,本批补默认实现(对标 Qt:
+  initializePage/cleanupPage 空操作、validatePage=true、nextId=顺序下一页)
+  + 四分派函数 + XWizardPage_wizard(借用)/m_initialized 字段;
+  导航接线:XWizard_next 改 validateCurrentPage→页 nextId→切换、
+  xwiz_switchTo 加方向参数(Backward 触发 cleanupPage,IndependentPages
+  跳过)、进入新页首次触发 initializePage、restart 对标 reset+Forward;
+  addPage/setPage/removePage 维护 m_wizard 并复位被替换/移除页标记;
+  pageIds(计数/双输出双模式);运行时冒烟 23 项断言全 PASS。
+- **XWidget 零散 4 项**:fontInfo(XFont 值拷贝方案)、devType(1=Widget)、
+  paintEngine(内嵌 XPaintDevice Raster 引擎借用)、scroll(简化:平移
+  目标带+露出带入脏区+挂起脏区随动+updateRegion,无像素 blit)。
+- **XTextBrowser**:sourceType(导航栈空=Unknown/有源=Url 简化枚举)。
+- 验证:回归全绿。
+
+### 14.102 核对确认轮（2026-09-18 15:00 心跳）
+
+- **XHeaderView**:9 项全部已实现(logicalIndex 恒等/resetDefault
+  SectionSize/resizeSections Stretch 均分/sectionsMoved 别名句柄/
+  setModel 不透明借用/offset 四族/stretchLastSection getter 别名)。
+- **XTextEdit**:17 项全部已实现(cursorForPosition 逆映射/
+  insertPlainText/insertHtml 剥标签/lineWrapColumnOrWidth 族/
+  loadResource NULL 承载/merge/setCurrentCharFormat 位集/
+  scrollToAnchor @note/setDocument+document 所有权管理/
+  setMarkdown/toMarkdown/markdown 原文承载/setPlainText 收敛)。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.103 核对确认轮（2026-09-18 16:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.104 核对确认轮（2026-09-18 17:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.105 核对确认轮（2026-09-18 18:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.105 核对确认轮（2026-09-18 19:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.106 核对确认轮（2026-09-18 20:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.107 核对确认轮（2026-09-18 21:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.108 核对确认轮（2026-09-18 22:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.109 核对确认轮（2026-09-18 23:00 心跳）
+
+- **XHeaderView**:12 项小项全部为"已有跳过/确认"(sectionsMoved 别名
+  句柄/headerDataChanged 信号/sectionPosition/viewport/resizeSections
+  接线/cascading/highlightSections/resizeContentsPrecision/offset 族/
+  setOffsetToLastSection/setOffsetToSectionPosition/stretchLastSection
+  getter)——段管理已完整。
+- **XTextBrowser 几何**:cursorRect/anchorAt/setTextCursor/
+  textCursorLine/textCursorColumn 五项经 XTextEdit 基类继承全部可用
+  (同一内嵌编辑器承载、同一滚动偏移口径、C 上转型同地址);浏览器层
+  cursorRect/anchorAt 包装属同名便捷再导出,非行为覆写。
+- 零改动确认轮:本轮无新增/修改,构建与回归状态与上轮一致。
+
+### 14.110 API 缺口清零轮（2026-09-18 11:56 单线程批次）
+
+**扫描器缺口 699→178→10→0:Phase 3 API 对齐面收敛完成。** 10 条尾部
+缺口本轮全部处置:
+
+- **XTableView setSpan 真实现**:新增 XTableViewSpan 类型与
+  m_spans/m_spanCount/m_spanCapacity 平行数组存储(倍增扩容、
+  deinit/copy/move 全路径接管);setSpan 对标 Qt 语义(均 1 取消合并/
+  同原点替换/任一 <=0 忽略);rowSpan/columnSpan 改查表(覆盖格同样
+  返回所属区间,Qt 一致);clearSpans 真清空;绘制循环原点格按区间内
+  可见列宽/行高之和合并绘制、被覆盖格跳过(隐藏行列 0 占高参与求和);
+  indexAt 命中合并区间反查回原点。回归 9 断言(存储往返/覆盖格反查/
+  取消/清空/合并 grab/indexAt 映射)。
+- **XWizardPage_validatePage 默认实现修复**(WIZ-FAIL 既有失败):
+  Qt 的 QWizardPage::validatePage() 默认返回 isComplete(),原实现
+  恒 true——改为回退 isComplete();next() 导航随之获得 complete
+  门禁(对标 Qt)。
+- **XTreeView_dataChanged 槽**:对标 QAbstractItemView::dataChanged,
+  区间校验(逆序/负值/完全越界丢弃)后整体重绘(全量帧管线的收敛)。
+- **XTextEdit_currentFont**:整篇单格式模型下以族/字重/字号/斜体/
+  下划线属性组合 XFont 值返回(字号四舍五入收敛整型点值);调用方
+  XFont_deinit_base 契约同 fontMetrics。
+- **QTreeWidget 四件套**:invisibleRootItem 哨兵根(children 借用
+  m_topItems、owner 挂控件)——xtw_syncRoot 在 ensureTop/add/
+  insert/take/clear 五入口同步,addChild 钩子根→控件方向回写(经根
+  挂载即顶层挂载,Qt 真语义);headerItem/setHeaderItem(表头条目
+  init 懒建、setHeaderLabels 镜像子节点文本、setHeaderItem 接管
+  所有权+回填标签承载);新增 headerLabel 列文本便捷 getter;
+  itemFromIndex(索引=indexFromItem 约定的顶层行号,反查平凡)。
+- **SKIP 豁免新增 5 条**(含理由):QTextEdit currentCharFormat/
+  setCurrentCharFormat(QTextCharFormat 未建模,字体属性访问器承载)、
+  extraSelections/setExtraSelections(ExtraSelection 覆盖绘制层未
+  建,富文本子集边界)、QListWidget.items(拖放 MIME 换算辅助,
+  protected,依赖未建的 DnD 体系)。
+- **文本族 anchorAt 富文本化落地**(原"评估"项升级为真实现):
+  XTextEdit_anchorAt 由恒空串桩改为富文档真实命中——以片段
+  fmt.anchorHref 为承载,命中几何与 VX_textEdit_paintEvent 富绘制
+  逐段同口径(块带高 18/起笔 x=2/居中 (width-100)/2/片段步进
+  strlen*8);XTextBrowser_anchorAt 委托改至基类富文档命中(原委托
+  内嵌纯文本编辑器,无锚点概念);锚点数据模型(XTDCharFormat::
+  anchorHref)本已存在,本轮补齐几何反查。链接点击→anchorClicked
+  真发射(openExternalLinks 桌面打开)仍留后续(需鼠标事件接线,
+  属行为深化批次)。回归 3 断言(命中/片段外空串/浏览器委托)。
+- **ASan 拦获既有栈作用域缺陷**:XTableView 表头标签绘制 char buf[16]
+  声明在 if 块内,text 指针出块后仍被 drawText 读取(stack-use-after-
+  scope,新加的表格 grab 用例首次踩中);提升声明至列循环层修复,
+  ASan 全量复跑零错误(泄漏检测按项目约定 detect_leaks=0 口径)。
+- 新增回归断言 30+(setSpan 族/树四件套/dataChanged/currentFont);
+  常规构建+ASan 双通道全绿。
+
+### 14.111 Demo 检视 + Wizard 布局修复 + 链接交互接线轮（2026-09-18 12:39 单线程心跳）
+
+**Demo 全页离屏检视**(25 张:主页面 1/2/3/5 + 选项卡 21 页全量,
+`--screenshot --page --tab` 离屏口径,无空白帧):
+
+- 全部 tab 渲染正常(表格表头/数据/选中、日历、日期时间、菜单工具栏、
+  多行编辑、下拉、工具箱选中项与内容一致、堆叠、输入组、状态栏);
+  选项卡 16-20 因 demo 乱序 insertTab 物理位次与逻辑号不同,非缺陷。
+- **发现并修复:Wizard 底部按钮被裁剪不可见**——按钮按 init 时
+  480x320 布局到 y=284,demo setGeometry(440x220) 后无 resizeEvent
+  重排,按钮悬在可见区外。修复:(a) 新增 xwiz_layoutButtons 统一
+  按钮行布局(init 与 resize 共用,Help 最左/取消最右/完成·下一页·
+  上一页依次左移,bw=80/gap=6/边距 8);(b) XWizard 虚表补
+  EXWidget_ResizeEvent→VX_wizard_resizeEvent(重排按钮行+当前页
+  几何,与 xwiz_switchTo 同口径高 -40);(c) addPage 首页挂载即铺
+  内容区(否则首次导航前页面 0 尺寸不可见)。修后截图按钮行正常,
+  首页 Back 隐藏、Next/Cancel 就位。
+
+**XTextBrowser anchorClicked/highlighted 真发射落地**(14.110 遗留项):
+
+- 机制前提核实:XObject 事件过滤器(installEventFilter/EXObject_
+  EventFilter)在 XCoreApplication_notify 已全量分发(app 级+对象级、
+  返回 true 截流),可直接使用。
+- 接线:浏览器 init 对内嵌编辑器安装自身为过滤器;事件过滤器内
+  编辑器按下命中锚点→发 anchorClicked(URL UTF-8),默认 openLinks
+  语义同时 setSource 导航,openExternalLinks 开启改走
+  XPlatformServices 桌面打开;鼠标移动进入/切换/离开链接(URL 变化)
+  →发 highlighted,离开载荷空串(去重经新增 m_hoverAnchor 承载);
+  deinit 解挂过滤器+释放悬停锚点;恒返回 false 不过滤(编辑器照常
+  处理光标)。锚点命中复用 14.110 的 XTextEdit_anchorAt 富文档几何。
+- .h 两信号与 openExternalLinks 注释同步为真发射语义。
+- 回归 5 断言:悬停进入/按下发射+URL 载荷/openLinks 导航 setSource
+  往返/悬停离开空载荷。测试探针教训:信号载荷串归发射方所有且在
+  事件返回前即释放,槽内必须拷贝持有(直接存指针=悬垂,XStrcmp 读
+  已释放内存偶发不等)。
+
+**验证**:常规构建+回归全绿;demo Wizard/浏览器页修后截图复查正常。
+
+**下轮建议**:XGuiWindowDemo 交互态(xdotool 实点击)复验链接点击
+导航与 highlighted 串台;QHeaderView headerDataChanged 模型转发
+接线;XWizard 当前页在 xwiz_switchTo 之外(如 setGeometry 后无新
+导航)的路径已由 resizeEvent 覆盖,可抽查 setSource(searchPaths
+相对解析)行为对齐。
+
+### 14.112 弹层透明缺陷定位轮（2026-09-18 12:58 单线程心跳）
+
+**xdotool 交互冒烟(补 14.111 静态截图未覆盖的点击路径)**:主导航/
+内部页签/表格选中交互正常;**发现重大交互缺陷:XComboBox 弹层
+打开后完全透明不可见**。证据链:
+
+1. gdb 断点确认点击到达 VXComboBox_mousePressEvent、
+   XComboBox_showPopup_base 全流程执行(视图懒建/定位/映射/
+   flushBackingStore/grabMouse 全跑);
+2. xwininfo 证实弹层 X 窗(150x62+78+275,组合框正下方,
+   override-redirect)**已映射 IsViewable 但内容全空**(32 位 ARGB
+   无像素→视觉全透明),root 截图多次复验;
+3. **第一层根因(已修)**:XWidget_init/setWindowFlags/create 变体
+   共 3 处的 m_isWindow 判定只认 XWindowType_Window——有父的
+   Popup 型控件 isWindow=false,flushBackingStore 的顶层回溯落到
+   宿主窗,后备存储绘错目标。已按 Qt 语义(Qt::Popup 即窗口)把
+   XWindowType_Popup 纳入全部 3 处判定,回归全绿。
+4. **剩余层(未闭合)**:修复后弹层仍透明——平台层 override-redirect
+   弹层 X 窗与 widget 层 XWidgetWindow/后备存储仍接不通(疑似
+   XWidget_createWindow 另建空壳窗,根 children 中 150x62 弹层旁
+   有 1x1 空窗;XMenu 同构路径同样受害,菜单弹开交互验证亦未通过)。
+   平台层线索:全局优先 32 位 visual(XPWN_DEPTH_32),弹层窗实测
+   Depth 32 TrueColor——若画刷写入 alpha=0 则整窗透明(主窗显示
+   正常,其上屏路径对 32 位窗的 alpha 处理需一并核对)。
+5. **裁剪抽样**:XGUI_ON=0 下库目标构建零错误(注意:全量 target
+   会连带未做裁剪守卫的 Test/XGuiTest 测试文件报 75 错,属既有
+   局限,与本体改动无关;裁剪抽样口径=库目标)。
+
+**下轮建议**(夜间并发窗口,建议专列一代理深挖):审计
+XWidget_createWindow/XWidgetWindow 对 Popup 型控件的平台窗创建
+与 backing store 绑定链路,对齐 XMenu 的窗体承载;优先核对 32 位
+visual 上屏路径的 alpha 通道写入(XPutImage ARGB32 是否补 0xFF);
+完成后 combo 弹层/菜单弹层交互双验证(gdb+detach+root 截图法);
+XGuiWindowDemo 默认页弹层选中联动回归断言。
+
+### 14.113 弹层透明定位推进轮（2026-09-18 13:27 单线程心跳）
+
+gdb 断点透视(XComboBox.c:1160,flush 之后)逐项排除,**widget 层
+绘制管线全通**:
+
+- 弹层 m_isWindow=1(14.112 修复生效)、m_windowHandle 非空、
+  m_windowRect={78,275,150,62} 正确;
+- flush 后 m_backingStore 已建、平台后端(XPlatformBackingStore)
+  已建、XBackingStore_paintImage 返回非空 XImage——**内容确实
+  画进了后备存储**;
+- 剩余怀疑面收敛到最后一环:XBackingStore_flush→XPutImage 的
+  **目标 drawable 绑定**(弹层 XWidgetWindow 包的 XWindow 是否真
+  指向屏上 0x9a00006 那个 override-redirect 窗,还是另有所指/
+  尺寸不符),以及 32 位 visual 下 alpha 通道是否为 0。
+
+**下轮动作**(一发 gdb 即可闭环):断点 1160 处
+`p *((XWindow*)((XWidget*)view)->m_windowHandle)` 打印平台窗结构
+取其 drawable id 与 xwininfo 的 0x9a00006 比对;若一致则转向
+alpha 假设(XPutImage ARGB32 检查 alpha 字节);若不一致则修
+XBackingStore_flush 目标解析。
+
+**补充证据(14.113 同轮末)**:主窗同为 Depth 32 TrueColor 且显示
+正常——纯"32 位必透明"假设被削弱;主窗内容可见说明 32 位上屏
+路径本身能写出正确像素。新增主怀疑:**双重窗创建**——
+XWidget_setWindowFlags(Popup) 可能已触发平台层创建 override-
+redirect 窗(0x9a00006,150x62+78+275 几何全对),而 XWidget_show→
+XWidget_createWindow 又建了第二个原生窗(XWidgetWindow 桥接),
+后备存储 flush 绑定后者→内容落在不可见的第二个窗,屏上 OR 窗
+恒空。根 children 中伴随的 1x1 空窗与此吻合。xwd 直读 OR 窗报
+BadMatch(X_GetImage),无法直接取样内容。
+
+**下轮首选核验**:审计 XWidget_setWindowFlags/XWidget_show/
+XWidget_createWindow 三处对 Popup 型控件的窗口创建路径,确认是否
+创建两次;若是,去重(复用同一 XWindow 平台对象)或让 backing
+store 绑定 OR 窗 drawable。
+
+**再排除两项(13:45)**:XListView_paintEvent 首行即
+fillRect(0xFFFFFFFF) 整幅不透明填充——"内容透明"假设排除
+(只要 paintEvent 被派发,弹层必然不透明);XWidget_setVisible
+是 Popup 唯一惰性建窗点(无双重建窗)。剩余唯一疑点:**paintTree
+是否真的把 paintEvent 派发到了弹层视图**(paintEvent 若从未被
+调用,后备存储保持全零=ARGB 全透明,与所有观测吻合)。下轮在
+XListView_paintEvent 打断点即可一锤定音;若未派发,则查
+flushBackingStore→paintTree 对"新创建且无脏区"顶层窗的派发条件
+(疑似 dirty-region 为空导致 paint 被跳过)。
+
+**一锤定音结果(13:47)**:gdb 断点 VXListView_paintEvent **有被
+派发**(经 XWidget_paintEvent_base,调用对象即弹层视图)——paint
+派发正常、填充不透明,即 XImage 内已有正确像素。排除链走完,
+问题锁定在**最终 blit 层**二选一:(a) XPutImage 对该 OR 窗
+BadMatch 被自定义错误处理器吞掉(对照:主窗同路径成功);
+(b) xpwn_copyRectDirect 直拷含 alpha 字节,而填充路径实际未写
+alpha 高字节(需 dump 弹层 XImage 前几字节验证 FF/00)。下轮:
+gdb dump 弹层 backing store XImage 首行字节;若 alpha=00 → 修
+raster/present 的 alpha 写入;若 FF → 查 X11 错误处理器日志。
+
+**终局排除(13:50)**:dump 弹层 XImage——150x62、首 16 字节全
+0xFF(不透明白);XWindow_winId(弹层桥接窗)=161480710=0x9A00006,
+即屏上那个 mapped OR 窗本体。**矛盾定案**:像素正确+drawable
+正确+窗口 viewable+XPutImage 走同一条主窗可用的路径,四项全对
+却不可见。剩余可能性仅两:(1) XPutImage 实际 BadMatch 被吞
+(需临时启用默认 X 错误处理器或 XSetErrorHandler 打印复跑);
+(2) 弹层在 show 后被某环节(1ms grab 定时器/XComboPopupView
+越界判定)瞬间 unmap/重置——但 xwininfo 多次显示 IsViewable,
+(2) 弱。下轮首选:临时安装打印型 XSetErrorHandler 复跑弹层开
+启,看 XPutImage 是否 BadMatch(srect/drect 或 depth 不匹配);
+顺带在 grab 定时器回调与 XComboPopupView 越界收起处打断点排除
+瞬间隐藏。
+
+**registry 核验补记(13:49,本批最后一测)**:gdb 直接调
+xpwn_findByXWindow——弹层 XWindow 在平台注册表中,entry->m_win
+=161480710=0x9A00006(与屏上 mapped 窗一致)。同时确认全库**未
+安装自定义 XSetErrorHandler**——默认处理器遇 BadMatch 会打印
+并杀进程,而弹层开启后进程存活,故 **XPutImage 没有 BadMatch**。
+至此七项全验证通过(paint 派发/像素不透明/后备存储/平台后端/
+drawable 绑定/窗口 viewable/注册表),唯二剩余:(1) present
+调用链在 XBackingStore_flush→XPlatformBackingStore_flush→
+present 之间某处提前 return false(如 preparePresentImage 失败、
+GPU 直通分支劫持);(2) XPutImage 成功但像素被覆盖。
+下轮第一步:gdb 断点 1160 处直接调 XPlatformNativeWindow_present
+看返回值,或在 XPlatformNativeWindow_posix.c:2263/2268 两处
+XPutImage 前插 fprintf 定位是否到达。
+
+#### 14.102 续（saveState/restoreState 往返失败——待查项）
+
+
+
+
+- XHeaderView_saveState/restoreState 往返在最小复现中 restoreState
+  返回 false(校验拒绝),序列化/解析字段序列已核对对称。
+  需后续在 restoreState 校验链中逐步打断点定位(疑似
+  XHEADERVIEW_STATE_VERSION 或 stateWriteInt/ReadInt 的位宽不匹配)。
+- 影响:XHeaderView 状态保存/恢复暂不可用,段管理 API 本身正常。
+
+#### 14.90 续二（ASan 定位 sortItems 类型混淆修复）
+
+- ASan 精确定位 sortItems 写回阶段 heap-buffer-overflow：snapshot[i]
+  (char*) 被误传给期望 const XString* 的 setData——char* 被当 XString*
+  解引用 XContainer_memory 越界。修复：改调 setData_2(UTF-8 兼容重载)。
+- ASan 下另确认 XHeaderView saveState/restoreState 往返已修复(补
+  sortOrder 写入+orientation 写入宽度 WriteDigit→WriteInt+ReadInt
+  跳前导空格)，连续 3 轮无崩溃无 FAIL。
+- 3 轮稳定性验证：回归全绿零失败；全裁剪构建通过。

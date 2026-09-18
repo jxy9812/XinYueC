@@ -2,6 +2,22 @@
 cmake_minimum_required(VERSION 3.5)
 #设置项目名称
 project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
+
+# ---- 裁剪开关转发：命令行 -DX?_ON=0/1 转为全局编译定义 ----
+# （否则 -D 仅入缓存为 UNINITIALIZED，不产生编译定义，"裁剪构建"实际全量编译。）
+option(XGUI_ON "XGui 模块总开关（默认开；-DXGUI_ON=0 关闭）" ON)
+foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON)
+    if(DEFINED ${_xsw})
+        set(_xval "${${_xsw}}")
+        if(_xval STREQUAL "ON" OR _xval STREQUAL "TRUE")
+            set(_xval 1)
+        elseif(_xval STREQUAL "OFF" OR _xval STREQUAL "FALSE")
+            set(_xval 0)
+        endif()
+        add_compile_definitions(${_xsw}=${_xval})
+        unset(_xval)
+    endif()
+endforeach()
 set(EXPORT_NAME XinYueC)
 #set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
@@ -262,6 +278,9 @@ else()
 endif()
 
 # ==================== XGui 对齐回归测试 ====================
+# XGUI_ON=0（嵌入式全裁剪）时 GUI 类型全部消失，回归测试(引用 GUI 类型)
+# 与 GUI 控件测试源一并排除。
+if(XGUI_ON)
 add_executable(XGuiRegression_Test
     "./xgui_regression_test.c"
     "./Test/XGuiTest/XLineEditTest.c"
@@ -282,6 +301,7 @@ if(UNIX)
 else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
+endif() # XGUI_ON
 enable_testing()
 # 测试以相对路径访问仓库资源（assets/、../Library/XFont 等），其直跑口径
 # 是仓库 bin/ 目录（./bin/XGuiRegression_Test）；CTest 显式对齐该工作目录，
@@ -313,6 +333,7 @@ endif()
 # 桌面原生窗口控件验收入口：XWindow + XGuiApplication + XBackingStore 走完整的
 # 「平台原生窗口（X11/Win32）-> 事件注入 -> 重绘 -> 上屏」链路。
 # 运行：无参数常驻，带参数可传入自动退出秒数（供无窗口管理器环境截图）。
+if(XGUI_ON)
 add_executable(XGuiWindowDemo_Test
     "./xgui_window_demo.c"
 )
@@ -321,6 +342,7 @@ if(UNIX)
 else()
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
+endif() # XGUI_ON
 
 # ==================== XGui GPU 阶段 1 冒烟测试 ====================
 add_executable(XGuiGpu_Test

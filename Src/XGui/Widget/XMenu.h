@@ -1,9 +1,9 @@
-/**
+﻿/**
  * @file       XMenu.h
  * @brief      XMenu 弹出菜单公开 API（对标 Qt 6.8 QMenu）。
  * @details    XMenu 继承 XWidget，实现 QMenu 的核心语义：
  *             - 动作容器：addAction/addMenu/addSeparator/clear/isEmpty、
- *               actions()、actionAt()、menuAction()；
+ *               actions()、actionAt()、menuAction()、menuInAction()；
  *             - 属性：title/setTitle、defaultAction/setDefaultAction、
  *               activeAction/setActiveAction、separatorsCollapsible、
  *               toolTipsVisible、tearOffEnabled；
@@ -344,6 +344,21 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos);
  * @return     菜单自身动作借用指针（由菜单拥有）；失败返回 NULL。
  */
 XAction* XMenu_menuAction(XMenu* self);
+
+/**
+ * @brief      返回动作承载的子菜单（对标 QMenu::menuInAction 静态接口）。
+ * @details    Qt 中为 qobject_cast<QMenu*>(action->menuObject())：动作
+ *             的关联对象是菜单时返回该菜单自身，否则返回 NULL。本项目
+ *             XAction 的菜单承载位（XAction_menu）只存放 XMenu*，不存在
+ *             第二种对象类型，因此省去 qobject_cast 类型鉴别，直接返回
+ *             动作当前关联的菜单（"菜单自身或 NULL"两种结果）。
+ * @note       简化差异：无运行时类型鉴别，返回值即动作登记的 XMenu；
+ *             菜单所有权归其父菜单或创建方，调用方不得释放。
+ * @param      action 目标动作借用指针；可为 NULL。
+ * @return     动作关联的子菜单借用指针；未关联或 action 为 NULL 返回
+ *             NULL。
+ */
+XMenu* XMenu_menuInAction(const XAction* action);
 
 /* ==================== 属性（对标 QMenu） ==================== */
 

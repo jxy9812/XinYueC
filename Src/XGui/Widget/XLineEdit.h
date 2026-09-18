@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XLineEdit.h
  * @brief      XLineEdit 单行文本编辑控件（对标 Qt 6.8 QLineEdit 全部公共 API）。
  * @details    功能范围：
@@ -704,6 +704,31 @@ void XLineEdit_setTextMargins_2(XLineEdit* self, const XMargins* margins);
  * @return     当前边距值拷贝；self 为 NULL 返回零边距。
  */
 XMargins XLineEdit_textMargins(const XLineEdit* self);
+
+/* ==================== 补全器（对标 QLineEdit completer/setCompleter） ==================== */
+
+/**
+ * @brief      设置补全器（对标 QLineEdit::setCompleter；借用，不拥有）。
+ * @details    安装时把补全器的关联控件设为本编辑框（对标 Qt 的
+ *             completer->setWidget(this)）；替换或清除时若原补全器的
+ *             关联控件仍是本编辑框则同步置空，避免悬挂借用。补全器仅
+ *             保存借用指针，生命周期由调用方管理：销毁补全器前必须先
+ *             以 NULL 调用本函数解绑。
+ * @note       补全器联动本体未建：用户编辑文本时已同步 completionPrefix
+ *             与内联补全（XTABLEWIDGET_ON 门控），弹出列表（popup）联动
+ *             不在本控件内实现；本接口此前经死声明清理移除，现按不透明
+ *             指针承载方案恢复接口存在性。
+ * @param      self 目标编辑框；可为 NULL。
+ * @param      completer 补全器借用指针；可为 NULL 表示解绑。
+ * @return     无返回值；重复设置同一补全器为无操作。
+ */
+void XLineEdit_setCompleter(XLineEdit* self, XCompleter* completer);
+/**
+ * @brief      查询已安装的补全器（对标 QLineEdit::completer）。
+ * @param      self 编辑框对象借用指针；可为 NULL。
+ * @return     补全器借用指针（不拥有）；未安装或 self 为 NULL 返回 NULL。
+ */
+XCompleter* XLineEdit_completer(const XLineEdit* self);
 
 /* ==================== 信号（对标 QLineEdit signals） ==================== */
 

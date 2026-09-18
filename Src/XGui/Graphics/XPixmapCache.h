@@ -7,9 +7,14 @@
  *             保护，但和 Qt 6.8 一样，公共缓存操作只在主线程生效；工作线程
  *             的查找、插入、替换、限制、移除和清空都会被忽略。Key 的引用计数
  *             与有效性标记使用原子操作，允许安全地观察生命周期状态。
+ * @note       模块开关 XPIXMAPCACHE_ON 定义于 XGuiConfig.h；置 0 时本
+ *             文件整体裁剪，引用侧 XIconScaledPixmapCache 退化为永久
+ *             未命中/拒绝插入（guard-review-0020 批次 2）。
  ******************************************************************************/
 #ifndef XPIXMAPCACHE_H
 #define XPIXMAPCACHE_H
+#include "XGuiConfig.h"
+#if XPIXMAPCACHE_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -193,4 +198,5 @@ void XPixmapCache_clear();
 #ifdef __cplusplus
 }
 #endif
+#endif /* XPIXMAPCACHE_ON */
 #endif /* XPIXMAPCACHE_H */

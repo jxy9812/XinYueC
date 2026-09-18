@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XWidget.h
  * @brief      XWidget 控件基类（对标 Qt 6.8 QWidget 的嵌入式 C 适配）。
  * @details    XWidget 继承 XObject，是整个控件体系的基类，提供已覆盖的
@@ -124,18 +124,12 @@ typedef struct XStyle XStyle;
 /** @brief XScreen 前向声明（screen/setScreen 借用指针；完整定义见
  *  XScreen.h，避免 XWidget 头文件拉入 XImage/XPixmap 依赖链）。 */
 typedef struct XScreen XScreen;
-/** @brief XPixmap 前向声明（grab 返回类型；完整定义见 XPixmap.h）。 */
+/** @brief XPixmap 前向声明（保留给后续像素图映射类 API；XWidget_grab
+ *  返回 XImage，完整定义见 XPixmap.h）。 */
 typedef struct XPixmap XPixmap;
 /** @brief XByteArray 前向声明（saveGeometry/restoreGeometry 的承载类型；
  *  完整定义见 XByteArray.h）。 */
 typedef struct XByteArray XByteArray;
-/** @brief XFontMetrics 不透明占位类型（本仓库未建立字体度量类；
- *  fontMetrics 恒返回 NULL，见该接口 @note）。 */
-typedef struct XFontMetrics XFontMetrics;
-/** @brief XFontInfo 不透明占位类型（本仓库未建立字体信息类；
- *  fontInfo 恒返回 NULL，见该接口 @note）。 */
-typedef struct XFontInfo XFontInfo;
-
 /** @brief 控件按宽度计算高度的回调（对标 QWidget::heightForWidth）。 */
 typedef int (*XWidgetHeightForWidthHandler)(XWidget* widget, int width,
                                             void* userData);
@@ -1406,12 +1400,52 @@ void XWidget_setInputMethodHints(XWidget* self, XInputMethodHints hints);
 const XString* XWidget_styleSheet(const XWidget* self);
 /** @brief 设置样式表文本（对标 QWidget::setStyleSheet；只存储不解释）。 */
 void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet);
-/** @brief 返回控件字体副本（对标 QWidget::font）。 */
-/** @brief 返回控件字体（对标 QWidget::font；借用语义浅拷贝，调用方
- *        不得修改/释放返回值；需要独立副本用 XWidget_font_const）。 */
+/**
+ * @brief      返回控件字体副本（对标 QWidget::font）。
+ * @details    深拷贝语义（Phase 3.2 裁定）：副本拥有独立的家族/样式名
+ *             字符串，调用方使用完毕必须调用 XFont_deinit_base 释放。
+ * @param      self 目标控件；可为 NULL。
+ * @return     控件当前字体的独立副本；空指针返回默认构造字体。
+ */
 XFont XWidget_font(const XWidget* self);
 /** @brief 设置控件字体（对标 QWidget::setFont）。 */
 void XWidget_setFont(XWidget* self, const XFont* font);
+/**
+ * @brief      返回控件字体供文本测量（对标 QWidget::fontMetrics 的 C 适配）。
+ * @details    Qt 中 QWidget::fontMetrics() 返回以 widget->font() 构造的
+ *             QFontMetrics 只读度量对象；本仓库未建立 QFontMetrics 等价类，
+ *             字体测量由 XPainter_textWidth/XPainter_textHeight/
+ *             XPainter_textAscent 等以 XFont 为入参的自由函数承担，故本
+ *             接口返回控件当前字体的 XFont 值拷贝作为测量凭据，调用方把
+ *             副本传入上述测量函数即可获得与 Qt 等价的度量能力。控件未
+ *             显式 setFont 时返回与 XWidget_font 相同的结果（默认构造字体）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     控件当前字体的独立 XFont 副本；空指针返回默认构造字体。
+ * @note       与 Qt 的承载差异：Qt 返回 QFontMetrics 对象并提供 width()/
+ *             height()/ascent() 等度量成员，本适配返回 XFont 值拷贝，测量
+ *             由调用方以 XPainter_textWidth/XPainter_textHeight 等接口完成；
+ *             副本拥有独立的家族/样式名字符串，使用完毕必须调用
+ *             XFont_deinit_base 释放（与 XWidget_font 相同的深拷贝契约）。
+ *             fontInfo() 采用同一 XFont 值拷贝方案提供（见
+ *             XWidget_fontInfo；本仓库未建立 QFontInfo 等价承载类型）。
+ */
+XFont XWidget_fontMetrics(const XWidget* self);
+/**
+ * @brief      返回控件实际生效字体信息（对标 QWidget::fontInfo 的 C 适配）。
+ * @details    Qt 中 QWidget::fontInfo() 返回以 widget->font() 交由字体
+ *             子系统解析后的 QFontInfo（反映实际匹配到的字体家族/样式）；
+ *             本仓库未建立字体替换/匹配引擎，XFont 即光栅化最终使用的
+ *             字体描述，解析结果与控件字体一致，故按 XWidget_fontMetrics
+ *             相同的 XFont 值拷贝方案返回，测量能力由调用方以
+ *             XPainter_textWidth/XPainter_textHeight 等接口完成。
+ * @param      self 目标控件；可为 NULL。
+ * @return     控件实际生效字体的独立 XFont 副本；空指针返回默认构造字体。
+ * @note       与 Qt 的承载差异：Qt 返回 QFontInfo 对象并提供 family()/
+ *             pointSize()/italic() 等解析结果查询成员，本适配返回 XFont
+ *             值拷贝；副本拥有独立的家族/样式名字符串，使用完毕必须调用
+ *             XFont_deinit_base 释放（与 XWidget_font 相同的深拷贝契约）。
+ */
+XFont XWidget_fontInfo(const XWidget* self);
 /** @brief 查询调色板（对标 QWidget::palette；未设置时返回应用调色板）。 */
 XPalette XWidget_palette(const XWidget* self);
 /** @brief 设置调色板（对标 QWidget::setPalette）。 */
@@ -1604,6 +1638,100 @@ XRegion XWidget_visibleRegion(const XWidget* self);
 
 /** @brief 返回顶层控件的后备存储（对标 QWidget::backingStore；无则 NULL）。 */
 XBackingStore* XWidget_backingStore(const XWidget* self);
+
+/**
+ * @brief      滚动控件内容（对标 QWidget::scroll(int dx, int dy)）。
+ * @details    对标 Qt 6.8 语义：把控件可视内容向右平移 dx、向下平移 dy
+ *             （负值反向），并把滚动露出/受影响的区域调度重绘。Qt 的
+ *             scroll_sys 经平台后备存储做像素 blit 并只重绘露出带；本
+ *             适配按任务裁定简化为"平移裁剪区域 + 调度重绘"——XGui 的
+ *             绘制闭环由 paintEvent 从头重建、无像素 blit 通道，故把
+ *             平移目标带（视口 ∩ 视口平移 (dx,dy)）与露出带
+ *             （视口 − 视口平移 (-dx,-dy)）一并并入脏区，由下一次
+ *             PAINT 事件重绘；已挂起在本控件的脏区随内容同步平移
+ *             （对标 scrollRect 的脏区平移语义）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      dx 水平滚动像素量；正值向右，负值向左。
+ * @param      dy 垂直滚动像素量；正值向下，负值向上。
+ * @return     无返回值；控件为 NULL、更新被禁用、不可见或 dx、dy 同时
+ *             为 0 时不执行操作（与 Qt 的前置守卫一致）。
+ * @note       简化项：无 scroll(dx, dy, const QRect&) 区域重载，滚动
+ *             范围恒为控件矩形 rect()；不平移子控件（Qt 的 scrollChildren
+ *             行为未提供，需要整体平移时由调用方对子控件逐一 move）；
+ *             无像素 blit，受影响区域整体重绘（不含 Qt 的位块搬运优化）。
+ */
+void XWidget_scroll(XWidget* self, int dx, int dy);
+
+/**
+ * @brief      返回控件绘制设备类型（对标 QPaintDevice::devType 的简化入口）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     有效控件返回 1（Widget，沿用 XPixmap_devType"有效设备返回
+ *             1"的既有简化约定）；空指针返回 0。
+ * @note       与 XPaintDeviceType 正式枚举的映射：内嵌 XPaintDevice 的
+ *             类型码为 XPaintDeviceType_Widget，精确查询可经
+ *             XWidget_paintDevice() 取设备后调 XPaintDevice_devType。
+ */
+int XWidget_devType(const XWidget* self);
+
+/**
+ * @brief      返回控件内部绘制引擎描述（对标 QPaintDevice::paintEngine）。
+ * @details    返回控件内嵌 XPaintDevice 的 XPaintEngine 引擎描述借用指针
+ *             （XGui 默认 Raster 软件光栅引擎，能力位
+ *             XPaintEngineFeature_AllFeatures）；本仓库绘制命令由
+ *             XPainter 承担，该描述仅提供 type/isActive/hasFeature 查询。
+ * @param      self 目标控件；可为 NULL。
+ * @return     内部 XPaintEngine 借用指针（void* 承载，调用方按
+ *             XPaintEngine* 解释，不得释放）；XPAINTDEVICE_ON 关闭或
+ *             参数无效返回 NULL（返回类型与 XPixmap_paintEngine/
+ *             XPicture_paintEngine 的既有约定一致）。
+ */
+void* XWidget_paintEngine(const XWidget* self);
+
+/* ==================== 快照与离屏渲染（对标 QWidget grab/render） ==================== */
+
+/**
+ * @brief      抓取控件当前内容为图像（对标 QWidget::grab）。
+ * @details    返回新建 XImage（控件全幅尺寸，ARGB32_Premultiplied，未被
+ *             内容覆盖的像素为全透明），调用方以 XImage_delete_base 释放。
+ *             按控件状态择一路径：
+ *              - 顶层控件且后备存储已持有同尺寸有效像素（最近一次上屏
+ *                内容）→ 经 XBackingStore_toImage 深拷贝，不触发重绘；
+ *              - 其余情况（从未上屏、后备数据缺失/尺寸不匹配、子控件）
+ *                → 创建临时画布并同步派发一次完整 paintEvent 子树绘制
+ *                （XWidget_paintTree 闭环，隐藏子控件不绘制）。
+ *             两种路径均不改变控件可见状态，也不向屏幕提交任何内容。 * @param      self 目标控件；可为 NULL。
+ * @return     快照图像（堆对象，调用方拥有）；失败返回 NULL。
+ * @note       简化项：无 RenderFlags 参数，恒等效绘制窗口背景与全部可见
+ *             子控件（DrawWindowBackground | DrawChildren）；背景填充依赖
+ *             autoFillBackground/paintEvent 自身语义，画布底色为透明。
+ * @note       简化项：目标图像不做 devicePixelRatio 缩放（恒 1:1 逻辑像素）。
+ * @note       若在控件自身 paintEvent 内重入抓取，该控件本层的 paintEvent
+ *             受 m_inPaintEvent 保护跳过（子控件仍会绘制），内容以外层
+ *             正在进行的绘制状态为准。
+ */
+XImage* XWidget_grab(const XWidget* self);
+
+/**
+ * @brief      把控件内容渲染到调用方绘制器（对标 QWidget::render）。
+ * @details    内部先把控件子树同步绘制到一张控件全幅的临时快照图像
+ *             （路径语义与 XWidget_grab 一致），再经调用方 painter 以
+ *             XPainter_drawImage 输出到 targetRect 左上角所在位置；painter
+ *             现有的平移/裁剪/合成属性照常生效。targetRect 为 NULL 时视为
+ *             (0,0,控件宽,控件高)。
+ * @param      self 目标控件；可为 NULL。
+ * @param      painter 目标绘制器；须已 begin（否则绘制失败返回 false）。
+ * @param      targetRect 绘制目标矩形（painter 坐标系）；仅尺寸生效，
+ *             可为 NULL。
+ * @return     渲染并输出成功返回 true；参数非法或尺寸不匹配返回 false。
+ * @note       简化项：仅支持等尺寸渲染——targetRect 宽高必须与控件尺寸
+ *             完全一致（不支持 Qt 的平移缩放矩阵推导），不一致返回 false；
+ *             平移由 targetRect.x/y 承担。不支持 RenderFlags（恒等效
+ *             DrawWindowBackground | DrawChildren）与不透明度参数。
+ * @note       简化项：与 grab 相同，隐藏子控件不参与渲染；在控件自身
+ *             paintEvent 内重入渲染时本层槽位被 m_inPaintEvent 保护跳过。
+ */
+bool XWidget_render(XWidget* self, XPainter* painter, const XRect* targetRect);
+
 
 /* ==================== 布局挂接（对标 QWidget::layout/setLayout） ==================== */
 

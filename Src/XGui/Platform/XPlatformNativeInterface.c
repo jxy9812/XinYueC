@@ -527,7 +527,6 @@ void* XPlatformNativeInterface_windowPropertyChanged_signal(
     return (void*)(size_t)XPlatformNativeInterface_windowPropertyChanged_signal;
 }
 
-#endif /* XPLATFORMNATIVEINTERFACE_ON */
 
 /* ==================== Task 2.16：上下文原生资源 ==================== */
 
@@ -560,3 +559,5 @@ void* XPlatformNativeInterface_nativeResourceFunctionForContext_2(
     (void)self; (void)resource;
     return NULL;
 }
+
+#endif /* XPLATFORMNATIVEINTERFACE_ON: 守卫扩至全文件,XGUI_ON=0 连带裁剪时实现整体不编 */

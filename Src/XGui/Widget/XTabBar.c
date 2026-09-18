@@ -113,6 +113,8 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
     uint32_t* colors;
     bool* visible;
     XString** tips;
+    XString** whatsThis;
+    XString** accessibleNames;
     XString** icons;
     XString** datas;
     XAbstractButton** buttons;
@@ -138,6 +140,14 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
                                       sizeof(XString*) * (size_t)cap);
     if (!tips) return false;
     self->m_tabToolTips = tips;
+    whatsThis = (XString**)XRealloc_System(self->m_tabWhatsThis,
+                                           sizeof(XString*) * (size_t)cap);
+    if (!whatsThis) return false;
+    self->m_tabWhatsThis = whatsThis;
+    accessibleNames = (XString**)XRealloc_System(self->m_tabAccessibleNames,
+                                                 sizeof(XString*) * (size_t)cap);
+    if (!accessibleNames) return false;
+    self->m_tabAccessibleNames = accessibleNames;
     icons = (XString**)XRealloc_System(self->m_tabIcons,
                                        sizeof(XString*) * (size_t)cap);
     if (!icons) return false;
@@ -154,6 +164,8 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
         self->m_tabTextColors[i] = 0;
         self->m_tabVisible[i] = true;
         self->m_tabToolTips[i] = NULL;
+        self->m_tabWhatsThis[i] = NULL;
+        self->m_tabAccessibleNames[i] = NULL;
         self->m_tabIcons[i] = NULL;
         self->m_tabData[i] = NULL;
         self->m_tabButtons[i] = NULL;
@@ -353,6 +365,14 @@ static void VXTabBar_copy(XTabBar* self, const XTabBar* other)
                                                      (const XWidget*)other);
     for (i = 0; i < other->m_count; ++i)
         XTabBar_addTab(self, other->m_titles[i]);
+    /* 逐项文本承载字段随 copy 同步（init 已置空，此处按源填充）。 */
+    for (i = 0; i < other->m_count; ++i) {
+        if (other->m_tabAccessibleNames && other->m_tabAccessibleNames[i])
+            XTabBar_setAccessibleTabName(self, i,
+                                         other->m_tabAccessibleNames[i]);
+        if (other->m_tabWhatsThis && other->m_tabWhatsThis[i])
+            XTabBar_setTabWhatsThis(self, i, other->m_tabWhatsThis[i]);
+    }
     self->m_currentIndex = other->m_currentIndex;
     self->m_tabsClosable = other->m_tabsClosable;
     self->m_movable = other->m_movable;
@@ -373,6 +393,8 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
     self->m_tabTextColors = other->m_tabTextColors;
     self->m_tabVisible = other->m_tabVisible;
     self->m_tabToolTips = other->m_tabToolTips;
+    self->m_tabWhatsThis = other->m_tabWhatsThis;
+    self->m_tabAccessibleNames = other->m_tabAccessibleNames;
     self->m_tabIcons = other->m_tabIcons;
     self->m_tabData = other->m_tabData;
     self->m_tabButtons = other->m_tabButtons;
@@ -383,6 +405,8 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
     other->m_tabTextColors = NULL;
     other->m_tabVisible = NULL;
     other->m_tabToolTips = NULL;
+    other->m_tabWhatsThis = NULL;
+    other->m_tabAccessibleNames = NULL;
     other->m_tabIcons = NULL;
     other->m_tabData = NULL;
     other->m_tabButtons = NULL;
@@ -429,6 +453,20 @@ static void VXTabBar_deinit(XTabBar* self)
                 XString_delete_base(self->m_tabToolTips[i]);
         XFree_System(self->m_tabToolTips);
         self->m_tabToolTips = NULL;
+    }
+    if (self->m_tabWhatsThis) {
+        for (i = 0; i < self->m_count; ++i)
+            if (self->m_tabWhatsThis[i])
+                XString_delete_base(self->m_tabWhatsThis[i]);
+        XFree_System(self->m_tabWhatsThis);
+        self->m_tabWhatsThis = NULL;
+    }
+    if (self->m_tabAccessibleNames) {
+        for (i = 0; i < self->m_count; ++i)
+            if (self->m_tabAccessibleNames[i])
+                XString_delete_base(self->m_tabAccessibleNames[i]);
+        XFree_System(self->m_tabAccessibleNames);
+        self->m_tabAccessibleNames = NULL;
     }
     if (self->m_tabIcons) {
         for (i = 0; i < self->m_count; ++i)
@@ -479,6 +517,8 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_tabTextColors = NULL;
     self->m_tabVisible = NULL;
     self->m_tabToolTips = NULL;
+    self->m_tabWhatsThis = NULL;
+    self->m_tabAccessibleNames = NULL;
     self->m_tabIcons = NULL;
     self->m_tabData = NULL;
     self->m_tabButtons = NULL;
@@ -545,6 +585,14 @@ int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
         XMemmove(&self->m_tabToolTips[index + 1],
                  &self->m_tabToolTips[index],
                  sizeof(XString*) * (size_t)(self->m_count - index));
+    if (self->m_tabWhatsThis)
+        XMemmove(&self->m_tabWhatsThis[index + 1],
+                 &self->m_tabWhatsThis[index],
+                 sizeof(XString*) * (size_t)(self->m_count - index));
+    if (self->m_tabAccessibleNames)
+        XMemmove(&self->m_tabAccessibleNames[index + 1],
+                 &self->m_tabAccessibleNames[index],
+                 sizeof(XString*) * (size_t)(self->m_count - index));
     if (self->m_tabIcons)
         XMemmove(&self->m_tabIcons[index + 1], &self->m_tabIcons[index],
                  sizeof(XString*) * (size_t)(self->m_count - index));
@@ -560,6 +608,8 @@ int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
     if (self->m_tabTextColors) self->m_tabTextColors[index] = 0;
     if (self->m_tabVisible) self->m_tabVisible[index] = true;
     if (self->m_tabToolTips) self->m_tabToolTips[index] = NULL;
+    if (self->m_tabWhatsThis) self->m_tabWhatsThis[index] = NULL;
+    if (self->m_tabAccessibleNames) self->m_tabAccessibleNames[index] = NULL;
     if (self->m_tabIcons) self->m_tabIcons[index] = NULL;
     if (self->m_tabData) self->m_tabData[index] = NULL;
     if (self->m_tabButtons) self->m_tabButtons[index] = NULL;
@@ -584,6 +634,14 @@ void XTabBar_removeTab(XTabBar* self, int index)
         XString_delete_base(self->m_tabToolTips[index]);
         self->m_tabToolTips[index] = NULL;
     }
+    if (self->m_tabWhatsThis && self->m_tabWhatsThis[index]) {
+        XString_delete_base(self->m_tabWhatsThis[index]);
+        self->m_tabWhatsThis[index] = NULL;
+    }
+    if (self->m_tabAccessibleNames && self->m_tabAccessibleNames[index]) {
+        XString_delete_base(self->m_tabAccessibleNames[index]);
+        self->m_tabAccessibleNames[index] = NULL;
+    }
     if (self->m_tabIcons && self->m_tabIcons[index]) {
         XString_delete_base(self->m_tabIcons[index]);
         self->m_tabIcons[index] = NULL;
@@ -605,6 +663,13 @@ void XTabBar_removeTab(XTabBar* self, int index)
                  sizeof(bool) * (size_t)(self->m_count - index - 1));
     if (self->m_tabToolTips)
         XMemmove(&self->m_tabToolTips[index], &self->m_tabToolTips[index + 1],
+                 sizeof(XString*) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabWhatsThis)
+        XMemmove(&self->m_tabWhatsThis[index], &self->m_tabWhatsThis[index + 1],
+                 sizeof(XString*) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabAccessibleNames)
+        XMemmove(&self->m_tabAccessibleNames[index],
+                 &self->m_tabAccessibleNames[index + 1],
                  sizeof(XString*) * (size_t)(self->m_count - index - 1));
     if (self->m_tabIcons)
         XMemmove(&self->m_tabIcons[index], &self->m_tabIcons[index + 1],
@@ -958,6 +1023,83 @@ const char* XTabBar_tabToolTip_2(const XTabBar* self, int index)
     return s ? XString_toUtf8(s) : "";
 }
 
+void XTabBar_setTabWhatsThis(XTabBar* self, int index, const XString* text)
+{
+    XString* repl;
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabWhatsThis)
+        return;
+    repl = text ? XString_create_copy(text) : NULL;
+    if (text && !repl) return;
+    if (self->m_tabWhatsThis[index])
+        XString_delete_base(self->m_tabWhatsThis[index]);
+    self->m_tabWhatsThis[index] = repl;
+}
+
+void XTabBar_setTabWhatsThis_2(XTabBar* self, int index, const char* text)
+{
+    XString* tmp = NULL;
+    if (text) {
+        tmp = XString_create_utf8(text);
+        if (!tmp) return;
+    }
+    XTabBar_setTabWhatsThis(self, index, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XTabBar_tabWhatsThis(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count || !self->m_tabWhatsThis)
+        return NULL;
+    return self->m_tabWhatsThis[index];
+}
+
+const char* XTabBar_tabWhatsThis_2(const XTabBar* self, int index)
+{
+    const XString* s;
+    s = XTabBar_tabWhatsThis(self, index);
+    return s ? XString_toUtf8(s) : "";
+}
+
+void XTabBar_setAccessibleTabName(XTabBar* self, int index,
+                                  const XString* name)
+{
+    XString* repl;
+    if (!self || index < 0 || index >= self->m_count ||
+        !self->m_tabAccessibleNames)
+        return;
+    repl = name ? XString_create_copy(name) : NULL;
+    if (name && !repl) return;
+    if (self->m_tabAccessibleNames[index])
+        XString_delete_base(self->m_tabAccessibleNames[index]);
+    self->m_tabAccessibleNames[index] = repl;
+}
+
+void XTabBar_setAccessibleTabName_2(XTabBar* self, int index, const char* name)
+{
+    XString* tmp = NULL;
+    if (name) {
+        tmp = XString_create_utf8(name);
+        if (!tmp) return;
+    }
+    XTabBar_setAccessibleTabName(self, index, tmp);
+    if (tmp) XString_delete_base(tmp);
+}
+
+const XString* XTabBar_accessibleTabName(const XTabBar* self, int index)
+{
+    if (!self || index < 0 || index >= self->m_count ||
+        !self->m_tabAccessibleNames)
+        return NULL;
+    return self->m_tabAccessibleNames[index];
+}
+
+const char* XTabBar_accessibleTabName_2(const XTabBar* self, int index)
+{
+    const XString* s;
+    s = XTabBar_accessibleTabName(self, index);
+    return s ? XString_toUtf8(s) : "";
+}
+
 void XTabBar_setTabButton(XTabBar* self, int index,
                           XAbstractButton* button)
 {
@@ -1035,6 +1177,8 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
     XString* icon;
     XString* data;
     XAbstractButton* button;
+    XString* whatsThis;
+    XString* accessibleName;
     int i;
     int step;
     if (!self || from < 0 || from >= self->m_count || to < 0 ||
@@ -1045,6 +1189,9 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
     color = self->m_tabTextColors ? self->m_tabTextColors[from] : 0;
     visible = self->m_tabVisible ? self->m_tabVisible[from] : true;
     tip = self->m_tabToolTips ? self->m_tabToolTips[from] : NULL;
+    whatsThis = self->m_tabWhatsThis ? self->m_tabWhatsThis[from] : NULL;
+    accessibleName = self->m_tabAccessibleNames
+                         ? self->m_tabAccessibleNames[from] : NULL;
     icon = self->m_tabIcons ? self->m_tabIcons[from] : NULL;
     data = self->m_tabData ? self->m_tabData[from] : NULL;
     button = self->m_tabButtons ? self->m_tabButtons[from] : NULL;
@@ -1058,6 +1205,10 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
             self->m_tabVisible[i] = self->m_tabVisible[i + step];
         if (self->m_tabToolTips)
             self->m_tabToolTips[i] = self->m_tabToolTips[i + step];
+        if (self->m_tabWhatsThis)
+            self->m_tabWhatsThis[i] = self->m_tabWhatsThis[i + step];
+        if (self->m_tabAccessibleNames)
+            self->m_tabAccessibleNames[i] = self->m_tabAccessibleNames[i + step];
         if (self->m_tabIcons)
             self->m_tabIcons[i] = self->m_tabIcons[i + step];
         if (self->m_tabData)
@@ -1070,6 +1221,8 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
     if (self->m_tabTextColors) self->m_tabTextColors[to] = color;
     if (self->m_tabVisible) self->m_tabVisible[to] = visible;
     if (self->m_tabToolTips) self->m_tabToolTips[to] = tip;
+    if (self->m_tabWhatsThis) self->m_tabWhatsThis[to] = whatsThis;
+    if (self->m_tabAccessibleNames) self->m_tabAccessibleNames[to] = accessibleName;
     if (self->m_tabIcons) self->m_tabIcons[to] = icon;
     if (self->m_tabData) self->m_tabData[to] = data;
     if (self->m_tabButtons) self->m_tabButtons[to] = button;
