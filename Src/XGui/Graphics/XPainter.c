@@ -1362,6 +1362,11 @@ static uint32_t painterComposeColor(uint32_t source, uint32_t destination,
         return destination;
     if (mode == XPainterCompositionMode_SourceOver && da == 0u)
         return source;
+    if (mode == XPainterCompositionMode_SourceOver && sa == 255u)
+        return source; /* 不透明源 SourceOver：factorDestination=0 使
+                          out 恒等于源（含 alpha=255），通用分支可证。
+                          斜线 Bresenham/散点弦线等逐像素路径的主力
+                          快捷分支。 */
 
     if (mode >= XPainterCompositionMode_Multiply &&
         mode <= XPainterCompositionMode_Exclusion)
@@ -1474,6 +1479,23 @@ static bool painterRaster_blendFillRect(XImage* image, const XRect* rect,
     sr = (color >> 16) & 0xffu;
     sg = (color >> 8) & 0xffu;
     sb = color & 0xffu;
+    /* 循环不变量提升 + 衰减查找表（查表与内联 (v*ia+127)/255 逐位
+       等价）：源预乘分量 sp* 与「目标分量按 (255-sa) 衰减」在整帧内
+       恒定，逐像素重复计算是面积系列填充的主要内循环开销。 */
+    {
+        uint32_t spR = (sr * sa + 127u) / 255u;
+        uint32_t spG = (sg * sa + 127u) / 255u;
+        uint32_t spB = (sb * sa + 127u) / 255u;
+        uint32_t lutR[256];
+        uint32_t lutG[256];
+        uint32_t lutB[256];
+        uint32_t v;
+        for (v = 0; v < 256u; ++v)
+        {
+            lutR[v] = (v * ia + 127u) / 255u;
+            lutG[v] = lutR[v];
+            lutB[v] = lutR[v];
+        }
     /* 逐像素语义（putPixel → painterComposeColor 的 SourceOver 分支）：
        目标以非预乘 ARGB32 读入，源/目标分量各自预乘后相加，再按结果
        alpha 反预乘写回（存储格式为预乘）。此处整行展开，逐位等价：
@@ -1491,23 +1513,26 @@ static bool painterRaster_blendFillRect(XImage* image, const XRect* rect,
             uint32_t dr;
             uint32_t dg;
             uint32_t db;
-            uint32_t spR;
-            uint32_t spG;
-            uint32_t spB;
             uint32_t outA;
             uint32_t outR;
             uint32_t outG;
             uint32_t outB;
-            /* 读入目标：反预乘回非预乘分量。 */
-            if (da == 0u)
-            {
-                dr = dg = db = 0u;
-            }
-            else if (da == 255u)
+            /* 不透明目标：outA 恒为 sa+ia=255，写回预乘为恒等——直写。 */
+            if (da == 255u)
             {
                 dr = (stored >> 16u) & 0xffu;
                 dg = (stored >> 8u) & 0xffu;
                 db = stored & 0xffu;
+                row[x] = 0xFF000000u |
+                         ((spR + lutR[dr]) << 16u) |
+                         ((spG + lutG[dg]) << 8u) |
+                         (spB + lutB[db]);
+                continue;
+            }
+            /* 读入目标：反预乘回非预乘分量。 */
+            if (da == 0u)
+            {
+                dr = dg = db = 0u;
             }
             else
             {
@@ -1518,14 +1543,10 @@ static bool painterRaster_blendFillRect(XImage* image, const XRect* rect,
                 if (dg > 255u) dg = 255u;
                 if (db > 255u) db = 255u;
             }
-            /* 预乘源与目标分量（painterMul255 取整）。 */
-            spR = (sr * sa + 127u) / 255u;
-            spG = (sg * sa + 127u) / 255u;
-            spB = (sb * sa + 127u) / 255u;
             outA = sa + (da * ia + 127u) / 255u;
-            outR = spR + (dr * ia + 127u) / 255u;
-            outG = spG + (dg * ia + 127u) / 255u;
-            outB = spB + (db * ia + 127u) / 255u;
+            outR = spR + lutR[dr];
+            outG = spG + lutG[dg];
+            outB = spB + lutB[db];
             /* 反预乘后按存储格式重新预乘写回。 */
             if (outA == 0u)
             {
@@ -1546,6 +1567,7 @@ static bool painterRaster_blendFillRect(XImage* image, const XRect* rect,
                      (((outG * outA + 127u) / 255u) << 8u) |
                      ((outB * outA + 127u) / 255u);
         }
+    }
     }
     return true;
 }
@@ -2940,9 +2962,18 @@ static bool painterRaster_restore(XPainter* self)
 
 /* ========== 指令录制后端 ========== */
 
+static bool painterPathDrawDispatch(XPainter* self, const XPainterPath* path,
+                                    XPainterPathOp op, bool fill,
+                                    bool stroke);
+
 static bool painterRecord_drawLine(XPainter* self, int x1, int y1,
                                    int x2, int y2)
 {
+    /* 回放期间不得再记录（否则命令被追加回同一 Picture，形成无限
+       自递归 → 栈溢出）；转为软件光栅实际绘制，即 Qt QPicture::play
+       的语义——把命令画到目标设备。 */
+    if (self && self->m_replaying)
+        return painterRaster_drawLine(self, x1, y1, x2, y2);
     return self && self->m_picture &&
            XPicture_recordDrawLine(self->m_picture, x1, y1, x2, y2);
 }
@@ -2950,6 +2981,8 @@ static bool painterRecord_drawLine(XPainter* self, int x1, int y1,
 static bool painterRecord_fillRect(XPainter* self, const XRect* rect,
                                    uint32_t color)
 {
+    if (self && self->m_replaying)
+        return painterRaster_fillRect(self, rect, color);
     return self && self->m_picture && rect &&
            XPicture_recordFillRect(self->m_picture, rect, color);
 }
@@ -2957,6 +2990,8 @@ static bool painterRecord_fillRect(XPainter* self, const XRect* rect,
 static bool painterRecord_drawImage(XPainter* self, const XImage* image,
                                     int x, int y)
 {
+    if (self && self->m_replaying)
+        return painterRaster_drawImage(self, image, x, y);
     return self && self->m_picture && image &&
            XPicture_recordDrawImage(self->m_picture, image, x, y);
 }
@@ -2967,6 +3002,33 @@ static bool painterRecord_drawShape(XPainter* self, XPainterShapeOp op,
                                     int spanAngle, bool filled,
                                     int xRadius, int yRadius)
 {
+    if (self && self->m_replaying)
+    {
+        /* 回放期间不得再记录；临时清空高层回调，让公共 API 走软件
+           内联实现（XPainter_drawEllipse/Arc/Pie/Chord 的 m_drawShape
+           为空分支），即 Qt QPicture::play 的语义。 */
+        XPainterShapeOp saved = self->m_drawShape ? op : op;
+        bool ok;
+        self->m_drawShape = NULL;
+        switch (op)
+        {
+            case XPainterShapeOp_Arc:
+                ok = XPainter_drawArc(self, rect, startAngle, spanAngle);
+                break;
+            case XPainterShapeOp_Pie:
+                ok = XPainter_drawPie(self, rect, startAngle, spanAngle);
+                break;
+            case XPainterShapeOp_Chord:
+                ok = XPainter_drawChord(self, rect, startAngle, spanAngle);
+                break;
+            case XPainterShapeOp_Ellipse:
+            default:
+                ok = XPainter_drawEllipse(self, rect);
+                break;
+        }
+        (void)saved;
+        return ok;
+    }
     return self && self->m_picture && rect &&
            XPicture_recordDrawShape(self->m_picture, (int)op, rect,
                                     startAngle, spanAngle, filled,
@@ -2978,6 +3040,13 @@ static bool painterRecord_drawShape(XPainter* self, XPainterShapeOp op,
 static bool painterRecord_drawPolyline(XPainter* self,
                                        const XPoint* points, int count)
 {
+    if (self && self->m_replaying)
+    {
+        bool ok;
+        self->m_drawPolyline = NULL;
+        ok = XPainter_drawPolyline(self, points, count);
+        return ok;
+    }
     return self && self->m_picture && points &&
            XPicture_recordDrawPolyline(self->m_picture, points, count);
 }
@@ -2987,6 +3056,13 @@ static bool painterRecord_drawPolygon(XPainter* self,
                                       bool filled,
                                       XPainterFillRule fillRule)
 {
+    if (self && self->m_replaying)
+    {
+        bool ok;
+        self->m_drawPolygon = NULL;
+        ok = XPainter_drawPolygon(self, points, count, fillRule);
+        return ok;
+    }
     return self && self->m_picture && points &&
            XPicture_recordDrawPolygon(self->m_picture, points, count,
                                       filled, (int)fillRule);
@@ -2995,6 +3071,13 @@ static bool painterRecord_drawPolygon(XPainter* self,
 static bool painterRecord_drawPoints(XPainter* self,
                                      const XPoint* points, int count)
 {
+    if (self && self->m_replaying)
+    {
+        bool ok;
+        self->m_drawPoints = NULL;
+        ok = XPainter_drawPoints(self, points, count);
+        return ok;
+    }
     return self && self->m_picture && points &&
            XPicture_recordDrawPoints(self->m_picture, points, count);
 }
@@ -3004,6 +3087,10 @@ static bool painterRecord_drawPoints(XPainter* self,
 static bool painterRecord_drawPath(XPainter* self, XPainterPathOp op,
                                    const XPainterPath* path)
 {
+    if (self && self->m_replaying)
+        return painterPathDrawDispatch(self, path, op, op !=
+                                       XPainterPathOp_Stroke,
+                                       op != XPainterPathOp_Fill);
     return self && self->m_picture && path &&
            XPicture_recordDrawPath(self->m_picture, (int)op, path);
 }

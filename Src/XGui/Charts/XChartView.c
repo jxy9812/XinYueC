@@ -864,26 +864,39 @@ static void xcv_paintArea(XChartView* self, XPainter* painter,
             up->m_base.m_count < 2) continue;
         XPainter_setBrush(painter, color);
         XPainter_setPen(painter, color);
-        for (pi = 0; pi < up->m_base.m_count - 1; ++pi) {
-            int ax0; int ay0; int ax1; int ay1; int bx0; int by1;
-            xcv_mapPoint(self, plotR, up->m_base.m_points[pi].x, up->m_base.m_points[pi].y,
-                         &ax0, &ay0);
-            xcv_mapPoint(self, plotR, up->m_base.m_points[pi + 1].x,
-                         up->m_base.m_points[pi + 1].y, &ax1, &ay1);
-            xcv_mapPoint(self, plotR, up->m_base.m_points[pi + 1].x, s->m_baseValue,
-                         &bx0, &by1);
-            /* 每段梯形以基线与上边界间的矩形填充近似（轴对齐数据）。 */
-            {
-                int top = ay0 < by1 ? ay0 : by1;
-                int hgt = ay0 < by1 ? by1 - ay0 : ay0 - by1;
-                int left = ax0 < ax1 ? ax0 : ax1;
-                int w = ax0 < ax1 ? ax1 - ax0 : ax0 - ax1;
-                if (hgt < 1) hgt = 1;
-                if (w < 1) w = 1;
-                XPainter_fillRect(painter,
-                    &(XRect){left, top, w, hgt}, color);
+        /* 对标 Qt QAreaSeries（areachartitem.cpp: painter->drawPath）：
+           上边界折线 + 基线两步回程构成闭合多边形，一次填充。此前逐段
+           矩形近似在下降段过填（填到线上方）、上升段欠填（楔形空隙）。
+           TEMP 复现版（堆损坏抓捕用）。 */
+        {
+            XPoint poly[128];
+            int count = up->m_base.m_count;
+            int i;
+            int used = 0;
+            int bx;
+            int by;
+            if (count > 126) count = 126;
+            for (i = 0; i < count; ++i) {
+                int sx;
+                int sy;
+                xcv_mapPoint(self, plotR, up->m_base.m_points[i].x,
+                             up->m_base.m_points[i].y, &sx, &sy);
+                poly[used].x = sx;
+                poly[used].y = sy;
+                ++used;
             }
-            (void)bx0;
+            xcv_mapPoint(self, plotR, up->m_base.m_points[count - 1].x,
+                         s->m_baseValue, &bx, &by);
+            poly[used].x = bx;
+            poly[used].y = by;
+            ++used;
+            xcv_mapPoint(self, plotR, up->m_base.m_points[0].x,
+                         s->m_baseValue, &bx, &by);
+            poly[used].x = bx;
+            poly[used].y = by;
+            ++used;
+            XPainter_drawPolygon(painter, poly, used,
+                                 XPainterFillRule_OddEven);
         }
         {
             int px; int py; int i;
