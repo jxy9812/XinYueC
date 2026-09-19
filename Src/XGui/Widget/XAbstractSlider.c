@@ -204,7 +204,20 @@ static void VXAbstractSlider_wheelEvent(XWidget* self, XEvent* event)
         if (slider->m_invertedControls) steps = -steps;
     }
 #endif /* XWINDOWEVENT_ON */
-    if (steps != 0) XAbstractSlider_stepBy_base(slider, steps);
+    if (steps != 0) {
+        /* 对标 Qt：滚轮经 triggerAction 执行（发射 actionTriggered，
+         * 依赖该信号做联动的代码才能收到）。 */
+        while (steps > 0) {
+            XAbstractSlider_triggerAction(
+                slider, (int)XAbstractSliderSliderAction_SingleStepAdd);
+            --steps;
+        }
+        while (steps < 0) {
+            XAbstractSlider_triggerAction(
+                slider, (int)XAbstractSliderSliderAction_SingleStepSub);
+            ++steps;
+        }
+    }
     XEvent_accept(event);
 }
 

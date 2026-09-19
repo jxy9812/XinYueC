@@ -12,6 +12,68 @@
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
 static void VXAbstractItemView_deinit(XAbstractItemView* self);
+/* ==================== 选择应用（键盘导航/修饰键点击共用） ==================== */
+
+/** @brief 仅移动当前索引（不触碰选择集合；对标 Ctrl+方向键的移动）。 */
+static void xaiv_setCurrentPreservingSelection(XAbstractItemView* view,
+                                               int row, int col)
+{
+    if (!view) return;
+    view->m_currentRow = row;
+    view->m_currentColumn = col;
+    if (view->m_selectionModel)
+        XItemSelectionModel_setCurrentIndex(view->m_selectionModel, row,
+                                            col);
+    XWidget_update((XWidget*)view);
+}
+
+/** @brief 选中/取消一个"单元"（按 selectionBehavior 展开整行/整列）。 */
+static void xaiv_selectCellExpanded(XAbstractItemView* view, int row,
+                                    int col, bool selected)
+{
+    XItemSelectionModel* sm = view ? view->m_selectionModel : NULL;
+    XAbstractItemModel* model = view ? view->m_model : NULL;
+    if (!sm) return;
+    if (selected &&
+        view->m_selectionBehavior ==
+            XAbstractItemViewSelectionBehavior_SelectRows && model) {
+        int c;
+        for (c = 0; c < model->m_cols; ++c)
+            XItemSelectionModel_select(sm, row, c, true);
+        return;
+    }
+    if (selected &&
+        view->m_selectionBehavior ==
+            XAbstractItemViewSelectionBehavior_SelectColumns && model) {
+        int r;
+        for (r = 0; r < model->m_rows; ++r)
+            XItemSelectionModel_select(sm, r, col, true);
+        return;
+    }
+    XItemSelectionModel_select(sm, row, col, selected);
+}
+
+/** @brief 清空选择并选中矩形区域（锚点→当前，行列归一）。 */
+static void xaiv_selectRect(XAbstractItemView* view, int r1, int c1,
+                            int r2, int c2)
+{
+    XItemSelectionModel* sm = view ? view->m_selectionModel : NULL;
+    XAbstractItemModel* model = view ? view->m_model : NULL;
+    int r;
+    int c;
+    if (!sm || !view) return;
+    XItemSelectionModel_clear(sm);
+    if (r1 > r2) { int t = r1; r1 = r2; r2 = t; }
+    if (c1 > c2) { int t = c1; c1 = c2; c2 = t; }
+    for (r = r1; r <= r2; ++r) {
+        for (c = c1; c <= c2; ++c) {
+            if (model && (r >= model->m_rows || c >= model->m_cols))
+                continue;
+            xaiv_selectCellExpanded(view, r, c, true);
+        }
+    }
+}
+
 static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
                                                  XEvent* event);
@@ -73,6 +135,8 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_autoScroll = true;
     self->m_model = NULL;
     self->m_selectionModel = XItemSelectionModel_create();
+    self->m_selectionAnchorRow = -1;
+    self->m_selectionAnchorCol = -1;
     self->m_rootRow = -1;
     self->m_rootCol = -1;
     self->m_iconW = 16;
@@ -865,10 +929,29 @@ void XAbstractItemView_scrollToBottom(XAbstractItemView* self)
 XAbstractItemModel* XAbstractItemView_model(const XAbstractItemView* self)
 { return self ? self->m_model : NULL; }
 
+static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args);
+
 void XAbstractItemView_setModel(XAbstractItemView* self,
                                 XAbstractItemModel* model)
 {
     if (!self) return;
+    /* 对标 Qt：模型替换时断开旧模型信号、连接新模型信号（此前不
+     * 连接，外部改模型后视图不刷新）。 */
+    if (self->m_model) {
+        XObject* m = (XObject*)self->m_model;
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_dataChanged_signal(
+                                   self->m_model, 0, 0),
+                             (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsInserted_signal(
+                                    self->m_model, 0, 0),
+                             (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_rowsRemoved_signal(
+                                    self->m_model, 0, 0),
+                             (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_modelReset_signal(
+                                   self->m_model),
+                             (XObject*)self, xaiv_modelRefreshSlot);
+    }
     self->m_model = model;
     /* 行/列变化入口同步：模型替换使全部 (row,col) 失效，释放持久编辑器
      * 标记表与条目控件表（控件指针归调用方，仅解除承载）。 */
@@ -883,7 +966,38 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
         self->m_currentRow = -1;
         self->m_currentColumn = -1;
     }
+    if (model) {
+        XObject* m = (XObject*)model;
+#define XAIV_MODEL_CONNECT(sig) \
+    XObject_connect_1(m, (size_t)(sig), (XObject*)self, \
+                      xaiv_modelRefreshSlot, XConnectionType_Direct)
+        XAIV_MODEL_CONNECT(XAbstractItemModel_dataChanged_signal(model, 0, 0));
+        XAIV_MODEL_CONNECT(XAbstractItemModel_rowsInserted_signal(model,
+                                                                   0, 0));
+        XAIV_MODEL_CONNECT(XAbstractItemModel_rowsRemoved_signal(model,
+                                                                   0, 0));
+        XAIV_MODEL_CONNECT(XAbstractItemModel_modelReset_signal(model));
+#undef XAIV_MODEL_CONNECT
+    }
     XWidget_update((XWidget*)self);
+}
+
+/** @brief 模型信号统一刷新槽：收敛当前索引越界并重绘（对标 Qt 视图
+ *         对 dataChanged/rowsInserted/rowsRemoved/modelReset 的自动
+ *         响应；此前 setModel 不连接任何信号）。 */
+static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args)
+{
+    XAbstractItemView* view = (XAbstractItemView*)receiver;
+    XAbstractItemModel* model;
+    if (!view) return;
+    model = view->m_model;
+    if (model) {
+        if (view->m_currentRow >= model->m_rows)
+            view->m_currentRow = model->m_rows - 1;
+        if (view->m_currentColumn >= model->m_cols)
+            view->m_currentColumn = model->m_cols - 1;
+    }
+    XWidget_update((XWidget*)view);
 }
 
 XItemSelectionModel* XAbstractItemView_selectionModel(
@@ -1071,8 +1185,41 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
         return;
     }
     if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
-        /* setCurrentIndex 已含选区联动（同步选择模型当前索引与选中）。 */
-        XAbstractItemView_setCurrentIndex(view, row, col);
+        XAbstractItemViewSelectionMode mode = view->m_selectionMode;
+        XItemSelectionModel* sm = view->m_selectionModel;
+        bool ctrl = (XMouseEvent_modifiers(me) &
+                     XKeyboardModifier_ControlModifier) != 0;
+        bool shift = (XMouseEvent_modifiers(me) &
+                      XKeyboardModifier_ShiftModifier) != 0;
+        bool toggle = (mode == XAbstractItemViewSelectionMode_MultiSelection)
+                      || (ctrl && mode !=
+                              XAbstractItemViewSelectionMode_SingleSelection &&
+                          mode != XAbstractItemViewSelectionMode_NoSelection);
+        if (mode == XAbstractItemViewSelectionMode_NoSelection) {
+            xaiv_setCurrentPreservingSelection(view, row, col);
+        } else if (shift && mode != XAbstractItemViewSelectionMode_SingleSelection) {
+            int ar = view->m_selectionAnchorRow;
+            int ac = view->m_selectionAnchorCol;
+            if (ar < 0 || ac < 0) { ar = row; ac = col; }
+            xaiv_selectRect(view, ar, ac, row, col);
+            view->m_currentRow = row;
+            view->m_currentColumn = col;
+            if (sm)
+                XItemSelectionModel_setCurrentIndex(sm, row, col);
+            XWidget_update((XWidget*)view);
+        } else if (toggle && sm) {
+            bool sel = XItemSelectionModel_isSelected(sm, row, col);
+            xaiv_selectCellExpanded(view, row, col, !sel);
+            view->m_currentRow = row;
+            view->m_currentColumn = col;
+            if (sm)
+                XItemSelectionModel_setCurrentIndex(sm, row, col);
+            XWidget_update((XWidget*)view);
+        } else {
+            XAbstractItemView_setCurrentIndex(view, row, col);
+            view->m_selectionAnchorRow = row;
+            view->m_selectionAnchorCol = col;
+        }
         xaiv_emitIndex(view, (size_t)XAbstractItemView_pressed_signal,
                        row, col);
     }
@@ -1164,6 +1311,86 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
         }
         XEvent_accept(event);
         return;
+    }
+    /* 键盘导航（对标 QAbstractItemView）：方向键/翻页/Home/End 移动
+       当前项；Shift 从锚点扩选；Ctrl 仅移动不改选择；无修饰按选择
+       模式选中（此前键盘导航完全缺失）。 */
+    {
+        XAbstractItemModel* model = view->m_model;
+        int rows = model ? model->m_rows : 0;
+        int cols = model ? model->m_cols : 0;
+        int deltaRow = 0;
+        int deltaCol = 0;
+        int pageRows;
+        bool ctrl = (modifiers & XKeyboardModifier_ControlModifier) != 0;
+        bool shift = (modifiers & XKeyboardModifier_ShiftModifier) != 0;
+        switch (key) {
+        case XKey_Left:  deltaCol = -1; break;
+        case XKey_Right: deltaCol = 1; break;
+        case XKey_Up:    deltaRow = -1; break;
+        case XKey_Down:  deltaRow = 1; break;
+        case XKey_PageUp:
+            pageRows = XWidget_height(self) / 24;
+            deltaRow = -(pageRows > 1 ? pageRows : 1);
+            break;
+        case XKey_PageDown:
+            pageRows = XWidget_height(self) / 24;
+            deltaRow = (pageRows > 1 ? pageRows : 1);
+            break;
+        case XKey_Home:
+            deltaCol = ctrl ? -cols : -1;
+            if (ctrl) deltaRow = -rows;
+            break;
+        case XKey_End:
+            deltaCol = ctrl ? cols : 1;
+            if (ctrl) deltaRow = rows;
+            break;
+        default:
+            break;
+        }
+        if (deltaRow != 0 || deltaCol != 0) {
+            int r = view->m_currentRow >= 0 ? view->m_currentRow : 0;
+            int c = view->m_currentColumn >= 0 ? view->m_currentColumn : 0;
+            if (rows > 0 && r >= rows) r = rows - 1;
+            if (cols > 0 && c >= cols) c = cols - 1;
+            r += deltaRow;
+            c += deltaCol;
+            if (r < 0) r = 0;
+            if (c < 0) c = 0;
+            if (rows > 0 && r >= rows) r = rows - 1;
+            if (cols > 0 && c >= cols) c = cols - 1;
+            if (rows <= 0 || cols <= 0) { XEvent_ignore(event); return; }
+            if (ctrl && !shift) {
+                xaiv_setCurrentPreservingSelection(view, r, c);
+            } else if (shift &&
+                       view->m_selectionMode !=
+                           XAbstractItemViewSelectionMode_NoSelection) {
+                int ar = view->m_selectionAnchorRow;
+                int ac = view->m_selectionAnchorCol;
+                if (ar < 0 || ac < 0) {
+                    ar = view->m_currentRow >= 0 ? view->m_currentRow : 0;
+                    ac = view->m_currentColumn >= 0
+                             ? view->m_currentColumn
+                             : 0;
+                }
+                xaiv_selectRect(view, ar, ac, r, c);
+                view->m_currentRow = r;
+                view->m_currentColumn = c;
+                if (view->m_selectionModel)
+                    XItemSelectionModel_setCurrentIndex(
+                        view->m_selectionModel, r, c);
+                XWidget_update((XWidget*)view);
+            } else if (view->m_selectionMode !=
+                       XAbstractItemViewSelectionMode_NoSelection) {
+                XAbstractItemView_setCurrentIndex(view, r, c);
+                view->m_selectionAnchorRow = r;
+                view->m_selectionAnchorCol = c;
+            } else {
+                xaiv_setCurrentPreservingSelection(view, r, c);
+            }
+            XEvent_accept(event);
+            return;
+        }
     }
     /* 可打印 ASCII（0x20..0x7e）且无 Ctrl/Alt/Meta 修饰 → 键盘搜索。
      * 带修饰键的组合（快捷键）不参与搜索，交回父类/忽略。 */

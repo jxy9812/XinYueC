@@ -38,6 +38,7 @@
 #include "XWindowSystemInterface.h"
 #include "XWindowEvent.h"
 #include "XGuiApplication.h"
+#include "XClipboard.h"
 #include "XPlatformDrag.h"
 #include "XImage.h"
 #include "XPixmap.h"
@@ -145,6 +146,12 @@ static Atom g_xpwnXdndTypeList;
 static Atom g_xpwnXdndActionCopy;
 static Atom g_xpwnTextUriList;
 static Atom g_xpwnTextPlain;
+static Atom g_xpwnClipboard;      /* CLIPBOARD 原子。 */
+static bool g_xpwnClipDataValid;  /* 剪贴板是否有数据。 */
+static Atom g_xpwnClipProp;       /* 剪贴板数据传输用属性原子。 */
+static char* g_xpwnClipText;      /* 认领期间保存的剪贴板文本（拥有）。 */
+static int g_xpwnClipTextLen;    /* 文本字节长度。 */
+static Window g_xpwnClipServeWin = None; /* 认领所有权的窗口。 */
 static Atom g_xpwnXdndData;
 static XWNPendingEntry g_xpwnEntries[XPWN_MAX_WINDOWS]; /**< 窗口注册表。 */
 
@@ -762,6 +769,8 @@ static bool xpwn_ensureConnection(void)
     g_xpwnTextUriList = XInternAtom(g_xpwnDisplay, "text/uri-list", False);
     g_xpwnTextPlain = XInternAtom(g_xpwnDisplay, "text/plain", False);
     g_xpwnXdndData = XInternAtom(g_xpwnDisplay, "XIN_YUE_C_XDND_DATA", False);
+    g_xpwnClipboard = XInternAtom(g_xpwnDisplay, "CLIPBOARD", False);
+    g_xpwnClipProp = XInternAtom(g_xpwnDisplay, "XIN_YUE_CLIP_DATA", False);
     (void)setlocale(LC_CTYPE, "");
     /* XIM_OPEN 协议携带 locale 的语言名，fcitx5 依此为 IC 分配输入
        引擎（"en"/C.UTF-8 → 英文引擎 → 按键透传无法中文）。非 zh
@@ -965,14 +974,23 @@ static int xpwn_translateKey(KeySym keysym)
  *          Mod1Mask->Alt、Mod4Mask->Meta、Mod2Mask->NumLock（Keypad
  *          标志）。不同桌面对 Mod1/Mod4 的指派可能有差异，此表为默认
  *          约定（Qt xcb 采用相同映射）。 */
-static XKeyboardModifiers xpwn_translateModifiers(unsigned int state)
+static XKeyboardModifiers xpwn_translateModifiers(unsigned int state,
+                                                  KeySym keysym)
 {
     XKeyboardModifiers modifiers = XKeyboardModifier_NoModifier;
     if (state & ShiftMask) modifiers |= XKeyboardModifier_ShiftModifier;
     if (state & ControlMask) modifiers |= XKeyboardModifier_ControlModifier;
     if (state & Mod1Mask) modifiers |= XKeyboardModifier_AltModifier;
     if (state & Mod4Mask) modifiers |= XKeyboardModifier_MetaModifier;
-    if (state & Mod2Mask) modifiers |= XKeyboardModifier_KeypadModifier;
+    /* NumLock（Mod2）只对真正的小键盘键表达 KeypadModifier：按 keysym
+     * 是否落在 KP 区（XK_KP_Space=0xff80..XK_KP_Equal=0xffbd）判定。
+     * 此前按 Mod2Mask 全键表加位——NumLock 开启时主键区
+     * Backspace/Delete/方向键全带 Keypad 位，壳与控制器的"无修饰键"
+     * 判断（plainMods/matchKey==NoModifier）全部失效，多行编辑
+     * Delete 无效的根因（2026-09-19）。鼠标等无 keysym 的路径传
+     * NoSymbol，恒不带 Keypad。 */
+    if (keysym >= (KeySym)0xff80 && keysym <= (KeySym)0xffbd)
+        modifiers |= XKeyboardModifier_KeypadModifier;
     return modifiers;
 }
 
@@ -1179,7 +1197,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                     keysym = alt;
             }
             key = xpwn_translateKey(keysym);
-            modifiers = xpwn_translateModifiers(ev->xkey.state);
+            modifiers = xpwn_translateModifiers(ev->xkey.state, keysym);
             if (ev->type == KeyPress) {
                 /* 自动重复识别：同一键码已在按下状态时，X11 转入重复节奏
                    （xkey 无显式标志，用按下表去重）。 */
@@ -1207,7 +1225,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             XKeyboardModifiers modifiers;
             position.x = ev->xbutton.x;
             position.y = ev->xbutton.y;
-            modifiers = xpwn_translateModifiers(ev->xbutton.state);
+            modifiers = xpwn_translateModifiers(ev->xbutton.state, NoSymbol);
             buttons = xpwn_translateButtonMask(ev->xbutton.state);
             if (ev->xbutton.button >= 4 && ev->xbutton.button <= 7) {
                 /* 滚轮 4 上 / 5 下 / 6 左 / 7 右：Qt 约定 ±120/格。 */
@@ -1261,7 +1279,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             XKeyboardModifiers modifiers;
             position.x = ev->xbutton.x;
             position.y = ev->xbutton.y;
-            modifiers = xpwn_translateModifiers(ev->xbutton.state);
+            modifiers = xpwn_translateModifiers(ev->xbutton.state, NoSymbol);
             button = xpwn_translateButton(ev->xbutton.button);
             if (button != XMouseButton_NoButton) {
                 /* 释放时 state 已不含本键，按下集合直接采用状态位。 */
@@ -1282,7 +1300,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             position.x = ev->xmotion.x;
             position.y = ev->xmotion.y;
             buttons = xpwn_translateButtonMask(ev->xmotion.state);
-            modifiers = xpwn_translateModifiers(ev->xmotion.state);
+            modifiers = xpwn_translateModifiers(ev->xmotion.state, NoSymbol);
             XWindowSystemInterface_handleMouseEvent(
                 entry->m_window, XEVENT_TYPE_MOUSE_MOVE,
                 XMouseButton_NoButton, buttons, modifiers, position);
@@ -1430,6 +1448,43 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             }
         }
         break;
+    case SelectionRequest:
+        /* 对标 Qt QXcbClipboard::handleSelectionRequest：其他应用请求
+         * 我们认领的剪贴板内容时，提供文本并发送 SelectionNotify。 */
+        if (g_xpwnClipText && g_xpwnClipServeWin != None &&
+            ev->xselectionrequest.selection == g_xpwnClipboard) {
+            XSelectionRequestEvent* req = &ev->xselectionrequest;
+            XSelectionEvent notify;
+            Atom target = (req->target == XA_STRING) ? XA_STRING
+                          : g_xpwnUtf8String;
+            memset(&notify, 0, sizeof(notify));
+            notify.type = SelectionNotify;
+            notify.display = g_xpwnDisplay;
+            notify.requestor = req->requestor;
+            notify.selection = req->selection;
+            notify.target = req->target;
+            notify.time = req->time;
+            notify.property = req->property;
+            XChangeProperty(g_xpwnDisplay, req->requestor,
+                            req->property != None ? req->property : req->target,
+                            target, 8, PropModeReplace,
+                            (const unsigned char*)g_xpwnClipText,
+                            g_xpwnClipTextLen);
+            XSendEvent(g_xpwnDisplay, req->requestor, False, 0,
+                       (XEvent*)&notify);
+            XFlush(g_xpwnDisplay);
+            delivered = true;
+        }
+        break;
+    case SelectionClear:
+        /* 其他应用认领了剪贴板：清除本地镜像（对标 QXcbClipboard）。 */
+        if (ev->xselectionclear.selection == g_xpwnClipboard) {
+            XFree_Hybrid(g_xpwnClipText);
+            g_xpwnClipText = NULL;
+            g_xpwnClipTextLen = 0;
+            delivered = true;
+        }
+        break;
     case SelectionNotify:
         entry = xpwn_findByNativeWindow(ev->xselection.requestor);
         if (entry && entry->m_window && entry->m_dropPending) {
@@ -1459,6 +1514,157 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
 }
 
 /* ==================== 可用性与生命周期（平台后端提供） ==================== */
+
+/* ==================== X11 CLIPBOARD 后端（Selection 协议） ====================
+ * 对标 QXcbClipboard：应用复制时认领 CLIPBOARD 选择区所有权并存储
+ * 文本；其他应用请求时经 SelectionRequest/SelectionNotify 协议提供。
+ * 粘贴时如果其他应用持有所有权，经 XConvertSelection 请求后等待
+ * SelectionNotify 到来再读取。 */
+
+static bool xpw_clipEnsureAtoms(void)
+{
+    if (!g_xpwnDisplay) return false;
+    if (g_xpwnClipboard == None) {
+        g_xpwnClipboard = XInternAtom(g_xpwnDisplay, "CLIPBOARD", False);
+        g_xpwnClipProp = XInternAtom(g_xpwnDisplay, "XIN_YUE_CLIP_DATA", False);
+    }
+    return g_xpwnClipboard != None;
+}
+
+/* 读取 X11 CLIPBOARD 当前所有者的文本（跨进程粘贴核心路径）。
+ * XConvertSelection 请求 → 事件泵等待 SelectionNotify → 读属性。
+ * 对标 Qt QXcbClipboard::clipboardReadIncrementalProperty。 */
+static char* xpw_clipReadSelection(void)
+{
+    XWNPendingEntry* entry = NULL;
+    Window req_win;
+    Atom utf8, prop;
+    X11_XEvent event;
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char* data = NULL;
+    char* result = NULL;
+    int i;
+    if (!xpwn_ensureConnection() || !xpw_clipEnsureAtoms()) return NULL;
+    /* 找一个本框架窗口作为请求者 */
+    for (i = 0; i < XPWN_MAX_WINDOWS; ++i) {
+        if (g_xpwnEntries[i].m_window != None) {
+            entry = &g_xpwnEntries[i];
+            break;
+        }
+    }
+    if (!entry || entry->m_win == None) return NULL;
+    req_win = entry->m_win;
+    utf8 = XInternAtom(g_xpwnDisplay, "UTF8_STRING", False);
+    prop = g_xpwnClipProp;
+    /* 请求 CLIPBOARD 数据（owner 回复 SelectionNotify 后数据在属性上） */
+    XConvertSelection(g_xpwnDisplay, g_xpwnClipboard, utf8, prop,
+                      req_win, CurrentTime);
+    XFlush(g_xpwnDisplay);
+    /* 事件泵：等 SelectionNotify（最长 500ms × 20 轮 = 1s） */
+    for (i = 0; i < 20; ++i) {
+        while (XPending(g_xpwnDisplay) > 0) {
+            XNextEvent(g_xpwnDisplay, &event);
+            if (event.type == SelectionNotify &&
+                event.xselection.selection == g_xpwnClipboard) {
+                goto got_notify;
+            }
+            /* 非剪贴板事件交回框架分派 */
+            xpwn_dispatchEvent(&event);
+        }
+        usleep(50000); /* 50ms */
+    }
+    return NULL; /* 超时 */
+got_notify:
+    /* 从窗口属性读数据 */
+    {
+        Atom actual_type;
+        int actual_format;
+        unsigned long nitems, bytes_after;
+        unsigned char* data = NULL;
+        XGetWindowProperty(g_xpwnDisplay, req_win, prop,
+                           0, 0xFFFFFF, True, AnyPropertyType,
+                           &actual_type, &actual_format,
+                           &nitems, &bytes_after, &data);
+        if (data && nitems > 0) {
+            result = (char*)XMemory_malloc(nitems + 1,
+                                           XCLASS_DEFAULT_MEMORY_TYPE);
+            if (result) {
+                memcpy(result, data, nitems);
+                result[nitems] = '\0';
+            }
+        }
+        if (data) XFree(data,XCLASS_DEFAULT_MEMORY_TYPE);
+    }
+    return result;
+}
+
+static bool xpw_clipBackendSetText(void* ud, int mode, const char* text)
+{
+    int len;
+    (void)ud; (void)mode;
+    if (!text || !xpwn_ensureConnection() || !xpw_clipEnsureAtoms()) return false;
+    len = (int)strlen(text);
+    {
+        char* updated = (char*)XRealloc_System(g_xpwnClipText, (size_t)len + 1);
+        if (!updated) return false;
+        g_xpwnClipText = updated;
+        memcpy(g_xpwnClipText, text, (size_t)len + 1);
+        g_xpwnClipTextLen = len;
+        g_xpwnClipDataValid = true;
+    }
+    /* 认领 CLIPBOARD 选择区所有权：使其他应用能粘贴我们的内容。 */
+    {
+        XWNPendingEntry* entry = NULL;
+        int i;
+        for (i = 0; i < XPWN_MAX_WINDOWS; ++i) {
+            if (g_xpwnEntries[i].m_window) {
+                entry = &g_xpwnEntries[i];
+                break;
+            }
+        }
+        if (entry && entry->m_win != None) {
+            XSetSelectionOwner(g_xpwnDisplay, g_xpwnClipboard,
+                               entry->m_win, CurrentTime);
+            g_xpwnClipServeWin = entry->m_win;
+            XFlush(g_xpwnDisplay);
+        }
+    }
+    return true;
+}
+
+static bool xpw_clipBackendClear(void* ud, int mode)
+{
+    (void)ud; (void)mode;
+    XFree_Hybrid(g_xpwnClipText);
+    g_xpwnClipText = NULL;
+    g_xpwnClipTextLen = 0;
+    g_xpwnClipDataValid = false;
+    return true;
+}
+
+/** @brief 后端 text 回调：经 X11 Selection 协议读取当前剪贴板内容。
+ *  支持跨进程——从本框架或其他应用的 CLIPBOARD 所有者读取。 */
+static bool xpw_clipBackendText(void* ud, int mode, char** outText)
+{
+    char* text = xpw_clipReadSelection();
+    if (!text) return false;
+    *outText = text;
+    return true;
+}
+
+static XClipboardBackend g_xpwnClipBackend = {
+    NULL,                    /* ud（平台用户数据） */
+    xpw_clipBackendText,     /* text */
+    xpw_clipBackendSetText,  /* setText */
+    xpw_clipBackendClear     /* clear */
+};
+
+void XPlatformNativeWindow_installClipboardBackend(void)
+{
+    XClipboard_installBackend(&g_xpwnClipBackend);
+}
 
 bool XPlatformNativeWindow_isAvailable(void)
 {
@@ -1761,6 +1967,17 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     entry->m_client = *geometry;
     XFlush(g_xpwnDisplay);
     return true;
+}
+
+bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
+{
+    (void)window;
+    (void)state;
+    /* X11 下窗口状态（最大化/最小化）由窗口管理器托管：规范实现应发
+     * EWMH _NET_WM_STATE ClientMessage（Win32 后端用 ShowWindow）。
+     * 本后端暂以安全 no-op 桩保持链接与语义（返回未同步），行为与
+     * 该提交引入前的 POSIX 表现一致；状态位仅存于 XWindow 内部。 */
+    return false;
 }
 
 bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)

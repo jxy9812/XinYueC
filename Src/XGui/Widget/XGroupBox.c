@@ -586,16 +586,33 @@ bool XGroupBox_isCheckable(const XGroupBox* self)
 
 void XGroupBox_setCheckable(XGroupBox* self, bool checkable)
 {
+    XWidgetFocusPolicy policy;
     if (!self || self->m_checkable == checkable) return;
     self->m_checkable = checkable;
-    /* 对标 Qt：切换 checkable 不清除已设置的 checked 状态，不发射
-       toggled。 */
+    if (checkable) {
+        /* 对标 Qt 6.8.3（qgroupbox.cpp init/setCheckable）：启用
+           checkable 即初始勾选（发射 toggled）并取 StrongFocus。 */
+        policy = XWidget_focusPolicy((XWidget*)self);
+        XWidget_setFocusPolicy((XWidget*)self,
+                               (XWidgetFocusPolicy)(policy |
+                                   XWidgetFocusPolicy_StrongFocus));
+        if (!self->m_checked)
+            XGroupBox_setChecked(self, true);
+    } else {
+        /* 关闭 checkable：不再报告选中并恢复子控件可用。 */
+        policy = XWidget_focusPolicy((XWidget*)self);
+        XWidget_setFocusPolicy((XWidget*)self,
+                               (XWidgetFocusPolicy)(policy &
+                                   ~XWidgetFocusPolicy_StrongFocus));
+        xgroupbox_setChildrenEnabled(self, true);
+    }
     XWidget_update((XWidget*)self);
 }
 
 bool XGroupBox_isChecked(const XGroupBox* self)
 {
-    return self ? self->m_checked : false;
+    /* 对标 Qt：isChecked() = checkable && checked。 */
+    return self ? (self->m_checkable && self->m_checked) : false;
 }
 
 void XGroupBox_setChecked(XGroupBox* self, bool checked)

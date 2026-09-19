@@ -14,7 +14,7 @@
  *             依赖 XWIDGET_ON、XPALETTE_ON、XPAINTER_ON。
  *             对标 QGroupBox::initStyleOption 的样式选项结构体
  *             （QStyleOptionGroupBox）本项目未提供，标注后续扩展；
- *             Qt 仅勾选框区域响应点击，本实现第一版放宽为整个标题区
+ *             Qt 响应区为勾选框+标题行（qcommonstyle SC_GroupBoxCheckBox|Label），本实现命中整个标题区，行为近似
  *             （见 mousePressEvent 说明）。
  * @author     XinYueC 团队
  ******************************************************************************/

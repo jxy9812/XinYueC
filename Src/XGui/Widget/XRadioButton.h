@@ -19,7 +19,7 @@
  *             XABSTRACTBUTTON_ON（基类裁剪时本类一并裁剪）；绘制使用
  *             XPainter，不依赖任何平台 API。
  * @note       近似边界：快捷键、样式表 bevel、悬停效果未实现；hitButton
- *             按 indicator 外接矩形命中（对标 Qt SE_RadioButtonClickRect，
+ *             按整控件矩形命中（对标 Qt SE_RadioButtonClickRect，
  *             无主题时近似 indicator 矩形）；显式 QButtonGroup 登记仍是
  *             裁剪项，跨父控件互斥需借助自动互斥组或后续 QButtonGroup。
  * @author     XinYueC 团队

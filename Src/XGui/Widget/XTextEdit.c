@@ -144,6 +144,73 @@ XVtable* XTextEdit_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/* ==================== 内嵌编辑器信号桥（壳转接，真发射） ====================
+ * 对标 Qt：QTextEdit 的 textChanged 等信号由内建设施发出。XTextEdit 以
+ * 内嵌 XPlainTextEdit 承载编辑能力，此处把其信号转接为壳的同名信号。
+ * 此前 8 个信号函数仅返回标识、无任何发射点（死信号）。 */
+
+static void xte_fwdVoid(XObject* receiver, XVarList* args, size_t signal)
+{
+    XTextEdit* self = (XTextEdit*)receiver;
+    if (!self) {
+        if (args) XVarList_delete(args);
+        return;
+    }
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+static void xte_fwdTextChanged(XObject* receiver, XVarList* args)
+{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_textChanged_signal); }
+
+static void xte_fwdCursorPositionChanged(XObject* receiver, XVarList* args)
+{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_cursorPositionChanged_signal); }
+
+static void xte_fwdSelectionChanged(XObject* receiver, XVarList* args)
+{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_selectionChanged_signal); }
+
+static void xte_fwdCopyAvailable(XObject* receiver, XVarList* args)
+{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_copyAvailable_signal); }
+
+static void xte_fwdModificationChanged(XObject* receiver, XVarList* args)
+{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_modificationChanged_signal); }
+
+static void xte_fwdUndoAvailable(XObject* receiver, XVarList* args)
+{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_undoAvailable_signal); }
+
+static void xte_fwdRedoAvailable(XObject* receiver, XVarList* args)
+{ xte_fwdVoid(receiver, args, (size_t)XTextEdit_redoAvailable_signal); }
+
+static void xte_connectEditorSignals(XTextEdit* self)
+{
+    XObject* ed;
+    if (!self || !self->m_editor) return;
+    ed = (XObject*)self->m_editor;
+#define XTE_CONNECT(sig, slot) \
+    XObject_connect_1(ed, (size_t)(sig), (XObject*)self, (slot), \
+                      XConnectionType_Direct)
+    XTE_CONNECT(XPlainTextEdit_textChanged_signal(self->m_editor),
+                xte_fwdTextChanged);
+    XTE_CONNECT(XPlainTextEdit_cursorPositionChanged_signal(self->m_editor),
+                xte_fwdCursorPositionChanged);
+    XTE_CONNECT(XPlainTextEdit_selectionChanged_signal(self->m_editor),
+                xte_fwdSelectionChanged);
+    XTE_CONNECT(XPlainTextEdit_copyAvailable_signal(self->m_editor, true),
+                xte_fwdCopyAvailable);
+    XTE_CONNECT(XPlainTextEdit_modificationChanged_signal(self->m_editor,
+                                                          false),
+                xte_fwdModificationChanged);
+    XTE_CONNECT(XPlainTextEdit_undoAvailable_signal(self->m_editor, false),
+                xte_fwdUndoAvailable);
+    XTE_CONNECT(XPlainTextEdit_redoAvailable_signal(self->m_editor, false),
+                xte_fwdRedoAvailable);
+#undef XTE_CONNECT
+}
+
 void XTextEdit_init(XTextEdit* self, XWidget* parent,
                            XWidgetFlags flags)
 {
@@ -153,6 +220,7 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     self->m_editor = XPlainTextEdit_create_ex(
         XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, 0);
     XWidget_resize((XWidget*)self->m_editor, 200, 100);
+    xte_connectEditorSignals(self);
 #if XTEXTDOCUMENT_ON
     self->m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     self->m_textDocOwned = true; /* 内部默认文档：拥有并负责释放。 */

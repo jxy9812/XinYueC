@@ -1,26 +1,37 @@
-﻿/**
+/**
  * @file       XPlainTextEdit.h
- * @brief      XPlainTextEdit 多行纯文本编辑控件（对标 Qt 6.8
+ * @brief      XPlainTextEdit 多行纯文本编辑控件壳（对标 Qt 6.8
  *             QPlainTextEdit 核心公共 API）。
  * @details    功能范围：
  *             - 继承 XAbstractScrollArea：视口 + 双滚动条 + 内容尺寸
- *               联动（行数 x 行高）；
+ *               联动（行数 x 行高，随控制器字体度量刷新）；
+ *             - 编辑能力面整体迁入私有文本控制器 XTextControl（对标
+ *               Qt QWidgetTextControl）：行模型/光标与选区锚点/
+ *               撤销重做/IME/命中测试/标准菜单数据源；壳仅保留
+ *               滚动联动、视口绘制、占位文本、frame/面板与信号转发；
+ *             - 事件入口（键盘/鼠标/IME/焦点）换算视口→内容坐标后
+ *               经 XTextControl_processEvent 统一路由；
+ *             - 绘制正文/选区高亮/光标/IME 下划线由控制器
+ *               XTextControl_draw 承担，壳画背景/边框/占位；
  *             - 文本：setPlainText/toPlainText、appendPlainText、
- *               insertPlainText、clear（
- 分块存储，逐行绘制）；
- *             - 光标：行/列内部光标，Left/Right/Up/Down/Home/End 移动，
+ *               insertPlainText、clear（控制器文档承载）；
+ *             - 光标：行/列查询（控制器绝对位置换算），Left/Right/
+ *               Up/Down/Home/End、Shift 扩展选区、拖选与双击选词、
  *               ensureCursorVisible；
- *             - 编辑：可打印字符插入、Backspace/Delete、Enter 分行；
- *             - 剪贴板：copy/cut/paste（XClipboard，对标 Qt 剪贴板交互）；
- *             - selectAll（对标）；undo/redo（快照栈）；
- *             - 只读 setReadOnly/isReadOnly；
- *             - LineWrapMode 枚举（NoWrap/WidgetWidth，数值对齐；第一版
- *               存储不换行绘制）；
+ *             - 剪贴板：copy/cut/paste（XTextClipboard，选区语义）；
+ *             - selectAll（锚点/位置模型）；undo/redo（命令差量栈）；
+ *             - 只读 setReadOnly/isReadOnly（映射控制器可编辑标志）；
+ *             - LineWrapMode 枚举（NoWrap/WidgetWidth，数值对齐；平铺
+ *               模型存储不换行绘制，与控制器一致）；
  *             - maximumBlockCount（块数上限，超限丢弃最旧块）；
  *             - placeholderText 占位文本（空内容灰显）；
- *             - 信号 textChanged()。
- *             与 Qt 差异：富文本/QTextDocument/HTML 子集暂不涉及。
- * @note       模块总开关 XPLAINTEXTEDIT_ON 定义于 XGuiConfig.h。
+ *             - 信号 textChanged/selectionChanged/cursorPositionChanged/
+ *               undoAvailable/redoAvailable/copyAvailable 等（发射点
+ *               为控制器信号，经壳转发）。
+ *             与 Qt 差异：富文本/QTextDocument/HTML 子集由控制器
+ *             HTML 子集承载（剥标签 + 锚点提取）。
+ * @note       模块总开关 XPLAINTEXTEDIT_ON 定义于 XGuiConfig.h；文本
+ *             控制器总开关 XTEXTCONTROL_ON 定义于 XTextControl.h。
  * @author     XinYueC 团队
  */
 #ifndef XPLAINTEXTEDIT_H
@@ -35,7 +46,12 @@ extern "C" {
 #include "XGuiConfig.h"
 #if XABSTRACTSCROLLAREA_ON
 #include "XAbstractScrollArea.h"
-#include "XTextDocument.h"
+#endif
+#include "XTextControl.h"
+#if !XTEXTCONTROL_ON
+/* 控制器模块裁剪时的占位前向声明：壳退化为仅滚动/绘制职责，
+   控制器指针恒空，全部编辑 API 无操作。 */
+typedef struct XTextControl XTextControl;
 #endif
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON
@@ -55,9 +71,10 @@ typedef enum XPlainTextEditMode
  * @details    描述一处与光标选区无关的独立高亮区间：行号 + 行内字节
  *             偏移 + 长度 + 颜色。由 setExtraSelections 整体写入、
  *             extraSelections 借用读出。
- * @note       对标差异：Qt 的 ExtraSelection 携带 QTextCharFormat（可含
- *             背景/前景/属性），此处简化为单一 ARGB32 高亮色；绘制联动
- *             （paintEvent 高亮渲染）暂未接入。
+ * @note       承载经换算委托控制器 XTextControlExtraSelection（文档
+ *             绝对字节区间），绘制联动由 XTextControl_draw 渲染；
+ *             跨 '\n' 的长度按文档绝对区间承载（@note 对标差异：
+ *             Qt 条目携带 QTextCursor，可跨块）。
  */
 typedef struct XPlainTextEditExtraSelection
 {
@@ -70,36 +87,46 @@ typedef struct XPlainTextEditExtraSelection
 XCLASS_DEFINE_BEGING(XPlainTextEdit)
 XCLASS_DEFINE_EXTEND_END(XPlainTextEdit, XAbstractScrollArea)
 
+/**
+ * @brief      XPlainTextEdit 控件对象；m_base 必须是第一个成员。
+ * @details    壳化后仅保留滚动联动/绘制/焦点编排等控件侧状态；
+ *             行存储、光标/选区、撤销重做、IME 与命中测试全部由
+ *             m_control（XTextControl，拥有）承载。
+ */
 typedef struct XPlainTextEdit
 {
-    XAbstractScrollArea m_base;
-#if XTEXTDOCUMENT_ON
-    XTextDocument* m_textDoc; /**< 富文本文档。 */
-#endif
-    XVector* m_lines;           /**< 文本行数组（char*，拥有）。 */
-    int m_cursorLine;           /**< 光标行（0 起）。 */
-    int m_cursorCol;            /**< 光标列（字节偏移）。 */
-    bool m_readOnly;            /**< 只读。 */
+    XAbstractScrollArea m_base; /**< 基类成员；必须是第一个。 */
+    XTextControl* m_control;    /**< 私有文本控制器（拥有；init 创建/
+                                     deinit 销毁；文档/光标/选区/撤销
+                                     承载，对标 Qt control 私有指针）。 */
+    XVector* m_lines;           /**< @compat 行文本镜像（char* 数组，拥
+                                     有；权威在控制器，textChanged 时
+                                     整体重建）。仅供不可修改的既有
+                                     消费方 XTextEdit 只读借用。 */
+    bool m_readOnly;            /**< 只读（映射控制器可编辑交互标志）。 */
     int m_wrapMode;             /**< 换行模式（默认 WidgetWidth）。 */
     int m_maxBlockCount;        /**< 块数上限（0 = 无限制）。 */
     XString* m_placeholder;    /**< 占位文本（对象拥有）。 */
-    bool m_undoEnabled;         /**< 撤销开关（默认 true）。 */
-    XVector* m_undoStack;       /**< 撤销快照栈（char*）。 */
-    XVector* m_redoStack;       /**< 重做快照栈（char*）。 */
-    bool m_selectionActive;     /**< 选区激活（selectAll 置位）。 */
+    bool m_undoEnabled;         /**< 撤销开关（镜像控制器，默认 true）。 */
+    XVector* m_undoStack;       /**< @compat 撤销可用哨兵栈（char*；仅以
+                                     空/非空镜像控制器 undoAvailable，
+                                     内容不访问）。仅供 XTextEdit 查询。 */
+    XVector* m_redoStack;       /**< @compat 重做可用哨兵栈（同上）。 */
     bool m_backgroundVisible;   /**< 背景可见（默认 true）。 */
-    int  m_cursorWidth;         /**< 光标宽度（px，默认 1）。 */
     bool m_centerCursor;        /**< 光标居中滚动。 */
     bool m_centerOnScroll;      /**< 滚动跟随光标。 */
     bool m_tabChangesFocus;     /**< Tab 切焦点（默认 false）。 */
     int  m_tabStopDistance;     /**< Tab 步进（px，默认 40）。 */
-    bool m_overwriteMode;       /**< 覆盖模式。 */
     int  m_wordWrapMode;        /**< 换行模式（对标 QTextOption::WrapMode）。 */
     XString* m_documentTitle;   /**< 文档标题（对象拥有）。 */
-    int  m_textInteractionFlags;/**< 文本交互标志位集。 */
-    bool m_modified;            /**< 修改标志。 */
-    int  m_charFormat;          /**< 当前字符格式（位值承载，简化 QTextCharFormat）。 */
-    XVector* m_extraSelections; /**< 额外选择集（XPlainTextEditExtraSelection 数组，拥有）。 */
+    int  m_textInteractionFlags;/**< 文本交互标志位集（壳存储镜像）。 */
+    XTimerId m_autoScrollTimer; /**< 拖选边缘自动滚动定时器（100ms 启动；
+                                     XTIMER_INVALID_ID = 未启动）。 */
+    int  m_autoScrollDir;       /**< 自动滚动方向（+1 向下 / -1 向上）。 */
+    bool m_inTrim;              /**< 块数上限裁剪进行中（防重入）。 */
+    XVector* m_extraSelCache;   /**< 额外选择集 (行,列,长度) 换算缓存
+                                     （XPlainTextEditExtraSelection 数组，
+                                     拥有；承载换算内部用）。 */
 } XPlainTextEdit;
 
 /** @brief XPlain文本Editclassinit（对标 Qt 同名接口）。
@@ -193,36 +220,33 @@ int XPlainTextEdit_cursorColumn(const XPlainTextEdit* self);
 
 /**
  * @brief      查询光标竖线矩形（对标 QPlainTextEdit::cursorRect）。
- * @details    与 paintEvent 自绘使用同一套度量口径：行高为
- *             XPE_LINE_HEIGHT（16px）、行左留白 2px；X 方向按控件字体
- *             测量光标前列宽（XPainter_textWidthRange，UTF-8 字节偏移
- *             口径），Y 方向随垂直滚动条取值偏移。矩形为控件局部坐标
- *             （不含绘制偏移变换）。
+ * @details    矩形取自控制器 XTextControl_cursorRect（内容坐标：行高随
+ *             控制器字体度量、X 按控制器字体测量光标前列宽），壳做视口
+ *             换算（行左留白 2px、扣除垂直/水平滚动取值）后输出控件
+ *             局部坐标。
  * @param      self 目标控件指针；NULL 时返回零矩形。
- * @return     光标矩形（宽度取 setCursorWidth 设定值，高度为一行行高）。
+ * @return     光标矩形（宽度取控制器 cursorWidth，高度为一行行高）。
  */
 XRect XPlainTextEdit_cursorRect(const XPlainTextEdit* self);
 
 /**
  * @brief      返回坐标 pos 处的超链接锚点（对标 QPlainTextEdit::anchorAt）。
- * @details    XPlainTextEdit 为平铺纯文本控件，不含任何锚点；本函数仅
- *             为对标 Qt 接口存在性而提供，恒返回 0 长度字符串。
- * @note       纯文本无锚点：pos 仅用于保持签名一致，不被使用。
+ * @details    委托控制器 anchorAt：平铺纯文本无锚点时恒返回 0 长度
+ *             字符串（经 appendHtml 等路径登记锚点后返回命中 href）。
  * @param      self 目标控件指针；可为 NULL。
- * @param      pos 控件局部坐标点；可为 NULL，不被使用。
- * @return     堆上新建的 0 长度 XString*，调用方以 XString_delete_base
- *             释放；分配失败返回 NULL。
+ * @param      pos 控件局部坐标点；可为 NULL。
+ * @return     堆上新建的 XString*，调用方以 XString_delete_base 释放；
+ *             分配失败返回 NULL。
  */
 XString* XPlainTextEdit_anchorAt(const XPlainTextEdit* self,
                                  const XPoint* pos);
 
 /**
- * @brief      从当前光标处查找文本（对标 QPlainTextEdit::find 简化版）。
- * @details    查找按 UTF-8 字节偏移逐行进行；flags 仅支持最低位，
- *             与 QTextDocument::FindFlag::FindBackward 数值一致。
- *             命中后置 cursorLine/cursorCol 并请求重绘（Qt 的选中文本
- *             语义简化为仅移动光标：向前查找光标落在命中结束处，
- *             向后查找落在命中起始处，便于连续查找）；未命中保持原位。
+ * @brief      从当前光标处查找文本（对标 QPlainTextEdit::find）。
+ * @details    委托控制器 find：flags 支持 FindBackward（最低位，与
+ *             QTextDocument::FindFlag 数值一致），控制器另支持区分
+ *             大小写/全词标志。命中后选区即命中串（Qt 语义），未命中
+ *             保持原位。
  * @param      self 目标控件指针；NULL 时直接返回 false。
  * @param      text UTF-8 查找串；NULL 或空串返回 false。
  * @param      flags 查找方向标志：1 = FindBackward（向后查找），
@@ -233,8 +257,8 @@ bool XPlainTextEdit_find(XPlainTextEdit* self, const char* text, int flags);
 
 /**
  * @brief      设置光标位置（对标 QPlainTextEdit::setTextCursor 的行列简化）。
- * @details    行列越界时钳位到有效范围（行 [0, blockCount-1]、列
- *             [0, 该行字节数]），并请求重绘。cursorLine/cursorColumn
+ * @details    行列换算为文档绝对位置后委托控制器 setTextCursor（无选区
+ *             收拢）；行列越界时钳位到有效范围。cursorLine/cursorColumn
  *             为同名既有查询接口；本组 textCursor* 命名与 Qt 对齐，
  *             两组查询语义一致。
  * @param      self 目标控件指针；NULL 时无操作。
@@ -324,11 +348,9 @@ void XPlainTextEdit_ensureCursorVisible(XPlainTextEdit* self);
 
 /**
  * @brief      返回坐标 pos 处的光标位置（对标 QPlainTextEdit::cursorForPosition）。
- * @details    基于平铺度量口径反查：行 = (pos->y + 垂直滚动值) / 行高，
- *             钳位到 [0, blockCount-1]；列按控件字体自行首（左留白 2px
- *             之后）逐码点累加字形宽（XPainter_textWidthRange，UTF-8
- *             字节偏移口径），定位到 pos->x 落点前的码点边界，超出行宽
- *             钳位到行尾。与 cursorRect/paintEvent 使用同一套度量。
+ * @details    壳做视口→内容坐标平移（行左留白 2px、加回垂直滚动值）
+ *             后委托控制器命中测试，再换算为 (行, 列) 承载。与
+ *             cursorRect/paintEvent 同一控制器度量口径。
  * @param      self 目标控件指针；NULL 时返回 {0,0}。
  * @param      pos 视口局部坐标点；NULL 时返回 {0,0}。
  * @return     光标位置承载：x = 行号（0 起），y = 列（行内 UTF-8 字节
@@ -340,13 +362,11 @@ XPoint XPlainTextEdit_cursorForPosition(const XPlainTextEdit* self,
 #if XMENU_ON
 /**
  * @brief      创建标准右键菜单（对标 QPlainTextEdit::createStandardContextMenu）。
- * @details    菜单包含撤销/重做/剪切/复制/粘贴/全选动作，动作触发槽
- *             直连控件自身同名槽；启用态按当前状态计算（撤销/重做看
- *             快照栈、剪切/复制看选区激活、粘贴看剪贴板文本、全选看
- *             存在文本且未全选），只读时不加入编辑类动作。
- * @note       对标差异：Qt 菜单另含"删除"与 IME 相关项，此处为任务
- *             指定的六项简化子集；弹出（popup）与 DeleteOnClose 由
- *             调用方负责（参照 XLineEdit::contextMenuEvent 用法）。
+ * @details    委托控制器 XTextControl_createStandardContextMenu：动作
+ *             集合（撤销/重做/剪切/复制/粘贴/删除/全选）与灰化条件
+ *             （撤销/重做栈、选区、剪贴板）全部读取控制器状态；
+ *             只读时仅提供复制/全选。弹出（popup）与 DeleteOnClose 由
+ *             调用方负责（参照 contextMenuEvent 用法）。
  * @param      self 目标控件指针；可为 NULL（返回 NULL）。
  * @return     新建的 XMenu*；所有权转移给调用方（用 XMenu_delete_base
  *             释放）；创建失败返回 NULL。
@@ -356,8 +376,7 @@ XMenu* XPlainTextEdit_createStandardContextMenu(XPlainTextEdit* self);
 
 /**
  * @brief      获取当前字符格式（对标 QPlainTextEdit::currentCharFormat）。
- * @details    平铺模型以 int 位值承载字符格式（粗体/斜体/下划线等按位
- *             自定义），与富文本 QTextCharFormat 无对应转换。
+ * @details    委托控制器：平铺模型以 int 位值承载字符格式。
  * @param      self 目标控件指针；NULL 时返回 0。
  * @return     当前字符格式位值。
  */
@@ -365,8 +384,7 @@ int XPlainTextEdit_currentCharFormat(const XPlainTextEdit* self);
 
 /**
  * @brief      设置当前字符格式（对标 QPlainTextEdit::setCurrentCharFormat）。
- * @details    平铺模型下仅记录格式位值，作为后续插入文本的格式约定；
- *             不追溯改写既有文本的格式。
+ * @details    委托控制器：格式位值作为后续插入文本的格式约定。
  * @param      self 目标控件指针；NULL 时无操作。
  * @param      format 字符格式位值。
  * @return     无返回值。
@@ -386,10 +404,9 @@ void XPlainTextEdit_mergeCurrentCharFormat(XPlainTextEdit* self, int format);
 #if XTEXTDOCUMENT_ON
 /**
  * @brief      返回内部富文本文档（对标 QPlainTextEdit::document）。
- * @details    控件初始化即持有内部 XTextDocument（appendHtml 等简化
- *             路径的承载），本接口返回借用指针，所有权仍归控件。
- * @note       平铺模型正文绘制走内部行数组，文档内容不反向同步；
- *             若经 setDocument 换入外部文档，借用指针直至控件析构或
+ * @details    委托控制器：文档镜像由控制器拥有（init 创建），本接口
+ *             返回借用指针。
+ * @note       若经 setDocument 换入外部文档，借用指针直至控件析构或
  *             再次 setDocument 前有效。
  * @param      self 目标控件指针；NULL 时返回 NULL。
  * @return     借用的 XTextDocument*；调用方不得释放。
@@ -398,12 +415,11 @@ XTextDocument* XPlainTextEdit_document(const XPlainTextEdit* self);
 
 /**
  * @brief      设置富文本文档（对标 QPlainTextEdit::setDocument 简化版）。
- * @details    控件接管 doc 所有权（与内部 m_textDoc 的拥有语义一致；
- *             Qt 中文档所有权不转移，为 @note 对标差异）：换入时以
- *             XTextDocument_toPlainText 将文档纯文本镜像到平铺行数组；
- *             传 NULL 时新建空内部文档（对标 Qt 的空文档回退）。
+ * @details    委托控制器 setDocument（桥接口径与既有实现一致）：换入
+ *             时接管所有权并将文档纯文本镜像到控制器行模型；传 NULL
+ *             时新建空内部文档（对标 Qt 的空文档回退）。
  * @param      self 目标控件指针；NULL 时无操作。
- * @param      doc 新文档；传入后所有权归控件，调用方不得再释放。
+ * @param      doc 新文档；传入后所有权归控制器，调用方不得再释放。
  * @return     无返回值。
  */
 void XPlainTextEdit_setDocument(XPlainTextEdit* self, XTextDocument* doc);
@@ -411,10 +427,7 @@ void XPlainTextEdit_setDocument(XPlainTextEdit* self, XTextDocument* doc);
 
 /**
  * @brief      读取额外选择集（对标 QPlainTextEdit::extraSelections）。
- * @details    返回内部数组借用视图与条目数；指针在下次
- *             setExtraSelections 或控件析构前有效，不得释放或修改。
- * @note       承载结构见 XPlainTextEditExtraSelection；绘制联动
- *             （paintEvent 高亮渲染）暂未接入，@note 状态承载。
+ * @details    读控制器额外选择集并换算为 (行, 列, 长度) 承载输出。
  * @param      self 目标控件指针；NULL 时返回 0 且 *selections 置 NULL。
  * @param      selections 输出借用数组首地址；可为 NULL（只要条目数）。
  * @return     条目数（无额外选择时为 0）。
@@ -424,8 +437,8 @@ int XPlainTextEdit_extraSelections(const XPlainTextEdit* self,
 
 /**
  * @brief      设置额外选择集（对标 QPlainTextEdit::setExtraSelections）。
- * @details    整体替换内部额外选择集（拷贝 entries 内容），并请求
- *             重绘。
+ * @details    换算为文档绝对字节区间后整体写入控制器（拷贝语义），
+ *             并请求重绘；高亮由 XTextControl_draw 渲染。
  * @param      self 目标控件指针；NULL 时无操作。
  * @param      selections 条目数组；NULL 视为清空。
  * @param      count 条目数；负值按 0 处理。
@@ -437,11 +450,8 @@ void XPlainTextEdit_setExtraSelections(XPlainTextEdit* self,
 
 /**
  * @brief      载入资源（对标 QPlainTextEdit::loadResource 简化版）。
- * @details    Qt 按类型（QTextDocument::ResourceType）与名称从资源
- *             缓存载入并以 QVariant 返回；平铺模型无资源存储，与 Qt
+ * @details    委托控制器 loadResource：平铺模型无资源存储，与 Qt
  *             默认实现"找不到返回无效 QVariant"对齐，恒返回 NULL。
- * @note       状态承载：如需资源注入，待引入 addResource 类接口后
- *             再扩展本函数查表实现。
  * @param      self 目标控件指针；可为 NULL。
  * @param      name 资源名称；可为 NULL。
  * @return     恒返回 NULL（未找到）。
@@ -451,9 +461,9 @@ XVariant* XPlainTextEdit_loadResource(XPlainTextEdit* self, int type,
 
 /**
  * @brief      返回文本光标（对标 QPlainTextEdit::textCursor 承载版）。
- * @details    平铺模型无 QTextCursor 类，以 XPoint 承载光标位置：
- *             x = 行号（0 起），y = 列（行内 UTF-8 字节偏移）；与
- *             setTextCursor(line, col)、cursorLine/cursorColumn 同源。
+ * @details    控制器光标绝对位置换算为 XPoint 承载：x = 行号（0 起），
+ *             y = 列（行内 UTF-8 字节偏移）；与 setTextCursor(line, col)、
+ *             cursorLine/cursorColumn 同源。
  * @param      self 目标控件指针；NULL 时返回 {0,0}。
  * @return     光标位置承载（x = 行，y = 列）。
  */
@@ -462,7 +472,8 @@ XPoint XPlainTextEdit_textCursor(const XPlainTextEdit* self);
 /**
  * @brief      放大字体（对标 QPlainTextEdit::zoomIn）。
  * @details    控件字体点大小与像素字号同步增加 range（下限钳位 1），
- *             像素字号同步增减以保证点阵渲染路径视觉生效。
+ *             像素字号同步增减以保证点阵渲染路径视觉生效；字体变更
+ *             同步下发控制器（行高/基线度量随字体刷新）。
  * @param      self 目标控件指针；NULL 或 range 为 0 时无操作。
  * @param      range 增量（点数）；可为 0。
  * @return     无返回值。
@@ -481,25 +492,20 @@ void XPlainTextEdit_zoomOut(XPlainTextEdit* self, int range);
 /* ==================== 选区查询（2026-09-17 补齐批次） ==================== */
 
 /**
- * @brief      查询是否存在激活选区（对标选区访问器 hasSelectedText；
- *             Qt 中 QPlainTextEdit 经 textCursor().hasSelection() 承载）。
- * @details    平铺模型以 m_selectionActive 单标志承载选区激活态：
- *             selectAll 置位，文本整体重建/撤销/重做/剪切清除。
+ * @brief      查询是否存在选区（对标 hasSelectedText；Qt 经
+ *             textCursor().hasSelection() 承载）。
+ * @details    委托控制器：光标位置与锚点不等即存在选区（锚点/位置
+ *             模型，可跨行）。
  * @param      self 目标控件指针；NULL 时返回 false。
- * @return     存在激活选区返回 true。
+ * @return     存在选区返回 true。
  */
 bool XPlainTextEdit_hasSelectedText(const XPlainTextEdit* self);
 
 /**
- * @brief      导出选中文本（对标选区访问器 selectedText 的平铺承载）。
- * @details    基于 m_selectionActive/m_cursorLine/Col：平铺模型下选区
- *             为当前行起点至光标，即当前行行内 [0, cursorCol) 字节区间，
- *             返回该片段的堆拷贝。
- * @note       简化实现：Qt 选区由 QTextCursor 锚点与位置构成、可跨行；
- *             此处仅承载"当前行起点至光标"的单行片段。selectAll 会将
- *             光标复位 (0,0)，按此口径无片段可导出（返回 NULL），
- *             全量文本语义由 copy 路径单独承载。
- * @param      self 目标控件指针；NULL 或无激活选区时返回 NULL。
+ * @brief      导出选中文本（对标 selectedText 的平铺承载）。
+ * @details    委托控制器选区导出（锚点到位置的文档区间，可跨行），
+ *             返回堆拷贝；无选区返回 NULL。
+ * @param      self 目标控件指针；NULL 或无选区时返回 NULL。
  * @return     堆拷贝（UTF-8，NUL 结尾），调用方以 XFree_System 释放；
  *             分配失败返回 NULL。
  */
@@ -508,11 +514,12 @@ char* XPlainTextEdit_selectedText(const XPlainTextEdit* self);
 /* ==================== 信号 ==================== */
 
 /**
- * @brief      文本变化信号（真发射）。
+ * @brief      文本变化信号（真发射；发射源为控制器 textChanged 转发）。
  */
 void* XPlainTextEdit_textChanged_signal(XPlainTextEdit* self);
 /**
- * @brief      光标位置变化信号（真发射）。
+ * @brief      光标位置变化信号（真发射；发射源为控制器
+ *             cursorPositionChanged 转发）。
  */
 void* XPlainTextEdit_cursorPositionChanged_signal(XPlainTextEdit* self);
 
@@ -533,9 +540,8 @@ void* XPlainTextEdit_updateRequest_signal(XPlainTextEdit* self,
 
 /**
  * @brief      选区变化信号（对标 QPlainTextEdit::selectionChanged）。
- * @details    真发射：选区激活状态翻转的路径（selectAll 置位、文本
- *             整体重建/撤销/重做/剪切清除选区）经 XObject_emitSignal
- *             通知已连接槽；无参数。
+ * @details    真发射：发射源为控制器 selectionChanged 转发（拖选/
+ *             键盘扩选/双击选词/选区收拢等路径）。
  * @param      self 目标控件指针；可为 NULL。
  * @return     不透明的 selectionChanged 信号标识；返回值不指向可释放
  *             对象，也不得解引用。

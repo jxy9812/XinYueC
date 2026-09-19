@@ -39,10 +39,10 @@ bool XProgressBarTest_runAll(void)
     XProgressBar_setValue(bar, -10);
     xp_expect(XProgressBar_value(bar) == 0, "负值钳位到 min");
 
-    /* 3. setRange：min>max 自动交换 + 值重钳位。 */
+    /* 3. setRange：min>max 收敛为 (min,min)（对标 Qt qBound 语义）。 */
     XProgressBar_setRange(bar, 10, 0);
-    xp_expect(XProgressBar_minimum(bar) == 0 && XProgressBar_maximum(bar) == 10,
-              "setRange 交换 min>max");
+    xp_expect(XProgressBar_minimum(bar) == 10 && XProgressBar_maximum(bar) == 10,
+              "setRange 收敛 min>max→(min,min)");
     XProgressBar_setRange(bar, 0, 200);
     XProgressBar_setValue(bar, 150);
     xp_expect(XProgressBar_value(bar) == 150, "新范围内值保持");

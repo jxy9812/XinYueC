@@ -302,6 +302,21 @@ else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 endif() # XGUI_ON
+
+# ==================== XLineControl 控制器验收测试 ====================
+if(XGUI_ON)
+add_executable(XLineControl_Acceptance_Test
+    "./xgui_linecontrol_acceptance_test.c"
+    "./Test/XGuiTest/XLineControlAcceptance.c"
+)
+if(UNIX)
+    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+add_test(NAME XLineControlAcceptance COMMAND XLineControl_Acceptance_Test)
+
+endif() # XGUI_ON
 enable_testing()
 # 测试以相对路径访问仓库资源（assets/、../Library/XFont 等），其直跑口径
 # 是仓库 bin/ 目录（./bin/XGuiRegression_Test）；CTest 显式对齐该工作目录，

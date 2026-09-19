@@ -242,13 +242,18 @@ XAction* XMenu_actionAt(const XMenu* self, const XPoint* pos)
     if (!self || !pos)
         return NULL;
     rect = XWidget_rect((XWidget*)self);
+    /* X 必须落在菜单宽度内：此前只查 Y——点击菜单右侧/左侧之外的
+     * 任意位置（y 恰在条目行内）都会被判为"点在条目上"，弹出菜单
+     * 无法通过点击外部关闭（14.124 补充五）。 */
+    if (pos->x < rect.x || pos->x >= rect.x + rect.width)
+        return NULL;
     if (pos->y < rect.y)
         return NULL;
     index = (pos->y - rect.y) /
             (self->m_actionHeight > 0 ? self->m_actionHeight : 1);
     count = self->m_actions
                 ? (int64_t)XVector_size_base(
-                      (const XContainer*)self->m_actions)
+                    (const XContainer*)self->m_actions)
                 : 0;
     if (index < 0 || index >= count)
         return NULL;

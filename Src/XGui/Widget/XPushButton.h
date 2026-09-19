@@ -242,7 +242,8 @@ void XPushButton_setAutoDefault(XPushButton* self, bool enable);
 bool XPushButton_isDefault(const XPushButton* self);
 /**
  * @brief      设置是否为默认按钮（对标 QPushButton::setDefault）。
- * @details    设置为 true 时 autoDefault 同步为 On；false 恢复 Auto 三态。
+ * @details    当前实现仅置默认标志并重绘：不改 autoDefault 三态，
+ *             也不做对话框内默认按钮唯一性收敛（待办）。
  */
 void XPushButton_setDefault(XPushButton* self, bool enable);
 /** @brief 查询是否为扁平按钮（对标 QPushButton::isFlat，默认 false）。 */

@@ -114,6 +114,8 @@ typedef struct XAbstractItemView
     bool m_autoScroll;               /**< 自动滚动（默认 true）。 */
     XAbstractItemModel* m_model;     /**< 数据模型（借用；可为 NULL）。 */
     XItemSelectionModel* m_selectionModel; /**< 选择模型（对象拥有；懒创建）。 */
+    int m_selectionAnchorRow;        /**< Shift 扩选锚点行（-1 未设置）。 */
+    int m_selectionAnchorCol;        /**< Shift 扩选锚点列。 */
     int m_rootRow;                   /**< 根索引行（预留树；默认 -1=根）。 */
     int m_rootCol;                   /**< 根索引列（预留树；默认 -1=根）。 */
     int m_iconW;                     /**< 图标尺寸宽（默认 16）。 */

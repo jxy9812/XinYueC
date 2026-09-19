@@ -775,6 +775,13 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
 static bool g_benchmarkFullRedraw;
 /** @brief 按 Qt QWidget::update() 语义合并待绘区域，不同步强制整树重绘。 */
 static void demo_input_autotest(DemoWin* self);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+static void demo_layout_chrome(DemoWin* self);
+#endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+static void demo_layout_content(DemoWin* self);
+static void demo_switchPage(DemoWin* self, int index);
+#endif
 static void demo_repaint(DemoWin* self)
 {
     XRect dirty;
@@ -902,6 +909,39 @@ static void demo_input_autotest(DemoWin* self)
         if (cond) XPrintf("XGuiAutoTest: [PASS] %s\n", what); \
         else { XPrintf("XGuiAutoTest: [FAIL] %s\n", what); ++failures; } \
     } while (0)
+
+    /* 0. 文本控件键盘注入：键入/光标移动/选区（实机渲染验证，
+     *    画面呈现于 autotest 交互后截图）。 */
+    {
+        int ki;
+        XWidget* editW = (XWidget*)edit;
+        XWidget_setFocus(editW);
+        XWidget_update(editW);
+        /* 键入 "hello"。 */
+        for (ki = 0; ki < 5; ++ki) {
+            XKeyEvent ke;
+            XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'a' + ki, 0);
+            XObject_event_base((XObject*)editW, (XEvent*)&ke);
+        }
+        /* Left → Left → 键入 "XY"（居中插入）。 */
+        {
+            XKeyEvent left;
+            XKeyEvent_init(&left, XEVENT_TYPE_KEY_PRESS, XKey_Left, 0);
+            XObject_event_base((XObject*)editW, (XEvent*)&left);
+            XObject_event_base((XObject*)editW, (XEvent*)&left);
+            for (ki = 0; ki < 2; ++ki) {
+                XKeyEvent ke;
+                XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'X' + ki, 0);
+                XObject_event_base((XObject*)editW, (XEvent*)&ke);
+            }
+        }
+        DEMO_EXPECT(strcmp(XLineEdit_text(edit), "abcXYde") == 0 &&
+                    XLineEdit_cursorPosition(edit) == 5,
+                    "实机键入 abcXYde 光标 5");
+        /* 程序化选区：前 4 字符高亮可见。 */
+        XLineEdit_setSelection(edit, 0, 4);
+        XWidget_update(editW);
+    }
 
     /* 1. 点击微调框上箭头：值 0 -> 1（按钮区右 16px 上半）。 */
     {
@@ -1404,6 +1444,10 @@ static void demo_input_textChangedSlot(XObject* receiver, XVarList* args)
     text = t ? t : "";
     snprintf(buf, sizeof(buf), "\xE6\x96\x87\xE6\x9C\xAC: %s", text); /* 文本: */
     XLabel_setText_2(&self->m_inputStatus, buf);
+    /* 标签文本更新走 XLabel 自身的整块 update:paintTree 逐矩形拆分后,
+       根静态 tile 只覆盖标签脏区并恢复背景,标签自绘新文本(14.122
+       根修后不再需要全窗标脏的临时缓解)。 */
+
     demo_set_status(self, buf);
 }
 /** @brief 微调框数值变化：同步滑块与进度条。 */
@@ -1430,6 +1474,8 @@ static void demo_input_sliderChangedSlot(XObject* receiver, XVarList* args)
     XProgressBar_setValue(&self->m_progressBar, value);
     snprintf(buf, sizeof(buf), "\xE6\xBB\x91\xE5\x9D\x97: %d", value); /* 滑块: */
     XLabel_setText_2(&self->m_inputStatus, buf);
+    /* 同 textChanged 槽:静态场景根修(14.122/14.123 ④)后标签更新
+       走自身整块 update,无需全窗标脏。 */
 }
 #endif /* 输入演示联动槽 */
 
@@ -1656,10 +1702,10 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
                   void(*)(XWidget*, XEvent*))(self, event);
     demo->m_staticSceneDirty = true;
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    demo_layout_chrome(demo);
+    demo_layout_chrome(self);
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    demo_layout_content(demo);
+    demo_layout_content(self);
 #endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
@@ -2703,7 +2749,6 @@ int main(int argc, char* argv[])
     if (!win) {
         XPrintf("XGuiWindowDemo: DemoWin_create 失败\n");
         XGuiApplication_delete_base(app);
-        return 1;
     }
     win->m_screenshotPath = screenshotPath;
     win->m_screenshotFrames = 0;

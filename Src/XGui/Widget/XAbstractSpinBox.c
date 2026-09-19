@@ -214,20 +214,35 @@ static void VXAbstractSpinBox_keyPressEvent(XWidget* self, XEvent* event)
     XAbstractSpinBox* spin = (XAbstractSpinBox*)self;
     XKeyEvent* ke;
     int key;
+    int mods;
     int steps;
     int flags;
     if (!spin || !event ||
         XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
     ke = (XKeyEvent*)event;
     key = XKeyEvent_key(ke);
+    mods = (int)XKeyEvent_modifiers(ke);
 
     switch (key) {
     case XKey_Up:
-    case XKey_Down:
+    case XKey_Down: {
+        /* 对标 Qt：按住 stepModifier(Ctrl) 时 Up/Down 步进 ×10。 */
+        bool up = (key == XKey_Up);
+        steps = (mods & (int)XKeyboardModifier_ControlModifier) ? 10 : 1;
+        flags = XAbstractSpinBox_stepEnabled_base(spin);
+        if (flags & (up ? XAbstractSpinBoxStepEnabledFlag_StepUpEnabled
+                        : XAbstractSpinBoxStepEnabledFlag_StepDownEnabled)) {
+            XAbstractSpinBox_stepBy_base(spin, up ? steps : -steps);
+            XEvent_accept(event);
+            return;
+        }
+        XEvent_ignore(event);
+        return;
+    }
     case XKey_PageUp:
     case XKey_PageDown: {
-        bool up = (key == XKey_Up || key == XKey_PageUp);
-        steps = (key == XKey_PageUp || key == XKey_PageDown) ? 10 : 1;
+        bool up = (key == XKey_PageUp);
+        steps = 10;
         flags = XAbstractSpinBox_stepEnabled_base(spin);
         if (flags & (up ? XAbstractSpinBoxStepEnabledFlag_StepUpEnabled
                         : XAbstractSpinBoxStepEnabledFlag_StepDownEnabled)) {

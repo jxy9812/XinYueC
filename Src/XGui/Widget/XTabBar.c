@@ -298,6 +298,14 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                                       tab.y + XTABBAR_TAB_H,
                                       tab.x + tab.width,
                                       tab.y + XTABBAR_TAB_H);
+                    if (bar->m_tabsClosable) {
+                        int cx2 = tab.x + tab.width - 8;
+                        int cy = tab.y + XTABBAR_TAB_H / 2;
+                        XPainter_drawLine(&painter, cx2 - 3, cy - 3,
+                                          cx2 + 3, cy + 3);
+                        XPainter_drawLine(&painter, cx2 - 3, cy + 3,
+                                          cx2 + 3, cy - 3);
+                    }
                     continue;
                 }
 #endif /* XSTYLE_ON */
@@ -314,6 +322,14 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                                   tab.y + XTABBAR_TAB_H,
                                   tab.x + tab.width,
                                   tab.y + XTABBAR_TAB_H);
+                if (bar->m_tabsClosable) {
+                    int cx2 = tab.x + tab.width - 8;
+                    int cy = tab.y + XTABBAR_TAB_H / 2;
+                    XPainter_drawLine(&painter, cx2 - 3, cy - 3,
+                                      cx2 + 3, cy + 3);
+                    XPainter_drawLine(&painter, cx2 - 3, cy + 3,
+                                      cx2 + 3, cy - 3);
+                }
             }
         }
     }
@@ -337,8 +353,33 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     idx = xtabbar_tabAt(bar, &pos);
     if (idx < 0) { XEvent_ignore(event); return; }
+    if (bar->m_tabsClosable) {
+        /* 关闭区 = 页签右侧 12px（对标 QTabBar 关闭按钮位）；命中仅发
+           tabCloseRequested，不改当前页（此前 tabsClosable 纯存储）。 */
+        int cols, rows, tabW, totalH;
+        int row, col;
+        int right, cx;
+        xtabbar_wrapLayout(bar, &cols, &rows, &tabW, &totalH);
+        row = idx / cols;
+        col = idx % cols;
+        right = col * tabW + tabW - 2;
+        cx = right - 6;
+        if (pos.x >= cx - 5 && pos.x <= cx + 5) {
+            xtabbar_emitInt(bar,
+                (size_t)XTabBar_tabCloseRequested_signal(bar), idx);
+            XWidget_update(self);
+            XEvent_accept(event);
+            return;
+        }
+    }
     xtabbar_emitInt(bar, (size_t)XTabBar_tabBarClicked_signal(bar, idx), idx);
     if (!bar->m_enabled[idx]) { XEvent_ignore(event); return; }
+    if (bar->m_movable) {
+        /* 拖拽换位起手：记录起始页签与按下位置（move 阶段跨页签即换位）。 */
+        bar->m_dragActive = true;
+        bar->m_dragIndex = idx;
+        bar->m_dragPressX = pos.x;
+    }
     if (idx != bar->m_currentIndex) {
         int old = bar->m_currentIndex;
         bar->m_currentIndex = idx;
@@ -346,6 +387,34 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
         (void)old;
     }
     XWidget_update(self);
+    XEvent_accept(event);
+}
+
+/** @brief 拖拽换位：指针进入相邻页签半区即 moveTab（发射 tabMoved）。 */
+static void VXTabBar_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XTabBar* bar = (XTabBar*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int idx;
+    if (!bar || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
+    if (!bar->m_movable || !bar->m_dragActive) return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    idx = xtabbar_tabAt(bar, &pos);
+    if (idx < 0 || idx == bar->m_dragIndex) return;
+    XTabBar_moveTab(bar, bar->m_dragIndex, idx);
+    bar->m_dragIndex = idx;
+    XWidget_update(self);
+}
+
+static void VXTabBar_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XTabBar* bar = (XTabBar*)self;
+    if (!bar || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
+    bar->m_dragActive = false;
     XEvent_accept(event);
 }
 
@@ -496,6 +565,8 @@ XVtable* XTabBar_class_init(void)
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXTabBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXTabBar_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXTabBar_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXTabBar_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXTabBar_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabBar_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTabBar_deinit);

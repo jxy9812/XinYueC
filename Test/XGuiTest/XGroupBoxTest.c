@@ -96,12 +96,15 @@ bool XGroupBoxTest_runAll(void)
 
         XGroupBox_setCheckable(box, true);
         gb_expect(XGroupBox_isCheckable(box), "setCheckable(true) 生效");
-        gb_expect(!XGroupBox_isChecked(box), "默认未勾选");
+        /* 对标 Qt 6.8.3：setCheckable(true) 即初始勾选（isChecked=true）。
+           此前预期 false 与 Qt 相反。 */
+        gb_expect(XGroupBox_isChecked(box), "setCheckable 后默认勾选");
 
         conn = XObject_connect_1((XObject*)box,
                                  (size_t)XGroupBox_toggled_signal,
                                  NULL, gb_onToggled, XConnectionType_Direct);
         gb_expect(conn != NULL, "连接 toggled 信号");
+        /* toggled 已在 setCheckable(true) 时发射。 */
 
         /* Qt 语义：非 checkable 时 setChecked 无效。 */
         XGroupBox_setCheckable(box, false);

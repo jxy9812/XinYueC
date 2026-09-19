@@ -26,6 +26,8 @@
 
 static void VXListView_deinit(XListView* self);
 static void VXListView_paintEvent(XWidget* self, XEvent* event);
+static void VXListView_scrollContentsBy(XAbstractScrollArea* area, int dx,
+                                        int dy);
 
 /** @brief 查询模型行数（无模型返回 0）。 */
 static int xlv_modelRows(const XListView* self)
@@ -142,6 +144,31 @@ static void xlv_drawRowText(XPainter* painter, const XListView* lv,
 
 /* 命中测试覆盖：列表按行渲染（列固定 modelColumn），跳过隐藏行，
    槽位步进与绘制一致（网格高参与）。 */
+/* ==================== 滚动偏移（对标 QListView 视口滚动） ==================== */
+
+/** @brief 读取滚动偏移（视口原点在内容坐标中的位置）。 */
+static void xlv_scrollOffsets(XListView* self, int* outX, int* outY)
+{
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(&self->m_base);
+    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(&self->m_base);
+    if (outX) *outX = hsb ? XScrollBar_value(hsb) : 0;
+    if (outY) *outY = vsb ? XScrollBar_value(vsb) : 0;
+}
+
+/** @brief 按内容尺寸维护滚动条范围（值变化才写，避免重绘回环）。 */
+static void xlv_updateScrollRanges(XListView* self, int contentHeight,
+                                   int contentWidth, int viewW, int viewH)
+{
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(&self->m_base);
+    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(&self->m_base);
+    int vMax = contentHeight > viewH ? contentHeight - viewH : 0;
+    int hMax = contentWidth > viewW ? contentWidth - viewW : 0;
+    if (vsb && XScrollBar_maximum(vsb) != vMax)
+        XScrollBar_setRange(vsb, 0, vMax);
+    if (hsb && XScrollBar_maximum(hsb) != hMax)
+        XScrollBar_setRange(hsb, 0, hMax);
+}
+
 static bool xlv_indexAt(XListView* self, int x, int y,
                         int* outRow, int* outCol)
 {
@@ -149,10 +176,14 @@ static bool xlv_indexAt(XListView* self, int x, int y,
     int rows;
     int slotY;
     int slotH;
+    int offX;
+    int offY;
     (void)x;
     if (outRow) *outRow = -1;
     if (outCol) *outCol = self ? self->m_modelColumn : 0;
     if (!self || y < 0) return false;
+    xlv_scrollOffsets(self, &offX, &offY);
+    y += offY; /* 视口坐标 → 内容坐标（此前命中不含滚动偏移）。 */
     xlv_refreshRowStates(self);
     rows = xlv_modelRows(self);
     slotH = xlv_slotHeight(self) + self->m_spacing;
@@ -183,6 +214,9 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
     int rh;
     int slotH;
     int slotW;
+    int offX;
+    int offY;
+    int bottom;
     (void)event;
     if (!lv) return;
     image = XWidget_paintImage(self);
@@ -204,30 +238,41 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
     rh = xlv_effectiveRowHeight(lv);
     slotH = xlv_slotHeight(lv);
     slotW = xlv_slotWidth(lv, r.width);
+    xlv_updateScrollRanges(lv, rows * (slotH + lv->m_spacing), slotW,
+                           r.width, r.height);
+    xlv_scrollOffsets(lv, &offX, &offY);
+    /* 内容坐标绘制：painter 平移 −偏移，行循环覆盖视口∩内容。此前
+     * 绘制不含滚动偏移，滚动条/scrollTo 均无视觉效果。 */
+    if (offX != 0 || offY != 0)
+        XPainter_translate(&painter, -(float)offX, -(float)offY);
     y = 0;
-    for (row = 0; row < rows && y < r.height; ++row) {
+    bottom = offY + r.height;
+    for (row = 0; row < rows && y <= bottom; ++row) {
         int h = slotH + lv->m_spacing;
         XRect cell = { 0, y, slotW, slotH };
         bool sel;
         bool cur;
         if (xlv_rowIsHidden(lv, row)) continue;
-        sel = view->m_selectionModel &&
-              XItemSelectionModel_isSelected(
-                  view->m_selectionModel, row, lv->m_modelColumn);
-        cur = (view->m_currentRow == row &&
-               view->m_currentColumn == lv->m_modelColumn);
-        if (sel)
-            XPainter_fillRect(&painter, &cell, 0xFFCCE4FFu);
-        else if (view->m_alternatingRowColors && (row & 1))
-            XPainter_fillRect(&painter, &cell, 0xFFF7F7F7u);
-        if (cur && !sel)
-            XPainter_fillRect(&painter, &cell, 0xFFE8F1FFu);
-        xlv_drawRowText(
-            &painter, lv, &cell,
-            XAbstractItemModel_data_2(model, row, lv->m_modelColumn));
-        if (lv->m_spacing > 0) {
-            XPainter_setPen(&painter, 0xFFDDDDDDu);
-            XPainter_drawLine(&painter, 0, y + rh, r.width, y + rh);
+        if (y + slotH >= offY) {
+            sel = view->m_selectionModel &&
+                  XItemSelectionModel_isSelected(
+                      view->m_selectionModel, row, lv->m_modelColumn);
+            cur = (view->m_currentRow == row &&
+                   view->m_currentColumn == lv->m_modelColumn);
+            if (sel)
+                XPainter_fillRect(&painter, &cell, 0xFFCCE4FFu);
+            else if (view->m_alternatingRowColors && (row & 1))
+                XPainter_fillRect(&painter, &cell, 0xFFF7F7F7u);
+            if (cur && !sel)
+                XPainter_fillRect(&painter, &cell, 0xFFE8F1FFu);
+            xlv_drawRowText(
+                &painter, lv, &cell,
+                XAbstractItemModel_data_2(model, row, lv->m_modelColumn));
+            if (lv->m_spacing > 0) {
+                XPainter_setPen(&painter, 0xFFDDDDDDu);
+                XPainter_drawLine(&painter, offX, y + rh,
+                                  offX + r.width, y + rh);
+            }
         }
         y += h;
     }
@@ -249,7 +294,18 @@ XVtable* XListView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXListView_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXListView_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt, VXListView_indexAt);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
+                             VXListView_scrollContentsBy);
     return XVTABLE_DEFAULT;
+}
+
+/** @brief 滚动内容变化：重绘视口（此前滚动条值变化不触发重绘）。 */
+static void VXListView_scrollContentsBy(XAbstractScrollArea* area, int dx,
+                                        int dy)
+{
+    (void)dx;
+    (void)dy;
+    if (area) XWidget_update((XWidget*)area);
 }
 
 void XListView_init(XListView* self, XWidget* parent, XWidgetFlags flags)
@@ -529,6 +585,8 @@ XRect XListView_visualRect(const XListView* self, int row)
     int slotH;
     int slotW;
     int y;
+    int offX;
+    int offY;
     r.x = 0;
     r.y = 0;
     r.width = 0;
@@ -547,8 +605,9 @@ XRect XListView_visualRect(const XListView* self, int row)
         if (xlv_rowIsHidden(self, i)) continue;
         y += slotH + self->m_spacing;
     }
-    r.x = 0;
-    r.y = y;
+    xlv_scrollOffsets((XListView*)self, &offX, &offY);
+    r.x = 0 - offX;
+    r.y = y - offY;
     r.width = slotW;
     r.height = slotH;
     return r;

@@ -38,6 +38,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XGuiApplication.h"
+#include "XPlatformNativeWindow.h"
 
 #include "XAlgorithm.h"
 #if XWINDOW_ON && XACCESSIBLE_ON
@@ -957,6 +958,7 @@ XClipboard* XGuiApplication_clipboard(void)
             XPlatformIntegration_setClipboard(app->m_platformIntegration,
                                               app->m_clipboard);
 #endif /* XPLATFORMINTEGRATION_ON */
+        XPlatformNativeWindow_installClipboardBackend();
     }
     return app->m_clipboard;
 }

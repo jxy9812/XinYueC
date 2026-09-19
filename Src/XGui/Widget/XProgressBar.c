@@ -543,7 +543,9 @@ int XProgressBar_maximum(const XProgressBar* self)
 void XProgressBar_setRange(XProgressBar* self, int min, int max)
 {
     if (!self) return;
-    if (min > max) { int t = min; min = max; max = t; }
+    /* 对标 Qt：min>max 时收敛为 (min,min)（qBound 语义），不交换——
+     * 此前交换得 (min,max)，与 XSpinBox/XAbstractSlider 不一致。 */
+    if (min > max) max = min;
     self->m_min = min;
     self->m_max = max;
     XProgressBar_setValue(self, self->m_value); /* 钳位 + 条件信号/重绘 */

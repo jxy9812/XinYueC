@@ -621,9 +621,15 @@ void XTextDocument_setUndoRedoEnabled(XTextDocument* self, bool enable)
 bool XTextDocument_isUndoRedoEnabled(const XTextDocument* self)
 { return self ? self->m_undoRedoEnabled : false; }
 bool XTextDocument_isUndoAvailable(const XTextDocument* self)
-{ return self ? self->m_modified > 0 : false; }
+{
+    /* 对标 Qt：undoEnabled 且撤销栈非空（此前误用修改计数）。 */
+    return self ? (self->m_undoRedoEnabled && self->m_undoTop > 0) : false;
+}
 bool XTextDocument_isRedoAvailable(const XTextDocument* self)
-{ (void)self; return false; }
+{
+    /* 对标 Qt：undoEnabled 且重做栈非空（此前恒 false）。 */
+    return self ? (self->m_undoRedoEnabled && self->m_redoTop > 0) : false;
+}
 
 /* ==================== 默认格式 ==================== */
 
@@ -662,27 +668,22 @@ void* XTextDocument_undoCommandAdded_signal(XTextDocument* self)
 
 #define XTD_MAX_UNDO 50
 
-static char* g_tdUndoStack[XTD_MAX_UNDO];
-static int g_tdUndoTop = 0;
-static char* g_tdRedoStack[XTD_MAX_UNDO];
-static int g_tdRedoTop = 0;
-
 static void xtd_saveSnapshot(XTextDocument* self)
 {
     if (!self || !self->m_undoRedoEnabled) return;
     {
         char* snap = XTextDocument_toPlainText(self);
         if (!snap) return;
-        if (g_tdUndoTop < XTD_MAX_UNDO) {
-            g_tdUndoStack[g_tdUndoTop++] = snap;
+        if (self->m_undoTop < XTD_MAX_UNDO) {
+            self->m_undoStack[self->m_undoTop++] = snap;
         } else {
             int i;
-            XFree_System(g_tdUndoStack[0]);
+            XFree_System(self->m_undoStack[0]);
             for (i = 0; i < XTD_MAX_UNDO - 1; ++i)
-                g_tdUndoStack[i] = g_tdUndoStack[i + 1];
-            g_tdUndoStack[XTD_MAX_UNDO - 1] = snap;
+                self->m_undoStack[i] = self->m_undoStack[i + 1];
+            self->m_undoStack[XTD_MAX_UNDO - 1] = snap;
         }
-        g_tdRedoTop = 0;
+        self->m_redoTop = 0;
     }
 }
 
@@ -835,11 +836,12 @@ char XTextDocument_characterAt(const XTextDocument* self, int position)
 
 void XTextDocument_undo(XTextDocument* self)
 {
-    if (!self || g_tdUndoTop == 0) return;
+    if (!self || !self->m_undoRedoEnabled || self->m_undoTop == 0) return;
     {
-        char* snap = g_tdUndoStack[--g_tdUndoTop];
-        if (g_tdRedoTop < XTD_MAX_UNDO)
-            g_tdRedoStack[g_tdRedoTop++] = XTextDocument_toPlainText(self);
+        char* snap = self->m_undoStack[--self->m_undoTop];
+        if (self->m_redoTop < XTD_MAX_UNDO)
+            self->m_redoStack[self->m_redoTop++] =
+                XTextDocument_toPlainText(self);
         xtd_restoreSnapshot(self, snap);
         XFree_System(snap);
     }
@@ -847,11 +849,12 @@ void XTextDocument_undo(XTextDocument* self)
 
 void XTextDocument_redo(XTextDocument* self)
 {
-    if (!self || g_tdRedoTop == 0) return;
+    if (!self || !self->m_undoRedoEnabled || self->m_redoTop == 0) return;
     {
-        char* snap = g_tdRedoStack[--g_tdRedoTop];
-        if (g_tdUndoTop < XTD_MAX_UNDO)
-            g_tdUndoStack[g_tdUndoTop++] = XTextDocument_toPlainText(self);
+        char* snap = self->m_redoStack[--self->m_redoTop];
+        if (self->m_undoTop < XTD_MAX_UNDO)
+            self->m_undoStack[self->m_undoTop++] =
+                XTextDocument_toPlainText(self);
         xtd_restoreSnapshot(self, snap);
         XFree_System(snap);
     }

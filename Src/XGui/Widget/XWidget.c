@@ -56,6 +56,7 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XShortcut.h"
 #include "XVarList.h"
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
@@ -123,6 +124,9 @@ static XWidget* g_focusWidget = NULL;
 
 /** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
 static XWidget* g_mouseGrabWidget = NULL;
+/* 应用模态控件（对标 QApplication 模态登记；经 XWidget_Protected.h
+ * 供 XDialog/XApplication 读写，VXWidgetWindow_event 做输入拦截）。 */
+static XWidget* g_applicationModalWidget = NULL;
 /** @brief 模块静态键盘抓取控件（对标 QApplication::keyboardGrabber）。 */
 static XWidget* g_keyboardGrabWidget = NULL;
 
@@ -1014,6 +1018,8 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
              * XGrabPointer 可能因映射时序未生效，此路由作可靠兜底）。 */
             XPoint global = XWidget_mapToGlobal(top, &pos);
             XPoint local = XWidget_mapFromGlobal(grabTop, &global);
+            fprintf(stderr, "[GRABDBG] redirect pos=%d,%d global=%d,%d local=%d,%d\n",
+                    pos.x, pos.y, global.x, global.y, local.x, local.y);
             XWidget_eventSetPosition(event, &local);
             return XWidget_dispatchPointerEvent(grabTop, event);
         }
@@ -1051,20 +1057,42 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     /* 对标 Qt：右键按下未被接受时合成上下文菜单事件，发给命中控件
        （QGuiApplicationPrivate::processMouseEvent 在 press 未接受且
        button==RightButton 时向窗口合成 QContextMenuEvent，最终由
-       QWidgetWindow 转发到鼠标下控件）。 */
+       QWidgetWindow 转发到鼠标下控件）。
+       坐标契约：local 必须逐接收者换算（pos − 累计偏移），global 以
+       顶层本地坐标统一换算——此前 local 取传播循环改写后的最后一个
+       接收者坐标、global 又按 target 本地坐标换算，双重偏移导致菜单
+       弹出位置错误（14.124 补充四 ①）。
+       传递契约：接收者未显式接受时沿父链继续投递——滚动区内部
+       viewport 等无上下文菜单槽的控件会静默吞掉事件，导致多行编辑
+       右键无菜单（14.124 补充四 ②）；Qt 中被忽略的 QContextMenuEvent
+       同样交由父级处理。 */
     if (!XEvent_isAccepted(event) &&
         XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
         ((const XMouseEvent*)event)->m_button == XMouseButton_RightButton) {
-        XContextMenuEvent* ctx;
-        XPoint local = XWidget_eventPosition(event);
-        XPoint global = XWidget_mapToGlobal(target, &local);
-        ctx = XContextMenuEvent_create_ex(
-            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_CONTEXT_MENU, &local,
-            &global, XContextMenuReason_Mouse,
-            ((const XMouseEvent*)event)->m_modifiers);
-        if (ctx) {
-            XWidget_sendEvent(target, (XEvent*)ctx);
-            XEvent_delete_base((XEvent*)ctx);
+        XWidget* w = target;
+        while (w) {
+            XContextMenuEvent* ctx;
+            XPoint off = XWidget_accumulateOffset(w);
+            XPoint local;
+            XPoint global;
+            local.x = pos.x - off.x;
+            local.y = pos.y - off.y;
+            global = XWidget_mapToGlobal(top, &pos);
+            ctx = XContextMenuEvent_create_ex(
+                XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_CONTEXT_MENU, &local,
+                &global, XContextMenuReason_Mouse,
+                ((const XMouseEvent*)event)->m_modifiers);
+            if (ctx) {
+                XEvent_ignore((XEvent*)ctx); /* 默认忽略：处理者显式接受 */
+                XWidget_sendEvent(w, (XEvent*)ctx);
+                if (XEvent_isAccepted((XEvent*)ctx)) {
+                    XEvent_delete_base((XEvent*)ctx);
+                    return true;
+                }
+                XEvent_delete_base((XEvent*)ctx);
+            }
+            if (w == top) break;
+            w = (XWidget*)XObject_parent((XObject*)w);
         }
     }
 #endif /* XWINDOWEVENT_ON */
@@ -1076,6 +1104,16 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
 {
     XWidget* target;
     if (!top || !event) return false;
+    /* 快捷键优先（对标 QShortcutMap：按键先过快捷键表，命中即消费）。 */
+    if (XEvent_type(event) == XEVENT_TYPE_KEY_PRESS) {
+        XShortcut* sc = XShortcut_match(
+            (int)((XKeyEvent*)event)->m_key, (XShortcutContext)0,
+            g_focusWidget);
+        if (sc) {
+            XShortcut_activate(sc);
+            return true;
+        }
+    }
     target = g_keyboardGrabWidget;
     if (!target || XWidget_topLevel(target) != top)
         target = g_focusWidget;
@@ -1181,6 +1219,29 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
                              bool(*)(XObject*, XEvent*))((XObject*)self, event);
     }
     type = XEvent_type(event);
+    /* 应用模态输入拦截（对标 QApplication 模态语义）：存在活动模态
+       控件时，非模态顶层窗口的输入事件一律吞掉（对标 Qt
+       QGuiApplicationPrivate::isWindowBlocked）。 */
+    if (g_applicationModalWidget) {
+        static const XEventType inputTypes[] = {
+            XEVENT_TYPE_MOUSE_BUTTON_PRESS, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+            XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK, XEVENT_TYPE_MOUSE_MOVE,
+            XEVENT_TYPE_WHEEL, XEVENT_TYPE_KEY_PRESS,
+            XEVENT_TYPE_KEY_RELEASE, XEVENT_TYPE_CONTEXT_MENU
+        };
+        size_t ti;
+        for (ti = 0; ti < sizeof(inputTypes) / sizeof(inputTypes[0]); ++ti) {
+            if (type == inputTypes[ti]) {
+                XWidget* modalTop =
+                    XWidget_topLevel(g_applicationModalWidget);
+                if (modalTop != top) {
+                    XEvent_accept(event);
+                    return true;
+                }
+                break;
+            }
+        }
+    }
     switch (type) {
     case XEVENT_TYPE_RESIZE: {
         XResizeEvent* re = (XResizeEvent*)event;
@@ -1890,6 +1951,26 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         return true;
     case XEVENT_TYPE_KEY_PRESS:
         XWidget_keyPressEvent_base(self, event);
+        /* 对标 QWidget::event 的 Tab 焦点遍历：控件未处理的 Tab/
+         * Shift+Tab（Backtab）按 focusPolicy 移动焦点并消费。此前
+         * focusNextChild 全仓无调用点，Tab 键无效。 */
+        if (!XEvent_isAccepted(event)) {
+            XKeyEvent* ke = (XKeyEvent*)event;
+            int key = (int)ke->m_key;
+            int mods = (int)ke->m_modifiers;
+            if ((key == (int)XKey_Tab || key == (int)XKey_Backtab) &&
+                (mods & ~(int)XKeyboardModifier_ShiftModifier) == 0 &&
+                (XWidget_focusPolicy(self) & XWidgetFocusPolicy_TabFocus)) {
+                bool next = (key == (int)XKey_Tab) ==
+                            ((mods & (int)XKeyboardModifier_ShiftModifier) == 0);
+                bool moved = next ? XWidget_focusNextChild(self)
+                                  : XWidget_focusPreviousChild(self);
+                if (moved) {
+                    XEvent_accept(event);
+                    return true;
+                }
+            }
+        }
         return true;
     case XEVENT_TYPE_KEY_RELEASE:
         XWidget_keyReleaseEvent_base(self, event);
@@ -3798,6 +3879,16 @@ void XWidget_setAcceptDrops(XWidget* self, bool enable)
     self->m_acceptDrops = enable ? 1 : 0;
 }
 
+void XWidget_setApplicationModalWidget(XWidget* widget)
+{
+    g_applicationModalWidget = widget;
+}
+
+XWidget* XWidget_applicationModalWidget(void)
+{
+    return g_applicationModalWidget;
+}
+
 void XWidget_grabMouse(XWidget* self)
 {
     XWidget* top;
@@ -4707,7 +4798,14 @@ bool XWidget_drawContentCached(XWidget* self, XPainter* target,
     return false;
 }
 
-/** @brief 递归绘制控件树：region 为控件本地坐标脏区，裁剪后平移递归子控件。 */
+/** @brief 递归绘制控件树：region 为控件本地坐标脏区，裁剪后平移递归子控件。
+ * @details Qt 语义根修（14.122）：PAINT 事件携带的矩形 R 是脏区外接框
+ *          （XPaintEvent_init 取 boundingRect），凡按自身 paint rect 涂写
+ *          的父级（样式面板、autoFillBackground、demo 静态 tile memcpy）
+ *          都会把 R 内后代旧像素一并抹掉；因此与 R 相交的后代必须以
+ *          R∩自身 为裁剪完整重绘，否则被抹像素残缺到其后代下次自我更新。
+ *          多矩形区域先逐矩形拆分派发：每棵子树的 PAINT 只携带单一矩形，
+ *          外接框==矩形本身，父级可涂写范围与后代重绘范围严格闭合。 */
 static void XWidget_paintTree(XWidget* widget, const XRegion* region)
 {
     const XVector* children;
@@ -4729,6 +4827,22 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
             return;
         }
         paintRegion = &maskClipped;
+    }
+    if (paintRegion->count > 1) {
+        XRegion single;
+        int r;
+        /* 遮罩求交可能重新引入多矩形：此处再拆，保证进入本控件的
+           PAINT 恒携带单一矩形（递归重入遮罩裁剪为幂等交集）。 */
+        XRegion_init(&single);
+        for (r = 0; r < paintRegion->count; ++r) {
+            XRegion_clear(&single);
+            XRegion_addRect(&single, &paintRegion->rects[r]);
+            XWidget_paintTree(widget, &single);
+        }
+        XRegion_deinit(&single);
+        XRegion_deinit(&clipped);
+        XRegion_deinit(&maskClipped);
+        return;
     }
     if (widget->m_updatesEnabled && !widget->m_inPaintEvent) {
         XPaintEvent event;

@@ -451,12 +451,16 @@ static bool VXCheckBox_hitButton(const XAbstractButton* base,
                                  const XPoint* pos)
 {
     const XCheckBox* self = (const XCheckBox*)base;
-    XRect ind;
+    XRect r;
 
     if (!self || !pos)
         return false;
-    ind = checkbox_indicatorRect(self);
-    return XRect_contains(&ind, pos->x, pos->y);
+    /* 对标 Qt SE_CheckBoxClickRect = indicator ∪ 文本/图标区
+     * （qcommonstyle.cpp）；文本未占满控件时右侧空档一并命中，与
+     * XRadioButton 的整矩形口径一致。此前仅命中 13×13 indicator,
+     * 点击标签文字不切换选中。 */
+    r = XWidget_rect((const XWidget*)self);
+    return XRect_contains(&r, pos->x, pos->y);
 }
 
 /** @brief 重载 ContentChanged 保护槽：文本/图标变化后刷新本类 sizeHint。 */

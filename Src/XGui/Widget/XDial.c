@@ -93,7 +93,12 @@ static int xdial_posToValue(const XDial* self, const XPoint* pos)
     /* 归一化到 [0,270)。 */
     while (rel < 0.0) rel += 360.0;
     while (rel >= 360.0) rel -= 360.0;
-    if (rel > XDIAL_SWEEP_ANGLE) {
+    if (self->m_wrapping) {
+        /* 对标 QDial wrapping=true：整圆回绕，无死角（值按角度取模
+         * 落回 [min,max]），拖过端点绕到另一端。 */
+        rel = (rel < 0.0) ? 0.0 : rel;
+        if (rel >= 360.0) rel = 359.999;
+    } else if (rel > XDIAL_SWEEP_ANGLE) {
         /* 270° 之外的死角：就近吸附到两端。 */
         rel = (rel < XDIAL_START_ANGLE + 360.0 - 45.0) ? 0.0 : XDIAL_SWEEP_ANGLE;
         if (rel > XDIAL_SWEEP_ANGLE) rel = XDIAL_SWEEP_ANGLE;
@@ -450,6 +455,8 @@ static void VXSliderBase_dialStub(void) {}
 
 /* ==================== 生命周期 ==================== */
 
+static void XDial_stepBy(XDial* self, int steps);
+
 XVtable* XDial_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDial)
@@ -460,6 +467,7 @@ XVtable* XDial_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXDial_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXDial_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXDial_changeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSlider_StepBy, XDial_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXDial_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, XDial_move);
 
@@ -511,6 +519,25 @@ void XDial_setNotchesVisible(XDial* self, bool visible)
     if (!self || self->m_notchesVisible == visible) return;
     self->m_notchesVisible = visible;
     XWidget_update((XWidget*)self);
+}
+
+/** @brief 步进（对标 QDial::stepBy）：wrapping=true 时越过端点回绕
+ *  到另一端（此前与普通滑块同为端点钳位，回绕语义缺失）。 */
+static void XDial_stepBy(XDial* self, int steps)
+{
+    int minimum = XAbstractSlider_minimum((const XAbstractSlider*)self);
+    int maximum = XAbstractSlider_maximum((const XAbstractSlider*)self);
+    int range = maximum - minimum + 1;
+    int value;
+    if (!self || steps == 0 || range <= 0) return;
+    if (!self->m_wrapping) {
+        XAbstractSlider_stepBy_base((XAbstractSlider*)self, steps);
+        return;
+    }
+    value = XAbstractSlider_value((const XAbstractSlider*)self);
+    value = minimum + (value - minimum + steps) % range;
+    if (value < minimum) value += range;
+    XAbstractSlider_setValue((XAbstractSlider*)self, value);
 }
 
 bool XDial_wrapping(const XDial* self)

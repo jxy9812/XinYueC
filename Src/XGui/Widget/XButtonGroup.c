@@ -387,6 +387,11 @@ void XButtonGroup_setExclusive(XButtonGroup* self, bool exclusive)
     self->m_exclusive = exclusive;
 }
 
+bool XButtonGroup_isExclusive(const XButtonGroup* self)
+{
+    return self ? self->m_exclusive != 0 : false;
+}
+
 void XButtonGroup_addButton(XButtonGroup* self, XAbstractButton* button,
                             int id)
 {
@@ -410,6 +415,10 @@ void XButtonGroup_addButton(XButtonGroup* self, XAbstractButton* button,
         XBGroupBridge* bridge = xbgroup_connectButton(self, button);
         XVector_push_back_1_base(self->m_bridges, &bridge);
     }
+    /* 回写按钮的组指针：使 XAbstractButton_group() 生效，并供基类在
+     * setChecked/nextCheckState 里识别 exclusive 组语义（对标
+     * QButtonGroup::addButton 后 button->group() 返回本组）。 */
+    button->m_group = self;
     if (XAbstractButton_isChecked(button)) {
         xbgroup_applyExclusive(self, button);
         self->m_checkedButton = button;
@@ -433,6 +442,7 @@ void XButtonGroup_removeButton(XButtonGroup* self, XAbstractButton* button)
     XVector_remove_base(self->m_bridges, index, 1);
     XVector_remove_base(self->m_buttons, index, 1);
     XVector_remove_base(self->m_ids, index, 1);
+    button->m_group = NULL; /* 摘除组指针（对标 removeButton 后 group() 为空） */
     if (self->m_checkedButton == button)
         self->m_checkedButton = NULL;
 }

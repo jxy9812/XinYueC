@@ -666,10 +666,15 @@ int XDateTimeEdit_timeSpec(const XDateTimeEdit* self)
 
 void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index)
 {
-    if (self && index >= 0) {
-        self->m_currentSection = index;
-        XWidget_update((XWidget*)self);
-    }
+    int code;
+    if (!self || index < 0) return;
+    code = XDateTimeEdit_sectionAt(self, index);
+    if (code == (int)XDateTimeEditSection_NoSection) return;
+    /* 分段序号与分段枚举码此前共用同一字段：传普通序号会落入非法
+     * 分段码，步进定位错段（14.124 扫描 中 项）。现按序号映射为
+     * 对应分段码后再落地。 */
+    self->m_currentSection = code;
+    XWidget_update((XWidget*)self);
 }
 
 /* ==================== 分段查询族 ==================== */
@@ -733,6 +738,18 @@ int XDateTimeEdit_sectionCount(const XDateTimeEdit* self)
     XdtSectionTok toks[8];
     if (!self) return 0;
     return xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+}
+
+int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self)
+{
+    XdtSectionTok toks[8];
+    int n;
+    int i;
+    if (!self) return 0;
+    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    for (i = 0; i < n; ++i)
+        if (toks[i].code == self->m_currentSection) return i;
+    return 0;
 }
 
 int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index)

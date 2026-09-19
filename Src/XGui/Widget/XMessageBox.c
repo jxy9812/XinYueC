@@ -145,12 +145,43 @@ static void VXMessageBox_deinit(XMessageBox* self)
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
+/** @brief 键盘：Enter→defaultButton；Esc→escapeButton（未设置回退
+ *         基类 Escape=reject）（对标 QMessageBox keyPressEvent）。 */
+static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XMessageBox* box = (XMessageBox*)self;
+    if (box && event &&
+        XEvent_type(event) == XEVENT_TYPE_KEY_PRESS) {
+        int key = ((XKeyEvent*)event)->m_key;
+        if (key == (int)XKey_Return || key == (int)XKey_Enter) {
+            if (box->m_defaultButton) {
+                XAbstractButton_click(box->m_defaultButton);
+                XEvent_accept(event);
+                return;
+            }
+        } else if (key == (int)XKey_Escape) {
+            if (box->m_escapeButton) {
+                XAbstractButton_click(box->m_escapeButton);
+                XEvent_accept(event);
+                return;
+            }
+            XDialog_reject(&box->m_base);
+            XEvent_accept(event);
+            return;
+        }
+    }
+    /* 其余按键交控件默认键盘链（XDialog 的 Escape 分支已在上方覆盖）。 */
+    XWidget_keyPressEvent_base(self, event);
+}
+
 XVtable* XMessageBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMessageBox)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
                              VX_messageBox_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
+                             VXMessageBox_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMessageBox_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -231,6 +262,9 @@ void XMessageBox_setTitle(XMessageBox* self, const char* utf8)
     if (!self->m_title) self->m_title = XString_create();
     if (self->m_title)
         XString_assign_utf8(self->m_title, utf8 ? utf8 : "");
+    /* 对标 Qt：标题同步到窗口（此前仅存内部字符串，原生标题不变）。 */
+    XWidget_setWindowTitle((XWidget*)self,
+                           XString_create_utf8(utf8 ? utf8 : ""));
 }
 
 const char* XMessageBox_title(const XMessageBox* self)

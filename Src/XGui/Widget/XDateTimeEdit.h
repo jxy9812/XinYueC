@@ -131,10 +131,8 @@ int XDateTimeEdit_timeSpec(const XDateTimeEdit* self);
  */
 void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index);
 /** @brief 查询当前分段序号（对标 Q_PROPERTY currentSectionIndex READ；
- *         宏别名复用 XDateTimeEdit_currentSection；项目简化：分段序号
- *         与分段码共用同一字段）。 */
-#define XDateTimeEdit_currentSectionIndex(self) \
-    XDateTimeEdit_currentSection((self))
+ *         序号为分段在显示格式中的 0 基位置，与分段枚举码分离）。 */
+int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self);
 #define XDateTimeEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**

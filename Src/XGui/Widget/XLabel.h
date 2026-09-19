@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XLabel.h
  * @brief      XLabel 标签控件（对标 Qt 6.8 QLabel，公开 API 的 C 适配）。
  * @details    XLabel 继承 XFrame（QLabel : QFrame），在控件矩形内显示
@@ -18,6 +18,16 @@
  *               按下再释放于链接上发 linkActivated；openExternalLinks
  *               为 true 时本实现不打开外部链接（无平台浏览器 API），
  *               仍发信号交由应用处理；
+ *             - 选择/链接交互承载（对齐迁移，2026-09-19 审计第四章）：
+ *               对标 Qt QLabel 可交互时内持 QWidgetTextControl 的宿主
+ *               形态，本控件内持 XTextControl（Src/XGui/Text/XTextControl.h）
+ *               实例：光标/选区状态机（anchor/position 对）、键盘扩展
+ *               选择、程序化选区、选中复制、键盘链接导航（Tab/回车）
+ *               与悬停链接状态归控制器；壳保留内容选择/布局/绘制入口/
+ *               focusPolicy 推导与 link 信号转发。控制器的文档与锚点
+ *               注册表在显示文本重建时同步（setText 路径），选区以
+ *               文档绝对 UTF-8 字节偏移承载，公开 API 仍维持 UTF-16
+ *               码元契约（换算在壳适配层）；
  *             - 尺寸提示对标 QLabelPrivate::sizeForWidth：文本尺寸 =
  *               (文本宽高 + 2*margin +/- indent) + 边框 contentsMargins；
  *               wordWrap 时高度随宽度变化（hasHeightForWidth）；
@@ -60,6 +70,13 @@ typedef struct XPicture XPicture;
 typedef struct XMovie XMovie;
 /** @brief XLabel 标签控件前向声明（完整类型见后文）。 */
 typedef struct XLabel XLabel;
+/**
+ * @brief XTextControl 文本控制器前向声明（选择/链接交互的宿主对象）。
+ * @details 完整类型与 API 见 Src/XGui/Text/XTextControl.h（私有控制器，
+ *          对标 Qt QWidgetTextControl）；XLabel 仅以不透明指针内持，
+ *          公开头文件不暴露控制器细节。
+ */
+typedef struct XTextControl XTextControl;
 
 /* ==================== 虚函数表（覆盖 XWidget 派生槽位） ==================== */
 
@@ -92,8 +109,8 @@ typedef enum XLabelTextInteractionFlag
     XLabelTextInteraction_TextSelectableByMouse      = 0x01, /**< 鼠标可选（拖选与双击选词）。 */
     XLabelTextInteraction_TextSelectableByKeyboard   = 0x02, /**< 键盘可选（方向键、Home/End、Ctrl+A）。 */
     XLabelTextInteraction_LinksAccessibleByMouse     = 0x04, /**< 鼠标可访问链接（默认）。 */
-    XLabelTextInteraction_LinksAccessibleByKeyboard  = 0x08, /**< 键盘可访问链接（未实现的受限项）。 */
-    XLabelTextInteraction_TextEditable               = 0x10  /**< 可编辑（未实现的受限项）。 */
+    XLabelTextInteraction_LinksAccessibleByKeyboard  = 0x08, /**< 键盘可访问链接（增量已实现：Tab/Shift+Tab 循环聚焦锚点、回车激活）。 */
+    XLabelTextInteraction_TextEditable               = 0x10  /**< 可编辑（增量已打通事件路径：键盘编辑/剪贴板/IME 经控制器承载；受限项：标签显示文本不随编辑刷新）。 */
 } XLabelTextInteractionFlag;
 /** @brief 文本交互标志组合类型（多个标志位按位或）。 */
 typedef uint32_t XLabelTextInteractionFlags;
@@ -138,14 +155,19 @@ typedef struct XLabelLinkRange
  *               绘图记录（拥有，setPicture 深拷贝入）；m_movie：
  *               影片（借用）；m_buddy：助记符伙伴控件（借用，快捷键
  *               关联未实现的受限项）；
- *             - m_selectionStart/m_selectionLength：程序化选择范围，
- *               按显示文本（剥离标记后的可见文本）的 UTF-16 码元计；
- *               m_selectionStart=-1 表示无选择；
+ *             - m_textControl：文本控制器（拥有，XTextControl 实例）。
+ *               对标 Qt QLabel 内持 QWidgetTextControl：光标/选区
+ *               （anchor/position 对，文档绝对 UTF-8 字节偏移）、键盘
+ *               扩展选择、程序化选区、选中复制与悬停链接状态归控制器；
+ *               显示文本与链接区间在重建时同步进控制器的文档与锚点
+ *               注册表；
  *             - m_displayText：显示文本（拥有，富文本剥离标记后重生成）；
  *             - m_links：链接范围数组（拥有）；m_linkCount/m_linkCapacity；
- *             - m_pressedLink/m_hoverLink：鼠标按下/悬停命中的链接索引
- *               （-1 表示无，仅内部维护）；m_textSelecting 与
- *               m_selectionAnchor 用于鼠标拖选与键盘扩展选择的内部状态；
+ *             - m_pressedLink/m_textSelecting 为壳级事件编排状态：
+ *               m_pressedLink 记录鼠标按下的链接索引（-1 表示无，用于
+ *               「按下与释放命中同一链接」的激活匹配，选区查询不读它）；
+ *               m_textSelecting 标记鼠标拖选进行中（决定 move 事件走
+ *               选区扩展还是链接悬停路径）；
  *             - m_resourceProvider/m_resourceProviderUserData：资源回调
  *               与其上下文（借用）。
  *             调用方不得手工修改任何字段；属性读写一律走公开 API。
@@ -168,23 +190,21 @@ typedef struct XLabel
     XPicture*                       m_picture;   /**< 绘图记录（拥有）。 */
     XMovie*                         m_movie;     /**< 影片（借用）。 */
     XWidget*                        m_buddy;     /**< 伙伴控件（借用）。 */
-    int                             m_selectionStart;  /**< 选择起点（UTF-16，-1 无）。 */
-    int                             m_selectionLength; /**< 选择长度（UTF-16 码元）。 */
     XString*                        m_displayText;/**< 显示文本（拥有）。 */
     XLabelLinkRange*                m_links;     /**< 链接范围数组（拥有）。 */
     int                             m_linkCount; /**< 链接数量。 */
     int                             m_linkCapacity; /**< 链接数组容量。 */
-    int                             m_pressedLink;  /**< 按下链接索引（-1 无）。 */
-    int                             m_hoverLink;    /**< 悬停链接索引（-1 无）。 */
-    bool                            m_textSelecting; /**< 鼠标拖选进行中。 */
-    int                             m_selectionAnchor; /**< 选择锚点（UTF-16，-1 无）。 */
+    int                             m_pressedLink;  /**< 按下链接索引（-1 无；壳级编排状态）。 */
+    bool                            m_textSelecting; /**< 鼠标拖选进行中（壳级编排状态）。 */
+    XTextControl*                   m_textControl; /**< 文本控制器（拥有；选区/键盘/链接交互承载）。 */
     XLabelResourceProvider           m_resourceProvider;       /**< 资源回调（借用）。 */
     void*                           m_resourceProviderUserData;/**< 资源回调上下文（借用）。 */
 } XLabel;
 
 /* ==================== 生命周期（对标 QLabel 构造/析构） ==================== */
 
-/** @brief XLabel 类虚函数表初始化（重载 Event/Paint/Change/Mouse/Focus/Copy/Move/Deinit）。 */
+/** @brief XLabel 类虚函数表初始化（重载 Event/Paint/Change/Mouse/Focus/
+ *         ContextMenu/InputMethod/Copy/Move/Deinit）。 */
 XVtable* XLabel_class_init(void);
 
 /**
@@ -193,7 +213,9 @@ XVtable* XLabel_class_init(void);
  *             再挂 XLabel 虚表并设置默认值：空文本、AutoText、Left|VCenter、
  *             margin=0、indent=-1、wordWrap=false、scaledContents=false、
  *             openExternalLinks=false、LinksAccessibleByMouse，
- *             尺寸策略 Preferred/Preferred + ControlType=Label。
+ *             尺寸策略 Preferred/Preferred + ControlType=Label；随后
+ *             创建内持 XTextControl 控制器（选择/链接交互宿主，见
+ *             m_textControl 说明）并同步交互标志与信号转发。
  * @param      self   待初始化对象；不可为 NULL。
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      flags  窗口标志（可传 0 表示 Widget 类型）。
@@ -387,8 +409,13 @@ void XLabel_setOpenExternalLinks(XLabel* self, bool open);
 XLabelTextInteractionFlags XLabel_textInteractionFlags(const XLabel* self);
 /**
  * @brief      设置文本交互标志（对标 QLabel::setTextInteractionFlags）。
- * @details    置 LinksAccessibleByKeyboard 时焦点策略自动置 StrongFocus；
- *             置可选中（Mouse/Keyboard）时置 ClickFocus；否则 NoFocus。
+ * @details    置 LinksAccessibleByKeyboard 时焦点策略自动置 StrongFocus，
+ *             并启用键盘链接导航（Tab/Shift+Tab 循环聚焦锚点、回车激
+ *             活，增量能力）；置可选中（Mouse/Keyboard）时置 ClickFocus；
+ *             否则 NoFocus。标志位同步下发内持 XTextControl（数值与
+ *             控制器交互标志一一对应）；置 TextEditable 时键盘编辑/
+ *             剪贴板路径由控制器承载（受限项：标签显示文本不随后续
+ *             控制器编辑刷新，仅打通事件路径）。
  */
 void XLabel_setTextInteractionFlags(XLabel* self,
                                     XLabelTextInteractionFlags flags);
@@ -399,14 +426,17 @@ void XLabel_setTextInteractionFlags(XLabel* self,
  * @brief      设置文本选择范围（对标 QLabel::setSelection）。
  * @details    参数为显示文本（剥离富文本标记后的可见文本）的 UTF-16
  *             代码单元偏移：start 为起点、length 为长度；start 与
- *             length 任一为 -1 时清除选择。选择仅影响绘制（Highlight /
- *             HighlightedText 着色）；鼠标拖选、双击选词与键盘选择均更新
- *             同一选择状态，可继续通过 selectedText() 读取。
+ *             length 任一为 -1 时清除选择。选择状态由内持 XTextControl
+ *             光标（anchor/position 对）承载，本函数换算为文档绝对
+ *             UTF-8 字节偏移后写入控制器并钳位。选择仅影响绘制
+ *             （Highlight / HighlightedText 着色）；鼠标拖选、双击选词
+ *             与键盘选择均更新同一控制器光标状态，可继续通过
+ *             selectedText() 读取。
  * @param      start  起点（UTF-16 码元，从 0 开始）。
  * @param      length 长度（UTF-16 码元）。
  */
 void XLabel_setSelection(XLabel* self, int start, int length);
-/** @brief 查询是否已有选择（对标 QLabel::hasSelectedText）。 */
+/** @brief 查询是否已有选择（对标 QLabel::hasSelectedText；读控制器光标）。 */
 bool XLabel_hasSelectedText(const XLabel* self);
 /**
  * @brief      返回选中文本（对标 QLabel::selectedText）。

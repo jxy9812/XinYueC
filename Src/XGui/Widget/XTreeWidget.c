@@ -21,6 +21,16 @@
 
 static void VXTreeWidget_deinit(XTreeWidget* self);
 static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event);
+static void VXTreeWidget_scrollContentsBy(XAbstractScrollArea* area, int dx,
+                                          int dy);
+
+/** @brief 读取垂直滚动偏移（视口原点在内容坐标中的 y）。 */
+static int xtw_scrollOffsetY(const XTreeWidget* self)
+{
+    XScrollBar* vbar = XAbstractScrollArea_verticalScrollBar(
+        (XAbstractScrollArea*)&self->m_base.m_base);
+    return vbar ? XScrollBar_value(vbar) : 0;
+}
 static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 
@@ -425,6 +435,7 @@ static int xtw_rowAtY(const XTreeWidget* self, int y, int* outRowY)
     int top = 0;
     if (outRowY) *outRowY = -1;
     if (!self) return -1;
+    y += xtw_scrollOffsetY(self); /* 视口坐标 → 内容坐标 */
     rh = xtw_effectiveRowHeight(self);
     for (i = 0; i < self->m_topCount; ++i) {
         const XTreeWidgetItem* item = self->m_topItems[i];
@@ -1241,10 +1252,33 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
         return;
     }
     XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
-    y = 0;
-    for (i = 0; i < tw->m_topCount; ++i) {
-        if (tw->m_topItems[i])
-            xtw_drawItem(tw, tw->m_topItems[i], &painter, 0, &y, h, i);
+    {
+        /* 滚动范围维护 + 偏移平移（此前滚动条值变化不触发重绘）。 */
+        XScrollBar* vbar = XAbstractScrollArea_verticalScrollBar(
+            (XAbstractScrollArea*)&tw->m_base.m_base);
+        int rows = 0;
+        int i2;
+        for (i2 = 0; i2 < tw->m_topCount; ++i2)
+            rows += (tw->m_topItems[i2] && xtw_isExpanded(tw, i2))
+                        ? xtw_subtreeRows(tw->m_topItems[i2])
+                        : 1;
+        int vMax = rows * xtw_effectiveRowHeight(tw) > h
+                       ? rows * xtw_effectiveRowHeight(tw) - h
+                       : 0;
+        int offY = xtw_scrollOffsetY(tw);
+        if (vbar && XScrollBar_maximum(vbar) != vMax)
+            XScrollBar_setRange(vbar, 0, vMax);
+        if (offY != 0)
+            XPainter_translate(&painter, 0.0f, -(float)offY);
+        y = 0;
+        for (i = 0; i < tw->m_topCount; ++i) {
+            if (tw->m_topItems[i]) {
+                /* 行绘制下限同步下移（跳过视口上方内容）。 */
+                xtw_drawItem(tw, tw->m_topItems[i], &painter, 0, &y,
+                             h + offY, i);
+            }
+        }
+        y = 0; /* 复位供后续逻辑（如有） */
     }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -1310,6 +1344,14 @@ static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
         XTreeWidget_itemActivated_signal(tw, row);
     }
     XEvent_accept(event);
+}
+
+static void VXTreeWidget_scrollContentsBy(XAbstractScrollArea* area, int dx,
+                                          int dy)
+{
+    (void)dx;
+    (void)dy;
+    if (area) XWidget_update((XWidget*)area);
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */

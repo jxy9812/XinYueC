@@ -8,6 +8,7 @@
  */
 
 #include "XShortcut.h"
+#include "XWidget.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XVector.h"
@@ -213,20 +214,41 @@ XShortcut* XShortcut_match(int key, XShortcutContext context,
         XShortcut** item =
             (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
         XShortcut* sc;
+        const XWidget* w;
         if (!item) continue;
         sc = *item;
         if (!sc || !sc->m_enabled || sc->m_key != key) continue;
-        /* context 过滤（简化）：应用级恒匹配；窗口级/子控件级要求
-         * 焦点控件存在；控件级要求焦点控件等于创建时 parent。 */
+        /* context 过滤（对标 QShortcutMap 的可达性判定）：
+         * Application 恒匹配；Window 限焦点控件与快捷键父级同顶层；
+         * WidgetWithChildren 限焦点控件为父级自身或其后代；
+         * Widget 仅父级自身。 */
         if (sc->m_context == XShortcutContext_ApplicationShortcut)
             return sc;
         if (!focusWidget) continue;
-        if (sc->m_context == XShortcutContext_WindowShortcut ||
-            sc->m_context == XShortcutContext_WidgetWithChildrenShortcut)
-            return sc;
+        if (sc->m_context == XShortcutContext_WindowShortcut) {
+            XWidget* shortcutTop = sc->m_parentWidget
+                ? XWidget_topLevelWidget(sc->m_parentWidget) : NULL;
+            /* 无父级的快捷键不限定窗口（legacy 宽松口径，回归 219a
+             * 契约）；有父级时要求焦点控件同顶层（对标 Qt
+             * WindowShortcut 的活动窗口语义）。 */
+            if (!shortcutTop ||
+                XWidget_topLevelWidget(focusWidget) == shortcutTop)
+                return sc;
+            continue;
+        }
+        if (sc->m_context == XShortcutContext_WidgetWithChildrenShortcut) {
+            if (!sc->m_parentWidget) continue;
+            w = focusWidget;
+            while (w) {
+                if ((const XWidget*)w ==
+                    (const XWidget*)sc->m_parentWidget)
+                    return sc;
+                w = (const XWidget*)XObject_parent((const XObject*)w);
+            }
+            continue;
+        }
         if (sc->m_context == XShortcutContext_WidgetShortcut &&
-            (sc->m_parentWidget == NULL ||
-             (XObject*)focusWidget == sc->m_parentWidget))
+            (XObject*)focusWidget == sc->m_parentWidget)
             return sc;
     }
     return NULL;

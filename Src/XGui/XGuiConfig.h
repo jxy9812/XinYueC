@@ -345,6 +345,21 @@
 #ifndef XTEXTDOCUMENT_ON
 #define XTEXTDOCUMENT_ON 1
 #endif
+#ifndef XTEXTUTF8_ON
+#define XTEXTUTF8_ON 1
+#endif
+#ifndef XTEXTCLIPBOARD_ON
+#define XTEXTCLIPBOARD_ON 1
+#endif
+#ifndef XTEXTMENU_ON
+#define XTEXTMENU_ON 1
+#endif
+#ifndef XLINECONTROL_ON
+#define XLINECONTROL_ON 1
+#endif
+#ifndef XTEXTCONTROL_ON
+#define XTEXTCONTROL_ON 1
+#endif
 #ifndef XTABLEWIDGET_ON
 #define XTABLEWIDGET_ON 1
 #endif

@@ -91,6 +91,11 @@ typedef struct XTextDocument
     int m_blockCount;      /**< 块数。 */
     int m_capacity;        /**< 块数组容量。 */
     bool m_undoRedoEnabled;
+    /* 撤销/重做栈（实例持有；此前为全局静态，多文档互相污染） */
+    char* m_undoStack[50];
+    int   m_undoTop;
+    char* m_redoStack[50];
+    int   m_redoTop;
     XString* m_title;      /**< 文档标题（对象拥有；metaInformation 0）。 */
     XString* m_url;        /**< 文档源 URL（对象拥有；metaInformation 1）。 */
     int m_modified;        /**< 修改计数。 */

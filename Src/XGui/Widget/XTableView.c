@@ -531,6 +531,57 @@ void XTableView_selectColumn(XTableView* self, int column)
                                       self->m_base.m_currentRow, column);
 }
 
+/* ==================== 滚动偏移（对标 QTableView 视口滚动） ==================== */
+
+/** @brief 读取滚动偏移（视口原点在内容坐标中的位置）。 */
+static void xtv_scrollOffsets(const XTableView* tv, int* outX, int* outY)
+{
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+        (const XAbstractScrollArea*)&tv->m_base);
+    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(
+        (const XAbstractScrollArea*)&tv->m_base);
+    if (outX) *outX = hsb ? XScrollBar_value(hsb) : 0;
+    if (outY) *outY = vsb ? XScrollBar_value(vsb) : 0;
+}
+
+/** @brief 按内容尺寸维护滚动条范围（值变化才写，避免重绘回环）。 */
+static void xtv_updateScrollRanges(XTableView* tv)
+{
+    XAbstractItemModel* model = tv->m_base.m_model;
+    XScrollBar* vsb;
+    XScrollBar* hsb;
+    int rows = model ? model->m_rows : 0;
+    int cols = model ? model->m_cols : 0;
+    int i;
+    int contentH = XTV_HEADER_H;
+    int contentW = 0;
+    int rh = tv->m_rowHeight > 0 ? tv->m_rowHeight : XTV_DEFAULT_ROW_HEIGHT;
+    int vMax;
+    int hMax;
+    int viewW = XWidget_width((XWidget*)tv);
+    int viewH = XWidget_height((XWidget*)tv);
+    vsb = XAbstractScrollArea_verticalScrollBar(
+        (const XAbstractScrollArea*)&tv->m_base);
+    hsb = XAbstractScrollArea_horizontalScrollBar(
+        (const XAbstractScrollArea*)&tv->m_base);
+    for (i = 0; i < rows; ++i) {
+        if (xtv_hiddenRaw(tv->m_rowHidden, tv->m_rowHiddenCount, i))
+            continue;
+        contentH += rh;
+    }
+    for (i = 0; i < cols; ++i) {
+        if (xtv_hiddenRaw(tv->m_colHidden, tv->m_colHiddenCount, i))
+            continue;
+        contentW += XTableView_columnWidth(tv, i);
+    }
+    vMax = contentH > viewH ? contentH - viewH : 0;
+    hMax = contentW > viewW ? contentW - viewW : 0;
+    if (vsb && XScrollBar_maximum(vsb) != vMax)
+        XScrollBar_setRange(vsb, 0, vMax);
+    if (hsb && XScrollBar_maximum(hsb) != hMax)
+        XScrollBar_setRange(hsb, 0, hMax);
+}
+
 /* ==================== 位置反查（行高/列宽/隐藏感知） ==================== */
 
 int XTableView_rowAt(const XTableView* self, int y)
@@ -544,6 +595,12 @@ int XTableView_rowAt(const XTableView* self, int y)
     model = self->m_base.m_model;
     rows = model ? model->m_rows : 0;
     if (y < 0 || rows <= 0) return -1;
+    {
+        int offX;
+        int offY;
+        xtv_scrollOffsets(self, &offX, &offY);
+        y += offY; /* 视口坐标 → 内容坐标（此前命中不含滚动偏移）。 */
+    }
     /* 与 indexAt 同一坐标系：扣除上方表头区高度。 */
     yAcc = y - XTV_HEADER_H;
     if (yAcc < 0) return -1;
@@ -568,6 +625,12 @@ int XTableView_columnAt(const XTableView* self, int x)
     model = self->m_base.m_model;
     cols = model ? model->m_cols : 0;
     if (x < 0 || cols <= 0) return -1;
+    {
+        int offX;
+        int offY;
+        xtv_scrollOffsets(self, &offX, &offY);
+        x += offX; /* 视口坐标 → 内容坐标。 */
+    }
     xAcc = 0;
     /* 隐藏列占宽 0：直接跳过不参与累计。 */
     for (col = 0; col < cols; ++col) {
@@ -651,6 +714,13 @@ XRect XTableView_visualRect(const XTableView* self, int row, int column)
        统一行高与列宽（行/列已判界，位置查询必为有效值）。 */
     r.x = XTableView_columnViewportPosition(self, column);
     r.y = XTableView_rowViewportPosition(self, row);
+    {
+        int offX;
+        int offY;
+        xtv_scrollOffsets(self, &offX, &offY);
+        r.x -= offX;
+        r.y -= offY;
+    }
     r.width = XTableView_columnWidth(self, column);
     r.height = XTableView_rowHeight(self);
     return r;
@@ -844,6 +914,8 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
     int rows;
     int x;
     int y;
+    int offX;
+    int offY;
     (void)event;
     if (!tv) return;
     image = XWidget_paintImage(self);
@@ -867,11 +939,13 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
     cols = model->m_cols;
     /* 行/列数变化生效入口：先同步隐藏状态表覆盖当前模型尺寸。 */
     xtv_syncHiddenTables(tv);
-    /* 表头区。 */
+    xtv_updateScrollRanges(tv);
+    /* 表头区（水平随内容滚动）。 */
     {
         XRect hr = { 0, 0, r.width, XTV_HEADER_H };
         XPainter_fillRect(&painter, &hr, 0xFFF0F0F0u);
-        x = 0;
+        xtv_scrollOffsets(tv, &offX, &offY);
+        x = -offX;
         for (col = 0; col < cols && x < r.width; ++col) {
             int w;
             const char* text;
@@ -896,13 +970,13 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
         }
     }
     /* 数据区网格（合并区间：原点格按合并宽高绘制，被覆盖格跳过）。 */
-    y = XTV_HEADER_H;
+    y = XTV_HEADER_H - offY;
     for (row = 0; row < rows && y < r.height; ++row) {
         int rh = tv->m_rowHeight > 0 ? tv->m_rowHeight
                                      : XTV_DEFAULT_ROW_HEIGHT;
         if (xtv_hiddenRaw(tv->m_rowHidden, tv->m_rowHiddenCount, row))
             continue; /* 隐藏行占高 0：不绘制也不累计高度。 */
-        x = 0;
+        x = -offX;
         for (col = 0; col < cols && x < r.width; ++col) {
             int w;
             int cellH = rh;

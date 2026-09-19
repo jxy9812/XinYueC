@@ -217,6 +217,12 @@ XWindow* XPlatformNativeWindow_windowForWinId(XWindowId id);
  */
 bool XPlatformNativeWindow_processPendingEvents(void);
 
+/** @brief 安装平台剪贴板后端（X11 Selection 协议/Win32 Clipboard）。
+ *  @details 对标 QPlatformClipboard：平台层在连接建立后调用此函数，
+ *           使 XClipboard 的复制粘贴经 X11 Selection 或 Win32
+ *           Clipboard API 与其他应用互通。仅需调用一次（幂等）。 */
+void XPlatformNativeWindow_installClipboardBackend(void);
+
 /**
  * @brief      阻塞等待原生事件，就绪后处理一批并返回。
  * @details    X11 用 poll(XConnectionNumber, POLLIN, msec)；Win32 用

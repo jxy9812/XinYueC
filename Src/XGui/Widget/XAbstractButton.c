@@ -10,6 +10,7 @@
 
 #include "XAlgorithm.h"
 #include "XAbstractButton_Protected.h"
+#include "XButtonGroup.h"
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -476,9 +477,17 @@ void XAbstractButton_setChecked(XAbstractButton* self, bool checked)
     old = self->m_checked;
     if (old == checked)
         return;
-    if (!checked && old && self->m_autoExclusive &&
-        abstractbutton_isOnlyAutoExclusiveMember(self)) {
-        return;
+    if (!checked && old) {
+        /* 对标 Qt：exclusive 按钮组内已选中按钮不可通过 setChecked(false)
+           反选（qabstractbutton.cpp:592-600，组版无"最后一个"条件）；
+           autoExclusive 的同语义保护见下。 */
+        if (self->m_group &&
+            XButtonGroup_isExclusive((XButtonGroup*)self->m_group))
+            return;
+        if (self->m_autoExclusive &&
+            abstractbutton_isOnlyAutoExclusiveMember(self)) {
+            return;
+        }
     }
 
     self->m_checked = checked;
@@ -617,8 +626,8 @@ void* XAbstractButton_group(const XAbstractButton* self)
 {
     /*
      * 对标 QAbstractButton::group()：返回登记该按钮的 QButtonGroup。
-     * 本实现以 void* 不透明承载；按钮组体系未建，XButtonGroup 尚未
-     * 回写 m_group，未经登记时恒为 NULL。
+     * 以 void* 不透明承载；XButtonGroup_addButton 时回写、
+     * removeButton 时清空。
      */
     return self ? self->m_group : NULL;
 }

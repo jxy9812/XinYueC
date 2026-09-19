@@ -157,6 +157,23 @@ XString* XClipboard_text_subtype(XClipboard* self, XString** subtype,
  * @param      text UTF-8 文本；可为 NULL（等价空串）。
  * @param      mode 目标模式。
  */
+/* ==================== 平台后端挂载点（对标 QPlatformClipboard） ==================== */
+
+/** @brief 平台剪贴板后端接口（C 函数指针形态；由平台集成层填充）。
+ *  @details 对标 Qt：QClipboard 为抽象 API,各平台提供 QPlatformClipboard
+ *           子类(X11 选择区/Win32 Clipboard)。未注入后端时 XClipboard
+ *           使用进程内存储（现状,仅进程内复制粘贴可用）。 */
+typedef struct XClipboardBackend
+{
+    void* ud;          /**< 平台层用户数据（传回各回调首参）。 */
+    bool (*text)(void* ud, int mode, char** outText);      /**< 读平台剪贴板文本（调用方 XFree_System 释放）。 */
+    bool (*setText)(void* ud, int mode, const char* text); /**< 写平台剪贴板文本。 */
+    bool (*clear)(void* ud, int mode);                     /**< 清平台剪贴板。 */
+} XClipboardBackend;
+
+/** @brief 安装平台后端（NULL 恢复进程内存储语义）。 */
+void XClipboard_installBackend(const XClipboardBackend* backend);
+
 void XClipboard_setText(XClipboard* self, const XString* text, XClipboardMode mode);
 
 /* ==================== MIME 数据（对标 QClipboard::mimeData / setMimeData） ==================== */

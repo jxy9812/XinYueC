@@ -233,6 +233,17 @@ XImage* XWidget_beginContentCacheFormat(XWidget* self, int width, int height,
  */
 void XWidget_markContentCacheReady(XWidget* self);
 
+/* ==================== 应用模态（对标 QApplication activeModalWidget） ==================== */
+
+/**
+ * @brief      设置当前应用模态控件（对标 QApplication::setActiveModalWidget
+ *             的内部登记；供 XDialog/open-exec 路径与模态输入拦截使用）。
+ * @param      widget 模态控件（借用）；NULL 清除。
+ */
+void XWidget_setApplicationModalWidget(XWidget* widget);
+/** @brief      返回当前应用模态控件（借用）；无则 NULL。 */
+XWidget* XWidget_applicationModalWidget(void);
+
 #ifdef __cplusplus
 }
 #endif

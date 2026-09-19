@@ -76,8 +76,10 @@ static void VXWizardPage_cleanupPage(XWizardPage* self)
  */
 static bool VXWizardPage_validatePage(XWizardPage* self)
 {
-    /* 对标 QWizardPage::validatePage 默认实现：返回 isComplete()。 */
-    return XWizardPage_isComplete(self);
+    /* 对标 Qt 6.8.3：validatePage 默认直接返回 true（推荐用
+     * isComplete() 控制 Next 按钮使能，而非重写本槽拦截翻页）。 */
+    (void)self;
+    return true;
 }
 
 /**
@@ -283,7 +285,15 @@ const XString* XWizardPage_pixmap(const XWizardPage* self, int which)
 void XWizardPage_setComplete(XWizardPage* self, bool complete)
 {
     if (!self) return;
+    if (self->m_complete == complete) return;
     self->m_complete = complete;
+    /* 对标 Qt：complete 状态变化发射 completeChanged()，向导据此更新
+       Next/Finish 使能（此前仅存值，向导无从感知）。 */
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XWizardPage_completeChanged_signal,
+                           NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    }
 }
 
 bool XWizardPage_isComplete(const XWizardPage* self)
@@ -323,6 +333,16 @@ static void xwiz_emitVoid(XWizard* self, size_t signal)
     }
 }
 
+static void xwiz_updateButtons(XWizard* self);
+
+/** @brief 页 completeChanged 槽：当前页完备性变化即刷新按钮使能。 */
+static void xwizard_pageCompleteChanged(XObject* receiver, XVarList* args)
+{
+    XWizard* self = (XWizard*)receiver;
+    (void)args;
+    if (self) xwiz_updateButtons(self);
+}
+
 static const char* xwiz_defaultButtonText(XWizardButton which)
 {
     switch (which) {
@@ -339,7 +359,16 @@ static void xwiz_updateButtons(XWizard* self)
 {
     bool isFirst = (self->m_currentIndex == 0);
     bool isLast = (self->m_currentIndex == self->m_pageCount - 1);
+    XWizardPage* current;
+    bool currentComplete;
     if (!self) return;
+    current = (self->m_currentIndex >= 0 &&
+               self->m_currentIndex < self->m_pageCount)
+                  ? self->m_pages[self->m_currentIndex]
+                  : NULL;
+    /* 对标 Qt：当前页 isComplete=false 时 Next/Finish 禁用（响应页的
+       completeChanged() 实时更新）。 */
+    currentComplete = current ? XWizardPage_isComplete(current) : true;
 #if XPUSHBUTTON_ON
     if (self->m_btnBack) {
         XWidget_setVisible((XWidget*)self->m_btnBack, !isFirst);
@@ -354,9 +383,13 @@ static void xwiz_updateButtons(XWizard* self)
         if (!txt || !txt[0])
             txt = xwiz_defaultButtonText(XWizardButton_NextButton);
         XAbstractButton_setText_2((XAbstractButton*)self->m_btnNext, txt);
+        XWidget_setEnabled((XWidget*)self->m_btnNext,
+                                   !isLast && currentComplete);
     }
     if (self->m_btnFinish) {
         XWidget_setVisible((XWidget*)self->m_btnFinish, isLast);
+        XWidget_setEnabled((XWidget*)self->m_btnFinish,
+                                   isLast && currentComplete);
     }
 #endif
 }
@@ -781,6 +814,12 @@ int XWizard_addPage(XWizard* self, XWizardPage* page)
     self->m_pageCount++;
     page->m_wizard = self;
     XWidget_setParent((XWidget*)page, (XWidget*)self, 0);
+    /* 页完备性变化 → 按钮使能实时刷新（对标 Qt 内部 completeChanged
+       到 QWizardPrivate::updateButtonLayout 的联动）。 */
+    XObject_connect_1((XObject*)page,
+                      (size_t)XWizardPage_completeChanged_signal(page),
+                      (XObject*)self, xwizard_pageCompleteChanged,
+                      XConnectionType_Direct);
     if (idx == 0) {
         XRect r;
         XWidget_setVisible((XWidget*)page, true);

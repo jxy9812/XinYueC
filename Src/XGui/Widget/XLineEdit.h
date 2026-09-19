@@ -1,36 +1,44 @@
-﻿/**
+/**
  * @file       XLineEdit.h
  * @brief      XLineEdit 单行文本编辑控件（对标 Qt 6.8 QLineEdit 全部公共 API）。
  * @details    功能范围：
- *             - 文本编辑：可打印 ASCII 字符插入、Backspace/Delete、
- *               Left/Right/Home/End 光标移动（光标按 UTF-8 字符边界
- *               移动，内部以字节偏移存储）；中文 IME 输入为后续扩展；
+ *             - 编辑引擎：文本/光标/选区/撤销/剪贴板/输入掩码/校验/回显
+ *               状态机/IME/命中测试/键盘分派全部迁入私有控制器
+ *               XLineControl（对标 Qt 6.8 QLineEdit 持 QWidgetLineControl
+ *               的壳-控制器关系），本控件为壳：持有控制器、编排事件与
+ *               绘制、维护壳属性并转发控制器信号为公开信号；
+ *             - 文本编辑：可打印字符插入、Backspace/Delete、方向/Home/
+ *               End 光标移动（按 UTF-8 字符边界，控制器内部以字节偏移
+ *               存储）、Ctrl 快捷键族（全选/复制/剪切/粘贴/撤销/重做）；
  *             - 回显模式：Normal / NoEcho / Password / PasswordEchoOnEdit
- *               （数值与 Qt 6.8 QLineEdit::EchoMode 完全一致）；
+ *               （数值与 Qt 6.8 QLineEdit::EchoMode 完全一致）；焦点状态
+ *               由壳推送控制器（PasswordEchoOnEdit 三态）；
  *             - maxLength 钳位、readOnly 只读、placeholder 占位提示
  *               （空文本时灰显）、alignment 对齐、frame 边框开关；
- *             - 选区：Shift+方向键扩展、setSelection、绘制反色高亮；
- *             - 撤销/重做：每次用户编辑前快照文本入栈（栈深 20）；
- *             - 剪贴板：cut/copy/paste 经 XGuiApplication_clipboard 的
- *               XClipboard（XCLIPBOARD_ON 且 XGUIAPPLICATION_ON 且应用
- *               存在时）；不可用时回退到控件内部缓冲；
- *             - 校验与掩码：validator 函数指针、inputMask 字符串
- *               （绘制时按掩码过滤显示、输入按掩码逐字符校验）；
- *             - 光标竖线（焦点内常显，闪烁为后续扩展）；文本超宽时
- *               水平滚动跟随光标（简化估算度量）；
- *             - 补全器：setCompleter/completer（借用 XCompleter，不拥有）；
- *               安装后把补全器的 widget 关联到本编辑框，并在用户编辑
- *               文本时同步 completionPrefix（InlineCompletion 模式下
- *               额外把补全余下部分写入文本并保持选中，对齐 Qt 内联补全）；
- *             - 输入法查询：inputMethodQuery 为文档化退化实现（恒 0，
- *               输入法属性查询走 XInputMethod 的焦点对象回调）；
+ *             - 选区：Shift+方向键扩展、setSelection、控制器绘制反色
+ *               高亮；
+ *             - 撤销/重做：控制器命令差量栈（对标 Qt 按字分组/按删除段
+ *               分组）；
+ *             - 剪贴板：cut/copy/paste 经控制器（XClipboard，模式
+ *               Clipboard）；
+ *             - 校验与掩码：validator 函数指针（本控件公开 API 面，经
+ *               适配钩子下发控制器）、inputMask 字符串（控制器全套
+ *               parse/mask/clear/strip/find 语义）；
+ *             - 光标竖线（焦点内常显，与迁移前行为一致；闪烁为控制器
+ *               既有能力，壳暂不启用以保持行为不变）；文本超宽时水平
+ *               滚动跟随光标（滚动钳位留壳，光标→X 取控制器）；
+ *             - 补全器：setCompleter/completer（借用 XCompleter，不拥
+ *               有）；安装后把补全器的 widget 关联到本编辑框，键盘输
+ *               入路径由控制器 complete() 推进补全状态；
+ *             - 输入法：inputMethodEvent 经控制器 processInputMethodEvent
+ *               （提交串整串直插语义不变，preedit 组合区为控制器增量）；
  *             - 信号：textChanged(const char*)、textEdited(const char*)、
  *               cursorPositionChanged(int,int)、returnPressed()、
  *               editingFinished()、selectionChanged()、inputRejected()。
  * @note       模块总开关 XLINEEDIT_ON 定义于 XGuiConfig.h；=0 时裁剪
- *             全部公共 API。依赖 XWIDGET_ON、XPALETTE_ON、XPAINTER_ON；
- *             剪贴板能力依赖 XCLIPBOARD_ON/XGUIAPPLICATION_ON（关闭时
- *             自动回退内部缓冲）。
+ *             全部公共 API。依赖 XWIDGET_ON、XPALETTE_ON、XPAINTER_ON、
+ *             XLINECONTROL_ON（控制器关闭时本控件无法编译）。剪贴板能
+ *             力依赖控制器（XCLIPBOARD_ON/XGUIAPPLICATION_ON）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XLINEEDIT_H
@@ -48,16 +56,21 @@ extern "C" {
 #include "XPainter.h"
 #include "XAlignment.h"
 #include "XAction.h"
+#include "XLineControl.h"
 #if XMENU_ON
 #include "XMenu.h"
 #endif /* XMENU_ON */
+
+#if XWIDGET_ON && XLINEEDIT_ON && !XLINECONTROL_ON
+#error "XLineEdit 需要私有控制器 XLineControl（XGuiConfig.h: XLINECONTROL_ON）"
+#endif
 
 /** @brief XCompleter 前向声明（补全器见 XCompleter.h；借用，不拥有）。 */
 typedef struct XCompleter XCompleter;
 
 #if XWIDGET_ON && XLINEEDIT_ON
 
-/** @brief 撤销/重做栈深度（对齐 Qt QLineEdit 内部 20 步上限）。 */
+/** @brief 撤销/重做栈深度（历史常量；栈本体已迁控制器命令差量栈）。 */
 #define XLINEEDIT_UNDO_DEPTH 20
 
 /**
@@ -78,7 +91,8 @@ typedef enum XLineEditActionPosition
  * @brief      回显模式（对标 QLineEdit::EchoMode，数值完全一致）。
  * @details    Normal 正常回显；NoEcho 完全不显示；Password 全部显示
  *             '*'；PasswordEchoOnEdit 在编辑（获得焦点）时正常回显、
- *             失焦后按 Password 显示。
+ *             失焦后按 Password 显示。状态位存于控制器，由壳在焦点
+ *             变化时推送（updatePasswordEchoEditing）。
  */
 typedef enum XLineEditEchoMode
 {
@@ -91,7 +105,8 @@ typedef enum XLineEditEchoMode
 /**
  * @brief      光标移动风格（对标 Qt::CursorMoveStyle，数值一致）。
  * @details    LogicalMoveStyle 按文本逻辑顺序移动；VisualMoveStyle 按
- *             视觉方向移动。本实现当前仅存储字段，两种风格行为一致。
+ *             视觉方向移动。单行 LTR 布局下两风格行为一致（控制器
+ *             语义）。
  */
 typedef enum XLineEditCursorMoveStyle
 {
@@ -126,69 +141,42 @@ XCLASS_DEFINE_EXTEND_END(XLineEdit, XWidget)
 
 /**
  * @brief      XLineEdit 单行编辑控件对象；m_base 必须是第一个成员。
- * @details    字段含义：
- *             - m_text：动态缓冲的 UTF-8 文本（NUL 结尾，堆分配）；
+ * @details    壳-控制器分工（对标 Qt QLineEdit → QWidgetLineControl）：
+ *             编辑逻辑（文本缓冲、光标/选区、撤销栈、回显状态机、输入
+ *             掩码、校验、IME、剪贴板、命中测试、键盘分派、补全联动与
+ *             绘制数据）全部由 m_control 指向的 XLineControl 持有；壳仅
+ *             保留：
+ *             - m_control：编辑控制器（拥有；init 创建，deinit 销毁）；
  *             - m_placeholder：占位提示文本（固定缓冲，空文本时绘制）；
- *             - m_cursor：光标的 UTF-8 字节偏移（0..strlen）；
- *             - m_anchor：选区锚点的 UTF-8 字节偏移；与 m_cursor 不等时
- *               表示存在选区（[min,max) 为选中区间）；
- *             - m_viewOffset：水平滚动偏移（文本超宽时跟随光标）；
- *             - m_maxLength：最大字符数（0 = 不限制）；
- *             - m_echoMode：回显模式（XLineEditEchoMode）；
- *             - m_readOnly：只读（拒绝编辑，允许移动与选择）；
- *             - m_frame：是否绘制凹陷边框（默认 true）；
- *             - m_alignment：文本水平对齐（默认 Left）；
- *             - m_displayBuf：显示文本缓存（回显+掩码过滤后，堆分配）；
- *             - m_inputMask：输入掩码字符串（堆分配，NULL=无掩码）；
- *             - m_validator/m_validatorUserData：校验回调与上下文（借用）；
- *             - m_clearButtonEnabled：清除按钮开关（点击清空文本）；
- *             - m_dragEnabled：拖拽开关（后续扩展，仅存储）；
- *             - m_cursorMoveStyle：光标移动风格（仅存储）；
- *             - m_textMargins：文本边距（像素，绘制与尺寸提示使用）；
- *             - m_modified：用户是否修改过文本（isModified）；
- *             - m_undoStack/m_redoStack/m_undoCount/m_redoCount：
- *               撤销/重做栈（每项为文本快照，栈深 XLINEEDIT_UNDO_DEPTH）；
- *             - m_clipboardText：剪贴板回退缓冲（系统剪贴板不可用时用）；
- *             - m_clearButtonRect：清除按钮命中矩形（绘制时记录）；
- *             - m_completer：补全器借用指针（不拥有）；安装后用户编辑
- *               文本时同步补全前缀；
- *             - m_completerSyncing：补全器同步重入保护（内部使用）。
+ *             - m_viewOffset：水平滚动偏移（像素；滚动钳位留壳，光标
+ *               →X 由控制器提供）；
+ *             - m_frame/m_alignment/m_textMargins：面板与文本区属性；
+ *             - m_finishedPending：自上次 editingFinished 后用户是否编
+ *               辑过（壳失焦门禁，对标 Qt d->edited）；
+ *             - m_clearButtonEnabled/m_clearButtonRect：清除按钮本体；
+ *             - m_validator/m_validatorUserData：校验回调公开 API 面
+ *               （经适配钩子下发控制器，回调 self 恒为壳指针）；
+ *             - m_actions/m_actionPositions/m_actionCount：内置 action
+ *               槽（对标 QLineEditPrivate side widget 体系）。
  *             调用者不得手工修改字段；一律走公开 API。
  */
 typedef struct XLineEdit
 {
     XWidget m_base;                  /**< 基类成员；必须是第一个。 */
-    char*   m_text;                  /**< 文本动态缓冲（NUL 结尾）。 */
+    XLineControl* m_control;         /**< 编辑控制器（拥有；对标 Qt d->control）。 */
     XString* m_placeholder;         /**< 占位提示（对象拥有）。 */
-    size_t  m_cursor;                /**< 光标字节偏移。 */
-    size_t  m_anchor;                /**< 选区锚点字节偏移（无选区时==m_cursor）。 */
-    int     m_viewOffset;            /**< 水平滚动偏移（像素，简化估算）。 */
-    int     m_maxLength;             /**< 最大字符数；0 = 不限制。 */
-    int     m_echoMode;              /**< 回显模式（XLineEditEchoMode）。 */
-    bool    m_readOnly;              /**< 只读。 */
+    int     m_viewOffset;            /**< 水平滚动偏移（像素，滚动钳位留壳）。 */
     bool    m_frame;                 /**< 是否绘制边框。 */
     int     m_alignment;             /**< 文本对齐（XAlignment 组合）。 */
-    char*   m_displayBuf;            /**< 显示文本缓存（回显+掩码过滤；拥有）。 */
-    char*   m_inputMask;             /**< 输入掩码（拥有；NULL=无）。 */
+    XMargins m_textMargins;          /**< 文本边距（像素）。 */
+    bool    m_finishedPending;       /**< 自上次 editingFinished 后用户是否编辑过。 */
+    bool    m_clearButtonEnabled;    /**< 清除按钮开关（点击清空文本）。 */
+    XRect   m_clearButtonRect;       /**< 清除按钮命中矩形（绘制时记录）。 */
     XLineEditValidatorFunc m_validator;  /**< 校验回调（借用；NULL=无）。 */
     void*   m_validatorUserData;     /**< 校验回调上下文（借用）。 */
-    bool    m_clearButtonEnabled;    /**< 清除按钮开关（点击清空文本）。 */
-    bool    m_dragEnabled;           /**< 拖拽开关（后续扩展，仅存储）。 */
-    int     m_cursorMoveStyle;       /**< 光标移动风格（XLineEditCursorMoveStyle）。 */
-    XMargins m_textMargins;          /**< 文本边距（像素）。 */
-    bool    m_modified;              /**< 用户是否修改过文本。 */
-    bool    m_finishedPending;       /**< 自上次 editingFinished 后用户是否编辑过。 */
-    char*   m_undoStack[XLINEEDIT_UNDO_DEPTH];  /**< 撤销栈（拥有）。 */
-    int     m_undoCount;             /**< 撤销栈深度。 */
-    char*   m_redoStack[XLINEEDIT_UNDO_DEPTH];  /**< 重做栈（拥有）。 */
-    int     m_redoCount;             /**< 重做栈深度。 */
-    char*   m_clipboardText;         /**< 剪贴板回退缓冲（拥有）。 */
-    XRect   m_clearButtonRect;       /**< 清除按钮命中矩形（绘制时记录）。 */
     XAction* m_actions[XLINEEDIT_MAX_ACTIONS]; /**< 内置 action 槽（借用指针）。 */
     uint8_t  m_actionPositions[XLINEEDIT_MAX_ACTIONS]; /**< 各 action 位置。 */
     uint8_t  m_actionCount;          /**< 已注册 action 数。 */
-    XCompleter* m_completer;         /**< 补全器（借用，不拥有；默认 NULL）。 */
-    bool     m_completerSyncing;     /**< 补全器同步重入保护（内部使用）。 */
 } XLineEdit;
 
 /* ==================== 生命周期 ==================== */
@@ -241,15 +229,15 @@ XLineEdit* XLineEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags
  * @param      self 编辑框对象借用指针；可为 NULL。
  * @return     内部文本的借用指针（UTF-8，NUL 结尾）；self 为 NULL 时
  *             返回空字符串。返回指针不得释放或修改，生命周期同 self
- *             及下一次文本修改前的状态。
+ *             及下一次文本修改前的状态。设置了输入掩码时按控制器
+ *             stripString 语义剥离未填占位（对标 Qt）。
  */
 const char* XLineEdit_text(const XLineEdit* self);
 /**
  * @brief      查询按回显模式处理的显示文本（对标 QLineEdit::displayText）。
- * @details    返回内部显示缓存借用指针：NoEcho 为空串；Password /
- *             PasswordEchoOnEdit（失焦）为逐字符 '*'；设置了 inputMask
- *             时按掩码过滤（不匹配的字符以占位符显示）。显示缓存随
- *             文本、回显模式、掩码与焦点变化自动刷新。
+ * @details    返回控制器显示文本借用指针：NoEcho 为空串；Password /
+ *             PasswordEchoOnEdit（非编辑态）为逐字符 '*'；显示文本随
+ *             文本、回显模式、掩码与焦点状态（壳推送）自动刷新。
  * @param      self 编辑框对象借用指针；可为 NULL。
  * @return     显示文本借用指针（UTF-8）；self 为 NULL 时返回空字符串。
  *             返回指针不得释放或修改。
@@ -260,12 +248,13 @@ const char* XLineEdit_displayText(const XLineEdit* self);
  * @details    光标移到末尾、清除选区；发射 textChanged；内容相同则忽略。
  *             按 Qt 语义清空撤销/重做历史，且不改变 isModified。
  * @param      self 目标编辑框；可为 NULL。
- * @param      text 新文本（UTF-8）；可为 NULL 等价空串；函数不取得所有权。
+ * @param      text 新文本（UTF-8）；NULL 时忽略并保持原状态；函数不取得
+ *             所有权。
  * @return     无返回值；self 为 NULL 或分配失败时保持原状态。
  */
 void XLineEdit_setText(XLineEdit* self, const char* text);
 /**
- * @brief      清空文本（对标 QLineEdit::clear；等价 setText("")）。
+ * @brief      清空文本（对标 QLineEdit::clear）。
  * @param      self 目标编辑框；可为 NULL。
  * @return     无返回值。
  */
@@ -273,8 +262,9 @@ void XLineEdit_clear(XLineEdit* self);
 /**
  * @brief      在光标处插入文本（对标 QLineEdit::insert）。
  * @details    替换当前选区；按 maxLength 与 inputMask 过滤；插入成功
- *             视为用户编辑（置 modified、压入撤销栈、发射 textChanged
- *             与 textEdited）。readOnly 时忽略。
+ *             视为用户编辑（置 modified、记录撤销、发射 textChanged
+ *             与 textEdited）。readOnly 时忽略。被掩码/长度/校验拒绝
+ *             时由控制器发射 inputRejected。
  * @param      self 目标编辑框；可为 NULL。
  * @param      utf8 待插入文本（UTF-8）；可为 NULL。
  * @return     无返回值；全部字符被掩码/长度拒绝时不改变文本。
@@ -296,7 +286,8 @@ int XLineEdit_echoMode(const XLineEdit* self);
 /**
  * @brief      设置回显模式并重绘（对标 QLineEdit::setEchoMode）。
  * @details    仅接受 XLineEditEchoMode 的 4 个合法值；切换时清除选区
- *             并把光标移到末尾（Qt 语义）。
+ *             并把光标移到末尾（Qt 语义），并取消控制器密码回显定时
+ *             器/复位编辑态。
  * @param      self 目标编辑框；可为 NULL。
  * @param      echoMode 目标回显模式（0..3）。
  * @return     无返回值；非法模式或未变化时保持原状态。
@@ -308,7 +299,8 @@ int XLineEdit_maxLength(const XLineEdit* self);
  * @brief      设置最大字符数（对标 QLineEdit::setMaxLength）。
  * @details    超长现有文本截断并发射 textChanged；不改变 isModified。
  * @param      self 目标编辑框；可为 NULL。
- * @param      maxLength 新上限；负数按 0（不限制）处理。
+ * @param      maxLength 新上限；0 表示不限制（控制器侧以 32767 承载）；
+ *             负数忽略（保持原状态）。
  * @return     无返回值。
  */
 void XLineEdit_setMaxLength(XLineEdit* self, int maxLength);
@@ -329,7 +321,7 @@ bool XLineEdit_isClearButtonEnabled(const XLineEdit* self);
 /**
  * @brief      设置清除按钮开关（对标 QLineEdit::setClearButtonEnabled）。
  * @details    启用后文本非空时在右侧绘制小叉提示，点击清除文本（视为
- *             用户编辑：置 modified、压入撤销栈）。图标为内置简笔绘制，
+ *             用户编辑：置 modified、记录撤销）。图标为内置简笔绘制，
  *             完整图标资源为后续扩展。
  * @param      self 目标编辑框；可为 NULL。
  * @param      enable true 启用，false 关闭。
@@ -339,8 +331,9 @@ void XLineEdit_setClearButtonEnabled(XLineEdit* self, bool enable);
 /**
  * @brief      设置文本校验回调（对标 QLineEdit::setValidator 的 C 适配）。
  * @details    校验回调为借用指针，函数不取得所有权；编辑产生的文本若
- *             校验为 Invalid 将被拒绝并发射 inputRejected；
- *             hasAcceptableInput 要求校验为 Acceptable。
+ *             校验为 Invalid 将被控制器回滚并发射 inputRejected；
+ *             hasAcceptableInput 要求校验为 Acceptable。回调的 self
+ *             参数恒为本编辑框（壳）指针。
  * @param      self 目标编辑框；可为 NULL。
  * @param      validator 校验回调；可为 NULL 清除校验。
  * @param      userData 回调上下文（借用）；随 validator 一起保存。
@@ -386,20 +379,22 @@ void XLineEdit_addAction(XLineEdit* self, XAction* action, int position);
 /**
  * @brief      查询光标竖线矩形（对标 QLineEdit::cursorRect）。
  * @details    返回控件本地坐标中光标竖线（1px 宽、文本行高）的矩形，
- *             与绘制一致（含边框/action 区偏移与水平滚动）。
+ *             与绘制一致（含边框/action 区偏移与水平滚动）；光标→X
+ *             由控制器 cursorToX 提供，壳做 contents 偏移换算。
  * @param      self 编辑框对象；可为 NULL。
  * @return     光标矩形；self 为 NULL 时返回零矩形。
  */
 XRect XLineEdit_cursorRect(const XLineEdit* self);
 
-/** @brief 查询光标位置（对标 QLineEdit::cursorPosition；UTF-8 字节偏移 0..strlen）。 */
+/** @brief 查询光标位置（对标 QLineEdit::cursorPosition；字符位置（字符索引，非字节） 0..strlen）。 */
 int XLineEdit_cursorPosition(const XLineEdit* self);
 /**
  * @brief      设置光标位置（对标 QLineEdit::setCursorPosition）。
  * @details    自动钳位并对齐 UTF-8 字符边界；清除选区（Qt 语义）。
  *             位置变化时发射 cursorPositionChanged。
  * @param      self 目标编辑框；可为 NULL。
- * @param      position 目标字节偏移；负数按 0、超出按 strlen 处理。
+ * @param      position 目标字符位置（字符索引）；负数按 0、超出按
+ *             strlen 处理。
  * @return     无返回值。
  */
 void XLineEdit_setCursorPosition(XLineEdit* self, int position);
@@ -407,7 +402,7 @@ void XLineEdit_setCursorPosition(XLineEdit* self, int position);
  * @brief      查询指定像素位置的字符位置（对标 QLineEdit::cursorPositionAt）。
  * @param      self 编辑框对象借用指针；可为 NULL。
  * @param      pos 编辑框局部坐标；可为 NULL（等价位置 0）。
- * @return     对应光标的 UTF-8 字节偏移（0..strlen）；self 为 NULL 返回 0。
+ * @return     对应光标的 字符位置（字符索引，非字节）（0..strlen）；self 为 NULL 返回 0。
  */
 int XLineEdit_cursorPositionAt(const XLineEdit* self, const XPoint* pos);
 
@@ -497,10 +492,10 @@ void XLineEdit_setModified(XLineEdit* self, bool modified);
 
 /**
  * @brief      设置选区（对标 QLineEdit::setSelection）。
- * @details    start 为 UTF-8 字节偏移；length 为字符数（可为负，负值
+ * @details    start 为 字符位置（字符索引，非字节）；length 为字符数（可为负，负值
  *             表示向 start 左侧扩展）。选区变化发射 selectionChanged。
  * @param      self 目标编辑框；可为 NULL。
- * @param      start 选区起点字节偏移；负数按 0、超出按 strlen 处理。
+ * @param      start 选区起点字符位置；负数按 0、超出按 strlen 处理。
  * @param      length 选区长度（字符数）；0 表示清除选区。
  * @return     无返回值。
  */
@@ -521,13 +516,13 @@ char* XLineEdit_selectedText(const XLineEdit* self);
 /**
  * @brief      查询选区起点（对标 QLineEdit::selectionStart）。
  * @param      self 编辑框对象借用指针；可为 NULL。
- * @return     起点 UTF-8 字节偏移；无选区或 self 为 NULL 返回 -1。
+ * @return     起点 字符位置（字符索引，非字节）；无选区或 self 为 NULL 返回 -1。
  */
 int XLineEdit_selectionStart(const XLineEdit* self);
 /**
  * @brief      查询选区终点（对标 QLineEdit::selectionEnd）。
  * @param      self 编辑框对象借用指针；可为 NULL。
- * @return     终点 UTF-8 字节偏移；无选区或 self 为 NULL 返回 -1。
+ * @return     终点 字符位置（字符索引，非字节）；无选区或 self 为 NULL 返回 -1。
  */
 int XLineEdit_selectionEnd(const XLineEdit* self);
 /**
@@ -585,16 +580,16 @@ void XLineEdit_redo(XLineEdit* self);
 
 /**
  * @brief      剪切选区文本到剪贴板（对标 QLineEdit::cut）。
- * @details    剪贴板经 XGuiApplication_clipboard 的 XClipboard
- *             （XClipboardMode_Clipboard）；剪贴板不可用时回退控件内部
- *             缓冲。readOnly 或无选区时无操作。
+ * @details    剪贴板经控制器（XClipboardMode_Clipboard）。readOnly 或
+ *             无选区时无操作。
  * @param      self 目标编辑框；可为 NULL。
  * @return     无返回值。
  */
 void XLineEdit_cut(XLineEdit* self);
 /**
  * @brief      复制选区文本到剪贴板（对标 QLineEdit::copy）。
- * @details    剪贴板机制同 cut；无选区时无操作。
+ * @details    剪贴板机制同 cut；无选区时无操作。密码类回显下为防泄
+ *             露不写剪贴板（控制器语义，对标 Qt）。
  * @param      self 目标编辑框；可为 NULL。
  * @return     无返回值。
  */
@@ -602,7 +597,7 @@ void XLineEdit_copy(XLineEdit* self);
 /**
  * @brief      从剪贴板粘贴文本到光标处（对标 QLineEdit::paste）。
  * @details    替换选区；按 maxLength 与 inputMask 过滤；粘贴视为用户
- *             编辑（置 modified、压入撤销栈）。剪贴板文本非空但全部
+ *             编辑（置 modified、记录撤销）。剪贴板文本非空但全部
  *             被拒绝时发射 inputRejected。readOnly 时无操作。
  * @param      self 目标编辑框；可为 NULL。
  * @return     无返回值。
@@ -714,10 +709,10 @@ XMargins XLineEdit_textMargins(const XLineEdit* self);
  *             关联控件仍是本编辑框则同步置空，避免悬挂借用。补全器仅
  *             保存借用指针，生命周期由调用方管理：销毁补全器前必须先
  *             以 NULL 调用本函数解绑。
- * @note       补全器联动本体未建：用户编辑文本时已同步 completionPrefix
- *             与内联补全（XTABLEWIDGET_ON 门控），弹出列表（popup）联动
- *             不在本控件内实现；本接口此前经死声明清理移除，现按不透明
- *             指针承载方案恢复接口存在性。
+ * @note       补全联动本体由控制器承载：键盘输入路径经控制器
+ *             complete() 同步 completionPrefix 与内联补全
+ *             （XTABLEWIDGET_ON 门控），弹出列表（popup）联动不在本
+ *             控件内实现。
  * @param      self 目标编辑框；可为 NULL。
  * @param      completer 补全器借用指针；可为 NULL 表示解绑。
  * @return     无返回值；重复设置同一补全器为无操作。
@@ -735,9 +730,8 @@ XCompleter* XLineEdit_completer(const XLineEdit* self);
 /**
  * @brief      textChanged(const char*) 信号标识（对标 QLineEdit::textChanged）。
  * @details    文本因任何原因变化（程序化或用户编辑）时由控件内部发射；
- *             参数为变化后的完整文本（UTF-8，借用）。self 仅用于占位，
- *             本实现中信号函数恒为标识获取器，发射由控件内部调用
- *             XObject_emitSignal 完成。
+ *             参数为变化后的完整文本（UTF-8，借用）。发射源为控制器
+ *             textChanged 信号的壳转发（发射点唯一，对标 Qt）。
  * @param      self 编辑框对象借用指针；可为 NULL。
  * @return     不透明的信号标识；不得解引用或释放。
  */
@@ -754,7 +748,7 @@ void* XLineEdit_textEdited_signal(XLineEdit* self);
  * @brief      cursorPositionChanged(int,int) 信号标识（对标
  *             QLineEdit::cursorPositionChanged）。
  * @details    光标位置变化（用户移动或 setCursorPosition）时发射；参数
- *             为旧位置与新位置（UTF-8 字节偏移）。
+ *             为旧位置与新位置（字符位置（字符索引，非字节））。
  * @param      self 编辑框对象借用指针；可为 NULL。
  * @param      oldPos 旧光标字节偏移（仅占位，本实现不用于发射判定）。
  * @param      newPos 新光标字节偏移（仅占位）。
@@ -785,7 +779,7 @@ void* XLineEdit_selectionChanged_signal(XLineEdit* self);
 /**
  * @brief      inputRejected() 信号标识（对标 QLineEdit::inputRejected）。
  * @details    键盘输入被掩码/长度/校验拒绝，或剪贴板文本被完全拒绝时
- *             发射。
+ *             发射（发射点唯一：控制器 inputRejected 的壳转发）。
  * @param      self 编辑框对象借用指针；可为 NULL。
  * @return     不透明的信号标识。
  */

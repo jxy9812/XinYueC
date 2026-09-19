@@ -90,6 +90,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XAbstractButton.h"
 #include "XClipboard.h"
 #include "XLineEdit.h"
+#include "XLineControl.h"
 #include "XLineEditTest.h"
 #include "XSliderTest.h"
 #include "XSpinBoxTest.h"
@@ -21022,6 +21023,8 @@ static void test_lineedit_context_menu_contract(void)
     /* ---- 可编辑态：undo/redo/分隔/剪切/复制/粘贴/删除/分隔/全选 ---- */
     XLineEdit_setText(edit, "hello");
     XLineEdit_selectAll(edit);
+    XTextClipboard_setText(""); /* 清空残留剪贴板，确保粘贴初始禁用 */
+    XClipboard_clear(XGuiApplication_clipboard(), XClipboardMode_Clipboard);
     menu = XLineEdit_createStandardContextMenu(edit);
     expect_true(menu != NULL, "标准上下文菜单创建");
     expect_true(XObject_objectName((XObject*)menu) != NULL &&
@@ -24849,9 +24852,11 @@ static void test_checkbox_contract(void)
     expect_true(XCheckBox_isCheckable(&box) &&
                 XCheckBox_checkState(&box) == XCheckState_Unchecked,
                 "XCheckBox 默认可选且未选中");
+    /* 对标 Qt SE_CheckBoxClickRect = indicator ∪ 文本区：标签文字
+       区域同样命中（2026-09-19 修正，此前仅 indicator 可点）。 */
     expect_true(XCheckBox_hitButton(&box, &inside) &&
-                !XCheckBox_hitButton(&box, &outside),
-                "XCheckBox 只命中 indicator 区域");
+                XCheckBox_hitButton(&box, &outside),
+                "XCheckBox 文本区域同属点击命中区");
     XCheckBox_setTristate(&box, true);
     XCheckBox_setCheckState(&box, XCheckState_PartiallyChecked);
     expect_true(XCheckBox_checkState(&box) == XCheckState_PartiallyChecked,
@@ -28062,9 +28067,12 @@ static void test_phase31_p1_contract(void)
         tgot = XDateTimeEdit_minimumTime(edit);
         p31_expect(XTime_minute(&tgot) == 0,
                    "clearMinimumDateTime 复位完整最小值");
-        p31_expect(XDateTimeEdit_currentSectionIndex(edit) ==
-                   XDateTimeEdit_currentSection(edit),
-                   "currentSectionIndex 别名与 currentSection 一致");
+        /* 对齐 Qt：currentSectionIndex 为显示格式中的 0 基序号，
+         * currentSection 为分段枚举码，两者本就不同轴。 */
+        p31_expect(XDateTimeEdit_currentSectionIndex(edit) >= 0 &&
+                   XDateTimeEdit_currentSectionIndex(edit) <
+                       XDateTimeEdit_sectionCount(edit),
+                   "currentSectionIndex 落在分段序号范围内");
 
         XDateTimeEdit_setDateRange(edit, &dmin, &dmax);
         got = XDateTimeEdit_minimumDate(edit);
@@ -28600,6 +28608,14 @@ static void test_phase32_p2_contract(void)
         XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
         XPoint cur;
         XPlainTextEdit_setPlainText(pe, "hello\nworld");
+        /* 固定 8x16 点阵字体：行高 16px，使命中坐标与默认轮廓字体解耦。 */
+        {
+            XFont hitFont;
+            XFont_init(&hitFont);
+            XFont_setFamily(&hitFont, "XFont8x16");
+            XWidget_setFont((XWidget*)pe, &hitFont);
+            XFont_deinit_base(&hitFont);
+        }
         cur = XPlainTextEdit_cursorForPosition(pe, &(XPoint){4, 18});
         p32_expect(cur.x == 1 && cur.y >= 0, "pe: cursorForPosition 反查");
         XPlainTextEdit_setCurrentCharFormat(pe, 0x1);
@@ -28940,12 +28956,15 @@ static void test_phase32_p2_contract(void)
         }
         XString_delete_base(plain);
         XTextEdit_setText(te, "line"); /* 纯文本探测分流 */
+        /* 对标 Qt：程序化 setText 清空撤销栈（不进撤销）。 */
+        p32_expect(!XTextEdit_canUndo(te), "xte: setText 清空撤销栈");
+        XTextEdit_insertPlainText(te, "X"); /* 编辑原语产生撤销快照 */
         p32_expect(XTextEdit_canUndo(te), "xte: canUndo 有撤销快照");
         XTextEdit_undo(te);
         {
-            /* 行为级验证:undo 后文本回退(不再是 "line")。 */
+            /* 行为级验证:undo 后文本回退到 setText 内容。 */
             XString* plain2 = XTextEdit_toPlainText(te);
-            p32_expect(plain2 && !XString_equals_utf8(plain2, "line",
+            p32_expect(plain2 && XString_equals_utf8(plain2, "line",
                        XChar_CaseSensitive),
                        "xte: undo 文本回退");
             if (plain2) XString_delete_base(plain2);
@@ -28995,7 +29014,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(title && XString_equals_utf8(title, "t1", XChar_CaseSensitive),
                    "pe: documentTitle 回读");
         if (title) XString_delete_base(title);
-        XPlainTextEdit_moveCursor(pe, 6, 0);
+        XPlainTextEdit_moveCursor(pe, 11, 0); /* 11 = XTextControlMove_End（Qt End） */
         p32_expect(XPlainTextEdit_cursorLine(pe) == 2, "pe: moveCursor End 到末行");
         XPlainTextEdit_appendHtml(pe, "<b>bold</b>");
         p32_expect(XStrstr(XPlainTextEdit_toPlainText(pe), "bold") != NULL,

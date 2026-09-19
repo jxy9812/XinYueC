@@ -377,6 +377,37 @@ static void VXComboBox_deinit(XComboBox* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/** @brief 键盘：Up/Down/Home/End 改当前项（对标 QComboBox 键盘导航；
+ *  可编辑模式下焦点在内嵌编辑框，本路径仅服务非编辑焦点）。 */
+static void VXComboBox_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XComboBox* combo = (XComboBox*)self;
+    XKeyEvent* ke;
+    int key;
+    int idx;
+    int count;
+    if (!combo || !event ||
+        XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
+    if (combo->m_editable) { XEvent_ignore(event); return; }
+    ke = (XKeyEvent*)event;
+    key = ke->m_key;
+    idx = XComboBox_currentIndex(combo);
+    count = XComboBox_count(combo);
+    if (key == (int)XKey_Up && idx > 0)
+        XComboBox_setCurrentIndex(combo, idx - 1);
+    else if (key == (int)XKey_Down && idx + 1 < count)
+        XComboBox_setCurrentIndex(combo, idx + 1);
+    else if (key == (int)XKey_Home && count > 0)
+        XComboBox_setCurrentIndex(combo, 0);
+    else if (key == (int)XKey_End && count > 0)
+        XComboBox_setCurrentIndex(combo, count - 1);
+    else {
+        XEvent_ignore(event);
+        return;
+    }
+    XEvent_accept(event);
+}
+
 XVtable* XComboBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XComboBox)
@@ -387,6 +418,7 @@ XVtable* XComboBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXComboBox_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXComboBox_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXComboBox_changeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXComboBox_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXComboBox_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXComboBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXComboBox_move);
@@ -533,6 +565,27 @@ bool XComboBox_isEditable(const XComboBox* self)
     return self ? self->m_editable : false;
 }
 
+/** @brief 转发槽：内嵌编辑框 textChanged → editTextChanged(text)
+ *  （此前 editTextChanged 仅声明无发射点，永不触发）。 */
+static void xcombo_editTextChangedFwd(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    const char* text = NULL;
+    if (!args || !self) {
+        if (args) XVarList_delete(args);
+        return;
+    }
+    XVarList_args_1(args, const char*, t);
+    text = t ? t : "";
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XComboBox_editTextChanged_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
 void XComboBox_setEditable(XComboBox* self, bool editable)
 {
     if (!self || self->m_editable == editable) return;
@@ -547,6 +600,13 @@ void XComboBox_setEditable(XComboBox* self, bool editable)
                                         XCOMBOBOX_BUTTON_W - 4,
                                     XWidget_height((XWidget*)self) - 4);
                 XWidget_show((XWidget*)self->m_lineEdit);
+                /* 对标 Qt：可编辑模式的编辑文本变化发射 editTextChanged
+                 * （此前信号无发射点，永不触发）。 */
+                XObject_connect_1(
+                    (XObject*)self->m_lineEdit,
+                    (size_t)XLineEdit_textChanged_signal(self->m_lineEdit),
+                    (XObject*)self, xcombo_editTextChangedFwd,
+                    XConnectionType_Direct);
             }
         }
     }

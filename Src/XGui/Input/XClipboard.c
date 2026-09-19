@@ -14,6 +14,25 @@
 
 #include "XPixmap.h"
 /** @brief 单个剪贴板模式的数据单元。 */
+static XClipboardBackend g_clipboardBackend;
+static int g_clipboardBackendInstalled = 0;
+
+void XClipboard_installBackend(const XClipboardBackend* backend)
+{
+    if (backend) {
+        g_clipboardBackend = *backend;
+        g_clipboardBackendInstalled = 1;
+    } else {
+        XMemset(&g_clipboardBackend, 0, sizeof(g_clipboardBackend));
+        g_clipboardBackendInstalled = 0;
+    }
+}
+
+static bool xclipboard_backendActive(void)
+{
+    return g_clipboardBackendInstalled && g_clipboardBackend.text != NULL;
+}
+
 typedef struct XClipboardModeData
 {
     XString*   m_text; /**< 纯文本（深拷贝）。 */
@@ -147,6 +166,8 @@ void XClipboard_clear(XClipboard* self, XClipboardMode mode)
         return;
     mode = clipboard_normalizeMode(mode);
     data = &self->m_data->m_modes[mode];
+    if (xclipboard_backendActive() && g_clipboardBackend.clear)
+        g_clipboardBackend.clear(g_clipboardBackend.ud, (int)mode);
     clipboard_clearModeData(data);
     clipboard_emitChanged(self, mode);
 }
@@ -158,6 +179,15 @@ XString* XClipboard_text(XClipboard* self, XClipboardMode mode)
         return NULL;
     mode = clipboard_normalizeMode(mode);
     data = &self->m_data->m_modes[mode];
+    if (xclipboard_backendActive() && g_clipboardBackend.text) {
+        char* raw = NULL;
+        if (g_clipboardBackend.text(g_clipboardBackend.ud, (int)mode,
+                                    &raw) && raw) {
+            XString* out = XString_create_utf8(raw);
+            XFree_System(raw);
+            return out;
+        }
+    }
     if (data->m_text)
         return XString_create_copy(data->m_text);
 #if XMIMEDATA_ON
@@ -200,6 +230,12 @@ void XClipboard_setText(XClipboard* self, const XString* text, XClipboardMode mo
     XMimeData* mime;
     if (!self || !self->m_data)
         return;
+    if (xclipboard_backendActive() && g_clipboardBackend.setText) {
+        /* 平台后端接管 OS 剪贴板；进程内镜像仍保留（本进程内
+         * 复制粘贴回环不再依赖平台往返）。 */
+        const char* utf8 = text ? XString_toUtf8(text) : "";
+        g_clipboardBackend.setText(g_clipboardBackend.ud, (int)mode, utf8);
+    }
     /* QClipboard::setText() 的 Qt 实现先构造 QMimeData，再转移所有权。 */
     mime = XMimeData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!mime)

@@ -20,6 +20,7 @@
 #include "XAlgorithm.h"
 #if XWIDGET_ON
 #include "XWidget.h"
+#include "XWidget_Protected.h"
 #endif /* XWIDGET_ON */
 
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
@@ -241,13 +242,14 @@ void XApplication_setFocusWidget(XWidget* widget)
 
 XWidget* XApplication_activeModalWidget(void)
 {
-    XApplication* app = g_xapp;
-    return app ? app->m_activeModalWidget : NULL;
+    /* 单一事实源：控件层的模态登记（XDialog/XShortcut 路径共用）。 */
+    return XWidget_applicationModalWidget();
 }
 
 void XApplication_setActiveModalWidget(XWidget* widget)
 {
     XApplication* app = g_xapp;
+    XWidget_setApplicationModalWidget(widget);
     if (app) app->m_activeModalWidget = widget;
 }
 

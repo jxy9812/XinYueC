@@ -21,8 +21,8 @@
  *             XABSTRACTBUTTON_ON（基类裁剪时本类一并裁剪）；绘制使用
  *             XPainter，不依赖任何平台 API。
  * @note       近似边界：QCheckBox 的快捷键、样式表/主题 bevel 未实现；
- *             hitButton 按 indicator 矩形命中（对标 Qt
- *             SE_CheckBoxClickRect，无主题时即 indicator 矩形）；m_mouseTracking
+ *             hitButton 按整控件矩形命中（对标 Qt
+ *             SE_CheckBoxClickRect = indicator ∪ 文本区）；m_mouseTracking
  *             悬停效果未实现；Qt 6.9 起废弃的 stateChanged(int) 信号不再
  *             提供，只对齐 Qt 6.7+ 的 checkStateChanged(Qt::CheckState)。
  * @author     XinYueC 团队

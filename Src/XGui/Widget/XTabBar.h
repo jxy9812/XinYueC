@@ -37,7 +37,10 @@ typedef struct XTabBar
     int     m_currentIndex;          /**< 当前项。 */
     bool*   m_enabled;               /**< 各项启用状态。 */
     bool    m_tabsClosable;          /**< 可关闭（字段保留）。 */
-    bool    m_movable;               /**< 可拖动（字段保留）。 */
+    bool    m_movable;               /**< 可拖动（拖拽换位 + tabMoved）。 */
+    bool    m_dragActive;            /**< 拖拽换位进行中。 */
+    int     m_dragIndex;             /**< 拖拽起始页签索引。 */
+    int     m_dragPressX;            /**< 按下时鼠标 x（本地坐标）。 */
 bool    m_autoHide;              /**< 自动隐藏。 */
     bool    m_expanding;             /**< 扩展。 */
     int     m_elideMode;             /**< 省略模式。 */

@@ -14,6 +14,7 @@
 #include "XEventLoop.h"
 #include "XGuiConfig.h"
 
+#include "XCoreApplication.h"
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 
@@ -44,10 +45,26 @@ static void xdlg_emitFinished(XDialog* self, int result)
     }
 }
 
+static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dialog = (XDialog*)self;
+    if (dialog && event &&
+        XEvent_type(event) == XEVENT_TYPE_KEY_PRESS) {
+        /* 对标 QDialog::keyPressEvent：Escape 触发 reject()。 */
+        if (((XKeyEvent*)event)->m_key == (int)XKey_Escape) {
+            XDialog_reject(dialog);
+            XEvent_accept(event);
+            return;
+        }
+    }
+    XWidget_keyPressEvent_base(self, event);
+}
+
 XVtable* XDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDialog)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXDialog_keyPressEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -80,8 +97,18 @@ int XDialog_exec(XDialog* self)
     if (!self) return 0;
     self->m_inExec = true;
     XWidget_show((XWidget*)self);
-    XGuiApplication_processEvents(XEventLoop_DialogExec);
-    self->m_inExec = false;
+    if (self->m_modal)
+        XWidget_setApplicationModalWidget((XWidget*)self);
+    /* 对标 QDialog::exec：阻塞于事件循环直到 done()。此前仅处理一批
+       事件即返回，模态语义不成立。 */
+    while (self->m_inExec) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents |
+                                       XEventLoop_WaitForMoreEvents);
+        if (self->m_modal && self->m_inExec)
+            XWidget_setApplicationModalWidget((XWidget*)self);
+    }
+    if (XWidget_applicationModalWidget() == (XWidget*)self)
+        XWidget_setApplicationModalWidget(NULL);
     return self->m_result;
 }
 
@@ -90,6 +117,8 @@ void XDialog_done(XDialog* self, int result)
     if (!self) return;
     self->m_result = result;
     self->m_inExec = false;
+    if (XWidget_applicationModalWidget() == (XWidget*)self)
+        XWidget_setApplicationModalWidget(NULL);
     XWidget_setVisible((XWidget*)self, false);
     xdlg_emitFinished(self, result);
 }
@@ -112,7 +141,14 @@ void XDialog_reject(XDialog* self)
 
 int XDialog_result(const XDialog* self) { return self ? self->m_result : 0; }
 void XDialog_setResult(XDialog* self, int result) { if (self) self->m_result = result; }
-void XDialog_setModal(XDialog* self, bool modal) { if (self) self->m_modal = modal; }
+void XDialog_setModal(XDialog* self, bool modal)
+{
+    if (!self || self->m_modal == modal) return;
+    self->m_modal = modal;
+    /* 可见的对话框即时生效模态登记（对标 open()/setModal 语义）。 */
+    if (modal && XWidget_isVisible((XWidget*)self))
+        XWidget_setApplicationModalWidget((XWidget*)self);
+}
 bool XDialog_isModal(const XDialog* self) { return self ? self->m_modal : false; }
 
 void XDialog_open(XDialog* self)
@@ -120,6 +156,7 @@ void XDialog_open(XDialog* self)
     if (!self) return;
     XDialog_setModal(self, true);
     XWidget_show((XWidget*)self);
+    XWidget_setApplicationModalWidget((XWidget*)self);
 }
 
 void XDialog_setSizeGripEnabled(XDialog* self, bool enable)

@@ -1,35 +1,36 @@
 /**
  * @file       XLineEdit.c
- * @brief      XLineEdit 单行编辑控件实现（对标 Qt 6.8 QLineEdit 全部公共 API）。
- * @details    内部表示：文本为 UTF-8 动态缓冲（NUL 结尾），光标/选区锚点
- *             为其中的字节偏移（恒定落在 UTF-8 字符边界上）。编辑操作：
- *             - 插入：可打印 ASCII（0x20..0x7e）与粘贴文本，maxLength 按
- *               字符数钳位（UTF-8 多字节字符整体计 1），inputMask 按位置
- *               类别逐字符过滤，validator 返回 Invalid 时整体拒绝并发射
- *               inputRejected；
- *             - 删除：Backspace 删光标前字符、Delete 删光标处字符（按
- *               UTF-8 续字节跳过，保证不切字符）；有选区时先删选区；
- *             - 移动：Left/Right 按 UTF-8 字符边界，Home/End 到首/尾，
- *               Ctrl+方向键按词移动，Shift+方向键扩展选区；
- *             - 快捷键：Ctrl+A 全选、Ctrl+C/X/V 复制/剪切/粘贴、
- *               Ctrl+Z/Y 撤销/重做（readOnly 时仅允许全选与复制）。
- *             绘制：frame 开时画凹陷边框；Base 底；回显模式决定显示文本
- *             （NoEcho 空、Password '*'、PasswordEchoOnEdit 焦点内正常）；
- *             inputMask 开启时显示按掩码过滤（不匹配字符显示占位符）；
- *             placeholder 在空文本时以 Mid 灰显；选区以 Highlight 反色
- *             高亮；清除按钮启用时文本非空绘制右侧简笔 ×；光标为焦点内
- *             的 1px 竖线（常显；闪烁为后续扩展）；文本超宽时按光标位置
- *             水平滚动（简化估算度量 8px/字符）。
- *             撤销/重做：每次用户编辑前把当前文本快照压入撤销栈（深
- *             XLINEEDIT_UNDO_DEPTH=20），undo/redo 交换快照并发射
- *             textChanged；setText 清空历史（Qt 语义）。
- *             剪贴板：优先 XGuiApplication_clipboard 的 XClipboard
- *             （XClipboardMode_Clipboard）；剪贴板不可用（未创建 GUI 应用
- *             或 XCLIPBOARD_ON/XGUIAPPLICATION_ON 关闭）时回退控件内部
- *             m_clipboardText 缓冲。
- *             键盘处理挂 XWidget 的 KeyPressEvent 虚槽；鼠标左键按下获得
- *             焦点并把光标定位到点击处，双击全选；失焦提交 editingFinished
- *             （自上次发射后用户编辑过才发射）。
+ * @brief      XLineEdit 单行编辑控件实现（对标 Qt 6.8 QLineEdit 全部公共
+ *             API；壳-控制器架构）。
+ * @details    对标 Qt 6.8 QLineEdit 持私有控制器 QWidgetLineControl 的
+ *             关系：文本缓冲/光标与选区/撤销栈/回显状态机（含密码回显
+ *             定时器）/输入掩码/校验与 fixup/IME/剪贴板/命中测试/键盘
+ *             分派/补全联动/文本区绘制数据全部迁入 m_control 指向的
+ *             XLineControl（Src/XGui/Text/XLineControl.{c,h}）；本壳
+ *             只保留：
+ *             - frame/面板/焦点框绘制与内置 action、清除按钮（side
+ *               widget 体系，对标 QLineEditPrivate）；
+ *             - sizeHint/minimumSizeHint（布局职责属壳）；
+ *             - 失焦 editingFinished 门禁（m_finishedPending，对标
+ *               Qt d->edited && (hasAcceptableInput||fixup())）；
+ *             - 水平滚动偏移 m_viewOffset 的钳位（光标→X 取控制器
+ *               cursorToX，像素守恒留壳）；
+ *             - 上下文菜单弹出与生命周期（菜单动作槽指控制器操作）；
+ *             - 平台层 IME 直投的全局焦点登记 g_focusedLineEdit；
+ *             - 信号转发：控制器 textChanged/textEdited/
+ *               cursorPositionChanged/selectionChanged/inputRejected/
+ *               accepted/editingFinished 唯一发射点经壳转接为公开信号。
+ *             事件入口：keyPressEvent → 控制器 processKeyEvent；
+ *             inputMethodEvent → 控制器 processInputMethodEvent；鼠标
+ *             命中的坐标平移（边框/边距/action 区/滚动偏移）在壳，命中
+ *             后调控制器 xToPos/moveCursor。绘制：paintEvent 先从控件
+ *             调色板取四色经 XLineControl_setPalette 注入控制器，再调
+ *             XLineControl_draw 完成正文/选区/光标绘制；占位提示留壳。
+ *             密码回显宿主判定：控制器无 widget 身份，壳在 focusIn/
+ *             focusOut 把焦点状态经 updatePasswordEchoEditing 推送给控
+ *             制器（对标 Qt updatePasswordEchoEditing 编排），光标常显
+ *             以 updateCursorBlinking 置位（不启用闪烁定时器，行为与
+ *             迁移前一致）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
@@ -47,13 +48,13 @@
 #endif /* XWINDOWEVENT_ON */
 #include "XMemory.h"
 #include "XEvent.h"
-#include "XCoreApplication.h"
-#include "XGuiApplication.h"
 #include "XVarList.h"
 #include "XString.h"
 #include "XClipboard.h"
+#include "XTextClipboard.h"
 #if XMENU_ON
 #include "XMenu.h"
+#include "XTextMenu.h"
 #endif /* XMENU_ON */
 #include "XColor.h"
 #if XPALETTE_ON
@@ -72,6 +73,9 @@ static XLineEdit* g_focusedLineEdit = NULL;
 #define XLINEEDIT_CHAR_W   8
 /* 内置 action 图标区宽度 */
 #define XLINEEDIT_ACTION_W 16
+/** @brief 控制器侧「不限制长度」上限（对标 Qt 构造默认 32767；壳 API
+ *         以 0 表示不限，两者在壳的委托层换算）。 */
+#define XLINEEDIT_UNLIMITED_MAX_LENGTH 32767
 
 /* ==================== 前向声明 ==================== */
 static void  VXLineEdit_keyPressEvent(XWidget* self, XEvent* event);
@@ -87,14 +91,16 @@ static void  VXLineEdit_deinit(XLineEdit* self);
 static void  VXLineEdit_copy(XLineEdit* self, const XLineEdit* other);
 static void  VXLineEdit_move(XLineEdit* self, XLineEdit* other);
 static void  xlineedit_updateSizeHints(XLineEdit* self);
-static void  xlineedit_syncCompleter(XLineEdit* self);
-/** @brief 替换行编辑框全部内容（定义在 setText 系列之后，被多处先行
- *         调用；无前置声明时 C 隐式声明与 static 定义冲突）。 */
-static void  xlineedit_setContent(XLineEdit* self, const char* newText,
-                                 size_t newCursor, bool userEdited,
-                                 bool clearHistory, bool emitChanged);
+static void  xlineedit_updateViewOffset(XLineEdit* self);
 
 /* ==================== 内部辅助 ==================== */
+
+/** @brief 取编辑缓冲原文（控制器 surroundingText；字节↔字符换算基准）。 */
+static const char* xlineedit_ctlRawText(const XLineEdit* self)
+{
+    if (!self || !self->m_control) return "";
+    return XLineControl_surroundingText(self->m_control);
+}
 
 /** @brief 取指定角色颜色为 ARGB32；无调色板能力时回退纯黑。 */
 static uint32_t xlineedit_color(const XLineEdit* self, XPaletteColorRole role)
@@ -137,11 +143,24 @@ static size_t xlineedit_charCountPrefix(const char* text, size_t byteLen)
     return chars;
 }
 
+/** @brief 字符索引 → UTF-8 字节偏移（公开 API 字符索引口径的换算层）。 */
+static size_t xlineedit_charIndexToByte(const char* text, size_t charIndex)
+{
+    size_t byte = 0;
+    size_t i = 0;
+    if (!text) return 0;
+    while (text[byte] && i < charIndex) {
+        ++byte;
+        while (((unsigned char)text[byte] & 0xC0u) == 0x80u) ++byte;
+        ++i;
+    }
+    return byte;
+}
+
 /** @brief 计算显示文本前 charCount 个字符的真实像素宽度。
- * @details 与 XPainter_drawText / posToCursor / cursorRect 使用同一字体
- *          度量（XPainter_textWidthRange 逐字符累计）：中文等双宽字符
- *          按真实字形宽计算，西文按单宽；旧实现按「字符数 × 固定 8px」
- *          估算，中文输入时光标/选区与文字错位。 */
+ * @details 与 XPainter_drawText 使用同一字体度量
+ *          （XPainter_textWidthRange 逐字符累计）：中文等双宽字符
+ *          按真实字形宽计算，西文按单宽。 */
 static int xlineedit_displayWidth(const XFont* font, const char* display,
                                   size_t charCount)
 {
@@ -161,36 +180,14 @@ static int xlineedit_displayWidth(const XFont* font, const char* display,
     return width;
 }
 
-/** @brief 从字节偏移向前回退到 UTF-8 字符边界（返回新偏移）。 */
-static size_t xlineedit_prevBoundary(const char* text, size_t pos)
-{
-    if (pos == 0) return 0;
-    --pos;
-    while (pos > 0 && ((unsigned char)text[pos] & 0xC0u) == 0x80u) --pos;
-    return pos;
-}
-
-/** @brief 从字节偏移向后前进到 UTF-8 字符边界（返回新偏移）。 */
-static size_t xlineedit_nextBoundary(const char* text, size_t pos)
-{
-    if (!text || !text[pos]) return pos;
-    ++pos;
-    while (text[pos] && ((unsigned char)text[pos] & 0xC0u) == 0x80u) ++pos;
-    return pos;
-}
-
-/** @brief 是否空白 ASCII 字符（词移动判定）。 */
-static bool xlineedit_isSpace(unsigned char c)
-{
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-}
-
 /** @brief 发射 const char* 参数信号（textChanged/textEdited）。 */
 static void xlineedit_emitTextSignal(XLineEdit* self, size_t signal)
 {
     XVarList* arguments;
-    if (!self || !self->m_text) return;
-    arguments = XVarList_Create(XVar(const char*, self->m_text));
+    const char* text;
+    if (!self || !self->m_control) return;
+    text = XLineControl_text(self->m_control);
+    arguments = XVarList_Create(XVar(const char*, text));
     if (!arguments) return;
     if (((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
@@ -230,409 +227,252 @@ static void xlineedit_emitCursorPosSignal(XLineEdit* self, int oldPos,
     }
 }
 
-/* ==================== 选区 ==================== */
-
-/** @brief 是否存在选区（锚点与光标不等）。 */
-static bool xlineedit_hasSelection(const XLineEdit* self)
-{
-    return self && self->m_anchor != self->m_cursor;
-}
-
-/** @brief 选区起点字节偏移。 */
-static size_t xlineedit_selStart(const XLineEdit* self)
-{
-    return self->m_anchor < self->m_cursor ? self->m_anchor : self->m_cursor;
-}
-
-/** @brief 选区终点字节偏移。 */
-static size_t xlineedit_selEnd(const XLineEdit* self)
-{
-    return self->m_anchor > self->m_cursor ? self->m_anchor : self->m_cursor;
-}
-
-/* ==================== 撤销/重做栈 ==================== */
-
-/** @brief 把当前文本快照压入撤销栈（栈满丢弃最旧）。 */
-static void xlineedit_undoPush(XLineEdit* self)
-{
-    char* snap;
-    if (!self || !self->m_text) return;
-    snap = (char*)XMalloc_System(XStrlen(self->m_text) + 1);
-    if (!snap) return;
-    XStrcpy(snap, self->m_text);
-    if (self->m_undoCount == XLINEEDIT_UNDO_DEPTH) {
-        XFree_System(self->m_undoStack[0]);
-        XMemmove(&self->m_undoStack[0], &self->m_undoStack[1],
-                (size_t)(XLINEEDIT_UNDO_DEPTH - 1) * sizeof(char*));
-        self->m_undoCount = XLINEEDIT_UNDO_DEPTH - 1;
-    }
-    self->m_undoStack[self->m_undoCount++] = snap;
-}
-
-/** @brief 清空撤销栈。 */
-static void xlineedit_undoClear(XLineEdit* self)
-{
-    int i;
-    if (!self) return;
-    for (i = 0; i < self->m_undoCount; ++i)
-        XFree_System(self->m_undoStack[i]);
-    self->m_undoCount = 0;
-}
-
-/** @brief 把当前文本快照压入重做栈（栈满丢弃最旧）。 */
-static void xlineedit_redoPush(XLineEdit* self)
-{
-    char* snap;
-    if (!self || !self->m_text) return;
-    snap = (char*)XMalloc_System(XStrlen(self->m_text) + 1);
-    if (!snap) return;
-    XStrcpy(snap, self->m_text);
-    if (self->m_redoCount == XLINEEDIT_UNDO_DEPTH) {
-        XFree_System(self->m_redoStack[0]);
-        XMemmove(&self->m_redoStack[0], &self->m_redoStack[1],
-                (size_t)(XLINEEDIT_UNDO_DEPTH - 1) * sizeof(char*));
-        self->m_redoCount = XLINEEDIT_UNDO_DEPTH - 1;
-    }
-    self->m_redoStack[self->m_redoCount++] = snap;
-}
-
-/** @brief 清空重做栈。 */
-static void xlineedit_redoClear(XLineEdit* self)
-{
-    int i;
-    if (!self) return;
-    for (i = 0; i < self->m_redoCount; ++i)
-        XFree_System(self->m_redoStack[i]);
-    self->m_redoCount = 0;
-}
-
-/* ==================== 输入掩码 ==================== */
+/* ==================== 控制器信号转发（发射点唯一） ==================== */
 
 /**
- * @brief 从掩码下标 cur 前进到下一个可编辑条目（跳过字面分隔符）。
- * @return 条目下标；耗尽（含 ';' 占位符后缀与结尾）返回 -1。
+ * @brief 控制器 textChanged → 壳 textChanged 转发 + 滚动/尺寸提示/重绘
+ *        联动（对标原 setContent 的提交收尾，迁移后由信号驱动）。
  */
-static int xlineedit_maskNextEntry(const char* mask, int cur,
-                                   char* classOut, bool* mandatoryOut)
+static void xlineedit_ctlTextChanged(XObject* receiver, XVarList* args)
 {
-    int i = cur;
-    char c;
-    if (!mask) return -1;
-    while ((c = mask[i]) != '\0') {
-        if (c == ';') return -1;
-        switch (c) {
-        case '0': case '9': case '#':
-        case 'A': case 'a':
-        case 'N': case 'n':
-        case 'X': case 'x':
-            if (classOut) *classOut = c;
-            if (mandatoryOut)
-                *mandatoryOut = (c == '0' || c == 'A' || c == 'N' || c == 'X');
-            return i;
-        default:
-            ++i; /* 跳过字面分隔符 */
-        }
-    }
-    return -1;
-}
-
-/** @brief 第 n 个文本字符对应的掩码条目信息（跳过字面量）；超出返回 false。 */
-static bool xlineedit_maskEntryN(const char* mask, size_t n,
-                                 char* classOut, bool* mandatoryOut)
-{
-    size_t count = 0;
-    int entry = -1;
-    if (!mask || mask[0] == '\0') return false;
-    while (1) {
-        entry = xlineedit_maskNextEntry(mask, entry + 1, classOut,
-                                        mandatoryOut);
-        if (entry < 0) return false;
-        if (count == n) return true;
-        ++count;
-    }
-}
-
-/** @brief 单字节字符是否匹配掩码类别。 */
-static bool xlineedit_maskCharMatches(char maskClass, unsigned char ch)
-{
-    switch (maskClass) {
-    case '0':
-    case '9':
-        return ch >= '0' && ch <= '9';
-    case '#':
-        return (ch >= '0' && ch <= '9') || ch == '+' || ch == '-' ||
-               ch == ' ';
-    case 'A':
-    case 'a':
-        return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
-    case 'N':
-    case 'n':
-        return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') ||
-               (ch >= 'a' && ch <= 'z');
-    case 'X':
-    case 'x':
-        return true;
-    default:
-        return false;
-    }
-}
-
-/** @brief 文本是否满足掩码：每个字符匹配其位置类别且全部必填位已填。 */
-static bool xlineedit_maskSatisfied(const char* mask, const char* text)
-{
-    int entry = -1;
-    char classChar;
-    bool mandatory;
-    const char* p;
-    if (!mask || mask[0] == '\0') return true;
-    if (!text) text = "";
-    p = text;
-    while (*p) {
-        entry = xlineedit_maskNextEntry(mask, entry + 1, &classChar,
-                                        &mandatory);
-        if (entry < 0) return false; /* 文本超出掩码长度 */
-        if (!xlineedit_maskCharMatches(classChar, (unsigned char)*p))
-            return false;
-        ++p;
-        while ((*p & 0xC0u) == 0x80u) ++p;
-    }
-    while (1) {
-        entry = xlineedit_maskNextEntry(mask, entry + 1, &classChar,
-                                        &mandatory);
-        if (entry < 0) break;
-        if (mandatory) return false; /* 必填位缺字符 */
-    }
-    return true;
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    xlineedit_emitTextSignal(self, (size_t)XLineEdit_textChanged_signal);
+    xlineedit_updateViewOffset(self);
+    xlineedit_updateSizeHints(self);
+    XWidget_update((XWidget*)self);
 }
 
 /**
- * @brief 按掩码过滤插入串：逐字符对照插入位置的掩码类别，匹配者保留
- *         （'X'/'x' 保留整个 UTF-8 字符），不匹配者丢弃。结果写入 out。
+ * @brief 控制器 textEdited → 壳 textEdited 转发 + 置失焦待发标志。
+ * @details 控制器 textEdited 仅在用户编辑结算（insert/backspace/del/
+ *        removeSelection/paste/IME 提交等 edited 收尾且文本确变）时发射，
+ *        与迁移前 setContent(userEdited=true) 的置位点集合一致：在此置
+ *        m_finishedPending（对标 Qt 壳侧 d->edited 置位），供失焦
+ *        editingFinished 门禁消费（审计 5.2 失焦门禁行为不变硬约束）。
  */
-static void xlineedit_filterInsert(const XLineEdit* self, size_t posByte,
-                                   const char* insert, char* out,
-                                   size_t outCap)
+static void xlineedit_ctlTextEdited(XObject* receiver, XVarList* args)
 {
-    size_t charIndex = 0;
-    const char* p;
-    size_t o = 0;
-    if (!insert || !out || outCap == 0) return;
-    out[0] = '\0';
-    if (!self->m_inputMask || self->m_inputMask[0] == '\0') {
-        XStrncpy(out, insert, outCap - 1);
-        out[outCap - 1] = '\0';
-        return;
-    }
-    /* 计算 posByte 之前的字符数（插入点的掩码序号起点）。 */
-    p = self->m_text;
-    while (p < self->m_text + posByte && *p) {
-        ++p;
-        while ((*p & 0xC0u) == 0x80u) ++p;
-        ++charIndex;
-    }
-    for (; *insert && o + 1 < outCap; ) {
-        char classChar;
-        bool mandatory;
-        size_t charLen = 1;
-        bool matched = false;
-        while ((insert[charLen] & 0xC0u) == 0x80u) ++charLen;
-        if (!xlineedit_maskEntryN(self->m_inputMask, charIndex,
-                                  &classChar, &mandatory))
-            break; /* 超出掩码长度：丢弃剩余 */
-        if (classChar == 'X' || classChar == 'x') {
-            if (o + charLen + 1 > outCap) break;
-            XMemcpy(out + o, insert, charLen);
-            o += charLen;
-            matched = true;
-        } else if (charLen == 1 &&
-                   xlineedit_maskCharMatches(classChar,
-                                             (unsigned char)*insert)) {
-            out[o++] = *insert;
-            matched = true;
-        }
-        if (matched) ++charIndex;
-        insert += charLen;
-    }
-    out[o] = '\0';
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    self->m_finishedPending = true;
+    xlineedit_emitTextSignal(self, (size_t)XLineEdit_textEdited_signal);
 }
 
-/* ==================== 显示文本（回显 + 掩码过滤） ==================== */
+/** @brief 控制器 cursorPositionChanged → 壳 cursorPositionChanged 转发 +
+ *        滚动跟随/重绘联动。 */
+static void xlineedit_ctlCursorPositionChanged(XObject* receiver,
+                                               XVarList* args)
+{
+    XLineEdit* self = (XLineEdit*)receiver;
+    int oldPos = 0;
+    int newPos = 0;
+    if (!self || !self->m_control) return;
+    if (args) {
+        oldPos = XVarList_arg(args, int);
+        newPos = XVarList_arg(args, int);
+    }
+    xlineedit_emitCursorPosSignal(self, oldPos, newPos);
+    xlineedit_updateViewOffset(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 控制器 selectionChanged → 壳 selectionChanged 转发 + 重绘联动。 */
+static void xlineedit_ctlSelectionChanged(XObject* receiver, XVarList* args)
+{
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    xlineedit_emitVoidSignal(self,
+                             (size_t)XLineEdit_selectionChanged_signal);
+    xlineedit_updateViewOffset(self);
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 控制器 inputRejected → 壳 inputRejected 转发（拒绝发射点唯一）。 */
+static void xlineedit_ctlInputRejected(XObject* receiver, XVarList* args)
+{
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    xlineedit_emitVoidSignal(self,
+                             (size_t)XLineEdit_inputRejected_signal);
+}
+
+/** @brief 控制器 accepted（Return 提交）→ 壳 returnPressed 转发
+ *        （对标 Qt QLineEdit 把 control 的 accepted 接为 returnPressed）。 */
+static void xlineedit_ctlAccepted(XObject* receiver, XVarList* args)
+{
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    xlineedit_emitVoidSignal(self,
+                             (size_t)XLineEdit_returnPressed_signal);
+}
+
+/** @brief 控制器 editingFinished → 壳 editingFinished 转发，并复位壳的
+ *        失焦待发标志（Return 与失焦两路共用一个公开信号）。 */
+static void xlineedit_ctlEditingFinished(XObject* receiver, XVarList* args)
+{
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    self->m_finishedPending = false;
+    xlineedit_emitVoidSignal(self,
+                             (size_t)XLineEdit_editingFinished_signal);
+}
+
+/** @brief 控制器 displayTextChanged（回显/掩码显示刷新）→ 重绘。 */
+static void xlineedit_ctlDisplayTextChanged(XObject* receiver, XVarList* args)
+{
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 控制器 updateNeeded（光标闪烁相位等局部重绘请求）→ 重绘。 */
+static void xlineedit_ctlUpdateNeeded(XObject* receiver, XVarList* args)
+{
+    XLineEdit* self = (XLineEdit*)receiver;
+    (void)args;
+    if (!self || !self->m_control) return;
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 建立控制器 → 壳的信号转发连接（receiverShell 为信号接收方，
+ *         move 语义转移控制器后需重连）。 */
+static void xlineedit_connectControlSignals(XLineEdit* self,
+                                            XLineEdit* receiverShell)
+{
+    XLineControl* ctl;
+    XObject* receiver;
+    XRect empty;
+    if (!self || !self->m_control || !receiverShell) return;
+    ctl = self->m_control;
+    receiver = (XObject*)receiverShell;
+    XRect_init(&empty, 0, 0, 0, 0);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_textChanged_signal(ctl, NULL),
+                      receiver, xlineedit_ctlTextChanged,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_textEdited_signal(ctl, NULL),
+                      receiver, xlineedit_ctlTextEdited,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_cursorPositionChanged_signal(
+                          ctl, 0, 0),
+                      receiver, xlineedit_ctlCursorPositionChanged,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_selectionChanged_signal(ctl),
+                      receiver, xlineedit_ctlSelectionChanged,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_inputRejected_signal(ctl),
+                      receiver, xlineedit_ctlInputRejected,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_accepted_signal(ctl),
+                      receiver, xlineedit_ctlAccepted,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_editingFinished_signal(ctl),
+                      receiver, xlineedit_ctlEditingFinished,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_displayTextChanged_signal(ctl,
+                                                                     NULL),
+                      receiver, xlineedit_ctlDisplayTextChanged,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)ctl,
+                      (size_t)XLineControl_updateNeeded_signal(ctl, empty),
+                      receiver, xlineedit_ctlUpdateNeeded,
+                      XConnectionType_Direct);
+}
+
+/** @brief 断开控制器 → receiverShell 的全部转发连接（move 转移前调用）。 */
+static void xlineedit_disconnectControlSignals(XLineEdit* self,
+                                               XLineEdit* receiverShell)
+{
+    XLineControl* ctl;
+    XObject* receiver;
+    XRect empty;
+    if (!self || !self->m_control || !receiverShell) return;
+    ctl = self->m_control;
+    receiver = (XObject*)receiverShell;
+    XRect_init(&empty, 0, 0, 0, 0);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_textChanged_signal(ctl, NULL),
+                         receiver, xlineedit_ctlTextChanged);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_textEdited_signal(ctl, NULL),
+                         receiver, xlineedit_ctlTextEdited);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_cursorPositionChanged_signal(
+                             ctl, 0, 0),
+                         receiver, xlineedit_ctlCursorPositionChanged);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_selectionChanged_signal(ctl),
+                         receiver, xlineedit_ctlSelectionChanged);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_inputRejected_signal(ctl),
+                         receiver, xlineedit_ctlInputRejected);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_accepted_signal(ctl),
+                         receiver, xlineedit_ctlAccepted);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_editingFinished_signal(ctl),
+                         receiver, xlineedit_ctlEditingFinished);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_displayTextChanged_signal(ctl,
+                                                                        NULL),
+                         receiver, xlineedit_ctlDisplayTextChanged);
+    XObject_disconnect_1((XObject*)ctl,
+                         (size_t)XLineControl_updateNeeded_signal(ctl, empty),
+                         receiver, xlineedit_ctlUpdateNeeded);
+}
+
+/* ==================== 校验适配钩子（壳回调 → 控制器委托） ==================== */
 
 /**
- * @brief 把第 charIndex 个原始字符按回显模式与掩码转换为显示字节并追加
- *        到 out（容量 cap）；返回写入字节数（0 = 不显示）。
+ * @brief 控制器 validate 委托适配：把壳的 XLineEditValidatorFunc 桥接为
+ *        XLineControlValidateFunc。validator 形参恒为壳指针（审计 5.2：
+ *        壳指针生命周期覆盖控制器调用——控制器在壳 deinit 中先行销毁）。
  */
-static size_t xlineedit_appendDisplayChar(const XLineEdit* self,
-                                          const char* ch, size_t charLen,
-                                          size_t charIndex, char* out,
-                                          size_t cap)
+static int xlineedit_validateAdapter(void* validator, char** text,
+                                     int* cursor, void* userData)
 {
-    bool starAll;
-    char placeholder = ' ';
-    if (!self || !ch || !out || cap == 0) return 0;
-    if (self->m_echoMode == XLineEditEchoMode_NoEcho) return 0;
-    starAll = (self->m_echoMode == XLineEditEchoMode_Password ||
-               (self->m_echoMode == XLineEditEchoMode_PasswordEchoOnEdit &&
-                !XWidget_hasFocus((XWidget*)self)));
-    if (starAll) {
-        out[0] = '*';
-        return 1;
+    XLineEdit* self = (XLineEdit*)validator;
+    if (!self || !self->m_validator || !text) {
+        return (int)XLineControlValidatorState_Acceptable;
     }
-    if (self->m_inputMask && self->m_inputMask[0]) {
-        char classChar;
-        bool mandatory;
-        if (!xlineedit_maskEntryN(self->m_inputMask, charIndex,
-                                  &classChar, &mandatory))
-            return 0; /* 超出掩码：不显示 */
-        if (classChar == 'X' || classChar == 'x' ||
-            (charLen == 1 &&
-             xlineedit_maskCharMatches(classChar, (unsigned char)*ch))) {
-            if (cap < charLen) return 0;
-            XMemcpy(out, ch, charLen);
-            return charLen;
-        }
-        {
-            const char* semi = XStrchr(self->m_inputMask, ';');
-            if (semi && semi[1]) placeholder = semi[1];
-        }
-        out[0] = placeholder;
-        return 1;
-    }
-    if (cap < charLen) return 0;
-    XMemcpy(out, ch, charLen);
-    return charLen;
+    (void)cursor; /* 壳回调契约不含光标出参（与迁移前一致）。 */
+    return (int)self->m_validator(self, *text, userData);
 }
 
-/** @brief 刷新显示缓存 m_displayBuf（回显 + 掩码过滤后的完整显示文本）。 */
-static void xlineedit_refreshDisplay(XLineEdit* self)
+/** @brief 控制器 fixup 委托适配：迁移前壳无 fixup 能力，恒原样返回。 */
+static void xlineedit_fixupAdapter(void* validator, char** text,
+                                   void* userData)
 {
-    size_t len;
-    size_t cap;
-    size_t o = 0;
-    size_t charIndex = 0;
-    const char* p;
-    char* updated;
-    if (!self) return;
-    if (!self->m_text) {
-        /* 无文本时保持 displayBuf 为 NULL 或清空已分配缓存；
-           paintEvent 对 NULL 回退空串。不在析构链的 focusOut 路径
-           再分配（否则 deinit 后泄漏 1B）。 */
-        if (self->m_displayBuf) self->m_displayBuf[0] = '\0';
-        return;
-    }
-    len = XStrlen(self->m_text);
-    cap = len + 1;
-    if (self->m_displayBuf)
-        updated = (char*)XRealloc_System(self->m_displayBuf, cap);
-    else
-        updated = (char*)XMalloc_System(cap);
-    if (!updated) return;
-    self->m_displayBuf = updated;
-    p = self->m_text;
-    while (*p) {
-        size_t charLen = 1;
-        size_t written;
-        while ((p[charLen] & 0xC0u) == 0x80u) ++charLen;
-        written = xlineedit_appendDisplayChar(self, p, charLen, charIndex,
-                                              self->m_displayBuf + o,
-                                              cap - 1 - o);
-        o += written;
-        ++charIndex;
-        p += charLen;
-    }
-    self->m_displayBuf[o] = '\0';
+    (void)validator;
+    (void)text;
+    (void)userData;
 }
 
-/**
- * @brief 按选区把显示文本拆为三段（seg0 选区前、seg1 选中段、seg2 选区
- *        后），并输出各段字符数（像素估算用）。各 seg 由调用方分配，
- *        容量须不小于显示文本长度 +1。
- */
-static void xlineedit_splitDisplay(const XLineEdit* self, size_t selStart,
-                                   size_t selEnd, char* seg0, char* seg1,
-                                   char* seg2, size_t* chars0, size_t* chars1,
-                                   size_t* chars2)
+/* ==================== 壳几何与滚动（viewOffset 钳位留壳） ==================== */
+
+/** @brief 同步控件字体到控制器（深拷贝 + 重排；度量入口与绘制前调用，
+ *         保证光标→X/自然宽与绘制同口径）。 */
+static void xlineedit_syncControlFont(XLineEdit* self)
 {
-    const char* p;
-    size_t charIndex = 0;
-    size_t o0 = 0, o1 = 0, o2 = 0;
-    size_t c0 = 0, c1 = 0, c2 = 0;
-    size_t cap = 0;
-    if (!self || !self->m_text) goto done;
-    cap = XStrlen(self->m_text) + 1;
-    p = self->m_text;
-    while (*p) {
-        size_t charLen = 1;
-        size_t start = (size_t)(p - self->m_text);
-        char* seg;
-        size_t* o;
-        size_t* c;
-        size_t written;
-        while ((p[charLen] & 0xC0u) == 0x80u) ++charLen;
-        if (start < selStart) { seg = seg0; o = &o0; c = &c0; }
-        else if (start < selEnd) { seg = seg1; o = &o1; c = &c1; }
-        else { seg = seg2; o = &o2; c = &c2; }
-        written = xlineedit_appendDisplayChar(self, p, charLen, charIndex,
-                                              seg ? seg + *o : NULL,
-                                              seg ? cap - 1 - *o : 0);
-        *o += written;
-        if (written) ++*c;
-        ++charIndex;
-        p += charLen;
-    }
-done:
-    if (seg0) seg0[o0] = '\0';
-    if (seg1) seg1[o1] = '\0';
-    if (seg2) seg2[o2] = '\0';
-    if (chars0) *chars0 = c0;
-    if (chars1) *chars1 = c1;
-    if (chars2) *chars2 = c2;
+    if (!self || !self->m_control) return;
+    XLineControl_setFont(self->m_control, &((XWidget*)self)->m_font);
 }
 
-/* ==================== 滚动与光标定位 ==================== */
-
-/** @brief 按光标位置更新水平滚动偏移（简化估算度量，光标保持可见）。 */
-static void xlineedit_updateViewOffset(XLineEdit* self)
-{
-    int textStart;
-    int textEnd;
-    int visibleW;
-    int textW;
-    int cursorX;
-    int lo;
-    int hi;
-    size_t chars;
-    size_t curChars;
-    if (!self || !self->m_text) return;
-    {
-        const XFont* font = &((XWidget*)self)->m_font;
-        chars = xlineedit_charCount(self->m_text);
-        curChars = xlineedit_charCountPrefix(self->m_text, self->m_cursor);
-        textStart = (self->m_frame ? 4 : 2) + self->m_textMargins.left;
-        textEnd = XWidget_width((XWidget*)self) - (self->m_frame ? 4 : 2) -
-                  self->m_textMargins.right -
-                  ((self->m_clearButtonEnabled && self->m_text[0]) ? 18 : 0);
-        if (textEnd <= textStart) textEnd = textStart + 1;
-        visibleW = textEnd - textStart;
-        /* 总宽/光标位都用真实字体宽度（逐字符累计，中文双宽正确），
-           与 drawText 渲染、posToCursor/cursorRect 同度量。 */
-        textW = xlineedit_displayWidth(font, self->m_text, chars);
-        if (textW <= visibleW) {
-            self->m_viewOffset = 0;
-            return;
-
-        }
-        cursorX = xlineedit_displayWidth(font, self->m_text, curChars);
-        lo = cursorX - visibleW + 1;
-        if (lo < 0) lo = 0;
-        hi = textW - visibleW;
-        self->m_viewOffset = cursorX;
-        if (self->m_viewOffset < lo) self->m_viewOffset = lo;
-        if (self->m_viewOffset > hi) self->m_viewOffset = hi;
-    }
-}
-
-/** @brief 像素 x 对应的光标字节偏移（简化估算度量反解）。 */
 /** @brief 文本区起始 x（边框+边距+起始侧 action 区）。 */
 static int xlineedit_textStartX(const XLineEdit* self)
 {
@@ -645,16 +485,83 @@ static int xlineedit_textStartX(const XLineEdit* self)
     return x;
 }
 
-/** @brief 末尾侧 action 占用总宽。 */
-static int xlineedit_trailingActionWidth(const XLineEdit* self)
+/** @brief 按光标位置更新水平滚动偏移（光标→X 取控制器，钳位留壳）。 */
+static void xlineedit_updateViewOffset(XLineEdit* self)
 {
-    int w = 0;
-    int i;
-    for (i = 0; i < (int)self->m_actionCount; ++i) {
-        if (self->m_actionPositions[i] == XLineEditActionPosition_Trailing)
-            w += XLINEEDIT_ACTION_W;
+    int textStart;
+    int textEnd;
+    int visibleW;
+    int textW;
+    int cursorX;
+    int lo;
+    int hi;
+    if (!self || !self->m_control) return;
+    xlineedit_syncControlFont(self);
+    textStart = xlineedit_textStartX(self);
+    textEnd = XWidget_width((XWidget*)self) - (self->m_frame ? 4 : 2) -
+              self->m_textMargins.right -
+              ((self->m_clearButtonEnabled &&
+                XLineControl_text(self->m_control)[0]) ? 18 : 0);
+    if (textEnd <= textStart) textEnd = textStart + 1;
+    visibleW = textEnd - textStart;
+    /* 总宽/光标位用控制器布局度量（与 XLineControl_draw 渲染、xToPos
+       命中同口径，中文双宽正确）。 */
+    textW = XLineControl_naturalTextWidth(self->m_control);
+    if (textW <= visibleW) {
+        self->m_viewOffset = 0;
+        return;
     }
-    return w;
+    cursorX = XLineControl_cursorToXCurrent(self->m_control);
+    lo = cursorX - visibleW + 1;
+    if (lo < 0) lo = 0;
+    hi = textW - visibleW;
+    self->m_viewOffset = cursorX;
+    if (self->m_viewOffset < lo) self->m_viewOffset = lo;
+    if (self->m_viewOffset > hi) self->m_viewOffset = hi;
+}
+
+/** @brief 同步估算尺寸到 XWidget 尺寸提示存储并请求重布局。 */
+static void xlineedit_updateSizeHints(XLineEdit* self)
+{
+    XSize hint;
+    XSize min;
+    if (!self) return;
+    hint = XLineEdit_sizeHint(self);
+    min = XLineEdit_minimumSizeHint(self);
+    XWidget_setSizeHint((XWidget*)self, &hint);
+    XWidget_setMinimumSizeHint((XWidget*)self, &min);
+    XWidget_updateGeometry((XWidget*)self);
+}
+
+/**
+ * @brief 创建并预热编辑控制器（init 与 move 共用）。
+ * @details 控制器现存缺陷的壳侧规避（不动控制器文件，缺口已在迁移报告
+ *          单列）：
+ *          - 缺陷一：xlc_bufAssign 对「n==0 且目标缓冲未分配」解引用空
+ *            指针（XLineControl_create("") 即段错误）。以非空文本创建
+ *            分配 text/display/layout/textReturn 四缓冲，再 setText("")
+ *            清空；setPreeditArea("x")→("") 预热 preedit 缓冲。缓冲一经
+ *            分配不再回收，此后空内容赋值路径安全。掩码返回缓存
+ *            m_maskReturn 不做预热（预热需经 setInputMask，会触发缺陷
+ *            二，见下）；公开 API 的 setInputMask("") 空清路径经壳的
+ *            「同掩码早退」守卫拦截，setInputMask(非空) 本身分配缓存，
+ *            其后再清空亦安全。
+ *          - 缺陷二（P0，勿从壳触发）：xlc_maskString 的局部 xlc_str
+ *            fill 未 xlc_strInit 即使用（XLineControl.c:951），
+ *            xlc_strFree(&fill) 释放栈垃圾指针 → 堆管理器自由链被污染
+ *            → 后续分配复用在用块。设置了输入掩码的控制器内部SetText/
+ *            插入路径必经此代码，控制器修复前输入掩码不可用。
+ *          控制器修复后本序列可整体退化为 XLineControl_create("")。
+ * @return 预热完成的控制器（拥有）；分配失败返回 NULL。
+ */
+static XLineControl* xlineedit_createControl(void)
+{
+    XLineControl* ctl = XLineControl_create("x");
+    if (!ctl) return NULL;
+    XLineControl_setText(ctl, "");
+    XLineControl_setPreeditArea(ctl, 0, "x");
+    XLineControl_setPreeditArea(ctl, -1, "");
+    return ctl;
 }
 
 /** @brief 命中 action（x 坐标 → 索引；未命中返回 -1）。 */
@@ -677,7 +584,6 @@ static int xlineedit_hitAction(const XLineEdit* self, int x)
             ++trailIdx;
         }
     }
-    (void)textStart;
     return -1;
 }
 
@@ -711,516 +617,24 @@ static void xlineedit_paintActions(const XLineEdit* self, XPainter* painter,
         }
         if (iconText && iconText[0])
             XPainter_drawText(painter, ax + 4, ay + 12, iconText, textColor);
-        (void)h;
     }
-}
-
-static size_t xlineedit_posToCursor(const XLineEdit* self, int x)
-{
-    const XFont* font;
-    int textStart;
-    int clickX;
-    size_t chars;
-    size_t boundary;
-    int prevWidth;
-    const char* p;
-    if (!self || !self->m_text) return 0;
-    font = &((XWidget*)self)->m_font;
-    textStart = xlineedit_textStartX(self);
-    clickX = x - textStart + self->m_viewOffset;
-    chars = xlineedit_charCount(self->m_text);
-    if (clickX <= 0) return 0;
-    /* 逐字符累计真实文本宽度，点击落在字符前半取其左边界、后半取
-       其右边界（与绘制字体一致的度量，中文/西文都正确）。 */
-    boundary = 0;
-    prevWidth = 0;
-    p = self->m_text;
-    while (boundary < XStrlen(self->m_text)) {
-        size_t next = boundary;
-        int charW;
-        ++next;
-        while ((self->m_text[next] & 0xC0u) == 0x80u) ++next;
-        charW = XPainter_textWidthRange(font, self->m_text,
-                                        (int)boundary, (int)next);
-        if (prevWidth + charW / 2 > clickX)
-            return boundary;
-        prevWidth += charW;
-        boundary = next;
-        if ((int)chars == 0) break;
-    }
-    (void)p;
-    return XStrlen(self->m_text);
-}
-
-/** @brief 移动光标（mark=true 保留锚点扩展选区；false 清除选区）并发射
- *         cursorPositionChanged/selectionChanged。 */
-static void xlineedit_moveCursor(XLineEdit* self, size_t newPos, bool mark)
-{
-    size_t oldCursor;
-    size_t maxPos;
-    bool oldSel;
-    bool newSel;
-    if (!self || !self->m_text) return;
-    maxPos = XStrlen(self->m_text);
-    if (newPos > maxPos) newPos = maxPos;
-    oldCursor = self->m_cursor;
-    oldSel = xlineedit_hasSelection(self);
-    if (newPos == oldCursor && (mark || self->m_anchor == oldCursor))
-        return;
-    self->m_cursor = newPos;
-    if (!mark) self->m_anchor = newPos;
-    newSel = xlineedit_hasSelection(self);
-    if (self->m_cursor != oldCursor)
-        xlineedit_emitCursorPosSignal(self, (int)oldCursor,
-                                      (int)self->m_cursor);
-    if (oldSel != newSel)
-        xlineedit_emitVoidSignal(self, (size_t)XLineEdit_selectionChanged_signal);
-    xlineedit_updateViewOffset(self);
-    XWidget_update((XWidget*)self);
-}
-
-/** @brief 直接设置选区（锚点与光标）；变化时发射 selectionChanged。 */
-static void xlineedit_setSelectionRange(XLineEdit* self, size_t anchor,
-                                        size_t cursor)
-{
-    bool oldSel;
-    bool newSel;
-    size_t oldStart;
-    size_t oldEnd;
-    if (!self) return;
-    oldSel = xlineedit_hasSelection(self);
-    oldStart = xlineedit_selStart(self);
-    oldEnd = xlineedit_selEnd(self);
-    self->m_anchor = anchor;
-    self->m_cursor = cursor;
-    newSel = xlineedit_hasSelection(self);
-    if (newSel != oldSel ||
-        (newSel && (xlineedit_selStart(self) != oldStart ||
-                    xlineedit_selEnd(self) != oldEnd))) {
-        xlineedit_emitVoidSignal(self,
-                                 (size_t)XLineEdit_selectionChanged_signal);
-    }
-    xlineedit_updateViewOffset(self);
-    XWidget_update((XWidget*)self);
-}
-
-/* ==================== 文本提交核心 ==================== */
-
-#if XTABLEWIDGET_ON
-/**
- * @brief 把当前编辑文本同步给已安装的补全器（用户编辑后调用）。
- * @details 对齐 Qt QWidgetLineControl::complete()：
- *          - readOnly 或非 Normal 回显模式时不补全；
- *          - Popup/UnfilteredPopup 模式用整段文本作前缀，只刷新
- *            completionPrefix 与候选（弹出列表为自绘，不在此展开）；
- *          - InlineCompletion 模式用选区前文本作前缀，若候选以该前缀
- *            开头则把余下部分写入文本并选中（内联补全）；
- *          - m_completerSyncing 为重入保护：内联写回会再次触发文本变化
- *            通知，此时直接返回。
- * @param self 目标编辑框；可为 NULL（无操作）。
- * @return 无返回值。
- */
-static void xlineedit_syncCompleter(XLineEdit* self)
-{
-    XCompleterCompletionMode mode;
-    const char* text;
-    size_t prefixLen;
-    XString* prefix;
-    if (!self || !self->m_completer || self->m_completerSyncing) return;
-    if (self->m_readOnly || self->m_echoMode != XLineEditEchoMode_Normal)
-        return;
-    text = self->m_text ? self->m_text : "";
-    mode = XCompleter_completionMode(self->m_completer);
-    prefixLen = XStrlen(text);
-    if (mode == XCompleterCompletionMode_InlineCompletion &&
-        xlineedit_hasSelection(self))
-        prefixLen = xlineedit_selStart(self); /* Qt：内联模式取选区前文本。 */
-    prefix = XString_create();
-    if (!prefix) return;
-    if (prefixLen > 0 &&
-        !XString_assign_with_length_utf8(prefix, text, prefixLen)) {
-        XString_delete_base((XClass*)prefix);
-        return;
-    }
-    /* setCompletionPrefix 内部会重建候选列表（等价 Qt complete()）。 */
-    XCompleter_setCompletionPrefix(self->m_completer, prefix);
-    if (mode == XCompleterCompletionMode_InlineCompletion) {
-        XString* completion = XCompleter_currentCompletion(self->m_completer);
-        if (completion) {
-            const char* c = XString_toUtf8(completion);
-            size_t cLen = c ? XStrlen(c) : 0;
-            if (c && cLen > prefixLen &&
-                XString_startsWith(completion, prefix,
-                                   XCompleter_caseSensitivity(
-                                       self->m_completer))) {
-                char* newText = (char*)XMalloc_System(cLen + 1);
-                if (newText) {
-                    XMemcpy(newText, c, cLen + 1);
-                    self->m_completerSyncing = true;
-                    xlineedit_setContent(self, newText, cLen, true, false,
-                                         true);
-                    self->m_completerSyncing = false;
-                    /* 选中补全追加的余下字符（start 为字节偏移，长度为
-                       字符数，与 setSelection 语义一致）。 */
-                    XLineEdit_setSelection(self, (int)prefixLen,
-                                           (int)xlineedit_charCount(
-                                               c + prefixLen));
-                    XFree_System(newText);
-                }
-            }
-            XString_delete_base((XClass*)completion);
-        }
-    }
-    XString_delete_base((XClass*)prefix);
-}
-#else
-static void xlineedit_syncCompleter(XLineEdit* self)
-{
-    (void)self; /* XTABLEWIDGET_ON=0：无补全器体系。 */
-}
-#endif /* XTABLEWIDGET_ON */
-
-/**
- * @brief 提交新文本并统一更新状态。
- * @param newText 新文本（可借用，函数内部复制）。
- * @param newCursor 新光标字节偏移。
- * @param userEdited true=用户编辑：压撤销栈、清重做栈、置 modified 与
- *        editingFinished 待发标志，并发射 textEdited；
- * @param clearHistory true=清空撤销/重做历史（setText 语义）；
- * @param emitChanged true=发射 textChanged。
- */
-static void xlineedit_setContent(XLineEdit* self, const char* newText,
-                                 size_t newCursor, bool userEdited,
-                                 bool clearHistory, bool emitChanged)
-{
-    size_t oldCursor;
-    bool oldSel;
-    char* updated;
-    if (!self) return;
-    if (!newText) newText = "";
-    oldCursor = self->m_cursor;
-    oldSel = xlineedit_hasSelection(self);
-
-    if (userEdited) {
-        xlineedit_undoPush(self);
-        xlineedit_redoClear(self);
-        self->m_modified = true;
-        self->m_finishedPending = true;
-    }
-    if (clearHistory) {
-        xlineedit_undoClear(self);
-        xlineedit_redoClear(self);
-    }
-
-    updated = (char*)XRealloc_System(self->m_text, XStrlen(newText) + 1);
-    if (!updated) return;
-    self->m_text = updated;
-    XStrcpy(self->m_text, newText);
-    self->m_cursor = newCursor;
-    self->m_anchor = newCursor;
-
-    xlineedit_refreshDisplay(self);
-    if (emitChanged) {
-        xlineedit_emitTextSignal(self, (size_t)XLineEdit_textChanged_signal);
-        if (userEdited)
-            xlineedit_emitTextSignal(self,
-                                     (size_t)XLineEdit_textEdited_signal);
-    }
-    if (self->m_cursor != oldCursor)
-        xlineedit_emitCursorPosSignal(self, (int)oldCursor,
-                                      (int)self->m_cursor);
-    if (oldSel || xlineedit_hasSelection(self))
-        xlineedit_emitVoidSignal(self,
-                                 (size_t)XLineEdit_selectionChanged_signal);
-    xlineedit_updateViewOffset(self);
-    xlineedit_updateSizeHints(self);
-    XWidget_update((XWidget*)self);
-    /* 用户编辑后同步补全器（程序化 setText/撤销重做不触发，对齐 Qt
-       只在编辑键与内联补全写回时推进补全状态）。 */
-    if (userEdited)
-        xlineedit_syncCompleter(self);
-}
-
-/**
- * @brief 在光标处插入 utf8（替换选区）；按掩码逐字符过滤、maxLength
- *        钳位、validator 拒绝 Invalid。返回是否实际插入了内容。
- */
-static bool xlineedit_insertText(XLineEdit* self, const char* utf8,
-                                 bool userEdited)
-{
-    size_t textLen;
-    size_t start;
-    size_t end;
-    size_t insertLen;
-    size_t newLen;
-    char* filtered;
-    char* newText;
-    if (!self || !self->m_text || !utf8 || !utf8[0]) return false;
-    textLen = XStrlen(self->m_text);
-    if (xlineedit_hasSelection(self)) {
-        start = xlineedit_selStart(self);
-        end = xlineedit_selEnd(self);
-    } else {
-        start = end = self->m_cursor;
-    }
-    filtered = (char*)XMalloc_System(XStrlen(utf8) + 1);
-    if (!filtered) return false;
-    xlineedit_filterInsert(self, start, utf8, filtered, XStrlen(utf8) + 1);
-    insertLen = XStrlen(filtered);
-    if (insertLen == 0) {
-        XFree_System(filtered);
-        return false;
-    }
-    /* maxLength 钳位（字符数；过滤后文本逐字符计数）。 */
-    if (self->m_maxLength > 0) {
-        size_t before = xlineedit_charCountPrefix(self->m_text, start);
-        size_t after = xlineedit_charCount(self->m_text + end);
-        size_t allowed;
-        if (before + after >= (size_t)self->m_maxLength)
-            allowed = 0;
-        else
-            allowed = (size_t)self->m_maxLength - before - after;
-        if (allowed == 0) {
-            XFree_System(filtered);
-            return false;
-        }
-        if (xlineedit_charCount(filtered) > allowed) {
-            size_t cut = 0;
-            size_t chars = 0;
-            while (cut < insertLen && chars < allowed) {
-                ++cut;
-                while (cut < insertLen &&
-                       ((unsigned char)filtered[cut] & 0xC0u) == 0x80u)
-                    ++cut;
-                ++chars;
-            }
-            filtered[cut] = '\0';
-            insertLen = cut;
-        }
-    }
-    newLen = textLen - (end - start) + insertLen;
-    newText = (char*)XMalloc_System(newLen + 1);
-    if (!newText) {
-        XFree_System(filtered);
-        return false;
-    }
-    XMemcpy(newText, self->m_text, start);
-    XMemcpy(newText + start, filtered, insertLen);
-    XMemcpy(newText + start + insertLen, self->m_text + end,
-           textLen - end + 1);
-    newText[newLen] = '\0';
-    /* 校验回调：Invalid 拒绝整个编辑。 */
-    if (self->m_validator) {
-        XLineEditValidatorState st =
-            self->m_validator(self, newText, self->m_validatorUserData);
-        if (st == XLineEditValidatorState_Invalid) {
-            XFree_System(newText);
-            XFree_System(filtered);
-            return false;
-        }
-    }
-    xlineedit_setContent(self, newText, start + insertLen, userEdited,
-                         false, true);
-    XFree_System(newText);
-    XFree_System(filtered);
-    return true;
-}
-
-/** @brief 删除 [from,to) 字节区间（视为用户编辑）。 */
-static void xlineedit_eraseRange(XLineEdit* self, size_t from, size_t to)
-{
-    size_t textLen;
-    char* newText;
-    if (!self || !self->m_text || from >= to) return;
-    textLen = XStrlen(self->m_text);
-    if (to > textLen) to = textLen;
-    newText = (char*)XMalloc_System(textLen - (to - from) + 1);
-    if (!newText) return;
-    XMemcpy(newText, self->m_text, from);
-    XMemcpy(newText + from, self->m_text + to, textLen - to + 1);
-    xlineedit_setContent(self, newText, from, true, false, true);
-    XFree_System(newText);
-}
-
-/* ==================== 剪贴板 ==================== */
-
-/** @brief 把文本写入剪贴板；剪贴板不可用时回退内部缓冲。 */
-static void xlineedit_setClipboardText(XLineEdit* self, const char* text)
-{
-    if (!self || !text) return;
-#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
-    {
-        XClipboard* cb = XGuiApplication_clipboard();
-        if (cb) {
-            XString* str = XString_create_utf8(text);
-            if (str) {
-                XClipboard_setText(cb, str, XClipboardMode_Clipboard);
-                XString_delete_base(str);
-            }
-            return;
-        }
-    }
-#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
-    {
-        char* updated =
-            (char*)XRealloc_System(self->m_clipboardText, XStrlen(text) + 1);
-        if (!updated) return;
-        self->m_clipboardText = updated;
-        XStrcpy(self->m_clipboardText, text);
-    }
-}
-
-/** @brief 读取剪贴板文本（新建堆拷贝，调用方 XFree_System）；无文本返回 NULL。 */
-static char* xlineedit_getClipboardText(XLineEdit* self)
-{
-#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
-    {
-        XClipboard* cb = XGuiApplication_clipboard();
-        if (cb) {
-            XString* str = XClipboard_text(cb, XClipboardMode_Clipboard);
-            if (str) {
-                const char* utf8 = XString_toUtf8(str);
-                size_t len = XString_toUtf8_length(str);
-                char* out = (char*)XMalloc_System(len + 1);
-                if (out) {
-                    XMemcpy(out, utf8, len);
-                    out[len] = '\0';
-                }
-                XString_delete_base(str);
-                return out;
-            }
-            return NULL;
-        }
-    }
-#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
-    if (self && self->m_clipboardText) {
-        size_t len = XStrlen(self->m_clipboardText);
-        char* out = (char*)XMalloc_System(len + 1);
-        if (out) XStrcpy(out, self->m_clipboardText);
-        return out;
-    }
-    return NULL;
-}
-
-/* ==================== 尺寸提示 ==================== */
-
-/** @brief 同步估算尺寸到 XWidget 尺寸提示存储并请求重布局。 */
-static void xlineedit_updateSizeHints(XLineEdit* self)
-{
-    XSize hint;
-    XSize min;
-    if (!self) return;
-    hint = XLineEdit_sizeHint(self);
-    min = XLineEdit_minimumSizeHint(self);
-    XWidget_setSizeHint((XWidget*)self, &hint);
-    XWidget_setMinimumSizeHint((XWidget*)self, &min);
-    XWidget_updateGeometry((XWidget*)self);
 }
 
 /* ==================== 键盘处理 ==================== */
 
-/** @brief 键盘按下：编辑/移动/回车/快捷键（readOnly 仅允许移动/选择/复制）。 */
+/** @brief 键盘按下：整体分派给控制器 processKeyEvent（编辑/移动/回车/
+ *         快捷键/补全；readOnly 门禁与事件 accept/ignore 由控制器口径
+ *         结算）。 */
 static void VXLineEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
-    XKeyEvent* ke;
-    int key;
-    XKeyboardModifiers mods;
-    bool ctrl;
-    bool shift;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
-    ke = (XKeyEvent*)event;
-    key = ke->m_key;
-    mods = ke->m_modifiers;
-    ctrl = (mods & XKeyboardModifier_ControlModifier) != 0;
-    shift = (mods & XKeyboardModifier_ShiftModifier) != 0;
-
-    /* 编辑类快捷键（readOnly 时仅允许全选与复制）。 */
-    if (ctrl && ((key >= 'a' && key <= 'z') ||
-                 (key >= 'A' && key <= 'Z'))) {
-        switch (key) {
-        case 'a':
-        case 'A':
-            XLineEdit_selectAll(edit);
-            return;
-        case 'c':
-        case 'C':
-            XLineEdit_copy(edit);
-            return;
-        case 'x':
-        case 'X':
-            if (!edit->m_readOnly) XLineEdit_cut(edit);
-            return;
-        case 'v':
-        case 'V':
-            if (!edit->m_readOnly) XLineEdit_paste(edit);
-            return;
-        case 'z':
-        case 'Z':
-            if (!edit->m_readOnly) XLineEdit_undo(edit);
-            return;
-        case 'y':
-        case 'Y':
-            if (!edit->m_readOnly) XLineEdit_redo(edit);
-            return;
-        default:
-            break;
-        }
+    if (!edit->m_control) {
         XEvent_ignore(event);
         return;
     }
-
-    switch (key) {
-    case XKey_Backspace:
-        if (edit->m_readOnly) { XEvent_ignore(event); return; }
-        XLineEdit_backspace(edit);
-        return;
-    case XKey_Delete:
-        if (edit->m_readOnly) { XEvent_ignore(event); return; }
-        XLineEdit_del(edit);
-        return;
-    case XKey_Left:
-        if (ctrl)
-            XLineEdit_cursorWordBackward(edit, shift);
-        else
-            XLineEdit_cursorBackward(edit, shift, 1);
-        return;
-    case XKey_Right:
-        if (ctrl)
-            XLineEdit_cursorWordForward(edit, shift);
-        else
-            XLineEdit_cursorForward(edit, shift, 1);
-        return;
-    case XKey_Home:
-        XLineEdit_home(edit, shift);
-        return;
-    case XKey_End:
-        XLineEdit_end(edit, shift);
-        return;
-    case XKey_Return:
-    case XKey_Enter:
-        xlineedit_emitVoidSignal(edit,
-                                 (size_t)XLineEdit_returnPressed_signal);
-        xlineedit_emitVoidSignal(edit,
-                                 (size_t)XLineEdit_editingFinished_signal);
-        edit->m_finishedPending = false;
-        return;
-    default:
-        break;
-    }
-
-    if (key >= 0x20 && key <= 0x7e && !ke->m_autoRepeat) {
-        char ch[2];
-        if (edit->m_readOnly) { XEvent_ignore(event); return; }
-        ch[0] = (char)key;
-        ch[1] = '\0';
-        if (!xlineedit_insertText(edit, ch, true))
-            xlineedit_emitVoidSignal(edit,
-                                     (size_t)XLineEdit_inputRejected_signal);
-        return;
-    }
-    XEvent_ignore(event);
+    XLineControl_processKeyEvent(edit->m_control, (XKeyEvent*)event);
 }
 
 /** @brief 键盘释放：默认忽略（自动重复/修饰键行为为后续扩展）。 */
@@ -1232,13 +646,30 @@ static void VXLineEdit_keyReleaseEvent(XWidget* self, XEvent* event)
 }
 
 /**
- * @brief      输入法事件：提交文本插入光标处（对标 QWidget::
- *             inputMethodEvent 的 commitString 处理；preedit 组合
- *             文本第一版不支持，确认后整串插入）。
+ * @brief      输入法事件：经控制器 processInputMethodEvent 处理（提交串
+ *             经插入过滤链整串直插，语义与迁移前一致；preedit 组合区为
+ *             控制器增量能力）。readOnly 时忽略（与迁移前的 insert 守卫
+ *             等价）。
  * @param      self  编辑框对象。
- * @param      event 输入法事件（m_commitString 为已确认文本）。
+ * @param      event 输入法事件。
  * @return     无返回值。
  */
+static void VXLineEdit_inputMethodEvent(XWidget* self, XEvent* event)
+{
+    XLineEdit* edit = (XLineEdit*)self;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_INPUT_METHOD) return;
+    if (!edit->m_control) return;
+    if (XLineControl_isReadOnly(edit->m_control)) return;
+#if XWINDOWEVENT_ON
+    XLineControl_processInputMethodEvent(edit->m_control,
+                                         (XInputMethodEvent*)event);
+    XEvent_accept(event);
+#else
+    (void)edit;
+#endif /* XWINDOWEVENT_ON */
+}
+
 #if XMENU_ON
 /** @brief 上下文菜单事件：创建标准菜单并弹出到事件全局坐标（对标
  *         QLineEdit::contextMenuEvent 的 createStandardContextMenu +
@@ -1264,25 +695,11 @@ static void VXLineEdit_contextMenuEvent(XWidget* self, XEvent* event)
 }
 #endif /* XMENU_ON */
 
-static void VXLineEdit_inputMethodEvent(XWidget* self, XEvent* event)
-{
-    XLineEdit* edit = (XLineEdit*)self;
-    XInputMethodEvent* ime;
-    const XString* commit;
-    const char* utf8;
-    if (!edit || !event ||
-        XEvent_type(event) != XEVENT_TYPE_INPUT_METHOD) return;
-    ime = (XInputMethodEvent*)event;
-    commit = ime->m_commitString; /* 直接字段访问（事件拥有，借用）。 */
-    if (!commit) return;
-    XLineEdit_insert(edit, XString_toUtf8(commit));
-    XEvent_accept(event);
-}
-
 /* ==================== 鼠标处理 ==================== */
 
 /** @brief 左键按下：获得焦点；命中清除按钮则清空文本；否则把光标定位到
- *         点击处（Shift+点击扩展选区）。 */
+ *         点击处（坐标平移在壳，命中测试 xToPos 与移动 moveCursor 在
+ *         控制器；Shift+点击扩展选区）。 */
 static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -1296,9 +713,9 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
-    XWidget_setFocusPolicy(self, XWidgetFocusPolicy_ClickFocus);
-    XWidget_setFocus(self);
-    g_focusedLineEdit = self;
+    XWidget_setFocusPolicy((XWidget*)edit, XWidgetFocusPolicy_ClickFocus);
+    XWidget_setFocus((XWidget*)edit);
+    g_focusedLineEdit = edit;
     pos = XMouseEvent_position(me);
     /* 内置 action 命中：触发 action 后返回（不移动光标）。 */
     {
@@ -1309,19 +726,32 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
             return;
         }
     }
-    /* 清除按钮命中：点击清除文本（视为用户编辑）。 */
-    if (edit->m_clearButtonEnabled && !edit->m_readOnly &&
-        edit->m_text && edit->m_text[0] &&
+    /* 清除按钮命中：点击清除文本（视为用户编辑：全选+删除选区路径，
+       撤销栈保留记录并发射 textEdited/textChanged，与迁移前一致）。 */
+    if (edit->m_clearButtonEnabled &&
+        !XLineControl_isReadOnly(edit->m_control) &&
+        XLineControl_text(edit->m_control)[0] &&
         pos.x >= edit->m_clearButtonRect.x &&
         pos.x < edit->m_clearButtonRect.x + edit->m_clearButtonRect.width &&
         pos.y >= edit->m_clearButtonRect.y &&
         pos.y < edit->m_clearButtonRect.y + edit->m_clearButtonRect.height) {
-        xlineedit_setContent(edit, "", 0, true, false, true);
+        XLineControl_selectAll(edit->m_control);
+        XLineControl_removeSelection(edit->m_control);
         XEvent_accept(event);
         return;
     }
     shift = (me->m_modifiers & XKeyboardModifier_ShiftModifier) != 0;
-    xlineedit_moveCursor(edit, xlineedit_posToCursor(edit, pos.x), shift);
+    {
+        /* 壳做 contents 平移（边框/边距/action 区/滚动偏移），控制器
+           做像素→字节偏移命中与光标移动（对标 Qt d->xToPos + control
+           ->moveCursor 编排）。 */
+        int clickX = pos.x - xlineedit_textStartX(edit) + edit->m_viewOffset;
+        int bytePos;
+        xlineedit_syncControlFont(edit);
+        bytePos = XLineControl_xToPos(edit->m_control, clickX,
+                                      (int)XLineControlCursorPosition_BetweenCharacters);
+        XLineControl_moveCursor(edit->m_control, bytePos, shift);
+    }
     XEvent_accept(event);
 }
 
@@ -1329,27 +759,52 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
 static void VXLineEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int clickX;
+    int bytePos;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK) return;
-    XLineEdit_selectAll(edit);
+    /* 对标 Qt 双击选词（此前简化为 selectAll；控制器已有
+     * selectWordAtPos 未被使用）。坐标口径与 mousePress 一致：
+     * contents 平移 + 滚动偏移。 */
+    if (!edit->m_control) return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    clickX = pos.x - xlineedit_textStartX(edit) + edit->m_viewOffset;
+    xlineedit_syncControlFont(edit);
+    bytePos = XLineControl_xToPos(edit->m_control, clickX,
+                                  (int)XLineControlCursorPosition_BetweenCharacters);
+    XLineControl_selectWordAtPos(edit->m_control, bytePos);
+    XWidget_update((XWidget*)edit);
     XEvent_accept(event);
 }
 
 /* ==================== 焦点处理 ==================== */
 
-/** @brief 获得焦点：刷新回显（PasswordEchoOnEdit）并重绘。 */
+/** @brief 获得焦点：把焦点/编辑态推送控制器（PasswordEchoOnEdit 明文
+ *         回显 + 关闭首键清空路径，行为与迁移前一致）；光标常显置位；
+ *         重绘。 */
 static void VXLineEdit_focusInEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_FOCUS_IN) return;
-    xlineedit_refreshDisplay(edit);
-    XWidget_update(self);
+    if (edit->m_control) {
+        /* 密码回显宿主判定：控制器无 widget 身份，壳推送焦点态（审计
+           5.1；对标 Qt updatePasswordEchoEditing 的壳侧编排）。 */
+        XLineControl_updatePasswordEchoEditing(edit->m_control, true);
+        /* 焦点内光标常显：置位闪烁相位而不启用定时器（行为不变）。 */
+        XLineControl_updateCursorBlinking(edit->m_control);
+    }
+    XWidget_update((XWidget*)edit);
     XEvent_accept(event);
 }
 
-/** @brief 失去焦点：自上次发射后用户编辑过则提交 editingFinished；刷新
- *         回显（PasswordEchoOnEdit 切回密码）并重绘。 */
+/** @brief 失去焦点：自上次发射后用户编辑过则提交 editingFinished（壳
+ *         门禁，对标 Qt d->edited && (hasAcceptableInput||fixup()) 的
+ *         失焦路径；可接受性/fixup 能力在控制器）；焦点态推送控制器切
+ *         回密码回显并重绘。 */
 static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -1357,17 +812,31 @@ static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
         XEvent_type(event) != XEVENT_TYPE_FOCUS_OUT) return;
     if (edit->m_finishedPending) {
         edit->m_finishedPending = false;
+        /* 对标 Qt d->edited && (hasAcceptableInput()||fixup())：不可
+           接受时先交控制器 fixup 修复，修复后仍不可接受则不发射
+           editingFinished（此前仅凭 edited 即发射）。 */
+        if (!XLineEdit_hasAcceptableInput(edit)) {
+            if (edit->m_control)
+                XLineControl_fixup(edit->m_control);
+            if (!XLineEdit_hasAcceptableInput(edit)) {
+                XEvent_accept(event);
+                return;
+            }
+            XWidget_update((XWidget*)edit);
+        }
         xlineedit_emitVoidSignal(edit,
                                  (size_t)XLineEdit_editingFinished_signal);
     }
-    xlineedit_refreshDisplay(edit);
-    XWidget_update(self);
+    if (edit->m_control)
+        XLineControl_updatePasswordEchoEditing(edit->m_control, false);
+    XWidget_update((XWidget*)edit);
     XEvent_accept(event);
 }
 
 /* ==================== 绘制 ==================== */
 
-/** @brief 绘制边框 + 文本/占位 + 选区高亮 + 清除按钮 + 光标（焦点内）。 */
+/** @brief 绘制边框 + 文本/选区/光标（控制器 draw）+ 占位 + 清除按钮 +
+ *         action 图标区。 */
 static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -1382,16 +851,12 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
     uint32_t mid;
     uint32_t highlight;
     uint32_t highlightedText;
-    const char* display;
     int tx;
     int ty;
-    int baseline = 0;
-    int editBaseline = 0;
+    int baseline;
     int lineH = 14;
-    size_t selStart = 0;
-    size_t selEnd = 0;
-    bool hasSel;
 
+    (void)event; /* 绘制事件无载荷。 */
     if (!edit || r.width <= 2 || r.height <= 2) return;
     r.x = 0; r.y = 0;
     base  = xlineedit_color(edit, XPaletteColorRole_Base);
@@ -1417,7 +882,6 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
     {
         const XFont* paintFont = &((XWidget*)self)->m_font;
         XPainter_setFont(&painter, paintFont);
-
     }
 
     if (edit->m_frame) {
@@ -1462,115 +926,51 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
         }
     }
 
-    xlineedit_refreshDisplay(edit);
-    display = (edit->m_displayBuf) ? edit->m_displayBuf : "";
-    tx = xlineedit_textStartX(edit);
+    /* 文本区绘制数据由控制器承载：注入调色板四色（Highlight/高亮前景/
+       正文/掩码反选），同步字体后经 draw 绘制正文/选区/光标。 */
+    if (edit->m_control) {
+        XLineControlPalette pal;
+        pal.m_highlight = highlight;
+        pal.m_highlightedText = highlightedText;
+        pal.m_text = text;
+        pal.m_window = base; /* 掩码反选前景（迁移前无此绘制，取 Base）。 */
+        XLineControl_setPalette(edit->m_control, &pal);
+        xlineedit_syncControlFont(edit);
+    }
     {
         const XFont* font = &((XWidget*)self)->m_font;
         int ascent = XPainter_textAscent(font);
         int descent = XPainter_textDescent(font);
         lineH = ascent + descent; /* 字形盒高（不含行距）。 */
         if (lineH < 14) lineH = 14;
-        /* 行盒垂直居中：ty 为行顶部；绘制基线 = 顶部 + 上伸高度。 */
+        /* 行盒垂直居中：ty 为行顶部；控制器以 offset.y + ascent 为
+           基线逐字绘制，与迁移前 baseline = ty + ascent 一致。 */
         ty = (r.height - lineH) / 2;
         baseline = ty + ascent;
-        editBaseline = 1;
-
     }
-    if (!editBaseline)
-        baseline = ty + 12; /* 回退：无字体时的固定基线偏移 */
-    hasSel = xlineedit_hasSelection(edit);
-    if (hasSel) {
-        selStart = xlineedit_selStart(edit);
-        selEnd = xlineedit_selEnd(edit);
+    tx = xlineedit_textStartX(edit);
+    if (edit->m_control) {
+        XPoint origin;
+        int flags = (int)(XLineControlDrawFlag_Text |
+                          XLineControlDrawFlag_Selections);
+        origin.x = tx - edit->m_viewOffset;
+        origin.y = ty;
+        /* 光标：焦点内常显（blinkStatus 由 focusIn 置位）。 */
+        if (XWidget_hasFocus(self))
+            flags |= (int)XLineControlDrawFlag_Cursor;
+        XLineControl_draw(edit->m_control, &painter, &origin, NULL, flags);
     }
-
-    if (edit->m_text && edit->m_text[0]) {
-        int baseX = tx - edit->m_viewOffset;
-        const XFont* font = &((XWidget*)self)->m_font;
-        if (hasSel) {
-            char* seg0;
-            char* seg1;
-            char* seg2;
-            size_t c0 = 0;
-            size_t c1 = 0;
-            size_t c2 = 0;
-            size_t displayLen = XStrlen(display);
-            seg0 = (char*)XMalloc_System(displayLen + 1);
-            seg1 = (char*)XMalloc_System(displayLen + 1);
-            seg2 = (char*)XMalloc_System(displayLen + 1);
-            if (seg0 && seg1 && seg2) {
-                xlineedit_splitDisplay(edit, selStart, selEnd,
-                                       seg0, seg1, seg2, &c0, &c1, &c2);
-                if (c1 > 0) {
-                    /* 选区/分段定位用真实字体宽度（display 逐字符累计），
-                       中文双宽与西文单宽都与 drawText 渲染对齐。 */
-                    int selX = baseX + xlineedit_displayWidth(font, display, c0);
-                    int selW = xlineedit_displayWidth(font, display, c0 + c1) -
-                               xlineedit_displayWidth(font, display, c0);
-                    XRect selRect;
-                    selRect.x = selX;
-                    selRect.y = ty + 1;
-                    selRect.width = selW;
-                    selRect.height = r.height - 2;
-                    XPainter_fillRect(&painter, &selRect, highlight);
-                }
-                if (seg0[0])
-                    XPainter_drawText(&painter, baseX, baseline, seg0, text);
-                if (seg1[0])
-                    XPainter_drawText(&painter,
-                                      baseX + xlineedit_displayWidth(font,
-                                          display, c0),
-                                      baseline, seg1, highlightedText);
-                if (seg2[0])
-                    XPainter_drawText(&painter,
-                                      baseX + xlineedit_displayWidth(font,
-                                          display, c0 + c1),
-                                      baseline, seg2, text);
-            }
-            XFree_System(seg0);
-            XFree_System(seg1);
-            XFree_System(seg2);
-        } else {
-            XPainter_drawText(&painter, baseX, baseline, display, text);
-
-        }
-        /* 光标：按前缀真实文本宽度定位（与绘制同字体，焦点内常显）。
-           K = 光标前对应的显示字符数；displayWidth 按 display 逐字符
-           累计真实宽（Normal 下与按 m_cursor 字节偏移等价；Password
-           掩码字符等宽也正确）。旧实现把字符数当字节偏移传
-           textWidthRange，中文（3 字节/字符、双宽）随输入越来越多地
-           落后于文字。 */
-        if (XWidget_hasFocus(self)) {
-            const XFont* font = &((XWidget*)self)->m_font;
-            int cx = baseX;
-            cx += xlineedit_displayWidth(
-                font, display,
-                xlineedit_charCountPrefix(edit->m_text, edit->m_cursor));
-            if (cx >= r.x + 1 && cx <= r.x + r.width - 1) {
-                XRect cursor = { cx, ty, XLINEEDIT_CURSOR_W, lineH };
-                XPainter_fillRect(&painter, &cursor, text);
-
-            }
-        }
-    } else if (edit->m_placeholder &&
-               XString_toUtf8(edit->m_placeholder) &&
-               XString_toUtf8(edit->m_placeholder)[0]) {
+    /* 占位提示（空文本时灰显；空判定读控制器，对标 Qt 壳绘制）。 */
+    if (xlineedit_ctlRawText(edit)[0] == '\0' && edit->m_placeholder &&
+        XString_toUtf8(edit->m_placeholder) &&
+        XString_toUtf8(edit->m_placeholder)[0]) {
         XPainter_drawText(&painter, tx - edit->m_viewOffset, baseline,
                           XString_toUtf8(edit->m_placeholder), mid);
-        if (XWidget_hasFocus(self)) {
-            XRect cursor = { tx - edit->m_viewOffset, ty,
-                             XLINEEDIT_CURSOR_W, lineH };
-            XPainter_fillRect(&painter, &cursor, text);
-        }
-    } else if (XWidget_hasFocus(self)) {
-        XRect cursor = { tx - edit->m_viewOffset, ty,
-                         XLINEEDIT_CURSOR_W, lineH };
-        XPainter_fillRect(&painter, &cursor, text);
     }
 
     /* 清除按钮（简笔 ×；点击清除由 mousePressEvent 处理）。 */
-    if (edit->m_clearButtonEnabled && edit->m_text && edit->m_text[0]) {
+    if (edit->m_clearButtonEnabled &&
+        xlineedit_ctlRawText(edit)[0] != '\0') {
         XRect btn;
         btn.width = 16;
         btn.height = 14;
@@ -1604,172 +1004,124 @@ static void VXLineEdit_changeEvent(XWidget* self, XEvent* event)
     (void)self;
 }
 
-/** @brief 反初始化：释放全部堆资源后调用父类 deinit。 */
+/** @brief 反初始化：销毁控制器与壳资源后调用父类 deinit。 */
 static void VXLineEdit_deinit(XLineEdit* self)
 {
-    int i;
     if (!self) return;
-    if (self->m_text) {
-        XFree_System(self->m_text);
-        self->m_text = NULL;
-    }
-    if (self->m_displayBuf) {
-        XFree_System(self->m_displayBuf);
-        self->m_displayBuf = NULL;
-    }
-    if (self->m_inputMask) {
-        XFree_System(self->m_inputMask);
-        self->m_inputMask = NULL;
-    }
-    if (self->m_clipboardText) {
-        XFree_System(self->m_clipboardText);
-        self->m_clipboardText = NULL;
+    if (self->m_control) {
+        XLineControl_delete_base((XClass*)self->m_control);
+        self->m_control = NULL;
     }
     if (self->m_placeholder) {
-        XString_delete_base(self->m_placeholder);
+        XString_delete_base((XClass*)self->m_placeholder);
         self->m_placeholder = NULL;
     }
-    for (i = 0; i < self->m_undoCount; ++i)
-        XFree_System(self->m_undoStack[i]);
-    for (i = 0; i < self->m_redoCount; ++i)
-        XFree_System(self->m_redoStack[i]);
-    self->m_undoCount = 0;
-    self->m_redoCount = 0;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
-/** @brief 深拷贝：基类深拷贝后复制文本与全部编辑字段（含撤销/重做栈）。 */
+/** @brief 深拷贝：基类深拷贝后把编辑状态经公开 API 迁移到本方控制器
+ *         （文本/回显/长度/掩码/校验/光标选区；控制器撤销历史无克隆
+ *         API，不随拷贝迁移——见迁移报告缺口记录）。 */
 static void VXLineEdit_copy(XLineEdit* self, const XLineEdit* other)
 {
-    int i;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XLineEdit_init(self, NULL, 0);
     XClass_Parent(XWidget, EXClass_Copy,
                   void(*)(XWidget*, const XWidget*))((XWidget*)self,
                                                      (const XWidget*)other);
-    XLineEdit_setText(self, other->m_text);
+    XLineEdit_setText(self, XLineEdit_text(other));
     if (self->m_placeholder && other->m_placeholder)
         XString_assign(self->m_placeholder, other->m_placeholder);
-    self->m_cursor = other->m_cursor;
-    self->m_anchor = other->m_anchor;
     self->m_viewOffset = other->m_viewOffset;
-    self->m_maxLength = other->m_maxLength;
-    self->m_echoMode = other->m_echoMode;
-    self->m_readOnly = other->m_readOnly;
     self->m_frame = other->m_frame;
     self->m_alignment = other->m_alignment;
     self->m_clearButtonEnabled = other->m_clearButtonEnabled;
-    self->m_dragEnabled = other->m_dragEnabled;
-    self->m_cursorMoveStyle = other->m_cursorMoveStyle;
-    self->m_textMargins = other->m_textMargins;
-    self->m_modified = other->m_modified;
     self->m_finishedPending = other->m_finishedPending;
+    self->m_textMargins = other->m_textMargins;
+    XLineEdit_setMaxLength(self, XLineEdit_maxLength(other));
+    XLineEdit_setEchoMode(self, XLineEdit_echoMode(other));
+    XLineEdit_setReadOnly(self, XLineEdit_isReadOnly(other));
+    XLineEdit_setDragEnabled(self, XLineEdit_dragEnabled(other));
+    XLineEdit_setCursorMoveStyle(self, XLineEdit_cursorMoveStyle(other));
+    XLineEdit_setModified(self, XLineEdit_isModified(other));
     self->m_validator = other->m_validator;
     self->m_validatorUserData = other->m_validatorUserData;
-    if (other->m_inputMask)
-        XLineEdit_setInputMask(self, other->m_inputMask);
-    /* 撤销/重做栈：深拷贝（setText 已清空本对象历史）。 */
-    for (i = 0; i < other->m_undoCount; ++i) {
-        char* snap =
-            (char*)XMalloc_System(XStrlen(other->m_undoStack[i]) + 1);
-        if (!snap) break;
-        XStrcpy(snap, other->m_undoStack[i]);
-        self->m_undoStack[self->m_undoCount++] = snap;
-    }
-    for (i = 0; i < other->m_redoCount; ++i) {
-        char* snap =
-            (char*)XMalloc_System(XStrlen(other->m_redoStack[i]) + 1);
-        if (!snap) break;
-        XStrcpy(snap, other->m_redoStack[i]);
-        self->m_redoStack[self->m_redoCount++] = snap;
-    }
-    if (other->m_clipboardText) {
-        char* cb = (char*)XMalloc_System(XStrlen(other->m_clipboardText) + 1);
-        if (cb) {
-            XStrcpy(cb, other->m_clipboardText);
-            self->m_clipboardText = cb;
+    XLineEdit_setValidator(self, other->m_validator,
+                           other->m_validatorUserData);
+    XLineEdit_setInputMask(self, XLineEdit_inputMask(other));
+    /* 光标/选区镜像：有选区按 setSelection 承载（锚点落选区端，对标
+       控制器语义），否则恢复光标字符位置。 */
+    if (other->m_control && self->m_control) {
+        if (XLineControl_hasSelectedText(other->m_control)) {
+            int ss = XLineControl_selectionStart(other->m_control);
+            int se = XLineControl_selectionEnd(other->m_control);
+            const char* raw = xlineedit_ctlRawText(other);
+            int len = (int)(xlineedit_charCountPrefix(raw, (size_t)se) -
+                            xlineedit_charCountPrefix(raw, (size_t)ss));
+            XLineEdit_setSelection(self, ss, len);
+        } else {
+            XLineEdit_setCursorPosition(self,
+                                        XLineEdit_cursorPosition(other));
         }
     }
     self->m_clearButtonRect = other->m_clearButtonRect;
+    xlineedit_updateSizeHints(self);
+    XWidget_update((XWidget*)self);
 }
 
-/** @brief 移动语义：基类移动后转移全部缓冲，源对象归构造默认值。 */
+/** @brief 移动语义：基类移动后转移控制器与壳缓冲，源对象归构造默认值
+ *         （控制器信号转发连接随接收方重连）。 */
 static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
 {
-    int i;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XLineEdit_init(self, NULL, 0);
     XClass_Parent(XWidget, EXClass_Move,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
-    /* 转移文本缓冲。 */
-    self->m_text = other->m_text;
-    other->m_text = NULL;
-    if (!self->m_text) {
-        self->m_text = (char*)XMalloc_System(1);
-        if (self->m_text) self->m_text[0] = '\0';
+    /* 断开源壳上的转发连接后整体转移控制器。 */
+    xlineedit_disconnectControlSignals(other, other);
+    if (self->m_control)
+        XLineControl_delete_base((XClass*)self->m_control);
+    self->m_control = other->m_control;
+    other->m_control = xlineedit_createControl();
+    if (other->m_control) {
+        XLineControl_setAccessibleObject(other->m_control,
+                                         (XObject*)other);
+        xlineedit_connectControlSignals(other, other);
     }
-    /* 转移显示/掩码/剪贴板缓冲与撤销重做栈。 */
-    self->m_displayBuf = other->m_displayBuf;
-    other->m_displayBuf = NULL;
-    self->m_inputMask = other->m_inputMask;
-    other->m_inputMask = NULL;
-    self->m_clipboardText = other->m_clipboardText;
-    other->m_clipboardText = NULL;
-    for (i = 0; i < other->m_undoCount; ++i) {
-        self->m_undoStack[i] = other->m_undoStack[i];
-        other->m_undoStack[i] = NULL;
+    if (self->m_control) {
+        XLineControl_setAccessibleObject(self->m_control, (XObject*)self);
+        /* 转移后的控制器需按新宿主重建转发连接（断开时以 other 为
+           接收方整体移除，信号转发链不随指针转移）。 */
+        xlineedit_connectControlSignals(self, self);
     }
-    self->m_undoCount = other->m_undoCount;
-    other->m_undoCount = 0;
-    for (i = 0; i < other->m_redoCount; ++i) {
-        self->m_redoStack[i] = other->m_redoStack[i];
-        other->m_redoStack[i] = NULL;
-    }
-    self->m_redoCount = other->m_redoCount;
-    other->m_redoCount = 0;
-
-    if (self->m_placeholder) XString_delete_base(self->m_placeholder);
+    if (self->m_placeholder) XString_delete_base((XClass*)self->m_placeholder);
     self->m_placeholder = other->m_placeholder;
     other->m_placeholder = XString_create();
-    self->m_cursor = other->m_cursor;
-    self->m_anchor = other->m_anchor;
     self->m_viewOffset = other->m_viewOffset;
-    self->m_maxLength = other->m_maxLength;
-    self->m_echoMode = other->m_echoMode;
-    self->m_readOnly = other->m_readOnly;
     self->m_frame = other->m_frame;
     self->m_alignment = other->m_alignment;
     self->m_clearButtonEnabled = other->m_clearButtonEnabled;
-    self->m_dragEnabled = other->m_dragEnabled;
-    self->m_cursorMoveStyle = other->m_cursorMoveStyle;
-    self->m_textMargins = other->m_textMargins;
-    self->m_modified = other->m_modified;
     self->m_finishedPending = other->m_finishedPending;
+    self->m_textMargins = other->m_textMargins;
     self->m_validator = other->m_validator;
     self->m_validatorUserData = other->m_validatorUserData;
     self->m_clearButtonRect = other->m_clearButtonRect;
-
     /* 源对象归构造默认值。 */
-    /* m_placeholder 已转移并重新创建为空串。 */
-    other->m_cursor = 0;
-    other->m_anchor = 0;
     other->m_viewOffset = 0;
-    other->m_maxLength = 0;
-    other->m_echoMode = XLineEditEchoMode_Normal;
-    other->m_readOnly = false;
     other->m_frame = true;
     other->m_alignment = XAlignment_Left;
     other->m_clearButtonEnabled = false;
-    other->m_dragEnabled = false;
-    other->m_cursorMoveStyle = XLineEditCursorMoveStyle_LogicalMoveStyle;
-    XMargins_init(&other->m_textMargins, 0, 0, 0, 0);
-    other->m_modified = false;
     other->m_finishedPending = false;
+    XMargins_init(&other->m_textMargins, 0, 0, 0, 0);
     other->m_validator = NULL;
     other->m_validatorUserData = NULL;
     XRect_init(&other->m_clearButtonRect, 0, 0, 0, 0);
-
+    /* 校验钩子经适配层下发：控制器仅存壳借用指针，move 后重定位到
+       目标壳（源壳指针随默认值复位）。 */
+    XLineEdit_setValidator(self, self->m_validator,
+                           self->m_validatorUserData);
+    XLineEdit_setValidator(other, NULL, NULL);
     xlineedit_updateSizeHints(self);
     XWidget_update((XWidget*)self);
 }
@@ -1810,45 +1162,32 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XLineEdit);
 
-    self->m_text = (char*)XMalloc_System(1);
-    if (self->m_text) self->m_text[0] = '\0';
+    self->m_control = NULL;
     self->m_placeholder = XString_create();
-    self->m_cursor = 0;
-    self->m_anchor = 0;
     self->m_viewOffset = 0;
-    self->m_maxLength = 0;
-    self->m_echoMode = XLineEditEchoMode_Normal;
-    self->m_readOnly = false;
     self->m_frame = true;
     self->m_alignment = XAlignment_Left;
-    self->m_displayBuf = NULL;
-    self->m_inputMask = NULL;
     self->m_validator = NULL;
     self->m_validatorUserData = NULL;
     self->m_clearButtonEnabled = false;
-    self->m_dragEnabled = false;
-    self->m_cursorMoveStyle = XLineEditCursorMoveStyle_LogicalMoveStyle;
-    XMargins_init(&self->m_textMargins, 0, 0, 0, 0);
-    self->m_modified = false;
     self->m_finishedPending = false;
-    self->m_undoCount = 0;
-    self->m_redoCount = 0;
-    self->m_clipboardText = NULL;
+    XMargins_init(&self->m_textMargins, 0, 0, 0, 0);
     /* 内置 action 槽：结构体成员数组，XWidget_init 只清基类部分；不初始化
        的话 m_actionCount 为堆残留垃圾，首帧绘制会解引用野指针（Debug CRT
-       cdcd 填充模式直接暴露）。撤销/重做栈同为成员指针数组，一并清零。 */
+       cdcd 填充模式直接暴露）。 */
     self->m_actionCount = 0;
-    /* 补全器借用指针必须显式置空：堆残留垃圾会让 syncCompleter 解引用
-       野指针（与 m_actionCount 同类教训，ASan malloc_fill_byte=0xBE 下
-       必现）。 */
-    self->m_completer = NULL;
-    self->m_completerSyncing = false;
     XMemset(self->m_actions, 0, sizeof(self->m_actions));
     XMemset(self->m_actionPositions, 0, sizeof(self->m_actionPositions));
-    XMemset(self->m_undoStack, 0, sizeof(self->m_undoStack));
-    XMemset(self->m_redoStack, 0, sizeof(self->m_redoStack));
     XRect_init(&self->m_clearButtonRect, 0, 0, 0, 0);
-    XWidget_setFocusPolicy(self, XWidgetFocusPolicy_ClickFocus);
+    /* 编辑控制器：迁入编辑逻辑的私有控制器（对标 Qt d->control）。
+       创建即预热（控制器空缓冲缺陷的壳侧规避，见 xlineedit_createControl）。 */
+    self->m_control = xlineedit_createControl();
+    if (self->m_control) {
+        XLineControl_setAccessibleObject(self->m_control, (XObject*)self);
+        xlineedit_connectControlSignals(self, self);
+        xlineedit_syncControlFont(self);
+    }
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_ClickFocus);
     xlineedit_updateSizeHints(self);
 }
 
@@ -1866,34 +1205,36 @@ XLineEdit* XLineEdit_create_ex(XMemoryType memory, XWidget* parent,
 
 const char* XLineEdit_text(const XLineEdit* self)
 {
-    return (self && self->m_text) ? self->m_text : "";
+    if (!self || !self->m_control) return "";
+    return XLineControl_text(self->m_control);
 }
 
 const char* XLineEdit_displayText(const XLineEdit* self)
 {
-    XLineEdit* e = (XLineEdit*)self;
-    if (!e) return "";
-    xlineedit_refreshDisplay(e);
-    return (e->m_displayBuf) ? e->m_displayBuf : "";
+    const XLineControlTextLayout* layout;
+    if (!self || !self->m_control) return "";
+    layout = XLineControl_textLayout(self->m_control);
+    return (layout && layout->m_text) ? layout->m_text : "";
 }
 
 void XLineEdit_setText(XLineEdit* self, const char* text)
 {
-    if (!self || !text) return;
-    if (self->m_text && XStrcmp(self->m_text, text) == 0) return;
-    xlineedit_setContent(self, text, XStrlen(text), false, true, true);
+    if (!self || !text || !self->m_control) return;
+    if (XStrcmp(XLineControl_text(self->m_control), text) == 0) return;
+    XLineControl_setText(self->m_control, text);
 }
 
 void XLineEdit_clear(XLineEdit* self)
 {
-    XLineEdit_setText(self, "");
+    if (!self || !self->m_control) return;
+    XLineControl_clear(self->m_control);
 }
 
 void XLineEdit_insert(XLineEdit* self, const char* utf8)
 {
-    if (!self || !utf8) return;
-    if (self->m_readOnly) return;
-    xlineedit_insertText(self, utf8, true);
+    if (!self || !utf8 || !self->m_control) return;
+    if (XLineControl_isReadOnly(self->m_control)) return;
+    XLineControl_insert(self->m_control, utf8);
 }
 
 const char* XLineEdit_placeholderText(const XLineEdit* self)
@@ -1918,75 +1259,71 @@ void XLineEdit_setPlaceholderText(XLineEdit* self, const char* placeholder)
 
 bool XLineEdit_isReadOnly(const XLineEdit* self)
 {
-    return self ? self->m_readOnly : false;
+    if (!self || !self->m_control) return false;
+    return XLineControl_isReadOnly(self->m_control);
 }
+
 void XLineEdit_setReadOnly(XLineEdit* self, bool readOnly)
 {
-    if (!self) return;
-    self->m_readOnly = readOnly;
+    if (!self || !self->m_control) return;
+    XLineControl_setReadOnly(self->m_control, readOnly);
 }
+
 int XLineEdit_echoMode(const XLineEdit* self)
 {
-    return self ? self->m_echoMode : XLineEditEchoMode_Normal;
+    if (!self || !self->m_control) return (int)XLineEditEchoMode_Normal;
+    return (int)XLineControl_echoMode(self->m_control);
 }
+
 void XLineEdit_setEchoMode(XLineEdit* self, int echoMode)
 {
-    if (!self || self->m_echoMode == echoMode) return;
+    if (!self || !self->m_control) return;
+    if (XLineControl_echoMode(self->m_control) == (uint32_t)echoMode) return;
     if (echoMode < XLineEditEchoMode_Normal ||
         echoMode > XLineEditEchoMode_PasswordEchoOnEdit)
         return;
-    self->m_echoMode = echoMode;
-    /* Qt 语义：切换回显模式清除选区并把光标移到末尾。 */
-    self->m_anchor = self->m_cursor =
-        self->m_text ? XStrlen(self->m_text) : 0;
-    xlineedit_refreshDisplay(self);
+    /* 控制器：取消密码回显定时器 + 复位编辑态 + 刷新显示（Qt 语义）。 */
+    XLineControl_setEchoMode(self->m_control, (uint32_t)echoMode);
+    /* 迁移前语义：切换回显模式清除选区并把光标移到末尾。 */
+    XLineControl_end(self->m_control, false);
     XWidget_update((XWidget*)self);
 }
+
 int XLineEdit_maxLength(const XLineEdit* self)
 {
-    return self ? self->m_maxLength : 0;
+    int maxLength;
+    if (!self || !self->m_control) return 0;
+    maxLength = XLineControl_maxLength(self->m_control);
+    /* 控制器以 Qt 默认 32767 表示不限；壳 API 以 0 表示不限。 */
+    return (maxLength >= XLINEEDIT_UNLIMITED_MAX_LENGTH) ? 0 : maxLength;
 }
+
 void XLineEdit_setMaxLength(XLineEdit* self, int maxLength)
 {
-    if (!self || maxLength < 0) return;
-    self->m_maxLength = maxLength;
-    if (maxLength > 0 && self->m_text &&
-        (int)xlineedit_charCount(self->m_text) > maxLength) {
-        /* 截断到第 maxLength 个字符边界。 */
-        size_t cut = 0;
-        int chars = 0;
-        const char* p = self->m_text;
-        char* truncated;
-        while (*p) {
-            ++p;
-            if ((*p & 0xC0u) != 0x80u) ++chars;
-            if (chars == maxLength) { cut = (size_t)(p - self->m_text); break; }
-        }
-        if (cut) {
-            truncated = (char*)XMalloc_System(cut + 1);
-            if (truncated) {
-                XMemcpy(truncated, self->m_text, cut);
-                truncated[cut] = '\0';
-                xlineedit_setContent(self, truncated, cut, false, false, true);
-                XFree_System(truncated);
-            }
-        }
-    }
+    if (!self || !self->m_control || maxLength < 0) return;
+    XLineControl_setMaxLength(self->m_control,
+                              maxLength == 0
+                                  ? XLINEEDIT_UNLIMITED_MAX_LENGTH
+                                  : maxLength);
 }
+
 int XLineEdit_alignment(const XLineEdit* self)
 {
     return self ? self->m_alignment : XAlignment_Left;
 }
+
 void XLineEdit_setAlignment(XLineEdit* self, int alignment)
 {
     if (!self || self->m_alignment == alignment) return;
     self->m_alignment = alignment;
     XWidget_update((XWidget*)self);
 }
+
 bool XLineEdit_hasFrame(const XLineEdit* self)
 {
     return self ? self->m_frame : true;
 }
+
 void XLineEdit_setFrame(XLineEdit* self, bool on)
 {
     if (!self || self->m_frame == on) return;
@@ -1994,6 +1331,7 @@ void XLineEdit_setFrame(XLineEdit* self, bool on)
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
 }
+
 void XLineEdit_addAction(XLineEdit* self, XAction* action, int position)
 {
     if (!self || !action) return;
@@ -2011,6 +1349,7 @@ bool XLineEdit_isClearButtonEnabled(const XLineEdit* self)
 {
     return self ? self->m_clearButtonEnabled : false;
 }
+
 void XLineEdit_setClearButtonEnabled(XLineEdit* self, bool enable)
 {
     if (!self || self->m_clearButtonEnabled == enable) return;
@@ -2018,17 +1357,28 @@ void XLineEdit_setClearButtonEnabled(XLineEdit* self, bool enable)
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
 }
+
 void XLineEdit_setValidator(XLineEdit* self, XLineEditValidatorFunc validator,
                             void* userData)
 {
     if (!self) return;
     self->m_validator = validator;
     self->m_validatorUserData = userData;
+    if (self->m_control) {
+        /* 校验器在控制器内单点消费（编辑拒绝回滚 + inputRejected 单一
+           发射点）；壳回调经适配钩子桥接，self 恒为壳指针。 */
+        XLineControl_setValidator(self->m_control, self,
+                                  validator ? xlineedit_validateAdapter : NULL,
+                                  validator ? xlineedit_fixupAdapter : NULL,
+                                  userData);
+    }
 }
+
 XLineEditValidatorFunc XLineEdit_validator(const XLineEdit* self)
 {
     return self ? self->m_validator : NULL;
 }
+
 XSize XLineEdit_sizeHint(const XLineEdit* self)
 {
     XSize s;
@@ -2039,30 +1389,31 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
         XSize_init(&s, 0, 0);
         return s;
     }
-    if (self->m_text) chars = xlineedit_charCount(self->m_text);
     {
+        const char* raw = xlineedit_ctlRawText(self);
         const char* phText = (self->m_placeholder
                               ? XString_toUtf8(self->m_placeholder) : NULL);
+        const XFont* font = &((XWidget*)self)->m_font;
+        const char* phPtr = phText ? phText : "";
+        int textW;
+        int phW;
+        int contentW;
+        if (raw) chars = xlineedit_charCount(raw);
         if (phText && phText[0]) {
             size_t pc = xlineedit_charCount(phText);
             if (pc > chars) chars = pc;
         }
         /* 首选宽度按真实字体度量（取文本与 placeholder 中较宽者），
            中文双宽不再被按 8px 低估。 */
-        const XFont* font = &((XWidget*)self)->m_font;
-        const char* textPtr = self->m_text ? self->m_text : "";
-        const char* phPtr = phText ? phText : "";
-        int textW = xlineedit_displayWidth(font, textPtr, chars);
-        int phW = (phText && phText[0])
-                      ? xlineedit_displayWidth(font, phPtr,
-                                               xlineedit_charCount(phPtr))
-                      : 0;
-
-        int contentW = textW > phW ? textW : phW;
+        textW = xlineedit_displayWidth(font, raw, chars);
+        phW = (phText && phText[0])
+                  ? xlineedit_displayWidth(font, phPtr,
+                                           xlineedit_charCount(phPtr))
+                  : 0;
+        contentW = textW > phW ? textW : phW;
         w = (int)((self->m_frame ? 8 : 4) + self->m_textMargins.left +
                   self->m_textMargins.right + contentW +
                   ((self->m_clearButtonEnabled) ? 18 : 0));
-
     }
     if (w < 40) w = 40;
     h = 14 + self->m_textMargins.top + self->m_textMargins.bottom +
@@ -2070,6 +1421,7 @@ XSize XLineEdit_sizeHint(const XLineEdit* self)
     XSize_init(&s, w, h);
     return s;
 }
+
 XSize XLineEdit_minimumSizeHint(const XLineEdit* self)
 {
     XSize s;
@@ -2088,432 +1440,320 @@ XSize XLineEdit_minimumSizeHint(const XLineEdit* self)
     XSize_init(&s, w, h);
     return s;
 }
+
 XRect XLineEdit_cursorRect(const XLineEdit* self)
 {
     XRect rect;
     int tx;
     int ty;
-    int baseline = 0;
-    int editBaseline = 0;    int cx;
+    int cx;
     XMemset(&rect, 0, sizeof(rect));
-    if (!self) return rect;
+    if (!self || !self->m_control) return rect;
     {
         const XFont* font = &((XWidget*)self)->m_font;
         int lineH = XPainter_textHeight(font);
-        int ascent = XPainter_textAscent(font);
         if (lineH < 14) lineH = 14;
+        /* 光标→X 由控制器提供（显示坐标），壳做 contents 偏移换算
+           （textStartX 与滚动偏移）；矩形形状与迁移前一致（1px 宽）。 */
+        xlineedit_syncControlFont((XLineEdit*)self);
         ty = (XWidget_height((XWidget*)self) - lineH) / 2;
         tx = xlineedit_textStartX(self);
-        cx = tx - self->m_viewOffset;
-        if (self->m_text) {
-            /* m_cursor 是 UTF-8 字节偏移，textWidthRange 的区间参数也是
-               字节偏移：直接传 m_cursor。旧实现把「字符数」当「字节偏移」
-               传入，中文（3 字节/字符、双宽字形）下光标随输入越来越多地
-               落后于文字。 */
-            cx += XPainter_textWidthRange(font, self->m_text, 0,
-                                          (int)self->m_cursor);
-
-        }
+        cx = tx - self->m_viewOffset +
+             XLineControl_cursorToXCurrent(self->m_control);
         rect.x = cx;
         rect.y = ty + 1;
         rect.width = XLINEEDIT_CURSOR_W;
         rect.height = lineH - 2;
-        (void)ascent;
     }
     return rect;
 }
 
 int XLineEdit_cursorPosition(const XLineEdit* self)
 {
-    /* 对标 Qt：返回字符索引（非字节偏移）。 */
-    return self ? (int)xlineedit_charCountPrefix(self->m_text,
-                                                 self->m_cursor) : 0;
+    if (!self || !self->m_control) return 0;
+    /* 控制器存字节偏移；公开 API 为字符索引（迁移前口径）。 */
+    return (int)xlineedit_charCountPrefix(
+        xlineedit_ctlRawText(self),
+        (size_t)XLineControl_cursor(self->m_control));
 }
+
 void XLineEdit_setCursorPosition(XLineEdit* self, int position)
 {
     size_t chars;
     size_t bytePos;
-    size_t i;
-    if (!self || !self->m_text) return;
+    const char* raw;
+    if (!self || !self->m_control) return;
     if (position < 0) position = 0;
-    /* 字符索引 → 字节偏移（对标 Qt 字符索引光标语义）。 */
-    chars = xlineedit_charCount(self->m_text);
+    /* 字符索引 → 字节偏移（对标迁移前公开口径），控制器按字节移动。 */
+    raw = xlineedit_ctlRawText(self);
+    chars = xlineedit_charCount(raw);
     if ((size_t)position > chars) position = (int)chars;
-    bytePos = 0;
-    for (i = 0; i < (size_t)position && self->m_text[bytePos]; ++i) {
-        ++bytePos;
-        while (((unsigned char)self->m_text[bytePos] & 0xC0u) == 0x80u)
-            ++bytePos;
-    }
-    xlineedit_moveCursor(self, bytePos, false);
+    bytePos = xlineedit_charIndexToByte(raw, (size_t)position);
+    XLineControl_setCursorPosition(self->m_control, (int)bytePos);
 }
+
 int XLineEdit_cursorPositionAt(const XLineEdit* self, const XPoint* pos)
 {
-    if (!self) return 0;
-    /* 像素位置 → 字节偏移 → 字符索引（对标 Qt 字符索引）。 */
-    return (int)xlineedit_charCountPrefix(
-        self->m_text, xlineedit_posToCursor(self, pos ? pos->x : 0));
+    int clickX;
+    int bytePos;
+    if (!self || !self->m_control) return 0;
+    /* 壳做 contents 平移 → 控制器 xToPos → 字符索引（迁移前口径）。 */
+    xlineedit_syncControlFont((XLineEdit*)self);
+    clickX = (pos ? pos->x : 0) - xlineedit_textStartX(self) +
+             self->m_viewOffset;
+    bytePos = XLineControl_xToPos(self->m_control, clickX,
+                                  (int)XLineControlCursorPosition_BetweenCharacters);
+    return (int)xlineedit_charCountPrefix(xlineedit_ctlRawText(self),
+                                          (size_t)bytePos);
 }
 
 /* ==================== 光标移动与编辑键 ==================== */
 
 void XLineEdit_cursorForward(XLineEdit* self, bool mark, int steps)
 {
-    size_t pos;
-    int i;
-    if (!self || !self->m_text) return;
-    pos = self->m_cursor;
-    if (steps < 0) {
-        for (i = 0; i < -steps; ++i)
-            pos = xlineedit_prevBoundary(self->m_text, pos);
-    } else {
-        for (i = 0; i < steps; ++i)
-            pos = xlineedit_nextBoundary(self->m_text, pos);
-    }
-    xlineedit_moveCursor(self, pos, mark);
+    if (!self || !self->m_control) return;
+    XLineControl_cursorForward(self->m_control, mark, steps);
 }
 
 void XLineEdit_cursorBackward(XLineEdit* self, bool mark, int steps)
 {
-    size_t pos;
-    int i;
-    if (!self || !self->m_text) return;
-    pos = self->m_cursor;
-    if (steps < 0) {
-        for (i = 0; i < -steps; ++i)
-            pos = xlineedit_nextBoundary(self->m_text, pos);
-    } else {
-        for (i = 0; i < steps; ++i)
-            pos = xlineedit_prevBoundary(self->m_text, pos);
-    }
-    xlineedit_moveCursor(self, pos, mark);
+    if (!self || !self->m_control) return;
+    XLineControl_cursorForward(self->m_control, mark, -steps);
 }
 
 void XLineEdit_cursorWordForward(XLineEdit* self, bool mark)
 {
-    size_t pos;
-    if (!self || !self->m_text) return;
-    pos = self->m_cursor;
-    /* 跳过空白，再跳过单词（词=连续非空白）。 */
-    while (self->m_text[pos] &&
-           xlineedit_isSpace((unsigned char)self->m_text[pos]))
-        pos = xlineedit_nextBoundary(self->m_text, pos);
-    while (self->m_text[pos] &&
-           !xlineedit_isSpace((unsigned char)self->m_text[pos]))
-        pos = xlineedit_nextBoundary(self->m_text, pos);
-    xlineedit_moveCursor(self, pos, mark);
+    if (!self || !self->m_control) return;
+    XLineControl_cursorWordForward(self->m_control, mark);
 }
 
 void XLineEdit_cursorWordBackward(XLineEdit* self, bool mark)
 {
-    size_t pos;
-    if (!self || !self->m_text) return;
-    pos = self->m_cursor;
-    /* 反向跳过空白，再反向跳过单词。 */
-    while (pos > 0 &&
-           xlineedit_isSpace((unsigned char)self->m_text[
-               xlineedit_prevBoundary(self->m_text, pos)]))
-        pos = xlineedit_prevBoundary(self->m_text, pos);
-    while (pos > 0 &&
-           !xlineedit_isSpace((unsigned char)self->m_text[
-               xlineedit_prevBoundary(self->m_text, pos)]))
-        pos = xlineedit_prevBoundary(self->m_text, pos);
-    xlineedit_moveCursor(self, pos, mark);
+    if (!self || !self->m_control) return;
+    XLineControl_cursorWordBackward(self->m_control, mark);
 }
 
 void XLineEdit_backspace(XLineEdit* self)
 {
-    size_t from;
-    size_t to;
-    if (!self || !self->m_text || self->m_readOnly) return;
-    if (xlineedit_hasSelection(self)) {
-        from = xlineedit_selStart(self);
-        to = xlineedit_selEnd(self);
-    } else {
-        to = self->m_cursor;
-        from = xlineedit_prevBoundary(self->m_text, to);
-    }
-    xlineedit_eraseRange(self, from, to);
+    if (!self || !self->m_control) return;
+    if (XLineControl_isReadOnly(self->m_control)) return;
+    XLineControl_backspace(self->m_control);
 }
 
 void XLineEdit_del(XLineEdit* self)
 {
-    size_t from;
-    size_t to;
-    if (!self || !self->m_text || self->m_readOnly) return;
-    if (xlineedit_hasSelection(self)) {
-        from = xlineedit_selStart(self);
-        to = xlineedit_selEnd(self);
-    } else {
-        from = self->m_cursor;
-        to = xlineedit_nextBoundary(self->m_text, from);
-    }
-    xlineedit_eraseRange(self, from, to);
+    if (!self || !self->m_control) return;
+    if (XLineControl_isReadOnly(self->m_control)) return;
+    XLineControl_del(self->m_control);
 }
 
 void XLineEdit_home(XLineEdit* self, bool mark)
 {
-    if (!self) return;
-    xlineedit_moveCursor(self, 0, mark);
+    if (!self || !self->m_control) return;
+    XLineControl_home(self->m_control, mark);
 }
 
 void XLineEdit_end(XLineEdit* self, bool mark)
 {
-    if (!self || !self->m_text) return;
-    xlineedit_moveCursor(self, XStrlen(self->m_text), mark);
+    if (!self || !self->m_control) return;
+    XLineControl_end(self->m_control, mark);
 }
 
 /* ==================== 修改状态 ==================== */
 
 bool XLineEdit_isModified(const XLineEdit* self)
 {
-    return self ? self->m_modified : false;
+    if (!self || !self->m_control) return false;
+    return XLineControl_isModified(self->m_control);
 }
 
 void XLineEdit_setModified(XLineEdit* self, bool modified)
 {
-    if (self) self->m_modified = modified;
+    if (!self || !self->m_control) return;
+    XLineControl_setModified(self->m_control, modified);
 }
 
 /* ==================== 选区 ==================== */
 
 void XLineEdit_setSelection(XLineEdit* self, int start, int length)
 {
-    size_t s;
-    size_t e;
-    size_t i;
     size_t chars;
-    if (!self || !self->m_text) return;
-    /* 字符索引 → 字节偏移（对标 Qt 字符索引选区语义）。 */
-    chars = xlineedit_charCount(self->m_text);
+    size_t s;
+    const char* raw;
+    if (!self || !self->m_control) return;
+    /* 迁移前公开口径：start 为字符索引（钳位到 [0,字符数]），length 为
+       字符数（可负）；控制器以字节偏移承载 start。 */
+    raw = xlineedit_ctlRawText(self);
+    chars = xlineedit_charCount(raw);
     if (start < 0) start = 0;
     if ((size_t)start > chars) start = (int)chars;
-    s = 0;
-    for (i = 0; i < (size_t)start && self->m_text[s]; ++i) {
-        ++s;
-        while (((unsigned char)self->m_text[s] & 0xC0u) == 0x80u) ++s;
-    }
-    e = s;
-    if (length < 0) {
-        /* 负长度：选区向 start 左侧扩展（按字符数）。 */
-        size_t n = (size_t)(-length);
-        size_t cnt = 0;
-        while (e > 0 && cnt < n) {
-            --e;
-            while (e > 0 &&
-                   ((unsigned char)self->m_text[e] & 0xC0u) == 0x80u)
-                --e;
-            ++cnt;
-        }
-    } else {
-        for (i = 0; i < (size_t)length && self->m_text[e]; ++i) {
-            ++e;
-            while (((unsigned char)self->m_text[e] & 0xC0u) == 0x80u) ++e;
-        }
-    }
-    xlineedit_setSelectionRange(self, s, e);
+    s = xlineedit_charIndexToByte(raw, (size_t)start);
+    XLineControl_setSelection(self->m_control, (int)s, length);
 }
 
 bool XLineEdit_hasSelectedText(const XLineEdit* self)
 {
-    return xlineedit_hasSelection(self);
+    if (!self || !self->m_control) return false;
+    return XLineControl_hasSelectedText(self->m_control);
 }
 
 char* XLineEdit_selectedText(const XLineEdit* self)
 {
-    size_t s;
-    size_t e;
-    size_t len;
-    char* out;
-    if (!self || !xlineedit_hasSelection(self)) return NULL;
-    s = xlineedit_selStart(self);
-    e = xlineedit_selEnd(self);
-    len = e - s;
-    out = (char*)XMalloc_System(len + 1);
-    if (!out) return NULL;
-    XMemcpy(out, self->m_text + s, len);
-    out[len] = '\0';
-    return out;
+    if (!self || !self->m_control) return NULL;
+    return XLineControl_selectedText(self->m_control);
 }
 
 int XLineEdit_selectionStart(const XLineEdit* self)
 {
-    if (!self || !xlineedit_hasSelection(self)) return -1;
-    return (int)xlineedit_selStart(self);
+    int bytes;
+    if (!self || !self->m_control) return -1;
+    bytes = XLineControl_selectionStart(self->m_control);
+    if (bytes < 0) return -1;
+    /* 对标 Qt：字符位置口径（与 cursorPosition 同单位），控制器存
+       字节偏移，按前缀字符数换算（此前直返字节，与组内 API 单位
+       不一致）。 */
+    return (int)xlineedit_charCountPrefix(xlineedit_ctlRawText(self),
+                                          (size_t)bytes);
 }
 
 int XLineEdit_selectionEnd(const XLineEdit* self)
 {
-    if (!self || !xlineedit_hasSelection(self)) return -1;
-    return (int)xlineedit_selEnd(self);
+    int bytes;
+    if (!self || !self->m_control) return -1;
+    bytes = XLineControl_selectionEnd(self->m_control);
+    if (bytes < 0) return -1;
+    return (int)xlineedit_charCountPrefix(xlineedit_ctlRawText(self),
+                                          (size_t)bytes);
 }
 
 int XLineEdit_selectionLength(const XLineEdit* self)
 {
-    size_t startChars;
-    size_t endChars;
-    if (!self || !xlineedit_hasSelection(self)) return 0;
-    startChars = xlineedit_charCountPrefix(self->m_text,
-                                           xlineedit_selStart(self));
-    endChars = xlineedit_charCountPrefix(self->m_text,
-                                         xlineedit_selEnd(self));
-    return (int)(endChars - startChars);
+    int s;
+    int e;
+    const char* raw;
+    if (!self || !self->m_control) return 0;
+    if (!XLineControl_hasSelectedText(self->m_control)) return 0;
+    s = XLineControl_selectionStart(self->m_control);
+    e = XLineControl_selectionEnd(self->m_control);
+    raw = xlineedit_ctlRawText(self);
+    return (int)(xlineedit_charCountPrefix(raw, (size_t)e) -
+                 xlineedit_charCountPrefix(raw, (size_t)s));
 }
 
 void XLineEdit_deselect(XLineEdit* self)
 {
-    if (!self) return;
-    xlineedit_moveCursor(self, self->m_cursor, false);
+    if (!self || !self->m_control) return;
+    XLineControl_deselect(self->m_control);
 }
 
 void XLineEdit_selectAll(XLineEdit* self)
 {
-    if (!self || !self->m_text) return;
-    xlineedit_setSelectionRange(self, 0, XStrlen(self->m_text));
+    if (!self || !self->m_control) return;
+    XLineControl_selectAll(self->m_control);
 }
 
 /* ==================== 撤销/重做 ==================== */
 
 bool XLineEdit_isUndoAvailable(const XLineEdit* self)
 {
-    return self ? self->m_undoCount > 0 : false;
+    if (!self || !self->m_control) return false;
+    return XLineControl_isUndoAvailable(self->m_control);
 }
 
 bool XLineEdit_isRedoAvailable(const XLineEdit* self)
 {
-    return self ? self->m_redoCount > 0 : false;
+    if (!self || !self->m_control) return false;
+    return XLineControl_isRedoAvailable(self->m_control);
 }
 
 void XLineEdit_undo(XLineEdit* self)
 {
-    char* snap;
-    if (!self || self->m_undoCount == 0) return;
-    snap = self->m_undoStack[--self->m_undoCount];
-    xlineedit_redoPush(self);
-    xlineedit_setContent(self, snap, XStrlen(snap), false, false, true);
-    XFree_System(snap);
+    if (!self || !self->m_control) return;
+    XLineControl_undo(self->m_control);
 }
 
 void XLineEdit_redo(XLineEdit* self)
 {
-    char* snap;
-    if (!self || self->m_redoCount == 0) return;
-    snap = self->m_redoStack[--self->m_redoCount];
-    xlineedit_undoPush(self);
-    xlineedit_setContent(self, snap, XStrlen(snap), false, false, true);
-    XFree_System(snap);
+    if (!self || !self->m_control) return;
+    XLineControl_redo(self->m_control);
 }
 
 /* ==================== 剪贴板 ==================== */
 
 void XLineEdit_cut(XLineEdit* self)
 {
-    size_t s;
-    size_t e;
-    char* sel;
-    if (!self || self->m_readOnly || !xlineedit_hasSelection(self)) return;
-    s = xlineedit_selStart(self);
-    e = xlineedit_selEnd(self);
-    sel = (char*)XMalloc_System(e - s + 1);
-    if (sel) {
-        XMemcpy(sel, self->m_text + s, e - s);
-        sel[e - s] = '\0';
-        xlineedit_setClipboardText(self, sel);
-        XFree_System(sel);
-    }
-    xlineedit_eraseRange(self, s, e);
+    if (!self || !self->m_control) return;
+    if (XLineControl_isReadOnly(self->m_control)) return;
+    if (!XLineControl_hasSelectedText(self->m_control)) return;
+    /* 对标 Qt cut = copy + del（控制器内为一次编辑结算）。 */
+    XLineControl_copy(self->m_control, (int)XClipboardMode_Clipboard);
+    XLineControl_del(self->m_control);
 }
 
 void XLineEdit_copy(XLineEdit* self)
 {
-    size_t s;
-    size_t e;
-    char* sel;
-    if (!self || !xlineedit_hasSelection(self)) return;
-    s = xlineedit_selStart(self);
-    e = xlineedit_selEnd(self);
-    sel = (char*)XMalloc_System(e - s + 1);
-    if (!sel) return;
-    XMemcpy(sel, self->m_text + s, e - s);
-    sel[e - s] = '\0';
-    xlineedit_setClipboardText(self, sel);
-    XFree_System(sel);
+    if (!self || !self->m_control) return;
+    if (!XLineControl_hasSelectedText(self->m_control)) return;
+    XLineControl_copy(self->m_control, (int)XClipboardMode_Clipboard);
 }
 
 void XLineEdit_paste(XLineEdit* self)
 {
-    char* text;
-    if (!self || self->m_readOnly) return;
-    text = xlineedit_getClipboardText(self);
-    if (!text) return;
-    if (text[0] == '\0') {
-        XFree_System(text);
-        return;
-    }
-    if (!xlineedit_insertText(self, text, true)) {
-        xlineedit_emitVoidSignal(self, (size_t)XLineEdit_inputRejected_signal);
-    }
-    XFree_System(text);
+    if (!self || !self->m_control) return;
+    if (XLineControl_isReadOnly(self->m_control)) return;
+    XLineControl_paste(self->m_control, (int)XClipboardMode_Clipboard);
 }
 
 /* ==================== 其他属性 ==================== */
 
 bool XLineEdit_dragEnabled(const XLineEdit* self)
 {
-    return self ? self->m_dragEnabled : false;
+    if (!self || !self->m_control) return false;
+    return XLineControl_dragEnabled(self->m_control);
 }
 
 void XLineEdit_setDragEnabled(XLineEdit* self, bool b)
 {
-    if (self) self->m_dragEnabled = b;
+    if (!self || !self->m_control) return;
+    XLineControl_setDragEnabled(self->m_control, b);
 }
 
 int XLineEdit_cursorMoveStyle(const XLineEdit* self)
 {
-    return self ? self->m_cursorMoveStyle
-                : XLineEditCursorMoveStyle_LogicalMoveStyle;
+    if (!self || !self->m_control)
+        return XLineEditCursorMoveStyle_LogicalMoveStyle;
+    return XLineControl_cursorMoveStyle(self->m_control);
 }
 
 void XLineEdit_setCursorMoveStyle(XLineEdit* self, int style)
 {
-    if (!self) return;
-    self->m_cursorMoveStyle = style;
+    if (!self || !self->m_control) return;
+    XLineControl_setCursorMoveStyle(self->m_control, style);
 }
 
 const char* XLineEdit_inputMask(const XLineEdit* self)
 {
-    return (self && self->m_inputMask) ? self->m_inputMask : "";
+    if (!self || !self->m_control) return "";
+    return XLineControl_inputMask(self->m_control);
 }
 
 void XLineEdit_setInputMask(XLineEdit* self, const char* inputMask)
 {
-    char* updated;
-    if (!self) return;
+    if (!self || !self->m_control) return;
     if (!inputMask) inputMask = "";
-    if (self->m_inputMask && XStrcmp(self->m_inputMask, inputMask) == 0)
+    if (XStrcmp(XLineControl_inputMask(self->m_control), inputMask) == 0)
         return;
-    updated = (char*)XRealloc_System(self->m_inputMask,
-                                     XStrlen(inputMask) + 1);
-    if (!updated) return;
-    self->m_inputMask = updated;
-    XStrcpy(self->m_inputMask, inputMask);
-    xlineedit_refreshDisplay(self);
+    XLineControl_setInputMask(self->m_control, inputMask);
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
 }
 
 bool XLineEdit_hasAcceptableInput(const XLineEdit* self)
 {
-    XLineEditValidatorState state;
-    if (!self || !self->m_text || !self->m_text[0]) return false;
-    if (!xlineedit_maskSatisfied(self->m_inputMask, self->m_text))
-        return false;
-    if (self->m_validator) {
-        state = self->m_validator((XLineEdit*)self, self->m_text,
-                                  self->m_validatorUserData);
-        if (state != XLineEditValidatorState_Acceptable) return false;
-    }
-    return true;
+    if (!self || !self->m_control) return false;
+    /* 对标 Qt：无校验器/掩码时空文本即可接受（此前"空文本恒 false"
+     * 为迁移前口径，与 Qt 的 hasAcceptableInput 语义相反）。 */
+    return XLineControl_hasAcceptableInput(self->m_control);
 }
 
 void XLineEdit_setTextMargins(XLineEdit* self, int left, int top,
@@ -2552,10 +1792,12 @@ XMargins XLineEdit_textMargins(const XLineEdit* self)
 void XLineEdit_setCompleter(XLineEdit* self, XCompleter* completer)
 {
     XCompleter* old;
-
-    if (!self || self->m_completer == completer) return;
-    old = self->m_completer;
-    self->m_completer = completer;
+    if (!self) return;
+    old = XLineEdit_completer(self);
+    if (old == completer) return;
+    /* 补全器借用指针由控制器持有（complete()/processKeyEvent 联动）。 */
+    if (self->m_control)
+        XLineControl_setCompleter(self->m_control, completer);
 #if XTABLEWIDGET_ON
     /* 对标 Qt：安装时 completer->setWidget(this)，供弹出定位与焦点判断
        使用；解绑/替换时把仍指向本编辑框的原补全器关联位清空，避免悬挂
@@ -2565,14 +1807,13 @@ void XLineEdit_setCompleter(XLineEdit* self, XCompleter* completer)
     } else if (old && XCompleter_widget(old) == (XWidget*)self) {
         XCompleter_setWidget(old, NULL);
     }
-#else
-    (void)old; /* XTABLEWIDGET_ON=0：补全器体系关闭，仅保留承载位。 */
 #endif /* XTABLEWIDGET_ON */
 }
 
 XCompleter* XLineEdit_completer(const XLineEdit* self)
 {
-    return self ? self->m_completer : NULL;
+    if (!self || !self->m_control) return NULL;
+    return (XCompleter*)XLineControl_completer(self->m_control);
 }
 
 /* ==================== 信号 ==================== */
@@ -2627,136 +1868,121 @@ XLineEdit* XLineEdit_focusedLineEdit(void)
 /* ==================== 标准右键菜单（对标 QLineEdit::
    createStandardContextMenu / contextMenuEvent） ==================== */
 
-/** @brief 菜单动作槽：撤销。 */
-static void xlineedit_menuUndoSlot(XObject* receiver, XVarList* args)
+/* 标准菜单构建共享化：动作触发槽与连接辅助在共享文本工具层 XTextMenu
+   （XTextMenu_createStandard）；本控件只提供 XTextMenuOps 适配槽，槽体
+   经壳公开 API 委托控制器（一行转发），动作集合与灰化条件逐一对应：
+   - readOnly 时撤销/重做/剪切/粘贴/删除槽置 NULL（菜单不出现这些项，
+     仅保留复制/全选）；
+   - 剪切/复制灰化 = 有选区且 Normal 回显（hasSel && echoNormal）；
+   - 粘贴灰化 = 剪贴板有非空文本（hasClip）；
+   - 删除灰化 = 有文本且有选区（hasText && hasSel）；
+   - 全选灰化 = 有文本且未全选（hasText && !allSelected）。 */
+
+/** @brief ops 适配槽：撤销/重做。 */
+static void xlineedit_menuOpUndo(void* ud)
 {
-    (void)args;
-    XLineEdit_undo((XLineEdit*)receiver);
+    XLineEdit_undo((XLineEdit*)ud);
 }
 
-/** @brief 菜单动作槽：重做。 */
-static void xlineedit_menuRedoSlot(XObject* receiver, XVarList* args)
+static bool xlineedit_menuOpCanUndo(void* ud)
 {
-    (void)args;
-    XLineEdit_redo((XLineEdit*)receiver);
+    return XLineEdit_isUndoAvailable((XLineEdit*)ud);
 }
 
-/** @brief 菜单动作槽：剪切。 */
-static void xlineedit_menuCutSlot(XObject* receiver, XVarList* args)
+static void xlineedit_menuOpRedo(void* ud)
 {
-    (void)args;
-    XLineEdit_cut((XLineEdit*)receiver);
+    XLineEdit_redo((XLineEdit*)ud);
 }
 
-/** @brief 菜单动作槽：复制。 */
-static void xlineedit_menuCopySlot(XObject* receiver, XVarList* args)
+static bool xlineedit_menuOpCanRedo(void* ud)
 {
-    (void)args;
-    XLineEdit_copy((XLineEdit*)receiver);
+    return XLineEdit_isRedoAvailable((XLineEdit*)ud);
 }
 
-/** @brief 菜单动作槽：粘贴。 */
-static void xlineedit_menuPasteSlot(XObject* receiver, XVarList* args)
+/** @brief ops 适配槽：剪切/复制（灰化 = 有选区且 Normal 回显）。 */
+static void xlineedit_menuOpCut(void* ud)
 {
-    (void)args;
-    XLineEdit_paste((XLineEdit*)receiver);
+    XLineEdit_cut((XLineEdit*)ud);
 }
 
-/** @brief 菜单动作槽：删除选中文本（对标
- *         QWidgetLineControl::_q_deleteSelected）。 */
-static void xlineedit_menuDeleteSlot(XObject* receiver, XVarList* args)
+static bool xlineedit_menuOpCanCutCopy(void* ud)
 {
-    (void)args;
-    XLineEdit_del((XLineEdit*)receiver);
+    XLineEdit* edit = (XLineEdit*)ud;
+    return XLineEdit_hasSelectedText(edit) &&
+           XLineEdit_echoMode(edit) == (int)XLineEditEchoMode_Normal;
 }
 
-/** @brief 菜单动作槽：全选。 */
-static void xlineedit_menuSelectAllSlot(XObject* receiver, XVarList* args)
+static void xlineedit_menuOpCopy(void* ud)
 {
-    (void)args;
-    XLineEdit_selectAll((XLineEdit*)receiver);
+    XLineEdit_copy((XLineEdit*)ud);
 }
 
-/** @brief 添加菜单动作并连接触发槽（返回动作便于设置启用态）。 */
-static XAction* xlineedit_addMenuAction(XMenu* menu, const char* utf8,
-                                        XSlotFunc1 slot, XLineEdit* edit)
+/** @brief ops 适配槽：粘贴（灰化 = 剪贴板有非空文本）。 */
+static void xlineedit_menuOpPaste(void* ud)
 {
-    XAction* action = XMenu_addAction_2(menu, utf8);
-    if (action && slot)
-        XObject_connect_1((XObject*)action,
-                          XSignal(XAction_triggered_signal),
-                          (XObject*)edit, slot, XConnectionType_Direct);
-    return action;
+    XLineEdit_paste((XLineEdit*)ud);
 }
 
-/** @brief 是否已全选（存在选区且覆盖全部文本；对标 allSelected）。 */
-static bool xlineedit_allSelected(const XLineEdit* self)
+static bool xlineedit_menuOpCanPaste(void* ud)
 {
-    return xlineedit_hasSelection(self) &&
-           xlineedit_selStart(self) == 0 &&
-           xlineedit_selEnd(self) == XStrlen(self->m_text);
+    const char* clip = XTextClipboard_getText();
+    (void)ud;
+    return clip && clip[0] != '\0';
+}
+
+/** @brief ops 适配槽：删除选中文本（对标
+ *         QWidgetLineControl::_q_deleteSelected；灰化 = 有文本且有选区）。 */
+static void xlineedit_menuOpDel(void* ud)
+{
+    XLineEdit_del((XLineEdit*)ud);
+}
+
+static bool xlineedit_menuOpCanDel(void* ud)
+{
+    XLineEdit* edit = (XLineEdit*)ud;
+    return XLineEdit_text(edit)[0] != '\0' &&
+           XLineEdit_hasSelectedText(edit);
+}
+
+/** @brief ops 适配槽：全选（灰化 = 有文本且未全选）。 */
+static void xlineedit_menuOpSelectAll(void* ud)
+{
+    XLineEdit_selectAll((XLineEdit*)ud);
+}
+
+static bool xlineedit_menuOpCanSelectAll(void* ud)
+{
+    XLineEdit* edit = (XLineEdit*)ud;
+    if (!edit || !edit->m_control) return false;
+    return XLineEdit_text(edit)[0] != '\0' &&
+           !XLineControl_allSelected(edit->m_control);
 }
 
 XMenu* XLineEdit_createStandardContextMenu(XLineEdit* self)
 {
-    XMenu* menu;
-    XAction* action;
-    XString* name;
+    XTextMenuOps ops;
     bool readOnly;
-    bool hasSel;
-    bool echoNormal;
-    bool hasText;
-    bool hasClip;
-    char* clip;
     if (!self) return NULL;
-    menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
-    if (!menu) return NULL;
-    /* 对标 Qt：qt_edit_menu 对象名供测试与样式查找。 */
-    name = XString_create_utf8("qt_edit_menu");
-    if (name) {
-        XObject_setObjectName((XObject*)menu, name);
-        XString_delete_base((XClass*)name);
-    }
-    readOnly = self->m_readOnly;
-    hasSel = xlineedit_hasSelection(self);
-    echoNormal = XLineEdit_echoMode(self) == (int)XLineEditEchoMode_Normal;
-    hasText = self->m_text[0] != '\0';
-    clip = xlineedit_getClipboardText(self);
-    hasClip = clip && clip[0] != '\0';
-    if (clip) XFree_System(clip);
-
+    readOnly = XLineEdit_isReadOnly(self);
+    XMemset(&ops, 0, sizeof(ops));
+    ops.ud = self;
+    /* readOnly 时仅提供复制/全选（其余槽保持 NULL，菜单不出现）。 */
     if (!readOnly) {
-        action = xlineedit_addMenuAction(menu, "撤销(&U)",
-                                         xlineedit_menuUndoSlot, self);
-        XAction_setEnabled(action, XLineEdit_isUndoAvailable(self));
-        action = xlineedit_addMenuAction(menu, "重做(&R)",
-                                         xlineedit_menuRedoSlot, self);
-        XAction_setEnabled(action, XLineEdit_isRedoAvailable(self));
-        XMenu_addSeparator(menu);
+        ops.undo = xlineedit_menuOpUndo;
+        ops.canUndo = xlineedit_menuOpCanUndo;
+        ops.redo = xlineedit_menuOpRedo;
+        ops.canRedo = xlineedit_menuOpCanRedo;
+        ops.cut = xlineedit_menuOpCut;
+        ops.canCut = xlineedit_menuOpCanCutCopy;
+        ops.paste = xlineedit_menuOpPaste;
+        ops.canPaste = xlineedit_menuOpCanPaste;
+        ops.del = xlineedit_menuOpDel;
+        ops.canDel = xlineedit_menuOpCanDel;
     }
-    if (!readOnly) {
-        action = xlineedit_addMenuAction(menu, "剪切(&T)",
-                                         xlineedit_menuCutSlot, self);
-        XAction_setEnabled(action, hasSel && echoNormal);
-    }
-    action = xlineedit_addMenuAction(menu, "复制(&C)",
-                                     xlineedit_menuCopySlot, self);
-    XAction_setEnabled(action, hasSel && echoNormal);
-    if (!readOnly) {
-        action = xlineedit_addMenuAction(menu, "粘贴(&P)",
-                                         xlineedit_menuPasteSlot, self);
-        XAction_setEnabled(action, hasClip);
-        action = xlineedit_addMenuAction(menu, "删除",
-                                         xlineedit_menuDeleteSlot, self);
-        XAction_setEnabled(action, hasText && hasSel);
-    }
-    if (!XMenu_actions(menu) ||
-        XVector_size_base(XMenu_actions(menu)) == 0)
-        return menu;
-    XMenu_addSeparator(menu);
-    action = xlineedit_addMenuAction(menu, "全选(&A)",
-                                     xlineedit_menuSelectAllSlot, self);
-    XAction_setEnabled(action, hasText && !xlineedit_allSelected(self));
-    return menu;
+    ops.copy = xlineedit_menuOpCopy;
+    ops.canCopy = xlineedit_menuOpCanCutCopy;
+    ops.selectAll = xlineedit_menuOpSelectAll;
+    ops.canSelectAll = xlineedit_menuOpCanSelectAll;
+    return XTextMenu_createStandard(&ops);
 }
 #endif /* XMENU_ON */

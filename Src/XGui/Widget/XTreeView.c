@@ -21,6 +21,14 @@
 
 static void VXTreeView_deinit(XTreeView* self);
 static void VXTreeView_paintEvent(XWidget* self, XEvent* event);
+static void VXTreeView_scrollContentsBy(XAbstractScrollArea* area, int dx,
+                                        int dy)
+{
+    (void)dx;
+    (void)dy;
+    if (area) XWidget_update((XWidget*)area);
+}
+
 static bool VXTreeView_indexAt(const XAbstractItemView* view, int x, int y,
                                int* outRow, int* outCol);
 static void VXTreeView_copy(XTreeView* self, const XTreeView* other);
@@ -231,6 +239,8 @@ XVtable* XTreeView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXTreeView_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTreeView_move);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXTreeView_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
+                             VXTreeView_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt, VXTreeView_indexAt);
     return XVTABLE_DEFAULT;
 }
@@ -720,13 +730,39 @@ int XTreeView_sortColumn(const XTreeView* self)
 int XTreeView_sortIndicatorOrder(const XTreeView* self)
 { return self ? self->m_sortOrder : 0; }
 
+/* ==================== 滚动偏移（对标 QTreeView 视口滚动） ==================== */
+
+/** @brief 读取垂直滚动偏移（视口原点在内容坐标中的 y）。 */
+static int xtvw_scrollOffsetY(const XTreeView* tv)
+{
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+        (const XAbstractScrollArea*)&tv->m_base);
+    return vsb ? XScrollBar_value(vsb) : 0;
+}
+
+/** @brief 按内容高度维护垂直滚动条范围（值变化才写）。 */
+static void xtvw_updateScrollRange(XTreeView* tv)
+{
+    XAbstractItemModel* model = tv->m_base.m_model;
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+        (const XAbstractScrollArea*)&tv->m_base);
+    int rows = model ? model->m_rows : 0;
+    int rh = tv->m_rowHeight > 0 ? tv->m_rowHeight : XTREEVIEW_DEFAULT_ROW_H;
+    int viewH = XWidget_height((XWidget*)tv);
+    int contentH = (tv->m_headerHidden ? 0 : XTREEVIEW_HEADER_H) +
+                   rows * rh;
+    int vMax = contentH > viewH ? contentH - viewH : 0;
+    if (vsb && XScrollBar_maximum(vsb) != vMax)
+        XScrollBar_setRange(vsb, 0, vMax);
+}
+
 /* ==================== 几何查询族（行高/列宽反推，同 indexAt 口径） ==================== */
 
 int XTreeView_rowAt(const XTreeView* self, int y)
 {
     int yAcc;
     if (!self || y < 0) return -1;
-    yAcc = y - xtv_headerOffset(self);
+    yAcc = y - xtv_headerOffset(self) + xtvw_scrollOffsetY(self);
     if (yAcc < 0) return -1;
     return yAcc / xtv_effectiveRowHeight(self);
 }
@@ -774,7 +810,8 @@ XRect XTreeView_visualRect(const XTreeView* self, int row, int column)
         x += xtv_columnEffectiveWidth(self, c, autoShare);
     }
     r.x = x;
-    r.y = xtv_headerOffset(self) + row * xtv_effectiveRowHeight(self);
+    r.y = xtv_headerOffset(self) + row * xtv_effectiveRowHeight(self) -
+          xtvw_scrollOffsetY(self);
     r.width = xtv_columnEffectiveWidth(self, column, autoShare);
     r.height = xtv_effectiveRowHeight(self);
     return r;
@@ -933,7 +970,8 @@ static bool VXTreeView_indexAt(const XAbstractItemView* view, int x, int y,
     if (outCol) *outCol = -1;
     if (!tv) return false;
     rh = tv->m_rowHeight > 0 ? tv->m_rowHeight : XTREEVIEW_DEFAULT_ROW_H;
-    yAcc = y - (tv->m_headerHidden ? 0 : XTREEVIEW_HEADER_H);
+    yAcc = y - (tv->m_headerHidden ? 0 : XTREEVIEW_HEADER_H) +
+           xtvw_scrollOffsetY(tv);
     if (yAcc < 0) return false;
     if (outRow) *outRow = yAcc / rh;
     if (outCol) *outCol = 0;
@@ -970,6 +1008,7 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
         return;
     }
     xtv_refreshRowStates(tv);
+    xtvw_updateScrollRange(tv);
     col0Hidden = XTreeView_isColumnHidden(tv, 0);
     if (!tv->m_headerHidden) {
         XRect hr = { 0, 0, r.width, XTREEVIEW_HEADER_H };
@@ -990,7 +1029,8 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
     }
     rows = model->m_rows;
     rh = tv->m_rowHeight > 0 ? tv->m_rowHeight : XTREEVIEW_DEFAULT_ROW_H;
-    y = tv->m_headerHidden ? 0 : XTREEVIEW_HEADER_H;
+    y = (tv->m_headerHidden ? 0 : XTREEVIEW_HEADER_H) -
+        xtvw_scrollOffsetY(tv);
     for (row = 0; row < rows && y < r.height; ++row) {
         XRect cell = { 0, y, r.width, rh };
         bool sel;
