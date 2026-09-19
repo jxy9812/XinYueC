@@ -59,6 +59,12 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
     return false;
 }
 
+bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
+{
+    (void)window; (void)state;
+    return false;
+}
+
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     (void)window; (void)geometry;

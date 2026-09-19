@@ -890,6 +890,12 @@ void XWindow_createHandle(XWindow* self)
             /* 初始标题同步（后端 create 内已兜底，这里按公共层状态再同步，
                保证 create 之后用户先 setTitle 的时序正确）。 */
             XPlatformNativeWindow_setTitle(self, data->m_title);
+            /* 创建前已请求的状态（showMaximized/showMinimized 早于
+               show() 时）在原生窗口就绪后补应用，否则状态位与原生
+               几何不一致（对齐 Qt：状态在 create 后由平台窗口应用）。 */
+            if (XWindow_effectiveState(data) != XWindowState_NoState)
+                (void)XPlatformNativeWindow_setWindowState(
+                    self, (uint32_t)XWindow_effectiveState(data));
         }
     }
 #endif /* XPLATFORMNATIVEWINDOW_ON */
@@ -1206,6 +1212,14 @@ void XWindow_setWindowStates(XWindow* self, XWindowStates states)
     before = XWindow_effectiveState(data);
     data->m_windowStates = states;
     after = XWindow_effectiveState(data);
+    /* 状态同步到平台层（对标 QPlatformWindow::setWindowState）：
+       此前只改内部状态位，原生窗口尺寸不随之变化，「最大化」实际
+       不生效。平台层未创建原生窗口时该调用安全 no-op。 */
+#if XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
+    if (after != before)
+        (void)XPlatformNativeWindow_setWindowState(
+            self, (uint32_t)after);
+#endif
     if (after != before)
         XWindow_windowStateChanged_signal(self, after);
     XWindow_updateVisibility(self);

@@ -137,6 +137,26 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible);
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry);
 
 /**
+ * @brief      同步窗口状态（最大化/最小化/全屏）到真实原生窗口。
+ * @details    对标 QPlatformWindow::setWindowState：Qt 在
+ *             QWindow::setWindowStates 里把状态转成 QWindowStateChangeEvent
+ *             并调用平台窗口的 setWindowState，由平台后端决定用
+ *             ShowWindow(SW_MAXIMIZE/SW_MINIMIZE) 还是
+ *             SetWindowPos/窗口管理器协议实现。本框架此前只改内部状态位，
+ *             原生窗口尺寸不随之变化，导致「最大化后仍是原尺寸」。
+ *             Win32 用 ShowWindow；X11 走 WM 状态消息（EWMH）；
+ *             未创建窗口时安全 no-op。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @param      state  生效状态位（XWindowState_* 的数值，可组合）；
+ *             0 表示恢复普通窗口态（ShowWindow(SW_RESTORE)）。平台层
+ *             不依赖 XWindow.h，故按位掩码传递，取值与
+ *             XWindowState_Minimized/FullScreen/Maximized 一致。
+ * @return     true 已同步；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_setWindowState(XWindow* window,
+                                          uint32_t state);
+
+/**
  * @brief      同步窗口标题到真实原生窗口。
  * @details    X11 用 XStoreName（UTF-8）；Win32 将 UTF-8 转 UTF-16 后
  *             SetWindowTextW。未创建窗口时安全 no-op。

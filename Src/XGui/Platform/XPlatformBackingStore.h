@@ -314,6 +314,24 @@ void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
                                                 int width, int height);
 
 /**
+ * @brief      查询平台后端的可直接绘制缓冲（零拷贝 present）。
+ * @details    Win32 后端返回 DIB section 的内存指针：backing store 的
+ *             绘制 XImage 以该内存为存储（XImage_init_ex_2 外部缓冲
+ *             模式），painter 直接画进 DIB，flush 只剩一次 BitBlt，
+ *             省去 XImage→DIB 的整帧 memcpy。返回 NULL 或任一出参为
+ *             NULL/非正时表示平台无共享缓冲能力，公共层回落自分配。
+ *             注意：指针在 surfaceResized 重建后失效，公共层必须每次
+ *             resize 重新查询。
+ * @param      nativeState 平台提交状态。
+ * @param      width/height 期望的缓冲尺寸（后端按此创建）。
+ * @param      outStride   输出每行字节数（32bpp 时通常为 width*4）。
+ * @return     可绘制内存指针；不支持/失败返回 NULL。
+ */
+void* XPlatformBackingStoreDriver_getNativeBuffer(void* nativeState,
+                                                  int width, int height,
+                                                  size_t* outStride);
+
+/**
  * @brief      把 flush 的脏区提交到真实显示目标。
  * @details    由公共层在完成脏区合并（含 FULL 整屏）与双缓冲同步后调用；
  *             平台后端只需把 image 的 region 区域上屏，不必处理缓冲维护。

@@ -769,12 +769,21 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
+/** @brief 基准模式是否强制整帧重绘（--benchmark-full）。默认基准走
+ *  「静态场景缓存 + 仅重绘性能浮层小块」路径，反映小区域增量刷新；
+ *  强制整帧才能得到每页的真实全屏绘制成本。 */
+static bool g_benchmarkFullRedraw;
 /** @brief 按 Qt QWidget::update() 语义合并待绘区域，不同步强制整树重绘。 */
 static void demo_input_autotest(DemoWin* self);
 static void demo_repaint(DemoWin* self)
 {
     XRect dirty;
     if (!self) return;
+    if (g_benchmarkFullRedraw) {
+        dirty = XWidget_rect(&self->m_base);
+        XWidget_updateRect(&self->m_base, &dirty);
+        return;
+    }
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
     if (self->m_staticSceneDirty ||
         XImage_width(&self->m_staticScene) != XWidget_width(&self->m_base) ||
@@ -852,9 +861,11 @@ static void demo_runFrameBenchmark(DemoWin* self, int durationSeconds,
     elapsedUsecs = now - start;
     if (elapsedUsecs <= 0)
         elapsedUsecs = 1;
-    XPrintf("XGuiWindowDemo: benchmark mode=%s frames=%u elapsed=%.3fs "
-            "fps=%.1f avg=%.3fms longest=%.3fms\n",
-            resizeWindow ? "resize" : "repaint", frameCount,
+    XPrintf("XGuiWindowDemo: benchmark mode=%s size=%dx%d frames=%u "
+            "elapsed=%.3fs fps=%.1f avg=%.3fms longest=%.3fms\n",
+            resizeWindow ? "resize" : "repaint",
+            XWidget_width(&self->m_base), XWidget_height(&self->m_base),
+            frameCount,
             (double)elapsedUsecs / 1000000.0,
             (double)frameCount * 1000000.0 / (double)elapsedUsecs,
             (double)elapsedUsecs / (double)frameCount / 1000.0,
@@ -2622,6 +2633,7 @@ int main(int argc, char* argv[])
     int autoSeconds;
     int benchmarkSeconds;
     bool benchmarkResize;
+    bool benchmarkMaximized;
     const char* screenshotPath;
     int screenshotPage;
     int screenshotTab;
@@ -2638,6 +2650,7 @@ int main(int argc, char* argv[])
         "XLineEdit { background-color: #FFFFE0; }\n");
 #endif
     benchmarkResize = false;
+    benchmarkMaximized = false;
     screenshotPath = NULL;
     autoTest = false;
     screenshotPage = 0;
@@ -2651,6 +2664,12 @@ int main(int argc, char* argv[])
                  argi + 1 < argc) {
             benchmarkSeconds = atoi(argv[++argi]);
             benchmarkResize = true;
+        }
+        else if (strcmp(argv[argi], "--maximized") == 0) {
+            benchmarkMaximized = true;
+        }
+        else if (strcmp(argv[argi], "--benchmark-full") == 0) {
+            g_benchmarkFullRedraw = true;
         }
         else if (strcmp(argv[argi], "--screenshot") == 0 &&
                  argi + 1 < argc) {
@@ -2711,7 +2730,10 @@ int main(int argc, char* argv[])
 #endif
 
     /* 3) 显示窗口：触发框架内部的惰性平台窗口创建并进入事件循环。 */
-    XWidget_showNormal(&win->m_base);
+    if (benchmarkMaximized)
+        XWidget_showMaximized(&win->m_base);
+    else
+        XWidget_showNormal(&win->m_base);
     XPrintf("XGuiWindowDemo: 屏幕尺寸=%.0fx%.0f\n",
            (double)XWidget_width(&win->m_base),
            (double)XWidget_height(&win->m_base));

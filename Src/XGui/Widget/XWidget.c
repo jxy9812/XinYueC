@@ -1112,6 +1112,18 @@ static void XWidget_paintEvent_default(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     rect.x += offset.x;
     rect.y += offset.y;
+    /* 只填充事件脏区：容器整页背景在最大化下约 250 万像素/帧，
+       而小区域刷新（性能浮层/光标闪烁）的常见脏区远小于控件矩形。
+       Qt 的 fillRegion 语义同样是按事件区域回填背景。 */
+    {
+        int w = XWidget_width(self);
+        int h = XWidget_height(self);
+        if (rect.x < 0) { rect.width += rect.x; rect.x = 0; }
+        if (rect.y < 0) { rect.height += rect.y; rect.y = 0; }
+        if (rect.x + rect.width > w) rect.width = w - rect.x;
+        if (rect.y + rect.height > h) rect.height = h - rect.y;
+        if (rect.width <= 0 || rect.height <= 0) return;
+    }
     image = XWidget_paintImage(self);
     if (image)
         XImage_fillRect(image, &rect, XColor_rgba(&color));

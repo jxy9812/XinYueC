@@ -71,6 +71,26 @@
 #define XFONT_OUTLINE_CACHE_ENTRIES 24
 #endif
 
+/** @brief 是否启用轮廓字形灰度图（alpha map）缓存。
+ *  @details 路径缓存只省去字库解码与路径搭建；逐帧的轮廓拉直、
+ *           4x4 抗锯齿覆盖率和逐像素混合仍是文本页的主要开销。
+ *           灰度图缓存把光栅化结果按（字库、码点、字号）整块复用，
+ *           对齐 Qt QFontEngine 的 glyph alpha map 缓存语义。 */
+#ifndef XFONT_GLYPH_ALPHA_CACHE_ON
+#define XFONT_GLYPH_ALPHA_CACHE_ON 1
+#endif
+
+/** @brief 轮廓灰度图缓存项数量；设为 0 或关闭开关可裁剪缓存。 */
+#ifndef XFONT_GLYPH_ALPHA_CACHE_ENTRIES
+#define XFONT_GLYPH_ALPHA_CACHE_ENTRIES 256
+#endif
+
+/** @brief 单个灰度图缓存项的像素上限（宽*高）；超过则只绘制不缓存，
+ *          防止超大字号一次性占用过多内存。 */
+#ifndef XFONT_GLYPH_ALPHA_CACHE_MAX_PIXELS
+#define XFONT_GLYPH_ALPHA_CACHE_MAX_PIXELS 16384
+#endif
+
 /**
  * @brief 是否把内置 XFontOutlineCommon 轮廓字库编译进目标。
  * @details 该开关同时控制 ASCII/标点和 GB2312 一级常用汉字两个数据块；
@@ -96,6 +116,8 @@
 #define XFONT_OUTLINE_CUBIC_ON 0
 #undef XFONT_OUTLINE_CACHE_ON
 #define XFONT_OUTLINE_CACHE_ON 0
+#undef XFONT_GLYPH_ALPHA_CACHE_ON
+#define XFONT_GLYPH_ALPHA_CACHE_ON 0
 #endif
 
 /**

@@ -44,6 +44,14 @@ void XPlatformBackingStoreDriver_setNativeTarget(void* nativeState,
     (void)nativeState; (void)nativeWindow;
 }
 
+void* XPlatformBackingStoreDriver_getNativeBuffer(void* nativeState,
+                                                  int width, int height,
+                                                  size_t* outStride)
+{
+    (void)nativeState; (void)width; (void)height; (void)outStride;
+    return NULL; /* 无共享缓冲能力：公共层回落自分配缓冲。 */
+}
+
 void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
                                                 int width, int height)
 {

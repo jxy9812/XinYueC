@@ -980,6 +980,39 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
     return true;
 }
 
+/**
+ * @brief      同步窗口状态到 Win32 原生窗口（对标 QPlatformWindow::setWindowState）。
+ * @details    Qt 的 windows 平台插件在 setWindowState 里按状态选择
+ *             ShowWindow 命令（SW_MAXIMIZE/SW_MINIMIZE/SW_RESTORE）或
+ *             对全屏单独处理。这里按 XWindowState_* 位掩码（与 XWindow.h
+ *             取值一致：Minimized=0x1、Maximized=0x2、FullScreen=0x4）
+ *             选择同一组命令。ShowWindow 同步派发 WM_SIZE，原生几何
+ *             记录随之更新；框架侧的窗口几何经既有 WM_SIZE 通路回写。
+ *             仅对已创建的原生窗口生效，未创建时安全 no-op。
+ * @param      window 目标窗口；可为 NULL。
+ * @param      state  状态位掩码；0 恢复普通态。
+ * @return     true 已同步；false 未创建/平台不可用。
+ */
+bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
+{
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd) return false;
+    /* 位值与 XWindowState_* 对齐：Minimized 0x1 / Maximized 0x2 /
+       FullScreen 0x4。优先级沿用 XWindow_effectiveState：
+       Minimized > FullScreen > Maximized > 普通。 */
+    if (state & 0x1u)
+        ShowWindow(entry->m_hwnd, SW_MINIMIZE);
+    else if (state & 0x4u)
+        ShowWindow(entry->m_hwnd, SW_SHOWMAXIMIZED);
+    else if (state & 0x2u)
+        ShowWindow(entry->m_hwnd, SW_MAXIMIZE);
+    else
+        ShowWindow(entry->m_hwnd, SW_RESTORE);
+    return true;
+}
+
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     XWNPendingEntry* entry;

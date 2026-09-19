@@ -226,6 +226,25 @@ void XPlatformBackingStoreDriver_setNativeTarget(void* nativeState,
     state->m_nativeTarget = (HWND)nativeWindow;
 }
 
+void* XPlatformBackingStoreDriver_getNativeBuffer(void* nativeState,
+                                                  int width, int height,
+                                                  size_t* outStride)
+{
+    struct XWin32BackingStoreNative* state =
+        (struct XWin32BackingStoreNative*)nativeState;
+    if (!state || width <= 0 || height <= 0) return NULL;
+    /* 同尺寸直接复用现有 DIB（不重建，指针稳定）；尺寸变化时先释放
+       旧面再重建（createSurface 仅在失败路径释放，入口不释放）。 */
+    if (!state->m_dibBits || state->m_width != width ||
+        state->m_height != height)
+    {
+        xpbs_win32_releaseSurface(state);
+        if (!xpbs_win32_createSurface(state, width, height)) return NULL;
+    }
+    if (outStride) *outStride = (size_t)width * 4u;
+    return state->m_dibBits;
+}
+
 void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
                                                 int width, int height)
 {
@@ -252,21 +271,108 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
        公共层统一触发的 present 回调。 */
     hwnd = xpbs_win32_targetHwnd(state, window);
     if (!hwnd) return;
-    /* 懒保护：create 后直接 flush（未经 resize）时 DIB 尚未建立，用当前
-       缓冲尺寸补建；正常路径由 surfaceResized 在 resize 时重建。 */
-    if (!state->m_memDC)
-        xpbs_win32_createSurface(state, XImage_width(image),
-                                 XImage_height(image));
-    if (!state->m_memDC) return;
-    for (i = 0; i < region->count; ++i)
-        xpbs_win32_syncDirtyRect(state, image, &region->rects[i]);
+    (void)offset; /* 窗口客户区坐标提交，偏移由提交目标窗口决定。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
+    /* 零拷贝模式：公共层在 resize 时经 getNativeBuffer 把绘制 XImage
+       直接架在 DIB 内存上。此处无需任何像素拷贝——按脏矩形把 DIB
+       经 memDC BitBlt 到窗口即可。 */
+    if (state->m_memDC && state->m_dibBits &&
+        state->m_width == XImage_width(image) &&
+        state->m_height == XImage_height(image) &&
+        XImage_constBits(image) == state->m_dibBits)
+    {
+        HDC winDC = GetDC(hwnd);
+        int j;
+        if (!winDC) return;
+        for (j = 0; j < region->count; ++j)
+        {
+            const XRect* rect = &region->rects[j];
+            if (rect->width > 0 && rect->height > 0)
+                BitBlt(winDC, rect->x, rect->y, rect->width, rect->height,
+                       state->m_memDC, rect->x, rect->y, SRCCOPY);
+        }
+        ReleaseDC(hwnd, winDC);
+        return;
+    }
+    /* 非 native 缓冲（外部缓冲/兼容路径）：SetDIBitsToDevice 直接从
+       XImage 行内存上屏。注意其源子矩形（XSrc/YSrc 与 iStartScan/
+       cScanLines）在负高度 DIB 下语义陷阱多（曾导致屏幕整帧垂直
+       错位复制），因此每矩形把脏行拷入紧凑临时缓冲
+       （biWidth=rect.width，XSrc=YSrc=0），与既有 xpwn_presentRect
+       同构。 */
+    {
+        HDC winDC = GetDC(hwnd);
+        int imgW;
+        int imgH;
+        int j;
+        uint8_t* buf = NULL;
+        size_t bufCap = 0;
+        if (!winDC) return;
+        imgW = XImage_width(image);
+        imgH = XImage_height(image);
+        for (j = 0; j < region->count; ++j)
+        {
+            const XRect* rect = &region->rects[j];
+            const uint8_t* sbuf;
+            int bpl;
+            int row;
+            BITMAPINFO bmi;
+            int x0;
+            if (rect->width <= 0 || rect->height <= 0) continue;
+            x0 = rect->x - (offset ? offset->x : 0);
+            if (rect->x < 0 || rect->y < 0 ||
+                rect->x + rect->width > imgW ||
+                rect->y + rect->height > imgH)
+                continue;
+            sbuf = XImage_constBits(image);
+            bpl = XImage_bytesPerLine(image);
+            if (!sbuf || bpl <= 0) break;
+            if ((size_t)rect->width * 4u * (size_t)rect->height > bufCap)
+            {
+                if (buf) XFree_Hybrid(buf);
+                bufCap = (size_t)rect->width * 4u * (size_t)rect->height;
+                buf = (uint8_t*)XMalloc_Hybrid(bufCap);
+                if (!buf) break;
+            }
+            for (row = 0; row < rect->height; ++row)
+                memcpy(buf + (size_t)row * (size_t)rect->width * 4u,
+                       sbuf + (size_t)(rect->y + row) * (size_t)bpl +
+                              (size_t)x0 * 4u,
+                       (size_t)rect->width * 4u);
+            memset(&bmi, 0, sizeof(bmi));
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = rect->width;
+            bmi.bmiHeader.biHeight = -rect->height; /* 自顶向下。 */
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            bmi.bmiHeader.biCompression = BI_RGB;
+            SetDIBitsToDevice(winDC, rect->x, rect->y,
+                              (DWORD)rect->width, (DWORD)rect->height,
+                              0, 0, 0, (UINT)rect->height,
+                              buf, &bmi, DIB_RGB_COLORS);
+        }
+        if (buf) XFree_Hybrid(buf);
+        ReleaseDC(hwnd, winDC);
+        return;
+    }
+#endif
+    /* FULL 模式保持原有 DIB 中转路径。 */
+    {
+        /* 懒保护：create 后直接 flush（未经 resize）时 DIB 尚未建立，用当前
+           缓冲尺寸补建；正常路径由 surfaceResized 在 resize 时重建。 */
+        if (!state->m_memDC)
+            xpbs_win32_createSurface(state, XImage_width(image),
+                                     XImage_height(image));
+        if (!state->m_memDC) return;
+        for (i = 0; i < region->count; ++i)
+            xpbs_win32_syncDirtyRect(state, image, &region->rects[i]);
+    }
     xpbs_win32_presentRegion(state, hwnd, region,
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
                              true);
 #else
                              false);
 #endif
-    (void)offset; /* 窗口客户区坐标 BitBlt，偏移由提交目标窗口决定。 */
 }
 
 void XPlatformBackingStoreDriver_presentTile(void* nativeState,

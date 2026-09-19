@@ -531,6 +531,19 @@ static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
     r.x = 0; r.y = 0;
     r.width = XWidget_width(self);
     r.height = XWidget_height(self);
+    /* 绘制范围 = 事件脏区（非 PAINT 入口退化为整控件）：背景、横幅、
+       分隔线全部限幅在脏区内，避免小区域刷新触发整页重绘。 */
+    if (event && XEvent_type(event) == XEVENT_TYPE_PAINT) {
+        XRect clip = XPaintEvent_rect((const XPaintEvent*)event);
+        if (clip.x < 0) { clip.width += clip.x; clip.x = 0; }
+        if (clip.y < 0) { clip.height += clip.y; clip.y = 0; }
+        if (clip.x + clip.width > r.width) clip.width = r.width - clip.x;
+        if (clip.y + clip.height > r.height)
+            clip.height = r.height - clip.y;
+        if (clip.width > 0 && clip.height > 0)
+            XPainter_setClipRect(&painter, &clip,
+                                 XPainterClipOperation_ReplaceClip);
+    }
     /* 白色背景。 */
     XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
     /* 顶部标题栏（有副标题时两行，对标 QWizard 横幅结构）。 */

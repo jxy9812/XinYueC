@@ -40,6 +40,7 @@ struct XPlatformBackingStore
     void* m_buffer2;                          /**< 外部第二块缓冲（借用）。 */
     size_t m_bufferSize;                      /**< 外部每块缓冲容量。 */
     bool m_externalBuffers;                   /**< 是否使用外部缓冲。 */
+    bool m_nativeBufferMode;                  /**< 绘制缓冲 = 平台共享内存（DIB），单缓冲。 */
     bool m_buffersInitialized;                /**< 外部绑定是否已完成一次。 */
     XSize m_size;                             /**< 当前缓冲尺寸。 */
     XRegion m_staticContents;                 /**< 静态内容区域集合。 */
@@ -453,6 +454,7 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
         /* DIRECT/PARTIAL：提交前把脏区同步到另一帧缓冲，保证下一帧只重绘
            变化区域即可（FULL 恒整屏，无需备份）。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
+        if (!self->m_nativeBufferMode)
         {
         XImage* inactive = xpbs_inactiveImage(self);
         if (inactive)
@@ -479,7 +481,9 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
         xpbs_invokePresent(self, &self->m_flushRegion, off);
     }
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    self->m_activeIndex ^= 1u;
+    /* native 零拷贝模式单缓冲：active 恒指向 m_image，不翻转。 */
+    if (!self->m_nativeBufferMode)
+        self->m_activeIndex ^= 1u;
 #endif
 }
 
@@ -508,7 +512,8 @@ void XPlatformBackingStore_flushTile(XPlatformBackingStore* self, XWindow* windo
     xpbs_invokePresent(self, &self->m_flushRegion, &origin);
     self->m_tileActive = false;
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    self->m_activeIndex ^= 1u;
+    if (!self->m_nativeBufferMode)
+        self->m_activeIndex ^= 1u;
 #endif
 }
 
@@ -535,6 +540,84 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         !xpbs_bufferSizeValid(size, self->m_bufferSize))
         return;
     if (w == self->m_size.width && h == self->m_size.height) return;
+    /* 零拷贝模式：平台驱动提供可直接绘制的共享内存（Win32 DIB
+       section）。绘制 XImage 以它为存储，flush 只剩一次 BitBlt，
+       省去 XImage→DIB 整帧 memcpy。驱动无此能力时回落自分配。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    if (w > 0 && h > 0 && self->m_nativeState && !self->m_externalBuffers)
+    {
+        /* 关键顺序：getNativeBuffer 内部会释放旧 DIB，必须先把旧内容
+           深拷贝快照（XCopy 是 COW 共享，不解决悬垂），再查询新缓冲。 */
+        XImage snapshot;
+        bool haveSnap = false;
+        XImage_init(&snapshot);
+        active = xpbs_activeImage(self);
+        if (active && active->m_data)
+            haveSnap = xpbs_deepCopy(active, &snapshot);
+        {
+            size_t stride = 0;
+            void* bits = XPlatformBackingStoreDriver_getNativeBuffer(
+                self->m_nativeState, w, h, &stride);
+            if (bits && stride >= (size_t)w * 4u)
+            {
+                XImage nativeImage;
+                XImage_init_ex_2(&nativeImage, w, h, XPBS_IMAGE_FORMAT,
+                                 (int)stride, (uint8_t*)bits, NULL, NULL);
+                if (nativeImage.m_data)
+                {
+                    if (haveSnap)
+                    {
+                        int ow2 = XImage_width(&snapshot);
+                        int oh2 = XImage_height(&snapshot);
+                        int cw = ow2 < w ? ow2 : w;
+                        int ch = oh2 < h ? oh2 : h;
+                        if (cw > 0 && ch > 0)
+                            xpbs_blitFromSnapshot(&snapshot, 0, 0,
+                                                  &nativeImage,
+                                                  0, 0, cw, ch);
+                    }
+                    /* m_image 共享 native 视图（外部缓冲，m_ownsData=
+                       false：unref 不释放 DIB，归 driver 管理）。 */
+                    XImage_deinit_base(&self->m_image);
+                    XImage_init(&self->m_image);
+                    XCopy(&self->m_image, &nativeImage);
+                    XImage_deinit_base(&nativeImage);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+                    /* native 模式单缓冲：第二缓冲置空（inactive 不用）。 */
+                    XImage_deinit_base(&self->m_image2);
+                    XImage_init(&self->m_image2);
+#endif
+                    self->m_nativeBufferMode = true;
+                    self->m_size.width = w;
+                    self->m_size.height = h;
+                    /* 与常规路径同款的簿记（不含 surfaceResized：
+                       native 缓冲已由 getNativeBuffer 保证，重建反而
+                       会使 m_image 的存储悬垂）。 */
+                    self->m_activeIndex = 0u;
+                    self->m_tileCursorX = 0;
+                    self->m_tileCursorY = 0;
+                    self->m_tileActive = false;
+                    XRegion_clear(&self->m_flushRegion);
+                    XRegion_init(&cropped);
+                    xpbs_clipRegion(&self->m_staticContents, w, h, &cropped);
+                    XRegion_copy(&cropped, &self->m_staticContents);
+                    XRegion_deinit(&cropped);
+                    XImage_deinit_base(&snapshot);
+                    return;
+                }
+                XImage_deinit_base(&nativeImage);
+            }
+        }
+        XImage_deinit_base(&snapshot);
+        /* 驱动拒绝该尺寸（罕见）：native 标志复位，走自分配路径。 */
+        self->m_nativeBufferMode = false;
+    }
+    if (self->m_nativeBufferMode && w > 0 && h > 0)
+    {
+        /* 驱动拒绝该尺寸（罕见）：回落自分配前清标志。 */
+        self->m_nativeBufferMode = false;
+    }
+#endif
     active = xpbs_activeImage(self);
     /* 先快照旧内容（共享引用），重建缓冲，最后回拷左上重叠区。 */
     XImage_init(&oldImage);

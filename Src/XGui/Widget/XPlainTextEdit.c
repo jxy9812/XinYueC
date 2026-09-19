@@ -536,30 +536,57 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
     if (vsb) scroll = XScrollBar_value(vsb);
     text = xpe_color(edit, XPaletteColorRole_Text);
     placeholder = xpe_color(edit, XPaletteColorRole_Mid);
+    /* 绘制范围 = 事件脏区（非 PAINT 入口退化为整控件）：背景填充、
+       边框、行绘制全部限幅在脏区内，避免小区域刷新（性能浮层/光标
+       闪烁）触发整页文本重绘。 */
     {
         int pw = XWidget_width(self);
         int ph = XWidget_height(self);
-        /* 背景：清屏防止父控件渲染透出。 */
-        XPainter_fillRect(&painter, &(XRect){0, 0, pw, ph}, 0xFFFFFFFFu);
-        /* 边框：上/左 dark、下/右 light 的凹陷框
-           （对标 QAbstractScrollArea 默认 StyledPanel|Sunken，与
-           XLineEdit 手绘回退同款）。 */
+        XRect clip;
+        if (event && XEvent_type(event) == XEVENT_TYPE_PAINT)
+            clip = XPaintEvent_rect((const XPaintEvent*)event);
+        else
+            XRect_init(&clip, 0, 0, pw, ph);
+        if (clip.x < 0) { clip.width += clip.x; clip.x = 0; }
+        if (clip.y < 0) { clip.height += clip.y; clip.y = 0; }
+        if (clip.x + clip.width > pw) clip.width = pw - clip.x;
+        if (clip.y + clip.height > ph) clip.height = ph - clip.y;
+        if (clip.width > 0 && clip.height > 0)
         {
-            uint32_t dark = xpe_color(edit, XPaletteColorRole_Dark);
-            uint32_t light = xpe_color(edit, XPaletteColorRole_Light);
-            if (dark == 0u) dark = 0xFF808080u;
-            if (light == 0u) light = 0xFFE0E0E0u;
-            XPainter_fillRect(&painter, &(XRect){0, 0, pw, 1}, dark);
-            XPainter_fillRect(&painter, &(XRect){0, 0, 1, ph}, dark);
-            XPainter_fillRect(&painter,
-                &(XRect){0, ph - 1, pw, 1}, light);
-            XPainter_fillRect(&painter,
-                &(XRect){pw - 1, 0, 1, ph}, light);
+            XPainter_setClipRect(&painter, &clip,
+                                 XPainterClipOperation_ReplaceClip);
+            /* 背景：清屏防止父控件渲染透出。 */
+            XPainter_fillRect(&painter, &clip, 0xFFFFFFFFu);
+            /* 边框：上/左 dark、下/右 light 的凹陷框
+               （对标 QAbstractScrollArea 默认 StyledPanel|Sunken，与
+               XLineEdit 手绘回退同款）。 */
+            {
+                uint32_t dark = xpe_color(edit, XPaletteColorRole_Dark);
+                uint32_t light = xpe_color(edit, XPaletteColorRole_Light);
+                if (dark == 0u) dark = 0xFF808080u;
+                if (light == 0u) light = 0xFFE0E0E0u;
+                XPainter_fillRect(&painter, &(XRect){0, 0, pw, 1}, dark);
+                XPainter_fillRect(&painter, &(XRect){0, 0, 1, ph}, dark);
+                XPainter_fillRect(&painter,
+                    &(XRect){0, ph - 1, pw, 1}, light);
+                XPainter_fillRect(&painter,
+                    &(XRect){pw - 1, 0, 1, ph}, light);
+            }
         }
     }
+    /* 行范围 = 滚动视口 ∩ 事件脏区：小区域刷新（光标闪烁/局部失效）
+       只重绘脏区覆盖的行，而非整个视口。 */
     firstVisible = scroll / XPE_LINE_HEIGHT;
     lastVisible = firstVisible + XWidget_height(self) / XPE_LINE_HEIGHT + 1;
     count = xpe_lineCount(edit);
+    if (event && XEvent_type(event) == XEVENT_TYPE_PAINT)
+    {
+        XRect dclip = XPaintEvent_rect((const XPaintEvent*)event);
+        int fromLine = (dclip.y + scroll) / XPE_LINE_HEIGHT;
+        int toLine = (dclip.y + dclip.height + scroll) / XPE_LINE_HEIGHT;
+        if (fromLine > firstVisible) firstVisible = fromLine;
+        if (toLine < lastVisible) lastVisible = toLine;
+    }
     {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
