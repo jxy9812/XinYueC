@@ -1410,6 +1410,16 @@ void XPainter_brushOrigin(const XPainter* self, XPoint* out);
 void XPainter_setClipRect(XPainter* self, const XRect* rect,
                           XPainterClipOperation operation);
 /**
+ * @brief      设置/清除表面裁剪（对标 Qt 绘制引擎 systemClip）。
+ * @details    由 paintTree 在派发 paintEvent 前按脏区调用：此后在该
+ *             设备上创建的所有 painter 自动继承该裁剪，且 putPixel/
+ *             fillRect/blit 的独立判定使 setClipRect(Replace) 也无法
+ *             把像素写到表面裁剪之外。
+ * @param rect 表面像素坐标裁剪矩形；NULL 或空矩形清除。
+ */
+void XPainter_setSurfaceClipRect(const XRect* rect, XImage* target);
+void XPainter_clearSurfaceClipRect(void);
+/**
  * @brief      判断是否启用了裁剪。
  * @param self 绘制器指针。
  * @return 启用裁剪返回 true。

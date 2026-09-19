@@ -454,6 +454,45 @@ static bool painterGpuApplyStateClip(XPainter* self)
  * @brief      恢复 XPainterState 的默认值。
  * @param state 待初始化的状态指针。
  */
+/* 表面裁剪（surface clip）：paintTree 派发 paintEvent 前按脏区设置，
+ * 控件内创建的 painter 经 begin_image 自动继承为初始裁剪；putPixel/
+ * fillRect/blit 的独立判定防止 setClipRect(Replace) 逃逸。对齐 Qt
+ * 绘制引擎的 systemClip（drawWidget → setSystemClip(toBePainted)）。
+ * 绘制固定单线程，文件级状态即可。 */
+static XRect g_surfaceClipRect;
+static XImage* g_surfaceClipImage;
+static int g_surfaceClipActive = 0;
+
+void XPainter_setSurfaceClipRect(const XRect* rect, XImage* target)
+{
+    if (rect && target && rect->width > 0 && rect->height > 0)
+    {
+        g_surfaceClipRect = *rect;
+        g_surfaceClipImage = target;
+        g_surfaceClipActive = 1;
+    }
+    else
+    {
+        g_surfaceClipActive = 0;
+    }
+}
+
+void XPainter_clearSurfaceClipRect(void)
+{
+    g_surfaceClipActive = 0;
+}
+
+int XPainter_surfaceClipActive(void)
+{
+    return g_surfaceClipActive && g_surfaceClipRect.width > 0 &&
+           g_surfaceClipRect.height > 0;
+}
+
+const XRect* XPainter_surfaceClipRect(void)
+{
+    return g_surfaceClipActive ? &g_surfaceClipRect : NULL;
+}
+
 static void painterDefaultState(XPainterState* state)
 {
     XMemset(state, 0, sizeof(*state));
@@ -1426,6 +1465,13 @@ static void painterRaster_putPixel(XPainter* self, int x, int y, uint32_t color)
 #endif /* XPAINTER_CLIP_REGION_ON */
     }
 #endif /* XPAINTER_CLIP_ON */
+    /* 表面裁剪兜底：paintEvent 内 setClipRect(Replace) 也无法把像素
+       写到表面裁剪之外（对齐 Qt systemClip 不可被控件绕过）。 */
+    if (g_surfaceClipActive && self->m_image == g_surfaceClipImage &&
+        (x < g_surfaceClipRect.x || y < g_surfaceClipRect.y ||
+         x >= g_surfaceClipRect.x + g_surfaceClipRect.width ||
+         y >= g_surfaceClipRect.y + g_surfaceClipRect.height))
+        return;
     if (!XImage_valid(self->m_image, x, y)) return;
     dst = XImage_pixel(self->m_image, x, y);
     XImage_setPixel(self->m_image, x, y,
@@ -1977,6 +2023,9 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
             if (state->m_hasClip)
                 target = XRect_intersected(&target, &state->m_clipRect);
 #endif /* XPAINTER_CLIP_ON */
+            /* 表面裁剪：paintTree 按脏区设置，填充自动限幅在脏区内。 */
+            if (g_surfaceClipActive && self->m_image == g_surfaceClipImage)
+                target = XRect_intersected(&target, &g_surfaceClipRect);
             if (target.width > 0 && target.height > 0)
                 XImage_fillRect(self->m_image, &target, effective);
             return true;
@@ -2082,6 +2131,26 @@ static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
     dstBpl = XImage_bytesPerLine(self->m_image);
     destW = XImage_width(self->m_image);
     destH = XImage_height(self->m_image);
+    /* 与表面裁剪求交（源偏移同步平移；仅上屏目标，离屏缓存不受限）。 */
+    if (g_surfaceClipActive && self->m_image == g_surfaceClipImage)
+    {
+        if (dx0 < g_surfaceClipRect.x)
+        {
+            sx0 += g_surfaceClipRect.x - dx0;
+            cw -= g_surfaceClipRect.x - dx0;
+            dx0 = g_surfaceClipRect.x;
+        }
+        if (dy0 < g_surfaceClipRect.y)
+        {
+            sy0 += g_surfaceClipRect.y - dy0;
+            ch -= g_surfaceClipRect.y - dy0;
+            dy0 = g_surfaceClipRect.y;
+        }
+        if (dx0 + cw > g_surfaceClipRect.x + g_surfaceClipRect.width)
+            cw = g_surfaceClipRect.x + g_surfaceClipRect.width - dx0;
+        if (dy0 + ch > g_surfaceClipRect.y + g_surfaceClipRect.height)
+            ch = g_surfaceClipRect.y + g_surfaceClipRect.height - dy0;
+    }
     /* 与目标图像边界求交（源偏移同步平移，保证字节偏移不越界）。 */
     if (dx0 < 0) { sx0 -= dx0; cw += dx0; dx0 = 0; }
     if (dy0 < 0) { sy0 -= dy0; ch += dy0; dy0 = 0; }
@@ -2254,6 +2323,19 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
             int cy0 = state->m_clipRect.y;
             int cx1 = cx0 + state->m_clipRect.width;
             int cy1 = cy0 + state->m_clipRect.height;
+            if (bx < cx0) { sx0 = cx0 - bx; cw -= sx0; bx = cx0; }
+            if (by < cy0) { sy0 = cy0 - by; ch -= sy0; by = cy0; }
+            if (bx + cw > cx1) cw = cx1 - bx;
+            if (by + ch > cy1) ch = cy1 - by;
+        }
+        /* 表面裁剪兜底：paintEvent 内 setClipRect(Replace) 逃逸时仍限制
+           在表面裁剪内（与 Qt systemClip 不可绕过一致）。 */
+        if (g_surfaceClipActive)
+        {
+            int cx0 = g_surfaceClipRect.x;
+            int cy0 = g_surfaceClipRect.y;
+            int cx1 = cx0 + g_surfaceClipRect.width;
+            int cy1 = cy0 + g_surfaceClipRect.height;
             if (bx < cx0) { sx0 = cx0 - bx; cw -= sx0; bx = cx0; }
             if (by < cy0) { sy0 = cy0 - by; ch -= sy0; by = cy0; }
             if (bx + cw > cx1) cw = cx1 - bx;
@@ -4523,6 +4605,22 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
        任一失败都保持软件。 */
     self->m_gpuBackend = NULL;
     self->m_gpuActive = false;
+#if XPAINTER_CLIP_ON
+    /* 继承表面裁剪为初始 painter 裁剪（begin 时变换为恒等，表面坐标
+       即设备像素坐标）：paintTree 按脏区设置，控件未自行裁剪时所有
+       像素写入自动限幅在脏区内（对标 Qt 绘制引擎 systemClip）。 */
+    if (g_surfaceClipActive && image == g_surfaceClipImage)
+    {
+        self->m_state.m_hasClip = true;
+        self->m_state.m_hasClipRect = true;
+        self->m_state.m_clipRect = g_surfaceClipRect;
+        self->m_state.m_clipOperation = XPainterClipOperation_ReplaceClip;
+#if XPAINTER_CLIP_REGION_ON
+        XRegion_clear(&self->m_state.m_clipRegion);
+        XRegion_addRect(&self->m_state.m_clipRegion, &g_surfaceClipRect);
+#endif
+    }
+#endif /* XPAINTER_CLIP_ON */
     if (XGpuRenderBackend_requested() &&
         !XGpuRenderBackend_frameDegraded() &&
         XImage_width(image) > 0 && XImage_height(image) > 0)
@@ -5992,6 +6090,51 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
         return;
     width = painter8x16Metric(dsc ? dsc->box_w : table->m_width, scale);
     height = painter8x16Metric(dsc ? dsc->box_h : table->m_height, scale);
+    /* 字形级裁剪早退：字形盒（平移到设备坐标）与有效裁剪（painter
+       裁剪 + 表面裁剪）完全不相交时跳过全部行扫描与 fillRect 派发。
+       此前裁剪外的字形仍逐行空走（文本密集页面的每帧固定开销）。 */
+    {
+        XImageTransform transform;
+        float gx0 = (float)x;
+        float gy0 = (float)baselineY -
+                    painter8x16Metric((dsc ? dsc->box_h : table->m_height) +
+                                          (dsc ? dsc->ofs_y : 0),
+                                      scale);
+        float gx1 = gx0 + (float)width;
+        float gy1 = gy0 + (float)height;
+        float tx = 0.0f;
+        float ty = 0.0f;
+        int isTranslation = painterEffectiveTransform(&painter->m_state,
+                                                      &transform) &&
+                            (painterMatrixIsIdentity(&transform) ||
+                             painterMatrixTranslation(&transform, &tx, &ty));
+        if (isTranslation)
+        {
+            XRect cell;
+            int have;
+            cell.x = (int)(gx0 + tx);
+            cell.y = (int)(gy0 + ty);
+            cell.width = (int)(gx1 - gx0) + 1;
+            cell.height = (int)(gy1 - gy0) + 1;
+            have = cell.width > 0 && cell.height > 0;
+#if XPAINTER_CLIP_ON
+            if (have && painter->m_state.m_hasClip)
+            {
+                XRect t = XRect_intersected(&cell,
+                                            &painter->m_state.m_clipRect);
+                have = t.width > 0 && t.height > 0;
+            }
+            if (have && g_surfaceClipActive &&
+                painter->m_image == g_surfaceClipImage)
+            {
+                XRect t2 = XRect_intersected(&cell, &g_surfaceClipRect);
+                have = t2.width > 0 && t2.height > 0;
+            }
+#endif /* XPAINTER_CLIP_ON */
+            if (!have)
+                return;
+        }
+    }
 #if XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON
     /* Qt 的 OpaqueMode 会先以 background() 画刷覆盖字形单元，再绘制
        字形前景。嵌入式点阵字体没有复杂 glyph bounds，因此按完整 8x16

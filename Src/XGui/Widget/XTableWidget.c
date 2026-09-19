@@ -12,6 +12,7 @@
 #include "XWindowEvent.h"
 #include <stdio.h>
 
+
 #if XTABLEWIDGET_ON
 
 #define XTW_DEFAULT_COL_WIDTH  90
@@ -1374,6 +1375,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
     XPainter_setPen(&painter, dark);
     XPainter_drawLine(&painter, 0, tw->m_headerHeight - 1,
                       w, tw->m_headerHeight - 1);
+    if (dirty.y < tw->m_headerHeight) {
     for (col = 0; col < tw->m_columns; ++col) {
         int cx = xtw_colX(tw, col) - ho;
         int cw = tw->m_base.m_colWidths[col];
@@ -1406,6 +1408,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
         XPainter_drawLine(&painter, cx + cw - 1, 0,
                           cx + cw - 1, tw->m_headerHeight - 1);
     }
+    } /* 脏区不在表头带时整段列头跳过 */
     /* 3) 数据区：裁剪到表头带之下——滚出视口顶的行（部分行）只画
        出表头以下部分，不得覆盖表头文字（对标 Qt 表头/内容分域）。 */
     XRect_init(&dataClip, 0, tw->m_headerHeight, w,
@@ -1416,7 +1419,16 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
                              XPainterClipOperation_IntersectClip);
 #endif /* XPAINTER_CLIP_ON */
     if (dataClip.height > 0) {
-    for (row = 0; row < tw->m_rows; ++row) {
+    {
+        /* 可视行范围按脏区 y 计算：小脏区刷新不再遍历全部行。 */
+        int first = (dirty.y + vo - tw->m_headerHeight) /
+                    (tw->m_base.m_rowHeight > 0 ? tw->m_base.m_rowHeight : 1);
+        int last = (dirty.y + dirty.height + vo - tw->m_headerHeight) /
+                   (tw->m_base.m_rowHeight > 0 ? tw->m_base.m_rowHeight : 1);
+        if (first < 0) first = 0;
+        if (last > tw->m_rows - 1) last = tw->m_rows - 1;
+        row = first < 0 ? 0 : first;
+        for (; row <= last && row < tw->m_rows; ++row) {
         int cy = tw->m_headerHeight + row * tw->m_base.m_rowHeight - vo;
         XTableWidgetItem* vItem;
         if (cy + tw->m_base.m_rowHeight < tw->m_headerHeight || cy > h) continue;
@@ -1465,6 +1477,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
                           windowText);
         XPainter_drawLine(&painter, 0, cy + tw->m_base.m_rowHeight - 1,
                           tw->m_headerWidth - 1, cy + tw->m_base.m_rowHeight - 1);
+    }
     }
     }
     XPainter_end(&painter);

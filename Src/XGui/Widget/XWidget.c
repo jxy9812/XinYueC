@@ -66,6 +66,9 @@
 #include "XPaintDevice.h"
 #include "XCoreApplication.h"
 #include "XBackingStore.h"
+
+/* TEMP：paintTree 派发 paintEvent 时的上屏目标图像（表面裁剪限定用）。 */
+static XImage* g_paintTargetImage;
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #include "XGpuRenderBackend.h"
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -4891,6 +4894,25 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 (XWindow*)top->m_windowHandle,
                 top->m_windowRect.width, top->m_windowRect.height);
 #endif /* GPU && !PARTIAL */
+        g_paintTargetImage = XBackingStore_paintImage(store);
+        /* 表面裁剪：按刷区域外接矩形设置（对标 Qt drawWidget →
+           setSystemClip(toBePainted)，设备坐标）。paintTree 递归期间
+           所有像素写入限幅在脏区内，控件 setClipRect 不可绕过。 */
+        {
+            XRect sc = { 0, 0, 0, 0 };
+            int r;
+            for (r = 0; r < whole.count; ++r) {
+                const XRect* rc = &whole.rects[r];
+                int rx1 = rc->x + rc->width;
+                int ry1 = rc->y + rc->height;
+                if (r == 0) { sc = *rc; continue; }
+                if (rc->x < sc.x) sc.x = rc->x;
+                if (rc->y < sc.y) sc.y = rc->y;
+                if (rx1 > sc.x + sc.width) sc.width = rx1 - sc.x;
+                if (ry1 > sc.y + sc.height) sc.height = ry1 - sc.y;
+            }
+            XPainter_setSurfaceClipRect(&sc, XBackingStore_paintImage(store));
+        }
         XBackingStore_beginPaint(store, &whole);
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         {
@@ -4936,7 +4958,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 #endif
         }
     }
+        g_paintTargetImage = NULL;
     XRegion_deinit(&whole);
+    XPainter_clearSurfaceClipRect();
     /* 保留绘制期间或本次快照未覆盖的脏区，并确保它最终会再次派发。 */
     if (top->m_dirty.count > 0)
     {
