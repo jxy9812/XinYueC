@@ -63,6 +63,10 @@ struct XPlatformInputContextPrivate
     bool m_inputMethodAccepted;           /**< 焦点对象查询得到的接受状态。 */
 };
 
+/** @brief FilterEvent 虚槽默认实现：空后端不消费任何输入事件。 */
+static bool VXPlatformInputContext_filterEvent(
+        const XPlatformInputContext* self, const XEvent* event);
+
 static void VXPlatformInputContext_deinit(XPlatformInputContext* self)
 {
     if (!self) return;
@@ -156,6 +160,10 @@ XVtable* XPlatformInputContext_class_init(void)
     XVTABLE_INIT_DEFAULT(XPlatformInputContext)
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPlatformInputContext_deinit);
+    /* 对标 QPlatformInputContext::filterEvent 虚函数：真实平台后端（XIM
+     * 组合过滤/DBus portal 拦截）可派生覆盖本槽接管按键过滤。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXPlatformInputContext_FilterEvent,
+                             VXPlatformInputContext_filterEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -232,12 +240,24 @@ void XPlatformInputContext_invokeAction(XPlatformInputContext* self,
         XPlatformInputContext_reset(self);
 }
 
+/** @brief FilterEvent 虚槽默认实现：空后端不消费任何输入事件。 */
+static bool VXPlatformInputContext_filterEvent(
+        const XPlatformInputContext* self, const XEvent* event)
+{
+    (void)self; (void)event;
+    return false;
+}
+
 bool XPlatformInputContext_filterEvent(const XPlatformInputContext* self,
                                        const XEvent* event)
 {
-    /* 空后端不消费任何输入事件。 */
-    (void)self; (void)event;
-    return false;
+    if (!self || XClassIsVtableNull((XObject*)self))
+        return false;
+    /* 经虚槽分发（对标 Qt 的虚函数调用）：派生后端覆盖 FilterEvent 后
+     * 返回 true 即表示事件被输入法消费，调用方应吞掉该事件。 */
+    return XClassGetVirtualFunc((XObject*)self, EXPlatformInputContext_FilterEvent,
+                                bool (*)(const XPlatformInputContext*,
+                                         const XEvent*))(self, event);
 }
 
 /* ==================== 虚拟键盘矩形 ==================== */

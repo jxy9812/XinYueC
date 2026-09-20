@@ -296,6 +296,7 @@ void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
 	event->m_buttons = button;
 	event->m_modifiers = modifiers;
 	event->m_position = position;
+	event->m_synthesized = false; /* 默认真实鼠标设备事件。 */
 }
 
 XMouseButton XMouseEvent_button(const XMouseEvent* event)
@@ -322,6 +323,16 @@ XPoint XMouseEvent_position(const XMouseEvent* event)
 {
 	XPoint position = { 0, 0 };
 	return event ? event->m_position : position;
+}
+
+void XMouseEvent_setSynthesized(XMouseEvent* event, bool synthesized)
+{
+	if (event) event->m_synthesized = synthesized;
+}
+
+bool XMouseEvent_isSynthesized(const XMouseEvent* event)
+{
+	return event && event->m_synthesized;
 }
 static int g_nextUserEventType = XEVENT_TYPE_USER;
 int XEvent_registerEventType(int hint)
@@ -552,6 +563,7 @@ static void VXMouseEvent_copy(XMouseEvent* dest, const XMouseEvent* src)
 	dest->m_buttons = src->m_buttons;
 	dest->m_modifiers = src->m_modifiers;
 	dest->m_position = src->m_position;
+	dest->m_synthesized = src->m_synthesized;
 }
 
 static XEvent* VXMouseEvent_clone(const XMouseEvent* event)

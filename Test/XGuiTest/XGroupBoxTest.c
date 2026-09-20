@@ -120,13 +120,16 @@ bool XGroupBoxTest_runAll(void)
         child = XWidget_create((XWidget*)box, 0);
         gb_expect(child != NULL, "创建子控件");
 
-        /* 勾选：恢复子控件 + 发射 toggled。 */
+        /* 勾选：恢复子控件 + 发射 toggled。
+           计数口径（Qt 语义）：连接后 setCheckable(false) 发射
+           toggled(false)=1，setCheckable(true) 发射 toggled(true)=2，
+           此处 setChecked(true) 为重复设置不发射。 */
         XGroupBox_setChecked(box, true);
         gb_expect(XGroupBox_isChecked(box), "setChecked(true) 生效");
-        gb_expect(gb_toggledCount == 1, "setChecked(true) 发射 toggled 1 次");
+        gb_expect(gb_toggledCount == 2, "setChecked(true) 重复设置不发射(累计2)");
         gb_expect(XWidget_isEnabled(child), "勾选后子控件恢复启用");
         XGroupBox_setChecked(box, true); /* 重复设置不发信号 */
-        gb_expect(gb_toggledCount == 1, "重复 setChecked 不重复发射");
+        gb_expect(gb_toggledCount == 2, "重复 setChecked 不重复发射");
 
         /* 未勾选：递归禁用子/孙控件。 */
         grandChild = XWidget_create(child, 0);
@@ -134,7 +137,7 @@ bool XGroupBoxTest_runAll(void)
         gb_expect(XWidget_isEnabled(grandChild), "孙控件默认启用");
         XGroupBox_setChecked(box, false);
         gb_expect(!XGroupBox_isChecked(box), "setChecked(false) 生效");
-        gb_expect(gb_toggledCount == 2, "setChecked(false) 发射 toggled");
+        gb_expect(gb_toggledCount == 3, "setChecked(false) 发射 toggled");
         gb_expect(!XWidget_isEnabled(child), "未勾选子控件禁用");
         gb_expect(!XWidget_isEnabled(grandChild), "未勾选孙控件递归禁用");
         XGroupBox_setChecked(box, true);
@@ -143,24 +146,35 @@ bool XGroupBoxTest_runAll(void)
 
         XObject_disconnect_2(conn);
 
-        /* 8. clicked 信号：标题区鼠标按下切换勾选状态。 */
+        /* 8. clicked/toggled 信号：标题区按下待命、释放切换（对标
+           QGroupBox mousePress/Release 语义）。 */
         {
             XMouseEvent mev;
             XPoint pos = { 10, 5 }; /* 标题区内（titleH=18） */
             XConnection* conn2 = XObject_connect_1(
                 (XObject*)box, (size_t)XGroupBox_clicked_signal, NULL,
                 gb_onClicked, XConnectionType_Direct);
+            /* toggled 计数连接已断开，点击联动断言前重新连接。 */
+            XConnection* conn3 = XObject_connect_1(
+                (XObject*)box, (size_t)XGroupBox_toggled_signal, NULL,
+                gb_onToggled, XConnectionType_Direct);
             gb_expect(conn2 != NULL, "连接 clicked 信号");
+            gb_expect(conn3 != NULL, "重连 toggled 信号");
+            gb_clickedCount = 0;
             XMouseEvent_init(&mev, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                              XMouseButton_LeftButton,
                              XKeyboardModifier_NoModifier, pos);
             XCoreApplication_sendEvent((XObject*)box, (XEvent*)&mev);
-            /* 已知问题：同上（CHILD_ADDED 分派链）导致 checkable 状态在
-           合并回归环境不同步——按下切换断言暂跳过。 */
-        gb_expect(gb_clickedCount >= 0, "标题区按下发射 clicked（占位）");
-            /* 已知问题：同上（CHILD_ADDED 分派链），暂跳过。 */
-            gb_expect(gb_toggledCount == 3, "标题区按下联动发射 toggled");
+            gb_expect(gb_clickedCount == 0 && gb_toggledCount == 4,
+                      "标题区按下仅待命，不切换不发射");
+            XMouseEvent_init(&mev, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton,
+                             XKeyboardModifier_NoModifier, pos);
+            XCoreApplication_sendEvent((XObject*)box, (XEvent*)&mev);
+            gb_expect(gb_clickedCount == 1, "标题区释放发射 clicked");
+            gb_expect(gb_toggledCount == 5, "标题区释放联动发射 toggled");
             XObject_disconnect_2(conn2);
+            XObject_disconnect_2(conn3);
         }
 
         XWidget_delete_base(grandChild);

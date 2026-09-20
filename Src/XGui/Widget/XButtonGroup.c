@@ -184,8 +184,11 @@ static void xbgroup_bridgeToggledSlot(XObject* receiver, XVarList* args)
     XVarList_args_1(args, bool, checked);
     id = XButtonGroup_id(self, button);
     if (checked) {
-        xbgroup_applyExclusive(self, button);
+        /* 先转移组内 tracked 选中按钮，再互斥取消其余成员：setChecked
+           的反选守卫只保护 tracked 按钮，次序颠倒会使取消被拒（对标
+           Qt notifyChecked 先更新 checkedButton 再反选前一个）。 */
         self->m_checkedButton = button;
+        xbgroup_applyExclusive(self, button);
     } else if (self->m_checkedButton == button) {
         self->m_checkedButton = NULL;
     }

@@ -15,6 +15,10 @@
 
 #if XINPUTMETHOD_ON
 
+#if XWIDGET_ON
+#include "XWidget.h"
+#endif /* XWIDGET_ON */
+
 #if XPLATFORMINPUTCTX_ON
 #include "XPlatformInputContext.h"
 #endif /* XPLATFORMINPUTCTX_ON */
@@ -192,6 +196,24 @@ void XInputMethod_setQueryHandler(XInputMethod* self,
     if (!self || !self->m_data) return;
     self->m_data->m_queryHandler = handler;
     self->m_data->m_queryUserData = userData;
+}
+
+XVariant* XInputMethod_defaultQueryHandler(XObject* focusObject,
+                                           XInputMethodQuery query,
+                                           const XVariant* argument,
+                                           void* userData)
+{
+    (void)argument;
+    (void)userData;
+    /* 对标 Qt：QInputMethod::queryFocusObject 向焦点对象发送
+       QInputMethodQueryEvent；焦点对象不是控件（普通 QObject/无焦点）时
+       不响应查询，返回 NULL 等价无效 QVariant。 */
+    if (!focusObject) return NULL;
+#if XWIDGET_ON
+    if (((XObject*)focusObject)->is_widget)
+        return XWidget_inputMethodQuery((const XWidget*)focusObject, query);
+#endif /* XWIDGET_ON */
+    return NULL;
 }
 
 /* ==================== 输入项状态 ==================== */

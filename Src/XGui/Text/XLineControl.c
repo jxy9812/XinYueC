@@ -3118,10 +3118,20 @@ void XLineControl_copy(const XLineControl* self, int mode)
 void XLineControl_paste(XLineControl* self, int mode)
 {
     char* clipText = NULL;
+    bool systemOnly = false;
     if (!self) return;
 #if XCLIPBOARD_ON && XGUIAPPLICATION_ON
     {
         XClipboard* clip = XGuiApplication_clipboard();
+        /* 对标 Qt 中键语义（QWidgetLineControl::paste(Selection)）：
+           Selection 模式且系统后端可用并支持选择区（supportsSelection）
+           时仅取系统 PRIMARY，空则不动作——不回退共享层，避免 X11 下
+           中键在 PRIMARY 为空时意外粘出 CLIPBOARD 旧内容。Clipboard
+           模式维持"系统剪贴板→共享层"回退链零回归；无系统后端（嵌入式
+           裁剪）时 systemOnly 恒为 false，Selection 仍走共享层回退。 */
+        systemOnly = (clip != NULL &&
+                      mode == (int)XClipboardMode_Selection &&
+                      XClipboard_supportsSelection(clip));
         if (clip) {
             XString* s = XClipboard_text(clip, (XClipboardMode)mode);
             if (s) {
@@ -3138,7 +3148,7 @@ void XLineControl_paste(XLineControl* self, int mode)
 #else
     (void)mode;
 #endif
-    if (!clipText) {
+    if (!clipText && !systemOnly) {
         /* 平台剪贴板不可用：回退共享层（进程内承载）。 */
         const char* shared = XTextClipboard_getText();
         if (shared && shared[0])

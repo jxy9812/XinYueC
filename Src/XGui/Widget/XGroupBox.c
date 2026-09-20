@@ -355,10 +355,9 @@ static void VXGroupBox_changeEvent(XWidget* self, XEvent* event)
     XWidget_update((XWidget*)box);
 }
 
-/** @brief 鼠标按下：标题区点击切换勾选状态（第一版按下即切换）。
- *  @details 对标 QGroupBox::mousePressEvent 的勾选框点击语义；Qt 仅
- *           SE_GroupBoxCheckBox 区域响应，本实现放宽为整个标题区
- *           （后续扩展可收窄）。非左键或非标题区交父类处理。 */
+/** @brief 鼠标按下：标题区仅记录按压态，不立即切换（对标
+ *  QGroupBox::mousePressEvent——设置 pressed 并重绘，勾选切换发生在
+ *  标题区内的释放，对齐复选框点击语义）。非左键或非标题区交父类。 */
 static void VXGroupBox_mousePressEvent(XWidget* self, XEvent* event)
 {
     XGroupBox* box = (XGroupBox*)self;
@@ -373,10 +372,10 @@ static void VXGroupBox_mousePressEvent(XWidget* self, XEvent* event)
         return;
     }
     pos = XMouseEvent_position(me);
-    if (box->m_checkable && xgroupbox_titleRowHit(box, &pos)) {
-        XGroupBox_setChecked(box, !box->m_checked); /* 变化时发射 toggled */
-        XGroupBox_clicked_signal(box, box->m_checked);
+    box->m_pressed = box->m_checkable && xgroupbox_titleRowHit(box, &pos);
+    if (box->m_pressed) {
         XEvent_accept(event);
+        XWidget_update((XWidget*)self);
         return;
     }
     XClass_Parent(XWidget, EXWidget_MousePressEvent,
@@ -390,9 +389,32 @@ static void VXGroupBox_mouseMoveEvent(XWidget* self, XEvent* event)
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
-/** @brief 鼠标释放：第一版按下即完成切换，释放交父类处理。 */
+/** @brief 鼠标释放：按压源于标题区且在标题区内释放时切换勾选并发射
+ *  clicked（对标 QGroupBox::mouseReleaseEvent 的指示器点击语义）。 */
 static void VXGroupBox_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
+    XGroupBox* box = (XGroupBox*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    bool wasPressed;
+    if (!box || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) {
+        XClass_Parent(XWidget, EXWidget_MouseReleaseEvent,
+                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    wasPressed = box->m_pressed;
+    box->m_pressed = false;
+    if (wasPressed && XMouseEvent_button(me) == XMouseButton_LeftButton) {
+        pos = XMouseEvent_position(me);
+        if (xgroupbox_titleRowHit(box, &pos)) {
+            XGroupBox_setChecked(box, !box->m_checked); /* 变化时发射 toggled */
+            XGroupBox_clicked_signal(box, box->m_checked);
+            XEvent_accept(event);
+            return;
+        }
+    }
     XClass_Parent(XWidget, EXWidget_MouseReleaseEvent,
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
@@ -503,6 +525,7 @@ void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_flat = false;
     self->m_checkable = false;
     self->m_checked = false;
+    self->m_pressed = false;
 }
 
 XGroupBox* XGroupBox_create_ex(XMemoryType memory, XWidget* parent,
@@ -599,11 +622,18 @@ void XGroupBox_setCheckable(XGroupBox* self, bool checkable)
         if (!self->m_checked)
             XGroupBox_setChecked(self, true);
     } else {
-        /* 关闭 checkable：不再报告选中并恢复子控件可用。 */
+        /* 关闭 checkable：对标 Qt（qgroupbox.cpp setCheckable else 支）
+           取消选中并发射 toggled(false)，同时恢复子控件可用。 */
         policy = XWidget_focusPolicy((XWidget*)self);
         XWidget_setFocusPolicy((XWidget*)self,
                                (XWidgetFocusPolicy)(policy &
                                    ~XWidgetFocusPolicy_StrongFocus));
+        if (self->m_checked) {
+            self->m_checked = false;
+            XGroupBox_toggled_signal(self, false);
+            XWidget_update((XWidget*)self);
+        }
+        self->m_pressed = false;
         xgroupbox_setChildrenEnabled(self, true);
     }
     XWidget_update((XWidget*)self);

@@ -15,6 +15,19 @@
  *               形式弹出项列表，选中回调 activated）；
  *             - 可编辑：setEditable + 内嵌 XLineEdit（editText 路径），
  *               placeholder/frame/validator 转发；
+ *             - 补全（可编辑）：setCompleterMode/isCompleterMode——
+ *               输入前缀自动过滤下拉弹层并高亮命中项（对标 QCompleter
+ *               PopupCompletion 子集，复用下拉弹层承载，前缀匹配不
+ *               区分大小写）；Enter 采纳高亮补全、Esc 收起弹层不改
+ *               文本、Up/Down/PageUp/PageDown 在命中行间移动高亮；
+ *             - 插入策略：insertPolicy/setInsertPolicy（枚举已对齐
+ *               Qt 顺序）在可编辑文本编辑结束（Enter/失焦）时结算
+ *               （对标 QComboBoxPrivate::returnPressed/editingFinished）：
+ *               NoInsert 不插入；duplicates 关闭且文本已存在仅置当前
+ *               项；InsertAtTop/InsertAtBottom/InsertAfterCurrent/
+ *               InsertBeforeCurrent/InsertAlphabetically 按位插入新
+ *               条目，InsertAtCurrent 以编辑文本替换当前项文本；用户
+ *               激活路径（Enter）结算后发射 activated/textActivated；
  *             - 信号：activated(int)/textActivated(const char*)/
  *               highlighted(int)/currentIndexChanged(int)/
  *               currentTextChanged(const char*)/editTextChanged(
@@ -103,6 +116,10 @@ typedef struct XComboBox
     bool    m_duplicatesEnabled;       /**< 允许重复项。 */
     bool    m_editable;                /**< 可编辑模式。 */
     XLineEdit* m_lineEdit;             /**< 可编辑模式的内嵌编辑框（拥有）。 */
+    bool    m_completerMode;           /**< 可编辑时启用前缀补全过滤（对标内建
+                                            completer 的 PopupCompletion 子集）。 */
+    bool    m_completionActive;        /**< 弹层当前处于补全过滤态（内部）。 */
+    int     m_completionRow;           /**< 补全弹层当前高亮行（内部；-1 无）。 */
     int     m_insertPolicy;            /**< 插入策略。 */
     int     m_sizeAdjustPolicy;        /**< 尺寸自适应策略。 */
     int     m_minimumContentsLength;   /**< 最小内容字符数。 */
@@ -189,6 +206,9 @@ void XComboBox_setFrame(XComboBox* self, bool on);
  */
 bool XComboBox_hasFrame(const XComboBox* self);
 /** @brief XCombo盒insert策略（对标 Qt 同名接口）。
+ * @details 只读非可编辑组合框无效果；可编辑组合框在编辑结束
+ *          （Enter/失焦）时按本策略结算（各值语义见枚举与类型
+ *          @details 说明）。
  * @param self 目标控件指针。
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
  */
@@ -610,6 +630,27 @@ int XComboBox_findData_2(const XComboBox* self, const char* data);
 void XComboBox_setCompleter(XComboBox* self, XCompleter* completer);
 /** @brief 查询补全器。 @param self 目标控件。 @return 借用指针。 */
 XCompleter* XComboBox_completer(const XComboBox* self);
+/**
+ * @brief      设置前缀补全过滤开关（对标 QComboBox 可编辑内建 completer
+ *             的 PopupCompletion 子集；本子集仅此一种补全模式）。
+ * @details    可编辑模式下输入前缀时，下拉弹层自动按前缀过滤条目并
+ *             高亮命中项（大小写不敏感，对标 QCompleter 默认
+ *             CaseInsensitive）：Enter 采纳高亮补全并发射既有
+ *             activated/textActivated；Esc 收起弹层且不改变编辑文本；
+ *             Up/Down/PageUp/PageDown 在命中行间移动高亮。无匹配时不
+ *             弹层（空列表同）。对非可编辑组合框仅保存开关，转为可编
+ *             辑后生效；关闭开关时存活的补全弹层立即收起（不改文本）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      enable bool 开关：true 启用前缀补全过滤。
+ * @return     无返回值。
+ */
+void XComboBox_setCompleterMode(XComboBox* self, bool enable);
+/**
+ * @brief      查询前缀补全过滤开关（对标 completer 存在性语义）。
+ * @param      self 目标控件指针。
+ * @return     已启用返回 true；self 为 NULL 或未启用返回 false。
+ */
+bool XComboBox_isCompleterMode(const XComboBox* self);
 /** @brief 设置图标尺寸（对标 setIconSize 的方边简化）。
  * @param self 目标控件。
  * @param size 方边像素（>0）。

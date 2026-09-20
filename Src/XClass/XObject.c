@@ -763,7 +763,7 @@ XObjectList* XObject_findChildren(const XObject* self, const XString* name, XFin
 
 bool XObject_event_base(XObject* self, XEvent* e)
 {
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
 		return false;
 	return XClassGetVirtualFunc(self, EXObject_Event, bool(*)(XObject*, XEvent*))(self,e);
 }

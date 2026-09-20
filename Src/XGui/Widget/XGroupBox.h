@@ -62,6 +62,7 @@ typedef struct XGroupBox
     bool    m_flat;                 /**< 扁平样式。 */
     bool    m_checkable;            /**< 是否可勾选。 */
     bool    m_checked;              /**< 勾选状态。 */
+    bool    m_pressed;              /**< 标题区按压中（对标 QGroupBoxPrivate::pressed）。 */
 } XGroupBox;
 
 /* ==================== 生命周期（对标 QGroupBox 构造/析构） ==================== */

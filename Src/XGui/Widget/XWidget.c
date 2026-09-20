@@ -33,7 +33,7 @@
  *                autoFillBackground 填充 XPaletteColorRole_Window 底色；
  *              - 事件分派：XWidget_event_base 继承自 XObject（宏复用
  *                XObject_event_base），经虚表 EXObject_Event 进入
- *                VXWidget_event；VXWidget_event 按 XEventType 分派到 23 个
+ *                VXWidget_event；VXWidget_event 按 XEventType 分派到 25 个
  *                事件虚函数槽（paintEvent/resizeEvent/moveEvent/closeEvent/
  *                focusInEvent/focusOutEvent/enterEvent/leaveEvent/keyPressEvent/
  *                keyReleaseEvent/inputMethodEvent/dragEnterEvent/dragMoveEvent/
@@ -58,6 +58,10 @@
 #include "XWidget_Protected.h"
 #include "XShortcut.h"
 #include "XVarList.h"
+#if XByteArray_ON
+#include "XByteArray.h"
+#endif /* XByteArray_ON */
+#include "XStringUtils.h"
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
 #endif /* XWINDOWEVENT_ON */
@@ -124,6 +128,18 @@ static XWidget* g_focusWidget = NULL;
 
 /** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
 static XWidget* g_mouseGrabWidget = NULL;
+/** @brief 模块静态触摸抓取控件（对标 Qt 触点隐式 grab：TouchBegin 被接受后
+ *         同一触点的 UPDATE/END 直达该控件，TOUCH_END/CANCEL 清除；当前
+ *         XTouchEvent 只承载主点，故为单触点简化模型）。 */
+static XWidget* g_touchGrabWidget = NULL;
+/** @brief touch→mouse 仿真开关（对标 Qt AA_SynthesizeMouseForUnhandledTouch-
+ *         Events；Qt 6 对未处理触摸序列的鼠标仿真默认开启，应用可显式关闭）。 */
+static bool g_touchMouseSynthEnabled = true;
+/** @brief 当前触摸序列的 touch→mouse 仿真状态：BEGIN 未被任何控件接受时
+ *         置位，END/CANCEL 清除（对标 Qt per-point synthesized-mouse 生命
+ *         周期；单点模型简化为序列级标志）。同一 BEGIN 只走 touch 或仿真
+ *         鼠标一条路。 */
+static bool g_touchMouseSynthActive = false;
 /* 应用模态控件（对标 QApplication 模态登记；经 XWidget_Protected.h
  * 供 XDialog/XApplication 读写，VXWidgetWindow_event 做输入拦截）。 */
 static XWidget* g_applicationModalWidget = NULL;
@@ -173,6 +189,10 @@ static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
 static XWidget* XWidget_deepestFocusProxy(const XWidget* self);
+/** @brief 触摸事件槽入口（对标 QWidget::touchEvent 虚函数调用形态）。 */
+void XWidget_touchEvent_base(XWidget* self, XEvent* event);
+/** @brief 数位板事件槽入口（对标 QWidget::tabletEvent 虚函数调用形态）。 */
+void XWidget_tabletEvent_base(XWidget* self, XEvent* event);
 static void XFocusProxy_register(XWidget* owner);
 static void XFocusProxy_cleanupFor(XWidget* self);
 static void XWidget_propagateEnabled(XWidget* self, bool enabled);
@@ -220,8 +240,10 @@ static XWidget* XWidget_topLevel(const XWidget* self)
 {
     const XWidget* w = self;
     if (!w) return NULL;
+    /* 经 XWidget_parentWidget 取父：非控件父（绕过控件 API 挂链）视同
+       无父控件，终止上溯，避免按 XWidget* 解引用非控件结构体。 */
     while (w && !w->m_isWindow) {
-        w = (const XWidget*)XObject_parent((XObject*)w);
+        w = XWidget_parentWidget(w);
     }
     return (XWidget*)w;
 }
@@ -333,6 +355,8 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
                 XWidget_clearFocusBase(self, XFocusReason_Other);
             if (g_mouseGrabWidget == self)
                 g_mouseGrabWidget = NULL;
+            if (g_touchGrabWidget == self)
+                g_touchGrabWidget = NULL;
             if (g_keyboardGrabWidget == self)
                 g_keyboardGrabWidget = NULL;
             XWidget_sendShowHide(self, false);
@@ -965,6 +989,19 @@ static XPoint XWidget_eventPosition(const XEvent* event)
     case XEVENT_TYPE_CONTEXT_MENU:
         out = ((const XContextMenuEvent*)event)->m_position;
         break;
+    /* 触摸/数位板按主点坐标参与命中测试（对标 QWidgetWindow::handleTouchEvent
+       的按触点位置 childAt 形态）。 */
+    case XEVENT_TYPE_TOUCH_BEGIN:
+    case XEVENT_TYPE_TOUCH_UPDATE:
+    case XEVENT_TYPE_TOUCH_END:
+    case XEVENT_TYPE_TOUCH_CANCEL:
+        out = ((const XTouchEvent*)event)->m_position;
+        break;
+    case XEVENT_TYPE_TABLET_PRESS:
+    case XEVENT_TYPE_TABLET_RELEASE:
+    case XEVENT_TYPE_TABLET_MOVE:
+        out = ((const XTabletEvent*)event)->m_position;
+        break;
 #endif /* XWINDOWEVENT_ON */
     default:
         break;
@@ -993,6 +1030,18 @@ static void XWidget_eventSetPosition(XEvent* event, const XPoint* pos)
     case XEVENT_TYPE_CONTEXT_MENU:
         ((XContextMenuEvent*)event)->m_position = *pos;
         break;
+    /* 命中后换算为接收控件局部坐标（与鼠标事件同一坐标契约）。 */
+    case XEVENT_TYPE_TOUCH_BEGIN:
+    case XEVENT_TYPE_TOUCH_UPDATE:
+    case XEVENT_TYPE_TOUCH_END:
+    case XEVENT_TYPE_TOUCH_CANCEL:
+        ((XTouchEvent*)event)->m_position = *pos;
+        break;
+    case XEVENT_TYPE_TABLET_PRESS:
+    case XEVENT_TYPE_TABLET_RELEASE:
+    case XEVENT_TYPE_TABLET_MOVE:
+        ((XTabletEvent*)event)->m_position = *pos;
+        break;
 #endif /* XWINDOWEVENT_ON */
     default:
         break;
@@ -1018,8 +1067,6 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
              * XGrabPointer 可能因映射时序未生效，此路由作可靠兜底）。 */
             XPoint global = XWidget_mapToGlobal(top, &pos);
             XPoint local = XWidget_mapFromGlobal(grabTop, &global);
-            fprintf(stderr, "[GRABDBG] redirect pos=%d,%d global=%d,%d local=%d,%d\n",
-                    pos.x, pos.y, global.x, global.y, local.x, local.y);
             XWidget_eventSetPosition(event, &local);
             return XWidget_dispatchPointerEvent(grabTop, event);
         }
@@ -1051,7 +1098,7 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
             if (XWidget_attrTest(&w->m_attributes, XWidgetAttribute_NoMousePropagation)) break;
         }
         if (w == top) break;
-        w = (XWidget*)XObject_parent((XObject*)w);
+        w = XWidget_parentWidget(w);
     }
 #if XWINDOWEVENT_ON
     /* 对标 Qt：右键按下未被接受时合成上下文菜单事件，发给命中控件
@@ -1092,7 +1139,7 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
                 XEvent_delete_base((XEvent*)ctx);
             }
             if (w == top) break;
-            w = (XWidget*)XObject_parent((XObject*)w);
+            w = XWidget_parentWidget(w);
         }
     }
 #endif /* XWINDOWEVENT_ON */
@@ -1125,7 +1172,170 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
     return XWidget_event_base((XWidget*)top, event);
 }
 
-/* ==================== 23 个默认事件槽（对标 QWidget 默认实现） ==================== */
+/** @brief 按命中测试 + 父链传播投递定位类输入事件（触摸/数位板共用）。
+ * @details 参照 XWidget_dispatchPointerEvent 的命中与坐标平移方式，但不含
+ *          鼠标抓取与右键上下文菜单合成（两者是 QMouseEvent 专属语义）。
+ *          命中：childAt 按主点位置（对标 QWidgetWindow::handleTouchEvent
+ *          / handleTabletEvent 的 childAt 形态）；传播：接收者未接受时沿
+ *          父链继续（与鼠标同一 accept 语义）。
+ * @return 接受事件的控件（含沿父链上溯后接受者）；无人接受返回 NULL。 */
+static XWidget* XWidget_dispatchInputAt(XWidget* top, XEvent* event)
+{
+    XWidget* target;
+    XPoint pos;
+    XWidget* w;
+    if (!top || !event) return NULL;
+    pos = XWidget_eventPosition(event);
+    target = XWidget_childAt(top, &pos);
+    if (!target) {
+        const XRegion* topMask = &top->m_mask;
+        /* 与指针派发一致：顶层有遮罩且点不在遮罩内时不派发。 */
+        if (topMask->count > 0 && !XRegion_contains(topMask, pos.x, pos.y))
+            return NULL;
+        target = top;
+    }
+    w = target;
+    while (w) {
+        XPoint off = XWidget_accumulateOffset(w);
+        XPoint local;
+        local.x = pos.x - off.x;
+        local.y = pos.y - off.y;
+        XWidget_eventSetPosition(event, &local);
+        if (!XWidget_attrTest(&w->m_attributes, XWidgetAttribute_TransparentForMouseEvents)) {
+            XWidget_sendEvent(w, event);
+            if (XEvent_isAccepted(event)) return w;
+            if (XWidget_attrTest(&w->m_attributes, XWidgetAttribute_NoMousePropagation)) break;
+        }
+        if (w == top) break;
+        w = XWidget_parentWidget(w);
+    }
+    return NULL;
+}
+
+/** @brief 合成鼠标事件并复用鼠标命中/派发管线（对标 QGuiApplicationPrivate::
+ *         synthesizeMouseFromTouchEvents 的 QMouseEvent 语义）。
+ * @details topLocal 为触摸主点的顶层局部坐标（与鼠标事件同一坐标系契约），
+ *          经 XWidget_dispatchPointerEvent 做命中测试 + 父链传播 + 逐接收者
+ *          坐标换算；来源标志置 m_synthesized=1（对标 Qt 的
+ *          MouseEventSynthesizedBySystem，经 XMouseEvent_isSynthesized
+ *          可与真实鼠标区分）。
+ * @return 合成鼠标事件被接受返回 true；分配失败/无人接受返回 false。 */
+static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
+                                             XMouseButton button,
+                                             XMouseButton buttons,
+                                             const XPoint* topLocal)
+{
+    XMouseEvent* mouse;
+    bool accepted;
+    if (!top || !topLocal) return false;
+    mouse = XMouseEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, button,
+                                  (XKeyboardModifiers)XKeyboardModifier_NoModifier,
+                                  *topLocal);
+    if (!mouse) return false;
+    XMouseEvent_setButtons(mouse, buttons);
+    XMouseEvent_setSynthesized(mouse, true); /* 合成来源标志。 */
+    accepted = XWidget_dispatchPointerEvent(top, (XEvent*)mouse);
+    XEvent_delete_base((XEvent*)mouse);
+    return accepted;
+}
+
+/** @brief 触摸事件命中派发：主点命中 + 触点隐式抓取 + touch→mouse 仿真
+ *         （对标 QWidgetWindow::handleTouchEvent / QGuiApplicationPrivate::
+ *         processTouchEvent）。
+ * @details Qt 语义：TouchBegin 按主点 childAt 命中；被接受后该触点被接收
+ *          控件隐式抓取，后续 UPDATE/END 直达抓取控件（含跨顶层坐标转投）；
+ *          TOUCH_END/TOUCH_CANCEL 投递完成后清理抓取。TouchBegin 未被任何
+ *          控件接受时进入鼠标仿真（对标 AA_SynthesizeMouseForUnhandled-
+ *          TouchEvents，默认开启）：合成 MOUSE_BUTTON_PRESS（坐标同触摸点）、
+ *          UPDATE→MOUSE_MOVE、END→MOUSE_BUTTON_RELEASE，复用鼠标命中/派发
+ *          管线（QMouseEvent 语义，合成事件带 m_synthesized 来源标志）；
+ *          同一 BEGIN 只走 touch 或
+ *          仿真鼠标一条路，END/CANCEL 清理仿真状态。多点按 XTouchEvent
+ *          最小负载只取主点，完整触点列表为已知偏差。 */
+static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
+{
+    XEventType type;
+    XWidget* receiver;
+    XPoint topLocal;
+    if (!top || !event) return false;
+    if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
+        return false;
+    type = XEvent_type(event);
+    /* 顶层局部坐标快照：后续命中派发会把事件位置改写为接收者局部坐标，
+       仿真鼠标必须以同一触摸点坐标进入鼠标管线。 */
+    topLocal = XWidget_eventPosition(event);
+    /* 新序列开始：防御性清理上一序列可能残留的仿真状态（平台漏发 END）。 */
+    if (type == XEVENT_TYPE_TOUCH_BEGIN)
+        g_touchMouseSynthActive = false;
+    if (g_touchGrabWidget) {
+        XWidget* grabTop = XWidget_topLevel(g_touchGrabWidget);
+        if (grabTop && grabTop != top) {
+            /* 跨顶层全局触点抓取：坐标换算到抓取窗口坐标系后转投
+               （对标鼠标抓取的同型兜底路由；触摸抓取生命周期同触点）。 */
+            XPoint pos = XWidget_eventPosition(event);
+            XPoint global = XWidget_mapToGlobal(top, &pos);
+            XPoint local = XWidget_mapFromGlobal(grabTop, &global);
+            XWidget_eventSetPosition(event, &local);
+            return XWidget_dispatchTouchEvent(grabTop, event);
+        }
+    }
+    if (g_touchGrabWidget && XWidget_topLevel(g_touchGrabWidget) == top) {
+        /* 触点抓取期间直达抓取控件，不再按命中测试分派。 */
+        XPoint pos = XWidget_eventPosition(event);
+        XPoint off = XWidget_accumulateOffset(g_touchGrabWidget);
+        XPoint local;
+        local.x = pos.x - off.x;
+        local.y = pos.y - off.y;
+        XWidget_eventSetPosition(event, &local);
+        XWidget_sendEvent(g_touchGrabWidget, event);
+        receiver = XEvent_isAccepted(event) ? g_touchGrabWidget : NULL;
+    } else {
+        receiver = XWidget_dispatchInputAt(top, event);
+        /* 对标 Qt：TouchBegin 被接受 → 隐式抓取接收控件。 */
+        if (type == XEVENT_TYPE_TOUCH_BEGIN && receiver)
+            g_touchGrabWidget = receiver;
+    }
+    /* touch→mouse 仿真：仅在 BEGIN 未被接受（无触点抓取）时进入，之后
+       整条序列持续合成，END 合成释放后复位（对标 Qt per-point 状态机）。 */
+    if (g_touchMouseSynthEnabled && !g_touchGrabWidget) {
+        if (type == XEVENT_TYPE_TOUCH_BEGIN && !receiver) {
+            g_touchMouseSynthActive = true;
+            /* 对标 Qt：合成 press 携带 LeftButton（button 与 buttons 一致）。 */
+            XWidget_synthesizeMouseFromTouch(top,
+                XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton,
+                XMouseButton_LeftButton, &topLocal);
+        } else if (type == XEVENT_TYPE_TOUCH_UPDATE && g_touchMouseSynthActive) {
+            /* move：button 为 NoButton，buttons 保持按压态。 */
+            XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_MOVE,
+                XMouseButton_NoButton, XMouseButton_LeftButton, &topLocal);
+        } else if (type == XEVENT_TYPE_TOUCH_END && g_touchMouseSynthActive) {
+            /* release：button 为 LeftButton，buttons 为剩余按压（空）。 */
+            XWidget_synthesizeMouseFromTouch(top,
+                XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+                XMouseButton_NoButton, &topLocal);
+        }
+    }
+    /* Qt 语义：触点序列结束（END/CANCEL）后清理抓取与仿真状态。 */
+    if (type == XEVENT_TYPE_TOUCH_END || type == XEVENT_TYPE_TOUCH_CANCEL) {
+        g_touchGrabWidget = NULL;
+        g_touchMouseSynthActive = false;
+    }
+    return XEvent_isAccepted(event);
+}
+
+/** @brief 数位板事件命中派发：与鼠标一致的按压命中路径（对标 QWidgetWindow::
+ *         handleTabletEvent——数位板事件按鼠标同型 childAt 命中 + 父链传播，
+ *         只是负载多压力/指针类型；不参与触摸抓取）。 */
+static bool XWidget_dispatchTabletEvent(XWidget* top, XEvent* event)
+{
+    if (!top || !event) return false;
+    if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
+        return false;
+    (void)XWidget_dispatchInputAt(top, event);
+    return XEvent_isAccepted(event);
+}
+
+/* ==================== 25 个默认事件槽（对标 QWidget 默认实现） ==================== */
 
 /** @brief 默认绘制槽：autoFillBackground 时用活动组 Window 色填充绘制矩形。 */
 static void XWidget_paintEvent_default(XWidget* self, XEvent* event)
@@ -1227,7 +1437,13 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
             XEVENT_TYPE_MOUSE_BUTTON_PRESS, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
             XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK, XEVENT_TYPE_MOUSE_MOVE,
             XEVENT_TYPE_WHEEL, XEVENT_TYPE_KEY_PRESS,
-            XEVENT_TYPE_KEY_RELEASE, XEVENT_TYPE_CONTEXT_MENU
+            XEVENT_TYPE_KEY_RELEASE, XEVENT_TYPE_CONTEXT_MENU,
+            /* 触摸/数位板同属输入事件：模态阻塞窗口一并吞掉（对标
+               QGuiApplicationPrivate::isWindowBlocked 对全部输入生效）。 */
+            XEVENT_TYPE_TOUCH_BEGIN, XEVENT_TYPE_TOUCH_UPDATE,
+            XEVENT_TYPE_TOUCH_END, XEVENT_TYPE_TOUCH_CANCEL,
+            XEVENT_TYPE_TABLET_PRESS, XEVENT_TYPE_TABLET_RELEASE,
+            XEVENT_TYPE_TABLET_MOVE
         };
         size_t ti;
         for (ti = 0; ti < sizeof(inputTypes) / sizeof(inputTypes[0]); ++ti) {
@@ -1295,6 +1511,19 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     case XEVENT_TYPE_WHEEL:
     case XEVENT_TYPE_ENTER:
         return XWidget_dispatchPointerEvent(top, event);
+    case XEVENT_TYPE_TOUCH_BEGIN:
+    case XEVENT_TYPE_TOUCH_UPDATE:
+    case XEVENT_TYPE_TOUCH_END:
+    case XEVENT_TYPE_TOUCH_CANCEL:
+        /* 对标 QWidgetWindow::handleTouchEvent：桥接窗口把窗口级触摸事件
+           按主点命中转发控件 touchEvent 虚槽。 */
+        return XWidget_dispatchTouchEvent(top, event);
+    case XEVENT_TYPE_TABLET_PRESS:
+    case XEVENT_TYPE_TABLET_RELEASE:
+    case XEVENT_TYPE_TABLET_MOVE:
+        /* 对标 QWidgetWindow::handleTabletEvent：数位板事件按鼠标一致
+           的命中路径转发控件 tabletEvent 虚槽。 */
+        return XWidget_dispatchTabletEvent(top, event);
     case XEVENT_TYPE_LEAVE:
         XWidget_clearUnderMouseRecursive(top);
         XWidget_sendEvent(top, event);
@@ -1316,12 +1545,68 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     case XEVENT_TYPE_CLOSE:
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
+    case XEVENT_TYPE_SHOW:
+    case XEVENT_TYPE_HIDE:
+        /* 对标 Qt：showEvent/hideEvent 由 QWidget::setVisible 经
+           XWidget_sendShowHide 按可见性翻转恰好发送一次；桥接窗口
+           自身的映射/取消映射事件（XWindow_setVisible 合成）不再
+           转发控件，避免同一翻转双次发射 visibilityChanged 等信号。 */
+        XEvent_accept(event);
+        return true;
     default:
         return XWidget_event_base(top, event);
     }
 }
 
 /* ==================== XWidget 类初始化与生命周期 ==================== */
+
+#if XINPUTMETHOD_ON
+/** @brief XWidget_inputMethodQuery 基类默认实现（对标 QWidget::inputMethodQuery
+ *         默认实现；各查询项返回值见 XWidget.h 声明处文档）。 */
+static XVariant* XWidget_inputMethodQuery_default(const XWidget* self,
+                                                  XInputMethodQuery query)
+{
+    if (!self) return NULL;
+    switch (query) {
+    case XInputMethodQuery_ImCursorRectangle:
+        /* 对标 Qt：QRectF(width() / 2.0, 0, 1, height())。 */
+        {
+            XRectF rect;
+            rect.x = (float)XWidget_width(self) / 2.0f;
+            rect.y = 0.0f;
+            rect.width = 1.0f;
+            rect.height = (float)XWidget_height(self);
+            return XVariant_create(&rect, sizeof(rect), XVariantType_User);
+        }
+    case XInputMethodQuery_ImInputItemClipRectangle:
+        /* 对标 Qt：QRectF(rect())，控件矩形的浮点副本。 */
+        {
+            XRect rect = XWidget_rect(self);
+            XRectF rectF;
+            rectF.x = (float)rect.x;
+            rectF.y = (float)rect.y;
+            rectF.width = (float)rect.width;
+            rectF.height = (float)rect.height;
+            return XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+        }
+    case XInputMethodQuery_ImHints:
+        /* 对标 Qt：(int)inputMethodHints()。 */
+        {
+            int32_t value = (int32_t)XWidget_inputMethodHints(self);
+            return XVariant_create(&value, sizeof(value), XVariantType_Int32);
+        }
+    case XInputMethodQuery_ImEnabled:
+        /* 对标 Qt：QVariant(true)。 */
+        {
+            bool enabled = true;
+            return XVariant_create(&enabled, sizeof(enabled), XVariantType_Bool);
+        }
+    default:
+        /* 对标 Qt：其余查询项返回无效 QVariant（NULL 等价）。 */
+        return NULL;
+    }
+}
+#endif /* XINPUTMETHOD_ON */
 
 XVtable* XWidget_class_init(void)
 {
@@ -1351,7 +1636,12 @@ XVtable* XWidget_class_init(void)
         XWidget_noopEvent_default,         /* ShowEvent */
         XWidget_noopEvent_default,         /* HideEvent */
         XWidget_noopEvent_default,         /* ChangeEvent */
-        XWidget_ignoreEvent_default        /* ContextMenuEvent */
+        XWidget_ignoreEvent_default,       /* ContextMenuEvent */
+        XWidget_ignoreEvent_default,       /* TouchEvent（默认忽略→沿父链传播；对标 QWidget 默认 touchEvent） */
+        XWidget_ignoreEvent_default        /* TabletEvent（默认忽略→沿父链传播；对标 QWidget 默认 tabletEvent） */
+#if XINPUTMETHOD_ON
+        ,XWidget_inputMethodQuery_default /* InputMethodQuery（对标 QWidget::inputMethodQuery） */
+#endif /* XINPUTMETHOD_ON */
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXWidget_deinit);
@@ -1364,6 +1654,16 @@ XVtable* XWidget_class_init(void)
 void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
+    /* 根因防护：父指针必须是已初始化的 XWidget（XObject::is_widget=1）。
+       裸 XWindow 等非控件对象被调用方强转 XWidget* 当父传入时（如
+       XLineEdit_create((XWidget*)XWindow_create(), 0)），其结构体远小于
+       XWidget，挂父后 XLineEdit_init 尾部 xlineedit_updateSizeHints →
+       XWidget_updateGeometry 沿父链读 parent->m_layout 会越界读到堆残留，
+       非零垃圾被当 XLayout* 传入 XLayout_activate 解引用段错误。
+       此处把非控件父一律按无父（顶层窗口）处理，杜绝垃圾强转；真实
+       控件父 is_widget 恒为 1（XWidget_init 统一置位），正常路径零变化。 */
+    if (parent && !((const XObject*)parent)->is_widget)
+        parent = NULL;
     XMemset(self, 0, sizeof(XWidget));
     XObject_init(&self->m_class);
     ((XObject*)self)->is_widget = 1;
@@ -1605,6 +1905,8 @@ static void VXWidget_deinit(XWidget* self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
     if (g_mouseGrabWidget == self)
         g_mouseGrabWidget = NULL;
+    if (g_touchGrabWidget == self)
+        g_touchGrabWidget = NULL;
     if (g_keyboardGrabWidget == self)
         g_keyboardGrabWidget = NULL;
     XWidget_freeString(&self->m_toolTip);
@@ -2007,6 +2309,21 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         return true;
     case XEVENT_TYPE_WHEEL:
         XWidget_wheelEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_TOUCH_BEGIN:
+    case XEVENT_TYPE_TOUCH_UPDATE:
+    case XEVENT_TYPE_TOUCH_END:
+    case XEVENT_TYPE_TOUCH_CANCEL:
+        /* 对标 QWidget::event 的 TouchBegin/Update/End → touchEvent 虚函数
+           分派；accept 状态由槽设置，默认忽略以沿父链传播。 */
+        XWidget_touchEvent_base(self, event);
+        return true;
+    case XEVENT_TYPE_TABLET_PRESS:
+    case XEVENT_TYPE_TABLET_RELEASE:
+    case XEVENT_TYPE_TABLET_MOVE:
+        /* 对标 QWidget::event 的 TabletPress/Release/Move → tabletEvent
+           虚函数分派。 */
+        XWidget_tabletEvent_base(self, event);
         return true;
     case XEVENT_TYPE_SHOW:
         XWidget_showEvent_base(self, event);
@@ -2472,6 +2789,133 @@ void XWidget_adjustSize(XWidget* self)
     XWidget_resize(self, hint.width, hint.height);
 }
 
+/* ==================== 窗口几何序列化（对标 QWidget::saveGeometry/restoreGeometry） ==================== */
+
+#if XByteArray_ON
+
+/**
+ * @brief      从序列化文本游标处解析一个带符号十进制字段。
+ * @details    跳过前导空格/制表符后接受可选正负号与十进制数字；数值溢出
+ *             int、无数字或数字后紧跟其他字符（如 "12ab"）一律按损坏数据
+ *             处理返回 false。解析后游标停在字段末尾（不含分隔空白）。
+ * @param      data 序列化缓冲区首地址。
+ * @param      length 缓冲区字节长度。
+ * @param      cursor 入参/出参：当前解析游标（字节偏移）。
+ * @param      out 解析成功时写回字段值。
+ * @return     解析成功返回 true；损坏数据返回 false。
+ */
+static bool xwg_parseField(const char* data, int length, int* cursor, int* out)
+{
+    int64_t value = 0;
+    bool negative = false;
+    bool hasDigit = false;
+    int i;
+    if (!data || !cursor || !out) return false;
+    i = *cursor;
+    while (i < length && (data[i] == ' ' || data[i] == '\t')) ++i;
+    if (i < length && (data[i] == '-' || data[i] == '+')) {
+        negative = (data[i] == '-');
+        ++i;
+    }
+    while (i < length && data[i] >= '0' && data[i] <= '9') {
+        value = value * 10 + (data[i] - '0');
+        if (value > 2147483647) return false; /* 超出 int 范围按损坏数据拒绝 */
+        hasDigit = true;
+        ++i;
+    }
+    if (!hasDigit) return false;
+    /* 数值后必须是分隔空白或串尾，防止 "12ab" 被部分解析。 */
+    if (i < length && data[i] != ' ' && data[i] != '\t' &&
+        data[i] != '\r' && data[i] != '\n')
+        return false;
+    *out = (int)(negative ? -value : value);
+    *cursor = i;
+    return true;
+}
+
+XByteArray* XWidget_saveGeometry(const XWidget* self)
+{
+    XByteArray* out;
+    XRect frame;
+    XRect normal;
+    char buf[160];
+    if (!self || !self->m_isWindow)
+        return NULL; /* 仅顶层窗口有效（Qt 同样把窗口几何保存在顶层上）。 */
+    out = XByteArray_create();
+    if (!out) return NULL;
+    /* 顶层控件 frameGeometry == geometry（仓库既有语义），故直接保存
+       m_windowRect；normalGeometry 在未进入特殊状态时回退当前几何。 */
+    frame = self->m_windowRect;
+    normal = XWidget_normalGeometry(self);
+    /* 序列化格式沿用仓库惯例（参照 XSplitter_saveState 的 XByteArray 文本
+       承载）：魔数 "XWG1" + 9 个空格分隔的十进制字段——
+       [0..3] 当前 frameGeometry x/y/w/h；[4..7] 正常态几何 x/y/w/h；
+       [8] 窗口状态标志（仅 Maximized|FullScreen，对标 Qt savedState，
+       最小化是瞬态不保存）。x/y 允许负值，故用带符号十进制而非定宽数字。 */
+    XSnprintf(buf, sizeof(buf),
+              "XWG1 %d %d %d %d %d %d %d %d %u",
+              frame.x, frame.y, frame.width, frame.height,
+              normal.x, normal.y, normal.width, normal.height,
+              (unsigned)(self->m_windowState &
+                         (XWindowStates)(XWindowState_Maximized |
+                                         XWindowState_FullScreen)));
+    XByteArray_append_utf8(out, buf);
+    return out;
+}
+
+bool XWidget_restoreGeometry(XWidget* self, const XByteArray* geometry)
+{
+    static const char magic[] = "XWG1";
+    const char* data;
+    int64_t length;
+    int fields[9];
+    int cursor;
+    int i;
+    XRect frame;
+    XRect normal;
+    unsigned savedState;
+    if (!self || !geometry) return false;
+    if (!self->m_isWindow)
+        return false; /* 仅顶层窗口有效；非顶层返回失败。 */
+    data = (const char*)XByteArray_constData(geometry);
+    length = XByteArray_size_base((const XContainer*)geometry);
+    if (!data || length < (int64_t)(sizeof(magic) - 1)) return false;
+    if (XStrncmp(data, magic, sizeof(magic) - 1) != 0)
+        return false; /* 魔数/版本不符按损坏数据拒绝。 */
+    cursor = (int)(sizeof(magic) - 1);
+    for (i = 0; i < 9; ++i) {
+        if (!xwg_parseField(data, (int)length, &cursor, &fields[i]))
+            return false;
+    }
+    /* 尾部只允许空白；截断或追加垃圾数据一律拒绝。 */
+    while (cursor < (int)length &&
+           (data[cursor] == ' ' || data[cursor] == '\t' ||
+            data[cursor] == '\r' || data[cursor] == '\n'))
+        ++cursor;
+    if (cursor != (int)length) return false;
+    savedState = (unsigned)fields[8];
+    /* 只接受 Maximized|FullScreen 组合（保存侧就不会写入其他位）。 */
+    if ((savedState & ~((unsigned)XWindowState_Maximized |
+                        (unsigned)XWindowState_FullScreen)) != 0)
+        return false;
+    /* 尺寸必须为正且交给 setGeometry 按最小/最大约束钳位；x/y 允许任意值。 */
+    if (fields[2] <= 0 || fields[3] <= 0 || fields[6] <= 0 || fields[7] <= 0)
+        return false;
+    XRect_init(&frame, fields[0], fields[1], fields[2], fields[3]);
+    XRect_init(&normal, fields[4], fields[5], fields[6], fields[7]);
+    /* 对标 QWidget::restoreGeometry 的恢复次序：先恢复窗口状态标志
+       （触发本仓库 setWindowState 的 normalGeometry 记账与桥接窗口同步），
+       再恢复当前几何，最后写回保存时的正常态几何——顺序保证最大化窗口
+       恢复后 normalGeometry 与保存值一致。简化项：不做 Qt 的屏幕可用
+       区域夹取（无多屏/任务栏概念），尺寸钳位由 setGeometry 完成。 */
+    XWidget_setWindowState(self, (XWindowStates)savedState);
+    XWidget_setGeometry(self, frame.x, frame.y, frame.width, frame.height);
+    self->m_normalGeometry = normal;
+    return true;
+}
+
+#endif /* XByteArray_ON */
+
 /* ==================== 尺寸约束 ==================== */
 
 XSize XWidget_minimumSize(const XWidget* self)
@@ -2735,7 +3179,16 @@ void XWidget_setSizePolicyFull(XWidget* self, const XWidgetSizePolicy* policy)
 
 XWidget* XWidget_parentWidget(const XWidget* self)
 {
-    return self ? (XWidget*)XObject_parent((XObject*)self) : NULL;
+    XObject* parent;
+    if (!self) return NULL;
+    /* 根因防护（批次七方向 b 的收口）：绕过控件 API 直接
+       XObject_setParent((XObject*)widget, 非控件) 后，父链上的
+       m_parent 不是 XWidget 布局；此处盲转会按 XWidget* 读
+       m_layout/m_visible 等越界字段（悬挂风险）。读前校验
+       is_widget，非控件父一律视同无父控件返回 NULL；正常路径
+       （XWidget_init/XWidget_setParent 已归一化）行为零变化。 */
+    parent = XObject_parent((XObject*)self);
+    return (parent && parent->is_widget) ? (XWidget*)parent : NULL;
 }
 
 void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
@@ -2744,6 +3197,11 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
     bool parentChanged;
     bool wasWindow;
     if (!self) return;
+    /* 根因防护（同 XWidget_init）：创建后重挂父也必须校验 is_widget，
+       否则裸 XWindow 等非控件对象经此挂父后，父链遍历仍会把非控件
+       结构体按 XWidget* 解引用（越界读 m_layout/m_visible 等）。 */
+    if (parent && !((const XObject*)parent)->is_widget)
+        parent = NULL;
     /* QWidget 禁止把控件设置为自身或其后代；C 接口采用安全返回，
      * 避免破坏 XObject 的父子链。 */
     if (self == parent) return;
@@ -3091,9 +3549,10 @@ XWidget* XWidget_nativeParentWidget(const XWidget* self)
 {
     XWidget* parent;
     if (!self) return NULL;
-    parent = (XWidget*)XObject_parent((XObject*)self);
+    /* 同 parentWidget 防护：非控件父视同无父，不做控件级上溯。 */
+    parent = XWidget_parentWidget(self);
     while (parent && !parent->m_windowHandle)
-        parent = (XWidget*)XObject_parent((XObject*)parent);
+        parent = XWidget_parentWidget(parent);
     return parent;
 }
 
@@ -3479,6 +3938,63 @@ void XWidget_setWindowIconText(XWidget* self, const XString* text)
     XWidget_freeString(&old); /* 替换旧值后释放原字符串，避免 setter 重复赋值泄漏。 */
     if (changed)
         XWidget_windowIconTextChanged_signal(self, self->m_windowIconText);
+}
+
+XIcon XWidget_windowIcon(const XWidget* self)
+{
+    XIcon out;
+    const XWidget* w;
+    XIcon_init(&out);
+    if (!self) return out;
+    /* 对标 QWidget::windowIcon()：本控件未显式设置图标（图标为空）时沿
+       父链向顶层传播解析，命中最近的非空图标；链上全部为空时回落应用
+       图标（QGuiApplication::windowIcon），应用也未设置则返回空图标。 */
+    w = self;
+    while (w && ((const XObject*)w)->is_widget && XIcon_isNull(&w->m_icon))
+        w = (const XWidget*)XObject_parent((XObject*)w);
+    if (w && ((const XObject*)w)->is_widget && !XIcon_isNull(&w->m_icon)) {
+        /* XCopy 对 XIcon 是共享私有数据（refcount 增量）的浅拷贝；调用方
+           用 XIcon_deinit_base 释放本副本即可（契约同 XWidget_font）。 */
+        XCopy(&out, &w->m_icon);
+        return out;
+    }
+#if XGUIAPPLICATION_ON
+    {
+        XIcon* appIcon = XGuiApplication_windowIcon();
+        if (appIcon) {
+            XCopy(&out, appIcon);
+            XIcon_delete_base((XClass*)appIcon);
+        }
+    }
+#endif /* XGUIAPPLICATION_ON */
+    return out;
+}
+
+void XWidget_setWindowIcon(XWidget* self, const XIcon* icon)
+{
+    XIcon empty;
+    int64_t oldKey;
+    int64_t newKey;
+    if (!self) return;
+    oldKey = XIcon_cacheKey(&self->m_icon);
+    if (icon) {
+        /* 共享式浅拷贝（XIconPrivate refcount 增量），旧引用自动释放。 */
+        XCopy(&self->m_icon, icon);
+    } else {
+        /* setWindowIcon(空图标) 清除图标（对标 setWindowIcon(QIcon())）。 */
+        XIcon_init(&empty);
+        XCopy(&self->m_icon, &empty);
+        XIcon_deinit_base(&empty);
+    }
+    newKey = XIcon_cacheKey(&self->m_icon);
+    /* 对标 QWidget::setWindowIcon_sys：仅顶层控件且桥接窗口已创建时刷新
+       平台窗口图标；窗口未创建时仅存值，惰性创建时由 XWidget_createWindow
+       携带 m_icon。子控件设置只存自身值，不改顶层平台图标（Qt 6 行为）。 */
+    if (self->m_isWindow && self->m_windowHandle)
+        XWindow_setIcon((XWindow*)self->m_windowHandle, &self->m_icon);
+    /* 图标内容键变化才发射 windowIconChanged（Qt 仅在图标变化时通知）。 */
+    if (newKey != oldKey)
+        XWidget_windowIconChanged_signal(self, &self->m_icon);
 }
 
 const XString* XWidget_windowFilePath(const XWidget* self)
@@ -3909,6 +4425,18 @@ XWidget* XWidget_mouseGrabber(void)
     return g_mouseGrabWidget;
 }
 
+void XWidget_setTouchMouseSynthesisEnabled(bool on)
+{
+    /* 对标 Qt AA_SynthesizeMouseForUnhandledTouchEvents（Qt 6 默认开启）：
+       框架级开关，切换只影响其后开始的触摸序列，正在进行的序列不受影响。 */
+    g_touchMouseSynthEnabled = on;
+}
+
+bool XWidget_touchMouseSynthesisEnabled(void)
+{
+    return g_touchMouseSynthEnabled;
+}
+
 void XWidget_grabKeyboard(XWidget* self)
 {
     if (!self || !self->m_visible) return;
@@ -4233,6 +4761,22 @@ void XWidget_setInputMethodHints(XWidget* self, XInputMethodHints hints)
     if (!self) return;
     self->m_inputMethodHints = hints;
 }
+
+#if XINPUTMETHOD_ON
+XVariant* XWidget_inputMethodQuery(const XWidget* self, XInputMethodQuery query)
+{
+    if (!self) return NULL;
+    /* 对标 Qt：QWidget::inputMethodQuery 为虚函数。这里经对象虚表分派到
+       EXWidget_InputMethodQuery 槽位（控件子类可重载），未绑定虚表或槽位
+       为空时回落基类默认实现；查询本身不修改控件状态。 */
+    if (((const XClass*)self)->m_vtable) {
+        XWidgetInputMethodQuerySlot slot = XClassGetVirtualFunc(
+            (XWidget*)self, EXWidget_InputMethodQuery, XWidgetInputMethodQuerySlot);
+        if (slot) return slot(self, query);
+    }
+    return XWidget_inputMethodQuery_default(self, query);
+}
+#endif /* XINPUTMETHOD_ON */
 
 const XString* XWidget_styleSheet(const XWidget* self)
 {
@@ -5201,10 +5745,10 @@ XImage* XWidget_grab(const XWidget* self)
  * XWidget_event_base 继承自 XObject（对标 QObject::event），按文档约定在
  * XWidget.h 中直接宏复用：XWidget_event_base(self, event) 展开为
  * XObject_event_base((XObject*)(self), (event))，经虚表 EXObject_Event 槽位
- * 分派到 VXWidget_event（按事件类型分发到 23 个控件事件虚函数）。
+ * 分派到 VXWidget_event（按事件类型分发到 25 个控件事件虚函数）。
  */
 
-/* ==================== 23 个公开事件槽入口（XWidget_*_base） ==================== */
+/* ==================== 25 个公开事件槽入口（XWidget_*_base） ==================== */
 
 /** @brief 生成公开事件槽入口：经对象虚表安全调用对应槽位。 */
 #define XWIDGET_VT_DISPATCH(FuncName, SlotEnum) \
@@ -5239,6 +5783,8 @@ XWIDGET_VT_DISPATCH(wheelEvent, EXWidget_WheelEvent)
 XWIDGET_VT_DISPATCH(showEvent, EXWidget_ShowEvent)
 XWIDGET_VT_DISPATCH(hideEvent, EXWidget_HideEvent)
 XWIDGET_VT_DISPATCH(changeEvent, EXWidget_ChangeEvent)
+XWIDGET_VT_DISPATCH(touchEvent, EXWidget_TouchEvent)
+XWIDGET_VT_DISPATCH(tabletEvent, EXWidget_TabletEvent)
 
 /* ==================== 图形效果（对标 QWidget::graphicsEffect） ==================== */
 

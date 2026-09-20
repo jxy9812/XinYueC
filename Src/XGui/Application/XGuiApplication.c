@@ -3,8 +3,10 @@
  * @brief      XGuiApplication GUI 应用类实现（对标 Qt 6.8 QGuiApplication）。
  * @details    本文件实现 XGuiApplication 的全部公开 API：
  *             - 生命周期：class_init / init / create_ex / deinit，继承
- *               XCoreApplication 全部虚槽（Notify/Event 沿用父类分发），
- *               仅重载析构清理 GUI 尾部资源；
+ *               XCoreApplication 全部虚槽（Event 沿用父类分发；notify
+ *               重载为键事件先经平台输入上下文 filterEvent 过滤——返回
+ *               true 吞掉事件，对标 QInputContext::filterEvent 遗产语义，
+ *               空后端恒 false 行为不变），另重载析构清理 GUI 尾部资源；
  *             - 元信息：应用显示名 / 桌面文件名 / 平台名 / 徽标数；
  *             - 窗口注册表：allWindows / topLevelWindows / topLevelAt /
  *               addWindow / removeWindow（lastWindowClosed 与 quit 策略）；
@@ -59,9 +61,14 @@
 
 #if XGUIAPPLICATION_ON
 
+#if XWIDGET_ON
+#include "XWidget.h"
+#endif /* XWIDGET_ON */
+
 /* ==================== 前向声明与辅助函数 ==================== */
 
 static void VXGuiApplication_deinit(XGuiApplication* app);
+static bool VXGuiApplication_notify(XObject* receiver, XEvent* event);
 
 /*
  * XCoreApplication 只保存一个基类指针，不能仅凭它的地址或一个非基类
@@ -142,13 +149,61 @@ static XCursor* XGuiApplication_cloneCursor(const XCursor* cursor)
 }
 #endif /* XCURSOR_ON */
 
+#if XINPUTMETHOD_ON || (XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON)
+/** @brief 解析当前生效的平台输入上下文（对标 Qt 的 qApp 输入上下文解析）。 */
+static XPlatformInputContext* XGuiApplication_activeInputContext(
+        XGuiApplication* app)
+{
+    XPlatformInputContext* context = NULL;
+#if XINPUTMETHOD_ON
+    /* QInputMethod 持有当前 platformContext（创建时与集成层双向绑定；
+     * 平台集成可用 XInputMethod_setPlatformContext 注入真实输入上下文）。 */
+    XInputMethod* inputMethod = app ? XGuiApplication_inputMethod() : NULL;
+    if (inputMethod)
+        context = XInputMethod_platformContext(inputMethod);
+#endif /* XINPUTMETHOD_ON */
+#if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
+    if (!context && app && app->m_platformIntegration)
+        context = XPlatformIntegration_inputContext(app->m_platformIntegration);
+#else
+    (void)app;
+#endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
+    return context;
+}
+#endif /* XINPUTMETHOD_ON || (XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON) */
+
+/** @brief notify 虚槽：按键派发前先经输入上下文过滤（Qt4 遗产语义）。 */
+static bool VXGuiApplication_notify(XObject* receiver, XEvent* event)
+{
+#if XINPUTMETHOD_ON || (XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON)
+    /* 对标 Qt4 QApplication::notify 的 QInputContext::filterEvent 遗产语义
+     * （Qt6 由 platformContext 过滤承接）：KEY_PRESS/KEY_RELEASE 在派发到
+     * 窗口/控件之前先问输入上下文，返回 true 即吞掉该事件。
+     * 平台 XIM（XFilterEvent）与 DBus portal（fcitx）在 WSI 键事件入口
+     * 之前已自行消费组合键，因此本钩子位于 IME 处理之后、控件派发之前，
+     * 两条过滤路径互不打架；空后端默认恒 false，派发行为不变。 */
+    if (event && (event->type == XEVENT_TYPE_KEY_PRESS ||
+                  event->type == XEVENT_TYPE_KEY_RELEASE)) {
+        XGuiApplication* app = XGuiApplication_instance();
+        XPlatformInputContext* inputContext =
+            XGuiApplication_activeInputContext(app);
+        if (inputContext &&
+            XPlatformInputContext_filterEvent(inputContext, event))
+            return true; /* 输入法消费：事件不再下发。 */
+    }
+#endif /* XINPUTMETHOD_ON || (XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON) */
+    return XClass_Parent(XCoreApplication, EXCoreApplication_Notify,
+                         bool (*)(XObject*, XEvent*))(receiver, event);
+}
+
 /* ==================== 类初始化与生命周期 ==================== */
 
 XVtable* XGuiApplication_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XGuiApplication)
     XVTABLE_INHERIT_XCLASS(XCoreApplication);
-    /* 仅重载析构；Notify/Event 沿用 XCoreApplication 的父类分发。 */
+    /* 重载 notify：键事件先经输入上下文过滤；event 槽沿用父类分发。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXCoreApplication_Notify, VXGuiApplication_notify);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXGuiApplication_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -336,6 +391,45 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
     /* 父类析构：释放 XCoreApplication 资源并清空全局单例。 */
     XClass_Deinit_Parent(XCoreApplication, (XCoreApplication*)app);
 }
+
+/* ==================== 应用程序属性（GUI 语义接线） ==================== */
+
+#if XWIDGET_ON
+/*
+ * AA_SynthesizeMouseForUnhandledTouchEvents(=12) 的三态接线（显式开 /
+ * 显式关 / 未设置）。取舍：XCoreApplication 的 XBitArray 只有位值，
+ * 无法区分「显式关」与「未设置」，而该属性在 Qt 6 的默认值是开；
+ * 转发点放在本 GUI 层包装 API（基类 setAttribute 不感知 GUI 属性、
+ * 不在本批改动范围），用静态 bool 记录是否被显式设置：
+ *   - 未显式设置：不触碰框架开关（XWidget.c 的 g_touchMouseSynthEnabled
+ *     保持默认 true，即 Qt 默认开语义），testAttribute 按默认开回答；
+ *   - 显式设置：转发到框架开关 XWidget_setTouchMouseSynthesisEnabled
+ *     （false 关、true 开），testAttribute 回读基类位值。
+ * 框架开关是运行时单一事实源；应用也可绕过属性直接调
+ * XWidget_setTouchMouseSynthesisEnabled（此时属性域查询不受影响，
+ * 与 Qt 只存在应用级属性的差异已被 XWidget.h 注释登记）。
+ */
+static bool g_synthMouseAttrExplicitlySet = false;
+
+void XGuiApplication_setAttribute(XCoreApplicationAttribute attribute, bool on)
+{
+    XCoreApplication_setAttribute(attribute, on);
+    if (attribute ==
+            XCORE_APPLICATION_ATTRIBUTE_SYNTHESIZE_MOUSE_FOR_UNHANDLED_TOUCH_EVENTS) {
+        g_synthMouseAttrExplicitlySet = true;
+        XWidget_setTouchMouseSynthesisEnabled(on);
+    }
+}
+
+bool XGuiApplication_testAttribute(XCoreApplicationAttribute attribute)
+{
+    if (attribute ==
+            XCORE_APPLICATION_ATTRIBUTE_SYNTHESIZE_MOUSE_FOR_UNHANDLED_TOUCH_EVENTS &&
+        !g_synthMouseAttrExplicitlySet)
+        return true; /* 未设置：按 Qt 6 默认值（开）回答。 */
+    return XCoreApplication_testAttribute(attribute);
+}
+#endif /* XWIDGET_ON */
 
 /* ==================== 应用元信息 ==================== */
 
@@ -977,6 +1071,17 @@ XInputMethod* XGuiApplication_inputMethod(void)
     if (!app->m_inputMethod) {
         app->m_inputMethod = XInputMethod_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (app->m_inputMethod) {
+#if XWIDGET_ON
+            /* 对标 Qt：QInputMethod 通过向焦点对象自动发送
+               QInputMethodQueryEvent 获取 ImCursorRectangle 等属性。这里把
+               内置桥接 handler 注册为默认查询回调，将查询转发给焦点控件的
+               XWidget_inputMethodQuery 虚槽；集成方仍可经 setQueryHandler
+               覆盖。生命周期：handler 为静态函数、userData 为 NULL，输入法
+               对象随应用析构一并删除，不留悬挂回调。 */
+            XInputMethod_setQueryHandler(app->m_inputMethod,
+                                         XInputMethod_defaultQueryHandler,
+                                         NULL);
+#endif /* XWIDGET_ON */
 #if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
             /* 与集成层输入上下文双向绑定：网络层转发经
                XPlatformInputContext 承载。 */

@@ -1053,18 +1053,38 @@ XSurfaceFormat XWindow_requestedFormat(const XWindow* self)
 /* ==================== 窗口标志与类型 ==================== */
 
 void XWindow_setFlags(XWindow* self, XWindowFlags flags)
-{ if (self && self->m_data) self->m_data->m_flags = flags; }
+{
+    XWindowPrivate* data;
+    if (!self || !(data = self->m_data)) return;
+    data->m_flags = flags;
+#if XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
+    /* 对标 QWindow::setFlags：句柄已存在时同步调用平台窗口的
+     * setWindowFlags（Qt 路径 QWindow::setFlags ->
+     * QPlatformWindow::setWindowFlags -> QXcbWindow::setWindowFlags，
+     * X11 落地 _NET_WM_STATE/_NET_WM_HINTS）。此前只改内部值，
+     * 创建后改 flags 无任何平台效果；创建前仍只存值（创建期
+     * override_redirect 逻辑不变），未挂接原生窗口时平台调用安全
+     * no-op。 */
+    if (data->m_created && data->m_nativeWindowAttached)
+        (void)XPlatformNativeWindow_setWindowFlags(self, (uint32_t)flags);
+#endif /* XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON */
+}
 
 XWindowFlags XWindow_flags(const XWindow* self)
 { return self && self->m_data ? self->m_data->m_flags : 0; }
 
 void XWindow_setFlag(XWindow* self, XWindowType flag, bool on)
 {
+    XWindowFlags flags;
     if (!self || !self->m_data) return;
+    flags = self->m_data->m_flags;
     if (on)
-        self->m_data->m_flags |= (XWindowFlags)flag;
+        flags |= (XWindowFlags)flag;
     else
-        self->m_data->m_flags &= (XWindowFlags)~flag;
+        flags &= (XWindowFlags)~flag;
+    /* 经 setFlags 统一走平台同步（对标 QWindow::setFlag 转调
+     * setFlags 的语义）。 */
+    XWindow_setFlags(self, flags);
 }
 
 XWindowType XWindow_type(const XWindow* self)

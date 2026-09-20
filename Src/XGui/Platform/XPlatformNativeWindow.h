@@ -157,6 +157,32 @@ bool XPlatformNativeWindow_setWindowState(XWindow* window,
                                           uint32_t state);
 
 /**
+ * @brief      同步窗口标志（window flags/hints）到真实原生窗口。
+ * @details    对标 QPlatformWindow::setWindowFlags：Qt 在
+ *             QWindow::setFlags 里改写内部标志后，若句柄已存在则调用
+ *             平台窗口的 setWindowFlags 由后端落地（QXcbWindow 更新
+ *             _NET_WM_STATE/_MOTIF_WM_HINTS/_NET_WM_HINTS，QWindowsWindow
+ *             重设 WS_STYLE）。本契约按位掩码传值，取值与
+ *             Src/XGui/Window/XWindow.h 的 XWindowType_* 完全一致
+ *             （平台层不依赖 XWindow.h，与 setWindowState 同款约定）。
+ *             X11 后端落地 EWMH 子集：
+ *             - WindowStaysOnTopHint    -> _NET_WM_STATE_ABOVE；
+ *             - WindowStaysOnBottomHint -> _NET_WM_STATE_BELOW；
+ *             - BypassWindowManagerHint -> _NET_WM_STATE_SKIP_TASKBAR +
+ *                 _NET_WM_STATE_SKIP_PAGER（近似：Qt xcb 实际通过
+ *                 re-create 窗口改 override_redirect 绕过 WM，本实现
+ *                 用 EWMH「不进任务栏/分页器」近似，差异见后端实现注释）；
+ *             - WindowDoesNotAcceptFocus -> _NET_WM_HINTS 的 input=False。
+ *             其余标志位（装饰按钮提示等）暂无平台效果；能力不足的
+ *             后端默认 no-op。未创建原生窗口时安全 no-op；该调用不
+ *             改变创建期 override_redirect 逻辑。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @param      flags  生效标志位（XWindowType_* 数值，可组合）。
+ * @return     true 已请求平台同步；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags);
+
+/**
  * @brief      同步窗口标题到真实原生窗口。
  * @details    X11 用 XStoreName（UTF-8）；Win32 将 UTF-8 转 UTF-16 后
  *             SetWindowTextW。未创建窗口时安全 no-op。
@@ -216,6 +242,17 @@ XWindow* XPlatformNativeWindow_windowForWinId(XWindowId id);
  * @return     true 本次处理并注入了至少一个事件；false 无事件或不可用。
  */
 bool XPlatformNativeWindow_processPendingEvents(void);
+
+/**
+ * @brief      逻辑 DPI 运行期刷新入口（重读平台 DPI 资源并差分发信号）。
+ * @details    X11 后端重读 RESOURCE_MANAGER 中的 Xft.dpi（xrdb 重载后
+ *             由应用择机调用；RRScreenChangeNotify 处理路径也会顺带重
+ *             读——xcb 无 Xft.dpi 变更推送，Qt 亦靠轮询/手工触发）。
+ *             值变化的屏幕经 WSI 入口回填并发射 logicalDotsPerInch-
+ *             Changed，重复值不发信号。不支持的平台恒返回 true（无操作）。
+ * @return     true 刷新流程执行完毕（无论值是否变化）；false 连接失败。
+ */
+bool XPlatformNativeWindow_refreshScreenLogicalDpi(void);
 
 /** @brief 安装平台剪贴板后端（X11 Selection 协议/Win32 Clipboard）。
  *  @details 对标 QPlatformClipboard：平台层在连接建立后调用此函数，

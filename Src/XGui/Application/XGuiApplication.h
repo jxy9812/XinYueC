@@ -607,6 +607,31 @@ XPlatformNativeInterface* XGuiApplication_platformNativeInterface(void);
 void* XGuiApplication_platformFunction(const char* functionName);
 
 
+/* ==================== 应用程序属性（GUI 语义接线，对标 QGuiApplication::setAttribute / testAttribute） ==================== */
+
+/**
+ * @brief      设置应用程序属性（GUI 层包装，对标 QGuiApplication::
+ *             setAttribute）。
+ * @details    除落位基类 XBitArray 外，对 GUI 语义属性做即时转发：
+ *             AA_SynthesizeMouseForUnhandledTouchEvents(false) 关闭
+ *             touch→mouse 仿真、(true) 开启（转发到框架开关
+ *             XWidget_setTouchMouseSynthesisEnabled）。
+ * @param      attribute 属性枚举（XCoreApplicationAttribute）。
+ * @param      on true 开启，false 关闭。
+ */
+void XGuiApplication_setAttribute(XCoreApplicationAttribute attribute, bool on);
+
+/**
+ * @brief      查询应用程序属性（GUI 层包装，对标 QGuiApplication::
+ *             testAttribute）。
+ * @details    AA_SynthesizeMouseForUnhandledTouchEvents 未被显式设置时按
+ *             Qt 6 默认值返回 true（默认开）；显式设置后返回落位位值。
+ * @param      attribute 属性枚举（XCoreApplicationAttribute）。
+ * @return     属性生效值。
+ */
+bool XGuiApplication_testAttribute(XCoreApplicationAttribute attribute);
+
+
 /* ==================== 桌面设置 / 退出策略（对标 QGuiApplication） ==================== */
 
 /**

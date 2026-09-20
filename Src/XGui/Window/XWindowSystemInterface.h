@@ -88,6 +88,48 @@ bool XWindowSystemInterface_handlePaintEvent(XWindow* window, const XRegion* reg
 void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window, XFocusReason reason);
 
 /**
+ * @brief      注入屏幕接入（对标 QWindowSystemInterface::handleScreenAdded）。
+ * @details    平台后端枚举到新屏幕时调用：登记到 XScreen 注册表并发射
+ *             XGuiApplication 的 screenAdded 信号。屏幕所有权归平台层。
+ * @param      screen 新屏幕；可为 NULL（no-op）。
+ */
+void XWindowSystemInterface_handleScreenAdded(XScreen* screen);
+
+/**
+ * @brief      注入屏幕移除（对标 QWindowSystemInterface::handleScreenRemoved）。
+ * @details    平台后端屏幕热拔时调用：从 XScreen 注册表注销并发射
+ *             screenRemoved 信号；屏幕对象仍由平台层释放。
+ * @param      screen 被移除屏幕；可为 NULL（no-op）。
+ */
+void XWindowSystemInterface_handleScreenRemoved(XScreen* screen);
+
+/**
+ * @brief      注入屏幕几何变化（对标 QWindowSystemInterface::
+ *             handleScreenGeometryChange）。
+ * @details    平台后端收到 RandR 几何变更时调用：把新几何同步进 XScreen
+ *             （内部按变化发射 geometryChanged/availableGeometryChanged/
+ *             virtualGeometryChanged/physicalDotsPerInchChanged 等）。
+ * @param      screen 目标屏幕；可为 NULL（no-op）。
+ * @param      geometry 新几何；可为 NULL 表示不更新几何。
+ * @param      availableGeometry 新可用几何；可为 NULL 表示跟随 geometry
+ *             （与 QPlatformScreen 缺省语义一致）。
+ */
+void XWindowSystemInterface_handleScreenGeometryChange(XScreen* screen,
+                                                       const XRect* geometry,
+                                                       const XRect* availableGeometry);
+
+/**
+ * @brief      注入屏幕逻辑 DPI 变化（对标 QWindowSystemInterface::
+ *             handleScreenLogicalDotsPerInchChange）。
+ * @details    平台后端逻辑 DPI（如 Xft.dpi 资源）变化时调用；同时更新
+ *             水平/垂直逻辑 DPI，值变化时发射 logicalDotsPerInchChanged。
+ * @param      screen 目标屏幕；可为 NULL（no-op）。
+ * @param      dpi 新逻辑 DPI（水平与垂直同值）。
+ */
+void XWindowSystemInterface_handleScreenLogicalDotsPerInchChange(XScreen* screen,
+                                                                 float dpi);
+
+/**
  * @brief      注入关闭事件（对标 QWindowSystemInterface::handleCloseEvent）。
  * @details    平台请求关闭窗口（关闭按钮/系统关机）时调用。事件经
  *             XWindow 的 close 槽（应用可重载）决定是否接受；接受时
@@ -199,6 +241,63 @@ bool XWindowSystemInterface_handleWheelEvent(XWindow* window,
                                              XKeyboardModifiers modifiers,
                                              XPoint position,
                                              const XPoint* angleDelta);
+
+/**
+ * @brief      注入触摸事件（对标 QWindowSystemInterface::handleTouchEvent）。
+ * @details    嵌入式触摸屏驱动 / X11 XI2（后续接入，见下注）在触摸按下/
+ *             移动/抬起时调用；构造 XTouchEvent（携带主点局部坐标、屏幕
+ *             坐标与触点数量）并自发投递。事件经 XWidgetWindow 桥接窗口
+ *             命中派发到控件 touchEvent 虚槽（对标 QWidgetWindow::
+ *             handleTouchEvent 形态）。
+ *             多点语义按 XTouchEvent 现有最小负载设计：只承载主点
+ *             （首个触点）坐标 + 触点计数，完整触点列表为已知偏差
+ *             （XWindowEvent.h Task 2.20），不新造字段。
+ *             Qt 语义：TouchBegin 被命中控件接受后该触点被隐式抓取，
+ *             后续 UPDATE/END 直达抓取控件；TOUCH_END/TOUCH_CANCEL 后
+ *             抓取清理（对标 QGuiApplicationPrivate::processTouchEvent
+ *             的触点 grab 生命周期）。touch→mouse 仿真已接（默认开，
+ *             XWidget_setTouchMouseSynthesisEnabled 可关；应用属性
+ *             AA_SynthesizeMouseForUnhandledTouchEvents 经
+ *             XGuiApplication_setAttribute 同步该开关）。
+ * @note       X11 XI2 触摸合成（XIGetSelectedEvents → XIDeviceEvent 翻译）
+ *             与嵌入式 tslib/evdev 注入不在本批（无硬件验证手段）；本
+ *             函数即两者后续的统一注入点，可由 /tmp 探针直接合成验证。
+ * @param      window         目标窗口；不可为 NULL。
+ * @param      type           事件类型：XEVENT_TYPE_TOUCH_BEGIN /
+ *                            TOUCH_UPDATE / TOUCH_END / TOUCH_CANCEL。
+ * @param      position       主点（首个触点）窗口局部坐标。
+ * @param      globalPosition 主点屏幕坐标；可为 NULL（按 0,0）。
+ * @param      pointCount     触点数量（<1 按 1 处理，主点必存在）。
+ * @return     true 已派发；false 参数无效或分配失败。
+ */
+bool XWindowSystemInterface_handleTouchEvent(XWindow* window, XEventType type,
+                                             XPoint position,
+                                             const XPoint* globalPosition,
+                                             int pointCount);
+
+/**
+ * @brief      注入数位板事件（对标 QWindowSystemInterface::handleTabletEvent）。
+ * @details    平台数位板驱动（XI2/XlsInput，后续接入）在笔按下/移动/抬起
+ *             时调用；构造 XTabletEvent（携带局部坐标、屏幕坐标、压力与
+ *             指针类型）并自发投递，经 XWidgetWindow 桥接窗口按鼠标一致
+ *             的命中路径派发到控件 tabletEvent 虚槽（对标 QWidgetWindow::
+ *             handleTabletEvent 的 childAt 命中形态；tablet 按压不参与
+ *             触摸抓取）。
+ * @note       X11 XI2 数位板合成不在本批（无硬件验证手段）；本函数即
+ *             后续注入点。
+ * @param      window         目标窗口；不可为 NULL。
+ * @param      type           事件类型：XEVENT_TYPE_TABLET_PRESS /
+ *                            TABLET_RELEASE / TABLET_MOVE。
+ * @param      position       窗口局部坐标。
+ * @param      globalPosition 屏幕坐标；可为 NULL（按 0,0）。
+ * @param      pressure       压力（0.0~1.0）。
+ * @param      pointerType    指针类型（XTabletPointerType）。
+ * @return     true 已派发；false 参数无效或分配失败。
+ */
+bool XWindowSystemInterface_handleTabletEvent(XWindow* window, XEventType type,
+                                              XPoint position,
+                                              const XPoint* globalPosition,
+                                              float pressure, int pointerType);
 
 /**
  * @brief      注入指针进入事件（对标 QWindowSystemInterface::handleEnterEvent）。

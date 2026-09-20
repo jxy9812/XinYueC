@@ -34,6 +34,13 @@ enum
     XPICTURE_MAX_POINTS = 65535,
     XPICTURE_POINT_STACK_COUNT = 64,
     XPICTURE_PATH_HEADER_SIZE = 8,
+    /* DrawPath 的 fillRule 采用尾随 4 字节记录（紧随路径元素之后）：
+       与 DrawTiledPixmap/DrawPixmap 的尾随 extra 块同一编码惯例，路径
+       元素偏移保持旧布局不变（0=OddEven、1=Winding，对标 Qt：
+       QPainterPath::fillRule 随 PdcDrawPath 持久化）。回放按记录长度
+       区分新旧格式，旧流无该字段时保持 XPainterPath 的 OddEven 默认
+       （零回归）。 */
+    XPICTURE_PATH_TRAILER_SIZE = 4,
     XPICTURE_PATH_ELEMENT_SIZE = 12,
     XPICTURE_MAX_PATH_ELEMENTS = 65535,
     XPICTURE_CLIP_REGION_HEADER_SIZE = 8,
@@ -269,9 +276,17 @@ static bool XPicture_validatePathPayload(const uint8_t* payload,
         op > (uint32_t)XPainterPathOp_Stroke ||
         count == 0u || count > XPICTURE_MAX_PATH_ELEMENTS)
         return false;
+    /* 按记录长度精确区分两种格式：旧流无 fillRule 字段；新流在路径
+       元素之后尾随 4 字节 fillRule（取值限定 0/1）。元素布局两种格式
+       完全一致，均从 8 字节头之后开始。 */
     required = (uint64_t)XPICTURE_PATH_HEADER_SIZE +
                (uint64_t)count * XPICTURE_PATH_ELEMENT_SIZE;
-    if (required != length) return false;
+    if (length == required + XPICTURE_PATH_TRAILER_SIZE) {
+        if (XPicture_getU32(payload + length - XPICTURE_PATH_TRAILER_SIZE) > 1u)
+            return false;
+    } else if (length != required) {
+        return false;
+    }
     for (i = 0; i < count; ++i)
     {
         const uint8_t* element = payload + XPICTURE_PATH_HEADER_SIZE +
@@ -1532,7 +1547,8 @@ bool XPicture_recordDrawPath(XPicture* self, int pathOp,
     if (path->m_elementCount > XPICTURE_MAX_PATH_ELEMENTS) return false;
     countU = (uint32_t)path->m_elementCount;
     payloadSize = XPICTURE_PATH_HEADER_SIZE +
-                  countU * XPICTURE_PATH_ELEMENT_SIZE;
+                  countU * XPICTURE_PATH_ELEMENT_SIZE +
+                  XPICTURE_PATH_TRAILER_SIZE;
     payload = (uint8_t*)XMalloc_Hybrid(payloadSize);
     if (!payload) return false;
     XPicture_putU32(payload, (uint32_t)pathOp);
@@ -1546,6 +1562,11 @@ bool XPicture_recordDrawPath(XPicture* self, int pathOp,
         XPicture_putF32(dest + 4, element->m_x1);
         XPicture_putF32(dest + 8, element->m_y1);
     }
+    /* 尾随记录路径填充规则（对标 Qt：QPainterPath::fillRule 随
+       PdcDrawPath 一并持久化）；取值 0=OddEven、1=Winding。 */
+    XPicture_putU32(payload + XPICTURE_PATH_HEADER_SIZE +
+                    countU * XPICTURE_PATH_ELEMENT_SIZE,
+                    (uint32_t)XPainterPath_fillRule(path));
     if (!XPicture_appendRecord(self, XPictureOpcode_DrawPath, payload,
                                payloadSize))
     {
@@ -1801,12 +1822,27 @@ static void XPicture_imageDataCleanup(void* info)
 }
 
 #if XPAINTER_PATH_ON
-static bool XPicture_rebuildPath(const uint8_t* payload, XPainterPath* path)
+static bool XPicture_rebuildPath(const uint8_t* payload, uint32_t length,
+                                 XPainterPath* path)
 {
     uint32_t count, i;
     bool ok;
     count = XPicture_getU32(payload + 4);
     XPainterPath_init(path);
+    /* 与 XPicture_validatePathPayload 同口径：按记录长度区分旧流
+       （无 fillRule 字段）与新流（元素之后尾随 4 字节 fillRule）。 */
+    {
+        uint64_t required = (uint64_t)XPICTURE_PATH_HEADER_SIZE +
+                            (uint64_t)count * XPICTURE_PATH_ELEMENT_SIZE +
+                            XPICTURE_PATH_TRAILER_SIZE;
+        if ((uint64_t)length == required)
+            /* 新流恢复录制时的填充规则（init 之后设置，避免被默认值
+               覆盖）；旧流无该字段，保持 XPainterPath_init 的 OddEven
+               默认（setFillRule 对非法值也回退 OddEven）。 */
+            XPainterPath_setFillRule(path, (XPainterFillRule)
+                XPicture_getU32(payload + length -
+                                XPICTURE_PATH_TRAILER_SIZE));
+    }
     for (i = 0; i < count; ++i)
     {
         const uint8_t* element = payload + XPICTURE_PATH_HEADER_SIZE +
@@ -2328,7 +2364,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
         {
             XPainterPath path;
             XPainterPathOp pathOp = (XPainterPathOp)XPicture_getU32(payload);
-            if (!XPicture_rebuildPath(payload, &path)) return false;
+            if (!XPicture_rebuildPath(payload, length, &path)) return false;
             if (painter->m_drawPath)
                 ok = painter->m_drawPath(painter, pathOp, &path);
             else

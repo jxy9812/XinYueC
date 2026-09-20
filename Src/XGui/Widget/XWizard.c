@@ -1329,7 +1329,10 @@ bool XWizard_validateCurrentPage(const XWizard* self)
     if (!self) return true;
     page = XWizard_currentPage(self);
     if (!page) return true;
-    /* 对标 QWizard::validateCurrentPage：分派当前页 validatePage 虚槽。 */
+    /* 对标 QWizard::validateCurrentPage：当前页 isComplete=false 时
+       直接判负（先于 validatePage 虚槽，与 Next/Finish 使能一致）。 */
+    if (!XWizardPage_isComplete(page)) return false;
+    /* 分派当前页 validatePage 虚槽。 */
     return XWizardPage_validatePage(page);
 }
 

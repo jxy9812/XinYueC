@@ -6,6 +6,17 @@
  *             列表（popupVisible 状态内嵌绘制——选中高亮跟随鼠标）；
  *             可编辑模式内嵌 XLineEdit 占满左侧（编辑文本经
  *             editTextChanged/InsertPolicy 插入语义）。
+ *             补全（可编辑 + completerMode）：输入前缀经内嵌行编辑子类
+ *             （XComboEdit）拦截键盘，textEdited 驱动复用下拉弹层的
+ *             前缀过滤（XListView 行隐藏承载，大小写不敏感，对标
+ *             QCompleter PopupCompletion）；Enter 采纳高亮补全，Esc
+ *             收起弹层不改文本，Up/Down/PageUp/PageDown 移动高亮。
+ *             插入策略（对标 Qt 6.8 QComboBoxPrivate::returnPressed/
+ *             editingFinished）：可编辑文本在 Enter（returnPressed）
+ *             与失焦（editingFinished）结算 insertPolicy；NoInsert 不
+ *             插入；duplicates 关闭且文本已存在仅置当前项；
+ *             InsertAtCurrent 以编辑文本替换当前项文本；Enter 结算
+ *             后发射 activated/textActivated。
  *             信号语义对标 Qt：activated 在用户选择时发射；
  *             currentIndexChanged/currentTextChanged 在当前项变化时
  *             发射；editTextChanged 仅可编辑模式编辑变化时发射。
@@ -46,6 +57,9 @@ static void  VXComboBox_copy(XComboBox* self, const XComboBox* other);
 static void  VXComboBox_move(XComboBox* self, XComboBox* other);
 static void  VXComboBox_timerEvent(XObject* object, XTimerEvent* event);
 static void  xcombo_releaseGrab(XComboBox* self);
+static void  xcombo_completionRefresh(XComboBox* self, const char* prefix);
+static void  xcombo_completionAccept(XComboBox* self);
+static void  xcombo_completionNavigate(XComboBox* self, int step);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -256,6 +270,10 @@ static void VXComboBox_copy(XComboBox* self, const XComboBox* other)
     self->m_maxVisibleItems = other->m_maxVisibleItems;
     self->m_duplicatesEnabled = other->m_duplicatesEnabled;
     self->m_editable = other->m_editable;
+    self->m_completerMode = other->m_completerMode;
+    /* 补全弹层为瞬态：拷贝不继承弹层状态（对标拷贝后弹层关闭）。 */
+    self->m_completionActive = false;
+    self->m_completionRow = -1;
     self->m_insertPolicy = other->m_insertPolicy;
     self->m_sizeAdjustPolicy = other->m_sizeAdjustPolicy;
     self->m_minimumContentsLength = other->m_minimumContentsLength;
@@ -286,6 +304,10 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     self->m_maxVisibleItems = other->m_maxVisibleItems;
     self->m_duplicatesEnabled = other->m_duplicatesEnabled;
     self->m_editable = other->m_editable;
+    self->m_completerMode = other->m_completerMode;
+    /* 补全弹层为瞬态：移动后按关闭态落位（弹层窗口本身不随迁）。 */
+    self->m_completionActive = false;
+    self->m_completionRow = -1;
     self->m_insertPolicy = other->m_insertPolicy;
     self->m_sizeAdjustPolicy = other->m_sizeAdjustPolicy;
     self->m_minimumContentsLength = other->m_minimumContentsLength;
@@ -297,6 +319,9 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     other->m_maxVisibleItems = 10;
     other->m_duplicatesEnabled = false;
     other->m_editable = false;
+    other->m_completerMode = false;
+    other->m_completionActive = false;
+    other->m_completionRow = -1;
     other->m_insertPolicy = XComboBoxInsertPolicy_InsertAtBottom;
     other->m_sizeAdjustPolicy = XComboBoxSizeAdjustPolicy_AdjustToContents;
     other->m_frame = true;
@@ -446,6 +471,9 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_duplicatesEnabled = false;
     self->m_editable = false;
     self->m_lineEdit = NULL;
+    self->m_completerMode = false;
+    self->m_completionActive = false;
+    self->m_completionRow = -1;
     self->m_insertPolicy = XComboBoxInsertPolicy_InsertAtBottom;
     self->m_sizeAdjustPolicy = XComboBoxSizeAdjustPolicy_AdjustToContents;
     self->m_minimumContentsLength = 0;
@@ -565,6 +593,168 @@ bool XComboBox_isEditable(const XComboBox* self)
     return self ? self->m_editable : false;
 }
 
+/* ==================== 可编辑补全与插入策略 ==================== */
+/*
+ * 对标 Qt 6.8 QComboBox 可编辑路径：
+ * - 补全：QCompleter PopupCompletion 子集——输入前缀过滤弹层（复用
+ *   下拉弹层，XListView 行隐藏承载过滤），Enter 采纳、Esc 收起不改
+ *   文本、Up/Down/PageUp/PageDown 移动高亮；
+ * - 插入策略：QComboBoxPrivate::returnPressed（Enter 结算 insertPolicy）
+ *   与 QComboBoxPrivate::editingFinished（失焦/Enter 后置同步命中项）。
+ */
+
+/** @brief ASCII 字母小写折叠（UTF-8 其余字节原样；UTF-8 自同步保证
+ *  字节级前缀比较等价字符级，仅大小写折叠限 ASCII，对标 QCompleter
+ *  默认 CaseInsensitive 的简化承载）。 */
+static char xcombo_asciiLower(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+/** @brief 大小写不敏感前缀匹配：item 以 prefix（UTF-8）开头返回 true。 */
+static bool xcombo_prefixMatchUtf8(const char* item, const char* prefix)
+{
+    size_t i;
+    if (!item || !prefix) return false;
+    for (i = 0; prefix[i]; ++i) {
+        if (item[i] == '\0') return false;
+        if (xcombo_asciiLower(item[i]) != xcombo_asciiLower(prefix[i]))
+            return false;
+    }
+    return true;
+}
+
+/** @brief 大小写不敏感 UTF-8 相等（对标 completer 情形 matchFlags 的
+ *  MatchFixedString|CaseInsensitive；completer 关闭时走 findText 大小写
+ *  敏感路径，见 xcombo_findTextMatch）。 */
+static bool xcombo_equalsInsensitiveUtf8(const char* a, const char* b)
+{
+    if (!a || !b) return false;
+    while (*a && *b) {
+        if (xcombo_asciiLower(*a) != xcombo_asciiLower(*b)) return false;
+        ++a;
+        ++b;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+/** @brief 大小写不敏感比较 a < b（对标 InsertAlphabetically 的
+ *  text.toLower() < itemText(i).toLower()）。 */
+static bool xcombo_lessInsensitiveUtf8(const char* a, const char* b)
+{
+    if (!a || !b) return false;
+    while (*a && *b) {
+        char la = xcombo_asciiLower(*a);
+        char lb = xcombo_asciiLower(*b);
+        if (la != lb) return la < lb;
+        ++a;
+        ++b;
+    }
+    return *a != '\0'; /* 前缀相等时较短者较小；全等返回 false。 */
+}
+
+/** @brief 编辑结束查找：补全开启时大小写不敏感（对标 Qt matchFlags
+ *  随 completer 大小写性取值），否则沿用 findText 大小写敏感语义。 */
+static int xcombo_findTextMatch(const XComboBox* self, const char* text)
+{
+    int i;
+    if (!self || !text) return -1;
+    if (!self->m_completerMode) return XComboBox_findText_2(self, text);
+    for (i = 0; i < self->m_itemCount; ++i)
+        if (self->m_items[i] &&
+            xcombo_equalsInsensitiveUtf8(XString_toUtf8(self->m_items[i]),
+                                         text))
+            return i;
+    return -1;
+}
+
+/** @brief 发射既有 activated(int) + textActivated(const char*) 信号对
+ *  （对标 QComboBoxPrivate::emitActivated）。 */
+static void xcombo_emitActivatedPair(XComboBox* self, int index)
+{
+    xcombo_emitInt(self, (size_t)XComboBox_activated_signal(self, index),
+                   index);
+    xcombo_emitText(self,
+                    (size_t)XComboBox_textActivated_signal(
+                        self, XComboBox_itemText_2(self, index)),
+                    XComboBox_itemText_2(self, index));
+}
+
+/** @brief 结算插入策略（对标 QComboBoxPrivate::returnPressed 主体）。
+ * @param userActivated true=Enter 用户激活（结算后发射 activated 对）；
+ *                      false=失焦结算（仅插入/置当前项，不发射激活）。
+ * @note  对标 Qt：NoInsert 直接返回；空文本返回；项数达 maxCount 且非
+ *        InsertAtCurrent 返回；duplicates 关闭且文本已存在仅置当前项；
+ *        InsertAtCurrent 为替换当前项文本（不插入）；列表空/无当前项
+ *        时 After/Before/AtCurrent 一律退化为插入到 0 处。
+ */
+static void xcombo_insertByPolicy(XComboBox* self, bool userActivated)
+{
+    const char* text;
+    int policy;
+    int index = -1;
+    int i;
+    if (!self || !self->m_editable || !self->m_lineEdit) return;
+    policy = self->m_insertPolicy;
+    if (policy == XComboBoxInsertPolicy_NoInsert) return;
+    text = XLineEdit_text(self->m_lineEdit);
+    if (!text || !text[0]) return;
+    if (self->m_itemCount >= self->m_maxCount &&
+        policy != XComboBoxInsertPolicy_InsertAtCurrent)
+        return;
+    /* 对标 Qt：结算前 deselect 并把光标移到行尾。 */
+    XLineEdit_deselect(self->m_lineEdit);
+    XLineEdit_end(self->m_lineEdit, false);
+    if (!self->m_duplicatesEnabled) {
+        index = xcombo_findTextMatch(self, text);
+        if (index >= 0) {
+            XComboBox_setCurrentIndex(self, index);
+            if (userActivated) xcombo_emitActivatedPair(self, index);
+            return;
+        }
+    }
+    switch (policy) {
+    case XComboBoxInsertPolicy_InsertAtTop:
+        index = 0;
+        break;
+    case XComboBoxInsertPolicy_InsertAtBottom:
+        index = self->m_itemCount;
+        break;
+    case XComboBoxInsertPolicy_InsertAtCurrent:
+    case XComboBoxInsertPolicy_InsertAfterCurrent:
+    case XComboBoxInsertPolicy_InsertBeforeCurrent:
+        if (self->m_itemCount == 0 || self->m_currentIndex < 0 ||
+            self->m_currentIndex >= self->m_itemCount)
+            index = 0;
+        else if (policy == XComboBoxInsertPolicy_InsertAtCurrent) {
+            /* 替换当前项文本即完成（Qt：不再插入、不发射激活）。 */
+            XComboBox_setItemText_2(self, self->m_currentIndex, text);
+            return;
+        } else if (policy == XComboBoxInsertPolicy_InsertAfterCurrent) {
+            index = self->m_currentIndex + 1;
+        } else {
+            index = self->m_currentIndex;
+        }
+        break;
+    case XComboBoxInsertPolicy_InsertAlphabetically:
+        index = 0;
+        for (i = 0; i < self->m_itemCount; ++i, ++index) {
+            if (xcombo_lessInsensitiveUtf8(
+                    text, XComboBox_itemText_2(self, i)))
+                break;
+        }
+        break;
+    default:
+        break;
+    }
+    if (index >= 0) {
+        XComboBox_insertItem_2(self, index, text);
+        XComboBox_setCurrentIndex(self, index);
+        if (userActivated)
+            xcombo_emitActivatedPair(self, XComboBox_currentIndex(self));
+    }
+}
+
 /** @brief 转发槽：内嵌编辑框 textChanged → editTextChanged(text)
  *  （此前 editTextChanged 仅声明无发射点，永不触发）。 */
 static void xcombo_editTextChangedFwd(XObject* receiver, XVarList* args)
@@ -586,32 +776,224 @@ static void xcombo_editTextChangedFwd(XObject* receiver, XVarList* args)
     }
 }
 
+/** @brief 转发槽：编辑框 textEdited（仅用户编辑）→ 补全过滤刷新
+ *  （对标 QCompleter 经行编辑用户输入驱动 setCompletionPrefix；
+ *  程序化 setEditText 不弹补全）。 */
+static void xcombo_editTextEditedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    const char* text = NULL;
+    if (args) {
+        XVarList_args_1(args, const char*, t);
+        text = t;
+    }
+    if (!self || !self->m_editable || !self->m_completerMode ||
+        !self->m_lineEdit)
+        return;
+    xcombo_completionRefresh(self, text ? text
+                                        : XLineEdit_text(self->m_lineEdit));
+}
+
+/** @brief 转发槽：编辑框 returnPressed（Enter）→ 结算插入策略（用户
+ *  激活路径，结算后发射 activated 对；对标 Qt returnPressed 连接）。 */
+static void xcombo_editReturnPressedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    (void)args;
+    if (!self || !self->m_editable || !self->m_lineEdit) return;
+    /* 补全弹层存活时 Enter 已被 XComboEdit 按键路径拦截采纳，不落此
+       结算（双保险：弹层存活直接忽略）。 */
+    if (self->m_popupVisible) return;
+    xcombo_insertByPolicy(self, true);
+}
+
+/** @brief 转发槽：编辑框 editingFinished（Return 后沿或失焦）→ 同步
+ *  命中项/失焦插入结算（对标 QComboBoxPrivate::editingFinished）。
+ * @note  Qt 6.8.3 失焦只做"命中即置当前项+激活"同步；本实现在此之上
+ *  把未命中文本也按 insertPolicy 插入（任务规定的编辑结束语义，差异
+ *  见头文件注记）。Enter 双发场景由"文本==当前项文本"早退自然去重。 */
+static void xcombo_editEditingFinishedSlot(XObject* receiver, XVarList* args)
+{
+    XComboBox* self = (XComboBox*)receiver;
+    const char* text;
+    int index;
+    (void)args;
+    if (!self || !self->m_editable || !self->m_lineEdit) return;
+    /* 补全弹层存活时挂起结算（对标 Qt editingFinished 的 completer
+     * popup 可见早退），仅收起弹层不改文本。 */
+    if (self->m_popupVisible) {
+        XComboBox_hidePopup_base(self);
+        return;
+    }
+    text = XLineEdit_text(self->m_lineEdit);
+    if (!text || !text[0]) return;
+    if (self->m_currentIndex >= 0 &&
+        self->m_currentIndex < self->m_itemCount &&
+        XString_toUtf8(self->m_items[self->m_currentIndex]) &&
+        XStrcmp(XString_toUtf8(self->m_items[self->m_currentIndex]),
+                text) == 0)
+        return;
+    index = xcombo_findTextMatch(self, text);
+    if (index >= 0) {
+        XComboBox_setCurrentIndex(self, index);
+        xcombo_emitActivatedPair(self, index);
+        return;
+    }
+    xcombo_insertByPolicy(self, false);
+}
+
+/** @brief 连接编辑框 → 组合框的编辑联动信号（textChanged 转发、
+ *  textEdited 补全刷新、returnPressed/editingFinished 插入策略结算）；
+ *  内嵌与外部安装的编辑框（setLineEdit）共用，对标 Qt 对行编辑的
+ *  信号挂接不区分安装方式。 */
+static void xcombo_connectLineEdit(XComboBox* self, XLineEdit* edit)
+{
+    if (!self || !edit) return;
+    XObject_connect_1((XObject*)edit,
+                      (size_t)XLineEdit_textChanged_signal(edit),
+                      (XObject*)self, xcombo_editTextChangedFwd,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)edit,
+                      (size_t)XLineEdit_textEdited_signal(edit),
+                      (XObject*)self, xcombo_editTextEditedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)edit,
+                      (size_t)XLineEdit_returnPressed_signal(edit),
+                      (XObject*)self, xcombo_editReturnPressedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)edit,
+                      (size_t)XLineEdit_editingFinished_signal(edit),
+                      (XObject*)self, xcombo_editEditingFinishedSlot,
+                      XConnectionType_Direct);
+}
+
+/*
+ * 内嵌行编辑子类（XComboEdit）：XLineEdit 不可直接修改，参照
+ * XComboPopupView 方案本地派生，覆写 keyPressEvent 拦截补全弹层存活
+ * 期间的 Enter/Esc/Up/Down/PageUp/PageDown（其余按键原样交给基类控制
+ * 器正常编辑）。外部安装的编辑框无此子类，Esc/方向键拦截为内嵌路径
+ * 专属简化（Enter/失焦结算经信号连接对两者一致生效）。
+ */
+XCLASS_DEFINE_BEGING(XComboEdit)
+XCLASS_DEFINE_EXTEND_END(XComboEdit, XLineEdit)
+
+/** @brief 组合框内嵌行编辑对象；m_base 必须是第一个成员。 */
+typedef struct XComboEdit
+{
+    XLineEdit  m_base;   /**< 基类成员（嵌 XLineEdit）；必须是第一个。 */
+    XComboBox* m_owner;  /**< 属主组合框（借用；可为 NULL）。 */
+} XComboEdit;
+
+static void VXComboEdit_keyPressEvent(XWidget* self, XEvent* event);
+
+/** @brief 键盘：补全弹层存活期间拦截 Enter（采纳）/Esc（收起不改文
+ *  本）/Up/Down/PageUp/PageDown（移动高亮）；其余键交基类控制器。 */
+static void VXComboEdit_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XComboEdit* edit = (XComboEdit*)self;
+    XComboBox* combo;
+    XKeyEvent* ke;
+    int key;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) {
+        XClass_Parent(XLineEdit, EXWidget_KeyPressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    combo = edit->m_owner;
+    ke = (XKeyEvent*)event;
+    key = ke->m_key;
+    if (!combo || !combo->m_editable || !combo->m_completerMode) {
+        XClass_Parent(XLineEdit, EXWidget_KeyPressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    if (combo->m_completionActive && combo->m_popupVisible) {
+        if (key == (int)XKey_Return || key == (int)XKey_Enter) {
+            xcombo_completionAccept(combo);
+            XEvent_accept(event);
+            return;
+        }
+        if (key == (int)XKey_Escape) {
+            /* 对标 QCompleter：Esc 收起补全弹层，编辑文本不变。 */
+            XComboBox_hidePopup_base(combo);
+            XEvent_accept(event);
+            return;
+        }
+        if (key == (int)XKey_Up || key == (int)XKey_Down) {
+            xcombo_completionNavigate(combo, key == (int)XKey_Up ? -1 : 1);
+            XEvent_accept(event);
+            return;
+        }
+        if (key == (int)XKey_PageUp || key == (int)XKey_PageDown) {
+            xcombo_completionNavigate(
+                combo, key == (int)XKey_PageUp ? -combo->m_maxVisibleItems
+                                               : combo->m_maxVisibleItems);
+            XEvent_accept(event);
+            return;
+        }
+    } else if (key == (int)XKey_Escape && combo->m_popupVisible) {
+        /* 全量下拉弹层存活：Esc 收起（不改编辑文本，对标 Qt）。 */
+        XComboBox_hidePopup_base(combo);
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XLineEdit, EXWidget_KeyPressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief 内嵌行编辑子类虚表：仅覆写按下键，其余继承 XLineEdit。 */
+static XVtable* XComboEdit_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XComboEdit)
+    XVTABLE_INHERIT_XCLASS(XLineEdit);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
+                             VXComboEdit_keyPressEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 创建内嵌行编辑（堆分配，属主由参数回指）。 */
+static XComboEdit* xcomboEdit_create(XComboBox* owner)
+{
+    XComboEdit* edit = (XComboEdit*)XMemory_malloc(
+        sizeof(XComboEdit), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!edit) return NULL;
+    XMemset(edit, 0, sizeof(*edit));
+    XLineEdit_init(&edit->m_base, (XWidget*)owner, 0);
+    XClassSetVtable(edit, XComboEdit);
+    edit->m_owner = owner;
+    Set_Class_Memory(edit, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(edit, true);
+    return edit;
+}
+
 void XComboBox_setEditable(XComboBox* self, bool editable)
 {
     if (!self || self->m_editable == editable) return;
     self->m_editable = editable;
     if (editable) {
-        /* 对标 Qt setEditable(true)：创建内嵌编辑框。 */
+        /* 对标 Qt setEditable(true)：创建内嵌编辑框（子类承载补全键）。 */
         if (!self->m_lineEdit) {
-            self->m_lineEdit = XLineEdit_create((XWidget*)self, 0);
+            XComboEdit* edit = xcomboEdit_create(self);
+            self->m_lineEdit = (XLineEdit*)edit;
             if (self->m_lineEdit) {
                 XWidget_setGeometry((XWidget*)self->m_lineEdit, 2, 2,
                                     XWidget_width((XWidget*)self) -
                                         XCOMBOBOX_BUTTON_W - 4,
                                     XWidget_height((XWidget*)self) - 4);
                 XWidget_show((XWidget*)self->m_lineEdit);
-                /* 对标 Qt：可编辑模式的编辑文本变化发射 editTextChanged
-                 * （此前信号无发射点，永不触发）。 */
-                XObject_connect_1(
-                    (XObject*)self->m_lineEdit,
-                    (size_t)XLineEdit_textChanged_signal(self->m_lineEdit),
-                    (XObject*)self, xcombo_editTextChangedFwd,
-                    XConnectionType_Direct);
+                /* 对标 Qt：编辑联动信号统一挂接（编辑文本变化发射
+                 * editTextChanged；textEdited 驱动补全；Enter/失焦
+                 * 结算插入策略）。 */
+                xcombo_connectLineEdit(self, self->m_lineEdit);
             }
         }
     }
     else {
-        /* 对标 Qt setEditable(false)：销毁内嵌编辑框。 */
+        /* 对标 Qt setEditable(false)：销毁内嵌编辑框；补全弹层存活时
+           一并收起（全量弹层不受影响）。 */
+        if (self->m_completionActive && self->m_popupVisible)
+            XComboBox_hidePopup_base(self);
         if (self->m_lineEdit) {
             XLineEdit_delete_base(self->m_lineEdit);
             self->m_lineEdit = NULL;
@@ -628,6 +1010,8 @@ void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
 {
     if (!self || !edit || edit == self->m_lineEdit) return;
     if (!self->m_editable) self->m_editable = true;
+    if (self->m_completionActive && self->m_popupVisible)
+        XComboBox_hidePopup_base(self);
     if (self->m_lineEdit) {
         XLineEdit_delete_base(self->m_lineEdit);
         self->m_lineEdit = NULL;
@@ -639,7 +1023,23 @@ void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
                             XCOMBOBOX_BUTTON_W - 4,
                         XWidget_height((XWidget*)self) - 4);
     XWidget_show((XWidget*)edit);
+    /* 对标 Qt setLineEdit：安装的编辑框同样挂接编辑联动信号。 */
+    xcombo_connectLineEdit(self, edit);
     XWidget_update((XWidget*)self);
+}
+
+void XComboBox_setCompleterMode(XComboBox* self, bool enable)
+{
+    if (!self || self->m_completerMode == enable) return;
+    self->m_completerMode = enable;
+    /* 关闭补全：存活的过滤弹层立即收起（不改编辑文本）。 */
+    if (!enable && self->m_completionActive && self->m_popupVisible)
+        XComboBox_hidePopup_base(self);
+}
+
+bool XComboBox_isCompleterMode(const XComboBox* self)
+{
+    return self ? self->m_completerMode : false;
 }
 
 /* ==================== 弹出列表部件化 ==================== */
@@ -704,12 +1104,34 @@ static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
+/** @brief 弹层本地坐标 y → 组合框条目行号。
+ * @note  与 XListView 绘制/命中同口径：隐藏行（补全过滤）占高 0 跳过，
+ *        按可见行序以 XCOMBOBOX_ITEM_H 步进换算；无可命中可见行返回
+ *        -1。补全过滤后直接 y/行高 会映射到错误的伪行。 */
+static int xcomboPopupView_rowAtY(const XComboPopupView* view, int y)
+{
+    XComboBox* owner;
+    int slot;
+    int row;
+    int visible = 0;
+    if (!view || !view->m_owner || y < 0) return -1;
+    owner = view->m_owner;
+    slot = y / XCOMBOBOX_ITEM_H;
+    for (row = 0; row < owner->m_itemCount; ++row) {
+        if (XListView_isRowHidden((XListView*)view, row)) continue;
+        if (visible == slot) return row;
+        ++visible;
+    }
+    return -1;
+}
+
 /** @brief 释放：窗内按行直接激活（选择+收起经 activated 槽联动）；
  *         越界释放吞掉（防止负坐标截断映射为 0 行误激活）。
  * @note  不再转发基类释放：基类 activated 依赖 IndexAt 虚槽，弹层
  *        子类虚表在该槽位解析不稳（xlv_indexAt 不被调用），故此处
- *        本地按 XCOMBOBOX_ITEM_H 行高直接换算行号并显式发射
- *        activated(row)，选择/收起仍经 xcombo_viewActivatedSlot。 */
+ *        本地按可见行序换算行号（xcomboPopupView_rowAtY，过滤弹层
+ *        跳过隐藏行）并显式发射 activated(row)，选择/收起仍经
+ *        xcombo_viewActivatedSlot。 */
 static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XComboPopupView* view = (XComboPopupView*)self;
@@ -728,8 +1150,8 @@ static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
         return;
     }
     if (view->m_owner) {
-        int row = pos.y / XCOMBOBOX_ITEM_H;
-        if (row >= 0 && row < view->m_owner->m_itemCount) {
+        int row = xcomboPopupView_rowAtY(view, pos.y);
+        if (row >= 0) {
             XVarList* args;
             XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
                                               row,
@@ -821,6 +1243,12 @@ static void xcombo_viewActivatedSlot(XObject* receiver, XVarList* args)
     col = XVarList_arg(args, int);
     if (row >= 0 && row < combo->m_itemCount) {
         XComboBox_setCurrentIndex(combo, row);
+        /* 可编辑：用户选择后编辑文本回填为选中项（对标 Qt 激活路径
+           的 lineEdit 回填；程序化 setCurrentIndex 不回填，保持既有
+           行为；回填为程序化 setText，不发射 textEdited，不会回环
+           触发补全过滤）。 */
+        if (combo->m_editable && combo->m_lineEdit)
+            XComboBox_setEditText_2(combo, XComboBox_itemText_2(combo, row));
         xcombo_emitInt(combo,
                        (size_t)XComboBox_activated_signal(combo, row), row);
         xcombo_emitText(combo,
@@ -1208,22 +1636,27 @@ void XComboBox_clear(XComboBox* self)
 
 /* ==================== 弹出与选择 ==================== */
 
-void XComboBox_showPopup_base(XComboBox* self)
+/* ==================== 补全弹层（复用下拉弹层承载） ==================== */
+
+/** @brief 清除弹层行过滤（全部置可见；仅操作已创建的弹层视图，不在
+ *  收起/显示路径上懒创建视图）。 */
+static void xcombo_clearRowHidden(XComboBox* self)
+{
+    int i;
+    if (!self || !self->m_popupView) return;
+    for (i = 0; i < self->m_itemCount; ++i)
+        XListView_setRowHidden(self->m_popupView, i, false);
+}
+
+/** @brief 依据行数重设弹层几何（组合框正下方，宽同组合框）。 */
+static void xcombo_popupReposition(XComboBox* self, int rows)
 {
     XListView* view;
     XPoint origin;
     XPoint g;
-    int rows;
     XRect r;
-    if (!self || self->m_popupVisible) return;
-    view = XComboBox_view(self);
-    if (!view) return;
-    xcombo_syncModel(self);
-    rows = self->m_itemCount < self->m_maxVisibleItems
-        ? (self->m_itemCount > 0 ? self->m_itemCount : 1)
-        : self->m_maxVisibleItems;
-    /* 顶层 Popup 窗口（参照 XMenu：无边框、覆盖式显示，X11 下
-       override-redirect）；定位在组合框正下方。 */
+    if (!self || !self->m_popupView) return;
+    view = self->m_popupView;
     XWidget_setWindowFlags((XWidget*)view, (XWidgetFlags)XWindowType_Popup);
     origin.x = 0;
     origin.y = XWidget_height((XWidget*)self);
@@ -1233,6 +1666,22 @@ void XComboBox_showPopup_base(XComboBox* self)
                XWidget_width((XWidget*)self),
                rows * XCOMBOBOX_ITEM_H + 2);
     XWidget_setGeometryRect((XWidget*)view, &r);
+    /* 独立顶层窗口无宿主帧泵：补全过滤态改尺寸后主动补一帧
+       （show 路径由 xcombo_popupShow 负责首帧）。 */
+    if (self->m_popupVisible)
+        XWidget_flushBackingStore((XWidget*)view, NULL);
+}
+
+/** @brief 弹出弹层（几何 + popupShown/show/raise/首帧/模态抓取全流程；
+ *  全量下拉与补全弹层共用）。rows < 1 时占 1 行（保持空列表既有可见
+ *  弹层行为）。 */
+static void xcombo_popupShow(XComboBox* self, int rows)
+{
+    XListView* view;
+    if (!self || !self->m_popupView) return;
+    view = self->m_popupView;
+    if (rows < 1) rows = 1;
+    xcombo_popupReposition(self, rows);
     self->m_popupVisible = true;
     xcombo_emitInt(self, (size_t)XComboBox_popupShown_signal(self), 0);
     XWidget_show((XWidget*)view);
@@ -1250,10 +1699,128 @@ void XComboBox_showPopup_base(XComboBox* self)
     XWidget_update((XWidget*)self);
 }
 
+/** @brief 补全过滤刷新（对标 QCompleter setCompletionPrefix + popup）：
+ *  按前缀（大小写不敏感）过滤弹层行并高亮；空前缀/无匹配不弹层或
+ *  收起弹层；命中时复用下拉弹层（行隐藏承载过滤，行号仍为条目索引）。
+ * @note  由编辑框 textEdited（仅用户编辑）驱动；程序化 setEditText
+ *  不触发（对标 Qt 补全不响应程序化文本设置）。 */
+static void xcombo_completionRefresh(XComboBox* self, const char* prefix)
+{
+    XListView* view;
+    int matches = 0;
+    int first = -1;
+    int i;
+    if (!self || !self->m_editable || !self->m_completerMode ||
+        !self->m_lineEdit)
+        return;
+    if (!prefix) prefix = "";
+    view = XComboBox_view(self); /* 懒创建并同步模型（复用下拉弹层）。 */
+    if (!view) return;
+    if (!prefix[0]) {
+        if (self->m_popupVisible) XComboBox_hidePopup_base(self);
+        return;
+    }
+    for (i = 0; i < self->m_itemCount; ++i) {
+        bool hit = self->m_items[i] &&
+                   xcombo_prefixMatchUtf8(XString_toUtf8(self->m_items[i]),
+                                          prefix);
+        XListView_setRowHidden(view, i, !hit);
+        if (hit) {
+            ++matches;
+            if (first < 0) first = i;
+        }
+    }
+    if (matches == 0) {
+        /* 对标 QCompleter PopupCompletion：无匹配不弹层（弹层存活则
+           收起，编辑文本不变）。 */
+        if (self->m_popupVisible) XComboBox_hidePopup_base(self);
+        return;
+    }
+    /* 高亮：上次补全行仍命中则粘滞，否则首个命中（对标 completer
+       currentRow 跟随）。 */
+    if (self->m_completionRow < 0 ||
+        self->m_completionRow >= self->m_itemCount ||
+        XListView_isRowHidden(view, self->m_completionRow))
+        self->m_completionRow = first;
+    XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
+                                      self->m_completionRow,
+                                      self->m_modelColumn);
+    self->m_completionActive = true;
+    if (!self->m_popupVisible)
+        xcombo_popupShow(self, matches);
+    else
+        xcombo_popupReposition(self, matches); /* 命中数变化改弹层高。 */
+}
+
+/** @brief Enter 采纳补全（对标 QCompleter activated → 编辑器回填 +
+ *  QComboBoxPrivate::completerActivated → 置当前项 + emitActivated）。
+ *  程序化回填不发射 textEdited，不会回环触发补全过滤。 */
+static void xcombo_completionAccept(XComboBox* self)
+{
+    int row;
+    if (!self || !self->m_editable || !self->m_lineEdit) return;
+    row = self->m_completionRow;
+    if (row < 0 || row >= self->m_itemCount) return;
+    XComboBox_setEditText_2(self, XComboBox_itemText_2(self, row));
+    XComboBox_setCurrentIndex(self, row);
+    xcombo_emitActivatedPair(self, row);
+    XComboBox_hidePopup_base(self);
+}
+
+/** @brief Up/Down/PageUp/PageDown 在命中行间移动高亮（对标 completer
+ *  popup 键导航；边界钳制不环绕，步长为可见行数）。 */
+static void xcombo_completionNavigate(XComboBox* self, int step)
+{
+    XListView* view = self ? self->m_popupView : NULL;
+    int row;
+    int remaining;
+    int dir;
+    if (!view || !self->m_completionActive) return;
+    row = self->m_completionRow;
+    if (row < 0 || row >= self->m_itemCount) return;
+    dir = step > 0 ? 1 : -1;
+    remaining = step > 0 ? step : -step;
+    while (remaining-- > 0) {
+        int next = row + dir;
+        while (next >= 0 && next < self->m_itemCount &&
+               XListView_isRowHidden(view, next))
+            next += dir;
+        if (next < 0 || next >= self->m_itemCount) break;
+        row = next;
+    }
+    if (row == self->m_completionRow) return;
+    self->m_completionRow = row;
+    XAbstractItemView_setCurrentIndex((XAbstractItemView*)view, row,
+                                      self->m_modelColumn);
+    XWidget_update((XWidget*)view);
+}
+
+void XComboBox_showPopup_base(XComboBox* self)
+{
+    XListView* view;
+    int rows;
+    if (!self || self->m_popupVisible) return;
+    view = XComboBox_view(self);
+    if (!view) return;
+    xcombo_syncModel(self);
+    /* 全量弹出前清残留过滤（补全收起时已清，此处兜底）：弹层为全量态。 */
+    xcombo_clearRowHidden(self);
+    self->m_completionActive = false;
+    self->m_completionRow = -1;
+    rows = self->m_itemCount < self->m_maxVisibleItems
+        ? (self->m_itemCount > 0 ? self->m_itemCount : 1)
+        : self->m_maxVisibleItems;
+    xcombo_popupShow(self, rows);
+}
+
 void XComboBox_hidePopup_base(XComboBox* self)
 {
     if (!self || !self->m_popupVisible) return;
     self->m_popupVisible = false;
+    /* 退出补全过滤态并清除行过滤：下次全量弹出不残留隐藏行。 */
+    self->m_completionActive = false;
+    self->m_completionRow = -1;
+    xcombo_clearRowHidden(self);
     /* 解除模态抓取：杀延迟抓取定时器 + 公共层/平台解抓（选择收起
        经 xcombo_viewActivatedSlot 亦走本路径）。 */
     xcombo_releaseGrab(self);

@@ -449,6 +449,9 @@ bool XPicture_recordDrawPoints(XPicture* self, const XPoint* points, int count);
  * @param pathOp XPainterPathOp 枚举数值；1=drawPath、2=fillPath、3=strokePath。
  * @param path 要记录的路径对象；NULL 或空路径按无操作返回 true。
  * @return 命令写入成功返回 true，否则返回 false。
+ * @note 路径 fillRule 以尾随 4 字节随本指令持久化（与 DrawTiledPixmap
+ *       尾随 extra 同惯例），回放恢复；旧录制流无该字段时保持默认
+ *       OddEven 零回归。
  */
 bool XPicture_recordDrawPath(XPicture* self, int pathOp,
                              const struct XPainterPath* path);

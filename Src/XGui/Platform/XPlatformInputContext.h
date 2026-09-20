@@ -41,9 +41,12 @@ extern "C" {
 #if XPLATFORMINPUTCTX_ON
 
 /** @brief 私有实现前向声明；仅供实现访问。 */
-typedef struct XPlatformInputContextPrivate XPlatformInputContextPrivate;/** @brief 声明 XPlatformInputContext 虚函数枚举：继承 XObject（无新增槽位）。 */
+typedef struct XPlatformInputContextPrivate XPlatformInputContextPrivate;/** @brief 声明 XPlatformInputContext 虚函数枚举：继承 XObject，
+ *  FilterEvent 为平台后端可覆盖的事件过滤虚槽（对标 QPlatformInputContext
+ *  的虚函数 filterEvent）。 */
 XCLASS_DEFINE_BEGING(XPlatformInputContext)
-XCLASS_DEFINE_EXTEND_END(XPlatformInputContext, XObject)
+XCLASS_DEFINE_ENUM(XPlatformInputContext, FilterEvent) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_END(XPlatformInputContext)
 
 
 
@@ -148,10 +151,15 @@ void XPlatformInputContext_invokeAction(XPlatformInputContext* self,
                                         int cursorPosition);
 
 /**
- * @brief      过滤输入事件（对标 filterEvent；空后端不消费任何事件）。
+ * @brief      过滤输入事件（对标 filterEvent 虚函数）。
+ * @details    经 FilterEvent 虚槽分发：内置空后端不消费任何事件（恒
+ *             false）；真实平台后端可派生覆盖本槽，返回 true 表示事件被
+ *             输入法消费，应用层按键派发前置钩子据此吞掉该事件（对标
+ *             QInputContext::filterEvent 遗产语义 / Qt6 platformContext
+ *             过滤）。
  * @param      self 目标对象；可为 NULL。
  * @param      event 输入事件借用指针；可为 NULL。
- * @return     恒 false（事件未被消费）。
+ * @return     事件被消费返回 true；默认实现恒 false。
  */
 bool XPlatformInputContext_filterEvent(const XPlatformInputContext* self,
                                        const XEvent* event);

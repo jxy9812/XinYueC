@@ -65,6 +65,14 @@ bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
     return false;
 }
 
+bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
+{
+    /* 能力不足的后端默认 no-op（对标 Qt 无窗口系统插件时的行为）：
+     * flags 仅存于 XWindow 内部，无平台效果。 */
+    (void)window; (void)flags;
+    return false;
+}
+
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     (void)window; (void)geometry;

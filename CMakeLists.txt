@@ -98,6 +98,19 @@ if(UNIX AND NOT APPLE)
         include_directories(${X11_INCLUDE_DIRS})
         target_link_libraries(${EXPORT_NAME}S PUBLIC ${X11_LIBRARIES})
         target_link_libraries(${EXPORT_NAME} PRIVATE ${X11_LIBRARIES})
+        # RandR（屏幕枚举/几何变化，XPlatformNativeWindow_posix.c 屏幕段）：
+        # 优先 dev 安装的 Xrandr 链接名；仅有运行库（libXrandr.so.2）时按
+        # 版本名兜底（函数声明内联在平台文件中，无需 libxrandr-dev 头）。
+        # 未检出时不注入 XINYUE_C_HAS_XRANDR，屏幕枚举回落 XScreenOfDisplay。
+        find_library(XINYUE_XRANDR_LIBRARY NAMES Xrandr)
+        if(NOT XINYUE_XRANDR_LIBRARY)
+            find_library(XINYUE_XRANDR_LIBRARY NAMES libXrandr.so.2 Xrandr.so.2)
+        endif()
+        if(XINYUE_XRANDR_LIBRARY)
+            add_compile_definitions(XINYUE_C_HAS_XRANDR=1)
+            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XRANDR_LIBRARY})
+            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XRANDR_LIBRARY})
+        endif()
     endif()
 
     # XPlatformGraphics 的 GLX 后端只在同时检测到 X11 与 OpenGL 时启用。

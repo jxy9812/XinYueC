@@ -296,7 +296,7 @@ typedef enum XPainterPenStyle
     XPainterPenStyle_DotLine = 3,    /**< 点线 */
     XPainterPenStyle_DashDotLine = 4,    /**< 一点一划 */
     XPainterPenStyle_DashDotDotLine = 5, /**< 两点一划 */
-    XPainterPenStyle_CustomDashLine = 6 /**< 自定义虚线（当前使用默认虚线近似） */
+    XPainterPenStyle_CustomDashLine = 6 /**< 自定义虚线（空节距按实线处理，对标 Qt setDashPattern 忽略空列表） */
 } XPainterPenStyle;
 
 /** @brief 画笔端点样式（对标 Qt 6.8 QPen::CapStyle）。 */
@@ -473,7 +473,10 @@ typedef struct XPainterState
     XPainterPenStyle m_penStyle;          /**< 画笔线段样式（对标 QPen::style）。 */
     XPainterPenCapStyle m_penCap;         /**< 画笔端点样式（默认 SquareCap）。 */
     XPainterPenJoinStyle m_penJoin;       /**< 画笔拐角样式（默认 BevelJoin）。 */
-    float m_dashPattern[16];              /**< 用户虚线节距（对标 QPen::dashPattern）。 */
+    float m_miterLimit;                   /**< MiterJoin 斜接上限（对标 QPen::miterLimit；
+                                               miter 长度与笔宽之比阈值，默认 2，下限 1；
+                                               save()/restore() 随本结构体整体快照）。 */
+    float m_dashPattern[16];              /**< 用户虚线节距（对标 QPen::dashPattern；单位为笔宽倍数）。 */
     int m_dashCount;                      /**< 用户虚线节距数（0=未设置）。 */
 #endif
     uint32_t m_penColor;        /**< 画笔颜色（ARGB32）。 */
@@ -501,6 +504,20 @@ typedef struct XPainterState
 #if XPAINTER_CLIP_REGION_ON
     XRegion m_clipRegion;       /**< 当前组合裁剪的设备坐标区域。 */
 #endif /* XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    XPainterPath* m_clipPath;   /**< 当前裁剪路径（逻辑坐标深拷贝，含 fillRule；
+                                     NULL 表示未设置。对标 Qt QPainterState 中
+                                     保存的 clipPath，clipPath() 返回其副本）。 */
+    bool m_hasClipPath;         /**< 是否启用精确路径光栅裁剪；矩形路径按 Qt
+                                     raster 引擎的矩形快路径语义退化为 clipRect，
+                                     此时为 false（掩码零开销）。 */
+    int m_clipPathSerial;       /**< 路径裁剪版本号（painter 侧覆盖掩码缓存的
+                                     失效配对键；0 表示从未设置）。 */
+    XImageTransform m_clipPathTransform; /**< 设置路径时的有效变换快照：Qt 的
+                                     裁剪路径在设置时即映射到设备空间，此后
+                                     变换不再回溯影响裁剪（QPainter 同语义），
+                                     掩码按该快照延迟重建。 */
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 #endif /* XPAINTER_CLIP_ON */
     XImageTransform m_transform; /**< 用户坐标到设备坐标的变换矩阵。 */
 #if XPAINTER_WORLD_MATRIX_ON
@@ -572,6 +589,19 @@ typedef struct XPainter
     int m_stateCapacity;              /**< 栈容量。 */
     bool m_initialized;               /**< 是否已完成 init 且尚未 deinit。 */
     bool m_replaying;                 /**< 是否正在回放 Picture，禁止重复记录状态命令。 */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    /* 裁剪路径覆盖掩码缓存（内部维护，勿直接访问）：按设备空间把当前
+       m_state.m_clipPath 光栅化为每像素 8 位覆盖，键为
+       m_state.m_clipPathSerial + 目标图像指针，任何一者变化即重建。 */
+    uint8_t* m_clipMaskData;          /**< 覆盖掩码缓冲（width*height 字节；可 NULL）。 */
+    XImage* m_clipMaskImage;          /**< 构建掩码时的目标图像（换目标即重建）。 */
+    int m_clipMaskWidth;              /**< 掩码宽度（0 表示空掩码=全部拒绝）。 */
+    int m_clipMaskHeight;             /**< 掩码高度。 */
+    int m_clipMaskLeft;               /**< 掩码左上角的设备 X。 */
+    int m_clipMaskTop;                /**< 掩码左上角的设备 Y。 */
+    int m_clipMaskSerial;             /**< 构建掩码时的路径版本号。 */
+    int m_clipSerialCounter;          /**< 路径版本号单调计数器（setClipPath 递增）。 */
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 } XPainter;
 
 /* ========== 生命周期 ========== */
@@ -655,9 +685,27 @@ bool XPainter_drawLine(XPainter* self, int x1, int y1, int x2, int y2);
  * @return 绘制成功返回 true。
  */
 bool XPainter_drawLine_2(XPainter* self, const XPoint* p1, const XPoint* p2);
+/**
+ * @brief      以浮点端点绘制一条直线（对标 QPainter::drawLine(const QLineF&)）。
+ * @details    绑定 XImage 光栅设备时端点以浮点精度经过有效变换映射后
+ *             取整到设备像素（缩放/旋转下不损失用户空间小数），与 int
+ *             入口共用同一设备坐标画线实现；录制/自定义后端按整型
+ *             契约取整用户坐标。NoPen 与虚线等画笔样式行为与 int
+ *             入口一致。
+ * @param self 绘制器指针。
+ * @param x1 起点 X 坐标（浮点）。
+ * @param y1 起点 Y 坐标（浮点）。
+ * @param x2 终点 X 坐标（浮点）。
+ * @param y2 终点 Y 坐标（浮点）。
+ * @return 绘制成功返回 true；未绑定设备返回 false。
+ */
+bool XPainter_drawLine_3(XPainter* self, float x1, float y1,
+                         float x2, float y2);
 
 /**
  * @brief      绘制一个点（用当前画笔）。
+ * @details    按零长度线落地，AA 下保持硬边（批次九约定，对标 Qt：图表
+ *             标记点保持锐利；如需圆点用 drawEllipse_2）。
  * @param self 绘制器指针。
  * @param x 点 X 坐标。
  * @param y 点 Y 坐标。
@@ -681,6 +729,22 @@ bool XPainter_drawPoint_2(XPainter* self, const XPoint* point);
  * @return 绘制成功返回 true；默认 NoBrush 时只绘制边框。
  */
 bool XPainter_drawRect(XPainter* self, const XRect* rect);
+
+/**
+ * @brief      以浮点坐标绘制矩形（对标 QPainter::drawRect(const QRectF&)）。
+ * @details    先用当前画刷填充（浮点外接矩形走多边形扫描填充，纯色与
+ *             渐变同一管线），再用当前画笔沿四条边描边（经浮点画线
+ *             入口）。负宽/高按 QRectF::normalized 规则交换几何边，
+ *             双零尺寸视为无操作返回 true，非有限坐标不产生可见输出。
+ * @param self 绘制器指针。
+ * @param x 左上角 X 坐标（浮点；可为几何边形式）。
+ * @param y 左上角 Y 坐标（浮点）。
+ * @param width 宽度（浮点；可为负）。
+ * @param height 高度（浮点；可为负）。
+ * @return 绘制成功返回 true；未绑定设备返回 false。
+ */
+bool XPainter_drawRect_2(XPainter* self, float x, float y,
+                         float width, float height);
 
 /**
  * @brief      批量绘制矩形（对标 QPainter::drawRects）。
@@ -748,6 +812,34 @@ bool XPainter_drawImage(XPainter* self, const XImage* image, int x, int y);
  */
 bool XPainter_drawImage_2(XPainter* self, const XImage* image, const XPoint* pos);
 
+#if XPAINTER_IMAGE_RECT_ON
+/**
+ * @brief      把源图像指定区域缩放绘制到目标矩形（对标 Qt 6.8
+ *             QPainter::drawImage(int x, int y, int w, int h,
+ *             const QImage&, int sx, int sy, int sw, int sh)）。
+ * @details    目标矩形 (x,y,w,h) 使用绘制器逻辑坐标，源矩形
+ *             (sx,sy,sw,sh) 使用图像物理像素坐标。负目标宽高按 Qt
+ *             规则改用源区域尺寸（除以图像设备像素比），非正源宽高
+ *             表示取到图像边缘，源越界按比例裁剪并同步调整目标区域，
+ *             全部由 drawImageRect 的 Qt 规则预处理承担；软件光栅下
+ *             缩放采样受 SmoothPixmapTransform 渲染提示控制（开启且
+ *             非整倍 1:1 时双线性，否则最近邻）。
+ * @param self 绘制器指针。
+ * @param x 目标左上角 X 坐标。
+ * @param y 目标左上角 Y 坐标。
+ * @param width 目标宽度；负值表示按源区域尺寸绘制。
+ * @param height 目标高度；负值表示按源区域尺寸绘制。
+ * @param image 源图像；NULL 返回 false，空图像视为无操作返回 true。
+ * @param sx 源区域左上角 X（像素）。
+ * @param sy 源区域左上角 Y（像素）。
+ * @param sw 源区域宽度；非正值表示取到图像右边缘。
+ * @param sh 源区域高度；非正值表示取到图像下边缘。
+ * @return 绘制成功返回 true。
+ */
+bool XPainter_drawImage_3(XPainter* self, int x, int y, int width, int height,
+                          const XImage* image, int sx, int sy, int sw, int sh);
+#endif /* XPAINTER_IMAGE_RECT_ON */
+
 #if XPAINTER_PIXMAP_ON
 /**
  * @brief      在指定位置绘制像素图（对标 Qt 6.8 QPainter::drawPixmap）。
@@ -787,6 +879,31 @@ bool XPainter_drawPixmap_2(XPainter* self, const XPixmap* pixmap,
 bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
                              const XPixmap* pixmap,
                              const XRect* sourceRect);
+
+/**
+ * @brief      把像素图源矩形缩放绘制到目标矩形（对标 Qt 6.8
+ *             QPainter::drawPixmap(int x, int y, int w, int h,
+ *             const QPixmap&, int sx, int sy, int sw, int sh)）。
+ * @details    与 drawPixmapRect 同构的 9 参整型便捷重载：目标
+ *             (x,y,w,h) 为绘制器逻辑坐标，源 (sx,sy,sw,sh) 为像素图
+ *             物理像素坐标；负目标尺寸、非正源尺寸与越界裁剪沿用
+ *             drawImageRect 的 Qt 规则，缩放采样受 SmoothPixmapTransform
+ *             渲染提示控制。
+ * @param self   绘制器指针。
+ * @param x      目标左上角 X 坐标。
+ * @param y      目标左上角 Y 坐标。
+ * @param width  目标宽度；负值表示按源区域尺寸绘制。
+ * @param height 目标高度；负值表示按源区域尺寸绘制。
+ * @param pixmap 源像素图；NULL 返回 false，空像素图无操作返回 true。
+ * @param sx 源区域左上角 X（物理像素）。
+ * @param sy 源区域左上角 Y（物理像素）。
+ * @param sw 源区域宽度；非正值表示取到右边缘。
+ * @param sh 源区域高度；非正值表示取到下边缘。
+ * @return 绘制成功或空像素图无操作返回 true。
+ */
+bool XPainter_drawPixmap_3(XPainter* self, int x, int y, int width, int height,
+                           const XPixmap* pixmap, int sx, int sy, int sw,
+                           int sh);
 #endif /* XPAINTER_IMAGE_RECT_ON */
 
 #if XPAINTER_TILED_PIXMAP_ON
@@ -853,6 +970,25 @@ bool XPainter_drawPicture(XPainter* self, const XPicture* picture, int x, int y)
  * @return 绘制成功返回 true；未绑定设备返回 false。
  */
 bool XPainter_drawEllipse(XPainter* self, const XRect* rect);
+
+/**
+ * @brief      以中心点与半径绘制椭圆（对标 QPainter::drawEllipse(const
+ *             QRectF&) 的浮点几何，中心+半径形式）。
+ * @details    绑定 XImage 光栅设备且无形状高层回调时，中心/半径以浮点
+ *             精度直接采样（与 drawEllipse 软件分支同源：64 段填充 +
+ *             32 段描边），经过既有变换/裁剪/透明度/合成管线；录制或
+ *             GPU 形状回调按整型外接矩形契约取整后复用 drawEllipse。
+ *             负半径按 QRectF::normalized 规则取正，非正半径视为无操作
+ *             返回 true，非有限坐标不产生可见输出。
+ * @param self 绘制器指针。
+ * @param cx 圆心 X 坐标（浮点）。
+ * @param cy 圆心 Y 坐标（浮点）。
+ * @param rx X 方向半径（浮点）。
+ * @param ry Y 方向半径（浮点）。
+ * @return 绘制成功返回 true；未绑定设备返回 false。
+ */
+bool XPainter_drawEllipse_2(XPainter* self, float cx, float cy,
+                            float rx, float ry);
 
 /**
  * @brief      绘制圆弧（对标 QPainter::drawArc）。
@@ -985,6 +1121,8 @@ typedef struct XPainterPath
     float m_currentX, m_currentY;    /**< 当前点。 */
     float m_subpathStartX, m_subpathStartY; /**< 当前子路径起点。 */
     bool m_requireMoveTo;       /**< 闭合后下一段曲线是否需隐式追加 MoveTo。 */
+    XPainterFillRule m_fillRule; /**< 填充规则（对标 QPainterPath::fillRule；
+                                      默认 OddEvenFill，与 Qt 默认一致）。 */
 } XPainterPath;
 
 /**
@@ -1044,6 +1182,14 @@ int XPainterPath_elementCount(const XPainterPath* self);
 /** @brief 查询当前点坐标；outX/outY 可为 NULL。 */
 void XPainterPath_currentPosition(const XPainterPath* self,
                                   float* x, float* y);
+/**
+ * @brief 设置路径填充规则（对标 QPainterPath::setFillRule）。
+ * @details 取值与 Qt::FillRule 一致（OddEven=0、Winding=1）；
+ *          非法值回退 OddEvenFill，与 drawPolygon 同口径。
+ */
+void XPainterPath_setFillRule(XPainterPath* self, XPainterFillRule rule);
+/** @brief 查询路径填充规则（对标 QPainterPath::fillRule）。 */
+XPainterFillRule XPainterPath_fillRule(const XPainterPath* self);
 
 /**
  * @brief      绘制路径：填充部分走当前画刷，轮廓走当前画笔（对标 drawPath）。
@@ -1322,6 +1468,15 @@ XPainterPenCapStyle XPainter_penCapStyle(const XPainter* self);
 void XPainter_setPenJoinStyle(XPainter* self, XPainterPenJoinStyle join);
 /** @brief 获取当前画笔拐角样式。 */
 XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self);
+/**
+ * @brief 设置 MiterJoin 斜接上限（对标 QPen::setMiterLimit）。
+ * @param self 绘制器指针；未激活时忽略。
+ * @param limit miter 长度与笔宽之比阈值；小于 1 的值钳位为 1（Qt 同语义，
+ *              1 表示恒回退 Bevel）。默认 2。
+ */
+void XPainter_setMiterLimit(XPainter* self, float limit);
+/** @brief 获取 MiterJoin 斜接上限（对标 QPen::miterLimit；NULL 返回 2）。 */
+float XPainter_miterLimit(const XPainter* self);
 /** @brief 设置用户自定义虚线节距（对标 QPen::setDashPattern）。
  * @param self 绘制器指针。
  * @param pattern 画/空交替节距数组（像素）；可为 NULL 表示清除自定义节距。
@@ -1468,18 +1623,26 @@ void XPainter_clipRegion(const XPainter* self, XRegion* out);
 #if XPAINTER_PATH_ON
 /**
  * @brief 设置路径裁剪（对标 QPainter::setClipPath）。
- * @note 当前以路径包围矩形近似（精确路径光栅裁剪登记为已知偏差，
- *       Task 2.20）；clipPath() 返回空路径。
+ * @details 路径按设置时的有效变换光栅化为设备空间覆盖掩码，绘制与
+ *          既有 clipRect/clipRegion/表面裁剪做与运算（对标 Qt raster
+ *          引擎的位图裁剪）；clipPath() 返回所设路径（逻辑坐标）。
+ *          路径为轴对齐矩形子路径时按矩形快路径语义直接走既有
+ *          clipRect 管线（掩码零开销）。Picture 指令集无路径裁剪
+ *          操作码，录制退化为路径包围盒的 setClipRect（与 Qt
+ *          QPicture 对区域裁剪的离散化口径一致的近似）。
  * @param self 绘制器指针。
  * @param path 逻辑坐标路径；NULL 视为空操作。
- * @param operation 裁剪操作；非法值按 ReplaceClip 处理。
+ * @param operation 裁剪操作；非法值按 ReplaceClip 处理。IntersectClip
+ *                  与既有裁剪相交；当既有裁剪已含路径时，路径对路径
+ *                  的精确交集暂以两者包围盒近似（登记偏差）。
  * @return 无返回值。
  */
 void XPainter_setClipPath(XPainter* self, const XPainterPath* path,
                           XPainterClipOperation operation);
 /**
  * @brief 获取当前路径裁剪（对标 QPainter::clipPath）。
- * @note 路径级裁剪未存储（见 setClipPath @note），输出空路径。
+ * @details 返回最近一次 setClipPath 设置路径的深拷贝（逻辑坐标，
+ *          含 fillRule），与 Qt 返回所设路径本身一致。
  * @param self 绘制器指针；可为 NULL。
  * @param out 输出路径；调用方负责 XPainterPath_deinit。
  * @return 无返回值。

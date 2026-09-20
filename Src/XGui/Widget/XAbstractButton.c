@@ -478,11 +478,13 @@ void XAbstractButton_setChecked(XAbstractButton* self, bool checked)
     if (old == checked)
         return;
     if (!checked && old) {
-        /* 对标 Qt：exclusive 按钮组内已选中按钮不可通过 setChecked(false)
-           反选（qabstractbutton.cpp:592-600，组版无"最后一个"条件）；
-           autoExclusive 的同语义保护见下。 */
+        /* 对标 Qt：互斥组内**当前选中**按钮不可经 setChecked(false)
+           反选（qabstractbutton.cpp——守卫只保护组 tracked 的
+           checkedButton；其余成员可正常取消，组互斥取消正依赖此
+           路径）。autoExclusive 的同语义保护见下。 */
         if (self->m_group &&
-            XButtonGroup_isExclusive((XButtonGroup*)self->m_group))
+            XButtonGroup_isExclusive((XButtonGroup*)self->m_group) &&
+            XButtonGroup_checkedButton((XButtonGroup*)self->m_group) == self)
             return;
         if (self->m_autoExclusive &&
             abstractbutton_isOnlyAutoExclusiveMember(self)) {

@@ -386,6 +386,10 @@ typedef struct XMouseEvent {
     XMouseButton m_buttons;         ///< 事件发生时所有处于按下状态的鼠标按键（位掩码）。
     XKeyboardModifiers m_modifiers; ///< 事件发生时按下的修饰键。
     XPoint m_position;              ///< 事件源对象局部坐标。
+    bool m_synthesized;             ///< 是否由触摸等事件合成（对标 Qt 的
+                                    ///< MouseEventSynthesized 来源标志；真实
+                                    ///< 鼠标设备事件为 false，XMouseEvent_init
+                                    ///< 默认置 false）。
 } XMouseEvent;
 
 /**
@@ -441,6 +445,20 @@ XKeyboardModifiers XMouseEvent_modifiers(const XMouseEvent* event);
  * @return 局部坐标；event 为 NULL 时返回零坐标。
  */
 XPoint XMouseEvent_position(const XMouseEvent* event);
+/**
+ * @brief 设置合成来源标志（触摸→鼠标合成器注入时使用）。
+ * @param event 鼠标事件实例；不可为 NULL。
+ * @param synthesized 目标状态。
+ */
+void XMouseEvent_setSynthesized(XMouseEvent* event, bool synthesized);
+/**
+ * @brief 判断事件是否由触摸等其他设备事件合成（对标 QMouseEvent::
+ *        mouseEventSource 的合成来源标志最小化）。
+ * @param event 鼠标事件实例。
+ * @return true 表示合成事件（touch→mouse 仿真），false 表示真实鼠标
+ *         设备事件；event 为 NULL 时返回 false。
+ */
+bool XMouseEvent_isSynthesized(const XMouseEvent* event);
 
 #define XMouseEvent_delete_base XEvent_delete_base
 #define XMouseEvent_deinit_base XEvent_deinit_base

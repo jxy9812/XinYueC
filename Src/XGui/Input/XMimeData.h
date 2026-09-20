@@ -26,6 +26,7 @@ extern "C" {
 #include "XMemory.h"
 #include "XString.h"
 #include "XStringList.h"
+#include "XByteArray.h"
 #include "XImage.h"
 #include "XPixmap.h"
 #include "XColor.h"
@@ -200,13 +201,57 @@ void XMimeData_setImageData(XMimeData* self, const XImage* image);
 void XMimeData_setData(XMimeData* self, const char* format, const XString* data);
 
 /**
+ * @brief      按原始字节登记自定义格式（对标 QMimeData::setData(mime,
+ *             QByteArray) 的二进制透明通道）。
+ * @details    与 XMimeData_setData 同一存储：自定义条目载荷自本批起改用
+ *             XByteArray（对标 Qt QByteArray）承载，逐字节保存不做 UTF-8
+ *             转换——PNG（0x89 魔数）等任意二进制写入读回字节精确。
+ *             text/plain / text/html 仍路由到文本存储（保持 XString 语义）。
+ * @param      self   目标对象；可为 NULL。
+ * @param      format UTF-8 编码的 MIME 类型名；可为 NULL。
+ * @param      data   原始字节缓冲（内部深拷贝）；可为 NULL（等价空数据）。
+ * @param      len    字节数；<0 视为 0。
+ */
+void XMimeData_setData_bytes(XMimeData* self, const char* format,
+                             const unsigned char* data, int len);
+
+/**
  * @brief      读取指定格式的原始数据（对标 QMimeData::data）。
  * @param      self   目标对象；可为 NULL。
  * @param      format UTF-8 编码的 MIME 类型名；可为 NULL。
  * @return     新建 XString 堆拷贝（保留原始字节）；无该格式时返回 NULL，
  *             调用方用 XString_delete_base 释放。
+ * @note       XString 通道面向文本格式（text/uri-list、text/html 等）；
+ *             二进制格式请改用 XMimeData_data_bytes 取字节精确副本
+ *             （XString 的 UTF-8 转换不保二进制透明）。
  */
 XString* XMimeData_data(const XMimeData* self, const char* format);
+
+/**
+ * @brief      读取指定格式的原始字节（对标 QMimeData::data 返回 QByteArray；
+ *             二进制透明通道）。
+ * @details    自定义条目载荷以 XByteArray 逐字节保存，本接口返回字节精确
+ *             深拷贝（PNG 魔数 0x89 等任意二进制原样往返）；text/plain /
+ *             text/html 返回对应文本的 UTF-8 字节（与 data() 同源）。
+ * @param      self   目标对象；可为 NULL。
+ * @param      format UTF-8 编码的 MIME 类型名；可为 NULL。
+ * @return     新建 XByteArray 堆拷贝；无该格式时返回 NULL，
+ *             调用方用 XByteArray_delete_base 释放。
+ */
+XByteArray* XMimeData_data_bytes(const XMimeData* self, const char* format);
+
+/**
+ * @brief      删除一种格式（对标 QMimeData::removeFormat）。
+ * @details    对 text/plain、text/html、application/x-color、
+ *             application/x-qt-image 四个内置格式做对应存储清理（删除
+ *             text 格式时同步清空文本/HTML，后续 text()/html() 返回
+ *             NULL）；其余格式名按 setData 登记的自定义条目整条移除。
+ *             MIME 类型名大小写不敏感，与 hasFormat 一致。
+ * @param      self   目标对象；可为 NULL。
+ * @param      format UTF-8 编码的 MIME 类型名；可为 NULL。
+ * @return     实际删除了内容返回 true；格式不存在时返回 false。
+ */
+bool XMimeData_removeFormat(XMimeData* self, const char* format);
 
 #endif /* XMIMEDATA_ON */
 

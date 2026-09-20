@@ -7,9 +7,11 @@
  *             信号。本模块不依赖任何平台 API：所有数据程序化存储于对象
  *             内部，不连接系统剪贴板；XGuiApplication_clipboard 返回进程
  *             内单例后，未来平台后端可在 setMimeData 时把数据同步给系统
- *             剪贴板。Selection/FindBuffer 两种平台相关模式
- *             supportsSelection()/supportsFindBuffer() 恒为 false，与
- *             Qt 在不支持该选择缓冲的平台上行为一致。
+ *             剪贴板。Selection/FindBuffer 两种平台相关模式的能力取决于
+ *             平台后端：X11 后端接入 PRIMARY 选择区后 supportsSelection()
+ *             返回 true（对标 QXcbClipboard），FindBuffer 的
+ *             supportsFindBuffer() 恒为 false，与 Qt 在不支持该选择缓冲
+ *             的平台上行为一致。
  * @note       模块开关 XCLIPBOARD_ON 定义于 XGuiConfig.h；置 0 时裁剪
  *             整个 XClipboard 公共 API。依赖子开关 XMIMEDATA_ON，关闭时
  *             MIME 数据接口退化为仅文本模式（空实现）。
@@ -48,8 +50,8 @@ XCLASS_DEFINE_EXTEND_END(XClipboard, XObject)
  */
 typedef enum XClipboardMode
 {
-    XClipboardMode_Clipboard = 0, /**< 标准剪贴板。 */
-    XClipboardMode_Selection,     /**< 选择缓冲（supportsSelection 恒 false）。 */
+    XClipboardMode_Clipboard = 0, /**< 标准剪贴板（X11 CLIPBOARD 选择区）。 */
+    XClipboardMode_Selection,     /**< 选择缓冲（X11 平台接 PRIMARY 选择区）。 */
     XClipboardMode_FindBuffer,    /**< 查找缓冲（supportsFindBuffer 恒 false）。 */
     XClipboardMode_LastMode = XClipboardMode_FindBuffer /**< 最后一个模式。 */
 } XClipboardMode;
@@ -98,7 +100,9 @@ XClipboard* XClipboard_create_ex(XMemoryType memory);
 
 /**
  * @brief      查询是否支持选择缓冲（对标 QClipboard::supportsSelection）。
- * @return     恒为 false（本实现不接系统选择缓冲）。
+ * @return     平台后端声明支持时为 true（X11 后端接入 PRIMARY 选择区，
+ *             对标 QXcbClipboard::supportsMode(Selection)）；未注入后端或
+ *             后端不支持时为 false。
  */
 bool XClipboard_supportsSelection(const XClipboard* self);
 
@@ -139,10 +143,16 @@ XString* XClipboard_text(XClipboard* self, XClipboardMode mode);
 /**
  * @brief      读取文本，同时输出子类型（对标 QClipboard::text(QString&, Mode)）。
  * @param      self    目标对象；可为 NULL。
- * @param      subtype 输出参数：文本子类型（"plain"）；有文本时分配堆拷贝，
- *                    无文本时置 NULL；可为 NULL。
+ * @param      subtype in/out 参数（对标 Qt）：输入为 NULL 或空串时按 Qt
+ *                    formats() 顺序依次尝试 "text/*"（plain -> html，无
+ *                    plain 而 mime 含 text/html 时返回 html 内容并输出
+ *                    "html"），输出为命中的子类型堆拷贝，无命中置 NULL；
+ *                    输入非空（如 "html"）时只尝试 "text/<请求子类型>"，
+ *                    命中与否都原样保留 *subtype（原地复用，调用方继续
+ *                    持有所有权，对标 Qt 的 QString& 复用）。
+ *                    本参数可为 NULL（等价空请求）。
  * @param      mode    目标模式。
- * @return     与 XClipboard_text 相同的堆拷贝文本；调用方释放。
+ * @return     命中子类型的堆拷贝文本；均无时返回 NULL；调用方释放。
  */
 XString* XClipboard_text_subtype(XClipboard* self, XString** subtype,
                               XClipboardMode mode);
@@ -169,10 +179,46 @@ typedef struct XClipboardBackend
     bool (*text)(void* ud, int mode, char** outText);      /**< 读平台剪贴板文本（调用方 XFree_System 释放）。 */
     bool (*setText)(void* ud, int mode, const char* text); /**< 写平台剪贴板文本。 */
     bool (*clear)(void* ud, int mode);                     /**< 清平台剪贴板。 */
+    bool supportsSelection;                                /**< 平台是否支持 Selection 选择区（对标 QPlatformClipboard::supportsSelection；X11 接 PRIMARY 时置 true）。 */
+    /* 可选反向通知：平台检测到本进程认领的选择区被其他应用夺走
+     * （X11 SelectionClear）时调用，未注册时保持纯进程内语义
+     * （对标 QXcbClipboard::handleSelectionClearRequest 直接调
+     * QPlatformClipboard 上层，C 分层下经本指针解耦）。 */
+    void (*selectionRevoked)(void* ud, int mode);          /**< 选择区所有权被夺通知（mode 为 XClipboardMode）。 */
+    /* ---- mime 多格式平台协商（对标 QXcbClipboard 把 QMimeData 各
+     * 格式映射为 X11 TARGETS 原子并在 SelectionRequest 按目标原子
+     * 回数）。三个回调均为可选：追加在结构体尾部保持既有位置初始化
+     * 兼容（C 语法对未列出的尾部成员补零），未注册（NULL）时全部
+     * 走既有纯文本路径，行为零回归。格式名统一使用 MIME 写法
+     * （"text/plain"、"text/html"、"image/png"……），长度上限
+     * XCLIPBOARD_FORMAT_NAME_MAX（含结束符）。 */
+    int (*formats)(void* ud, int mode, char outFormats[][64], int max); /**< 列出该模式当前可提供的 mime 格式名，返回实际个数（0=无）。 */
+    bool (*mimeData)(void* ud, int mode, const char* format,
+                     const unsigned char** data, int* len); /**< 读指定格式字节（借用语义：*data 指向平台内部镜像/接收缓冲，免拷贝，仅在下次后端调用前有效；对标 Qt 平台 mimeData 直接借用 QMimeData）。 */
+    bool (*setMimeData)(void* ud, int mode, const char* format,
+                        const unsigned char* data, int len); /**< 写指定格式字节进平台剪贴板（平台内部深拷贝；对标 QXcbClipboard::setMimeData 逐格式登记）。 */
 } XClipboardBackend;
+
+/** @brief 后端格式名缓冲上限（含结束符；与 formats 回调的 outFormats
+ *  第二维一致，供上层在栈上分配格式名表）。 */
+#define XCLIPBOARD_FORMAT_NAME_MAX 64
+/** @brief 上层一次枚举格式的合理容量（对标 QMimeData::formats() 列表规模）。 */
+#define XCLIPBOARD_MAX_FORMATS 16
 
 /** @brief 安装平台后端（NULL 恢复进程内存储语义）。 */
 void XClipboard_installBackend(const XClipboardBackend* backend);
+
+/**
+ * @brief      平台反向通知入口：指定模式的选择区所有权被其他应用夺走
+ *             （对标 QXcbClipboard::handleSelectionClearRequest：清空
+ *             ownerData 并经 setMimeData(NULL) 发射变化信号）。
+ * @details    由平台经后端契约的 selectionRevoked 回调进入；实现复位该
+ *             模式的 owns 状态与数据，并按 Qt 顺序发射模式专用信号
+ *             （dataChanged/selectionChanged）再发射 changed(mode)。
+ * @param      ud   后端用户数据（可忽略）。
+ * @param      mode XClipboardMode 取值。
+ */
+void XClipboard_backendSelectionRevoked(void* ud, int mode);
 
 void XClipboard_setText(XClipboard* self, const XString* text, XClipboardMode mode);
 
@@ -207,7 +253,11 @@ XImage* XClipboard_image(const XClipboard* self, XClipboardMode mode);
 
 /**
  * @brief      设置指定模式的图像（对标 QClipboard::setImage）。
- * @details    等价于构造含图像的 XMimeData 后调用 setMimeData。
+ * @details    等价于构造含图像的 XMimeData 后调用 setMimeData；进程内以
+ *             application/x-qt-image 存储（回读走自有 mime 优先），同时
+ *             平台后端接入时把图像 PNG 编码为 image/png 原子推送平台
+ *             镜像（对标 Qt setImage 后 xcb 端 TARGETS 含 image/png），
+ *             编码失败仅影响平台侧原子，进程内语义不变。
  * @param      self  目标对象；可为 NULL。
  * @param      image 源图像；可为 NULL。
  * @param      mode  目标模式。
@@ -223,7 +273,8 @@ XPixmap* XClipboard_pixmap(const XClipboard* self, XClipboardMode mode);
 
 /**
  * @brief      设置指定模式的像素图（对标 QClipboard::setPixmap）。
- * @details    内部转换为 XImage 后按 setMimeData 语义保存。
+ * @details    内部转换为 XImage 后按 setMimeData 语义保存（与 setImage
+ *             相同：进程内 x-qt-image 存储 + 平台侧 image/png 派生镜像）。
  * @param      self   目标对象；可为 NULL。
  * @param      pixmap 源像素图；可为 NULL。
  * @param      mode   目标模式。

@@ -7,13 +7,17 @@
  *               QAbstractSpinBox），复用上下步进/键盘编辑框架；
  *             - 值：dateTime/setDateTime、date/setDate、time/setTime、
  *               minimumDateTime/maximumDateTime 与范围钳位；
- *             - 分段：Section 枚举（NoSection..YearSection，数值对齐
- *               QDateTimeEdit::Section）、currentSection/
- *               setCurrentSection、sections() 掩码；
+ *             - 分段：Section 枚举（NoSection/AmPm/MSec/Second/Minute/
+ *               Hour/Day/Month/Year，数值对齐 QDateTimeEdit::Section）、
+ *               currentSection/setCurrentSection、sections() 掩码；
  *             - displayFormat/setDisplayFormat（默认
- *               "yyyy-MM-dd HH:mm:ss"；绘制/文本按格式串的 yyyy/MM/dd/
- *               HH/mm/ss 占位符展开）；
- *             - stepBy：按当前分段增减（年/月/日/时/分/秒，含进位）；
+ *               "yyyy-MM-dd HH:mm:ss"；绘制/文本按格式串的 yyyy/MM/
+ *               dd/dddd/ddd/HH/h/hh/mm/ss/zzz/zz/z/AP(A) 占位符展开，
+ *               字面字符原样输出；ddd/dddd 星期文案周一..周日/星期一..
+ *               星期日，AP/A 固定中文「上午/下午」，详见实现注释）；
+ *             - stepBy：按当前分段增减（年/月/日/时/分/秒/毫秒，含进位；
+ *               上下午段 ±12 小时翻转）；键盘 Left/Right 跨段导航并整段
+ *               选中（对标 QDateTimeEdit 方向键分段导航）；
  *             - 信号：dateTimeChanged(QDateTime*)/dateChanged/
  *               timeChanged（携带内部 XDateTime 指针，借用）；
  *             - calendarWidget 族：calendarWidget/setCalendarWidget
@@ -37,10 +41,15 @@ extern "C" {
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
 
-/** @brief 编辑分段（对标 QDateTimeEdit::Section，数值一致）。 */
+/** @brief 编辑分段（对标 QDateTimeEdit::Section，数值一致）。
+ * @note  ddd/dddd 星期记号与 dd 同挂 DaySection，h/hh 与 HH 同挂
+ *        HourSection（对标 Qt：星期/12 小时制为内部记号档位，公共
+ *        Section 枚举不单列；stepBy/导航按枚举码分派）。 */
 typedef enum XDateTimeEditSection
 {
     XDateTimeEditSection_NoSection = 0x0000,
+    XDateTimeEditSection_AmPmSection = 0x0001,   /**< 上下午段。 */
+    XDateTimeEditSection_MSecSection = 0x0002,   /**< 毫秒段。 */
     XDateTimeEditSection_SecondSection = 0x0004,
     XDateTimeEditSection_MinuteSection = 0x0008,
     XDateTimeEditSection_HourSection = 0x0010,
@@ -342,10 +351,11 @@ int XDateTimeEdit_sections(const XDateTimeEdit* self);
 #define XDateTimeEdit_displayedSections(self) XDateTimeEdit_sections((self))
 /**
  * @brief      查询显示分段数（对标 QDateTimeEdit::sectionCount）。
- * @details    按 displayFormat 中可识别分段记号（yyyy/MM/dd/HH/mm/ss）
- *             出现次数计数；格式为 NULL 时按默认格式 "yyyy-MM-dd HH:mm:ss"。
+ * @details    按 displayFormat 中可识别分段记号（yyyy/MM/dd/dddd/ddd/
+ *             HH/h/hh/mm/ss/zzz/zz/z/AP(A)）出现次数计数；格式为 NULL
+ *             时按默认格式 "yyyy-MM-dd HH:mm:ss"。
  * @param      self 目标控件；NULL 返回 0。
- * @return     分段个数（0~8）。
+ * @return     分段个数（0~16）。
  */
 int XDateTimeEdit_sectionCount(const XDateTimeEdit* self);
 /**
@@ -359,8 +369,11 @@ int XDateTimeEdit_sectionCount(const XDateTimeEdit* self);
 int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index);
 /**
  * @brief      查询指定分段的显示文本（对标 QDateTimeEdit::sectionText）。
- * @details    按分段记号宽度渲染当前值（年份 4 位、其余 2 位）；分段未
- *             在格式中出现时返回空文本。
+ * @details    按分段记号位宽渲染当前值（年份 4 位、其余数字段 2 位、
+ *             h/z 按 1~3 位档位）；ddd/dddd 返回星期文案（周一..周日/
+ *             星期一..星期日）、AmPmSection 返回「上午/下午」；分段未
+ *             在格式中出现时返回空文本。同码多档（如 "dd ddd"）取格式
+ *             中先出现者。
  * @param      self 目标控件；NULL 返回空文本对象。
  * @param      section 分段枚举值（XDateTimeEditSection）。
  * @return     新建 XString*；调用方负责 XString_delete_base 释放。

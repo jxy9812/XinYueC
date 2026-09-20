@@ -201,6 +201,25 @@ void XInputMethod_setQueryHandler(XInputMethod* self,
                                   XInputMethodQueryHandler handler,
                                   void* userData);
 
+/**
+ * @brief      框架内置焦点对象查询桥接（对标 Qt 向焦点对象自动发送
+ *             QInputMethodQueryEvent 的查询链路）。
+ * @details    由 XGuiApplication_inputMethod() 创建输入法实例时经
+ *             XInputMethod_setQueryHandler 自动注册：把查询转发给焦点控件的
+ *             XWidget_inputMethodQuery 虚槽；焦点对象不是控件（或无焦点）时
+ *             返回 NULL，与 Qt 焦点对象不响应查询的无效 QVariant 语义一致。
+ *             集成方仍可用 XInputMethod_setQueryHandler 覆盖本桥接。
+ * @param      focusObject 当前焦点对象借用指针；可为 NULL。
+ * @param      query 查询项。
+ * @param      argument 查询参数；桥接不使用（原样语义由控件解释）。
+ * @param      userData 未使用（恒以 NULL 注册）。
+ * @return     控件虚槽新建的 XVariant；无结果返回 NULL，调用方负责释放。
+ */
+XVariant* XInputMethod_defaultQueryHandler(XObject* focusObject,
+                                           XInputMethodQuery query,
+                                           const XVariant* argument,
+                                           void* userData);
+
 /* ==================== 输入项状态（对标 QInputMethod） ==================== */
 
 /**

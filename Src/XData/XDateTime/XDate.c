@@ -133,9 +133,11 @@ int XDate_day(const XDate* date) {
 
 int XDate_dayOfWeek(const XDate* date) {
     if (XDate_isNull(date)) return 0;
-    // 1 Jan 1 AD was a Monday (Julian Day 1721426)
-    // Monday = 1, Sunday = 7
-    return (int)((date->m_jd + 1) % 7) + 1;
+    // 儒略日 0 对应周一（0001-01-01 jd=1721426 为周一）；周一=1..周日=7。
+    // 旧式 (jd+1)%7 整体偏移一天（如 2024-03-05 周二被返回为周三）。
+    int64_t wd = date->m_jd % 7;
+    if (wd < 0) wd += 7;
+    return (int)wd + 1;
 }
 
 int XDate_dayOfYear(const XDate* date) {

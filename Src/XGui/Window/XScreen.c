@@ -275,6 +275,9 @@ void XScreen_init(XScreen* self)
     self->m_data->m_depth = 32;
     self->m_data->m_logicalDotsPerInchX = 96.0f;
     self->m_data->m_logicalDotsPerInchY = 96.0f;
+    /* 设备像素比固定 1.0：X11 无 HiDPI 缩放管道，逻辑像素即设备像素，
+       与 Qt xcb 平台（QXcbScreen::devicePixelRatio 无 QT_SCALE_FACTOR 等
+       强制时恒为 1）保持一致；平台层无需也不应回填其它值。 */
     self->m_data->m_devicePixelRatio = 1.0f;
     self->m_data->m_refreshRate = 60.0f;
     self->m_data->m_primaryOrientation =

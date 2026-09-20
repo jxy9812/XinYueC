@@ -15,7 +15,10 @@
  *               childrenRegion/isAncestorOf/window/窗口句柄；
  *             - 可见性与窗口状态：setVisible/show/hide/showNormal/
  *               showMinimized/showMaximized/showFullScreen、windowState、
- *               模态 windowModality、激活 activateWindow、close；
+ *               模态 windowModality、激活 activateWindow、close；窗口
+ *               图标 windowIcon/setWindowIcon（顶层刷新桥接窗口、子控件
+ *               沿父链回链解析）与顶层几何序列化 saveGeometry/
+ *               restoreGeometry（XByteArray 文本承载）；
  *             - 可用性与焦点：setEnabled/isEnabledTo、focusPolicy/setFocus/
  *               clearFocus/hasFocus/focusWidget、focusProxy/setFocusProxy、
  *               nextInFocusChain/previousInFocusChain；
@@ -43,7 +46,9 @@
  *             stackUnder）已按 Qt 6.8 QWidget 行为对齐并通过回归；导航
  *             nextInFocusChain/previousInFocusChain 已提供查询入口；
  *             状态提示、What's This、无障碍名称/描述、窗口角色、输入法提示、
- *             样式表文本和窗口图标文本已提供存储/查询；mask()/setMask()/
+ *             样式表文本和窗口图标文本已提供存储/查询；窗口图标
+ *             windowIcon/setWindowIcon 与顶层几何序列化
+ *             saveGeometry/restoreGeometry 已按 Qt 6.8 对齐；mask()/setMask()/
  *             clearMask() 提供区域遮罩并作用于命中测试与绘制裁剪；
  *             visibleRegion() 提供祖先裁剪的可见区域计算；鼠标/键盘抓取
  *             grabMouse/grabKeyboard 已按同级窗口事件直投语义对齐。未以
@@ -426,9 +431,12 @@ typedef void (*XWidgetEventSlot)(XWidget* self, XEvent* event);
  * @brief XWidget 虚函数表枚举。
  * @details 前 3 个槽位继承自 XClass（Copy/Move/Deinit）；XObject 的
  *          Event/EventFilter/ChildEvent/... 槽位由 XVTABLE_INHERIT_XCLASS
- *          (XObject) 继承；下述 23 个新槽位从 XCLASS_VTABLE_GET_SIZE(XObject)
+ *          (XObject) 继承；下述 26 个新槽位从 XCLASS_VTABLE_GET_SIZE(XObject)
  *          开始追加，分别对标 QWidget 的 paintEvent / resizeEvent / ... /
- *          hideEvent / changeEvent。 */
+ *          hideEvent / changeEvent / touchEvent / tabletEvent，末尾的
+ *          InputMethodQuery 对标
+ *          QWidget::inputMethodQuery 虚函数（仅 XINPUTMETHOD_ON 时启用槽位，
+ *          类初始化按同一条件注册默认实现，各编译配置下槽位序号自洽）。 */
 XCLASS_DEFINE_BEGING(XWidget)
 XCLASS_DEFINE_ENUM(XWidget, PaintEvent) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XWidget, ResizeEvent),
@@ -452,9 +460,14 @@ XCLASS_DEFINE_ENUM(XWidget, MouseMoveEvent),
 XCLASS_DEFINE_ENUM(XWidget, WheelEvent),
 XCLASS_DEFINE_ENUM(XWidget, ShowEvent),
 XCLASS_DEFINE_ENUM(XWidget, HideEvent),
-XCLASS_DEFINE_ENUM(XWidget, ChangeEvent),
-XCLASS_DEFINE_ENUM(XWidget, ContextMenuEvent),
-XCLASS_DEFINE_END(XWidget)
+    XCLASS_DEFINE_ENUM(XWidget, ChangeEvent),
+    XCLASS_DEFINE_ENUM(XWidget, ContextMenuEvent),
+    XCLASS_DEFINE_ENUM(XWidget, TouchEvent),   /**< 触摸事件槽（对标 QWidget::touchEvent）。 */
+    XCLASS_DEFINE_ENUM(XWidget, TabletEvent),  /**< 数位板事件槽（对标 QWidget::tabletEvent）。 */
+#if XINPUTMETHOD_ON
+    XCLASS_DEFINE_ENUM(XWidget, InputMethodQuery),
+#endif /* XINPUTMETHOD_ON */
+    XCLASS_DEFINE_END(XWidget)
 
 /**
  * @brief      XWidget 控件对象；m_class 必须是第一个成员（嵌 XObject）。
@@ -824,6 +837,36 @@ void XWidget_setFixedHeight(XWidget* self, int height);
  */
 void XWidget_adjustSize(XWidget* self);
 
+/* ==================== 窗口几何序列化（对标 QWidget::saveGeometry/restoreGeometry） ==================== */
+
+/**
+ * @brief      序列化顶层窗口几何与窗口状态（对标 QWidget::saveGeometry）。
+ * @details    承载类型沿用仓库惯例（同 XSplitter_saveState）：返回新建的
+ *             XByteArray（文本格式：魔数 "XWG1" + 9 个空格分隔的十进制
+ *             字段，依次为 frameGeometry x/y/w/h、正常态几何 x/y/w/h、
+ *             窗口状态标志 Maximized|FullScreen；对标 Qt 的 magic+version+
+ *             frameGeometry+normalGeometry+savedState，最小化为瞬态不保存）。
+ *             调用方用 XByteArray_delete_base 释放返回对象。
+ * @param      self 目标顶层控件；可为 NULL。
+ * @return     序列化字节串（堆对象，调用方拥有）；非顶层控件、空指针或
+ *             分配失败返回 NULL。
+ */
+#if XByteArray_ON
+XByteArray* XWidget_saveGeometry(const XWidget* self);
+/**
+ * @brief      恢复 saveGeometry 序列化的窗口几何与状态（对标 QWidget::restoreGeometry）。
+ * @details    校验魔数/版本/字段与尾部数据，损坏、截断、尺寸非法或状态位
+ *             越界一律返回 false 且不改动控件。恢复次序对齐 Qt：先恢复
+ *             窗口状态标志（最大化/全屏，含桥接窗口同步），再恢复当前
+ *             几何，最后写回保存时的正常态几何。简化项：不做 Qt 的屏幕
+ *             可用区域夹取，尺寸由 setGeometry 按最小/最大约束钳位。
+ * @param      self 目标顶层控件；可为 NULL。
+ * @param      geometry XWidget_saveGeometry 返回的字节串；可为 NULL。
+ * @return     恢复成功返回 true；非顶层控件、空指针或数据损坏返回 false。
+ */
+bool XWidget_restoreGeometry(XWidget* self, const XByteArray* geometry);
+#endif /* XByteArray_ON */
+
 /* ==================== 尺寸约束与提示（对标 QWidget） ==================== */
 
 /**
@@ -939,7 +982,9 @@ void XWidget_setSizePolicyFull(XWidget* self, const XWidgetSizePolicy* policy);
 
 /* ==================== 控件树与命中测试（对标 QWidget） ==================== */
 
-/** @brief 返回父控件（对标 QWidget::parentWidget）。 */
+/** @brief 返回父控件（对标 QWidget::parentWidget）。
+ * @note  父对象带 is_widget 校验：绕过控件 API 直接挂到非控件 XObject
+ *        之下时返回 NULL，保证调用方可安全解引用返回值。 */
 XWidget* XWidget_parentWidget(const XWidget* self);
 /**
  * @brief      设置父控件（对标 QWidget::setParent(QWidget*, WindowFlags)）。
@@ -1148,6 +1193,32 @@ void XWidget_setWindowTitle(XWidget* self, const XString* title);
 const XString* XWidget_windowIconText(const XWidget* self);
 /** @brief 设置窗口图标文本（对标已废弃的 QWidget::setWindowIconText；仅存储不推送）。 */
 void XWidget_setWindowIconText(XWidget* self, const XString* text);
+/**
+ * @brief      返回窗口图标（对标 QWidget::windowIcon）。
+ * @details    生效语义与 Qt 6.8 一致：本控件显式设置过图标时返回自身图标；
+ *             否则沿父链向顶层传播解析（子控件回链顶层已设图标）；链上
+ *             全部为空时回落应用图标（XGuiApplication_windowIcon），应用
+ *             未设置时返回空图标（XIcon_isNull 为真）。顶层控件的图标
+ *             显示在标题栏（经桥接窗口 XWindow_setIcon 生效）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     生效图标的 XIcon 值副本；内部为共享私有数据的引用计数拷贝，
+ *             调用方使用完毕必须调用 XIcon_deinit_base 释放（契约同
+ *             XWidget_font）；空指针返回空图标。
+ */
+XIcon XWidget_windowIcon(const XWidget* self);
+/**
+ * @brief      设置窗口图标（对标 QWidget::setWindowIcon）。
+ * @details    顶层控件且桥接窗口已创建时立即刷新平台窗口图标
+ *             （XWindow_setIcon，标题栏生效）；窗口未创建时仅存值，惰性
+ *             创建时由 XWidget_createWindow 携带。子控件设置只记录在自身
+ *             （Qt 6 行为：不改动顶层平台图标），并作为 windowIcon 向上
+ *             解析的最近命中点。icon 为 NULL 等价设置空图标（清除）。
+ *             图标内容变化时发射 XWidget_windowIconChanged_signal。
+ * @param      self 目标控件；可为 NULL。
+ * @param      icon 新图标借用指针；可为 NULL 清除图标。
+ * @return     无返回值；空指针不执行操作。
+ */
+void XWidget_setWindowIcon(XWidget* self, const XIcon* icon);
 /** @brief 查询窗口文件路径（对标 QWidget::windowFilePath）。 */
 const XString* XWidget_windowFilePath(const XWidget* self);
 /** @brief 设置窗口文件路径（对标 QWidget::setWindowFilePath）。 */
@@ -1299,6 +1370,19 @@ void XWidget_grabMouse(XWidget* self);
 void XWidget_releaseMouse(XWidget* self);
 /** @brief 查询当前鼠标抓取控件（对标静态 QWidget::mouseGrabber）。 */
 XWidget* XWidget_mouseGrabber(void);
+/**
+ * @brief      设置未处理触摸序列的 touch→mouse 仿真开关
+ *             （对标 Qt AA_SynthesizeMouseForUnhandledTouchEvents）。
+ * @details    默认开启：TouchBegin 未被任何控件接受时合成鼠标按下/
+ *             移动/释放序列（坐标同触摸点，复用鼠标命中/派发管线）；
+ *             控件显式接受触摸事件则该序列不仿真。切换只影响其后开始
+ *             的触摸序列。
+ * @param      on true 开启仿真（默认），false 关闭。
+ * @return     无返回值。
+ */
+void XWidget_setTouchMouseSynthesisEnabled(bool on);
+/** @brief 查询 touch→mouse 仿真开关（默认开启，见 setTouchMouseSynthesisEnabled）。 */
+bool XWidget_touchMouseSynthesisEnabled(void);
 /**
  * @brief      抓取键盘输入（对标 QWidget::grabKeyboard）。
  * @details    抓取后该控件所在顶层窗口的按键事件直接投递给抓取控件，优先于焦点控件。
@@ -1539,8 +1623,19 @@ void XWidget_removeAction(XWidget* self, XAction* action);
 
 #if XINPUTMETHOD_ON
 /**
+ * @brief      控件输入法查询虚槽签名（对标 QWidget::inputMethodQuery）。
+ * @details    框架输入法路径（XInputMethod_defaultQueryHandler）把查询转发
+ *             到焦点控件的 EXWidget_InputMethodQuery 虚槽；控件子类可经
+ *             XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery, ...) 重载
+ *             以返回真实光标/环绕文本等属性。
+ */
+typedef XVariant* (*XWidgetInputMethodQuerySlot)(const XWidget* self,
+                                                 XInputMethodQuery query);
+
+/**
  * @brief      查询输入法所需信息（对标 QWidget::inputMethodQuery）。
- * @details    与 Qt 6.8 QWidget::inputMethodQuery 默认实现一致：
+ * @details    虚槽经 EXWidget_InputMethodQuery 分派；基类默认实现与
+ *             Qt 6.8 QWidget::inputMethodQuery 默认实现一致：
  *             - XInputMethodQuery_ImCursorRectangle：返回 (width/2, 0, 1, height)
  *               的矩形（XRectF 承载，类型 XVariantType_User）；
  *             - XInputMethodQuery_ImInputItemClipRectangle：返回控件矩形的
@@ -1555,8 +1650,10 @@ void XWidget_removeAction(XWidget* self, XAction* action);
  * @note       与 Qt 的差异：ImFont 返回 NULL（XGui 未建立字体变体类型）、
  *             ImAnchorPosition 不回落 ImCursorPosition（无光标位置概念的
  *             基类控件）、ImEnabled 在基类返回 true 而非无效变体。XGui 的
- *             平台输入法路径经 XInputMethodQueryHandler 回调（XInputMethod.h），
- *             集成方可在回调中按 focusObject 是否控件转发到本接口。
+ *             平台输入法路径经 XInputMethodQueryHandler 回调（XInputMethod.h）；
+ *             XGuiApplication_inputMethod() 自动注册的
+ *             XInputMethod_defaultQueryHandler 按 focusObject 是否控件把
+ *             查询转发到本接口（对标 Qt 向焦点对象发送 QInputMethodQueryEvent）。
  */
 XVariant* XWidget_inputMethodQuery(const XWidget* self, XInputMethodQuery query);
 #endif /* XINPUTMETHOD_ON */

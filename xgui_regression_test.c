@@ -4334,8 +4334,12 @@ static void test_painter_task211_contract(void)
         {
             XPainterPath back;
             XPainter_clipPath(&painter, &back);
-            expect_true(back.m_elementCount == 0,
-                        "t211: clipPath 返回空路径（已知偏差）");
+            /* B4 落地后 clipPath() 返回所设路径副本（对标 QPainter::clipPath）；
+               原"返回空路径（已知偏差）"断言随偏差一并移除。 */
+            expect_true(back.m_elementCount == path.m_elementCount &&
+                        XPainterPath_fillRule(&back) ==
+                            XPainterPath_fillRule(&path),
+                        "t211: clipPath 返回所设路径副本");
             XPainterPath_deinit(&back);
         }
         XPainterPath_deinit(&path);
@@ -27870,8 +27874,265 @@ static void test_datetimeedit_contract(void)
 
     XDateTimeEdit_delete_base(edit);
 }
+
+/* ==================== XDateTimeEdit 扩展格式引擎（对标 Qt ddd/hh/zzz/AP） ==================== */
+
+static void test_datetimeedit_format_ext(void)
+{
+    XDateTimeEdit* edit = XDateTimeEdit_create(NULL, 0);
+    XDateTime dt = XDateTime_create();
+    XString* txt;
+
+    dt_expect(edit != NULL, "dtext: 创建");
+    XDate_setDate(&dt.m_date, 2024, 3, 5); /* 2024-03-05 为周二 */
+    XTime_setHMS(&dt.m_time, 15, 5, 9, 45);
+    XDateTimeEdit_setDateTime(edit, &dt);
+    XDateTimeEdit_setDisplayFormat(edit, "yyyy-MM-dd hh:mm:ss.zzz dddd AP");
+    dt_expect(XDateTimeEdit_sectionCount(edit) == 9, "dtext: 9 分段");
+    dt_expect(XDateTimeEdit_sectionAt(edit, 6) ==
+              (int)XDateTimeEditSection_MSecSection, "dtext: sectionAt(6)=MSec");
+    dt_expect(XDateTimeEdit_sectionAt(edit, 7) ==
+              (int)XDateTimeEditSection_DaySection, "dtext: dddd 挂 DaySection");
+    dt_expect(XDateTimeEdit_sectionAt(edit, 8) ==
+              (int)XDateTimeEditSection_AmPmSection, "dtext: sectionAt(8)=AmPm");
+
+    txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_HourSection);
+    dt_expect(txt && strcmp(XString_toUtf8(txt), "03") == 0,
+              "dtext: hh 15 点折 03");
+    if (txt) XString_delete_base(txt);
+    txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_MSecSection);
+    dt_expect(txt && strcmp(XString_toUtf8(txt), "045") == 0,
+              "dtext: zzz=045");
+    if (txt) XString_delete_base(txt);
+    txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_AmPmSection);
+    dt_expect(txt && strcmp(XString_toUtf8(txt), "下午") == 0,
+              "dtext: 15 点=下午");
+    if (txt) XString_delete_base(txt);
+
+    /* dddd 星期文案（独立格式验证：DaySection 取格式中先出现者，
+       9 段长格式中 dd 在前故此处单独验证）。 */
+    XDateTimeEdit_setDisplayFormat(edit, "dddd");
+    txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_DaySection);
+    dt_expect(txt && strcmp(XString_toUtf8(txt), "星期二") == 0,
+              "dtext: dddd=星期二");
+    if (txt) XString_delete_base(txt);
+
+    /* z 尾零截断（对标 qlocale：毫秒按秒小数处理）。 */
+    XTime_setHMS(&dt.m_time, 0, 0, 0, 200);
+    XDateTimeEdit_setDateTime(edit, &dt);
+    XDateTimeEdit_setDisplayFormat(edit, "z");
+    txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_MSecSection);
+    dt_expect(txt && strcmp(XString_toUtf8(txt), "2") == 0,
+              "dtext: z 截尾零 ms200=2");
+    if (txt) XString_delete_base(txt);
+
+    /* 毫秒步进跨秒进位（999+1 经 epoch 进秒）+ 上下午步进翻转。 */
+    XTime_setHMS(&dt.m_time, 10, 20, 30, 999);
+    XDateTimeEdit_setDateTime(edit, &dt);
+    XDateTimeEdit_setDisplayFormat(edit, "HH:mm:ss.zzz");
+    XDateTimeEdit_setSelectedSection(edit, XDateTimeEditSection_MSecSection);
+    XAbstractSpinBox_stepUp((XAbstractSpinBox*)edit);
+    {
+        XTime t = XDateTimeEdit_time(edit);
+        dt_expect(XTime_second(&t) == 31 && XTime_msec(&t) == 0,
+                  "dtext: 毫秒步进跨秒进位");
+    }
+    XDateTimeEdit_setDisplayFormat(edit, "h ap");
+    XTime_setHMS(&dt.m_time, 11, 0, 0, 0);
+    XDateTimeEdit_setDateTime(edit, &dt);
+    XDateTimeEdit_setSelectedSection(edit, XDateTimeEditSection_AmPmSection);
+    XAbstractSpinBox_stepUp((XAbstractSpinBox*)edit);
+    {
+        XTime t = XDateTimeEdit_time(edit);
+        dt_expect(XTime_hour(&t) == 23, "dtext: 上下午步进 +12h");
+    }
+
+    /* Left/Right 跨段导航（端点停驻）。 */
+    {
+        XKeyEvent ke;
+        XDateTimeEdit_setDisplayFormat(edit, "yyyy-MM-dd hh:mm:ss.zzz AP");
+        XDateTimeEdit_setCurrentSectionIndex(edit, 0);
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Right,
+                       XKeyboardModifier_NoModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        dt_expect(XDateTimeEdit_currentSection(edit) ==
+                  (int)XDateTimeEditSection_MonthSection,
+                  "dtext: Right 移到月段");
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Left,
+                       XKeyboardModifier_NoModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, XKey_Left,
+                       XKeyboardModifier_NoModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        dt_expect(XDateTimeEdit_currentSection(edit) ==
+                  (int)XDateTimeEditSection_YearSection,
+                  "dtext: Left 端点停驻年段");
+    }
+    XDateTimeEdit_delete_base(edit);
+}
+
+/* ==================== XComboBox 补全/插入策略（对标 QCompleter/insertPolicy） ==================== */
+
+static void test_combobox_completer_policy(void)
+{
+    XComboBox* combo = XComboBox_create(NULL, 0);
+    XString* a = XString_create_utf8("Alpha");
+    XString* b = XString_create_utf8("Beta");
+    XString* g = XString_create_utf8("Gamma");
+    XString* zz = XString_create_utf8("Zz");
+    XComboBox_addItem(combo, a);
+    XComboBox_addItem(combo, b);
+    XComboBox_addItem(combo, g);
+
+    dt_expect(XComboBox_insertPolicy(combo) ==
+              (int)XComboBoxInsertPolicy_InsertAtBottom, "cbp: 默认 InsertAtBottom");
+    dt_expect(XComboBox_isCompleterMode(combo) == false, "cbp: 补全默认关");
+
+    /* 补全过滤：键入 'G' 只剩 Gamma。 */
+    XComboBox_setEditable(combo, true);
+    XComboBox_setCompleterMode(combo, true);
+    dt_expect(XComboBox_isCompleterMode(combo) == true, "cbp: 补全开启");
+    {
+        XKeyEvent k;
+        XKeyEvent_init(&k, XEVENT_TYPE_KEY_PRESS, 'G',
+                       XKeyboardModifier_NoModifier);
+        XWidget_event_base((XWidget*)XComboBox_lineEdit(combo), (XEvent*)&k);
+    }
+    dt_expect(XComboBox_popupVisible(combo), "cbp: 前缀命中弹层");
+    dt_expect(XListView_isRowHidden(XComboBox_view(combo), 0) &&
+              XListView_isRowHidden(XComboBox_view(combo), 1) &&
+              !XListView_isRowHidden(XComboBox_view(combo), 2),
+              "cbp: 过滤只留 Gamma");
+    {
+        XKeyEvent k;
+        XKeyEvent_init(&k, XEVENT_TYPE_KEY_PRESS, XKey_Return,
+                       XKeyboardModifier_NoModifier);
+        XWidget_event_base((XWidget*)XComboBox_lineEdit(combo), (XEvent*)&k);
+    }
+    dt_expect(!XComboBox_popupVisible(combo), "cbp: Enter 采纳收层");
+    dt_expect(XComboBox_currentIndex(combo) == 2, "cbp: 采纳置当前 Gamma");
+    dt_expect(strcmp(XComboBox_currentText_2(combo), "Gamma") == 0,
+              "cbp: 采纳回填文本");
+
+    /* 无匹配不弹层；Esc 收层不改文本。 */
+    {
+        XKeyEvent k;
+        XKeyEvent_init(&k, XEVENT_TYPE_KEY_PRESS, 'Z',
+                       XKeyboardModifier_NoModifier);
+        XWidget_event_base((XWidget*)XComboBox_lineEdit(combo), (XEvent*)&k);
+    }
+    dt_expect(!XComboBox_popupVisible(combo), "cbp: 无匹配不弹层");
+
+    /* InsertAtBottom：新文本回车追加。 */
+    XComboBox_setCompleterMode(combo, false);
+    XComboBox_setInsertPolicy(combo, XComboBoxInsertPolicy_InsertAtBottom);
+    XLineEdit_setText(XComboBox_lineEdit(combo), "Zz");
+    {
+        XKeyEvent k;
+        XKeyEvent_init(&k, XEVENT_TYPE_KEY_PRESS, XKey_Return,
+                       XKeyboardModifier_NoModifier);
+        XWidget_event_base((XWidget*)XComboBox_lineEdit(combo), (XEvent*)&k);
+    }
+    dt_expect(XComboBox_count(combo) == 4, "cbp: InsertAtBottom 追加");
+    dt_expect(strcmp(XComboBox_itemText_2(combo, 3), "Zz") == 0,
+              "cbp: 追加在尾部");
+    (void)zz;
+
+    /* NoInsert：完整已存在文本回车只置当前项不插入。 */
+    XComboBox_setInsertPolicy(combo, XComboBoxInsertPolicy_NoInsert);
+    XLineEdit_setText(XComboBox_lineEdit(combo), "Alpha");
+    {
+        XKeyEvent k;
+        XKeyEvent_init(&k, XEVENT_TYPE_KEY_PRESS, XKey_Return,
+                       XKeyboardModifier_NoModifier);
+        XWidget_event_base((XWidget*)XComboBox_lineEdit(combo), (XEvent*)&k);
+    }
+    dt_expect(XComboBox_count(combo) == 4, "cbp: NoInsert 不插入");
+    dt_expect(XComboBox_currentIndex(combo) == 0, "cbp: 命中置当前 Alpha");
+
+    XString_delete_base((XClass*)a);
+    XString_delete_base((XClass*)b);
+    XString_delete_base((XClass*)g);
+    XString_delete_base((XClass*)zz);
+    XComboBox_delete_base(combo);
+}
+
+/* ==================== XWidget windowIcon/saveGeometry（对标 QWidget） ==================== */
+
+static void test_xwidget_icon_geometry(void)
+{
+    XWidget* top = XWidget_create(NULL, 0);
+    XWidget* child = XWidget_create(top, 0);
+    XIcon icon;
+    XPixmap pm;
+    XByteArray* saved;
+
+    dt_expect(top != NULL && child != NULL, "wig: 创建");
+    {
+        XIcon none = XWidget_windowIcon(top);
+        dt_expect(XIcon_isNull(&none), "wig: 默认空图标");
+        XIcon_deinit_base(&none);
+    }
+
+    XPixmap_init_ex(&pm, 4, 4);
+    XIcon_init_pixmap(&icon, &pm);
+    XWidget_setWindowIcon(top, &icon);
+    {
+        XIcon got = XWidget_windowIcon(child);
+        dt_expect(!XIcon_isNull(&got) &&
+                  XIcon_cacheKey(&got) == XIcon_cacheKey(&icon),
+                  "wig: 子控件回链顶层图标");
+        XIcon_deinit_base(&got);
+    }
+    XIcon_deinit_base(&icon);
+
+    /* 几何存取往返。 */
+    XWidget_setGeometry(top, 10, 20, 300, 200);
+    saved = XWidget_saveGeometry(top);
+    dt_expect(saved != NULL, "wig: saveGeometry 非空");
+    XWidget_setGeometry(top, 0, 0, 100, 100);
+    dt_expect(XWidget_restoreGeometry(top, saved), "wig: restore 成功");
+    dt_expect(XWidget_geometry(top).x == 10 && XWidget_geometry(top).y == 20 &&
+              XWidget_geometry(top).width == 300 &&
+              XWidget_geometry(top).height == 200,
+              "wig: 几何恢复");
+    {
+        XByteArray* again = XWidget_saveGeometry(top);
+        dt_expect(again &&
+                  XVector_size_base((const XContainer*)again) ==
+                  XVector_size_base((const XContainer*)saved) &&
+                  memcmp(XByteArray_data(again),
+                         XByteArray_data(saved),
+                         (size_t)XVector_size_base((const XContainer*)saved)) == 0,
+                  "wig: 往返后序列化逐字节一致");
+        if (again) XByteArray_delete_base(again);
+    }
+
+    /* 损坏数据拒绝且零副作用。 */
+    {
+        XByteArray* bad = XByteArray_create_utf8("BAD1 1 2 3 4 5 6 7 8 9");
+        dt_expect(!XWidget_restoreGeometry(top, bad), "wig: 魔数错误拒绝");
+        XByteArray_delete_base(bad);
+        bad = XByteArray_create_utf8("XWG1 1 2 3");
+        dt_expect(!XWidget_restoreGeometry(top, bad), "wig: 字段不足拒绝");
+        XByteArray_delete_base(bad);
+        dt_expect(XWidget_geometry(top).x == 10 &&
+                  XWidget_geometry(top).width == 300,
+                  "wig: 拒绝后几何未被改动");
+    }
+
+    /* 非顶层不支持。 */
+    dt_expect(XWidget_saveGeometry(child) == NULL, "wig: 子控件 save 返回 NULL");
+    dt_expect(!XWidget_restoreGeometry(child, saved),
+              "wig: 子控件 restore 失败");
+
+    if (saved) XByteArray_delete_base(saved);
+    XWidget_delete_base(child);
+    XWidget_delete_base(top);
+}
 /* ==================== XDateTimeEdit/XFontComboBox 已在上方;下面补录 ===
  * QFontComboBox 契约测试（对标 QFontComboBox） ==================== */
+
 
 static void fcb_expect(bool cond, const char* what)
 {
@@ -30396,6 +30657,9 @@ static void test_xgui_widgets(void)
     test_abstractscrollarea_ext_contract();
     test_small_widgets_contract();
     test_datetimeedit_contract();
+    test_datetimeedit_format_ext();
+    test_combobox_completer_policy();
+    test_xwidget_icon_geometry();
     test_phase31_p1_contract();
     test_phase32_p2_contract();
     test_fontcombobox_contract();

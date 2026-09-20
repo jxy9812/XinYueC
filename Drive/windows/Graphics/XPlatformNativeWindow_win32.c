@@ -1013,6 +1013,16 @@ bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
     return true;
 }
 
+bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
+{
+    /* 能力不足的标志子集默认 no-op 保持链接（TODO：对标
+     * QWindowsWindow::setWindowFlags，用 SetWindowLong 重设
+     * WS_OVERLAPPEDWINDOW/WS_EX_TOOLWINDOW/WS_EX_TOPMOST/
+     * WS_EX_TRANSPARENT/WS_EX_NOACTIVATE 等风格位落地提示位）。 */
+    (void)window; (void)flags;
+    return false;
+}
+
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     XWNPendingEntry* entry;

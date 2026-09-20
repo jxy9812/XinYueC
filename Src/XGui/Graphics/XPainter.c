@@ -244,6 +244,15 @@ static void xgpu_sync_readback_if_requested(XPainter* self)
 
 static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
                                    int x2, int y2);
+static bool painterRaster_drawLineDevice(XPainter* self, int x1, int y1,
+                                         int x2, int y2);
+#if XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON
+/** @brief 线段抗锯齿光栅（定义在 painterFillContoursAntialiased 之后，
+ *         复用填充 AA 通道的覆盖合成入口）。 */
+static bool painterRaster_drawLineAntialiased(XPainter* self, int ix1,
+                                              int iy1, int ix2, int iy2,
+                                              int width);
+#endif /* XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON */
 
 /** @brief 画线局部提交的命令参数（设备坐标端点）。 */
 typedef struct PainterGpuLineArgs
@@ -254,12 +263,14 @@ typedef struct PainterGpuLineArgs
     int m_y2; /**< 端点 2 Y。 */
 } PainterGpuLineArgs;
 
-/** @brief 画线局部提交回调：重入软件实现（m_gpuActive 已关闭）。 */
-static void painterGpuDrawLineCommand(XPainter* self, void* userData)
+/** @brief 画线局部提交回调：重入软件实现（m_gpuActive 已关闭）。
+ *  @note  参数与重入目标均为设备坐标端点（painterRaster_drawLineDevice），
+ *         不再经过用户→设备映射；用户坐标入口见 painterRaster_drawLine。 */
+static void painterGpuDrawLineDeviceCommand(XPainter* self, void* userData)
 {
     const PainterGpuLineArgs* args = (const PainterGpuLineArgs*)userData;
-    painterRaster_drawLine(self, args->m_x1, args->m_y1,
-                           args->m_x2, args->m_y2);
+    painterRaster_drawLineDevice(self, args->m_x1, args->m_y1,
+                                 args->m_x2, args->m_y2);
 }
 
 /**
@@ -353,6 +364,17 @@ static void painterGpuDrawTextCommand(XPainter* self, void* userData)
 
 static bool painterGpuApplyStateClip(XPainter* self);
 
+/* ========== 路径裁剪（B4：精确路径光栅裁剪）前置声明 ========== */
+/* 对标 Qt raster 引擎的位图裁剪：路径在 setClipPath 时按当时变换
+   冻结到设备空间，绘制期经逐像素覆盖掩码与 clipRect/clipRegion 做
+   与运算。掩码按 (状态版本号, 目标图像) 惰性重建；未设置路径时
+   putPixel 只多一次布尔判定（零开销）。 */
+static bool painterClipPathActive(const XPainter* self);
+static void painterClipMaskCacheReset(XPainter* self);
+static uint8_t painterClipMaskCoverageAt(XPainter* self, int x, int y);
+static bool xpainterPathCopy(XPainterPath* dst, const XPainterPath* src);
+static void painterClipPathStateClear(XPainterState* state);
+
 static bool painterGpuSubmitSoftwareCommand(XPainter* self,
     void (*drawCommand)(XPainter* self, void* userData), void* userData)
 {
@@ -419,6 +441,12 @@ static bool painterGpuApplyStateClip(XPainter* self)
     XRect clipDevice;
     if (!self || !self->m_gpuBackend) return false;
     hasClip = self->m_state.m_hasClip;
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    /* 精确路径裁剪：scissor 只能表达矩形，路径掩码由软件光栅完成，
+       返回 false 让调用方整帧走既有软件局部提交模式。 */
+    if (self->m_state.m_hasClipPath)
+        return false;
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 #if XPAINTER_CLIP_REGION_ON
     if (hasClip && !XRegion_isEmpty(&self->m_state.m_clipRegion) &&
         self->m_state.m_clipRegion.count > 1)
@@ -500,6 +528,7 @@ static void painterDefaultState(XPainterState* state)
     state->m_penStyle = XPainterPenStyle_SolidLine;
     state->m_penCap = XPainterPenCapStyle_SquareCap;
     state->m_penJoin = XPainterPenJoinStyle_BevelJoin;
+    state->m_miterLimit = 2.0f; /* 对标 QPen 默认 miterLimit。 */
 #endif
     state->m_penColor = 0xff000000u;   /* 默认黑色不透明画笔 */
     state->m_penWidth = 1;
@@ -1103,6 +1132,13 @@ static bool painterStatePush(XPainter* self)
                 XRegion_init(&self->m_stateStack[i].m_clipRegion);
         }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+        {
+            int i;
+            for (i = 0; i < self->m_stateCapacity; ++i)
+                self->m_stateStack[i].m_clipPath = NULL;
+        }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
     }
     else if (self->m_stateCount >= self->m_stateCapacity)
     {
@@ -1122,6 +1158,13 @@ static bool painterStatePush(XPainter* self)
                 XRegion_init(&self->m_stateStack[i].m_clipRegion);
         }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+        {
+            int i;
+            for (i = oldCapacity; i < newCapacity; ++i)
+                self->m_stateStack[i].m_clipPath = NULL;
+        }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
     }
     {
         XFont fontCopy;
@@ -1131,10 +1174,47 @@ static bool painterStatePush(XPainter* self)
            暂存它，避免状态结构体赋值覆盖掉这块可复用存储。 */
         XRegion reusableRegion = saved->m_clipRegion;
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+        /* 裁剪路径为堆对象指针：先暂存槽位旧路径，结构体赋值后为当前
+           状态的路径建立独立深拷贝（对标 Qt QPainterState 保存完整
+           clipPath；浅拷贝会导致双重释放）。 */
+        XPainterPath* slotClipPath = saved->m_clipPath;
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
         *saved = self->m_state;
         XFont_init(&fontCopy);
         XCopy(&fontCopy, &saved->m_font);
         saved->m_font = fontCopy;
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+        saved->m_clipPath = NULL;
+        if (self->m_state.m_clipPath)
+        {
+            saved->m_clipPath =
+                (XPainterPath*)XMalloc_System(sizeof(XPainterPath));
+            if (saved->m_clipPath)
+                XPainterPath_init(saved->m_clipPath);
+            if (!saved->m_clipPath ||
+                !xpainterPathCopy(saved->m_clipPath,
+                                  self->m_state.m_clipPath))
+            {
+                /* 与区域拷贝失败同口径：拒绝一次不完整的 save()。
+                   saved->m_font 已由本次保存初始化，先释放。 */
+                if (saved->m_clipPath)
+                {
+                    XPainterPath_deinit(saved->m_clipPath);
+                    XFree_System(saved->m_clipPath);
+                    saved->m_clipPath = NULL;
+                }
+                saved->m_clipPath = slotClipPath;
+                XFont_deinit_base(&saved->m_font);
+                return false;
+            }
+        }
+        if (slotClipPath)
+        {
+            XPainterPath_deinit(slotClipPath);
+            XFree_System(slotClipPath);
+        }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
         saved->m_clipRegion = reusableRegion;
         XRegion_copy(&self->m_state.m_clipRegion, &saved->m_clipRegion);
@@ -1167,11 +1247,45 @@ static void painterStatePop(XPainter* self)
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
         XRegion currentRegion = self->m_state.m_clipRegion;
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+        /* 与区域相同的所有权交换：当前状态路径指针先摘下（随后归还
+           栈槽复用），弹出状态路径深拷贝回当前状态——两次 save() 间
+           修改路径不会穿透到已保存副本（对标 Qt restore 恢复 clipPath）。 */
+        XPainterPath* currentClipPath = self->m_state.m_clipPath;
+        XPainterPath* restoredClipPath = NULL;
+        if (saved->m_clipPath)
+        {
+            restoredClipPath =
+                (XPainterPath*)XMalloc_System(sizeof(XPainterPath));
+            if (restoredClipPath)
+                XPainterPath_init(restoredClipPath);
+            if (restoredClipPath &&
+                xpainterPathCopy(restoredClipPath, saved->m_clipPath))
+            {
+                /* 拷贝成功。 */
+            }
+            else
+            {
+                /* 内存不足：放弃路径裁剪（不裁=不吞内容，保守降级），
+                   避免共享指针引发双重释放。 */
+                if (restoredClipPath)
+                {
+                    XPainterPath_deinit(restoredClipPath);
+                    XFree_System(restoredClipPath);
+                }
+                restoredClipPath = NULL;
+            }
+        }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
         XFont_init(&fontCopy);
         XCopy(&fontCopy, &saved->m_font);
         self->m_state = *saved;
         self->m_state.m_font = fontCopy;
         XFont_deinit_base(&saved->m_font);
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+        self->m_state.m_clipPath = restoredClipPath;
+        saved->m_clipPath = currentClipPath;
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
         /* restore() 弹出的区域转移给当前状态；当前状态原有区域放回
            栈槽，两个对象都保持已分配容量，供后续 save() 继续复用。 */
@@ -1200,6 +1314,17 @@ static void painterStateStackRelease(XPainter* self)
     for (i = 0; i < self->m_stateCapacity; ++i)
         XRegion_deinit(&self->m_stateStack[i].m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    for (i = 0; i < self->m_stateCapacity; ++i)
+    {
+        if (self->m_stateStack[i].m_clipPath)
+        {
+            XPainterPath_deinit(self->m_stateStack[i].m_clipPath);
+            XFree_System(self->m_stateStack[i].m_clipPath);
+            self->m_stateStack[i].m_clipPath = NULL;
+        }
+    }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
     for (i = 0; i < self->m_stateCount; ++i)
         XFont_deinit_base(&self->m_stateStack[i].m_font);
     XFree_System(self->m_stateStack);
@@ -1601,6 +1726,13 @@ static void painterRaster_putPixel(XPainter* self, int x, int y, uint32_t color)
             y >= state->m_clipRect.y + state->m_clipRect.height)
             return;
 #endif /* XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_PATH_ON
+        /* 精确路径裁剪（对标 Qt raster 位图裁剪）：路径覆盖掩码为 0 的
+           像素拒绝写入。未设置路径时 m_hasClipPath 恒为 false，此处
+           仅一次布尔判定。 */
+        if (state->m_hasClipPath && painterClipMaskCoverageAt(self, x, y) == 0u)
+            return;
+#endif /* XPAINTER_PATH_ON */
     }
 #endif /* XPAINTER_CLIP_ON */
     /* 表面裁剪兜底：paintEvent 内 setClipRect(Replace) 也无法把像素
@@ -1897,6 +2029,30 @@ static bool painterRaster_drawAxisLine(XPainter* self, int x1, int y1,
 }
 
 /**
+ * @brief      计算画笔线宽在设备空间的缩放系数（对标 Qt 非 cosmetic 画笔）。
+ * @details    对标 Qt：QPen 默认非 cosmetic，线宽随世界变换缩放（cosmetic
+ *             画笔才固定为 1 设备像素）。缩放系数取变换作用于两个单位向量
+ *             的平均长度：scale=(|M·(1,0)|+|M·(0,1)|)/2
+ *             =(sqrt(m11²+m12²)+sqrt(m21²+m22²))/2。
+ *             平移/单位变换结果恒为 1.0f，调用方保持原始线宽走原快路径；
+ *             退化矩阵（长度为 0 或非有限值）按 cosmetic 口径返回 0，
+ *             由调用方回退为 1 设备像素。
+ */
+static float painterPenWidthScale(const XImageTransform* transform)
+{
+    float lengthX;
+    float lengthY;
+    if (!transform) return 0.0f;
+    lengthX = sqrtf(transform->m11 * transform->m11 +
+                    transform->m12 * transform->m12);
+    lengthY = sqrtf(transform->m21 * transform->m21 +
+                    transform->m22 * transform->m22);
+    if (!isfinite(lengthX) || !isfinite(lengthY))
+        return 0.0f;
+    return (lengthX + lengthY) * 0.5f;
+}
+
+/**
  * @brief      软件光栅画线：变换端点后沿主轴方向偏移绘制粗线。
  */
 static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
@@ -1904,11 +2060,6 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
 {
     XImageTransform transform;
     float fx1, fy1, fx2, fy2;
-    int ix1, iy1, ix2, iy2;
-    int dx, dy;
-    int64_t adx, ady;
-    int width, start, end, k;
-    uint32_t color;
     if (!self || !self->m_image) return false;
     if (!painterEffectiveTransform(&self->m_state, &transform))
         return false;
@@ -1917,10 +2068,33 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
         !painterMapPoint(&transform,
                          (float)x2, (float)y2, &fx2, &fy2))
         return false;
-    ix1 = painterRound(fx1);
-    iy1 = painterRound(fy1);
-    ix2 = painterRound(fx2);
-    iy2 = painterRound(fy2);
+    /* 用户坐标映射到设备空间后取整，再交给设备坐标画线实现；浮点
+       入口（QLineF 等价）见 XPainter_drawLine_3，可保留映射前的
+       浮点精度。 */
+    return painterRaster_drawLineDevice(self, painterRound(fx1),
+                                        painterRound(fy1),
+                                        painterRound(fx2),
+                                        painterRound(fy2));
+}
+
+/**
+ * @brief      设备坐标画线（端点已映射并取整到设备像素网格）。
+ * @details    从 painterRaster_drawLine 拆出的公共尾部：包围盒裁剪、
+ *             笔宽随变换缩放、GPU 轴对齐快速路径与软件 Bresenham。
+ *             供整数入口（映射+取整后）与浮点入口（drawLine_3，保留
+ *             浮点精度映射）共用，保证两条入口逐像素一致。
+ */
+static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
+                                         int ix2, int iy2)
+{
+    XImageTransform transform;
+    int dx, dy;
+    int64_t adx, ady;
+    int width, start, end, k;
+    uint32_t color;
+    if (!self || !self->m_image) return false;
+    if (!painterEffectiveTransform(&self->m_state, &transform))
+        return false;
     /* 线段包围盒（含笔宽半径外扩）完全在有效裁剪外：零像素可见，
        跳过整段 Bresenham 走查（网格线/边框/序列线高频场景）。 */
     {
@@ -1934,6 +2108,22 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
         int miny;
         int maxy;
         width = self->m_state.m_penWidth;
+        /* 非 cosmetic 画笔：线宽按有效变换的实际缩放系数放大（对标
+           QPainter：pen 不是 cosmetic 时笔宽随世界变换缩放）。平移/
+           单位变换系数恒为 1.0f，保持原始线宽与既有快路径零回归；
+           系数为 0（退化矩阵）或笔宽为 0 时按 cosmetic 处理，保持
+           1 设备像素。 */
+        if (width >= 1)
+        {
+            float widthScale = painterPenWidthScale(&transform);
+            if (widthScale <= 0.0f)
+                width = 1;
+            else if (widthScale != 1.0f)
+            {
+                int scaled = painterRound((float)width * widthScale);
+                width = scaled >= 1 ? scaled : 1;
+            }
+        }
         if (width < 1) width = 1;
         half = width / 2 + 1;
         minx = (ix1 < ix2 ? ix1 : ix2) - half;
@@ -1970,6 +2160,24 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
     color = painterApplyOpacity(self->m_state.m_penColor, self->m_state.m_opacity);
     dx = ix2 - ix1;
     dy = iy2 - iy1;
+#if XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON
+    /* 对标 Qt raster 引擎（qt_rasterize → QRasterPaintEngine::drawLines
+       的 AA 管线）：Antialiasing 提示开启时线段走浮点覆盖率光栅化。
+       性能门控约定（本批次时间盒）：
+       - 仅斜线（dx!=0 且 dy!=0）进入 AA 分支；水平/垂直整数线保持
+         既有硬边路径逐像素一致（轴向零回归：轴线像素覆盖本已饱和，
+         开 AA 只有开销没有视觉收益）；
+       - 零长度线（drawPoint 落地形态）与 GPU 轴对齐快速路径不受影响；
+       - 虚线在用户域拆段（painterDrawLineStyled）后逐段进入本分支，
+         间隙像素不被触碰，仍是背景；
+       - hint 关闭时不进入本分支，Bresenham 路径逐字节零回归。 */
+    if ((self->m_state.m_renderHints & XPainterRenderHint_Antialiasing) != 0u &&
+        dx != 0 && dy != 0)
+    {
+        return painterRaster_drawLineAntialiased(self, ix1, iy1, ix2, iy2,
+                                                 width);
+    }
+#endif /* XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
     /* 画线 GPU 快速路径：Solid 笔 + 非 RoundCap + 轴对齐（水平/垂直）
        线段以半开像素范围 quad 提交——与软件 drawAxisLine 的像素范围
@@ -1988,7 +2196,13 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
         roundCap = self->m_state.m_penCap == XPainterPenCapStyle_RoundCap;
 #endif /* XPAINTER_PENSTYLE_ON */
         if (solidLine && !roundCap && width >= 1 &&
-            ((dx == 0) != (dy == 0)))
+            ((dx == 0) != (dy == 0)) &&
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+            /* 路径裁剪：scissor 无法表达曲线边界，轴对齐 quad 快速路径
+               禁用，落入下方软件局部提交（putPixel 掩码与运算）。 */
+            !painterClipPathActive(self) &&
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+            true)
         {
             uint32_t premul;
             unsigned a = (color >> 24) & 0xffu;
@@ -2045,11 +2259,12 @@ static bool painterRaster_drawLine(XPainter* self, int x1, int y1,
                 self->m_state.m_compositionMode ==
                     XPainterCompositionMode_SourceOver);
         }
-        /* 斜线/虚线/圆头/零尺寸点：软件光栅局部提交（不整帧降级）。 */
+        /* 斜线/虚线/圆头/零尺寸点：软件光栅局部提交（不整帧降级）。
+           端点已是设备坐标，重入 painterRaster_drawLineDevice 不再映射。 */
         {
-            PainterGpuLineArgs args = { x1, y1, x2, y2 };
+            PainterGpuLineArgs args = { ix1, iy1, ix2, iy2 };
             return painterGpuSubmitSoftwareCommand(
-                self, painterGpuDrawLineCommand, &args);
+                self, painterGpuDrawLineDeviceCommand, &args);
         }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -2215,6 +2430,12 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
                 if (state->m_clipRect.width <= 0 ||
                     state->m_clipRect.height <= 0)
                     clipOk = false;
+#if XPAINTER_PATH_ON
+                /* 路径裁剪非矩形快路径：GPU scissor 无法表达 → 软件局部
+                   提交（沿用既有 GPU 局部提交模式）。 */
+                if (state->m_hasClipPath)
+                    clipOk = false;
+#endif /* XPAINTER_PATH_ON */
             }
 #endif /* XPAINTER_CLIP_ON */
             compOk =
@@ -2300,6 +2521,12 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
 #else
             spanFill = true;
 #endif /* XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_PATH_ON
+            /* 精确路径裁剪：整段 fillRect 会越过曲线边界，退回逐像素
+               putPixel（其内做掩码与运算）。 */
+            if (state->m_hasClipPath)
+                spanFill = false;
+#endif /* XPAINTER_PATH_ON */
         }
         if (blendFill && state->m_hasClip)
         {
@@ -2308,6 +2535,10 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
 #else
             blendFill = true;
 #endif /* XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_PATH_ON
+            if (state->m_hasClipPath)
+                blendFill = false;
+#endif /* XPAINTER_PATH_ON */
         }
 #endif /* XPAINTER_CLIP_ON */
         if (spanFill || blendFill)
@@ -2548,6 +2779,74 @@ static bool painterRaster_blitImageSameFormat(XPainter* self, const XImage* imag
                                          width, height, opacity, mode);
 }
 
+/**
+ * @brief      双线性采样源图像（对标 Qt SmoothPixmapTransform 渲染提示）。
+ * @details    fx/fy 为连续源坐标，读取 floor(fx),floor(fy) 起的 2x2 邻域
+ *             并按小数权重加权：p = Σ p(i,j)·wx(i)·wy(j)（wx/wy 为该轴
+ *             小数部分，四角权重 (1-w)(1-h)、w(1-h)、(1-w)h、wh）。
+ *             邻域坐标逐轴钳位到 [minX,maxX]×[minY,maxY]——右/下边缘
+ *             复制相邻内点，与 Qt raster 引擎 fetchBilinear 的边界处理
+ *             一致。像素统一经 XImage_pixel 读取（全部 XImage 像素格式
+ *             均转换为直通 ARGB32），插值也在直通 ARGB 空间进行，与既有
+ *             putPixel/透明度合成管线的颜色语义保持一致。
+ * @param image 源图像（非空）。
+ * @param fx/fy 连续源坐标。
+ * @param minX/minY/maxX/maxY 邻域钳位范围（闭区间，须落在图像内）。
+ * @return 插值后的 ARGB32 颜色。
+ */
+static uint32_t painterRaster_sampleBilinear(const XImage* image,
+                                             float fx, float fy,
+                                             int minX, int minY,
+                                             int maxX, int maxY)
+{
+    int x0, y0, x1, y1;
+    float wx, wy;
+    uint32_t p00, p10, p01, p11;
+    float w00, w10, w01, w11;
+    float a, r, g, b;
+    if (!image) return 0u;
+    /* 先钳位采样点本身，再取 2x2 邻域并逐轴钳位到闭区间内。 */
+    if (fx < (float)minX) fx = (float)minX;
+    if (fy < (float)minY) fy = (float)minY;
+    if (fx > (float)maxX) fx = (float)maxX;
+    if (fy > (float)maxY) fy = (float)maxY;
+    x0 = (int)floorf(fx);
+    y0 = (int)floorf(fy);
+    wx = fx - (float)x0;
+    wy = fy - (float)y0;
+    x1 = x0 + 1 > maxX ? maxX : x0 + 1;
+    y1 = y0 + 1 > maxY ? maxY : y0 + 1;
+    p00 = XImage_pixel(image, x0, y0);
+    p10 = XImage_pixel(image, x1, y0);
+    p01 = XImage_pixel(image, x0, y1);
+    p11 = XImage_pixel(image, x1, y1);
+    w00 = (1.0f - wx) * (1.0f - wy);
+    w10 = wx * (1.0f - wy);
+    w01 = (1.0f - wx) * wy;
+    w11 = wx * wy;
+    a = (float)((p00 >> 24) & 0xffu) * w00 + (float)((p10 >> 24) & 0xffu) * w10 +
+        (float)((p01 >> 24) & 0xffu) * w01 + (float)((p11 >> 24) & 0xffu) * w11;
+    r = (float)((p00 >> 16) & 0xffu) * w00 + (float)((p10 >> 16) & 0xffu) * w10 +
+        (float)((p01 >> 16) & 0xffu) * w01 + (float)((p11 >> 16) & 0xffu) * w11;
+    g = (float)((p00 >> 8) & 0xffu) * w00 + (float)((p10 >> 8) & 0xffu) * w10 +
+        (float)((p01 >> 8) & 0xffu) * w01 + (float)((p11 >> 8) & 0xffu) * w11;
+    b = (float)(p00 & 0xffu) * w00 + (float)(p10 & 0xffu) * w10 +
+        (float)(p01 & 0xffu) * w01 + (float)(p11 & 0xffu) * w11;
+    /* 权重和恒为 1，结果不会越过 0..255；钳位仅防御浮点舍入误差。 */
+    {
+        int ai = (int)(a + 0.5f);
+        int ri = (int)(r + 0.5f);
+        int gi = (int)(g + 0.5f);
+        int bi = (int)(b + 0.5f);
+        if (ai < 0) ai = 0; else if (ai > 255) ai = 255;
+        if (ri < 0) ri = 0; else if (ri > 255) ri = 255;
+        if (gi < 0) gi = 0; else if (gi > 255) gi = 255;
+        if (bi < 0) bi = 0; else if (bi > 255) bi = 255;
+        return ((uint32_t)ai << 24) | ((uint32_t)ri << 16) |
+               ((uint32_t)gi << 8) | (uint32_t)bi;
+    }
+}
+
 static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                                     int x, int y)
 {
@@ -2581,6 +2880,11 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
 #endif /* XPAINTER_CLIP_REGION_ON */
                 if (state->m_clipRect.width <= 0 || state->m_clipRect.height <= 0)
                     clipOk = false;
+#if XPAINTER_PATH_ON
+                /* 路径裁剪：GPU 贴图无路径掩码 → 软件局部提交。 */
+                if (state->m_hasClipPath)
+                    clipOk = false;
+#endif /* XPAINTER_PATH_ON */
             }
 #endif /* XPAINTER_CLIP_ON */
             if (clipOk && compOk)
@@ -2655,6 +2959,11 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
         }
 #endif /* XPAINTER_CLIP_ON */
         if (cw > 0 && ch > 0 &&
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+            /* 精确路径裁剪：整块 memcpy 快速 blit 会越过路径边界，
+               退回逐像素 putPixel 兜底循环（掩码与运算）。 */
+            !painterClipPathActive(self) &&
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
             painterRaster_blitImageRegion(self, image, sx0, sy0, bx, by,
                                           cw, ch, opacity,
                                           state->m_compositionMode))
@@ -2678,6 +2987,13 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
         XImageTransform inverse;
         float minX, minY, maxX, maxY;
         int px0, py0, px1, py1;
+#if XPAINTER_RENDERHINT_ON
+        /* 对标 Qt SmoothPixmapTransform 渲染提示：本路径只承接旋转/
+           缩放/切变/透视等复杂变换（恒等与平移 1:1 blit 已提前走
+           快速路径），提示开启时逆映射出的连续源坐标改用双线性采样。 */
+        bool smooth = (state->m_renderHints &
+                       XPainterRenderHint_SmoothPixmapTransform) != 0;
+#endif
         sourceRect.x = x;
         sourceRect.y = y;
         sourceRect.width = width;
@@ -2699,6 +3015,7 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                 for (px = px0; px < px1; ++px)
                 {
                     float ux, uy, sx, sy;
+                    uint32_t sourcePixel;
                     if (!painterMapPoint(&inverse, px + 0.5f, py + 0.5f,
                                          &ux, &uy))
                         continue;
@@ -2707,9 +3024,15 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                     if (sx < 0.0f || sy < 0.0f ||
                         sx >= (float)width || sy >= (float)height)
                         continue;
+#if XPAINTER_RENDERHINT_ON
+                    if (smooth)
+                        sourcePixel = painterRaster_sampleBilinear(
+                            image, sx, sy, 0, 0, width - 1, height - 1);
+                    else
+#endif
+                        sourcePixel = XImage_pixel(image, (int)sx, (int)sy);
                     painterRaster_putPixel(self, px, py,
-                        painterApplyOpacityByte(
-                            XImage_pixel(image, (int)sx, (int)sy), opacity));
+                        painterApplyOpacityByte(sourcePixel, opacity));
                 }
             }
         }
@@ -2906,15 +3229,46 @@ static bool painterRaster_drawImageRect(XPainter* self,
     py1 = painterCeilClamp(maxY, XImage_height(self->m_image));
     opacity = painterOpacityByte(self->m_state.m_opacity);
     {
-        int py;
-        for (py = py0; py < py1; ++py)
+        int srcW = XImage_width(image);
+        int srcH = XImage_height(image);
+        int clampMinX, clampMaxX, clampMinY, clampMaxY;
+        bool smooth = false;
+#if XPAINTER_RENDERHINT_ON
+        float ignoreTx, ignoreTy;
+        /* 对标 Qt SmoothPixmapTransform：目标与源尺寸不等（缩放）或
+           变换含旋转/切变/缩放分量时启用双线性；1:1 恒等/平移贴图
+           （drawTiledPixmap 与 DPR=1 的 drawPixmapRect 等高频路径）
+           保持最近邻零回归。 */
+        smooth = (self->m_state.m_renderHints &
+                  XPainterRenderHint_SmoothPixmapTransform) != 0;
+        if (smooth &&
+            params->m_targetWidth == params->m_sourceWidth &&
+            params->m_targetHeight == params->m_sourceHeight &&
+            (painterMatrixIsIdentity(&transform) ||
+             painterMatrixTranslation(&transform, &ignoreTx, &ignoreTy)))
+            smooth = false;
+#endif
+        /* 双线性邻域钳位范围：源矩形（已按 Qt 规则裁剪进图像内）经
+           floor/ceil 外扩浮点误差后，与图像边界取交集。 */
+        clampMinX = (int)floorf(params->m_sourceX);
+        clampMaxX = (int)ceilf(params->m_sourceX + params->m_sourceWidth) - 1;
+        clampMinY = (int)floorf(params->m_sourceY);
+        clampMaxY = (int)ceilf(params->m_sourceY + params->m_sourceHeight) - 1;
+        if (clampMinX < 0) clampMinX = 0;
+        if (clampMinY < 0) clampMinY = 0;
+        if (clampMaxX > srcW - 1) clampMaxX = srcW - 1;
+        if (clampMaxY > srcH - 1) clampMaxY = srcH - 1;
         {
-            int px;
-            for (px = px0; px < px1; ++px)
+            int py;
+            for (py = py0; py < py1; ++py)
             {
+                int px;
+                for (px = px0; px < px1; ++px)
+                {
                 float ux, uy;
                 float tx, ty;
-                int sx, sy;
+                float fx, fy;
+                uint32_t sourcePixel;
                 if (!painterMapPoint(&inverse, (float)px + 0.5f,
                                      (float)py + 0.5f, &ux, &uy))
                     continue;
@@ -2922,19 +3276,27 @@ static bool painterRaster_drawImageRect(XPainter* self,
                 ty = (uy - params->m_targetY) / params->m_targetHeight;
                 if (tx < 0.0f || tx >= 1.0f || ty < 0.0f || ty >= 1.0f)
                     continue;
-                /* Qt raster sampling floors source coordinates.  A C cast
-                   would truncate -0.5 toward zero and incorrectly sample
-                   pixel 0 for a source rectangle extending left/up. */
-                sx = (int)floorf(params->m_sourceX +
-                                 tx * params->m_sourceWidth);
-                sy = (int)floorf(params->m_sourceY +
-                                 ty * params->m_sourceHeight);
+                fx = params->m_sourceX + tx * params->m_sourceWidth;
+                fy = params->m_sourceY + ty * params->m_sourceHeight;
+                if (smooth)
                 {
-                    uint32_t sourcePixel = 0u;
-                    if (sx >= 0 && sy >= 0 &&
-                        sx < XImage_width(image) &&
-                        sy < XImage_height(image))
+                    /* Qt raster sampling with SmoothPixmapTransform：
+                       连续源坐标直接做双线性加权（邻域钳位见上）。 */
+                    sourcePixel = painterRaster_sampleBilinear(
+                        image, fx, fy, clampMinX, clampMinY,
+                        clampMaxX, clampMaxY);
+                }
+                else
+                {
+                    /* Qt raster sampling floors source coordinates.  A C cast
+                       would truncate -0.5 toward zero and incorrectly sample
+                       pixel 0 for a source rectangle extending left/up. */
+                    int sx = (int)floorf(fx);
+                    int sy = (int)floorf(fy);
+                    sourcePixel = 0u;
+                    if (sx >= 0 && sy >= 0 && sx < srcW && sy < srcH)
                         sourcePixel = XImage_pixel(image, sx, sy);
+                }
                 painterRaster_putPixel(self, px, py,
                     painterApplyOpacityByte(sourcePixel,
                                             opacity));
@@ -3420,7 +3782,10 @@ XPainterBackgroundMode XPainter_backgroundMode(const XPainter* self)
 /**
  * @brief      取某画笔样式的“画/空”二元相位模式。
  * @param style 画笔样式。
- * @param outPattern 输出模式表（画/空交替，段长按像素计）。
+ * @param outPattern 输出模式表（画/空交替）。段长单位为笔宽倍数——
+ *                   对标 Qt QPen：dash pattern 的每个数值都以 pen
+ *                   width 为单位（qt_scale_dash_pattern 把节距乘以
+ *                   笔宽），宽度变化时虚线视觉等比缩放（P2-B10）。
  * @param outCount 输出模式段数。
  * @return 实线样式返回 false（无需拆分）；NoPen 或无效样式也返回 false。
  */
@@ -3441,15 +3806,17 @@ static bool painterDashPattern(const XPainter* self,
         case XPainterPenStyle_DashDotLine:   *outPattern = kDashDot;   *outCount = 4; return true;
         case XPainterPenStyle_DashDotDotLine:*outPattern = kDashDotDot;*outCount = 6; return true;
         case XPainterPenStyle_CustomDashLine:
-            /* 优先使用 QPen::setDashPattern 提供的动态数组；未提供时
-               使用 Qt 默认 DashLine 的节距作为确定性近似。 */
+            /* 优先使用 QPen::setDashPattern 提供的动态数组。空节距回退
+               实线：对标 Qt——QPen::setDashPattern 对空列表直接忽略
+               （qpen.cpp：pattern 为空时不改变样式），且 QStroker 对
+               空 dash pattern 按连续实线描边，视觉上等价 SolidLine
+               （P2-B10：旧行为退化为 DashLine 节距，与 Qt 不符）。 */
             if (self->m_state.m_dashCount > 0) {
                 *outPattern = self->m_state.m_dashPattern;
                 *outCount = self->m_state.m_dashCount;
-            } else {
-                *outPattern = kDash; *outCount = 2;
+                return true;
             }
-            return true;
+            return false;
         default:
             return false;
     }
@@ -3471,6 +3838,7 @@ static bool painterDrawLineStyled(XPainter* self, int x1, int y1,
     float dxf, dyf;
     float total;
     float pos;
+    float unitScale;
     int idx;
     if (!self || !self->m_drawLine)
         return false;
@@ -3478,6 +3846,12 @@ static bool painterDrawLineStyled(XPainter* self, int x1, int y1,
         return true;
     if (!painterDashPattern(self, &pat, &patCount))
         return self->m_drawLine(self, x1, y1, x2, y2);
+    /* 节距单位 = 笔宽倍数（对标 Qt qt_scale_dash_pattern：pattern 数值
+       乘以 pen width）。笔宽 0 按 cosmetic 1px 处理，与设备线宽管线
+       （painterRaster_drawLineDevice）一致。注意：节距沿用户坐标推进，
+       不再乘世界变换缩放——与既有整型用户域拆段口径保持一致。 */
+    unitScale = (float)(self->m_state.m_penWidth >= 1 ?
+                        self->m_state.m_penWidth : 1);
     dxf = (float)(x2 - x1);
     dyf = (float)(y2 - y1);
     total = sqrtf(dxf * dxf + dyf * dyf);
@@ -3500,7 +3874,7 @@ static bool painterDrawLineStyled(XPainter* self, int x1, int y1,
         idx = 0;
         while (consumed < span)
         {
-            float segLen = pat[idx];
+            float segLen = pat[idx] * unitScale;
             int seg;
             bool draw = (idx & 1) == 0;
             if (segLen <= 0.0f) segLen = 1.0f;
@@ -3525,7 +3899,7 @@ static bool painterDrawLineStyled(XPainter* self, int x1, int y1,
     idx = 0;
     while (pos < total)
     {
-        float segLen = pat[idx];
+        float segLen = pat[idx] * unitScale;
         bool draw = (idx & 1) == 0;
         float t0, t1;
         if (segLen <= 0.0f) segLen = 1.0f;
@@ -4183,6 +4557,16 @@ static bool painterScanFillDevice(XPainter* self, int n,
 #if XPAINTER_CLIP_ON
                 clipped = self->m_state.m_hasClip;
 #endif /* XPAINTER_CLIP_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+                if (clipped && self->m_state.m_hasClipPath)
+                {
+                    /* 精确路径裁剪：整段 fillRect 越界，退逐像素
+                       putPixel（其内做路径掩码与运算）。 */
+                    for (px = xl; px <= xr; ++px)
+                        painterRaster_putPixel(self, px, py, solidColor);
+                }
+                else
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
                 if (clipped && self->m_state.m_clipRegion.count != 1)
                 {
@@ -4213,7 +4597,18 @@ static bool painterScanFillDevice(XPainter* self, int n,
                     XImage_fillRect(self->m_image, &span, solidColor);
                 }
 #elif XPAINTER_CLIP_ON
+#if XPAINTER_PATH_ON
+                if (clipped && self->m_state.m_hasClipPath)
+                {
+                    /* 精确路径裁剪（无区域构建）：逐像素 putPixel 做掩码
+                       与运算，防止整段 fillRect 越过路径边界。 */
+                    for (px = xl; px <= xr; ++px)
+                        painterRaster_putPixel(self, px, py, solidColor);
+                }
+                else if (clipped)
+#else
                 if (clipped)
+#endif /* XPAINTER_PATH_ON */
                 {
                     int clipLeft = self->m_state.m_clipRect.x;
                     int clipRight = clipLeft + self->m_state.m_clipRect.width - 1;
@@ -4302,6 +4697,23 @@ static bool painterFillPolygonShape(XPainter* self, int n,
     uint32_t brushColor;
     bool gradient = false;
     if (!self || n < 3) return self != NULL;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    /* GPU 会话 + 精确路径裁剪：AA 覆盖图/扫描填充的 GPU 通道不带路径
+       掩码，软件光栅局部提交（重入时 m_gpuActive=false，逐像素掩码
+       与运算由 putPixel/AA 覆盖完成）。 */
+    if (self->m_gpuActive && painterClipPathActive(self))
+    {
+        PainterGpuPolyArgs args;
+        args.m_n = n;
+        args.m_uxs = uxs;
+        args.m_uys = uys;
+        args.m_fillRule = fillRule;
+        return painterGpuSubmitSoftwareCommand(self, painterGpuPolyCommand,
+                                               &args);
+    }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #if XPAINTER_BRUSH_ON
     brushColor = self->m_state.m_brush.m_color;
     gradient = self->m_state.m_brush.m_style ==
@@ -4443,6 +4855,18 @@ static bool painterFillContoursAntialiased(XPainter* self,
                                           (size_t)column];
                 uint32_t pixel;
                 if (coverage == 0u) continue;
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+                /* 精确路径裁剪：形状覆盖率 × 路径覆盖掩码（对标 Qt
+                   raster 引擎裁剪掩码与形状 AA 的逐像素相乘），边界
+                   保持双重抗锯齿；掩码为 0 的像素直接跳过。 */
+                if (painterClipPathActive(self))
+                {
+                    unsigned mask = painterClipMaskCoverageAt(
+                        self, left + column, top + row);
+                    coverage = painterMul255(mask, coverage);
+                    if (coverage == 0u) continue;
+                }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
                 if (coverage >= 255u) pixel = ink;
                 else
                 {
@@ -4458,6 +4882,148 @@ static bool painterFillContoursAntialiased(XPainter* self,
     }
     XFree_System(alpha);
     return true;
+}
+
+/**
+ * @brief      线段裁剪（Liang-Barsky 参数化）。
+ * @details    AA 覆盖图按线段包围盒分配内存：先把线段按浮点精度裁到
+ *             目标位图外扩盒内，防止超大坐标的线段（部分可见）申请
+ *             巨大 alpha 缓冲；裁剪只影响不可见部分，可见输出不变。
+ * @return     true 时输出裁剪后端点；false 表示线段完全在界外。
+ */
+static bool painterRaster_lineClipToBounds(float x0, float y0,
+                                           float x1, float y1,
+                                           float minX, float minY,
+                                           float maxX, float maxY,
+                                           float* outX0, float* outY0,
+                                           float* outX1, float* outY1)
+{
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    float t0 = 0.0f;
+    float t1 = 1.0f;
+    /* p/q 按 left/right/bottom/top 四边成对（标准 Liang-Barsky）。 */
+    const float p[4] = { -dx, dx, -dy, dy };
+    const float q[4] = { x0 - minX, maxX - x0, y0 - minY, maxY - y0 };
+    int i;
+    for (i = 0; i < 4; ++i)
+    {
+        if (p[i] == 0.0f)
+        {
+            if (q[i] < 0.0f) return false; /* 与该边平行且在界外。 */
+        }
+        else
+        {
+            float r = q[i] / p[i];
+            if (p[i] < 0.0f)
+            {
+                if (r > t1) return false;
+                if (r > t0) t0 = r;
+            }
+            else
+            {
+                if (r < t0) return false;
+                if (r < t1) t1 = r;
+            }
+        }
+    }
+    *outX0 = x0 + t0 * dx;
+    *outY0 = y0 + t0 * dy;
+    *outX1 = x0 + t1 * dx;
+    *outY1 = y0 + t1 * dy;
+    return t0 < t1; /* 退化（擦边缩成一点）时按不可见处理。 */
+}
+
+/**
+ * @brief      线段抗锯齿光栅：设备坐标线段 → 笔宽四边形 → 灰度覆盖合成。
+ * @details    对标 Qt raster 引擎开启 QPainter::Antialiasing 后的浮点
+ *             描边管线：把线段沿法线向两侧各偏移半线宽构成封闭四边形
+ *             （覆盖率用多边形面积口径估计），复用填充 AA 通道的
+ *             `painterFillContoursAntialiased`（4x4 面积子采样生成
+ *             灰度覆盖图 → 逐像素 putPixel 既有混合通道），因此裁剪/
+ *             透明度/合成模式语义与填充 AA 完全同源，不新写混合器。
+ *             坐标口径：覆盖光栅器（painterGlyphContoursAlphaCoverage）
+ *             以整数设备坐标为像素中心（采样点 i-0.5+[0.125..0.875]），
+ *             故端点直接使用设备整数坐标，AA 线与硬边 Bresenham 覆盖
+ *             同一组像素。笔帽对标 Qt 默认 SquareCap：两端沿方向各
+ *             延伸半线宽（FlatCap 不延伸；RoundCap 本批次近似为方帽，
+ *             折线拐角因此自然填补缝隙）。笔宽已由调用方按有效变换
+ *             缩放（P0 批次引入，设备像素口径）。
+ * @param      width 已缩放的笔宽（>=1，设备像素）。
+ * @return     成功返回 true；完全在界外返回 true（无可见输出）。
+ */
+static bool painterRaster_drawLineAntialiased(XPainter* self, int ix1,
+                                              int iy1, int ix2, int iy2,
+                                              int width)
+{
+    float ax, ay, bx, by, dx, dy, len, hw, nx, ny, extend, ex, ey;
+    float clipMinX, clipMinY, clipMaxX, clipMaxY;
+    float xs[4];
+    float ys[4];
+    PainterPathFillContour contour;
+    if (!self || !self->m_image) return false;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    /* GPU 会话 + 精确路径裁剪：drawAlphaBitmap 通道不带路径掩码，
+       软件光栅局部提交（重入时 m_gpuActive=false，走下方软件 AA）。 */
+    if (self->m_gpuActive && painterClipPathActive(self))
+    {
+        PainterGpuLineArgs args;
+        args.m_x1 = ix1;
+        args.m_y1 = iy1;
+        args.m_x2 = ix2;
+        args.m_y2 = iy2;
+        return painterGpuSubmitSoftwareCommand(
+            self, painterGpuDrawLineDeviceCommand, &args);
+    }
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+    if (width < 1) width = 1;
+    hw = (float)width * 0.5f;
+    /* 内存护栏：覆盖图按线段包围盒分配，先把线段裁到位图外扩盒内
+       （外扩 hw+1 覆盖笔帽延伸与边缘像素），超大坐标不产生巨缓冲。 */
+    clipMinX = -1.0f - hw;
+    clipMinY = -1.0f - hw;
+    clipMaxX = (float)XImage_width(self->m_image) + hw;
+    clipMaxY = (float)XImage_height(self->m_image) + hw;
+    ax = (float)ix1;
+    ay = (float)iy1;
+    bx = (float)ix2;
+    by = (float)iy2;
+    if (!painterRaster_lineClipToBounds(ax, ay, bx, by,
+                                        clipMinX, clipMinY,
+                                        clipMaxX, clipMaxY,
+                                        &ax, &ay, &bx, &by))
+        return true;
+    dx = bx - ax;
+    dy = by - ay;
+    len = sqrtf(dx * dx + dy * dy);
+    if (!(len > 0.0f) || !isfinite(len)) return true;
+    nx = -dy / len * hw; /* 单位法线 × 半线宽（四边形短边方向）。 */
+    ny = dx / len * hw;
+    extend = hw;         /* 对标 Qt 默认 SquareCap。 */
+#if XPAINTER_PENSTYLE_ON
+    if (self->m_state.m_penCap == XPainterPenCapStyle_FlatCap)
+        extend = 0.0f;
+#endif /* XPAINTER_PENSTYLE_ON */
+    ex = dx / len * extend;
+    ey = dy / len * extend;
+    /* 顶点按绕行序：起点+法线 → 终点+法线 → 终点-法线 → 起点-法线。 */
+    xs[0] = ax - ex + nx; ys[0] = ay - ey + ny;
+    xs[1] = bx + ex + nx; ys[1] = by + ey + ny;
+    xs[2] = bx + ex - nx; ys[2] = by + ey - ny;
+    xs[3] = ax - ex - nx; ys[3] = ay - ey - ny;
+    contour.m_xs = xs;
+    contour.m_ys = ys;
+    contour.m_count = 4;
+    contour.m_closed = true;
+    /* 复用填充 AA 通道：subdiv=4（4x4 面积子采样，与多边形/路径填充
+       同一覆盖率口径）。透明度由 painterFillContoursAntialiased 内部
+       按 m_opacity 统一施加，故传原始笔色避免二次缩放；GPU 会话在
+       该函数内经 drawAlphaBitmap 提交（与填充 AA 一致）。 */
+    return painterFillContoursAntialiased(self, &contour, 1,
+                                          XPainterFillRule_OddEven,
+                                          self->m_state.m_penColor, 4);
 }
 #endif /* XPAINTER_PATH_ON */
 
@@ -5008,6 +5574,198 @@ fail:
 }
 #endif /* XPAINTER_PATH_ON */
 
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+/* ========== 精确路径裁剪：覆盖掩码（B4） ==========
+ * 对标 Qt raster 引擎的位图裁剪（QPainterPath 裁剪在设置时以当时变换
+ * 光栅化为设备空间位图掩码，后续变换不回溯影响裁剪；绘制时掩码与
+ * clipRect/clipRegion/systemClip 做与运算）。掩码按
+ * (m_state.m_clipPathSerial, 目标图像) 惰性重建：save()/restore() 切换
+ * 状态后版本号失配自动重建，未设置路径的绘制只多一次布尔判定。 */
+
+static bool painterPathBuildContours(const XPainterPath* path, float offsetX,
+                                     float offsetY,
+                                     PainterPathFillContour** outContours,
+                                     int* outCount, int* outCapacity);
+static void painterPathFillContoursFree(PainterPathFillContour** contours,
+                                        int* count, int* capacity);
+
+/**
+ * @brief      判断精确路径裁剪当前是否生效。
+ * @details    m_hasClipPath 须与 m_hasClip 同真：setClipping(false)/NoClip
+ *             关闭裁剪时路径掩码一并失效（对标 QPainter::setClipping）。
+ */
+static bool painterClipPathActive(const XPainter* self)
+{
+    return self && self->m_state.m_hasClip && self->m_state.m_hasClipPath;
+}
+
+/** @brief 释放路径覆盖掩码缓存（保留版本号计数器）。 */
+static void painterClipMaskCacheReset(XPainter* self)
+{
+    if (!self) return;
+    if (self->m_clipMaskData)
+    {
+        XFree_System(self->m_clipMaskData);
+        self->m_clipMaskData = NULL;
+    }
+    self->m_clipMaskImage = NULL;
+    self->m_clipMaskWidth = 0;
+    self->m_clipMaskHeight = 0;
+    self->m_clipMaskLeft = 0;
+    self->m_clipMaskTop = 0;
+}
+
+/**
+ * @brief      惰性重建路径覆盖掩码（键：路径版本号 + 目标图像）。
+ * @details    路径按 m_clipPathTransform（设置时的有效变换快照）映射到
+ *             设备坐标，经既有 4x4 面积子采样覆盖光栅化生成 8 位灰度
+ *             掩码（AA 边界与形状填充 AA 同源口径）。坐标约定：掩码
+ *             像素 (i,j) 覆盖设备像素 (left+i, top+j)，故传入光栅器的
+ *             偏移为 -(left+0.5)（覆盖光栅器以整数坐标为像素中心）。
+ *             构建失败时缓存零尺寸掩码：失败闭合（绝不画出路径之外的
+ *             内容，与表面裁剪不可逃逸口径一致），且不反复重试。
+ * @return     true 掩码可用（查询 m_clipMaskData/Width/Height）；
+ *             false 当前未启用路径裁剪。
+ */
+static bool painterClipMaskEnsure(XPainter* self)
+{
+    XPainterState* state;
+    PainterPathFillContour* contours = NULL;
+    int contourCount = 0;
+    int contourCapacity = 0;
+    float minX = 0.0f;
+    float minY = 0.0f;
+    float maxX = 0.0f;
+    float maxY = 0.0f;
+    bool haveBounds = false;
+    int left;
+    int top;
+    int width;
+    int height;
+    int c;
+    int i;
+    int imageWidth = 0;
+    int imageHeight = 0;
+    uint8_t* alpha;
+    if (!self) return false;
+    state = &self->m_state;
+    if (!state->m_hasClipPath || !state->m_clipPath) return false;
+    if (self->m_clipMaskSerial == state->m_clipPathSerial &&
+        self->m_clipMaskImage == self->m_image)
+        return true; /* 缓存命中（含失败闭合的零尺寸掩码）。 */
+    painterClipMaskCacheReset(self);
+    /* 先记版本号：构建失败也缓存零尺寸掩码，避免逐像素反复重试。 */
+    self->m_clipMaskSerial = state->m_clipPathSerial;
+    self->m_clipMaskImage = self->m_image;
+    if (self->m_image)
+    {
+        imageWidth = XImage_width(self->m_image);
+        imageHeight = XImage_height(self->m_image);
+    }
+    if (!painterPathBuildContours(state->m_clipPath, 0.0f, 0.0f,
+                                  &contours, &contourCount, &contourCapacity))
+        return true; /* 展平失败：空掩码，全部拒绝。 */
+    for (c = 0; c < contourCount; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        for (i = 0; i < contour->m_count; ++i)
+        {
+            float dx;
+            float dy;
+            /* 路径元素在 setClipPath 时已验证可映射；此处快照变换重放
+               同一映射。非有限/超大坐标按失败闭合处理。 */
+            if (!painterMapPoint(&state->m_clipPathTransform,
+                                 contour->m_xs[i], contour->m_ys[i],
+                                 &dx, &dy) ||
+                !isfinite(dx) || !isfinite(dy) ||
+                dx < -1.0e9f || dx > 1.0e9f || dy < -1.0e9f || dy > 1.0e9f)
+            {
+                painterPathFillContoursFree(&contours, &contourCount,
+                                            &contourCapacity);
+                return true;
+            }
+            if (!haveBounds)
+            {
+                minX = maxX = dx;
+                minY = maxY = dy;
+                haveBounds = true;
+            }
+            else
+            {
+                if (dx < minX) minX = dx;
+                if (dx > maxX) maxX = dx;
+                if (dy < minY) minY = dy;
+                if (dy > maxY) maxY = dy;
+            }
+        }
+    }
+    if (!haveBounds)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return true;
+    }
+    left = painter8x16FloorInt(minX);
+    top = painter8x16FloorInt(minY);
+    width = painter8x16CeilInt(maxX) - left;
+    height = painter8x16CeilInt(maxY) - top;
+    /* 收缩到目标图像范围：掩码查询只发生在图像像素上，越小越省内存。 */
+    if (left < 0) { width += left; left = 0; }
+    if (top < 0) { height += top; top = 0; }
+    if (imageWidth > 0 && left + width > imageWidth)
+        width = imageWidth - left;
+    if (imageHeight > 0 && top + height > imageHeight)
+        height = imageHeight - top;
+    if (width <= 0 || height <= 0) return true; /* 与目标不相交：空掩码。 */
+    if ((size_t)width > ((size_t)-1) / (size_t)height) return true;
+    alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+    if (!alpha) return true;
+    XMemset(alpha, 0, (size_t)width * (size_t)height);
+    /* 复用既有 AA 填充的 4x4 面积子采样覆盖光栅化：掩码边界与形状
+       AA 同一覆盖率口径。偏移 -(left+0.5)：覆盖光栅器以整数坐标为
+       像素中心，掩码像素 (i,j) 须对齐设备像素 (left+i, top+j)。 */
+    if (!painterGlyphContoursAlphaCoverage(
+            contours, contourCount,
+            -(float)left - 0.5f, -(float)top - 0.5f,
+            alpha, width, height, 4))
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        XFree_System(alpha);
+        return true; /* 光栅化失败：空掩码，失败闭合。 */
+    }
+    painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
+    self->m_clipMaskData = alpha;
+    self->m_clipMaskWidth = width;
+    self->m_clipMaskHeight = height;
+    self->m_clipMaskLeft = left;
+    self->m_clipMaskTop = top;
+    return true;
+}
+
+/**
+ * @brief      查询设备像素 (x,y) 的路径覆盖掩码值（0~255）。
+ * @return     掩码覆盖；0 表示拒绝写入。未启用路径裁剪时返回 255。
+ */
+static uint8_t painterClipMaskCoverageAt(XPainter* self, int x, int y)
+{
+    int mx;
+    int my;
+    if (!self) return 255u;
+    if (!painterClipMaskEnsure(self)) return 255u;
+    if (!self->m_clipMaskData || self->m_clipMaskWidth <= 0 ||
+        self->m_clipMaskHeight <= 0)
+        return 0u; /* 失败闭合：构建失败/空路径时不写出裁剪。 */
+    mx = x - self->m_clipMaskLeft;
+    my = y - self->m_clipMaskTop;
+    if (mx < 0 || my < 0 || mx >= self->m_clipMaskWidth ||
+        my >= self->m_clipMaskHeight)
+        return 0u;
+    return self->m_clipMaskData[(size_t)my * (size_t)self->m_clipMaskWidth +
+                                (size_t)mx];
+}
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+
 /**
  * @brief      计算圆弧上若干采样点。
  * @param cx/cy/rx/ry 椭圆中心与半径。
@@ -5096,6 +5854,10 @@ void XPainter_deinit(XPainter* self)
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    painterClipPathStateClear(&self->m_state);
+    painterClipMaskCacheReset(self);
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
     XMemset(self, 0, sizeof(*self));
     self->m_userData = NULL;
 }
@@ -5243,6 +6005,10 @@ bool XPainter_end(XPainter* self)
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+    painterClipPathStateClear(&self->m_state);
+    painterClipMaskCacheReset(self);
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
     self->m_deviceKind = XPainterDevice_None;
     self->m_image = NULL;
     self->m_picture = NULL;
@@ -5309,6 +6075,60 @@ bool XPainter_drawLine_2(XPainter* self, const XPoint* p1, const XPoint* p2)
 {
     if (!p1 || !p2) return false;
     return XPainter_drawLine(self, p1->x, p1->y, p2->x, p2->y);
+}
+
+bool XPainter_drawLine_3(XPainter* self, float x1, float y1,
+                         float x2, float y2)
+{
+    if (!self || self->m_deviceKind == XPainterDevice_None || !self->m_drawLine)
+        return false;
+#if XPAINTER_PENSTYLE_ON
+    /* NoPen：真正的无绘制——提前返回且不触发 GPU 同步，与 int 入口一致。 */
+    if (self->m_state.m_penStyle == XPainterPenStyle_NoPen)
+        return true;
+    if (self->m_state.m_penStyle != XPainterPenStyle_SolidLine)
+    {
+        /* 虚线/点线：节距相位在整型用户坐标上计算（与 int 入口同一
+           painterDrawLineStyled 管线），端点先按 painterRound 取整。 */
+        bool styledOk = painterDrawLineStyled(self, painterRound(x1),
+                                              painterRound(y1),
+                                              painterRound(x2),
+                                              painterRound(y2));
+        xgpu_sync_readback_if_requested(self);
+        return styledOk;
+    }
+#endif /* XPAINTER_PENSTYLE_ON */
+    if (self->m_deviceKind == XPainterDevice_Image)
+    {
+        /* 对标 QPainter::drawLine(const QLineF&) 无抗锯齿时的 aliased
+           输出：端点以浮点精度经过有效变换映射（缩放/旋转不损失
+           用户空间小数），取整到设备像素后走与 int 入口完全相同的
+           设备坐标画线实现（裁剪/笔宽缩放/GPU 快速路径共用）。 */
+        XImageTransform transform;
+        float fx1, fy1, fx2, fy2;
+        bool lineOk;
+        if (!painterEffectiveTransform(&self->m_state, &transform))
+            return false;
+        if (!painterMapPoint(&transform, x1, y1, &fx1, &fy1) ||
+            !painterMapPoint(&transform, x2, y2, &fx2, &fy2))
+            return false;
+        lineOk = painterRaster_drawLineDevice(self, painterRound(fx1),
+                                              painterRound(fy1),
+                                              painterRound(fx2),
+                                              painterRound(fy2));
+        xgpu_sync_readback_if_requested(self);
+        return lineOk;
+    }
+    /* 录制/自定义后端：回调契约为整型用户坐标，按 painterRound 取整后
+       复用 m_drawLine（录制内容回放时再经变换映射，语义一致）。 */
+    {
+        bool lineOk = self->m_drawLine(self, painterRound(x1),
+                                       painterRound(y1),
+                                       painterRound(x2),
+                                       painterRound(y2));
+        xgpu_sync_readback_if_requested(self);
+        return lineOk;
+    }
 }
 
 bool XPainter_drawPoint(XPainter* self, int x, int y)
@@ -5476,6 +6296,75 @@ bool XPainter_drawRect(XPainter* self, const XRect* rect)
     return ok;
 }
 
+bool XPainter_drawRect_2(XPainter* self, float x, float y,
+                         float width, float height)
+{
+    bool ok;
+    float left, top, right, bottom, t;
+    if (!self) return false;
+    /* 对标 QPainter::drawRect(const QRectF&)：非有限坐标不产生可见
+       输出；双零尺寸与 int 入口一致视为空矩形无操作。 */
+    if (!isfinite(x) || !isfinite(y) ||
+        !isfinite(width) || !isfinite(height))
+        return true;
+    if (width == 0.0f && height == 0.0f) return true;
+    if (self->m_deviceKind == XPainterDevice_None)
+        return false;
+    /* QRectF::normalized：负宽/高交换几何边（按 x 与 x+width 的
+       几何边界规则，与 int 版 drawRect 相同）。 */
+    left = x;
+    right = x + width;
+    top = y;
+    bottom = y + height;
+    if (right < left) { t = left; left = right; right = t; }
+    if (bottom < top) { t = top; top = bottom; bottom = t; }
+#if XPAINTER_BRUSH_ON
+    if (self->m_state.m_brush.m_style != XPainterBrushStyle_NoBrush)
+    {
+#if XPAINTER_SHAPE_ON || XPAINTER_POLYGON_ON || XPAINTER_PATH_ON
+        /* 浮点外接矩形走多边形扫描填充（纯色与渐变同一管线），顶点
+           保留浮点精度经有效变换映射——对标 Qt 光栅引擎把 QRectF
+           当作设备空间多边形填充的口径。 */
+        {
+            float xs[4];
+            float ys[4];
+            xs[0] = left;  ys[0] = top;
+            xs[1] = right; ys[1] = top;
+            xs[2] = right; ys[2] = bottom;
+            xs[3] = left;  ys[3] = bottom;
+            if (!painterFillPolygonShape(self, 4, xs, ys,
+                                         XPainterFillRule_OddEven))
+                return false;
+        }
+#else
+        {
+            /* 形状/多边形/路径能力裁剪时退化为整型 fillRect。 */
+            XRect normalized;
+            normalized.x = painterRound(left);
+            normalized.y = painterRound(top);
+            normalized.width = painterRound(right) - normalized.x;
+            normalized.height = painterRound(bottom) - normalized.y;
+            if (!XPainter_fillRect(self, &normalized,
+                                   self->m_state.m_brush.m_color))
+                return false;
+        }
+#endif /* XPAINTER_SHAPE_ON || XPAINTER_POLYGON_ON || XPAINTER_PATH_ON */
+    }
+#endif /* XPAINTER_BRUSH_ON */
+    if (!self->m_drawLine)
+        return true;
+    /* 四条边各画一条线（上、左、右、下，与 int 版边序一致），统一走
+       浮点 drawLine 入口，使 NoPen/虚线/笔宽状态与单独画线一致。 */
+    ok = XPainter_drawLine_3(self, left, top, right, top);
+    if (!ok) return false;
+    ok = XPainter_drawLine_3(self, left, top, left, bottom);
+    if (!ok) return false;
+    ok = XPainter_drawLine_3(self, right, top, right, bottom);
+    if (!ok) return false;
+    ok = XPainter_drawLine_3(self, left, bottom, right, bottom);
+    return ok;
+}
+
 bool XPainter_drawRects(XPainter* self, const XRect* rects, int rectCount)
 {
     int i;
@@ -5625,6 +6514,29 @@ bool XPainter_drawImage_2(XPainter* self, const XImage* image, const XPoint* pos
     if (!pos) return false;
     return XPainter_drawImage(self, image, pos->x, pos->y);
 }
+
+#if XPAINTER_IMAGE_RECT_ON
+bool XPainter_drawImage_3(XPainter* self, int x, int y, int width, int height,
+                          const XImage* image, int sx, int sy, int sw, int sh)
+{
+    XRect target;
+    XRect source;
+    if (!self || !image) return false;
+    /* 对标 QPainter::drawImage(int,int,int,int,const QImage&,int,int,
+       int,int)：目标 (x,y,w,h)，源矩形 (sx,sy,sw,sh)。负目标宽高按
+       Qt 规则改用源区域尺寸，非正源宽高表示取到图像边缘，越界裁剪
+       与空区域语义全部由 drawImageRect 的 Qt 规则预处理承担。 */
+    target.x = x;
+    target.y = y;
+    target.width = width;
+    target.height = height;
+    source.x = sx;
+    source.y = sy;
+    source.width = sw;
+    source.height = sh;
+    return XPainter_drawImageRect(self, &target, image, &source);
+}
+#endif /* XPAINTER_IMAGE_RECT_ON */
 
 #if XPAINTER_IMAGE_RECT_ON
 bool XPainter_drawImageRect(XPainter* self, const XRect* targetRect,
@@ -5823,6 +6735,28 @@ bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
     ok = XPainter_drawImageRect(self, targetRect, &image, sourceRect);
     XImage_deinit_base(&image);
     return ok;
+}
+
+bool XPainter_drawPixmap_3(XPainter* self, int x, int y, int width, int height,
+                           const XPixmap* pixmap, int sx, int sy, int sw,
+                           int sh)
+{
+    XRect target;
+    XRect source;
+    if (!self || !pixmap) return false;
+    /* 对标 QPainter::drawPixmap(int,int,int,int,const QPixmap&,int,int,
+       int,int)：与 drawPixmapRect 同构，源矩形为像素图物理像素坐标，
+       目标矩形为绘制器逻辑坐标；负目标尺寸/非正源尺寸/越界裁剪沿用
+       drawImageRect 的 Qt 规则。 */
+    target.x = x;
+    target.y = y;
+    target.width = width;
+    target.height = height;
+    source.x = sx;
+    source.y = sy;
+    source.width = sw;
+    source.height = sh;
+    return XPainter_drawPixmapRect(self, &target, pixmap, &source);
 }
 #endif /* XPAINTER_IMAGE_RECT_ON */
 
@@ -8496,6 +9430,24 @@ static bool painterBrushShouldFill(XPainter* self)
 #endif
 }
 
+/** @brief 折线/多边形顶点超限扩容（对标 Qt：QPaintEngineEx 不截断顶点）。
+ *  @details 顶点数超过栈内容量时，从 XMemory 体系一次性分配可容纳
+ *           count 个顶点的双数组块（xs 与 ys 同块，单次分配/释放配对）；
+ *           分配失败返回 false，不改动调用方状态（零副作用）。
+ *  @return 成功把 *xs/*ys 指向堆缓冲返回 true；count 非法或内存不足返回 false。 */
+static bool painterPolyPointsReserve(float** xs, float** ys, int count)
+{
+    float* block;
+    if (!xs || !ys || count <= 0 ||
+        (size_t)count > ((size_t)-1) / sizeof(float) / 2u)
+        return false;
+    block = (float*)XMalloc_System((size_t)count * sizeof(float) * 2u);
+    if (!block) return false;
+    *xs = block;
+    *ys = block + count;
+    return true;
+}
+
 /** @brief 用画线方式连接一组用户空间浮点顶点（画刷样式不参与）。 */
 static bool painterDrawPolyLineFloat(XPainter* self,
                                      const float* uxs, const float* uys,
@@ -8550,6 +9502,54 @@ bool XPainter_drawEllipse(XPainter* self, const XRect* rect)
                      32, xs, ys, &n);
         if (!painterDrawPolyLineFloat(self, xs, ys, n, true))
             return false;
+    return true;
+}
+
+bool XPainter_drawEllipse_2(XPainter* self, float cx, float cy,
+                            float rx, float ry)
+{
+    float xs[XPAINTER_POLY_MAX_POINTS];
+    float ys[XPAINTER_POLY_MAX_POINTS];
+    int n;
+    XRect rect;
+    if (!self) return false;
+    /* 对标 QPainter::drawEllipse(const QRectF&) 的浮点口径：以中心+半径
+       直接给出椭圆几何；非有限坐标不产生可见输出，负半径按
+       QRectF::normalized 的几何边交换规则取正，非正半径（零尺寸外接
+       矩形）视为无操作。 */
+    if (!isfinite(cx) || !isfinite(cy) ||
+        !isfinite(rx) || !isfinite(ry))
+        return true;
+    if (rx < 0.0f) rx = -rx;
+    if (ry < 0.0f) ry = -ry;
+    if (rx <= 0.0f || ry <= 0.0f) return true;
+    if (self->m_deviceKind == XPainterDevice_None) return false;
+    if (self->m_drawShape)
+    {
+        /* 形状高层回调（录制/GPU 原语）契约为整型外接矩形：按
+           painterRound 取整后复用 drawEllipse 的完整管线。 */
+        rect.x = painterRound(cx - rx);
+        rect.y = painterRound(cy - ry);
+        rect.width = painterRound(cx + rx) - rect.x;
+        rect.height = painterRound(cy + ry) - rect.y;
+        if (rect.width <= 0 || rect.height <= 0) return true;
+        return XPainter_drawEllipse(self, &rect);
+    }
+    /* 软件浮点路径：与 drawEllipse 内联分支同源（64 段扫描填充 +
+       32 段闭合描边），中心/半径不经整型外接矩形往返，保留浮点精度
+       经过既有变换/裁剪/透明度/合成管线。 */
+    if (painterBrushShouldFill(self))
+    {
+        painterArcPoints(cx, cy, rx, ry, 0.0f, 6.283185307179586f,
+                         64, xs, ys, &n);
+        if (!painterFillPolygonShape(self, n, xs, ys,
+                                     XPainterFillRule_OddEven))
+            return false;
+    }
+    painterArcPoints(cx, cy, rx, ry, 0.0f, 6.283185307179586f,
+                     32, xs, ys, &n);
+    if (!painterDrawPolyLineFloat(self, xs, ys, n, true))
+        return false;
     return true;
 }
 
@@ -8752,44 +9752,71 @@ bool XPainter_drawRoundedRect(XPainter* self, const XRect* rect,
 #if XPAINTER_POLYGON_ON
 bool XPainter_drawPolyline(XPainter* self, const XPoint* points, int count)
 {
-    float xs[XPAINTER_POLY_MAX_POINTS];
-    float ys[XPAINTER_POLY_MAX_POINTS];
+    float stackXs[XPAINTER_POLY_MAX_POINTS];
+    float stackYs[XPAINTER_POLY_MAX_POINTS];
+    float* xs = stackXs;
+    float* ys = stackYs;
     int i;
+    bool ok;
     if (!self) return false;
     if (!points || count < 2) return true;
     if (self->m_deviceKind == XPainterDevice_None) return false;
-    if (count > XPAINTER_POLY_MAX_POINTS) count = XPAINTER_POLY_MAX_POINTS;
     if (self->m_drawPolyline)
         return self->m_drawPolyline(self, points, count);
+    /* 对标 Qt：QPainter::drawPolyline 不截断顶点；超过栈容量时改用
+       XMemory 堆缓冲（超限扩容），消除静默截断。 */
+    if (count > XPAINTER_POLY_MAX_POINTS &&
+        !painterPolyPointsReserve(&xs, &ys, count))
+        return false;
     for (i = 0; i < count; ++i) { xs[i] = (float)points[i].x; ys[i] = (float)points[i].y; }
-    return painterDrawPolyLineFloat(self, xs, ys, count, false);
+    ok = painterDrawPolyLineFloat(self, xs, ys, count, false);
+    if (xs != stackXs)
+    {
+        /* 堆缓冲与栈缓冲配对释放：xs/ys 同块，仅释放一次。 */
+        XFree_System(xs);
+    }
+    return ok;
 }
 
 bool XPainter_drawPolygon(XPainter* self, const XPoint* points, int count,
                           XPainterFillRule fillRule)
 {
-    float xs[XPAINTER_POLY_MAX_POINTS];
-    float ys[XPAINTER_POLY_MAX_POINTS];
+    float stackXs[XPAINTER_POLY_MAX_POINTS];
+    float stackYs[XPAINTER_POLY_MAX_POINTS];
+    float* xs = stackXs;
+    float* ys = stackYs;
     int i;
+    bool ok;
     if (!self) return false;
     if (!points || count < 2) return true;
     if (self->m_deviceKind == XPainterDevice_None) return false;
     if (fillRule != XPainterFillRule_Winding)
         fillRule = XPainterFillRule_OddEven;
-    if (count > XPAINTER_POLY_MAX_POINTS) count = XPAINTER_POLY_MAX_POINTS;
     if (self->m_drawPolygon)
         return self->m_drawPolygon(self, points, count,
                                    painterBrushShouldFill(self), fillRule);
+    /* 对标 Qt：QPainter::drawPolygon 不截断顶点；超过栈容量时改用
+       XMemory 堆缓冲（超限扩容），消除静默截断。 */
+    if (count > XPAINTER_POLY_MAX_POINTS &&
+        !painterPolyPointsReserve(&xs, &ys, count))
+        return false;
     for (i = 0; i < count; ++i) { xs[i] = (float)points[i].x; ys[i] = (float)points[i].y; }
+    ok = true;
     if (count >= 3 && painterBrushShouldFill(self))
-        if (!painterFillPolygonShape(self, count, xs, ys, fillRule))
-            return false;
-    /* Qt QPainter::drawPolygon() 将首点隐式连接到末点，即使仅给出
-       两个顶点也会形成闭合轮廓（第二条边与第一条边重合）。保持
-       count==2 的闭合语义，避免与 QPaintEngineEx::drawPolygon()
-       （qpainter.cpp:4558-4588、qpaintengineex.cpp:903-912）不一致；
-       三点及以上仍按通常多边形闭合。 */
-    return painterDrawPolyLineFloat(self, xs, ys, count, count >= 2);
+        ok = painterFillPolygonShape(self, count, xs, ys, fillRule);
+    if (ok)
+        /* Qt QPainter::drawPolygon() 将首点隐式连接到末点，即使仅给出
+           两个顶点也会形成闭合轮廓（第二条边与第一条边重合）。保持
+           count==2 的闭合语义，避免与 QPaintEngineEx::drawPolygon()
+           （qpainter.cpp:4558-4588、qpaintengineex.cpp:903-912）不一致；
+           三点及以上仍按通常多边形闭合。 */
+        ok = painterDrawPolyLineFloat(self, xs, ys, count, count >= 2);
+    if (xs != stackXs)
+    {
+        /* 堆缓冲与栈缓冲配对释放：xs/ys 同块，仅释放一次。 */
+        XFree_System(xs);
+    }
+    return ok;
 }
 
 bool XPainter_drawConvexPolygon(XPainter* self, const XPoint* points,
@@ -9086,6 +10113,24 @@ void XPainterPath_currentPosition(const XPainterPath* self,
     if (!self) return;
     if (x) *x = self->m_currentX;
     if (y) *y = self->m_currentY;
+}
+
+void XPainterPath_setFillRule(XPainterPath* self, XPainterFillRule rule)
+{
+    if (!self) return;
+    /* 与 XPainter_drawPolygon 同口径：非法值回退 OddEvenFill
+       （Qt::OddEvenFill=0、Qt::WindingFill=1）。 */
+    if (rule != XPainterFillRule_Winding)
+        rule = XPainterFillRule_OddEven;
+    self->m_fillRule = rule;
+}
+
+XPainterFillRule XPainterPath_fillRule(const XPainterPath* self)
+{
+    /* 未初始化/旧结构体的零值即 OddEvenFill，与 Qt 默认一致。 */
+    if (!self || self->m_fillRule != XPainterFillRule_Winding)
+        return XPainterFillRule_OddEven;
+    return XPainterFillRule_Winding;
 }
 
 typedef struct PainterPathVertices
@@ -9545,6 +10590,607 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
 }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
+#if XPLATFORMINTEGRATION_ON && XGPU_ON && XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+static bool painterPathDraw(XPainter* self, const XPainterPath* path,
+                            bool fill, bool stroke, float offsetX,
+                            float offsetY);
+
+/** @brief 路径绘制局部提交参数（逻辑路径 + 填充/描边标志）。 */
+typedef struct PainterGpuPathArgs
+{
+    const XPainterPath* m_path;   /**< 路径对象（借用，重入期间有效）。 */
+    bool m_fill;                  /**< 是否填充内部。 */
+    bool m_stroke;                /**< 是否描边轮廓。 */
+} PainterGpuPathArgs;
+
+/** @brief 路径绘制局部提交回调：重入软件实现（m_gpuActive 已关闭）。 */
+static void painterGpuPathCommand(XPainter* self, void* userData)
+{
+    const PainterGpuPathArgs* args = (const PainterGpuPathArgs*)userData;
+    painterPathDraw(self, args->m_path, args->m_fill, args->m_stroke,
+                    0.0f, 0.0f);
+}
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON && XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+
+/* ========== 几何描边器（P1-B3） ==========
+ * 对标 Qt QStroker 的简化实现：把已展平的路径折线按设备笔宽向两侧
+ * 偏移生成描边多边形（分段平行四边形 + 拐角补片 + 端帽片），再交由
+ * 既有扫描填充管线（painterScanFillDevice）出像素——AA 覆盖/硬边扫
+ * 描/透明度/合成模式/裁剪/GPU 局部提交全部自动获得，不新写混合器。
+ * 简化点（相对 QStroker）：
+ *   - 曲线已由路径展平器变成折线，此处只处理线段；
+ *   - 180° 折返（平分线退化）按 QStroker 折返生成圆帽的语义补半圆
+ *     扇区（Round/Bevel/Miter 拐角样式一律圆弧）；
+ *   - miter limit 取 XPainter 状态值（对标 QPen::miterLimit，默认 2、
+ *     下限 1），超限回退 Bevel。 */
+
+/** @brief 单个描边多边形片顶点上限（四边形裁剪两次 ≤6 顶点，
+ *         圆弧扇区 ≤12 顶点，24 留余量）。 */
+#define XPAINTER_STROKE_POLY_MAX 24
+/** @brief MiterJoin 斜接上限的回退默认值（对标 QPen::miterLimit 默认 2，
+ *         单位为笔宽倍数；miter 长度/笔宽 超过该值回退 Bevel）。
+ *         实际阈值优先取 XPainter 状态（XPainter_setMiterLimit），仅当
+ *         笔样式状态未编译时使用本常量。 */
+#define XPAINTER_STROKE_MITER_LIMIT 2.0f
+
+/** @brief 描边多边形片（设备坐标凸多边形）。 */
+typedef struct PainterStrokePoly
+{
+    float m_xs[XPAINTER_STROKE_POLY_MAX];
+    float m_ys[XPAINTER_STROKE_POLY_MAX];
+    int m_n;
+} PainterStrokePoly;
+
+/** @brief 子路径内一段折线（设备坐标；法线已乘半宽）。 */
+typedef struct PainterStrokeSeg
+{
+    float m_x0;
+    float m_y0;
+    float m_dx;
+    float m_dy;
+    float m_nx;
+    float m_ny;
+    float m_len;
+} PainterStrokeSeg;
+
+/** @brief 构造一段的垂直偏移四边形（对接边过端点，帽/拐角后续处理）。 */
+static void painterStrokePolyQuad(PainterStrokePoly* poly,
+                                  float x0, float y0, float x1, float y1,
+                                  float nx, float ny)
+{
+    poly->m_n = 4;
+    poly->m_xs[0] = x0 + nx; poly->m_ys[0] = y0 + ny;
+    poly->m_xs[1] = x1 + nx; poly->m_ys[1] = y1 + ny;
+    poly->m_xs[2] = x1 - nx; poly->m_ys[2] = y1 - ny;
+    poly->m_xs[3] = x0 - nx; poly->m_ys[3] = y0 - ny;
+}
+
+/**
+ * @brief      Sutherland–Hodgman 单平面凸多边形裁剪。
+ * @details    沿拐角平分线把相邻两段的偏移四边形裁开：内侧互相重叠的
+ *             楔形被去除（半透明描边不会双重混色），外侧留出的楔形由
+ *             join 补片精确填补（Bevel 三角/Miter 四边形/Round 扇区），
+ *             所有片恰好铺满描边区域，仅在共享边上相邻。
+ */
+static void painterStrokePolyClip(PainterStrokePoly* poly,
+                                  float ax, float ay,
+                                  float bx, float by, int wantSide)
+{
+    float outX[XPAINTER_STROKE_POLY_MAX + 1];
+    float outY[XPAINTER_STROKE_POLY_MAX + 1];
+    float dx = bx - ax;
+    float dy = by - ay;
+    int m = 0;
+    int i;
+    for (i = 0; i < poly->m_n; ++i)
+    {
+        int k = (i + 1) % poly->m_n;
+        float px = poly->m_xs[i];
+        float py = poly->m_ys[i];
+        float qx = poly->m_xs[k];
+        float qy = poly->m_ys[k];
+        float sp = dx * (py - ay) - dy * (px - ax);
+        float sq = dx * (qy - ay) - dy * (qx - ax);
+        bool pin = (sp * (float)wantSide >= 0.0f);
+        bool qin = (sq * (float)wantSide >= 0.0f);
+        if (pin && m <= XPAINTER_STROKE_POLY_MAX)
+        {
+            outX[m] = px; outY[m] = py; ++m;
+        }
+        if (pin != qin && fabsf(sp - sq) > 1.0e-12f &&
+            m <= XPAINTER_STROKE_POLY_MAX)
+        {
+            float t = sp / (sp - sq);
+            outX[m] = px + t * (qx - px);
+            outY[m] = py + t * (qy - py);
+            ++m;
+        }
+    }
+    if (m > XPAINTER_STROKE_POLY_MAX) m = XPAINTER_STROKE_POLY_MAX;
+    poly->m_n = m;
+    for (i = 0; i < m; ++i)
+    {
+        poly->m_xs[i] = outX[i];
+        poly->m_ys[i] = outY[i];
+    }
+}
+
+/**
+ * @brief      把一个描边片逆映射回用户坐标并交由扫描填充管线。
+ * @details    painterScanFillDevice 内部完成用户→设备映射与
+ *             AA/硬边/GPU 分支，因此这里传用户坐标即可；透明度/
+ *             合成模式/裁剪由该管线统一施加（对标把描边多边形喂给
+ *             QRasterPaintEngine 填充通道的做法）。
+ */
+static bool painterStrokeEmit(XPainter* self, const PainterStrokePoly* poly,
+                              const XImageTransform* inverse, uint32_t color)
+{
+    float uxs[XPAINTER_STROKE_POLY_MAX];
+    float uys[XPAINTER_STROKE_POLY_MAX];
+    int i;
+    if (poly->m_n < 3) return true; /* 裁剪退化为线/点：无可见覆盖。 */
+    for (i = 0; i < poly->m_n; ++i)
+        if (!painterMapPoint(inverse, poly->m_xs[i], poly->m_ys[i],
+                             &uxs[i], &uys[i]))
+            return false;
+    return painterScanFillDevice(self, poly->m_n, uxs, uys, color, false,
+                                 XPainterFillRule_Winding);
+}
+
+/**
+ * @brief      端帽片：对标 QPen CapStyle。
+ * @param dirx/diry 帽向外延伸方向（起点帽为 -方向，终点帽为 +方向）。
+ *             FlatCap 不延伸（无片）；SquareCap 延伸半宽（对标 Qt 方帽
+ *             矩形）；RoundCap 半圆扇区（8 段近似，DotLine+RoundCap
+ *             即得圆点，与 Qt 虚线端点加帽行为一致）。
+ */
+static bool painterStrokeCap(XPainter* self, float vx, float vy,
+                             float dirx, float diry, float hw,
+                             int cap, const XImageTransform* inverse,
+                             uint32_t color)
+{
+    PainterStrokePoly poly;
+    float nx = -diry * hw;
+    float ny = dirx * hw;
+    int i;
+    if (cap == (int)XPainterPenCapStyle_FlatCap)
+        return true; /* 平头：对接边即边界，不延伸。 */
+    if (cap == (int)XPainterPenCapStyle_RoundCap)
+    {
+        float base = atan2f(ny, nx);
+        poly.m_n = 0;
+        for (i = 0; i <= 8; ++i)
+        {
+            float ang = base - 3.14159265358979f * (float)i / 8.0f;
+            poly.m_xs[poly.m_n] = vx + cosf(ang) * hw;
+            poly.m_ys[poly.m_n] = vy + sinf(ang) * hw;
+            ++poly.m_n;
+        }
+        return painterStrokeEmit(self, &poly, inverse, color);
+    }
+    /* SquareCap：沿方向延伸半宽的矩形。 */
+    poly.m_n = 4;
+    poly.m_xs[0] = vx + nx;      poly.m_ys[0] = vy + ny;
+    poly.m_xs[1] = vx - nx;      poly.m_ys[1] = vy - ny;
+    poly.m_xs[2] = vx - nx + dirx * hw; poly.m_ys[2] = vy - ny + diry * hw;
+    poly.m_xs[3] = vx + nx + dirx * hw; poly.m_ys[3] = vy + ny + diry * hw;
+    return painterStrokeEmit(self, &poly, inverse, color);
+}
+
+/**
+ * @brief      描边一条子折线（设备坐标）：偏移四边形 + 拐角补片 + 端帽。
+ * @param closed 闭合子路径：首尾顶点处也生成 join，不生成端帽（对标
+ *             Qt 对 closed subpath 的处理）。
+ */
+static bool painterStrokeSubPoly(XPainter* self, const float* px,
+                                 const float* py, int count, bool closed,
+                                 float hw, int cap, int join,
+                                 float miterLimit,
+                                 const XImageTransform* inverse,
+                                 uint32_t color)
+{
+    PainterStrokeSeg* segs;
+    PainterStrokePoly* polys;
+    int segTotal = closed ? count : count - 1;
+    int segCount = 0;
+    int joinCount;
+    int i;
+    bool ok = true;
+    if (count < 2 || segTotal < 1) return true;
+    segs = (PainterStrokeSeg*)XMalloc_Hybrid(
+        (size_t)segTotal * sizeof(*segs));
+    polys = (PainterStrokePoly*)XMalloc_Hybrid(
+        (size_t)segTotal * sizeof(*polys));
+    if (!segs || !polys)
+    {
+        XFree_Hybrid(segs);
+        XFree_Hybrid(polys);
+        return false;
+    }
+    for (i = 0; i < segTotal; ++i)
+    {
+        int j = (i + 1) % count;
+        float dx = px[j] - px[i];
+        float dy = py[j] - py[i];
+        float len = sqrtf(dx * dx + dy * dy);
+        PainterStrokeSeg* seg;
+        if (len < 1.0e-6f) continue; /* 零长度段不参与描边几何。 */
+        seg = &segs[segCount++];
+        seg->m_x0 = px[i];
+        seg->m_y0 = py[i];
+        seg->m_dx = dx / len;
+        seg->m_dy = dy / len;
+        seg->m_len = len;
+        seg->m_nx = -dy / len * hw;
+        seg->m_ny = dx / len * hw;
+    }
+    if (segCount == 0)
+    {
+        XFree_Hybrid(segs);
+        XFree_Hybrid(polys);
+        return true;
+    }
+    for (i = 0; i < segCount; ++i)
+        painterStrokePolyQuad(&polys[i], segs[i].m_x0, segs[i].m_y0,
+                              segs[i].m_x0 + segs[i].m_dx * segs[i].m_len,
+                              segs[i].m_y0 + segs[i].m_dy * segs[i].m_len,
+                              segs[i].m_nx, segs[i].m_ny);
+    /* 拐角：沿角平分线（半宽法线之和方向）裁开相邻四边形，再补外楔。
+       前段保叉积 + 侧、后段保 - 侧（对左右转通用，代数可证）。 */
+    joinCount = closed ? segCount : segCount - 1;
+    for (i = 0; i < joinCount && ok; ++i)
+    {
+        int next = (i + 1) % segCount;
+        PainterStrokeSeg* a = &segs[i];
+        PainterStrokeSeg* b = &segs[next];
+        float vx = a->m_x0 + a->m_dx * a->m_len;
+        float vy = a->m_y0 + a->m_dy * a->m_len;
+        float bdx = a->m_nx + b->m_nx;
+        float bdy = a->m_ny + b->m_ny;
+        float cosTheta = a->m_dx * b->m_dx + a->m_dy * b->m_dy;
+        float denom = 1.0f + cosTheta;
+        float side;
+        if (fabsf(bdx) + fabsf(bdy) < hw * 1.0e-4f)
+        {
+            /* 180° 折返（平分线退化）：对标 QStroker 折返拐角生成圆帽
+               的语义，Round/Bevel/Miter 一律在顶点补半圆扇区。扇区圆心
+               为拐角顶点，两端点为折返转向下的外侧偏移点 side*a_n 与
+               side*b_n（折返时二者反径向，|delta|=π），扫向由转向决定
+               ——与下方 RoundJoin 同一套 side 口径，保证半圆落在折返
+               「外」侧（来向段行进方向一侧，即转向的圆帽位置），与两
+               侧偏移四边形恰好铺满折返处描边区域。零长度段已在建段时
+               跳过，不会进入本分支。 */
+            PainterStrokePoly piece;
+            float foldSide = (a->m_dx * b->m_dy - a->m_dy * b->m_dx > 0.0f)
+                                 ? -1.0f : 1.0f;
+            float base = atan2f(foldSide * a->m_ny, foldSide * a->m_nx);
+            float delta = atan2f(foldSide * b->m_ny, foldSide * b->m_nx)
+                          - base;
+            int s;
+            while (delta > 3.14159265358979f) delta -= 6.28318530717959f;
+            while (delta < -3.14159265358979f) delta += 6.28318530717959f;
+            piece.m_n = 0;
+            piece.m_xs[piece.m_n] = vx;
+            piece.m_ys[piece.m_n] = vy;
+            ++piece.m_n;
+            for (s = 0; s <= 8; ++s)
+            {
+                float ang = base + delta * (float)s / 8.0f;
+                piece.m_xs[piece.m_n] = vx + cosf(ang) * hw;
+                piece.m_ys[piece.m_n] = vy + sinf(ang) * hw;
+                ++piece.m_n;
+            }
+            ok = painterStrokeEmit(self, &piece, inverse, color);
+            continue;
+        }
+        painterStrokePolyClip(&polys[i], vx, vy, vx + bdx, vy + bdy, +1);
+        painterStrokePolyClip(&polys[next], vx, vy, vx + bdx, vy + bdy, -1);
+        /* 外楔取哪一侧：法线固定为行进方向 +90°，故 Math 逆时针转角
+           （cross>0）时 n1/n2 指向内侧，外楔在 -n1/-n2 一侧；顺时针
+           转角时 n1/n2 直接指向外侧。side=±1 统一两种情形。 */
+        side = (a->m_dx * b->m_dy - a->m_dy * b->m_dx > 0.0f) ? -1.0f
+                                                              : 1.0f;
+        if (join == (int)XPainterPenJoinStyle_RoundJoin)
+        {
+            /* RoundJoin：外切圆弧扇区（6 段近似，对标 Qt 圆角连接）。 */
+            PainterStrokePoly piece;
+            float base = atan2f(side * a->m_ny, side * a->m_nx);
+            float delta = atan2f(side * b->m_ny, side * b->m_nx) - base;
+            int s;
+            while (delta > 3.14159265358979f) delta -= 6.28318530717959f;
+            while (delta < -3.14159265358979f) delta += 6.28318530717959f;
+            piece.m_n = 0;
+            piece.m_xs[piece.m_n] = vx;
+            piece.m_ys[piece.m_n] = vy;
+            ++piece.m_n;
+            for (s = 0; s <= 6; ++s)
+            {
+                float ang = base + delta * (float)s / 6.0f;
+                piece.m_xs[piece.m_n] = vx + cosf(ang) * hw;
+                piece.m_ys[piece.m_n] = vy + sinf(ang) * hw;
+                ++piece.m_n;
+            }
+            ok = painterStrokeEmit(self, &piece, inverse, color);
+        }
+        else if (join == (int)XPainterPenJoinStyle_MiterJoin &&
+                 denom > 1.0e-6f &&
+                 sqrtf(2.0f / denom) <= miterLimit)
+        {
+            /* MiterJoin：延长到两偏移线交点 m = v±(n1+n2)/(1+cosθ)。
+               miter 长度/笔宽 = sqrt(2/(1+cosθ))（对标 Qt 以笔宽为
+               基准的 miterLimit 口径），超过 XPainter_setMiterLimit
+               设置的阈值时回退 Bevel（Qt 默认 2，下限 1）。 */
+            PainterStrokePoly piece;
+            float mx = vx + side * bdx / denom;
+            float my = vy + side * bdy / denom;
+            piece.m_n = 4;
+            piece.m_xs[0] = vx;      piece.m_ys[0] = vy;
+            piece.m_xs[1] = vx + side * a->m_nx;
+            piece.m_ys[1] = vy + side * a->m_ny;
+            piece.m_xs[2] = mx;      piece.m_ys[2] = my;
+            piece.m_xs[3] = vx + side * b->m_nx;
+            piece.m_ys[3] = vy + side * b->m_ny;
+            ok = painterStrokeEmit(self, &piece, inverse, color);
+        }
+        else
+        {
+            /* BevelJoin（默认）：直连两边的外楔三角形（补角）。 */
+            PainterStrokePoly piece;
+            piece.m_n = 3;
+            piece.m_xs[0] = vx;
+            piece.m_ys[0] = vy;
+            piece.m_xs[1] = vx + side * a->m_nx;
+            piece.m_ys[1] = vy + side * a->m_ny;
+            piece.m_xs[2] = vx + side * b->m_nx;
+            piece.m_ys[2] = vy + side * b->m_ny;
+            ok = painterStrokeEmit(self, &piece, inverse, color);
+        }
+    }
+    if (!closed && ok)
+    {
+        PainterStrokeSeg* first = &segs[0];
+        PainterStrokeSeg* last = &segs[segCount - 1];
+        /* CapStyle 作用于开放子路径两端（对标 Qt：虚线每节两端也加
+           帽，DotLine+RoundCap 即圆点）。 */
+        ok = painterStrokeCap(self, first->m_x0, first->m_y0,
+                              -first->m_dx, -first->m_dy, hw, cap,
+                              inverse, color);
+        if (ok)
+            ok = painterStrokeCap(self,
+                                  last->m_x0 + last->m_dx * last->m_len,
+                                  last->m_y0 + last->m_dy * last->m_len,
+                                  last->m_dx, last->m_dy, hw, cap,
+                                  inverse, color);
+    }
+    for (i = 0; i < segCount && ok; ++i)
+        ok = painterStrokeEmit(self, &polys[i], inverse, color);
+    XFree_Hybrid(segs);
+    XFree_Hybrid(polys);
+    return ok;
+}
+
+/**
+ * @brief      描边一条轮廓（设备坐标）：有虚线节距时按节距拆分。
+ * @details    节距单位为笔宽倍数（对标 Qt qt_scale_dash_pattern：段长
+ *             = pattern × pen width），相位沿整条轮廓连续推进并在每个
+ *             原始顶点处断开事件点，保证实段内部的拐角仍生成 join；
+ *             每个实段作为开放子路径加端帽。虚线在闭合轮廓上按开放
+ *             子路径处理（首尾相接处为对接端帽，对标 Qt 虚线闭合路径
+ *             在起点断开）。空节距已由 painterDashPattern 回退实线。
+ */
+static bool painterStrokeContour(XPainter* self, const float* px,
+                                 const float* py, int count, bool closed,
+                                 float hw, float width, int cap, int join,
+                                 float miterLimit,
+                                 const float* pat, int patCount,
+                                 const XImageTransform* inverse,
+                                 uint32_t color)
+{
+    float* sx;
+    float* sy;
+    int maxPoints;
+    int subCount = 0;
+    int segLoop = closed ? count : count - 1;
+    int patIdx = 0;
+    int i;
+    float patPos = 0.0f;
+    bool on = true;
+    bool ok = true;
+    if (!pat)
+        return painterStrokeSubPoly(self, px, py, count, closed, hw, cap,
+                                    join, miterLimit, inverse, color);
+    if (count < 2 || segLoop < 1) return true;
+    maxPoints = count * (patCount + 1) + 2;
+    sx = (float*)XMalloc_Hybrid((size_t)maxPoints * sizeof(float));
+    sy = (float*)XMalloc_Hybrid((size_t)maxPoints * sizeof(float));
+    if (!sx || !sy)
+    {
+        XFree_Hybrid(sx);
+        XFree_Hybrid(sy);
+        return false;
+    }
+    for (i = 0; i < segLoop && ok; ++i)
+    {
+        int j = (i + 1) % count;
+        float x0 = px[i], y0 = py[i];
+        float dx = px[j] - x0, dy = py[j] - y0;
+        float len = sqrtf(dx * dx + dy * dy);
+        float consumed = 0.0f;
+        if (len < 1.0e-6f) continue;
+#define XPAINTER_STROKE_APPEND(cxp, cyp)                                  \
+    do                                                                    \
+    {                                                                     \
+        if (subCount < maxPoints)                                         \
+        {                                                                 \
+            if (subCount == 0 ||                                          \
+                fabsf(sx[subCount - 1] - (cxp)) > 1.0e-6f ||              \
+                fabsf(sy[subCount - 1] - (cyp)) > 1.0e-6f)                \
+            {                                                             \
+                sx[subCount] = (cxp);                                     \
+                sy[subCount] = (cyp);                                     \
+                ++subCount;                                               \
+            }                                                             \
+        }                                                                 \
+    } while (0)
+        if (on) XPAINTER_STROKE_APPEND(x0, y0); /* 段首入列。 */
+        while (consumed < len - 1.0e-6f && ok)
+        {
+            float segFull = pat[patIdx] * width;
+            float remain;
+            float step;
+            if (segFull <= 0.0f) segFull = 1.0f; /* 退化节距保护。 */
+            remain = segFull - patPos;
+            if (remain <= 1.0e-6f)
+            {
+                /* 节距段耗尽：实段先补终点，再翻转画/空状态。 */
+                if (on) XPAINTER_STROKE_APPEND(x0 + dx * (consumed / len),
+                                               y0 + dy * (consumed / len));
+                patIdx = (patIdx + 1) % patCount;
+                patPos = 0.0f;
+                on = !on;
+                if (!on && subCount >= 2)
+                    ok = painterStrokeSubPoly(self, sx, sy, subCount,
+                                              false, hw, cap, join,
+                                              miterLimit, inverse, color);
+                if (!on) subCount = 0;
+                else XPAINTER_STROKE_APPEND(x0 + dx * (consumed / len),
+                                            y0 + dy * (consumed / len));
+                continue;
+            }
+            step = remain < (len - consumed) ? remain : (len - consumed);
+            consumed += step;
+            patPos += step;
+            if (patPos >= segFull - 1.0e-6f)
+            {
+                if (on) XPAINTER_STROKE_APPEND(x0 + dx * (consumed / len),
+                                               y0 + dy * (consumed / len));
+                patIdx = (patIdx + 1) % patCount;
+                patPos = 0.0f;
+                on = !on;
+                if (!on && subCount >= 2)
+                    ok = painterStrokeSubPoly(self, sx, sy, subCount,
+                                              false, hw, cap, join,
+                                              miterLimit, inverse, color);
+                if (!on) subCount = 0;
+                else XPAINTER_STROKE_APPEND(x0 + dx * (consumed / len),
+                                            y0 + dy * (consumed / len));
+            }
+            /* 段末自然结束（未撞节距边界）：终点由下一段段首入列或
+               循环外的收尾补上。 */
+        }
+        if (on) XPAINTER_STROKE_APPEND(px[j], py[j]);
+#undef XPAINTER_STROKE_APPEND
+    }
+    if (on && subCount >= 2 && ok)
+        ok = painterStrokeSubPoly(self, sx, sy, subCount, false, hw, cap,
+                                  join, miterLimit, inverse, color);
+    XFree_Hybrid(sx);
+    XFree_Hybrid(sy);
+    return ok;
+}
+
+/**
+ * @brief      几何描边入口：设备笔宽 > 1 时接管 strokePath/drawPath
+ *             的描边（P1-B3）。
+ * @return true=已接管（含 NoPen 无输出）；false=交回旧逐段 drawLine
+ *         管线（1px 默认笔、Picture 录制/回放后端、变换不可逆——
+ *         保证默认笔逐像素零回归）。
+ */
+static bool painterPathStrokeWide(XPainter* self,
+                                  const PainterPathFillContour* contours,
+                                  int contourCount)
+{
+    XImageTransform transform;
+    XImageTransform inverse;
+    const float* pat = NULL;
+    int patCount = 0;
+    int cap = (int)XPainterPenCapStyle_FlatCap;
+    int join = (int)XPainterPenJoinStyle_BevelJoin;
+    float miterLimit = XPAINTER_STROKE_MITER_LIMIT;
+    uint32_t color;
+    float* dev = NULL;
+    size_t total = 0;
+    size_t offset = 0;
+    float widthF;
+    float hw;
+    int width;
+    int c;
+    int i;
+    bool ok = true;
+    if (!self || !contours || contourCount <= 0) return false;
+    if (self->m_deviceKind != XPainterDevice_Image)
+        return false; /* Picture 录制/回放保持旧管线（录制契约）。 */
+#if XPAINTER_PENSTYLE_ON
+    if (self->m_state.m_penStyle == XPainterPenStyle_NoPen)
+        return true; /* NoPen：真无绘制，接管后直接结束。 */
+#endif
+    if (!painterEffectiveTransform(&self->m_state, &transform))
+        return false;
+    /* 笔宽随有效变换缩放：与 painterRaster_drawLineDevice 同一口径
+       （非 cosmetic 笔宽 × painterPenWidthScale，退化矩阵按 1px）。 */
+    width = self->m_state.m_penWidth;
+    if (width >= 1)
+    {
+        float widthScale = painterPenWidthScale(&transform);
+        if (widthScale <= 0.0f)
+            width = 1;
+        else if (widthScale != 1.0f)
+        {
+            int scaled = painterRound((float)width * widthScale);
+            width = scaled >= 1 ? scaled : 1;
+        }
+    }
+    if (width < 1) width = 1;
+    if (width <= 1)
+        return false; /* 1px 默认笔：交回旧管线，逐像素零回归。 */
+    if (!painterMatrixInvert(&transform, &inverse))
+        return false; /* 奇异变换无法逆映射描边片，交回旧管线。 */
+#if XPAINTER_PENSTYLE_ON
+    cap = (int)self->m_state.m_penCap;
+    join = (int)self->m_state.m_penJoin;
+    miterLimit = self->m_state.m_miterLimit; /* 对标 QPen::miterLimit。 */
+    /* 空节距（CustomDashLine 未设置 pattern）在此返回 false → 实线，
+       与 drawLine 管线同一判定（对标 Qt 空 pattern = 实线）。 */
+    if (!painterDashPattern(self, &pat, &patCount))
+    {
+        pat = NULL;
+        patCount = 0;
+    }
+#endif
+    color = self->m_state.m_penColor; /* 透明度由填充管线统一施加。 */
+    widthF = (float)width;
+    hw = widthF * 0.5f;
+    for (c = 0; c < contourCount; ++c)
+        total += (size_t)contours[c].m_count;
+    if (total < 2) return true;
+    if (total > ((size_t)-1) / (2u * sizeof(float))) return false;
+    dev = (float*)XMalloc_Hybrid(total * 2u * sizeof(float));
+    if (!dev) return false;
+    for (c = 0; c < contourCount && ok; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        float* dxs = dev + offset;
+        float* dys = dev + offset + total;
+        for (i = 0; i < contour->m_count; ++i)
+        {
+            if (!painterMapPoint(&transform, contour->m_xs[i],
+                                 contour->m_ys[i], &dxs[i], &dys[i]))
+            {
+                ok = false;
+                break;
+            }
+        }
+        if (ok)
+            ok = painterStrokeContour(self, dxs, dys, contour->m_count,
+                                      contour->m_closed, hw, widthF, cap,
+                                      join, miterLimit, pat, patCount,
+                                      &inverse, color);
+        offset += (size_t)contour->m_count;
+    }
+    XFree_Hybrid(dev);
+    return ok;
+}
+
 static bool painterPathDraw(XPainter* self, const XPainterPath* path,
                             bool fill, bool stroke, float offsetX,
                             float offsetY)
@@ -9556,15 +11202,44 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
     if (!self) return false;
     if (!path || path->m_elementCount == 0) return true;
     if (self->m_deviceKind == XPainterDevice_None) return false;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+#if XPAINTER_CLIP_ON
+    /* GPU 会话 + 精确路径裁剪：AA 覆盖图经 drawAlphaBitmap 提交不带
+       路径掩码，软件光栅局部提交（对标既有 GPU 局部提交模式）。 */
+    if (self->m_gpuActive && painterClipPathActive(self))
+    {
+        PainterGpuPathArgs args;
+        args.m_path = path;
+        args.m_fill = fill;
+        args.m_stroke = stroke;
+        return painterGpuSubmitSoftwareCommand(self, painterGpuPathCommand,
+                                               &args);
+    }
+#endif /* XPAINTER_CLIP_ON */
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     if (!painterPathBuildContours(path, offsetX, offsetY, &contours,
                                   &contourCount, &contourCapacity))
         return false;
+    /* 对标 QPainter::drawPath/fillPath：填充规则取 path.fillRule()
+       （QPainterPath 默认 OddEvenFill），Winding 走非零环绕计数管线。 */
     if (fill && contourCount > 0 &&
         !painterFillPathContours(self, contours, contourCount,
-                                 XPainterFillRule_OddEven))
+                                 XPainterPath_fillRule(path)))
         goto fail;
     if (stroke)
     {
+        /* 几何描边器（P1-B3）：设备笔宽 > 1 时按笔宽把路径向两侧偏移
+           成描边多边形进填充管线——JoinStyle（Bevel 补角/Miter 斜接/
+           Round 圆弧）与 CapStyle（Flat/Square/Round）生效，且自动
+           获得 AA/透明度/合成/裁剪/GPU 局部提交；返回 false（1px
+           默认笔、Picture 录制/回放、奇异变换）时走下方逐段 drawLine
+           旧管线，保证默认笔逐像素零回归。 */
+        if (painterPathStrokeWide(self, contours, contourCount))
+        {
+            painterPathFillContoursFree(&contours, &contourCount,
+                                        &contourCapacity);
+            return true;
+        }
         for (i = 0; i < contourCount; ++i)
             if (!painterDrawPolyLineFloat(self, contours[i].m_xs,
                                           contours[i].m_ys,
@@ -9643,6 +11318,7 @@ void XPainter_setPen(XPainter* self, uint32_t color)
         self->m_state.m_penWidth = 1;
         self->m_state.m_penCap = XPainterPenCapStyle_SquareCap;
         self->m_state.m_penJoin = XPainterPenJoinStyle_BevelJoin;
+        self->m_state.m_miterLimit = 2.0f; /* 全新 QPen 复位默认 miterLimit。 */
 #endif /* XPAINTER_PENSTYLE_ON */
         painterRecord_penState(self);
     }
@@ -9659,6 +11335,7 @@ void XPainter_setPen_2(XPainter* self, XPainterPenStyle style)
     self->m_state.m_penStyle = style;
     self->m_state.m_penCap = XPainterPenCapStyle_SquareCap;
     self->m_state.m_penJoin = XPainterPenJoinStyle_BevelJoin;
+    self->m_state.m_miterLimit = 2.0f; /* 全新 QPen 复位默认 miterLimit。 */
     painterRecord_penState(self);
 }
 #endif /* XPAINTER_PENSTYLE_ON */
@@ -9763,6 +11440,22 @@ void XPainter_setPenJoinStyle(XPainter* self, XPainterPenJoinStyle join)
 XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self)
 {
     return self ? self->m_state.m_penJoin : XPainterPenJoinStyle_BevelJoin;
+}
+
+void XPainter_setMiterLimit(XPainter* self, float limit)
+{
+    if (!self || self->m_deviceKind == XPainterDevice_None) return;
+    /* 对标 QPen::setMiterLimit：小于 1 的值钳位为 1（miter 长度不可能
+       小于笔宽，1 即恒回退 Bevel；非有限值按 Qt 不做特判，此处统一
+       钳位防御 NaN 破坏比较逻辑）。 */
+    if (!(limit >= 1.0f)) limit = 1.0f;
+    self->m_state.m_miterLimit = limit;
+    painterRecord_penState(self);
+}
+
+float XPainter_miterLimit(const XPainter* self)
+{
+    return self ? self->m_state.m_miterLimit : 2.0f;
 }
 #endif /* XPAINTER_PENSTYLE_ON */
 
@@ -10551,6 +12244,39 @@ typedef struct PainterTextLine
     int m_charCount;       /**< 该行字形数。 */
 } PainterTextLine;
 
+/** @brief 行缓冲超限扩容（对标 Qt：QTextLayout 的行数没有固定上限）。
+ *  @details 需要 required 个行槽而当前容量不足时，按双倍容量扩容：
+ *           首次从栈缓冲切换到堆时以 XMemory 体系分配并拷贝既有行，
+ *           之后走 XRealloc_System 扩容；分配失败返回 false 且不改动
+ *           已有缓冲（零副作用），由调用方释放并回滚。
+ *  @param lines 当前缓冲指针（栈或堆），成功后更新为最新缓冲。
+ *  @param stackLines 调用方栈上缓冲，用于识别"尚未切堆"状态。
+ *  @param capacity 当前容量（槽位），成功后更新。
+ *  @param required 需要的最小槽位数。
+ *  @return 容量足够（含已扩容）返回 true；内存不足返回 false。 */
+static bool painterTextLinesEnsure(PainterTextLine** lines,
+                                   PainterTextLine* stackLines,
+                                   int* capacity, int required)
+{
+    int newCapacity;
+    PainterTextLine* grown;
+    if (!lines || !stackLines || !capacity)
+        return false;
+    if (required <= *capacity)
+        return true;
+    newCapacity = *capacity * 2;
+    if (newCapacity < required) newCapacity = required;
+    grown = (PainterTextLine*)XRealloc_System(
+        (*lines == stackLines) ? NULL : *lines,
+        (size_t)newCapacity * sizeof(*grown));
+    if (!grown) return false;
+    if (*lines == stackLines)
+        XMemcpy(grown, stackLines, (size_t)*capacity * sizeof(*grown));
+    *lines = grown;
+    *capacity = newCapacity;
+    return true;
+}
+
 /** @brief 统计 [start,end) 内 UTF-8 字形数量。 */
 static int painterCountChars(const char* start, const char* end)
 {
@@ -10859,7 +12585,8 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     int charW;
     int maxChars;
     int lineCap;
-    PainterTextLine lines[64];
+    PainterTextLine stackLines[64];
+    PainterTextLine* lines = stackLines;
     int lineCount = 0;
     const char* lineStart;
     const char* p;
@@ -10904,7 +12631,7 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
        避免后续布局宽度除零，并保持设备状态不变。 */
     if (table.m_width <= 0 || table.m_height <= 0 || charW <= 0)
         return true;
-    lineCap = (int)(sizeof(lines) / sizeof(lines[0]));
+    lineCap = (int)(sizeof(stackLines) / sizeof(stackLines[0]));
     wrap = (flags & XPAINTER_TEXT_WORD_WRAP) != 0u;
     wrapAnywhere = (flags & XPAINTER_TEXT_WRAP_ANYWHERE) != 0u;
     /* Qt 只有显式启用 WordWrap/WrapAnywhere（或强制两端对齐）时才
@@ -10965,7 +12692,9 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     lineStart = utf8;
     p = utf8;
     curCount = 0;
-    while (*p != '\0' && lineCount < lineCap)
+    /* 行缓冲动态容量（对标 Qt：QTextLayout 行数无固定上限）：行数超过
+       栈缓冲时经 painterTextLinesEnsure 扩容，不再静默丢弃。 */
+    while (*p != '\0')
     {
         const char* charStart = p;
         uint32_t cp = painter8x16DecodeNext(&p);
@@ -10979,6 +12708,9 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
                 ++curCount;
                 continue;
             }
+            if (!painterTextLinesEnsure(&lines, stackLines, &lineCap,
+                                        lineCount + 1))
+                goto textLayoutOOM;
             lines[lineCount].m_start = lineStart;
             lines[lineCount].m_end = charStart;
             lines[lineCount].m_charCount = curCount;
@@ -11004,6 +12736,9 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
                 }
                 if (spaceEnd)
                 {
+                    if (!painterTextLinesEnsure(&lines, stackLines, &lineCap,
+                                                lineCount + 1))
+                        goto textLayoutOOM;
                     lines[lineCount].m_start = lineStart;
                     lines[lineCount].m_end = spaceEnd;
                     lines[lineCount].m_charCount =
@@ -11014,6 +12749,9 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
                     continue;
                 }
             }
+            if (!painterTextLinesEnsure(&lines, stackLines, &lineCap,
+                                        lineCount + 1))
+                goto textLayoutOOM;
             lines[lineCount].m_start = lineStart;
             lines[lineCount].m_end = p;
             lines[lineCount].m_charCount = curCount;
@@ -11022,8 +12760,11 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
             curCount = 0;
         }
     }
-    if (lineStart < p && lineCount < lineCap)
+    if (lineStart < p)
     {
+        if (!painterTextLinesEnsure(&lines, stackLines, &lineCap,
+                                    lineCount + 1))
+            goto textLayoutOOM;
         lines[lineCount].m_start = lineStart;
         lines[lineCount].m_end = p;
         lines[lineCount].m_charCount = curCount;
@@ -11031,6 +12772,8 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     }
     if (lineCount == 0)
     {
+        if (lines != stackLines)
+            XFree_System(lines);
 #if XPAINTER_CLIP_ON
         if (restoreClip)
             XPainter_restore(self);
@@ -11090,11 +12833,23 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
         XPainterPath_deinit(&outlinePathStorage);
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
+    if (lines != stackLines)
+        XFree_System(lines);
 #if XPAINTER_CLIP_ON
     if (restoreClip)
         XPainter_restore(self);
 #endif /* XPAINTER_CLIP_ON */
     return true;
+
+textLayoutOOM:
+    /* 行缓冲扩容失败：释放堆缓冲并回滚裁剪状态，零副作用、无泄漏。 */
+    if (lines != stackLines)
+        XFree_System(lines);
+#if XPAINTER_CLIP_ON
+    if (restoreClip)
+        XPainter_restore(self);
+#endif /* XPAINTER_CLIP_ON */
+    return false;
 }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
 
@@ -11152,20 +12907,175 @@ static void xpainterPathBounds(const XPainterPath* path, XRect* out)
                (int)ceilf(maxX - minX), (int)ceilf(maxY - minY));
 }
 
+/* ========== 路径裁剪（B4：精确路径光栅裁剪） ========== */
+
+/**
+ * @brief      深拷贝路径（含元素数组与 fillRule）。
+ * @param dst  目标路径（须已 init 或为零值结构）。
+ * @param src  源路径；NULL/空路径把 dst 重置为空路径。
+ * @return     成功返回 true；内存不足返回 false（dst 保持原内容）。
+ */
+static bool xpainterPathCopy(XPainterPath* dst, const XPainterPath* src)
+{
+    XPainterPathElement* elements;
+    if (!dst) return false;
+    if (dst == src) return true;
+    if (!src || src->m_elementCount <= 0 || !src->m_elements)
+    {
+        XPainterPath_deinit(dst);
+        XPainterPath_init(dst);
+        return true;
+    }
+    elements = (XPainterPathElement*)XMalloc_System(
+        sizeof(*elements) * (size_t)src->m_elementCount);
+    if (!elements) return false;
+    XMemcpy(elements, src->m_elements,
+            sizeof(*elements) * (size_t)src->m_elementCount);
+    XPainterPath_deinit(dst);
+    *dst = *src;
+    dst->m_elements = elements;
+    dst->m_elementCapacity = src->m_elementCount;
+    return true;
+}
+
+/**
+ * @brief      判断路径是否为单个闭合的轴对齐矩形子路径。
+ * @details    对标 Qt 对矩形路径的优化：QPainterPath 由 addRect 构造
+ *             （MoveTo→LineTo×3→补线闭合）时，raster 引擎按矩形快路径
+ *             处理裁剪。这里识别同一元素模式（4 条边各自水平/垂直且
+ *             首尾闭合），命中时把裁剪退化为既有 clipRect 管线。
+ * @return     是矩形子路径返回 true 并输出逻辑包围矩形。
+ */
+static bool painterClipPathIsRect(const XPainterPath* path, XRect* out)
+{
+    const XPainterPathElement* e;
+    float px[5];
+    float py[5];
+    int i;
+    if (!path || path->m_elementCount != 5 || !path->m_elements) return false;
+    e = path->m_elements;
+    if (e[0].m_type != XPainterPathElement_MoveTo) return false;
+    for (i = 1; i < 5; ++i)
+        if (e[i].m_type != XPainterPathElement_LineTo) return false;
+    for (i = 0; i < 5; ++i)
+    {
+        px[i] = e[i].m_x1;
+        py[i] = e[i].m_y1;
+        if (i > 0 && (!isfinite(px[i]) || !isfinite(py[i]))) return false;
+    }
+    /* 首尾闭合 + 4 条边各自轴对齐（任意绕行方向/退化矩形均接受）。 */
+    if (px[0] != px[4] || py[0] != py[4]) return false;
+    for (i = 0; i < 4; ++i)
+        if (px[i] != px[i + 1] && py[i] != py[i + 1]) return false;
+    xpainterPathBounds(path, out);
+    return true;
+}
+
+/**
+ * @brief      释放状态中的裁剪路径并关闭精确路径裁剪标志。
+ */
+static void painterClipPathStateClear(XPainterState* state)
+{
+    if (!state) return;
+    if (state->m_clipPath)
+    {
+        XPainterPath_deinit(state->m_clipPath);
+        XFree_System(state->m_clipPath);
+        state->m_clipPath = NULL;
+    }
+    state->m_hasClipPath = false;
+}
+
 void XPainter_setClipPath(XPainter* self, const XPainterPath* path,
                           XPainterClipOperation operation)
 {
     XRect bounds;
-    if (!self || !path) return;
+    XRect rectBounds;
+    bool rectFastPath = false;
+    if (!self || self->m_deviceKind == XPainterDevice_None || !path) return;
+    if (operation != XPainterClipOperation_NoClip &&
+        operation != XPainterClipOperation_ReplaceClip &&
+        operation != XPainterClipOperation_IntersectClip)
+        operation = XPainterClipOperation_ReplaceClip;
+
     xpainterPathBounds(path, &bounds);
+    /* 矩形快路径门控：轴对齐矩形子路径 + 无旋转/错切/透视的变换时，
+       与 setClipRect(包围盒) 逐位一致，直接走既有 clipRect 管线
+       （span/blit/GPU scissor 等全部快速路径保持可用，零掩码开销）。 */
+    if (painterClipPathIsRect(path, &rectBounds))
+    {
+        XImageTransform transform;
+        if (painterEffectiveTransform(&self->m_state, &transform) &&
+            fabsf(transform.m12) < 1.0e-6f &&
+            fabsf(transform.m21) < 1.0e-6f &&
+            fabsf(transform.m13) < 1.0e-6f &&
+            fabsf(transform.m23) < 1.0e-6f)
+        {
+            rectFastPath = true;
+            bounds = rectBounds;
+        }
+    }
+
+    /* 1) 矩形部分：复用 setClipRect 的完整语义——包围盒按当前变换映射、
+       IntersectClip 与既有 clipRect/clipRegion 精确求交、NoClip 关闭、
+       Picture 录制与 clipBoundingRect/clipRegion 查询状态同步。 */
     XPainter_setClipRect(self, &bounds, operation);
+    if (operation == XPainterClipOperation_NoClip)
+    {
+        /* 对标 Qt：NoClip 关闭整个裁剪（含路径部分）。 */
+        painterClipPathStateClear(&self->m_state);
+        painterClipMaskCacheReset(self);
+        return;
+    }
+
+    /* 2) 路径部分：存储所设路径的深拷贝（含 fillRule），供 clipPath()
+       返回；非矩形快路径时按设置时的有效变换惰性光栅化覆盖掩码。
+       与既有含路径裁剪做 IntersectClip 时，路径对路径的精确交集
+       无法用单一路径表示，按包围盒近似（登记偏差，见头文件）。 */
+    {
+        XPainterPath* copy =
+            (XPainterPath*)XMalloc_System(sizeof(XPainterPath));
+        if (!copy) return;
+        XPainterPath_init(copy);
+        if (!xpainterPathCopy(copy, path))
+        {
+            XPainterPath_deinit(copy);
+            XFree_System(copy);
+            return;
+        }
+        painterClipPathStateClear(&self->m_state);
+        self->m_state.m_clipPath = copy;
+        self->m_state.m_hasClipPath = !rectFastPath;
+        self->m_state.m_clipPathSerial = ++self->m_clipSerialCounter;
+        if (rectFastPath)
+        {
+            /* 矩形路径：rect 部分已精确表达裁剪，不建掩码。 */
+            painterEffectiveTransform(&self->m_state,
+                                      &self->m_state.m_clipPathTransform);
+        }
+        else if (painterEffectiveTransform(&self->m_state,
+                                           &self->m_state.m_clipPathTransform))
+        {
+            painterClipMaskCacheReset(self); /* 版本号已变，惰性重建。 */
+        }
+        else
+        {
+            /* 变换不可用：放弃精确掩码，保留包围盒裁剪（保守降级）。 */
+            self->m_state.m_hasClipPath = false;
+        }
+    }
 }
 
 void XPainter_clipPath(const XPainter* self, XPainterPath* out)
 {
-    (void)self;
     if (!out) return;
     XPainterPath_init(out);
+    /* 对标 QPainter::clipPath()：返回所设路径（逻辑坐标，含 fillRule）
+       的副本；未设置时输出空路径。 */
+    if (!self || self->m_deviceKind == XPainterDevice_None ||
+        !self->m_state.m_clipPath)
+        return;
+    (void)xpainterPathCopy(out, self->m_state.m_clipPath);
 }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 

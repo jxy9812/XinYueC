@@ -1724,6 +1724,57 @@ static void xtc_commitPreedit(XTextControl* self)
 }
 
 /**
+ * @brief      按指定剪贴板模式粘贴（xtc_mousePressEvent 中键分支前置声明；
+ *             实现见 XTextControl_paste 处，对标 QWidgetTextControl::paste
+ *             (QClipboard::Mode) 的模式参数化通道）。
+ */
+static void xtc_pasteFromMode(XTextControl* self, int mode);
+
+/**
+ * @brief      中键按下：光标落到点击处后从 Selection 选择缓冲（X11
+ *             PRIMARY）粘贴。对标 Qt QWidgetTextControlPrivate::
+ *             mousePressEvent 中键分支（TextEditable 且剪贴板
+ *             supportsSelection 时 setCursorPosition(点击处) +
+ *             paste(QClipboard::Selection)）。
+ * @return     true 已处理（事件接收）；false 未处理（平台不支持选择区/
+ *             不可编辑/未命中，保持既有 ignore 行为零回归）。
+ * @note       粘贴复用 XTextControl_paste 既有通道（xtc_pasteFromMode），
+ *             只读不写剪贴板，CLIPBOARD 内容不受影响（对标 Qt 中键粘贴
+ *             语义）。
+ */
+static bool xtc_middleClickPaste(XTextControl* self, const XMouseEvent* e)
+{
+    XClipboard* clipObj;
+    XPoint pos;
+    int cursorPos;
+    int oldPos;
+    int oldAnchor;
+    if (!self || !e ||
+        !(self->m_interactionFlags &
+          (int)XTextControlInteraction_TextEditable))
+        return false;
+    /* 对标 Qt：中键 Selection 粘贴仅当平台后端声明支持选择区
+       （QGuiApplication::clipboard()->supportsSelection() 门禁）。 */
+    clipObj = XGuiApplication_clipboard();
+    if (!clipObj || !XClipboard_supportsSelection(clipObj))
+        return false;
+    pos = e->m_position;
+    /* 对标 Qt cursorForPosition(点击处)：FuzzyHit 未命中（<0）不动作。 */
+    cursorPos = XTextControl_hitTest(
+        self, &pos, (int)XTextControlHitTestAccuracy_FuzzyHit);
+    if (cursorPos < 0) return false;
+    oldPos = self->m_cursorPosition;
+    oldAnchor = self->m_cursorAnchor;
+    if (xtc_isPreediting(self)) xtc_commitPreedit(self);
+    /* 对标 Qt setCursorPosition(pos)：收起选区并把光标锚到点击处。 */
+    xtc_setCursorPos(self, cursorPos, (int)XTextControlMoveMode_MoveAnchor);
+    xtc_notifyCursorPosition(self, oldPos);
+    xtc_repaintOldAndNewSelection(self, oldPos, oldAnchor);
+    xtc_pasteFromMode(self, (int)XClipboardMode_Selection);
+    return true;
+}
+
+/**
  * @brief      鼠标按下（对标 mousePressEvent 全分支：链接锚点记录、
  *             焦点指示清理、三击判定、Shift 扩展、起拖判定、preedit 提交）。
  */
@@ -1760,7 +1811,13 @@ static void xtc_mousePressEvent(XTextControl* self, XMouseEvent* e)
     if (!(button & (int)XMouseButton_LeftButton) ||
         !((flags & (int)XTextControlInteraction_TextSelectableByMouse) ||
           (flags & (int)XTextControlInteraction_TextEditable))) {
-        XEvent_ignore((XEvent*)e);
+        /* 对标 Qt mousePressEvent 中键分支：中键 Selection 粘贴见
+           xtc_middleClickPaste；其余非左键/未处理场景保持既有 ignore。 */
+        if ((button & (int)XMouseButton_MiddleButton) &&
+            xtc_middleClickPaste(self, e))
+            XEvent_accept((XEvent*)e);
+        else
+            XEvent_ignore((XEvent*)e);
         return;
     }
 
@@ -3239,7 +3296,14 @@ void XTextControl_copy(XTextControl* self)
     XFree_System(text);
 }
 
-void XTextControl_paste(XTextControl* self)
+/**
+ * @brief      按指定剪贴板模式粘贴（对标 QWidgetTextControl::paste
+ *             (QClipboard::Mode mode) 的模式参数化通道；插入复用
+ *             insertFromMimeData 既有路径，UTF-8 字节口径不变）。
+ * @note       只读不写剪贴板：中键 Selection 粘贴不影响 CLIPBOARD 内容
+ *             （对标 Qt）。
+ */
+static void xtc_pasteFromMode(XTextControl* self, int mode)
 {
     const char* clip = NULL;
     char* owned = NULL;
@@ -3251,8 +3315,7 @@ void XTextControl_paste(XTextControl* self)
     {
         XClipboard* clipObj = XGuiApplication_clipboard();
         if (clipObj) {
-            XClipboardMode mode = (XClipboardMode)XClipboardMode_Clipboard;
-            XString* st = XClipboard_text(clipObj, mode);
+            XString* st = XClipboard_text(clipObj, (XClipboardMode)mode);
             if (st) {
                 const char* utf8 = XString_toUtf8(st);
                 if (utf8 && utf8[0]) owned = xtc_strdupN(utf8, -1);
@@ -3265,6 +3328,12 @@ void XTextControl_paste(XTextControl* self)
     if (clip && clip[0])
         XTextControl_insertFromMimeData(self, clip);
     if (owned) XFree_System(owned);
+}
+
+void XTextControl_paste(XTextControl* self)
+{
+    /* 对标 Qt paste() 无参重载：默认 CLIPBOARD 模式。 */
+    xtc_pasteFromMode(self, (int)XClipboardMode_Clipboard);
 }
 
 void XTextControl_undo(XTextControl* self)

@@ -4,9 +4,14 @@
  * @details    平台后端调用 handle* 注入函数时，构造携带负载的具体事件
  *             （XResizeEvent / XExposeEvent / XPaintEvent / XFocusEvent /
  *             XCloseEvent / XShowEvent / XHideEvent / XKeyEvent /
- *             XMouseEvent / XWheelEvent / XEnterEvent），并经
+ *             XMouseEvent / XWheelEvent / XEnterEvent / XTouchEvent /
+ *             XTabletEvent），并经
  *             XGuiApplication_sendSpontaneousEvent 以自发事件语义同步
  *             投递，XWindow_event_base 按事件类型路由到对应窗口事件槽。
+ *             屏幕接入系列（handleScreenAdded/Removed/GeometryChange/
+ *             LogicalDotsPerInchChange，对标 QWindowSystemInterface 同名
+ *             接口）为同步属性同步入口：直接转发 XScreen 注册表与
+ *             XGuiApplication 屏幕信号，不走事件队列。
  *             事件投递后立即释放，符合 XEvent 的事件所有权约定。
  *             本文件不引用任何平台 API，嵌入式可用。
  * @note       模块总开关 XWINDOWSYSTEMINTERFACE_ON 定义于 XGuiConfig.h；
@@ -88,6 +93,48 @@ void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window, XFocusReas
     if (!event) return;
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
     XEvent_delete_base((XEvent*)event);
+}
+
+void XWindowSystemInterface_handleScreenAdded(XScreen* screen)
+{
+    /* 对标 QWindowSystemInterface::handleScreenAdded：平台层枚举到屏幕后
+       统一经本入口登记；登记与 screenAdded 信号由 XGuiApplication 负责。 */
+    if (!screen) return;
+    XGuiApplication_screenAdded(screen);
+}
+
+void XWindowSystemInterface_handleScreenRemoved(XScreen* screen)
+{
+    if (!screen) return;
+    XGuiApplication_screenRemoved(screen);
+}
+
+void XWindowSystemInterface_handleScreenGeometryChange(XScreen* screen,
+                                                       const XRect* geometry,
+                                                       const XRect* availableGeometry)
+{
+#if XSCREEN_ON
+    if (!screen) return;
+    /* 更新顺序与 QPlatformScreen::geometryChanged 一致：先 geometry
+       （其内部已联动 availableGeometry/virtualGeometry/物理 DPI），再按
+       平台提供的独立可用几何覆盖。 */
+    if (geometry) XScreen_setGeometry(screen, geometry);
+    if (availableGeometry) XScreen_setAvailableGeometry(screen, availableGeometry);
+#else
+    (void)screen; (void)geometry; (void)availableGeometry;
+#endif /* XSCREEN_ON */
+}
+
+void XWindowSystemInterface_handleScreenLogicalDotsPerInchChange(XScreen* screen,
+                                                                 float dpi)
+{
+#if XSCREEN_ON
+    if (!screen) return;
+    /* Qt 的 handleScreenLogicalDotsPerInchChange 用单值同时更新 X/Y。 */
+    XScreen_setLogicalDotsPerInch(screen, dpi, dpi);
+#else
+    (void)screen; (void)dpi;
+#endif /* XSCREEN_ON */
 }
 
 bool XWindowSystemInterface_handleCloseEvent(XWindow* window)
@@ -238,6 +285,50 @@ bool XWindowSystemInterface_handleWheelEvent(XWindow* window,
     event = XWheelEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                   XEVENT_TYPE_WHEEL, &position, NULL,
                                   angleDelta, buttons, modifiers);
+    if (!event) return false;
+    XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
+    XEvent_delete_base((XEvent*)event);
+    return true;
+}
+
+bool XWindowSystemInterface_handleTouchEvent(XWindow* window, XEventType type,
+                                             XPoint position,
+                                             const XPoint* globalPosition,
+                                             int pointCount)
+{
+    XTouchEvent* event;
+    /* 对标 QGuiApplicationPrivate::processTouchEvent 的 WSI 入口形态：
+       平台后端只负责翻译原生触摸流，合成/命中/派发统一在本入口之后。
+       X11 XI2 合成与嵌入式 tslib/evdev 注入不在本批（无硬件验证手段），
+       本函数即其后续统一注入点（/tmp 探针可直接合成验证）。 */
+    if (!window || (type != XEVENT_TYPE_TOUCH_BEGIN &&
+                    type != XEVENT_TYPE_TOUCH_UPDATE &&
+                    type != XEVENT_TYPE_TOUCH_END &&
+                    type != XEVENT_TYPE_TOUCH_CANCEL))
+        return false;
+    if (pointCount < 1) pointCount = 1;
+    event = XTouchEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, &position,
+                                  globalPosition, pointCount);
+    if (!event) return false;
+    XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
+    XEvent_delete_base((XEvent*)event);
+    return true;
+}
+
+bool XWindowSystemInterface_handleTabletEvent(XWindow* window, XEventType type,
+                                              XPoint position,
+                                              const XPoint* globalPosition,
+                                              float pressure, int pointerType)
+{
+    XTabletEvent* event;
+    /* 对标 QGuiApplicationPrivate::processTabletEvent：平台翻译原生笔事件
+       后统一经本入口投递；X11 XI2 合成不在本批（无硬件验证手段）。 */
+    if (!window || (type != XEVENT_TYPE_TABLET_PRESS &&
+                    type != XEVENT_TYPE_TABLET_RELEASE &&
+                    type != XEVENT_TYPE_TABLET_MOVE))
+        return false;
+    event = XTabletEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, &position,
+                                   globalPosition, pressure, pointerType);
     if (!event) return false;
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
     XEvent_delete_base((XEvent*)event);

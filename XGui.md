@@ -2121,6 +2121,39 @@ docs/xgui-audit/2026-09-19/xgui-qt-alignment-scan.md §六。
 外部编辑器复制的文本也可粘贴到 XGui 输入框——X11 Selection 协议
 双向互通已生效。
 
+**阶段四加固(2026-09-19,跨进程剪贴板实测暴露缺陷批次,已全部落地)**:
+1. **原子初始化守卫缺陷(跨进程粘贴失败根因)**:`xpw_clipEnsureAtoms`
+   以 `g_xpwnClipboard == None` 作为整块初始化守卫,但 CLIPBOARD/
+   XIN_YUE_CLIP_DATA 原子在连接初始化处已提前 intern,守卫永不成立,
+   导致 TARGETS/TIMESTAMP 原子保持 None——所有 TARGETS 询问被回
+   `property=None` 拒绝,剪贴板管理器(dde-clipboard 等)拿不到目标
+   列表即中止取数。修复:各原子独立判空 intern。
+2. **SelectionRequest 必回 Notify**:无论能否满足必须回复
+   SelectionNotify(不能满足时 property=None 表拒绝),否则请求方
+   阻塞等待直至超时;TARGETS 询问返回 {UTF8_STRING, STRING}
+   (不广告 TIMESTAMP——实测部分管理器遇未知目标会中止取数,
+   但直接请求 TIMESTAMP 仍可服务)。
+3. **专用剪贴板窗口 + 真实时间戳(对标 QXcbClipboard::m_window)**:
+   所有权挂在 1×1 永不映射的专用窗口上,与业务窗口生命周期解耦;
+   认领时对专用窗口做零长度属性变更,经 PropertyNotify 取真实
+   服务器时间戳(避免 CurrentTime 歧义),同时作为 TIMESTAMP
+   目标的应答内容。
+4. **读取路径快慢分离**:`XGetSelectionOwner` 快速判空(无所有者
+   立即返回,消除粘贴空剪贴板 1 秒阻塞);自己持有所有权时直接
+   返回本地镜像(免协议往返);外部所有者先请求 UTF8_STRING,
+   被拒(property=None)回退 XA_STRING 重试。
+5. **分配器配对修复**:镜像缓冲 `XRealloc_System`/`XFree_System`
+   配对(此前 XFree_Hybrid 错配);`XGetWindowProperty` 返回的
+   Xlib 缓冲经 `xpwn_xFree`(还原宏后真实 XFree)释放(此前
+   XMemory_free 错配,存在堆破坏风险)。
+6. **事件泵健壮性**:SelectionNotify 等待泵(50ms×20)将非剪贴板
+   事件交回框架分派,双 XGui 应用互拷互贴时不死锁。
+
+**跨进程三向验证 ✓**(xtrace 协议轨迹 + 独立 Xlib 探针实测):
+①外部进程→XGui 读取(含中文 UTF-8);②XGui 复制→存活期内
+外部读取;③XGui 退出后 dde-clipboard 正确采信并继续提供内容
+(此前因缺陷 1+2 永远采信失败,只回旧缓存)。
+
 **修复计划(四阶段,按影响面×严重度排序)**:
 
 **阶段一:交互正确性小项批次**(✅ 2026-09-19 完成,回归/验收全绿)
@@ -2178,31 +2211,585 @@ End 导航+Ctrl 仅移动+Shift 锚点扩选+行为展开)
     Esc→escapeButton(缺省回退 reject)✓
 22. XLineEdit:双击选词(替换简化 selectAll)✓
 
+**阶段一~四收尾轮(2026-09-19 深夜,心跳巡检暴露的 6 条失败断言
+根修,回归/验收全绿)**:
+1. **is_app_closing 永久拦截(根因,波及面最大)**:
+   VXCoreApplication_deinit 置位 is_app_closing 后永不复位,应用
+   实例销毁后(回归多套件先后建/删应用、真实应用关闭首窗场景)
+   所有经 notify 的事件被永久吞掉——XGroupBox 点击不切换、
+   CHILD_ADDED 分派"合并回归与独立运行不一致"(XGroupBoxTest
+   已知问题注释的真正根源)皆源于此。修复:deinit 完成时复位,
+   标志仅保护析构窗口期;对齐 Qt 的 sendEvent 不依赖应用实例语义。
+2. XWidgetWindow_event 补 SHOW/HIDE 显式分支不再转发控件:
+   showEvent/hideEvent 由 XWidget_sendShowHide 按可见性翻转恰好
+   发射一次;桥接窗口自身的映射事件转发曾致 visibilityChanged
+   双次发射(此前被缺陷 1 掩盖)。
+3. XGroupBox 对齐 Qt 收尾:setCheckable(false) 取消选中并发射
+   toggled(false);标题区点击改 Qt 释放语义(mousePress 仅按压
+   待命,mouseRelease 在标题区内切换+clicked,新增 m_pressed 位);
+   XGroupBoxTest 计数口径修正并补 reconnect+press/release 事件对。
+4. XButtonGroup 互斥取消死锁:setChecked(false) 的反选守卫改为
+   只保护组 tracked 的 checkedButton(此前无条件拒绝反选,使
+   applyExclusive 永远取消不掉前一按钮);bridgeToggledSlot 先
+   转移 tracked 再互斥取消(对标 Qt notifyChecked 次序)。
+5. XWizard_validateCurrentPage 补 isComplete 门禁:当前页
+   complete=false 时直接判负(先于 validatePage 虚槽),与 Next/
+   Finish 使能逻辑一致(对标 QWizard::validateCurrentPage)。
+
 **遗留(大体量/已声明边界,另行安排)**:XGraphicsEffect 渲染
 生态、XErrorMessage done-shown 机制、XDockWidget 浮动/特性位、
 XMainWindow 停靠几何、XTabBar movable 已做/样式形状未做;
 Graphics(XPainter)/Charts/Input/Platform 与 Qt 对齐扫描另轮。
 
-**全部完成项均已验证**:主回归 exit=0、验收 68/68、构建零错误、
-git diff --check 干净、未提交 Git。
-**遗留清单(未对齐项,后续排期)**:**遗留清单(未对齐项,后续排期)**:
+**阶段一~四全部完成 ✅(2026-09-19 收尾轮后,回归零失败断言、
+验收 68/68、构建零错误、git diff --check 干净、未提交 Git)**。
+§14.125 计划执行完毕,后续仅剩下表"未对齐项"按排期另行处理。
+**遗留清单(未对齐项,后续排期)**:
 | 项 | 现状 | 类型 |
 |---|---|---|
 | XDockWidget toggleViewAction 恒 NULL / setFloating 无真实浮动 | 未动 | 结构改造 |
 | XInputDialog/XFileDialog/XColorDialog 静态函数不弹窗 | 未动 | 需真实 UI |
 | XPlainTextEdit 换行(WidgetWidth 声明不生效) | 未动 | 平铺模型架构边界 |
 | XTextEdit/XTextBrowser 富文本渲染子集 | 未动 | 独立引擎工程 |
-| XDateTimeEdit 格式引擎仅 6 占位符(缺 AM/PM/毫秒/星期) | 未动 | 中 |
-| XComboBox completer 接入、insertPolicy | 未动 | 中 |
+| XDateTimeEdit 格式引擎仅 6 占位符(缺 AM/PM/毫秒/星期) | ✅ 已完成 | 见 §14.126 批次一 |
+| XComboBox completer 接入、insertPolicy | ✅ 已完成 | 见 §14.126 批次二 |
 | 条目视图编辑闭环(delegate/commitData)与 role 体系 | 未动 | 基类扩展 |
 | XGraphicsEffect 渲染生态、XErrorMessage done-shown | 未动 | 大体量 |
 | XMainWindow Top/Bottom 停靠几何、saveState 含 dock | 未动 | 中 |
-| XWidget windowIcon 公开 API、saveGeometry/restoreGeometry | 未动 | 小 |
-| Graphics(XPainter)/Charts/Input/Platform 对齐扫描 | 未做 | 另轮 |
-| POSIX 平台 X11 CLIPBOARD/PRIMARY 选择区集成(外部复制→粘贴) | 未做 | 平台层。挂载点已就绪(XClipboardBackend,见 XClipboard.h);X11 实现落地时按三件套惯例归位:Src/XGui/Platform/XPlatformClipboard 抽象 + Drive/Unsupported 桩 + Drive/Posix 实现(避免二次搬迁,与 X11 实现同轮) |
+| XWidget windowIcon 公开 API、saveGeometry/restoreGeometry | ✅ 已完成 | 见 §14.126 批次三 |
+| Graphics(XPainter)/Charts/Input/Platform 对齐扫描 | ✅ 扫描完成 | 见 §14.126 两份差距报告(含 P0-P2 排期);修复另轮 |
+| POSIX 平台 X11 CLIPBOARD/PRIMARY 选择区集成(外部复制→粘贴) | 部分完成 | CLIPBOARD 已落地(Drive/Posix 直接实现 XPlatformNativeWindow_installClipboardBackend,见"阶段四加固")。剩余:①PRIMARY 选择区(中键粘贴)未接(另见 §14.126 输入域报告 P0-3);②INCR 大数据传输未实现(>窗口属性上限的文本会被截断);③按三件套惯例归位 Src/XGui/Platform 抽象层可再议 |
 
 **验证约定**:每阶段完成后跑主回归+验收 68/68;涉及行为修正的
 同步补验收断言;实机 demo 巡检。
+
+### 14.126 遗留清单并行批次轮（2026-09-19 深夜,子代理并行开工）
+
+**组织方式**:3 个实现子代理按文件域并行(XDateTimeEdit/XComboBox/
+XWidget 各自只改本域文件,不碰共享测试与文档),2 个只读扫描子代理
+出差距报告;主代理统一构建、补回归断言、跑双套件。
+
+**批次一:XDateTimeEdit 格式引擎扩展(6→11 种记号)**:
+- 新增 ddd/dddd(星期,周一起始,中文文案)、h/hh(12 小时制)、
+  z/zz/zzz(毫秒,z/zz 截尾零语义对标 qlocale dateTimeToString)、
+  AP/A/ap/a(上下午,固定中文「上午/下午」,无 locale 环境下等价
+  zh_CN amText/pmText)。
+- 枚举扩 AmPmSection(0x0001)/MSecSection(0x0002),数值对标 Qt
+  6.8 Section;分段容量 8→16;stepBy 新增毫秒(1ms/步)与上下午
+  (±12h 翻转)分支;keyPressEvent 重载实现 Left/Right 跨段导航
+  (整段反选,端点停驻)。
+- 三处重复的 6 占位符解析合并为唯一 tokenizer(xdt_tokenize)+
+  xdt_renderToken/xdt_render/xdt_selectCurrentSection。
+- 已知裁剪边界(注释已标注):单字母 d/M/H/m/s 仍为字面输出;
+  hh 不依赖 AP 固定折算 12h(Qt 含 AP 才折算)。
+
+**批次二:XComboBox 补全与插入策略**:
+- `XComboBox_setCompleterMode/isCompleterMode`(默认关,仅
+  PopupCompletion):可编辑时 textEdited 触发前缀过滤(大小写
+  不敏感),复用下拉弹层按行隐藏承载,Enter 采纳高亮行(回填
+  文本+置当前项+activated),Esc 收层不改文本,Up/Down 层内导航。
+- insertPolicy 七值真实结算(此前只存字段):Enter 主路径+
+  失焦路径,公共守卫对齐 Qt returnPressed(空文本不结算、
+  maxCount 钳制、duplicates 查重口径随补全开关)。
+- 修复外部 setLineEdit 安装编辑框时 editTextChanged 无发射点
+  的缺口;弹层释放命中改按可见行序换算,修过滤后伪行问题。
+- 有据偏差(注释注明):Qt 6.8.3 失焦不插入仅同步,本实现失焦
+  也执行策略插入;如需严格 6.8.3 删 editingFinished 槽末行即可。
+
+**批次三:XWidget windowIcon/saveGeometry/restoreGeometry**:
+- `XWidget_windowIcon/setWindowIcon`:值语义(XIcon 引用计数
+  共享副本);子控件 set 只记录自身,get 沿父链向顶层解析,链上
+  全空回落应用图标(对标 QApplication::windowIcon);顶层 set 即
+  时刷新桥接窗口图标,变化经 cacheKey 判定后发既有
+  windowIconChanged 信号。
+- `XWidget_saveGeometry/restoreGeometry`(XByteArray 承载):
+  "XWG1 frameX frameY frameW frameH normX normY normW normH
+  stateFlags" 文本格式(带符号变长十进制,对标 Qt 的
+  magic+frameGeometry+normalGeometry+savedState 五元组);
+  逐字段校验(魔数/字段数/数值/尾垃圾/宽高>0/stateFlags 位域),
+  全部通过才落地,失败零副作用;仅顶层有效。
+
+**根修(新回归断言抓获):XDate_dayOfWeek 整体偏移一天**:
+旧式 `(jd+1)%7+1` 使 2024-03-05(周二)返回周三。改为 `jd%7+1`
+(带负数归一)。0001-01-01(jd=1721426,周一)因恰在边界未暴露。
+全量回归确认 XCalendarWidget 等既有使用方零回归。
+
+**回归断言**:新增 test_datetimeedit_format_ext /
+test_combobox_completer_policy / test_xwidget_icon_geometry
+三个套件(分段映射/渲染语义/截尾零/进位翻转/段导航;补全过滤
+弹层/Enter 采纳/Esc/无匹配/InsertAtBottom/NoInsert;
+图标传播/几何往返/逐字节一致/损坏拒绝/非顶层不支持)。
+**验证**:构建 0 错误、主回归 exit=0 零失败断言、验收 68/68、
+未提交 Git。
+
+**串行批次轮(2026-09-20 晨,单子代理逐批推进,对应扫描报告
+P0 消化)**:
+
+**串行批次一:XPainter P0 三条**(Src/XGui/Graphics/XPainter.c/.h):
+1. 画笔宽度随非 cosmetic 变换缩放:新增 painterPenWidthScale,
+   scale=(|M·(1,0)|+|M·(0,1)|)/2,设备线宽=round(pen×scale)
+   下限 1;单位/平移变换 scale≡1 零回归;penWidth<1 或退化矩阵
+   保持 1px cosmetic(对标 Qt 非 cosmetic 语义,修 scale(3,1)
+   下 2px 线仍 1px 的问题)。
+2. XPainterPath 填充规则:新增 m_fillRule + setFillRule/fillRule
+   (OddEven/Winding,值对齐 Qt FillRule),fillPath/drawPath 改用
+   路径规则(此前硬编码 OddEven);Winding 非零环绕管线复用既有
+   painterBuildFillSpans;默认零回归。
+3. 消除静默截断:drawPolyline/drawPolygon 去掉 128 点上限
+   (>128 切堆缓冲,XMalloc_System/XFree_System 配对);
+   drawTextRect 行缓冲栈 64 槽起步动态翻倍扩容,OOM 路径统一
+   释放+回滚裁剪零副作用。
+- 已知范围外:XPicture 录制流不持久化 fillRule(后续批次)。
+- 自验证:构建 0 错误、回归/验收全绿;/tmp 13 项行为断言
+  (单位厚度不变、scale(3,1) 厚度 4、OddEven/Winding 重叠差异、
+  200 点不截断、100 行文本第 99 行可见)全 PASS。
+
+**串行批次二:输入法查询接线**(Input/Platform 扫描 P0-1):
+- XGuiApplication_inputMethod 惰性创建时自动注册内置桥接
+  XInputMethod_defaultQueryHandler → 焦点控件
+  XWidget_inputMethodQuery 虚槽(新增 EXWidget_InputMethodQuery
+  槽位,子类可重载),无焦点/非控件返回 NULL。
+- 取值映射:ImCursorRectangle=(w/2,0,1,h) 经 inputItemTransform
+  映射、ImInputItemClipRectangle=控件矩形、ImEnabled=true、
+  ImHints=设置值;ImSurroundingText 等文本类返回 NULL(文本控件
+  重载虚槽属 P1 未扩散)。
+- 生命周期:应用析构先删 inputMethod,其后查询因 instance()==NULL
+  直接 NULL,实测无悬挂;集成方仍可 setQueryHandler 覆盖。
+- 自验证:构建 0 错误、回归/验收全绿;端到端 11/11(注册生效、
+  焦点实时值、平移映射 (50,0,1,50)→(60,20,1,50)、清焦点回落、
+  销毁后无悬挂)。
+- 主代理终验:双批次后全量构建 0 错误、回归 exit=0 零 FAIL、
+  验收 68/68、diff --check 干净。
+
+**扫描报告 P0 消化进度**:XPainter P0 三条 ✅;输入法查询接线 ✅;
+余:TOUCH/TABLET WSI 入口与合成、剪贴板后端 mime 多格式(见上文
+两份扫描报告排期)。
+
+**串行批次三:剪贴板 PRIMARY 选择区 + 外部变更通知**(2026-09-20,
+Input 域 P0-3 + P1-4):
+- PRIMARY 服务与 CLIPBOARD 同构:5 个单选择区全局收敛为
+  XpwClipOwnerState[2](CLIPBOARD/PRIMARY 各自镜像/所有权/
+  时间戳),SelectionRequest/TARGETS/TIMESTAMP/UTF8 回退全链路
+  按事件 selection 原子分流;专用窗口与时间戳路径两选择区共用。
+- `XClipboard_supportsSelection()` 按后端能力位返回(X11 true);
+  Selection 模式 setText/text/clear 走 PRIMARY;FindBuffer 后端
+  显式拒绝仅留进程内镜像。
+- 后端契约尾部追加 supportsSelection 能力位与可选
+  selectionRevoked 回调(位置初始化兼容);X11 SelectionClear 时
+  通知 → owns 复位 + 清该模式数据 + 发射信号(Clipboard→
+  dataChanged,Selection→selectionChanged,顺序先专用后 changed
+  对齐 Qt);未注册零回归。
+- 自验证:构建 0 错误、回归/验收全绿;真机 X server 独立探针
+  23/23(双选择区分流、互不串扰、外部认领复位、双向读回)。
+- 遗留:控件侧中键粘贴(鼠标 Button2→粘贴 Selection)下一批;
+  clear 不主动释放所有权(沿用既有)。
+
+**串行批次四:XPainter P1 双线性 + 浮点重载族**(Graphics 域
+P1-B8 + A6/A7):
+- SmoothPixmapTransform 落地:hint 开启时缩放/变换图像采样改
+  双线性(2x2 邻域加权、逐轴边界钳位、经 XImage_pixel 直通
+  ARGB 空间插值);恒等/平移 1:1 blit 仍走 memcpy 快路径
+  (drawTiledPixmap 等 1:1 热路径零回归);GPU 无需改(复杂路径
+  本就局部软件提交)。
+- 浮点/9 参重载族:drawImage_3/drawPixmap_3(9 参,Qt 负目标
+  尺寸/越界裁剪规则)、drawLine_3(float,scale(10,1) 下 0.55
+  落设备 x=6 的亚像素精度)、drawRect_2(float,QRectF normalized)、
+  drawEllipse_2(中心半径版);全部复用既有变换/裁剪/opacity/
+  合成管线;拆出 painterRaster_drawLineDevice 供设备坐标重入。
+- 自验证:构建 0 错误、回归/验收全绿;/tmp 29/29(2x 放大插值
+  0xbf、hint 关闭最近邻、1:1 逐字节一致、浮点精度、Picture
+  录制冒烟)。
+- 已知取舍:直通 ARGB 空间插值(Qt 为预乘空间,透明边缘抗晕
+  略优,注释已注明);采样每像素 4 次 XImage_pixel,P2 可加
+  constBits 快速路径。
+
+**串行批次五:控件侧中键粘贴**(2026-09-20,PRIMARY 落地闭环,
+对标 Qt X11 中键粘贴语义):
+- XLineEdit:Button2 按下且 supportsSelection() 时坐标平移
+  (textStartX+viewOffset,与左键同口径)→控制器 xToPos 落光标
+  →复用 XLineControl_paste(Selection) 既有通道(UTF-8 字节
+  口径未动);处理则 setFocus+accept。
+- XTextControl:FuzzyHit hitTest→setCursorPos(MoveAnchor)→
+  复用 xtc_pasteFromMode(Selection)(XTextControl_paste 原体
+  重构为模式参数化通道,公开入口变 Clipboard 便捷入口,对标
+  QWidgetTextControl::paste(Mode));XPlainTextEdit 经既有
+  xpe_forwardMouseEvent 转发无需改动。
+- 只读/不可编辑门禁先行;中键不写剪贴板、CLIPBOARD 不串台。
+- 自验证:构建 0 错误、回归/验收全绿;真机探针 10/10(三处
+  点击位置插入+光标落点、中文 12 字节无损、只读不粘贴、
+  CLIPBOARD 不变、多行通道同样生效)。
+- 顺带发现(既有问题,非本批引入,未修):XLineEdit 以未实例化
+  XWindow 直接作父控件时创建期 updateSizeHints 路径会踩垃圾
+  m_layout 指针(真实用法 NULL 父或容器不触发,待排期);
+  Selection 为空时 paste 回退共享层 XTextClipboard_getText
+  为既有行为,如需严格 Qt 语义(空则不动)可后续按模式收紧。
+
+**串行批次六:窗口 flags 运行时同步 EWMH**(2026-09-20,平台域
+P1-6):平台契约新增 XPlatformNativeWindow_setWindowFlags(位掩码
+同 XWindowType 值),XWindow_setFlags 在已挂接平台窗口时转发,
+setFlag 转调 setFlags(对标 QWindow::setFlag→setFlags);X11 落地:
+StaysOnTop→_NET_WM_STATE_ABOVE、StaysOnBottom→BELOW、
+BypassWindowManager→SKIP_TASKBAR+SKIP_PAGER(EWMH 近似,Qt xcb
+实为 re-create 窗口,注释注明)、DoesNotAcceptFocus→
+_NET_WM_HINTS.input=False;未映射窗口读-改-写属性(保留 WM 管理的
+原子),已映射窗口发 _NET_WM_STATE ClientMessage 由 WM 回写
+(EWMH 规定映射态属性归 WM,实测直改会被冲掉);装饰提示留
+_MOTIF_WM_HINTS TODO。win32/unsupported 兜底 no-op 保链接。
+自验证:构建 0 错误、回归/验收全绿;Xlib 探针 15/15(ABOVE/
+BELOW/SKIP_*/input 位增删、无残留、创建前仅存值零回归)。
+已知 WM 时序:映射后数百 ms 内 ClientMessage 可能被 WM 丢弃
+(WM 侧行为,应用 show 后稍晚设置不受影响)。
+
+**串行批次七:裸父控件悬挂指针根修**(2026-09-20,批次五探针
+发现的框架创建期 bug):
+- 根因:XWindow 是 XObject 非 widget 子类(仅 m_class+m_data,
+  is_widget 恒 0),`XWidget_init` 无条件接受父指针挂链后,
+  `XWidget_parentWidget` 把裸 XWindow* 盲转 XWidget* 读 m_layout
+  ——读到分配块之外堆内存(实测读到已释放文本 "<double"),
+  非零垃圾传入 XLayout_activate 段错误(gdb 回栈逐帧证实:
+  XLineEdit_init→updateSizeHints→updateGeometry→Layout_activate)。
+- 修复:XWidget_init 与 XWidget_setParent 两个建链入口顶部校验
+  `((const XObject*)parent)->is_widget`,非控件父归一化为 NULL
+  (按顶层处理),覆盖全部控件子类的创建与重挂;真实控件父
+  恒通过零变化。
+- 自验证:构建 0 错误、回归/验收全绿;探针修复前 SIGSEGV(139)
+  →修复后 exit=0,创建/setText/sizeHint 正常,重挂父场景同安全。
+- 残留风险面(未修):绕过控件 API 直接 XObject_setParent 后再
+  盲转的 API 误用,可在 XWidget_parentWidget 补 is_widget 校验
+  (方向 b,后续小改)。
+
+**串行批次八:TOUCH/TABLET WSI 入口与控件派发**(2026-09-20,
+Input/Platform 域 P0-2,扫描报告最后一条 P0 消化):
+- WSI 入口:handleTouchEvent(TOUCH_BEGIN/UPDATE/END/CANCEL,
+  主点+pointCount)与 handleTabletEvent(PRESS/RELEASE/MOVE,
+  压力+指针类型),自发同步投递,风格对齐相邻 handleMouseEvent。
+- 投递链:VXWidgetWindow_event 补分支(模态拦截表纳入)→
+  XWidget_dispatchTouchEvent/TabletEvent(共用命中/坐标平移/
+  父链传播循环)→ 新增 EXWidget_TouchEvent/TabletEvent 虚槽
+  (默认 ignore,VT_DISPATCH 接通);disabled 丢弃分支继续生效。
+- 隐式抓取对标 QGuiApplicationPrivate:BEGIN 被接受即抓取,
+  UPDATE/END 直达(含跨顶层坐标转投),END/CANCEL 清理,
+  控件销毁/隐藏摘除;accept 语义与鼠标一致。
+- 自验证:构建 0 错误、回归/验收全绿;探针 25/25(三连计数、
+  命中平移、抓取与清理、压力透传、非法类型拒绝)。
+- 未尽:XI2 触摸合成(入口即统一注入点)、touch→mouse 仿真、
+  XTouchEvent 完整多点列表(Task 2.20 既有偏差)。
+
+**串行批次九:线条抗锯齿**(2026-09-20,Graphics 域 P1-B5):
+- painterRaster_drawLineAntialiased:线段沿法线偏移半线宽构
+  封闭四边形,交既有填充 AA 通道 4x4 面积子采样生成覆盖图;
+  合成完全复用 putPixel 状态管线(裁剪/clipRegion/opacity/
+  compositionMode 不新写混合器),GPU 会话自动走
+  drawAlphaBitmap 提交。
+- 笔帽对标 Qt 默认 SquareCap(两端延伸半线宽,折线拐角自然
+  填补);透明度只施加一次(传原始 penColor 防双重缩放);
+  Liang-Barsky 裁剪护栏防超大坐标申请巨缓冲。
+- 受益图元:drawLine(含浮点入口)/drawPolyline,及椭圆/圆角
+  矩形/圆弧/饼形轮廓(离散折线天然受益);虚线拆段后逐段 AA。
+- 门控:仅 Antialiasing 开且 dx≠0 且 dy≠0 进 AA 分支;hint 关、
+  轴向线、零长点、GPU 轴线快速路径逐字节零回归;drawPoint
+  保持硬边(图表标记锐利,记录为约定)。
+- 自验证:构建 0 错 0 警告、回归/验收全绿、XGuiGpu_Test 通过;
+  /tmp 9 项(斜线灰度、轴向逐位一致、opacity 混合值与硬边
+  参考逐位相等、虚线间隙纯背景、出界零像素)全 PASS。
+- 未尽:AA 分支 RoundCap 近似方帽、无 join 几何(strokePath
+  独立描边引擎仍缺,依赖 drawPolyline 落地);覆盖图按包围盒
+  整块分配,分片优化后续。
+
+**串行批次十:Input 域小项组合**(2026-09-20):
+- text_subtype 升级 in/out(对标 QClipboard::text(QString&,Mode)):
+  空请求按 formats 顺序 plain→html 回退,显式 "html" 只查
+  text/html 不回退 plain;subtype 原地复用防调用方泄漏。
+- XMimeData_removeFormat 新增:四个内置格式分别清理对应存储,
+  自定义条目整条移除,大小写不敏感与 hasFormat 一致。
+- filterEvent 接入:XGuiApplication 重载 EXCoreApplication_Notify,
+  KEY_PRESS/RELEASE 派发前问输入上下文 FilterEvent 虚槽
+  (新增,默认恒 false 零回归),位于 IME consumed 之后控件派发
+  之前,对标 Qt4 notify 的 filterEvent 遗产语义。
+- 自验证:构建 0 错误、回归/验收全绿;探针三组全 PASS。
+
+**串行批次十一:XMimeData 自定义条目损坏根修**(2026-09-20,
+批次十探针发现的既有 SEGV):
+- 根因:m_custom 是存条目指针的 XVector,XVector_at_base 返回
+  槽位地址(元素类型为指针时应为二级指针),七处直接强转成
+  条目指针使用——读到指针本身当 XString*、越过槽位越界,
+  setData 后首次 hasFormat 即 SEGV。
+- 修复:新增 mime_customAt 帮助(槽位地址解引用,NULL/越界安全),
+  七处全部改走;条目生命周期本就自带深拷贝与 deinit,修好取址
+  零泄漏。
+- 同族排查:urls/text/html/image/color 均深拷贝无问题;连带修复
+  VXMimeData_move 漏转移 m_urls(目标丢 urls/源悬空)。
+- 自验证:构建 0 错误、回归/验收全绿;ASan+LeakSanitizer 探针
+  19/19(修复前 SEGV 复现、64 条扩容、removeFormat、copy/move、
+  零泄漏)。
+- 建议回归断言:setData→hasFormat→formats 往返(现有套件缺口)、
+  扩容后逐条 data、removeFormat 自定义分支、copy/move 所有权。
+
+**串行批次十三:三小项组合**(2026-09-20):
+- XWidget_parentWidget 读前 is_widget 校验(批次七方向 b 收口),
+  沿父链 4 处直接强转全部改走防护入口(顶层判定/鼠标/右键菜单/
+  触摸派发传播循环/nativeParentWidget),绕过 XObject_setParent
+  直挂场景收口。
+- XLineControl_paste Selection 空回退收紧:systemOnly 标志
+  (Selection 模式且后端 supportsSelection 时跳过共享层回退,
+  PRIMARY 空则不动作,对标 Qt 中键);Clipboard 回退链与无后端
+  嵌入式行为零回归。
+- touch→mouse 仿真:默认开(对标 Qt 6),未被接受的 TouchBegin
+  合成 PRESS/MOVE/RELEASE(按钮状态对齐 Qt 合成语义),复用
+  dispatchPointerEvent 管线;被接受则只走触摸+隐式抓取;
+  框架级开关 XWidget_setTouchMouseSynthesisEnabled;
+  顺带清理上批遗留 [GRABDBG] 调试输出。
+- 自验证:构建 0 错误、回归/验收全绿;探针 28/28。
+- 未尽:SYNTHESIZE_MOUSE 属性位三态接线(需 XBitArray 三态)、
+  handleTouchEvent 注释更新(文件不在批内)、XMouseEvent 无
+  synthesized 来源标志(既有偏差)。
+
+**串行批次十四:strokePath 几何描边 + 虚线节距对齐**(2026-09-20,
+Graphics 域 P1-B3 + P2-B10):
+- 几何描边器 painterPathStrokeWide:设备笔宽>1 且 Image 可逆变
+  换接管(1px 默认笔/Picture/奇异变换走原管线逐像素零回归);
+  每段法线 ±半宽对接四边形,拐角沿角平分线 Sutherland-Hodgman
+  裁开消除内侧重叠(半透明不双重混色),外侧楔形 join 补片:
+  Bevel 三角/Miter 延长交点(miter 超限 2 回退 Bevel,真实截断)/
+  Round 6 段弧;Cap:Flat/Square/Round 8 段,虚线实段两端也加帽
+  (对标 Qt DotLine+RoundCap=圆点)。
+- 各描边片逆映射回用户坐标逐片走 Winding 扫描填充,AA/opacity/
+  composition/裁剪/GPU 局部提交全部复用既有通道;描边器内虚线
+  节距×笔宽沿轮廓连续推进。
+- 虚线节距单位改笔宽倍数(对标 Qt):轴向与通用管线 unitScale=
+  max(penWidth,1),宽度 1 数值不变;CustomDashLine 空 pattern
+  回退实线(Qt setDashPattern 空列表忽略语义);生产代码无
+  笔宽>1 虚线调用方,视觉变化面为零。
+- 自验证:构建 0 错误、回归/验收/Gpu 三套件全绿;/tmp 自测
+  (Bevel/Miter/Round 拐角像素、圆端帽、节距 4 倍量测、1px
+  逐像素等价哨兵、opacity 混合、AA 宽笔曲线白芯灰边)全 PASS。
+- 未尽:180° 折返拐角不生成补片(TODO)、无 setMiterLimit API、
+  Round 为 6/8 段近似、描边器仅 Image 设备、用户坐标节距未乘
+  世界变换缩放(注释注明)。
+
+**串行批次十五:屏幕接入与 DPI 回填**(2026-09-20,平台域 P1-7/8):
+- 枚举:RandR 1.5 XRRGetMonitors 逐监视器一屏(屏名取监视器
+  原子),扩展不可用回落 XScreenOfDisplay;上限 8;注册经新 WSI
+  入口 handleScreenAdded→XGuiApplication_screenAdded(复用
+  XScreen 既有注册表),含 (0,0) 的监视器为主屏。
+- DPI:physical=pixels/(mm/25.4)(虚拟屏 mm=0 保留不伪造);
+  logical=Xft.dpi 资源>解析失败回退 96(对标 QXcbScreen);
+  devicePixelRatio 恒 1.0(X11 无缩放管道,注释对标)。
+- 事件泵实接:RRScreenChangeNotifyMask 订阅,泵内拦截→
+  XRRUpdateConfiguration→重枚举差分回填(值不变不发信号);
+  实机 xrandr 切 1920x1440 再切回,geometry 变更均被捕获。
+- 连接时序修正:屏幕接入改首次事件泵时惰性接入(应用单例
+  必有效,Qt 屏幕接入同样在构造完成后生效)。
+- 自验证:构建 0 错误、回归/验收全绿;探针 screens 数量/几何/
+  physical 95.94/logical 96 与 xrandr 逐字段一致。
+- 未尽:热插拔增删与主屏重选(TODO)、Xft.dpi 运行期变更不触发
+  刷新、物理尺寸热刷新直调平台未走 WSI、窗口创建前 screens()
+  为空(事件循环启动后可用的既定语义)。
+
+**串行批次十六:剪贴板 mime 多格式协商**(2026-09-20,Input 域
+P0-3 收尾):
+- 契约尾部追加 formats/mimeData(借用语义免拷贝)/setMimeData
+  三个可选回调,未注册零回归;XClipboard setMimeData 经
+  clear+逐格式写入,mimeData() 非自有时一次性合并外部 formats
+  (m_externalMerged,clear/revoke 复位)。
+- X11:多格式镜像条目(MIME 名↔目标原子↔字节流,容量 8),
+  text/plain 与既有 m_text 通道双向互通;TARGETS 应答=镜像实际
+  持有集合;SelectionRequest 按目标原子匹配回数据(format=8
+  原样,PNG 不再编码);读方向 TARGETS 枚举直通(协议目标跳过),
+  text/plain 复用 UTF8_STRING→XA_STRING 回退。
+- 真机探针:写方向 plain+html+PNG 特征字节→外部 TARGETS 逐
+  原子读到字节一致;读方向外部 text/html→mimeData 合并后
+  text_subtype("html") 取回;批次三纯文本双向复测通过。
+- 修复两个真机才暴露的读缺陷:TARGETS 原子表须按 Xlib long
+  数组整拷贝(截短拷贝高位拼垃圾原子致 BadAtom);
+  XGetWindowProperty 的 nitems 是元素数不是字节数。
+- 已知限制(注释注明):XMimeData 以 XString 存字节,非 UTF-8
+  二进制载荷(如 PNG 魔数 0x89)进 mime 前会被转码,对标 Qt 需
+  QByteArray 的同类限制;image/png 读取方向、INCR、MULTIPLE、
+  SAVE_TARGETS 未做;外部内容后续变化不自动刷新已合并镜像。
+
+**串行批次十七:四小项收尾组合**(2026-09-20):
+- touch→mouse 属性接线:XGuiApplication_setAttribute/testAttribute
+  新增(属性 12 显式设置时转发框架开关,XBitArray 三态限制用
+  静态 bool 记录显式设置,注释注明取舍);handleTouchEvent 注释
+  更新为已接。
+- XPicture 录制流持久化 fillRule:DrawPath 尾随 4 字节(同
+  DrawTiledPixmap 尾随 extra 编码惯例,旧流字节偏移不受影响);
+  新旧格式按记录长度精确区分,旧流回放默认 OddEven 零回归,
+  fillRule>1 校验拒绝。
+- MOTIF 装饰提示位落地(批次六 TODO 消化):就地定义 MWM 5 字段,
+  无提示位→DECOR_ALL|FUNC_ALL 存量零回归,Frameless→decorations=0,
+  显式模式按位组装(Title/SystemMenu/Min/Max/Close/固定尺寸抑制
+  RESIZE),setWindowFlags 与原生 create 两处写入;真实 DDE 会话
+  探针 10/10。
+- drawPoint AA 约定文档化(零长线硬边,圆点用 drawEllipse_2)。
+- 自验证:构建 0 错误、回归/验收/Gpu 全绿;Picture 探针 4/4、
+  属性接线 7/7。
+- 未尽:XCoreApplication 基类直调 setAttribute 不触发转发(收敛
+  GUI 属性包装待后);MOTIF functions 未覆盖 MWM_FUNC_RESIZE
+  精确语义、未复刻 Qt Tool/Popup 默认收敛规则。
+
+**串行批次十八:XScreen 热插拔差分增删**(2026-09-20,批次十五
+TODO 收口):
+- xpwn_screensEnumerate 改与平台注册表差分:按 RandR 监视器名
+  匹配(对标 Qt output name 标识),命中仅差分回填(内部变化才发
+  信号),未命中 handleScreenAdded,枚举后对未覆盖屏幕逐个
+  handleScreenRemoved 注销(含 monitorCount==0 全拔出);
+  修复自反性 bug(本轮新登记未标 matched 被同轮误删致抖动,
+  探针首跑暴露即修)。
+- 主屏重选 xpwn_screensReselectPrimary:含 (0,0) 者优先否则
+  取首块,变化才发 primaryScreenChanged;驻留窗口迁移:移除屏
+  上窗口 setScreen(新主屏)+几何钳位+原生窗口同步移动
+  (对标 Qt setScreen 迁移)。
+- 自验证:构建 0 错误、回归/验收/Gpu 全绿;真机 RandR 拓扑
+  (setmonitor 改名+分辨率切换驱动 Notify)走通增删/差分/幂等/
+  晋升/钳位迁移,显示环境已还原。
+- 未尽:多监视器真实热插拔受虚拟驱动限制未端到端(代码路径+
+  单屏差分等价验证);同名监视器按首名匹配;主屏原点挪移未实测。
+
+**串行批次十九:剪贴板 image/png 读取方向**(2026-09-20,
+遗留清单收尾):
+- 复用库内自研编解码 XImageCodec_decode(Png)——支持 8/16 位
+  灰度/RGB/RGBA、调色板+tRNS、Adam7 隔行,零自研零新文件。
+- XClipboard_image 重写:自有 application/x-qt-image 优先;
+  其次后端 formats 含 image/png 时按 Qt QXcbClipboardMime
+  按需读语义直取后端字节(绕开 XString 合并镜像的 UTF-8 转换,
+  保二进制透明)→解码;pixmap 自动受益;解码失败 isNull 零副作用。
+- 自验证:构建 0 错误、回归/验收全绿;真机探针——外部 serve
+  合法 8x6 RGBA PNG(独立 CRC 校验)解码宽高/抽样像素含 alpha
+  精确一致;垃圾字节 isNull 不崩。
+- 未尽:XMimeData 合并镜像对二进制 mime 仍经 XString 暂存
+  (XMimeData_data("image/png") 字节不可靠,需 XByteArray 通道,
+  批次二十候选);image/bmp/jpeg 等原子接线(codec 能力已备);
+  无 TARGETS 老应用、INCR 大图传输未验。
+
+**串行批次二十:mime 二进制安全 + 图像原子扩展**(2026-09-20,
+批次十九登记项收口):
+- XMimeData 自定义条目载荷 XString*→XByteArray*(对标 QMimeData
+  的 QByteArray):新增 setData_bytes/data_bytes 二进制透明通道,
+  copy/move/removeFormat/deinit 全链同步;批次十一 mime_customAt
+  取址模式保留;XClipboard 外部合并镜像改直存字节,出栈不再过
+  UTF-8 转换;旧 XString 接口签名未动,文本格式零回归。Drive/Posix
+  侧核对结论:镜像本就 memcpy+format=8 原样存储,字节流安全已满足。
+- 图像原子扩展:image/png→image/bmp→image/jpeg 识别序(对标
+  Qt png 置首同序),逐项 XImageCodec_canDecode 门闸(裁剪配置
+  如实跳过),解码失败回落下一原子;批次十九"绕开镜像"路径被
+  更优的二进制透明镜像读取取代。
+- 自验证:构建 0 错误、回归/验收全绿;ASan+LeakSanitizer 探针
+  33/33(0x89 魔数+全值域 320 字节逐字节一致、png/bmp/jpeg 并存
+  优先级、真机跨进程 bmp 解码、copy/move/removeFormat 零泄漏)。
+- 未尽:application/x-qt-image 写方向(PNG 编码推平台镜像)仍为
+  既有 TODO;旧 data() XString 通道对二进制不透明(头文件已注明
+  须用 data_bytes);跨进程像素级色彩断言可并入后续回归。
+
+**串行批次二十一:P2 小项四连**(2026-09-20):
+- XPainter miterLimit API:setMiterLimit/miterLimit(默认 2.0,
+  <1 与 NaN 钳位 1,对标 QPen::setMiterLimit),入状态快照随
+  save/restore,setPen 复位默认;描边器读取状态值(修批次十四
+  注释口径:该比值实为 miter 长度/笔宽,与 Qt 基准一致)。
+- 描边器 180° 折返补片:平分线退化分支补半圆扇区(圆心=顶点,
+  扫向用 RoundJoin 同套转向公式,圆帽落折返外侧),三种 Join
+  一律圆弧;像素级验证外侧有墨内侧干净。
+- XMouseEvent synthesized 标志:XEvent.h 新增 m_synthesized 位
+  +isSynthesized/setSynthesized,touch→mouse 合成置 1,
+  XMouseEvent_init 默认 0,vtable copy 逐字段同步;全库核对无
+  裸 memcpy 半拷贝路径。
+- Xft.dpi 运行期刷新:关键发现——XGetDefault 首调后缓存资源库,
+  xrdb 重载永远不可见;改为每次直读根窗口 RESOURCE_MANAGER +
+  XrmGetStringDatabase(对标 Qt xcb 每次读属性),缺失回落
+  XGetDefault→96;差分回填全部屏幕(重复值不发信号),
+  RRScreenChangeNotify 后顺带重读;公开
+  XPlatformNativeWindow_refreshScreenLogicalDpi()。
+- 自验证:构建 0 错误、回归/验收/Gpu 全绿;探针(miterLimit
+  钳位/快照/像素墨量、折返三 Join 半圆、synthesized 同步、
+  RESOURCE_MANAGER 改 123.5 刷新差分恰发 1 次)全 PASS。
+- 约束偏差报备:XMouseEvent 定义在 XCode/XEvent(非独立头)、
+  refreshScreenLogicalDpi 声明落 XPlatformNativeWindow.h,
+  均为最小必要。
+
+**串行批次二十二:x-qt-image 写方向编码**(2026-09-20,剪贴板
+图像读写全闭环):
+- 复用库内 XImageCodec_encode(Png)(canEncode 门闸),零自研;
+  setImage/setPixmap/含 x-qt-image 的 setMimeData 三路汇入
+  clipboard_pushImagePngToBackend:编码后 setMimeData("image/png")
+  深拷贝推平台镜像,内部类型不以原名登记(平台对外 TARGETS
+  与 Qt 一致);mime 已显式携带 image/png 时跳过防重复登记;
+  编码失败仅平台侧无图像原子,进程内语义不变。
+- CLIPBOARD/PRIMARY 双模式;先清后写镜像整体替换语义保持;
+  外部认领后 owns/信号复位照旧。
+- 自验证:构建 0 错误、回归/验收全绿;真机探针——4x3 ARGB
+  渐变(含半透明)image 后 TARGETS 恰含 image/png,读回 137 字节
+  PNG 解码 12/12 像素含 alpha 一致;同进程回读等值;桌面剪贴板
+  管理器真实请求了该原子(外部可见性旁证)。
+- 未尽:XMimeData_formats 列出 x-qt-image 与 Qt formats() 剔除
+  内部类型的对齐属 XMimeData 模块决策(注释注明取舍);
+  x-color 平台映射无约定维持跳过;后端 mimeData 借用语义在
+  未来 INCR 改造时需复核读方向合并。
+
+**串行批次轮收尾小结(批次三~十八,2026-09-19~20)**:
+- 扫描报告 P0 全部清零(线宽变换缩放/Winding/截断/输入法接线/
+  TOUCH-TABLET/剪贴板 PRIMARY+mime 多格式),P1 消化大部分
+  (双线性、浮点重载、中键粘贴、EWMH flags、屏幕 DPI、
+  filterEvent、text_subtype html、removeFormat、线条 AA、
+  strokePath 描边器、虚线笔宽倍数、setClipPath 精确裁剪、
+  热插拔差分、外部变更通知),P2 零散(图片 PNG 读取方向、INCR/
+  MULTIPLE/SAVE_TARGETS、miterLimit API、synthesized 来源标志、
+  多点触控列表、基类属性分发)转入下方遗留清单按需排期。
+- 顺带根修三枚真 bug:XDate_dayOfWeek 偏一天、
+  XMimeData 自定义条目取址损坏(+move 漏 urls)、
+  XWidget 裸父悬挂指针;XScreen 登记自反抖动即时修复。
+- 每批均:构建 0 错误+主回归零 FAIL+验收 68/68(+GPU 套件按需)
+  +真机/ASan 探针自证;全部未提交 Git。
+
+**串行批次十二:setClipPath 精确路径裁剪**(2026-09-20,Graphics
+P1-B4,消 Task 2.20 既录偏差):
+- 状态:m_clipPath 深拷贝(含 fillRule)+ 设置时变换快照
+  (对标 Qt 裁剪路径冻结设备空间);合成复用 setClipRect 全语义
+  (IntersectClip 求交/NoClip 清除/Picture 录制与查询同步);
+  save/restore 仿 XRegion 所有权交接。
+- 掩码:复用 AA 填充 4x4 覆盖机制按快照变换光栅化为 8 位掩码,
+  (serial,目标图像) 惰性重建;putPixel 掩码门控(未设路径仅一次
+  bool 判定零开销),AA 填充做覆盖率×掩码乘法;矩形路径退化为
+  clipRect 快路径逐位一致;span/blit/整段填充快路径在路径裁剪
+  激活时退逐像素。
+- GPU:路径裁剪返回 false 走既有局部软件提交降级;Picture 指令集
+  无操作码,录制退化包围盒近似(注释注明);clipPath() 返回副本。
+- 自验证:构建 0 错误、回归/验收全绿、XGuiGpu_Test 通过;
+  /tmp 19/19(圆形裁剪圆外零写入、交集、往返、save/restore、
+  矩形逐位一致、20000 次压测 RSS 零增长)。
+- 已登记偏差:路径∧路径相交按包围盒近似(单一路径不可表示);
+  t211 断言同步为新行为(原断言硬编码旧偏差,注释说明)。
+
+**扫描报告一:Graphics(XPainter) 域对齐差距**(要点,完整证据
+见扫描原文,已核对变换族/38 合成模式/opacity/save-restore/
+clip 语义均已对齐无需动):
+- P0:①画笔宽度不随变换缩放(全部按 cosmetic 处理,scale(2,2)
+  下线宽仍 1px,XPainter.c:1936);②fillPath/drawPath 无
+  Winding 填充(硬编码 OddEven,XPainter.c:9563,XPainterPath
+  无 fillRule 成员);③折线/多边形 128 点、drawTextRect 64 行
+  静默截断(XPAINTER_POLY_MAX_POINTS)。
+- P1:SmoothPixmapTransform 空操作(恒最近邻);线条无 AA
+  (Antialiasing 仅作用于填充);strokePath 无几何描边(无
+  join/cap 几何);setClipPath 仅包围盒;drawImage/drawPixmap
+  浮点与 9 参重载缺失(内部参数已浮点化,成本低)。
+- P2:旋转文本 AA 退化、3 个 hint 存储无消费、虚线节距不乘
+  笔宽、图案画刷部分路径按基色近似、QFontMetrics 类等。
+**扫描报告二:Input/Platform 域对齐差距**(要点;QInputMethod/
+QPlatformInputContext API 面与信号集、剪贴板信号语义、
+XPlatformNativeInterface 全套均已对齐无需动):
+- P0:①输入法查询回调从未接线(XWidget_inputMethodQuery 存在
+  但无调用点,cursorRectangle 等恒零);②TOUCH/TABLET 事件
+  类型/负载齐但 WSI 无 handle 入口、平台无合成(整链路断);
+  ③剪贴板后端契约仅纯文本(setImage/setMimeData 不经后端,
+  图像/HTML 永远到不了 OS 剪贴板)。
+- P1:外部剪贴板变化不通知(SelectionClear 只清平台镜像,
+  dataChanged 不发);XPlatformInputContext_filterEvent 死代码;
+  窗口 flags 运行时不同步(无 setWindowFlags 契约);屏幕/DPI
+  域未接入(XScreen 无 RandR 回填,devicePixelRatio 硬编码 1.0);
+  text_subtype 只报 plain。
+- P2:InputMethodEvent 无 Attribute 列表、removeFormat 缺失、
+  WSI 键鼠事件缺 timestamp/scanCode、XCursor 形状未映射 X11
+  cursor font 等。
 
 ### 14.122 实机输入页复现与静态场景缓存修复（2026-09-19 午后二）
 

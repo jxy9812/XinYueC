@@ -23,52 +23,311 @@
 
 /* ==================== 内部工具 ==================== */
 
-/** @brief 用当前 displayFormat 将值渲染为编辑文本。 */
-static void xdt_refreshText(XDateTimeEdit* self)
+/** @brief 分段记号容量上限（默认格式 6 段；含毫秒/星期/上下午的
+ *         "yyyy-MM-dd HH:mm:ss.zzz dddd AP" 记 9 段，取 16 覆盖常用格式）。 */
+#define XDT_SECTION_MAX 16
+
+/** @brief 分段记号（内部解析产物，渲染/掩码/查询共用一份解析）。 */
+typedef struct XdtSectionTok
 {
-    char buf[128];
-    const char* fmt = (self->m_displayFormat
-                       ? XString_toUtf8(self->m_displayFormat) : NULL);
+    int  code;  /**< 分段枚举值（XDateTimeEditSection）。 */
+    int  width; /**< 数字位数/档位：yyyy=4；MM/dd/HH/mm/ss=2；h=1|2；
+                     z=1|2|3；ddd=3/dddd=4（区分星期文案档）；AP/A=1|2。
+                     现有记号全为 ASCII，宽度恰等于格式串字节长度。 */
+    char spec;  /**< 格式字母（'y''M''d''H''h''m''s''z''A'），渲染分派用。 */
+    size_t pos; /**< 记号在格式串中的字节偏移（渲染定位）。 */
+} XdtSectionTok;
+
+/** @brief 取控件当前生效格式串（NULL 控件/格式时回退默认格式）。 */
+static const char* xdt_effectiveFormat(const XDateTimeEdit* self)
+{
+    const char* fmt = (self && self->m_displayFormat)
+        ? XString_toUtf8(self->m_displayFormat) : NULL;
+    return fmt ? fmt : "yyyy-MM-dd HH:mm:ss";
+}
+
+/** @brief 解析 displayFormat 的分段记号（唯一解析入口，最长匹配优先，
+ *         字面字符原样跳过；对标 Qt 记号连续区语义）。返回记号个数。
+ * @note  记号集对标 QDateTimeEdit::setDisplayFormat 常用子集：yyyy/MM/
+ *        dd/dddd/ddd/HH/h/hh/mm/ss/zzz/zz/z/AP（A、ap、a 同 AP，Qt 对
+ *        上下午记号大小写不敏感）；单字母 d/M/H/m/s 维持字面输出。 */
+static int xdt_tokenize(const char* fmt, XdtSectionTok* out, int max)
+{
+    int n = 0;
+    size_t i = 0;
     if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
+    while (fmt[i] != '\0' && n < max) {
+        char c = fmt[i];
+        if (c == 'y' && XStrncmp(&fmt[i], "yyyy", 4) == 0) {
+            out[n].code = (int)XDateTimeEditSection_YearSection;
+            out[n].width = 4;
+            out[n].spec = 'y';
+            out[n++].pos = i;
+            i += 4;
+        } else if (c == 'M' && XStrncmp(&fmt[i], "MM", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_MonthSection;
+            out[n].width = 2;
+            out[n].spec = 'M';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 'd' && XStrncmp(&fmt[i], "dddd", 4) == 0) {
+            out[n].code = (int)XDateTimeEditSection_DaySection;
+            out[n].width = 4;
+            out[n].spec = 'd';
+            out[n++].pos = i;
+            i += 4;
+        } else if (c == 'd' && XStrncmp(&fmt[i], "ddd", 3) == 0) {
+            out[n].code = (int)XDateTimeEditSection_DaySection;
+            out[n].width = 3;
+            out[n].spec = 'd';
+            out[n++].pos = i;
+            i += 3;
+        } else if (c == 'd' && XStrncmp(&fmt[i], "dd", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_DaySection;
+            out[n].width = 2;
+            out[n].spec = 'd';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 'H' && XStrncmp(&fmt[i], "HH", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_HourSection;
+            out[n].width = 2;
+            out[n].spec = 'H';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 'h' && XStrncmp(&fmt[i], "hh", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_HourSection;
+            out[n].width = 2;
+            out[n].spec = 'h';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 'h') {
+            out[n].code = (int)XDateTimeEditSection_HourSection;
+            out[n].width = 1;
+            out[n].spec = 'h';
+            out[n++].pos = i++;
+        } else if (c == 'm' && XStrncmp(&fmt[i], "mm", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_MinuteSection;
+            out[n].width = 2;
+            out[n].spec = 'm';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 's' && XStrncmp(&fmt[i], "ss", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_SecondSection;
+            out[n].width = 2;
+            out[n].spec = 's';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 'z' && XStrncmp(&fmt[i], "zzz", 3) == 0) {
+            out[n].code = (int)XDateTimeEditSection_MSecSection;
+            out[n].width = 3;
+            out[n].spec = 'z';
+            out[n++].pos = i;
+            i += 3;
+        } else if (c == 'z' && XStrncmp(&fmt[i], "zz", 2) == 0) {
+            out[n].code = (int)XDateTimeEditSection_MSecSection;
+            out[n].width = 2;
+            out[n].spec = 'z';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 'z') {
+            out[n].code = (int)XDateTimeEditSection_MSecSection;
+            out[n].width = 1;
+            out[n].spec = 'z';
+            out[n++].pos = i++;
+        } else if ((c == 'A' || c == 'a')
+                   && (XStrncmp(&fmt[i], "AP", 2) == 0
+                       || XStrncmp(&fmt[i], "ap", 2) == 0)) {
+            out[n].code = (int)XDateTimeEditSection_AmPmSection;
+            out[n].width = 2;
+            out[n].spec = 'A';
+            out[n++].pos = i;
+            i += 2;
+        } else if (c == 'A' || c == 'a') {
+            out[n].code = (int)XDateTimeEditSection_AmPmSection;
+            out[n].width = 1;
+            out[n].spec = 'A';
+            out[n++].pos = i++;
+        } else {
+            ++i;
+        }
+    }
+    return n;
+}
+
+/** @brief 统计一段 UTF-8 文本的字符数（XLineEdit 光标/选区按字符索引，
+ *         非字节）。 */
+static int xdt_utf8Chars(const char* s, int bytes)
+{
+    int chars = 0;
+    int j;
+    for (j = 0; j < bytes; ++j) {
+        if (((unsigned char)s[j] & 0xC0) != 0x80) ++chars;
+    }
+    return chars;
+}
+
+/** @brief 按单个记号渲染当前值到 buf；返回写入字节数（渲染与
+ *         sectionText 共用，保证两路输出一致）。
+ * @note  上下午/星期文案固定中文（框架无完整 locale，与库内既有中文化
+ *         风格一致；对标 zh_CN 的 amText/pmText 与 dayName）：
+ *         ddd=周一..周日，dddd=星期一..星期日，A=上午/下午。 */
+static int xdt_renderToken(const XDateTimeEdit* self,
+                           const XdtSectionTok* tok,
+                           char* buf, size_t cap)
+{
+    switch (tok->spec) {
+    case 'y':
+        return XSnprintf(buf, cap, "%04d",
+                         XDate_year(&self->m_dateTime.m_date));
+    case 'M':
+        return XSnprintf(buf, cap, "%02d",
+                         XDate_month(&self->m_dateTime.m_date));
+    case 'd':
+        if (tok->width >= 3) {
+            /* XDate_dayOfWeek 1=周一..7=周日；无星期文案起始日偏移。 */
+            static const char* const shortNames[7] = {
+                "周一", "周二", "周三", "周四", "周五", "周六", "周日" };
+            static const char* const longNames[7] = {
+                "星期一", "星期二", "星期三", "星期四", "星期五",
+                "星期六", "星期日" };
+            int dow = XDate_dayOfWeek(&self->m_dateTime.m_date);
+            int idx = (dow >= 1 && dow <= 7) ? dow - 1 : 0;
+            return XSnprintf(buf, cap, "%s",
+                             (tok->width >= 4 ? longNames
+                                              : shortNames)[idx]);
+        }
+        return XSnprintf(buf, cap, "%02d",
+                         XDate_day(&self->m_dateTime.m_date));
+    case 'H':
+        return XSnprintf(buf, cap, "%02d",
+                         XTime_hour(&self->m_dateTime.m_time));
+    case 'h': {
+        /* 12 小时制折算（对标 Qt 含 AP 的 'h'：13→1，0→12）。XGui 固定
+         * 折算，不依赖格式是否含 AP（差异已注释，见 h/hh 语义）。 */
+        int h = XTime_hour(&self->m_dateTime.m_time);
+        h = (h > 12) ? (h - 12) : ((h == 0) ? 12 : h);
+        if (tok->width >= 2) return XSnprintf(buf, cap, "%02d", h);
+        return XSnprintf(buf, cap, "%d", h);
+    }
+    case 'm':
+        return XSnprintf(buf, cap, "%02d",
+                         XTime_minute(&self->m_dateTime.m_time));
+    case 's':
+        return XSnprintf(buf, cap, "%02d",
+                         XTime_second(&self->m_dateTime.m_time));
+    case 'z': {
+        /* 对标 QLocale::dateTimeToString：毫秒按"秒的小数部分"渲染，
+         * 先零填充到 3 位，z/zz 档再截去不保留的尾零（如 ms=200 →
+         * z 为 "2"、zz 为 "20"，ms=45 三档均为 "045"）。 */
+        int ms = XTime_msec(&self->m_dateTime.m_time);
+        int len = XSnprintf(buf, cap, "%03d", ms);
+        int chop = 3 - tok->width;
+        while (chop-- > 0 && len > 1 && buf[len - 1] == '0') {
+            buf[--len] = '\0';
+        }
+        return len;
+    }
+    case 'A': {
+        int h = XTime_hour(&self->m_dateTime.m_time);
+        return XSnprintf(buf, cap, "%s", (h < 12) ? "上午" : "下午");
+    }
+    default:
+        break;
+    }
+    return 0;
+}
+
+/** @brief 分段在编辑文本中的选区（UTF-8 字符索引，供 XLineEdit_setSelection）。 */
+typedef struct XdtSectionRange
+{
+    int start; /**< 选区起点（字符索引）。 */
+    int len;   /**< 选区长度（字符数）。 */
+} XdtSectionRange;
+
+/** @brief 用当前 displayFormat 将值渲染为编辑文本；ranges 非 NULL 时
+ *         顺带输出各分段选区（对标 Qt 编辑时段落整体反选的呈现基础）。 */
+static void xdt_render(XDateTimeEdit* self, char* buf, size_t cap,
+                       XdtSectionRange* ranges, int maxRanges,
+                       int* rangeCount)
+{
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    const char* fmt;
     size_t o = 0;
     size_t i = 0;
+    int n;
+    int ri = 0;
+    int chars = 0;
+    int ti = 0;
     if (!self) return;
-    while (fmt[i] != '\0' && o < sizeof(buf) - 1) {
-        if (XStrncmp(&fmt[i], "yyyy", 4) == 0) {
-            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%04d",
-                                  XDate_year(&self->m_dateTime.m_date));
-            i += 4;
-        } else if (XStrncmp(&fmt[i], "MM", 2) == 0) {
-            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
-                                  XDate_month(&self->m_dateTime.m_date));
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "dd", 2) == 0) {
-            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
-                                  XDate_day(&self->m_dateTime.m_date));
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "HH", 2) == 0) {
-            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
-                                  XTime_hour(&self->m_dateTime.m_time));
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "mm", 2) == 0) {
-            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
-                                  XTime_minute(&self->m_dateTime.m_time));
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "ss", 2) == 0) {
-            o += (size_t)XSnprintf(&buf[o], sizeof(buf) - o, "%02d",
-                                  XTime_second(&self->m_dateTime.m_time));
-            i += 2;
+    fmt = xdt_effectiveFormat(self);
+    n = xdt_tokenize(fmt, toks, XDT_SECTION_MAX);
+    while (fmt[i] != '\0' && o < cap - 1) {
+        if (ti < n && i == toks[ti].pos) {
+            /* 命中分段记号：整段渲染并记录选区（字符索引）。 */
+            char piece[32];
+            int k = xdt_renderToken(self, &toks[ti], piece, sizeof(piece));
+            int j;
+            if (k < 0) k = 0;
+            if ((size_t)k > cap - o - 1) k = (int)(cap - o - 1);
+            if (ranges && ri < maxRanges) {
+                ranges[ri].start = chars;
+                ranges[ri].len = xdt_utf8Chars(piece, k);
+                ++ri;
+            }
+            for (j = 0; j < k; ++j) buf[o++] = piece[j];
+            chars += xdt_utf8Chars(piece, k);
+            i += toks[ti].width; /* 现有记号均为 ASCII：宽度=格式字节长。 */
+            ++ti;
         } else {
+            /* 字面字符原样输出（UTF-8 多字节按整体计入字符数）。 */
             buf[o++] = fmt[i++];
+            if (((unsigned char)buf[o - 1] & 0xC0) != 0x80) ++chars;
         }
     }
     buf[o] = '\0';
+    if (rangeCount) *rangeCount = ri;
+}
+
+/** @brief 用当前 displayFormat 将值渲染为编辑文本（对标
+ *         QDateTimeEditPrivate::textFromDateTime → QLocale::toString）。 */
+static void xdt_refreshText(XDateTimeEdit* self)
+{
+    char buf[128];
+    if (!self) return;
+    xdt_render(self, buf, sizeof(buf), NULL, 0, NULL);
     /* 更新基类编辑框文本（不经 signals，避免回环）。 */
     {
         XLineEdit* edit = XAbstractSpinBox_lineEdit(
             (XAbstractSpinBox*)self);
         if (edit) XLineEdit_setText(edit, buf);
         XLineEdit_setCursorPosition(edit, 0);
+    }
+}
+
+/** @brief 整段选中当前分段文本（对标 QDateTimeEdit 编辑时段落整体
+ *         反选）；当前分段不在格式中时清除选区保持原状。 */
+static void xdt_selectCurrentSection(XDateTimeEdit* self)
+{
+    char buf[128];
+    XdtSectionRange ranges[XDT_SECTION_MAX];
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    int count = 0;
+    int n;
+    int index = -1;
+    int i;
+    XLineEdit* edit;
+    if (!self) return;
+    xdt_render(self, buf, sizeof(buf), ranges, XDT_SECTION_MAX, &count);
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
+    for (i = 0; i < n; ++i) {
+        if (toks[i].code == self->m_currentSection) { index = i; break; }
+    }
+    edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
+    if (!edit) return;
+    if (index >= 0 && index < count && ranges[index].len > 0) {
+        XLineEdit_setSelection(edit, ranges[index].start, ranges[index].len);
+    } else {
+        XLineEdit_deselect(edit);
     }
 }
 
@@ -148,7 +407,8 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
         XDate_setDate(&edit->m_dateTime.m_date, y, m,
                       XDate_day(&edit->m_dateTime.m_date));
     } else if (section == (int)XDateTimeEditSection_DaySection) {
-        /* 简化：日增减经 epoch 毫秒换算。 */
+        /* 简化：日增减经 epoch 毫秒换算；ddd/dddd 星期段同挂 DaySection，
+         * ±1 天即星期变化（对标 Qt 星期段步进语义）。 */
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps * 86400000;
         XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
@@ -160,6 +420,16 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps * 60000;
         XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
+    } else if (section == (int)XDateTimeEditSection_MSecSection) {
+        /* 毫秒段步进：1 毫秒/步（跨秒/分/时的进位由 epoch 换算天然承担）。 */
+        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
+        ms += (int64_t)steps;
+        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
+    } else if (section == (int)XDateTimeEditSection_AmPmSection) {
+        /* 上下午段步进 = 翻转上午/下午（±12 小时，对标 Qt 步进 AmPm 段）。 */
+        int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
+        ms += (int64_t)steps * 43200000;
+        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
     } else {
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps * 1000;
@@ -168,6 +438,8 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
     xdt_clamp(edit);
     if (XDateTime_compare(&old, &edit->m_dateTime) != 0) {
         xdt_refreshText(edit);
+        /* 步进后保持当前分段整体反选（对标 Qt 步进不清除段落选区）。 */
+        xdt_selectCurrentSection(edit);
         xdt_emitChanged(edit);
         /* 用户编辑变体（对标 QDateEdit::userDateChanged/QTimeEdit::
          * userTimeChanged）：按日期/时间部分是否变化分别发射。 */
@@ -183,6 +455,41 @@ static int XDateTimeEdit_stepEnabled(const XAbstractSpinBox* self)
     (void)self;
     return (int)XAbstractSpinBoxStepEnabledFlag_StepUpEnabled |
            (int)XAbstractSpinBoxStepEnabledFlag_StepDownEnabled;
+}
+
+/** @brief 键盘按下：Left/Right 在分段间移动并整段选中当前段（对标
+ *         QDateTimeEdit 方向键跨段导航，段间不循环）；其余按键交基类
+ *         （Up/Down/PageUp/PageDown 步进、Home/End 边界、其余转发
+ *         内嵌编辑框）。 */
+static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)self;
+    XKeyEvent* ke;
+    int key;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
+    ke = (XKeyEvent*)event;
+    key = XKeyEvent_key(ke);
+    if (key == XKey_Left || key == XKey_Right) {
+        XdtSectionTok toks[XDT_SECTION_MAX];
+        int count = xdt_tokenize(xdt_effectiveFormat(edit), toks,
+                                 XDT_SECTION_MAX);
+        if (count > 0) {
+            int index = XDateTimeEdit_currentSectionIndex(edit);
+            int target = (key == XKey_Left)
+                ? (index > 0 ? index - 1 : 0)
+                : (index + 1 < count ? index + 1 : count - 1);
+            /* 段序号 → 段枚举码落地（与 setCurrentSectionIndex 同映射）。 */
+            edit->m_currentSection = toks[target].code;
+            XWidget_update((XWidget*)self);
+            xdt_selectCurrentSection(edit);
+            XEvent_accept(event);
+            return;
+        }
+        /* 无分段格式：退回基类，让方向键回到编辑框光标移动。 */
+    }
+    XClass_Parent(XAbstractSpinBox, EXWidget_KeyPressEvent,
+                  void (*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -212,6 +519,8 @@ XVtable* XDateTimeEdit_class_init(void)
                              XDateTimeEdit_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepEnabled,
                              XDateTimeEdit_stepEnabled);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
+                             XDateTimeEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDateTimeEdit_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -509,29 +818,13 @@ void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section)
 
 int XDateTimeEdit_sections(const XDateTimeEdit* self)
 {
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    int n;
+    int i;
     int mask = 0;
-    const char* fmt;
-    size_t i = 0;
     if (!self) return 0;
-    fmt = (self->m_displayFormat ? XString_toUtf8(self->m_displayFormat) : NULL);
-    if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
-    while (fmt[i] != '\0') {
-        if (XStrncmp(&fmt[i], "yyyy", 4) == 0) {
-            mask |= (int)XDateTimeEditSection_YearSection; i += 4;
-        } else if (XStrncmp(&fmt[i], "MM", 2) == 0) {
-            mask |= (int)XDateTimeEditSection_MonthSection; i += 2;
-        } else if (XStrncmp(&fmt[i], "dd", 2) == 0) {
-            mask |= (int)XDateTimeEditSection_DaySection; i += 2;
-        } else if (XStrncmp(&fmt[i], "HH", 2) == 0) {
-            mask |= (int)XDateTimeEditSection_HourSection; i += 2;
-        } else if (XStrncmp(&fmt[i], "mm", 2) == 0) {
-            mask |= (int)XDateTimeEditSection_MinuteSection; i += 2;
-        } else if (XStrncmp(&fmt[i], "ss", 2) == 0) {
-            mask |= (int)XDateTimeEditSection_SecondSection; i += 2;
-        } else {
-            ++i;
-        }
-    }
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
+    for (i = 0; i < n; ++i) mask |= toks[i].code;
     return mask;
 }
 
@@ -679,74 +972,20 @@ void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index)
 
 /* ==================== 分段查询族 ==================== */
 
-/** @brief 分段记号（内部解析产物）。 */
-typedef struct XdtSectionTok
-{
-    int code;    /**< 分段枚举值（XDateTimeEditSection）。 */
-    int width;   /**< 渲染宽度：年份 4 位，其余 2 位。 */
-} XdtSectionTok;
-
-/** @brief 解析 displayFormat 中可识别的分段记号（与 xdt_refreshText
- *         记号集一致；最多 8 个）。返回记号个数。 */
-static int xdt_parseSections(const char* fmt, XdtSectionTok* out, int max)
-{
-    int n = 0;
-    size_t i = 0;
-    if (!fmt) fmt = "yyyy-MM-dd HH:mm:ss";
-    while (fmt[i] != '\0' && n < max) {
-        if (XStrncmp(&fmt[i], "yyyy", 4) == 0) {
-            out[n].code = (int)XDateTimeEditSection_YearSection;
-            out[n++].width = 4;
-            i += 4;
-        } else if (XStrncmp(&fmt[i], "MM", 2) == 0) {
-            out[n].code = (int)XDateTimeEditSection_MonthSection;
-            out[n++].width = 2;
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "dd", 2) == 0) {
-            out[n].code = (int)XDateTimeEditSection_DaySection;
-            out[n++].width = 2;
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "HH", 2) == 0) {
-            out[n].code = (int)XDateTimeEditSection_HourSection;
-            out[n++].width = 2;
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "mm", 2) == 0) {
-            out[n].code = (int)XDateTimeEditSection_MinuteSection;
-            out[n++].width = 2;
-            i += 2;
-        } else if (XStrncmp(&fmt[i], "ss", 2) == 0) {
-            out[n].code = (int)XDateTimeEditSection_SecondSection;
-            out[n++].width = 2;
-            i += 2;
-        } else {
-            ++i;
-        }
-    }
-    return n;
-}
-
-/** @brief 取控件当前生效格式串（NULL 控件/格式时回退默认格式）。 */
-static const char* xdt_effectiveFormat(const XDateTimeEdit* self)
-{
-    const char* fmt = (self && self->m_displayFormat)
-        ? XString_toUtf8(self->m_displayFormat) : NULL;
-    return fmt ? fmt : "yyyy-MM-dd HH:mm:ss";
-}
-
 int XDateTimeEdit_sectionCount(const XDateTimeEdit* self)
 {
-    XdtSectionTok toks[8];
+    XdtSectionTok toks[XDT_SECTION_MAX];
     if (!self) return 0;
-    return xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    return xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
 }
 
 int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self)
 {
-    XdtSectionTok toks[8];
+    XdtSectionTok toks[XDT_SECTION_MAX];
     int n;
     int i;
     if (!self) return 0;
-    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
     for (i = 0; i < n; ++i)
         if (toks[i].code == self->m_currentSection) return i;
     return 0;
@@ -754,10 +993,10 @@ int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self)
 
 int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index)
 {
-    XdtSectionTok toks[8];
+    XdtSectionTok toks[XDT_SECTION_MAX];
     int n;
     if (!self || index < 0) return (int)XDateTimeEditSection_NoSection;
-    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
     if (index >= n) return (int)XDateTimeEditSection_NoSection;
     return toks[index].code;
 }
@@ -765,60 +1004,45 @@ int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index)
 XString* XDateTimeEdit_sectionText(const XDateTimeEdit* self, int section)
 {
     XString* out;
-    XdtSectionTok toks[8];
+    XdtSectionTok toks[XDT_SECTION_MAX];
     int n;
     int i;
-    int value = 0;
     bool found = false;
-    int width = 2;
-    char buf[16];
+    XdtSectionTok hit;
+    char buf[32];
     out = XString_create();
     if (!out) return NULL;
     if (!self) {
         XString_assign_utf8(out, "");
         return out;
     }
-    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
     for (i = 0; i < n; ++i) {
         if (toks[i].code == section) {
+            /* 取首个匹配记号（"dd ddd" 同码段时以先出现者为准）。 */
+            hit = toks[i];
             found = true;
-            width = toks[i].width;
             break;
         }
     }
     if (found) {
-        switch ((XDateTimeEditSection)section) {
-        case XDateTimeEditSection_YearSection:
-            value = XDate_year(&self->m_dateTime.m_date); break;
-        case XDateTimeEditSection_MonthSection:
-            value = XDate_month(&self->m_dateTime.m_date); break;
-        case XDateTimeEditSection_DaySection:
-            value = XDate_day(&self->m_dateTime.m_date); break;
-        case XDateTimeEditSection_HourSection:
-            value = XTime_hour(&self->m_dateTime.m_time); break;
-        case XDateTimeEditSection_MinuteSection:
-            value = XTime_minute(&self->m_dateTime.m_time); break;
-        case XDateTimeEditSection_SecondSection:
-            value = XTime_second(&self->m_dateTime.m_time); break;
-        default:
-            found = false; break;
-        }
+        /* 渲染与整体显示共用 xdt_renderToken：星期/上下午为中文文案，
+         * 其余按记号位宽补零。 */
+        xdt_renderToken(self, &hit, buf, sizeof(buf));
+    } else {
+        buf[0] = '\0';
     }
-    if (found)
-        XSnprintf(buf, sizeof(buf), "%0*d", width, value);
-    else
-        XSnprintf(buf, sizeof(buf), "");
     XString_assign_utf8(out, buf);
     return out;
 }
 
 void XDateTimeEdit_setSelectedSection(XDateTimeEdit* self, int section)
 {
-    XdtSectionTok toks[8];
+    XdtSectionTok toks[XDT_SECTION_MAX];
     int n;
     int i;
     if (!self) return;
-    n = xdt_parseSections(xdt_effectiveFormat(self), toks, 8);
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
     for (i = 0; i < n; ++i) {
         if (toks[i].code == section) {
             self->m_currentSection = section;

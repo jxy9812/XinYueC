@@ -51,6 +51,7 @@
 #include "XVarList.h"
 #include "XString.h"
 #include "XClipboard.h"
+#include "XGuiApplication.h"
 #include "XTextClipboard.h"
 #if XMENU_ON
 #include "XMenu.h"
@@ -697,6 +698,40 @@ static void VXLineEdit_contextMenuEvent(XWidget* self, XEvent* event)
 
 /* ==================== 鼠标处理 ==================== */
 
+#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
+/** @brief 中键按下：光标落到点击处后从 Selection（X11 PRIMARY）粘贴。
+ *         对标 Qt QWidgetLineControl::processMouseEvent 中键分支
+ *         （supportsSelection 时 xToPos + moveCursor(pos,false) +
+ *         paste(QClipboard::Selection)）。
+ * @return true 表示已处理（事件接收）；false 保持既有 ignore 行为。
+ * @note   粘贴复用控制器 XLineControl_paste 既有通道，只读不写剪贴板，
+ *         CLIPBOARD 内容不受影响（对标 Qt 中键粘贴语义）。 */
+static bool xlineedit_pasteSelectionAt(XLineEdit* edit, const XMouseEvent* me)
+{
+    XClipboard* clip;
+    XPoint pos;
+    int clickX;
+    int bytePos;
+    if (!edit || !edit->m_control) return false;
+    clip = XGuiApplication_clipboard();
+    /* 对标 Qt：中键 Selection 粘贴仅当平台后端声明支持选择区
+       （QGuiApplication::clipboard()->supportsSelection() 门禁）。 */
+    if (!clip || !XClipboard_supportsSelection(clip)) return false;
+    if (XLineControl_isReadOnly(edit->m_control)) return false;
+    /* 坐标口径与左键定位一致：壳 contents 平移（边框/边距/action 区/
+       滚动偏移），控制器像素→字节偏移命中。xToPos 恒有合法落点（钳位），
+       对标 Qt 中键"若有 hit 则落光标"。 */
+    pos = XMouseEvent_position(me);
+    clickX = pos.x - xlineedit_textStartX(edit) + edit->m_viewOffset;
+    xlineedit_syncControlFont(edit);
+    bytePos = XLineControl_xToPos(edit->m_control, clickX,
+                                  (int)XLineControlCursorPosition_BetweenCharacters);
+    XLineControl_moveCursor(edit->m_control, bytePos, false);
+    XLineControl_paste(edit->m_control, (int)XClipboardMode_Selection);
+    return true;
+}
+#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
+
 /** @brief 左键按下：获得焦点；命中清除按钮则清空文本；否则把光标定位到
  *         点击处（坐标平移在壳，命中测试 xToPos 与移动 moveCursor 在
  *         控制器；Shift+点击扩展选区）。 */
@@ -710,7 +745,20 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     me = (XMouseEvent*)event;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
-        XEvent_ignore(event);
+        /* 对标 Qt：中键按下且平台支持 Selection（X11 PRIMARY）时在点击
+           处粘贴；其余按键（含不支持 Selection 的中键）保持既有 ignore
+           行为零回归。 */
+        if (XMouseEvent_button(me) == XMouseButton_MiddleButton &&
+            xlineedit_pasteSelectionAt(edit, me)) {
+            XWidget_setFocusPolicy((XWidget*)edit,
+                                   XWidgetFocusPolicy_ClickFocus);
+            XWidget_setFocus((XWidget*)edit);
+            g_focusedLineEdit = edit;
+            XWidget_update((XWidget*)edit);
+            XEvent_accept(event);
+        } else {
+            XEvent_ignore(event);
+        }
         return;
     }
     XWidget_setFocusPolicy((XWidget*)edit, XWidgetFocusPolicy_ClickFocus);

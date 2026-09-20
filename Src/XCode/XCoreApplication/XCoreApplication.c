@@ -734,8 +734,9 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
             for_each_iterator(appFilters, XVector, it) {
                 XObject* filter = *((XObject**)XVector_iterator_data(&it));
                 if (!filter) continue;
-                if (XObject_eventFilter_base(filter, receiver, event))
+                if (XObject_eventFilter_base(filter, receiver, event)) {
                     return true;
+                }
             }
         }
     }
@@ -812,4 +813,8 @@ void VXCoreApplication_deinit(XCoreApplication* app)
     if (g_app == app) {
         g_app = NULL;
     }
+    /* 析构完成即解除事件拦截：is_app_closing 仅保护析构窗口期，
+       若保持置位会让后续(无应用实例期间)所有 notify 派发被永久
+       吞掉（回归多套件先后建/删应用时暴露）。 */
+    is_app_closing = false;
 }
