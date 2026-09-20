@@ -8,7 +8,9 @@
  *              用于 winId()/windowForWinId() 与事件路由；
  *             - 视觉选择：优先 32 位 TrueColor（RGBA8888），失败回退 24
  *               位 TrueColor；上屏按服务器字节序直拷或 24 位重排后
- *               XPutImage 提交；
+ *               XPutImage 提交（XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16=1
+ *               时后备缓冲为 RGB16/565，与 depth-16/565 视觉按 2 字节/
+ *               像素直通上屏）；
  *             - 事件：Expose -> handleExposeEvent（重绘），
  *               ConfigureNotify -> 先更新本后端几何记录再
  *               handleGeometryChange（防回环），FocusIn/Out -> 焦点注入，
@@ -133,6 +135,17 @@ extern int XRRUpdateConfiguration(X11_XEvent* event);
 /** @brief 首选 32 位 TrueColor 视觉深度；失败回退 24。 */
 #define XPWN_DEPTH_32 32
 #define XPWN_DEPTH_24 24
+/** @brief 16 位 TrueColor 视觉深度（仅 RGB16 直拷分支使用，见下）。 */
+#define XPWN_DEPTH_16 16
+
+/* 后备缓冲像素格式选择器：0 = 现状 ARGB32（4 字节/像素），1 = RGB16
+ * （565，2 字节/像素，与 Qt QRgb16 同构）。统一定义在
+ * Src/XGui/XGuiConfig.h（并行批次落地）；此处 #ifndef 兜底为 0，保证
+ * 配置项尚未落地时本文件按现状行为编译，两种取值下行为均经编译期
+ * 门控（#if），互不掺入。 */
+#ifndef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+#define XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 0
+#endif
 
 /** @brief 原生窗口注册表槽位（X11 Window 与公共 XWindow 对象双向登记）。 */
 /** @brief 双击判定时间间隔（毫秒）；移植沿用 Qt 默认约 400ms。 */
@@ -150,7 +163,8 @@ typedef struct XWNPendingEntry
     int m_presentWidth;         /**< 描述符对应图像宽度。 */
     int m_presentHeight;        /**< 描述符对应图像高度。 */
     int m_presentBytesPerLine;  /**< 描述符对应的缓冲行跨度。 */
-    bool m_presentDirect;       /**< 是否可以直接采用 BGRA8888 布局。 */
+    bool m_presentDirect;       /**< 是否可以按后备缓冲原生布局直拷（ARGB32
+                                     模式为 BGRA8888；RGB16 模式为 565）。 */
     XRect m_client;      /**< 本后端最近一次记录的客户端几何（去重用）。 */
     bool m_keyPressed[256];    /**< 各键码当前按下状态（X11 键码 8..255），用于识别自动重复。 */
     unsigned long m_lastPressTime;    /**< 最近一次非滚轮按键的时间戳（X11 毫秒节拍）。 */
@@ -1453,7 +1467,10 @@ static void xpwn_applyTitle(Window xwin, const XString* title)
     }
 }
 
-/** @brief 把 ARGB32 缓冲的一行/一矩形直拷进 XPutImage 缓冲。 */
+/** @brief 把 ARGB32 缓冲的一行/一矩形直拷进 XPutImage 缓冲。
+ *  @note   仅 ARGB32 后备缓冲模式使用；RGB16 模式下直拷走
+ *          xpwn_copyRect16（本函数无调用点，随 #if 收起避免空转）。 */
+#if !XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
 static void xpwn_copyRectDirect(const XImage* src, const XRect* srect,
                                 uint8_t* dst, int dstBpl)
 {
@@ -1470,6 +1487,7 @@ static void xpwn_copyRectDirect(const XImage* src, const XRect* srect,
                (size_t)srect->width * 4u);
     }
 }
+#endif /* !XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 */
 
 /** @brief 把 ARGB32 缓冲重排为 24 位（丢弃高 8 位 Alpha）后入 XPutImage。 */
 static void xpwn_copyRect24(const XImage* src, const XRect* srect,
@@ -1495,6 +1513,35 @@ static void xpwn_copyRect24(const XImage* src, const XRect* srect,
         }
     }
 }
+
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+/** @brief 把 RGB16（565，2 字节/像素）后备缓冲的一行/一矩形直拷进
+ *         depth-16 ZPixmap 上屏缓冲。
+ *  @details 源与目标同为 565 布局（R 高 5 位/G 中 6 位/B 低 5 位，
+ *           小端 2 字节单元，内存布局与 XPutImage 的 ZPixmap 一致），
+ *           故逐行做字节拷贝即可（对标 QXcbBackingStore 对 rgb565
+ *           视觉的 memcpy 快路径）。函数形态与 xpwn_copyRect24 对齐：
+ *           逐行、入参防护、返回是否拷贝。行跨度按 2 字节/像素换算。 */
+static bool xpwn_copyRect16(const XImage* src, const XRect* srect,
+                            uint8_t* dst, int dstBpl)
+{
+    const uint8_t* sbuf;
+    int bpl;
+    int row;
+    if (!src || !srect || !dst || dstBpl <= 0) return false;
+    sbuf = XImage_constBits(src);
+    bpl = XImage_bytesPerLine(src);
+    if (!sbuf || bpl <= 0) return false;
+    for (row = 0; row < srect->height; ++row) {
+        XMemcpy(dst + (int64_t)(srect->y + row) * dstBpl +
+                    (int64_t)srect->x * 2,
+                sbuf + (int64_t)(srect->y + row) * bpl +
+                    (int64_t)srect->x * 2,
+                (size_t)srect->width * 2u);
+    }
+    return true;
+}
+#endif /* XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 */
 
 /* ==================== 键鼠翻译工具（X11 -> 无关键码） ==================== */
 
@@ -3840,6 +3887,7 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
     uint8_t* buffer;
     size_t bufferSize;
     int bufBpl;
+    int wantBpl = 0; /* 0 = 交由 XCreateImage 按 bitmap_pad 自算行跨度。 */
     bool direct;
     if (!entry || imgW <= 0 || imgH <= 0)
         return false;
@@ -3848,10 +3896,40 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
         return true;
 
     xpwn_releasePresentImage(entry);
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    /* RGB16(565)直拷视觉预判：depth-16 + 565 掩码时显式传行跨度
+       w*2 —— XCreateImage 的自算值按 bitmap_pad=32 圆整为
+       (w*2+3)&~3，与 2 字节/像素直拷缓冲不一致；bits_per_pixel/
+       字节序待创建后复核（见下方 direct 判定）。 */
+    if (g_xpwnDepth == XPWN_DEPTH_16 &&
+        g_xpwnVisual->red_mask == 0x0000f800u &&
+        g_xpwnVisual->green_mask == 0x000007e0u &&
+        g_xpwnVisual->blue_mask == 0x0000001fu)
+        wantBpl = imgW * 2;
+#endif
     ximg = XCreateImage(g_xpwnDisplay, g_xpwnVisual, g_xpwnDepth, ZPixmap, 0,
-                        NULL, imgW, imgH, 32, 0);
+                        NULL, imgW, imgH, 32, wantBpl);
     if (!ximg)
         return false;
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    /* RGB16 模式后备缓冲已是 565（2 字节/像素，小端 16 位单元）：
+       仅当视觉同为 depth-16/565 且按小端读像素时逐行字节直通。
+       depth-24/32 视觉需要 565->32 展开，本层当前不提供该转换，
+       上屏直接失败 —— 绝不落入 24 位重排路径（xpwn_copyRect24 按
+       4 字节/像素读取 565 缓冲会越界/花屏）。 */
+    direct = g_xpwnDepth == XPWN_DEPTH_16 &&
+             ximg->bits_per_pixel == 16 && ximg->byte_order == LSBFirst &&
+             ImageByteOrder(g_xpwnDisplay) == LSBFirst &&
+             g_xpwnVisual->red_mask == 0x0000f800u &&
+             g_xpwnVisual->green_mask == 0x000007e0u &&
+             g_xpwnVisual->blue_mask == 0x0000001fu;
+    if (!direct) {
+        ximg->data = NULL;
+        XDestroyImage(ximg);
+        return false;
+    }
+    bufBpl = imgW * 2;
+#else
     /* 直拷条件：真 32 位像素 + 标准 BGRA8888 掩码 + 小端字节序（与
        ARGB32 小端内存布局 [B,G,R,A] 相同）。24 位深含 32 位填充的视觉
        也能直拷（高 8 位 Alpha 被服务器忽略）。 */
@@ -3861,6 +3939,7 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
              g_xpwnVisual->green_mask == 0x0000ff00u &&
              g_xpwnVisual->blue_mask == 0x000000ffu;
     bufBpl = direct ? imgW * 4 : (imgW * 3 + 3) & ~3;
+#endif
     if (bufBpl <= 0 || (size_t)imgH > SIZE_MAX / (size_t)bufBpl) {
         ximg->data = NULL;
         XDestroyImage(ximg);
@@ -3907,6 +3986,11 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     imgW = XImage_width(image);
     imgH = XImage_height(image);
     if (imgW <= 0 || imgH <= 0) return false;
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    /* RGB16 模式契约：后备缓冲即 RGB16/565。非 RGB16 输入属配置错配，
+       拒绝上屏（copyRect16 按 2 字节/像素搬运，误拷 4 字节缓冲会越界）。 */
+    if (XImage_format(image) != XImageFormat_RGB16) return false;
+#endif
 
     /* 裁剪脏区：region 为 NULL/空按整幅；offset 为缓冲相对窗口偏移。 */
     if (!offset) {
@@ -3945,7 +4029,14 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         drect.width = srect.width;
         drect.height = srect.height;
         if (direct) {
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+            /* RGB16 模式：direct 仅在「缓冲 565 + 视觉 depth-16/565」
+               时成立（见 xpwn_preparePresentImage），按 2 字节/像素
+               直拷进 ZPixmap 缓冲后提交。 */
+            xpwn_copyRect16(image, &srect, buffer, bufBpl);
+#else
             xpwn_copyRectDirect(image, &srect, buffer, bufBpl);
+#endif
             XPutImage(g_xpwnDisplay, entry->m_win, entry->m_gc, ximg,
                       srect.x, srect.y, drect.x, drect.y,
                       (unsigned)srect.width, (unsigned)srect.height);

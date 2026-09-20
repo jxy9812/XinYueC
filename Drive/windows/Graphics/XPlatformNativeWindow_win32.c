@@ -32,10 +32,13 @@
  *               DispatchMessage），WM_QUIT 只记录不派发；waitForEvents 用
  *               MsgWaitForMultipleObjects(QS_ALLINPUT) 阻塞等待事件就绪后
  *               再泵一批，形成自绘主循环事件源；
- *             - 上屏：present 把 ARGB32 预乘 Alpha 软件缓冲的脏区按行拷贝
- *               进与脏区等宽的自顶向下 32 位 DIB（BI_RGB，BGRA 字节序与
- *               XImage 小端 [B,G,R,A] 直配），再经 SetDIBitsToDevice 提交
- *               到窗口 DC；DIB 负高度表示 top-down，无需像素转换；
+ *             - 上屏：present 把软件缓冲的脏区按行重排进与脏区等宽的
+ *               自顶向下 DIB，再经 SetDIBitsToDevice 提交到窗口 DC；
+ *               DIB 负高度表示 top-down。表面格式随
+ *               XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16（XGuiConfig 定义，
+ *               默认 0）：0=ARGB32（BI_RGB，BGRA 字节序与 XImage 小端
+ *               [B,G,R,A] 直配）、1=RGB16 565（BI_BITFIELDS，行内存即
+ *               565 编码）；两种模式均为直配字节序，无需像素转换；
  *             - 标题同步：XString_toUtf16 得到 UTF-16 缓冲后
  *               SetWindowTextW，未设置标题时用空串。
  *             - 剪贴板后端：installClipboardBackend 安装 Win32 系统剪贴板
@@ -88,6 +91,27 @@
  * waitForEvents 的 X11 fd + ring fd 双源 poll 语义镜像）。本头自带
  * windows.h 守卫，CXinYueConfig 经 XGuiConfig -> XGuiConfig.h 可见。 */
 #include "XNetIoRingWin32.h"
+#endif
+
+#ifndef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+/* XGuiConfig 统一定义，此处兜底供独立编译。 */
+#define XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 0
+#endif
+
+/* 上屏表面每像素字节数：ARGB32=4、RGB16(565)=2。缓冲内像素编码由绘制
+   内核负责写入，本层只把字节按对应 bpp 的 DIB 语义交给 GDI，不做任何
+   颜色转换（对标 QWindowsBackingStore 的图像格式跟随策略）。 */
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+#define XPWN_PIXEL_BYTES 2u
+/* GDI 对 16bpp DIB 同样按 DWORD 对齐取行；此宏与公共层
+   XImageFormat_bytesPerLine(width, XImageFormat_RGB16) 的 4 字节行
+   对齐规则一致，保证重排后目标行距与 GDI 读取语义吻合。 */
+#define XPWN_DIB_ROW_STRIDE(pixelWidth) \
+    ((((size_t)(pixelWidth) * XPWN_PIXEL_BYTES) + 3u) & ~(size_t)3u)
+#else
+#define XPWN_PIXEL_BYTES 4u
+#define XPWN_DIB_ROW_STRIDE(pixelWidth) \
+    ((size_t)(pixelWidth) * XPWN_PIXEL_BYTES)
 #endif
 
 /** @brief 进程内原生窗口注册表容量（静态表，单线程使用）。 */
@@ -1946,14 +1970,25 @@ XWindow* XPlatformNativeWindow_windowForWinId(XWindowId id)
 
 /* ==================== 上屏（平台后端提供） ==================== */
 
-/** @brief 把 XImage 的一块矩形按行重排为等宽 packed 32bpp DIB 并提交。 */
+/** @brief 把 XImage 的一块矩形按行重排为等宽 packed DIB 并提交。 */
 static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
                              const XRect* srect, int dstX, int dstY)
 {
     const uint8_t* sbuf;
     int srcBpl;
     int w, h, row;
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    /* RGB16(565)：BI_BITFIELDS 要求在 BITMAPINFOHEADER 之后跟随 3 个
+       DWORD 掩码，而 BITMAPINFO 自身只有 1 个颜色表槽，故用扩展布局
+       装配（成员名与 BITMAPINFO 保持一致，共用下方装配代码）。 */
+    struct
+    {
+        BITMAPINFOHEADER bmiHeader;
+        DWORD bmiMasks[3];
+    } bmi;
+#else
     BITMAPINFO bmi;
+#endif
     HDC hdc;
     uint8_t* buf;
     if (!entry || !entry->m_hwnd || !image || !srect) return false;
@@ -1963,14 +1998,15 @@ static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
     sbuf = XImage_constBits(image);
     srcBpl = XImage_bytesPerLine(image);
     if (!sbuf || srcBpl <= 0) return false;
-    buf = (uint8_t*)XMalloc_Hybrid((size_t)w * 4u * (size_t)h);
+    buf = (uint8_t*)XMalloc_Hybrid(XPWN_DIB_ROW_STRIDE(w) * (size_t)h);
     if (!buf) return false;
-    /* 按行拷贝：目标 packed（行宽 w*4），源行宽可任意（含 4 字节对齐垫）。 */
+    /* 按行拷贝：目标行距按 DIB DWORD 对齐（packed 32bpp 时即 w*4），
+       源行宽可任意（含对齐垫）；像素编码与 DIB 一致，仅重排行距。 */
     for (row = 0; row < h; ++row) {
-        XMemcpy(buf + (size_t)row * (size_t)w * 4u,
+        XMemcpy(buf + (size_t)row * XPWN_DIB_ROW_STRIDE(w),
                sbuf + (size_t)(srect->y + row) * (size_t)srcBpl +
-                      (size_t)srect->x * 4u,
-               (size_t)w * 4u);
+                      (size_t)srect->x * XPWN_PIXEL_BYTES,
+               (size_t)w * XPWN_PIXEL_BYTES);
     }
     memset(&bmi, 0, sizeof(bmi));
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -1978,15 +2014,26 @@ static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
     /* 负高度 = 自顶向下 DIB：与 XImage 每行自顶向下的内存布局一致。 */
     bmi.bmiHeader.biHeight = -h;
     bmi.bmiHeader.biPlanes = 1;
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    /* 像素已是 565 布局，GDI 端以 BI_BITFIELDS 声明 565 掩码直传。 */
+    bmi.bmiHeader.biBitCount = 16;
+    bmi.bmiHeader.biCompression = BI_BITFIELDS;
+    bmi.bmiMasks[0] = 0xF800u; /* R：高 5 位。 */
+    bmi.bmiMasks[1] = 0x07E0u; /* G：中 6 位。 */
+    bmi.bmiMasks[2] = 0x001Fu; /* B：低 5 位。 */
+    bmi.bmiHeader.biSizeImage = (DWORD)XPWN_DIB_ROW_STRIDE(w) * (DWORD)h;
+#else
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
+#endif
     hdc = GetDC(entry->m_hwnd);
     if (!hdc) {
         XFree_Hybrid(buf);
         return false;
     }
     SetDIBitsToDevice(hdc, dstX, dstY, (DWORD)w, (DWORD)h,
-                      0, 0, 0, (UINT)h, buf, &bmi, DIB_RGB_COLORS);
+                      0, 0, 0, (UINT)h, buf, (BITMAPINFO*)&bmi,
+                      DIB_RGB_COLORS);
     ReleaseDC(entry->m_hwnd, hdc);
     XFree_Hybrid(buf);
     return true;

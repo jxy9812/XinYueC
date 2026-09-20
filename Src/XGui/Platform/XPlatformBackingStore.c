@@ -24,8 +24,29 @@
 #include "XImageFormat.h"
 #include "XMemory.h"
 
-/** @brief 后备缓冲默认像素格式（对标 Qt 栅格后备存储的 ARGB32 预乘）。 */
+/** @brief 后备缓冲像素格式（对标 Qt 栅格后备存储的 ARGB32 预乘）。
+ *  @note  由 XGuiConfig.h 的 XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 编译期
+ *         选择（对标 QBackingStore 按目标窗口/屏幕格式协商缓冲，嵌入式
+ *         面板格式出厂固定，故以编译期开关表达）：默认 ARGB32 预乘，
+ *         与既有行为逐位一致；置 1 切换为 RGB16（RGB565，每像素 2 字
+ *         节），供无 Alpha 的 16 位面板目标省一半表面内存与带宽。选择
+ *         器是 0/1 布尔（XGuiConfig.h 不反向包含 XImageFormat.h），枚举
+ *         映射收敛在本文件。 */
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+#define XPBS_IMAGE_FORMAT XImageFormat_RGB16
+#else
 #define XPBS_IMAGE_FORMAT XImageFormat_ARGB32_Premultiplied
+#endif
+
+/** @brief 后备缓冲每像素字节数（与 XPBS_IMAGE_FORMAT 同源的条件编译
+ *  常量）。XImageFormat 体系只提供运行时访问器（XImageFormat_bitDepth
+ *  返回位数，格式表为 XImageFormat.c 私有），stride 校验等需要「每像
+ *  素字节」的场合直接用本常量，保持编译期常量、零运行时开销。 */
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+#define XPBS_PIXEL_BYTES 2u
+#else
+#define XPBS_PIXEL_BYTES 4u
+#endif
 
 /** @brief 共享软件核心 + 平台提交状态。 */
 struct XPlatformBackingStore
@@ -93,7 +114,8 @@ static bool xpbs_intersect(const XRect* a, const XRect* b, XRect* out)
     return true;
 }
 
-/** @brief 按行复制像素矩形（4 字节/像素，ARGB32 小端与 DIB BGRA 一致）。
+/** @brief 按行复制像素矩形（每像素 XPBS_PIXEL_BYTES 字节；默认 ARGB32
+ *         4 字节小端与 DIB BGRA 一致，RGB16 为 2 字节）。
  *  @note  源与目标各自使用自己的 bytesPerLine，因此支持跨尺寸复制
  *         （resize 保留左上重叠区时源缓冲与目标缓冲行距可能不同）。 */
 static void xpbs_copyRectPixels(const XImage* src, int sx, int sy,
@@ -112,9 +134,11 @@ static void xpbs_copyRectPixels(const XImage* src, int sx, int sy,
     dstBpl = XImage_bytesPerLine(dst);
     if (!sbuf || !dbuf || srcBpl <= 0 || dstBpl <= 0) return;
     for (row = 0; row < h; ++row)
-        XMemmove(dbuf + (int64_t)(dy + row) * dstBpl + (int64_t)dx * 4,
-                sbuf + (int64_t)(sy + row) * srcBpl + (int64_t)sx * 4,
-                (size_t)w * 4u);
+        XMemmove(dbuf + (int64_t)(dy + row) * dstBpl +
+                     (int64_t)dx * XPBS_PIXEL_BYTES,
+                sbuf + (int64_t)(sy + row) * srcBpl +
+                     (int64_t)sx * XPBS_PIXEL_BYTES,
+                (size_t)w * XPBS_PIXEL_BYTES);
 }
 
 /** @brief 把源图像深拷贝到目标图像（XCopy 为共享引用，不能用）。 */
@@ -558,7 +582,10 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
             size_t stride = 0;
             void* bits = XPlatformBackingStoreDriver_getNativeBuffer(
                 self->m_nativeState, w, h, &stride);
-            if (bits && stride >= (size_t)w * 4u)
+            /* stride 下限按当前表面格式的每像素字节数校验（ARGB32 为
+               w*4，RGB16 为 w*2）；平台驱动给不出足够行距时视为拒绝，
+               回落自分配路径。 */
+            if (bits && stride >= (size_t)w * XPBS_PIXEL_BYTES)
             {
                 XImage nativeImage;
                 XImage_init_ex_2(&nativeImage, w, h, XPBS_IMAGE_FORMAT,
@@ -700,8 +727,24 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     xpbs_clipRegion(&self->m_staticContents, w, h, &cropped);
     XRegion_copy(&cropped, &self->m_staticContents);
     XRegion_deinit(&cropped);
-    /* 通知平台重建表面（Win32 DIB/DC）。 */
+    /* 通知平台重建表面（Win32 DIB/DC）。传入尺寸必须与实际缓冲一致
+       （头文件契约：PARTIAL 模式为 tile 缓冲尺寸）：Win32 侧按传入
+       尺寸建 DIB，PARTIAL 下若传整窗 w/h 会建出整窗 DIB 而绘制图像
+       只有 tile 大，白白浪费内存。此处与上方 tile 分配（633-637 附近
+       的 min(w,160)×min(h,80)）同源取 min。DIRECT/FULL 的缓冲就是
+       整窗，仍传 w/h 不变。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    {
+        int surfaceW = w < XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH ?
+                       w : XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH;
+        int surfaceH = h < XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT ?
+                       h : XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT;
+        XPlatformBackingStoreDriver_surfaceResized(self->m_nativeState,
+                                                   surfaceW, surfaceH);
+    }
+#else
     XPlatformBackingStoreDriver_surfaceResized(self->m_nativeState, w, h);
+#endif
 }
 
 bool XPlatformBackingStore_scroll(XPlatformBackingStore* self,

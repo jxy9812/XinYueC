@@ -149,6 +149,21 @@
 #define XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT 80
 #endif
 
+/* 窗口表面（后备存储）像素格式的编译期选择器（对标 Qt QBackingStore
+ * 随目标窗口/屏幕格式协商缓冲格式的行为：Qt 由平台窗口报告格式后按
+ * 其分配缓冲；嵌入式目标的面板像素接口在出厂时固定，没有运行期协商
+ * 的必要，因此这里用编译期开关等价表达）：
+ * - 0（默认）：XImageFormat_ARGB32_Premultiplied，与既有行为逐位一致；
+ * - 1：XImageFormat_RGB16（RGB565，每像素 2 字节），供无 Alpha 的
+ *   16 位面板嵌入式目标把表面内存与带宽省一半。
+ * 注意：本文件只提供 0/1 布尔选择器，不得 include XImageFormat.h——
+ * 配置头必须保持叶子（XImageFormat.h 体系经本文件入口聚合，反向包含
+ * 会形成包含环）；选择器到 XImageFormat 枚举值的映射由使用方
+ * （XPlatformBackingStore.c 的 XPBS_IMAGE_FORMAT）完成。 */
+#ifndef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+#define XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 0
+#endif
+
 /* 可选的平台启动帧缓冲。应用或板级配置可以在编译选项中把这三个
  * 宏替换为静态显存地址和容量；平台后端创建 XPlatformBackingStore
  * 时只登记一次，后续 resize 只重建 XImage 描述，不重复绑定缓冲。
@@ -695,6 +710,8 @@
 #define XGUI_BACKINGSTORE_BUFFER2 0
 #undef XGUI_BACKINGSTORE_BUFFER_SIZE
 #define XGUI_BACKINGSTORE_BUFFER_SIZE 0
+#undef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+#define XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 0
 #undef XPIXMAP_ON
 #define XPIXMAP_ON 0
 #undef XSTYLE_ON

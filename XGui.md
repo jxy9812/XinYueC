@@ -1,6 +1,6 @@
 # XGui 进度文档
 
-> 最后更新：2026-09-18 Asia/Shanghai
+> 最后更新：2026-09-20 Asia/Shanghai
 > 职责：记录 XGui（对标 Qt 6.8.3）当前实现进度、已知问题与下一步。
 > 本文件面向“更换 AI 继续”场景，所有定位信息均为当前仓库实测事实。
 > **阅读指引**：当前进度与计划看本文各主节；历次会话的逐轮改动日志
@@ -3605,3 +3605,158 @@ Debug 侥幸不崩（帧大 + 调用深度不同）、页堆查不出（非堆�
 - 教训：`bin/` 下同名二进制被多次构建覆盖，验证前必须 rm + 重链 +
   复核尺寸（Debug 7.3MB/10.8MB vs Release 4.0/5.3MB），否则会测到
   陈旧产物。本轮已再次踩坑（bin 混入 Release 回归导致误判 127 崩溃）。
+
+## 23. 主循环双源等待 + 目标格式内核表(RGB565 首批) — 2026-09-20
+
+> 本节覆盖三个批次:①已提交的主循环双源等待+Win32 剪贴板(`1126d61a`);
+> ②未提交的渲染管线普查+RGB565 内核表首批(当前工作树);③换机继续指南。
+
+### 23.1 已提交:主循环双源统一等待(批次 `1126d61a`)
+
+GUI 主循环从"等单源+轮询另一源(20ms 量化)"改为单阻塞点覆盖双源:
+
+- **POSIX**(`XPlatformNativeWindow_posix.c`):`waitForEvents` 用 poll 双 fd
+  —— X11 连接 fd + `XAbstractNetIoRing_global()` 的 ring 事件 fd
+  (io_uring ring fd / epoll fd,经 `getEventFd` 抽象);ring 就绪调
+  `XAbstractNetIoRing_processReady()`,X11 就绪泵原生事件,分源唤醒。
+- **Windows**(`XPlatformNativeWindow_win32.c`):
+  `MsgWaitForMultipleObjects(1, {IOCP句柄}, FALSE, msec, QS_ALLINPUT)`;
+  IOCP 就绪先 `processReady` 批量 drain 再泵消息(防高频消息饿死网络)。
+- `XAbstractNetIoRing_ON=0` 或 ring 未启用时退化单源,行为同既往。
+- 同批修复:`XNetIoRingPosix.h` 补 `linux/time_types.h` 包含(新内核头缺
+  `__kernel_timespec` 编译失败);`XNetIoRingWin32.h` 补 class_init 声明。
+- 收益:网络完成事件延迟 ~20ms 量化 → 微秒级;空闲真休眠(嵌入式待机
+  唤醒 50 次/秒 → 按需)。**20ms 钳制(dispatcher :705)保留未动**——它
+  是时间轮心跳,不是延迟来源;若要提升普通定时器精度,把时间轮最近
+  到期并入 `XDeviceTimer_nextPreciseDeadline`(未做,见 23.4 规划)。
+
+### 23.2 未提交:目标格式内核表(RGB565 首批)——当前工作树状态
+
+**架构**(对标 Skia blitter + LVGL 目标格式内核组织,超越两者处:格式
+表在建表面时一次解析,热路径零格式分支;新格式/加速器=注册一张表,
+不碰 painter):
+
+- 新增 `Src/XGui/Graphics/XRenderKernel.h`:`XRenderKernelOps` 七个
+  span 级原语(fillSpanOpaque/fillSpanBlend/blitSpan/blendSpan/
+  glyphMaskSpan/storePrem)+ `XRenderKernel_forFormat(register)`。
+  约定:行基址+像素列;颜色恒为预乘 ARGB32 规范色,内核自行压缩;
+  **未注册格式返回 NULL → 调用方回退既有逐像素路径(零回归保险丝)**。
+- 新增 `XRenderKernel.c`:槽位注册中心(惰性注册内置内核;NEON/
+  Helium/DMA2D 变体未来经 register 覆盖注入)。
+- 新增 `XRenderKernel_rgb565.c`:首张格式表六内核;混合口径逐字节
+  对齐 `painterMul255` 的 `(a*b+127)/255`(勿用 `>>8` 近似,有 ±1 差)。
+
+**五个接缝**(普查确认,`XPainter.c` +210 行;默认 ARGB32 路径字节级
+不变——每处条件都是"dest 非 ARGB32_Premultiplied 才进新分支"):
+
+| 接缝 | 位置 | 内容 |
+|---|---|---|
+| blendFillRect | XPainter.c:1602-1627 | 非 Prem 时 ops->fillSpanBlend 按行 |
+| putPixel | :1775-1801 | 换最终存储为 ops->storePrem(裁剪判定零改动;detached 门保 COW) |
+| blitImageRegion | :2700-2826 | 门放宽+行内核(blit/blendSpan 按 alpha 分流);行宽校验改 depth/8 |
+| glyphAlphaBlend | :8598-8680 | 与直写块格式互斥的新分支,goto fallback 保底 |
+| XImage_fillRect | XImage.c:5561-5592 | RGB16 行快循环(不依赖内核表,XImage 公共层内联) |
+
+**表面格式化**(`XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16` 选择器,默认 0;
+嵌入式 `-D...=1` 切 565):
+
+- `XGuiConfig.h:152-166` 选择器定义(:713-714 裁剪级联复位);
+- `XPlatformBackingStore.c:27-48` `XPBS_IMAGE_FORMAT`/`XPBS_PIXEL_BYTES`
+  按选择器;:117-141 copyRect 的 *4 → *PIXEL_BYTES;:585-588 stride 校验
+  按格式;:731-747 PARTIAL 下 surfaceResized 改传 tile 尺寸(修复 Win32
+  白建整窗 DIB;依据既有契约注释"PARTIAL 为 tile 缓冲尺寸");
+- **勿改 `requiredBufferSize`**——它按 `XImageFormat_bytesPerLine` 算,
+  本身随格式正确(RGB16 4 字节行对齐),改 w*2 反而破坏奇数宽对齐。
+
+**present 适配**:
+
+- win32(两文件):16bpp `BI_BITFIELDS`+掩码 {0xF800,0x07E0,0x001F};
+  DIB 行距 `(w*2+3)&~3`(4 字节对齐,勿用裸 w*2,否则奇数宽错位);
+  `XPBS_WIN32_PIXEL_BYTES`/`XPWN_PIXEL_BYTES`/`*_DIB_ROW_STRIDE` 宏族;
+  grabWindow 截图路径有意未改(GDI 自转换)。
+- posix(`XPlatformNativeWindow_posix.c` +95):`xpwn_copyRect16`;
+  depth-16+565 掩码直拷判定(:3920-3925);XCreateImage 显式
+  bytes_per_line=w*2(:3899-3911);视觉非 16 位时返回 false(无展开
+  路径,绝不误按 4 字节读)。
+
+**PARTIAL 免全屏缓冲确认**(普查实证,此前担心的"全屏后备"不存在):
+`XPlatformBackingStore.c:633-637` 只分配 `min(w,160)×min(h,80)` tile;
+但 tile 是**逐片绘制完立即上屏**(`XWidget.c:5592-5599` 唯一 flushTile
+调用方),无攒批——见 23.4 规划。
+
+### 23.3 验证状态(未提交批次)
+
+- ✅ Windows x86-Debug:581 目标全绿,`XinYueCd.dll` 链接成功
+  (注意:CMake GLOB 不自动发现新文件——新增 .c 后需 `touch
+  CMakeLists.txt` 重新配置;ninja 依赖缓存偶发陈旧,报"未声明标识符"
+  时先 touch 源文件强制重编再排查);
+- ✅ WSL gcc 11.4 全量:静态库 971 编译单元通过;测试可执行文件链接
+  失败仅因 WSL 缺 libpcap-dev(`apt install libpcap-dev` 可解,非代码);
+- ✅ RGB16 组合配置:三互依文件 + 内核两文件合并 gcc 语法检查通过
+  (`RGB16_COMBINED_OK`);各子代理已各自跑过双配置;
+- ✅ 修复主线契约文件疏漏:`XRenderKernel.c` 补 `<stddef.h>`(NULL,
+  MSVC 放过 gcc 抓住);
+- ❌ 运行时未测:RGB565 真机/模拟器目验、565 色彩正确性(GDI 小端
+  语义为设计推断)、XGUI_ON=0 全裁剪配置下 XPainter.c 有 3 个既有
+  编译错误(HEAD 同样存在,非本批引入,已记录待修);
+- 📦 未提交:10 文件(+576/−40 + 3 新文件),等用户验收后提交。
+
+### 23.4 后续规划(按优先级)
+
+1. **RGB565 运行时目验**(板/模拟器,XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16=1
+   构建 demo)→ 通过后提交本批;
+2. **fbdev 显示驱动模板**(/dev/fb+mmap+FBIOPAN):需公共层补 5 钩子
+   ——格式协商(已有选择器)、pan/swap、cache clean/invalidate(DMA
+   scanout 前)、vsync/fence、按格式 stride(已有);落地后 RGB565
+   present 零拷贝直写 framebuffer;
+3. **SIMD 内核填充**:XRenderKernel_register 覆盖注入 NEON/Helium
+   变体(fill/copy/blit 三热内核优先);
+4. **PARTIAL tile 攒批**:相邻 tile 合并 flush,减少 present 次数;
+5. **时间轮 deadline 并入 nextPreciseDeadline**(普通定时器精度
+   20ms → 1ms,时间轮全局精度已是 `XTimeWheelGroup_create(1)`);
+6. **静态内容保留层**(字节预算 LRU,静态仪表盘 3~5×);
+7. 修 XGUI_ON=0 下 XPainter.c 3 个既有编译错误。
+
+嵌入式性能预期(工程估算,以板测为准):MCU+DMA2D 场景整帧 3~6×、
+RAM 省 0.5~1.5MB(PARTIAL 免全屏+565 减半);入门 A 核静态 HMI
+5~10×;桌面无感(基线已 5670FPS/0.176ms)。
+
+### 23.5 工作流方式(子代理并发模式,换机可复用)
+
+本批采用"主线统筹 + Flash 子代理并发"的动态工作流模式,已在两个
+批次中验证有效,后续沿用:
+
+**模型分工**:主线程 GLM-5.3(统筹/契约/接线/构建验证/审查),子代理
+GLM-5.3-Flash(边界清晰的实现类任务)。本机可用模型见 ListModels;
+工作流脚本经 CreateWorkflow 的 `subagent_model` 字段指定:
+`account:bigmodel-individual-coding-plan/GLM-5.3-Flash`。
+
+**批次 1(普查)**:2 个只读 Explore 型子代理并发(渲染内核普查 /
+表面管道普查),Promise.all 汇合,artifact.markdown 出报告;主线对
+最承重行号做确定性抽查后采信。
+
+**批次 2(实现)**:主线先亲自写契约文件(XRenderKernel.h/.c,所有
+子代理的对接界面,不能并行)→ 再派 5 个实现子代理并发,按**文件
+互不重叠**分组(RGB565 内核新文件 / XPainter+XImage 接缝 / 表面
+公共层 / win32 两文件 / posix 一文件)→ 各自跑 gcc 语法双配置 →
+主线集成(修跨平台疏漏+全量构建)。
+
+**并发正确性三原则**(本批实证有效):
+1. 契约先行:子代理开工前接口头文件必须在库里,任务书写明"先读后写";
+2. 文件所有权:每个子代理独占文件集,禁止越界(5 路零冲突实证);
+3. 并行顺序消解:宏定义使用点 `#ifndef 兜底`,不依赖别路先落地。
+
+**已知坑(换机必读)**:
+- Git Bash → wsl.exe 传参会把 `$var`/`$(...)` 剥离/预展开:复合命令
+  写入 .sh 文件放仓库内,`wsl -- bash -c "bash /mnt/d/.../x.sh"` 执行
+  (子代理们各自独立发现了这一点,解法一致);
+- 命令含反斜杠路径时 printf/echo 转义易坏,批处理文件用 Write 工具
+  或 heredoc 生成;
+- MSVC 放过而 gcc 严格的头文件疏漏(如 NULL 未含 <stddef.h>)——
+  双平台构建互补,缺一不可;
+- 新增 .c 文件后 CMake GLOB 不感知:touch CMakeLists.txt 重配置;
+- ninja 依赖缓存陈旧会造成幽灵"未声明标识符":touch 源文件强制重编;
+- 工作流草稿存于 `.zcode/workflow-drafts/`(本机路径,不入库,换机
+  后按本节描述重建即可,脚本很短);
+- 大任务防中断:已完成的批次务必及时让用户验收提交(本文件 23.2 即
+  处于待提交状态)。

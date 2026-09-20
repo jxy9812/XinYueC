@@ -5558,6 +5558,38 @@ void XImage_fillRect(XImage* self, const XRect* rect, uint32_t color)
         }
         return;
     }
+    /* RGB16（565）整行快循环：颜色经 XImage_writePixelValue 的 RGB16
+       打包口径（compress5/6/5，忽略 alpha）一次算好 uint16_t 后按行
+       填充（对标 LVGL lv_draw_sw 的 blend_to_rgb565 整行直写）。此前
+       RGB16 落入下方逐像素 writePixelValue 尾循环。XImage 属公共层，
+       直接内联快循环，不经渲染内核表。 */
+    if (self->m_data->m_format == XImageFormat_RGB16)
+    {
+        uint16_t value =
+            (uint16_t)((XImage_compress5((uint8_t)(color >> 16)) << 11) |
+                       (XImage_compress6((uint8_t)(color >> 8)) << 5) |
+                       XImage_compress5((uint8_t)color));
+        int y;
+        for (y = ry; y < ry + rh; ++y)
+        {
+            uint8_t* line = self->m_data->m_data +
+                            (size_t)y * (size_t)self->m_data->m_bytesPerLine +
+                            (size_t)rx * 2u;
+            int x;
+            if ((((uintptr_t)line) & (sizeof(uint16_t) - 1u)) == 0u)
+            {
+                uint16_t* pixels = (uint16_t*)line;
+                for (x = 0; x < rw; ++x)
+                    pixels[x] = value;
+            }
+            else
+            {
+                for (x = 0; x < rw; ++x)
+                    XImage_store16(line + (size_t)x * 2u, value);
+            }
+        }
+        return;
+    }
     for (int y = ry; y < ry + rh; y++)
         for (int x = rx; x < rx + rw; x++)
             XImage_writePixelValue(self->m_data, x, y, color);

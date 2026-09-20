@@ -27,6 +27,12 @@
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #include "XGpuRenderBackend.h"
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+#if XPAINTER_ON
+/* 目标格式渲染内核表（span 级原语，对标 Skia blitter 按目标格式分派）：
+   非预乘目标经 XRenderKernel_forFormat 取表按行加速；默认
+   ARGB32_Premultiplied 目标不经此表，既有路径字节级不变。 */
+#include "XRenderKernel.h"
+#endif /* XPAINTER_ON */
 #include <math.h>
 #include <limits.h>
 
@@ -1594,7 +1600,31 @@ static bool painterRaster_blendFillRect(XImage* image, const XRect* rect,
     if (!image || !rect || rect->width <= 0 || rect->height <= 0)
         return true;
     if (XImage_format(image) != XImageFormat_ARGB32_Premultiplied)
+    {
+#if XPAINTER_ON
+        /* 对标 Skia blitter 按目标格式分派 / LVGL blend_to_rgb565：
+           非预乘目标若注册了行级填充内核，则按行调 fillSpanBlend
+           （源 alpha=255 时内核内部走不透明直写），整块矩形只留
+           一次格式分派，绕开逐像素回退。ops 取一次存局部。 */
+        {
+            const XRenderKernelOps* ops =
+                XRenderKernel_forFormat(XImage_format(image));
+            uint8_t* kernelBase;
+            int kernelBpl;
+            if (!ops || !ops->fillSpanBlend || !XImage_isDetached(image))
+                return false;
+            kernelBase = XImage_bits(image);
+            kernelBpl = XImage_bytesPerLine(image);
+            if (!kernelBase || kernelBpl <= 0)
+                return false;
+            for (y = rect->y; y < rect->y + rect->height; ++y)
+                ops->fillSpanBlend(kernelBase + (size_t)y * (size_t)kernelBpl,
+                                   rect->x, rect->width, color);
+            return true;
+        }
+#endif /* XPAINTER_ON */
         return false;
+    }
     if (!XImage_isDetached(image)) return false;
     base = XImage_bits(image);
     bytesPerLine = XImage_bytesPerLine(image);
@@ -1744,8 +1774,31 @@ static void painterRaster_putPixel(XPainter* self, int x, int y, uint32_t color)
         return;
     if (!XImage_valid(self->m_image, x, y)) return;
     dst = XImage_pixel(self->m_image, x, y);
-    XImage_setPixel(self->m_image, x, y,
-                    painterComposeColor(color, dst, state->m_compositionMode));
+    {
+        /* 裁剪/区域/路径掩码/表面裁剪判定全部沿用上方既有逻辑，此处
+           仅替换最终存储：非预乘目标经内核表终端存储（storePrem 内部
+           压缩到目标格式），绕开 XImage_setPixel 的逐像素 detach/格式
+           分派。默认 ARGB32_Premultiplied 目标不进此分支。 */
+        uint32_t composed =
+            painterComposeColor(color, dst, state->m_compositionMode);
+#if XPAINTER_ON
+        XImageFormat dstFormat = XImage_format(self->m_image);
+        if (dstFormat != XImageFormat_ARGB32_Premultiplied)
+        {
+            const XRenderKernelOps* ops = XRenderKernel_forFormat(dstFormat);
+            if (ops && ops->storePrem && XImage_isDetached(self->m_image))
+            {
+                /* 行基址经 XImage 扫描行 API（bits + bytesPerLine）。 */
+                ops->storePrem(XImage_bits(self->m_image) +
+                                   (size_t)y * (size_t)XImage_bytesPerLine(
+                                       self->m_image),
+                               x, composed);
+                return;
+            }
+        }
+#endif /* XPAINTER_ON */
+        XImage_setPixel(self->m_image, x, y, composed);
+    }
 }
 
 /**
@@ -2644,6 +2697,12 @@ static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
     int destW;
     int destH;
     int sy;
+    /* 行级内核分派标志（普通 int，非 XPAINTER_ON 构建恒为 0 → 既有
+       格式门逐字不变）；ops 取一次存局部，行循环内不再调 forFormat。 */
+    int kernelBlit = 0;
+#if XPAINTER_ON
+    const XRenderKernelOps* kernelOps = NULL;
+#endif /* XPAINTER_ON */
     if (!self || !self->m_image || !image) return false;
     if (cw <= 0 || ch <= 0) return true;
     if (mode != XPainterCompositionMode_Source &&
@@ -2651,7 +2710,21 @@ static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
         return false;
     srcFormat = XImage_format(image);
     dstFormat = XImage_format(self->m_image);
-    if (srcFormat != dstFormat &&
+#if XPAINTER_ON
+    /* 对标 Skia blitter 按目标格式分派 / LVGL blend_to_rgb565：目标为
+       非预乘格式（RGB565 等）且注册了行级 blit/blend 内核时，放宽下方
+       ARGB32 系快路径格式门，行循环内按 blitSpan/blendSpan/逐像素
+       兜底处理；源行保持 uint32_t 规范色（ARGB32/ARGB32_Prem/RGB32，
+       三者均在既有 switch 白名单内）。 */
+    kernelOps = XRenderKernel_forFormat(dstFormat);
+    kernelBlit =
+        dstFormat != XImageFormat_ARGB32_Premultiplied &&
+        (srcFormat == XImageFormat_ARGB32 ||
+         srcFormat == XImageFormat_ARGB32_Premultiplied ||
+         srcFormat == XImageFormat_RGB32) &&
+        kernelOps != NULL;
+#endif /* XPAINTER_ON */
+    if (!kernelBlit && srcFormat != dstFormat &&
         !((srcFormat == XImageFormat_ARGB32 &&
            dstFormat == XImageFormat_ARGB32_Premultiplied) ||
           (srcFormat == XImageFormat_ARGB32_Premultiplied &&
@@ -2700,7 +2773,57 @@ static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
     if (dx0 + cw > destW) cw = destW - dx0;
     if (dy0 + ch > destH) ch = destH - dy0;
     if (cw <= 0 || ch <= 0) return true;
-    if (srcBpl < (sx0 + cw) * 4 || dstBpl < (dx0 + cw) * 4) return false;
+    if (srcBpl < (sx0 + cw) * 4) return false;
+    /* 内核路径按目标格式实际字节深校验目标行宽（RGB565 为 2 字节），
+       不能沿用下方 4 字节口径。 */
+    if (kernelBlit)
+    {
+        int dstBpp = XImage_depth(self->m_image) / 8;
+        if (dstBpp <= 0 || dstBpl < (dx0 + cw) * dstBpp) return false;
+    }
+    else if (dstBpl < (dx0 + cw) * 4)
+        return false;
+#if XPAINTER_ON
+    if (kernelBlit)
+    {
+        /* 对标 Skia blitter 按目标格式分派 / LVGL blend_to_rgb565：
+           行级内核搬移/混合——行内源 alpha 全 255（含 RGB32 与 Source
+           替换语义）走 blitSpan 直拷压缩，预乘半透明行走 blendSpan，
+           其余（非预乘半透明行）退逐像素 putPixel 保持既有颜色语义；
+           槽位缺省（NULL）时同样逐像素兜底。 */
+        for (sy = 0; sy < ch; ++sy)
+        {
+            const uint32_t* srcRow = (const uint32_t*)(src +
+                (size_t)(sy + sy0) * (size_t)srcBpl + (size_t)sx0 * 4u);
+            uint8_t* dstRow = dst + (size_t)(sy + dy0) * (size_t)dstBpl;
+            bool rowOpaque = true;
+            int px;
+            if (srcFormat != XImageFormat_RGB32)
+            {
+                for (px = 0; px < cw; ++px)
+                {
+                    if (((srcRow[px] >> 24u) & 0xffu) != 0xffu)
+                    {
+                        rowOpaque = false;
+                        break;
+                    }
+                }
+            }
+            if (rowOpaque && kernelOps->blitSpan)
+                kernelOps->blitSpan(dstRow, dx0, srcRow, 0, cw);
+            else if (!rowOpaque &&
+                     mode == XPainterCompositionMode_SourceOver &&
+                     srcFormat == XImageFormat_ARGB32_Premultiplied &&
+                     kernelOps->blendSpan)
+                kernelOps->blendSpan(dstRow, dx0, srcRow, 0, cw);
+            else
+                for (px = 0; px < cw; ++px)
+                    painterRaster_putPixel(self, dx0 + px, dy0 + sy,
+                                           srcRow[px]);
+        }
+        return true;
+    }
+#endif /* XPAINTER_ON */
     for (sy = 0; sy < ch; ++sy)
     {
         const uint32_t* srcRow = (const uint32_t*)(src +
@@ -8472,6 +8595,89 @@ static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
             return;
         }
     }
+#if XPAINTER_ON
+    /* 对标 Skia blitter 按目标格式分派 / LVGL blend_to_rgb565：非预乘
+       目标若注册了行级字形 mask 内核，则整块按行 glyphMaskSpan 混合。
+       门槛与上方直写版同构（SourceOver + 无图案画刷 + detached），但
+       目标格式互斥——默认 ARGB32_Premultiplied 仍走上方直写版，既有
+       路径字节级不变。裁剪求交逻辑保留（同 8343-8374 区段），内层
+       混合换成内核调用。 */
+    if (XImage_format(painter->m_image) !=
+            XImageFormat_ARGB32_Premultiplied &&
+        painter->m_state.m_compositionMode ==
+            XPainterCompositionMode_SourceOver &&
+        !painterPatternActive(painter) &&
+        XImage_isDetached(painter->m_image))
+    {
+        /* ops 取一次存局部，行循环内不再调 forFormat。 */
+        const XRenderKernelOps* ops =
+            XRenderKernel_forFormat(XImage_format(painter->m_image));
+        if (ops && ops->glyphMaskSpan)
+        {
+            /* 有效写入区 = 字形位图 ∩ painter 裁剪 ∩ 表面裁剪。 */
+            int cl0 = 0;
+            int ct0 = 0;
+            int cr1 = XImage_width(painter->m_image);
+            int cb1 = XImage_height(painter->m_image);
+            unsigned sa = (ink >> 24) & 0xffu;
+            /* 内核约定颜色为预乘 ARGB32：按 ink 的 alpha 先行预乘，
+               覆盖率调制由内核完成（直写版的两步乘法此处合为一步，
+               数学等价、仅舍入次序不同）。 */
+            uint32_t colorPrem = (sa << 24u) |
+                ((((uint32_t)((ink >> 16u) & 0xffu) * sa + 127u) / 255u)
+                 << 16u) |
+                ((((uint32_t)((ink >> 8u) & 0xffu) * sa + 127u) / 255u)
+                 << 8u) |
+                (((uint32_t)(ink & 0xffu) * sa + 127u) / 255u);
+#if XPAINTER_CLIP_ON
+            if (painter->m_state.m_hasClip)
+            {
+                if (painter->m_state.m_clipRect.x > cl0)
+                    cl0 = painter->m_state.m_clipRect.x;
+                if (painter->m_state.m_clipRect.y > ct0)
+                    ct0 = painter->m_state.m_clipRect.y;
+                if (painter->m_state.m_clipRect.x +
+                        painter->m_state.m_clipRect.width < cr1)
+                    cr1 = painter->m_state.m_clipRect.x +
+                          painter->m_state.m_clipRect.width;
+                if (painter->m_state.m_clipRect.y +
+                        painter->m_state.m_clipRect.height < cb1)
+                    cb1 = painter->m_state.m_clipRect.y +
+                          painter->m_state.m_clipRect.height;
+            }
+#endif /* XPAINTER_CLIP_ON */
+            if (g_surfaceClipActive &&
+                painter->m_image == g_surfaceClipImage)
+            {
+                if (g_surfaceClipRect.x > cl0) cl0 = g_surfaceClipRect.x;
+                if (g_surfaceClipRect.y > ct0) ct0 = g_surfaceClipRect.y;
+                if (g_surfaceClipRect.x + g_surfaceClipRect.width < cr1)
+                    cr1 = g_surfaceClipRect.x + g_surfaceClipRect.width;
+                if (g_surfaceClipRect.y + g_surfaceClipRect.height < cb1)
+                    cb1 = g_surfaceClipRect.y + g_surfaceClipRect.height;
+            }
+            {
+                int y0 = top < ct0 ? ct0 : top;
+                int y1 = top + height < cb1 ? top + height : cb1;
+                uint8_t* base = XImage_bits(painter->m_image);
+                int bpl = XImage_bytesPerLine(painter->m_image);
+                if (!base || bpl <= 0) goto fallback;
+                for (i = y0; i < y1; ++i)
+                {
+                    const uint8_t* row = alpha + (size_t)(i - top) *
+                                         (size_t)width;
+                    int x0 = left < cl0 ? cl0 : left;
+                    int x1 = left + width < cr1 ? left + width : cr1;
+                    if (x1 > x0)
+                        ops->glyphMaskSpan(base + (size_t)i * (size_t)bpl,
+                                           x0, x1 - x0, row + (x0 - left),
+                                           colorPrem);
+                }
+                return;
+            }
+        }
+    }
+#endif /* XPAINTER_ON */
 #undef mul255v
 fallback:
     for (i = 0; i < height; ++i)
