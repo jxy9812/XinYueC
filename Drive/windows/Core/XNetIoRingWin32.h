@@ -89,6 +89,7 @@ typedef struct XEventContext_IOCP {
 /* 前置声明（结构体定义在 XNetIoRingWin32.c） */
 typedef struct XNetIoRingWin32 XNetIoRingWin32;
 
+XVtable* XNetIoRingWin32_class_init(void);
 /* ==================== 构造与析构 ==================== */
 
 /**

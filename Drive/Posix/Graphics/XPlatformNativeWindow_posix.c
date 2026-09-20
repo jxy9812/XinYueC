@@ -123,6 +123,10 @@ extern int XRRUpdateConfiguration(X11_XEvent* event);
 #include <string.h>
 #include <time.h>
 
+#if XAbstractNetIoRing_ON
+#include "XAbstractNetIoRing.h" /* 主循环双源等待：ring 事件 fd 与 processReady。 */
+#endif
+
 /** @brief 进程内原生窗口注册表容量（静态表，单线程使用）。 */
 #define XPWN_MAX_WINDOWS 64
 
@@ -272,6 +276,7 @@ static XpwClipOwnerState* xpw_clipStateForSelection(Atom selection)
 /* 按后端模式取状态槽：Clipboard→CLIPBOARD、Selection→PRIMARY，
  * 其余模式（FindBuffer 等）不支持系统选择区，统一视为 Clipboard 槽
  * 由调用方先行拒绝。 */
+#if XCLIPBOARD_ON
 static XpwClipOwnerState* xpw_clipStateForMode(int mode)
 {
     if (mode == (int)XClipboardMode_Selection) return &g_xpwnClipStates[1];
@@ -286,13 +291,16 @@ static Atom xpw_clipAtomForMode(int mode)
     if (mode == (int)XClipboardMode_Clipboard) return g_xpwnClipboard;
     return None;
 }
+#endif /* XCLIPBOARD_ON */
 
 /* 前向：SelectionClear 反向通知（实现在文件尾 X11 剪贴板后端小节，
  * 经后端契约的 selectionRevoked 可选回调分发）。 */
 static void xpw_clipNotifyRevoked(int mode);
 
+#if XCLIPBOARD_ON
 /* 前向：跨进程 Selection 请求者窗口查找（实现在 mime 多格式协商小节）。 */
 static Window xpw_clipFindRequestorWindow(void);
+#endif /* XCLIPBOARD_ON */
 
 static Atom g_xpwnXdndData;
 static XWNPendingEntry g_xpwnEntries[XPWN_MAX_WINDOWS]; /**< 窗口注册表。 */
@@ -369,7 +377,7 @@ static size_t xpwn_preeditText(const XIMText* text, char* out, size_t capacity)
     if (!text || !text->string.multi_byte || text->length <= 0) return 0;
     n = (size_t)text->length;
     if (n >= capacity) n = capacity - 1;
-    memcpy(out, text->string.multi_byte, n);
+    XMemcpy(out, text->string.multi_byte, n);
     out[n] = '\0';
     return n;
 }
@@ -422,7 +430,7 @@ static void xpwn_preeditDraw(XIC inputContext, XPointer clientData,
     memmove(entry->m_preedit + first + insertedLength,
             entry->m_preedit + first + removed,
             oldLength - first - removed + 1u);
-    if (insertedLength) memcpy(entry->m_preedit + first, inserted, insertedLength);
+    if (insertedLength) XMemcpy(entry->m_preedit + first, inserted, insertedLength);
     (void)XWindowSystemInterface_handleInputMethodEvent(
         entry->m_window, entry->m_preedit, "", 0, 0,
         draw->caret, draw->caret);
@@ -502,7 +510,7 @@ static char* xpwn_readXdndData(Window window, Atom property)
     if (raw && format == 8) {
         data = (char*)XMalloc_Hybrid((size_t)itemCount + 1u);
         if (data) {
-            memcpy(data, raw, (size_t)itemCount);
+            XMemcpy(data, raw, (size_t)itemCount);
             data[itemCount] = '\0';
         }
     }
@@ -1457,7 +1465,7 @@ static void xpwn_copyRectDirect(const XImage* src, const XRect* srect,
     bpl = XImage_bytesPerLine(src);
     if (!sbuf || bpl <= 0) return;
     for (row = 0; row < srect->height; ++row) {
-        memcpy(dst + (int64_t)(srect->y + row) * dstBpl + (int64_t)srect->x * 4,
+        XMemcpy(dst + (int64_t)(srect->y + row) * dstBpl + (int64_t)srect->x * 4,
                sbuf + (int64_t)(srect->y + row) * bpl + (int64_t)srect->x * 4,
                (size_t)srect->width * 4u);
     }
@@ -1961,7 +1969,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                                            &count, &after, &raw) == Success &&
                         raw && format == 32) {
                         offeredCount = count > 3 ? 3 : (size_t)count;
-                        memcpy(offered, raw, offeredCount * sizeof(Atom));
+                        XMemcpy(offered, raw, offeredCount * sizeof(Atom));
                     }
                     xpwn_xFree(raw);
                 } else {
@@ -2154,6 +2162,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
     }
     case SelectionClear:
     {
+#if XCLIPBOARD_ON
         /* 其他应用认领了选择区：清除该选择区的本地镜像，并经后端契约
          * 的 selectionRevoked 反向通知上层（对标 QXcbClipboard 的
          * handleSelectionClearRequest：清 ownerData 并向上发射变化）。 */
@@ -2166,6 +2175,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             xpw_clipNotifyRevoked(mode);
             delivered = true;
         }
+#endif /* XCLIPBOARD_ON */
         break;
     }
     case SelectionNotify:
@@ -2198,6 +2208,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
 
 /* ==================== 可用性与生命周期（平台后端提供） ==================== */
 
+#if XCLIPBOARD_ON
 /* ==================== X11 CLIPBOARD 后端（Selection 协议） ====================
  * 对标 QXcbClipboard：应用复制时认领 CLIPBOARD 选择区所有权并存储
  * 文本；其他应用请求时经 SelectionRequest/SelectionNotify 协议提供。
@@ -2322,7 +2333,7 @@ got_notify:
         result = (unsigned char*)XMemory_malloc(copyBytes,
                                                 XCLASS_DEFAULT_MEMORY_TYPE);
         if (result) {
-            memcpy(result, data, copyBytes);
+            XMemcpy(result, data, copyBytes);
             *outLen = (int)nitems;
         }
     }
@@ -2345,7 +2356,7 @@ static char* xpw_clipWaitNotify(Window req_win, Atom prop, Atom selection,
     result = (char*)XMemory_malloc((size_t)rawLen + 1,
                                    XCLASS_DEFAULT_MEMORY_TYPE);
     if (result) {
-        memcpy(result, raw, (size_t)rawLen);
+        XMemcpy(result, raw, (size_t)rawLen);
         result[rawLen] = '\0';
     }
     XFree_System(raw);
@@ -2371,7 +2382,7 @@ static char* xpw_clipReadSelection(Atom selection)
         result = (char*)XMemory_malloc((size_t)st->m_textLen + 1,
                                        XCLASS_DEFAULT_MEMORY_TYPE);
         if (result) {
-            memcpy(result, st->m_text, (size_t)st->m_textLen);
+            XMemcpy(result, st->m_text, (size_t)st->m_textLen);
             result[st->m_textLen] = '\0';
         }
         return result;
@@ -2450,7 +2461,7 @@ static bool xpw_clipStoreFormat(XpwClipOwnerState* st, const char* mime,
     buf = (unsigned char*)XRealloc_System(st->m_formats[idx].m_data,
                                           (size_t)len + 1);
     if (!buf) return false;
-    memcpy(buf, data, (size_t)len);
+    XMemcpy(buf, data, (size_t)len);
     buf[len] = '\0'; /* 文本格式可按 C 串使用；二进制以 m_len 为准。 */
     st->m_formats[idx].m_data = buf;
     st->m_formats[idx].m_len = len;
@@ -2464,7 +2475,7 @@ static bool xpw_clipStoreFormat(XpwClipOwnerState* st, const char* mime,
          * 与旧 text 快速路径仍走 m_text）。 */
         char* t = (char*)XRealloc_System(st->m_text, (size_t)len + 1);
         if (t) {
-            memcpy(t, data, (size_t)len);
+            XMemcpy(t, data, (size_t)len);
             t[len] = '\0';
             st->m_text = t;
             st->m_textLen = len;
@@ -2694,7 +2705,7 @@ static bool xpw_clipBackendSetText(void* ud, int mode, const char* text)
         char* updated = (char*)XRealloc_System(st->m_text, (size_t)len + 1);
         if (!updated) return false;
         st->m_text = updated;
-        memcpy(st->m_text, text, (size_t)len + 1);
+        XMemcpy(st->m_text, text, (size_t)len + 1);
         st->m_textLen = len;
         st->m_dataValid = true;
     }
@@ -2761,6 +2772,15 @@ void XPlatformNativeWindow_installClipboardBackend(void)
 {
     XClipboard_installBackend(&g_xpwnClipBackend);
 }
+
+#else
+/* 剪贴板模块裁剪（XCLIPBOARD_ON=0）：后端整体不编译；事件路径仍引用
+ * 的撤销通知退化为空桩（无平台后端即无所有权撤销语义）。 */
+static void xpw_clipNotifyRevoked(int mode)
+{
+    (void)mode;
+}
+#endif /* XCLIPBOARD_ON */
 
 bool XPlatformNativeWindow_isAvailable(void)
 {
@@ -3578,23 +3598,73 @@ bool XPlatformNativeWindow_processPendingEvents(void)
     return delivered;
 }
 
+/* ==================== 主循环双源等待（对标 QEventDispatcherUNIX 的
+ * 统一 poll）：X11 连接 fd 与 XAbstractNetIoRing 全局 ring 的事件 fd
+ * （io_uring ring fd / epoll fd）同数组 poll，谁就绪处理谁——
+ * X11 就绪泵原生事件，ring 就绪经 processReady 拉一轮完成包（内部
+ * pollPlatform -> 排空 SQ -> drainCQ -> dispatchCQEntry）。
+ * 网络模块裁剪（XAbstractNetIoRing_ON=0）或 ring 未启用/无事件 fd 时
+ * 自动退化为单源等待，行为与既往完全一致。定时器 deadline 由调用方
+ * （XGuiApplication_waitForEvents 的使用模式）经 maxMilliseconds 传入，
+ * XDeviceTimer 时间轮不需要 pollfd 槽位。 */
 bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
 {
-    struct pollfd pfd;
-    int fd;
+    struct pollfd fds[2];
+    int xfd;
+    nfds_t count = 0;
     int result;
+    bool x11Ready = false;
+    bool ringReady = false;
     if (!xpwn_ensureConnection()) return false;
+    /* 前置快查：X11 已有积压事件时直接泵，不让 ring 就绪插队。 */
     if (XPending(g_xpwnDisplay) > 0)
         return XPlatformNativeWindow_processPendingEvents();
-    fd = XConnectionNumber(g_xpwnDisplay);
-    if (fd < 0) return false;
-    memset(&pfd, 0, sizeof(pfd));
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-    result = poll(&pfd, 1u, maxMilliseconds);
-    if (result <= 0) return false;
-    if ((pfd.revents & (POLLIN | POLLERR | POLLHUP)) == 0) return false;
-    return XPlatformNativeWindow_processPendingEvents();
+    xfd = XConnectionNumber(g_xpwnDisplay);
+    if (xfd < 0) return false;
+    memset(fds, 0, sizeof(fds));
+    /* 源 0：X11 连接（有协议数据可读即有待处理事件）。 */
+    fds[count].fd = xfd;
+    fds[count].events = POLLIN;
+    ++count;
+#if XAbstractNetIoRing_ON
+    /* 源 1：全局 ring 事件 fd（io_uring 完成入队 / epoll 就绪列表
+     * 变化 / wakeUp eventfd 写入都会使其可读）。 */
+    {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        if (ring && XAbstractNetIoRing_isEnabled(ring)) {
+            XFd ringFd = XAbstractNetIoRing_getEventFd_base(ring);
+            if (ringFd != XFD_INVALID) {
+                fds[count].fd = (int)(intptr_t)ringFd;
+                fds[count].events = POLLIN;
+                ++count;
+            }
+        }
+    }
+#endif /* XAbstractNetIoRing_ON */
+    result = poll(fds, count, maxMilliseconds);
+    if (result <= 0) return false; /* 超时或出错：无事件可处理。 */
+    /* 分源判定：spurious wakeup（revents 为 0）时两边都不动。 */
+    if ((fds[0].revents & (POLLIN | POLLERR | POLLHUP)) != 0)
+        x11Ready = true;
+#if XAbstractNetIoRing_ON
+    if (count > 1 &&
+        (fds[1].revents & (POLLIN | POLLERR | POLLHUP)) != 0)
+        ringReady = true;
+#endif /* XAbstractNetIoRing_ON */
+#if XAbstractNetIoRing_ON
+    if (ringReady) {
+        XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+        /* processReady 内部按 pollPlatform -> SQ -> CQ 顺序拉取并
+           经 dispatchCQEntry 投递完成事件到应用层（postEvent 语义，
+           与主循环后续 processEvents 自然衔接）。 */
+        if (ring && XAbstractNetIoRing_isEnabled(ring))
+            XAbstractNetIoRing_processReady(ring);
+    }
+#endif /* XAbstractNetIoRing_ON */
+    if (x11Ready)
+        return XPlatformNativeWindow_processPendingEvents();
+    /* 仅 ring 就绪：网络事件已经投递，本次无可泵的 GUI 事件。 */
+    return false;
 }
 
 bool XPlatformNativeWindow_queryKeyboardModifiers(

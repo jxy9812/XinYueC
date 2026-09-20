@@ -45,6 +45,11 @@
 #if XNET_HAS_IO_URING_HDR
 #include <linux/io_uring.h>
 #include <sys/syscall.h>
+#if __has_include(<linux/time_types.h>)
+/* struct __kernel_timespec 所在头；5.6 前的内核由 io_uring.h 内嵌，
+ * 新内核头拆分后需显式包含（Ubuntu 22.04 实测缺它报 incomplete type）。 */
+#include <linux/time_types.h>
+#endif
 #endif
 #include <unistd.h>
 

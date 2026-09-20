@@ -38,6 +38,11 @@
  *               到窗口 DC；DIB 负高度表示 top-down，无需像素转换；
  *             - 标题同步：XString_toUtf16 得到 UTF-16 缓冲后
  *               SetWindowTextW，未设置标题时用空串。
+ *             - 剪贴板后端：installClipboardBackend 安装 Win32 系统剪贴板
+ *               后端（文本走 CF_UNICODETEXT、HTML 走 "HTML Format"、
+ *               image/png 走注册格式透传），专用隐藏窗口认领所有权并
+ *               监听 WM_CLIPBOARDUPDATE，外部应用认领时经
+ *               selectionRevoked 反向通知上层（受 XCLIPBOARD_ON 约束）。
  *             窗口映射/几何/标题同步全部围绕 XWindow 驱动，setGeometry 按
  *             本后端记录客户端几何去重，杜绝 WM_SIZE/WM_MOVE 与 setGeometry
  *             互相触发造成递归震荡。公共契约头不包含任何 Windows API。
@@ -66,16 +71,24 @@
 #include "XWindowSystemInterface.h"
 #include "XWindowEvent.h"
 #include "XGuiApplication.h"
+#include "XClipboard.h"
 #include "XImage.h"
 #include "XPixmap.h"
 #include "XString.h"
 #include "XGeometry.h"
 #include "XMemory.h"
-
+#include "XAbstractNetIoRing.h"
 #include <windows.h>
 #include <imm.h>
 #include <shellapi.h>
 #include <string.h>
+
+#if XAbstractNetIoRing_ON
+/* 主循环双源等待：IOCP 端口句柄与 processReady（与 POSIX 端
+ * waitForEvents 的 X11 fd + ring fd 双源 poll 语义镜像）。本头自带
+ * windows.h 守卫，CXinYueConfig 经 XGuiConfig -> XGuiConfig.h 可见。 */
+#include "XNetIoRingWin32.h"
+#endif
 
 /** @brief 进程内原生窗口注册表容量（静态表，单线程使用）。 */
 #define XPWN_MAX_WINDOWS 64
@@ -99,6 +112,13 @@ static HINSTANCE g_xpwnInstance;          /**< 进程实例句柄（GetModuleHan
 static bool g_xpwnClassRegistered;        /**< 窗口类是否已注册（幂等标志）。 */
 static bool g_xpwnQuitReceived;           /**< 已收到 WM_QUIT（只记录不派发）。 */
 static XWNPendingEntry g_xpwnEntries[XPWN_MAX_WINDOWS]; /**< 窗口注册表。 */
+
+#if XCLIPBOARD_ON
+/** @brief 剪贴板专用隐藏窗口（属主 + 监听宿主；定义见剪贴板后端节）。 */
+static HWND g_xpwnClipHwnd;
+/** @brief 剪贴板外部认领处理（WM_CLIPBOARDUPDATE；定义见剪贴板后端节）。 */
+static void xpwn_clipHandleClipboardUpdate(void);
+#endif /* XCLIPBOARD_ON */
 
 /** @brief 把系统 UTF-16 输入法文本转成临时 UTF-8 串（调用方负责释放）。 */
 static char* xpwn_imeUtf8(const wchar_t* text, int wcharCount)
@@ -170,9 +190,9 @@ static char* xpwn_dropFilesUriList(HDROP drop)
             XFree_Hybrid(utf8);
             break;
         }
-        memcpy(result + used, "file:///", 8u);
+        XMemcpy(result + used, "file:///", 8u);
         used += 8u;
-        memcpy(result + used, utf8, strlen(utf8));
+        XMemcpy(result + used, utf8, strlen(utf8));
         used += strlen(utf8);
         result[used++] = '\r';
         result[used++] = '\n';
@@ -828,6 +848,17 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         return 0;
     }
 
+#if XCLIPBOARD_ON
+    case WM_CLIPBOARDUPDATE:
+        /* 剪贴板内容变化通知：监听只挂在专用剪贴板窗口上，外部应用
+           认领系统剪贴板时在此反向通知上层（本进程写入触发的更新由
+           处理函数按属主判断忽略）。 */
+        if (hwnd == g_xpwnClipHwnd) {
+            xpwn_clipHandleClipboardUpdate();
+            return 0;
+        }
+        break;
+#endif /* XCLIPBOARD_ON */
     case WM_SHOWWINDOW:
         if (entry) entry->m_visible = (wParam != FALSE);
         return 0;
@@ -860,15 +891,73 @@ bool XPlatformNativeWindow_processPendingEvents(void)
     return delivered;
 }
 
+/* 主循环双源等待（对标 QEventDispatcher 的统一等待点，与 POSIX 端
+ * waitForEvents 的 X11 fd + ring fd 双源 poll 语义镜像）：消息队列经
+ * QS_ALLINPUT 参与，全局 ring 的 IOCP 端口句柄作为可等待对象参与
+ * （完成包入队即变信号态）。醒来分源处理：IOCP 就绪先非阻塞批量
+ * drain（processReady 内部 pollPlatform -> 排空 SQ -> drainCQ ->
+ * dispatchCQEntry），消息就绪再泵空——先 IOCP 后消息，避免高频消息
+ * 反复抢占饿死网络完成。网络模块裁剪（XAbstractNetIoRing_ON=0）或
+ * ring 未启用时退化为单源等待，行为与既往一致。约定：启用双源等待
+ * 期间，ring 自身的 waitForEvents 阻塞路径不得另处使用（单线程模型
+ * 下自然成立；两处竞争同一 IOCP 队列会互偷完成包）。 */
 bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
 {
     DWORD rc;
     DWORD msec;
+#if XAbstractNetIoRing_ON
+    HANDLE handles[1];
+    DWORD handleCount = 0;
+    bool ringReady = false;
+    XAbstractNetIoRing* ring = NULL;
+    ring = XAbstractNetIoRing_global();
+    if (ring && XAbstractNetIoRing_isEnabled(ring)) {
+        HANDLE iocp = XNetIoRingWin32_iocpHandle(
+            (XNetIoRingWin32*)ring);
+        if (iocp && iocp != INVALID_HANDLE_VALUE) {
+            handles[handleCount++] = iocp;
+        }
+    }
+#endif /* XAbstractNetIoRing_ON */
     if (!xpwn_ensureInstance()) return false;
     msec = maxMilliseconds < 0 ? INFINITE : (DWORD)maxMilliseconds;
+#if XAbstractNetIoRing_ON
+    rc = MsgWaitForMultipleObjects(handleCount, handleCount ? handles : NULL,
+                                   FALSE, msec, QS_ALLINPUT);
+    if (handleCount && rc == WAIT_OBJECT_0) {
+        /* IOCP 就绪：批量 drain 完成包并投递事件（非阻塞语义由
+           processReady 内部 pollPlatform 的 GQCS(timeout=0) 保证）。 */
+        ring = XAbstractNetIoRing_global();
+        if (ring && XAbstractNetIoRing_isEnabled(ring)) {
+            XAbstractNetIoRing_processReady(ring);
+            ringReady = true;
+        }
+    }
+    if (rc == WAIT_OBJECT_0 + handleCount || rc == WAIT_TIMEOUT) {
+        /* 消息信号（WAIT_OBJECT_0 + nCount）或超时（超时也可能是 IOCP
+           句柄在 msec 内未入包）：消息侧一律再尝试泵一轮，保持与
+           单源版本相同的唤醒后必泵语义。 */
+        return XPlatformNativeWindow_processPendingEvents();
+    }
+    if (rc > WAIT_OBJECT_0 && rc <= WAIT_OBJECT_0 + handleCount) {
+        /* 句柄区间其他索引（当前仅 1 个句柄，防御性处理）。 */
+        ring = XAbstractNetIoRing_global();
+        if (ring && XAbstractNetIoRing_isEnabled(ring)) {
+            XAbstractNetIoRing_processReady(ring);
+            ringReady = true;
+        }
+        return XPlatformNativeWindow_processPendingEvents();
+    }
+    if (rc == WAIT_FAILED) return false;
+    /* ringReady 分支未泵消息：网络事件已投递，本次无 GUI 事件可泵，
+       与 POSIX 版「仅 ring 就绪返回 false」的语义一致。 */
+    (void)ringReady;
+    return false;
+#else
     rc = MsgWaitForMultipleObjects(0u, NULL, FALSE, msec, QS_ALLINPUT);
     if (rc != WAIT_OBJECT_0) return false;
     return XPlatformNativeWindow_processPendingEvents();
+#endif /* XAbstractNetIoRing_ON */
 }
 
 bool XPlatformNativeWindow_queryKeyboardModifiers(
@@ -878,6 +967,627 @@ bool XPlatformNativeWindow_queryKeyboardModifiers(
     *outModifiers = xpwn_translateModifiers();
     return true;
 }
+
+/* ==================== Win32 CLIPBOARD 后端（系统剪贴板 API） ====================
+ * 对标 QWindowsClipboard：应用复制时 OpenClipboard + EmptyClipboard
+ * 认领系统剪贴板并立即渲染数据（不做延迟渲染，无需 WM_RENDERFORMAT），
+ * 其他应用粘贴由系统直接回数；本进程属主状态经 WM_CLIPBOARDUPDATE
+ * 监听，外部应用认领时经 selectionRevoked 反向通知上层（对标
+ * QXcbClipboard 的 SelectionClear 通知路径）。文本走 CF_UNICODETEXT
+ * （UTF-8 <-> UTF-16 转换，旧程序 ANSI 文本回退），HTML 走
+ * "HTML Format"（CF_HTML 0.9 协议头，片段偏移按 UTF-8 字节计），
+ * image/png 走注册格式 "PNG"/"image/png" 原样透传（解码在
+ * XClipboard_image 经 XImageCodec 完成，与 X11 后端透传策略一致）。
+ * 分配器纪律：text 回调结果按契约以 XMalloc_System 分配（调用方
+ * XFree_System 释放），mimeData 借用接收缓冲同为 System 族，各分配
+ * 与释放严格同族配对；GlobalAlloc 块在 SetClipboardData 成功后归
+ * 系统所有，失败路径自行 GlobalFree。 */
+#if XCLIPBOARD_ON
+
+/** @brief 本进程写入会话的 mime 格式名单容量（与 X11 后端镜像同规模）。 */
+#define XPWN_CLIP_MAX_FORMATS 8
+
+/** @brief 剪贴板属主状态（写入会话）：mime 名单 + 持有标志。 */
+static bool g_xpwnClipOwnSession; /**< 本进程当前持有系统剪贴板。 */
+static char g_xpwnClipFormatNames[XPWN_CLIP_MAX_FORMATS]
+                                 [XCLIPBOARD_FORMAT_NAME_MAX];
+static int g_xpwnClipFormatCount; /**< 会话名单实际个数。 */
+
+/** @brief mimeData 借用语义接收缓冲（System 分配；数据在下次后端调用
+ *  前有效，对标 X11 后端 m_recv）。 */
+static unsigned char* g_xpwnClipRecv;
+static int g_xpwnClipRecvLen;
+
+/** @brief 注册格式句柄缓存（RegisterClipboardFormatW 进程内幂等）。 */
+static UINT g_xpwnClipFmtHtml;
+static UINT g_xpwnClipFmtPng;
+static UINT g_xpwnClipFmtPngMime;
+
+/** @brief 复位写入会话（仅本地名单与标志；不动系统剪贴板）。 */
+static void xpwn_clipResetSession(void)
+{
+    g_xpwnClipFormatCount = 0;
+    g_xpwnClipOwnSession = false;
+}
+
+/** @brief 定长拷贝 mime 格式名（含结束符；避免 MSVC strn* 安全告警）。 */
+static void xpwn_clipCopyFormatName(char* dst, const char* src)
+{
+    int i;
+    for (i = 0; i + 1 < XCLIPBOARD_FORMAT_NAME_MAX && src[i]; ++i)
+        dst[i] = src[i];
+    dst[i] = '\0';
+}
+
+/** @brief 在会话名单登记 mime 格式（已存在或名单满则跳过）。 */
+static void xpwn_clipSessionAdd(const char* mime)
+{
+    int i;
+    if (!mime || !mime[0]) return;
+    for (i = 0; i < g_xpwnClipFormatCount; ++i) {
+        if (strcmp(g_xpwnClipFormatNames[i], mime) == 0) return;
+    }
+    if (g_xpwnClipFormatCount >= XPWN_CLIP_MAX_FORMATS) return;
+    xpwn_clipCopyFormatName(g_xpwnClipFormatNames[g_xpwnClipFormatCount],
+                            mime);
+    ++g_xpwnClipFormatCount;
+}
+
+/** @brief 惰性创建剪贴板专用隐藏窗口并注册更新监听（幂等）。 */
+static bool xpwn_clipEnsureWindow(void)
+{
+    if (g_xpwnClipHwnd) return true;
+    if (!xpwn_ensureInstance()) return false;
+    /* 专用隐藏弹窗：不进入窗口注册表（lpCreateParams 为空，
+       GWLP_USERDATA 恒 NULL），消息经 WndProc default 分支走
+       DefWindowProc，对既有窗口路由零影响（对标 QWindowsClipboard
+       的专用 clipboard 窗口）。 */
+    g_xpwnClipHwnd = CreateWindowExW(0, XPWN_CLASS_NAME, L"XinYueCClipboard",
+                                     WS_POPUP, 0, 0, 0, 0,
+                                     NULL, NULL, g_xpwnInstance, NULL);
+    if (!g_xpwnClipHwnd) return false;
+    AddClipboardFormatListener(g_xpwnClipHwnd);
+    return true;
+}
+
+/** @brief 打开剪贴板（独占资源，与其他进程竞争时短退避重试）。 */
+static bool xpwn_clipOpen(void)
+{
+    int attempt;
+    for (attempt = 0; attempt < 5; ++attempt) {
+        if (OpenClipboard(g_xpwnClipHwnd)) return true;
+        Sleep(2);
+    }
+    return false;
+}
+
+/** @brief 取注册格式句柄（惰性注册并缓存；失败返回 0）。 */
+static UINT xpwn_clipRegisteredFormat(LPCWSTR name, UINT* cache)
+{
+    if (*cache == 0) *cache = RegisterClipboardFormatW(name);
+    return *cache;
+}
+
+/** @brief 全局块内 UTF-16 文本的有效长度（按第一个 NUL 截断，返回
+ *  wchar 元素个数；GlobalSize 为分配粒度，可能大于实际文本）。 */
+static int xpwn_clipWideCount(const wchar_t* wide, SIZE_T bytes)
+{
+    SIZE_T i;
+    SIZE_T count = bytes / sizeof(wchar_t);
+    for (i = 0; i < count; ++i) {
+        if (wide[i] == L'\0') break;
+    }
+    return (int)i;
+}
+
+/** @brief UTF-16 转 UTF-8（System 分配器分配；clipboard text 契约要求
+ *  调用方 XFree_System 释放，与 Hybrid 系分配器不可混用）。 */
+static char* xpwn_clipWideToUtf8System(const wchar_t* wide, int wcharCount)
+{
+    char* utf8;
+    int bytes;
+    if (!wide || wcharCount <= 0) return NULL;
+    bytes = WideCharToMultiByte(CP_UTF8, 0, wide, wcharCount,
+                                NULL, 0, NULL, NULL);
+    if (bytes <= 0) return NULL;
+    utf8 = (char*)XMalloc_System((size_t)bytes + 1u);
+    if (!utf8) return NULL;
+    if (WideCharToMultiByte(CP_UTF8, 0, wide, wcharCount,
+                            utf8, bytes, NULL, NULL) != bytes) {
+        XFree_System(utf8);
+        return NULL;
+    }
+    utf8[bytes] = '\0';
+    return utf8;
+}
+
+/** @brief CF_TEXT（ANSI）转 UTF-8：CP_ACP -> UTF-16 两跳（旧程序仅登记
+ *  ANSI 文本的兜底路径）。 */
+static char* xpwn_clipAnsiToUtf8System(const char* ansi)
+{
+    int wchars;
+    wchar_t* wide;
+    char* utf8;
+    if (!ansi || !ansi[0]) return NULL;
+    wchars = MultiByteToWideChar(CP_ACP, 0, ansi, -1, NULL, 0); /* 含 NUL。 */
+    if (wchars <= 1) return NULL;
+    wide = (wchar_t*)XMalloc_Hybrid(sizeof(wchar_t) * (size_t)wchars);
+    if (!wide) return NULL;
+    MultiByteToWideChar(CP_ACP, 0, ansi, -1, wide, wchars);
+    utf8 = xpwn_clipWideToUtf8System(wide, wchars - 1); /* 去掉 NUL。 */
+    XFree_Hybrid(wide);
+    return utf8;
+}
+
+/** @brief 字节串复制进 GMEM_MOVEABLE 全局块（SetClipboardData 前置；
+ *  成功提交后所有权移交系统，失败路径由调用方 GlobalFree）。 */
+static HGLOBAL xpwn_clipRawGlobal(const unsigned char* data, int len)
+{
+    HGLOBAL handle;
+    void* dst;
+    if (len <= 0) return NULL;
+    handle = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)len);
+    if (!handle) return NULL;
+    dst = GlobalLock(handle);
+    if (!dst) {
+        GlobalFree(handle);
+        return NULL;
+    }
+    XMemcpy(dst, data, (size_t)len);
+    GlobalUnlock(handle);
+    return handle;
+}
+
+/** @brief 写 10 位定宽十进制（CF_HTML 偏移字段，含前导零）。 */
+static void xpwn_clipWriteOffset10(char* dst, int value)
+{
+    int i;
+    for (i = 9; i >= 0; --i) {
+        dst[i] = (char)('0' + value % 10);
+        value /= 10;
+    }
+}
+
+/** @brief 构造 "HTML Format"（CF_HTML 0.9 协议）全局块；布局对标
+ *  QWindowsMimeHtml::convertFromMime：定宽偏移头 + 固定包裹骨架，
+ *  偏移按 UTF-8 字节计。失败返回 NULL。 */
+static HGLOBAL xpwn_clipBuildHtmlFormat(const unsigned char* html, int len)
+{
+    static const char kHead[] =
+        "Version:0.9\r\n"
+        "StartHTML:0000000000\r\nEndHTML:0000000000\r\n"
+        "StartFragment:0000000000\r\nEndFragment:0000000000\r\n";
+    static const char kPre[] = "<html><body>\r\n<!--StartFragment-->";
+    static const char kPost[] = "<!--EndFragment-->\r\n</body>\r\n</html>";
+    const int headLen = (int)sizeof(kHead) - 1;
+    const int startHtml = headLen;
+    const int fragStart = startHtml + (int)(sizeof(kPre) - 1);
+    const int fragEnd = fragStart + len;
+    const int endHtml = fragEnd + (int)(sizeof(kPost) - 1);
+    HGLOBAL handle;
+    char* payload;
+    char* dst;
+    if (len <= 0) return NULL;
+    handle = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)endHtml + 1u);
+    if (!handle) return NULL;
+    payload = (char*)GlobalLock(handle);
+    if (!payload) {
+        GlobalFree(handle);
+        return NULL;
+    }
+    XMemcpy(payload, kHead, (size_t)headLen);
+    dst = payload + headLen;
+    XMemcpy(dst, kPre, sizeof(kPre) - 1);
+    dst += (int)(sizeof(kPre) - 1);
+    XMemcpy(dst, html, (size_t)len);
+    dst += len;
+    XMemcpy(dst, kPost, sizeof(kPost) - 1);
+    /* 回填偏移：Version 行后依次 StartHTML/EndHTML/StartFragment/
+       EndFragment 的 10 位数字段（段长为协议定长，逐段推进填写）。 */
+    dst = payload;
+    dst += sizeof("Version:0.9\r\n") - 1;
+    dst += sizeof("StartHTML:") - 1;
+    xpwn_clipWriteOffset10(dst, startHtml);
+    dst += 10 + (int)(sizeof("\r\n") - 1);
+    dst += sizeof("EndHTML:") - 1;
+    xpwn_clipWriteOffset10(dst, endHtml);
+    dst += 10 + (int)(sizeof("\r\n") - 1);
+    dst += sizeof("StartFragment:") - 1;
+    xpwn_clipWriteOffset10(dst, fragStart);
+    dst += 10 + (int)(sizeof("\r\n") - 1);
+    dst += sizeof("EndFragment:") - 1;
+    xpwn_clipWriteOffset10(dst, fragEnd);
+    GlobalUnlock(handle);
+    return handle;
+}
+
+/** @brief 在 CF_HTML 头部找 "Key:<十进制>" 偏移值（缺省返回 -1）。 */
+static int xpwn_clipHtmlHeaderValue(const char* payload, int payloadLen,
+                                    const char* key)
+{
+    int keyLen = (int)strlen(key);
+    int limit = payloadLen - keyLen;
+    int i;
+    if (limit > 512) limit = 512; /* 协议头区域恒在载荷前部。 */
+    for (i = 0; i < limit; ++i) {
+        if (payload[i] == key[0] &&
+            memcmp(payload + i, key, (size_t)keyLen) == 0) {
+            int value = 0;
+            int j = i + keyLen;
+            if (j >= payloadLen || payload[j] != ':') continue;
+            for (++j; j < payloadLen && payload[j] >= '0'
+                      && payload[j] <= '9'; ++j) {
+                value = value * 10 + (payload[j] - '0');
+            }
+            return value;
+        }
+    }
+    return -1;
+}
+
+/** @brief 把字节串落入接收缓冲并返回借用指针（mimeData 借用语义落点；
+ *  缓冲复用/扩容均在 System 族内配对）。 */
+static const unsigned char* xpwn_clipRecvStore(const unsigned char* data,
+                                               int len)
+{
+    unsigned char* buf;
+    if (len <= 0) return NULL;
+    buf = (unsigned char*)XRealloc_System(g_xpwnClipRecv, (size_t)len);
+    if (!buf) return NULL;
+    XMemcpy(buf, data, (size_t)len);
+    g_xpwnClipRecv = buf;
+    g_xpwnClipRecvLen = len;
+    return buf;
+}
+
+/* 后端 mimeData 回调：按 mime 名读系统剪贴板并落入接收缓冲（借用
+ * 语义：*data 仅在下次后端调用前有效）。text/plain 读 CF_UNICODETEXT
+ * （回退 CF_TEXT）；text/html 解析 CF_HTML 片段偏移后截取片段；
+ * image/png 读注册格式原始字节。 */
+static bool xpwn_clipBackendMimeData(void* ud, int mode, const char* format,
+                                     const unsigned char** data, int* len)
+{
+    const unsigned char* payload = NULL;
+    int payloadLen = 0;
+    (void)ud;
+    if (!data || !len || !format ||
+        mode != (int)XClipboardMode_Clipboard)
+        return false;
+    *data = NULL;
+    *len = 0;
+    if (!xpwn_clipEnsureWindow()) return false;
+    if (strcmp(format, "text/plain") == 0) {
+        HGLOBAL handle;
+        if (!IsClipboardFormatAvailable(CF_UNICODETEXT) &&
+            !IsClipboardFormatAvailable(CF_TEXT))
+            return false;
+        if (!xpwn_clipOpen()) return false;
+        handle = (HGLOBAL)GetClipboardData(CF_UNICODETEXT);
+        if (handle) {
+            const wchar_t* wide = (const wchar_t*)GlobalLock(handle);
+            if (wide) {
+                SIZE_T bytes = GlobalSize(handle);
+                char* utf8 = NULL;
+                if (bytes >= sizeof(wchar_t))
+                    utf8 = xpwn_clipWideToUtf8System(
+                        wide, xpwn_clipWideCount(wide, bytes));
+                GlobalUnlock(handle);
+                if (utf8) {
+                    payloadLen = (int)strlen(utf8);
+                    payload = xpwn_clipRecvStore((const unsigned char*)utf8,
+                                                 payloadLen);
+                    XFree_System(utf8);
+                }
+            }
+        } else {
+            handle = (HGLOBAL)GetClipboardData(CF_TEXT);
+            if (handle) {
+                const char* ansi = (const char*)GlobalLock(handle);
+                if (ansi) {
+                    char* utf8 = xpwn_clipAnsiToUtf8System(ansi);
+                    GlobalUnlock(handle);
+                    if (utf8) {
+                        payloadLen = (int)strlen(utf8);
+                        payload = xpwn_clipRecvStore(
+                            (const unsigned char*)utf8, payloadLen);
+                        XFree_System(utf8);
+                    }
+                }
+            }
+        }
+        CloseClipboard();
+    } else if (strcmp(format, "text/html") == 0) {
+        UINT fmt = xpwn_clipRegisteredFormat(L"HTML Format",
+                                             &g_xpwnClipFmtHtml);
+        HGLOBAL handle;
+        if (!fmt || !IsClipboardFormatAvailable(fmt)) return false;
+        if (!xpwn_clipOpen()) return false;
+        handle = (HGLOBAL)GetClipboardData(fmt);
+        if (handle) {
+            const char* raw = (const char*)GlobalLock(handle);
+            if (raw) {
+                SIZE_T bytes = GlobalSize(handle);
+                int start = xpwn_clipHtmlHeaderValue(raw, (int)bytes,
+                                                     "StartFragment");
+                int end = xpwn_clipHtmlHeaderValue(raw, (int)bytes,
+                                                   "EndFragment");
+                int from;
+                int to;
+                GlobalUnlock(handle);
+                /* 头部解析成功取片段字节（CF_HTML 片段偏移按字节计）；
+                   缺头/越界回退整段载荷。 */
+                if (start >= 0 && end > start && end <= (int)bytes) {
+                    from = start;
+                    to = end;
+                } else {
+                    from = 0;
+                    to = (int)bytes;
+                }
+                payloadLen = to - from;
+                payload = xpwn_clipRecvStore((const unsigned char*)raw + from,
+                                             payloadLen);
+            }
+        }
+        CloseClipboard();
+    } else if (strcmp(format, "image/png") == 0) {
+        UINT fmt = xpwn_clipRegisteredFormat(L"PNG", &g_xpwnClipFmtPng);
+        HGLOBAL handle;
+        if (!fmt || !IsClipboardFormatAvailable(fmt))
+            fmt = xpwn_clipRegisteredFormat(L"image/png",
+                                            &g_xpwnClipFmtPngMime);
+        if (!fmt || !IsClipboardFormatAvailable(fmt)) return false;
+        if (!xpwn_clipOpen()) return false;
+        handle = (HGLOBAL)GetClipboardData(fmt);
+        if (handle) {
+            const unsigned char* raw = (const unsigned char*)GlobalLock(handle);
+            if (raw) {
+                /* 注册格式载荷按 GlobalSize 透传（PNG 解码止于 IEND 块，
+                   分配粒度补零不影响；对标 X11 原样透传策略）。 */
+                payloadLen = (int)GlobalSize(handle);
+                payload = xpwn_clipRecvStore(raw, payloadLen);
+                GlobalUnlock(handle);
+            }
+        }
+        CloseClipboard();
+    } else {
+        return false;
+    }
+    if (!payload || payloadLen <= 0) return false;
+    *data = payload;
+    *len = payloadLen;
+    return true;
+}
+
+/* 后端 setMimeData 回调：认领所有权（首次 EmptyClipboard）后逐格式
+ * 写系统板（对标 QXcbClipboard::setMimeData 逐格式登记；XClipboard
+ * 上层先行的 clear 后端回调已 Empty，此处对独立调用兜底）。 */
+static bool xpwn_clipBackendSetMimeData(void* ud, int mode, const char* format,
+                                        const unsigned char* data, int len)
+{
+    UINT winFmt;
+    HGLOBAL handle = NULL;
+    bool ok = false;
+    (void)ud;
+    if (!format || !data || len <= 0 ||
+        mode != (int)XClipboardMode_Clipboard)
+        return false;
+    if (!xpwn_clipEnsureWindow() || !xpwn_clipOpen()) return false;
+    if (!g_xpwnClipOwnSession || GetClipboardOwner() != g_xpwnClipHwnd) {
+        /* 首次认领（或外部期间被夺）：清空系统板并把属主设为专用
+           窗口，同时开启本进程写入会话。 */
+        EmptyClipboard();
+        xpwn_clipResetSession();
+        g_xpwnClipOwnSession = true;
+    }
+    if (strcmp(format, "text/plain") == 0) {
+        /* UTF-8 -> UTF-16 后按 CF_UNICODETEXT 登记（Windows 文本标准
+           格式，须 NUL 结尾；对标 QWindowsMimeText）。 */
+        int wchars = MultiByteToWideChar(CP_UTF8, 0, (const char*)data,
+                                         len, NULL, 0);
+        if (wchars > 0) {
+            handle = GlobalAlloc(GMEM_MOVEABLE,
+                                 sizeof(wchar_t) * ((size_t)wchars + 1u));
+            if (handle) {
+                wchar_t* wide = (wchar_t*)GlobalLock(handle);
+                if (wide) {
+                    MultiByteToWideChar(CP_UTF8, 0, (const char*)data,
+                                        len, wide, wchars);
+                    wide[wchars] = L'\0';
+                    GlobalUnlock(handle);
+                } else {
+                    GlobalFree(handle);
+                    handle = NULL;
+                }
+            }
+        }
+        winFmt = CF_UNICODETEXT;
+    } else if (strcmp(format, "text/html") == 0) {
+        winFmt = xpwn_clipRegisteredFormat(L"HTML Format",
+                                           &g_xpwnClipFmtHtml);
+        handle = xpwn_clipBuildHtmlFormat(data, len);
+    } else if (strcmp(format, "image/png") == 0) {
+        /* 注册格式 "PNG"（Chromium/Office 等的剪贴板约定名）原样透传。 */
+        winFmt = xpwn_clipRegisteredFormat(L"PNG", &g_xpwnClipFmtPng);
+        handle = xpwn_clipRawGlobal(data, len);
+    } else {
+        /* 其余 mime 名原样注册为 Windows 注册格式后透传（对标 X11
+           后端以 mime 名作目标原子）。 */
+        winFmt = RegisterClipboardFormatA(format);
+        if (winFmt == 0) {
+            CloseClipboard();
+            return false;
+        }
+        handle = xpwn_clipRawGlobal(data, len);
+    }
+    if (handle) {
+        /* SetClipboardData 成功后 HGLOBAL 归系统所有；失败必须自释放。 */
+        if (SetClipboardData(winFmt, handle)) {
+            xpwn_clipSessionAdd(format);
+            ok = true;
+        } else {
+            GlobalFree(handle);
+        }
+    }
+    CloseClipboard();
+    return ok;
+}
+
+/* 后端 text 回调：读系统剪贴板文本（CF_UNICODETEXT 优先，回退
+ * CF_TEXT）转 UTF-8 返回；结果按契约以 System 分配器分配（调用方
+ * XFree_System 释放）。不支持模式（Selection/FindBuffer）返回 false，
+ * 与 X11 后端原子为 None 的分支一致。 */
+static bool xpwn_clipBackendText(void* ud, int mode, char** outText)
+{
+    char* utf8 = NULL;
+    (void)ud;
+    if (!outText || mode != (int)XClipboardMode_Clipboard) return false;
+    *outText = NULL;
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) &&
+        !IsClipboardFormatAvailable(CF_TEXT))
+        return false;
+    if (!xpwn_clipEnsureWindow() || !xpwn_clipOpen()) return false;
+    if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
+        HGLOBAL handle = (HGLOBAL)GetClipboardData(CF_UNICODETEXT);
+        const wchar_t* wide =
+            handle ? (const wchar_t*)GlobalLock(handle) : NULL;
+        if (wide) {
+            SIZE_T bytes = GlobalSize(handle);
+            if (bytes >= sizeof(wchar_t))
+                utf8 = xpwn_clipWideToUtf8System(
+                    wide, xpwn_clipWideCount(wide, bytes));
+            GlobalUnlock(handle);
+        }
+    } else {
+        HGLOBAL handle = (HGLOBAL)GetClipboardData(CF_TEXT);
+        const char* ansi = handle ? (const char*)GlobalLock(handle) : NULL;
+        if (ansi) {
+            utf8 = xpwn_clipAnsiToUtf8System(ansi);
+            GlobalUnlock(handle);
+        }
+    }
+    CloseClipboard();
+    if (!utf8) return false;
+    *outText = utf8;
+    return true;
+}
+
+/* 后端 setText 回调：归一到 setMimeData 的 text/plain 写入路径（与
+ * X11 后端 setText/setMimeData 镜像互通设计一致）。 */
+static bool xpwn_clipBackendSetText(void* ud, int mode, const char* text)
+{
+    if (!text) return false;
+    return xpwn_clipBackendSetMimeData(ud, mode, "text/plain",
+                                       (const unsigned char*)text,
+                                       (int)strlen(text));
+}
+
+/* 后端 clear 回调：EmptyClipboard 清空数据并把属主设为本进程专用
+ * 窗口（空板同样登记为本进程会话，使后续逐格式写入不再重复 Empty）；
+ * 不支持模式无操作（对齐 X11 后端原子为 None 的分支）。 */
+static bool xpwn_clipBackendClear(void* ud, int mode)
+{
+    (void)ud;
+    if (mode != (int)XClipboardMode_Clipboard) return true;
+    if (!xpwn_clipEnsureWindow() || !xpwn_clipOpen()) return false;
+    EmptyClipboard();
+    xpwn_clipResetSession();
+    g_xpwnClipOwnSession = true;
+    CloseClipboard();
+    return true;
+}
+
+/* 后端 formats 回调：本进程会话→回报名单；外部所有→枚举系统格式并
+ * 把已知代理名映射为 mime（text/plain、text/html、image/png；未知
+ * 注册格式暂不暴露，对标 Qt 平台映射已知格式集合）。 */
+static int xpwn_clipBackendFormats(void* ud, int mode,
+                                   char outFormats[][64], int max)
+{
+    int count = 0;
+    (void)ud;
+    if (!outFormats || max <= 0 || mode != (int)XClipboardMode_Clipboard)
+        return 0;
+    if (!xpwn_clipEnsureWindow()) return 0;
+    if (g_xpwnClipOwnSession && GetClipboardOwner() == g_xpwnClipHwnd) {
+        int i;
+        for (i = 0; i < g_xpwnClipFormatCount && count < max; ++i) {
+            xpwn_clipCopyFormatName(outFormats[count],
+                                    g_xpwnClipFormatNames[i]);
+            ++count;
+        }
+        return count;
+    }
+    if (CountClipboardFormats() == 0) return 0; /* 空板快速返回。 */
+    if (!xpwn_clipOpen()) return 0;
+    {
+        UINT fmt = 0;
+        bool havePlain = false;
+        wchar_t name[XCLIPBOARD_FORMAT_NAME_MAX];
+        while ((fmt = EnumClipboardFormats(fmt)) != 0 && count < max) {
+            const char* mapped = NULL;
+            if (fmt == CF_UNICODETEXT || fmt == CF_TEXT) {
+                if (!havePlain) {
+                    mapped = "text/plain";
+                    havePlain = true;
+                }
+            } else if (fmt >= 0xC000u) {
+                /* 注册格式：已知代理名映射为 mime（对标 X11 TARGETS
+                   的原子名映射）。 */
+                if (GetClipboardFormatNameW(
+                        fmt, name,
+                        (int)(sizeof(name) / sizeof(name[0]) - 1)) > 0) {
+                    if (wcscmp(name, L"HTML Format") == 0)
+                        mapped = "text/html";
+                    else if (wcscmp(name, L"PNG") == 0 ||
+                             wcscmp(name, L"image/png") == 0)
+                        mapped = "image/png";
+                }
+            }
+            if (mapped) {
+                xpwn_clipCopyFormatName(outFormats[count], mapped);
+                ++count;
+            }
+        }
+    }
+    CloseClipboard();
+    return count;
+}
+
+/** @brief WM_CLIPBOARDUPDATE 处理：外部应用认领系统剪贴板时复位本
+ *  进程会话并经后端契约反向通知上层（对标 QXcbClipboard 的
+ *  SelectionClear -> handleSelectionClearRequest：复位 ownerData 并
+ *  发射 changed）。本进程写入触发的更新（属主仍为专用窗口）忽略。
+ *  定义位于 g_xpwnClipBackend 之后（引用其成员）。 */
+static XClipboardBackend g_xpwnClipBackend = {
+    NULL,                               /* ud（平台用户数据）。 */
+    xpwn_clipBackendText,               /* text */
+    xpwn_clipBackendSetText,            /* setText */
+    xpwn_clipBackendClear,              /* clear */
+    false,                              /* supportsSelection（Win32 无
+                                           PRIMARY 选择区，Selection 模式
+                                           保持进程内语义）。 */
+    XClipboard_backendSelectionRevoked, /* selectionRevoked（反向通知
+                                           入口）。 */
+    xpwn_clipBackendFormats,            /* formats（mime 多格式枚举）。 */
+    xpwn_clipBackendMimeData,           /* mimeData（按格式借用读取）。 */
+    xpwn_clipBackendSetMimeData         /* setMimeData（逐格式写系统板）。 */
+};
+
+static void xpwn_clipHandleClipboardUpdate(void)
+{
+    if (GetClipboardOwner() == g_xpwnClipHwnd) return;
+    if (!g_xpwnClipOwnSession) return;
+    xpwn_clipResetSession();
+    if (g_xpwnClipBackend.selectionRevoked)
+        g_xpwnClipBackend.selectionRevoked(g_xpwnClipBackend.ud,
+                                           (int)XClipboardMode_Clipboard);
+}
+
+void XPlatformNativeWindow_installClipboardBackend(void)
+{
+    XClipboard_installBackend(&g_xpwnClipBackend);
+}
+
+#endif /* XCLIPBOARD_ON */
 
 /* ==================== 可用性与生命周期（平台后端提供） ==================== */
 
@@ -1257,7 +1967,7 @@ static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
     if (!buf) return false;
     /* 按行拷贝：目标 packed（行宽 w*4），源行宽可任意（含 4 字节对齐垫）。 */
     for (row = 0; row < h; ++row) {
-        memcpy(buf + (size_t)row * (size_t)w * 4u,
+        XMemcpy(buf + (size_t)row * (size_t)w * 4u,
                sbuf + (size_t)(srect->y + row) * (size_t)srcBpl +
                       (size_t)srect->x * 4u,
                (size_t)w * 4u);
