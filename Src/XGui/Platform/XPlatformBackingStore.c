@@ -135,6 +135,31 @@ static size_t xpbs_pixelBytes(XImageFormat format)
     return depth > 0 ? (size_t)((depth + 7) / 8) : 0u;
 }
 
+#if XGUI_ON && XPLATFORM_FBDEV_ON && XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+/**
+ * @brief      软件双缓冲是否应降级为单缓冲（显示驱动自带硬件轮换时）。
+ * @details    fbdev 双缓冲面板 + 直写层（XPlatformBackingStore_posix.c 的
+ *             g_xpbsFbWriteIndex 逐帧轮换硬件缓冲并 pan）场景下，软件侧
+ *             的第二帧缓冲纯冗余：直写是"软件帧 -> fb 后台缓冲"的帧后
+ *             拷贝，不存在撕裂写，双缓冲同步（flush 前把脏区拷进 inactive
+ *             帧）白花一次带宽 + 一块全屏 RAM。检测依据：活动显示驱动
+ *             probe 报告 m_doubleBuffered。桌面（无驱动注册）恒 false，
+ *             双缓冲行为逐位不变。
+ */
+static bool xpbs_softwareSingleBuffer(void)
+{
+    const XPlatformDisplayDriverOps* ops = XPlatformDisplayDriver_active();
+    XPlatformDisplayInfo info;
+    if (!ops || !ops->probe || !ops->probe(&info)) return false;
+    return info.m_doubleBuffered;
+}
+#else
+static bool xpbs_softwareSingleBuffer(void)
+{
+    return false;
+}
+#endif
+
 /** @brief 共享软件核心 + 平台提交状态。 */
 struct XPlatformBackingStore
 {
@@ -149,6 +174,11 @@ struct XPlatformBackingStore
     size_t m_bufferSize;                      /**< 外部每块缓冲容量。 */
     bool m_externalBuffers;                   /**< 是否使用外部缓冲。 */
     bool m_nativeBufferMode;                  /**< 绘制缓冲 = 平台共享内存（DIB），单缓冲。 */
+    bool m_softwareSingleBuffer;              /**< 软件侧单缓冲降级：活动显示驱动自带
+                                                双缓冲（fbdev 直写层逐帧轮换硬件
+                                                缓冲并 pan），软件第二缓冲冗余——
+                                                跳过分配与脏区双帧同步，省一块全屏
+                                                缓冲（嵌入式 RAM 关键收益）。 */
     bool m_buffersInitialized;                /**< 外部绑定是否已完成一次。 */
     XSize m_size;                             /**< 当前缓冲尺寸。 */
     XRegion m_staticContents;                 /**< 静态内容区域集合。 */
@@ -319,6 +349,8 @@ static XImage* xpbs_inactiveImage(XPlatformBackingStore* self)
 {
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     if (!self) return NULL;
+    /* 软件单缓冲降级（驱动硬件轮换）：无第二帧，脏区双帧同步自然跳过。 */
+    if (self->m_softwareSingleBuffer) return NULL;
     return self->m_activeIndex == 0u ? &self->m_image2 : &self->m_image;
 #else
     (void)self;
@@ -380,6 +412,11 @@ size_t XPlatformBackingStore_requiredBufferSize(const XSize* size)
     if (stride == 0 || (size_t)size->height > SIZE_MAX / stride) return 0;
     return stride * (size_t)size->height;
 #endif
+}
+
+XImageFormat XPlatformBackingStore_surfaceFormat(void)
+{
+    return xpbs_surfaceFormat();
 }
 
 static void xpbs_initConfiguredImage(XImage* image, int width, int height,
@@ -743,8 +780,10 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
         xpbs_invokePresent(self, &self->m_flushRegion, off);
     }
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    /* native 零拷贝模式单缓冲：active 恒指向 m_image，不翻转。 */
-    if (!self->m_nativeBufferMode)
+    /* native 零拷贝模式单缓冲：active 恒指向 m_image，不翻转。
+       软件单缓冲降级（驱动硬件轮换）同理不翻转——恒画同一软件帧，
+       撕裂防护由直写层的 fb 后台缓冲轮换 + pan 承担。 */
+    if (!self->m_nativeBufferMode && !self->m_softwareSingleBuffer)
         self->m_activeIndex ^= 1u;
 #endif
 }
@@ -778,7 +817,7 @@ static void xpbs_flushTileImmediate(XPlatformBackingStore* self,
     xpbs_invokePresent(self, &self->m_flushRegion, &origin);
     self->m_tileActive = false;
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    if (!self->m_nativeBufferMode)
+    if (!self->m_nativeBufferMode && !self->m_softwareSingleBuffer)
         self->m_activeIndex ^= 1u;
 #endif
 }
@@ -851,8 +890,8 @@ void XPlatformBackingStore_flushTileBatched(XPlatformBackingStore* self,
     self->m_tileActive = false;
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     /* 与即时路径同款缓冲轮转（PARTIAL 无 native 零拷贝，保持逐位一致的
-       双缓冲生命周期语义）。 */
-    if (!self->m_nativeBufferMode)
+       双缓冲生命周期语义；软件单缓冲降级时同样不翻转）。 */
+    if (!self->m_nativeBufferMode && !self->m_softwareSingleBuffer)
         self->m_activeIndex ^= 1u;
 #endif
 #else
@@ -964,6 +1003,8 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
                     XImage_init(&self->m_image2);
 #endif
                     self->m_nativeBufferMode = true;
+                    /* native 与软件单缓冲降级互斥：native 架接优先。 */
+                    self->m_softwareSingleBuffer = false;
                     self->m_size.width = w;
                     self->m_size.height = h;
                     /* 与常规路径同款的簿记（不含 surfaceResized：
@@ -1016,7 +1057,12 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
             self->m_externalBuffers ? self->m_buffer1 : NULL, self->m_bufferSize);
 #endif
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    if (w > 0 && h > 0)
+    /* 软件双缓冲降级：显示驱动自带硬件轮换时第二软件缓冲冗余，不分配
+       （省一块全屏 RAM；m_softwareSingleBuffer 置位后 inactive 帧同步
+       与翻转全部退化为单缓冲语义，见 flush）。降级状态按驱动注册时序
+       惰性重估（板级先注册驱动再建窗的常规时序下首次 resize 即定案）。 */
+    self->m_softwareSingleBuffer = xpbs_softwareSingleBuffer();
+    if (w > 0 && h > 0 && !self->m_softwareSingleBuffer)
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         xpbs_initConfiguredImage(&newImage2,
             w < XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH ? w : XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH,
@@ -1027,10 +1073,10 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
             self->m_externalBuffers ? self->m_buffer2 : NULL, self->m_bufferSize);
 #endif
 #endif
-    /* 分配失败保持旧缓冲不变。 */
+    /* 分配失败保持旧缓冲不变（降级时 newImage2 为空是预期，不算失败）。 */
     if ((w > 0 && h > 0 && !newImage.m_data)
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-        || (w > 0 && h > 0 && !newImage2.m_data)
+        || (w > 0 && h > 0 && !newImage2.m_data && !self->m_softwareSingleBuffer)
 #endif
        )
     {

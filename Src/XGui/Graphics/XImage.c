@@ -7,6 +7,10 @@
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
+#ifndef XIMAGECACHE_ON
+#define XIMAGECACHE_ON 0  /* XGuiConfig 统一定义，并行批次落地；此兜底供独立编译。 */
+#endif
+#include "XImageCache.h"
 #include "XImageCodec.h"
 #include "XImageCodecInternal.h"
 #include "XImageFormat.h"
@@ -4796,9 +4800,21 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
     XFile* file;
     XByteArray* bytes;
     XImage decoded;
+    XImage cached;
     bool result = false;
     bool hasExplicitFormat;
     if (!self || !fileName) return false;
+    /* 对标 LVGL lv_image_cache 的「load 先查缓存」模式：文件加载漏斗
+     * 逐次重复文件 IO + 解码，命中时把缓存条目浅共享转移进 self
+     * （XMove 窃取 m_data 引用，禁止深拷贝），完全跳过下方文件 IO 与
+     * 解码。XIMAGECACHE_ON=0 时 lookup 为空实现，恒未命中，直通零
+     * 开销。键与稍后 insert 保持一致：fileName 原串 + format 原指针
+     * 内容，不做规范化。 */
+    XImage_init(&cached);
+    if (XImageCache_lookup(fileName, format, &cached)) {
+        XMove(self, &cached);
+        return true;
+    }
     path = XString_create_utf8(fileName);
     file = path ? XFile_create_2(path) : NULL;
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
@@ -4855,6 +4871,11 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
         }
     }
     if (result) {
+        /* 先登记缓存再移交 self：insert 内部对 decoded 深拷贝，本副本
+         * 所有权不动，随后 XMove 照常移交，无 double-free 风险。键与
+         * 命中路径一致（fileName 原串 + format 原指针内容）。加载失败
+         * 不 invalidate：文件可能只是暂时不可读，保守保留旧条目。 */
+        XImageCache_insert(fileName, format, &decoded);
         XMove(self, &decoded);
     } else {
         /* 与 QImage::load() 一致，失败结果替换为 null 图像。 */

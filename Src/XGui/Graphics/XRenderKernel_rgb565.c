@@ -27,7 +27,7 @@
  ******************************************************************************/
 #include "XRenderKernel.h"
 
-#if XPAINTER_ON
+#if XPAINTER_ON && XRENDERKERNEL_RGB565_ON
 
 /* ========== 565 编解码基元 ========== */
 
@@ -270,4 +270,4 @@ void XRenderKernel_registerRgb565(void)
     XRenderKernel_register(XImageFormat_RGB16, &g_rgb565Kernel);
 }
 
-#endif /* XPAINTER_ON */
+#endif /* XPAINTER_ON && XRENDERKERNEL_RGB565_ON */

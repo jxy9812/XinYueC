@@ -27,6 +27,10 @@ static void VSvgEngine_pixmap(const XIconEngine* self, const XSize* size,
     (void)state;
     if (!out || !se || !se->m_fileName) return;
     XImage_init(&image);
+    /* 对标 QSvgIconEngine 的 pixmap 缓存诉求：每次请求都完整「读文件 +
+       解析 SVG + 光栅化」代价毫秒级，hover/状态切换/窗口重绘高频触发。
+       XImageCache（默认开）在此路径命中后跳过全部 IO 与解析，是本缓存
+       的首个受益者。 */
     if (!XImage_load(&image, se->m_fileName, NULL) || XImage_isNull(&image)) {
         XImage_deinit_base(&image);
         return;

@@ -29,7 +29,8 @@
 
 #if defined(__linux__)
 
-#include <string.h>
+#include "XMemory.h" /* XMemcpy（fbdev 直写行拷贝；对标全库 XMem* 纪律 */
+#include <stdio.h>
 
 #include "XImageFormat.h"
 #include "XPlatformDisplayDriver.h"
@@ -39,6 +40,37 @@
 #if XGUI_ON && XPLATFORM_FBDEV_ON
 
 /* ==================== 显示驱动直写（消费点 2：present 提交） ==================== */
+
+/** @brief cacheSync 失败诊断已打印标志（一次性，防逐帧刷屏）。 */
+static bool g_xpbsCacheSyncWarned;
+
+/**
+ * @brief      显示驱动 cache 同步 + 一次性失败诊断。
+ * @details    cacheSync 返回 false 表示驱动未真正完成 CPU cache 同步
+ *             （fbdev 模板占位即如此——msync 不等于 DCache clean）：
+ *             一致性/uncached 内存无需同步（无害），非一致性 cached
+ *             映射则会显示旧数据。只打一次诊断指明修复路径，不逐帧
+ *             刷屏；返回值透传给调用方留决策空间（当前策略：继续
+ *             present——画面仍会更新，最坏是旧数据，不因同步缺失
+ *             拒绝上屏）。
+ */
+static bool xpbs_cacheSyncWarnOnce(const XPlatformDisplayDriverOps* ops)
+{
+    bool ok = ops->cacheSync(XPlatformDisplayCache_Clean, NULL, 0);
+    if (!ok && !g_xpbsCacheSyncWarned)
+    {
+        g_xpbsCacheSyncWarned = true;
+        fprintf(stderr,
+                "[fbdev] WARNING: display driver cacheSync reported "
+                "NOT-synced (template placeholder does not clean CPU "
+                "DCache). On cache-coherent/uncached memory this is "
+                "harmless; on non-coherent cached mappings the display "
+                "may show stale lines. Fix: register a board-level "
+                "cacheSync via XPlatformDisplayDriver_register "
+                "(cacheflush/dma_sync).\n");
+    }
+    return ok;
+}
 
 /**
  * @brief      把脏区从后备表面直写进活动显示驱动的帧缓冲映射。
@@ -68,6 +100,7 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
     size_t pixelBytes;
     int imgBpl;
     int i;
+    int writeIndex;
     if (!ops || !image || !image->m_data || !region) return false;
     /* 直写仅当后备格式即面板扫描格式（preferred==面板 → true）。 */
     if (!ops->formatNegotiate(XImage_format(image), &panel) ||
@@ -81,6 +114,23 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
     srcBase = XImage_constBits(image);
     imgBpl = XImage_bytesPerLine(image);
     if (!srcBase || imgBpl <= 0) return false;
+    /* 真零拷贝判定：native 模式下公共层传入的 image 本就架在 fb 映射上
+       （getNativeBuffer 返回了映射起点），无需也无法再 memcpy——只做
+       cacheSync 提交。区分依据：数据指针命中映射区间。 */
+    if (srcBase >= (const uint8_t*)info.m_frameBuffer &&
+        srcBase < (const uint8_t*)info.m_frameBuffer + info.m_frameBufferSize)
+    {
+        /* 双缓冲轮换状态未用（native 恒单缓冲 0 号）；pan(0) 收敛。 */
+        xpbs_cacheSyncWarnOnce(ops);
+        ops->pan(0);
+        return true;
+    }
+    /* 双缓冲轮换：写入与上次呈现不同的后台缓冲，pan 到该缓冲——对未
+     * 变化的 yoffset 发 pan 多数驱动直接返回、不等待，恒 pan(0) 的
+     * "名义翻页"不产生防撕裂效果；轮换 + FB_ACTIVATE_VBL 才是真正的
+     * 双缓冲提交（对标 LVGL linux fbdev 驱动 flush 后交换绘制缓冲）。
+     * 单缓冲面板恒写 0 号（直写即可见）。 */
+    writeIndex = g_xpbsFbWriteIndex;
     if (offset)
         off = offset;
     else
@@ -103,7 +153,10 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         if (wy0 < off->y) wy0 = off->y;
         if (wx1 > off->x + XImage_width(image))  wx1 = off->x + XImage_width(image);
         if (wy1 > off->y + XImage_height(image)) wy1 = off->y + XImage_height(image);
-        /* 面板范围约束（窗口坐标即 fb 像素坐标；越界行会踏出映射区）。 */
+        /* 面板范围约束（窗口坐标即 fb 像素坐标；越界行会踏出映射区）。
+         * 双缓冲面板的可见高度被驱动钳到 yres——后台缓冲在
+         * [yres, yres_virtual) 区段，写入行 y 需加 writeIndex*yres 偏移
+         * 进入对应缓冲（0 号缓冲偏移 0，逐帧交替写入互不覆盖）。 */
         if (wx0 < 0) wx0 = 0;
         if (wy0 < 0) wy0 = 0;
         if (wx1 > info.m_width)  wx1 = info.m_width;
@@ -112,20 +165,23 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         src = srcBase + (int64_t)(wy0 - off->y) * imgBpl +
               (int64_t)(wx0 - off->x) * (int64_t)pixelBytes;
         dst = (uint8_t*)info.m_frameBuffer +
-              (size_t)wy0 * info.m_stride + (size_t)wx0 * pixelBytes;
+              (size_t)(writeIndex * info.m_height + wy0) * info.m_stride +
+              (size_t)wx0 * pixelBytes;
         rowBytes = (size_t)(wx1 - wx0) * pixelBytes;
         for (y = wy0; y < wy1; ++y)
         {
-            memcpy(dst, src, rowBytes);
+            XMemcpy(dst, src, rowBytes);
             src += imgBpl;
             dst += info.m_stride;
         }
     }
-    /* DMA scanout 前 cache clean（一致性内存的实现即时返回成功）。 */
-    ops->cacheSync(XPlatformDisplayCache_Clean, NULL, 0);
-    /* 翻页提交：直写目标恒为 0 号缓冲（单缓冲直写即可见，双缓冲按
-     * FB_ACTIVATE_VBL 在下个垂直消隐生效）。 */
-    ops->pan(0);
+    /* DMA scanout 前 cache clean（一次性失败诊断，见函数注释；
+     * 非一致性 cached 板子须注册板级覆盖，见驱动模板 cacheSync 注释）。 */
+    xpbs_cacheSyncWarnOnce(ops);
+    /* 翻页提交：pan 到刚写入的缓冲（单缓冲 no-op）；成功后轮换写索引。
+     * pan 失败不回滚（内容已在目标缓冲，下帧重试同号缓冲覆盖写）。 */
+    if (ops->pan(writeIndex))
+        g_xpbsFbWriteIndex ^= 1;
     return true;
 }
 
@@ -156,8 +212,39 @@ void* XPlatformBackingStoreDriver_getNativeBuffer(void* nativeState,
                                                   int width, int height,
                                                   size_t* outStride)
 {
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    const XPlatformDisplayDriverOps* ops;
+    XPlatformDisplayInfo info;
+    XImageFormat panel = XImageFormat_Invalid;
+    (void)nativeState;
+    if (outStride) *outStride = 0;
+    if (width < 1 || height < 1) return NULL;
+    ops = XPlatformDisplayDriver_active();
+    if (!ops) return NULL;
+    if (!ops->probe(&info) || !info.m_frameBuffer || info.m_stride == 0)
+        return NULL;
+    /* 仅单缓冲面板提供真零拷贝（XImage 直接架在 fb 映射上，painter
+     * 写入即可见，present 退化 cacheSync）：双缓冲面板坚持"写后台
+     * 缓冲 + pan 轮换"的防撕裂提交（见 xpbs_presentToDisplayDriver），
+     * native 架接固定 0 号缓冲会与轮换互踩，放弃 native 保轮换。 */
+    if (info.m_doubleBuffered) return NULL;
+    /* 尺寸与行距校验（公共层会按 XPBS 像素字节复验下限）：面板分辨率
+     * 须与请求窗口尺寸完全一致（嵌入式单屏满屏窗口模型），行距取驱动
+     * stride（硬件对齐）。 */
+    if (info.m_width != width || info.m_height != height) return NULL;
+    /* 格式协商：面板扫描格式与后备表面格式一致才可零拷贝（painter
+     * 内核按协商格式写入）。格式不符返回 NULL 回落自分配+直写拷贝。 */
+    if (!ops->formatNegotiate(XPlatformBackingStore_surfaceFormat(),
+                              &panel) ||
+        panel != XPlatformBackingStore_surfaceFormat() ||
+        panel != info.m_format)
+        return NULL;
+    if (outStride) *outStride = info.m_stride;
+    return info.m_frameBuffer;
+#else
     (void)nativeState; (void)width; (void)height; (void)outStride;
     return NULL; /* 无共享缓冲能力：公共层回落自分配缓冲。 */
+#endif
 }
 
 void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,

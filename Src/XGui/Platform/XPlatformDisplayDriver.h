@@ -131,7 +131,11 @@ typedef struct XPlatformDisplayDriverOps
      * @param      mode   同步方向（Clean/Invalidate/CleanInvalidate）。
      * @param      address 目标地址；NULL 表示整个帧缓冲。
      * @param      length 字节数；address 为 NULL 时忽略。
-     * @return true 同步完成或不需同步（一致性内存）；false 失败。
+     * @return true 同步完成或不需同步（一致性内存）；false 未完成同步
+     *         （驱动占位未实现真正的 CPU DCache 清理）。消费链对 false
+     *         打印一次性诊断；板级必须经覆盖注入真实 cacheflush 后才
+     *         返回 true——严禁占位实现返回 true 谎报能力（非一致性
+     *         cached 映射上会静默显示旧数据）。
      */
     bool (*cacheSync)(XPlatformDisplayCacheMode mode, void* address,
                       size_t length);

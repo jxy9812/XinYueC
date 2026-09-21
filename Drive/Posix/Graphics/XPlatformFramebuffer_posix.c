@@ -56,6 +56,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -64,6 +65,7 @@
 #include <linux/fb.h>
 
 #include "XImageFormat.h"
+#include "XPlatformNativeWindow.h" /* isAvailable：反向时序防护。 */
 
 /* ==================== 进程级驱动状态（静态，无堆分配） ==================== */
 
@@ -287,12 +289,22 @@ static bool xpdfb_cacheSync(XPlatformDisplayCacheMode mode, void* address,
         len = g_xpdfbMapSize;
     }
     if (len == 0) return true;
-    /* 主线用户态无通用 CPU 数据 cache clean 入口；一致性映射下
-     * msync 为尽力写回，设备映射不支持时返回 EINVAL——那正说明
-     * 无需软件同步（uncached/write-combine），视为成功。 */
-    if (msync(base, len, MS_SYNC) != 0 && errno != EINVAL)
-        return false;
-    return true;
+    /* 主线用户态无通用 CPU 数据 cache clean 入口，本占位不谎报能力：
+     * msync 面向文件页缓存回写，对设备 mmap 多数内核返回 0 但不执行
+     * 任何 CPU DCache 清理动作——若在此返回 true，非一致性内存（DMA
+     * 不与 CPU 缓存同步）且映射为 cached 的板子上调用方会误以为同步
+     * 已完成，scanout 实际看不到 CPU 脏行（显示旧数据），比"没有钩子"
+     * 更危险。因此：占位恒返回 false（= 未同步），消费链据此打印一次
+     * 性诊断；映射为 uncached/write-combine 的板子（多数 fbdev 默认）
+     * 本就无需软件同步，false 无害；真需要同步的板子经
+     * XPlatformDisplayDriver_register 覆盖 cacheSync 为板级
+     * cacheflush/dma_sync 实现，返回 true（对标 LVGL 的 cache
+     * invalidate 回调注入模式：默认空钩子由用户注入，不假成功）。
+     * 判定板级是否需要覆盖：真机若出现"CPU 明明画了、屏上缺/旧"的
+     * 现象，即为非一致性 cached 映射。 */
+    (void)msync(base, len, MS_SYNC); /* 尽力写回页缓存；不据其判定
+                                        CPU cache 状态（见上）。 */
+    return false; /* 占位：未做 CPU cache 同步，不谎报成功。 */
 }
 
 static bool xpdfb_waitVsync(int timeoutMilliseconds)
@@ -402,6 +414,20 @@ bool XPlatformFramebuffer_register(void)
 {
     if (g_xpdfbRegistered)
         return XPlatformDisplayDriver_active() == &g_xpdfbOps;
+    /* 反向时序防护：fbdev 必须在 GUI/X11 初始化之前注册。若已有 X11
+     * 原生连接（先建过窗），fbdev 直写路径此后会与 X11 present 并存
+     * ——格式匹配时 X11 窗口冻屏（fb 直写优先），属设计外时序。响亮
+     * 告警并拒绝注册（不产生半激活状态），提示板级调整 main 初始化
+     * 顺序（对标 Qt linuxfb 与 X11 后端互斥的加载期约束）。 */
+    if (XPlatformNativeWindow_isAvailable())
+    {
+        fprintf(stderr,
+                "[fbdev] ERROR: X11 connection already established; "
+                "registering the framebuffer driver now would freeze "
+                "existing windows. Call XPlatformFramebuffer_register() "
+                "before XGuiApplication initialization.\n");
+        return false;
+    }
     if (!xpdfb_probeDevice())
         return false; /* 无 /dev/fb 环境：不可用，不注册（预期路径）。 */
     if (!XPlatformDisplayDriver_register(&g_xpdfbOps))

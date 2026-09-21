@@ -671,6 +671,11 @@ EXTEND_END 会把 END_SIZE 重置回父类值**）。
   Flash 子代理实现；契约先行（接口头先入库）；文件所有权互不重叠；
   并行顺序消解用 `#ifndef` 兜底。模型指定
   `account:bigmodel-individual-coding-plan/GLM-5.3-Flash`。
+- **禁止 `2>nul` 重定向**（已两次误建仓库根 `nul` 字面文件）：Git Bash
+  不认 Windows 的 NUL 设备名，`2>nul` 会创建真实文件且常规手段删不掉
+  （需扩展路径：`python -c "import os; os.remove('//?/D:/.../nul')"`）。
+  丢弃输出一律用 `2>/dev/null`；任务书给子代理的命令不得含
+  `nul` 字样。
 - **集成脚本**：构建输出落盘只回传退出码摘要（world.run 输出上限
   256KB，直接捕获 cmake 输出会超限——`.zcode/integrate.sh`）。
 - **验证纪律**：每批次构建 0 错误 + 三套件 + 真机/ASan 探针自证
@@ -683,6 +688,66 @@ EXTEND_END 会把 END_SIZE 重置回父类值**）。
   多构建目录共用 bin/ 输出会互相覆盖二进制。
 
 ------
+
+## 10. 规划：图表最大化性能优化（两期，对标 Qt DeviceCoordinateCache）
+
+> 状态：计划已定未开工。路线决策：软件静态层缓存（嵌入式基线，普适收益）
+> 先行，GPU 直通增强（有 GPU 硬件，数千 FPS 潜力）随后；框架已有
+> vulkan→gl→软件自动回退，两路径互斥自动切换。
+
+### 10.1 背景实测（2026-09-21，本机 2752×1089）
+
+| 场景 | 数据 |
+|---|---|
+| 最大化图表（tab 20）repaint | 357 FPS / 2.8ms（七个历史提交实测 34.5～36.4，非回退，是每帧全量重绘的结构成本） |
+| 最大化图表 --benchmark-full | 36.1 FPS（历史文档记录优化后 74～79，未在任何已提交树复现） |
+| 最大化选项卡容器页 | 6235 FPS（纯缓存 blit 的物理上限示范） |
+| 小窗口 520×360 图表 | 2033 FPS（历史 852，已提升 2.4×） |
+| 上屏成本 | 12MB 帧 SetDIBitsToDevice ≈ 1～1.3ms，软件路径物理下限 ≈700 FPS |
+
+### 10.2 第一期：XChartView 静态层缓存（嵌入式基线，预期 357→450～550）
+
+对标 Qt QGraphicsItem::DeviceCoordinateCache。XChart 全部 setter 为纯模型写
+入、零自动失效（失效完全由应用层 updateChart 驱动）——指纹比对方案
+天然可行，零 API 改动。
+
+- **Phase A 插桩（半天）**：XCHARTVIEW_PROFILE 编译开关，xcv_renderToImage
+  五段计时（指纹/静态层blit/静态重建/序列/图例），每秒均值输出。
+  先弄清 2.8ms 去向再动手。
+- **Phase B 静态层（1～1.5 天，核心）**：XChartView 私有 m_staticLayer
+  （XImage，格式=目标表面格式）+ m_staticFp（FNV-1a）+ m_staticValid。
+  指纹覆盖：宽高/margins/titleVisible+标题文本 hash/theme 字段组/
+  backgroundVisible+brush/plotArea 三态/轴 range+tickCount+网格可见性/
+  legendVisible/序列数量+颜色+名称 hash；**不含序列数据点**（序列
+  是动态部分）。命中→blit 层（受 dirty/clip）；未命中→静态五件
+  套渲进层再 blit；序列照旧绘制（plot 裁剪不变）。位一致性
+  依据 source-over 结合律（层=G over B 的 8bit 结果，S over G′ 与直画
+  同轮次同舍入）。开关 XCHARTVIEW_STATIC_LAYER_ON（默认 1，
+  XGUI_ON=0 级联）；renderToImage(dirty=NULL) 公共 API 语义不变（回归
+  测试 t218b 按像素断言）。
+- **Phase C 验证（半天）**：回归全绿（renderToImage 像素断言验证位
+  一致）；基准对照：最大化 repaint/full 两档 + 小窗口；四配置
+  语法检查（XGUI_ON=0/XCHARTS_ON=0/STATIC_LAYER=0/RGB16）。
+
+预期：repaint 357→450～550（25～50%，视 Phase A 数据）；上屏 12MB
+拷贝是物理下限（≈700 FPS），1000+ FPS 需第二期 GPU 路径。
+
+### 10.3 第二期：GPU 直通增强（有 GPU 硬件，数千 FPS 潜力）
+
+- 前置：查 GPU 回归套件 exit=3 既有问题（父提交已存在，非新
+  回归；XGuiGpu_Test 单跑正常）。
+- 图表页 GPU 直通验证与补齐（demo 已有 acquireForWindow/
+  presentToWindow/frameDegraded 挂点，非 PARTIAL 模式生效）。
+- 静态层作为 GPU 纹理与软件路径协同；GPU 不可用时框架自动
+  回退软件（零回归）。
+- 验收：GPU 直通下最大化图表 FPS 显著高于软件路径；回退
+  路径零回归。
+
+### 10.4 后续批次（按板测数据排序，不在本期）
+
+序列 SIMD 填充（光栅 2.5～4×）、样条细分降档、vsync 门控消费、
+RGB332/1bpp 内核（打开 MCU+SPI 屏档位）、图片资源离线编译
+（RLE/C 数组，零解码零 IO）、点阵字体整字缓存。
 
 ## 附：历史战役归档索引（docs/xgui/history/）
 

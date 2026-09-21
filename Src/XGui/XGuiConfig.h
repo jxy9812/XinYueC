@@ -18,6 +18,13 @@
 #ifndef XIMAGECODEC_ON
 #define XIMAGECODEC_ON 1
 #endif
+/* 解码图像字节预算 LRU 缓存（XImageCache）。默认 1（桌面与嵌入式
+ * Linux 都受益：图标/SVG 反复加载免重复解码；预算见 XImageCache.h，
+ * 桌面默认 1MB、裸机/RTOS 默认 0 编译期完全裁剪）；需要极限省 RAM 的
+ * 构建显式置 0（load 直通，零运行时开销）。 */
+#ifndef XIMAGECACHE_ON
+#define XIMAGECACHE_ON 1
+#endif
 #ifndef XSCREEN_ON
 #define XSCREEN_ON 1
 #endif
@@ -213,6 +220,41 @@
 #endif
 #ifndef XPAINTER_ON
 #define XPAINTER_ON 1
+#endif
+/* 目标格式渲染内核（XRenderKernel 族）逐格式编译开关：嵌入式只编译
+ * 目标面板实际需要的格式，其余内核零代码生成（ROM 纪律）。总门控
+ * XPAINTER_ON=0 时全部连带裁剪；XRenderKernel 注册中心与五接缝分派
+ * 不受各格式开关影响（未编译格式的槽位为空，painter 自动回退逐像素
+ * 路径——零回归语义与 XRenderKernel.h 契约一致）。
+ * 各格式开关默认值对齐 fbdev 面板协商能力（XPlatformFramebuffer 的
+ * formatFromVar 映射集）：16/24/32 位面板常用格式默认开；Grayscale8
+ * （单色 OLED/墨水屏）与 RGB555（15 位面板）默认开但可关。 */
+#ifndef XRENDERKERNEL_RGB565_ON
+#define XRENDERKERNEL_RGB565_ON 1
+#endif
+#ifndef XRENDERKERNEL_RGB555_ON
+#define XRENDERKERNEL_RGB555_ON 1
+#endif
+#ifndef XRENDERKERNEL_RGB888_ON
+#define XRENDERKERNEL_RGB888_ON 1
+#endif
+#ifndef XRENDERKERNEL_BGR888_ON
+#define XRENDERKERNEL_BGR888_ON 1
+#endif
+#ifndef XRENDERKERNEL_RGB32_ON
+#define XRENDERKERNEL_RGB32_ON 1
+#endif
+#ifndef XRENDERKERNEL_RGBX8888_ON
+#define XRENDERKERNEL_RGBX8888_ON 1
+#endif
+#ifndef XRENDERKERNEL_RGBA8888_ON
+#define XRENDERKERNEL_RGBA8888_ON 1
+#endif
+#ifndef XRENDERKERNEL_ARGB32_ON
+#define XRENDERKERNEL_ARGB32_ON 1
+#endif
+#ifndef XRENDERKERNEL_GRAYSCALE8_ON
+#define XRENDERKERNEL_GRAYSCALE8_ON 1
 #endif
 #ifndef XPAINTER_SHAPE_ON
 #define XPAINTER_SHAPE_ON 1
@@ -669,6 +711,8 @@
 #if !XGUI_ON
 #undef XIMAGECODEC_ON
 #define XIMAGECODEC_ON 0
+#undef XIMAGECACHE_ON
+#define XIMAGECACHE_ON 0
 #undef XSCREEN_ON
 #define XSCREEN_ON 0
 #undef XSURFACEFORMAT_ON
@@ -733,6 +777,25 @@
 #define XPAINTDEVICE_ON 0
 #undef XPAINTER_ON
 #define XPAINTER_ON 0
+/* 渲染内核逐格式开关随总开关连带裁剪。 */
+#undef XRENDERKERNEL_RGB565_ON
+#define XRENDERKERNEL_RGB565_ON 0
+#undef XRENDERKERNEL_RGB555_ON
+#define XRENDERKERNEL_RGB555_ON 0
+#undef XRENDERKERNEL_RGB888_ON
+#define XRENDERKERNEL_RGB888_ON 0
+#undef XRENDERKERNEL_BGR888_ON
+#define XRENDERKERNEL_BGR888_ON 0
+#undef XRENDERKERNEL_RGB32_ON
+#define XRENDERKERNEL_RGB32_ON 0
+#undef XRENDERKERNEL_RGBX8888_ON
+#define XRENDERKERNEL_RGBX8888_ON 0
+#undef XRENDERKERNEL_RGBA8888_ON
+#define XRENDERKERNEL_RGBA8888_ON 0
+#undef XRENDERKERNEL_ARGB32_ON
+#define XRENDERKERNEL_ARGB32_ON 0
+#undef XRENDERKERNEL_GRAYSCALE8_ON
+#define XRENDERKERNEL_GRAYSCALE8_ON 0
 #undef XPAINTER_SHAPE_ON
 #define XPAINTER_SHAPE_ON 0
 #undef XPAINTER_POLYGON_ON

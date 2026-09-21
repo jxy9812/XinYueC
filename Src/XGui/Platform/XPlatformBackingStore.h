@@ -42,6 +42,7 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XTypes.h"
 #include "XGeometry.h"
+#include "XImageFormat.h" /* surfaceFormat() 返回值；仅依赖 XGuiConfig，无环。 */
 
 /**
  * @brief      PARTIAL 模式相邻 tile 攒批合并 flush 编译开关（默认开）。
@@ -339,6 +340,17 @@ bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
  *         扫描格式（见 XPlatformDisplayDriver.h 消费链），故面板 565
  *         时容量减半。 */
 size_t XPlatformBackingStore_requiredBufferSize(const XSize* size);
+
+/**
+ * @brief      返回当前后备表面像素格式（运行期真值）。
+ * @details    无活动显示驱动时恒为编译期选择器格式（与 XPBS_IMAGE_FORMAT
+ *             一致）；有活动驱动时为 formatNegotiate 协商出的面板扫描
+ *             格式（面板 565 而选择器为 ARGB32 时，缓冲按面板格式分配
+ *             以避免逐帧转换——见消费点 1 注）。平台提交驱动经此查询做
+ *             零拷贝（getNativeBuffer）的格式核对。
+ * @return     当前后备表面格式（XImageFormat 枚举值）。
+ */
+XImageFormat XPlatformBackingStore_surfaceFormat(void);
 
 /* ==================== 平台驱动契约（Drive 平台后端提供） ==================== */
 
