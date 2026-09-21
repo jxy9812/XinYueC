@@ -106,10 +106,10 @@ XGui 是对标 Qt Widgets 的纯 C GUI 模块，分层如下（平台调用只�
 格式栈 HTML 解析器：b/i/u/s/sup/sub/font(color/size)/
 span(style background-color)/br/p(align)/h1-h6/ul/ol/li(嵌套分级)/
 a(href)+8 类实体；toHtml 与解析器互逆；链接悬停/点击信号。渲染端
-消费：粗（伪粗体）/下划线/删除线/前景色/背景色/字号/标题梯度/块
-对齐/列表缩进+标记（无序方块、有序按层序号）/上下标（62% 字号+基线
-偏移）。简化边界：软换行已落地、超宽裁剪、内联嵌套上限两层、斜体仅
-属性承载（位图字库无合成倾斜，待字形引擎专项）。
+消费：粗（伪粗体）/斜体（§8.0g11 合成倾斜）/下划线/删除线/前景色/
+背景色/字号/标题梯度/块对齐/列表缩进+标记（无序方块、有序按层序号）/
+上下标（62% 字号+基线偏移）。简化边界：软换行已落地、超宽裁剪、
+内联嵌套上限两层。
 
 ### 4.3 XTextDocument
 
@@ -613,6 +613,94 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   净（守卫零回归）。探错顺序：38 错（XTextControl.c 36 + XLineControl
   2）→ 9 锁三类事件类型 → 33 锁 TEST_FILE 目标 → 收口。
 
+### 8.0g10 XPaintDevice 绘制派发（begin 泛化）✓（2026-09-21，§8.2 末项常规件）
+
+- **设备侧**：XPaintDevice 增可选 `m_beginPainter` 回调（设备自述「如何
+  被绘制」——对标 QPaintEngine::begin 的设备侧虚语义，C 分层经回调解
+  耦）+ `XPaintDevice_setBeginPainter` 启用/撤销；init 默认 NULL（不
+  开放）。
+- **绘制器侧**：`XPainter_begin_device(painter, device)` 泛化入口——
+  与 begin_image/begin_picture 同护栏（未 init/已激活拒绝），装配权
+  交还设备回调（单一事实源在设备，painter 不复制装配逻辑）。
+- **接入**：XImage/XPicture 经 paintDevice() 访问器惰性装配（幂等）；
+  XPixmap/XBitmap 的 paintDevice 转发内部 XImage 自动继承，零改动接
+  入；XWidget 保持不开放（对标 Qt：控件不可在绘制事件外 begin）。
+- **关键设计（两轮 ASan 实证）**：设备 userData 为内部数据指针
+  （XImageData*/XPicturePrivate*，引用计数共享、外层对象不唯一）——
+  ①栈上临时包装不可行：painter 长持绑定目标指针，回调返回即悬垂
+  （ASan stack-use-after-return 当场抓获）；②最终方案=数据内嵌惰性
+  堆外壳（m_deviceShell，仅 m_class+m_data 自指），随数据 unref 归零
+  路径释放；壳对数据**裸借用不持引用**（持引用会使"只剩壳引用"时无
+  人触发 unref 整块泄漏）；XPainter_device() 返回外壳指针（非调用方
+  栈对象，断言口径同步）。
+- **验证**：构建 0 错误；回归新增 8 断言全过（绑定 Image/Picture/
+  绘制落像素/重复绑定拒绝/未 init 拒绝/Widget 拒绝/end 解绑/外壳指
+  针口径）；三套件全绿；ASan 总量 102766B 与基线逐字节一致（零新增
+  泄漏、零 UAF）。
+
+### 8.0g11 斜体合成 + XTabBar 小尾巴 ✓（2026-09-21，§8.2 长尾收尾）
+
+- **斜体合成倾斜（字形引擎专项，此前"仅属性承载"收口）**：
+  outline 路径在 PainterOutlinePathSink 坐标换算处加 shear
+  （XPAINTER_SYNTHETIC_ITALIC_SHEAR=0.22，基线不动、顶部右移，对标
+  Qt 合成斜体约 12°）；位图路径双管齐下——AA 覆盖采样按逆 shear 映射
+  （x 扫描范围外扩 shear×字高）、非 AA 行块按行右移
+  shear×(基线−行)；缓存隔离：italic 折进 scaleKey 最高位
+  （painterOutlineCacheKey，三处缓存共用、结构零改动）。富文本
+  `<i>` 接通：xte_makeFragFontStyled 把片段 italic 映射 XFont_style
+  （度量/绘制同口径）。目验：Xvfb 双窗口正体/斜体截图对比，逐行
+  首墨迹偏移曲线 +3→+1→0（顶部最大、基线归零）确认 shear 特征；
+  回归零失败。
+- **XTabBar elide**：XStyleOption 尾部追加 m_tabElideMode；
+  XCommonStyle xcs_elideText（右/左/中省略+无省略截断，U+2026），
+  CE_TabBarTabLabel 消费；TabBar paint 传 elideMode。目验：长标题
+  窄条渲染"Settings/Network/User Acc…"截短+右滚动按钮并存。
+- **XTabBar 按住连发**：滚动按钮按下启动 120ms 定时器（首段 3 跳
+  ≈350ms 延迟），按住期间每拍步进一页签宽，释放/失能/析构终止；
+  init 显式置 XTIMER_INVALID_ID（Memset 清零后 0 非 INVALID——
+  回归断言抓出的边界）。
+- **触摸滚动**：不做——触摸→mouse 合成无来源标志（§8.1 声明边界），
+  触摸接入时随 XI2 专项一并处理。
+- **验证**：构建 0 错误；回归（含新增 8 断言）exit=0 零失败；验收
+  68/68；GPU 通过；diff 干净。
+
+### 8.0g12 XGuiDemo 全量 Widget 接入 + 全量自动化测试 ✓（2026-09-21，§8.2 长尾·demo 收口）
+
+- **全量接入**：demo 全家迁入 `Test/XGuiDemo/`（主文件 xgui_window_demo.c
+  + 4 个演示页 + `xgui_demo_pages.h` 契约头，契约先行 + 每页
+  独立翻译单元，文件所有权分离并行开发）：条目视图页
+  （XListWidget/XListView+自定义模型/XTreeWidget/XTableWidget/
+  XHeaderView 段带可视化子类）；对话框页（XMessageBox×4 非阻塞
+  open+结果中继/XInputDialog/XFileDialog/XColorDialog 模态便捷函数
+  仅构造覆盖/XProgressDialog/自定义 XDialog+XDialogButtonBox）；
+  高级控件页（XTextEdit 富文本含 §8.0g11 斜体直观样例/XCompleter+
+  XLineEdit/XKeySequenceEdit Ctrl 修饰注入/XShortcut/XSizeGrip/
+  XFocusFrame/XRubberBand/XToolTip/XSplashScreen/XMainWindow+
+  XDockWidget 独立窗）；图形效果页（Opacity/Blur/DropShadow 挂样例
+  +无效果基线组同屏像素对照）。主文件：9 页导航单行 84px、窗口按
+  扩展页自适应 800x600、`--style=common|fusion|fusion-css` 样式矩阵
+  开关、autotest 逐页调度与效果页独立帧截图。修复 styleOpt 先用后
+  初始化的启动段错误（原样式安装块不依赖参数故未暴露）。
+- **全量自动化测试（--autotest，事件经 XObject_event_base 直发与真
+  实输入同路径）**：**129 断言全过 exit=0**——输入页 9 + 条目视图 20
+  + 对话框 44 + 高级控件 38 + 效果 18。点击/键入/滚动/补全/序列捕
+  获/效果挂摘全覆盖，全程非阻塞（模态 exec 仅真人路径）。
+- **目验（Xvfb 截图 + AI 视检 + 像素差分）**：9 页逐页截图正常；效
+  果页三项差分成立——透明度对比度 4.9 vs 基线 15.8、模糊边框中间亮
+  度像素 7.2% vs 1.6%、投影带暗像素 4.7% vs 0.9%；样式三套矩阵渲染
+  正常，CSS 黄底仅在 fusion-css 出现。
+- **框架真缺陷两笔（本批次根修，页面目验揪出）**：①XListView/
+  XTreeWidget paintEvent 缺 `XWidget_paintOffset` 平移——paintImage
+  返回顶层后备存储，控件非零偏移时内容直绘窗口 (0,0)（XListWidget
+  继承同槽一并修复；XLabel/XFrame/XTableWidget 本就正确）；②
+  XTreeWidget 条目文本 `XPainter_drawText` 第 4 参墨水色传 0（透明
+  =条目永不出字；对标 XTableWidget 传 palette windowText）。根修后
+  demo 页 paintOffsetSafe 子类补偿自动退化为直调基类路径。
+- **ASan**：autotest 0 断言失败；退出持有 18.3KB/126（控件树夹具语
+  义 + fontconfig 缓存 + ime 17B 连接级），新增页面零新增泄漏源
+  （completer 模型 static 可达不计泄漏）。注意 LSan 检出泄漏时进程
+  exit=1，与断言结果无关。
+
 ### 8.1 架构裁剪/平台边界（声明式偏差，非漏实现）
 
 - XPaintEngine 绘制命令接口由 XPainter 承担；XImage/XPixmap/XBitmap/
@@ -624,12 +712,14 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
 - XColorSpace ICC 固定 1024 缓冲承载，不解析矩阵/LUT。
 - XTouchEvent 单触点（完整多点列表待做）。
 - XMenuBar 几何模型与样式绘制有轻微偏差；XHeaderView 维持 XWidget
-  直接派生（调研结论，重评条件=表头实体化进 XTableView）。
+  直接派生（调研结论，重评条件=表头实体化进 XTableView）；本体无
+  自绘代码，独立摆放不可见（demo 页以子类画段带可视化）。
 - 快捷键以 XShortcut 承载（无 grabShortcut 注册表）；手势体系不做；
   文件 URL 族不做；纯公历（QCalendar 备选历法不做）。
 - XGraphicsEffect：blur 固定 3x3 核（blurRadius 仅 API 对齐）、效果
-  外扩区依赖父级重绘；富文本子集边界（斜体无视觉——字形引擎专项；
-  嵌套列表各级标记形态统一方块；span 半透明背景混合语义）。
+  外扩区依赖父级重绘；富文本子集边界（斜体已合成倾斜 §8.0g11——
+  固定 shear 0.22 非 12° 连续可调；嵌套列表各级标记形态统一方块；
+  span 半透明背景混合语义）。
 - XFileDialog 多选（getOpenFileNames）未实化；XColorDialog 无 Alpha
   通道输入、48 标准色为简化生成。
 - 剪贴板：外部内容后续变化不自动刷新镜像；image/png 写出载荷须
@@ -642,17 +732,18 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
 | 项 | 类型 | 备注 |
 |---|---|---|
 | 全量内存清零+夹具有序拆除 | ✅ 收官 | §8.0g6~g8：生产真缺陷五笔全修（XMenu 隔个漏删/按钮盒 clear/XFontSet 逐窗口/setFont 880B 壳/菜单栏桥），回归 195→102.8KB，非 Mesa 残余 94KB→1.8KB（-98%，余为 fontconfig 缓存+字符串碎屑）；Mesa 101KB 连接级环境噪音；登记表全量拆除方案不可行（栈对象悬垂）已证 |
-| XGraphicsEffect 视觉目验 | 小 | 有头环境人工验收三效果 |
+| XGraphicsEffect 视觉目验 | ✅ 完成 | 2026-09-21 无头自动化目验：Xvfb 真实渲染四按钮同屏（基准+三效果）→ 原生 Xlib 截图 PNG 视检+像素差分——Opacity 亮度 -39%、Blur 边缘发散可见、Shadow 下方投影带 18 vs 基准 0；blurRadius 4/12 逐位相同=§8.1 已声明固定核偏差（非缺陷）；截图存 /tmp/effect_review/ 供人工复核；§8.0g12 效果页把三效果挂到真控件并纳入 demo autotest+像素差分常态化 |
 | ~~文档重构阶段三（architecture/ 分册）~~ | ✅ 完成 | 2026-09-21：render-pipeline/text-system/clipboard-input/platform/widgets-dialogs 五册落地 docs/xgui/architecture/ |
 | Qt 6.8.3 二次全量对齐复扫 | 大 | 大量代码变更后的回归性复扫 |
 | Qt+LVGL 融合优化专项 | 大 | 内核表已按 LVGL 组织，续：嵌入式显存/局部刷新策略 |
-| 富文本引擎深化（换行/嵌套/图片） | 部分收口 | 换行/嵌套/图片/列表标记+嵌套分级/上下标/背景色已落地（§8.0g2/g4/g5）；剩斜体合成（字形引擎专项）、嵌套标记形态梯度——见 §8.0g5 未尽 |
-| XPlainTextEdit 增量布局 | 中 | 现为全量 O(文档长) 重建 |
+| 富文本引擎深化（换行/嵌套/图片） | ✅ 收口 | 换行/嵌套/图片/列表标记+嵌套分级/上下标/背景色/斜体合成（§8.0g2/g4/g5/g11）全部落地；§8.2 无剩余项 |
+| XPlainTextEdit 增量布局 | ✅ 已修 | 2026-09-21 §8.0e：单逻辑行编辑局部更新可视行段（原位替换+尾段 memmove，跨行回退全量），2000 次编辑全增量与全量参照逐条一致 |
 | MULTIPLE 进 TARGETS 广播、INCR 读超时参数化 | ✅ 已修 | 2026-09-21 §8.0g3：setIncrTimeoutMs API + TARGETS 应答补 MULTIPLE 原子（Xvfb 独立客户端探针实证） |
-| XPaintDevice 接入绘制派发（begin 泛化） | 中 | 现仅 metrics 抽象 |
+| XPaintDevice 接入绘制派发（begin 泛化） | ✅ 已修 | 2026-09-21 §8.0g10：beginPainter 回调+XPainter_begin_device；Image/Picture 堆外壳绑定（ASan 两轮实证定方案），Pixmap/Bitmap 转发继承，Widget 按对标不开放；ASan 与基线逐字节一致 |
+| XGuiDemo 全量 Widget 接入+全量测试 | ✅ 完成 | 2026-09-21 §8.0g12：9 页 129 断言 autotest 全过 + 逐页目验 + 样式三套矩阵 + 效果像素差分 + ASan 零新增泄漏；随批根修框架 paintOffset/drawText 真缺陷两笔（§8.3） |
 | SIMD 内核（NEON/Helium/DMA2D 变体注册） | 中 | 需板级验证 |
 | XGUI_ON=0 下其余文件同类裁剪错误 | ✅ 已修 | 2026-09-21 §8.0g9：XLineControl/XTextControl 守卫补齐 + demo 可执行/install 按 XGUI_ON 分流，静态+动态库裁剪构建双 0 错误 |
-| XTabBar 多选项卡溢出 | ✅ 已修 | 滚动按钮+偏移滚动+自动露出+滚轮（2026-09-21，见 §8.0f）；elide/按住连发/触摸滚动待做 |
+| XTabBar 多选项卡溢出 | ✅ 已修 | 滚动按钮+偏移滚动+自动露出+滚轮（2026-09-21，见 §8.0f）；elide/按住连发已收口（§8.0g11）；触摸滚动随 XI2 专项 |
 | XTabWidget setWidget 替换语义（现拒绝二次设置） | ✅ 已修 | 2026-09-21 §8.0g2：替换语义落地（摘父链转移所有权），探针 19/19 |
 | demo 启动器按钮文字溢出边界（页 4 网格） | ✅ 已修 | 2026-09-21 §8.0g2：文案缩短至单元格宽度内 |
 
@@ -663,7 +754,10 @@ move 漏 urls；裸父控件 is_widget 归一化；is_app_closing 永久拦截�
 撤销合并 strdupN 越界（分配/拷贝分离）；setFont 比较时序 UAF（先较
 后释）；XTextDocument setPlainText 容量增长+清零；XDate 儒略日口径；
 XClass 槽位宏陷阱（**首槽必锚定父类槽位总数 + 用 DEFINE_END 续号，
-EXTEND_END 会把 END_SIZE 重置回父类值**）。
+EXTEND_END 会把 END_SIZE 重置回父类值**）；XListView/XTreeWidget
+paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移直
+绘窗口原点）；XTreeWidget 条目文本 drawText 墨水色传 0（第 4 参是
+色非长度，透明=永不出字）。
 
 ## 9. 工作流约定
 

@@ -970,6 +970,92 @@ static void VXCommonStyle_drawPrimitive(XStyle* self, int pe,
 }
 
 
+/** @brief 文本省略（§8.0g11）：按 mode 在文本内插入省略号使宽度不超
+ *         maxW（对标 Qt fontMetrics elidedText；单行字节口径）。
+ *  @return 栈缓冲指针（调用方直接使用；maxW 内原样返回入参）。 */
+static const char* xcs_elideText(char* buf, int bufCap, const char* text,
+                                 int mode, int maxW, const XFont* font)
+{
+    int fullW;
+    int len;
+    int i;
+    const char* ell = "\xe2\x80\xa6"; /* U+2026 HORIZONTAL ELLIPSIS */
+    int ellW;
+    if (!text || !text[0] || maxW <= 0) return text;
+    fullW = XPainter_textWidth(font, text);
+    if (fullW <= maxW) return text;
+    len = (int)XStrlen(text);
+    if (len >= bufCap) len = bufCap - 1;
+    if (mode == 0) { /* 无省略模式：截断不加点 */
+        int w = 0;
+        int cut = 0;
+        for (i = 0; i < len; ++i) {
+            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+            if (w + cw > maxW) break;
+            w += cw;
+            cut = i + 1;
+        }
+        XMemcpy(buf, text, (size_t)cut);
+        buf[cut] = '\0';
+        return buf;
+    }
+    ellW = XPainter_textWidth(font, ell);
+    if (ellW > maxW) { buf[0] = '\0'; return buf; }
+    if (mode == 2) { /* 左省略：保留尾部 */
+        int w = ellW;
+        int start = len;
+        for (i = len - 1; i >= 0; --i) {
+            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+            if (w + cw > maxW) break;
+            w += cw;
+            start = i;
+        }
+        buf[0] = '\0';
+        XStrncat(buf, ell, (size_t)bufCap - 1);
+        XStrncat(buf, text + start, (size_t)bufCap - 1);
+        return buf;
+    }
+    if (mode == 1) { /* 右省略：保留头部 */
+        int w = ellW;
+        int cut = 0;
+        for (i = 0; i < len; ++i) {
+            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+            if (w + cw > maxW) break;
+            w += cw;
+            cut = i + 1;
+        }
+        XMemcpy(buf, text, (size_t)cut);
+        buf[cut] = '\0';
+        XStrncat(buf, ell, (size_t)bufCap - 1);
+        return buf;
+    }
+    /* 中省略（mode 3）：头尾各留一半预算。 */
+    {
+        int w = ellW;
+        int head = 0;
+        int tail = len;
+        int half = (maxW - ellW) / 2;
+        for (i = 0; i < len; ++i) {
+            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+            if (w + cw > half) break;
+            w += cw;
+            head = i + 1;
+        }
+        w = ellW;
+        for (i = len - 1; i > head; --i) {
+            int cw = XPainter_textWidthRange(font, text, i - 1, i);
+            if (w + cw > half) break;
+            w += cw;
+            tail = i - 1;
+        }
+        XMemcpy(buf, text, (size_t)head);
+        buf[head] = '\0';
+        XStrncat(buf, ell, (size_t)bufCap - 1);
+        XStrncat(buf, text + tail, (size_t)bufCap - 1);
+    }
+    return buf;
+}
+
 /** @brief 绘制页签标签（CE_TabBarTabLabel：居中文本 + 焦点框）。 */
 static void xcs_drawTabLabel(XStyle* self, const XStyleOption* option,
                              XPainter* painter, const XWidget* widget)
@@ -987,13 +1073,21 @@ static void xcs_drawTabLabel(XStyle* self, const XStyleOption* option,
     textColor = xcs_color(option, XPaletteColorRole_WindowText);
     if (textColor == 0) textColor = 0xFF000000u;
     if (option->m_text && option->m_text[0]) {
-        textW = XPainter_textWidth(XPainter_font(painter), option->m_text);
-        textH = XPainter_textHeight(XPainter_font(painter));
+        const XFont* font = XPainter_font(painter);
+        char elided[256];
+        const char* shown = option->m_text;
+        if (option->m_tabElideMode != 0 && r.width > 4) {
+            shown = xcs_elideText(elided, (int)sizeof(elided),
+                                  option->m_text, option->m_tabElideMode,
+                                  r.width - 6, font);
+        }
+        textW = XPainter_textWidth(font, shown);
+        textH = XPainter_textHeight(font);
         if (textH < 14) textH = 14;
         XPainter_drawText(painter,
             r.x + (r.width - textW) / 2,
             r.y + (r.height - textH) / 2 + textH - 4,
-            option->m_text, textColor);
+            shown, textColor);
     }
     if (option->m_state & XStyleState_HasFocus) {
         XStyleOption foc = *option;

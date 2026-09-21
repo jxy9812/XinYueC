@@ -18,6 +18,9 @@
 #include "XAlgorithm.h"
 #include "XPainter.h"
 #include "XMemory.h"
+#if XPAINTDEVICE_ON
+#include "XPaintDevice.h"
+#endif /* XPAINTDEVICE_ON */
 #if XPAINTER_PIXMAP_ON
 #include "XPixmap.h"
 #endif /* XPAINTER_PIXMAP_ON */
@@ -87,6 +90,10 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
 
 /* ========== 内部常量 ========== */
 
+/** @brief 斜体合成倾斜系数（§8.0g11，对标 Qt 合成斜体：基线不动、顶部
+ *         右移约 0.2 字高，右倾约 12~14°；Qt qfontengine 合成斜率
+ *         0.5*ascent/height ≈ 0.2~0.25，取 0.22 折中）。 */
+#define XPAINTER_SYNTHETIC_ITALIC_SHEAR 0.22f
 
 /** @brief 状态栈初始容量。 */
 enum { XPAINTER_STATE_INITIAL_CAPACITY = 8 };
@@ -6151,6 +6158,19 @@ bool XPainter_begin_picture(XPainter* self, XPicture* picture)
     return true;
 }
 
+bool XPainter_begin_device(XPainter* self, XPaintDevice* device)
+{
+    if (!self || !self->m_initialized || !device) return false;
+    /* 与 begin_image/begin_picture 同护栏：活动绘制器拒绝隐式换设备。 */
+    if (self->m_deviceKind != XPainterDevice_None) return false;
+    /* 设备未开放 begin 泛化（未注册 beginPainter 回调）按不支持拒绝。 */
+    if (!device->m_beginPainter) return false;
+    /* 装配权交还设备（单一事实源）：设备回调内部调 begin_image/
+       begin_picture 完成回调表装配；回调失败（如空图像）时设备侧未
+       绑定，本绘制器 m_deviceKind 仍为 None，状态保持不变。 */
+    return device->m_beginPainter(device->m_userData, self);
+}
+
 XPainterRasterBackend XPainter_rasterBackend(const XPainter* self)
 {
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
@@ -7660,6 +7680,7 @@ static void painter8x16DrawGlyphAntialiased(XPainter* painter, int x,
     int firstY;
     int lastY;
     int y;
+    float italicShear; /* §8.0g11 斜体合成倾斜（0=正体）。 */
     if (!painter || !glyph || !table || !(scale > 0.0f) || !isfinite(scale))
         return;
     if (!painterEffectiveTransform(&painter->m_state, &transform))
@@ -7667,6 +7688,14 @@ static void painter8x16DrawGlyphAntialiased(XPainter* painter, int x,
     effective = painterApplyOpacity(color, painter->m_state.m_opacity);
     glyphWidth = (float)(dsc ? dsc->box_w : table->m_width) * scale;
     glyphHeight = (float)(dsc ? dsc->box_h : table->m_height) * scale;
+    italicShear = XFont_italic(&painter->m_state.m_font)
+                      ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f;
+    if (italicShear != 0.0f)
+    {
+        /* sheared 顶右角右移 shear*字高：x 扫描范围随之外扩。 */
+        lastX = painter8x16CeilInt(originX + glyphWidth +
+                                   italicShear * glyphHeight) - 1;
+    }
     originX = (float)x + transform.dx +
               (float)(dsc ? dsc->ofs_x : 0) * scale;
     originY = painter8x16GlyphOriginY(baselineY, transform.dy, scale, table,
@@ -7687,9 +7716,12 @@ static void painter8x16DrawGlyphAntialiased(XPainter* painter, int x,
         int pixelX;
         for (pixelX = firstX; pixelX <= lastX; ++pixelX)
         {
-            float coverage = painter8x16GlyphCoverage(
-                glyph, table, (float)pixelX - originX,
-                (float)y - originY, scale);
+            float gx = (float)pixelX - originX;
+            float coverage;
+            if (italicShear != 0.0f)
+                gx -= italicShear * ((float)baselineY - (float)y);
+            coverage = painter8x16GlyphCoverage(
+                glyph, table, gx, (float)y - originY, scale);
             unsigned alpha;
             if (coverage <= 0.0f)
                 continue;
@@ -7738,6 +7770,10 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                                       scale);
         float gx1 = gx0 + (float)width;
         float gy1 = gy0 + (float)height;
+        /* §8.0g11：italic 顶部右移 shear*字高，字形盒右缘随之扩大。 */
+        if (XFont_italic(&painter->m_state.m_font))
+            gx1 += XPAINTER_SYNTHETIC_ITALIC_SHEAR *
+                   (float)(baselineY - (int)gy0) * 1.0f;
         float tx = 0.0f;
         float ty = 0.0f;
         int isTranslation = painterEffectiveTransform(&painter->m_state,
@@ -7799,6 +7835,12 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                                          glyph, scale, table, dsc);
         return;
     }
+    {
+        /* §8.0g11 斜体合成：基线不动、逐行右移 shear*(基线-行) 像素
+           （行 y 越小越靠上，偏移越大）。 */
+        const float italicShear =
+            XFont_italic(&painter->m_state.m_font)
+                ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f;
     for (row = 0; row < (dsc ? dsc->box_h : table->m_height); ++row)
     {
         unsigned bits = 0u;
@@ -7842,6 +7884,10 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                     r.width = right - left;
                     r.height = painter8x16Edge(row + 1, scale) -
                                painter8x16Edge(row, scale);
+                    /* §8.0g11 斜体合成：基线不动、行越高右移越多。 */
+                    if (italicShear != 0.0f)
+                        r.x += (int)(italicShear *
+                                     (float)(baselineY - r.y) + 0.5f);
                 }
                 XPainter_fillRect(painter, &r, color);
             }
@@ -7849,6 +7895,7 @@ static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                 ++col; /* 跳过 0 位 */
         }
     }
+    } /* §8.0g11 italicShear 作用域块闭合 */
 }
 
 /* ---------- 内置点阵字库表（字体由 XFont 的 family 选择） ---------- */
@@ -8012,11 +8059,24 @@ typedef struct PainterOutlinePathSink
     float m_originX;
     float m_baselineY;
     float m_scale;
+    float m_shear;          /**< §8.0g11 斜体合成倾斜系数（0=关；对标
+                                 Qt 合成斜体 shear，右倾约 1/5 字高）。 */
 } PainterOutlinePathSink;
 
 static float painterOutlineX(const PainterOutlinePathSink* sink, float x)
 {
     return sink->m_originX + x * sink->m_scale;
+}
+
+/* §8.0g11：shear 变换在 outline 坐标（y 向上为正的字体空间）应用——
+   x' = x + shear*(y-fontAscent 参考线) 等价于屏幕坐标 x' = x + shear*
+   (baselineY - y_screen)；此处用屏幕 Y 一次性算偏移最直观。 */
+static float painterOutlineShearX(const PainterOutlinePathSink* sink,
+                                  float x, float screenY)
+{
+    float base = sink->m_originX + x * sink->m_scale;
+    if (sink->m_shear == 0.0f) return base;
+    return base + sink->m_shear * (sink->m_baselineY - screenY);
 }
 
 static float painterOutlineY(const PainterOutlinePathSink* sink, float y)
@@ -8027,39 +8087,52 @@ static float painterOutlineY(const PainterOutlinePathSink* sink, float y)
 static bool painterOutlineMoveTo(void* userData, float x, float y)
 {
     PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
-    return sink && sink->m_path &&
-           XPainterPath_moveTo(sink->m_path, painterOutlineX(sink, x),
-                               painterOutlineY(sink, y));
+    float sy;
+    if (!sink || !sink->m_path) return false;
+    sy = painterOutlineY(sink, y);
+    return XPainterPath_moveTo(sink->m_path,
+                               painterOutlineShearX(sink, x, sy), sy);
 }
 
 static bool painterOutlineLineTo(void* userData, float x, float y)
 {
     PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
-    return sink && sink->m_path &&
-           XPainterPath_lineTo(sink->m_path, painterOutlineX(sink, x),
-                               painterOutlineY(sink, y));
+    float sy;
+    if (!sink || !sink->m_path) return false;
+    sy = painterOutlineY(sink, y);
+    return XPainterPath_lineTo(sink->m_path,
+                               painterOutlineShearX(sink, x, sy), sy);
 }
 
 static bool painterOutlineQuadTo(void* userData, float cx, float cy,
                                  float x, float y)
 {
     PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
-    return sink && sink->m_path &&
-           XPainterPath_quadTo(sink->m_path, painterOutlineX(sink, cx),
-                               painterOutlineY(sink, cy),
-                               painterOutlineX(sink, x), painterOutlineY(sink, y));
+    float scy;
+    float sy;
+    if (!sink || !sink->m_path) return false;
+    scy = painterOutlineY(sink, cy);
+    sy = painterOutlineY(sink, y);
+    return XPainterPath_quadTo(sink->m_path,
+                               painterOutlineShearX(sink, cx, scy), scy,
+                               painterOutlineShearX(sink, x, sy), sy);
 }
 
 static bool painterOutlineCubicTo(void* userData, float c1x, float c1y,
                                   float c2x, float c2y, float x, float y)
 {
     PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
-    return sink && sink->m_path &&
-           XPainterPath_cubicTo(sink->m_path, painterOutlineX(sink, c1x),
-                                painterOutlineY(sink, c1y),
-                                painterOutlineX(sink, c2x),
-                                painterOutlineY(sink, c2y),
-                                painterOutlineX(sink, x), painterOutlineY(sink, y));
+    float sc1y;
+    float sc2y;
+    float sy;
+    if (!sink || !sink->m_path) return false;
+    sc1y = painterOutlineY(sink, c1y);
+    sc2y = painterOutlineY(sink, c2y);
+    sy = painterOutlineY(sink, y);
+    return XPainterPath_cubicTo(sink->m_path,
+                                painterOutlineShearX(sink, c1x, sc1y), sc1y,
+                                painterOutlineShearX(sink, c2x, sc2y), sc2y,
+                                painterOutlineShearX(sink, x, sy), sy);
 }
 
 static bool painterOutlineClose(void* userData)
@@ -8089,7 +8162,8 @@ static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
                                     uint32_t codepoint, float scale,
                                     float originX, float baselineY,
                                     XPainterPath* path,
-                                    XFontOutlineGlyphMetrics* metrics)
+                                    XFontOutlineGlyphMetrics* metrics,
+                                    float shear)
 {
     PainterOutlinePathSink context;
     XFontOutlineSink sink;
@@ -8101,6 +8175,7 @@ static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
     context.m_originX = originX;
     context.m_baselineY = baselineY;
     context.m_scale = scale;
+    context.m_shear = shear;
     XMemset(&sink, 0, sizeof(sink));
     sink.userData = &context;
     sink.moveTo = painterOutlineMoveTo;
@@ -8141,6 +8216,16 @@ static uint32_t painterOutlineScaleKey(float scale)
     value = (double)scale * 65536.0;
     if (value >= 4294967294.0) return 0xfffffffeu;
     return (uint32_t)(value + 0.5);
+}
+
+/* §8.0g11：italic 折进缓存键最高位（scaleKey 上限 0xfffffffe，最高位
+   恒空）——outline 路径缓存与 alpha 缓存共用，斜体/正体字形自动隔离，
+   缓存结构零改动。 */
+static uint32_t painterOutlineCacheKey(float scale, bool italic)
+{
+    uint32_t key = painterOutlineScaleKey(scale);
+    if (key != 0u && italic) key |= 0x80000000u;
+    return key;
 }
 
 static PainterOutlinePathCacheEntry* painterOutlineCacheFind(
@@ -8186,13 +8271,17 @@ static PainterOutlinePathCacheEntry* painterOutlineCacheLoad(
     PainterOutlinePathCacheEntry* entry;
     XPainterPath path;
     XFontOutlineGlyphMetrics metrics;
-    uint32_t scaleKey = painterOutlineScaleKey(scale);
+    uint32_t scaleKey = painterOutlineCacheKey(scale, font &&
+                                               XFont_italic(font));
     if (!face || !face->m_family || !face->m_family[0] || scaleKey == 0u)
         return NULL;
     entry = painterOutlineCacheFind(face, codepoint, scaleKey);
     if (entry) return entry;
     if (!painterOutlineBuildPath(face, font, codepoint, scale, 0.0f, 0.0f,
-                                 &path, &metrics))
+                                 &path, &metrics,
+                                 font && XFont_italic(font)
+                                     ? XPAINTER_SYNTHETIC_ITALIC_SHEAR
+                                     : 0.0f))
         return NULL;
     entry = painterOutlineCacheSlot();
     if (!entry)
@@ -8830,7 +8919,8 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                          (translateX == (float)tx &&
                           translateY == (float)ty);
         const XFontFace* face = XFont_face(&painter->m_state.m_font);
-        uint32_t scaleKey = painterOutlineScaleKey(scale);
+        uint32_t scaleKey = painterOutlineCacheKey(
+            scale, XFont_italic(&painter->m_state.m_font));
         PainterGlyphAlphaCacheEntry* entry =
             cacheable ? painterGlyphAlphaCacheFind(face, cp, scaleKey) : NULL;
         if (entry)
@@ -8849,7 +8939,9 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     if (!painterOutlineBuildPath(
             XFont_face(&painter->m_state.m_font), &painter->m_state.m_font,
             cp, scale, (float)x + translateX,
-            (float)baselineY + translateY, &path, &metrics))
+            (float)baselineY + translateY, &path, &metrics,
+            XFont_italic(&painter->m_state.m_font)
+                ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f))
         return false;
     if (outMetrics) *outMetrics = metrics;
     ok = painterPathBuildContours(&path, 0.0f, 0.0f, &contours,
@@ -8901,7 +8993,9 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                     painterGlyphAlphaCacheSlot();
                 painterGlyphAlphaCacheStore(
                     slot, XFont_face(&painter->m_state.m_font), cp,
-                    painterOutlineScaleKey(scale), &metrics,
+                    painterOutlineCacheKey(
+                        scale, XFont_italic(&painter->m_state.m_font)),
+                    &metrics,
                     0, 0, 1, 1, &blank);
             }
         }
@@ -8957,7 +9051,9 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                 /* 存储失败（缓存满/超限/内存不足）仅放弃复用，
                    本帧照常绘制。 */
                 painterGlyphAlphaCacheStore(
-                    slot, face, cp, painterOutlineScaleKey(scale),
+                    slot, face, cp,
+                    painterOutlineCacheKey(
+                        scale, XFont_italic(&painter->m_state.m_font)),
                     &metrics, left - (x + tx), top - (baselineY + ty),
                     width, height, alpha);
             }
@@ -10779,7 +10875,10 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
     if (!glyphPath)
     {
         if (!painterOutlineBuildPath(face, &self->m_state.m_font, cp, scale,
-                                     0.0f, 0.0f, &localPath, &metrics))
+                                     0.0f, 0.0f, &localPath, &metrics,
+                                     XFont_italic(&self->m_state.m_font)
+                                         ? XPAINTER_SYNTHETIC_ITALIC_SHEAR
+                                         : 0.0f))
             return false;
         glyphPath = &localPath;
         localPathValid = true;

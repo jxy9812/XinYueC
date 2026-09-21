@@ -15,6 +15,9 @@
 #include "XImageCodecInternal.h"
 #include "XImageFormat.h"
 #include "XPaintDevice.h"
+#if XPAINTDEVICE_ON
+#include "XPainter.h" /* §8.0g10：设备 beginPainter 回调转发 begin_image。 */
+#endif
 #include "XAtomic.h"
 #include "XClass.h"
 #include "XVtable.h"
@@ -206,6 +209,12 @@ typedef struct XImageData
     XString          m_textAll;          /**< 空键聚合文本缓存（对标 text("") 的稳定返回） */
 #if XPAINTDEVICE_ON
     XPaintDevice     m_paintDevice;      /**< 绘制设备描述（内嵌，供 paintDevice() 查询）。 */
+    struct XImage*   m_deviceShell;      /**< §8.0g10 begin 泛化：惰性分配的堆上
+                                              XImage 外壳（壳仅含 m_class+m_data
+                                              自指），供设备 beginPainter 绑定——
+                                              painter 持有设备指针须长于绑定周期，
+                                              栈包装不可行（ASan stack-use-after-
+                                              return 实证）；随数据 unref 释放。 */
 #endif
 }XImageData;
 
@@ -445,6 +454,29 @@ static XString* XImageData_buildAllText(const XImageData* d)
  * @return 图像数据指针，失败返回 NULL
  */
 #if XPAINTDEVICE_ON
+/* §8.0g10 设备绘制入口：绑定到与数据同生命周期的堆上 XImage 外壳
+ * （首访惰性分配）。设备 userData 是 XImageData*（引用计数共享，外层
+ * XImage 对象不唯一）；painter 会长期持有绑定目标指针，栈包装在回调
+ * 返回后即悬垂（ASan stack-use-after-return 实证），故外壳随数据存亡。 */
+static bool ximage_beginPainter(void* userData, XPainter* painter)
+{
+    XImageData* d = (XImageData*)userData;
+    if (!d) return false;
+    if (!d->m_deviceShell) {
+        d->m_deviceShell = (struct XImage*)XMalloc_System(sizeof(XImage));
+        if (!d->m_deviceShell) return false;
+        XMemset(d->m_deviceShell, 0, sizeof(XImage));
+        XClass_init((XClass*)d->m_deviceShell);
+        XClassSetVtable(d->m_deviceShell, XImage);
+        /* 壳的 m_data 为裸借用（不持引用）：壳与数据同生命周期（都由
+           数据的 unref 归零路径释放），且壳只在本 beginPainter 与数据
+           unref 路径被触碰，无并发窗口。持引用会造成「只剩壳引用时无
+           人触发 unref」的整块泄漏。 */
+        d->m_deviceShell->m_data = d;
+    }
+    return XPainter_begin_image(painter, d->m_deviceShell);
+}
+
 /** @brief XImage 绘制设备度量回调（对标 QImage 的 QPaintDevice 度量）。
  *  DPI 换算与 Qt qimage.cpp 一致：dpi = dpm × 0.0254（整数 254/10000）。 */
 static int ximage_paintDeviceMetric(void* userData, int metric)
@@ -594,6 +626,14 @@ static void XImageData_unref(XImageData* d)
             XFree_System(d->m_colorTable);
         XImageColorProfileResource_unref(d->m_colorProfile);
         XImageData_deinitText(d);
+#if XPAINTDEVICE_ON
+        if (d->m_deviceShell) {
+            /* 壳对数据的引用不计数（此处数据 refcount 已归零），仅释壳。 */
+            d->m_deviceShell->m_data = NULL;
+            XFree_System(d->m_deviceShell);
+            d->m_deviceShell = NULL;
+        }
+#endif
         XFree_System(d);
     }
 }
@@ -5823,6 +5863,11 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
 XPaintDevice* XImage_paintDevice(XImage* self)
 {
     if (!self || !self->m_data) return NULL;
+    /* §8.0g10 begin 泛化：首次访问时惰性装配设备绘制入口（回调静态，
+       幂等；装配失败保持 NULL=设备不开放 begin_device）。 */
+    if (!self->m_data->m_paintDevice.m_beginPainter)
+        XPaintDevice_setBeginPainter(&self->m_data->m_paintDevice,
+                                     ximage_beginPainter);
     return &self->m_data->m_paintDevice;
 }
 #endif /* XPAINTDEVICE_ON */

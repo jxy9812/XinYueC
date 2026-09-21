@@ -45,7 +45,14 @@ void XPaintDevice_init(XPaintDevice* self, int devType, void* userData,
     self->m_devType = devType;
     self->m_userData = userData;
     self->m_metric = metric;
+    self->m_beginPainter = NULL; /* 默认不开放；接入类经 setter 启用。 */
     XPaintEngine_init(&self->m_engine, engineType, features);
+}
+
+void XPaintDevice_setBeginPainter(XPaintDevice* self,
+                                  XPaintDeviceBeginFunc begin)
+{
+    if (self) self->m_beginPainter = begin;
 }
 
 int XPaintDevice_devType(const XPaintDevice* self)

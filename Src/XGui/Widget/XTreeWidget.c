@@ -1200,8 +1200,10 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
     text = XTreeWidgetItem_text_2(item);
     if (text && text[0]) {
         XPainter_setPen(painter, 0xFF000000u);
+        /* drawText 第 4 参是墨水色：传 0=透明，条目文本任何路径都不
+         * 出字（对标 XTableWidget 传 palette windowText）。 */
         XPainter_drawText(painter, indent * depth + 12, y0 + rh - 6,
-                          text, 0);
+                          text, 0xFF000000u);
     }
     /* 子节点指示（顶层行按展开态绘制 +/-：折叠补竖线）。 */
     if (item->childCount > 0) {
@@ -1237,6 +1239,7 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
     XImage* image;
     XPainter painter;
     XRect r;
+    XPoint offset;
     int y;
     int i;
     int h;
@@ -1251,6 +1254,11 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
         XPainter_deinit(&painter);
         return;
     }
+    /* paintImage 返回的是顶层窗口后备存储，须按控件偏移平移到局部
+     * 原点（对标 XTableWidget；缺平移时内容直绘到窗口 (0,0)）。 */
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
     {
         /* 滚动范围维护 + 偏移平移（此前滚动条值变化不触发重绘）。 */

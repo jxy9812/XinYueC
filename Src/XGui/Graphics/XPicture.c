@@ -537,6 +537,12 @@ typedef struct XPicturePrivate
     int              m_boundingH;   /**< 边界矩形高度 */
 #if XPAINTDEVICE_ON
     XPaintDevice     m_paintDevice; /**< 绘制设备描述（内嵌）。 */
+    struct XPicture* m_deviceShell; /**< §8.0g10 begin 泛化：惰性分配的堆上
+                                         XPicture 外壳（自指），供设备
+                                         beginPainter 绑定——painter 持有设备
+                                         指针须长于绑定周期，栈包装不可行
+                                         （ASan stack-use-after-return 实证）；
+                                         随数据 unref 释放。 */
 #endif
 }XPicturePrivate;
 
@@ -588,6 +594,14 @@ static void XPicturePrivate_unref(XPicturePrivate* d)
     if (XAtomic_fetch_add_int32(&d->m_refCount, -1, XAtomic_MemoryOrder_SeqCst) == 1)
     {
         if (d->m_data) XFree_System(d->m_data);
+#if XPAINTDEVICE_ON
+        if (d->m_deviceShell) {
+            /* 壳对数据的引用不计数（此处 refcount 已归零），仅释壳。 */
+            d->m_deviceShell->m_data = NULL;
+            XFree_System(d->m_deviceShell);
+            d->m_deviceShell = NULL;
+        }
+#endif
         XFree_System(d);
     }
 }
@@ -2716,9 +2730,32 @@ bool XPicture_isDetached(const XPicture* self)
 }
 
 #if XPAINTDEVICE_ON
+/* §8.0g10 设备绘制入口：绑定到与数据同生命周期的堆上 XPicture 外壳
+ * （首访惰性分配；同 XImage 外壳纪律——painter 长持绑定目标指针）。 */
+static bool xpicture_beginPainter(void* userData, XPainter* painter)
+{
+    XPicturePrivate* d = (XPicturePrivate*)userData;
+    if (!d) return false;
+    if (!d->m_deviceShell) {
+        d->m_deviceShell = (struct XPicture*)XMalloc_System(sizeof(XPicture));
+        if (!d->m_deviceShell) return false;
+        XMemset(d->m_deviceShell, 0, sizeof(XPicture));
+        XClass_init((XClass*)d->m_deviceShell);
+        XClassSetVtable(d->m_deviceShell, XPicture);
+        /* 壳的 m_data 为裸借用（不持引用）：壳与数据同生命周期，理由同
+           XImage 侧——持引用会使「只剩壳引用」时无人触发 unref 泄漏。 */
+        d->m_deviceShell->m_data = d;
+    }
+    return XPainter_begin_picture(painter, d->m_deviceShell);
+}
+
 XPaintDevice* XPicture_paintDevice(XPicture* self)
 {
     if (!self || !self->m_data) return NULL;
+    /* §8.0g10：首次访问惰性装配（幂等；与 XImage 同款纪律）。 */
+    if (!self->m_data->m_paintDevice.m_beginPainter)
+        XPaintDevice_setBeginPainter(&self->m_data->m_paintDevice,
+                                     xpicture_beginPainter);
     return &self->m_data->m_paintDevice;
 }
 #endif /* XPAINTDEVICE_ON */

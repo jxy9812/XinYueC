@@ -72,12 +72,12 @@ XinYueC/
 │   ├── FreeRTOS/ keil/ STM32/ msvc/ gcc/  # 嵌入式与编译器相关
 ├── Test/                     # 测试代码目录
 │   ├── XGuiTest/             # XGui 控件测试
+│   ├── XGuiDemo/             # XGui 演示程序（9 页全量 Widget 接入，autotest/截图/样式矩阵支持）
 │   ├── XCodeTest/ XContainerTest/ XDataTest/ XMemoryTest/
 │   ├── XDeviceTest/ XIOTest/ XLibraryTest/ XProtocolTest/ XTimerTest/
 │   └── XTestMenu*            # 交互式测试菜单入口
 ├── xgui_regression_test.c    # XGui 回归测试（控件全家族）
 ├── xgui_linecontrol_acceptance_test.c  # XLineControl 验收测试
-├── xgui_window_demo.c        # XGui 演示程序（autotest/截图支持）
 ├── XGui.md                   # XGui 模块文档（架构/批次记录/遗留清单）
 ├── CMakeLists.txt            # CMake配置文件
 └── README.md                 # 项目说明文档

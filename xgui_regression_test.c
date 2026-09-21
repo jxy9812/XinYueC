@@ -4396,6 +4396,55 @@ static void test_painter_task211_contract(void)
                         "t211: XWidget 设备度量");
             XWidget_delete_base(w);
         }
+        /* §8.0g10 begin 泛化：begin_device 经设备 beginPainter 回调派发。
+           Image 设备（惰性装配启用）应绑定成功并可绘制；Widget 设备未
+           开放 begin 应拒绝；已激活绘制器重复绑定应拒绝。 */
+        {
+            XImage gimg;
+            XPainter gp;
+            XPicture gpic;
+            expect_true(XPainter_begin_device(
+                            &gp, XImage_paintDevice(&gimg)) == false,
+                        "t211g: 未 init 绘制器拒绝绑定");
+            XImage_init_ex(&gimg, 16, 12, XImageFormat_ARGB32);
+            XPainter_init(&gp, NULL);
+            expect_true(XPainter_begin_device(
+                            &gp, XImage_paintDevice(&gimg)),
+                        "t211g: begin_device 绑定 XImage 设备");
+            expect_true(XPainter_device(&gp) != NULL &&
+                        XPainter_device(&gp) != (void*)&gimg &&
+                        XPainter_rasterBackend(&gp) ==
+                            XPainterRasterBackend_Raster,
+                        "t211g: 绑定后设备指针（堆外壳）与后端正确");
+            expect_true(XPainter_begin_device(
+                            &gp, XImage_paintDevice(&gimg)) == false,
+                        "t211g: 已激活重复绑定拒绝");
+            XPainter_fillRect(&gp, &(XRect){0, 0, 16, 12}, 0xFF00FF00u);
+            expect_true(XImage_pixel(&gimg, 8, 6) == 0xFF00FF00u,
+                        "t211g: 泛化绑定后绘制落像素");
+            expect_true(XPainter_end(&gp), "t211g: end 解绑");
+            /* Picture 设备（指令录制后端）。 */
+            XPicture_init(&gpic, -1);
+            expect_true(XPainter_begin_device(
+                            &gp, XPicture_paintDevice(&gpic)),
+                        "t211g: begin_device 绑定 XPicture 设备");
+            expect_true(XPainter_device(&gp) != NULL &&
+                        XPainter_device(&gp) != (void*)&gpic,
+                        "t211g: Picture 绑定设备指针（堆外壳）");
+            XPainter_end(&gp);
+            XPicture_deinit_base(&gpic);
+            /* Widget 设备：未开放 begin 泛化，应拒绝。 */
+            {
+                XWidget* gw = XWidget_create(NULL, 0);
+                expect_true(gw != NULL && XPainter_begin_device(
+                                              &gp, XWidget_paintDevice(gw)) ==
+                                              false,
+                            "t211g: Widget 设备不开放 begin 拒绝");
+                XWidget_delete_base(gw);
+            }
+            XPainter_deinit(&gp);
+            XImage_deinit_base(&gimg);
+        }
     }
 #endif /* XPAINTDEVICE_ON */
 

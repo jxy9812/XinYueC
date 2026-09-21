@@ -447,6 +447,7 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                         opt.m_state |= XStyleState_HasFocus;
                     opt.m_tabSelected = isCur;
                     opt.m_tabIndex = i;
+                    opt.m_tabElideMode = bar->m_elideMode; /* §8.0g11 */
                     opt.m_text = bar->m_titles[i] ? XString_toUtf8(bar->m_titles[i]) : "";
 #if XPALETTE_ON
                     opt.m_palette = XWidget_palette(self);
@@ -518,6 +519,54 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
+/* ==================== §8.0g11 滚动按钮按住连发 ==================== */
+
+/** @brief 启动连发：350ms 后每 120ms 沿 dir 步进（先杀旧定时器）。 */
+/** @brief 停止连发（释放/失能/销毁路径共用）。 */
+static void xtabbar_scrollRepeatStop(XTabBar* bar)
+{
+    if (!bar) return;
+    if (bar->m_scrollRepeatTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)bar, bar->m_scrollRepeatTimer);
+        bar->m_scrollRepeatTimer = XTIMER_INVALID_ID;
+    }
+    bar->m_scrollRepeatDir = 0;
+    bar->m_repeatSkip = 0;
+}
+
+static void xtabbar_scrollRepeatStart(XTabBar* bar, int dir)
+{
+    if (!bar) return;
+    xtabbar_scrollRepeatStop(bar);
+    bar->m_scrollRepeatDir = dir;
+    bar->m_scrollRepeatTimer = XObject_startTimer_ms(
+        (XObject*)bar, 120u, XTimerType_PreciseTimer);
+    if (bar->m_scrollRepeatTimer != XTIMER_INVALID_ID) {
+        /* 首段 350ms 延迟：改投递间隔不可行，改用一次性长间隔+首跳
+           由 timerEvent 内计数实现——此处直接记录起始即可（定时器以
+           120ms 触发，timerEvent 首三次跳过）。 */
+        bar->m_repeatSkip = 3;
+    }
+}
+
+/** @brief 连发定时器触发：首段延迟计数后每拍步进一页签宽。 */
+static void VXTabBar_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XTabBar* bar = (XTabBar*)object;
+    if (!bar || !event) return;
+    if (XTimerEvent_timerId(event) == bar->m_scrollRepeatTimer) {
+        if (bar->m_repeatSkip > 0) {
+            --bar->m_repeatSkip; /* 首段 350ms 延迟（3×120ms）。 */
+        } else if (bar->m_scrollRepeatDir != 0) {
+            xtabbar_scrollBy(bar,
+                             bar->m_scrollRepeatDir * XTABBAR_TAB_W);
+        }
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    XEvent_ignore((XEvent*)event);
+}
+
 static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
 {
     XTabBar* bar = (XTabBar*)self;
@@ -534,17 +583,20 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     {
         /* 溢出态端部滚动按钮命中区（各 XTABBAR_SCROLL_BTN_W px）：
-           按/点步进一个页签宽（连发由系统按键重复事件自然补足）。 */
+           按下先步进一个页签宽；按住 350ms 后连发（§8.0g11，对标
+           QTabBar 滚动按钮自动重复），释放停止。 */
         int tW, cW, btnW, viewX, viewW, maxOff;
         if (xtabbar_scrollLayout(bar, &tW, &cW, &btnW, &viewX, &viewW,
                                  &maxOff)) {
             if (pos.x < btnW) {
                 xtabbar_scrollBy(bar, -XTABBAR_TAB_W);
+                xtabbar_scrollRepeatStart(bar, -1);
                 XEvent_accept(event);
                 return;
             }
             if (pos.x >= viewX + viewW) {
                 xtabbar_scrollBy(bar, XTABBAR_TAB_W);
+                xtabbar_scrollRepeatStart(bar, 1);
                 XEvent_accept(event);
                 return;
             }
@@ -623,6 +675,7 @@ static void VXTabBar_mouseReleaseEvent(XWidget* self, XEvent* event)
     if (!bar || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
     bar->m_dragActive = false;
+    xtabbar_scrollRepeatStop(bar); /* §8.0g11：按住连发终止。 */
     XEvent_accept(event);
 }
 
@@ -739,6 +792,7 @@ static void VXTabBar_deinit(XTabBar* self)
 {
     int i;
     if (!self) return;
+    xtabbar_scrollRepeatStop(self); /* §8.0g11：析构停连发定时器。 */
     for (i = 0; i < self->m_count; ++i) {
         if (self->m_titles[i]) XString_delete_base(self->m_titles[i]);
         self->m_titles[i] = NULL;
@@ -813,6 +867,7 @@ XVtable* XTabBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXTabBar_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VXTabBar_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabBar_changeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXTabBar_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTabBar_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXTabBar_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTabBar_move);
@@ -851,6 +906,9 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_changeCurrentOnDrag = false;
     self->m_usesScrollButtons = true; /* 对标 QTabBar 默认 true。 */
     self->m_scrollOffset = 0;
+    self->m_scrollRepeatDir = 0;     /* §8.0g11 连发状态显式复位。 */
+    self->m_scrollRepeatTimer = XTIMER_INVALID_ID;
+    self->m_repeatSkip = 0;
     self->m_documentMode = false;
     self->m_drawBase = true;
 }

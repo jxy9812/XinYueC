@@ -50,6 +50,9 @@ bool    m_autoHide;              /**< 自动隐藏。 */
     bool    m_changeCurrentOnDrag;   /**< 拖拽悬停切换（仅存状态；拖放切换未实现）。 */
     bool    m_usesScrollButtons;     /**< 滚动按钮（默认 true，对标 Qt）。 */
     int     m_scrollOffset;          /**< 滚动偏移（px；溢出态下最左可见内容 x）。 */
+    int     m_scrollRepeatDir;       /**< §8.0g11 按住连发方向（-1 左/+1 右/0 无）。 */
+    XTimerId m_scrollRepeatTimer;    /**< §8.0g11 连发定时器（XTIMER_INVALID_ID=无）。 */
+    int     m_repeatSkip;            /**< §8.0g11 连发首段延迟计数（350ms≈3 跳）。 */
     bool    m_documentMode;          /**< 文档模式（无边框）。 */
     bool    m_drawBase;              /**< 绘制基底（默认 true）。 */
     uint32_t* m_tabTextColors;       /**< 各项文本颜色（0=默认；平行数组）。 */

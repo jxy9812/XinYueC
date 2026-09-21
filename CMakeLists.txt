@@ -84,6 +84,12 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}/Src/XPlatform)
 #递归搜索目录下的文件添加到变量中
 file(GLOB_RECURSE SRC_FILE "Src/*.c" )
 file(GLOB_RECURSE TEST_FILE "Test/*.c" )
+# XGuiDemo 是自带 main() 的独立演示可执行（见下方 XGuiWindowDemo_Test 目标），
+# 不能被卷进 Static/Dynamic 主程序（会与 main.c 重复定义 main）。
+file(GLOB_RECURSE XGUI_DEMO_FILE "Test/XGuiDemo/*.c" )
+if(XGUI_DEMO_FILE)
+    list(REMOVE_ITEM TEST_FILE ${XGUI_DEMO_FILE})
+endif()
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
 add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
@@ -375,7 +381,11 @@ endif()
 # 运行：无参数常驻，带参数可传入自动退出秒数（供无窗口管理器环境截图）。
 if(XGUI_ON)
 add_executable(XGuiWindowDemo_Test
-    "./xgui_window_demo.c"
+    "./Test/XGuiDemo/xgui_window_demo.c"
+    "./Test/XGuiDemo/xgui_demo_page_views.c"
+    "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
+    "./Test/XGuiDemo/xgui_demo_page_advanced.c"
+    "./Test/XGuiDemo/xgui_demo_page_effects.c"
 )
 if(UNIX)
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)

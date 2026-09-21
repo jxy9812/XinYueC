@@ -111,6 +111,10 @@ typedef enum XPaintEngineFeature
 /** @brief XPaintDevice 前向声明。 */
 typedef struct XPaintDevice XPaintDevice;
 
+/* §8.0g10 begin 泛化：XPainter 前向声明（完整定义在 XPainter.h，调用
+   方须自行 include；此处仅用于设备绘制入口回调签名）。 */
+typedef struct XPainter XPainter;
+
 /**
  * @brief      设备度量回调（对标 QPaintDevice::metric 虚函数）。
  * @param      userData 接入对象指针（图像数据/控件指针）。
@@ -118,6 +122,17 @@ typedef struct XPaintDevice XPaintDevice;
  * @return     度量值。
  */
 typedef int (*XPaintDeviceMetricFunc)(void* userData, int metric);
+
+/**
+ * @brief      设备绘制入口回调（§8.0g10 begin 泛化：对标
+ *             QPainter::begin(QPaintDevice*) 的设备侧虚语义——
+ *             QPaintEngine::begin 由引擎承担，C 分层下设备经本回调
+ *             自述「如何被绘制」）。
+ * @param      userData 接入对象指针（与 m_userData 同一指针）。
+ * @param      painter 目标绘制器（设备把自身的后端回调装配上去）。
+ * @return     true=绑定成功；false=设备不支持绘制或参数无效。
+ */
+typedef bool (*XPaintDeviceBeginFunc)(void* userData, XPainter* painter);
 
 /** @brief 绘制引擎描述（对标 QPaintEngine 的数据查询部分）。 */
 typedef struct XPaintEngine
@@ -134,6 +149,9 @@ typedef struct XPaintDevice
     void* m_userData;           /**< 接入对象指针（借用）。 */
     XPaintDeviceMetricFunc m_metric; /**< 度量回调（可为 NULL=默认 0）。 */
     XPaintEngine m_engine;      /**< 引擎描述（paintEngine() 返回）。 */
+    XPaintDeviceBeginFunc m_beginPainter; /**< 设备绘制入口（§8.0g10 可选；
+                                               NULL=设备未开放 begin 泛化，
+                                               XPainter_begin_device 拒绝）。 */
 } XPaintDevice;
 
 /* ==================== 引擎 ==================== */
@@ -167,6 +185,10 @@ bool XPaintEngine_hasFeature(const XPaintEngine* self,
 void XPaintDevice_init(XPaintDevice* self, int devType, void* userData,
                        XPaintDeviceMetricFunc metric, int engineType,
                        uint32_t features);
+/** @brief 启用设备绘制入口（§8.0g10 begin 泛化；接入类在 init 后调用，
+ *         NULL 撤销）。 */
+void XPaintDevice_setBeginPainter(XPaintDevice* self,
+                                  XPaintDeviceBeginFunc begin);
 /** @brief 查询设备类型码（对标 QPaintDevice::devType）。
  * @param self 目标绘制设备；可为 NULL。
  * @return 设备类型码。

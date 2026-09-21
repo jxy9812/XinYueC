@@ -664,6 +664,9 @@ typedef struct XStyleOption
     int m_checkState2;    /**< 条目勾选状态（0 未选/1 部分/2 选中）。 */
     XIcon* m_icon;        /**< 条目图标（借用；可空）。 */
     int m_decorationAlignment; /**< 装饰对齐（XAlignment 位）。 */
+    int m_tabElideMode;   /**< 页签省略模式（§8.0g11：0 无/1 右省略/2 左
+                               省略/3 中省略，对标 Qt::ElideRight 等；
+                               追加尾部保持既有初始化兼容）。 */
 } XStyleOption;
 
 /**

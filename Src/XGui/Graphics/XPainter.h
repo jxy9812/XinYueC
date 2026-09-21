@@ -22,6 +22,10 @@ extern "C" {
 #include <stdbool.h>
 #include "XPicture.h"
 #include "XImage.h"
+
+/* begin_device 泛化入口参数类型（§8.0g10）：XPaintDevice 完整定义在
+   XPaintDevice.h，此处前向声明避免头循环（调用方须自行 include）。 */
+typedef struct XPaintDevice XPaintDevice;
 #include "XGeometry.h"
 #include "XPainter_config.h"
 #include "XFont.h"
@@ -643,6 +647,23 @@ XPainterRasterBackend XPainter_rasterBackend(const XPainter* self);
  *             XPainter_end() 再绑定新图片。图片所有权仍归调用方。
  */
 bool XPainter_begin_picture(XPainter* self, XPicture* picture);
+
+/**
+ * @brief      泛化设备绑定（§8.0g10：对标 QPainter::begin(QPaintDevice*)
+ *             的设备侧派发）。
+ * @details    经设备的 beginPainter 回调把绘制装配权交还设备：设备侧
+ *             回调内部调用 begin_image/begin_picture（或未来其它后端）
+ *             完成回调表装配，本入口不复制装配逻辑（单一事实源在设备）。
+ *             XPaintDevice 五类接入（Image/Pixmap/Bitmap/Picture/Widget）
+ *             中已启用 beginPainter 者可经此绑定；未启用（m_beginPainter
+ *             ==NULL）返回 false。
+ * @param self 绘制器指针。
+ * @param device 目标绘制设备描述（*_paintDevice() 返回值）；NULL 返回 false。
+ * @return 绑定成功返回 true。
+ * @note       已有活动绑定时先拒绝（与 begin_image/begin_picture 同护栏，
+ *             需先 XPainter_end()）。设备所有权仍归调用方。
+ */
+bool XPainter_begin_device(XPainter* self, XPaintDevice* device);
 
 /**
  * @brief      结束绘制：解除设备绑定、清空状态栈并恢复默认状态。

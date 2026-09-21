@@ -93,6 +93,17 @@ static XFont xte_makeFragFont(const XTextEdit* self, int pixelSize)
 }
 
 #if XTEXTDOCUMENT_ON
+/** @brief 片段字体（斜体接通，§8.0g11）：片段 italic 属性映射到
+ *         XFont_style（字形引擎合成倾斜渲染；位图字库无真斜体字形，
+ *         painter 侧按 shear 合成——对齐 Qt 无斜体字形时的行为）。 */
+static XFont xte_makeFragFontStyled(const XTextEdit* self,
+                                    const XTDFragment* f, int pixelSize)
+{
+    XFont font = xte_makeFragFont(self, pixelSize);
+    if (f && f->fmt.italic)
+        XFont_setItalic(&font, true);
+    return font;
+}
 /** @brief 片段生效像素字号（度量/绘制共用同一口径）：fontPointSize
  *         优先、缺省用块字号；上下标缩至 XTE_SUPSUB_PERMILLE（对标
  *         QTextCharFormat verticalAlignment 的缩小呈现），下限 4px。 */
@@ -369,7 +380,8 @@ static void xte_buildWords(const XTextEdit* self, const XTDBlock* blk,
         txt = xte_fragTextSafe(f);
         len = (int)XStrlen(txt);
         if (len <= 0) continue;
-        font = xte_makeFragFont(self, xte_fragPixelSize(self, f, blockPx));
+        font = xte_makeFragFontStyled(self, f,
+                                      xte_fragPixelSize(self, f, blockPx));
         fragH[j] = XPainter_textHeight(&font);
         fragA[j] = XPainter_textAscent(&font);
         fragSpaceW[j] = XPainter_textWidthRange(&font, " ", 0, 1);
@@ -548,8 +560,8 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
                 } else {
                     const char* txt = xte_fragTextSafe(f);
                     if (txt[0]) {
-                        XFont font = xte_makeFragFont(
-                            self, xte_fragPixelSize(self, f, blockPx));
+                        XFont font = xte_makeFragFontStyled(
+                            self, f, xte_fragPixelSize(self, f, blockPx));
                         int h = XPainter_textHeight(&font);
                         int a = XPainter_textAscent(&font);
                         XFont_deinit_base(&font);
@@ -625,8 +637,8 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
                     const XTESeg* seg = &lay.segs[line->segFirst + s];
                     const XTDFragment* f = &blk->fragments[seg->fragIdx];
                     XTERichGeom geom;
-                    XFont font = xte_makeFragFont(
-                        self, xte_fragPixelSize(self, f, blockPx));
+                    XFont font = xte_makeFragFontStyled(
+                        self, f, xte_fragPixelSize(self, f, blockPx));
                     geom.x = xStart + seg->xOff;
                     geom.baselineY = y + line->ascent;
                     geom.top = y;

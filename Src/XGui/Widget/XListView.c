@@ -303,6 +303,7 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
     int offX;
     int offY;
     int bottom;
+    XPoint offset;
     (void)event;
     if (!lv) return;
     image = XWidget_paintImage(self);
@@ -313,6 +314,11 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
         XPainter_deinit(&painter);
         return;
     }
+    /* paintImage 返回的是顶层窗口后备存储，须按控件偏移平移到局部
+     * 原点（对标 XTableWidget；缺平移时内容直绘到窗口 (0,0)）。 */
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
     if (!model) {
         XPainter_end(&painter);

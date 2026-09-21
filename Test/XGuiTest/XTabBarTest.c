@@ -116,6 +116,22 @@ bool XTabBarTest_runAll(void)
     tb_expect(XTabBar_tabData_2(bar, 1) != NULL &&
               XStrcmp(XTabBar_tabData_2(bar, 1), "data1") == 0,
               "moveTab 数据随行");
+    /* §8.0g11：elide 模式通道 + 按住连发状态机（此时 elideMode 已被
+       上文改为 2；仅验证 setter 回读，默认值断言须在新对象上）。 */
+    XTabBar_setElideMode(bar, 0);
+    tb_expect(XTabBar_elideMode(bar) == 0, "elideMode 设为无省略");
+    XTabBar_setElideMode(bar, 1);
+    tb_expect(XTabBar_elideMode(bar) == 1, "elideMode 设回右省略");
+    {
+        XTabBar* fresh = XTabBar_create(NULL, 0);
+        tb_expect(fresh != NULL && XTabBar_elideMode(fresh) == 1,
+                  "elideMode 新对象默认右省略");
+        tb_expect(fresh != NULL && fresh->m_scrollRepeatDir == 0 &&
+                  fresh->m_scrollRepeatTimer == XTIMER_INVALID_ID &&
+                  fresh->m_repeatSkip == 0,
+                  "连发状态初始为无");
+        if (fresh) XTabBar_delete_base(fresh);
+    }
     XTabBar_delete_base(bar);
 
     {

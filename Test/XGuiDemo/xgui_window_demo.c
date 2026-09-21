@@ -36,6 +36,7 @@
 #include "XImage.h"
 #include "XWindow.h"
 #include "XWindowEvent.h"
+#include "xgui_demo_pages.h"
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #include "XGpuRenderBackend.h"
 #endif
@@ -336,7 +337,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[5]; /**< 页面切换按钮：按钮/选择/堆叠/输入/选项卡演示。 */
+    XPushButton     m_pageNav[9]; /**< 页面切换按钮：5 内置页 + 4 扩展页。 */
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（4 个演示页面）。 */
@@ -345,6 +346,7 @@ typedef struct DemoWin
     XWidget         m_pageStacked; /**< 页面 2：堆叠演示容器。 */
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：选项卡演示容器。 */
+    XWidget*        m_extPages[4]; /**< 页面 5~8：扩展页根（xgui_demo_pages.h 契约，堆对象随父链级联析构）。 */
 #endif
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -1017,6 +1019,40 @@ static void demo_input_autotest(DemoWin* self)
         XGuiApplication_quit();
 }
 
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+/* 前向声明：本函数定义在 demo_page_name 之前。 */
+static const char* demo_page_name(int index);
+
+/** @brief 扩展页（5~8）图形界面自动化验证调度。
+ * @details 逐页切换并调用页面自带的 autotest（xgui_demo_pages.h 契约：
+ *          事件注入 + getter 断言，全程非阻塞），汇总失败数；任一失败
+ *          退出非零。结束恢复第 4 页，保持交互后截图口径不变。 */
+static void demo_ext_pages_autotest(DemoWin* demo)
+{
+    int (*const kTests[4])(XWidget*) = {
+        demo_page_views_autotest, demo_page_dialogs_autotest,
+        demo_page_advanced_autotest, demo_page_effects_autotest
+    };
+    int total = 0;
+    int exti;
+    for (exti = 0; exti < 4; ++exti) {
+        int failures;
+        if (!demo->m_extPages[exti])
+            continue; /* 页面模块被裁剪，跳过 */
+        demo_switchPage(demo, 5 + exti);
+        failures = kTests[exti](demo->m_extPages[exti]);
+        XPrintf("XGuiAutoTest: 扩展页%d(%s) %s\n", 5 + exti,
+                demo_page_name(5 + exti),
+                failures == 0 ? "PASS" : "FAIL");
+        /* 负值=页面自检错页（契约 -1），按失败计。 */
+        total += failures > 0 ? failures : (failures < 0 ? 1 : 0);
+    }
+    demo_switchPage(demo, 3);
+    if (total)
+        XGuiApplication_quit();
+}
+#endif /* XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
 static bool demo_framePump(void* userData)
 {
     DemoWin* demo = (DemoWin*)userData;
@@ -1032,16 +1068,40 @@ static bool demo_framePump(void* userData)
     if (demo->m_autoTest) {
         if (demo->m_autoTestFrames == 3) {
             demo_input_autotest(demo);
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+            demo_ext_pages_autotest(demo);
+#endif
             demo->m_staticSceneDirty = true;
             demo_repaint(demo);
         }
-        else if (demo->m_autoTestFrames >= 5) {
+        else if (demo->m_autoTestFrames == 5) {
             {
                 XImage* device = XWidget_paintImage(&demo->m_base);
                 if (device && XImage_save_2(device, "/tmp/demo_autotest_after.png",
                                             "PNG", 95))
                     XPrintf("XGuiAutoTest: 交互后截图 /tmp/demo_autotest_after.png\n");
             }
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+            /* 切到效果页：repaint 异步投递，本帧只切页，隔两帧再截图。 */
+            if (demo->m_extPages[3]) {
+                demo_switchPage(demo, 8);
+                demo->m_staticSceneDirty = true;
+                demo_repaint(demo);
+            }
+#endif
+        }
+        else if (demo->m_autoTestFrames >= 7) {
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+            /* 效果页留证：启用态效果与无效果基线同屏，供集成阶段像素对照。 */
+            if (demo->m_extPages[3]) {
+                XImage* fxDevice = XWidget_paintImage(&demo->m_base);
+                if (fxDevice &&
+                    XImage_save_2(fxDevice, "/tmp/demo_page8_effects.png",
+                                  "PNG", 95))
+                    XPrintf("XGuiAutoTest: 效果页截图 /tmp/demo_page8_effects.png\n");
+                demo_switchPage(demo, 3);
+            }
+#endif
             demo_stopTimers(demo);
             demo->m_closed = true;
             XGuiApplication_quit();
@@ -1171,14 +1231,18 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[5] = {
+    static const char* const kNames[9] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
         "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA", /* 输入演示 */
-        "\xE9\x80\x89\xE9\xA1\xB9\xE5\x8D\xA1\xE6\xBC\x94\xE7\xA4\xBA"  /* 选项卡演示 */
+        "\xE9\x80\x89\xE9\xA1\xB9\xE5\x8D\xA1\xE6\xBC\x94\xE7\xA4\xBA", /* 选项卡演示 */
+        "\xE6\x9D\xA1\xE7\x9B\xAE\xE8\xA7\x86\xE5\x9B\xBE", /* 条目视图 */
+        "\xE5\xAF\xB9\xE8\xAF\x9D\xE6\xA1\x86",             /* 对话框 */
+        "\xE9\xAB\x98\xE7\xBA\xA7\xE6\x8E\xA7\xE4\xBB\xB6", /* 高级控件 */
+        "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C"  /* 图形效果 */
     };
-    if (index < 0 || index > 4)
+    if (index < 0 || index > 8)
         return kNames[0];
     return kNames[index];
 }
@@ -1273,7 +1337,7 @@ static void demo_switchPage(DemoWin* self, int index)
 {
     if (!self) return;
     if (index < 0) index = 0;
-    if (index > 4) index = 4;
+    if (index > 8) index = 8;
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
     /* XStackedLayout 的 setGeometry 只给当前页面分配几何；切换后必须
        重新分配，否则新页面容器保持 0x0 导致页面内容不可见。 */
@@ -1428,6 +1492,36 @@ static void demo_nav4Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 4);
+}
+/** @brief 页面 6（条目视图）导航按钮 clicked 槽。 */
+static void demo_nav5Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 5);
+}
+/** @brief 页面 7（对话框）导航按钮 clicked 槽。 */
+static void demo_nav6Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 6);
+}
+/** @brief 页面 8（高级控件）导航按钮 clicked 槽。 */
+static void demo_nav7Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 7);
+}
+/** @brief 页面 9（图形效果）导航按钮 clicked 槽。 */
+static void demo_nav8Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 8);
+}
+
+/** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
+static void demo_ext_page_status(void* user, const char* text)
+{
+    demo_set_status((DemoWin*)user, text);
 }
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
 
@@ -1955,28 +2049,51 @@ static DemoWin* DemoWin_create(void)
     XWidget_init(&self->m_pageTabs, &self->m_base, 0);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageTabs);
+    /* ---- 页面 5~8：扩展页注册（xgui_demo_pages.h 契约，堆根随父级联
+     * 析构）；裁剪配置下 build 返回 NULL 则跳过注册。 ---- */
+    {
+        int exti;
+        XWidget* (*const kExtBuilders[4])(XWidget*, DemoPageStatusFn, void*) = {
+            demo_page_views_build, demo_page_dialogs_build,
+            demo_page_advanced_build, demo_page_effects_build
+        };
+        for (exti = 0; exti < 4; ++exti) {
+            self->m_extPages[exti] =
+                kExtBuilders[exti]((XWidget*)&self->m_base,
+                                   demo_ext_page_status, self);
+            if (self->m_extPages[exti])
+                XStackedLayout_addWidget(&self->m_stackLayout,
+                                         self->m_extPages[exti]);
+        }
+    }
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 页面切换导航按钮（标题栏下方一行）。 */
     {
-        static const char* const kNavTexts[5] = {
+        static const char* const kNavTexts[9] = {
             "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
             "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
             "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
             "\xE8\xBE\x93\xE5\x85\xA5\xE6\xBC\x94\xE7\xA4\xBA", /* 输入演示 */
-            "\xE9\x80\x89\xE9\xA1\xB9\xE5\x8D\xA1\xE6\xBC\x94\xE7\xA4\xBA"  /* 选项卡演示 */
+            "\xE9\x80\x89\xE9\xA1\xB9\xE5\x8D\xA1\xE6\xBC\x94\xE7\xA4\xBA", /* 选项卡演示 */
+            "\xE6\x9D\xA1\xE7\x9B\xAE\xE8\xA7\x86\xE5\x9B\xBE", /* 条目视图 */
+            "\xE5\xAF\xB9\xE8\xAF\x9D\xE6\xA1\x86",             /* 对话框 */
+            "\xE9\xAB\x98\xE7\xBA\xA7\xE6\x8E\xA7\xE4\xBB\xB6", /* 高级控件 */
+            "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C"  /* 图形效果 */
         };
-        static void (*const kNavSlots[5])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[9])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
-            demo_nav4Slot
+            demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
+            demo_nav8Slot
         };
         int nav;
-        for (nav = 0; nav < 5; ++nav) {
+        for (nav = 0; nav < 9; ++nav) {
             XPushButton* button = &self->m_pageNav[nav];
             XPushButton_init(button, &self->m_base, 0);
             demo_set_widget_default_font((XWidget*)button);
             XPushButton_setText_2(button, kNavTexts[nav]);
-            XWidget_setGeometry((XWidget*)button, 12 + nav * 104, 44, 96, 26);
+            /* 9 个按钮收窄到 84px/步距 86，单行排入 800 宽窗口。 */
+            XWidget_setGeometry((XWidget*)button, 12 + nav * 86, 44, 84, 26);
             XObject_connect_1((XObject*)button,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)self, kNavSlots[nav],
@@ -2685,6 +2802,7 @@ int main(int argc, char* argv[])
     bool benchmarkResize;
     bool benchmarkMaximized;
     const char* screenshotPath;
+    const char* styleOpt;
     int screenshotPage;
     int screenshotTab;
     bool autoTest;
@@ -2693,15 +2811,10 @@ int main(int argc, char* argv[])
 
     autoSeconds = 0;
     benchmarkSeconds = 0;
-#if XSTYLE_ON
-    XFusionStyle_installDefault();
-    XStyle_installStyleSheet(
-        "XPushButton:hover { background-color: #3D8BFD; }\n"
-        "XLineEdit { background-color: #FFFFE0; }\n");
-#endif
     benchmarkResize = false;
     benchmarkMaximized = false;
     screenshotPath = NULL;
+    styleOpt = NULL;
     autoTest = false;
     screenshotPage = 0;
     screenshotTab = -1;
@@ -2731,6 +2844,11 @@ int main(int argc, char* argv[])
         else if (strcmp(argv[argi], "--tab") == 0) {
             screenshotTab = atoi(argv[++argi]);
         }
+        else if (strncmp(argv[argi], "--style=", 8) == 0) {
+            /* 样式矩阵开关：common=框架默认样式（无 CSS 覆盖）/
+             * fusion=仅 Fusion / fusion-css=Fusion+样式表（缺省，历史口径）。 */
+            styleOpt = argv[argi] + 8;
+        }
         else if (strcmp(argv[argi], "--autotest") == 0) {
             autoTest = true;
         }
@@ -2740,6 +2858,21 @@ int main(int argc, char* argv[])
     }
     if (autoSeconds < 0) autoSeconds = 0;
     if (benchmarkSeconds < 0) benchmarkSeconds = 0;
+
+#if XSTYLE_ON
+    /* 样式矩阵开关：fusion-css=Fusion+样式表（缺省，历史口径）/ fusion=仅
+     * Fusion / common=框架默认样式。须在参数解析后执行（读 styleOpt）。 */
+    if (!styleOpt || strcmp(styleOpt, "fusion-css") == 0) {
+        XFusionStyle_installDefault();
+        XStyle_installStyleSheet(
+            "XPushButton:hover { background-color: #3D8BFD; }\n"
+            "XLineEdit { background-color: #FFFFE0; }\n");
+    }
+    else if (strcmp(styleOpt, "fusion") == 0) {
+        XFusionStyle_installDefault();
+    }
+    /* common：保持框架默认样式，供样式矩阵对照。 */
+#endif
 
     /* 1) 初始化 XGuiApplication（进程内单例）。 */
     app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
@@ -2773,6 +2906,12 @@ int main(int argc, char* argv[])
         XWidget_setWindowTitle(&win->m_base, title);
         XString_delete_base((XClass*)title);
     }
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    if (win->m_extPages[0] || win->m_extPages[1] ||
+        win->m_extPages[2] || win->m_extPages[3])
+        XWidget_setGeometry(&win->m_base, 40, 40, 800, 600); /* 9 页导航与扩展页 760x480 内容需要 */
+    else
+#endif
     XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_layout_chrome(win);
@@ -2884,7 +3023,7 @@ int main(int argc, char* argv[])
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     {
         int nav;
-        for (nav = 0; nav < 3; ++nav)
+        for (nav = 0; nav < 9; ++nav)
             XPushButton_deinit_base(&win->m_pageNav[nav]);
     }
 #endif
