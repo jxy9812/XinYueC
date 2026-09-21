@@ -73,7 +73,8 @@ typedef struct XDateTimeEdit
     XDateTime m_maximum;       /**< 最大值。 */
     XString* m_displayFormat;  /**< 显示格式串（对象拥有）。 */
     int m_currentSection;      /**< 当前编辑分段。 */
-    bool m_calendarPopup;      /**< 日历弹出（默认 true）。 */
+    bool m_calendarPopup;      /**< 日历弹出（默认 false，对标
+                                    QDateTimeEdit::calendarPopup）。 */
     int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime）。 */
 #if XCALENDARWIDGET_ON
     XCalendarWidget* m_calendar; /**< 内置日历（懒创建；对象拥有，

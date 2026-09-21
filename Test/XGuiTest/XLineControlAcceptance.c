@@ -196,6 +196,9 @@ static void ac_ime(const char* commit, const char* preedit, int cursor)
     XString* p = preedit ? XString_create_utf8(preedit) : NULL;
     XInputMethodEvent_init(&ime, p, c, 0, 0, cursor, -1);
     XLineControl_processInputMethodEvent(&ac_ctl, &ime);
+    /* init 深拷贝了预编辑/提交串（事件拥有），处理后必须 deinit，
+       否则每条 IME 事件泄漏两份 XString。 */
+    XInputMethodEvent_deinit_base(&ime);
     if (c) XString_delete_base((XClass*)c);
     if (p) XString_delete_base((XClass*)p);
 }
@@ -969,6 +972,9 @@ static bool ac_fixupClamp999(void* validator, char** text, void* userData)
 bool XLineControlAcceptance_runAll(void)
 {
     XLineControl_init(&ac_ctl, "");
+    /* 纳入存活跟踪：否则首个 ac_open 会 init-over-init 覆盖指针，
+       首个控制器内部缓冲脱管泄漏（ASan 基线扫查发现）。 */
+    ac_ctlAlive = true;
     ac_groupA();
     ac_groupB();
     ac_groupC();

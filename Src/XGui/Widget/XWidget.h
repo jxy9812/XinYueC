@@ -126,6 +126,9 @@ typedef struct XWidgetWindow XWidgetWindow;
 typedef struct XAction XAction;
 /** @brief XStyle 前向声明（style/setStyle 借用指针；完整定义见 XStyle.h）。 */
 typedef struct XStyle XStyle;
+/** @brief 保留层 LRU 登记节点前向声明（setContentRetained 登记表；
+ *  完整定义为 XWidget.c 私有实现细节，仅以指针形式在 XWidget 中持有）。 */
+typedef struct XWidgetRetainedNode XWidgetRetainedNode;
 /** @brief XScreen 前向声明（screen/setScreen 借用指针；完整定义见
  *  XScreen.h，避免 XWidget 头文件拉入 XImage/XPixmap 依赖链）。 */
 typedef struct XScreen XScreen;
@@ -607,6 +610,18 @@ typedef struct XWidget
                                                 *   setGraphicsEffect 时旧效果
                                                 *   释放，控件销毁一并释放；
                                                 *   渲染应用为后续扩展）。 */
+    XImage*                 m_retainedCache;   /**< 静态内容保留层离屏缓存
+                                                 *   （拥有；ARGB32_Premultiplied，
+                                                 *   含自身+可见子树渲染输出；
+                                                 *   NULL=未建立）。 */
+    struct XWidgetRetainedNode* m_retainedNode; /**< 保留层 LRU 登记节点
+                                                 *   （拥有；NULL=未登记）。 */
+    uint64_t                m_retainedStamp;   /**< 保留层最近访问时间戳
+                                                 *   （LRU 淘汰序）。 */
+    bool                    m_retainedEnabled; /**< 保留层开关（显式选择加入，
+                                                 *   默认 false=零回归）。 */
+    bool                    m_retainedValid;   /**< 保留层缓存内容有效
+                                                 *   （失效后待重渲染更新）。 */
 } XWidget;
 
 /* ==================== 类与实例生命周期 ==================== */
@@ -1857,11 +1872,6 @@ void XWidget_setLayout(XWidget* self, XLayout* layout);
 
 /* ==================== 图形效果（对标 QWidget::graphicsEffect） ==================== */
 
-/**
- * @brief      获取控件当前的图形效果（对标 QWidget::graphicsEffect）。
- * @param      self 目标控件；可为 NULL。
- * @return     效果借用指针；未设置或无效返回 NULL。
- */
 XGraphicsEffect* XWidget_graphicsEffect(const XWidget* self);
 /**
  * @brief      设置控件图形效果（对标 QWidget::setGraphicsEffect）。
@@ -1873,6 +1883,52 @@ XGraphicsEffect* XWidget_graphicsEffect(const XWidget* self);
  * @return     无返回值。
  */
 void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect);
+
+/* ==================== 静态内容保留层（对标 LVGL 静态内容缓存思想） ==================== */
+
+/**
+ * @brief      使全部保留层缓存失效（应用级批量场景：调色板广播等）。
+ * @note       沿保留层链表逐个 XWidget_update，缓存经 addDirtyRegion
+ *             链式失效并在下次绘制重渲染。
+ */
+void XWidget_invalidateAllRetainedLayers(void);
+
+/**
+ * @brief      显式开启/关闭控件的静态内容保留层（默认关闭，零回归）。
+ * @details    开启后，控件的渲染输出（自身+可见子树）保留在离屏缓存
+ *             （ARGB32_Premultiplied）中；每帧 paintTree 到达该控件且脏区
+ *             与控件相交时，直接从缓存 blit（含子树）并跳过 paintEvent
+ *             派发。控件收到 update()/几何/字体/可见性/启用/调色板变化，
+ *             或子控件 update 向上冒泡时，缓存失效，下次绘制重渲染并
+ *             更新缓存。约束：
+ *             - 字节预算 XGUI_RETAINED_LAYER_BUDGET_BYTES（默认 2MB）：
+ *               超预算按 LRU（最近访问时间戳）淘汰最久未用的保留层；
+ *               被淘汰控件退回常规绘制，如需保留须重新开启；
+ *             - 缓存分配失败时该控件退回常规绘制（不阻塞）；
+ *             - 与图形效果互斥：已开保留层的控件 setGraphicsEffect 非
+ *               NULL 时放弃保留（效果优先，见 XWidget.c 实现）；
+ *             - render/grab 离屏重定向期间不参与（快照恒实时渲染）。
+ * @param      self 目标控件；可为 NULL。
+ * @param      on true=开启保留层；false=关闭并释放缓存。
+ * @return     调用后的实际开关状态（预算为 0 时开启请求立即退回 false）。
+ */
+bool XWidget_setContentRetained(XWidget* self, bool on);
+
+/**
+ * @brief      查询控件保留层的当前开关状态。
+ * @param      self 目标控件；可为 NULL。
+ * @return     开启且未被 LRU 淘汰返回 true；否则 false。
+ */
+bool XWidget_contentRetained(const XWidget* self);
+
+/**
+ * @brief      保留层全局统计：当前缓存字节总量与登记控件数。
+ * @details    供性能面板/探针观测预算占用；usedBytes 含有效与已失效但
+ *             尚未释放的缓存图像。
+ * @param      usedBytes 输出当前缓存字节总量；可为 NULL（不取）。
+ * @param      count 输出当前登记（开启中）的保留层控件数；可为 NULL。
+ */
+void XWidget_retainedLayerStats(size_t* usedBytes, int* count);
 
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */
 

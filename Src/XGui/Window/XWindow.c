@@ -53,6 +53,9 @@
 #if XPLATFORMWINDOW_ON
 #include "XPlatformWindow.h"
 #endif /* XPLATFORMWINDOW_ON */
+#if XCURSOR_ON
+#include "XCursor.h"
+#endif /* XCURSOR_ON */
 
 #if XWINDOW_ON
 
@@ -1245,6 +1248,25 @@ void XWindow_setWindowStates(XWindow* self, XWindowStates states)
     XWindow_updateVisibility(self);
 }
 
+void XWindow_reportWindowStateChanged(XWindow* self, XWindowState state)
+{
+    XWindowPrivate* data;
+    XWindowState before;
+    XWindowState after;
+    if (!self || !(data = self->m_data)) return;
+    /* 平台上报路径：与 setWindowStates 相同的「持久化 + 信号 + 可见性」
+       三步，但**不**调用 XPlatformNativeWindow_setWindowState——平台是
+       本状态的事实来源（WM 实测结果），回写会形成注入回环。 */
+    before = XWindow_effectiveState(data);
+    data->m_windowStates = (XWindowStates)state;
+    after = XWindow_effectiveState(data);
+    if (after != before)
+        XWindow_windowStateChanged_signal(self, after);
+    /* 最小化上报同样要联动可见性枚举（Minimized→Minimized 可见性），
+       与 setWindowStates 末尾的 updateVisibility 保持一致。 */
+    XWindow_updateVisibility(self);
+}
+
 /* ==================== 瞬态父窗口 ==================== */
 
 void XWindow_setTransientParent(XWindow* self, XWindow* parent)
@@ -1794,10 +1816,40 @@ XCursor* XWindow_cursor(const XWindow* self)
 }
 
 void XWindow_setCursor(XWindow* self, const XCursor* cursor)
-{ if (self && self->m_data) XWindow_setCursorInternal(&self->m_data->m_cursor, cursor); }
+{
+    XWindowPrivate* data;
+    if (!self || !(data = self->m_data)) return;
+    /* 存储语义不变：深拷贝落位（批次二十四前的既有行为）。 */
+    XWindow_setCursorInternal(&data->m_cursor, cursor);
+#if XPLATFORMNATIVEWINDOW_ON
+    /* 窗口级光标平台生效路径（复用批次二十四 XCursor 平台后端钩子，
+       与 XWidget_setCursor 同一条 XDefineCursor 通道，不另设第二套）：
+       仅在原生窗口已创建时应用——直接用私有 m_winId 而非
+       XWindow_winId()，后者在未创建时会惰性建窗产生副作用。后端未
+       注册 / 窗口未映射时静默失败，存储已完成（对标 Qt 平台插件
+       不可用时光标仅存储）。非 NULL 光标走 apply；NULL 与 unsetCursor
+       同义，走 clear 通道恢复默认。 */
+    if (data->m_created && data->m_winId != 0) {
+        if (data->m_cursor)
+            (void)XCursor_applyToWindow((uintptr_t)data->m_winId,
+                                        data->m_cursor);
+        else
+            (void)XCursor_clearForWindow((uintptr_t)data->m_winId);
+    }
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+}
 
 void XWindow_unsetCursor(XWindow* self)
-{ if (self && self->m_data) XWindow_setCursorInternal(&self->m_data->m_cursor, NULL); }
+{
+    XWindowPrivate* data;
+    if (!self || !(data = self->m_data)) return;
+    XWindow_setCursorInternal(&data->m_cursor, NULL);
+#if XPLATFORMNATIVEWINDOW_ON
+    /* 平台清除路径：XUndefineCursor 恢复窗口默认光标（静默语义同上）。 */
+    if (data->m_created && data->m_winId != 0)
+        (void)XCursor_clearForWindow((uintptr_t)data->m_winId);
+#endif /* XPLATFORMNATIVEWINDOW_ON */
+}
 #else
 XCursor* XWindow_cursor(const XWindow* self)
 {

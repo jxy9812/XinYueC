@@ -15,7 +15,8 @@
  *             editingFinished）：可编辑文本在 Enter（returnPressed）
  *             与失焦（editingFinished）结算 insertPolicy；NoInsert 不
  *             插入；duplicates 关闭且文本已存在仅置当前项；
- *             InsertAtCurrent 以编辑文本替换当前项文本；Enter 结算
+ *             InsertAtCurrent 以编辑文本替换当前项文本（无当前项时
+ *             AtCurrent/After/Before 不动作，对标 Qt）；Enter 结算
  *             后发射 activated/textActivated。
  *             信号语义对标 Qt：activated 在用户选择时发射；
  *             currentIndexChanged/currentTextChanged 在当前项变化时
@@ -29,6 +30,7 @@
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
 
 #include "XComboBox.h"
+#include "XCompleter.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XString.h"
@@ -312,7 +314,8 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     self->m_sizeAdjustPolicy = other->m_sizeAdjustPolicy;
     self->m_minimumContentsLength = other->m_minimumContentsLength;
     self->m_frame = other->m_frame;
-    if (self->m_placeholderText) XString_delete_base(self->m_placeholderText);
+    if (self->m_placeholderText)
+        XString_delete_base((XClass*)self->m_placeholderText);
     self->m_placeholderText = other->m_placeholderText;
     other->m_placeholderText = XString_create();
     other->m_maxCount = 2147483647;
@@ -366,7 +369,7 @@ static void VXComboBox_deinit(XComboBox* self)
     /* 先解除弹窗模态抓取（内部引用弹窗指针，须先于删除视图执行）。 */
     xcombo_releaseGrab(self);
     if (self->m_placeholderText) {
-        XString_delete_base(self->m_placeholderText);
+        XString_delete_base((XClass*)self->m_placeholderText);
         self->m_placeholderText = NULL;
     }
     if (self->m_popupView) {
@@ -378,11 +381,11 @@ static void VXComboBox_deinit(XComboBox* self)
         self->m_model = NULL;
     }
     for (i = 0; i < self->m_itemCount; ++i) {
-        if (self->m_items[i]) XString_delete_base(self->m_items[i]);
+        if (self->m_items[i]) XString_delete_base((XClass*)self->m_items[i]);
         if (self->m_itemData && self->m_itemData[i])
-            XString_delete_base(self->m_itemData[i]);
+            XString_delete_base((XClass*)self->m_itemData[i]);
         if (self->m_itemIcons && self->m_itemIcons[i])
-            XString_delete_base(self->m_itemIcons[i]);
+            XString_delete_base((XClass*)self->m_itemIcons[i]);
         self->m_items[i] = NULL;
     }
     if (self->m_items) {
@@ -639,18 +642,23 @@ static bool xcombo_equalsInsensitiveUtf8(const char* a, const char* b)
 }
 
 /** @brief 大小写不敏感比较 a < b（对标 InsertAlphabetically 的
- *  text.toLower() < itemText(i).toLower()）。 */
+ *  text.toLower() < itemText(i).toLower()）。
+ * @note  Qt 侧 toLower() 比较是 UTF-16 码点序：ASCII 折叠大小写后按
+ *  码点比；非 ASCII（如中文）无大小写，按码点比。UTF-8 的自同步编码
+ *  保证无符号字节序 == 码点序，故非 ASCII 字节须以 unsigned char 比较
+ *  （原实现按有符号 char，>=0x80 字节为负，中文恒排 ASCII 之前，且
+ *  前缀分支返回值颠倒——"ab" vs "abc" 误判 a 不小于 b，顺序错插）。 */
 static bool xcombo_lessInsensitiveUtf8(const char* a, const char* b)
 {
     if (!a || !b) return false;
     while (*a && *b) {
-        char la = xcombo_asciiLower(*a);
-        char lb = xcombo_asciiLower(*b);
+        unsigned char la = (unsigned char)xcombo_asciiLower(*a);
+        unsigned char lb = (unsigned char)xcombo_asciiLower(*b);
         if (la != lb) return la < lb;
         ++a;
         ++b;
     }
-    return *a != '\0'; /* 前缀相等时较短者较小；全等返回 false。 */
+    return *b != '\0'; /* a 为 b 真前缀时 a < b；全等返回 false。 */
 }
 
 /** @brief 编辑结束查找：补全开启时大小写不敏感（对标 Qt matchFlags
@@ -685,8 +693,9 @@ static void xcombo_emitActivatedPair(XComboBox* self, int index)
  *                      false=失焦结算（仅插入/置当前项，不发射激活）。
  * @note  对标 Qt：NoInsert 直接返回；空文本返回；项数达 maxCount 且非
  *        InsertAtCurrent 返回；duplicates 关闭且文本已存在仅置当前项；
- *        InsertAtCurrent 为替换当前项文本（不插入）；列表空/无当前项
- *        时 After/Before/AtCurrent 一律退化为插入到 0 处。
+ *        InsertAtCurrent 为替换当前项文本（不插入）；AtCurrent/
+ *        AfterCurrent/BeforeCurrent 在列表空/无当前项时不动作
+ *        （对标 QComboBoxPrivate::_q_returnPressed 的无效当前项 return）。
  */
 static void xcombo_insertByPolicy(XComboBox* self, bool userActivated)
 {
@@ -723,10 +732,13 @@ static void xcombo_insertByPolicy(XComboBox* self, bool userActivated)
     case XComboBoxInsertPolicy_InsertAtCurrent:
     case XComboBoxInsertPolicy_InsertAfterCurrent:
     case XComboBoxInsertPolicy_InsertBeforeCurrent:
+        /* 对标 Qt 6.8 QComboBoxPrivate::_q_returnPressed：AtCurrent/
+           AfterCurrent/BeforeCurrent 在 currentIndex 无效（列表空/无
+           当前项）时直接 return 不动作，不退化为插入到 0。 */
         if (self->m_itemCount == 0 || self->m_currentIndex < 0 ||
             self->m_currentIndex >= self->m_itemCount)
-            index = 0;
-        else if (policy == XComboBoxInsertPolicy_InsertAtCurrent) {
+            return;
+        if (policy == XComboBoxInsertPolicy_InsertAtCurrent) {
             /* 替换当前项文本即完成（Qt：不再插入、不发射激活）。 */
             XComboBox_setItemText_2(self, self->m_currentIndex, text);
             return;
@@ -1274,7 +1286,7 @@ XListView* XComboBox_view(XComboBox* self)
             /* 行激活（单击）联动选择并收起弹窗。 */
             XObject_connect_1((XObject*)self->m_popupView,
                 (size_t)XAbstractItemView_activated_signal(
-                    self->m_popupView, 0, 0),
+                    (XAbstractItemView*)self->m_popupView, 0, 0),
                 (XObject*)self, xcombo_viewActivatedSlot,
                 XConnectionType_Direct);
         }
@@ -1364,7 +1376,7 @@ XString* XComboBox_inputMethodQuery(XComboBox* self, int query)
         XString* cur = XComboBox_currentText(self);
         if (cur) {
             XString_assign(out, cur);
-            XString_delete_base(cur);
+            XString_delete_base((XClass*)cur);
         }
     }
     return out;
@@ -1374,8 +1386,33 @@ int XComboBox_currentIndex(const XComboBox* self)
 {
     return self ? self->m_currentIndex : -1;
 }
+/** @brief 可编辑模式下取行编辑显示值作为 currentText 来源（分叉态）。
+ * @note  对标 Qt 6.8 文档 currentText 语义：editable 时 "current text
+ *  is the value displayed by the line edit"。本封装只在编辑框文本与
+ *  当前项文本分叉（用户正在编辑/程序化 setEditText 且未命中项）时
+ *  返回编辑框文本；两者同步（采纳回填/程序化置当前项后一致）时返回
+ *  NULL 走当前项文本路径，保证 _2 版本借用指针口径稳定。不可编辑或
+ *  无编辑框恒返回 NULL。 */
+static const char* xcombo_editTextSource(const XComboBox* self)
+{
+    const char* edit;
+    if (!self || !self->m_editable || !self->m_lineEdit) return NULL;
+    edit = XLineEdit_text(self->m_lineEdit);
+    if (!edit) return NULL;
+    if (self->m_currentIndex >= 0 &&
+        self->m_currentIndex < self->m_itemCount &&
+        self->m_items[self->m_currentIndex]) {
+        const char* item = XString_toUtf8(self->m_items[self->m_currentIndex]);
+        if (item && XStrcmp(item, edit) == 0)
+            return NULL; /* 同步态：编辑框显示的就是当前项文本。 */
+    }
+    return edit;
+}
+
 XString* XComboBox_currentText(const XComboBox* self)
 {
+    const char* edit = xcombo_editTextSource(self);
+    if (edit) return XString_create_utf8(edit);
     if (self && self->m_currentIndex >= 0 &&
         self->m_currentIndex < self->m_itemCount && self->m_items[self->m_currentIndex])
         return XString_create_copy(self->m_items[self->m_currentIndex]);
@@ -1383,6 +1420,8 @@ XString* XComboBox_currentText(const XComboBox* self)
 }
 const char* XComboBox_currentText_2(const XComboBox* self)
 {
+    const char* edit = xcombo_editTextSource(self);
+    if (edit) return edit;
     if (self && self->m_currentIndex >= 0 &&
         self->m_currentIndex < self->m_itemCount && self->m_items[self->m_currentIndex])
         return XString_toUtf8(self->m_items[self->m_currentIndex]);
@@ -1526,16 +1565,16 @@ void XComboBox_insertItem_2(XComboBox* self, int index, const char* text)
 {
     XString_Init_Utf8(tmp, text ? text : "");
     XComboBox_insertItem(self, index, tmp);
-    XString_deinit_base(tmp);
+    XString_deinit_base((XClass*)tmp);
 }
 
 void XComboBox_insertItems(XComboBox* self, int index, const XStringList* texts)
 {
     int i, n;
     if (!self || !texts) return;
-    n = (int)XVector_size_base((const XVector*)texts);
+    n = (int)XVector_size_base((const XContainer*)texts);
     for (i = 0; i < n; ++i) {
-        XString* s = *(XString**)XStringList_at_base(texts, i);
+        XString* s = *(XString**)XStringList_at_base((const XVector*)texts, i);
         XComboBox_insertItem(self, index, s);
         if (index >= 0) ++index;
     }
@@ -1584,18 +1623,18 @@ void XComboBox_removeItem(XComboBox* self, int index)
              sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     if (self->m_itemData) {
         if (self->m_itemData[index])
-            XString_delete_base(self->m_itemData[index]);
+            XString_delete_base((XClass*)self->m_itemData[index]);
         XMemmove(&self->m_itemData[index], &self->m_itemData[index + 1],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     }
     if (self->m_itemIcons) {
         if (self->m_itemIcons[index])
-            XString_delete_base(self->m_itemIcons[index]);
+            XString_delete_base((XClass*)self->m_itemIcons[index]);
         XMemmove(&self->m_itemIcons[index], &self->m_itemIcons[index + 1],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     }
     --self->m_itemCount;
-    XString_delete_base(removed);
+    XString_delete_base((XClass*)removed);
     if (self->m_currentIndex >= self->m_itemCount)
         self->m_currentIndex = self->m_itemCount - 1;
     XWidget_update((XWidget*)self);
@@ -1619,13 +1658,13 @@ void XComboBox_clear(XComboBox* self)
     int i;
     if (!self) return;
     for (i = 0; i < self->m_itemCount; ++i) {
-        if (self->m_items[i]) XString_delete_base(self->m_items[i]);
+        if (self->m_items[i]) XString_delete_base((XClass*)self->m_items[i]);
         if (self->m_itemData && self->m_itemData[i]) {
-            XString_delete_base(self->m_itemData[i]);
+            XString_delete_base((XClass*)self->m_itemData[i]);
             self->m_itemData[i] = NULL;
         }
         if (self->m_itemIcons && self->m_itemIcons[i]) {
-            XString_delete_base(self->m_itemIcons[i]);
+            XString_delete_base((XClass*)self->m_itemIcons[i]);
             self->m_itemIcons[i] = NULL;
         }
     }
@@ -1922,7 +1961,7 @@ void XComboBox_setItemIcon(XComboBox* self, int index, const XString* path)
     repl = path ? XString_create_copy(path) : NULL;
     if (path && !repl) return;
     if (self->m_itemIcons[index])
-        XString_delete_base(self->m_itemIcons[index]);
+        XString_delete_base((XClass*)self->m_itemIcons[index]);
     self->m_itemIcons[index] = repl;
     XWidget_update((XWidget*)self);
 }
@@ -1934,7 +1973,7 @@ void XComboBox_setItemIcon_2(XComboBox* self, int index, const char* path)
         if (!tmp) return;
     }
     XComboBox_setItemIcon(self, index, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XString_delete_base((XClass*)tmp);
 }
 const XString* XComboBox_itemIcon(const XComboBox* self, int index)
 {
@@ -1960,7 +1999,7 @@ void XComboBox_setItemData(XComboBox* self, int index, const XString* data)
     repl = data ? XString_create_copy(data) : NULL;
     if (data && !repl) return;
     if (self->m_itemData[index])
-        XString_delete_base(self->m_itemData[index]);
+        XString_delete_base((XClass*)self->m_itemData[index]);
     self->m_itemData[index] = repl;
 }
 void XComboBox_setItemData_2(XComboBox* self, int index, const char* data)
@@ -1971,7 +2010,7 @@ void XComboBox_setItemData_2(XComboBox* self, int index, const char* data)
         if (!tmp) return;
     }
     XComboBox_setItemData(self, index, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XString_delete_base((XClass*)tmp);
 }
 const XString* XComboBox_itemData(const XComboBox* self, int index)
 {
@@ -2011,12 +2050,39 @@ int XComboBox_findData_2(const XComboBox* self, const char* data)
     tmp = XString_create_utf8(data);
     if (!tmp) return -1;
     out = XComboBox_findData(self, tmp);
-    XString_delete_base(tmp);
+    XString_delete_base((XClass*)tmp);
     return out;
 }
 
 void XComboBox_setCompleter(XComboBox* self, XCompleter* completer)
-{ if (self) self->m_completer = completer; }
+{
+    XCompleter* old;
+    if (!self || self->m_completer == completer) return;
+    old = self->m_completer;
+    self->m_completer = completer;
+#if XTABLEWIDGET_ON
+    /* 对标 QComboBox::setCompleter 的安装接通语义（降级承载）：
+       - 借用安装，不取得所有权（Qt 同）；
+       - 补全器无模型时接通组合框条目模型（Qt：!completer->model() 时
+         completer->setModel(d->model)）；
+       - 记录关联控件，安装非空补全器即驱动内置补全过滤路径
+         （m_completerMode 置位，语义对标"安装补全器后行编辑获得
+         popup 补全"；XGui 无 QCompleter 弹出栈，内置 completerMode
+         前缀过滤弹层为既定降级承载，取舍见头文件注记）；
+       - setCompleter(NULL) 仅解除指针，不动 completerMode 开关（保留
+         显式 setCompleterMode 的用户意图）；
+       - 替换/解除时原补全器仍回指本组合框则清其关联位（对标
+         XLineEdit_setCompleter 的借用卫生，防悬挂）。 */
+    if (completer) {
+        if (!XCompleter_model(completer))
+            XCompleter_setModel(completer, XComboBox_model(self));
+        XCompleter_setWidget(completer, (XWidget*)self);
+        self->m_completerMode = true;
+    }
+    if (old && XCompleter_widget(old) == (XWidget*)self)
+        XCompleter_setWidget(old, NULL);
+#endif /* XTABLEWIDGET_ON */
+}
 XCompleter* XComboBox_completer(const XComboBox* self)
 { return self ? self->m_completer : NULL; }
 

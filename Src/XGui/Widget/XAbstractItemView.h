@@ -92,8 +92,49 @@ typedef enum XAbstractItemViewTextElideMode
     XAbstractItemViewTextElideMode_ElideNone = 3    /**< 不省略。 */
 } XAbstractItemViewTextElideMode;
 
+/**
+ * @brief      条目数据角色（对标 Qt 6.8 Qt::ItemDataRole，数值一致；
+ *             另见 XPlatform/XSql/XSqlGlobal.h 的 XSqlItemDataRole 先例）。
+ *
+ * @note       本库 QModelIndex 以 (row,column) 平面承载且
+ *             XAbstractItemModel 的 data/setData 通路无 role 参数，仅承载
+ *             文本；role 维度由视图基类扩展提供（见
+ *             XAbstractItemView_itemText 族）：DisplayRole/EditRole 转发
+ *             模型文本通路，其余 role 由视图侧叠加存储承载。
+ */
+typedef enum XItemDataRole
+{
+    XItemDataRole_DisplayRole = 0,       /**< 显示文本（对标 Qt::DisplayRole）。 */
+    XItemDataRole_DecorationRole = 1,    /**< 装饰（图标）承载（对标 DecorationRole）。 */
+    XItemDataRole_EditRole = 2,          /**< 编辑器初值（对标 EditRole）。 */
+    XItemDataRole_FontRole = 6,          /**< 字体（对标 FontRole）。 */
+    XItemDataRole_TextAlignmentRole = 7, /**< 文本对齐（对标 TextAlignmentRole）。 */
+    XItemDataRole_CheckStateRole = 10,   /**< 复选状态（对标 CheckStateRole）。 */
+    XItemDataRole_UserRole = 256         /**< 用户自定义角色起点（对标 UserRole）。 */
+} XItemDataRole;
+
+/**
+ * @brief      条目复选状态（对标 Qt 6.8 Qt::CheckState，数值一致）。
+ */
+typedef enum XItemCheckState
+{
+    XItemCheckState_Unchecked = 0,        /**< 未选中（对标 Qt::Unchecked）。 */
+    XItemCheckState_PartiallyChecked = 1, /**< 半选中（对标 Qt::PartiallyChecked）。 */
+    XItemCheckState_Checked = 2           /**< 选中（对标 Qt::Checked）。 */
+} XItemCheckState;
+
+/** @brief 条目委托前向声明（完整定义见 XItemDelegate.h；视图字段借用承载）。 */
+typedef struct XItemDelegate XItemDelegate;
+/** @brief 字体前向声明（完整定义见 XFont.h；role 承载为借用指针）。 */
+typedef struct XFont XFont;
+
+/** @brief 键盘搜索累积前缀容量（字节，含结尾 NUL；对标 Qt
+ *         keyboardSearch 前缀缓冲的每视图成员承载）。 */
+#define XABSTRACTITEMVIEW_SEARCH_CAPACITY 64
+
 XCLASS_DEFINE_BEGING(XAbstractItemView)
 XCLASS_DEFINE_ENUM(XAbstractItemView, IndexAt) = XCLASS_VTABLE_GET_SIZE(XAbstractScrollArea),
+XCLASS_DEFINE_ENUM(XAbstractItemView, VisualRect),
 XCLASS_DEFINE_END(XAbstractItemView)
 
 /**
@@ -142,6 +183,22 @@ typedef struct XAbstractItemView
     int m_columnDelegateCount;       /**< 列级委托表已分配容量（0=未分配）。 */
     void** m_rowDelegates;           /**< 行级委托不透明指针表（按行号索引；按需扩容；NULL=未分配）。 */
     int m_rowDelegateCount;          /**< 行级委托表已分配容量（0=未分配）。 */
+    XWidget* m_editor;               /**< 当前打开的临时编辑器（委托 createEditor 产物；对象拥有；NULL=未在编辑）。 */
+    int m_editRow;                   /**< 编辑中行；-1=无。 */
+    int m_editCol;                   /**< 编辑中列；-1=无。 */
+    bool m_editCommitted;            /**< 本次编辑会话已提交（commitData 幂等门禁；对标 Qt 提交/回退分支判定）。 */
+    bool m_editClosing;              /**< 编辑器关闭流程进行中（抑制编辑器失焦回调重入）。 */
+    bool m_itemsEditable;            /**< 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载；默认 false 保持既有行为）。 */
+    XItemDelegate* m_defaultDelegate; /**< 默认条目委托（对标 Qt 视图缺省 QStyledItemDelegate；对象拥有；懒创建）。 */
+    void* m_roleTable;               /**< role 叠加存储平行表（XItemDataRole 非 text 维度；行主序；按需扩容；NULL=未分配）。 */
+    int m_roleRows;                  /**< role 表已分配行数（0=未分配）。 */
+    int m_roleCols;                  /**< role 表已分配列数（0=未分配）。 */
+    /* 键盘搜索累积状态（每视图实例承载；对标 Qt keyboardSearch 的
+     * 视图私有 m_keyboardSearchPrefix/时间戳——此前为全库共享静态缓冲，
+     * 多视图交替键入时互相污染前缀）。 */
+    char m_searchPrefix[XABSTRACTITEMVIEW_SEARCH_CAPACITY]; /**< 累积前缀（含结尾 NUL；init 零值=空）。 */
+    size_t m_searchPrefixLen;        /**< 前缀长度（不含 NUL；0=无前缀）。 */
+    int64_t m_searchLastMs;          /**< 上次键入时刻（epoch 毫秒；超 XAIV 间隔重置前缀）。 */
 } XAbstractItemView;
 
 XVtable* XAbstractItemView_class_init(void);
@@ -261,19 +318,74 @@ int XAbstractItemView_editTriggers(const XAbstractItemView* self);
  *
  *        语义（对齐 Qt 6.8 edit(index) → edit(index, AllEditTriggers,
  *        nullptr)）：self 为空、(row,column) 无效或编辑触发为
- *        NoEditTriggers 时直接返回 false（判定不通过）；否则进入
- *        编辑器创建阶段。
+ *        NoEditTriggers 时直接返回 false（判定不通过）；随后对标
+ *        model flags ItemIsEditable 的门禁（本库以
+ *        XAbstractItemView_itemsEditable 承载，默认 false）；门禁通过
+ *        后进入委托编辑闭环：解析委托（行级→列级→默认）→ createEditor
+ *        → setEditorData → updateEditorGeometry（按 visualRect 摆放并
+ *        scrollTo 保证可见）→ 显示编辑器并授焦点。同格已在编辑返回
+ *        true（同 Qt）；他格在编辑时先按提交分支关闭旧编辑器（同 Qt
+ *        的单编辑器收敛）。
  *
  * @param self 目标视图指针。
  * @param row 行号（<0 视为无效索引）。
  * @param column 列号（<0 视为无效索引）。
  * @return 编辑会话成功开启返回 true；未开启返回 false。
- *
- * @note 编辑器体系未建：委托的 createEditor/提交回写（commitData、
- *       closeEditor）尚未实现，本句柄完成触发合法性判定后预留返回
- *       false（当前无编辑器可开，同 Qt 无委托时的失败路径）。
  */
 bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column);
+/**
+ * @brief 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载；
+ *        基类扩展：本库模型通路无 flags 查询，以该开关统一门禁）。
+ *
+ *        默认 false（关闭时 edit/全部触发位点判定失败，保持本批之前的
+ *        既有行为）；true 后编辑触发（CurrentChanged/DoubleClicked/
+ *        SelectedClicked/EditKeyPressed/AnyKeyPressed）按 editTriggers
+ *        位组合生效。
+ *
+ * @param self 目标视图指针。
+ * @param editable true 允许进入编辑闭环。
+ * @return 无返回值。
+ */
+void XAbstractItemView_setItemsEditable(XAbstractItemView* self,
+                                        bool editable);
+/** @brief 查询条目可编辑门禁。 @param self 目标视图指针。 @return 开启返回 true。 */
+bool XAbstractItemView_itemsEditable(const XAbstractItemView* self);
+/**
+ * @brief 是否正在编辑（Qt 无同名公开接口；以内部编辑会话状态承载，
+ *        供接入层/测试判定）。
+ * @param self 目标视图指针。
+ * @return 有打开的编辑器返回 true。
+ */
+bool XAbstractItemView_isEditing(const XAbstractItemView* self);
+/**
+ * @brief 提交编辑器数据（对标 commitData(QWidget*) 槽）。
+ *
+ *        语义（对齐 Qt）：编辑器不是当前会话编辑器、无委托或本次会话
+ *        已提交过时为空操作（幂等，对标 Qt 的提交一次性语义）；否则经
+ *        委托 setModelData → 模型 setData 落库（dataChanged 驱动视图
+ *        刷新）。
+ *
+ * @param self 目标视图指针。
+ * @param editor 编辑器控件指针（委托 createEditor 产物）。
+ * @return 无返回值。
+ */
+void XAbstractItemView_commitData(XAbstractItemView* self, XWidget* editor);
+/**
+ * @brief 关闭编辑器（对标 closeEditor(QWidget*, EndEditHint) 槽）。
+ *
+ *        两分支（对齐 Qt）：hint != RevertModelCache 为提交分支（尚未
+ *        提交时先走 commitData 同款提交通路再关闭）；hint ==
+ *        RevertModelCache 为放弃分支（不写模型直接关闭）。随后析构编
+ *        辑器并清空会话状态；EditNextItem/EditPreviousItem 提示在关闭
+ *        后移动当前项并按需重开编辑（对标 Qt 的 Tab 编辑链）。
+ *
+ * @param self 目标视图指针。
+ * @param editor 编辑器控件指针；非当前会话编辑器时忽略。
+ * @param hint XItemDelegateEndEditHint 枚举（见 XItemDelegate.h）。
+ * @return 无返回值。
+ */
+void XAbstractItemView_closeEditor(XAbstractItemView* self, XWidget* editor,
+                                   int hint);
 
 /* ==================== 委托（对标 QAbstractItemView） ==================== */
 
@@ -281,11 +393,12 @@ bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column);
  * @brief 设置条目委托（对标 setItemDelegate(QAbstractItemDelegate*)）。
  *
  * @param self 目标视图指针。
- * @param delegate 委托不透明指针（借用；可为 NULL 恢复默认）。
+ * @param delegate 委托不透明指针（XItemDelegate* 或其派生；借用，不
+ *                 析构；可为 NULL 恢复默认委托）。
  * @return 无返回值（变化时请求一次重绘，同 Qt 委托变化后刷新视口）。
  *
- * @note 委托体系未建：仅以 void* 不透明指针承载，不析构、不虚分派，
- *       由后续批次的委托/编辑实现读取生效。
+ * @note 委托以 void* 承载（历史签名），编辑闭环经 XItemDelegate 虚表
+ *       分派使用；传入非委托指针并在开启编辑后使用为未定义行为。
  */
 void XAbstractItemView_setItemDelegate(XAbstractItemView* self,
                                        void* delegate);
@@ -363,6 +476,119 @@ void* XAbstractItemView_itemDelegateForRow(const XAbstractItemView* self,
  */
 void* XAbstractItemView_itemDelegateForIndex(const XAbstractItemView* self,
                                              int row, int col);
+
+/* ==================== role 数据（对标 model data(index, role)/setData(index, role, v)） ==================== */
+
+/**
+ * @brief 读取条目 role 文本（对标 data(index, role) 的文本维度）。
+ *
+ *        role 语义（对齐 Qt 6.8）：DisplayRole/EditRole 返回模型单元格
+ *        文本借用指针（基类平铺模型单文本承载，两 role 同通道，同 Qt
+ *        默认模型的 Display/Edit 同值语义）；其余 role 经本族的非文本
+ *        接口读取（返回空串）。
+ *
+ * @param self 目标视图指针。
+ * @param row 行号（越界返回空串）。
+ * @param col 列号（越界返回空串）。
+ * @param role XItemDataRole 枚举（DisplayRole/EditRole 生效）。
+ * @return 文本借用指针（UTF-8）；self 为空返回空串。
+ */
+const char* XAbstractItemView_itemText(const XAbstractItemView* self,
+                                       int row, int col, int role);
+/**
+ * @brief 写入条目 role 文本（对标 setData(index, value, role)）。
+ *
+ *        role 为 DisplayRole/EditRole 时转发模型 setData 通路（发射
+ *        dataChanged 驱动视图刷新，同 Qt）；其余 role 非文本维度，
+ *        返回 false。
+ *
+ * @param self 目标视图指针。
+ * @param row 行号（越界返回 false）。
+ * @param col 列号（越界返回 false）。
+ * @param role XItemDataRole 枚举（DisplayRole/EditRole 生效）。
+ * @param text 新文本（UTF-8）；NULL 等价清空。
+ * @return 落库成功返回 true。
+ */
+bool XAbstractItemView_setItemText(XAbstractItemView* self, int row, int col,
+                                   int role, const char* text);
+/**
+ * @brief 读取复选状态（对标 data(index, CheckStateRole)）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @return XItemCheckState 值（0..2）；未设置、越界或 self 为空返回 -1
+ *         （Qt 无"未设置"承载，本库以 -1 区分默认未勾选）。
+ */
+int XAbstractItemView_itemCheckState(const XAbstractItemView* self,
+                                     int row, int col);
+/**
+ * @brief 写入复选状态（对标 setData(index, checkState, CheckStateRole)）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @param state XItemCheckState 值（0..2）；<0 清除该格设置。
+ * @return 无返回值（变化时请求一次重绘）。
+ */
+void XAbstractItemView_setItemCheckState(XAbstractItemView* self,
+                                         int row, int col, int state);
+/**
+ * @brief 读取文本对齐（对标 data(index, TextAlignmentRole)）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @return XAlignment 位组合；未设置、越界或 self 为空返回 0。
+ */
+int XAbstractItemView_itemTextAlignment(const XAbstractItemView* self,
+                                        int row, int col);
+/**
+ * @brief 写入文本对齐（对标 setData(index, alignment, TextAlignmentRole)）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @param alignment XAlignment 位组合；0 清除该格设置。
+ * @return 无返回值（变化时请求一次重绘）。
+ */
+void XAbstractItemView_setItemTextAlignment(XAbstractItemView* self,
+                                            int row, int col, int alignment);
+/**
+ * @brief 读取条目字体（对标 data(index, FontRole)）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @return 字体借用指针；未设置、越界或 self 为空返回 NULL。
+ */
+const XFont* XAbstractItemView_itemFont(const XAbstractItemView* self,
+                                        int row, int col);
+/**
+ * @brief 写入条目字体（对标 setData(index, font, FontRole)）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @param font 字体借用指针（不转移所有权，生命周期归调用方）；NULL 清除。
+ * @return 无返回值（变化时请求一次重绘）。
+ */
+void XAbstractItemView_setItemFont(XAbstractItemView* self, int row, int col,
+                                   const XFont* font);
+/**
+ * @brief 读取条目装饰（对标 data(index, DecorationRole)；本库以不透明
+ *        指针承载，通常为 XImage* 图像）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @return 装饰不透明借用指针；未设置、越界或 self 为空返回 NULL。
+ */
+const void* XAbstractItemView_itemDecoration(const XAbstractItemView* self,
+                                             int row, int col);
+/**
+ * @brief 写入条目装饰（对标 setData(index, decoration, DecorationRole)）。
+ * @param self 目标视图指针。
+ * @param row 行号。
+ * @param col 列号。
+ * @param decoration 装饰不透明借用指针（不转移所有权）；NULL 清除。
+ * @return 无返回值（变化时请求一次重绘）。
+ */
+void XAbstractItemView_setItemDecoration(XAbstractItemView* self, int row,
+                                         int col, const void* decoration);
 
 /* ==================== 持久编辑器与条目控件（对标 QAbstractItemView） ==================== */
 
@@ -457,8 +683,9 @@ bool XAbstractItemView_keyboardSearch(const XAbstractItemView* self);
  * @param text 本次键入的文本；NULL 或空串仅重置累积前缀。
  * @return 命中并移动当前索引返回 true；无模型、开关关闭或未命中返回 false。
  *
- * @note 简化：累积前缀存于全库共享的静态缓冲（非每视图状态），容量
- *       64 字节，超出容量的追加字符被丢弃；interval 固定 2000ms
+ * @note 简化：累积前缀为本视图实例状态（m_searchPrefix，对标 Qt 的
+ *       视图私有前缀成员），容量 XABSTRACTITEMVIEW_SEARCH_CAPACITY
+ *       字节，超出容量的追加字符被丢弃；interval 固定 2000ms
  *       （Qt 可经 keyboardInputInterval 配置，本库暂不承载）。
  */
 bool XAbstractItemView_keyboardSearch_2(XAbstractItemView* self,

@@ -2,10 +2,11 @@
  * @file       XTextBrowser.h
  * @brief      XTextBrowser 富文本浏览控件（对标 Qt 6.8 QTextBrowser
  *             核心公共 API）。
- * @details    继承 XPlainTextEdit（对标 QTextBrowser 继承 QTextEdit），
+ * @details    继承 XTextEdit（对标 QTextBrowser 继承 QTextEdit），
  *             默认只读；增加源导航 API（setSource/source/backward/
- *             forward/home/reload）与导航信号。第一版不做 HTML 渲染，
- *             setSource 仅记录 URL 并触发 sourceChanged。
+ *             forward/home/reload）与导航信号。setSource 记录 URL 并
+ *             触发 sourceChanged（无文件加载通道，内容经 setHtml 注入
+ *             ——渲染子集只读富文本预览，含 anchor 点击/悬停信号）。
  *             导航历史以容量上限 50 的环形数组承载，压满后新条目
  *             环形覆盖最老条目（对标浏览器历史上限行为）。
  * @note       模块总开关 XTEXTBROWSER_ON 定义于 XGuiConfig.h。
@@ -74,6 +75,19 @@ void XTextBrowser_setSource(XTextBrowser* self, const char* url);
  * @brief      获取当前浏览源 URL（对标 source）。
  */
 const char* XTextBrowser_source(const XTextBrowser* self);
+
+/**
+ * @brief      设置富文本内容（渲染子集；对标 QTextBrowser::setHtml）。
+ * @details    委托基类 XTextEdit_setHtml：以渲染子集（b/i/u/s、
+ *             font color/size、br、p align、a href，嵌套上限一层）
+ *             解析并进入只读富文本预览；浏览器编辑器恒只读。链接悬停
+ *             高亮/手型光标随预览绘制生效，点击发射 anchorClicked 并按
+ *             openLinks/openExternalLinks 决定导航或外开。
+ * @param      self 目标控件指针；NULL 无操作。
+ * @param      html UTF-8 HTML 文本；NULL 视为空串。
+ * @return     无返回值。
+ */
+void XTextBrowser_setHtml(XTextBrowser* self, const char* html);
 
 /** @brief 浏览源类型（对标 QTextDocument::ResourceType 的简化子集）。 */
 typedef enum XTextBrowserSourceType
@@ -206,13 +220,14 @@ XStringList* XTextBrowser_searchPaths(const XTextBrowser* self);
 XRect XTextBrowser_cursorRect(const XTextBrowser* self);
 /**
  * @brief      返回坐标 pos 处的超链接锚点（对标 QTextBrowser::anchorAt）。
- * @details    委托内嵌编辑器 XPlainTextEdit_anchorAt：当前锚点几何未建
- *             （XTextDocument 尚无锚点/链接块信息），恒返回 0 长度字符
- *             串对象；编辑器日后支持锚点后本函数自动返回锚点文本。
+ * @details    委托 XTextEdit_anchorAt：以富文本文档（XTextDocument 片段
+ *             fmt.anchorHref）为承载、与只读预览绘制路径同一套逐块几何
+ *             命中（块高随字体度量、块宽实测、按对齐定位）；片段无锚点
+ *             或未命中返回 0 长度字符串对象。
  * @note       返回值为堆上新建的 XString*（空串对象或锚点文本），由
  *             调用方以 XString_delete_base 释放；内存分配失败返回 NULL。
  * @param      self 目标控件指针；可为 NULL。
- * @param      pos 控件局部坐标点；可为 NULL，不被使用。
+ * @param      pos 控件局部坐标点；可为 NULL。
  * @return     堆上新建的 XString*；语义见 @note。
  */
 XString* XTextBrowser_anchorAt(const XTextBrowser* self, const XPoint* pos);
@@ -243,24 +258,18 @@ void* XTextBrowser_forwardAvailable_signal(XTextBrowser* self, bool available);
 void* XTextBrowser_historyChanged_signal(XTextBrowser* self);
 
 /** @brief anchorClicked(const char*) 信号（对标 QTextBrowser::anchorClicked；
- *         载荷：链接 URL UTF-8）。真实发射点：内嵌编辑器鼠标按下命中
- *         锚点（事件过滤器 VX_browser_eventFilter）；默认 openLinks
- *         语义下同时以该 URL 触发 setSource 导航，openExternalLinks
- *         开启时改交平台服务按桌面方式打开。
- * @param      self 目标控件指针；可为 NULL。
- * @param      url 链接 URL（UTF-8）；可为 NULL，视为空串。
- * @return     不透明的 anchorClicked 信号标识；返回值不指向可释放对象，
- *             也不得解引用。
- */
+ *         载荷：链接 URL UTF-8）。真实发射点：只读富文本预览态下鼠标
+ *         点击命中锚点（基类 linkActivated → xtb_linkActivatedForward
+ *         转发），默认 openLinks 语义下同时以该 URL 触发 setSource 导航，
+ *         openExternalLinks 开启时改交平台服务按桌面方式打开。 */
 void* XTextBrowser_anchorClicked_signal(XTextBrowser* self, const char* url);
 
 /**
  * @brief      highlighted(const char*) 信号（对标
  *             QTextBrowser::highlighted）。
- * @details    载荷：高亮链接 URL（UTF-8）。真实发射点：鼠标移动进入/
- *             切换/离开链接（URL 变化）时发射，离开时载荷为空串；
- *             由事件过滤器 VX_browser_eventFilter 与 anchorClicked
- *             成对接入（14.111 轮落地）。
+ * @details    载荷：高亮链接 URL（UTF-8）。真实发射点：预览态鼠标进入/
+ *             切换/离开链接（URL 变化）时经基类 linkHovered →
+ *             xtb_linkHoveredForward 转发发射（离开时载荷为空串）。
  * @param      self 目标控件指针；可为 NULL。
  * @param      url 高亮链接 URL（UTF-8）；可为 NULL，视为空串。
  * @return     不透明的 highlighted 信号标识；返回值不指向可释放对象，

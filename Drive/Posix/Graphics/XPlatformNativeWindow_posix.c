@@ -39,14 +39,18 @@
 #include "XWindow.h"
 #include "XWindowSystemInterface.h"
 #include "XWindowEvent.h"
+#include "XCursor.h"
 #include "XGuiApplication.h"
 #include "XClipboard.h"
 #include "XPlatformDrag.h"
 #include "XImage.h"
 #include "XPixmap.h"
+#include "XBitmap.h"
 #include "XString.h"
 #include "XGeometry.h"
 #include "XMemory.h"
+#include "XPlatformDisplayDriver.h" /* 单屏互斥检查（XPLATFORM_FBDEV_ON=0 时为空头）。 */
+#include <stdio.h>
 
 /* Xlib 与 XinYueC 公共层存在以下命名冲突：
  *   - XImage/XPoint/XEvent/XColor/XKeyEvent/XExposeEvent：Xlib 与公共
@@ -69,6 +73,8 @@
 #include <X11/Xatom.h>
 #include <X11/Xresource.h>
 #include <X11/keysym.h>
+/* 光标形状字形常量（XC_*，仅宏/枚举无类型冲突）。 */
+#include <X11/cursorfont.h>
 #if defined(XINYUE_C_HAS_XRANDR)
 /* 屏幕接入：本机仅有 RandR 协议头 randr.h 与运行库 libXrandr.so.2，无
  * libxrandr-dev 的 Xrandr.h，故这里按上游 libXrandr 1.5.2 头逐字声明
@@ -124,6 +130,10 @@ extern int XRRUpdateConfiguration(X11_XEvent* event);
 #include <locale.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+/* X11 连接 fd 监视线程（主循环统一等待桥，见 xpwn_x11WakeWatch 注释）：
+ * 平台层用 POSIX 原生线程原语即可，无需引入公共层 XThread 体系。 */
+#include <pthread.h>
 
 #if XAbstractNetIoRing_ON
 #include "XAbstractNetIoRing.h" /* 主循环双源等待：ring 事件 fd 与 processReady。 */
@@ -145,6 +155,14 @@ extern int XRRUpdateConfiguration(X11_XEvent* event);
  * 门控（#if），互不掺入。 */
 #ifndef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
 #define XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 0
+#endif
+
+/* [ime-dbg] XIM 输入法协商诊断输出编译开关（默认关）：逐条 locale/
+ * style/XCreateIC 日志属调试残留，生产构建对标 Qt 平台插件静默
+ * （Qt 的 XIM 诊断走 QLoggingCategory，默认级别不输出）。排查输入法
+ * 协商问题时以 -DXPWN_IME_DEBUG=1 重编本文件即可恢复全部输出。 */
+#ifndef XPWN_IME_DEBUG
+#define XPWN_IME_DEBUG 0
 #endif
 
 /** @brief 原生窗口注册表槽位（X11 Window 与公共 XWindow 对象双向登记）。 */
@@ -171,6 +189,10 @@ typedef struct XWNPendingEntry
     XMouseButton m_lastPressButton;   /**< 最近一次非滚轮按键的按键。 */
     XPoint m_lastPressPos;            /**< 最近一次非滚轮按键的位置。 */
     XIC m_inputContext;               /**< XIM 输入上下文（拥有；可为 NULL）。 */
+    XFontSet m_fontSet;               /**< PreeditPosition 风格 IC 的预编辑字体集
+                                           （拥有；§8.0g7：XCreateIC 不接管所有权，
+                                           须在 IC 销毁后 XFreeFontSet，此前逐窗口
+                                           泄漏 ~3.7KB）。 */
     DBusConnection* m_imeBus;         /**< fcitx5 DBus 输入法会话连接（进程共享）。 */
     char* m_imeIcPath;                /**< fcitx5 DBus IC 对象路径（拥有；NULL=无）。 */
     char* m_imeKeybuf;                /**< CreateInputContext 返回的密钥（拥有）。 */
@@ -202,6 +224,27 @@ static Atom g_xpwnNetWmStateAbove;     /**< _NET_WM_STATE_ABOVE 原子。 */
 static Atom g_xpwnNetWmStateBelow;     /**< _NET_WM_STATE_BELOW 原子。 */
 static Atom g_xpwnNetWmStateSkipTaskbar; /**< _NET_WM_STATE_SKIP_TASKBAR 原子。 */
 static Atom g_xpwnNetWmStateSkipPager;   /**< _NET_WM_STATE_SKIP_PAGER 原子。 */
+/* 窗口状态原子（对标 QXcbWindow::setWindowState 维护的三个 EWMH 状态位：
+ * 最大化在 X11 拆为 VERT/HORZ 两原子同时请求，全屏/最大化由 WM 回写
+ * _NET_WM_STATE，客户端经 PropertyNotify 观察闭环）。 */
+static Atom g_xpwnNetWmStateMaximizedVert; /**< _NET_WM_STATE_MAXIMIZED_VERT 原子。 */
+static Atom g_xpwnNetWmStateMaximizedHorz; /**< _NET_WM_STATE_MAXIMIZED_HORZ 原子。 */
+static Atom g_xpwnNetWmStateFullscreen;  /**< _NET_WM_STATE_FULLSCREEN 原子。 */
+static Atom g_xpwnWmChangeState;         /**< WM_CHANGE_STATE 原子（ICCCM 4.1.4
+                                              最小化状态迁移请求载体）。 */
+static Atom g_xpwnWmState;               /**< WM_STATE 原子（WM 托管状态属性，
+                                              IconicState 检测用）。 */
+/* _NET_WM_WINDOW_TYPE 原子表（对标 QXcbWindow::setWindowType 的 atom()
+ * 集；COMBO 在公共层 XWindowType 枚举暂无对应值，先登记保持原子表与
+ * Qt xcb 对齐）。 */
+static Atom g_xpwnNetWmWindowType;       /**< _NET_WM_WINDOW_TYPE 属性原子。 */
+static Atom g_xpwnNetWmTypeNormal;       /**< _NET_WM_WINDOW_TYPE_NORMAL。 */
+static Atom g_xpwnNetWmTypeDialog;       /**< _NET_WM_WINDOW_TYPE_DIALOG。 */
+static Atom g_xpwnNetWmTypeUtility;      /**< _NET_WM_WINDOW_TYPE_UTILITY。 */
+static Atom g_xpwnNetWmTypeSplash;       /**< _NET_WM_WINDOW_TYPE_SPLASH。 */
+static Atom g_xpwnNetWmTypeTooltip;      /**< _NET_WM_WINDOW_TYPE_TOOLTIP。 */
+static Atom g_xpwnNetWmTypeCombo;        /**< _NET_WM_WINDOW_TYPE_COMBO。 */
+static Atom g_xpwnNetWmTypePopupMenu;    /**< _NET_WM_WINDOW_TYPE_POPUP_MENU。 */
 static Atom g_xpwnMotifWmHints;        /**< _MOTIF_WM_HINTS 原子（装饰提示）。 */
 static XIM g_xpwnInputMethod;     /**< X11 输入法方法（不可用时为 NULL）。 */
 static Atom g_xpwnXdndAware;
@@ -221,7 +264,35 @@ static Atom g_xpwnTargets;        /* TARGETS 原子（Selection 目标询问）�
 static Atom g_xpwnTimestamp;      /* TIMESTAMP 原子（所有权时间询问）。 */
 static Atom g_xpwnClipProp;       /* 剪贴板数据传输用属性原子。 */
 static Atom g_xpwnTextHtml;       /* text/html 目标原子（mime html 协商）。 */
+static Atom g_xpwnIncr;           /* INCR 原子（ICCM 2.5 增量传输协议头类型）。 */
+static Atom g_xpwnSaveTargets;    /* SAVE_TARGETS 原子（剪贴板管理器保存询问）。 */
+static Atom g_xpwnMultiple;       /* MULTIPLE 原子（ICCCM 2.6.2 批量转换询问）。 */
+
+/* ==================== 主循环统一等待：X11 fd → ring 唤醒桥 ====================
+ * 根因（对标缺陷：XEventLoop::exec → XAbstractEventDispatcher::processEvents
+ * 的主线程阻塞分支只阻塞在 XAbstractNetIoRing 的等待原语上——Linux 端
+ * XNetIoRingPosix_waitForEvents 仅 poll{ring fd/epoll fd, 唤醒 eventfd}，
+ * X11 连接 fd 不在其中；双源 poll{X11, ring}（XPlatformNativeWindow_
+ * waitForEvents）只有 XGuiApplication_waitForEvents 自绘主循环可达）。
+ * 后果：exec 标准主循环在有长定时器挂起时，X11 按键要等定时器到期才被
+ * 泵出；无定时器时受 20ms 心跳量化。
+ * 方案（对标 Qt：QEventDispatcherGlib 把 X11 连接 fd 并入 GMainContext
+ * 统一等待）：这里选"把 X11 fd 并入 ring 统一等待"目标，但经 ring 既有
+ * 的跨线程唤醒通道在平台层内实现——XAbstractNetIoRing_registerEvent 在
+ * Posix 后端是空桩（XNetIoRingPosix.c：epoll 兴趣仅随网络 SQE 提交登记，
+ * 无被动 fd 分发通道），字面注册不会让 fd 进入等待集；而 dispatcher 侧
+ * 增加"额外等待 fd"通道超出本文件所有权。故由一个常驻监视线程 poll(X11
+ * 连接 fd)，可读即 XAbstractNetIoRing_wakeUp（ring 的跨线程 eventfd，
+ * Posix 后端 wakeUp/wakeFd 本为多线程设计）——dispatcher 的阻塞等待立即
+ * 返回，下一轮 processEvents 的轮询回调把 X11 事件泵空。监视线程只做
+ * poll 与 eventfd 写、绝不在子线程触碰 Display*（Xlib 单线程约定不破）；
+ * 自身阻塞在 poll(-1) 上零 CPU，无忙等。全局 ring 生命周期为进程级
+ * （dispatcher 析构仅清指针不销毁），监视线程持有后不会悬空。 */
+static int          g_xpwnWatchXfd = -1;    /**< 受监视的 X11 连接 fd。 */
+static pthread_t    g_xpwnWatchThread;      /**< 监视线程句柄（分离态）。 */
+static bool         g_xpwnWatchStarted = false; /**< 监视线程已启动（主线程写）。 */
 static Window g_xpwnClipWin = None;      /* 专用剪贴板窗口（对标 QXcbClipboard::m_window，CLIPBOARD/PRIMARY 共用）。 */
+static Window g_xpwnClipReqWin = None;   /* 专用请求者窗口（对标 QXcbClipboard::m_requestor，读方向传输属性挂此窗口并监听 PropertyNotify）。 */
 
 /** @brief 单个 mime 格式的镜像条目（对标 QXcbClipboard::m_owner[mode]
  *  中 QMimeData 的一个 format：mime 名 ↔ X11 TARGETS 原子双向映射，
@@ -307,14 +378,86 @@ static Atom xpw_clipAtomForMode(int mode)
 }
 #endif /* XCLIPBOARD_ON */
 
+/* 从镜像条目构建可服务目标原子数组（TARGETS/SAVE_TARGETS 共用）：
+ * 依次报告各格式条目的目标原子，text/plain 条目额外补 XA_STRING
+ * （对标 Qt 同时提供 UTF8_STRING 与 STRING 两个文本目标）；与既有
+ * TARGETS 分支逐字节同序，仅抽出共享并补容量护栏。返回写入个数。 */
+static int xpw_clipBuildTargetAtoms(const XpwClipOwnerState* st,
+                                    Atom* targets, int max)
+{
+    int n = 0;
+    int fi;
+    if (!st || !targets || max <= 0) return 0;
+    for (fi = 0; fi < st->m_formatCount && n < max; ++fi) {
+        if (st->m_formats[fi].m_target == None || !st->m_formats[fi].m_data)
+            continue;
+        targets[n++] = st->m_formats[fi].m_target;
+        if (n >= max) break;
+        if (strncmp(st->m_formats[fi].m_mime, "text/plain",
+                    sizeof(st->m_formats[fi].m_mime)) == 0)
+            targets[n++] = XA_STRING;
+    }
+    return n;
+}
+
 /* 前向：SelectionClear 反向通知（实现在文件尾 X11 剪贴板后端小节，
  * 经后端契约的 selectionRevoked 可选回调分发）。 */
 static void xpw_clipNotifyRevoked(int mode);
 
-#if XCLIPBOARD_ON
-/* 前向：跨进程 Selection 请求者窗口查找（实现在 mime 多格式协商小节）。 */
-static Window xpw_clipFindRequestorWindow(void);
-#endif /* XCLIPBOARD_ON */
+/* ==================== X11 INCR 大数据增量传输（ICCCM 2.5，对标
+ * QXcbClipboardTransaction） ====================
+ * 数据超过服务器单次请求/单属性承载上限时，选择区所有权方向（serve）以
+ * type=INCR 分片传输：协议头（format=32 总长度）→ 先回 SelectionNotify →
+ * 每当 requestor 删除属性（PropertyNotify state=PropertyDelete）写下一片
+ * （PropModeReplace）→ 最后一片被取走后写零长度属性终结。请求方向
+ * （读）见 xpw_clipCollectIncr。小数据路径维持单次 XChangeProperty 不变。 */
+
+/** @brief INCR 会话表容量（有界；表满时新的大数据请求按协议以
+ *  property=None 礼貌拒绝，对标 Qt 按窗口键的 QMap 加超时自毁）。 */
+#define XPWN_CLIP_INCR_MAX_SESSIONS 8
+/** @brief INCR 读方向整体超时（毫秒；对端死亡时不至于挂死）。
+ *  参数化：默认 XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS，经后端契约
+ *  setIncrTimeoutMs 由 XClipboard_setIncrTimeoutMs 调整（§8.2 协议补边：
+ *  慢生产者/大载荷场景可调大）。仅约束读方向；serve 方向由闲置回收治理。 */
+static int g_xpwnClipIncrTimeoutMs = XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS;
+/** @brief 会话闲置超时（毫秒）：对端中途退出后删除通知永不再来，借
+ *  事件泵扫描回收快照（Qt abort timer 的无定时器等价实现）。 */
+#define XPWN_CLIP_INCR_SESSION_IDLE_MS 30000
+/** @brief 262144：常见 X 服务器单属性数据上限口径（阈值双保险上限）。 */
+#define XPWN_CLIP_INCR_CHUNK_CAP 262144
+/** @brief 增量收集总量防御上限（256MB；异常所有者/伪造总长保护）。 */
+#define XPWN_CLIP_INCR_MAX_TOTAL (256u * 1024u * 1024u)
+
+/** @brief 单个进行中的 INCR 服务会话（对标 QXcbClipboardTransaction：
+ *  requestor/property/数据/偏移 + 对端事件监听）。数据为认领镜像的
+ *  深拷贝快照，镜像中途被覆盖或清除不影响在途传输的一致性。 */
+typedef struct XpwClipIncrSession
+{
+    bool           m_active;    /**< 槽位在用。 */
+    Window         m_requestor; /**< 请求者窗口（会话键）。 */
+    Atom           m_property;  /**< 传输属性。 */
+    Atom           m_selection; /**< 所属选择区（SelectionClear 时中止）。 */
+    Atom           m_type;      /**< 数据目标原子（各分片保持一致，ICCCM 2.5）。 */
+    unsigned char* m_data;      /**< 数据快照（拥有）。 */
+    int            m_total;     /**< 总字节长度。 */
+    int            m_offset;    /**< 已写出的字节数。 */
+    unsigned long  m_lastMs;    /**< 最近一次活动的单调毫秒（闲置回收）。 */
+} XpwClipIncrSession;
+
+static XpwClipIncrSession g_xpwnClipIncrSessions[XPWN_CLIP_INCR_MAX_SESSIONS];
+
+/* 前向：INCR 会话管理（实现在「X11 INCR 会话管理」小节）；
+ * SelectionRequest 处理与事件泵位于其定义之前，需先行声明。 */
+static void xpw_clipIncrAbortForSelection(Atom selection);
+static void xpw_clipIncrAbortForWindow(Window requestor);
+static int xpw_clipIncrChunkLimit(void);
+static bool xpw_clipIncrStart(Window requestor, Atom property, Atom selection,
+                              Atom type, const unsigned char* data, int len);
+static bool xpw_clipHandleIncrDelete(const XPropertyEvent* pev);
+/* EWMH 窗口状态回读（定义在 EWMH 窗口状态小节；PropertyNotify 分支
+ * 用作 WM 状态回写 -> XWindow_reportWindowStateChanged 的换算入口）。 */
+static XWindowState xpwn_queryWmWindowState(Display* display, Window win);
+static void xpw_clipIncrSweepIdle(void);
 
 static Atom g_xpwnXdndData;
 static XWNPendingEntry g_xpwnEntries[XPWN_MAX_WINDOWS]; /**< 窗口注册表。 */
@@ -349,6 +492,19 @@ static const XMimeData* g_xpwnDragMime;
 static Atom g_xpwnDragFormat;
 
 /* ==================== 内部工具 ==================== */
+
+/* Xlib 异步错误处理器。Xlib 默认处理器会把协议错误当致命错误 exit() 进程；
+ * 而跨进程剪贴板/XDND 传输的协议对端窗口随时可能销毁（典型：INCR 分片
+ * 传输中途对端退出，XChangeProperty 到已销毁窗口产生 BadWindow），此类
+ * 可预期异步错误必须非致命化。对标 Qt xcb：X 协议错误是普通事件
+ * （QXcbConnection 打印后继续），这里对齐该语义——打印并吞掉。 */
+static int xpwn_xlibErrorHandler(Display* display, XErrorEvent* err)
+{
+    (void)display;
+    fprintf(stderr, "[xpwn] X11 async error ignored: code=%d request=%d\n",
+            err->error_code, err->request_code);
+    return 0; /* 返回 0 表示错误已被处理，不交回默认致命处理器。 */
+}
 
 /** @brief 空槽查找；注册表满时返回 NULL。 */
 static XWNPendingEntry* xpwn_findFreeSlot(void)
@@ -656,16 +812,24 @@ static DBusHandlerResult xpwn_imeFilter(DBusConnection* connection,
 {
     (void)connection;
     (void)user_data;
+    /* 逐信号诊断输出收进 XPWN_IME_DEBUG（默认 0）：本过滤器每条 DBus
+       信号都会进入，属生产路径残留（对标 Qt 平台插件静默，QLogging-
+       Category 默认级别不输出）。失败诊断（bus/IC 创建失败）保留为
+       进程一次性的启动告警，与 XOpenIM 失败提示同策略。 */
+#if XPWN_IME_DEBUG
     XPrintf("[ime-dbus] signal: type=%d path=%s ifc=%s member=%s\n",
             (int)dbus_message_get_type(message),
             dbus_message_get_path(message) ? dbus_message_get_path(message) : "?",
             dbus_message_get_interface(message) ? dbus_message_get_interface(message) : "?",
             dbus_message_get_member(message) ? dbus_message_get_member(message) : "?");
+#endif
     if (dbus_message_is_signal(message, "org.fcitx.Fcitx.InputContext1",
                                "CommitString")) {
         DBusError err;
         char* text = NULL;
+#if XPWN_IME_DEBUG
         XPrintf("[ime-dbus] CommitString 分支进入\n");
+#endif
         dbus_error_init(&err);
         if (dbus_message_get_args(message, &err, DBUS_TYPE_STRING, &text,
                                   DBUS_TYPE_INVALID) && text && text[0]) {
@@ -797,8 +961,10 @@ static void xpwn_imeInit(void)
         dbus_connection_add_filter(g_xpwnImeBus, xpwn_imeFilter, NULL, NULL);
         dbus_connection_flush(g_xpwnImeBus);
     }
+#if XPWN_IME_DEBUG
     XPrintf("[ime-dbus] IC=%s（DBus 输入法就绪）唯一连接名=%s\n",
             g_xpwnImeIcPath, dbus_bus_get_unique_name(g_xpwnImeBus));
+#endif
 }
 
 /**
@@ -850,8 +1016,13 @@ static bool xpwn_imeProcessKey(int keyval, unsigned keycode,
             dbus_message_unref(reply);
     }
     if (dbus_error_is_set(&err)) dbus_error_free(&err);
+    /* 逐键诊断输出收进 XPWN_IME_DEBUG（默认 0）：ProcessKeyEvent 每次按键
+       都会走到这里，直接 fprintf(stderr) 属生产路径残留（对标 Qt 平台
+       插件静默，QLoggingCategory 默认级别不输出）。 */
+#if XPWN_IME_DEBUG
     fprintf(stderr, "[ime-dbus] ProcessKeyEvent -> consumed=%d\n",
             (int)consumed);
+#endif
     return consumed != FALSE;
 }
 
@@ -1302,8 +1473,489 @@ static void xpwn_screensRefresh(X11_XEvent* event)
 #endif
 }
 
+/* ==================== 光标后端（XCursor 平台钩子，对标 Qt QPlatformCursor） ==================== */
+
+/** @brief 形状字体光标缓存槽容量（XCursor_Arrow..XCursor_Last + Blank 专用）。 */
+#define XPWN_CURSOR_CACHE_SIZE 25
+
+/** @brief 形状→字体光标缓存（进程期持有；XCloseDisplay 时随连接释放）。 */
+static struct
+{
+    bool   m_valid;  /**< 该槽是否已创建过 Cursor。 */
+    Cursor m_cursor; /**< X11 字体/像素图光标资源。 */
+} g_xpwnCursorCache[XPWN_CURSOR_CACHE_SIZE];
+
+/** @brief Blank（隐藏光标）专用 1x1 空像素图光标；创建一次复用。 */
+static Cursor g_xpwnBlankCursor = None;
+static bool g_xpwnBlankCursorCreated = false;
+
+/**
+ * @brief      XGui 光标形状 → X11 cursor font 字形映射。
+ * @details    对标 Qt qcursor_x11 的形状表：Qt 标准形状中进入字体映射的
+ *             子集逐一对齐；Qt 用位图自绘的形状（Forbidden/Busy/手型/拖拽
+ *             系列）取语义最近的字体字形并注明近似。SplitV/SplitH 沿用
+ *             Qt 的历史选择（SplitV→水平双箭头：垂直分割条沿水平方向
+ *             拖动）。返回 -1 表示字体无对应（Blank 走专用空像素图；
+ *             Bitmap/Custom 不进本表——走 XCreatePixmapCursor 1bit 位图
+ *             通道，见 xpwn_cursorAcquireBitmapCursor/
+ *             xpwn_cursorAcquirePixmapCursor，不再回落左箭头）。
+ * @return     cursorfont 字形值；无对应字形返回 -1。
+ */
+static int xpwn_cursorShapeToFontGlyph(XCursorShape shape)
+{
+    switch (shape) {
+    case XCursor_Arrow:        return XC_left_ptr;           /* 68 */
+    case XCursor_UpArrow:      return XC_center_ptr;         /* 22 */
+    case XCursor_Cross:        return XC_crosshair;          /* 34 */
+    case XCursor_Wait:         return XC_watch;              /* 150 */
+    case XCursor_IBeam:        return XC_xterm;              /* 152 */
+    case XCursor_SizeVer:      return XC_sb_v_double_arrow;  /* 116 */
+    case XCursor_SizeHor:      return XC_sb_h_double_arrow;  /* 108 */
+    case XCursor_SizeBDiag:    return XC_top_right_corner;   /* 136 */
+    case XCursor_SizeFDiag:    return XC_top_left_corner;    /* 134 */
+    case XCursor_SizeAll:      return XC_fleur;              /* 52 */
+    case XCursor_SplitV:       return XC_sb_h_double_arrow;  /* 108（同 Qt）。 */
+    case XCursor_SplitH:       return XC_sb_v_double_arrow;  /* 116（同 Qt）。 */
+    case XCursor_PointingHand: return XC_hand2;              /* 60 */
+    case XCursor_Forbidden:    return XC_pirate;             /* 88（近似）。 */
+    case XCursor_WhatsThis:    return XC_question_arrow;     /* 92 */
+    case XCursor_Busy:         return XC_watch;              /* 150（近似）。 */
+    case XCursor_OpenHand:     return XC_hand1;              /* 58（近似）。 */
+    case XCursor_ClosedHand:   return XC_hand1;              /* 58（共用近似）。 */
+    case XCursor_DragCopy:     return XC_plus;               /* 90（近似）。 */
+    case XCursor_DragMove:     return XC_fleur;              /* 52（近似）。 */
+    case XCursor_DragLink:     return XC_question_arrow;     /* 92（近似）。 */
+    default:                   return -1;                    /* Blank/Bitmap/Custom。 */
+    }
+}
+
+/** @brief 取（或创建）形状对应的 X11 光标资源；失败返回 None。 */
+static Cursor xpwn_cursorAcquireShapeCursor(XCursorShape shape)
+{
+    int glyph;
+    int slot;
+    if (shape == XCursor_Blank) {
+        /* 隐藏光标：字体无对应，用 1x1 透明像素图构建（Qt 同思路）。 */
+        if (!g_xpwnBlankCursorCreated) {
+            Pixmap blank;
+            XColor dummy;
+            static char bits[8] = {0};
+            g_xpwnBlankCursorCreated = true;
+            blank = XCreateBitmapFromData(g_xpwnDisplay,
+                                          RootWindow(g_xpwnDisplay,
+                                                     g_xpwnScreenNumber),
+                                          bits, 1, 1);
+            if (blank != None) {
+                XMemset(&dummy, 0, sizeof(dummy));
+                g_xpwnBlankCursor = XCreatePixmapCursor(g_xpwnDisplay, blank,
+                                                        blank, &dummy, &dummy,
+                                                        0, 0);
+                XFreePixmap(g_xpwnDisplay, blank);
+            }
+        }
+        return g_xpwnBlankCursor;
+    }
+    if ((int)shape < 0 || (int)shape >= XPWN_CURSOR_CACHE_SIZE)
+        return None;
+    slot = (int)shape;
+    if (g_xpwnCursorCache[slot].m_valid)
+        return g_xpwnCursorCache[slot].m_cursor;
+    glyph = xpwn_cursorShapeToFontGlyph(shape);
+    if (glyph < 0)
+        return None; /* 字体无对应（Bitmap/Custom 已由 apply 分流到位图
+                        通道）：不再回落左箭头，返回 None 交上层静默。 */
+    g_xpwnCursorCache[slot].m_cursor =
+        XCreateFontCursor(g_xpwnDisplay, (unsigned int)glyph);
+    g_xpwnCursorCache[slot].m_valid = g_xpwnCursorCache[slot].m_cursor != None;
+    return g_xpwnCursorCache[slot].m_cursor;
+}
+
+/* ==================== 位图/像素图光标（XCreatePixmapCursor 1bit 通道） ====================
+ * 对标 Qt QCursor(QBitmap/QPixmap) 的 X11 落地：XCreatePixmapCursor 只
+ * 承载双色模型——source 位选前景/背景色（此处黑/白，与 Qt 位图光标的
+ * color1=黑→前景、color0=白→背景一致），mask 位选透写（1=绘制、0=
+ * 透明），遮罩可选（无遮罩以 source 自身代之——整体不透明）。全彩
+ * ARGB 像素图光标需 RENDER 扩展（对标 Qt xcb 的 XRenderCreateCursor
+ * 路径），本批按 1bit 传统通道落地。 */
+
+/** @brief 取 XBitmap 的 1bit 紧凑位数据（(w+7)/8 字节/行、字节内 LSB
+ *  对应行内最左像素，与 XCreateBitmapFromData 的 XYBitmap/LSBFirst
+ *  逐字节约定一致；对标 Qt QBitmap 的 MonoLSB 数据直拷进 X 位图）。
+ *  Mono（MSB 序）存储则逐字节位反转归一。
+ *  @return 成功返回 XMemory 分配缓冲（调用方 XFree_System 释放），
+ *          非单色位图/空位图/分配失败返回 NULL。 */
+static unsigned char* xpwn_cursorBitmapBits(const XBitmap* bmp, int* outW,
+                                            int* outH)
+{
+    XImage img;
+    XImageFormat fmt;
+    unsigned char* packed;
+    int w, h, lineBytes, stride, row;
+    if (!bmp || !outW || !outH) return NULL;
+    XImage_init(&img);
+    XPixmap_toImage(&bmp->m_class, &img);
+    fmt = XImage_format(&img);
+    w = XImage_width(&img);
+    h = XImage_height(&img);
+    if ((fmt != XImageFormat_Mono && fmt != XImageFormat_MonoLSB) ||
+        w <= 0 || h <= 0) {
+        XImage_deinit_base(&img);
+        return NULL;
+    }
+    lineBytes = (w + 7) / 8;
+    stride = XImage_bytesPerLine(&img);
+    packed = (unsigned char*)XMemory_malloc((size_t)lineBytes * (size_t)h,
+                                            XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!packed) {
+        XImage_deinit_base(&img);
+        return NULL;
+    }
+    for (row = 0; row < h; ++row) {
+        const unsigned char* src = XImage_scanLine(&img, row);
+        unsigned char* dst = packed + (size_t)row * (size_t)lineBytes;
+        int col;
+        if (!src || stride < lineBytes) {
+            XFree_System(packed);
+            XImage_deinit_base(&img);
+            return NULL;
+        }
+        if (fmt == XImageFormat_MonoLSB) {
+            /* MonoLSB（XBitmap 固定存储序）：位排列已一致，逐行直拷。 */
+            XMemcpy(dst, src, (size_t)lineBytes);
+        } else {
+            /* Mono（MSB 序）：逐字节位反转成 LSB 序。 */
+            for (col = 0; col < lineBytes; ++col) {
+                unsigned char b = src[col];
+                unsigned char r = 0;
+                int bit;
+                for (bit = 0; bit < 8; ++bit)
+                    if (b & (unsigned char)(1u << bit))
+                        r |= (unsigned char)(1u << (7 - bit));
+                dst[col] = r;
+            }
+        }
+    }
+    XImage_deinit_base(&img);
+    *outW = w;
+    *outH = h;
+    return packed;
+}
+
+/* 位数据 → X11 双色光标：source/mask 各为 (w+7)/8 字节/行的 LSB 位图。
+ * 前景黑、背景白（对标 Qt 位图光标 X11 落地的前景/背景取值）；热点
+ * 未设置（负值）用中心，越界钳制进图内（X11 要求热点落在光标内）。
+ * mask 为 NULL 时以 source 代之（整体不透明的黑白光标）。临时 Pixmap
+ * 与 Cursor 即用即毁：XDefineCursor 后窗口持有服务器侧引用，按 Xlib
+ * 手册 XFreeCursor 仅解除资源号关联、存储待无引用后才释放（对标 Qt
+ * 在 QCursor 析构时统一 XFreeCursor；形状字体光标仍走进程级缓存）。
+ * 失败返回 None。 */
+static Cursor xpwn_cursorCreateFromBits(const unsigned char* srcBits,
+                                        const unsigned char* maskBits,
+                                        int w, int h, int hotX, int hotY)
+{
+    Pixmap srcPix;
+    Pixmap maskPix;
+    X11_XColor fg;
+    X11_XColor bg;
+    Cursor cur = None;
+    Window root;
+    if (!srcBits || w <= 0 || h <= 0) return None;
+    root = RootWindow(g_xpwnDisplay, g_xpwnScreenNumber);
+    srcPix = XCreateBitmapFromData(g_xpwnDisplay, root,
+                                   (const char*)srcBits,
+                                   (unsigned int)w, (unsigned int)h);
+    maskPix = None;
+    if (maskBits)
+        maskPix = XCreateBitmapFromData(g_xpwnDisplay, root,
+                                        (const char*)maskBits,
+                                        (unsigned int)w, (unsigned int)h);
+    if (maskPix == None)
+        maskPix = srcPix; /* 遮罩可选：无遮罩/创建失败以 source 代之。 */
+    if (srcPix != None) {
+        /* 黑前景（位 1 = Qt::color1）+ 白背景（位 0 = Qt::color0）。
+         * XCreatePixmapCursor 直接取 red/green/blue 原值，无需 colormap。 */
+        XMemset(&fg, 0, sizeof(fg));
+        XMemset(&bg, 0, sizeof(bg));
+        bg.red = bg.green = bg.blue = 0xffff;
+        if (hotX < 0) hotX = w / 2; /* (-1,-1)=中心（XCursor 头文件约定）。 */
+        if (hotY < 0) hotY = h / 2;
+        if (hotX >= w) hotX = w - 1;
+        if (hotY >= h) hotY = h - 1;
+        cur = XCreatePixmapCursor(g_xpwnDisplay, srcPix, maskPix,
+                                  &fg, &bg, (unsigned int)hotX,
+                                  (unsigned int)hotY);
+    }
+    if (srcPix != None)
+        XFreePixmap(g_xpwnDisplay, srcPix);
+    if (maskPix != None && maskPix != srcPix)
+        XFreePixmap(g_xpwnDisplay, maskPix);
+    return cur;
+}
+
+/** @brief Bitmap 形状 → X11 光标（对标 Qt QCursor(QBitmap,QBitmap,hotX,
+ *  hotY)）：source=XCursor_bitmap、可选 mask=XCursor_mask（尺寸不一致
+ *  时按无遮罩处理），经 XCreateBitmapFromData + XCreatePixmapCursor
+ *  生成 1bit 深度光标。失败返回 None（apply 静默）。 */
+static Cursor xpwn_cursorAcquireBitmapCursor(const XCursor* cursor)
+{
+    const XBitmap* src;
+    const XBitmap* mask;
+    unsigned char* srcBits;
+    unsigned char* maskBits = NULL;
+    int w = 0, h = 0, mw = 0, mh = 0;
+    XPoint hot;
+    Cursor cur;
+    if (!cursor) return None;
+    src = XCursor_bitmap(cursor);
+    if (!src) return None;
+    srcBits = xpwn_cursorBitmapBits(src, &w, &h);
+    if (!srcBits) return None;
+    mask = XCursor_mask(cursor);
+    if (mask) {
+        maskBits = xpwn_cursorBitmapBits(mask, &mw, &mh);
+        if (maskBits && (mw != w || mh != h)) {
+            /* source/mask 必须同尺寸（X11 约定）：不一致视为无效遮罩，
+               按整体不透明处理。 */
+            XFree_System(maskBits);
+            maskBits = NULL;
+        }
+    }
+    hot = XCursor_hotSpot(cursor);
+    cur = xpwn_cursorCreateFromBits(srcBits, maskBits, w, h, hot.x, hot.y);
+    XFree_System(srcBits);
+    if (maskBits) XFree_System(maskBits);
+    return cur;
+}
+
+/** @brief Custom 形状（像素图）→ X11 光标（对标 Qt QCursor(QPixmap,hotX,
+ *  hotY) 的 X11 位图化落地）：转 ARGB32 后按 1bit 双色模型逐像素判定——
+ *  mask 位 = alpha≥128（无 alpha 信息即整体不透明），source 位 = 不透明
+ *  且亮度 <128（暗部→黑前景，亮部→白背景）。XCreatePixmapCursor 只承载
+ *  双色，全彩光标需 RENDER 扩展（对标 Qt xcb 的 XRenderCreateCursor），
+ *  为后续增强。失败返回 None（apply 静默）。 */
+static Cursor xpwn_cursorAcquirePixmapCursor(const XCursor* cursor)
+{
+    const XPixmap* pix;
+    XImage img;
+    unsigned char* srcBits = NULL;
+    unsigned char* maskBits = NULL;
+    int w, h, lineBytes, row, col;
+    size_t bufBytes;
+    XPoint hot;
+    Cursor cur = None;
+    if (!cursor) return None;
+    pix = XCursor_pixmap(cursor);
+    if (!pix) return None;
+    XImage_init(&img);
+    XPixmap_toImage(pix, &img);
+    if (!XImage_convertToFormatInPlace(&img, XImageFormat_ARGB32, 0)) {
+        XImage_deinit_base(&img);
+        return None;
+    }
+    w = XImage_width(&img);
+    h = XImage_height(&img);
+    if (w <= 0 || h <= 0) {
+        XImage_deinit_base(&img);
+        return None;
+    }
+    lineBytes = (w + 7) / 8;
+    bufBytes = (size_t)lineBytes * (size_t)h;
+    srcBits = (unsigned char*)XMemory_malloc(bufBytes,
+                                             XCLASS_DEFAULT_MEMORY_TYPE);
+    maskBits = (unsigned char*)XMemory_malloc(bufBytes,
+                                              XCLASS_DEFAULT_MEMORY_TYPE);
+    if (srcBits && maskBits) {
+        XMemset(srcBits, 0, bufBytes);
+        XMemset(maskBits, 0, bufBytes);
+        for (row = 0; row < h; ++row) {
+            for (col = 0; col < w; ++col) {
+                uint32_t p = XImage_pixel(&img, col, row);
+                unsigned int alpha = (p >> 24) & 0xffu;
+                unsigned int r, g, b, luma;
+                if (alpha < 128)
+                    continue; /* 透明：mask=0（该位已零初始化）。 */
+                maskBits[(size_t)row * lineBytes + (col >> 3)] |=
+                    (unsigned char)(1u << (col & 7));
+                r = (p >> 16) & 0xffu;
+                g = (p >> 8) & 0xffu;
+                b = p & 0xffu;
+                luma = (r * 77u + g * 151u + b * 28u) >> 8; /* 0..255。 */
+                if (luma < 128)
+                    srcBits[(size_t)row * lineBytes + (col >> 3)] |=
+                        (unsigned char)(1u << (col & 7)); /* 暗部→黑。 */
+            }
+        }
+        hot = XCursor_hotSpot(cursor);
+        cur = xpwn_cursorCreateFromBits(srcBits, maskBits, w, h,
+                                        hot.x, hot.y);
+    }
+    XFree_System(srcBits);
+    XFree_System(maskBits);
+    XImage_deinit_base(&img);
+    return cur;
+}
+
+static bool xpwn_cursorBackendQueryPos(int* x, int* y)
+{
+    Window root, child;
+    int rootX, rootY, winX, winY;
+    unsigned int mask;
+    if (!g_xpwnDisplay)
+        return false;
+    if (!XQueryPointer(g_xpwnDisplay,
+                       RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
+                       &root, &child, &rootX, &rootY, &winX, &winY, &mask))
+        return false; /* 指针在其他屏幕（Xinerama）等场景。 */
+    if (x) *x = rootX;
+    if (y) *y = rootY;
+    return true;
+}
+
+static bool xpwn_cursorBackendWarpPos(int x, int y)
+{
+    if (!g_xpwnDisplay)
+        return false;
+    /* 全局（根窗口）坐标定位：src_w=None + dest_w=根窗口。 */
+    XWarpPointer(g_xpwnDisplay, None,
+                 RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
+                 0, 0, 0, 0, x, y);
+    XFlush(g_xpwnDisplay);
+    return true;
+}
+
+static bool xpwn_cursorBackendApplyWindowCursor(uintptr_t nativeWindowId,
+                                                const XCursor* cursor)
+{
+    Cursor native;
+    XCursorShape shape;
+    if (!g_xpwnDisplay || nativeWindowId == 0)
+        return false;
+    /* 无光标对象时按默认箭头恢复（XUndefineCursor 语义的等价简化）。 */
+    if (!cursor) {
+        XUndefineCursor(g_xpwnDisplay, (Window)nativeWindowId);
+        XFlush(g_xpwnDisplay);
+        return true;
+    }
+    shape = XCursor_shape(cursor);
+    if (shape == XCursor_Bitmap)
+        /* 位图光标（XCursor_create_bitmap）：1bit 双色
+           XCreatePixmapCursor 通道，遮罩可选（对标 Qt
+           QCursor(QBitmap,QBitmap,hotX,hotY)）。 */
+        native = xpwn_cursorAcquireBitmapCursor(cursor);
+    else if (shape == XCursor_Custom)
+        /* 像素图光标（XCursor_create_pixmap）：ARGB32 采样降为 1bit
+           source+mask 后 XCreatePixmapCursor（对标 Qt
+           QCursor(QPixmap,hotX,hotY) 的 X11 位图化落地；全彩需 RENDER
+           扩展，后续增强）。 */
+        native = xpwn_cursorAcquirePixmapCursor(cursor);
+    else
+        native = xpwn_cursorAcquireShapeCursor(shape);
+    if (native == None)
+        return false; /* 创建失败静默（位图无效/连接异常等）。 */
+    /* 窗口未映射时 XDefineCursor 合法：光标在映射后生效（X11 语义）。 */
+    XDefineCursor(g_xpwnDisplay, (Window)nativeWindowId, native);
+    XFlush(g_xpwnDisplay);
+    if (shape == XCursor_Bitmap || shape == XCursor_Custom) {
+        /* 位图通道的 Cursor 即用即毁：XDefineCursor 后窗口持有服务器
+           侧引用，XFreeCursor 仅解除资源号关联、存储待无引用后释放
+           （Xlib 手册语义；形状字体光标走进程级缓存，不在此释放）。 */
+        XFreeCursor(g_xpwnDisplay, native);
+    }
+    return true;
+}
+
+static bool xpwn_cursorBackendClearWindowCursor(uintptr_t nativeWindowId)
+{
+    if (!g_xpwnDisplay || nativeWindowId == 0)
+        return false;
+    XUndefineCursor(g_xpwnDisplay, (Window)nativeWindowId);
+    XFlush(g_xpwnDisplay);
+    return true;
+}
+
+/** @brief XCursor 平台后端钩子表（静态存储期；后端只保存指针）。 */
+static const XCursorPlatformBackend g_xpwnCursorBackend = {
+    xpwn_cursorBackendQueryPos,
+    xpwn_cursorBackendWarpPos,
+    xpwn_cursorBackendApplyWindowCursor,
+    xpwn_cursorBackendClearWindowCursor
+};
+
+/** @brief 连接建立后向 XCursor 注册平台光标后端（幂等）。 */
+static void xpwn_cursorBackendInstall(void)
+{
+    XCursor_installPlatformBackend(&g_xpwnCursorBackend);
+}
+
 static bool xpwn_ensureConnection(void);
 static bool xpwn_screensApplyLogicalDpi(void);
+
+/**
+ * @brief      X11 连接 fd 监视线程主体（主循环统一等待桥，见文件头部
+ *             g_xpwnWatchXfd 处的方案说明）。
+ * @details    阻塞 poll(X11 fd)：可读（键盘/鼠标/Expose/WM 状态回写等
+ *             协议数据到达）即经 XAbstractNetIoRing_wakeUp 唤醒 exec
+ *             标准主循环的阻塞等待——事件数据本身不在此消费，由被唤醒的
+ *             主线程经轮询回调泵空（Xlib 单线程访问约定不破）。
+ *             可读性为 level-triggered：主线程尚未泵空期间重 poll 会立即
+ *             返回造成空转，故唤醒后先做一次至多 4ms 的限幅 poll——新
+ *             数据一到即返回（唤醒延迟不受影响），把重唤醒频率封顶在
+ *             250 次/秒；随后回到无限期阻塞。POLLERR/HUP/NVAL（连接
+ *             死亡）退出线程，退化回主循环既有心跳节拍。
+ * @param      arg 未用（pthread 签名要求）。
+ * @return     NULL。
+ */
+#if XAbstractNetIoRing_ON
+static void* xpwn_x11WakeWatch(void* arg)
+{
+    struct pollfd pfd;
+    int r;
+    (void)arg;
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = g_xpwnWatchXfd;
+    pfd.events = POLLIN;
+    for (;;) {
+        do {
+            r = poll(&pfd, 1, -1);
+        } while (r < 0 && errno == EINTR);
+        if (r <= 0)
+            continue; /* 伪唤醒（无 EINTR 之外错误）：重新阻塞。 */
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+            break; /* 连接失效：退出监视线程（GUI 事件源已不存在）。 */
+        {
+            XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+            /* ring 未启用（如 createPlatform 失败）时保持静默：主循环
+               本就只剩心跳节拍，唤醒通道缺席属既有行为。 */
+            if (ring && XAbstractNetIoRing_isEnabled(ring))
+                XAbstractNetIoRing_wakeUp_base(ring);
+        }
+        /* 限幅再武装（见函数头注释）：至多 4ms，数据保持期间逐次重醒。 */
+        do {
+            r = poll(&pfd, 1, 4);
+        } while (r < 0 && errno == EINTR);
+    }
+    return NULL;
+}
+#endif /* XAbstractNetIoRing_ON */
+
+/** @brief 连接建立后惰性启动 X11 fd 监视线程（幂等；失败静默退化）。
+ *  @note  网络模块裁剪（XAbstractNetIoRing_ON=0）时 ring 阻塞等待同样
+ *         整体缺席（dispatcher 主线程分支条件不成立），唤醒通道无意义，
+ *         不起线程。 */
+static void xpwn_x11WakeWatchStart(void)
+{
+#if XAbstractNetIoRing_ON
+    if (g_xpwnWatchStarted || g_xpwnDisplay == NULL) return;
+    g_xpwnWatchXfd = XConnectionNumber(g_xpwnDisplay);
+    if (g_xpwnWatchXfd < 0) return;
+    if (pthread_create(&g_xpwnWatchThread, NULL, xpwn_x11WakeWatch, NULL) != 0)
+        return; /* 线程创建失败：静默退化回心跳节拍（与修复前一致）。 */
+    pthread_detach(g_xpwnWatchThread); /* 进程级常驻，无 join 语义。 */
+    g_xpwnWatchStarted = true;
+#else
+    (void)g_xpwnWatchStarted; /* 裁剪变体：静态保持未用。 */
+#endif /* XAbstractNetIoRing_ON */
+}
 
 /**
  * @brief      逻辑 DPI 运行期刷新公开入口（对标 Qt 中 xcb 后端对
@@ -1332,6 +1984,9 @@ static bool xpwn_ensureConnection(void)
     if (g_xpwnDisplay == NULL && g_xpwnDepth != 0) return false; /* 已失败。 */
     g_xpwnDisplay = XOpenDisplay(NULL);
     if (!g_xpwnDisplay) return false;
+    /* 协议错误非致命化（见 xpwn_xlibErrorHandler 注释；须在首个请求前
+       安装，Xlib 惯例在连接建立后立即设置）。 */
+    XSetErrorHandler(xpwn_xlibErrorHandler);
     /* 注意：连接成功后把深度置非 0 作为「已尝试成功」标记；失败路径在
        上面已 return。这里先选视觉。 */
     g_xpwnScreenNumber = DefaultScreen(g_xpwnDisplay);
@@ -1372,6 +2027,34 @@ static bool xpwn_ensureConnection(void)
                                             "_NET_WM_STATE_SKIP_PAGER",
                                             False);
     g_xpwnMotifWmHints = XInternAtom(g_xpwnDisplay, "_MOTIF_WM_HINTS", False);
+    /* 窗口状态/类型原子（对标 QXcbWindow::setWindowState/setWindowType
+       的 atom() 初始化；AnyPropertyType 语义下 None 返回值在写入端判空
+       跳过，无 WM 的最小会话同样安全）。 */
+    g_xpwnNetWmStateMaximizedVert = XInternAtom(g_xpwnDisplay,
+                                    "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    g_xpwnNetWmStateMaximizedHorz = XInternAtom(g_xpwnDisplay,
+                                    "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    g_xpwnNetWmStateFullscreen = XInternAtom(g_xpwnDisplay,
+                                             "_NET_WM_STATE_FULLSCREEN", False);
+    g_xpwnWmChangeState = XInternAtom(g_xpwnDisplay, "WM_CHANGE_STATE", False);
+    g_xpwnWmState = XInternAtom(g_xpwnDisplay, "WM_STATE", False);
+    g_xpwnNetWmWindowType = XInternAtom(g_xpwnDisplay,
+                                        "_NET_WM_WINDOW_TYPE", False);
+    g_xpwnNetWmTypeNormal = XInternAtom(g_xpwnDisplay,
+                                        "_NET_WM_WINDOW_TYPE_NORMAL", False);
+    g_xpwnNetWmTypeDialog = XInternAtom(g_xpwnDisplay,
+                                        "_NET_WM_WINDOW_TYPE_DIALOG", False);
+    g_xpwnNetWmTypeUtility = XInternAtom(g_xpwnDisplay,
+                                         "_NET_WM_WINDOW_TYPE_UTILITY", False);
+    g_xpwnNetWmTypeSplash = XInternAtom(g_xpwnDisplay,
+                                        "_NET_WM_WINDOW_TYPE_SPLASH", False);
+    g_xpwnNetWmTypeTooltip = XInternAtom(g_xpwnDisplay,
+                                         "_NET_WM_WINDOW_TYPE_TOOLTIP", False);
+    g_xpwnNetWmTypeCombo = XInternAtom(g_xpwnDisplay,
+                                       "_NET_WM_WINDOW_TYPE_COMBO", False);
+    g_xpwnNetWmTypePopupMenu = XInternAtom(g_xpwnDisplay,
+                                           "_NET_WM_WINDOW_TYPE_POPUP_MENU",
+                                           False);
     g_xpwnXdndAware = XInternAtom(g_xpwnDisplay, "XdndAware", False);
     g_xpwnXdndEnter = XInternAtom(g_xpwnDisplay, "XdndEnter", False);
     g_xpwnXdndPosition = XInternAtom(g_xpwnDisplay, "XdndPosition", False);
@@ -1398,10 +2081,12 @@ static bool xpwn_ensureConnection(void)
                 (void)XSetLocaleModifiers("@im=fcitx");
         }
     }
+#if XPWN_IME_DEBUG
     XPrintf("[ime-dbg] locale=%s XSupportsLocale=%d XMODIFIERS=%s\n",
             setlocale(LC_CTYPE, NULL),
             (int)XSupportsLocale(),
             getenv("XMODIFIERS") ? getenv("XMODIFIERS") : "(unset)");
+#endif
     /* 依次尝试常见输入法桥（fcitx/ibus/XIM 默认），环境变量
        XMODIFIERS 优先；XOpenIM 全部失败时中文输入不可用（西文不受
        影响），启动日志给出提示。 */
@@ -1415,15 +2100,24 @@ static bool xpwn_ensureConnection(void)
         for (ci = 0; ci < 3 && !g_xpwnInputMethod; ++ci) {
             (void)XSetLocaleModifiers(candidates[ci]);
             g_xpwnInputMethod = XOpenIM(g_xpwnDisplay, NULL, NULL, NULL);
+#if XPWN_IME_DEBUG
             XPrintf("[ime-dbg] XSetLocaleModifiers(%s) -> XOpenIM %s\n",
                     candidates[ci],
                     g_xpwnInputMethod ? "OK" : "failed");
+#endif
         }
         if (!g_xpwnInputMethod)
             XPrintf("XPlatformNativeWindow: XOpenIM 失败——XIM 不可用"
                     "（西文不受影响；中文走 DBus 输入法前端）\n");
     }
     xpwn_imeInit(); /* fcitx5 DBus 输入法（中文主路径）。 */
+    /* 光标后端注册：连接可用后 XCursor 的 pos/setPos/窗口光标接口即
+       走真实 X11 通道（XQueryPointer/XWarpPointer/XDefineCursor）。 */
+    xpwn_cursorBackendInstall();
+    /* 主循环统一等待桥：X11 fd 监视线程随连接建立惰性启动（幂等），
+       使 exec 标准主循环的 ring 阻塞等待能被 X11 输入即时唤醒（对标
+       QEventDispatcherGlib 把 X11 fd 并入主循环统一等待）。 */
+    xpwn_x11WakeWatchStart();
     /* 屏幕接入不在这里初始化：连接可能早在 XGuiApplication 构造期间被
        平台集成（字体/主题等）间接建立，此时 GUI 单例尚未发布，
        screenAdded 的登记会丢失；改为首次事件泵时惰性接入（见
@@ -1675,6 +2369,193 @@ static XMouseButton xpwn_translateButtonMask(unsigned int state)
     return buttons;
 }
 
+/* ==================== X11 SelectionRequest serve（单目标 + MULTIPLE 批量）
+ * ==================== 对标 QXcbClipboard::handleSelectionRequest：单目标
+ * serve 与 ICCCM 2.6.2 MULTIPLE 的逐对分流共用同一实现（Qt 对 MULTIPLE
+ * 属性里的每个 (target,property) 对做等价的单目标 serve，最后统一一条
+ * SelectionNotify）。两个函数均只写属性、不回 Notify——回发由
+ * xpwn_dispatchEvent 的 SelectionRequest 分支统一完成（保证「一次
+ * notify」的协议约束只在一个位置落实）。 */
+
+/* 单目标 serve：按 req->target 把转换结果写进传输属性并返回是否成功
+ * （served）。req->property 为 None 时按 ICCCM 2.5 约定以 target 名代之。
+ * 分支逻辑与此前 SelectionRequest 分支的内联实现逐字节一致，抽出共用：
+ * TARGETS/SAVE_TARGETS 报告镜像目标集合（text/plain 条目额外补
+ * XA_STRING）、TIMESTAMP 回认领时间戳、数据目标按镜像格式条目命中回数，
+ * 大数据（超 xpw_clipIncrChunkLimit 阈值）改走 ICCCM 2.5 INCR 增量传输
+ * ——会话表容量由 xpw_clipIncrStart 内部复核（先闲置回收再取槽，表满
+ * 返回 false 按协议拒绝）。镜像无效/目标不匹配时不写属性、返回 false。 */
+static bool xpw_clipServeTarget(XSelectionRequestEvent* req)
+{
+    XpwClipOwnerState* st = xpw_clipStateForSelection(req->selection);
+    Atom prop = req->property != None ? req->property : req->target;
+    bool served = false;
+    if (st && st->m_dataValid && st->m_serveWin != None) {
+        if (req->target == g_xpwnTargets) {
+            /* TARGETS 询问：报告镜像实际持有的格式原子集合（对标
+             * QXcbClipboard::handleSelectionRequest 按 QMimeData
+             * formats() 报告）；text/plain 额外补 XA_STRING（对标
+             * Qt 同时提供 UTF8_STRING 与 STRING 两个文本目标）。
+             * TIMESTAMP 可直接请求但不进列表——部分剪贴板管理器
+             * 遇未知目标会中止取数。不支持的格式不出现在列表。
+             * MULTIPLE 协议目标由 xpw_clipServeMultiple 承接（ICCCM
+             * 2.6.2），并按 ICCCM 广播进列表（§8.2 协议补边：请求方
+             * 据此可用一次批量转换取齐多格式）；数组容量 +1 护栏
+             * 即为此预留。 */
+            Atom targets[XPWN_CLIP_MAX_FORMATS * 2 + 1];
+            int n = xpw_clipBuildTargetAtoms(st, targets,
+                                             (int)(sizeof(targets) / sizeof(targets[0])));
+            if (g_xpwnMultiple != None &&
+                n < (int)(sizeof(targets) / sizeof(targets[0])))
+                targets[n++] = g_xpwnMultiple;
+            XChangeProperty(g_xpwnDisplay, req->requestor, prop,
+                            XA_ATOM, 32, PropModeReplace,
+                            (const unsigned char*)targets, n);
+            served = true;
+        } else if (g_xpwnSaveTargets != None &&
+                   req->target == g_xpwnSaveTargets) {
+            /* SAVE_TARGETS 询问（freedesktop 剪贴板管理器协议，对标
+             * QXcbClipboard 对剪贴板管理器 SAVE_TARGETS 请求的应答）：
+             * Klipper 等管理器接管所有权前先以 SAVE_TARGETS 询问旧
+             * owner「愿意保存哪些目标」，旧 owner 以 XA_ATOM 数组回
+             * 当前镜像支持的转换目标并 SelectionNotify，管理器随后逐
+             * 目标取数暂存。此处复用 TARGETS 的目标集合应答（轻量
+             * 落地：不做逐目标延迟序列化，镜像数据本已全量在内存）。 */
+            Atom targets[XPWN_CLIP_MAX_FORMATS * 2 + 1];
+            int n = xpw_clipBuildTargetAtoms(st, targets,
+                                             (int)(sizeof(targets) / sizeof(targets[0])));
+            XChangeProperty(g_xpwnDisplay, req->requestor, prop,
+                            XA_ATOM, 32, PropModeReplace,
+                            (const unsigned char*)targets, n);
+            served = true;
+        } else if (req->target == g_xpwnTimestamp) {
+            /* TIMESTAMP 询问：报告认领所有权的时间戳（按选择区取
+             * 各自认领时的时间）。 */
+            long t = (long)st->m_timestamp;
+            XChangeProperty(g_xpwnDisplay, req->requestor, prop,
+                            XA_INTEGER, 32, PropModeReplace,
+                            (const unsigned char*)&t, 1);
+            served = true;
+        } else {
+            /* 数据目标：按请求原子匹配镜像格式条目（text/plain 条目
+             * 同时响应 UTF8_STRING 与 XA_STRING）；命中即把保存的
+             * 字节流按 format=8 原样回（image/png 等二进制不再编码，
+             * 对标 Qt 平台层直接透传 QMimeData 保存的字节）。 */
+            int fi, hit = -1;
+            Atom type = req->target;
+            for (fi = 0; fi < st->m_formatCount; ++fi) {
+                if (req->target == st->m_formats[fi].m_target) {
+                    hit = fi;
+                    break;
+                }
+                if (req->target == XA_STRING &&
+                    strncmp(st->m_formats[fi].m_mime, "text/plain",
+                            sizeof(st->m_formats[fi].m_mime)) == 0) {
+                    hit = fi;
+                    type = XA_STRING;
+                    break;
+                }
+            }
+            if (hit < 0 && st->m_text &&
+                (req->target == g_xpwnUtf8String || req->target == XA_STRING)) {
+                /* 兼容旧文本镜像：仅 setText 通道写入时仍可服务。 */
+                hit = -2;
+                type = (req->target == XA_STRING) ? XA_STRING : g_xpwnUtf8String;
+            }
+            if (hit >= 0) {
+                const unsigned char* bytes = (hit == -2)
+                    ? (const unsigned char*)st->m_text
+                    : st->m_formats[hit].m_data;
+                int len = (hit == -2) ? st->m_textLen
+                                      : st->m_formats[hit].m_len;
+                if (bytes && len >= 0) {
+                    if (len > xpw_clipIncrChunkLimit()) {
+                        /* 大数据（超 xpw_clipIncrChunkLimit 阈值）：改走
+                         * ICCCM 2.5 INCR 增量传输——写 type=INCR 协议头
+                         * 并登记分片会话；SelectionNotify（由调用方统一
+                         * 回发）按协议先于首批数据分片，且其 property
+                         * 指向传输属性，请求方由协议头得知 INCR（对标
+                         * QXcbClipboard::handleSelectionRequest 的 INCR
+                         * 分支）。会话表满则按协议拒绝。 */
+                        served = xpw_clipIncrStart(req->requestor, prop,
+                                                   req->selection, type,
+                                                   bytes, len);
+                    } else {
+                        /* 小数据/空数据：既有单次写入路径逐字节不变
+                         * （空文本仍服务零长度属性，保持原语义）。 */
+                        XChangeProperty(g_xpwnDisplay, req->requestor,
+                                        prop, type, 8, PropModeReplace,
+                                        bytes, len);
+                        served = true;
+                    }
+                }
+            }
+        }
+    }
+    return served;
+}
+
+/** @brief MULTIPLE 属性内 (target,property) 对数组的防御性对数上限
+ *  （超出视为畸形请求整体拒绝；正常客户端的批量转换远低于此）。 */
+#define XPWN_CLIP_MULTIPLE_MAX_PAIRS 1024
+
+/* MULTIPLE serve（ICCCM 2.6.2，对标 QXcbClipboard::handleSelectionRequest
+ * 的 MULTIPLE 分支）：请求方把 (target,property) 原子对数组放在传输属性
+ * （type=ATOM、format=32）里请求 MULTIPLE。逐对以 xpw_clipServeTarget
+ * 分流 serve（各对结果写入对内自己的 property；对内 property=None 时以
+ * target 名代之，与单请求约定一致）；某对失败则把数组内该对的 property
+ * 原子改写为 None 作为逐对失败标记（ICCCM 2.6.2；仅当有失败才回写属性，
+ * 全成功零额外往返）。target=None 终止遍历（ICCCM：请求方可借此截断
+ * 列表）。处理完返回 true，由调用方对同一请求只回一条 SelectionNotify
+ * （target/property 回 MULTIPLE 属性本身）。属性读取失败、类型/格式
+ * 不符、对数不成偶或超防御上限 → 返回 false，调用方按协议以
+ * property=None 拒绝（对标 Qt "Invalid multiple request" 拒绝路径）。 */
+static bool xpw_clipServeMultiple(XSelectionRequestEvent* req)
+{
+    Atom prop = req->property != None ? req->property : req->target;
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char* data = NULL;
+    unsigned long* pairs;
+    unsigned long i, pairCount;
+    bool modified = false;
+    if (XGetWindowProperty(g_xpwnDisplay, req->requestor, prop,
+                           0, 0xFFFFFF, False, XA_ATOM,
+                           &actual_type, &actual_format,
+                           &nitems, &bytes_after, &data) != Success)
+        return false;
+    if (actual_type != XA_ATOM || actual_format != 32 || !data ||
+        nitems < 2 || (nitems & 1ul) != 0ul ||
+        nitems / 2 > (unsigned long)XPWN_CLIP_MULTIPLE_MAX_PAIRS) {
+        /* 畸形 MULTIPLE 属性：不逐对尝试，整体按协议拒绝。 */
+        if (data) xpwn_xFree(data);
+        return false;
+    }
+    /* Xlib 约定：format=32 属性数据按 long 数组返回，元素即 Atom。 */
+    pairs = (unsigned long*)data;
+    pairCount = nitems / 2;
+    for (i = 0; i < pairCount; ++i) {
+        XSelectionRequestEvent sub = *req;
+        sub.target = (Atom)pairs[i * 2];
+        if (sub.target == None)
+            break; /* ICCCM 2.6.2：None 目标终止列表（后续对不处理）。 */
+        sub.property = (Atom)pairs[i * 2 + 1];
+        if (sub.property == None)
+            sub.property = sub.target; /* 对内 None：以 target 名代之。 */
+        if (!xpw_clipServeTarget(&sub)) {
+            pairs[i * 2 + 1] = (unsigned long)None; /* 逐对失败标记。 */
+            modified = true;
+        }
+    }
+    if (modified)
+        XChangeProperty(g_xpwnDisplay, req->requestor, prop, XA_ATOM, 32,
+                        PropModeReplace, (const unsigned char*)pairs,
+                        (int)nitems);
+    xpwn_xFree(data);
+    return true;
+}
+
 /* ==================== 事件泵（平台后端提供） ==================== */
 
 /** @brief 单条 XEvent 翻译为窗口事件注入；返回是否注入了事件。 */
@@ -1792,7 +2673,9 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                热键由 IME 内部消费，返回 True 时事件不再下发）。 */
             if (entry->m_inputContext &&
                 XFilterEvent((X11_XEvent*)ev, entry->m_window)) {
+#if XPWN_IME_DEBUG
                 XPrintf("[ime-dbg] XFilterEvent consumed key\n");
+#endif
                 delivered = true;
                 break;
             }
@@ -1813,14 +2696,18 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                     /* 功能键防护（必须）：Backspace/方向等 fcitx 透传
                        时会错给空白文本——不信其文本，交 KEY_PRESS。 */
                     if (status == XLookupBoth && imeKeysym >= (KeySym)0xff00) {
+#if XPWN_IME_DEBUG
                         XPrintf("[ime-dbg] fnkey text='%s' keysym=0x%lx"
                                 "（走 KEY_PRESS）\n", committed,
                                 (unsigned long)imeKeysym);
+#endif
                     }
                     else if (status == XLookupChars ||
                              (status == XLookupBoth &&
                               imeKeysym < (KeySym)0xff00)) {
+#if XPWN_IME_DEBUG
                         XPrintf("[ime-dbg] commit text='%s'\n", committed);
+#endif
                         (void)XWindowSystemInterface_handleInputMethodEvent(
                             entry->m_window, "", committed, 0, 0, -1, -1);
                         if (ev->type == KeyPress) {
@@ -1857,14 +2744,16 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                    （xkey 无显式标志，用按下表去重）。 */
                 autoRepeat = entry->m_keyPressed[ev->xkey.keycode & 0xff];
                 entry->m_keyPressed[ev->xkey.keycode & 0xff] = true;
-                XWindowSystemInterface_handleKeyEvent(
+                XWindowSystemInterface_handleKeyEvent_ex(
                     entry->m_window, XEVENT_TYPE_KEY_PRESS, key, modifiers,
-                    autoRepeat);
+                    autoRepeat, (uint32_t)ev->xkey.keycode,
+                    (uint32_t)ev->xkey.time);
             } else {
                 entry->m_keyPressed[ev->xkey.keycode & 0xff] = false;
-                XWindowSystemInterface_handleKeyEvent(
+                XWindowSystemInterface_handleKeyEvent_ex(
                     entry->m_window, XEVENT_TYPE_KEY_RELEASE, key, modifiers,
-                    false);
+                    false, (uint32_t)ev->xkey.keycode,
+                    (uint32_t)ev->xkey.time);
             }
             delivered = true;
         }
@@ -1874,11 +2763,16 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xbutton.window);
         if (entry && entry->m_window) {
             XPoint position;
+            XPoint globalPosition;
             XMouseButton button;
             XMouseButton buttons;
             XKeyboardModifiers modifiers;
             position.x = ev->xbutton.x;
             position.y = ev->xbutton.y;
+            /* 根坐标与事件时间（ms）随完整负载通道透传（对标 Qt 全局
+               位置/时间戳语义）。 */
+            globalPosition.x = ev->xbutton.x_root;
+            globalPosition.y = ev->xbutton.y_root;
             modifiers = xpwn_translateModifiers(ev->xbutton.state, NoSymbol);
             buttons = xpwn_translateButtonMask(ev->xbutton.state);
             if (ev->xbutton.button >= 4 && ev->xbutton.button <= 7) {
@@ -1909,13 +2803,15 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                         isDoubleClick = true;
                     }
                     if (isDoubleClick) {
-                        XWindowSystemInterface_handleMouseEvent(
+                        XWindowSystemInterface_handleMouseEvent_ex(
                             entry->m_window, XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK,
-                            button, buttons | button, modifiers, position);
+                            button, buttons | button, modifiers, position,
+                            &globalPosition, (uint32_t)ev->xbutton.time);
                     } else {
-                        XWindowSystemInterface_handleMouseEvent(
+                        XWindowSystemInterface_handleMouseEvent_ex(
                             entry->m_window, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
-                            button, buttons | button, modifiers, position);
+                            button, buttons | button, modifiers, position,
+                            &globalPosition, (uint32_t)ev->xbutton.time);
                     }
                     entry->m_lastPressTime = now;
                     entry->m_lastPressButton = button;
@@ -1929,18 +2825,22 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xbutton.window);
         if (entry && entry->m_window) {
             XPoint position;
+            XPoint globalPosition;
             XMouseButton button;
             XKeyboardModifiers modifiers;
             position.x = ev->xbutton.x;
             position.y = ev->xbutton.y;
+            globalPosition.x = ev->xbutton.x_root;
+            globalPosition.y = ev->xbutton.y_root;
             modifiers = xpwn_translateModifiers(ev->xbutton.state, NoSymbol);
             button = xpwn_translateButton(ev->xbutton.button);
             if (button != XMouseButton_NoButton) {
                 /* 释放时 state 已不含本键，按下集合直接采用状态位。 */
                 XMouseButton buttons = xpwn_translateButtonMask(ev->xbutton.state);
-                XWindowSystemInterface_handleMouseEvent(
+                XWindowSystemInterface_handleMouseEvent_ex(
                     entry->m_window, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
-                    button, buttons, modifiers, position);
+                    button, buttons, modifiers, position,
+                    &globalPosition, (uint32_t)ev->xbutton.time);
             }
             delivered = true;
         }
@@ -1949,15 +2849,19 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xmotion.window);
         if (entry && entry->m_window) {
             XPoint position;
+            XPoint globalPosition;
             XMouseButton buttons;
             XKeyboardModifiers modifiers;
             position.x = ev->xmotion.x;
             position.y = ev->xmotion.y;
+            globalPosition.x = ev->xmotion.x_root;
+            globalPosition.y = ev->xmotion.y_root;
             buttons = xpwn_translateButtonMask(ev->xmotion.state);
             modifiers = xpwn_translateModifiers(ev->xmotion.state, NoSymbol);
-            XWindowSystemInterface_handleMouseEvent(
+            XWindowSystemInterface_handleMouseEvent_ex(
                 entry->m_window, XEVENT_TYPE_MOUSE_MOVE,
-                XMouseButton_NoButton, buttons, modifiers, position);
+                XMouseButton_NoButton, buttons, modifiers, position,
+                &globalPosition, (uint32_t)ev->xmotion.time);
             delivered = true;
         }
         break;
@@ -2113,85 +3017,24 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         XSelectionRequestEvent* req = (XSelectionRequestEvent*)
                                       &ev->xselectionrequest;
         XSelectionEvent notify;
-        XpwClipOwnerState* st = xpw_clipStateForSelection(req->selection);
         Atom prop = req->property != None ? req->property : req->target;
         bool served = false;
-        fprintf(stderr, "[clip-dbg] %.3f SelectionRequest sel=%s from 0x%lx target=%s prop=0x%lx mirror=%s serveWin=0x%lx\n",
-                (double)((long)time(NULL) % 1000),
-                XGetAtomName(g_xpwnDisplay, req->selection),
-                (unsigned long)req->requestor,
-                XGetAtomName(g_xpwnDisplay, req->target),
-                (unsigned long)req->property,
-                (st && st->m_dataValid) ? "set" : "NULL",
-                (st ? (unsigned long)st->m_serveWin : 0ul));
-        if (st && st->m_dataValid && st->m_serveWin != None) {
-            if (req->target == g_xpwnTargets) {
-                /* TARGETS 询问：报告镜像实际持有的格式原子集合（对标
-                 * QXcbClipboard::handleSelectionRequest 按 QMimeData
-                 * formats() 报告）；text/plain 额外补 XA_STRING（对标
-                 * Qt 同时提供 UTF8_STRING 与 STRING 两个文本目标）。
-                 * TIMESTAMP 可直接请求但不进列表——部分剪贴板管理器
-                 * 遇未知目标会中止取数。不支持的格式不出现在列表。 */
-                Atom targets[XPWN_CLIP_MAX_FORMATS * 2 + 1];
-                int n = 0, fi;
-                for (fi = 0; fi < st->m_formatCount; ++fi) {
-                    if (st->m_formats[fi].m_target == None || !st->m_formats[fi].m_data)
-                        continue;
-                    targets[n++] = st->m_formats[fi].m_target;
-                    if (strncmp(st->m_formats[fi].m_mime, "text/plain", sizeof(st->m_formats[fi].m_mime)) == 0)
-                        targets[n++] = XA_STRING;
-                }
-                XChangeProperty(g_xpwnDisplay, req->requestor, prop,
-                                XA_ATOM, 32, PropModeReplace,
-                                (const unsigned char*)targets, n);
-                served = true;
-            } else if (req->target == g_xpwnTimestamp) {
-                /* TIMESTAMP 询问：报告认领所有权的时间戳（按选择区取
-                 * 各自认领时的时间）。 */
-                long t = (long)st->m_timestamp;
-                XChangeProperty(g_xpwnDisplay, req->requestor, prop,
-                                XA_INTEGER, 32, PropModeReplace,
-                                (const unsigned char*)&t, 1);
-                served = true;
-            } else {
-                /* 数据目标：按请求原子匹配镜像格式条目（text/plain 条目
-                 * 同时响应 UTF8_STRING 与 XA_STRING）；命中即把保存的
-                 * 字节流按 format=8 原样回（image/png 等二进制不再编码，
-                 * 对标 Qt 平台层直接透传 QMimeData 保存的字节）。 */
-                int fi, hit = -1;
-                Atom type = req->target;
-                for (fi = 0; fi < st->m_formatCount; ++fi) {
-                    if (req->target == st->m_formats[fi].m_target) {
-                        hit = fi;
-                        break;
-                    }
-                    if (req->target == XA_STRING &&
-                        strncmp(st->m_formats[fi].m_mime, "text/plain",
-                                sizeof(st->m_formats[fi].m_mime)) == 0) {
-                        hit = fi;
-                        type = XA_STRING;
-                        break;
-                    }
-                }
-                if (hit < 0 && st->m_text &&
-                    (req->target == g_xpwnUtf8String || req->target == XA_STRING)) {
-                    /* 兼容旧文本镜像：仅 setText 通道写入时仍可服务。 */
-                    hit = -2;
-                    type = (req->target == XA_STRING) ? XA_STRING : g_xpwnUtf8String;
-                }
-                if (hit >= 0) {
-                    const unsigned char* bytes = (hit == -2)
-                        ? (const unsigned char*)st->m_text
-                        : st->m_formats[hit].m_data;
-                    int len = (hit == -2) ? st->m_textLen
-                                          : st->m_formats[hit].m_len;
-                    if (bytes) {
-                        XChangeProperty(g_xpwnDisplay, req->requestor, prop,
-                                        type, 8, PropModeReplace, bytes, len);
-                        served = true;
-                    }
-                }
-            }
+        if (g_xpwnMultiple != None && req->target == g_xpwnMultiple) {
+            /* ICCCM 2.6.2 MULTIPLE 批量转换（收口此前「批次二十三评估
+             * 维持 P2 缓做」项）：传输属性内为 (target,property) 原子对
+             * 数组，逐对分流单目标 serve（复用 xpw_clipServeTarget 的
+             * TARGETS/TIMESTAMP/数据/INCR 路径，INCR 会话表容量由
+             * xpw_clipIncrStart 复核）；处理完只回本分支末尾这一条
+             * SelectionNotify（对标 Qt 对 MULTIPLE 逐对 serve 后统一
+             * notify）。整体畸形（属性缺失/类型格式不符/对数不成偶）
+             * 才以 property=None 拒绝；镜像无效时逐对失败、数组内标记
+             * None 后仍回 MULTIPLE 属性，请求方可逐对得知结果。 */
+            served = xpw_clipServeMultiple(req);
+        } else {
+            /* 单目标请求：TARGETS/SAVE_TARGETS/TIMESTAMP/数据目标共用
+             * 逻辑抽为 xpw_clipServeTarget（分支与既有内联实现逐字节
+             * 一致），成功与否仍由本分支统一回发 SelectionNotify。 */
+            served = xpw_clipServeTarget(req);
         }
         memset(&notify, 0, sizeof(notify));
         notify.type = SelectionNotify;
@@ -2218,6 +3061,9 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         if (st) {
             int mode = (sel == XA_PRIMARY) ? (int)XClipboardMode_Selection
                                            : (int)XClipboardMode_Clipboard;
+            /* 所有权易主：该选择区在途的 INCR 分片会话一并中止（快照数据
+               已失效，继续传输只会误导旧请求方）。 */
+            xpw_clipIncrAbortForSelection(sel);
             xpw_clipClearMirror(st);
             xpw_clipNotifyRevoked(mode);
             delivered = true;
@@ -2246,11 +3092,214 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             delivered = true;
         }
         break;
+    case PropertyNotify:
+        /* 剪贴板 INCR 分片会话推进：requestor 每删一次传输属性（GetProperty
+         * delete=True 取走上一片）即写下一片（ICCCM 2.5，对标 Qt
+         * QXcbClipboard::handlePropertyNotifyEvent 转发事务）。此处监听的
+         * 是外部请求者窗口（serve 会话）与本进程请求窗口（读收集期间不会
+         * 走到主泵，见 xpw_clipCollectIncr 自有循环）。不算框架窗口事件。 */
+        if (xpw_clipHandleIncrDelete(&ev->xproperty))
+            xpw_clipIncrSweepIdle();
+        /* WM 状态回写观察（对标 QXcbWindow::handlePropertyNotifyEvent 对
+         * _NET_WM_STATE/WM_STATE 的处理）：setWindowState 请求最大化/
+         * 全屏/最小化后，WM 执行结果经属性回写体现——增删 _NET_WM_STATE
+         * 原子或改 WM_STATE 图标态。此处换算成 XWindowState 上报公共层
+         * （XWindow_reportWindowStateChanged 发射 windowStateChanged 且
+         * 不回写平台层，无注入回环），showMaximized 等实测状态闭环。 */
+        else if (ev->xproperty.state == PropertyNewValue &&
+                 (ev->xproperty.atom == g_xpwnNetWmState ||
+                  ev->xproperty.atom == g_xpwnWmState)) {
+            entry = xpwn_findByNativeWindow(ev->xproperty.window);
+            if (entry && entry->m_window)
+                XWindow_reportWindowStateChanged(
+                    entry->m_window,
+                    xpwn_queryWmWindowState(g_xpwnDisplay, entry->m_win));
+        }
+        break;
     default:
         break;
     }
     (void)type;
     return delivered;
+}
+
+/* ==================== X11 INCR 会话管理（serve 方向核心） ==================== */
+
+/* 单调时钟毫秒（会话闲置扫描用）。 */
+static unsigned long xpw_clipMonotonicMs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long)ts.tv_sec * 1000ul +
+           (unsigned long)ts.tv_nsec / 1000000ul;
+}
+
+/* INCR 触发阈值/单分片上限（字节）。口径：
+ * - XExtendedMaxRequestSize/XMaxRequestSize 返回以 4 字节字为单位的服务器
+ *   最大请求长度（Qt qclipboard_x11.cpp 同以 *4 折算字节）；BIG-REQUESTS
+ *   不可用（XExtendedMaxRequestSize 返回 0）时回退 XMaxRequestSize。
+ * - 折算字节后除 4：ICCCM 2.5 要求单分片应明显小于 maximum-request-size，
+ *   为协议头/属性名等开销预留余量。
+ * - 再与 XPWN_CLIP_INCR_CHUNK_CAP（262144，常见服务器单属性上限）取小，
+ *   避免现代服务器扩展上限很大时单分片直接顶到单属性极限。
+ * 同一数值兼任「数据超过该长度即改走 INCR」的触发阈值：小于它的单次
+ * XChangeProperty 在有 BIG-REQUESTS 的服务器上必然一次承载成功。 */
+static int xpw_clipIncrChunkLimit(void)
+{
+    long extWords;
+    long maxBytes;
+    long limit;
+    if (!g_xpwnDisplay) return XPWN_CLIP_INCR_CHUNK_CAP;
+    extWords = XExtendedMaxRequestSize(g_xpwnDisplay);
+    maxBytes = (extWords > 0 ? extWords
+                             : (long)XMaxRequestSize(g_xpwnDisplay)) * 4;
+    limit = maxBytes / 4;
+    if (limit > (long)XPWN_CLIP_INCR_CHUNK_CAP)
+        limit = XPWN_CLIP_INCR_CHUNK_CAP;
+    if (limit < 1024) limit = 1024; /* 极小 max-request 服务器的保底分片。 */
+    return (int)limit;
+}
+
+/* 中止会话：解除对 requestor 窗口的属性监听并释放快照（对标
+ * QXcbClipboardTransaction 结束时恢复 NO_EVENT 事件掩码并自毁）。 */
+static void xpw_clipIncrAbort(XpwClipIncrSession* s)
+{
+    if (!s || !s->m_active) return;
+    s->m_active = false;
+    if (g_xpwnDisplay && s->m_requestor != None)
+        XSelectInput(g_xpwnDisplay, s->m_requestor, NoEventMask);
+    if (s->m_data) { XFree_System(s->m_data); s->m_data = NULL; }
+    s->m_requestor = None;
+    s->m_property = None;
+    s->m_selection = None;
+    s->m_type = None;
+    s->m_total = 0;
+    s->m_offset = 0;
+    s->m_lastMs = 0;
+}
+
+static void xpw_clipIncrAbortForSelection(Atom selection)
+{
+    int i;
+    for (i = 0; i < XPWN_CLIP_INCR_MAX_SESSIONS; ++i) {
+        XpwClipIncrSession* s = &g_xpwnClipIncrSessions[i];
+        if (s->m_active && s->m_selection == selection)
+            xpw_clipIncrAbort(s);
+    }
+}
+
+static void xpw_clipIncrAbortForWindow(Window requestor)
+{
+    int i;
+    for (i = 0; i < XPWN_CLIP_INCR_MAX_SESSIONS; ++i) {
+        XpwClipIncrSession* s = &g_xpwnClipIncrSessions[i];
+        if (s->m_active && s->m_requestor == requestor)
+            xpw_clipIncrAbort(s);
+    }
+}
+
+/* 闲置会话回收（对端死亡后 PropertyDelete 永不再来）：在新会话建立与
+ * 事件泵空闲时扫描，快照与槽位占用随 30s 闲置自动归还（Qt
+ * QXcbClipboardTransaction abort timer 的无定时器等价）。 */
+static void xpw_clipIncrSweepIdle(void)
+{
+    unsigned long now = xpw_clipMonotonicMs();
+    int i;
+    for (i = 0; i < XPWN_CLIP_INCR_MAX_SESSIONS; ++i) {
+        XpwClipIncrSession* s = &g_xpwnClipIncrSessions[i];
+        if (s->m_active && now - s->m_lastMs > XPWN_CLIP_INCR_SESSION_IDLE_MS)
+            xpw_clipIncrAbort(s);
+    }
+}
+
+/* 写下一分片。由 requestor 窗口传输属性上的 PropertyNotify
+ * state=PropertyDelete 驱动（请求方每次用 GetProperty delete=True 取走
+ * 分片，删除事件即「已取走」信号）。分片一律 PropModeReplace（ICCCM 2.5：
+ * 请求方每次整读该属性；对标 QXcbClipboardTransaction 的 REPLACE）。
+ * 最后一片被取走后再收一次 Delete，此时写零长度属性作为终结信号——
+ * ICCCM 2.5：请求方读到零长度分片即知传输完成。 */
+static void xpw_clipIncrWriteNext(XpwClipIncrSession* s)
+{
+    int remain = s->m_total - s->m_offset;
+    if (remain > 0) {
+        int limit = xpw_clipIncrChunkLimit();
+        int chunk = remain < limit ? remain : limit;
+        XChangeProperty(g_xpwnDisplay, s->m_requestor, s->m_property,
+                        s->m_type, 8, PropModeReplace,
+                        s->m_data + s->m_offset, chunk);
+        s->m_offset += chunk;
+        s->m_lastMs = xpw_clipMonotonicMs();
+        return;
+    }
+    XChangeProperty(g_xpwnDisplay, s->m_requestor, s->m_property,
+                    s->m_type, 8, PropModeReplace,
+                    (const unsigned char*)"", 0);
+    xpw_clipIncrAbort(s);
+}
+
+/* 事件泵挂接：INCR 会话推进（仅响应在会话 requestor 窗口/属性上的删除
+ * 通知）。返回是否命中任一会话。 */
+static bool xpw_clipHandleIncrDelete(const XPropertyEvent* pev)
+{
+    int i;
+    bool handled = false;
+    if (pev->state != PropertyDelete) return false;
+    for (i = 0; i < XPWN_CLIP_INCR_MAX_SESSIONS; ++i) {
+        XpwClipIncrSession* s = &g_xpwnClipIncrSessions[i];
+        if (!s->m_active || s->m_requestor != pev->window ||
+            s->m_property != pev->atom)
+            continue;
+        xpw_clipIncrWriteNext(s);
+        handled = true;
+    }
+    return handled;
+}
+
+/* 建立 INCR 会话并发协议头（SelectionRequest 数据目标超阈值时调用）。
+ * 序列对标 ICCCM 2.5 与 QXcbClipboardTransaction 构造：
+ *  1) 对 requestor 窗口挂 PropertyChangeMask（X11 允许监听其他客户端
+ *     窗口的属性变化；GTK gdkselectionoutputstream-x11.c 同法）；
+ *  2) 写 type=INCR、format=32、值=总字节长度的协议头属性；
+ *  3) SelectionNotify 由调用方先行回发（notify.property 指向传输属性；
+ *     ICCCM 2.5 顺序为「INCR 头 → notify → 等 requestor 删头 → 逐片」），
+ *     此后本会话由 PropertyNotify Delete 逐片驱动。
+ * 表满返回 false，调用方按协议以 property=None 拒绝该请求。 */
+static bool xpw_clipIncrStart(Window requestor, Atom property, Atom selection,
+                              Atom type, const unsigned char* data, int len)
+{
+    XpwClipIncrSession* s = NULL;
+    long header;
+    int i;
+    if (requestor == None || property == None || !data || len <= 0)
+        return false;
+    xpw_clipIncrSweepIdle();
+    /* 同一 requestor+property 的旧会话（对端异常重入）先行让位。 */
+    for (i = 0; i < XPWN_CLIP_INCR_MAX_SESSIONS; ++i) {
+        XpwClipIncrSession* cur = &g_xpwnClipIncrSessions[i];
+        if (cur->m_active && cur->m_requestor == requestor &&
+            cur->m_property == property)
+            xpw_clipIncrAbort(cur);
+        if (!cur->m_active && !s)
+            s = cur;
+    }
+    if (!s) return false; /* 会话表满：礼貌拒绝。 */
+    s->m_data = (unsigned char*)XMemory_malloc((size_t)len,
+                                               XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!s->m_data) return false;
+    memcpy(s->m_data, data, (size_t)len);
+    s->m_requestor = requestor;
+    s->m_property = property;
+    s->m_selection = selection;
+    s->m_type = type;
+    s->m_total = len;
+    s->m_offset = 0;
+    s->m_lastMs = xpw_clipMonotonicMs();
+    s->m_active = true;
+    XSelectInput(g_xpwnDisplay, requestor, PropertyChangeMask);
+    header = (long)len; /* format=32 按 long 数组传递（Xlib 统一转换）。 */
+    XChangeProperty(g_xpwnDisplay, requestor, property, g_xpwnIncr, 32,
+                    PropModeReplace, (const unsigned char*)&header, 1);
+    return true;
 }
 
 /* ==================== 可用性与生命周期（平台后端提供） ==================== */
@@ -2279,6 +3328,12 @@ static bool xpw_clipEnsureAtoms(void)
         g_xpwnUtf8String = XInternAtom(g_xpwnDisplay, "UTF8_STRING", False);
     if (g_xpwnTextHtml == None)
         g_xpwnTextHtml = XInternAtom(g_xpwnDisplay, "text/html", False);
+    if (g_xpwnIncr == None)
+        g_xpwnIncr = XInternAtom(g_xpwnDisplay, "INCR", False);
+    if (g_xpwnSaveTargets == None)
+        g_xpwnSaveTargets = XInternAtom(g_xpwnDisplay, "SAVE_TARGETS", False);
+    if (g_xpwnMultiple == None)
+        g_xpwnMultiple = XInternAtom(g_xpwnDisplay, "MULTIPLE", False);
     return g_xpwnClipboard != None;
 }
 
@@ -2294,6 +3349,23 @@ static bool xpw_clipEnsureOwnerWindow(void)
                                         -1, -1, 1, 1, 0, 0, 0);
     if (g_xpwnClipWin == None) return false;
     XSelectInput(g_xpwnDisplay, g_xpwnClipWin, PropertyChangeMask);
+    return true;
+}
+
+/* 确保存在专用请求者窗口（1×1、永不映射、PropertyChangeMask）。读方向
+ * 的传输属性与 SelectionNotify 都挂在本窗口：INCR 增量收集需要接收该
+ * 窗口的 PropertyNotify(NewValue) 事件，且不污染业务窗口的既有事件
+ * 掩码（窗口不存在时也可发起跨进程读取）。对标 QXcbClipboard::
+ * m_requestor。 */
+static bool xpw_clipEnsureRequestorWindow(void)
+{
+    if (g_xpwnClipReqWin != None) return true;
+    if (!xpw_clipEnsureOwnerWindow()) return false;
+    g_xpwnClipReqWin = XCreateSimpleWindow(g_xpwnDisplay,
+                                           DefaultRootWindow(g_xpwnDisplay),
+                                           -1, -1, 1, 1, 0, 0, 0);
+    if (g_xpwnClipReqWin == None) return false;
+    XSelectInput(g_xpwnDisplay, g_xpwnClipReqWin, PropertyChangeMask);
     return true;
 }
 
@@ -2321,12 +3393,112 @@ static Time xpw_clipServerTimestamp(void)
     return ev.xproperty.time;
 }
 
+/* ICCCM 2.5 请求方增量收集循环（对标 Qt QXcbClipboard::getSelection 的
+ * INCR 分支）。前置：xpw_clipWaitNotifyRaw 已用 GetProperty(delete=True)
+ * 取走并删除 type=INCR 的协议头——该删除即 ICCCM 的「开始」信号，所有者
+ * 由此写第一分片。循环等待本窗口传输属性上的 PropertyNotify
+ * state=PropertyNewValue，读分片（delete=True：既取走数据又生成驱动
+ * 所有者下一片的删除通知），读到零长度分片即完成（ICCCM 2.5：所有者以
+ * 零长度属性收尾；请求方自身 delete=True 读取产生的 PropertyDelete 不可
+ * 当作终结信号）。g_xpwnClipIncrTimeoutMs 整体超时兜底。totalLen 为
+ * 协议头给出的总长（仅作下界与初始容量参考）。 */
+static unsigned char* xpw_clipCollectIncr(Window req_win, Atom prop,
+                                          unsigned long totalLen, int* outLen,
+                                          bool* timeout)
+{
+    unsigned char* result;
+    int have = 0;
+    int cap;
+    unsigned long startMs = xpw_clipMonotonicMs();
+    *timeout = false;
+    *outLen = 0;
+    cap = (totalLen > 0 && totalLen < (unsigned long)XPWN_CLIP_INCR_MAX_TOTAL)
+              ? (int)totalLen + 1 : 65536;
+    result = (unsigned char*)XMemory_malloc((size_t)cap,
+                                            XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!result) return NULL;
+    for (;;) {
+        bool gotNewValue = false;
+        while (XPending(g_xpwnDisplay) > 0) {
+            X11_XEvent event;
+            XNextEvent(g_xpwnDisplay, &event);
+            if (event.type == PropertyNotify &&
+                event.xproperty.window == req_win &&
+                event.xproperty.atom == prop &&
+                event.xproperty.state == PropertyNewValue) {
+                gotNewValue = true;
+                break;
+            }
+            /* 非目标事件交回框架分派（并行的 INCR serve 会话因此持续
+               推进，见 xpwn_dispatchEvent 的 PropertyNotify 分支）。 */
+            xpwn_dispatchEvent(&event);
+        }
+        if (!gotNewValue) {
+            if (xpw_clipMonotonicMs() - startMs >
+                    (unsigned long)g_xpwnClipIncrTimeoutMs) {
+                *timeout = true;
+                break;
+            }
+            usleep(50000); /* 50ms */
+            continue;
+        }
+        {
+            Atom actual_type;
+            int actual_format;
+            unsigned long nitems, bytes_after;
+            unsigned char* data = NULL;
+            if (XGetWindowProperty(g_xpwnDisplay, req_win, prop,
+                                   0, 0xFFFFFF, True, AnyPropertyType,
+                                   &actual_type, &actual_format,
+                                   &nitems, &bytes_after, &data) != Success)
+                break; /* 服务器侧异常：按失败收尾。 */
+            if (nitems > 0 && data) {
+                unsigned long elemBytes = (actual_format == 32)
+                    ? sizeof(long) : (unsigned long)(actual_format / 8);
+                unsigned long chunk = nitems * elemBytes;
+                if ((unsigned long)have + chunk >
+                    (unsigned long)XPWN_CLIP_INCR_MAX_TOTAL) {
+                    xpwn_xFree(data);
+                    break; /* 防御异常所有者。 */
+                }
+                if ((unsigned long)have + chunk > (unsigned long)cap) {
+                    unsigned long newCap = (unsigned long)cap * 2;
+                    unsigned char* grown;
+                    while (newCap < (unsigned long)have + chunk)
+                        newCap *= 2;
+                    grown = (unsigned char*)XRealloc_System(result,
+                                                            (size_t)newCap);
+                    if (!grown) { xpwn_xFree(data); break; }
+                    result = grown;
+                    cap = (int)newCap;
+                }
+                memcpy(result + have, data, chunk);
+                have += (int)chunk;
+            }
+            /* Xlib 自行分配的缓冲必须用真实 XFree 释放。 */
+            xpwn_xFree(data);
+            if (nitems == 0) {
+                /* 零长度分片：传输完成（本次 delete=True 读取同时删掉
+                   零长度属性，ICCCM 2.5 的收尾握手闭合）。 */
+                *outLen = have;
+                return result;
+            }
+        }
+    }
+    /* 超时/失败清场：删除残留属性（向所有者发最后的删除信号，令其在途
+       会话得以推进/收敛），释放半成品。 */
+    XDeleteProperty(g_xpwnDisplay, req_win, prop);
+    XFree_System(result);
+    return NULL;
+}
+
 /* 等待 SelectionNotify 并读取数据属性（一次目标转换尝试，二进制安全：
  * 返回拥有方原始数据，*outLen 为元素个数——format=8 字节流时即字节
  * 数，format=32 时为元素数；供 TARGETS/多格式读取复用）。
  * 返回值：成功时为拥有方数据（调用方释放，不补 NUL——image/png 等
  * 二进制可能含 0）；refused=true 表示所有者明确拒绝（property=None）；
- * timeout=true 表示等待超时。 */
+ * timeout=true 表示等待超时。属性实际类型为 INCR 时透明进入 ICCCM 2.5
+ * 增量收集（xpw_clipCollectIncr），小数据路径逐字节保持原行为。 */
 static unsigned char* xpw_clipWaitNotifyRaw(Window req_win, Atom prop,
                                             Atom selection, int* outLen,
                                             bool* refused, bool* timeout)
@@ -2367,6 +3539,17 @@ got_notify:
                            &actual_type, &actual_format,
                            &nitems, &bytes_after, &data) != Success)
         return NULL;
+    if (g_xpwnIncr != None && actual_type == g_xpwnIncr) {
+        /* ICCCM 2.5 增量传输：首属性 type=INCR、format=32、值=总字节
+           长度（下界）。上面的 Delete=True 读取同时删除了协议头属性——
+           即请求方「删除属性以开始传输」的协议动作，所有者由此写第一
+           分片。进入增量收集循环拼装完整数据（对标 Qt QXcbClipboard::
+           getSelection 的 INCR 分支）。 */
+        unsigned long totalLen =
+            (data && nitems > 0) ? (unsigned long)*(long*)data : 0;
+        xpwn_xFree(data);
+        return xpw_clipCollectIncr(req_win, prop, totalLen, outLen, timeout);
+    }
     if (data && nitems > 0) {
         /* 拷贝字节数按 Xlib 返回缓冲的元素宽度换算：format=8 字节流时
          * 即 nitems 字节；format=32 时 Xlib 把 32 位线上数据转成 long
@@ -2434,8 +3617,10 @@ static char* xpw_clipReadSelection(Atom selection)
         }
         return result;
     }
-    /* 找一个本框架窗口作为请求者 */
-    req_win = xpw_clipFindRequestorWindow();
+    /* 专用请求窗口承载传输属性与 SelectionNotify（不再借用业务窗口，
+       空窗口应用亦可跨进程读取；对标 QXcbClipboard::m_requestor）。 */
+    if (!xpw_clipEnsureRequestorWindow()) return NULL;
+    req_win = g_xpwnClipReqWin;
     if (req_win == None) return NULL;
     utf8 = XInternAtom(g_xpwnDisplay, "UTF8_STRING", False);
     prop = g_xpwnClipProp;
@@ -2457,19 +3642,8 @@ static char* xpw_clipReadSelection(Atom selection)
 /* ==================== X11 mime 多格式协商（P0-3） ====================
  * 对标 QXcbClipboard：QMimeData 各格式 ↔ X11 TARGETS 原子双向映射，
  * setMimeData 时多格式并存镜像，SelectionRequest 按目标原子回数；
- * 读方向先 TARGETS 枚举再按需 XConvertSelection。 */
-
-/* 找一个本框架窗口作为跨进程 Selection 请求者（XConvertSelection 需要
- * 请求方窗口接收属性数据；对标 QXcbClipboard::requestorWindow）。 */
-static Window xpw_clipFindRequestorWindow(void)
-{
-    int i;
-    for (i = 0; i < XPWN_MAX_WINDOWS; ++i) {
-        if (g_xpwnEntries[i].m_window && g_xpwnEntries[i].m_win != None)
-            return g_xpwnEntries[i].m_win;
-    }
-    return None;
-}
+ * 读方向先 TARGETS 枚举再按需 XConvertSelection。（请求者窗口统一用
+ * 专用请求窗口 xpw_clipEnsureRequestorWindow，见其注释。） */
 
 /* mime 格式名 → X11 目标原子（对标 QXcbClipboard 的 mime/target 映射：
  * text/plain 服务为 UTF8_STRING；其余格式以 MIME 名作原子名，与
@@ -2553,14 +3727,15 @@ static bool xpw_clipClaimOwnership(XpwClipOwnerState* st, Atom selection)
 static int xpw_clipQueryExternalFormats(Atom selection,
                                         char outFormats[][64], int max)
 {
-    Window reqWin = xpw_clipFindRequestorWindow();
+    Window reqWin;
     Atom prop;
     bool refused, timeout;
     unsigned char* raw;
     unsigned long i, n;
     int len = 0, count = 0;
     bool havePlain = false;
-    if (reqWin == None) return 0;
+    if (!xpw_clipEnsureRequestorWindow()) return 0;
+    reqWin = g_xpwnClipReqWin;
     prop = g_xpwnClipProp;
     XConvertSelection(g_xpwnDisplay, selection, g_xpwnTargets, prop,
                       reqWin, CurrentTime);
@@ -2683,12 +3858,13 @@ static bool xpw_clipBackendMimeData(void* ud, int mode, const char* format,
     /* 外部所有者：按目标原子按需读取（text/plain 复用既有 UTF8_STRING
      * →XA_STRING 回退路径；其余格式以 mime 名作原子直接请求）。 */
     {
-        Window reqWin = xpw_clipFindRequestorWindow();
+        Window reqWin;
         Atom prop = g_xpwnClipProp;
         bool refused, timeout;
         unsigned char* raw = NULL;
         int rawLen = 0;
-        if (reqWin == None) return false;
+        if (!xpw_clipEnsureRequestorWindow()) return false;
+        reqWin = g_xpwnClipReqWin;
         if (strcmp(format, "text/plain") == 0) {
             char* text = xpw_clipReadSelection(selection);
             if (!text) return false;
@@ -2764,11 +3940,6 @@ static bool xpw_clipBackendSetText(void* ud, int mode, const char* text)
                            g_xpwnClipWin, st->m_timestamp);
         st->m_serveWin = g_xpwnClipWin;
         XFlush(g_xpwnDisplay);
-        fprintf(stderr, "[clip-dbg] claimed sel=%s owner=0x%lx stamp=0x%lx mirror=%s(%d)\n",
-                XGetAtomName(g_xpwnDisplay, selection),
-                (unsigned long)g_xpwnClipWin,
-                (unsigned long)st->m_timestamp,
-                st->m_text ? "set" : "NULL", st->m_textLen);
     }
     return true;
 }
@@ -2795,6 +3966,15 @@ static bool xpw_clipBackendText(void* ud, int mode, char** outText)
     return true;
 }
 
+/* INCR 读超时参数化（后端契约可选回调）：ms<=0 恢复默认；仅影响读方向
+ * 的整体兜底超时，serve 会话的闲置回收不受影响。 */
+static void xpw_clipBackendSetIncrTimeout(void* ud, int ms)
+{
+    (void)ud;
+    g_xpwnClipIncrTimeoutMs =
+        (ms > 0) ? ms : XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS;
+}
+
 static XClipboardBackend g_xpwnClipBackend = {
     NULL,                    /* ud（平台用户数据） */
     xpw_clipBackendText,     /* text */
@@ -2804,7 +3984,8 @@ static XClipboardBackend g_xpwnClipBackend = {
     XClipboard_backendSelectionRevoked, /* selectionRevoked（反向通知入口） */
     xpw_clipBackendFormats,  /* formats（mime 多格式枚举） */
     xpw_clipBackendMimeData, /* mimeData（按格式借用读取） */
-    xpw_clipBackendSetMimeData /* setMimeData（逐格式写入镜像） */
+    xpw_clipBackendSetMimeData, /* setMimeData（逐格式写入镜像） */
+    xpw_clipBackendSetIncrTimeout /* setIncrTimeoutMs（INCR 读超时参数化） */
 };
 
 /* SelectionClear 反向通知：经后端契约可选回调通知 XClipboard 层对应
@@ -2839,6 +4020,58 @@ bool XPlatformNativeWindow_isAvailable(void)
 static void xpwn_applyMotifHints(Display* display, Window win,
                                  uint32_t flags);
 
+/**
+ * @brief      按 XWindow 类型写 _NET_WM_WINDOW_TYPE（对标
+ *             QXcbWindow::setWindowType：EWMH 窗口类型提示，WM 据此
+ *             决定装饰、任务栏分组、焦点策略与定位层级；此前本后端
+ *             缺失该属性，对话框/工具窗口在 EWMH 合规 WM 上被当普通
+ *             顶层窗口对待）。
+ * @details    映射与 Qt xcb 同构：
+ *             - Dialog/Sheet -> _NET_WM_WINDOW_TYPE_DIALOG；
+ *             - Tool/Drawer  -> _NET_WM_WINDOW_TYPE_UTILITY；
+ *             - SplashScreen -> _NET_WM_WINDOW_TYPE_SPLASH；
+ *             - ToolTip      -> _NET_WM_WINDOW_TYPE_TOOLTIP；
+ *             - Popup        -> _NET_WM_WINDOW_TYPE_POPUP_MENU
+ *               （Qt 对 Qt::PopupMenu/Menu 同样写 POPUP_MENU；本框架
+ *               Popup 即弹出族）；
+ *             - 其余（普通顶层 Window 等）-> _NET_WM_WINDOW_TYPE_NORMAL
+ *               （EWMH 建议普通顶层显式写 NORMAL，部分 WM 以"缺类型"
+ *               做旧式识别，显式写避免误判）。
+ *             COMBO 原子已登记但公共层 XWindowType 枚举暂无对应值，
+ *             现阶段不可达。属性在创建（映射前）一次写入；Qt 同样在
+ *             create 阶段落实类型。
+ */
+static void xpwn_applyWindowType(Display* display, Window win,
+                                 XWindowType type)
+{
+    Atom typeAtom;
+    switch (type) {
+    case XWindowType_Dialog:
+    case XWindowType_Sheet:
+        typeAtom = g_xpwnNetWmTypeDialog;
+        break;
+    case XWindowType_Tool:
+    case XWindowType_Drawer:
+        typeAtom = g_xpwnNetWmTypeUtility;
+        break;
+    case XWindowType_SplashScreen:
+        typeAtom = g_xpwnNetWmTypeSplash;
+        break;
+    case XWindowType_ToolTip:
+        typeAtom = g_xpwnNetWmTypeTooltip;
+        break;
+    case XWindowType_Popup:
+        typeAtom = g_xpwnNetWmTypePopupMenu;
+        break;
+    default:
+        typeAtom = g_xpwnNetWmTypeNormal;
+        break;
+    }
+    if (g_xpwnNetWmWindowType == None || typeAtom == None) return;
+    XChangeProperty(display, win, g_xpwnNetWmWindowType, XA_ATOM, 32,
+                    PropModeReplace, (unsigned char*)&typeAtom, 1);
+}
+
 bool XPlatformNativeWindow_create(XWindow* window)
 {
     XWNPendingEntry* entry;
@@ -2848,6 +4081,23 @@ bool XPlatformNativeWindow_create(XWindow* window)
     XString* title;
     int w, h;
     if (!window) return false;
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    /* 单屏互斥（嵌入式无窗口系统模型）：显示驱动已注册时拒绝创建 X11
+     * 窗口并告警。检查必须在惰性 X 连接建立之前——嵌入式无 X 环境不能
+     * 被 xpwn_ensureConnection 无辜建连（见 XPlatformFramebuffer_posix.h
+     * 头注约束）。拒绝后 XWindow_createHandle 回落虚拟 WId，后备存储
+     * flush 走显示驱动直写路径（XPlatformBackingStore_posix.c）。 */
+    if (XPlatformDisplayDriver_active())
+    {
+        const XPlatformDisplayDriverOps* activeOps =
+            XPlatformDisplayDriver_active();
+        fprintf(stderr,
+                "XPlatformNativeWindow_create: display driver \"%s\" active, "
+                "refusing X11 window creation (single-screen fbdev model)\n",
+                activeOps->m_name ? activeOps->m_name : "unknown");
+        return false;
+    }
+#endif
     if (!xpwn_ensureConnection()) return false;
     entry = xpwn_findByXWindow(window);
     if (entry) return true; /* 幂等：已登记直接成功。 */
@@ -2861,23 +4111,39 @@ bool XPlatformNativeWindow_create(XWindow* window)
     attr.background_pixel = 0u;
     attr.border_pixel = 0u;
     attr.colormap = g_xpwnColormap;
-    /* 弹出菜单等 Popup 窗口按 override-redirect 创建：不经窗口管理器
-     * 装饰（无标题栏/关闭按钮），弹出时直接覆盖显示，对齐 Qt::Popup
-     * 语义。 */
+    /* 仅 Qt 同款集合按 override-redirect 创建（对标 QXcbWindow::create：
+     * Popup/ToolTip/SplashScreen 及携带 X11BypassWindowManagerHint 的窗口
+     * ——瞬态弹出族生命周期极短、位置由应用给定，绕过 WM 的装饰/摆放/
+     * 聚焦策略换即时弹出；Bypass 语义即"完全绕过 WM"）。FramelessWindow-
+     * Hint 不再触发 override-redirect（对标 Qt：无边框窗口仍受 WM 管理，
+     * 只经 _MOTIF_WM_HINTS decorations=0 抑制装饰，见 xpwn_applyMotifHints；
+     * 此前把 Frameless 并入 override-redirect 会使无边框窗口绕过 WM——
+     * 不进任务栏、不参与 Alt-Tab、失焦不回落，且 override_redirect 创建后
+     * 不可改，语义被永久钉死）。Bypass 的差异说明：Qt 对创建后增删该提示
+     * 经 re-create 改 override_redirect，本框架无 re-create，动态增删仍走
+     * setWindowFlags 的 EWMH 近似（SKIP_TASKBAR/SKIP_PAGER，见该函数
+     * 注释）；本判定只在创建时刻采纳创建时的提示位。 */
     {
         XWindowType winType = XWindow_type(window);
+        uint32_t winFlags = (uint32_t)XWindow_flags(window);
         if (winType == XWindowType_Popup ||
-            (winType & XWindowType_FramelessWindowHint) != 0) {
+            winType == XWindowType_ToolTip ||
+            winType == XWindowType_SplashScreen ||
+            (winFlags & (uint32_t)XWindowType_BypassWindowManagerHint) != 0u) {
             attr.override_redirect = True;
         }
     }
     /* 输入事件掩码：键盘/鼠标按键/指针移动/进出均需在创建窗口时声明，
        否则 X 服务器不会向本窗口投递对应事件。滚轮事件(Button4/5)走
-       ButtonPress 通道，进入/离开用于 Qt 对齐的 enter/leave 语义。 */
+       ButtonPress 通道，进入/离开用于 Qt 对齐的 enter/leave 语义。
+       PropertyChangeMask：观察 WM 对 _NET_WM_STATE/WM_STATE 的回写
+       （setWindowState 请求最大化/全屏/最小化后，WM 增删原子/改 WM_STATE
+       都经属性回写体现——对标 QXcbWindow::handlePropertyNotifyEvent 的
+       状态观察入口，实测状态经 XWindow_reportWindowStateChanged 上报）。 */
     attr.event_mask = ExposureMask | StructureNotifyMask | FocusChangeMask
                    | KeyPressMask | KeyReleaseMask
                    | ButtonPressMask | ButtonReleaseMask | PointerMotionMask
-                   | EnterWindowMask | LeaveWindowMask;
+                   | EnterWindowMask | LeaveWindowMask | PropertyChangeMask;
     xwin = XCreateWindow(g_xpwnDisplay,
                          RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
                          geom.x, geom.y, (unsigned)w, (unsigned)h, 0,
@@ -2891,6 +4157,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_window = window;
     entry->m_gc = XCreateGC(g_xpwnDisplay, xwin, 0, NULL);
     entry->m_client = geom;
+    /* 窗口类型提示（对标 QXcbWindow::setWindowType：创建时按类型写
+       _NET_WM_WINDOW_TYPE，映射前生效）。 */
+    xpwn_applyWindowType(g_xpwnDisplay, xwin, XWindow_type(window));
     if (g_xpwnXdndAware != None) {
         unsigned long version = 5;
         XChangeProperty(g_xpwnDisplay, xwin, g_xpwnXdndAware, XA_ATOM, 32,
@@ -2951,12 +4220,14 @@ bool XPlatformNativeWindow_create(XWindow* window)
                     if (chosen != 0) break;
                 }
                 /* 打印服务器支持的全部 style（诊断）。 */
+#if XPWN_IME_DEBUG
                 for (s = 0; s < (int)serverStyles->count_styles; ++s)
                     XPrintf("[ime-dbg]   server style 0x%04lX\n",
                             (unsigned long)serverStyles->supported_styles[s]);
                 XPrintf("[ime-dbg] 服务器支持 %u 种 style；选定 %s\n",
                         (unsigned)serverStyles->count_styles,
                         chosenName ? chosenName : "(无交集)");
+#endif
 #undef XFree
                 /* supported_styles 与 XIMStyles 结构同块分配，只 Free
                    结构体一次（两次 Free 即 double free 崩溃）。 */
@@ -2964,7 +4235,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
 #define XFree XMemory_free
             }
             else if (miss) {
+#if XPWN_IME_DEBUG
                 XPrintf("[ime-dbg] style 查询缺失 %s\n", miss);
+#endif
             }
             if (chosen == (XIMPreeditPosition | XIMStatusArea) ||
                 chosen == (XIMPreeditPosition | XIMStatusNothing)) {
@@ -2982,8 +4255,10 @@ bool XPlatformNativeWindow_create(XWindow* window)
                         g_xpwnDisplay,
                         "-*-*-*-*-*-*-16-*-*-*-*-*-*-*",
                         &missingList, &missingCount, &defString);
+#if XPWN_IME_DEBUG
                 XPrintf("[ime-dbg] XCreateFontSet = %s\n",
                         fontSet ? "OK" : "FAILED");
+#endif
                 /* 平铺传法（嵌套列表 XVaCreateNestedList 在本环境对
                    XNFontSet 处理崩溃——见回归 SegFault 定位；平铺
                    版稳定但 fcitx5 下 XCreateIC 返回 NULL，中文输入
@@ -2997,6 +4272,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
                     XNSpotLocation, &spot,
                     NULL);
                 if (missingList) XFreeStringList(missingList);
+                /* 字体集为 entry 所有（XCreateIC 不接管；IC 存续期间须保持
+                 * 有效，随窗口销毁在 XDestroyIC 后释放）。 */
+                entry->m_fontSet = fontSet;
             }
             else if (chosen == (XIMPreeditCallbacks | XIMStatusNothing)) {
                 entry->m_inputContext = XCreateIC(
@@ -3018,9 +4296,11 @@ bool XPlatformNativeWindow_create(XWindow* window)
                     XNFocusWindow, xwin,
                     NULL);
             }
+#if XPWN_IME_DEBUG
             XPrintf("[ime-dbg] XCreateIC(style=%s) = %s\n",
                     chosenName ? chosenName : "无",
                     entry->m_inputContext ? "OK" : "FAILED");
+#endif
             entry->m_spot = spot;
         }
     }
@@ -3084,8 +4364,20 @@ void XPlatformNativeWindow_destroy(XWindow* window)
         XDestroyIC(entry->m_inputContext);
         entry->m_inputContext = NULL;
     }
+    /* PreeditPosition 风格 IC 的字体集：IC 已销毁方可释放（§8.0g7）。 */
+    if (entry->m_fontSet) {
+        XFreeFontSet(g_xpwnDisplay, entry->m_fontSet);
+        entry->m_fontSet = NULL;
+    }
     xpwn_releasePresentImage(entry);
     if (entry->m_gc) XFreeGC(g_xpwnDisplay, entry->m_gc);
+    /* 窗口销毁时取消已定义的窗口光标（XUndefineCursor；形状字体光标
+       资源本身由进程期缓存持有，随 XCloseDisplay 统一释放）。 */
+    if (entry->m_win)
+        XUndefineCursor(g_xpwnDisplay, entry->m_win);
+    /* 该窗口若是跨进程剪贴板读取的请求者或 INCR serve 的对端，清理其
+       在途会话（防御；常规请求窗口为专用窗口不随业务窗口销毁）。 */
+    xpw_clipIncrAbortForWindow(entry->m_win);
     /* 外部窗口只解除登记，不取得其 X11 资源的销毁所有权。 */
     if (XWindow_type(window) != XWindowType_ForeignWindow)
         XDestroyWindow(g_xpwnDisplay, entry->m_win);
@@ -3141,15 +4433,97 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     return true;
 }
 
-bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
+/* ==================== EWMH 窗口状态（对标 QXcbWindow::setWindowState） ==================== */
+
+/**
+ * @brief      Withdrawn（未映射）窗口的 _NET_WM_STATE 属性路径：读-改-写
+ *             单个状态原子。EWMH：已映射窗口的 _NET_WM_STATE 归 WM 所有，
+ *             客户端只能经 ClientMessage 请求变更；属性直写仅对
+ *             Withdrawn 窗口在下次映射时由 WM 采纳（对标
+ *             QXcbWindow::setNetWmState 的 xcb_change_property
+ *             PropModeReplace 分支）。
+ */
+static void xpwn_writeNetWmStateAtom(Display* display, Window win,
+                                     Atom stateAtom, bool add)
 {
-    (void)window;
-    (void)state;
-    /* X11 下窗口状态（最大化/最小化）由窗口管理器托管：规范实现应发
-     * EWMH _NET_WM_STATE ClientMessage（Win32 后端用 ShowWindow）。
-     * 本后端暂以安全 no-op 桩保持链接与语义（返回未同步），行为与
-     * 该提交引入前的 POSIX 表现一致；状态位仅存于 XWindow 内部。 */
-    return false;
+    Atom merged[48];
+    Atom* current = NULL;
+    Atom actualType;
+    int actualFormat;
+    unsigned long nItems = 0;
+    unsigned long bytesAfter = 0;
+    unsigned long i;
+    int mergedCount = 0;
+    bool present = false;
+    if (g_xpwnNetWmState == None || stateAtom == None) return;
+    XGetWindowProperty(display, win, g_xpwnNetWmState, 0, 1024, False,
+                       XA_ATOM, &actualType, &actualFormat, &nItems,
+                       &bytesAfter, (unsigned char**)&current);
+    if (current) {
+        for (i = 0; i < nItems && mergedCount < 48; ++i) {
+            if (current[i] == stateAtom) {
+                present = true;
+                if (!add) continue; /* REMOVE：剔除该原子。 */
+            }
+            merged[mergedCount++] = current[i];
+        }
+        xpwn_xFree(current); /* Xlib 属性缓冲须用真实 XFree 释放。 */
+    }
+    if (add && !present && mergedCount < 48)
+        merged[mergedCount++] = stateAtom;
+    XChangeProperty(display, win, g_xpwnNetWmState, XA_ATOM, 32,
+                    PropModeReplace, (unsigned char*)merged, mergedCount);
+}
+
+/**
+ * @brief      从 WM 托管属性回读窗口实测状态（对标 QXcbWindow::
+ *             handlePropertyNotifyEvent 的状态解析：WM 增删
+ *             _NET_WM_STATE 原子或改写 WM_STATE 后回写属性，平台层把
+ *             属性内容换算成 Qt 状态位供上报公共层）。
+ * @return     XWindowState 位组合（FullScreen/Maximized/Minimized）。
+ */
+static XWindowState xpwn_queryWmWindowState(Display* display, Window win)
+{
+    XWindowState state = XWindowState_NoState;
+    Atom actualType;
+    int actualFormat;
+    unsigned long nItems = 0;
+    unsigned long bytesAfter = 0;
+    unsigned char* data = NULL;
+    unsigned long i;
+    if (win == None) return state;
+    /* _NET_WM_STATE：XA_ATOM 数组。最大化在 X11 拆为 VERT/HORZ 两原子，
+       须同时在场（对标 Qt 的 Maximized 双原子换算）。 */
+    if (g_xpwnNetWmState != None &&
+        XGetWindowProperty(display, win, g_xpwnNetWmState, 0, 1024, False,
+                           XA_ATOM, &actualType, &actualFormat, &nItems,
+                           &bytesAfter, &data) == Success &&
+        data != NULL && actualFormat == 32) {
+        bool maxVert = false;
+        bool maxHorz = false;
+        for (i = 0; i < nItems; ++i) {
+            Atom atom = ((const Atom*)data)[i];
+            if (atom == g_xpwnNetWmStateFullscreen)
+                state |= XWindowState_FullScreen;
+            else if (atom == g_xpwnNetWmStateMaximizedVert) maxVert = true;
+            else if (atom == g_xpwnNetWmStateMaximizedHorz) maxHorz = true;
+        }
+        if (maxVert && maxHorz) state |= XWindowState_Maximized;
+        xpwn_xFree(data); /* Xlib 属性缓冲须用真实 XFree 释放。 */
+    }
+    /* WM_STATE：data32[0] 为 ICCCM 状态（IconicState=3 -> 最小化，
+       对标 Qt 对 WM_STATE 图标化状态的检测）。 */
+    data = NULL;
+    if (g_xpwnWmState != None &&
+        XGetWindowProperty(display, win, g_xpwnWmState, 0, 2, False,
+                           g_xpwnWmState, &actualType, &actualFormat,
+                           &nItems, &bytesAfter, &data) == Success &&
+        data != NULL && actualFormat == 32 && nItems >= 1) {
+        if (((const long*)data)[0] == IconicState)
+            state |= XWindowState_Minimized;
+        xpwn_xFree(data);
+    }
+    return state;
 }
 
 /* ==================== EWMH 窗口标志同步（对标 QXcbWindow::setWindowFlags） ==================== */
@@ -3188,6 +4562,79 @@ static void xpwn_sendNetWmStateMessage(Display* display, Window win,
     event.xclient.data.l[4] = 0;
     XSendEvent(display, RootWindow(display, g_xpwnScreenNumber), False,
                SubstructureRedirectMask | SubstructureNotifyMask, &event);
+}
+
+/**
+ * @brief      请求 WM 变更窗口状态（对标 QXcbWindow::setWindowState）。
+ * @details    最大化/全屏走 EWMH _NET_WM_STATE ClientMessage（已映射），
+ *             动作按目标状态逐原子取 ADD/REMOVE——目标未置位的原子要
+ *             显式 REMOVE（对标 Qt setWindowState 先撤旧态再落新态）；
+ *             最大化按 X11 惯例同时请求 MAXIMIZED_VERT + MAXIMIZED_HORZ
+ *             两原子。Withdrawn（未映射）窗口改走 _NET_WM_STATE 属性
+ *             直写（映射时由 WM 采纳，见 xpwn_writeNetWmStateAtom）。
+ *             最小化走 ICCCM 4.1.4 WM_CHANGE_STATE(IconicState)
+ *             ClientMessage——EWMH 未定义最小化状态原子，Qt xcb 同以
+ *             WM_CHANGE_STATE 请求图标化。状态实际落定由 WM 回写
+ *             _NET_WM_STATE/WM_STATE 体现，经 PropertyNotify ->
+ *             xpwn_queryWmWindowState 回读并 XWindow_reportWindowState-
+ *             Changed 上报公共层（闭环，见 xpwn_dispatchEvent）。
+ * @return     请求已发出返回 true；窗口未登记/连接不可用返回 false。
+ */
+bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
+{
+    XWNPendingEntry* entry;
+    bool fullScreen;
+    bool maximized;
+    struct
+    {
+        Atom atom; /**< _NET_WM_STATE 状态原子。 */
+        bool on;   /**< 目标状态是否要求该原子在场（ADD）或不在场（REMOVE）。 */
+    } netStates[3];
+    int netCount = 0;
+    int i;
+    if (!window || !xpwn_ensureConnection()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_win) return false;
+    fullScreen = (state & (uint32_t)XWindowState_FullScreen) != 0;
+    maximized = (state & (uint32_t)XWindowState_Maximized) != 0;
+
+    /* 最小化：WM_CHANGE_STATE(IconicState) ClientMessage 发往根窗口
+       （ICCCM 4.1.4：客户端经根窗口 SubstructureRedirect 请求 WM 把
+       自己转入图标态）。 */
+    if ((state & (uint32_t)XWindowState_Minimized) != 0) {
+        X11_XEvent event;
+        memset(&event, 0, sizeof(event));
+        event.xclient.type = ClientMessage;
+        event.xclient.display = g_xpwnDisplay;
+        event.xclient.window = entry->m_win;
+        event.xclient.message_type = g_xpwnWmChangeState;
+        event.xclient.format = 32;
+        event.xclient.data.l[0] = IconicState;
+        XSendEvent(g_xpwnDisplay,
+                   RootWindow(g_xpwnDisplay, g_xpwnScreenNumber), False,
+                   SubstructureRedirectMask | SubstructureNotifyMask,
+                   &event);
+        XFlush(g_xpwnDisplay);
+        return true;
+    }
+
+    netStates[netCount].atom = g_xpwnNetWmStateFullscreen;
+    netStates[netCount++].on = fullScreen;
+    netStates[netCount].atom = g_xpwnNetWmStateMaximizedVert;
+    netStates[netCount++].on = maximized;
+    netStates[netCount].atom = g_xpwnNetWmStateMaximizedHorz;
+    netStates[netCount++].on = maximized;
+    if (xpwn_windowViewable(g_xpwnDisplay, entry->m_win)) {
+        for (i = 0; i < netCount; ++i)
+            xpwn_sendNetWmStateMessage(g_xpwnDisplay, entry->m_win,
+                                       netStates[i].atom, netStates[i].on);
+    } else {
+        for (i = 0; i < netCount; ++i)
+            xpwn_writeNetWmStateAtom(g_xpwnDisplay, entry->m_win,
+                                     netStates[i].atom, netStates[i].on);
+    }
+    XFlush(g_xpwnDisplay);
+    return true;
 }
 
 /* ==================== MOTIF 装饰提示（对标 QXcbWindow::setMotifWindowFlags） ==================== */
@@ -3422,6 +4869,12 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
                                        managed[k], managedOn[k]);
         }
     }
+    /* 窗口类型提示随 flags 变化重写（对标 QXcbWindow::setWindowFlags 内部
+     * 调用 setWindowType：类型是 flags 的 TypeMask 位段，提示位增删可能
+     * 连带类型迁移（如 Widget→Dialog）；_NET_WM_WINDOW_TYPE 为单值属性，
+     * 整体替换写。XWindow_setFlags 已先更新 m_flags 再进入本函数，此处
+     * XWindow_type 取到的是新类型）。 */
+    xpwn_applyWindowType(g_xpwnDisplay, entry->m_win, XWindow_type(window));
     XFlush(g_xpwnDisplay);
 
     /* 装饰提示落地：WindowMinMaxButtonsHint/WindowTitleHint/SystemMenu/

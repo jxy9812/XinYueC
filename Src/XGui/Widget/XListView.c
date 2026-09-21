@@ -24,6 +24,11 @@
 #define XLISTVIEW_DEFAULT_ROW_H 24
 #define XLISTVIEW_DEFAULT_BATCH_SIZE 100
 
+/* role 渲染消费常量（对标 QStyledItemDelegate::paint 的条目布局子集，
+ * 勾选框/装饰与文本的间距，像素）。 */
+#define XLV_ROLE_CHECK_BOX 12
+#define XLV_ROLE_CONTENT_GAP 4
+
 static void VXListView_deinit(XListView* self);
 static void VXListView_paintEvent(XWidget* self, XEvent* event);
 static void VXListView_scrollContentsBy(XAbstractScrollArea* area, int dx,
@@ -109,37 +114,118 @@ static bool xlv_rowIsHidden(const XListView* self, int row)
 }
 
 /**
- * @brief 绘制行文本：无对齐/换行状态走历史基线快速路径；否则走
+ * @brief 绘制简笔勾选框（CheckStateRole 渲染消费；对标 Qt
+ *        PE_IndicatorCheckBox 的简化笔画：外框 + 选中勾线/半选中横线）。
+ * @param painter 绘制器。
+ * @param cell 行单元矩形。
+ * @param checkState XItemCheckState 值（0..2）。
+ * @return 勾选框占用的内容宽度（框 + 右侧间距；供文本区推进）。
+ */
+static int xlv_drawCheckIndicator(XPainter* painter, const XRect* cell,
+                                  int checkState)
+{
+    int box = XLV_ROLE_CHECK_BOX;
+    int x = cell->x + 2;
+    int y = cell->y + (cell->height - box) / 2;
+    XRect frame;
+    if (!painter || checkState < 0) return 0;
+    XRect_init(&frame, x, y, box, box);
+    XPainter_setPen(painter, 0xFF666666u);
+    XPainter_drawRect(painter, &frame);
+    if (checkState == XItemCheckState_Checked) {
+        /* 选中：框内两段折线勾（对标 Qt 勾选标记）。 */
+        XPainter_setPen(painter, 0xFF207F20u);
+        XPainter_drawLine(painter, x + 2, y + box / 2,
+                          x + box / 2, y + box - 3);
+        XPainter_drawLine(painter, x + box / 2, y + box - 3,
+                          x + box - 2, y + 2);
+    } else if (checkState == XItemCheckState_PartiallyChecked) {
+        /* 半选：框内中横线（对标 Qt 半选标记）。 */
+        XPainter_setPen(painter, 0xFF207F20u);
+        XPainter_drawLine(painter, x + 2, y + box / 2,
+                          x + box - 2, y + box / 2);
+    }
+    return box + XLV_ROLE_CONTENT_GAP;
+}
+
+/**
+ * @brief 绘制 DecorationRole 图像（渲染消费；对标 QStyledItemDelegate
+ *        的 decoration 子集——原尺寸左置、随行高垂直居中）。
+ * @param painter 绘制器。
+ * @param cell 行单元矩形。
+ * @param decoration 装饰借用指针（XImage*；NULL=未设置）。
+ * @return 占用宽度（图像宽 + 右侧间距；未设置/越界/超出行高返回 0）。
+ */
+static int xlv_drawDecoration(XPainter* painter, const XRect* cell,
+                              const void* decoration)
+{
+    const XImage* image = (const XImage*)decoration;
+    int w;
+    int h;
+    if (!painter || !image) return 0;
+    w = XImage_width(image);
+    h = XImage_height(image);
+    /* 超出行单元的装饰不绘制（本库无图标缩放承载，避免越行覆盖）。 */
+    if (w <= 0 || h <= 0 || h > cell->height) return 0;
+    XPainter_drawImage(painter, image, cell->x + 2,
+                       cell->y + (cell->height - h) / 2);
+    return w + XLV_ROLE_CONTENT_GAP;
+}
+
+/**
+ * @brief 绘制行文本：无对齐/换行/role 状态走历史基线快速路径；否则走
  *        矩形布局路径（条目对齐按位参与、词换行按 TextWordWrap）。
  * @param painter 绘制器。
  * @param lv 目标视图。
  * @param cell 行单元矩形（含网格收缩后的宽度/槽位高度）。
  * @param text UTF-8 文本；NULL 或空串无操作。
+ * @param roleAlign TextAlignmentRole 对齐（XAlignment 位组合；0=未设置；
+ *                  设置时覆盖视图级 itemAlignment，对标 Qt 逐条目对齐
+ *                  优先于视图布局默认）。
+ * @param roleFont FontRole 字体（NULL=未设置；对标 Qt 逐条目字体，
+ *                  仅本次绘制生效，用毕恢复默认字库）。
+ * @param contentX 文本区左缘 x（绝对坐标；勾选框/装饰占位推进后的值；
+ *                 等于 cell->x 时与历史渲染像素一致）。
  */
 static void xlv_drawRowText(XPainter* painter, const XListView* lv,
-                            const XRect* cell, const char* text)
+                            const XRect* cell, const char* text,
+                            int roleAlign, const XFont* roleFont,
+                            int contentX)
 {
     int flags;
     if (!painter || !lv || !cell || !text || text[0] == '\0') return;
-    flags = lv->m_itemAlignment & (XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK |
-                                   XPAINTER_TEXT_ALIGN_VERTICAL_MASK);
+    if (roleFont) XPainter_setFont(painter, roleFont);
+    flags = roleAlign
+                ? (roleAlign & (XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK |
+                                XPAINTER_TEXT_ALIGN_VERTICAL_MASK))
+                : (lv->m_itemAlignment &
+                   (XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK |
+                    XPAINTER_TEXT_ALIGN_VERTICAL_MASK));
     if (lv->m_wordWrap) flags |= XPAINTER_TEXT_WORD_WRAP;
     if (flags == 0) {
         /* 默认路径：与历史渲染一致（左缘 4px、基线 y+行高-6）。
          * 颜色必须显式传不透明黑：XPainter_drawText 直接以该参数作
          * ink（透明色写入=无像素），setPen 不影响此路径。 */
         XPainter_setPen(painter, 0xFF000000u);
-        XPainter_drawText(painter, 4,
+        XPainter_drawText(painter, contentX + 4,
                           cell->y + xlv_effectiveRowHeight(lv) - 6,
                           text, 0xFF000000u);
+        if (roleFont) XPainter_setFont(painter, NULL);
         return;
     }
     if (!(flags & XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK))
         flags |= XPAINTER_TEXT_ALIGN_LEFT;
     if (!(flags & XPAINTER_TEXT_ALIGN_VERTICAL_MASK))
         flags |= XPAINTER_TEXT_ALIGN_BOTTOM;
-    XPainter_drawTextRect(painter, cell, (uint32_t)flags, text,
-                          0xFF000000u);
+    {
+        /* 文本区=内容占位推进后的剩余矩形（含历史 cell 宽度收缩）。 */
+        XRect textRect;
+        XRect_init(&textRect, contentX, cell->y,
+                   cell->x + cell->width - contentX, cell->height);
+        XPainter_drawTextRect(painter, &textRect, (uint32_t)flags, text,
+                              0xFF000000u);
+    }
+    if (roleFont) XPainter_setFont(painter, NULL);
 }
 
 /* 命中测试覆盖：列表按行渲染（列固定 modelColumn），跳过隐藏行，
@@ -265,9 +351,32 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
                 XPainter_fillRect(&painter, &cell, 0xFFF7F7F7u);
             if (cur && !sel)
                 XPainter_fillRect(&painter, &cell, 0xFFE8F1FFu);
-            xlv_drawRowText(
-                &painter, lv, &cell,
-                XAbstractItemModel_data_2(model, row, lv->m_modelColumn));
+            {
+                /* role 叠加存储渲染消费（对标 QStyledItemDelegate::paint
+                 * 的 role 消费子集；此前写入端零消费）：布局顺序同 Qt
+                 * 风格条目——CheckStateRole 勾选框最左、DecorationRole
+                 * 图像其次、剩余矩形承载文本（TextAlignmentRole 对齐/
+                 * FontRole 字体）。 */
+                int contentX = cell.x;
+                int check = XAbstractItemView_itemCheckState(
+                    view, row, lv->m_modelColumn);
+                if (check >= 0)
+                    contentX += xlv_drawCheckIndicator(&painter, &cell,
+                                                       check);
+                contentX += xlv_drawDecoration(
+                    &painter, &cell,
+                    XAbstractItemView_itemDecoration(view, row,
+                                                     lv->m_modelColumn));
+                xlv_drawRowText(
+                    &painter, lv, &cell,
+                    XAbstractItemModel_data_2(model, row,
+                                              lv->m_modelColumn),
+                    XAbstractItemView_itemTextAlignment(view, row,
+                                                        lv->m_modelColumn),
+                    XAbstractItemView_itemFont(view, row,
+                                               lv->m_modelColumn),
+                    contentX);
+            }
             if (lv->m_spacing > 0) {
                 XPainter_setPen(&painter, 0xFFDDDDDDu);
                 XPainter_drawLine(&painter, offX, y + rh,
@@ -287,6 +396,19 @@ static bool VXListView_indexAt(const XAbstractItemView* view, int x, int y,
     return xlv_indexAt((XListView*)view, x, y, outRow, outCol);
 }
 
+/* 条目几何虚槽：转发到列表既有 (row) 几何（单列渲染，非渲染列无矩形；
+ * 供基类编辑器摆放/scrollTo/尺寸提示虚分派，对标 QListView::visualRect
+ * 对 QAbstractItemView::visualRect 的覆写）。 */
+static bool VXListView_visualRect(const XAbstractItemView* view, int row,
+                                  int col, XRect* out)
+{
+    XListView* lv = (XListView*)view;
+    if (!lv || !out) return false;
+    if (col != lv->m_modelColumn) return false;
+    *out = XListView_visualRect(lv, row);
+    return out->width > 0 && out->height > 0;
+}
+
 XVtable* XListView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XListView)
@@ -294,6 +416,8 @@ XVtable* XListView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXListView_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXListView_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt, VXListView_indexAt);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
+                             VXListView_visualRect);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
                              VXListView_scrollContentsBy);
     return XVTABLE_DEFAULT;

@@ -42,6 +42,20 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XTypes.h"
 #include "XGeometry.h"
+
+/**
+ * @brief      PARTIAL 模式相邻 tile 攒批合并 flush 编译开关（默认开）。
+ * @details    为什么落在契约头而非 XGuiConfig.h：配置头必须保持叶子且不归
+ *             本模块所有权，故本模块私有开关以 #ifndef 形式在此登记，全局
+ *             默认开，需要逐片即时上屏的目标（低延迟调试、逐 tile 撕裂
+ *             定位）用编译选项 -DXGUI_BACKINGSTORE_TILE_BATCHING_ON=0
+ *             关闭。关闭后 XPlatformBackingStore_flushTileBatched 退化为
+ *             与 flushTile 完全一致的即时 present，调用方无需感知。
+ */
+#ifndef XGUI_BACKINGSTORE_TILE_BATCHING_ON
+#define XGUI_BACKINGSTORE_TILE_BATCHING_ON 1
+#endif
+
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
 
 /** @brief XWindow 前向声明（公共层只持有借用指针，不引用其内部）。 */
@@ -154,6 +168,56 @@ void XPlatformBackingStore_flushTile(XPlatformBackingStore* self,
                                      XWindow* window,
                                      const XRect* tileRect,
                                      const XPoint* offset);
+
+/* ==================== tile 攒批（PARTIAL 扩展，非 Qt API） ==================== */
+
+/**
+ * @brief      以「请求攒批」语义提交当前 tile buffer（平台契约扩展）。
+ * @details    与 flushTile 的逐片即时上屏不同，本函数把刚绘制完的 tile
+ *             内容拷入攒批缓冲并向当前批次登记该窗口区域，真正 present
+ *             由攒批决策触发（对标 Qt 高频局部更新按帧合批提交、LVGL 9
+ *             partial 渲染的 flush 排队）：
+ *             - 相邻/重叠合并：与当前批次外接矩形共边或重叠的 tile 直接
+ *                 并批，一次 Driver 提交覆盖多片，显著减少 present 次数；
+ *             - 不相邻（离散脏区/换行跳跃）：先把已攒批次整体上屏再开新批；
+ *             - 超预算：并批后外接矩形超过 1/4 屏（半宽×半高，且保证至
+ *                 少容纳一片 tile）时先上屏旧批再开新批；
+ *             - 16ms 帧界：批次首片入批起超过 16ms（60Hz 一帧）后有新
+ *                 tile 到来即先上屏旧批，避免大脏区 repaint 的首片延迟
+ *                 到帧末才可见。
+ *             XGUI_BACKINGSTORE_TILE_BATCHING_ON=0 时退化为与 flushTile
+ *             完全一致的即时上屏（本函数仍是合法调用点）。
+ * @param      self     目标句柄；可为 NULL。
+ * @param      window   目标窗口借用指针；可为 NULL。
+ * @param      tileRect 当前 tile 在窗口坐标中的完整矩形；不能为空。
+ * @param      offset   缓冲相对窗口偏移；可为 NULL 按零点处理。
+ * @note       tile image 的绘制坐标契约与 flushTile 一致（恒从 (0,0) 起）；
+ *             调用方必须在帧边界调用 flushPendingTiles 收尾，保证所有
+ *             已请求攒批的 tile 终究上屏（最终一致性）。
+ */
+void XPlatformBackingStore_flushTileBatched(XPlatformBackingStore* self,
+                                            XWindow* window,
+                                            const XRect* tileRect,
+                                            const XPoint* offset);
+
+/**
+ * @brief      显式边界强制 flush：把攒批中尚未上屏的内容立即提交。
+ * @details    帧结束（endPaint 之前）、焦点变化引发的同步 repaint、定时
+ *             器帧界等显式边界调用本函数。它是「最终一致性」的兜底入口：
+ *             任何已被攒批登记的 tile 都必须经本函数或后续攒批决策真正
+ *             上屏。无待提交内容时为 no-op；攒批关闭时为纯 no-op。
+ * @param      self   目标句柄；可为 NULL。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ */
+void XPlatformBackingStore_flushPendingTiles(XPlatformBackingStore* self,
+                                             XWindow* window);
+
+/**
+ * @brief      查询是否存在已攒批、尚未上屏的 tile 内容。
+ * @param      self 目标句柄；可为 NULL。
+ * @return     攒批开启且有未提交批次返回 true；其余（含开关关闭）返回 false。
+ */
+bool XPlatformBackingStore_hasPendingTiles(const XPlatformBackingStore* self);
 
 /**
  * @brief      按新尺寸重建后备缓冲（对标 QPlatformBackingStore::resize）。
@@ -269,7 +333,11 @@ bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
                                        void* buffer1, void* buffer2,
                                        size_t bufferSize);
 
-/** @brief 计算指定尺寸所需的单块整屏 ARGB32 缓冲字节数。 */
+/** @brief 计算指定尺寸所需的单块整屏缓冲字节数。
+ *  @note  格式为当前后备表面格式：默认编译期选择（ARGB32 预乘，RGB16
+ *         选择器置 1 时为 RGB16/565）；有活动显示驱动时为协商出的面板
+ *         扫描格式（见 XPlatformDisplayDriver.h 消费链），故面板 565
+ *         时容量减半。 */
 size_t XPlatformBackingStore_requiredBufferSize(const XSize* size);
 
 /* ==================== 平台驱动契约（Drive 平台后端提供） ==================== */

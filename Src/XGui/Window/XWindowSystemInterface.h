@@ -88,6 +88,21 @@ bool XWindowSystemInterface_handlePaintEvent(XWindow* window, const XRegion* reg
 void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window, XFocusReason reason);
 
 /**
+ * @brief      注入窗口状态变化（对标 QWindowSystemInterface::
+ *             handleWindowStateChanged）。
+ * @details    平台后端收到窗口管理器的状态实测结果（WM 图标化、EWMH
+ *             _NET_WM_STATE 回送、Win32 WM_SIZE 状态分支等）时调用：
+ *             经 XWindow_reportWindowStateChanged 持久化状态位并发射
+ *             XWindow 的 windowStateChanged 信号、联动可见性枚举；
+ *             与 XWindow_setWindowStates 的主动请求路径不同，本入口
+ *             不回写平台层（避免注入回环）。
+ * @param      window   目标窗口；可为 NULL（no-op）。
+ * @param      newState 平台上报的状态组合（可含 WindowActive 位）。
+ */
+void XWindowSystemInterface_handleWindowStateChanged(XWindow* window,
+                                                     XWindowState newState);
+
+/**
  * @brief      注入屏幕接入（对标 QWindowSystemInterface::handleScreenAdded）。
  * @details    平台后端枚举到新屏幕时调用：登记到 XScreen 注册表并发射
  *             XGuiApplication 的 screenAdded 信号。屏幕所有权归平台层。
@@ -128,6 +143,43 @@ void XWindowSystemInterface_handleScreenGeometryChange(XScreen* screen,
  */
 void XWindowSystemInterface_handleScreenLogicalDotsPerInchChange(XScreen* screen,
                                                                  float dpi);
+
+/**
+ * @brief      注入平台主题变化（对标 QWindowSystemInterface::
+ *             handleThemeChanged）。
+ * @details    平台主题（深/浅色方案等）变化时调用。XGui 的主题落点是
+ *             XStyleHints 的颜色方案（XGui 未建独立 Theme 状态，styleHints
+ *             亦无 themeChanged 信号，对齐其 colorScheme/
+ *             colorSchemeChanged，对标 Qt 6.5+ 深浅色通道）：转发
+ *             XStyleHints_setColorScheme，值变化时由其内部发射
+ *             colorSchemeChanged。styleHints 单例不可用（XSTYLEHINTS_ON=0
+ *             或无应用实例）时 no-op。
+ * @param      theme 新主题对应的颜色方案（XStyleHintsColorScheme）。
+ */
+void XWindowSystemInterface_handleThemeChanged(XStyleHintsColorScheme theme);
+
+/**
+ * @brief      注入平台区域设置变化（对标 QWindowSystemInterface::
+ *             handleLocaleChange）。
+ * @details    系统区域设置变化时调用；localeUtf8 沿用 XGui 全框架的
+ *             BCP 47/POSIX 名称字符串约定（XGui 未建 XLocale 类型）。
+ *             转发 XGuiApplication_setPlatformLocaleUtf8：落位平台区域
+ *             设置并在请求方向为 Auto 时重解析有效布局方向（值变化时
+ *             发射 layoutDirectionChanged）。NULL/空串表示清除注入态。
+ * @param      localeUtf8 新区域设置名（UTF-8）；可为 NULL。
+ */
+void XWindowSystemInterface_handleLocaleChange(const char* localeUtf8);
+
+/**
+ * @brief      注入应用状态变化（对标 QWindowSystemInterface::
+ *             handleApplicationStateChanged）。
+ * @details    平台应用生命周期状态（活动/隐藏/挂起，如移动端前后台切换、
+ *             桌面会话挂起）变化时调用：转发 XGuiApplication_setApplicationState
+ *             （值变化时内部发射 applicationStateChanged）。
+ * @param      state 新应用状态（XGuiApplicationState 位组合）。
+ */
+void XWindowSystemInterface_handleApplicationStateChanged(
+        XGuiApplicationState state);
 
 /**
  * @brief      注入关闭事件（对标 QWindowSystemInterface::handleCloseEvent）。
@@ -171,6 +223,23 @@ bool XWindowSystemInterface_handleHideEvent(XWindow* window);
 bool XWindowSystemInterface_handleKeyEvent(XWindow* window, XEventType type,
                                            int key, XKeyboardModifiers modifiers,
                                            bool autoRepeat);
+
+/**
+ * @brief      注入键盘事件（完整负载版，对标 handleKeyEvent 带
+ *             nativeScanCode/timestamp 的平台通道）。
+ * @details    与 handleKeyEvent 相同，另携带平台扫描码与事件时间戳
+ *             （X11 为 xkey.keycode 与 xkey.time 毫秒值；Win32 为
+ *             lParam 硬件扫描码与消息时间）。未知时传 0（事件字段
+ *             归零，向后兼容既有调用方）。
+ * @param      nativeScanCode 平台扫描码；未知传 0。
+ * @param      timestamp      事件时间戳（毫秒）；未知传 0。
+ * @return     true 已派发；false 参数无效或分配失败。
+ */
+bool XWindowSystemInterface_handleKeyEvent_ex(XWindow* window, XEventType type,
+                                              int key, XKeyboardModifiers modifiers,
+                                              bool autoRepeat,
+                                              uint32_t nativeScanCode,
+                                              uint32_t timestamp);
 
 /**
  * @brief      注入系统输入法组合/提交事件（对标 handleInputMethodEvent）。
@@ -224,6 +293,24 @@ bool XWindowSystemInterface_handleMouseEvent(XWindow* window, XEventType type,
                                              XPoint position);
 
 /**
+ * @brief      注入鼠标按键/移动事件（完整负载版，对标 handleMouseEvent 带
+ *             globalPosition/timestamp 的平台通道）。
+ * @details    与 handleMouseEvent 相同，另携带屏幕全局坐标与事件时间戳
+ *             （X11 为 xbutton/xmotion 的 x_root/y_root 与 time 毫秒值）。
+ *             未知时传 NULL/0（事件字段归零，向后兼容既有调用方）。
+ * @param      globalPosition 屏幕全局坐标；可为 NULL（按 (0,0)）。
+ * @param      timestamp      事件时间戳（毫秒）；未知传 0。
+ * @return     true 已派发；false 参数无效或分配失败。
+ */
+bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type,
+                                                XMouseButton button,
+                                                XMouseButton buttons,
+                                                XKeyboardModifiers modifiers,
+                                                XPoint position,
+                                                const XPoint* globalPosition,
+                                                uint32_t timestamp);
+
+/**
  * @brief      注入滚轮事件（对标 QWindowSystemInterface::handleWheelEvent）。
  * @details    平台滚轮滚动时调用；构造 XWheelEvent（携带局部坐标、角度增量
  *             angleDelta、按下按键与修饰键）并自发投递。角度增量遵循 Qt
@@ -274,6 +361,33 @@ bool XWindowSystemInterface_handleTouchEvent(XWindow* window, XEventType type,
                                              XPoint position,
                                              const XPoint* globalPosition,
                                              int pointCount);
+
+/**
+ * @brief      注入触摸事件（完整负载版，携带事件时间戳）。
+ * @details    与 handleTouchEvent 相同，另携带平台触摸时间戳（X11 XI2
+ *             XIDeviceEvent 的 time 毫秒值）。未知时传 0。时间戳经
+ *             XWindowSystemInterface_touchTimestamp 供 touch→mouse 合成器
+ *             透传到合成鼠标事件（对标 Qt 合成 QMouseEvent 继承触摸
+ *             timestamp 语义）。XTouchEvent 负载结构本批未扩展（字段
+ *             归属 XWindowEvent.h），时间戳以同步派发作用域的通道承载：
+ *             注入为同步自发投递，合成器在投递期间读取即得本序列时间。
+ * @param      timestamp 事件时间戳（毫秒）；未知传 0。
+ * @return     true 已派发；false 参数无效或分配失败。
+ */
+bool XWindowSystemInterface_handleTouchEvent_ex(XWindow* window, XEventType type,
+                                                XPoint position,
+                                                const XPoint* globalPosition,
+                                                int pointCount,
+                                                uint32_t timestamp);
+
+/**
+ * @brief      返回当前同步派发中的触摸事件时间戳（毫秒）。
+ * @details    供 XWidget.c 的 touch→mouse 合成器在触摸事件同步投递期间
+ *             读取并透传到合成鼠标事件；仅在 handleTouchEvent(_ex) 同步
+ *             派发栈内有定义，其他时刻返回 0（合成事件按未知时间处理）。
+ * @return     当前触摸时间戳；无同步触摸派发时为 0。
+ */
+uint32_t XWindowSystemInterface_touchTimestamp(void);
 
 /**
  * @brief      注入数位板事件（对标 QWindowSystemInterface::handleTabletEvent）。

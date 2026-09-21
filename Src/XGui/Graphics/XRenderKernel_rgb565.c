@@ -6,20 +6,23 @@
  *             "在目标格式域收尾"组织方式：所有输入统一为 0xAARRGGBB
  *             预乘 ARGB32 规范色（XPainter 的规范色），内核内部完成
  *             source-over 合成与 565 压缩，外部零格式分支。
- *             合成口径对齐（先读 XPainter.c 后确定）：
- *             - 除法近似采用 painterMul255 的 (a*b+127)/255 精确四舍五入
- *               （XPainter.c:1339），而非 (x*255+127)>>8 变体——后者与
- *               painter 存在 ±1 口径差，两套近似不可混用；
+ *             合成口径对齐（先读 XPainter.c 后确定；引用一律按函数名
+ *             锚定、不写行号，避免上游演进导致行号漂移失准）：
+ *             - 除法近似采用 XPainter.c 的 painterMul255 的
+ *               (a*b+127)/255 精确四舍五入，而非 (x*255+127)>>8 变体
+ *               ——后者与 painter 存在 ±1 口径差，两套近似不可混用；
  *             - alpha==0 保目标、alpha==255 直写两条快捷路径对应
- *               painterComposeColor 的 SourceOver 分支（XPainter.c:1486、
- *               XPainter.c:1490）；
+ *               painterComposeColor 的 SourceOver 分支的两条 if 快捷
+ *               （sa==0 返回目标、da==0 返回源）；
  *             - 字形覆盖率调制等价 Qt BYTE_MUL：预乘色各通道同乘覆盖率
- *               后仍为预乘色，再走 source-over，与 painter 文本路径的
- *               (coverage*a+127)/255 调制（XPainter.c:4870）同口径。
+ *               后仍为预乘色，再走 source-over，与 painter 文本回退
+ *               路径 painterGlyphAlphaBlend 的 (coverage*a+127)/255
+ *               调制同口径。
  *             565 打包按本内核契约使用截断式 ((r>>3)<<11)|((g>>2)<<5)|
  *             (b>>3)（对标 Qt qConvertRgb32To16）；注意 XImage_setPixel
- *             走的是四舍五入压缩（XImage.c:3399），两者可在渲染层与
- *             直接读写层各自独立存在，本内核以契约为准。
+ *             走的是四舍五入压缩（XImage.c 的 XImage_compress5/
+ *             compress6），两者可在渲染层与直接读写层各自独立存在，
+ *             本内核以契约为准。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XRenderKernel.h"
@@ -32,6 +35,10 @@
  * @brief 把预乘 ARGB32 规范色压缩为 RGB565（截断式，契约固定公式）。
  * @note  对标 Qt qConvertRgb32To16；预乘色的 RGB 分量在 565（无 alpha
  *        位）目标上无需再做反预乘，直接按位截断。
+ *        口径互引：XImage.c 的 XImage_compress5/compress6 为四舍五入
+ *        式 ((v*N+127)/255)，本函数为截断式 (v>>N)——同一颜色经两侧
+ *        压缩可差 1 LSB；渲染层（本内核）与直接读写层
+ *        （XImage_setPixel）两套口径各自独立并存，见文件头契约说明。
  */
 static uint16_t rgb565_pack(uint32_t argbPrem)
 {
@@ -55,7 +62,7 @@ static unsigned rgb565_expand6(unsigned value)
 
 /**
  * @brief 8 位分量相乘并按 255 四舍五入。
- * @note  与 XPainter.c 的 painterMul255（XPainter.c:1339）逐字节同式，
+ * @note  与 XPainter.c 的 painterMul255 逐字节同式，
  *        保证内核合成结果与 painter ARGB32 路径同口径。
  */
 static unsigned rgb565_mul255(unsigned a, unsigned b)
@@ -71,8 +78,8 @@ static unsigned rgb565_mul255(unsigned a, unsigned b)
  *        目标为不透明 565：先位复制展开到 8 位合成域，压缩回 565 收尾
  *        （LVGL blend_to_rgb565 的"目标格式域收尾"思路，但合成在
  *        ARGB32 精度域完成以保证与 painter 口径一致）。源 alpha 为 0
- *        或 255 时走快捷路径（XPainter.c:1486/1490 同款），避免
- *        读改写与无效乘法。
+ *        或 255 时走快捷路径（painterComposeColor 的 SourceOver 快捷
+ *        分支同款），避免读改写与无效乘法。
  */
 static uint16_t rgb565_overPixel(uint16_t dstPixel, uint32_t srcPrem)
 {
@@ -114,9 +121,9 @@ static void rgb565_fillSpanOpaque(uint8_t* rowBytes, int x, int count,
 /**
  * @brief 半透明纯色 source-over 填充一段 565 目标行。
  * @note  alpha==255 先查（契约第 3 条）：退化为不透明直写，免读改写；
- *        alpha==0 对应 painter 的 SourceOver 快捷分支（XPainter.c:1486）
- *        直接返回。src 常量把拆包/invA 提到循环外，逐像素只做
- *        565 展开、三次乘加与压缩。
+ *        alpha==0 对应 painter 的 SourceOver 快捷分支
+ *        （painterComposeColor）直接返回。src 常量把拆包/invA 提到
+ *        循环外，逐像素只做 565 展开、三次乘加与压缩。
  */
 static void rgb565_fillSpanBlend(uint8_t* rowBytes, int x, int count,
                                  uint32_t argbPrem)
@@ -169,7 +176,8 @@ static void rgb565_blitSpan(uint8_t* dstRow, int dstX,
  * @brief 预乘 source-over 源行混合到 565 目标行。
  * @note  逐像素先查源 alpha（契约第 3 条）：255 直写免读改写（对标
  *        Skia blitRow_s32a_opaque 的不透明快捷分支）、0 跳过
- *        （XPainter.c:1486 同款），其余走 rgb565_overPixel 合成。
+ *        （painterComposeColor 的 SourceOver 快捷分支同款），其余走
+ *        rgb565_overPixel 合成。
  */
 static void rgb565_blendSpan(uint8_t* dstRow, int dstX,
                              const uint32_t* srcRow, int srcX, int count)
@@ -195,8 +203,9 @@ static void rgb565_blendSpan(uint8_t* dstRow, int dstX,
  * @brief 字形灰度 mask 混合到 565 目标行。
  * @note  覆盖率调制等价 Qt BYTE_MUL：预乘色各通道乘覆盖率仍为预乘色，
  *        再 source-over 入目标。coverage==0 跳过（契约第 4 条）；
- *        调制用 rgb565_mul255，与 painter 文本路径的覆盖率缩放
- *        （XPainter.c:4870-4877 的 (coverage*a+127)/255）同口径；
+ *        调制用 rgb565_mul255，与 painter 文本回退路径
+ *        painterGlyphAlphaBlend 的覆盖率缩放
+ *        （(coverage*a+127)/255）同口径；
  *        调制后源不透明时直写，半透明走 rgb565_overPixel。
  */
 static void rgb565_glyphMaskSpan(uint8_t* rowBytes, int x, int count,

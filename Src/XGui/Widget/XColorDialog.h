@@ -10,8 +10,13 @@
  *             - 信号：currentColorChanged(XColor)/colorSelected(XColor)。
  *             颜色以 XColor 值类型传递（XData/XColor）。
  * @note       模块总开关 XDIALOG_ON（XWIDGET_ON && XDIALOG_ON 有效）。
- * @note       无 GUI 对话框环境：getColor 不做模态执行，直接返回 initial；
- *             colorSelected 由应用在“接受”动作处手动触发（测试用）。
+ * @note       getColor 有 XCoreApplication 实例时构造真实对话框并
+ *             exec 阻塞执行：8 列×6 行标准色块网格（点击选色）+
+ *             R/G/B 三个 XSpinBox 自定义输入 + 预览块 + 确定/取消
+ *             按钮，应用模态、Escape→reject；接受返回选中色，取消
+ *             返回失效色（对标 Qt）。无 GUI 对话框环境不做模态执行，
+ *             直接返回 initial；colorSelected 由应用在“接受”动作处
+ *             手动触发（测试用）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XCOLORDIALOG_H

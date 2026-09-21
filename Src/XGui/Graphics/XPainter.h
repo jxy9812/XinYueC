@@ -1471,17 +1471,24 @@ XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self);
 /**
  * @brief 设置 MiterJoin 斜接上限（对标 QPen::setMiterLimit）。
  * @param self 绘制器指针；未激活时忽略。
- * @param limit miter 长度与笔宽之比阈值；小于 1 的值钳位为 1（Qt 同语义，
- *              1 表示恒回退 Bevel）。默认 2。
+ * @param limit miter 长度与笔宽之比阈值；小于 1 的值钳位为 1（Qt 存储
+ *              不钳位，但阈值 ≤1 时两方均恒回退 Bevel、行为一致）。
+ *              默认 2。
  */
 void XPainter_setMiterLimit(XPainter* self, float limit);
 /** @brief 获取 MiterJoin 斜接上限（对标 QPen::miterLimit；NULL 返回 2）。 */
 float XPainter_miterLimit(const XPainter* self);
 /** @brief 设置用户自定义虚线节距（对标 QPen::setDashPattern）。
  * @param self 绘制器指针。
- * @param pattern 画/空交替节距数组（像素）；可为 NULL 表示清除自定义节距。
+ * @param pattern 画/空交替节距数组，单位为笔宽倍数（对标 QPen::
+ *                dashPattern 口径：数值均以笔宽为单位，绘制时按
+ *                qt_scale_dash_pattern 乘以笔宽缩放，并非像素）；
+ *                可为 NULL 表示清除自定义节距。
  * @param count 节距数量（最多 16；0 或负数表示清除）。
  * @return 无返回值；未激活或参数非法时忽略。
+ * @note  与 Qt 的差异：QPen::setDashPattern 会自动把画笔样式置为
+ *        CustomDashLine，XGui 需另行显式调用 XPainter_setPenStyle(
+ *        XPainterPenStyle_CustomDashLine)，否则自定义节距不生效。
  */
 void XPainter_setDashPattern(XPainter* self, const float* pattern,
                              int count);

@@ -256,6 +256,29 @@ bool XMimeData_hasFormat(const XMimeData* self, const char* mimeType)
     return mime_findCustom(self, mimeType) >= 0;
 }
 
+/** @brief 判断 MIME 类型名是否为 application/x-qt* 框架内部类型。
+ *  @details 对标 Qt：application/x-qt-image 等以 "application/x-qt" 为前缀
+ *           的类型是框架内部交换通道（批次二十二模块决策），不对外呈现。
+ */
+static bool mime_isInternalQtType(const char* mimeType)
+{
+    static const char kPrefix[] = "application/x-qt";
+    size_t i;
+    if (!mimeType)
+        return false;
+    /* 前缀比较大小写不敏感（与 hasFormat 同一规则）。 */
+    for (i = 0; i < sizeof(kPrefix) - 1; ++i) {
+        char c = mimeType[i];
+        if (!c)
+            return false; /* 短于前缀：非内部类型。 */
+        if (c >= 'A' && c <= 'Z')
+            c = (char)(c - 'A' + 'a');
+        if (c != kPrefix[i])
+            return false;
+    }
+    return true;
+}
+
 XStringList* XMimeData_formats(const XMimeData* self)
 {
     XStringList* list;
@@ -266,20 +289,27 @@ XStringList* XMimeData_formats(const XMimeData* self)
     if (!self || !self->m_data)
         return list;
 
+    /* 对标 QMimeData::formats：剔除全部 application/x-qt* 内部类型
+     * （批次二十二模块决策；Qt 平台剪贴板集成层同样不把 x-qt* 呈现给
+     * formats() 调用方）。内部类型仍可经 hasFormat/data 命中——Qt 的
+     * hasFormat 走存储检查，application/x-qt-image 查询不依赖 formats
+     * 列表，本实现 hasFormat 对内置格式的直接存储分支即该语义。
+     * 框架内部消费方（如 XClipboard 的图像派生推送）一律走
+     * XMimeData_hasImage 等内部查询，不经 formats() 往返。 */
     if (self->m_data->m_text)
         XStringList_push_back_utf8(list, "text/plain");
     if (self->m_data->m_html)
         XStringList_push_back_utf8(list, "text/html");
     if (self->m_data->m_hasColor)
         XStringList_push_back_utf8(list, "application/x-color");
-    if (self->m_data->m_image)
-        XStringList_push_back_utf8(list, "application/x-qt-image");
+    /* application/x-qt-image（内置图像内部类型）不列入。 */
 
     n = self->m_data->m_custom
             ? XVector_size_base((const XContainer*)self->m_data->m_custom) : 0;
     for (i = 0; i < n; ++i) {
         XMimeCustomEntry* entry = mime_customAt(self->m_data->m_custom, (int64_t)i);
-        if (entry && entry->m_format)
+        if (entry && entry->m_format &&
+            !mime_isInternalQtType(XString_toUtf8(entry->m_format)))
             XStringList_push_back_base(list, entry->m_format);
     }
     return list;

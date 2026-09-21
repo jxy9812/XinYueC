@@ -170,8 +170,15 @@ static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
             return;
         }
     }
-    /* 其余按键交控件默认键盘链（XDialog 的 Escape 分支已在上方覆盖）。 */
-    XWidget_keyPressEvent_base(self, event);
+    /* 其余按键静态转发父类 XDialog 实现（对标 QDialog::keyPressEvent
+       非 Esc 分支静态调用基类）：经 XClass_Parent 取 XDialog 类虚表
+       keyPress 槽位（VXDialog_keyPressEvent，含 Escape→reject 回退）。
+       此前经 XWidget_keyPressEvent_base 转发：该 _base 入口按对象虚表
+       再分派回最派生重载 VXMessageBox_keyPressEvent，未处理的按键
+       （如无 defaultButton 的 Enter）即无界自递归栈溢出（复扫 P0-1，
+       XDialog 同根同修）。 */
+    XClass_Parent(XDialog, EXWidget_KeyPressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 XVtable* XMessageBox_class_init(void)

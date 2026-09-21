@@ -6,7 +6,7 @@ project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
 # ---- 裁剪开关转发：命令行 -DX?_ON=0/1 转为全局编译定义 ----
 # （否则 -D 仅入缓存为 UNINITIALIZED，不产生编译定义，"裁剪构建"实际全量编译。）
 option(XGUI_ON "XGui 模块总开关（默认开；-DXGUI_ON=0 关闭）" ON)
-foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON)
+foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON XPLATFORM_FBDEV_ON)
     if(DEFINED ${_xsw})
         set(_xval "${${_xsw}}")
         if(_xval STREQUAL "ON" OR _xval STREQUAL "TRUE")
@@ -18,6 +18,14 @@ foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVI
         unset(_xval)
     endif()
 endforeach()
+
+# ==================== fbdev 显示驱动模板（嵌入式 RGB565 直写铺路） ====================
+# 新增源文件 Drive/Posix/Graphics/XPlatformFramebuffer_posix.c（及其 .h）经上方
+# file(GLOB_RECURSE DRIVE_FILE "Drive/*.c") 自动入列——新增/删除源文件后须触发
+# 重新配置（touch 本文件即可），glob 才会重扫。功能受 XPLATFORM_FBDEV_ON 控制
+# （默认 0，XPlatformDisplayDriver.h 内 #ifndef 兜底；嵌入式目标以
+# -DXPLATFORM_FBDEV_ON=ON 开启）。默认关闭时该文件经预处理守卫整段裁剪，
+# 桌面 X11 路径零变化；无需额外链接库（fbdev 经 sys/ioctl.h + mmap 即可）。
 set(EXPORT_NAME XinYueC)
 #set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
@@ -248,6 +256,9 @@ endif()
 
 # ==================== 静态链接的可执行程序 ====================
 # 链接 XinYueCS 静态库，生成的可执行文件不依赖外部动态库（除系统库外）
+# XGUI_ON=0（嵌入式全裁剪）时与回归测试同口径排除：demo（main.c）与
+# Test/*.c 控件测试源引用 GUI 类型，裁剪构建无法编译。
+if(XGUI_ON)
 add_executable(${EXPORT_NAME}_Static
 ${TEST_FILE}
 "./main.c"
@@ -278,6 +289,7 @@ if(UNIX)
 else()
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite)
 endif()
+endif() # XGUI_ON（demo 可执行排除）
 
 # ==================== XFtp 端到端真服务器联调测试 ====================
 # 独立可执行文件 ftp_e2e_test.exe，搭配 ftp_test_server.py 跑完整 FTP 协议测试

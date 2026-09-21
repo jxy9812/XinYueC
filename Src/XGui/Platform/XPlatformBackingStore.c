@@ -10,6 +10,12 @@
  *             - 平台后端只需提供这些钩子，无需再维护缓冲逻辑；
  *               Unsupported 存根 Driver_create 返回 false 时，本层 create
  *               返回 NULL，XBackingStore 保持「空后端」语义。
+ *             - PARTIAL 模式的相邻 tile 攒批合并 flush（远端 §23.4 规划
+ *               4）：flushTileBatched 把相邻/重叠 tile 内容拷入攒批缓冲，
+ *               超 1/4 屏预算或 16ms 帧界才真正 present，帧末由
+ *               flushPendingTiles 收批兜底；编译开关
+ *               XGUI_BACKINGSTORE_TILE_BATCHING_ON（默认开）关闭后退化为
+ *               逐片即时上屏。
  *             本文件不包含任何平台 API 头。
  * @note       模块总开关 XBACKINGSTORE_ON 与 XPLATFORMBACKINGSTORE_ON 定义
  *             于 XGuiConfig.h；任一处 0 时本实现整体裁剪。
@@ -23,6 +29,27 @@
 #include "XImage.h"
 #include "XImageFormat.h"
 #include "XMemory.h"
+/* 显示驱动契约（消费点见下方 xpbs_surfaceFormat / 平台 Driver_present）：
+ * 契约头不含任何平台 API 头，公共层只经 ops 表消费；XPLATFORM_FBDEV_ON=0
+ * 时本头整体为空、新消费代码同步裁剪（零新增 ABI 面，桌面零回归）。 */
+#include "XPlatformDisplayDriver.h"
+
+/** @brief tile 攒批总闸：仅 PARTIAL 模式有意义（DIRECT/FULL 没有逐片
+ *  提交路径，攒批层整体裁剪为零开销）。XGUI_BACKINGSTORE_TILE_BATCHING_ON
+ *  是面向调用方的编译开关（见契约头），此处收敛为文件内单一判定。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL && \
+    XGUI_BACKINGSTORE_TILE_BATCHING_ON
+#define XPBS_TILE_BATCHING_ON 1
+#else
+#define XPBS_TILE_BATCHING_ON 0
+#endif
+
+#if XPBS_TILE_BATCHING_ON
+#include "XDateTime.h"
+/** @brief 攒批 16ms 帧界（60Hz 一帧，对标 Qt 高频局部更新按 vsync 合帧；
+ *  批次首片入批起超过该时长即强制先上屏，防大脏区 repaint 首片延迟）。 */
+#define XPBS_TILE_BATCH_FRAME_MS 16
+#endif
 
 /** @brief 后备缓冲像素格式（对标 Qt 栅格后备存储的 ARGB32 预乘）。
  *  @note  由 XGuiConfig.h 的 XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 编译期
@@ -47,6 +74,66 @@
 #else
 #define XPBS_PIXEL_BYTES 4u
 #endif
+
+/* ==================== 显示驱动格式协商（消费点 1：缓冲格式决定） ====================
+ * 嵌入式单屏（XPlatformDisplayDriver 契约，驱动注册见
+ * Drive/Posix/Graphics/XPlatformFramebuffer_posix.c）：后备存储创建/resize
+ * 分配缓冲时，以编译期选择器格式（XPBS_IMAGE_FORMAT）为 preferred 向活动
+ * 驱动 formatNegotiate，按面板扫描格式分配缓冲——present 侧无需任何转换：
+ * - 面板 565 + 选择器 RGB16=1：协商为真即"直写零拷贝"（present 经平台
+ *   Driver 的 fbdev 直写路径 memcpy 上屏，X11 路径跳过）；
+ * - 面板非 565（RGB888/RGB32 等）：同样按面板格式分配，避免逐帧转换；
+ * - 面板格式不可识别（Invalid）：保持编译期格式，present 不直写（回落
+ *   平台既有提交路径）。
+ * 无活动驱动（桌面默认未注册）或 XPLATFORM_FBDEV_ON=0 时折叠为编译期
+ * 常量，缓冲格式与既有行为逐位一致（零回归）。 */
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+/** @brief 上次协商时的活动驱动（注销/换驱动后惰性重协商的失效判据）。 */
+static const XPlatformDisplayDriverOps* g_xpbsDriverOps = NULL;
+/** @brief 协商出的后备表面格式（无驱动时恒为编译期选择器格式）。 */
+static XImageFormat g_xpbsDriverFormat = XPBS_IMAGE_FORMAT;
+#endif
+
+/**
+ * @brief 后备表面像素格式（运行期：优先驱动协商结果；否则编译期选择器）。
+ * @note  调用点为 create/resize/requiredBufferSize 等缓冲决策路径（非逐
+ *        像素热路径）；协商结果按活动驱动指针缓存，板级启动代码在 GUI
+ *        初始化前注册驱动的常规时序下首次查询即定案。
+ */
+static XImageFormat xpbs_surfaceFormat(void)
+{
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    const XPlatformDisplayDriverOps* ops = XPlatformDisplayDriver_active();
+    if (ops != g_xpbsDriverOps)
+    {
+        XImageFormat panel = XImageFormat_Invalid;
+        g_xpbsDriverOps = ops;
+        g_xpbsDriverFormat = XPBS_IMAGE_FORMAT;
+        /* preferred 传编译期选择器格式；返回值只区分"可直写/需转换"，
+           两种情况下只要面板报告了可识别扫描格式就按它分配（避免
+           present 逐帧转换），直写可行性由 present 侧对照
+           "后备格式==面板格式"再判定。面板格式不可识别（Invalid）时
+           保持编译期格式，present 不直写。 */
+        if (ops)
+        {
+            (void)ops->formatNegotiate(XPBS_IMAGE_FORMAT, &panel);
+            if (panel != XImageFormat_Invalid)
+                g_xpbsDriverFormat = panel;
+        }
+    }
+    return g_xpbsDriverFormat;
+#else
+    return XPBS_IMAGE_FORMAT;
+#endif
+}
+
+/** @brief 每像素字节数（按格式位深推导，支持运行期协商格式；未知格式
+ *         返回 0，调用方据此拒绝分配/拷贝）。 */
+static size_t xpbs_pixelBytes(XImageFormat format)
+{
+    int depth = XImageFormat_bitDepth(format);
+    return depth > 0 ? (size_t)((depth + 7) / 8) : 0u;
+}
 
 /** @brief 共享软件核心 + 平台提交状态。 */
 struct XPlatformBackingStore
@@ -77,6 +164,16 @@ struct XPlatformBackingStore
     void* m_nativeTarget;                     /**< 原生目标窗口句柄（Windows HWND，其它平台记录）。 */
     unsigned m_beginPaintActive;              /**< beginPaint/endPaint 区间标志。 */
     void* m_nativeState;                      /**< 平台提交状态（Driver 拥有）。 */
+#if XPBS_TILE_BATCHING_ON
+    /* tile 攒批（PARTIAL 专属，见文件内 XPBS_TILE_BATCHING_ON）：把相邻
+     * tile 内容先拷入攒批缓冲，凑满一片连续区域后一次 present，消除逐片
+     * 上屏的 present 次数放大（对标 Qt 高频局部更新按帧合批）。 */
+    XImage m_batchImage;                      /**< 攒批缓冲（拥有）：容纳当前预算批次的外接矩形。 */
+    XRegion m_batchRegion;                    /**< 已攒 tile 的窗口坐标集合（present 脏区）。 */
+    XRect m_batchBounds;                      /**< 已攒集合的外接矩形（窗口坐标）。 */
+    int64_t m_batchStartMs;                   /**< 批次首片入批时刻（16ms 帧界判定基准）。 */
+    bool m_batchOpen;                         /**< 攒批中是否存在待上屏内容。 */
+#endif
 };
 
 /* ==================== 内部工具 ==================== */
@@ -114,20 +211,26 @@ static bool xpbs_intersect(const XRect* a, const XRect* b, XRect* out)
     return true;
 }
 
-/** @brief 按行复制像素矩形（每像素 XPBS_PIXEL_BYTES 字节；默认 ARGB32
+/** @brief 按行复制像素矩形（每像素字节数按源/目标格式推导：默认 ARGB32
  *         4 字节小端与 DIB BGRA 一致，RGB16 为 2 字节）。
  *  @note  源与目标各自使用自己的 bytesPerLine，因此支持跨尺寸复制
- *         （resize 保留左上重叠区时源缓冲与目标缓冲行距可能不同）。 */
+ *         （resize 保留左上重叠区时源缓冲与目标缓冲行距可能不同）。
+ *         源/目标格式不一致时拒绝拷贝（驱动运行中注册换代的理论时序，
+ *         宁丢迁移内容不可错位污染，见 xpbs_surfaceFormat 注）。 */
 static void xpbs_copyRectPixels(const XImage* src, int sx, int sy,
                                 XImage* dst, int dx, int dy,
                                 int w, int h)
 {
     const uint8_t* sbuf;
     uint8_t* dbuf;
+    size_t pixelBytes;
     int srcBpl;
     int dstBpl;
     int row;
     if (!src || !dst || w <= 0 || h <= 0) return;
+    if (XImage_format(src) != XImage_format(dst)) return;
+    pixelBytes = xpbs_pixelBytes(XImage_format(src));
+    if (pixelBytes == 0) return;
     sbuf = XImage_constBits(src);
     dbuf = XImage_bits(dst);
     srcBpl = XImage_bytesPerLine(src);
@@ -135,10 +238,10 @@ static void xpbs_copyRectPixels(const XImage* src, int sx, int sy,
     if (!sbuf || !dbuf || srcBpl <= 0 || dstBpl <= 0) return;
     for (row = 0; row < h; ++row)
         XMemmove(dbuf + (int64_t)(dy + row) * dstBpl +
-                     (int64_t)dx * XPBS_PIXEL_BYTES,
+                     (int64_t)dx * (int64_t)pixelBytes,
                 sbuf + (int64_t)(sy + row) * srcBpl +
-                     (int64_t)sx * XPBS_PIXEL_BYTES,
-                (size_t)w * XPBS_PIXEL_BYTES);
+                     (int64_t)sx * (int64_t)pixelBytes,
+                (size_t)w * pixelBytes);
 }
 
 /** @brief 把源图像深拷贝到目标图像（XCopy 为共享引用，不能用）。 */
@@ -267,13 +370,13 @@ size_t XPlatformBackingStore_requiredBufferSize(const XSize* size)
                  size->width : XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH;
         int bh = size->height < XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT ?
                  size->height : XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT;
-        stride = (size_t)XImageFormat_bytesPerLine(bw, XPBS_IMAGE_FORMAT);
+        stride = (size_t)XImageFormat_bytesPerLine(bw, xpbs_surfaceFormat());
         if (stride == 0 || (size_t)bh > SIZE_MAX / stride) return 0;
         return stride * (size_t)bh;
     }
 #else
     stride = (size_t)XImageFormat_bytesPerLine(size->width,
-                                                XPBS_IMAGE_FORMAT);
+                                                xpbs_surfaceFormat());
     if (stride == 0 || (size_t)size->height > SIZE_MAX / stride) return 0;
     return stride * (size_t)size->height;
 #endif
@@ -283,6 +386,7 @@ static void xpbs_initConfiguredImage(XImage* image, int width, int height,
                                      void* buffer, size_t bufferSize)
 {
     int stride;
+    XImageFormat format = xpbs_surfaceFormat();
     if (!image) return;
     if (width <= 0 || height <= 0)
     {
@@ -293,14 +397,136 @@ static void xpbs_initConfiguredImage(XImage* image, int width, int height,
     }
     if (buffer)
     {
-        stride = XImageFormat_bytesPerLine(width, XPBS_IMAGE_FORMAT);
-        XImage_init_ex_2(image, width, height, XPBS_IMAGE_FORMAT,
+        stride = XImageFormat_bytesPerLine(width, format);
+        XImage_init_ex_2(image, width, height, format,
                          stride, (uint8_t*)buffer, NULL, NULL);
         (void)bufferSize;
     }
     else
-        XImage_init_ex(image, width, height, XPBS_IMAGE_FORMAT);
+        XImage_init_ex(image, width, height, format);
 }
+
+#if XPBS_TILE_BATCHING_ON
+/* ==================== tile 攒批内部工具（PARTIAL 专属） ==================== */
+
+/** @brief 当前毫秒时钟。为什么经 XDateTime 平台适配而不直接触平台 API：
+ *  本文件契约不含任何平台头（与 Drive 时钟后端解耦），共同层既有惯例是
+ *  经 XDateTime_*SecsSinceEpoch 取时间（XGpuRenderDriver_gl.c 计时同款）。 */
+static int64_t xpbs_batchNowMs(void)
+{
+    return XDateTime_currentMSecsSinceEpoch();
+}
+
+/** @brief 攒批预算：半宽×半高（≈1/4 屏面积），下限抬到一片 tile。
+ *  为什么按外接矩形宽高而不是累计面积判定：present 源是攒批缓冲上的矩形
+ *  区域，外接矩形尺寸直接决定缓冲容量上限（对标 LVGL partial 对单次
+ *  flush 区域的封顶，避免攒批缓冲随窗口无界增长）。 */
+static void xpbs_batchBudget(const XPlatformBackingStore* self,
+                             int* outW, int* outH)
+{
+    int tileW = XGUI_BACKINGSTORE_PARTIAL_BUFFER_WIDTH;
+    int tileH = XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT;
+    int w = self->m_size.width;
+    int h = self->m_size.height;
+    int bw = (w + 1) / 2;
+    int bh = (h + 1) / 2;
+    /* 下限 = 一片 tile（裁到窗口内）：小窗口半宽/半高不足单片时抬到
+       单片，保证首片总能入批、攒批不至于整体不可用；上限天然 ≤ 窗口。 */
+    if (bw < tileW) bw = tileW;
+    if (bh < tileH) bh = tileH;
+    if (bw > w && w > 0) bw = w;
+    if (bh > h && h > 0) bh = h;
+    *outW = bw;
+    *outH = bh;
+}
+
+/** @brief 确保攒批缓冲按当前预算就绪（懒分配；窗口变大后按需重建）。
+ *  @return false 表示低内存等分配失败，调用方退化为逐片即时上屏。 */
+static bool xpbs_batchEnsureBuffer(XPlatformBackingStore* self)
+{
+    int bw, bh;
+    xpbs_batchBudget(self, &bw, &bh);
+    if (bw <= 0 || bh <= 0) return false;
+    if (self->m_batchImage.m_data &&
+        XImage_width(&self->m_batchImage) >= bw &&
+        XImage_height(&self->m_batchImage) >= bh)
+        return true;
+    XImage_deinit_base(&self->m_batchImage);
+    XImage_init(&self->m_batchImage);
+    XImage_init_ex(&self->m_batchImage, bw, bh, xpbs_surfaceFormat());
+    return self->m_batchImage.m_data != NULL;
+}
+
+/** @brief 16ms 帧界是否已到。墙钟回拨（now < startMs）按未到期处理：
+ *  攒批只是延迟策略，帧末 flushPendingTiles 兜底最终一致性，不依赖时钟
+ *  单调性（对标 QElapsedTimer 用途而共同层仅有墙钟毫秒的现实约束）。 */
+static bool xpbs_batchDeadlinePassed(const XPlatformBackingStore* self)
+{
+    int64_t now;
+    if (!self->m_batchOpen) return false;
+    now = xpbs_batchNowMs();
+    if (now < self->m_batchStartMs) return false;
+    return (now - self->m_batchStartMs) >= XPBS_TILE_BATCH_FRAME_MS;
+}
+
+/** @brief 把已攒批次整体上屏并复位批次状态（缓冲保留复用）。
+ *  @note  present 只送 m_batchRegion 登记过的矩形：region 之外的缓冲像素
+ *         从未被写入，按集合上屏保证不把未攒批内容带出（平台 Driver 以
+ *         (region, offset) 逐矩形搬运，天然支持多矩形一次提交）。 */
+static void xpbs_batchPresent(XPlatformBackingStore* self, XWindow* window)
+{
+    XPoint origin;
+    if (!self->m_batchOpen || XRegion_isEmpty(&self->m_batchRegion))
+    {
+        self->m_batchOpen = false;
+        return;
+    }
+    origin.x = self->m_batchBounds.x;
+    origin.y = self->m_batchBounds.y;
+    XPlatformBackingStoreDriver_presentTile(self->m_nativeState, window,
+                                            &self->m_batchImage,
+                                            &self->m_batchRegion, &origin);
+    xpbs_invokePresent(self, &self->m_batchRegion, &origin);
+    self->m_batchOpen = false;
+    XRegion_clear(&self->m_batchRegion);
+}
+
+/** @brief 丢弃攒批中的待上屏内容并释放缓冲（resize 换代时使用）。
+ *  @note  resize 无 window 入参无法上屏；PARTIAL tile 缓冲本就不保留旧
+ *         内容，resize 后由控件层整帧 repaint 覆盖，故此处直接丢弃而不
+ *         是丢失一致性（旧内容随窗口尺寸失效，上屏反而错位）。 */
+static void xpbs_batchReset(XPlatformBackingStore* self)
+{
+    self->m_batchOpen = false;
+    XRegion_clear(&self->m_batchRegion);
+    XRect_init(&self->m_batchBounds, 0, 0, 0, 0);
+    self->m_batchStartMs = 0;
+    if (self->m_batchImage.m_data)
+    {
+        XImage_deinit_base(&self->m_batchImage);
+        XImage_init(&self->m_batchImage);
+    }
+}
+
+/** @brief 开批或并批：把 tile 窗口矩形并入当前批次外接矩形。
+ *  @return false 表示攒批缓冲不可用（仅开批时可能），调用方应退化为
+ *          即时上屏；true 表示 batchBounds/region 已包含该 tile。 */
+static bool xpbs_batchAccumulate(XPlatformBackingStore* self,
+                                 const XRect* presented)
+{
+    if (!self->m_batchOpen)
+    {
+        if (!xpbs_batchEnsureBuffer(self)) return false;
+        XRegion_clear(&self->m_batchRegion);
+        self->m_batchBounds = *presented;
+        self->m_batchStartMs = xpbs_batchNowMs();
+        self->m_batchOpen = true;
+        return true;
+    }
+    self->m_batchBounds = XRect_united(&self->m_batchBounds, presented);
+    return true;
+}
+#endif /* XPBS_TILE_BATCHING_ON */
 
 /* ==================== 生命周期（共享实现 + 平台驱动） ==================== */
 
@@ -327,6 +553,13 @@ XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
     XRegion_init(&store->m_staticContents);
     XRegion_init(&store->m_paintRegion);
     XRegion_init(&store->m_flushRegion);
+#if XPBS_TILE_BATCHING_ON
+    XImage_init(&store->m_batchImage);
+    XRegion_init(&store->m_batchRegion);
+    XRect_init(&store->m_batchBounds, 0, 0, 0, 0);
+    store->m_batchStartMs = 0;
+    store->m_batchOpen = false;
+#endif
     XSize_init(&store->m_size, 0, 0);
 #if XGUI_BACKINGSTORE_BUFFER_SIZE > 0
     if (!XPlatformBackingStore_setBuffers(
@@ -358,6 +591,11 @@ void XPlatformBackingStore_delete(XPlatformBackingStore* self)
     XRegion_deinit(&self->m_staticContents);
     XRegion_deinit(&self->m_paintRegion);
     XRegion_deinit(&self->m_flushRegion);
+#if XPBS_TILE_BATCHING_ON
+    if (self->m_batchImage.m_data)
+        XImage_deinit_base(&self->m_batchImage);
+    XRegion_deinit(&self->m_batchRegion);
+#endif
     XFree_System(self);
 }
 
@@ -511,8 +749,12 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
 #endif
 }
 
-void XPlatformBackingStore_flushTile(XPlatformBackingStore* self, XWindow* window,
-                                      const XRect* tileRect, const XPoint* offset)
+/** @brief flushTile 的即时上屏主体（逐片 present；攒批的关闭/退化路径
+ *  共用同一份簿记，保证两种路径的生命周期语义逐位一致）。 */
+static void xpbs_flushTileImmediate(XPlatformBackingStore* self,
+                                    XWindow* window,
+                                    const XRect* tileRect,
+                                    const XPoint* offset)
 {
     XPoint origin;
     XRect presentedRect;
@@ -541,6 +783,107 @@ void XPlatformBackingStore_flushTile(XPlatformBackingStore* self, XWindow* windo
 #endif
 }
 
+void XPlatformBackingStore_flushTile(XPlatformBackingStore* self, XWindow* window,
+                                      const XRect* tileRect, const XPoint* offset)
+{
+    xpbs_flushTileImmediate(self, window, tileRect, offset);
+}
+
+void XPlatformBackingStore_flushTileBatched(XPlatformBackingStore* self,
+                                            XWindow* window,
+                                            const XRect* tileRect,
+                                            const XPoint* offset)
+{
+#if XPBS_TILE_BATCHING_ON
+    XImage* image;
+    XPoint origin;
+    XRect presented;
+    XRect grown;
+    XRect merged;
+    XRect hit;
+    int budgetW, budgetH;
+    bool connected;
+    if (!self || !tileRect || !(image = xpbs_activeImage(self)) ||
+        !image->m_data || tileRect->width <= 0 || tileRect->height <= 0)
+        return;
+    origin.x = tileRect->x;
+    origin.y = tileRect->y;
+    if (offset) { origin.x += offset->x; origin.y += offset->y; }
+    presented.x = origin.x;
+    presented.y = origin.y;
+    presented.width = tileRect->width;
+    presented.height = tileRect->height;
+    /* 邻接/重叠判定：tile 外扩 1px 后与批次外接矩形相交即视为连片
+       （共边或重叠，对标 Qt 脏区合并的相邻矩形并集）；离散跳跃的新
+       tile 先收旧批，避免外接矩形夹带大片未绘制区域。 */
+    grown = XRect_adjusted(&presented, -1, -1, 1, 1);
+    connected = self->m_batchOpen &&
+                xpbs_intersect(&self->m_batchBounds, &grown, &hit);
+    if (connected)
+    {
+        merged = XRect_united(&self->m_batchBounds, &presented);
+        xpbs_batchBudget(self, &budgetW, &budgetH);
+        /* 超预算（1/4 屏）或 16ms 帧界到点：先上屏旧批再开新批。 */
+        if (merged.width > budgetW || merged.height > budgetH ||
+            xpbs_batchDeadlinePassed(self))
+            xpbs_batchPresent(self, window);
+    }
+    else if (self->m_batchOpen)
+    {
+        /* 不相邻：已攒内容到此为止，本片另起新批。 */
+        xpbs_batchPresent(self, window);
+    }
+    if (!xpbs_batchAccumulate(self, &presented))
+    {
+        /* 攒批缓冲分配失败（低内存）：退化为逐片即时上屏，最终一致性
+           不依赖攒批能力是否可用。 */
+        xpbs_flushTileImmediate(self, window, tileRect, offset);
+        return;
+    }
+    /* tile 内容并入攒批缓冲：源坐标恒从 (0,0) 起（flushTile 同款契约），
+       目标按批次外接矩形原点平移；present 按 m_batchRegion 集合搬运，
+       未登记的缓冲像素不会被读出，无脏数据外带。 */
+    xpbs_copyRectPixels(image, 0, 0, &self->m_batchImage,
+                        presented.x - self->m_batchBounds.x,
+                        presented.y - self->m_batchBounds.y,
+                        presented.width, presented.height);
+    XRegion_addRect(&self->m_batchRegion, &presented);
+    self->m_tileActive = false;
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    /* 与即时路径同款缓冲轮转（PARTIAL 无 native 零拷贝，保持逐位一致的
+       双缓冲生命周期语义）。 */
+    if (!self->m_nativeBufferMode)
+        self->m_activeIndex ^= 1u;
+#endif
+#else
+    /* 攒批关闭：请求攒批退化为逐片即时上屏（调用方无需感知开关）。 */
+    xpbs_flushTileImmediate(self, window, tileRect, offset);
+#endif
+}
+
+void XPlatformBackingStore_flushPendingTiles(XPlatformBackingStore* self,
+                                             XWindow* window)
+{
+#if XPBS_TILE_BATCHING_ON
+    if (!self) return;
+    /* 显式边界（帧末/焦点变化/定时器帧界）强制收批：最终一致性的兜底。 */
+    xpbs_batchPresent(self, window);
+#else
+    (void)self;
+    (void)window;
+#endif
+}
+
+bool XPlatformBackingStore_hasPendingTiles(const XPlatformBackingStore* self)
+{
+#if XPBS_TILE_BATCHING_ON
+    return self && self->m_batchOpen && !XRegion_isEmpty(&self->m_batchRegion);
+#else
+    (void)self;
+    return false;
+#endif
+}
+
 void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size)
 {
     XImage oldImage;
@@ -564,6 +907,12 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         !xpbs_bufferSizeValid(size, self->m_bufferSize))
         return;
     if (w == self->m_size.width && h == self->m_size.height) return;
+#if XPBS_TILE_BATCHING_ON
+    /* 尺寸真正变化才作废攒批：resize 无 window 入参无法上屏，且旧内容
+       随窗口尺寸换代失效（PARTIAL tile 缓冲本就不保留旧帧），后续整帧
+       repaint 会覆盖；不丢弃会在新预算下按失效坐标 present。 */
+    xpbs_batchReset(self);
+#endif
     /* 零拷贝模式：平台驱动提供可直接绘制的共享内存（Win32 DIB
        section）。绘制 XImage 以它为存储，flush 只剩一次 BitBlt，
        省去 XImage→DIB 整帧 memcpy。驱动无此能力时回落自分配。 */
@@ -583,12 +932,12 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
             void* bits = XPlatformBackingStoreDriver_getNativeBuffer(
                 self->m_nativeState, w, h, &stride);
             /* stride 下限按当前表面格式的每像素字节数校验（ARGB32 为
-               w*4，RGB16 为 w*2）；平台驱动给不出足够行距时视为拒绝，
-               回落自分配路径。 */
-            if (bits && stride >= (size_t)w * XPBS_PIXEL_BYTES)
+               w*4，RGB16 为 w*2；协商格式按位深推导）；平台驱动给不出
+               足够行距时视为拒绝，回落自分配路径。 */
+            if (bits && stride >= (size_t)w * xpbs_pixelBytes(xpbs_surfaceFormat()))
             {
                 XImage nativeImage;
-                XImage_init_ex_2(&nativeImage, w, h, XPBS_IMAGE_FORMAT,
+                XImage_init_ex_2(&nativeImage, w, h, xpbs_surfaceFormat(),
                                  (int)stride, (uint8_t*)bits, NULL, NULL);
                 if (nativeImage.m_data)
                 {

@@ -31,7 +31,8 @@ install(TARGETS ${EXPORT_NAME}S
         LIBRARY DESTINATION lib
  )
 
-# 安装静态链接的可执行程序
+# 安装静态链接的可执行程序（XGUI_ON=0 裁剪构建时目标被排除，随同跳过）
+if(XGUI_ON)
 install(TARGETS ${EXPORT_NAME}_Static
         RUNTIME DESTINATION bin
 )
@@ -40,6 +41,7 @@ install(TARGETS ${EXPORT_NAME}_Static
 install(TARGETS ${EXPORT_NAME}_Dynamic
         RUNTIME DESTINATION bin
 )
+endif() # XGUI_ON
 
 # 生成 xxxTargets.cmake文件
 install(

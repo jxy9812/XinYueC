@@ -31,7 +31,11 @@ bool XDeviceTimer_cancel(XAbstractEventDispatcher* dispatcher, XTimerType actual
     XHandle backendHandle);
 /** @brief 处理到期定时器。@param dispatcher 当前调度器；@param processGlobalWheel 是否同时处理全局时间轮。 */
 void XDeviceTimer_process(XAbstractEventDispatcher* dispatcher, bool processGlobalWheel);
-/** @brief 查询当前调度器最早的高精度到期时间。@param dispatcher 调度器，只读借用。 @return 单调时钟纳秒时间戳，无定时器返回 UINT64_MAX。 */
+/** @brief 查询当前线程可兑现的最近定时器截止时刻：高精度红黑树最近到期，
+ *         主线程另并入全局时间轮内最近的普通定时器到期（§23.4 规划 5）。
+ *         时间轮仅由主线程消费，故工作线程只返回高精度部分的截止。
+ *         @param dispatcher 调度器，只读借用。
+ *         @return Unix 纪元纳秒时间戳，无任何定时器返回 UINT64_MAX。 */
 uint64_t XDeviceTimer_nextPreciseDeadline(const XAbstractEventDispatcher* dispatcher);
 /** @brief 释放调度器关联的高精度后端资源。@param dispatcher 调度器，只能在销毁流程调用。 */
 void XDeviceTimer_releaseDispatcher(XAbstractEventDispatcher* dispatcher);

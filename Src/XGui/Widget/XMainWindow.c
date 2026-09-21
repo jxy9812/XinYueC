@@ -2,6 +2,10 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XGuiConfig.h"
+#include "XDockWidget_Protected.h"
+#include "XStringUtils.h"
+
+#include <string.h>
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -133,7 +137,8 @@ static int xmw_bottomUsed(const XMainWindow* self)
  * @brief      判断某个停靠区域是否被占用。
  * @param      self 目标主窗口；可为 NULL。
  * @param      area 停靠区域码（XDockWidgetArea）。
- * @return     存在该区域的非浮动停靠面板返回 true。
+ * @return     存在该区域的非浮动且未隐藏的停靠面板返回 true（区域内
+ *             面板全部隐藏时区域不保留几何空间，对齐 Qt 行为）。
  */
 static bool xmw_dockAreaUsed(const XMainWindow* self, int area)
 {
@@ -144,7 +149,9 @@ static bool xmw_dockAreaUsed(const XMainWindow* self, int area)
     for (i = 0; i < n; ++i) {
         int* a = (int*)XVector_at_base(self->m_dockAreas, i);
         XDockWidget** d = (XDockWidget**)XVector_at_base(self->m_docks, i);
-        if (a && d && *d && !(*d)->m_floating && *a == area) return true;
+        if (a && d && *d && !(*d)->m_floating && *a == area &&
+            !XWidget_isHidden((XWidget*)*d))
+            return true;
     }
     return false;
 }
@@ -196,29 +203,118 @@ static void xmw_layoutDockColumn(XMainWindow* self, int area, int x, int colW,
         }
     }
     if (rows <= 0) return;
-    if (fixedSum <= avail && rows > fixed)
-        autoHeight = (avail - fixedSum) / (rows - fixed);
-    y = top;
+    {
+        /* 指定值优先：无压缩时覆盖行高直接生效；总量超限按比例压缩；
+         * 未覆盖的行均分剩余高度（最后一行吃掉整数均分的余量）。 */
+        int compressed = fixedSum > avail;
+        if (!compressed && rows > fixed)
+            autoHeight = (avail - fixedSum) / (rows - fixed);
+        y = top;
+        for (i = 0; i < n; ++i) {
+            int* a = (int*)XVector_at_base(self->m_dockAreas, i);
+            XDockWidget** d =
+                (XDockWidget**)XVector_at_base(self->m_docks, i);
+            int* oh = self->m_dockHeights
+                          ? (int*)XVector_at_base(self->m_dockHeights, i)
+                          : NULL;
+            int h;
+            if (!a || !d || !*d || *a != area || (*d)->m_floating) continue;
+            if (XWidget_isHidden((XWidget*)*d)) continue;
+            if (oh && *oh > 0 && !compressed)
+                h = *oh;
+            else if (oh && *oh > 0)
+                h = (int)((int64_t)*oh * avail / fixedSum);
+            else if (i == lastIndex)
+                h = bottom - y; /* 最后一行吃掉整数均分的余量 */
+            else
+                h = autoHeight;
+            if (h < 0) h = 0;
+            if (h > bottom - y) h = bottom - y;
+            XRect_init(&r, x, y, colW, h);
+            XWidget_setGeometryRect((XWidget*)*d, &r);
+            y += h;
+        }
+    }
+}
+
+/**
+ * @brief      布局一条停靠行（Top/Bottom）内的可见面板列。
+ * @details    停靠列布局的转置模型（对标 Qt 停靠区行布局）：面板按登记
+ *             顺序从左到右排列，宽度优先取 m_dockHeights 的覆盖值
+ *             （resizeDocks Horizontal 对 Top/Bottom 面板的结果），未覆盖
+ *             的均分剩余宽度；覆盖值总和超过可用宽度时按比例压缩。行高
+ *             由调用方给定（m_topDockHeight/m_bottomDockHeight）。
+ * @param      self 目标主窗口。
+ * @param      area 行区域码（Top/Bottom）。
+ * @param      y 行顶边界。
+ * @param      rowH 行高。
+ * @param      left 行左边界。
+ * @param      right 行右边界。
+ * @return     无返回值。
+ */
+static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
+                              int left, int right)
+{
+    XRect r;
+    int64_t i;
+    int64_t n;
+    int64_t lastIndex = -1;
+    int cols = 0;
+    int fixed = 0;
+    int fixedSum = 0;
+    int avail;
+    int autoWidth = 0;
+    int x;
+    if (!self || !self->m_docks || rowH <= 0) return;
+    if (right < left) right = left;
+    avail = right - left;
+    n = XVector_size_base((const XContainer*)self->m_docks);
     for (i = 0; i < n; ++i) {
         int* a = (int*)XVector_at_base(self->m_dockAreas, i);
         XDockWidget** d = (XDockWidget**)XVector_at_base(self->m_docks, i);
-        int* oh = self->m_dockHeights
+        int* ow = self->m_dockHeights
                       ? (int*)XVector_at_base(self->m_dockHeights, i) : NULL;
-        int h;
         if (!a || !d || !*d || *a != area || (*d)->m_floating) continue;
         if (XWidget_isHidden((XWidget*)*d)) continue;
-        if (i == lastIndex)
-            h = bottom - y; /* 最后一行吃掉整数均分的余量 */
-        else if (oh && *oh > 0)
-            h = fixedSum > avail ? (int)((int64_t)*oh * avail / fixedSum)
-                                 : *oh;
-        else
-            h = autoHeight;
-        if (h < 0) h = 0;
-        if (h > bottom - y) h = bottom - y;
-        XRect_init(&r, x, y, colW, h);
-        XWidget_setGeometryRect((XWidget*)*d, &r);
-        y += h;
+        ++cols;
+        lastIndex = i;
+        if (ow && *ow > 0) {
+            ++fixed;
+            fixedSum += *ow;
+        }
+    }
+    if (cols <= 0) return;
+    {
+        /* 指定值优先：无压缩时覆盖宽度直接生效；总量超限按比例压缩；
+         * 未覆盖的列均分剩余宽度（最后一列吃掉整数均分的余量）。 */
+        int compressed = fixedSum > avail;
+        if (!compressed && cols > fixed)
+            autoWidth = (avail - fixedSum) / (cols - fixed);
+        x = left;
+        for (i = 0; i < n; ++i) {
+            int* a = (int*)XVector_at_base(self->m_dockAreas, i);
+            XDockWidget** d =
+                (XDockWidget**)XVector_at_base(self->m_docks, i);
+            int* ow = self->m_dockHeights
+                          ? (int*)XVector_at_base(self->m_dockHeights, i)
+                          : NULL;
+            int w;
+            if (!a || !d || !*d || *a != area || (*d)->m_floating) continue;
+            if (XWidget_isHidden((XWidget*)*d)) continue;
+            if (ow && *ow > 0 && !compressed)
+                w = *ow;
+            else if (ow && *ow > 0)
+                w = (int)((int64_t)*ow * avail / fixedSum);
+            else if (i == lastIndex)
+                w = right - x; /* 最后一列吃掉整数均分的余量 */
+            else
+                w = autoWidth;
+            if (w < 0) w = 0;
+            if (w > right - x) w = right - x;
+            XRect_init(&r, x, y, w, rowH);
+            XWidget_setGeometryRect((XWidget*)*d, &r);
+            x += w;
+        }
     }
 }
 
@@ -230,6 +326,8 @@ static void xmw_layout(XMainWindow* self)
     int bottom = 0;
     int leftW;
     int rightW;
+    int topRowH;
+    int bottomRowH;
     XRect r;
     int64_t i;
     int64_t n;
@@ -256,6 +354,22 @@ static void xmw_layout(XMainWindow* self)
         XWidget_setGeometryRect(self->m_statusBar, &r);
         bottom = sh;
     }
+    /* Top/Bottom 停靠行（对标 QMainWindow 四区布局：Top 行位于工具栏
+     * 之下、左右列与中央之上；Bottom 行位于状态栏之上、中央之下）。 */
+    topRowH = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Top)
+                  ? self->m_topDockHeight : 0;
+    bottomRowH = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Bottom)
+                     ? self->m_bottomDockHeight : 0;
+    if (topRowH > h - bottom - top) topRowH = h - bottom - top > 0
+                                                  ? h - bottom - top : 0;
+    if (bottomRowH > h - bottom - top - topRowH)
+        bottomRowH = h - bottom - top - topRowH > 0
+                         ? h - bottom - top - topRowH : 0;
+    xmw_layoutDockRow(self, (int)XDockWidgetArea_Top, top, topRowH, 0, w);
+    top += topRowH;
+    xmw_layoutDockRow(self, (int)XDockWidgetArea_Bottom,
+                      h - bottom - bottomRowH, bottomRowH, 0, w);
+    bottom += bottomRowH;
     /* 左/右停靠列：列宽可经 resizeDocks 覆盖，列内可见面板行堆叠。 */
     leftW = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Left)
                 ? self->m_leftDockWidth : 0;
@@ -354,6 +468,8 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     self->m_dockTabGroups = XVector_Create(XVector*);
     self->m_leftDockWidth = 160;
     self->m_rightDockWidth = 160;
+    self->m_topDockHeight = 100;
+    self->m_bottomDockHeight = 100;
     self->m_dockOptions = (int)XMainWindowDockOption_AnimatedDocks;
     self->m_iconSize = 16;
     self->m_toolButtonStyle = (int)XToolButtonStyle_IconOnly;
@@ -694,9 +810,25 @@ static void xmw_dockGroupSync(XMainWindow* self)
 void XMainWindow_addDockWidget(XMainWindow* self, int area,
                                XWidget* dock)
 {
+    XDockWidget* d = (XDockWidget*)dock;
     int areaVal = area;
     int heightVal = 0;
+    int64_t existing;
     if (!self || !dock || !self->m_docks) return;
+    /* 登记宿主回链（浮动/显隐变化经此通知主窗口重排）。 */
+    XDockWidget_setHost(d, (XWidget*)self);
+    /* 对标 Qt：addDockWidget 会把浮动面板重新停靠。 */
+    if (d->m_floating) XDockWidget_setFloating(d, false);
+    existing = xmw_dockIndex(self, d);
+    if (existing >= 0) {
+        /* 对标 Qt：重复登记视为移动，仅更新区域（避免重复条目破坏
+         * saveState/restoreState 的按下标映射）。 */
+        *(int*)XVector_at_base(self->m_dockAreas, existing) = areaVal;
+        XWidget_setParent(dock, (XWidget*)self, 0);
+        XWidget_show(dock);
+        xmw_layout(self);
+        return;
+    }
     XWidget_setParent(dock, (XWidget*)self, 0);
     XVector_push_back_1_base(self->m_docks, &dock);
     XVector_push_back_1_base(self->m_dockAreas, &areaVal);
@@ -715,7 +847,10 @@ void XMainWindow_removeDockWidget(XMainWindow* self, XWidget* dock)
     for (i = 0; i < n; ++i) {
         XDockWidget** item =
             (XDockWidget**)XVector_at_base(self->m_docks, i);
-        if (item && *item == dock) {
+        if (item && (XWidget*)*item == dock) {
+            /* 对标 Qt：移除后面板隐藏并脱离主窗口布局。 */
+            XWidget_hide(dock);
+            XDockWidget_setHost((XDockWidget*)dock, NULL);
             XVector_remove_base(self->m_docks, i, 1);
             XVector_remove_base(self->m_dockAreas, i, 1);
             if (self->m_dockHeights)
@@ -857,9 +992,21 @@ void XMainWindow_resizeDocks(XMainWindow* self, XDockWidget** docks,
                 self->m_leftDockWidth = size;
             else if (area == (int)XDockWidgetArea_Right)
                 self->m_rightDockWidth = size;
-            /* Top/Bottom 区域没有几何布局，忽略其宽度调整。 */
-        } else if (self->m_dockHeights) {
-            *(int*)XVector_at_base(self->m_dockHeights, idx) = size;
+            else if (area == (int)XDockWidgetArea_Top ||
+                     area == (int)XDockWidgetArea_Bottom) {
+                /* Top/Bottom 行面板的行内宽度覆盖（共用跨向覆盖槽位）。 */
+                if (self->m_dockHeights)
+                    *(int*)XVector_at_base(self->m_dockHeights, idx) = size;
+            }
+        } else if (orientation == 2 /* Qt::Vertical：调高度 */) {
+            if (area == (int)XDockWidgetArea_Top)
+                self->m_topDockHeight = size;
+            else if (area == (int)XDockWidgetArea_Bottom)
+                self->m_bottomDockHeight = size;
+            else if (self->m_dockHeights) {
+                /* 左/右列面板的行高覆盖。 */
+                *(int*)XVector_at_base(self->m_dockHeights, idx) = size;
+            }
         }
     }
     xmw_layout(self);
@@ -873,6 +1020,8 @@ bool XMainWindow_isSeparator(const XMainWindow* self, const XPoint* pos)
     int bottom;
     int lw;
     int rw;
+    int topRowH;
+    int bottomRowH;
     if (!self || !pos) return false;
     w = XWidget_width((const XWidget*)self);
     h = XWidget_height((const XWidget*)self);
@@ -889,6 +1038,19 @@ bool XMainWindow_isSeparator(const XMainWindow* self, const XPoint* pos)
     if (xmw_dockAreaUsed(self, (int)XDockWidgetArea_Right) &&
         pos->x >= w - rw - 2 && pos->x <= w - rw + 2)
         return true;
+    /* Top 行与中央区域之间的水平分隔带（与 xmw_layout 同口径）。 */
+    topRowH = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Top)
+                  ? self->m_topDockHeight : 0;
+    if (topRowH > 0 && pos->x >= lw && pos->x < w - rw &&
+        pos->y >= top + topRowH - 2 && pos->y <= top + topRowH + 2)
+        return true;
+    /* Bottom 行与中央区域之间的水平分隔带。 */
+    bottomRowH = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Bottom)
+                     ? self->m_bottomDockHeight : 0;
+    if (bottomRowH > 0 && pos->x >= lw && pos->x < w - rw &&
+        pos->y >= h - bottom - bottomRowH - 2 &&
+        pos->y <= h - bottom - bottomRowH + 2)
+        return true;
     return false;
 }
 
@@ -901,6 +1063,15 @@ void XMainWindow_setDockOptions(XMainWindow* self, int options)
 int XMainWindow_dockOptions(const XMainWindow* self)
 {
     return self ? self->m_dockOptions : 0;
+}
+
+void XMainWindow_updateDockLayout(XMainWindow* self)
+{
+    /* 保护接口（见 XMainWindow_Protected.h）：停靠面板浮动/显隐变化时
+     * 经宿主回链回触重排（对标 QDockWidget 触发
+     * QMainWindowLayout::update 的私有路径）。重排幂等，重复调用安全。 */
+    if (!self) return;
+    xmw_layout(self);
 }
 
 
@@ -1226,24 +1397,133 @@ void XMainWindow_removeToolBar(XMainWindow* self, XWidget* toolbar)
     }
 }
 
+/* ==================== 布局状态序列化（对标 saveState/restoreState） ==================== */
+
+/** @brief 快照魔数前缀（对标 Qt QMainWindowLayout 的 magic 码）。 */
+#define XMW_STATE_MAGIC "XMWSTATE:"
+/** @brief 停靠面板条目分隔符内的字段个数：区域:可见:浮动:跨向覆盖。 */
+#define XMW_STATE_VERSION 2
+
+/**
+ * @brief      从快照游标扫描一个十进制整数。
+ * @param      cursor 游标指针（扫描后前移）；不可为 NULL。
+ * @param      out 解析结果输出；不可为 NULL。
+ * @return     至少消费一位数字返回 true；否则返回 false。
+ */
+static bool xmw_scanInt(const char** cursor, int* out)
+{
+    const char* p = *cursor;
+    int value = 0;
+    bool negative = false;
+    bool any = false;
+    if (*p == '-') {
+        negative = true;
+        ++p;
+    }
+    while (*p >= '0' && *p <= '9') {
+        value = value * 10 + (*p - '0');
+        ++p;
+        any = true;
+    }
+    *cursor = p;
+    *out = negative ? -value : value;
+    return any;
+}
+
+/**
+ * @brief      匹配游标处的指定字符并前移。
+ * @param      cursor 游标指针；不可为 NULL。
+ * @param      ch 期望字符。
+ * @return     匹配返回 true；否则游标不动并返回 false。
+ */
+static bool xmw_scanChar(const char** cursor, char ch)
+{
+    if (**cursor == ch) {
+        ++*cursor;
+        return true;
+    }
+    return false;
+}
+
 XString* XMainWindow_saveState(const XMainWindow* self)
 {
     XString* out;
     size_t i;
     size_t n;
+    char buf[64];
     if (!self) return NULL;
     out = XString_create();
     if (!out) return NULL;
-    XString_append_utf8(out, "XMWSTATE:1;");
+    XSnprintf(buf, sizeof(buf), "XMWSTATE:%d;", XMW_STATE_VERSION);
+    XString_append_utf8(out, buf);
+    /* 工具栏登记项：t<区域>;（断行哨兵区域为 0，按下标一一对应）。 */
     if (self->m_toolBars) {
         n = XVector_size_base((const XContainer*)self->m_toolBars);
         for (i = 0; i < n; ++i) {
             int area = XVector_At_Base(self->m_toolBarAreas, (int64_t)i, int);
-            {
-                char buf[24];
-                XSnprintf(buf, sizeof(buf), "t%d;", area);
+            XSnprintf(buf, sizeof(buf), "t%d;", area);
+            XString_append_utf8(out, buf);
+        }
+    }
+    /* 四区几何：g<左列宽>,<右列宽>,<顶行高>,<底行高>; */
+    XSnprintf(buf, sizeof(buf), "g%d,%d,%d,%d;",
+              self->m_leftDockWidth, self->m_rightDockWidth,
+              self->m_topDockHeight, self->m_bottomDockHeight);
+    XString_append_utf8(out, buf);
+    /* 停靠面板项（按登记顺序）：d<区域>:<可见>:<浮动>:<跨向覆盖>; */
+    if (self->m_docks) {
+        n = XVector_size_base((const XContainer*)self->m_docks);
+        for (i = 0; i < n; ++i) {
+            XDockWidget* d = XVector_At_Base(self->m_docks, (int64_t)i,
+                                             XDockWidget*);
+            int area = XVector_At_Base(self->m_dockAreas, (int64_t)i, int);
+            int size = self->m_dockHeights
+                           ? XVector_At_Base(self->m_dockHeights,
+                                             (int64_t)i, int) : 0;
+            XSnprintf(buf, sizeof(buf), "d%d:%d:%d:%d;",
+                      area,
+                      (d && !XWidget_isHidden((XWidget*)d)) ? 1 : 0,
+                      (d && d->m_floating) ? 1 : 0,
+                      size);
+            XString_append_utf8(out, buf);
+        }
+    }
+    /* 标签组条目（v2 追加段；对标 QMainWindow::saveState 持久化
+     * tabified groups）：p<成员数>:<下标0>,<下标1>,...; 下标为停靠面板
+     * 登记顺序（与 d 条目同口径，restoreState 按下标回映射）。旧快照
+     * 缺本段时 restoreState 解析为无组，格式向后兼容。 */
+    if (self->m_dockTabGroups) {
+        n = XVector_size_base((const XContainer*)self->m_dockTabGroups);
+        for (i = 0; i < n; ++i) {
+            XVector* group =
+                XVector_At_Base(self->m_dockTabGroups, (int64_t)i, XVector*);
+            int64_t j;
+            int64_t m;
+            bool valid = true;
+            if (!group) continue;
+            m = XVector_size_base((const XContainer*)group);
+            /* 预校验：成员必须全部已登记（独占成员不成组，与既有判定
+             * 同口径），避免写出口径混乱的残缺条目。 */
+            if (m < 2) continue;
+            for (j = 0; j < m; ++j) {
+                XDockWidget* d =
+                    XVector_At_Base(group, j, XDockWidget*);
+                if (!d || xmw_dockIndex(self, d) < 0) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) continue;
+            XSnprintf(buf, sizeof(buf), "p%d:", (int)m);
+            XString_append_utf8(out, buf);
+            for (j = 0; j < m; ++j) {
+                XDockWidget* d = XVector_At_Base(group, j, XDockWidget*);
+                XSnprintf(buf, sizeof(buf), "%s%d",
+                          j > 0 ? "," : "",
+                          (int)xmw_dockIndex(self, d));
                 XString_append_utf8(out, buf);
             }
+            XString_append_utf8(out, ";");
         }
     }
     return out;
@@ -1251,9 +1531,160 @@ XString* XMainWindow_saveState(const XMainWindow* self)
 
 bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
 {
-    (void)self;
-    (void)state;
-    /* 布局恢复：当前实现仅接受快照（不重排），返回 true 表示已识别。 */
+    const char* p;
+    int version = 0;
+    int toolBarIdx = 0;
+    int dockIdx = 0;
+    if (!state) {
+        /* 对齐既有约定：NULL 视为重置请求；当前无可重置字段。 */
+        return true;
+    }
+    if (!self) return false;
+    p = XString_toUtf8(state);
+    if (!p) return false;
+    if (strncmp(p, XMW_STATE_MAGIC, sizeof(XMW_STATE_MAGIC) - 1) != 0)
+        return false; /* 对齐 Qt：快照不识别返回 false */
+    p += sizeof(XMW_STATE_MAGIC) - 1;
+    if (!xmw_scanInt(&p, &version) || !xmw_scanChar(&p, ';'))
+        return false;
+    if (version < 1 || version > XMW_STATE_VERSION) return false;
+    /* 对标 Qt restoreState 重建整个布局：编组先全部解散后按快照重建。
+     * 旧快照（v1 或缺 p 段的 v2）没有组条目时即恢复为无组（任务裁定：
+     * 旧快照缺段 = 无组），组结构只记录成组关系，不影响面板显隐。 */
+    if (self->m_dockTabGroups) {
+        int64_t g;
+        int64_t gn =
+            XVector_size_base((const XContainer*)self->m_dockTabGroups);
+        for (g = 0; g < gn; ++g) {
+            XVector* group =
+                XVector_At_Base(self->m_dockTabGroups, g, XVector*);
+            if (group) XVector_delete_base(group);
+        }
+        XVector_clear_base(self->m_dockTabGroups);
+    }
+    self->m_activeTabifiedDock = NULL;
+    for (;;) {
+        char tag = *p;
+        if (tag == '\0') break;
+        if (tag == 't') {
+            /* 工具栏区域：按下标回放到登记表（含断行哨兵）。 */
+            int area;
+            ++p;
+            if (!xmw_scanInt(&p, &area) || !xmw_scanChar(&p, ';'))
+                return false;
+            if (self->m_toolBars && self->m_toolBarAreas &&
+                toolBarIdx < (int)XVector_size_base(
+                                 (const XContainer*)self->m_toolBars)) {
+                *(int*)XVector_at_base(self->m_toolBarAreas,
+                                       (int64_t)toolBarIdx) = area;
+            }
+            ++toolBarIdx;
+        } else if (tag == 'g' && version >= 2) {
+            /* 四区几何尺寸。 */
+            int l, r, t, b;
+            ++p;
+            if (!xmw_scanInt(&p, &l) || !xmw_scanChar(&p, ',') ||
+                !xmw_scanInt(&p, &r) || !xmw_scanChar(&p, ',') ||
+                !xmw_scanInt(&p, &t) || !xmw_scanChar(&p, ',') ||
+                !xmw_scanInt(&p, &b) || !xmw_scanChar(&p, ';'))
+                return false;
+            if (l > 0) self->m_leftDockWidth = l;
+            if (r > 0) self->m_rightDockWidth = r;
+            if (t > 0) self->m_topDockHeight = t;
+            if (b > 0) self->m_bottomDockHeight = b;
+        } else if (tag == 'd' && version >= 2) {
+            /* 停靠面板：区域/显隐/浮动/跨向覆盖，按登记顺序回放。 */
+            int area, visible, floating, size;
+            ++p;
+            if (!xmw_scanInt(&p, &area) || !xmw_scanChar(&p, ':') ||
+                !xmw_scanInt(&p, &visible) || !xmw_scanChar(&p, ':') ||
+                !xmw_scanInt(&p, &floating) || !xmw_scanChar(&p, ':') ||
+                !xmw_scanInt(&p, &size) || !xmw_scanChar(&p, ';'))
+                return false;
+            if (self->m_docks &&
+                dockIdx < (int)XVector_size_base(
+                              (const XContainer*)self->m_docks)) {
+                XDockWidget* d = XVector_At_Base(self->m_docks,
+                                                 (int64_t)dockIdx,
+                                                 XDockWidget*);
+                if (d) {
+                    *(int*)XVector_at_base(self->m_dockAreas,
+                                           (int64_t)dockIdx) = area;
+                    if (self->m_dockHeights)
+                        *(int*)XVector_at_base(self->m_dockHeights,
+                                               (int64_t)dockIdx) = size;
+                    if (d->m_floating != (floating != 0))
+                        XDockWidget_setFloating(d, floating != 0);
+                    XWidget_setVisible((XWidget*)d, visible != 0);
+                }
+            }
+            ++dockIdx;
+        } else if (tag == 'p' && version >= 2) {
+            /* 标签组：p<成员数>:<下标0>,<下标1>,...;（v2 追加段；对标
+             * restoreState 还原 tabified groups）。按下标取回面板后依次
+             * 编组——首成员建组，其余成员逐个挂入（复用 tabify 的内部
+             * 编组助手，不发射激活信号、不改显隐，显隐由 d 条目回放）。 */
+            int count = 0;
+            int k = 0;
+            XDockWidget* first = NULL;
+            ++p;
+            if (!xmw_scanInt(&p, &count) || !xmw_scanChar(&p, ':') ||
+                count < 0)
+                return false;
+            for (k = 0; k < count; ++k) {
+                int idx = 0;
+                XDockWidget* d = NULL;
+                if (!xmw_scanInt(&p, &idx))
+                    return false;
+                if (k + 1 < count && !xmw_scanChar(&p, ','))
+                    return false;
+                if (self->m_docks && idx >= 0 &&
+                    idx < (int)XVector_size_base(
+                              (const XContainer*)self->m_docks)) {
+                    d = XVector_At_Base(self->m_docks, (int64_t)idx,
+                                        XDockWidget*);
+                }
+                if (!d) continue; /* 越界下标跳过（与 d 条目宽松口径一致） */
+                if (!first)
+                    first = d;
+                else
+                    xmw_dockGroupAttach(self, first, d);
+            }
+            if (!xmw_scanChar(&p, ';'))
+                return false;
+        } else {
+            return false; /* 未知条目：快照损坏（对齐 Qt 返回 false） */
+        }
+    }
+    /* 标签组活动面板回放：每组取快照显隐下首个未隐藏成员为活动标签
+     * （d 条目已按"活动标签可见、其余隐藏"回放，此处据此还原各组的
+     * 当前标签语义），并记入 m_activeTabifiedDock（最后一组胜出，与
+     * tabifyDockWidget 的"最近激活"语义一致）。 */
+    if (self->m_dockTabGroups) {
+        int64_t g;
+        int64_t gn =
+            XVector_size_base((const XContainer*)self->m_dockTabGroups);
+        for (g = 0; g < gn; ++g) {
+            XVector* group =
+                XVector_At_Base(self->m_dockTabGroups, g, XVector*);
+            int64_t j;
+            int64_t m;
+            XDockWidget* active = NULL;
+            if (!group) continue;
+            m = XVector_size_base((const XContainer*)group);
+            for (j = 0; j < m; ++j) {
+                XDockWidget* d = XVector_At_Base(group, j, XDockWidget*);
+                if (d && !XWidget_isHidden((XWidget*)d)) {
+                    active = d;
+                    break;
+                }
+            }
+            if (!active && m > 0)
+                active = XVector_At_Base(group, 0, XDockWidget*);
+            self->m_activeTabifiedDock = (XWidget*)active;
+        }
+    }
+    xmw_layout(self);
     return true;
 }
 

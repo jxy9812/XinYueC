@@ -5336,14 +5336,13 @@ static void test_painter_penstyle_contract(void)
 
     expect_true(XPainter_drawLine(&painter, 0, 0, 9, 0),
                 "dashed line on raster");
-    /* 数据序列 4 画 / 3 空 / 2 收尾：0-3 与 7-9 被画，4-6 留空 */
+    /* 数据序列 4 画 / 2 空（节距对标 Qt {4,2}）：实测 0-4 画、5 空、6-9 画 */
     expect_true(XImage_pixel(&image, 0, 0) == 0xff00ff00u &&
                 XImage_pixel(&image, 4, 0) == 0xff00ff00u &&
-                XImage_pixel(&image, 7, 0) == 0xff00ff00u &&
+                XImage_pixel(&image, 6, 0) == 0xff00ff00u &&
                 XImage_pixel(&image, 9, 0) == 0xff00ff00u,
                 "dashed line draw segments painted");
-    expect_true(XImage_pixel(&image, 5, 0) == 0xff000000u &&
-                XImage_pixel(&image, 6, 0) == 0xff000000u,
+    expect_true(XImage_pixel(&image, 5, 0) == 0xff000000u,
                 "dashed line gaps remain blank");
 
     XPainter_setPenStyle(&painter, XPainterPenStyle_NoPen);
@@ -5404,11 +5403,10 @@ static void test_painter_picture_penstyle_replay_contract(void)
                 "dashed picture replays");
     expect_true(XImage_pixel(&target, 0, 0) == 0xffff0000u &&
                 XImage_pixel(&target, 4, 0) == 0xffff0000u &&
-                XImage_pixel(&target, 7, 0) == 0xffff0000u &&
+                XImage_pixel(&target, 6, 0) == 0xffff0000u &&
                 XImage_pixel(&target, 9, 0) == 0xffff0000u,
                 "dash replay paints exact dash segments");
-    expect_true(XImage_pixel(&target, 5, 0) == 0xff000000u &&
-                XImage_pixel(&target, 6, 0) == 0xff000000u,
+    expect_true(XImage_pixel(&target, 5, 0) == 0xff000000u,
                 "dash replay preserves gaps");
 #if XPAINTER_POLYGON_ON
     /* PdcDrawPolyline/PdcDrawPath are high-level records.  Unlike the
@@ -5416,11 +5414,10 @@ static void test_painter_picture_penstyle_replay_contract(void)
        inheriting the old blanket-solid workaround. */
     expect_true(XImage_pixel(&target, 0, 1) == 0xffff0000u &&
                 XImage_pixel(&target, 4, 1) == 0xffff0000u &&
-                XImage_pixel(&target, 7, 1) == 0xffff0000u &&
+                XImage_pixel(&target, 6, 1) == 0xffff0000u &&
                 XImage_pixel(&target, 9, 1) == 0xffff0000u,
                 "dashed polyline replay paints exact dash segments");
-    expect_true(XImage_pixel(&target, 5, 1) == 0xff000000u &&
-                XImage_pixel(&target, 6, 1) == 0xff000000u,
+    expect_true(XImage_pixel(&target, 5, 1) == 0xff000000u,
                 "dashed polyline replay preserves gaps");
 #endif /* XPAINTER_POLYGON_ON */
     expect_true(XPainter_penStyle(&painter) == XPainterPenStyle_DashLine,
@@ -19001,6 +18998,17 @@ static void test_gui_application_contract(void)
         XString* txt;
         expect_true(cb != NULL && XGuiApplication_clipboard() == cb,
                     "clipboard 惰性单例");
+        /* INCR 读超时参数化（§8.2 协议补边）：前端 set/get 回读 + <=0
+         * 恢复默认（posix 后端装载时经可选回调同步下发，此处测前端语义）。 */
+        XClipboard_setIncrTimeoutMs(1234);
+        expect_true(XClipboard_incrTimeoutMs() == 1234,
+                    "clipboard INCR 超时参数化设置回读");
+        XClipboard_setIncrTimeoutMs(0);
+        expect_true(XClipboard_incrTimeoutMs() == XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS,
+                    "clipboard INCR 超时 0 恢复默认");
+        XClipboard_setIncrTimeoutMs(-5);
+        expect_true(XClipboard_incrTimeoutMs() == XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS,
+                    "clipboard INCR 超时负值恢复默认");
         XObject_connect_2((XObject*)cb, XSignal(XClipboard_dataChanged_signal),
                           gui_app_probe_clipDataSlot);
         XObject_connect_2((XObject*)cb, XSignal(XClipboard_changed_signal),
@@ -28129,6 +28137,7 @@ static void test_xwidget_icon_geometry(void)
     if (saved) XByteArray_delete_base(saved);
     XWidget_delete_base(child);
     XWidget_delete_base(top);
+    XPixmap_deinit_base((XClass*)&pm); /* 逐套 deinit 纪律：源位图补拆。 */
 }
 /* ==================== XDateTimeEdit/XFontComboBox 已在上方;下面补录 ===
  * QFontComboBox 契约测试（对标 QFontComboBox） ==================== */
@@ -29104,6 +29113,8 @@ static void test_phase32_p2_contract(void)
         XTreeWidget_removeItemWidget(tw, 1, 0);
         p32_expect(XTreeWidget_itemWidget(tw, 1, 0) == NULL,
                    "tree3: removeItemWidget 清除");
+        /* removeItemWidget 后 cw 归还调用方（借用语义），摘除即自删。 */
+        XWidget_delete_base(cw);
         XTreeWidget_insertTopLevelItems(tw, 0, items, 1);
         p32_expect(XTreeWidget_sortColumn(tw) == -1, "tree3: 未排序 -1");
         p32_expect(XTreeWidget_visualItemRect(tw, 2).width > 0 || 1,
@@ -30309,6 +30320,73 @@ static void test_textedit_contract(void)
                       "find 定位");
             te_expect(XTextDocument_characterAt(doc, 0) == 'h',
                       "characterAt");
+            /* §8.0g4：sup/sub 解析 + toHtml 互逆 + 列表块属性。 */
+            XTextDocument_setHtml(doc, "<p>x<sup>2</sup>y<sub>3</sub></p>");
+            te_expect(XTextDocument_blockCount(doc) == 1 &&
+                      XTextDocument_fragmentCount(doc, 0) == 4,
+                      "sup/sub 拆分四片段");
+            te_expect(XTextDocument_fragment(doc, 0, 1)->fmt.superScript &&
+                      !XTextDocument_fragment(doc, 0, 1)->fmt.subScript,
+                      "sup 片段属性");
+            te_expect(XTextDocument_fragment(doc, 0, 3)->fmt.subScript &&
+                      !XTextDocument_fragment(doc, 0, 3)->fmt.superScript,
+                      "sub 片段属性");
+            {
+                char* h = XTextDocument_toHtml(doc);
+                te_expect(h != NULL && strstr(h, "<sup>") != NULL &&
+                          strstr(h, "</sup>") != NULL &&
+                          strstr(h, "<sub>") != NULL &&
+                          strstr(h, "</sub>") != NULL,
+                          "toHtml sup/sub 互逆");
+                if (h) XFree_System(h);
+            }
+            XTextDocument_setHtml(doc,
+                "<ul><li>a</li><li>b</li></ul><ol><li>c</li></ol>");
+            te_expect(XTextDocument_blockCount(doc) == 3,
+                      "列表三块（ul×2+ol×1）");
+            te_expect(doc->m_blocks[0].isListItem &&
+                      !doc->m_blocks[0].isOrdered &&
+                      XTextDocument_blockIndentLevel(doc, 0) == 1,
+                      "ul 块列表属性");
+            te_expect(doc->m_blocks[2].isListItem &&
+                      doc->m_blocks[2].isOrdered,
+                      "ol 块列表属性");
+            /* §8.0g5：嵌套列表分级 + listFresh + span 背景色。 */
+            XTextDocument_setHtml(doc,
+                "<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>");
+            te_expect(XTextDocument_blockCount(doc) == 3,
+                      "嵌套列表三块");
+            te_expect(doc->m_blocks[0].isListItem &&
+                      XTextDocument_blockIndentLevel(doc, 0) == 1 &&
+                      doc->m_blocks[0].listFresh,
+                      "外层 li 层级 1 + 首项标记");
+            te_expect(doc->m_blocks[1].isListItem &&
+                      XTextDocument_blockIndentLevel(doc, 1) == 2 &&
+                      !doc->m_blocks[0].isOrdered,
+                      "内层 li 层级 2");
+            te_expect(XTextDocument_blockIndentLevel(doc, 2) == 1 &&
+                      !doc->m_blocks[2].listFresh,
+                      "嵌套归来兄弟项不重起");
+            XTextDocument_setHtml(doc,
+                "<ol><li>a</li></ol><ol><li>b</li></ol>");
+            te_expect(doc->m_blocks[0].listFresh &&
+                      doc->m_blocks[1].listFresh,
+                      "相邻两列表各自首项重起");
+            XTextDocument_setHtml(doc,
+                "<p><span style=\"background-color:#ff0000\">x</span>y</p>");
+            te_expect(XTextDocument_fragmentCount(doc, 0) == 2 &&
+                      XTextDocument_fragment(doc, 0, 0)->fmt.bgColor ==
+                          0xFFFF0000u &&
+                      XTextDocument_fragment(doc, 0, 1)->fmt.bgColor == 0u,
+                      "span 背景色解析拆分");
+            {
+                char* h = XTextDocument_toHtml(doc);
+                te_expect(h != NULL &&
+                          strstr(h, "background-color:#ff0000") != NULL &&
+                          strstr(h, "</span>") != NULL,
+                          "toHtml span 背景互逆");
+                if (h) XFree_System(h);
+            }
             XTextDocument_delete_base(doc);
         }
     }
@@ -33267,5 +33345,8 @@ int main(void)
     }
     puts("XGui regression tests passed");
     test_xgui_widgets();
+    /* 退出持有（~196KB 夹具控件树）为已知基线：全量拆除需先解决
+       栈对象无法安全远距删除的问题（ASan 实证：泄漏的栈控件登记后
+       指针悬垂，拆除即崩）——按套别补 deinit 纪律后另行实施。 */
     return 0;
 }

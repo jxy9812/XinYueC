@@ -3391,6 +3391,11 @@ static unsigned XImage_compress16(uint8_t value)
     return ((unsigned)value << 8) | value;
 }
 
+/* 口径互引：此处 5/6 位压缩为四舍五入式 ((v*N+127)/255)；渲染内核
+ * XRenderKernel_rgb565.c 的 rgb565_pack 按契约为截断式 (v>>3/v>>2，
+ * 对标 Qt qConvertRgb32To16)。同一颜色经两条路径压缩可差 1 LSB——
+ * 直接读写层（XImage_setPixel）与渲染层两套口径各自独立并存，详见
+ * 内核文件头的契约说明。 */
 static unsigned XImage_compress6(uint8_t value)
 {
     return ((unsigned)value * 63u + 127u) / 255u;

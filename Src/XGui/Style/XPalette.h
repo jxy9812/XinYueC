@@ -7,7 +7,10 @@
  *             模块用「纯色笔刷」等价：每个角色仅存一个 XColor，不存在
  *             渐变/图片笔刷，嵌入式友好。默认构造使用 Qt 6.8 Fusion
  *             浅色主题的纯色角色配色，供 XGuiApplication 使用；上层可自由修改
- *             任一颜色单元后整体传回 setPalette。
+ *             任一颜色单元后整体传回 setPalette。XPalette_init_dark 提供
+ *             Qt 6.5+ StandardPalette 深色语义的内置深色组（对标
+ *             qt_fusionPalette 深色分支），供 XGuiApplication 的
+ *             theme×调色板联动在深色 scheme 时整体切换。
  * @note       模块开关 XPALETTE_ON 定义于 XGuiConfig.h；置 0 时裁剪
  *             整个 XPalette 公共 API。
  * @author     XinYueC 团队
@@ -89,6 +92,25 @@ XPalette XPalette_create(void);
  * @param      self 目标调色板指针；可为 NULL。
  */
 void XPalette_init_default(XPalette* self);
+
+/**
+ * @brief      创建深色标准调色板（对标 Qt 6.5+ StandardPalette 深色语义）。
+ * @details    按 Qt 6.8 qt_fusionPalette() 的深色分支（darkAppearance）逐
+ *             角色计算：Window/Button 为 #323232、Base 为 #232323、文本为
+ *             #f0f0f0、高亮为 #308cc6，深色下 Link 复用高亮色、Accent 镜像
+ *             高亮色；衍生灰阶用 QColor::lighter/darker 的 HSV V 通道整数
+ *             折算（见实现注释，灰色通道经 HSV 往返不变）。工具提示/交替行
+ *             等融合层未覆盖的角色沿用 QPalette 构造默认。供
+ *             XGuiApplication 的 theme×调色板联动使用。
+ * @return     已填充深色配色的 XPalette 值。
+ */
+XPalette XPalette_create_dark(void);
+
+/**
+ * @brief      与 XPalette_create_dark 等价，按深色主题初始化调色板。
+ * @param      self 目标调色板指针；可为 NULL。
+ */
+void XPalette_init_dark(XPalette* self);
 
 /**
  * @brief      按值拷贝调色板（薄封装，等价结构体赋值）。

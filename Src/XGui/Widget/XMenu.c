@@ -1035,11 +1035,17 @@ static void VXMenu_deinit(XMenu* self)
     self->m_execResult = NULL;
     if (self->m_actions) {
         while (XVector_size_base((XContainer*)self->m_actions) > 0) {
+            int64_t sizeBefore =
+                XVector_size_base((XContainer*)self->m_actions);
             XAction** item = (XAction**)XVector_at_base(
                 (XContainer*)self->m_actions, 0);
             if (item && *item)
                 XAction_delete_base(*item);
-            if (XVector_size_base((XContainer*)self->m_actions) > 0)
+            /* 动作析构经 destroyed 信号自摘（xmenu_actionDestroyedSlot
+             * 已把自身移出向量）——尺寸已缩时不可再补 remove，否则会把
+             * 下一个动作指针丢弃不删（隔个漏删，§8.0g6 ASan 复扫定位的
+             * 真缺陷）；自摘未发生时（防御）手动摘除防死循环。 */
+            if (XVector_size_base((XContainer*)self->m_actions) == sizeBefore)
                 XVector_remove_base((XContainer*)self->m_actions, 0, 1);
         }
         XVector_delete_base(self->m_actions);

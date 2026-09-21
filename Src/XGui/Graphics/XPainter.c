@@ -374,12 +374,17 @@ static bool painterGpuApplyStateClip(XPainter* self);
 /* 对标 Qt raster 引擎的位图裁剪：路径在 setClipPath 时按当时变换
    冻结到设备空间，绘制期经逐像素覆盖掩码与 clipRect/clipRegion 做
    与运算。掩码按 (状态版本号, 目标图像) 惰性重建；未设置路径时
-   putPixel 只多一次布尔判定（零开销）。 */
+   putPixel 只多一次布尔判定（零开销）。
+   守卫与实现章节（XPAINTER_CLIP_ON && XPAINTER_PATH_ON）一致：
+   XPainterPath 类型随 XPAINTER_PATH_ON 声明，此前无守卫导致
+   PATH_ON=0 组合编译失败（前置声明引用未知类型）。 */
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
 static bool painterClipPathActive(const XPainter* self);
 static void painterClipMaskCacheReset(XPainter* self);
 static uint8_t painterClipMaskCoverageAt(XPainter* self, int x, int y);
 static bool xpainterPathCopy(XPainterPath* dst, const XPainterPath* src);
 static void painterClipPathStateClear(XPainterState* state);
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 
 static bool painterGpuSubmitSoftwareCommand(XPainter* self,
     void (*drawCommand)(XPainter* self, void* userData), void* userData)
@@ -481,6 +486,17 @@ static bool painterGpuApplyStateClip(XPainter* self)
 #endif /* XPAINTER_CLIP_ON */
 
 #else /* !(XPLATFORMINTEGRATION_ON && XGPU_ON) */
+/* 对标 GPU 关闭构建：回读入口退化为空操作（与上方 GPU 分支内
+   XPLATFORMINTEGRATION_ON && XGPU_ON 不成立时的同函数体一致），
+   调用点（XPainter_end 等）无需逐处加守卫。 */
+static void xgpu_sync_readback_if_requested(XPainter* self)
+{
+    (void)self;
+}
+/* 对标：设备坐标画线入口的原型原先只在 GPU 分支内声明，全裁剪
+   配置下 painterRaster_drawLine 调用它需要先行声明。 */
+static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
+                                         int ix2, int iy2);
 #define XPAINTER_GPU_FALLBACK(self) ((void)(self))
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
@@ -1119,9 +1135,11 @@ static bool painterRegionsEqual(const XRegion* lhs, const XRegion* rhs)
 static bool painterStatePush(XPainter* self)
 {
     int newCapacity;
-#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+    /* 声明守卫与赋值处同式：区域扩容（CLIP_REGION_ON）与路径指针
+       扩容清空（PATH_ON）两处使用任一开启即需声明。 */
+#if XPAINTER_CLIP_ON && (XPAINTER_CLIP_REGION_ON || XPAINTER_PATH_ON)
     int oldCapacity;
-#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#endif /* XPAINTER_CLIP_ON && (XPAINTER_CLIP_REGION_ON || XPAINTER_PATH_ON) */
     XPainterState* newStack;
     if (!self) return false;
     if (!self->m_stateStack)
@@ -1148,9 +1166,12 @@ static bool painterStatePush(XPainter* self)
     }
     else if (self->m_stateCount >= self->m_stateCapacity)
     {
-#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+        /* oldCapacity 同时服务区域扩容初始化（CLIP_REGION_ON）与路径
+           指针扩容清空（PATH_ON）两处使用，声明须覆盖两者，否则
+           CLIP_REGION_ON=0 + PATH_ON=1 组合下未声明（既有缺陷）。 */
+#if XPAINTER_CLIP_ON && (XPAINTER_CLIP_REGION_ON || XPAINTER_PATH_ON)
         oldCapacity = self->m_stateCapacity;
-#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+#endif /* XPAINTER_CLIP_ON && (XPAINTER_CLIP_REGION_ON || XPAINTER_PATH_ON) */
         newCapacity = self->m_stateCapacity * 2;
         newStack = (XPainterState*)XRealloc_System(
             self->m_stateStack, sizeof(XPainterState) * (size_t)newCapacity);
@@ -1211,7 +1232,7 @@ static bool painterStatePush(XPainter* self)
                     saved->m_clipPath = NULL;
                 }
                 saved->m_clipPath = slotClipPath;
-                XFont_deinit_base(&saved->m_font);
+                XFont_deinit_base((XClass*)&saved->m_font);
                 return false;
             }
         }
@@ -1229,7 +1250,7 @@ static bool painterStatePush(XPainter* self)
         {
             /* XRegion_copy() 保留旧 out 内容时，不能把这次保存计入栈深度；
                saved->m_font 已由本次保存初始化，先释放其独立字符串副本。 */
-            XFont_deinit_base(&saved->m_font);
+            XFont_deinit_base((XClass*)&saved->m_font);
             return false;
         }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -1246,7 +1267,7 @@ static void painterStatePop(XPainter* self)
 {
     if (!self || self->m_stateCount <= 0) return;
     --self->m_stateCount;
-    XFont_deinit_base(&self->m_state.m_font);
+    XFont_deinit_base((XClass*)&self->m_state.m_font);
     {
         XFont fontCopy;
         XPainterState* saved = &self->m_stateStack[self->m_stateCount];
@@ -1287,7 +1308,7 @@ static void painterStatePop(XPainter* self)
         XCopy(&fontCopy, &saved->m_font);
         self->m_state = *saved;
         self->m_state.m_font = fontCopy;
-        XFont_deinit_base(&saved->m_font);
+        XFont_deinit_base((XClass*)&saved->m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
         self->m_state.m_clipPath = restoredClipPath;
         saved->m_clipPath = currentClipPath;
@@ -1332,7 +1353,7 @@ static void painterStateStackRelease(XPainter* self)
     }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
     for (i = 0; i < self->m_stateCount; ++i)
-        XFont_deinit_base(&self->m_stateStack[i].m_font);
+        XFont_deinit_base((XClass*)&self->m_stateStack[i].m_font);
     XFree_System(self->m_stateStack);
     self->m_stateStack = NULL;
     self->m_stateCount = 0;
@@ -1574,14 +1595,17 @@ static uint32_t painterComposeColor(uint32_t source, uint32_t destination,
 }
 
 /**
- * @brief      半透明纯色矩形的整段 SourceOver 混合（预乘 ARGB32 目标）。
+ * @brief      半透明纯色矩形的整段 SourceOver 混合（预乘 ARGB32/内核格式目标）。
  * @details    与 painterComposeColor 的 SourceOver 分支逐位一致：源按
  *             其 alpha 预乘后加上按 (255-sa) 衰减的目标，目标 alpha 为
  *             255 时 outA 恒为 255、无需反预乘。目标为预乘 ARGB32 时
  *             直接按 uint32_t 行写入，绕开 XImage_setPixel 的逐像素
  *             detach/格式分派（那是面积填充 19ms/帧的主因）。
- *             目标非预乘/非 32 位时返回 false，由调用方退回逐像素路径。
- * @param      image 目标图像（须为 ARGB32_Premultiplied）。
+ *             目标为注册了行级内核的其它格式（RGB565 等）时按行调
+ *             fillSpanBlend；入参 color 为非预乘色，两个分支内部均
+ *             先按 (sr*sa+127)/255 预乘（内核契约 argbPrem 要求预乘）。
+ *             无内核/未 detach 时返回 false，由调用方退回逐像素路径。
+ * @param      image 目标图像（ARGB32_Premultiplied 或注册内核的格式）。
  * @param      rect  设备坐标矩形（已与裁剪求交）。
  * @param      color 源颜色（非预乘 ARGB32，已含整体透明度）。
  * @return     true 已混合；false 目标格式不支持。
@@ -1611,12 +1635,25 @@ static bool painterRaster_blendFillRect(XImage* image, const XRect* rect,
                 XRenderKernel_forFormat(XImage_format(image));
             uint8_t* kernelBase;
             int kernelBpl;
+            uint32_t sa;
             if (!ops || !ops->fillSpanBlend || !XImage_isDetached(image))
                 return false;
             kernelBase = XImage_bits(image);
             kernelBpl = XImage_bytesPerLine(image);
             if (!kernelBase || kernelBpl <= 0)
                 return false;
+            /* 内核契约（XRenderKernel.h fillSpanBlend 的 argbPrem）要求
+               预乘 ARGB32 源色，而调用方传入的 effective 是
+               painterApplyOpacity 只缩 alpha 的非预乘色：与下方 ARGB32
+               分支的 spR=(sr*sa+127)/255 同式先预乘再传——否则 RGB565
+               等目标上半透明 SourceOver 填充的源色按非预乘直入合成式
+               out=src+dst*(255-sa)/255，过亮 255/sa 倍（内核分支此前
+               漏了 ARGB32 分支已有的同一步）。 */
+            sa = (color >> 24) & 0xffu;
+            color = (color & 0xff000000u) |
+                    (((((color >> 16) & 0xffu) * sa + 127u) / 255u) << 16) |
+                    (((((color >> 8) & 0xffu) * sa + 127u) / 255u) << 8) |
+                    ((((color) & 0xffu) * sa + 127u) / 255u);
             for (y = rect->y; y < rect->y + rect->height; ++y)
                 ops->fillSpanBlend(kernelBase + (size_t)y * (size_t)kernelBpl,
                                    rect->x, rect->width, color);
@@ -2891,17 +2928,6 @@ static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
     return true;
 }
 
-/* 整图 blit：区域版以源 (0,0) 起点、目标 (x,y) 调用。 */
-static bool painterRaster_blitImageSameFormat(XPainter* self, const XImage* image,
-                                              int x, int y,
-                                              int width, int height,
-                                              uint8_t opacity,
-                                              XPainterCompositionMode mode)
-{
-    return painterRaster_blitImageRegion(self, image, 0, 0, x, y,
-                                         width, height, opacity, mode);
-}
-
 /**
  * @brief      双线性采样源图像（对标 Qt SmoothPixmapTransform 渲染提示）。
  * @details    fx/fy 为连续源坐标，读取 floor(fx),floor(fy) 起的 2x2 邻域
@@ -3062,6 +3088,15 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
             int cy0 = state->m_clipRect.y;
             int cx1 = cx0 + state->m_clipRect.width;
             int cy1 = cy0 + state->m_clipRect.height;
+#if XPAINTER_CLIP_REGION_ON
+            /* 多矩形裁剪区域：整块 memcpy 快速 blit 只按包围盒 m_clipRect
+               求交，会在区域缝隙处过绘——置 fastBlit=0 退回下方逐像素
+               putPixel 兜底循环（其内 XRegion_contains 逐点判定），与
+               fillRect 的 span/blend 快速路径 count<=1 门同构（对标 Qt
+               raster 引擎 drawImage 对 clipRegion 多矩形的逐段处理）。 */
+            if (state->m_clipRegion.count > 1)
+                fastBlit = 0;
+#endif /* XPAINTER_CLIP_REGION_ON */
             if (bx < cx0) { sx0 = cx0 - bx; cw -= sx0; bx = cx0; }
             if (by < cy0) { sy0 = cy0 - by; ch -= sy0; by = cy0; }
             if (bx + cw > cx1) cw = cx1 - bx;
@@ -3081,7 +3116,7 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
             if (by + ch > cy1) ch = cy1 - by;
         }
 #endif /* XPAINTER_CLIP_ON */
-        if (cw > 0 && ch > 0 &&
+        if (fastBlit && cw > 0 && ch > 0 &&
 #if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
             /* 精确路径裁剪：整块 memcpy 快速 blit 会越过路径边界，
                退回逐像素 putPixel 兜底循环（掩码与运算）。 */
@@ -3447,9 +3482,13 @@ static bool painterRaster_restore(XPainter* self)
 
 /* ========== 指令录制后端 ========== */
 
+#if XPAINTER_PATH_ON
+/* 对标：路径派发原型依赖 XPainterPath/XPainterPathOp，与下方唯一
+   调用点 painterRecord_drawPath 同守卫，全裁剪配置下类型不存在。 */
 static bool painterPathDrawDispatch(XPainter* self, const XPainterPath* path,
                                     XPainterPathOp op, bool fill,
                                     bool stroke);
+#endif /* XPAINTER_PATH_ON */
 
 static bool painterRecord_drawLine(XPainter* self, int x1, int y1,
                                    int x2, int y2)
@@ -3915,7 +3954,10 @@ XPainterBackgroundMode XPainter_backgroundMode(const XPainter* self)
 static bool painterDashPattern(const XPainter* self,
                                const float** outPattern, int* outCount)
 {
-    static const float kDash[2]      = { 4.0f, 3.0f };
+    /* 内置节距对标 Qt qpen.cpp 的风格化画笔默认表（DashLine {4,2}、
+       DotLine {1,2}、DashDot {4,2,1,2}、DashDotDot {4,2,1,2,1,2}）；
+       此前 DashLine 误为 {4,3}，画段同长而空段多 1（P1 复扫修正）。 */
+    static const float kDash[2]      = { 4.0f, 2.0f };
     static const float kDot[2]       = { 1.0f, 2.0f };
     static const float kDashDot[4]   = { 4.0f, 2.0f, 1.0f, 2.0f };
     static const float kDashDotDot[6]= { 4.0f, 2.0f, 1.0f, 2.0f, 1.0f, 2.0f };
@@ -4184,13 +4226,19 @@ static int painter8x16FloorInt(float value);
 static int painter8x16CeilInt(float value);
 static bool painterGlyphContoursAlphaCoverage(
     const PainterPathFillContour* contours, int contourCount, float offsetX,
-    float offsetY, uint8_t* alpha, int width, int height, int subdiv);
+    float offsetY, uint8_t* alpha, int width, int height, int subdiv,
+    XPainterFillRule fillRule);
 static bool painterFillContoursAntialiased(XPainter* self,
     const PainterPathFillContour* contours, int contourCount,
     XPainterFillRule fillRule, uint32_t brushColor, int subdiv);
 static bool painterFillPolygonShape(XPainter* self, int n,
                                     const float* uxs, const float* uys,
                                     XPainterFillRule fillRule);
+/* 路径填充规则 getter（定义在路径章节；掩码重建在此之前取用）。
+   XPainterPath 类型随 XPAINTER_PATH_ON 声明，前置声明须同守卫。 */
+#if XPAINTER_PATH_ON
+XPainterFillRule XPainterPath_fillRule(const XPainterPath* self);
+#endif /* XPAINTER_PATH_ON */
 
 /** @brief 渐变多边形局部提交的命令参数（用户坐标顶点）。 */
 typedef struct PainterGpuPolyArgs
@@ -4462,23 +4510,10 @@ static bool painterScanFillDevice(XPainter* self, int n,
 #endif /* XPAINTER_RENDERHINT_ON */
         if (antialias || self->m_gpuActive)
         {
-            /* Winding 规则（GPU 非 AA）：fillContours 覆盖图忽略
-               fillRule（按 OddEven 填充，绕组抵消），软件 ScanFill
-               的 winding 正确——GPU 会话走局部提交（软件 winding）。 */
-            if (self->m_gpuActive && !antialias &&
-                fillRule == XPainterFillRule_Winding)
-            {
-                PainterGpuPolyArgs args;
-                bool filled;
-                args.m_n = n;
-                args.m_uxs = uxs;
-                args.m_uys = uys;
-                args.m_fillRule = fillRule;
-                filled = painterGpuSubmitSoftwareCommand(
-                    self, painterGpuPolyCommand, &args);
-                XFree_Hybrid(heapStorage);
-                return filled;
-            }
+            /* 覆盖光栅器已支持 fillRule（此前恒 OddEven，Winding 交叉区
+               出孔洞，GPU 非 AA Winding 不得不绕道 painterGpuPolyCommand
+               软件局部提交——根因修复后该特例路径冗余，删除并统一走
+               覆盖图提交）。 */
             PainterPathFillContour contour;
             bool filled;
             contour.m_xs = dtx;
@@ -4879,6 +4914,7 @@ static bool painterFillPolygonShape(XPainter* self, int n,
  *             的像素丢失（与文本丢失同根因）。几何不进字形图集（形状
  *             重复率低且尺寸大，直传上传）。
  * @param      contours 设备坐标子路径数组（调用方已完成变换映射）。
+ * @param      fillRule 填充规则（OddEven/Winding，透传覆盖光栅器）。
  * @param      subdiv 每轴子采样数（Antialiasing 时 4，否则 1）。
  * @return     成功返回 true；分配失败返回 false（调用方回退二值）。
  */
@@ -4902,7 +4938,11 @@ static bool painterFillContoursAntialiased(XPainter* self,
     uint8_t* alpha = NULL;
     uint32_t ink;
     bool ok;
-    (void)fillRule;
+    /* fillRule 透传覆盖光栅器（对标 Qt raster 引擎 QRasterizer 按路径
+       fillRule 生成 span）：此前此参数被忽略、覆盖光栅器恒按 OddEven
+       展开，AA 开启或 GPU 会话时 Winding 填充的内部子路径交叉区被误判
+       为空洞（非 AA 扫描线分支 painterFillPathContours 的
+       painterBuildFillSpans 则一直正确）。 */
     for (c = 0; c < contourCount; ++c)
     {
         const PainterPathFillContour* contour = &contours[c];
@@ -4939,7 +4979,8 @@ static bool painterFillContoursAntialiased(XPainter* self,
     XMemset(alpha, 0, (size_t)width * (size_t)height);
     ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
                                            -(float)left, -(float)top,
-                                           alpha, width, height, subdiv);
+                                           alpha, width, height, subdiv,
+                                           fillRule);
     if (!ok)
     {
         XFree_System(alpha);
@@ -5475,27 +5516,34 @@ static bool painterGlyphContoursAlpha(const PainterPathFillContour* contours,
 {
     return painterGlyphContoursAlphaCoverage(contours, contourCount,
                                              offsetX, offsetY, alpha,
-                                             width, height, 1);
+                                             width, height, 1,
+                                             XPainterFillRule_OddEven);
 }
 
 /**
  * @brief      路径覆盖光栅化：二值（subdiv=1）或 NxN 面积子采样灰度。
  * @details    每个像素划分 subdiv x subdiv 个子采样点；对每条子扫描线
- *             求交、排序并按奇偶规则成对展开，统计落在填充区间内的
- *             子点数，覆盖率线性映射为 8 位灰度。subdiv=1 时与既有
- *             二值行为逐字节一致（像素中心单点判定）；subdiv=4 即
- *             抗锯齿灰度（与 GPU 图集缓存同源，软/GPU 逐像素一致）。
+ *             求交、排序并按 fillRule（对标 Qt raster 引擎
+ *             QRasterizer::rasterizeLine 后按
+ *             Qt::OddEvenFill/WindingFill 展开生成 span 的口径）展开
+ *             为填充区间，统计落在区间内的子点数，覆盖率线性映射为
+ *             8 位灰度。subdiv=1 时与既有二值行为逐字节一致（像素
+ *             中心单点判定）；subdiv=4 即抗锯齿灰度（与 GPU 图集缓存
+ *             同源，软/GPU 逐像素一致）。
  *             该函数只写调用方提供的缓冲，不触碰任何绘制器状态。
  * @param      contours 已展平子路径数组。
  * @param      contourCount 子路径数量。
  * @param      offsetX/offsetY 路径坐标到 alpha 图坐标的平移量。
  * @param      alpha 目标缓冲（width*height 字节，由调用方分配并清零）。
  * @param      subdiv 每轴子采样数（>=1）。
+ * @param      fillRule 填充规则（OddEven/Winding；此前恒 OddEven，
+ *             是 AA/GPU 路径 Winding 填充出现孔洞的根因）。
  * @return     成功返回 true；参数非法或内存分配失败返回 false。
  */
 static bool painterGlyphContoursAlphaCoverage(
     const PainterPathFillContour* contours, int contourCount, float offsetX,
-    float offsetY, uint8_t* alpha, int width, int height, int subdiv)
+    float offsetY, uint8_t* alpha, int width, int height, int subdiv,
+    XPainterFillRule fillRule)
 {
     PainterPathFillContour* workContours = NULL;
     XPainterFillCrossing* crossings = NULL;
@@ -5636,7 +5684,7 @@ static bool painterGlyphContoursAlphaCoverage(
             {
                 int spanCount = painterBuildFillSpans(crossings,
                                                       crossingCount,
-                                                      XPainterFillRule_OddEven,
+                                                      fillRule,
                                                       spans);
                 for (j = 0; j + 1 < spanCount; j += 2)
                 {
@@ -5846,11 +5894,16 @@ static bool painterClipMaskEnsure(XPainter* self)
     XMemset(alpha, 0, (size_t)width * (size_t)height);
     /* 复用既有 AA 填充的 4x4 面积子采样覆盖光栅化：掩码边界与形状
        AA 同一覆盖率口径。偏移 -(left+0.5)：覆盖光栅器以整数坐标为
-       像素中心，掩码像素 (i,j) 须对齐设备像素 (left+i, top+j)。 */
+       像素中心，掩码像素 (i,j) 须对齐设备像素 (left+i, top+j)。
+       填充规则取所设路径的 fillRule（对标 Qt raster 引擎裁剪掩码按
+       路径 fillRule 光栅化）：此前恒 OddEven，setClipPath 以
+       WindingFill 路径裁剪时内部交叉区被误裁成空洞，与 AA/GPU 填充
+       同根因，一并修正。 */
     if (!painterGlyphContoursAlphaCoverage(
             contours, contourCount,
             -(float)left - 0.5f, -(float)top - 0.5f,
-            alpha, width, height, 4))
+            alpha, width, height, 4,
+            XPainterPath_fillRule(state->m_clipPath)))
     {
         painterPathFillContoursFree(&contours, &contourCount,
                                     &contourCapacity);
@@ -5973,7 +6026,7 @@ void XPainter_deinit(XPainter* self)
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     /* 对象即将销毁，无需调用 end() 重建一次默认状态。 */
     painterStateStackRelease(self);
-    XFont_deinit_base(&self->m_state.m_font);
+    XFont_deinit_base((XClass*)&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -6124,7 +6177,7 @@ bool XPainter_end(XPainter* self)
     /* restore() 会把当前状态的区域容量交换回已弹出的栈槽；释放时
        必须遍历整个已初始化容量，而不是只遍历活动深度。 */
     painterStateStackRelease(self);
-    XFont_deinit_base(&self->m_state.m_font);
+    XFont_deinit_base((XClass*)&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -6155,7 +6208,7 @@ bool XPainter_end(XPainter* self)
     painterDefaultState(&self->m_state);
     /* defaultState 创建了新字体（含 XString）：end 后不再有持有者，
        释放避免泄漏（下次 begin 时状态会被重建）。 */
-    XFont_deinit_base(&self->m_state.m_font);
+    XFont_deinit_base((XClass*)&self->m_state.m_font);
     return wasActive;
 }
 
@@ -7017,7 +7070,7 @@ void XPainter_setFont(XPainter* self, const XFont* font)
     else {
         /* NULL 表示恢复默认字体；只有这个分支需要先释放旧字符串，
            XCopy() 自身已经负责替换目标资源。 */
-        XFont_deinit_base(&self->m_state.m_font);
+        XFont_deinit_base((XClass*)&self->m_state.m_font);
         XFont_init(&self->m_state.m_font);
     }
     /* Qt QPicturePaintEngine::updateFont() serializes the complete font
@@ -8461,7 +8514,16 @@ static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
         painter->m_state.m_compositionMode ==
             XPainterCompositionMode_SourceOver &&
         !painterPatternActive(painter) &&
-        XImage_isDetached(painter->m_image))
+        XImage_isDetached(painter->m_image)
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+        /* 多矩形裁剪区域：整块直写只按包围盒 m_clipRect 求交，缝隙处
+           过绘——退回 fallback 逐像素 putPixel（其内 XRegion_contains
+           逐点判定），与 fillRect 快速路径 count<=1 门同构（对标 Qt
+           raster 引擎 alpha-map blitter 对 clipRegion 的分段处理）。 */
+        && (!painter->m_state.m_hasClip ||
+            painter->m_state.m_clipRegion.count <= 1)
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+    )
     {
         /* 有效写入区 = 字形位图 ∩ painter 裁剪 ∪ 表面裁剪。 */
         int cl0 = 0;
@@ -8600,14 +8662,21 @@ static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
        目标若注册了行级字形 mask 内核，则整块按行 glyphMaskSpan 混合。
        门槛与上方直写版同构（SourceOver + 无图案画刷 + detached），但
        目标格式互斥——默认 ARGB32_Premultiplied 仍走上方直写版，既有
-       路径字节级不变。裁剪求交逻辑保留（同 8343-8374 区段），内层
-       混合换成内核调用。 */
+       路径字节级不变。裁剪求交逻辑保留（同上方直写版 painterGlyphAlphaBlend
+       的包围盒求交区段），内层混合换成内核调用。 */
     if (XImage_format(painter->m_image) !=
             XImageFormat_ARGB32_Premultiplied &&
         painter->m_state.m_compositionMode ==
             XPainterCompositionMode_SourceOver &&
         !painterPatternActive(painter) &&
-        XImage_isDetached(painter->m_image))
+        XImage_isDetached(painter->m_image)
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+        /* 多矩形裁剪区域：同上方直写版的 count<=1 门——内核按行
+           glyphMaskSpan 无法表达区域缝隙，退回逐像素兜底。 */
+        && (!painter->m_state.m_hasClip ||
+            painter->m_state.m_clipRegion.count <= 1)
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+    )
     {
         /* ops 取一次存局部，行循环内不再调 forFormat。 */
         const XRenderKernelOps* ops =
@@ -8860,7 +8929,11 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     XMemset(alpha, 0, (size_t)width * (size_t)height);
     ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
                                            -(float)left, -(float)top,
-                                           alpha, width, height, 4);
+                                           alpha, width, height, 4,
+                                           /* 字形轮廓维持 OddEven 既有口径
+                                              （字形反走样基线不随本次填充
+                                              规则修复变化）。 */
+                                           XPainterFillRule_OddEven);
     painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
     if (ok)
     {
@@ -9078,14 +9151,22 @@ static int painterCodepointAdvance(const XFont* font,
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     XFontGlyphDsc dsc;
     const XFontFace* face = XFont_face(font);
-    uint32_t scaleKey = painterGlyphScaleKey(scale);
     int cached;
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+    /* 对标：步进缓存的三个入口随轮廓后端一起裁剪（定义在
+       XFONT_OUTLINE_ON && XPAINTER_PATH_ON 块内）；点阵路径在全
+       裁剪配置下退回逐次解码，与引入缓存前的行为一致——缓存仅是
+       性能优化，不改变度量结果。 */
+    uint32_t scaleKey = painterGlyphScaleKey(scale);
     if (painterGlyphAdvanceCacheGet(face, cp, scaleKey, &cached))
         return cached;
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     cached = XFontFace_loadBitmapGlyph_base(face, font, cp, &dsc, NULL, 0)
                  ? painter8x16GlyphAdvance(&dsc, table, scale)
                  : painter8x16Metric(table ? table->m_width : 0, scale);
+#if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
     painterGlyphAdvanceCachePut(face, cp, scaleKey, cached);
+#endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     return cached;
 }
 
@@ -10776,7 +10857,10 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
         ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
                                                -(float)left, -(float)top,
                                                alpha, width, height,
-                                               glyphAntialias ? 4 : 1);
+                                               glyphAntialias ? 4 : 1,
+                                               /* 字形轮廓维持 OddEven 既有
+                                                  口径（同软件字形路径）。 */
+                                               XPainterFillRule_OddEven);
         if (!ok)
         {
             XFree_System(alpha);
@@ -11651,9 +11735,11 @@ XPainterPenJoinStyle XPainter_penJoinStyle(const XPainter* self)
 void XPainter_setMiterLimit(XPainter* self, float limit)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
-    /* 对标 QPen::setMiterLimit：小于 1 的值钳位为 1（miter 长度不可能
-       小于笔宽，1 即恒回退 Bevel；非有限值按 Qt 不做特判，此处统一
-       钳位防御 NaN 破坏比较逻辑）。 */
+    /* 对标 QPen::setMiterLimit：Qt（qpen.cpp）本身不钳位、阈值原样
+       存储；但 miter 长度/笔宽恒 ≥1，阈值 ≤1 时任何转角都超限回退
+       Bevel——与本处钳位到 1 殊途同归，可见行为一致（钳位仅令状态
+       观测值规范化）。非有限值 Qt 不做特判，此处统一钳位防御 NaN
+       破坏比较逻辑。 */
     if (!(limit >= 1.0f)) limit = 1.0f;
     self->m_state.m_miterLimit = limit;
     painterRecord_penState(self);

@@ -170,6 +170,8 @@ typedef struct XGuiApplication
     XFont*   m_font;                      /**< 应用字体（拥有堆拷贝）。 */
 #if XPALETTE_ON
     XPalette m_palette;                   /**< 应用调色板（值类型）。 */
+    bool m_paletteExplicitlySet;          /**< 显式 setPalette 标志（对标 Qt::AA_SetPalette，置位后 theme 不再覆盖调色板）。 */
+    bool m_paletteSchemeFollow;           /**< 调色板随颜色方案联动开关（默认 true；对标 Qt 6.5 深浅色跟随语义）。 */
 #endif /* XPALETTE_ON */
     XVector* m_overrideStack;             /**< 光标覆盖栈（XCursor* 堆拷贝）。 */
     XVector* m_windows;                   /**< 窗口注册表（XWindow* 借用指针）。 */
@@ -178,6 +180,7 @@ typedef struct XGuiApplication
     XObject* m_focusObject;               /**< 焦点对象（借用指针）。 */
     XGuiLayoutDirection  m_layoutDirection;    /**< 当前有效布局方向（恒为 LTR 或 RTL）。 */
     XGuiLayoutDirection  m_requestedLayoutDirection; /**< 调用方请求方向；Auto 时由平台语言解析。 */
+    char m_platformLocale[64];            /**< 平台区域设置名（BCP 47/POSIX，WSI 注入；空串表示未知）。 */
     XGuiApplicationState m_applicationState;   /**< 应用状态。 */
     XGuiDpiRoundingPolicy m_dpiPolicy;         /**< 高分屏缩放取整策略。 */
     XKeyboardModifiers   m_keyboardModifiers;  /**< 当前键盘修饰键。 */
@@ -488,8 +491,14 @@ XFont* XGuiApplication_font(void);
 #if XPALETTE_ON
 /**
  * @brief      设置应用调色板（对标 QGuiApplication::setPalette）。
- * @details    值拷贝保存并发射已弃用的 paletteChanged 信号。
- * @param      palette 源调色板；可为 NULL（等价重置为默认浅色主题）。
+ * @details    值拷贝保存并发射已弃用的 paletteChanged 信号，同时向全部
+ *             顶层控件广播 ApplicationPaletteChange 并触发重绘（对标
+ *             QApplicationPrivate::handlePaletteChanged 传播）。本次或
+ *             此前任意一次调用（含 NULL 重置）都会置位显式调色板标志
+ *             （对标 Qt::AA_SetPalette）：此后系统颜色方案（theme）变化
+ *             不再覆盖用户调色板，直到进程结束。
+ * @param      palette 源调色板；可为 NULL（显式重置为默认浅色主题，
+ *             同样冻结联动）。
  */
 void XGuiApplication_setPalette(const XPalette* palette);
 
@@ -498,6 +507,25 @@ void XGuiApplication_setPalette(const XPalette* palette);
  * @return     调色板值副本。
  */
 XPalette XGuiApplication_palette(void);
+
+/**
+ * @brief      开关「调色板随颜色方案联动」（XGui 扩展守卫，对标
+ *             Qt 6.5 StandardPalette 深浅跟随语义 + AA_SetPalette 守卫）。
+ * @details    默认开启：系统颜色方案（XStyleHints colorScheme）深浅翻转时
+ *             应用调色板自动切到内置深色/浅色标准组。关闭适用于嵌入主题
+ *             自管理场景（theme 深浅不再触碰调色板）。重新开启且用户未
+ *             显式 setPalette 过时，立即按当前方案对齐一次；显式
+ *             setPalette 置位的标志不受本开关影响（联动开启也不会覆盖
+ *             用户调色板，两道守卫取交集）。
+ * @param      on true 开启联动（默认），false 关闭。
+ */
+void XGuiApplication_setPaletteColorSchemeFollowEnabled(bool on);
+
+/**
+ * @brief      查询「调色板随颜色方案联动」开关（默认 true）。
+ * @return     联动开启返回 true。
+ */
+bool XGuiApplication_paletteColorSchemeFollowEnabled(void);
 #endif /* XPALETTE_ON */
 
 /* ==================== 输入状态（对标 QGuiApplication::keyboardModifiers 等） ==================== */
@@ -564,6 +592,29 @@ bool XGuiApplication_isRightToLeft(void);
 
 /** @brief 是否从左到右（对标 isLeftToRight）。 */
 bool XGuiApplication_isLeftToRight(void);
+
+/* ==================== 平台区域设置（对标 QLocale::setDefault / LocaleChange 注入态） ==================== */
+
+/**
+ * @brief      设置平台区域设置名（平台注入接口；对标 Qt 内部
+ *             QGuiApplicationPrivate 对 QLocale::setDefault 的同步）。
+ * @details    XGui 未建立 XLocale 类型，区域设置沿用控件层的 BCP 47 /
+ *             POSIX 名称字符串约定（见 XWidget_setLocale 注释）。落位
+ *             后当请求方向为 Auto 时按新区域重解析有效布局方向
+ *             （RTL 语言族 ar/he/fa/ur 等识别为 RTL；值变化时内部发射
+ *             layoutDirectionChanged），显式 LTR/RTL 请求不受影响。
+ *             localeUtf8 为 NULL/空串表示清除（回到未知，Auto 解析退回
+ *             平台输入上下文）。
+ * @param      localeUtf8 区域设置名（UTF-8）；可为 NULL。超长截断。
+ */
+void XGuiApplication_setPlatformLocaleUtf8(const char* localeUtf8);
+
+/**
+ * @brief      查询平台区域设置名（WSI handleLocaleChange 注入态）。
+ * @return     内部缓冲借用指针；未注入或已清除时返回空串（非 NULL），
+ *             入参非法（无应用实例）返回 NULL。
+ */
+const char* XGuiApplication_platformLocaleUtf8(void);
 
 /* ==================== 样式提示 / 剪贴板 / 输入法（对标 QGuiApplication 单例访问器） ==================== */
 

@@ -3,7 +3,10 @@
  * @brief      XInputDialog 输入对话框控件（对标 Qt 6.8 QInputDialog : QDialog）。
  * @details    继承 XDialog，提供文本/整数/浮点/下拉选择四种输入模式：
  *             - 静态便捷函数 getText/getMultiLineText/getInt/getDouble/
- *               getItem（无 GUI 对话框环境返回默认值，*ok 置 false）；
+ *               getItem（有 XCoreApplication 实例时构造真实对话框并
+ *               exec 阻塞执行：内嵌输入控件 + 确定/取消按钮行，应用
+ *               模态、Escape→reject；无 GUI 对话框环境返回默认值，
+ *               *ok 置 false）；
  *             - 实例属性：inputMode/labelText/textValue/intValue/
  *               doubleValue/comboBoxItems/comboBoxEditable/
  *               okButtonText/cancelButtonText、InputDialogOption 选项位；

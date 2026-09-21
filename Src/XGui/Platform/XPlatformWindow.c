@@ -9,6 +9,9 @@
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XString.h"
+#if XSCREEN_ON
+#include "XScreen.h"
+#endif /* XSCREEN_ON */
 #if XPLATFORMNATIVEWINDOW_ON
 #include "XPlatformNativeWindow.h"
 #endif
@@ -25,6 +28,7 @@ static uint64_t g_nextNativeId = 0;
 struct XPlatformWindowPrivate
 {
     XWindow* m_window;                 /**< 绑定的 XWindow 借用指针。 */
+    XPlatformWindow* m_parent;         /**< 平台父窗口借用指针（存值语义，不拥有）。 */
     uint64_t m_nativeId;               /**< 原生句柄 ID（自增分配）。 */
     bool m_foreign;                    /**< 是否为外部原生窗口。 */
     XVariantHashMap* m_properties;     /**< 原生属性表（XString→XVariant，拥有）。 */
@@ -167,6 +171,76 @@ void XPlatformWindow_requestActivate(XPlatformWindow* self)
 #else
     /* 无 GUI 应用/窗口子系统：嵌入式无焦点系统，no-op。 */
 #endif
+}
+
+/* ==================== 轻量窗口关系 / 暴露 / 屏幕命中（扫描 P2-7 补齐） ==================== */
+
+void XPlatformWindow_setParent(XPlatformWindow* self, XPlatformWindow* parent)
+{
+    /* 存值语义（对标 QPlatformWindow::setParent 的轻量子集）：只落位
+       借用指针，不重建原生窗口、不改 XWindow 公共父链；循环父链等
+       校验由上层集成代码负责（Qt 中亦由 QWindow 层完成）。 */
+    if (self && self->m_data) self->m_data->m_parent = parent;
+}
+
+XPlatformWindow* XPlatformWindow_parent(const XPlatformWindow* self)
+{ return (self && self->m_data) ? self->m_data->m_parent : NULL; }
+
+bool XPlatformWindow_isExposed(const XPlatformWindow* self)
+{
+#if XWINDOW_ON
+    /* 绑定窗口时以窗口暴露态为准（XWindow_setExposed 由 WSI
+       handleExposeEvent 维护，空区域=整窗遮挡）。 */
+    if (self && self->m_data && self->m_data->m_window)
+        return XWindow_isExposed(self->m_data->m_window);
+#else
+    (void)self;
+#endif /* XWINDOW_ON */
+    /* Qt QPlatformWindow::isExposed 缺省实现：无窗口/无暴露概念时恒已暴露。 */
+    return true;
+}
+
+XScreen* XPlatformWindow_screenForGeometry(const XRect* geometry)
+{
+#if XSCREEN_ON
+    XVector* screens;
+    XScreen* fallback = NULL;
+    XScreen* best = NULL;
+    int cx = 0;
+    int cy = 0;
+    size_t i;
+    size_t n;
+    /* 空几何无可命中中心点，直接走回落链（主屏幕 → 注册表首个）。 */
+    if (!geometry || geometry->width <= 0 || geometry->height <= 0)
+        geometry = NULL;
+    else {
+        /* Qt screenForGeometry 语义：以矩形中心点命中屏幕。 */
+        cx = geometry->x + geometry->width / 2;
+        cy = geometry->y + geometry->height / 2;
+    }
+    screens = XScreen_screens();
+    if (screens) {
+        n = XVector_size_base((const XContainer*)screens);
+        for (i = 0; i < n; ++i) {
+            XScreen** slot = (XScreen**)XVector_at_base(screens, (int64_t)i);
+            XScreen* screen = slot ? *slot : NULL;
+            if (!screen) continue;
+            if (!fallback) fallback = screen;
+            if (best || !geometry) continue;
+            {
+                XRect g = XScreen_geometry(screen);
+                if (XRect_contains(&g, cx, cy)) best = screen;
+            }
+        }
+        XVector_delete_base(screens);
+    }
+    if (best) return best;
+    if (XScreen_primaryScreen()) return XScreen_primaryScreen();
+    return fallback;
+#else /* !XSCREEN_ON */
+    (void)geometry;
+    return NULL;
+#endif /* XSCREEN_ON */
 }
 
 /* ==================== 原生属性表 ==================== */

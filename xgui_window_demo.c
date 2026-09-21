@@ -2346,7 +2346,10 @@ static DemoWin* DemoWin_create(void)
             XWidget_setGeometry((XWidget*)&self->m_toolBar, 0, 30, 300, 34);
             XWidget_show((XWidget*)&self->m_toolBar);
             XWidget_setGeometry(mbPage, 0, 0, 400, 220);
-            (void)XTabWidget_insertTab_2(&self->m_tabWidget, 8, mbPage, "菜单工具栏");
+            /* 页签标题即启动器按钮文本：XTabBar 固定页签宽（滚动 88px/
+               换行 72~88px 单元格），5 字标题（约 77px）会顶满/越过边界，
+               缩短为 3 字保证任何布局模式下文字不越界。 */
+            (void)XTabWidget_insertTab_2(&self->m_tabWidget, 8, mbPage, "菜单栏");
         }
     }
 #endif
@@ -2617,8 +2620,9 @@ static DemoWin* DemoWin_create(void)
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 18,
                                demo_wrapTabPage(self, (XWidget*)&self->m_errMsg), "Error");
 #endif
+    /* 同页签 8：6 字符标题（约 83px）超页签单元格宽，缩短为 3 字。 */
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 16,
-                               demo_wrapTabPage(self, (XWidget*)&self->m_stackedW), "堆叠+按钮组");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_stackedW), "堆叠组");
 #endif
 
     XLabel_init(&self->m_tabStatus, (XWidget*)&self->m_pageTabs, 0);

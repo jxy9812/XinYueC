@@ -674,6 +674,23 @@ void XWindow_setWindowState(XWindow* self, XWindowState state);
  */
 void XWindow_setWindowStates(XWindow* self, XWindowStates states);
 
+/**
+ * @brief      平台上报窗口状态变化（QWindowSystemInterface::
+ *             handleWindowStateChanged 到达窗口侧的落点）。
+ * @details    与 setWindowStates 的差异：状态由平台（窗口管理器实测结果，
+ *             如 WM 图标化/EWMH 状态回送）上报，只做「持久化 + 生效状态
+ *             变化时发射 windowStateChanged + 更新可见性」，**不回写平台
+ *             层**——XWindow_setWindowStates 内部会经
+ *             XPlatformNativeWindow_setWindowState 反向请求平台改状态，
+ *             平台作为上报源时那样做会形成注入回环。与既有
+ *             XWindow_reportContentOrientationChange 同用 report 前缀
+ *             表达「平台上报」语义。
+ * @param      self 目标窗口；可为 NULL（no-op）。
+ * @param      state 平台上报的状态组合（可含 WindowActive 位；落位保存，
+ *             查询口径 XWindow_windowState 按生效优先级解析）。
+ */
+void XWindow_reportWindowStateChanged(XWindow* self, XWindowState state);
+
 /* ==================== 瞬态父窗口与祖先查询 ==================== */
 
 /**
@@ -1073,7 +1090,11 @@ XCursor* XWindow_cursor(const XWindow* self);
 
 /**
  * @brief      设置窗口光标（对标 QWindow::setCursor）。
- * @details    光标以深拷贝持有；传入 NULL 视为取消光标。
+ * @details    光标以深拷贝持有；传入 NULL 视为取消光标。窗口已创建且
+ *             原生 id 就绪时，同步经 XCursor 平台后端应用到原生窗口
+ *             （XDefineCursor 路径，复用 XWidget_setCursor 同一钩子，
+ *             不另设第二套）；后端未注册或窗口未映射时静默——存储语义
+ *             不变，与 Qt 平台插件不可用时光标仅存储的行为一致。
  * @param      self 目标窗口；可为 NULL。
  * @param      cursor 新光标；可为 NULL。
  */
@@ -1081,6 +1102,8 @@ void XWindow_setCursor(XWindow* self, const XCursor* cursor);
 
 /**
  * @brief      取消窗口光标（对标 QWindow::unsetCursor）。
+ * @details    存储清除后，窗口已创建时同步经 XCursor 平台后端恢复默认
+ *             光标（XUndefineCursor 路径；静默语义同 setCursor）。
  * @param      self 目标窗口；可为 NULL。
  */
 void XWindow_unsetCursor(XWindow* self);

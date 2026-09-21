@@ -31,6 +31,8 @@ static void VXTreeView_scrollContentsBy(XAbstractScrollArea* area, int dx,
 
 static bool VXTreeView_indexAt(const XAbstractItemView* view, int x, int y,
                                int* outRow, int* outCol);
+static bool VXTreeView_visualRect(const XAbstractItemView* view, int row,
+                                  int col, XRect* out);
 static void VXTreeView_copy(XTreeView* self, const XTreeView* other);
 static void VXTreeView_move(XTreeView* self, XTreeView* other);
 
@@ -242,6 +244,8 @@ XVtable* XTreeView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
                              VXTreeView_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt, VXTreeView_indexAt);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
+                             VXTreeView_visualRect);
     return XVTABLE_DEFAULT;
 }
 
@@ -976,6 +980,18 @@ static bool VXTreeView_indexAt(const XAbstractItemView* view, int x, int y,
     if (outRow) *outRow = yAcc / rh;
     if (outCol) *outCol = 0;
     return true;
+}
+
+/* 条目几何虚槽：转发到树视图既有 (row,col) 几何（含表头区/行高/列宽/
+ * 滚动偏移口径；供基类编辑器摆放/scrollTo/尺寸提示虚分派，对标
+ * QTreeView::visualRect 对 QAbstractItemView::visualRect 的覆写）。 */
+static bool VXTreeView_visualRect(const XAbstractItemView* view, int row,
+                                  int col, XRect* out)
+{
+    XTreeView* tv = (XTreeView*)view;
+    if (!tv || !out) return false;
+    *out = XTreeView_visualRect(tv, row, col);
+    return out->width > 0 && out->height > 0;
 }
 
 static void VXTreeView_paintEvent(XWidget* self, XEvent* event)

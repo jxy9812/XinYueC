@@ -186,9 +186,30 @@ const XString* XCoreApplication_organizationDomain(void);
 /* ==================== 应用程序属性（对标 Qt QCoreApplication::setAttribute / testAttribute） ==================== */
 
 /**
+ * @brief "属性设置完成"回调钩子（对标 Qt QGuiApplication 对应用属性的
+ *        私有转发点，如 AA_SynthesizeMouseForUnhandledTouchEvents）。
+ * @param attribute 已写入位数组的属性枚举值。
+ * @param on 本次设置的目标状态。
+ */
+typedef void (*XCoreApplicationAttributeHook)(XCoreApplicationAttribute attribute,
+                                              bool on);
+
+/**
+ * @brief 注册属性设置完成回调钩子（GUI 层派生应用接入用；对标 Qt 把
+ *        GUI 属性语义放在 QGuiApplication 层的实现方式）。
+ * @details 基类 setAttribute 写完位数组后同步调用已注册钩子：直调
+ *          XCoreApplication_setAttribute 的调用方与经 GUI 包装层
+ *          XGuiApplication_setAttribute 的调用方行为收敛一致。全进程
+ *          单钩子（重复注册覆盖前者）；传 NULL 注销。钩子内不得回调
+ *          setAttribute（避免重入）。
+ * @param hook 钩子函数指针；可为 NULL。
+ */
+void XCoreApplication_setAttributeHook(XCoreApplicationAttributeHook hook);
+
+/**
  * @brief 设置应用程序属性（对标 QCoreApplication::setAttribute）
  * @param attribute 属性枚举值
- * @param on true 启用，false 禁用
+ * @param on 目标状态
  */
 void XCoreApplication_setAttribute(XCoreApplicationAttribute attribute, bool on);
 

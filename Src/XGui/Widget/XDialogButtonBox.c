@@ -407,6 +407,9 @@ void XDialogButtonBox_clear(XDialogButtonBox* self)
     n = XVector_size_base((const XContainer*)self->m_bridges);
     for (i = (int)n - 1; i >= 0; --i) {
         XAbstractButton** btn;
+        int* stdVal = self->m_standards
+                  ? (int*)XVector_at_base(self->m_standards, i)
+                  : NULL;
         XDBBridge** bp =
             (XDBBridge**)XVector_at_base(self->m_bridges, i);
         btn = self->m_buttons
@@ -420,8 +423,18 @@ void XDialogButtonBox_clear(XDialogButtonBox* self)
             XVector_remove_base(self->m_roles, i, 1);
         if (self->m_standards)
             XVector_remove_base(self->m_standards, i, 1);
-        if (btn && *btn)
-            XWidget_setParent((XWidget*)*btn, NULL, 0);
+        if (btn && *btn) {
+            /* 所有权分级（§8.0g6，对标 Qt 盒拥有自建按钮）：
+             * addButton_3 创建的标准按钮（m_standards 非 0）为盒所有，
+             * clear/析构时删除；用户经 addButton 传入的按钮（0 标记）
+             * 仅摘父归还调用方。此前一律摘父使标准按钮成孤儿泄漏
+             * （ASan 归因 7.7KB/18 块）。向量条目已先行移除，删除
+             * 无自摘回调冲突。 */
+            if (stdVal && *stdVal != 0)
+                XWidget_delete_base((XWidget*)*btn);
+            else
+                XWidget_setParent((XWidget*)*btn, NULL, 0);
+        }
     }
     xdb_relayout(self);
 }

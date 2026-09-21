@@ -19,11 +19,13 @@
  *             - 布局：菜单栏(顶) → 工具栏区 → 中央控件 → 停靠区 →
  *               状态栏(底)，resizeEvent 触发重排。
  * @note       模块总开关 XMAINWINDOW_ON 定义于 XGuiConfig.h。
- * @note       停靠体系为简化模型：只有左/右两条停靠列参与几何布局
- *             （列内可见面板按登记顺序行堆叠，行高可经 resizeDocks
- *             覆盖；列宽默认 160 像素），Top/Bottom 区域只登记不布局；
- *             标签组只记录分组与活动面板，不绘制真实标签条。相关接口的
- *             @note 逐条注明与 Qt 6.8.3 的差异。
+ * @note       停靠体系为简化模型：四个停靠区（左/右两条停靠列 +
+ *             Top/Bottom 两条停靠行）参与几何布局——列内可见面板按登记
+ *             顺序行堆叠（行高可经 resizeDocks 覆盖，列宽默认 160 像素），
+ *             行内可见面板按登记顺序横排（宽度可经 resizeDocks 覆盖，
+ *             行高默认 100 像素）；标签组只记录分组与活动面板，不绘制
+ *             真实标签条。浮动（setFloating(true)）面板脱离主窗布局，
+ *             成独立顶层窗口。相关接口的 @note 逐条注明与 Qt 6.8.3 的差异。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XMAINWINDOW_H
@@ -73,9 +75,11 @@ typedef struct XMainWindow
     XVector* m_toolBarAreas;     /**< 工具栏停靠区域（int）。 */
     XVector* m_docks;            /**< 停靠面板数组（XDockWidget*，借用）。 */
     XVector* m_dockAreas;        /**< 停靠面板区域（int）。 */
-    XVector* m_dockHeights;      /**< 停靠面板行高覆盖（int，与 m_docks 同
-                                  *   长；0 = 自动均分；对标 resizeDocks
-                                  *   的垂直尺寸）。 */
+    XVector* m_dockHeights;      /**< 停靠面板跨向尺寸覆盖（int，与
+                                  *   m_docks 同长；语义随区域：左/右列
+                                  *   面板 = 行高覆盖，Top/Bottom 行面板
+                                  *   = 宽度覆盖；0 = 自动均分；对标
+                                  *   resizeDocks 的结果存储）。 */
     XVector* m_dockTabGroups;    /**< 停靠面板标签组（元素为 XVector*，
                                   *   组内为 XDockWidget* 借用指针；仅记录
                                   *   成组关系，不绘制标签条）。 */
@@ -83,6 +87,10 @@ typedef struct XMainWindow
                                   *   可经 resizeDocks 横向调整）。 */
     int m_rightDockWidth;        /**< 右侧停靠列宽度（像素；默认 160，
                                   *   可经 resizeDocks 横向调整）。 */
+    int m_topDockHeight;         /**< 顶部停靠行高度（像素；默认 100，
+                                  *   可经 resizeDocks 纵向调整）。 */
+    int m_bottomDockHeight;      /**< 底部停靠行高度（像素；默认 100，
+                                  *   可经 resizeDocks 纵向调整）。 */
     int m_dockOptions;           /**< 停靠选项。 */
     int m_iconSize;              /**< 工具栏图标尺寸。 */
     int m_toolButtonStyle;       /**< 全局工具按钮样式（XToolButtonStyle 取值）。 */
@@ -238,6 +246,20 @@ int XMainWindow_toolButtonStyle(const XMainWindow* self);
 
 /* ==================== 停靠面板 ==================== */
 
+/** @brief 把 dock 停靠到主窗口的指定区域（对标 QMainWindow::
+ *         addDockWidget）。
+ * @details 四区几何（对标 Qt）：Left/Right 为纵向停靠列（列内面板按
+ *          登记顺序行堆叠，列宽默认 160），Top/Bottom 为横向停靠行
+ *          （行内面板按登记顺序横排，行高默认 100，位于工具栏之下/
+ *          状态栏之上）；登记后面板显示并立即重排。重复登记同一面板时
+ *          按 Qt 语义视为移动：仅更新区域，不产生重复条目。面板当前
+ *          处于浮动状态时先回归停靠（对标 Qt addDockWidget 会把浮动
+ *          面板重新停靠）。
+ * @param self 目标主窗口；可为 NULL，NULL 时不执行操作。
+ * @param area 停靠区域码（XDockWidgetArea 单个位）。
+ * @param dock 停靠面板指针（XDockWidget*，借用）。
+ * @return 无返回值。
+ */
 void XMainWindow_addDockWidget(XMainWindow* self, int area,
                                XWidget* dock);
 /** @brief XMainWindowremove停靠控件（对标 Qt 同名接口）。
@@ -321,9 +343,11 @@ const XVector* XMainWindow_tabifiedDockWidgets(const XMainWindow* self,
  */
 bool XMainWindow_restoreDockWidget(XMainWindow* self, XDockWidget* dock);
 /** @brief 按给定尺寸调整停靠面板（对标 resizeDocks）。
- * @details Horizontal：docks[i] 位于左/右列时把该列列宽设为 sizes[i]；
- *          Vertical：把 docks[i] 在其列内的行高设为 sizes[i]，未指定行高
- *          的面板均分剩余高度。sizes[i] <= 0、面板为 NULL、未登记或处于
+ * @details Horizontal：docks[i] 位于左/右列时把该列列宽设为 sizes[i]，
+ *          位于 Top/Bottom 行时把该面板的行内宽度覆盖设为 sizes[i]；
+ *          Vertical：docks[i] 位于 Top/Bottom 行时把该行行高设为
+ *          sizes[i]，位于左/右列时把行高覆盖设为 sizes[i]，未指定覆盖
+ *          的面板均分剩余空间。sizes[i] <= 0、面板为 NULL、未登记或处于
  *          浮动状态时跳过该项（对齐 Qt 的跳过语义）。调整后立即重排。
  * @param self 目标主窗口；可为 NULL，NULL 时不执行操作。
  * @param docks 停靠面板指针数组（借用，长度为 count）；为 NULL 时不执行
@@ -337,19 +361,18 @@ bool XMainWindow_restoreDockWidget(XMainWindow* self, XDockWidget* dock);
  * @note 与 Qt 差异：Qt 签名为 QList<QDockWidget*> + QList<int> +
  *       Qt::Orientation，XGui 用裸数组 + count；Qt 尊重
  *       minimumSize/maximumSize 并按权重分配剩余空间，XGui 按“指定值
- *       优先、其余均分、总量超限时按比例压缩”处理；Top/Bottom 区域面板
- *       不参与简化布局，对其调整尺寸没有几何效果。
+ *       优先、其余均分、总量超限时按比例压缩”处理。
  */
 void XMainWindow_resizeDocks(XMainWindow* self, XDockWidget** docks,
                              const int* sizes, int count, int orientation);
 /** @brief 查询坐标是否落在停靠区分隔条上（对标 isSeparator）。
  * @param self 目标主窗口；可为 NULL。
  * @param pos 主窗口坐标系中的坐标借用指针；可为 NULL。
- * @return 命中左/右停靠列与中央区域之间的竖直分隔带（列边界 ±2 像素，
- *         纵向限于菜单栏/工具栏与状态栏之间）返回 true；否则返回 false。
+ * @return 命中以下分隔带之一返回 true：左/右停靠列与中央区域之间的
+ *         竖直分隔带（列边界 ±2 像素），或 Top/Bottom 停靠行与中央区域
+ *         之间的水平分隔带（行边界 ±2 像素）；否则返回 false。
  * @note 与 Qt 差异：Qt 用 findSeparator 遍历真实分隔条控件；XGui 简化
- *       布局没有分隔条控件，本实现按列边界几何判定，只覆盖左/右停靠列
- *       与中央区域之间的分隔带（Top/Bottom 区域无布局模型）。
+ *       布局没有分隔条控件，本实现按区边界几何判定（列/行边界 ±2 像素）。
  */
 bool XMainWindow_isSeparator(const XMainWindow* self, const XPoint* pos);
 
@@ -463,14 +486,30 @@ void XMainWindow_insertToolBar(XMainWindow* self, XWidget* before,
 void XMainWindow_removeToolBar(XMainWindow* self, XWidget* toolbar);
 /** @brief 保存窗口布局状态（对标 QMainWindow::saveState；返回新建
  *         XString* 布局快照，调用方负责 delete_base）。
+ * @details 快照格式 "XMWSTATE:2;"：工具栏登记项 "t<区域>;"（含断行
+ *          哨兵）、停靠几何 "g<左列宽>,<右列宽>,<顶行高>,<底行高>;"、
+ *          停靠面板项 "d<区域>:<可见>:<浮动>:<跨向覆盖>;"（按登记顺序）、
+ *          标签组项 "p<成员数>:<下标0>,<下标1>,...;"（v2 内追加段，下标
+ *          为停靠面板登记顺序；对标 Qt saveState 持久化 tabified
+ *          groups），覆盖 dock 布局（区域、显隐、浮动状态、尺寸覆盖、
+ *          tabify 编组）。组内活动标签由 d 条目的显隐位表达（活动标签
+ *          可见、其余隐藏）。
  * @param self 目标主窗口。
  * @return 新建 XString*；失败返回 NULL。
  */
 XString* XMainWindow_saveState(const XMainWindow* self);
 /** @brief 恢复窗口布局状态（对标 QMainWindow::restoreState）。
+ * @details 解析 saveState 快照并按登记顺序回放：工具栏区域、停靠面板
+ *          区域/显隐/浮动状态/跨向覆盖、四区几何尺寸、标签组编组
+ *          （p 条目按下标重建 tabify 组；旧快照缺 p 段时恢复为无组，
+ *          格式向后兼容），随后还原各组活动标签（首个未隐藏成员）并
+ *          重排。恢复前先解散既有编组（对标 Qt restoreState 重建整个
+ *          布局）。浮动面板经 XDockWidget_setFloating 恢复为独立顶层
+ *          窗口。快照损坏或格式不识别返回 false（对齐 Qt）；state 为
+ *          NULL 视为重置，当前无可重置字段，直接返回 true。
  * @param self 目标主窗口。
  * @param state 借用 XString* 快照；可为 NULL（重置）。
- * @return 恢复成功返回 true。
+ * @return 恢复成功返回 true；快照无效返回 false。
  */
 bool XMainWindow_restoreState(XMainWindow* self, const XString* state);
 

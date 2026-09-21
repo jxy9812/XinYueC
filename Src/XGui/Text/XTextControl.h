@@ -17,8 +17,12 @@
  *             与 Qt 的已知差异（平铺行 vs 文档模型的边界）：
  *             - 无富文本格式：QTextCharFormat 以 int 位值承载，无逐字符
  *               格式存储；HTML 走"剥标签 + 提取 <a href> 锚点"的子集；
- *             - 无自动换行：一个 '\n' 段落即一行，QTextLayout 的
- *               wordWrap/行内 wrap 不存在（documentSize 宽度取 textWidth）；
+ *             - 软换行（2026-09-20 批次补齐，对标 QTextLayout 行内 wrap）：
+ *               WidgetWidth 模式下逻辑行按 m_wordWrapMode（对标
+ *               QTextOption::WrapMode）折为可视行，布局缓存数组
+ *               {逻辑行, 起始字节, 字节长, 像素宽} 承载，字节位置与
+ *               (可视行, 列) 双向映射覆盖光标/命中/选区/绘制；NoWrap
+ *               保持整行不拆但绘制逐行裁剪到文本矩形；
  *             - 无表格/图片/对象（QTextTable/QTextFrame 路径整族裁剪）；
  *             - 撤销为命令差量栈 + 撤销组（beginEditBlock/endEditBlock
  *               + 连续键入合并），对标 QTextDocument 的 edit block 语义；
@@ -151,6 +155,28 @@ typedef enum XTextControlHitTestAccuracy
     XTextControlHitTestAccuracy_FuzzyHit = 1  /**< 模糊命中（钳位到最近边界）。 */
 } XTextControlHitTestAccuracy;
 
+/**
+ * @brief      换行开关（对标 QPlainTextEdit::LineWrapMode，数值一致）。
+ */
+typedef enum XTextControlLineWrapMode
+{
+    XTextControlLineWrap_NoWrap = 0,      /**< 不换行（长行水平滚动/裁剪）。 */
+    XTextControlLineWrap_WidgetWidth = 1  /**< 按定宽（textWidth）软换行。 */
+} XTextControlLineWrapMode;
+
+/**
+ * @brief      断行规则（对标 QTextOption::WrapMode，数值一致）。
+ */
+typedef enum XTextControlWrapMode
+{
+    XTextControlWrap_NoWrap = 0,            /**< 不换行。 */
+    XTextControlWrap_WordWrap = 1,          /**< 词界断行（CJK 逐字可断，
+                                                 Latin 按词边界，长词超宽硬断）。 */
+    XTextControlWrap_ManualWrap = 2,        /**< 仅手动换行（等同 NoWrap）。 */
+    XTextControlWrap_Anywhere = 3,          /**< 逐字断行（任意码点间可断）。 */
+    XTextControlWrap_WordBoundaryOrAnywhere = 4 /**< 词界优先，超宽词内任意断。 */
+} XTextControlWrapMode;
+
 /* ========================================================================== */
 /*                          平铺行模型数据结构                                */
 /* ========================================================================== */
@@ -167,6 +193,21 @@ typedef struct XTextControlLine
     int len;    /**< 行长（UTF-8 字节数，不含 NUL）。 */
     int cap;    /**< 缓冲容量（字节，含 NUL 位）。 */
 } XTextControlLine;
+
+/**
+ * @brief      软换行可视行缓存条目（对标 QTextLayout 单行 Line）。
+ * @details    一个逻辑行按断行规则折为 0..n 条可视行；start/len 为该
+ *             可视行在逻辑行"视觉文本"（preedit splice 后）中的字节
+ *             区间，width 为像素宽。全部可视行按 (逻辑行, 起始字节)
+ *             单调排列，支撑字节位置 ↔ (可视行, 列) 的二分双向映射。
+ */
+typedef struct XTextControlVisualRow
+{
+    int line;   /**< 所属逻辑行（0 起，对标 QTextBlock 索引）。 */
+    int start;  /**< 逻辑行视觉文本内起始字节（含）。 */
+    int len;    /**< 可视行字节长（不含行间 '\n'/软断点占用）。 */
+    int width;  /**< 可视行像素宽（与 XPainter_textWidthRange 同源度量）。 */
+} XTextControlVisualRow;
 
 /**
  * @brief      撤销/重做命令（差量承载，对标 QTextDocument 的 undo 命令）。
@@ -248,7 +289,8 @@ typedef struct XTextControl
     int m_cursorAnchor;          /**< 选区锚点（绝对字节偏移；== 位置即无选区）。 */
     int m_lastSelPosition;       /**< 上次通知选区的位置（信号去重）。 */
     int m_lastSelAnchor;         /**< 上次通知选区的锚点（信号去重）。 */
-    int m_goalCol;               /**< 垂直移动列目标（对标 cursor x 保持）。 */
+    int m_goalCol;               /**< 垂直移动 X 目标（像素；<0 未设；对标
+                                      QTextCursor 垂直移动保持的 x 坐标）。 */
 
     /* ---- 格式（对标 QTextCharFormat 位值承载） ---- */
     int m_charFormat;            /**< 当前插入字符格式（位值）。 */
@@ -273,7 +315,24 @@ typedef struct XTextControl
     bool m_wordSelectionEnabled; /**< 拖选按词选（默认 false）。 */
     bool m_openExternalLinks;    /**< 链接交由外部打开（默认 false）。 */
     bool m_ignoreUnusedNavigationEvents; /**< 未消费的导航事件是否忽略。 */
-    int m_textWidth;             /**< 首选文本宽度（<= 0 = 未设置）。 */
+    int m_textWidth;             /**< 首选文本宽度（<= 0 = 未设置；WidgetWidth
+                                      换行模式下的折行宽度来源，对标
+                                      QTextDocument::textWidth）。 */
+
+    /* ---- 软换行布局缓存（对标 QTextDocumentLayout 的可视行布局） ---- */
+    XTextControlVisualRow* m_visualRows; /**< 可视行数组（拥有；按 (逻辑行,
+                                              起始字节) 单调）。 */
+    int m_visualCount;           /**< 可视行数（NoWrap 时 == m_lineCount）。 */
+    int m_visualCap;             /**< 可视行数组容量。 */
+    bool m_layoutValid;          /**< 布局缓存有效（编辑/字体/宽度/模式变更
+                                      后失效，惰性重建）。 */
+    int m_lineWrapMode;          /**< 换行开关（XTextControlLineWrapMode；
+                                      默认 WidgetWidth，对标 QPlainTextEdit）。 */
+    int m_wordWrapMode;          /**< 断行规则（XTextControlWrapMode；默认
+                                      WordWrap，对标 QTextOption::WrapMode）。 */
+    bool m_cursorAtRowStart;     /**< 光标视觉边沿：软断点字节归属下一可视
+                                      行行首（Home 触达，对标 Qt 光标边沿
+                                      跟踪；其余移动恒 false）。 */
 
     /* ---- 鼠标状态机 ---- */
     bool m_mousePressed;         /**< 按下拖选中（TextSelectableByMouse）。 */
@@ -457,6 +516,28 @@ XRect XTextControl_cursorRectAt(const XTextControl* self, int position);
  */
 XRect XTextControl_cursorRect(const XTextControl* self);
 /**
+ * @brief      可视行数（对标 QPlainTextEdit::lineCount 的控制器承载；
+ *              QPlainTextEdit::lineCount 即可视行口径）。
+ * @details    WidgetWidth 软换行时 = sum(逻辑行折行数)；NoWrap 时等于
+ *             blockCount。惰性重建布局缓存。
+ */
+int XTextControl_lineCount(const XTextControl* self);
+/**
+ * @brief      逻辑块数（对标 QTextDocument::blockCount；不含软换行拆分）。
+ */
+int XTextControl_blockCount(const XTextControl* self);
+/**
+ * @brief      绝对字节位置 → (可视行, 可视行内字节列)。
+ * @details    先经逻辑行/列，再经 preedit 视觉列映射与可视行查找；
+ *             位置钳位到文档范围。
+ */
+void XTextControl_posToVisualLineCol(const XTextControl* self, int pos,
+                                     int* line, int* col);
+/**
+ * @brief      (可视行, 可视行内字节列) → 绝对字节位置（行列钳位）。
+ */
+int XTextControl_visualLineColToPos(const XTextControl* self, int line, int col);
+/**
  * @brief      指定选区矩形（对标 selectionRect(const QTextCursor&)；内容坐标）。
  */
 XRect XTextControl_selectionRectAt(const XTextControl* self, int position, int anchor);
@@ -507,6 +588,27 @@ int XTextControl_extraSelections(const XTextControl* self,
 void XTextControl_setTextWidth(XTextControl* self, int width);
 int XTextControl_textWidth(const XTextControl* self);
 /**
+ * @brief      设置换行开关（对标 QPlainTextEdit::setLineWrapMode）。
+ * @details    NoWrap 保持整行不拆（绘制逐行裁剪兜底）；WidgetWidth 按
+ *             textWidth 折行。变更后失效布局缓存并发射
+ *             documentSizeChanged/updateRequest。
+ */
+void XTextControl_setLineWrapMode(XTextControl* self, int mode);
+/**
+ * @brief      读取换行开关（对标 lineWrapMode）。
+ */
+int XTextControl_lineWrapMode(const XTextControl* self);
+/**
+ * @brief      设置断行规则（对标 QTextOption::setWrapMode）。
+ * @details    WordWrap（默认）/Anywhere/WordBoundaryOrAnywhere 生效；
+ *             NoWrap/ManualWrap 等同关闭软换行。通知路径同 setLineWrapMode。
+ */
+void XTextControl_setWordWrapMode(XTextControl* self, int mode);
+/**
+ * @brief      读取断行规则（对标 QTextOption::wrapMode）。
+ */
+int XTextControl_wordWrapMode(const XTextControl* self);
+/**
  * @brief      文档尺寸（对标 size()）：宽 = textWidth（未设置为内容宽），
  *             高 = 行数 x 行高。
  */
@@ -528,7 +630,9 @@ bool XTextControl_isWordSelectionEnabled(const XTextControl* self);
  */
 bool XTextControl_isPreediting(XTextControl* self);
 /**
- * @brief      平铺块矩形（对标 blockBoundingRect 虚函数；内容坐标整行条带）。
+ * @brief      平铺块矩形（对标 blockBoundingRect 虚函数；内容坐标块条带）。
+ * @details    line 为逻辑行（block）索引；条带高度含该块全部可视行
+ *             （软换行时 = 折行数 x 行高，对标 Qt 块包围盒语义）。
  */
 XRect XTextControl_blockBoundingRect(const XTextControl* self, int line);
 
@@ -616,11 +720,13 @@ void XTextControl_processEvent(XTextControl* control, XEvent* event);
  */
 void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect);
 
+#if XWINDOWEVENT_ON
 /**
  * @brief      合成焦点事件（对标 setFocus(focus, reason)）：经
  *             processEvent 投递 FocusIn/FocusOut。
  */
 void XTextControl_setFocus(XTextControl* self, bool focus, XFocusReason reason);
+#endif /* XWINDOWEVENT_ON */
 
 /**
  * @brief      输入法查询（对标 inputMethodQuery(property, argument)）。

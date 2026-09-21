@@ -5,6 +5,8 @@
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+#include "XAction.h"
+#include "XMainWindow_Protected.h"
 
 #include "XAlgorithm.h"
 #include "XPainter.h"
@@ -12,7 +14,26 @@
 
 #if XWIDGET_ON && XDOCKWIDGET_ON
 
+/* ==================== 内部常量 ==================== */
+
+/** @brief 标题条交互高度：绘制 20 像素标题 + 1 像素底部分隔线；
+ *         setWidget 的内容区从该高度起（与既有 setWidget/绘制口径一致）。 */
+#define XDW_TITLE_H 21
+/** @brief 标题条右侧关闭按钮命中区宽度（对标 Qt 标题条关闭按钮）。 */
+#define XDW_CLOSE_BOX 18
+
+/** @brief 调用 XWidget 基类事件实现（经 XClass_Parent 取基类虚表槽位）。
+ * @note  不可用 XWidget_*_base 入口转发：该入口按对象虚表再分派，会
+ *        重新命中本类重载形成自递归（与 XToolBar 的
+ *        XClass_Parent 转发同口径）。 */
+#define xdw_callParent(self, eventSlot, eventArg)                      \
+    XClass_Parent(XWidget, EXWidget_##eventSlot,                      \
+                  void (*)(XWidget*, XEvent*))((self), (eventArg))
+
 /* ==================== 内部工具 ==================== */
+
+/** @brief 宿主销毁槽前向声明（定义见保护接口一节；deinit 先用到）。 */
+static void xdw_hostDestroyedSlot(XObject* receiver, XVarList* args);
 
 static void xdw_emitInt(XDockWidget* self, size_t signal, int value)
 {
@@ -36,6 +57,74 @@ static void xdw_emitBool(XDockWidget* self, size_t signal, bool value)
     } else {
         XVarList_delete(args);
     }
+}
+
+/**
+ * @brief      判断标题条局部坐标是否命中关闭按钮。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @param      pos 面板局部坐标；可为 NULL。
+ * @return     命中标题条右侧关闭区返回 true。
+ */
+static bool xdw_closeHit(const XDockWidget* dock, const XPoint* pos)
+{
+    int w;
+    if (!dock || !pos) return false;
+    w = XWidget_width((XWidget*)dock);
+    return pos->y >= 0 && pos->y < XDW_TITLE_H &&
+           pos->x >= w - XDW_CLOSE_BOX && pos->x < w;
+}
+
+/**
+ * @brief      判断局部坐标是否落在标题条内。
+ * @param      pos 面板局部坐标；可为 NULL。
+ * @return     纵向位于标题条高度内返回 true。
+ */
+static bool xdw_titleHit(const XPoint* pos)
+{
+    return pos && pos->y >= 0 && pos->y < XDW_TITLE_H;
+}
+
+/**
+ * @brief      广播可见性变化并联动宿主与切换动作。
+ * @details    对标 Qt：QDockWidget::visibilityChanged 随真实显隐发射，
+ *             同时按 QDockWidgetPrivate::syncViewAction 同步
+ *             toggleViewAction 的 checked 位；显隐改变停靠区占位时经
+ *             宿主回链请求主窗口重排（对标 QMainWindowLayout::update）。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @param      visible 最新生效可见状态。
+ * @return     无返回值。
+ */
+static void xdw_announceVisible(XDockWidget* dock, bool visible)
+{
+    if (!dock) return;
+    if (dock->m_toggleAction)
+        XAction_setChecked(dock->m_toggleAction, visible);
+    if (dock->m_announcedVisible == visible) return;
+    dock->m_announcedVisible = visible;
+    xdw_emitBool(dock, (size_t)XDockWidget_visibilityChanged_signal, visible);
+    if (dock->m_host)
+        XMainWindow_updateDockLayout((XMainWindow*)dock->m_host);
+}
+
+/**
+ * @brief      把内容控件摆到标题条以下全部区域。
+ * @details    对标 Qt：QDockWidget 的内容控件恒填充标题条（含分隔线，
+ *             XDW_TITLE_H）以下的全部客户区，停靠/浮动/缩放三态都跟随
+ *             （QDockWidgetLayout 总是把 contents 重设为标题栏下方整块）。
+ *             高度不足标题条时钳位 0（与既有 setWidget 口径一致）。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @return     无返回值。
+ */
+static void xdw_layoutContent(XDockWidget* dock)
+{
+    XRect r;
+    int h;
+    if (!dock || !dock->m_widget) return;
+    h = XWidget_height((XWidget*)dock);
+    XRect_init(&r, 0, XDW_TITLE_H,
+               XWidget_width((XWidget*)dock),
+               h > XDW_TITLE_H ? h - XDW_TITLE_H : 0);
+    XWidget_setGeometryRect(dock->m_widget, &r);
 }
 
 /* ==================== 事件处理 ==================== */
@@ -105,9 +194,142 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
     XPainter_drawText(&painter, 6, 14,
                       dock->m_title ? XString_toUtf8(dock->m_title) : "",
                       windowText);
+    if (dock->m_features & 0x1 /* Closable：绘制关闭标记（对标 Qt 标题条） */) {
+        XPainter_drawText(&painter, w - XDW_CLOSE_BOX + 4, 14, "×",
+                          windowText);
+    }
     XRect_init(&line, 0, 20, w, 1);
     XPainter_fillRect(&painter, &line, windowText);
     XPainter_deinit(&painter);
+}
+
+/**
+ * @brief      鼠标按下：浮动窗口标题栏的关闭/拖动命中（对标 Qt 浮动
+ *             QDockWidget 标题条交互）。
+ * @details    关闭按钮命中且 Closable 特性开启时隐藏面板（任务裁定：
+ *             close 槽回归停靠区语义简化为隐藏，面板保持登记可复显）；
+ *             标题条命中且 Movable 特性开启时开始拖动（记录抓取偏移并
+ *             提升窗口）。TODO：拖拽重停靠（拖回主窗/拖到其它停靠区）
+ *             未实现，停靠态标题条按下暂不启动拖动。
+ * @param      self 目标控件。
+ * @param      event 鼠标按下事件。
+ * @return     无返回值。
+ */
+static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XDockWidget* dock = (XDockWidget*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    if (!dock || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) {
+        xdw_callParent(self, MousePressEvent, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    if (xdw_closeHit(dock, &pos) && (dock->m_features & 0x1)) {
+        /* 对标 Qt：标题条关闭按钮关闭面板；简化为隐藏（保持登记）。 */
+        XWidget_setVisible(self, false);
+        XEvent_accept(event);
+        return;
+    }
+    if (dock->m_floating && xdw_titleHit(&pos) &&
+        (dock->m_features & 0x2 /* Movable：标题条可拖动 */) &&
+        XMouseEvent_button(me) == XMouseButton_LeftButton) {
+        XPoint g = XMouseEvent_globalPosition(me);
+        dock->m_dragging = true;
+        dock->m_dragOffset.x = g.x - XWidget_x(self);
+        dock->m_dragOffset.y = g.y - XWidget_y(self);
+        XWidget_raise(self); /* 对标 Qt：拖动前激活提升浮动窗口 */
+        XEvent_accept(event);
+        return;
+    }
+    xdw_callParent(self, MousePressEvent, event);
+}
+
+/**
+ * @brief      鼠标移动：拖动中的浮动窗口跟随全局坐标平移（对标 Qt 拖动
+ *             浮动 QDockWidget 移动顶层窗口）。
+ * @param      self 目标控件。
+ * @param      event 鼠标移动事件。
+ * @return     无返回值。
+ */
+static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XDockWidget* dock = (XDockWidget*)self;
+    XMouseEvent* me;
+    XPoint g;
+    if (!dock || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) {
+        xdw_callParent(self, MouseMoveEvent, event);
+        return;
+    }
+    if (dock->m_floating && dock->m_dragging) {
+        me = (XMouseEvent*)event;
+        if (!(XMouseEvent_buttons(me) & XMouseButton_LeftButton)) {
+            dock->m_dragging = false; /* 按键已释放：安全终止拖动 */
+            xdw_callParent(self, MouseMoveEvent, event);
+            return;
+        }
+        g = XMouseEvent_globalPosition(me);
+        XWidget_move(self, g.x - dock->m_dragOffset.x,
+                     g.y - dock->m_dragOffset.y);
+        XEvent_accept(event);
+        return;
+    }
+    xdw_callParent(self, MouseMoveEvent, event);
+}
+
+/**
+ * @brief      鼠标释放：结束标题栏拖动。
+ * @param      self 目标控件。
+ * @param      event 鼠标释放事件。
+ * @return     无返回值。
+ */
+static void VX_dockWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XDockWidget* dock = (XDockWidget*)self;
+    if (dock && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE &&
+        dock->m_dragging) {
+        dock->m_dragging = false;
+        XEvent_accept(event);
+        return;
+    }
+    xdw_callParent(self, MouseReleaseEvent, event);
+}
+
+/** @brief 显示事件：转发父类后广播 visibilityChanged(true)。 */
+static void VX_dockWidget_showEvent(XWidget* self, XEvent* event)
+{
+    xdw_callParent(self, ShowEvent, event);
+    if (self)
+        xdw_announceVisible((XDockWidget*)self, XWidget_isVisible(self));
+}
+
+/** @brief 隐藏事件：转发父类后广播 visibilityChanged(false)。 */
+static void VX_dockWidget_hideEvent(XWidget* self, XEvent* event)
+{
+    xdw_callParent(self, HideEvent, event);
+    if (self)
+        xdw_announceVisible((XDockWidget*)self, false);
+}
+
+/**
+ * @brief      尺寸变更事件：内容控件重摆到标题条以下全部区域。
+ * @details    对标 Qt：QDockWidget 内容恒随面板尺寸跟随（停靠态主窗口
+ *             重排、浮动态顶层缩放、回归停靠三态的几何变化都经
+ *             ResizeEvent 到达），修复此前 setWidget 仅一次性摆位、
+ *             之后内容矩形不随面板更新的缺陷。
+ * @param      self 目标控件。
+ * @param      event 尺寸变更事件。
+ * @return     无返回值。
+ */
+static void VX_dockWidget_resizeEvent(XWidget* self, XEvent* event)
+{
+    xdw_callParent(self, ResizeEvent, event);
+    if (self)
+        xdw_layoutContent((XDockWidget*)self);
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -123,6 +345,18 @@ static void VX_dockWidget_deinit(XDockWidget* self)
         XString_delete_base(self->m_title);
         self->m_title = NULL;
     }
+    if (self->m_toggleAction) {
+        /* 切换动作归面板所有（对标 Qt toggleViewAction 归 dock 所有）。 */
+        XAction_delete_base(self->m_toggleAction);
+        self->m_toggleAction = NULL;
+    }
+    if (self->m_host) {
+        /* 析构时摘除宿主销毁监听（setHost 建立的回链）。 */
+        XObject_disconnect_1((XObject*)self->m_host,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, xdw_hostDestroyedSlot);
+    }
+    self->m_host = NULL;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
@@ -131,6 +365,15 @@ XVtable* XDockWidget_class_init(void)
     XVTABLE_INIT_DEFAULT(XDockWidget)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_dockWidget_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VX_dockWidget_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VX_dockWidget_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VX_dockWidget_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_dockWidget_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VX_dockWidget_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VX_dockWidget_hideEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_dockWidget_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -167,16 +410,18 @@ XDockWidget* XDockWidget_create_ex(XMemoryType memory,
 
 void XDockWidget_setWidget(XDockWidget* self, XWidget* widget)
 {
-    XRect r;
-    if (!self) return;
-    if (self->m_widget) return;
+    if (!self || self->m_widget == widget) return;
+    if (self->m_widget) {
+        /* 对标 Qt setWidget 的替换语义：已有内容时先摘除旧控件（转独立
+         * 顶层即脱离本面板父链），所有权转移给调用方、由调用方决定释放
+         * （Qt 中旧 widget 脱离 dock 后归调用方管理，dock 不再删除）。 */
+        XWidget_setParent(self->m_widget, NULL, 0);
+    }
     self->m_widget = widget;
-    XWidget_setParent(widget, (XWidget*)self, 0);
-    XRect_init(&r, 0, 21,
-               XWidget_width((XWidget*)self),
-               XWidget_height((XWidget*)self) > 21
-                   ? XWidget_height((XWidget*)self) - 21 : 0);
-    XWidget_setGeometryRect(widget, &r);
+    if (widget)
+        XWidget_setParent(widget, (XWidget*)self, 0);
+    /* 对标 Qt：新内容立即摆到标题条以下全部区域。 */
+    xdw_layoutContent(self);
 }
 
 XWidget* XDockWidget_widget(const XDockWidget* self)
@@ -199,12 +444,50 @@ int XDockWidget_features(const XDockWidget* self)
 
 void XDockWidget_setFloating(XDockWidget* self, bool floating)
 {
+    XWidget* selfw;
+    XWidget* host;
+    XPoint origin;
+    XPoint globalPos;
+    int w;
+    int h;
+    bool wasVisible;
     if (!self || self->m_floating == floating) return;
+    selfw = (XWidget*)self;
+    host = self->m_host;
+    /* 记录当前几何与全局位置（对标 Qt：浮动时窗口保持屏幕位置尺寸）。
+     * 必须在重设父对象前完成，子控件坐标经父链映射才有意义。 */
+    XPoint_init(&origin, 0, 0);
+    globalPos = XWidget_mapToGlobal(selfw, &origin);
+    w = XWidget_width(selfw);
+    h = XWidget_height(selfw);
+    wasVisible = XWidget_isVisible(selfw);
     self->m_floating = floating;
+    self->m_dragging = false;
+    if (floating) {
+        /* 对标 Qt：setFloating(true) 脱离主窗布局，转成独立顶层窗口
+         * （Qt::Window），保留尺寸并映射到原全局位置。 */
+        XWidget_setParent(selfw, NULL,
+                          (XWidgetFlags)XWindowType_Window);
+        XWidget_setWindowTitle(selfw, self->m_title);
+        if (w <= 0) w = 200; /* 无宿主几何时的兜底尺寸 */
+        if (h <= 0) h = 150;
+        XWidget_resize(selfw, w, h);
+        XWidget_move(selfw, globalPos.x, globalPos.y);
+        if (wasVisible) {
+            XWidget_show(selfw);
+            XWidget_raise(selfw);
+            XWidget_activateWindow(selfw); /* 对标 Qt：浮动窗获得焦点 */
+        }
+    } else if (host) {
+        /* 对标 Qt：setFloating(false) 回归停靠区，重新挂回宿主主窗口，
+         * 几何交还主窗口停靠布局（随后统一重排）。 */
+        XWidget_setParent(selfw, host, 0);
+        if (wasVisible) XWidget_show(selfw);
+    }
+    if (host)
+        XMainWindow_updateDockLayout((XMainWindow*)host);
     xdw_emitBool(self, (size_t)XDockWidget_topLevelChanged_signal,
                  floating);
-    xdw_emitInt(self,
-                (size_t)XDockWidget_dockLocationChanged_signal(self, 0), 0);
 }
 
 bool XDockWidget_isFloating(const XDockWidget* self)
@@ -241,12 +524,71 @@ XWidget* XDockWidget_titleBarWidget(const XDockWidget* self)
     return self ? self->m_titleBar : NULL;
 }
 
-XAction* XDockWidget_toggleViewAction(const XDockWidget* self)
+/** @brief toggleViewAction 槽：翻转面板可见性（对标 QDockWidget
+ *         toggleViewAction 的 triggered→setVisible 桥接）。 */
+static void xdw_toggleViewSlot(XObject* receiver, XVarList* args)
 {
-    /* 对标 toggleViewAction()：返回显示/隐藏切换动作；第一版返回 NULL
-     * 占位（动作需持久归 dock 所有，待动作管理补齐）。 */
+    XDockWidget* dock = (XDockWidget*)receiver;
+    (void)args;
+    if (!dock) return;
+    XWidget_setVisible((XWidget*)dock, !XWidget_isVisible((XWidget*)dock));
+}
+
+XAction* XDockWidget_toggleViewAction(XDockWidget* self)
+{
+#if XACTION_ON
+    XAction* action;
+    if (!self) return NULL;
+    if (self->m_toggleAction) return self->m_toggleAction;
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    if (!action) return NULL;
+    self->m_toggleAction = action;
+    XAction_setCheckable(action, true); /* 对标 Qt：切换动作可选中 */
+    XAction_setText_2(action,
+                      self->m_title ? XString_toUtf8(self->m_title) : "");
+    XAction_setChecked(action, XWidget_isVisible((XWidget*)self));
+    XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
+                      (XObject*)self, xdw_toggleViewSlot,
+                      XConnectionType_Direct);
+    return self->m_toggleAction;
+#else
+    /* XACTION_ON 裁剪时保留遗留回退（无动作子系统）。 */
     (void)self;
     return NULL;
+#endif /* XACTION_ON */
+}
+
+/* ==================== 保护接口（XDockWidget_Protected.h） ==================== */
+
+/** @brief 宿主销毁槽：宿主主窗口释放时摘除回链（对标 Qt 的 QPointer
+ *         防悬空语义；浮动面板已脱离宿主控件树，必须显式摘链）。 */
+static void xdw_hostDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    XDockWidget* dock = (XDockWidget*)receiver;
+    (void)args;
+    if (dock) dock->m_host = NULL;
+}
+
+void XDockWidget_setHost(XDockWidget* self, XWidget* host)
+{
+    if (!self) return;
+    if (self->m_host) {
+        XObject_disconnect_1((XObject*)self->m_host,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, xdw_hostDestroyedSlot);
+    }
+    self->m_host = host;
+    if (host) {
+        XObject_connect_1((XObject*)host,
+                          XSignal(XObject_destroyed_signal),
+                          (XObject*)self, xdw_hostDestroyedSlot,
+                          XConnectionType_Direct);
+    }
+}
+
+XWidget* XDockWidget_host(const XDockWidget* self)
+{
+    return self ? self->m_host : NULL;
 }
 
 /* ==================== 信号 ==================== */

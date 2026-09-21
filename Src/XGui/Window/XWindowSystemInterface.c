@@ -26,6 +26,11 @@
 
 #if XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON && XWINDOWEVENT_ON
 
+/** @brief 当前同步派发中的触摸事件时间戳（毫秒）；仅 handleTouchEvent(_ex)
+ *         同步投递栈内有定义，供 touch→mouse 合成器透传（详见
+ *         XWindowSystemInterface_touchTimestamp 注释）。 */
+static uint32_t g_touchTimestamp = 0;
+
 void XWindowSystemInterface_handleGeometryChange(XWindow* window, const XRect* rect)
 {
     XResizeEvent* event;
@@ -95,6 +100,16 @@ void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window, XFocusReas
     XEvent_delete_base((XEvent*)event);
 }
 
+void XWindowSystemInterface_handleWindowStateChanged(XWindow* window,
+                                                     XWindowState newState)
+{
+    /* 对标 QWindowSystemInterface::handleWindowStateChanged：平台是窗口
+       状态的事实来源（WM 实测结果），经 report 通道持久化并发射
+       windowStateChanged 信号、联动可见性（内部不回写平台层）。 */
+    if (!window) return;
+    XWindow_reportWindowStateChanged(window, newState);
+}
+
 void XWindowSystemInterface_handleScreenAdded(XScreen* screen)
 {
     /* 对标 QWindowSystemInterface::handleScreenAdded：平台层枚举到屏幕后
@@ -135,6 +150,35 @@ void XWindowSystemInterface_handleScreenLogicalDotsPerInchChange(XScreen* screen
 #else
     (void)screen; (void)dpi;
 #endif /* XSCREEN_ON */
+}
+
+void XWindowSystemInterface_handleThemeChanged(XStyleHintsColorScheme theme)
+{
+#if XSTYLEHINTS_ON
+    /* 对标 QGuiApplicationPrivate::processThemeChanged：平台主题变化
+       进入 styleHints 颜色方案（XGui 的 Theme 落点），值变化时由
+       XStyleHints_setColorScheme 内部发射 colorSchemeChanged。 */
+    XStyleHints* hints = XGuiApplication_styleHints();
+    if (hints) XStyleHints_setColorScheme(hints, theme);
+#else
+    (void)theme;
+#endif /* XSTYLEHINTS_ON */
+}
+
+void XWindowSystemInterface_handleLocaleChange(const char* localeUtf8)
+{
+    /* 对标 QWindowSystemInterface::handleLocaleChange：区域设置落位应用
+       注入态（BCP 47 名称字符串），请求方向为 Auto 时按新语言重解析
+       有效布局方向（值变化时发射 layoutDirectionChanged）。 */
+    XGuiApplication_setPlatformLocaleUtf8(localeUtf8);
+}
+
+void XWindowSystemInterface_handleApplicationStateChanged(
+        XGuiApplicationState state)
+{
+    /* 对标 QWindowSystemInterface::handleApplicationStateChanged：转发
+       应用状态（值变化时内部发射 applicationStateChanged）。 */
+    XGuiApplication_setApplicationState(state);
 }
 
 bool XWindowSystemInterface_handleCloseEvent(XWindow* window)
@@ -181,11 +225,24 @@ bool XWindowSystemInterface_handleKeyEvent(XWindow* window, XEventType type,
                                              int key, XKeyboardModifiers modifiers,
                                              bool autoRepeat)
 {
+    /* 既有签名向后兼容：平台未提供扫描码/时间时按 0 委托完整负载版。 */
+    return XWindowSystemInterface_handleKeyEvent_ex(window, type, key,
+                                                    modifiers, autoRepeat, 0, 0);
+}
+
+bool XWindowSystemInterface_handleKeyEvent_ex(XWindow* window, XEventType type,
+                                              int key, XKeyboardModifiers modifiers,
+                                              bool autoRepeat,
+                                              uint32_t nativeScanCode,
+                                              uint32_t timestamp)
+{
     XKeyEvent* event;
     if (!window) return false;
     event = XKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, key, modifiers);
     if (!event) return false;
     XKeyEvent_setAutoRepeat(event, autoRepeat);
+    XKeyEvent_setNativeScanCode(event, nativeScanCode);
+    XKeyEvent_setTimestamp(event, timestamp);
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
     XEvent_delete_base((XEvent*)event);
     return true;
@@ -263,12 +320,28 @@ bool XWindowSystemInterface_handleMouseEvent(XWindow* window, XEventType type,
                                              XKeyboardModifiers modifiers,
                                              XPoint position)
 {
+    /* 既有签名向后兼容：平台未提供全局坐标/时间时按零值委托完整负载版。 */
+    return XWindowSystemInterface_handleMouseEvent_ex(window, type, button,
+                                                      buttons, modifiers,
+                                                      position, NULL, 0);
+}
+
+bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type,
+                                                XMouseButton button,
+                                                XMouseButton buttons,
+                                                XKeyboardModifiers modifiers,
+                                                XPoint position,
+                                                const XPoint* globalPosition,
+                                                uint32_t timestamp)
+{
     XMouseEvent* event;
     if (!window) return false;
     event = XMouseEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, button,
                                   modifiers, position);
     if (!event) return false;
     XMouseEvent_setButtons(event, buttons);
+    XMouseEvent_setGlobalPosition(event, globalPosition);
+    XMouseEvent_setTimestamp(event, timestamp);
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
     XEvent_delete_base((XEvent*)event);
     return true;
@@ -296,6 +369,18 @@ bool XWindowSystemInterface_handleTouchEvent(XWindow* window, XEventType type,
                                              const XPoint* globalPosition,
                                              int pointCount)
 {
+    /* 既有签名向后兼容：平台未提供时间时按 0 委托完整负载版。 */
+    return XWindowSystemInterface_handleTouchEvent_ex(window, type, position,
+                                                      globalPosition,
+                                                      pointCount, 0);
+}
+
+bool XWindowSystemInterface_handleTouchEvent_ex(XWindow* window, XEventType type,
+                                                XPoint position,
+                                                const XPoint* globalPosition,
+                                                int pointCount,
+                                                uint32_t timestamp)
+{
     XTouchEvent* event;
     /* 对标 QGuiApplicationPrivate::processTouchEvent 的 WSI 入口形态：
        平台后端只负责翻译原生触摸流，合成/命中/派发统一在本入口之后。
@@ -307,12 +392,26 @@ bool XWindowSystemInterface_handleTouchEvent(XWindow* window, XEventType type,
                     type != XEVENT_TYPE_TOUCH_CANCEL))
         return false;
     if (pointCount < 1) pointCount = 1;
+    /* 记录本序列时间戳供合成器读取：注入为同步自发投递（调用返回时
+       事件已处理完毕），静态值的作用域即"当前同步派发中的触摸事件"，
+       合成器在投递栈内读取恰好命中本序列；XTouchEvent 负载结构未扩展
+       （字段归属 XWindowEvent.h，不在本批改动面），以通道方式透传。 */
+    g_touchTimestamp = timestamp;
     event = XTouchEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, &position,
                                   globalPosition, pointCount);
-    if (!event) return false;
+    if (!event) {
+        g_touchTimestamp = 0;
+        return false;
+    }
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
     XEvent_delete_base((XEvent*)event);
+    g_touchTimestamp = 0;
     return true;
+}
+
+uint32_t XWindowSystemInterface_touchTimestamp(void)
+{
+    return g_touchTimestamp;
 }
 
 bool XWindowSystemInterface_handleTabletEvent(XWindow* window, XEventType type,

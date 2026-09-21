@@ -18,6 +18,8 @@ static void VXTableView_deinit(XTableView* self);
 static void VXTableView_paintEvent(XWidget* self, XEvent* event);
 static bool VXTableView_indexAt(const XAbstractItemView* view, int x, int y,
                                 int* outRow, int* outCol);
+static bool VXTableView_visualRect(const XAbstractItemView* view, int row,
+                                   int col, XRect* out);
 static void VXTableView_copy(XTableView* self, const XTableView* other);
 static void VXTableView_move(XTableView* self, XTableView* other);
 
@@ -28,6 +30,11 @@ static void VXTableView_move(XTableView* self, XTableView* other);
 #define XTV_CONTENT_HMARGIN 4
 /** @brief 按内容调整的单元格上下边距（单行文本简化预留）。 */
 #define XTV_CONTENT_VMARGIN 2
+
+/* role 渲染消费常量（对标 QStyledItemDelegate::paint 的条目布局子集，
+ * 勾选框/装饰与文本的间距，像素）。 */
+#define XTV_ROLE_CHECK_BOX 12
+#define XTV_ROLE_CONTENT_GAP 4
 
 /* ==================== 内部辅助（隐藏状态表；参照 XTreeView 模式） ==================== */
 
@@ -124,6 +131,8 @@ XVtable* XTableView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXTableView_move);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXTableView_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt, VXTableView_indexAt);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
+                             VXTableView_visualRect);
     return XVTABLE_DEFAULT;
 }
 
@@ -900,6 +909,128 @@ static bool VXTableView_indexAt(const XAbstractItemView* view, int x, int y,
 
 /* ==================== 绘制（model 数据通路） ==================== */
 
+/* 条目几何虚槽：转发到表格既有 (row,col) 几何（含列宽/表头区/隐藏/滚动
+ * 偏移口径；供基类编辑器摆放/scrollTo/尺寸提示虚分派，对标
+ * QTableView::visualRect 对 QAbstractItemView::visualRect 的覆写）。 */
+static bool VXTableView_visualRect(const XAbstractItemView* view, int row,
+                                   int col, XRect* out)
+{
+    XTableView* tv = (XTableView*)view;
+    if (!tv || !out) return false;
+    *out = XTableView_visualRect(tv, row, col);
+    return out->width > 0 && out->height > 0;
+}
+
+/* ==================== role 叠加存储渲染消费（对标 QStyledItemDelegate::paint） ==================== */
+
+/**
+ * @brief 绘制简笔勾选框（CheckStateRole 渲染消费；对标 Qt
+ *        PE_IndicatorCheckBox 的简化笔画：外框 + 选中勾线/半选中横线）。
+ * @return 勾选框占用的内容宽度（框 + 右侧间距；供文本区推进）。
+ */
+static int xtv_drawCheckIndicator(XPainter* painter, int cellX, int cellY,
+                                  int cellW, int cellH, int checkState)
+{
+    int box = XTV_ROLE_CHECK_BOX;
+    int x = cellX + 2;
+    int y = cellY + (cellH - box) / 2;
+    XRect frame;
+    if (!painter || checkState < 0) return 0;
+    (void)cellW;
+    XRect_init(&frame, x, y, box, box);
+    XPainter_setPen(painter, 0xFF666666u);
+    XPainter_drawRect(painter, &frame);
+    if (checkState == XItemCheckState_Checked) {
+        /* 选中：框内两段折线勾（对标 Qt 勾选标记）。 */
+        XPainter_setPen(painter, 0xFF207F20u);
+        XPainter_drawLine(painter, x + 2, y + box / 2,
+                          x + box / 2, y + box - 3);
+        XPainter_drawLine(painter, x + box / 2, y + box - 3,
+                          x + box - 2, y + 2);
+    } else if (checkState == XItemCheckState_PartiallyChecked) {
+        /* 半选：框内中横线（对标 Qt 半选标记）。 */
+        XPainter_setPen(painter, 0xFF207F20u);
+        XPainter_drawLine(painter, x + 2, y + box / 2,
+                          x + box - 2, y + box / 2);
+    }
+    return box + XTV_ROLE_CONTENT_GAP;
+}
+
+/**
+ * @brief 绘制 DecorationRole 图像（渲染消费；对标 QStyledItemDelegate
+ *        的 decoration 子集——原尺寸左置、随行高垂直居中）。
+ * @return 占用宽度（图像宽 + 右侧间距；未设置/越界/超出行高返回 0）。
+ */
+static int xtv_drawDecoration(XPainter* painter, int cellX, int cellY,
+                              int cellW, int cellH, const void* decoration)
+{
+    const XImage* image = (const XImage*)decoration;
+    int w;
+    int h;
+    if (!painter || !image) return 0;
+    w = XImage_width(image);
+    h = XImage_height(image);
+    /* 超出单元格的装饰不绘制（本库无图标缩放承载，避免越格覆盖）。 */
+    if (w <= 0 || h <= 0 || h > cellH || w > cellW) return 0;
+    XPainter_drawImage(painter, image, cellX + 2,
+                       cellY + (cellH - h) / 2);
+    return w + XTV_ROLE_CONTENT_GAP;
+}
+
+/**
+ * @brief 绘制单元格内容：role 叠加存储渲染 + 文本（对标
+ *        QStyledItemDelegate::paint 的 role 消费子集）。
+ *
+ *        消费顺序同 Qt 风格条目布局：CheckStateRole 简笔勾选框最左、
+ *        DecorationRole 图像其次、剩余矩形承载文本（TextAlignmentRole
+ *        对齐、FontRole 字体）。无任何 role 设置时保持历史基线快速
+ *        路径（x+4、基线 y+cellH-6，渲染像素零漂移）。
+ */
+static void xtv_drawCellContent(XPainter* painter,
+                                const XAbstractItemView* view,
+                                int row, int col,
+                                int x, int y, int w, int cellH)
+{
+    const char* text = XAbstractItemModel_data_2(view->m_model, row, col);
+    int check = XAbstractItemView_itemCheckState(view, row, col);
+    int roleAlign = XAbstractItemView_itemTextAlignment(view, row, col);
+    const XFont* roleFont = XAbstractItemView_itemFont(view, row, col);
+    const void* decoration = XAbstractItemView_itemDecoration(view, row, col);
+    int contentX = x;
+
+    if (check >= 0)
+        contentX += xtv_drawCheckIndicator(painter, x, y, w, cellH, check);
+    contentX += xtv_drawDecoration(painter, x, y, w, cellH, decoration);
+    if (!text || !text[0]) return;
+    if (roleFont) XPainter_setFont(painter, roleFont);
+    if (roleAlign == 0 && check < 0 && !decoration) {
+        /* 历史快速路径（像素零漂移）：左缘 4px、基线 y+cellH-6。
+         * 颜色必须显式传不透明黑：XPainter_drawText 直接以该参数作
+         * ink（透明色写入=无像素），setPen 不影响此路径。 */
+        XPainter_setPen(painter, 0xFF000000u);
+        XPainter_drawText(painter, x + 4, y + cellH - 6, text,
+                          0xFF000000u);
+        if (roleFont) XPainter_setFont(painter, NULL);
+        return;
+    }
+    {
+        /* role 布局路径：文本区=内容占位推进后的剩余矩形；对齐缺省
+         * 左/底（同历史基线方位，对标 Qt 缺省对齐）。 */
+        XRect textRect;
+        uint32_t flags = (uint32_t)(roleAlign &
+            (XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK |
+             XPAINTER_TEXT_ALIGN_VERTICAL_MASK));
+        if (!(flags & XPAINTER_TEXT_ALIGN_HORIZONTAL_MASK))
+            flags |= XPAINTER_TEXT_ALIGN_LEFT;
+        if (!(flags & XPAINTER_TEXT_ALIGN_VERTICAL_MASK))
+            flags |= XPAINTER_TEXT_ALIGN_BOTTOM;
+        XRect_init(&textRect, contentX, y, x + w - contentX, cellH);
+        XPainter_drawTextRect(painter, &textRect, flags, text,
+                              0xFF000000u);
+    }
+    if (roleFont) XPainter_setFont(painter, NULL);
+}
+
 static void VXTableView_paintEvent(XWidget* self, XEvent* event)
 {
     XTableView* tv = (XTableView*)self;
@@ -1022,12 +1153,11 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
                     XPainter_fillRect(&painter, &cell, 0xFFF7F7F7u);
             }
             {
-                const char* text = XAbstractItemModel_data_2(model, row, col);
-                if (text && text[0]) {
-                    XPainter_setPen(&painter, 0xFF000000u);
-                    XPainter_drawText(&painter, x + 4, y + cellH - 6, text,
-                                  0xFF000000u);
-                }
+                /* role 叠加存储渲染消费（对标 QStyledItemDelegate::paint
+                 * 的 role 消费子集；此前写入端零消费）：勾选框/装饰/
+                 * 对齐/字体按格生效，无 role 时走历史快速路径。 */
+                xtv_drawCellContent(&painter, view, row, col, x, y, w,
+                                    cellH);
             }
             if (tv->m_gridVisible) {
                 XPainter_setPen(&painter, 0xFFDDDDDDu);

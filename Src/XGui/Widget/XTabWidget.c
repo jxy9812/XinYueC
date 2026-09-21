@@ -41,18 +41,10 @@ static void xtabwidget_layout(XTabWidget* self)
     int barH;
     int pageH;
     int i;
-    {   /* 与 XTabBar 的 xtabbar_wrapLayout 一致：计算多行 tabBar 高度。 */
-        int minW = 72;
-        int cols;
-        int rows;
-        if (w < minW) w = minW;
-        cols = w / minW;
-        if (cols < 1) cols = 1;
-        if (cols > self->m_count) cols = self->m_count;
-        if (cols < 1) cols = 1; /* m_count=0 时防除零。 */
-        rows = (self->m_count + cols - 1) / cols;
-        if (rows < 1) rows = 1;
-        barH = rows * 24; /* 24 = XTABBAR_TAB_H */
+    {   /* 页签条高度由 XTabBar 统一提供：溢出滚动模式恒单行(24)，
+           否则按换行布局行数计（此前本地复算与滚动模式会漂移）。 */
+        barH = XTabBar_barHeightHint(&self->m_tabBar, w);
+        if (barH < 1) barH = 24; /* 24 = XTABBAR_TAB_H 兜底。 */
     }
     pageH = h - barH;
     if (pageH < 1) pageH = 1;
@@ -537,6 +529,40 @@ void XTabWidget_setCurrentWidget(XTabWidget* self, XWidget* page)
     if (!self || !page) return;
     index = XTabWidget_indexOf(self, page);
     if (index >= 0) XTabWidget_setCurrentIndex(self, index);
+}
+
+void XTabWidget_setWidget(XTabWidget* self, XWidget* widget)
+{
+    int idx;
+    int held;
+    XWidget* old;
+    if (!self || widget == (XWidget*)self) return;
+    /* 替换以“存在页容器”为前提：尚无任何页时不动作（建页须页签
+       文本，走 addTab/insertTab，setWidget 不代建）。 */
+    idx = self->m_currentIndex;
+    if (idx < 0 || idx >= self->m_count || !self->m_pages[idx]) return;
+    old = self->m_clients[idx];
+    /* 同指针幂等：重设现有内容为无操作（对标 Qt setWidget 家族）。 */
+    if (old == widget) return;
+    /* 新控件已登记在其它页：仅解除那条借用记录（控件本体随下方
+       reparent 归入当前页容器，原页转为无内容——对标 Qt 同一子控件
+       挂到新父即随迁）。 */
+    if (widget) {
+        held = XTabWidget_indexOf(self, widget);
+        if (held >= 0 && held != idx) self->m_clients[held] = NULL;
+    }
+    /* 替换语义：旧控件摘除父链转独立顶层（XWidget_setParent(NULL)
+       即窗口化并隐藏），不销毁——所有权转移调用方（对标 QDockWidget
+       /QMdiSubWindow::setWidget 旧件不删）。 */
+    if (old)
+        XWidget_setParent(old, NULL, 0);
+    /* 装入新控件并布局：reparent 到当前页容器，铺满页几何并按当前
+       页同步显隐。 */
+    self->m_clients[idx] = widget;
+    if (widget)
+        XWidget_setParent(widget, self->m_pages[idx], 0);
+    xtabwidget_layout(self);
+    xtabwidget_showCurrent(self);
 }
 
 void XTabWidget_setTabIcon(XTabWidget* self, int index, const XString* path)

@@ -489,6 +489,17 @@
 #define XGUI_PERFORMANCE_OVERLAY_UPDATE_MS 250
 #endif
 
+/* 控件静态内容保留层（retained layer，融合 LVGL 静态内容缓存思想）字节
+ * 预算：显式 XWidget_setContentRetained(true) 的控件把"自身+可见子树"的
+ * 渲染输出缓存为离屏 ARGB32_Premultiplied 图像，后续帧脏区与控件相交时
+ * 直接从缓存 blit 并跳过 paintEvent 派发。全部保留层缓存字节总量超过本
+ * 预算时按 LRU（最近访问时间戳）淘汰最久未用的保留层；预算不足/分配
+ * 失败的控件自动退回常规绘制（不阻塞）。默认 2MB；置 0 时任何保留层
+ * 缓存都无法建立（开关退化为直通，等价整体关闭）。 */
+#ifndef XGUI_RETAINED_LAYER_BUDGET_BYTES
+#define XGUI_RETAINED_LAYER_BUDGET_BYTES (2u * 1024u * 1024u)
+#endif
+
 /* 原生窗口与系统无障碍平台后端。 */
 #ifndef XPLATFORMNATIVEWINDOW_X11_ON
 #define XPLATFORMNATIVEWINDOW_X11_ON 1
@@ -712,6 +723,8 @@
 #define XGUI_BACKINGSTORE_BUFFER_SIZE 0
 #undef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
 #define XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 0
+#undef XGUI_RETAINED_LAYER_BUDGET_BYTES
+#define XGUI_RETAINED_LAYER_BUDGET_BYTES 0
 #undef XPIXMAP_ON
 #define XPIXMAP_ON 0
 #undef XSTYLE_ON

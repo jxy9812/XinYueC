@@ -150,6 +150,11 @@ static XMBBridge* xmb_bridgeCreate(XMenuBar* bar, XMenu* menu, XAction* action)
     bridge->m_bar = bar;
     bridge->m_menu = menu;
     bridge->m_action = action;
+    /* 桥挂为动作的 XObject 子（§8.0g8）：动作析构级联释放堆子，桥随
+       其配对动作存亡——此前桥仅被信号连接引用、无持有者，逐 addMenu
+       泄漏（ASan 归因 560B×5）。 */
+    if (action)
+        XObject_setParent(&bridge->m_base, (XObject*)action);
     return bridge;
 }
 

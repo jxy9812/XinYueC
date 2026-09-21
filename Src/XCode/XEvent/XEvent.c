@@ -249,6 +249,9 @@ void XKeyEvent_init(XKeyEvent* event, XEventType type, int key, XKeyboardModifie
 	event->m_key = key;
 	event->m_modifiers = modifiers;
 	event->m_autoRepeat = false;
+	/* 新增负载向后兼容：平台未提供时保持零值（对标 Qt 未知扫描码/时间）。 */
+	event->m_nativeScanCode = 0;
+	event->m_timestamp = 0;
 }
 
 int XKeyEvent_key(const XKeyEvent* event)
@@ -269,6 +272,26 @@ bool XKeyEvent_autoRepeat(const XKeyEvent* event)
 void XKeyEvent_setAutoRepeat(XKeyEvent* event, bool autoRepeat)
 {
 	if (event) event->m_autoRepeat = autoRepeat;
+}
+
+uint32_t XKeyEvent_nativeScanCode(const XKeyEvent* event)
+{
+	return event ? event->m_nativeScanCode : 0;
+}
+
+void XKeyEvent_setNativeScanCode(XKeyEvent* event, uint32_t scanCode)
+{
+	if (event) event->m_nativeScanCode = scanCode;
+}
+
+uint32_t XKeyEvent_timestamp(const XKeyEvent* event)
+{
+	return event ? event->m_timestamp : 0;
+}
+
+void XKeyEvent_setTimestamp(XKeyEvent* event, uint32_t timestamp)
+{
+	if (event) event->m_timestamp = timestamp;
 }
 
 XMouseEvent* XMouseEvent_create_ex(XMemoryType memory, XEventType type, XMouseButton button,
@@ -296,7 +319,10 @@ void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
 	event->m_buttons = button;
 	event->m_modifiers = modifiers;
 	event->m_position = position;
+	event->m_globalPosition.x = 0; /* 平台未提供时保持零（对标 Qt 未知全局坐标）。 */
+	event->m_globalPosition.y = 0;
 	event->m_synthesized = false; /* 默认真实鼠标设备事件。 */
+	event->m_timestamp = 0;       /* 平台未提供时保持零（对标 Qt 未知时间）。 */
 }
 
 XMouseButton XMouseEvent_button(const XMouseEvent* event)
@@ -333,6 +359,35 @@ void XMouseEvent_setSynthesized(XMouseEvent* event, bool synthesized)
 bool XMouseEvent_isSynthesized(const XMouseEvent* event)
 {
 	return event && event->m_synthesized;
+}
+
+XPoint XMouseEvent_globalPosition(const XMouseEvent* event)
+{
+	XPoint position = { 0, 0 };
+	return event ? event->m_globalPosition : position;
+}
+
+void XMouseEvent_setGlobalPosition(XMouseEvent* event,
+	const XPoint* globalPosition)
+{
+	if (!event)
+		return;
+	if (globalPosition)
+		event->m_globalPosition = *globalPosition;
+	else {
+		event->m_globalPosition.x = 0;
+		event->m_globalPosition.y = 0;
+	}
+}
+
+uint32_t XMouseEvent_timestamp(const XMouseEvent* event)
+{
+	return event ? event->m_timestamp : 0;
+}
+
+void XMouseEvent_setTimestamp(XMouseEvent* event, uint32_t timestamp)
+{
+	if (event) event->m_timestamp = timestamp;
 }
 static int g_nextUserEventType = XEVENT_TYPE_USER;
 int XEvent_registerEventType(int hint)

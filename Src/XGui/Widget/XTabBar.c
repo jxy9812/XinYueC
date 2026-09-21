@@ -28,6 +28,8 @@
 
 #define XTABBAR_TAB_W 88
 #define XTABBAR_TAB_H 24
+/** @brief 溢出态端部滚动按钮命中/绘制区宽（对标 Qt 16-20px 区间）。 */
+#define XTABBAR_SCROLL_BTN_W 18
 
 /* ==================== 前向声明 ==================== */
 static void  VXTabBar_paintEvent(XWidget* self, XEvent* event);
@@ -38,6 +40,7 @@ static void  VXTabBar_copy(XTabBar* self, const XTabBar* other);
 static void  VXTabBar_move(XTabBar* self, XTabBar* other);
 static int   xtabbar_tabAt(const XTabBar* self, const XPoint* pos);
 static void  xtabbar_emitInt(XTabBar* self, size_t signal, int value);
+static void  VXTabBar_wheelEvent(XWidget* self, XEvent* event);
 
 /** @brief 双击：命中页签时发射 tabBarDoubleClicked(int)（对标
  *         QTabBar::tabBarDoubleClicked）。 */
@@ -178,11 +181,10 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
  *  @details 当标签总宽超出可用宽度时自动换行，对标 QTabBar 多行模式。
  *          列数 = barW / minTabW（每标签最小 48px 保可读），
  *          行数 = ceil(count / cols)，标签宽度 = barW / cols。 */
-static void xtabbar_wrapLayout(const XTabBar* self,
-                               int* outCols, int* outRows,
-                               int* outTabW, int* outTotalH)
+static void xtabbar_wrapLayoutW(int count, int barW,
+                                int* outCols, int* outRows,
+                                int* outTabW, int* outTotalH)
 {
-    int barW = XWidget_width((XWidget*)self);
     int minW = 72;
     int cols;
     int rows;
@@ -190,9 +192,9 @@ static void xtabbar_wrapLayout(const XTabBar* self,
     if (barW < minW) barW = minW;
     cols = barW / minW;
     if (cols < 1) cols = 1;
-    if (cols > self->m_count) cols = self->m_count;
-    if (cols < 1) cols = 1; /* m_count=0 时防除零。 */
-    rows = (self->m_count + cols - 1) / cols;
+    if (cols > count) cols = count;
+    if (cols < 1) cols = 1; /* count=0 时防除零。 */
+    rows = (count + cols - 1) / cols;
     if (rows < 1) rows = 1;
     tabW = barW / cols;
     if (tabW > XTABBAR_TAB_W) tabW = XTABBAR_TAB_W;
@@ -202,12 +204,141 @@ static void xtabbar_wrapLayout(const XTabBar* self,
     *outTotalH = rows * XTABBAR_TAB_H;
 }
 
-/** @brief 点击坐标 → 项索引（-1 = 无）。 */
+static void xtabbar_wrapLayout(const XTabBar* self,
+                               int* outCols, int* outRows,
+                               int* outTabW, int* outTotalH)
+{
+    xtabbar_wrapLayoutW(self->m_count, XWidget_width((XWidget*)self),
+                        outCols, outRows, outTabW, outTotalH);
+}
+
+/** @brief 溢出判定（宽度参数化）：页签总宽(固定宽×项数) > 条宽。 */
+static bool xtabbar_overflowW(const XTabBar* self, int barW)
+{
+    if (!self || self->m_count <= 0) return false;
+    if (barW < 1) barW = 1;
+    return self->m_count * XTABBAR_TAB_W > barW;
+}
+
+/** @brief 滚动模式布局（宽度参数化）。
+ *  @details 仅当 usesScrollButtons 开启且溢出时激活：单行固定宽页签，
+ *           端部预留滚动按钮区，返回有效视口与最大偏移。
+ *  @return 滚动模式激活返回 true（out 参数全部有效）；否则 false。
+ */
+static bool xtabbar_scrollLayoutW(const XTabBar* self, int barW,
+                                  int* outTabW, int* outContentW,
+                                  int* outBtnW, int* outViewX,
+                                  int* outViewW, int* outMaxOff)
+{
+    int contentW;
+    int btnW;
+    int viewW;
+    if (!self || !self->m_usesScrollButtons) return false;
+    if (barW < 1) barW = 1;
+    contentW = self->m_count * XTABBAR_TAB_W;
+    if (contentW <= barW) return false; /* 未溢出：无需滚动。 */
+    btnW = XTABBAR_SCROLL_BTN_W;
+    viewW = barW - 2 * btnW;
+    if (viewW < 1) viewW = 1; /* 极窄条退化：保 1px 视口防负宽。 */
+    if (outTabW) *outTabW = XTABBAR_TAB_W;
+    if (outContentW) *outContentW = contentW;
+    if (outBtnW) *outBtnW = btnW;
+    if (outViewX) *outViewX = btnW;
+    if (outViewW) *outViewW = viewW;
+    if (outMaxOff) *outMaxOff = contentW - viewW;
+    return true;
+}
+
+/** @brief 滚动模式布局（取控件当前宽）。 */
+static bool xtabbar_scrollLayout(const XTabBar* self, int* outTabW,
+                                 int* outContentW, int* outBtnW,
+                                 int* outViewX, int* outViewW,
+                                 int* outMaxOff)
+{
+    return xtabbar_scrollLayoutW(self, XWidget_width((XWidget*)self),
+                                 outTabW, outContentW, outBtnW, outViewX,
+                                 outViewW, outMaxOff);
+}
+
+/** @brief 有效滚动偏移（clamp 到 [0, maxOff]；条宽变化后旧值自动收敛）。 */
+static int xtabbar_effOffset(const XTabBar* self, int maxOff)
+{
+    int off = self ? self->m_scrollOffset : 0;
+    if (off < 0) off = 0;
+    if (off > maxOff) off = maxOff;
+    return off;
+}
+
+/** @brief 步进滚动（delta px；clamp 后写回并请求重绘）。 */
+static void xtabbar_scrollBy(XTabBar* self, int delta)
+{
+    int tabW, contentW, btnW, viewX, viewW, maxOff;
+    int newOff;
+    if (!self) return;
+    if (!xtabbar_scrollLayout(self, &tabW, &contentW, &btnW, &viewX,
+                              &viewW, &maxOff)) return;
+    newOff = self->m_scrollOffset + delta;
+    if (newOff < 0) newOff = 0;
+    if (newOff > maxOff) newOff = maxOff;
+    if (newOff == self->m_scrollOffset) return;
+    self->m_scrollOffset = newOff;
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 页签内容 x → 视口屏幕 x（滚动模式）。 */
+static int xtabbar_tabScreenX(const XTabBar* self, int index, int viewX,
+                              int off)
+{
+    (void)self;
+    return viewX + index * XTABBAR_TAB_W - off;
+}
+
+/** @brief 当前页自动露出（对标 QTabBar ensureVisible 语义）。
+ *  @details 页签左缘在视口左界之左或右缘在视口右界之右时，滚动最小
+ *           距使其完全可见（clamp 由 xtabbar_scrollBy 承担）。
+ */
+static void xtabbar_ensureVisible(XTabBar* self, int index)
+{
+    int tabW, contentW, btnW, viewX, viewW, maxOff;
+    int off;
+    int tabL;
+    int tabR;
+    if (!self || index < 0 || index >= self->m_count) return;
+    if (!xtabbar_scrollLayout(self, &tabW, &contentW, &btnW, &viewX,
+                              &viewW, &maxOff)) return;
+    tabL = index * XTABBAR_TAB_W;
+    tabR = tabL + XTABBAR_TAB_W;
+    off = xtabbar_effOffset(self, maxOff);
+    if (tabR > off + viewW)
+        xtabbar_scrollBy(self, tabR - viewW - off);
+    off = xtabbar_effOffset(self, maxOff);
+    if (tabL < off)
+        xtabbar_scrollBy(self, tabL - off);
+}
+
+/** @brief 点击坐标 → 项索引（-1 = 无）。
+ *  @details 滚动模式：先把命中 x 换算回内容坐标（减视口起点、加滚动
+ *           偏移）再除以固定页签宽；按钮区/视口外/内容末尾之后均 -1。
+ */
 static int xtabbar_tabAt(const XTabBar* self, const XPoint* pos)
 {
     int cols, rows, tabW, totalH;
     int row, col, idx;
     if (!pos) return -1;
+    {
+        int cW, btnW, viewX, viewW, maxOff, off, cx;
+        if (xtabbar_scrollLayout(self, &tabW, &cW, &btnW, &viewX, &viewW,
+                                 &maxOff)) {
+            if (pos->y < 0 || pos->y >= XTABBAR_TAB_H) return -1;
+            if (pos->x < viewX || pos->x >= viewX + viewW) return -1;
+            off = xtabbar_effOffset(self, maxOff);
+            cx = pos->x - viewX + off;
+            if (cx < 0 || cx >= cW) return -1;
+            idx = cx / XTABBAR_TAB_W;
+            if (idx < 0 || idx >= self->m_count) return -1;
+            return idx;
+        }
+    }
     xtabbar_wrapLayout(self, &cols, &rows, &tabW, &totalH);
     if (pos->y < 0 || pos->y >= totalH) return -1;
     row = pos->y / XTABBAR_TAB_H;
@@ -218,6 +349,18 @@ static int xtabbar_tabAt(const XTabBar* self, const XPoint* pos)
 }
 
 /* ==================== 虚槽实现 ==================== */
+
+/** @brief 绘制端部滚动按钮箭头（使用 painter 当前画笔色）。 */
+static void xtabbar_drawArrow(XPainter* painter, int cx, int cy, bool left)
+{
+    if (left) {
+        XPainter_drawLine(painter, cx + 2, cy - 4, cx - 2, cy);
+        XPainter_drawLine(painter, cx + 2, cy + 4, cx - 2, cy);
+    } else {
+        XPainter_drawLine(painter, cx - 2, cy - 4, cx + 2, cy);
+        XPainter_drawLine(painter, cx - 2, cy + 4, cx + 2, cy);
+    }
+}
 
 static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
 {
@@ -256,17 +399,37 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
     {
         int cols, rows, tabW, totalH;
         int row, col;
+        int cW = 0, btnW = 0, viewX = 0, viewW = 0, maxOff = 0, off = 0;
+        int barW = XWidget_width(self);
+        bool scrollMode;
         XStyle* style = NULL;
 #if XSTYLE_ON
         style = XStyle_defaultStyle();
 #endif
         xtabbar_wrapLayout(bar, &cols, &rows, &tabW, &totalH);
+        scrollMode = xtabbar_scrollLayout(bar, &tabW, &cW, &btnW, &viewX,
+                                          &viewW, &maxOff);
+        off = scrollMode ? xtabbar_effOffset(bar, maxOff) : 0;
+        if (scrollMode) {
+            /* 溢出滚动：全部页签裁剪到视口（首尾越界页签部分绘制）。 */
+            XRect viewRect;
+            XRect_init(&viewRect, viewX, 0, viewW, XTABBAR_TAB_H);
+            XPainter_setClipRect(&painter, &viewRect,
+                                 XPainterClipOperation_ReplaceClip);
+        }
         for (i = 0; i < bar->m_count; ++i) {
-            row = i / cols;
-            col = i % cols;
-            {
-                XRect tab = { col * tabW, row * XTABBAR_TAB_H,
-                              tabW - 1, XTABBAR_TAB_H };
+            XRect tab;
+            if (scrollMode) {
+                int sx = viewX + i * XTABBAR_TAB_W - off;
+                if (sx + XTABBAR_TAB_W <= viewX || sx >= viewX + viewW)
+                    continue; /* 完全越界页签不绘制。 */
+                XRect_init(&tab, sx, 0, XTABBAR_TAB_W - 1, XTABBAR_TAB_H);
+            } else {
+                row = i / cols;
+                col = i % cols;
+                XRect_init(&tab, col * tabW, row * XTABBAR_TAB_H,
+                           tabW - 1, XTABBAR_TAB_H);
+            }
                 bool isCur = (i == bar->m_currentIndex);
 #if XSTYLE_ON
                 if (style != NULL) {
@@ -330,7 +493,25 @@ static void VXTabBar_paintEvent(XWidget* self, XEvent* event)
                     XPainter_drawLine(&painter, cx2 - 3, cy + 3,
                                       cx2 + 3, cy - 3);
                 }
-            }
+        }
+        if (scrollMode) {
+            /* 端部滚动按钮（裁剪区外绘制）：按钮底 + 左/右箭头，
+               到达滚动边界时以 Disabled(Mid) 色显示。 */
+            XRect bl;
+            XRect br;
+            int brW = barW - (viewX + viewW);
+            XPainter_setClipping(&painter, false); /* 关闭视口裁剪画按钮。 */
+            XRect_init(&bl, 0, 0, btnW, XTABBAR_TAB_H);
+            if (brW < 0) brW = 0;
+            XRect_init(&br, viewX + viewW, 0, brW, XTABBAR_TAB_H);
+            XPainter_fillRect(&painter, &bl, button);
+            if (brW > 0) XPainter_fillRect(&painter, &br, button);
+            XPainter_setPen(&painter, off > 0 ? windowText : disabled);
+            xtabbar_drawArrow(&painter, bl.x + btnW / 2,
+                              XTABBAR_TAB_H / 2, true);
+            XPainter_setPen(&painter, off < maxOff ? windowText : disabled);
+            xtabbar_drawArrow(&painter, br.x + brW / 2,
+                              XTABBAR_TAB_H / 2, false);
         }
     }
     XPainter_end(&painter);
@@ -351,18 +532,44 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
         return;
     }
     pos = XMouseEvent_position(me);
+    {
+        /* 溢出态端部滚动按钮命中区（各 XTABBAR_SCROLL_BTN_W px）：
+           按/点步进一个页签宽（连发由系统按键重复事件自然补足）。 */
+        int tW, cW, btnW, viewX, viewW, maxOff;
+        if (xtabbar_scrollLayout(bar, &tW, &cW, &btnW, &viewX, &viewW,
+                                 &maxOff)) {
+            if (pos.x < btnW) {
+                xtabbar_scrollBy(bar, -XTABBAR_TAB_W);
+                XEvent_accept(event);
+                return;
+            }
+            if (pos.x >= viewX + viewW) {
+                xtabbar_scrollBy(bar, XTABBAR_TAB_W);
+                XEvent_accept(event);
+                return;
+            }
+        }
+    }
     idx = xtabbar_tabAt(bar, &pos);
     if (idx < 0) { XEvent_ignore(event); return; }
     if (bar->m_tabsClosable) {
         /* 关闭区 = 页签右侧 12px（对标 QTabBar 关闭按钮位）；命中仅发
            tabCloseRequested，不改当前页（此前 tabsClosable 纯存储）。 */
-        int cols, rows, tabW, totalH;
-        int row, col;
         int right, cx;
-        xtabbar_wrapLayout(bar, &cols, &rows, &tabW, &totalH);
-        row = idx / cols;
-        col = idx % cols;
-        right = col * tabW + tabW - 2;
+        int tW, cW, btnW, viewX, viewW, maxOff;
+        if (xtabbar_scrollLayout(bar, &tW, &cW, &btnW, &viewX, &viewW,
+                                 &maxOff)) {
+            right = xtabbar_tabScreenX(bar, idx, viewX,
+                                       xtabbar_effOffset(bar, maxOff))
+                    + XTABBAR_TAB_W - 2;
+        } else {
+            int cols, rows, tabW, totalH;
+            int row, col;
+            xtabbar_wrapLayout(bar, &cols, &rows, &tabW, &totalH);
+            row = idx / cols;
+            col = idx % cols;
+            right = col * tabW + tabW - 2;
+        }
         cx = right - 6;
         if (pos.x >= cx - 5 && pos.x <= cx + 5) {
             xtabbar_emitInt(bar,
@@ -386,6 +593,7 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
         xtabbar_emitInt(bar, (size_t)XTabBar_currentChanged_signal(bar, idx), idx);
         (void)old;
     }
+    xtabbar_ensureVisible(bar, idx); /* 点击切换后自动露出目标页签。 */
     XWidget_update(self);
     XEvent_accept(event);
 }
@@ -418,6 +626,36 @@ static void VXTabBar_mouseReleaseEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/** @brief 滚轮：溢出态按一个页签宽步进滚动（对标 QTabBar 滚轮切换）。
+ *  @details 水平条优先取 angleDelta.y，为 0 时退化取 x；每 120 计一步，
+ *           向上滚（正值）回卷到更早页签（偏移减小）。非溢出态忽略。
+ */
+static void VXTabBar_wheelEvent(XWidget* self, XEvent* event)
+{
+    XTabBar* bar = (XTabBar*)self;
+    int tW, cW, btnW, viewX, viewW, maxOff;
+    if (!bar || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+    if (!xtabbar_scrollLayout(bar, &tW, &cW, &btnW, &viewX, &viewW,
+                              &maxOff)) {
+        XEvent_ignore(event);
+        return;
+    }
+#if XWINDOWEVENT_ON
+    {
+        XWheelEvent* we = (XWheelEvent*)event;
+        XPoint delta = XWheelEvent_angleDelta(we);
+        int d = (delta.y != 0) ? delta.y : delta.x;
+        int steps = d / 120;
+        if (steps != 0) {
+            xtabbar_scrollBy(bar, -steps * XTABBAR_TAB_W);
+            XEvent_accept(event);
+            return;
+        }
+    }
+#endif /* XWINDOWEVENT_ON */
+    XEvent_ignore(event);
+}
+
 static void VXTabBar_changeEvent(XWidget* self, XEvent* event)
 {
     XEvent_ignore(event);
@@ -445,6 +683,8 @@ static void VXTabBar_copy(XTabBar* self, const XTabBar* other)
     self->m_currentIndex = other->m_currentIndex;
     self->m_tabsClosable = other->m_tabsClosable;
     self->m_movable = other->m_movable;
+    self->m_usesScrollButtons = other->m_usesScrollButtons;
+    self->m_scrollOffset = other->m_scrollOffset;
 }
 
 static void VXTabBar_move(XTabBar* self, XTabBar* other)
@@ -485,8 +725,11 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
     other->m_currentIndex = -1;
     self->m_tabsClosable = other->m_tabsClosable;
     self->m_movable = other->m_movable;
+    self->m_usesScrollButtons = other->m_usesScrollButtons;
+    self->m_scrollOffset = other->m_scrollOffset;
     other->m_tabsClosable = false;
     other->m_movable = false;
+    other->m_scrollOffset = 0;
 }
 
 /* ==================== 生命周期 ==================== */
@@ -568,6 +811,7 @@ XVtable* XTabBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXTabBar_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXTabBar_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXTabBar_mouseDoubleClickEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VXTabBar_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXTabBar_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTabBar_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXTabBar_copy);
@@ -605,7 +849,8 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_shape = 0; /* Qt::RoundedShape */
     self->m_iconSize = 0; /* 0 = 默认尺寸 */
     self->m_changeCurrentOnDrag = false;
-    self->m_usesScrollButtons = false;
+    self->m_usesScrollButtons = true; /* 对标 QTabBar 默认 true。 */
+    self->m_scrollOffset = 0;
     self->m_documentMode = false;
     self->m_drawBase = true;
 }
@@ -754,6 +999,7 @@ void XTabBar_removeTab(XTabBar* self, int index)
     --self->m_count;
     if (self->m_currentIndex >= self->m_count)
         self->m_currentIndex = self->m_count - 1;
+    xtabbar_ensureVisible(self, self->m_currentIndex); /* 移除后当前页露出。 */
     XWidget_update((XWidget*)self);
 }
 
@@ -768,6 +1014,7 @@ void XTabBar_setCurrentIndex(XTabBar* self, int index)
     if (!self || index < 0 || index >= self->m_count) return;
     if (index == self->m_currentIndex) return;
     self->m_currentIndex = index;
+    xtabbar_ensureVisible(self, index); /* 切换后自动露出（对标 ensureVisible）。 */
     xtabbar_emitInt(self, (size_t)XTabBar_currentChanged_signal(self, index), index);
     XWidget_update((XWidget*)self);
 }
@@ -926,9 +1173,42 @@ bool XTabBar_expanding(const XTabBar* self)
 { return self ? self->m_expanding : true; }
 
 void XTabBar_setUsesScrollButtons(XTabBar* self, bool enable)
-{ if (self) self->m_usesScrollButtons = enable; }
+{
+    if (!self || self->m_usesScrollButtons == enable) return;
+    self->m_usesScrollButtons = enable;
+    if (!enable) self->m_scrollOffset = 0; /* 回退旧布局，清偏移。 */
+    XWidget_update((XWidget*)self);
+}
 bool XTabBar_usesScrollButtons(const XTabBar* self)
-{ return self ? self->m_usesScrollButtons : false; }
+{ return self ? self->m_usesScrollButtons : true; }
+
+bool XTabBar_isOverflowed(const XTabBar* self)
+{
+    return xtabbar_overflowW(self, XWidget_width((const XWidget*)self));
+}
+
+int XTabBar_scrollOffset(const XTabBar* self)
+{
+    int tW, cW, btnW, viewX, viewW, maxOff;
+    if (!self) return 0;
+    if (!xtabbar_scrollLayout(self, &tW, &cW, &btnW, &viewX, &viewW,
+                              &maxOff))
+        return 0;
+    return xtabbar_effOffset(self, maxOff);
+}
+
+int XTabBar_barHeightHint(const XTabBar* self, int forWidth)
+{
+    int tW, cW, btnW, viewX, viewW, maxOff;
+    int cols, rows, tabW, totalH;
+    if (!self) return 0;
+    if (xtabbar_scrollLayoutW(self, forWidth, &tW, &cW, &btnW, &viewX,
+                              &viewW, &maxOff))
+        return XTABBAR_TAB_H; /* 溢出滚动：恒单行。 */
+    xtabbar_wrapLayoutW(self->m_count, forWidth, &cols, &rows, &tabW,
+                        &totalH);
+    return totalH;
+}
 
 void XTabBar_setDrawBase(XTabBar* self, bool enable)
 { if (self) self->m_drawBase = enable; }
@@ -968,7 +1248,16 @@ bool XTabBar_tabRect(const XTabBar* self, int index, XRect* out)
 {
     int cols, rows, tabW, totalH;
     int row, col;
+    int tW, cW, btnW, viewX, viewW, maxOff;
     if (!self || !out || index < 0 || index >= self->m_count) return false;
+    if (xtabbar_scrollLayout(self, &tW, &cW, &btnW, &viewX, &viewW,
+                             &maxOff)) {
+        /* 滚动模式：返回视口内实际矩形（含偏移；越界页签可为负 x）。 */
+        XRect_init(out, xtabbar_tabScreenX(self, index, viewX,
+                                           xtabbar_effOffset(self, maxOff)),
+                   0, XTABBAR_TAB_W, XTABBAR_TAB_H);
+        return true;
+    }
     xtabbar_wrapLayout(self, &cols, &rows, &tabW, &totalH);
     row = index / cols;
     col = index % cols;
@@ -984,7 +1273,11 @@ int XTabBar_tabAt(const XTabBar* self, const XPoint* pos)
 int XTabBar_tabWidth(const XTabBar* self)
 {
     int cols, rows, tabW, totalH;
+    int tW, cW, btnW, viewX, viewW, maxOff;
     if (!self) return 0;
+    if (xtabbar_scrollLayout(self, &tW, &cW, &btnW, &viewX, &viewW,
+                             &maxOff))
+        return XTABBAR_TAB_W; /* 滚动模式：固定页签宽。 */
     xtabbar_wrapLayout(self, &cols, &rows, &tabW, &totalH);
     return tabW;
 }
@@ -1302,6 +1595,7 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
         self->m_currentIndex--;
     else if (self->m_currentIndex < from && self->m_currentIndex >= to)
         self->m_currentIndex++;
+    xtabbar_ensureVisible(self, self->m_currentIndex); /* 换位后当前页露出。 */
     xtabbar_emitInt2(self, (size_t)XTabBar_tabMoved_signal(self, from, to),
                      from, to);
     XWidget_update((XWidget*)self);

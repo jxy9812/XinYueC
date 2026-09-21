@@ -250,11 +250,32 @@ void XDeviceTimer_process(XAbstractEventDispatcher* dispatcher, bool processGlob
         XHrTimerGroup_handler_base((XTimerGroupBase*)dispatcher->d_ptr->m_hrtimerGroup);
 }
 
+/*
+ * 统一最近截止查询（§23.4 规划 5）：把全局时间轮内最近的普通定时器到期
+ * 并入高精度红黑树的截止，使阻塞等待按"最近一个定时器"唤醒，普通定时器
+ * 精度从 20ms 心跳量化提升到时间轮的 1ms 刻度（对标 Qt 6.8 事件分发器的
+ * 单一定时器源最小截止语义）。
+ * 仅主线程并入时间轮：时间轮为进程级单例，只由主线程消费
+ * （XDeviceTimer_process 的 processGlobalWheel 仅主线程为真），工作线程
+ * 并入只会按自己无法兑现的截止提前唤醒并空转。查询经
+ * XTimeWheelGroup_GlobalExists 门卫，不强制惰性创建全局时间轮，
+ * 无任何定时器时维持返回 UINT64_MAX 的既有行为。
+ */
 uint64_t XDeviceTimer_nextPreciseDeadline(const XAbstractEventDispatcher* dispatcher)
 {
-    if (!dispatcher || !dispatcher->d_ptr || !dispatcher->d_ptr->m_hrtimerGroup)
-        return UINT64_MAX;
-    return XHrTimerGroup_getNextExpireTime(dispatcher->d_ptr->m_hrtimerGroup);
+    uint64_t deadline = UINT64_MAX;
+    if (!dispatcher || !dispatcher->d_ptr) return UINT64_MAX;
+    if (dispatcher->d_ptr->m_hrtimerGroup)
+        deadline = XHrTimerGroup_getNextExpireTime(dispatcher->d_ptr->m_hrtimerGroup);
+    if (XAbstractEventDispatcher_isMainThread((XAbstractEventDispatcher*)dispatcher)
+        && XTimeWheelGroup_GlobalExists())
+    {
+        /* 只读查询，去 const 仅因 isMainThread 形参未声明 const */
+        uint64_t wheelDeadline =
+            XTimeWheelGroup_getNextExpireTime(XTimeWheelGroup_global());
+        if (wheelDeadline < deadline) deadline = wheelDeadline;
+    }
+    return deadline;
 }
 
 void XDeviceTimer_releaseDispatcher(XAbstractEventDispatcher* dispatcher)

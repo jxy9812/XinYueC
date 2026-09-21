@@ -16,7 +16,12 @@
  *             - 光标覆盖栈：setOverrideCursor / changeOverrideCursor /
  *               restoreOverrideCursor / overrideCursor（深拷贝入栈）；
  *             - 字体 / 调色板：深拷贝保存并发射 fontChanged /
- *               paletteChanged（XPALETTE_ON 守卫）；
+ *               paletteChanged（XPALETTE_ON 守卫）；调色板随系统颜色方案
+ *               （theme 深浅色）联动：colorSchemeChanged 时整体切换内置
+ *               深色/浅色标准调色板（对标 Qt 6.5+ StandardPalette 深浅
+ *               语义），显式 setPalette 置守卫标志（对标 AA_SetPalette）
+ *               后不再被 theme 覆盖；变化时向全部顶层控件广播
+ *               ApplicationPaletteChange 并触发重绘；
  *             - 输入状态 / 布局方向 / 应用状态 / DPI 策略 / 桌面设置 /
  *               退出策略 / 会话状态 / sync / exec / notify；
  *             - 样式提示与剪贴板惰性单例；
@@ -43,6 +48,7 @@
 #include "XPlatformNativeWindow.h"
 
 #include "XAlgorithm.h"
+#include "XStringUtils.h"
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XPlatformAccessibility.h"
 #endif
@@ -65,10 +71,19 @@
 #include "XWidget.h"
 #endif /* XWIDGET_ON */
 
+#if XPALETTE_ON && XAPPLICATION_ON
+/* 顶层控件注册表（调色板变化广播用，对标 QApplication::topLevelWidgets）。 */
+#include "XApplication.h"
+#endif /* XPALETTE_ON && XAPPLICATION_ON */
+
 /* ==================== 前向声明与辅助函数 ==================== */
 
 static void VXGuiApplication_deinit(XGuiApplication* app);
 static bool VXGuiApplication_notify(XObject* receiver, XEvent* event);
+#if XWIDGET_ON
+/** @brief 惰性注册"属性设置完成"钩子（定义见应用程序属性一节）。 */
+static void guiApp_ensureAttributeHookInstalled(void);
+#endif /* XWIDGET_ON */
 
 /*
  * XCoreApplication 只保存一个基类指针，不能仅凭它的地址或一个非基类
@@ -122,14 +137,35 @@ static void XGuiApplication_emit(XGuiApplication* self, size_t signal,
 static XGuiLayoutDirection XGuiApplication_resolveAutoLayoutDirection(
         const XGuiApplication* app)
 {
+    /* WSI 注入的区域设置（BCP 47）优先：按语言主子标签识别 RTL 族
+     * （阿拉伯语/希伯来语/波斯语/乌尔都语等），对标 QLocale 布局方向
+     * 查询语义；未注入时退回平台输入上下文。 */
+    if (app && app->m_platformLocale[0]) {
+        static const char* const rtlLanguages[] = {
+            "ar", "he", "fa", "ur", "ps", "syr", "dv", "ckb"
+        };
+        size_t i;
+        for (i = 0; i < sizeof(rtlLanguages) / sizeof(rtlLanguages[0]); ++i) {
+            const char* lang = rtlLanguages[i];
+            size_t len = 0;
+            while (lang[len] != '\0') ++len;
+            if (XStrncmp(app->m_platformLocale, lang, len) == 0 &&
+                (app->m_platformLocale[len] == '\0' ||
+                 app->m_platformLocale[len] == '-' ||
+                 app->m_platformLocale[len] == '_'))
+                return XGuiLayoutDirection_RightToLeft;
+        }
+    }
 #if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
-    XPlatformInputContext* inputContext;
-    if (app && app->m_platformIntegration) {
-        inputContext = XPlatformIntegration_inputContext(
-            app->m_platformIntegration);
-        if (inputContext && XPlatformInputContext_inputDirection(inputContext) ==
-                XInputMethodLayoutDirection_RightToLeft)
-            return XGuiLayoutDirection_RightToLeft;
+    {
+        XPlatformInputContext* inputContext;
+        if (app && app->m_platformIntegration) {
+            inputContext = XPlatformIntegration_inputContext(
+                app->m_platformIntegration);
+            if (inputContext && XPlatformInputContext_inputDirection(inputContext) ==
+                    XInputMethodLayoutDirection_RightToLeft)
+                return XGuiLayoutDirection_RightToLeft;
+        }
     }
 #else
     (void)app;
@@ -271,6 +307,12 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
            sizeof(XGuiApplication) - sizeof(XCoreApplication));
     XCoreApplication_init((XCoreApplication*)app, argc, argv);
     XClassSetVtable(app, XGuiApplication);
+#if XWIDGET_ON
+    /* GUI 应用实例建立即注册属性钩子：此后应用直调基类
+       XCoreApplication_setAttribute 设置 GUI 属性（如属性 12）与经
+       XGuiApplication_setAttribute 包装层行为一致（批次十七报备项收敛）。 */
+    guiApp_ensureAttributeHookInstalled();
+#endif /* XWIDGET_ON */
     if (reinitialize) {
         /* 保留已初始化对象的完整所有权信息；首次初始化则使用
            XCoreApplication/XClass 建立的默认内存方法和非堆标记。 */
@@ -291,6 +333,9 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
     app->m_windows = XVector_Create(XWindow*);
 #if XPALETTE_ON
     XPalette_init_default(&app->m_palette);
+    /* 调色板随颜色方案联动默认开启（对标 Qt 6.5 深浅色跟随）；
+       显式调色板标志保持 memset 的 false（对标 AA_SetPalette 未置位）。 */
+    app->m_paletteSchemeFollow = true;
 #endif /* XPALETTE_ON */
 #if XPLATFORMINTEGRATION_ON
     app->m_platformIntegration =
@@ -399,8 +444,11 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
  * AA_SynthesizeMouseForUnhandledTouchEvents(=12) 的三态接线（显式开 /
  * 显式关 / 未设置）。取舍：XCoreApplication 的 XBitArray 只有位值，
  * 无法区分「显式关」与「未设置」，而该属性在 Qt 6 的默认值是开；
- * 转发点放在本 GUI 层包装 API（基类 setAttribute 不感知 GUI 属性、
- * 不在本批改动范围），用静态 bool 记录是否被显式设置：
+ * 转发体收敛进"属性设置完成"钩子（批次十七报备项收敛）：基类
+ * XCoreApplication_setAttribute 写完位数组后回调本文件注册的钩子，
+ * GUI 包装层与直调基类两条路径行为一致（Qt 对 GUI 属性的转发同样
+ * 位于 QGuiApplication 私有层而非 QCoreApplication）。用静态 bool
+ * 记录是否被显式设置：
  *   - 未显式设置：不触碰框架开关（XWidget.c 的 g_touchMouseSynthEnabled
  *     保持默认 true，即 Qt 默认开语义），testAttribute 按默认开回答；
  *   - 显式设置：转发到框架开关 XWidget_setTouchMouseSynthesisEnabled
@@ -410,15 +458,38 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
  * 与 Qt 只存在应用级属性的差异已被 XWidget.h 注释登记）。
  */
 static bool g_synthMouseAttrExplicitlySet = false;
+static bool g_attributeHookInstalled = false;
 
-void XGuiApplication_setAttribute(XCoreApplicationAttribute attribute, bool on)
+/** @brief 属性设置完成钩子体：属性 12 显式设置时同步框架开关（幂等）。 */
+static void guiApp_attributeHook(XCoreApplicationAttribute attribute, bool on)
 {
-    XCoreApplication_setAttribute(attribute, on);
     if (attribute ==
             XCORE_APPLICATION_ATTRIBUTE_SYNTHESIZE_MOUSE_FOR_UNHANDLED_TOUCH_EVENTS) {
         g_synthMouseAttrExplicitlySet = true;
         XWidget_setTouchMouseSynthesisEnabled(on);
     }
+}
+
+/** @brief 惰性注册钩子（幂等）；包装层与实例初始化双入口保证任何
+ *         触达 GUI 属性语义的路径都已完成注册。 */
+static void guiApp_ensureAttributeHookInstalled(void)
+{
+    if (!g_attributeHookInstalled) {
+        g_attributeHookInstalled = true;
+        XCoreApplication_setAttributeHook(guiApp_attributeHook);
+    }
+}
+
+void XGuiApplication_setAttribute(XCoreApplicationAttribute attribute, bool on)
+{
+    guiApp_ensureAttributeHookInstalled();
+    XCoreApplication_setAttribute(attribute, on);
+    /* 基类在无应用实例时提前返回（不会触发钩子）；此处兜底保证
+       预创建期的静态设置（对标 QGuiApplication::setAttribute 静态期
+       可用性）仍立即转发框架开关。有实例时基类钩子已转发，本分支
+       不走（避免重复）。 */
+    if (!XCoreApplication_instance())
+        guiApp_attributeHook(attribute, on);
 }
 
 bool XGuiApplication_testAttribute(XCoreApplicationAttribute attribute)
@@ -909,6 +980,96 @@ XFont* XGuiApplication_font(void)
 }
 
 #if XPALETTE_ON
+/* ==================== 调色板 × 颜色方案联动（对标 Qt 6.5+ 深浅色通道） ==================== */
+
+/**
+ * @brief      向全部顶层控件广播调色板变化并触发重绘。
+ * @details    对标 QApplicationPrivate::handlePaletteChanged：向顶层控件
+ *             发送 ApplicationPaletteChange 事件并请求重绘。控件层
+ *             XWidget_palette() 在每次绘制时实时解析应用调色板
+ *             （无显式 setPalette 的控件随应用整体换肤），因此更新
+ *             顶层控件脏区即完成全树重绘；事件本身供控件级监听者
+ *             刷新内部调色板缓存（当前无消费者，与 Qt 事件面一致）。
+ *             仅顶层粒度广播为最小实现（Qt 逐控件发送，本框架单窗口
+ *             后备存储模型下顶层脏区已覆盖整棵控件树）。
+ */
+static void XGuiApplication_broadcastTopLevelPaletteChanged(void)
+{
+#if XAPPLICATION_ON && XWIDGET_ON
+    XVector* topLevel;
+    size_t i;
+    size_t n;
+    topLevel = XApplication_topLevelWidgets();
+    if (!topLevel) return;
+    n = XVector_size_base((const XContainer*)topLevel);
+    for (i = 0; i < n; ++i) {
+        XWidget* w = XVector_At_Base(topLevel, (int64_t)i, XWidget*);
+        if (!w) continue;
+        {
+            /* 栈区事件：sendEvent 不取得所有权（对标 Qt sendEvent 语义）。 */
+            XEvent paletteEvent;
+            XEvent_init(&paletteEvent, XEVENT_TYPE_APPLICATION_PALETTE_CHANGE);
+            XGuiApplication_sendEvent((XObject*)w, &paletteEvent);
+        }
+        XWidget_update(w);
+    }
+    /* 应用级调色板广播的保留层批量失效（树中保留层不随顶层 update
+       自动失效——缓存 blit 跳过 paintEvent 派发，需显式命中）。 */
+#if XWIDGET_ON
+    XWidget_invalidateAllRetainedLayers();
+#endif
+    XVector_delete_base((XClass*)topLevel);
+#endif /* XAPPLICATION_ON && XWIDGET_ON */
+}
+
+#if XSTYLEHINTS_ON
+/**
+ * @brief      将应用调色板对齐到指定颜色方案的标准调色板（内部）。
+ * @details    深色 scheme 用内置深色标准组、浅色/未知用浅色标准组
+ *             （对标 Qt 6.8 qt_fusionPalette 的 darkAppearance 分支：
+ *             Unknown 与 Light 同走浅色路径）。
+ * @return     调色板发生变化返回 true。
+ */
+static bool XGuiApplication_applyStandardPaletteForScheme(
+        XGuiApplication* app, XStyleHintsColorScheme scheme)
+{
+    XPalette next;
+    if (scheme == XStyleHintsColorScheme_Dark)
+        XPalette_init_dark(&next);
+    else
+        XPalette_init_default(&next);
+    if (XPalette_isEqual(&next, &app->m_palette))
+        return false;
+    XPalette_copy(&app->m_palette, &next);
+    return true;
+}
+
+/** @brief colorSchemeChanged 联动槽：深浅色翻转时切换标准调色板并广播。
+ *         对标 QGuiApplicationPrivate::handleThemeChanged → updatePalette：
+ *         平台主题颜色方案变化时应用调色板按 StandardPalette 深浅语义
+ *         重建，再经 handlePaletteChanged 传播。两道守卫（对标 Qt 的
+ *         AA_SetPalette 与嵌入主题自管理扩展）任一生效即不覆盖：
+ *         - m_paletteExplicitlySet：用户显式 setPalette 过（AA_SetPalette）；
+ *         - m_paletteSchemeFollow 为 false：联动被显式关闭。 */
+static void guiApp_colorSchemeChangedSlot(XObject* sender, XVarList* args)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    XStyleHints* hints = (XStyleHints*)sender;
+    XStyleHintsColorScheme scheme;
+    (void)args;
+    if (!app) return;
+    if (app->m_paletteExplicitlySet || !app->m_paletteSchemeFollow)
+        return;
+    /* XStyleHints_setColorScheme 先落值再发射信号，单线程模型下读回
+       单例当前值即本次变化的方案（对 args 为空的程序化发射同样成立）。 */
+    scheme = XStyleHints_colorScheme(hints);
+    if (XGuiApplication_applyStandardPaletteForScheme(app, scheme)) {
+        XGuiApplication_paletteChanged_signal(app, &app->m_palette);
+        XGuiApplication_broadcastTopLevelPaletteChanged();
+    }
+}
+#endif /* XSTYLEHINTS_ON */
+
 void XGuiApplication_setPalette(const XPalette* palette)
 {
     XGuiApplication* app = XGuiApplication_instance();
@@ -917,7 +1078,13 @@ void XGuiApplication_setPalette(const XPalette* palette)
         XPalette_copy(&app->m_palette, palette);
     else
         XPalette_init_default(&app->m_palette);
+    /* 对标 Qt::AA_SetPalette：QGuiApplicationPrivate::setPalette 按
+       解析掩码置位该属性；本值类型无逐角色掩码，退化为整盘显式标志。
+       NULL 重置同为显式操作：重置为浅色标准调色板并冻结后续 theme
+       联动，语义可预期。 */
+    app->m_paletteExplicitlySet = true;
     XGuiApplication_paletteChanged_signal(app, &app->m_palette);
+    XGuiApplication_broadcastTopLevelPaletteChanged();
 }
 
 XPalette XGuiApplication_palette(void)
@@ -929,6 +1096,34 @@ XPalette XGuiApplication_palette(void)
     else
         XPalette_init_default(&out);
     return out;
+}
+
+bool XGuiApplication_paletteColorSchemeFollowEnabled(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    return app ? app->m_paletteSchemeFollow : true;
+}
+
+void XGuiApplication_setPaletteColorSchemeFollowEnabled(bool on)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    if (!app || app->m_paletteSchemeFollow == on) return;
+    app->m_paletteSchemeFollow = on;
+#if XSTYLEHINTS_ON
+    /* 重新开启且未显式 setPalette 时立即对齐当前方案：关闭期间 scheme
+       可能已翻转（对标 handleThemeChanged 在主题变化时 updatePalette
+       的即时性）；显式标志生效时保持用户调色板不动。 */
+    if (on && !app->m_paletteExplicitlySet) {
+        XStyleHints* hints = XGuiApplication_styleHints();
+        XStyleHintsColorScheme scheme = hints
+            ? XStyleHints_colorScheme(hints)
+            : XStyleHintsColorScheme_Unknown;
+        if (XGuiApplication_applyStandardPaletteForScheme(app, scheme)) {
+            XGuiApplication_paletteChanged_signal(app, &app->m_palette);
+            XGuiApplication_broadcastTopLevelPaletteChanged();
+        }
+    }
+#endif /* XSTYLEHINTS_ON */
 }
 #endif /* XPALETTE_ON */
 
@@ -1014,6 +1209,35 @@ bool XGuiApplication_isLeftToRight(void)
     return XGuiApplication_layoutDirection() == XGuiLayoutDirection_LeftToRight;
 }
 
+/* ==================== 平台区域设置 ==================== */
+
+void XGuiApplication_setPlatformLocaleUtf8(const char* localeUtf8)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    if (!app) return;
+    if (localeUtf8 && localeUtf8[0]) {
+        size_t i;
+        /* 缓冲定长 64 字节：BCP 47 名称很短，越界截断即可，不引入分配。 */
+        for (i = 0; i < sizeof(app->m_platformLocale) - 1 &&
+                    localeUtf8[i] != '\0'; ++i)
+            app->m_platformLocale[i] = localeUtf8[i];
+        app->m_platformLocale[i] = '\0';
+    } else {
+        /* NULL/空串等价清除：Auto 方向解析退回平台输入上下文。 */
+        app->m_platformLocale[0] = '\0';
+    }
+    /* 请求方向为 Auto 时按新区域重解析有效方向（值变化时内部发射
+       layoutDirectionChanged）；显式 LTR/RTL 请求在该函数内部直接
+       短路，不受区域设置影响。 */
+    XGuiApplication_notifyPlatformInputDirectionChanged();
+}
+
+const char* XGuiApplication_platformLocaleUtf8(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    return app ? app->m_platformLocale : NULL;
+}
+
 /* ==================== 样式提示 / 剪贴板 / 输入法 ==================== */
 
 #if XSTYLEHINTS_ON
@@ -1023,6 +1247,18 @@ XStyleHints* XGuiApplication_styleHints(void)
     if (!app) return NULL;
     if (!app->m_styleHints) {
         app->m_styleHints = XStyleHints_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+#if XPALETTE_ON
+        /* theme×调色板联动入口：平台 handleThemeChanged（WSI）→
+           XStyleHints_setColorScheme → colorSchemeChanged → 联动槽完成
+           深浅标准调色板切换（对标 QGuiApplicationPrivate::
+           handleThemeChanged → updatePalette 链）。传 NULL 取信号标识，
+           不触发发射（信号函数 self 为 NULL 时仅返回地址）。 */
+        if (app->m_styleHints)
+            XObject_connect_2((XObject*)app->m_styleHints,
+                              (size_t)XStyleHints_colorSchemeChanged_signal(
+                                  NULL, XStyleHintsColorScheme_Unknown),
+                              guiApp_colorSchemeChangedSlot);
+#endif /* XPALETTE_ON */
 #if XPLATFORMINTEGRATION_ON
         /* 注入集成层，使平台 styleHint() 可映射单例状态。 */
         if (app->m_platformIntegration)

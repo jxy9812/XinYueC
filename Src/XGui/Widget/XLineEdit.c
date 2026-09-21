@@ -53,6 +53,9 @@
 #include "XClipboard.h"
 #include "XGuiApplication.h"
 #include "XTextClipboard.h"
+#if XINPUTMETHOD_ON
+#include "XVariant.h"
+#endif /* XINPUTMETHOD_ON */
 #if XMENU_ON
 #include "XMenu.h"
 #include "XTextMenu.h"
@@ -1001,12 +1004,30 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
         XPoint origin;
         int flags = (int)(XLineControlDrawFlag_Text |
                           XLineControlDrawFlag_Selections);
+        int textEndPx = XWidget_width((XWidget*)self) -
+                        (edit->m_frame ? 4 : 2) - edit->m_textMargins.right -
+                        ((edit->m_clearButtonEnabled &&
+                          XLineControl_text(edit->m_control)[0]) ? 18 : 0);
+        XRect textClip;
+        /* 水平滚动后 offset 左侧的已滚出文本会画到边框区外——对标
+           QLineEdit：正文/选区/光标一律裁剪到文本矩形内绘制。 */
+        textClip.x = tx;
+        textClip.y = 0;
+        textClip.width = (textEndPx > tx) ? (textEndPx - tx) : 1;
+        textClip.height = r.height;
         origin.x = tx - edit->m_viewOffset;
         origin.y = ty;
         /* 光标：焦点内常显（blinkStatus 由 focusIn 置位）。 */
         if (XWidget_hasFocus(self))
             flags |= (int)XLineControlDrawFlag_Cursor;
-        XLineControl_draw(edit->m_control, &painter, &origin, NULL, flags);
+        XPainter_save(&painter);
+        XPainter_setClipRect(&painter, &textClip,
+                             XPainterClipOperation_IntersectClip);
+        /* 控制器 draw 自带 clip 参数（裁剪矩形，对标 QLineEdit 传
+           viewport）——双保险：painter 级与控制器级一致。 */
+        XLineControl_draw(edit->m_control, &painter, &origin, &textClip,
+                          flags);
+        XPainter_restore(&painter);
     }
     /* 占位提示（空文本时灰显；空判定读控制器，对标 Qt 壳绘制）。 */
     if (xlineedit_ctlRawText(edit)[0] == '\0' && edit->m_placeholder &&
@@ -1176,6 +1197,218 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
 
 /* ==================== 生命周期 ==================== */
 
+#if XINPUTMETHOD_ON
+/** @brief IME 文本查询限幅（字节；与 XTextControl_inputMethodQuery 的
+ *         前后文默认限幅一致）。 */
+#define XLINEEDIT_IM_TEXT_LIMIT 1024
+
+/** @brief [start, start+len) 字节区间深拷（XMemory 体系承载，调用方
+ *         XFree_System 释放）。 */
+static char* xlineedit_dupRange(const char* text, int start, int len)
+{
+    char* out;
+    if (!text || start < 0 || len <= 0) return NULL;
+    out = (char*)XMalloc_System((size_t)len + 1);
+    if (!out) return NULL;
+    XMemcpy(out, text + start, (size_t)len);
+    out[len] = '\0';
+    return out;
+}
+
+/** @brief 选区锚点字节偏移（无选区=光标；对标 QWidgetLineControl 的
+ *         anchor 语义：锚点为选区未随光标移动的一端）。 */
+static int xlineedit_anchorPos(const XLineControl* ctl)
+{
+    if (!ctl) return 0;
+    if (!XLineControl_hasSelectedText(ctl)) return XLineControl_cursor(ctl);
+    return (XLineControl_cursor(ctl) == XLineControl_selectionStart(ctl))
+               ? XLineControl_selectionEnd(ctl)
+               : XLineControl_selectionStart(ctl);
+}
+
+/** @brief 锚点矩形（控件局部坐标）：x 取控制器 cursorToX(anchor) 后加
+ *         contents 偏移，纵向行框与 XLineEdit_cursorRect 同口径。 */
+static XRect xlineedit_anchorRectWidget(const XLineEdit* self)
+{
+    XRect rect;
+    const XFont* font;
+    int lineH;
+    int ty;
+    if (!self || !self->m_control) {
+        XRect_init(&rect, 0, 0, 0, 0);
+        return rect;
+    }
+    font = &((XWidget*)self)->m_font;
+    lineH = XPainter_textHeight(font);
+    if (lineH < 14) lineH = 14;
+    xlineedit_syncControlFont((XLineEdit*)self);
+    ty = (XWidget_height((XWidget*)self) - lineH) / 2;
+    rect.x = xlineedit_textStartX(self) - self->m_viewOffset +
+             XLineControl_cursorToX(self->m_control,
+                                    xlineedit_anchorPos(self->m_control));
+    rect.y = ty + 1;
+    rect.width = XLINEEDIT_CURSOR_W;
+    rect.height = lineH - 2;
+    return rect;
+}
+
+/** @brief 基类默认查询复刻（对标 QWidget::inputMethodQuery 默认实现）。
+ *  @note  基类实现为 XWidget.c 内部静态，虚槽重载后无法显式回调，按其
+ *         文档契约逐项复刻；其余查询项返回 NULL（等价无效 QVariant）。 */
+static XVariant* xlineedit_inputMethodQueryBase(const XWidget* self,
+                                                XInputMethodQuery query)
+{
+    if (!self) return NULL;
+    switch (query) {
+    case XInputMethodQuery_ImCursorRectangle: {
+        XRectF rect;
+        rect.x = (float)XWidget_width(self) / 2.0f;
+        rect.y = 0.0f;
+        rect.width = 1.0f;
+        rect.height = (float)XWidget_height(self);
+        return XVariant_create(&rect, sizeof(rect), XVariantType_User);
+    }
+    case XInputMethodQuery_ImInputItemClipRectangle: {
+        XRect rect = XWidget_rect(self);
+        XRectF rectF;
+        rectF.x = (float)rect.x;
+        rectF.y = (float)rect.y;
+        rectF.width = (float)rect.width;
+        rectF.height = (float)rect.height;
+        return XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+    }
+    case XInputMethodQuery_ImHints: {
+        int32_t value = (int32_t)XWidget_inputMethodHints(self);
+        return XVariant_create(&value, sizeof(value), XVariantType_Int32);
+    }
+    case XInputMethodQuery_ImEnabled: {
+        bool enabled = true;
+        return XVariant_create(&enabled, sizeof(enabled), XVariantType_Bool);
+    }
+    default:
+        return NULL;
+    }
+}
+
+/**
+ * @brief      输入法查询虚槽：转发控制器真实状态（对标 QLineEdit::
+ *             inputMethodQuery 委托 QWidgetLineControl::inputMethodQuery）。
+ * @details    ImCursorRectangle/ImAnchorRectangle 按壳 contents 偏移
+ *             （textStartX − m_viewOffset + 控制器 cursorToX）换算为
+ *             控件局部矩形，纵向行框与 XLineEdit_cursorRect 同口径
+ *             （对标 Qt 把控制器 cursorRect 平移滚动偏移后上送）；
+ *             ImSurroundingText/ImCursorPosition/ImAnchorPosition/
+ *             ImAbsolutePosition/ImCurrentSelection/ImTextBeforeCursor/
+ *             ImTextAfterCursor/ImMaximumTextLength 直取控制器对应状态
+ *             ——位置一律字节偏移，与 surroundingText 字节索引同基
+ *             （平铺承载约定；壳公开 API 的字符索引口径不用于 IME）。
+ *             ImInputItemClipRectangle/ImHints/ImEnabled 走基类默认复刻；
+ *             其余查询项与控制器缺席返回 NULL（等价无效 QVariant）。
+ */
+static XVariant* VXLineEdit_inputMethodQuery(const XWidget* self,
+                                             XInputMethodQuery query)
+{
+    XLineEdit* edit = (XLineEdit*)self;
+    XLineControl* ctl;
+    if (!edit || !edit->m_control)
+        return xlineedit_inputMethodQueryBase(self, query);
+    ctl = edit->m_control;
+    switch (query) {
+    case XInputMethodQuery_ImCursorRectangle: {
+        XRect rect = XLineEdit_cursorRect(edit);
+        XRectF rectF;
+        rectF.x = (float)rect.x;
+        rectF.y = (float)rect.y;
+        rectF.width = (float)rect.width;
+        rectF.height = (float)rect.height;
+        return XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+    }
+    case XInputMethodQuery_ImAnchorRectangle: {
+        XRect rect = xlineedit_anchorRectWidget(edit);
+        XRectF rectF;
+        rectF.x = (float)rect.x;
+        rectF.y = (float)rect.y;
+        rectF.width = (float)rect.width;
+        rectF.height = (float)rect.height;
+        return XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+    }
+    case XInputMethodQuery_ImCursorPosition: {
+        int32_t pos = (int32_t)XLineControl_cursor(ctl);
+        return XVariant_create(&pos, sizeof(pos), XVariantType_Int32);
+    }
+    case XInputMethodQuery_ImAnchorPosition: {
+        int32_t anchor = (int32_t)xlineedit_anchorPos(ctl);
+        return XVariant_create(&anchor, sizeof(anchor), XVariantType_Int32);
+    }
+    case XInputMethodQuery_ImAbsolutePosition: {
+        /* 单行文档无块结构：绝对位置 == 光标位置（对标 QLineEdit）。 */
+        int32_t pos = (int32_t)XLineControl_cursor(ctl);
+        return XVariant_create(&pos, sizeof(pos), XVariantType_Int32);
+    }
+    case XInputMethodQuery_ImSurroundingText:
+        /* 对标 QWidgetLineControl ImSurroundingText=m_text；借用串经
+           XString_toVariant_utf8 深拷进变体，控件态不被外部持有。 */
+        return XString_toVariant_utf8(XLineControl_surroundingText(ctl));
+    case XInputMethodQuery_ImCurrentSelection: {
+        /* 对标 QWidgetLineControl ImCurrentSelection=selectedText()；
+           无选区返回 NULL（等价无效 QVariant，同 Qt 无选区行为）。 */
+        char* sel = XLineControl_selectedText(ctl);
+        XVariant* var = sel ? XString_toVariant_utf8(sel) : NULL;
+        if (sel) XFree_System(sel);
+        return var;
+    }
+    case XInputMethodQuery_ImTextBeforeCursor: {
+        const char* text = XLineControl_text(ctl);
+        int pos = XLineControl_cursor(ctl);
+        int textLen = XLineControl_textEnd(ctl);
+        int from;
+        char* slice;
+        XVariant* var;
+        if (!text) return NULL;
+        if (pos > textLen) pos = textLen;
+        if (pos <= 0) return NULL;
+        from = (pos > XLINEEDIT_IM_TEXT_LIMIT)
+                   ? pos - XLINEEDIT_IM_TEXT_LIMIT : 0;
+        slice = xlineedit_dupRange(text, from, pos - from);
+        if (!slice) return NULL;
+        var = XString_toVariant_utf8(slice);
+        XFree_System(slice);
+        return var;
+    }
+    case XInputMethodQuery_ImTextAfterCursor: {
+        const char* text = XLineControl_text(ctl);
+        int pos = XLineControl_cursor(ctl);
+        int textLen = XLineControl_textEnd(ctl);
+        int to;
+        char* slice;
+        XVariant* var;
+        if (!text) return NULL;
+        if (pos < 0) pos = 0;
+        if (pos > textLen) pos = textLen;
+        to = textLen - pos > XLINEEDIT_IM_TEXT_LIMIT
+                 ? pos + XLINEEDIT_IM_TEXT_LIMIT
+                 : textLen;
+        if (to <= pos) return NULL;
+        slice = xlineedit_dupRange(text, pos, to - pos);
+        if (!slice) return NULL;
+        var = XString_toVariant_utf8(slice);
+        XFree_System(slice);
+        return var;
+    }
+    case XInputMethodQuery_ImMaximumTextLength: {
+        /* 对标 QLineEdit::inputMethodQuery 返回 maximumLength()（数值
+           上限）：壳 0=不限按控制器实际承载 32767 上报，避免 0 被消费方
+           误读为不允许输入。 */
+        int32_t maxLen = (int32_t)XLineEdit_maxLength(edit);
+        if (maxLen <= 0) maxLen = XLINEEDIT_UNLIMITED_MAX_LENGTH;
+        return XVariant_create(&maxLen, sizeof(maxLen), XVariantType_Int32);
+    }
+    default:
+        return xlineedit_inputMethodQueryBase(self, query);
+    }
+}
+#endif /* XINPUTMETHOD_ON */
+
 XVtable* XLineEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XLineEdit)
@@ -1183,6 +1416,11 @@ XVtable* XLineEdit_class_init(void)
 
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXLineEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VXLineEdit_inputMethodEvent);
+#if XINPUTMETHOD_ON
+    /* 输入法查询虚槽：转发控制器真实状态（对标 QLineEdit::
+       inputMethodQuery 委托 QWidgetLineControl；基类兜底只回居中假矩形）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery, VXLineEdit_inputMethodQuery);
+#endif /* XINPUTMETHOD_ON */
 #if XMENU_ON
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent,
                              VXLineEdit_contextMenuEvent);

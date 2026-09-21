@@ -64,6 +64,9 @@
 #include "XStringUtils.h"
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+#include "XWindowSystemInterface.h"
+#endif
 #endif /* XWINDOWEVENT_ON */
 #include "XGuiApplication.h"
 #include "XImage.h"
@@ -71,9 +74,32 @@
 #include "XPaintDevice.h"
 #include "XCoreApplication.h"
 #include "XBackingStore.h"
+#include "XPlatformBackingStore.h"
 
 /* TEMP：paintTree 派发 paintEvent 时的上屏目标图像（表面裁剪限定用）。 */
 static XImage* g_paintTargetImage;
+/* 静态内容保留层前向声明：失效联动（update/几何/可见性路径调用）、
+ * 生命周期挂钩与 paintTree 绘制钩子，实现体在效果钩子之后的保留层小节。 */
+static void xwidget_retainedDropCache(XWidget* self);
+static void xwidget_retainedDisable(XWidget* self);
+static void xwidget_retainedInvalidateForRect(XWidget* origin);
+static void xwidget_retainedInvalidateChain(XWidget* origin);
+static bool xwidget_paintRetainedLayer(XWidget* widget, const XRegion* paintRegion);
+
+/** @brief 保留层 LRU 登记节点（双向链表；g_retainedHead=最近使用，
+ *         g_retainedTail=最久未用，两端操作均 O(1)）。定义前置：失效
+ *         联动与移动构造在文件前段即访问登记表。 */
+struct XWidgetRetainedNode {
+    struct XWidgetRetainedNode* m_prev;
+    struct XWidgetRetainedNode* m_next;
+    XWidget* m_widget;            /**< 借用；控件析构/移动时反向改绑或摘除。 */
+};
+
+static XWidgetRetainedNode* g_retainedHead;   /**< MRU 端。 */
+static XWidgetRetainedNode* g_retainedTail;   /**< LRU 端。 */
+static int g_retainedRegistered;              /**< 登记数；保留层全局总开关判断。 */
+static size_t g_retainedBytes;                /**< 当前缓存字节总量（含失效未释放）。 */
+static uint64_t g_retainedStampClock;         /**< 单调访问时间戳时钟。 */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #include "XGpuRenderBackend.h"
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -160,6 +186,9 @@ typedef struct XFocusProxyEntry
 /** @brief 焦点代理注册表头（单链表；条目随 owner/proxy 生命周期登记清理）。 */
 static XFocusProxyEntry* g_focusProxyEntries = NULL;
 
+
+
+
 /* ==================== 静态函数前向声明 ==================== */
 
 /** @brief 属性位置位/清位（对标 QWidget::setAttribute 内部实现）。 */
@@ -203,6 +232,8 @@ static void XWidget_clearUnderMouseRecursive(XWidget* self);
 static void XWidget_addDirty(XWidget* self, const XRect* rect);
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
+static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
+                                           const XRegion* paintRegion);
 static void XRegion_translateInline(XRegion* region, int dx, int dy);
 
 /* ==================== 通用辅助函数 ==================== */
@@ -348,6 +379,11 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
     }
     self->m_visible = newVisible ? 1 : 0;
     if (newVisible != oldVisible) {
+        /* 可见性变化联动保留层：该矩形区域的目标像素内容改变（显示
+           前/隐藏后由父级背景与邻居填充），命中链上与交叠保留层全部
+           作废。 */
+        if (g_retainedRegistered > 0)
+            xwidget_retainedInvalidateForRect(self);
         if (newVisible) {
             XWidget_sendShowHide(self, true);
         } else {
@@ -410,6 +446,9 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
         }
         if (newVisible == oldVisible) continue;
         widget->m_visible = newVisible ? 1 : 0;
+        /* 子树可见性传播联动保留层：生效可见翻转即像素内容改变。 */
+        if (g_retainedRegistered > 0)
+            xwidget_retainedInvalidateForRect(widget);
         if (newVisible) {
             if (widget->m_windowHandle) {
                 if (!XWidget_postPaintEvent(widget))
@@ -593,6 +632,11 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
 #if XCURSOR_ON
     if (top->m_cursor && XWindow_setCursor)
         XWindow_setCursor(window, top->m_cursor);
+    /* 惰性建窗补生效：setCursor 先于窗口创建时（平台后端尚未注册或
+       winId 未就绪而静默），窗口建立后补做一次原生应用。 */
+    if (top->m_cursor)
+        (void)XCursor_applyToWindow((uintptr_t)XWindow_winId(window),
+                                    top->m_cursor);
 #endif /* XCURSOR_ON */
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     XApplication_registerTopLevelWidget(top);
@@ -694,6 +738,11 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     bool copiedSource;
     if (!self || !region || !self->m_updatesEnabled) return;
     self->m_contentCacheDirty = true;
+    /* 保留层失效联动：update/updateRect/updateRegion/repaint 全部经此
+       入口，沿父链命中保留层祖先、并与脏区相交的其他保留层一并作废。
+       未启用保留层时仅一次全局计数布尔判断（零回归红线）。 */
+    if (g_retainedRegistered > 0)
+        xwidget_retainedInvalidateForRect(self);
     top = XWidget_topLevel(self);
     if (!top) return;
     /* 脏区恒按顶层后备存储坐标折算：render/grab 重定向期间 paintEvent
@@ -1146,13 +1195,16 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     return XEvent_isAccepted(event);
 }
 
-/** @brief 键盘事件投递：优先焦点控件，其次顶层控件。 */
+/** @brief 键盘事件投递：优先焦点控件，其次顶层控件；未接受沿父链上抛。 */
 static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
 {
     XWidget* target;
+    XEventType type;
+    bool bubble;
     if (!top || !event) return false;
+    type = XEvent_type(event);
     /* 快捷键优先（对标 QShortcutMap：按键先过快捷键表，命中即消费）。 */
-    if (XEvent_type(event) == XEVENT_TYPE_KEY_PRESS) {
+    if (type == XEVENT_TYPE_KEY_PRESS) {
         XShortcut* sc = XShortcut_match(
             (int)((XKeyEvent*)event)->m_key, (XShortcutContext)0,
             g_focusWidget);
@@ -1165,8 +1217,26 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
     if (!target || XWidget_topLevel(target) != top)
         target = g_focusWidget;
     if (!target || XWidget_topLevel(target) != top) target = (XWidget*)top;
+    /* 仅按键按下/释放参与父链上抛；输入法事件仍单点投递（对标 Qt：
+       QInputMethodEvent 只发焦点控件，不做父链传播）。键盘抓取
+       （g_keyboardGrabWidget）仅决定起点，沿用既有目标选择逻辑。 */
+    bubble = (type == XEVENT_TYPE_KEY_PRESS ||
+              type == XEVENT_TYPE_KEY_RELEASE);
     if (target) {
-        XWidget_sendEvent(target, event);
+        XWidget* w = target;
+        while (w) {
+            XWidget_sendEvent(w, event);
+            /* 对标 Qt：焦点控件 ignore 的按键沿父链逐级重投（QKeyEvent
+               在 QApplication::notify 的父链传播），接受即止；到达顶层
+               或链中窗口型控件不再外抛。QDialog 依赖该传播实现"行编辑
+               有焦点时 Esc 也 reject"：子行编辑 ignore → 对话框
+               keyPress 收到 Esc → reject。此前仅投单个 target，ignore
+               后事件直接丢弃（复扫 P1-1；上抛范式与
+               XWidget_dispatchPointerEvent 的父链传播同口径）。 */
+            if (XEvent_isAccepted(event)) return true;
+            if (w == (XWidget*)top || w->m_isWindow) break;
+            w = XWidget_parentWidget(w);
+        }
         return XEvent_isAccepted(event);
     }
     return XWidget_event_base((XWidget*)top, event);
@@ -1234,6 +1304,11 @@ static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
     if (!mouse) return false;
     XMouseEvent_setButtons(mouse, buttons);
     XMouseEvent_setSynthesized(mouse, true); /* 合成来源标志。 */
+    /* 触摸时间戳透传：合成鼠标事件继承源触摸序列时间（对标 Qt 合成
+       QMouseEvent 继承触摸 timestamp 语义）；无同步触摸派发时为 0。 */
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+    XMouseEvent_setTimestamp(mouse, XWindowSystemInterface_touchTimestamp());
+#endif
     accepted = XWidget_dispatchPointerEvent(top, (XEvent*)mouse);
     XEvent_delete_base((XEvent*)mouse);
     return accepted;
@@ -1734,6 +1809,12 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     XRegion_init(&self->m_staticContents);
     self->m_contentCache = NULL;
     self->m_contentCacheDirty = true;
+    /* 保留层默认全关（显式选择加入；零回归红线）。 */
+    self->m_retainedCache = NULL;
+    self->m_retainedNode = NULL;
+    self->m_retainedStamp = 0;
+    self->m_retainedEnabled = false;
+    self->m_retainedValid = false;
     XRegion_init(&self->m_mask);
 #if XPAINTDEVICE_ON
     XPaintDevice_init(&self->m_paintDevice, XPaintDeviceType_Widget, self,
@@ -1930,6 +2011,8 @@ static void VXWidget_deinit(XWidget* self)
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
     XWidget_freeContentCache(self);
+    /* 保留层登记节点持有本控件借用指针，析构必须先摘除再释放缓存。 */
+    xwidget_retainedDisable(self);
     XRegion_deinit(&self->m_mask);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
@@ -1997,6 +2080,9 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
         self->m_graphicsEffect = NULL;
     }
     XWidget_freeContentCache(self);
+    /* 保留层为运行期显式选择加入状态：拷贝前释放自身登记，且不继承
+       目标保留状态（与图形效果同一“不随拷贝复制”家族）。 */
+    xwidget_retainedDisable(self);
     /* 复制字段（m_class 基类、m_windowHandle、m_backingStore 不复制）。 */
     self->m_windowFlags = other->m_windowFlags;
     self->m_attributes = other->m_attributes;
@@ -2112,6 +2198,20 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     other->m_contentCache = NULL;
     self->m_contentCacheDirty = other->m_contentCacheDirty;
     other->m_contentCacheDirty = true;
+    /* 保留层状态随移动转移：缓存/开关/时间戳平移，登记节点保留在
+       LRU 链上但反指改绑目标控件（源控件归零，防双重登记）。 */
+    self->m_retainedCache = other->m_retainedCache;
+    other->m_retainedCache = NULL;
+    self->m_retainedValid = other->m_retainedValid;
+    other->m_retainedValid = false;
+    self->m_retainedEnabled = other->m_retainedEnabled;
+    other->m_retainedEnabled = false;
+    self->m_retainedStamp = other->m_retainedStamp;
+    other->m_retainedStamp = 0;
+    self->m_retainedNode = other->m_retainedNode;
+    if (self->m_retainedNode)
+        self->m_retainedNode->m_widget = self;
+    other->m_retainedNode = NULL;
 #if XWINDOW_ON && XACCESSIBLE_ON
     self->m_accessible = XAccessible_createForWidget(self);
     if (other->m_accessible) {
@@ -2273,10 +2373,15 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
                 }
             }
         }
-        return true;
+        /* 对标 QWidget::event：键盘虚槽返回后保留事件接受状态，由上层
+           派发（XWidget_dispatchKeyEvent）按 accept/ignore 决定是否沿
+           父链上抛。此前无条件 return true 抹平接受状态，ignore 的
+           按键被当作已消费，父链传播无从发起（复扫 P1-1）。 */
+        return XEvent_isAccepted(event);
     case XEVENT_TYPE_KEY_RELEASE:
         XWidget_keyReleaseEvent_base(self, event);
-        return true;
+        /* 同 KEY_PRESS：保留接受状态供父链传播判定（复扫 P1-1）。 */
+        return XEvent_isAccepted(event);
     case XEVENT_TYPE_INPUT_METHOD:
         XWidget_inputMethodEvent_base(self, event);
         return true;
@@ -2625,9 +2730,14 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
         XWidget* parent = XWidget_parentWidget(self);
         if (parent) {
             XRect dirty = XRect_united(&old, &self->m_windowRect);
+            /* 经 addDirtyRegion 联动父链与兄弟交叠保留层。 */
             XWidget_updateRect(parent, &dirty);
         }
     }
+    /* 几何变化联动自身与祖先保留层（缓存尺寸/内容随几何失效；父级
+       一侧已由上方 updateRect → addDirtyRegion 的保留层联动覆盖）。 */
+    if (g_retainedRegistered > 0)
+        xwidget_retainedInvalidateChain(self);
 }
 
 /** @brief 若为顶层且桥接窗口存在，同步平台窗口几何。 */
@@ -4619,8 +4729,15 @@ void XWidget_setCursor(XWidget* self, const XCursor* cursor)
     XCopy(self->m_cursor, cursor);
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetCursor, true);
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
-    if (top && top->m_windowHandle)
-        XWindow_setCursor((XWindow*)top->m_windowHandle, self->m_cursor);
+    if (top && top->m_windowHandle) {
+        XWindow* window = (XWindow*)top->m_windowHandle;
+        XWindow_setCursor(window, self->m_cursor);
+        /* 平台生效路径：形状/自定义光标映射为原生光标并 XDefineCursor
+           到窗口（XCursor 平台后端；无后端/窗口未映射时静默，存储已
+           完成）。形状变化时重复调用即更新生效光标。 */
+        (void)XCursor_applyToWindow((uintptr_t)XWindow_winId(window),
+                                    self->m_cursor);
+    }
 #else
     (void)self;
     (void)cursor;
@@ -4638,8 +4755,12 @@ void XWidget_unsetCursor(XWidget* self)
     }
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetCursor, false);
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
-    if (top && top->m_windowHandle)
-        XWindow_unsetCursor((XWindow*)top->m_windowHandle);
+    if (top && top->m_windowHandle) {
+        XWindow* window = (XWindow*)top->m_windowHandle;
+        XWindow_unsetCursor(window);
+        /* 平台清除路径：XUndefineCursor 恢复窗口默认光标（静默语义同上）。 */
+        (void)XCursor_clearForWindow((uintptr_t)XWindow_winId(window));
+    }
 #else
     (void)self;
 #endif /* XCURSOR_ON */
@@ -5388,6 +5509,33 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
         XRegion_deinit(&maskClipped);
         return;
     }
+    /* 静态内容保留层：先于效果钩子检查（保留的是未施效输出；同控件
+       效果与保留同开时效果优先——setContentRetained 与 setGraphicsEffect
+       已强制互斥，此处效果位测试为防御兜底）。仅显式开启保留层的控件
+       进入本路径（m_retainedEnabled 门）；未启用保留层的运行态在此仅剩
+       一次 g_retainedRegistered 全局计数判断（短路），热点路径零额外
+       开销（零回归红线）。 */
+    if (g_retainedRegistered > 0 &&
+        widget->m_retainedEnabled &&
+        widget->m_updatesEnabled && !widget->m_inPaintEvent &&
+        !(widget->m_graphicsEffect &&
+          XGraphicsEffect_isEnabled(widget->m_graphicsEffect)) &&
+        xwidget_paintRetainedLayer(widget, paintRegion)) {
+        XRegion_deinit(&clipped);
+        XRegion_deinit(&maskClipped);
+        return;
+    }
+    /* 效果挂接渲染段（对标 Qt drawWidget 的 graphics effect 分支）：控件
+       携带启用中的效果时，本控件+可见子树改走离屏效果管线（source 快照
+       →效果处理→回贴），成功即完成本子树绘制并跳过常规派发；失败（无
+       绘制目标/快照失败等）回退常规路径。 */
+    if (widget->m_updatesEnabled && !widget->m_inPaintEvent &&
+        widget->m_graphicsEffect &&
+        xwidget_drawWithGraphicsEffect(widget, paintRegion)) {
+        XRegion_deinit(&clipped);
+        XRegion_deinit(&maskClipped);
+        return;
+    }
     if (widget->m_updatesEnabled && !widget->m_inPaintEvent) {
         XPaintEvent event;
         widget->m_inPaintEvent = 1;
@@ -5588,6 +5736,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         {
             XRect tile;
             XRegion tileRegion;
+            /* 攒批入口经平台句柄直达（XBackingStore 公共包装不在本模块
+               所有权内；present 决策全部由平台层攒批策略触发）。 */
+            XPlatformBackingStore* platform = XBackingStore_handle(store);
             XRegion_init(&tileRegion);
             while (XBackingStore_nextTile(store, &tile)) {
                 /* XWidget_paintTree 接收的是区域集合。不能把 XRect 直接
@@ -5595,10 +5746,18 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 XRegion_clear(&tileRegion);
                 XRegion_addRect(&tileRegion, &tile);
                 XWidget_paintTree(top, &tileRegion);
-                XBackingStore_flushTile(store, (XWindow*)top->m_windowHandle,
-                                        &tile, NULL);
+                /* 请求攒批（对标 Qt 高频局部更新按帧合批）：本调用只把
+                   tile 内容并入攒批缓冲，present 由攒批决策触发（相邻
+                   合并/超 1/4 屏预算/16ms 帧界）；攒批关闭时退化为逐片
+                   即时上屏。 */
+                XPlatformBackingStore_flushTileBatched(
+                    platform, (XWindow*)top->m_windowHandle, &tile, NULL);
             }
             XRegion_deinit(&tileRegion);
+            /* 帧末显式边界强制收批：所有已请求攒批的 tile 在本帧内终究
+               上屏（最终一致性，不丢帧）。 */
+            XPlatformBackingStore_flushPendingTiles(
+                platform, (XWindow*)top->m_windowHandle);
             XBackingStore_endPaint(store);
         }
 #else
@@ -5797,13 +5956,328 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
 {
     if (!self) return;
     if (self->m_graphicsEffect == effect) return;
-    /* Qt：已有效果先删除再安装新效果，控件取得新效果所有权；
-       渲染应用为后续扩展（XGraphicsEffect.h @note）。 */
+    /* Qt：已有效果先删除再安装新效果，控件取得新效果所有权。 */
     if (self->m_graphicsEffect) {
+        XGraphicsEffect_setSource(self->m_graphicsEffect, NULL);
         XGraphicsEffect_delete_base(self->m_graphicsEffect);
         self->m_graphicsEffect = NULL;
     }
     self->m_graphicsEffect = effect;
+    if (effect) {
+        /* 图形效果与保留层互斥（效果优先）：保留层缓存的是未施效输出，
+           同控件二者不可同开——挂接效果即放弃保留（释放缓存与 LRU 登记，
+           控件退回常规绘制）。 */
+        if (self->m_retainedEnabled)
+            xwidget_retainedDisable(self);
+        /* 对标 Qt setGraphicsEffect：挂接即建立 source() 关联，并经
+           sourceChanged（基类默认转 update()，覆盖效果外扩包围盒）请求
+           一次重绘，保证效果安装即呈现。 */
+        XGraphicsEffect_setSource(effect, self);
+        XGraphicsEffect_sourceChanged(
+            effect, XGraphicsEffectChange_ContentsChanged |
+                        XGraphicsEffectChange_GeometryChanged);
+    }
+}
+
+/**
+ * @brief 效果挂接绘制入口（XWidget 效果段私有；对标 Qt
+ *        QWidgetPrivate::drawWidget 的 graphics effect 分支）。
+ * @details paintTree 常规派发前调用：控件带启用效果时，先把本控件+可见
+ *          子树同步渲染到控件全幅的未施效离屏快照（对标 Qt source 绘制
+ *          不含效果自身；期间临时摘除本控件效果以防 paintTree 递归重入
+ *          效果分支），再交 XGraphicsEffect_drawWidget 完成"脏区∩控件
+ *          区域"的效果处理与回贴。快照恒走 createSnapshotImage+
+ *          renderSubtree 同步重绘路径，不读后备存储旧帧——旧帧可能已
+ *          含上一轮效果输出，重复施效会逐帧加深。
+ * @param      widget 目标控件；不可为 NULL。
+ * @param      paintRegion 本控件局部坐标绘制区域；不可为 NULL。
+ * @return true=效果路径已完成本子树绘制；false=回退常规绘制。
+ */
+static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
+                                           const XRegion* paintRegion)
+{
+    XGraphicsEffect* effect;
+    XImage* snapshot;
+    bool rendered;
+    bool drawn;
+    if (!widget || !paintRegion || !widget->m_graphicsEffect) return false;
+    effect = widget->m_graphicsEffect;
+    if (!XGraphicsEffect_isEnabled(effect)) return false;
+    snapshot = xwidget_createSnapshotImage(XWidget_width(widget),
+                                           XWidget_height(widget));
+    if (!snapshot) return false;
+    /* 临时摘除效果：source 快照绘制不得再次进入效果分支（防递归）。 */
+    widget->m_graphicsEffect = NULL;
+    rendered = xwidget_renderSubtree(widget, snapshot, 0, 0);
+    widget->m_graphicsEffect = effect;
+    if (!rendered) {
+        XImage_delete_base(snapshot);
+        return false;
+    }
+    drawn = XGraphicsEffect_drawWidget(effect, widget, snapshot, paintRegion);
+    XImage_delete_base(snapshot);
+    return drawn;
+}
+
+/* ==================== 静态内容保留层（对标 LVGL 静态内容缓存思想） ==================== */
+/* 登记节点结构与全局表定义前置在文件头部（前向声明块之后）：
+ * 失效联动（addDirtyRegion）、几何/可见性钩子与移动构造在其之前使用。 */
+
+/** @brief 保留层字节预算（XGuiConfig.h #ifndef 默认 2MB；0=禁止建立缓存）。 */
+static size_t xwidget_retainedBudget(void)
+{
+    return (size_t)(XGUI_RETAINED_LAYER_BUDGET_BYTES);
+}
+
+/** @brief 缓存图像字节量（ARGB32_Premultiplied 恒 4 字节/像素）。 */
+static size_t xwidget_retainedImageBytes(int width, int height)
+{
+    return (size_t)width * (size_t)height * 4u;
+}
+
+/** @brief 访问即刷新：登记节点移到表头（MRU）并更新访问时间戳。 */
+static void xwidget_retainedTouch(XWidget* self)
+{
+    XWidgetRetainedNode* node = self ? self->m_retainedNode : NULL;
+    if (!node || g_retainedHead == node) {
+        if (self) self->m_retainedStamp = ++g_retainedStampClock;
+        return;
+    }
+    self->m_retainedStamp = ++g_retainedStampClock;
+    if (node->m_prev) node->m_prev->m_next = node->m_next;
+    if (node->m_next) node->m_next->m_prev = node->m_prev;
+    if (g_retainedTail == node) g_retainedTail = node->m_prev;
+    node->m_prev = NULL;
+    node->m_next = g_retainedHead;
+    if (g_retainedHead) g_retainedHead->m_prev = node;
+    g_retainedHead = node;
+    if (!g_retainedTail) g_retainedTail = node;
+}
+
+/** @brief 释放缓存图像并扣减预算字节；登记与开关不动（重建时复用）。 */
+static void xwidget_retainedDropCache(XWidget* self)
+{
+    if (!self || !self->m_retainedCache) return;
+    g_retainedBytes -= xwidget_retainedImageBytes(
+        XImage_width(self->m_retainedCache),
+        XImage_height(self->m_retainedCache));
+    XImage_delete_base(self->m_retainedCache);
+    self->m_retainedCache = NULL;
+    self->m_retainedValid = false;
+}
+
+/** @brief 彻底关闭保留层：摘除登记、释放缓存、清开关（LRU 淘汰终点）。 */
+static void xwidget_retainedDisable(XWidget* self)
+{
+    XWidgetRetainedNode* node;
+    if (!self) return;
+    node = self->m_retainedNode;
+    if (node) {
+        if (node->m_prev) node->m_prev->m_next = node->m_next;
+        else g_retainedHead = node->m_next;
+        if (node->m_next) node->m_next->m_prev = node->m_prev;
+        else g_retainedTail = node->m_prev;
+        XMemory_free(node, XCLASS_DEFAULT_MEMORY_TYPE);
+        self->m_retainedNode = NULL;
+        --g_retainedRegistered;
+    }
+    xwidget_retainedDropCache(self);
+    self->m_retainedEnabled = false;
+    self->m_retainedStamp = 0;
+}
+
+/** @brief 单点失效（保持缓存内存，下次绘制重渲染并更新缓存）。 */
+static void xwidget_retainedInvalidateOne(XWidget* widget)
+{
+    if (widget && widget->m_retainedEnabled && widget->m_retainedValid)
+        widget->m_retainedValid = false;
+}
+
+/** @brief 失效 origin 自身及其保留层祖先链（子树在祖先缓存内）。 */
+static void xwidget_retainedInvalidateChain(XWidget* origin)
+{
+    XWidget* node = origin;
+    while (node) {
+        xwidget_retainedInvalidateOne(node);
+        node = (XWidget*)XObject_parent((XObject*)node);
+    }
+}
+
+/**
+ * @brief 失效联动主入口：origin 子树内容/几何/可见性变化命中的保留层作废。
+ * @details 只沿父链失效（origin 自身 + 保留层祖先）：缓存画布从全透明
+ *          开始、只含子树自身渲染输出（不含背景与邻居），预乘 SourceOver
+ *          的 Porter-Duff Over 结合律保证回贴恒等于"子树输出 over 目标
+ *          既有内容"——父级背景重绘、兄弟交叠内容变化都不改变缓存语义，
+ *          无需相交扫描；这正是全窗口脏区下保留层不被误杀的关键。
+ */
+static void xwidget_retainedInvalidateForRect(XWidget* origin)
+{
+    if (!origin || g_retainedRegistered <= 0) return;
+    xwidget_retainedInvalidateChain(origin);
+}
+
+/**
+ * @brief 预算内确保 w×h 保留层缓存图像；失败/超预算返回 NULL。
+ * @details 同尺寸旧缓存直接复用；尺寸变化先扣旧账，再按 LRU 从表尾
+ *          淘汰（被淘汰控件退回常规绘制）腾位；单缓存超预算或分配
+ *          失败时返回 NULL，调用方退回常规绘制（不阻塞）。
+ */
+static XImage* xwidget_retainedEnsureCache(XWidget* self, int width, int height)
+{
+    XImage* image;
+    size_t need;
+    size_t budget;
+    if (width <= 0 || height <= 0) return NULL;
+    budget = xwidget_retainedBudget();
+    need = xwidget_retainedImageBytes(width, height);
+    if (self->m_retainedCache &&
+        XImage_width(self->m_retainedCache) == width &&
+        XImage_height(self->m_retainedCache) == height)
+        return self->m_retainedCache;
+    if (need > budget) return NULL;
+    xwidget_retainedDropCache(self);
+    /* 按访问时间戳从 LRU 端淘汰"其他"保留层腾位（本帧内 blit/重建会
+       把同树其他保留层陆续刷新为 MRU，新启用控件的节点可能恰好居于
+       LRU 端——因此只能跳过 self 挑受害者，不能一见 self 就放弃）。
+       淘汰的保留层开关一并清除（不自动重建，防抖动）。 */
+    while (g_retainedBytes + need > budget) {
+        XWidgetRetainedNode* victim;
+        victim = g_retainedTail;
+        while (victim && victim->m_widget == self)
+            victim = victim->m_prev;
+        if (!victim) break;
+        xwidget_retainedDisable(victim->m_widget);
+    }
+    if (g_retainedBytes + need > budget) return NULL;
+    image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!image) return NULL;
+    if (!XImage_reinit_ex(image, width, height,
+                          XImageFormat_ARGB32_Premultiplied)) {
+        XImage_delete_base(image);
+        return NULL;
+    }
+    /* 与 grab 快照同语义：缓存画布从全透明开始，未覆盖像素保持 0。 */
+    XImage_fillRect(image, NULL, 0u);
+    self->m_retainedCache = image;
+    g_retainedBytes += need;
+    return image;
+}
+
+/**
+ * @brief 保留层绘制入口（paintTree 效果钩子之前调用）。
+ * @details 缓存有效且脏区与控件相交：直接整幅 blit（表面裁剪限幅），
+ *          跳过自身与子树的 paintEvent 派发；缓存无效：先经
+ *          renderSubtree 同步重渲染进缓存（paintEvent 恰好派发一次，
+ *          复用效果钩子的离屏重定向闭环），再 blit。
+ *          回贴与效果回贴同一"paintImage+paintOffset+表面裁剪"闭环；
+ *          缓存未覆盖像素为全透明，预乘 SourceOver 混合对 alpha=0
+ *          幂等，不越界改写目标既有像素——blit 区域与常规渲染逐像素
+ *          一致（Porter-Duff Over 结合律：缓存内容=渲染输出 over 透明，
+ *          回贴=渲染输出 over 目标既有内容，与直接绘制等价）。
+ * @param      widget 保留层控件；不可为 NULL。
+ * @param      paintRegion 本控件局部坐标绘制区域；不可为 NULL。
+ * @return     true=本子树绘制已完成；false=回退常规绘制路径。
+ */
+static bool xwidget_paintRetainedLayer(XWidget* widget, const XRegion* paintRegion)
+{
+    int width = XWidget_width(widget);
+    int height = XWidget_height(widget);
+    XImage* target;
+    if (width <= 0 || height <= 0 || !paintRegion || paintRegion->count <= 0)
+        return false;
+    /* render/grab 离屏重定向期间不参与：快照恒实时渲染（含自身缓存
+       建立的重入——renderSubtree 登记后 paintTree 再次到达本控件时
+       经此短路，防自递归）。 */
+    if (xwidget_redirectRoot(widget)) return false;
+    if (!widget->m_retainedValid || !widget->m_retainedCache ||
+        XImage_width(widget->m_retainedCache) != width ||
+        XImage_height(widget->m_retainedCache) != height) {
+        XImage* cache = xwidget_retainedEnsureCache(widget, width, height);
+        if (!cache) {
+            /* 分配失败/预算不足：整层放弃保留，退回常规绘制（不阻塞）。 */
+            xwidget_retainedDisable(widget);
+            return false;
+        }
+        xwidget_renderSubtree(widget, cache, 0, 0);
+        widget->m_retainedValid = true;
+    }
+    xwidget_retainedTouch(widget);
+    target = XWidget_paintImage(widget);
+    if (!target) return true; /* 无上屏目标（纯同步派发）：内容已进缓存。 */
+    {
+        XPainter painter;
+        XPoint offset;
+        XPainter_init(&painter, NULL);
+        if (XPainter_begin_image(&painter, target)) {
+            offset = XWidget_paintOffset(widget);
+            XPainter_drawImage(&painter, widget->m_retainedCache,
+                               offset.x, offset.y);
+            XPainter_end(&painter);
+        }
+        XPainter_deinit(&painter);
+    }
+    return true;
+}
+
+bool XWidget_setContentRetained(XWidget* self, bool on)
+{
+    XWidgetRetainedNode* node;
+    if (!self) return false;
+    if (!on) {
+        xwidget_retainedDisable(self);
+        return false;
+    }
+    if (self->m_retainedEnabled) {
+        xwidget_retainedTouch(self);
+        return true;
+    }
+    /* 与图形效果互斥：保留层缓存的是未施效输出，效果优先（报告取舍：
+       开效果前必须先关保留；此处直接拒绝开启请求）。 */
+    if (self->m_graphicsEffect &&
+        XGraphicsEffect_isEnabled(self->m_graphicsEffect))
+        return false;
+    if (xwidget_retainedBudget() <= 0) return false;
+    /* 顶层窗口暂不参与：其自带后备存储与 DIRECT 整帧缓冲已具备持久
+       语义，面板级（子控件）保留才是 HMI 痛点的目标形态。 */
+    if (self->m_isWindow) return false;
+    node = (XWidgetRetainedNode*)XMemory_malloc(sizeof(XWidgetRetainedNode),
+                                                XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!node) return false;
+    node->m_prev = NULL;
+    node->m_next = g_retainedHead;
+    if (g_retainedHead) g_retainedHead->m_prev = node;
+    g_retainedHead = node;
+    if (!g_retainedTail) g_retainedTail = node;
+    node->m_widget = self;
+    self->m_retainedNode = node;
+    ++g_retainedRegistered;
+    self->m_retainedEnabled = true;
+    self->m_retainedValid = false;
+    self->m_retainedStamp = ++g_retainedStampClock;
+    return true;
+}
+
+void XWidget_invalidateAllRetainedLayers(void)
+{
+    /* 应用级批量失效（调色板广播等"自上而下"场景）：沿保留层链表
+       逐个 update，经 addDirtyRegion→chain 失效使缓存作废并重渲染。 */
+    XWidgetRetainedNode* node = g_retainedHead;
+    while (node) {
+        if (node->m_widget) XWidget_update(node->m_widget);
+        node = node->m_next;
+    }
+}
+
+bool XWidget_contentRetained(const XWidget* self)
+{
+    return self ? self->m_retainedEnabled : false;
+}
+
+void XWidget_retainedLayerStats(size_t* usedBytes, int* count)
+{
+    if (usedBytes) *usedBytes = g_retainedBytes;
+    if (count) *count = g_retainedRegistered;
 }
 
 /* ==================== 通知信号（对标 QWidget 信号） ==================== */

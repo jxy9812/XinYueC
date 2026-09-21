@@ -13,10 +13,15 @@
  *             枚举 FileMode/AcceptMode/Option 数值与 Qt 6.8.3
  *             qtbase/src/widgets/dialogs/qfiledialog.h 完全一致。
  * @note       模块总开关 XDIALOG_ON（XWIDGET_ON && XDIALOG_ON 有效）。
- * @note       无 GUI 对话框环境：静态函数创建临时实例、应用存储 setter，
+ * @note       getOpenFileName/getSaveFileName（及 getExistingDirectory）
+ *             有 XCoreApplication 实例时构造真实对话框并 exec 阻塞执行：
+ *             目录下拉 + XListView 文件列表（双击进入目录 / 回上级、
+ *             名称过滤）+ 文件名编辑 + 确定/取消，应用模态、
+ *             Escape→reject；目录列举依赖 XFILE_ON && XDIR_ON。
+ *             无 GUI 对话框环境：静态函数创建临时实例、应用存储 setter，
  *             但不执行模态对话框循环，一律返回默认值（字符串类返回空串、
  *             列表类返回空列表），*selectedFilterIndex 保持 0；信号可由
- *             应用手动触发供测试。渲染与原生文件浏览为后续扩展。
+ *             应用手动触发供测试。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XFILEDIALOG_H

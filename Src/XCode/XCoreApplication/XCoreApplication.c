@@ -191,11 +191,24 @@ const XString* XCoreApplication_organizationDomain(void)
 
 /* ==================== 应用程序属性 ==================== */
 
+/** @brief 属性设置完成回调钩子；GUI 层（XGuiApplication）注册，全进程单钩子。 */
+static XCoreApplicationAttributeHook g_attributeHook = NULL;
+
+void XCoreApplication_setAttributeHook(XCoreApplicationAttributeHook hook)
+{
+    g_attributeHook = hook;
+}
+
 void XCoreApplication_setAttribute(XCoreApplicationAttribute attribute, bool on)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
     XBitArray_setBit(&app->m_attribute, attribute, on);
+    /* 属性设置完成钩子：把 GUI 语义属性（如属性 12 的触摸→鼠标仿真
+     * 开关）的转发收敛到基类统一出口——直调基类与经 XGuiApplication
+     * 包装层调用行为一致（批次十七报备项收敛）。 */
+    if (g_attributeHook)
+        g_attributeHook(attribute, on);
 }
 
 bool XCoreApplication_testAttribute(XCoreApplicationAttribute attribute)

@@ -329,6 +329,13 @@ typedef struct XKeyEvent {
     int m_key;                      ///< 与平台无关的按键码（XKey 枚举或 ASCII 码位）。
     XKeyboardModifiers m_modifiers; ///< 事件发生时按下的修饰键。
     bool m_autoRepeat;              ///< 是否为系统自动重复产生（按住不放）。
+    uint32_t m_nativeScanCode;      ///< 平台扫描码（对标 QKeyEvent::
+                                    ///< nativeScanCode；X11 为 xkey.keycode，
+                                    ///< Win32 为硬件扫描码；平台后端注入时
+                                    ///< 填写，程序合成事件为 0）。
+    uint32_t m_timestamp;           ///< 事件时间戳（毫秒，对标 QKeyEvent::
+                                    ///< timestamp；平台后端注入时填写原生
+                                    ///< 时间，程序合成事件为 0）。
 } XKeyEvent;
 
 /**
@@ -372,6 +379,30 @@ bool XKeyEvent_autoRepeat(const XKeyEvent* event);
  * @param autoRepeat 目标状态。
  */
 void XKeyEvent_setAutoRepeat(XKeyEvent* event, bool autoRepeat);
+/**
+ * @brief 获取平台扫描码（对标 QKeyEvent::nativeScanCode）。
+ * @param event 键盘事件实例。
+ * @return 平台扫描码；平台未提供或 event 为 NULL 时返回 0。
+ */
+uint32_t XKeyEvent_nativeScanCode(const XKeyEvent* event);
+/**
+ * @brief 设置平台扫描码（平台后端注入时使用）。
+ * @param event 键盘事件实例；不可为 NULL。
+ * @param scanCode 平台扫描码。
+ */
+void XKeyEvent_setNativeScanCode(XKeyEvent* event, uint32_t scanCode);
+/**
+ * @brief 获取事件时间戳（毫秒，对标 QKeyEvent::timestamp）。
+ * @param event 键盘事件实例。
+ * @return 时间戳；平台未提供或 event 为 NULL 时返回 0。
+ */
+uint32_t XKeyEvent_timestamp(const XKeyEvent* event);
+/**
+ * @brief 设置事件时间戳（平台后端注入时使用）。
+ * @param event 键盘事件实例；不可为 NULL。
+ * @param timestamp 毫秒时间戳。
+ */
+void XKeyEvent_setTimestamp(XKeyEvent* event, uint32_t timestamp);
 
 #define XKeyEvent_delete_base XEvent_delete_base
 #define XKeyEvent_deinit_base XEvent_deinit_base
@@ -386,10 +417,16 @@ typedef struct XMouseEvent {
     XMouseButton m_buttons;         ///< 事件发生时所有处于按下状态的鼠标按键（位掩码）。
     XKeyboardModifiers m_modifiers; ///< 事件发生时按下的修饰键。
     XPoint m_position;              ///< 事件源对象局部坐标。
+    XPoint m_globalPosition;        ///< 屏幕全局坐标（对标 QMouseEvent::
+                                    ///< globalPosition；平台后端注入时填写
+                                    ///< 根坐标，程序合成事件为 (0,0)）。
     bool m_synthesized;             ///< 是否由触摸等事件合成（对标 Qt 的
                                     ///< MouseEventSynthesized 来源标志；真实
                                     ///< 鼠标设备事件为 false，XMouseEvent_init
                                     ///< 默认置 false）。
+    uint32_t m_timestamp;           ///< 事件时间戳（毫秒，对标 QMouseEvent::
+                                    ///< timestamp；平台后端注入时填写原生
+                                    ///< 时间，程序合成事件为 0）。
 } XMouseEvent;
 
 /**
@@ -459,6 +496,31 @@ void XMouseEvent_setSynthesized(XMouseEvent* event, bool synthesized);
  *         设备事件；event 为 NULL 时返回 false。
  */
 bool XMouseEvent_isSynthesized(const XMouseEvent* event);
+/**
+ * @brief 获取屏幕全局坐标（对标 QMouseEvent::globalPosition）。
+ * @param event 鼠标事件实例。
+ * @return 全局坐标；平台未提供或 event 为 NULL 时返回 (0,0)。
+ */
+XPoint XMouseEvent_globalPosition(const XMouseEvent* event);
+/**
+ * @brief 设置屏幕全局坐标（平台后端注入时使用）。
+ * @param event 鼠标事件实例；不可为 NULL。
+ * @param globalPosition 屏幕全局坐标；可为 NULL（按 (0,0)）。
+ */
+void XMouseEvent_setGlobalPosition(XMouseEvent* event,
+                                   const XPoint* globalPosition);
+/**
+ * @brief 获取事件时间戳（毫秒，对标 QMouseEvent::timestamp）。
+ * @param event 鼠标事件实例。
+ * @return 时间戳；平台未提供或 event 为 NULL 时返回 0。
+ */
+uint32_t XMouseEvent_timestamp(const XMouseEvent* event);
+/**
+ * @brief 设置事件时间戳（平台后端注入/触摸合成透传时使用）。
+ * @param event 鼠标事件实例；不可为 NULL。
+ * @param timestamp 毫秒时间戳。
+ */
+void XMouseEvent_setTimestamp(XMouseEvent* event, uint32_t timestamp);
 
 #define XMouseEvent_delete_base XEvent_delete_base
 #define XMouseEvent_deinit_base XEvent_deinit_base

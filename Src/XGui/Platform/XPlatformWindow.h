@@ -44,6 +44,13 @@ typedef struct XWindow XWindow;
 typedef uintptr_t XWindowId;
 #endif /* XWINDOW_ON */
 
+#if XSCREEN_ON
+#include "XScreen.h"
+#else /* !XSCREEN_ON */
+/** @brief XSCREEN_ON=0 时的 XScreen 前向声明，保持指针 API 可编译。 */
+typedef struct XScreen XScreen;
+#endif /* XSCREEN_ON */
+
 #if XPLATFORMWINDOW_ON
 
 /** @brief 私有实现前向声明；仅供实现访问。 */
@@ -161,6 +168,46 @@ void XPlatformWindow_setVisible(XPlatformWindow* self, bool visible);
  * @param      self 目标对象；可为 NULL。
  */
 void XPlatformWindow_requestActivate(XPlatformWindow* self);
+
+/* ==================== 轻量窗口关系 / 暴露 / 屏幕命中（扫描 P2-7 补齐） ==================== */
+
+/**
+ * @brief      设置平台窗口父句柄（对标 QPlatformWindow::setParent 轻量子集）。
+ * @details    存值语义：只落位父句柄借用指针（不取得所有权），不重建
+ *             原生窗口、不改 XWindow 公共父链；与 m_window 同为借用，
+ *             调用方保证父句柄生命周期覆盖本对象使用期。传 NULL 清除
+ *             （窗口变回顶层语义）。
+ * @param      self   目标对象；可为 NULL。
+ * @param      parent 父平台窗口借用指针；可为 NULL。
+ */
+void XPlatformWindow_setParent(XPlatformWindow* self, XPlatformWindow* parent);
+
+/**
+ * @brief      返回平台窗口父句柄（对标 QPlatformWindow::parent）。
+ * @return     父句柄借用指针；未设置或入参非法返回 NULL。
+ */
+XPlatformWindow* XPlatformWindow_parent(const XPlatformWindow* self);
+
+/**
+ * @brief      查询平台窗口是否已暴露（对标 QPlatformWindow::isExposed）。
+ * @details    绑定 XWindow 时以窗口暴露态为准（XWindow_setExposed 由
+ *             WSI handleExposeEvent 按 Qt processExposeEvent 语义维护）；
+ *             未绑定窗口/平台无暴露概念时按 Qt 缺省实现恒返回 true。
+ * @param      self 目标对象；可为 NULL。
+ * @return     true 已暴露。
+ */
+bool XPlatformWindow_isExposed(const XPlatformWindow* self);
+
+/**
+ * @brief      按几何命中已注册屏幕（对标 QPlatformWindow::screenForGeometry）。
+ * @details    取几何中心点在注册屏幕几何内命中的首个屏幕（Qt 语义：
+ *             screenForPosition(center)）；无命中时回落主屏幕，再回落
+ *             注册表首个屏幕；未注册任何屏幕或 XSCREEN_ON=0 返回 NULL。
+ *             geometry 为 NULL 或空矩形时按未命中处理（直接回落）。
+ * @param      geometry 待命中几何；可为 NULL。
+ * @return     命中/回落屏幕借用指针；无可用屏幕返回 NULL。
+ */
+XScreen* XPlatformWindow_screenForGeometry(const XRect* geometry);
 
 /* ==================== 原生属性表（对标 QPlatformNativeInterface 窗口属性） ==================== */
 

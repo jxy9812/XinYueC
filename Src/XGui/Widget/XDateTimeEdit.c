@@ -166,6 +166,18 @@ static int xdt_utf8Chars(const char* s, int bytes)
     return chars;
 }
 
+/** @brief 星期/上下午文案表：渲染（xdt_renderToken）与键入解析
+ *         （xdt_parseEditText）共用同一份，保证 round-trip 一致。
+ *         星期下标对应 XDate_dayOfWeek()-1（1=周一..7=周日），对标
+ *         zh_CN 的 dayName；上下午对标 zh_CN 的 amText/pmText。 */
+static const char* const xdt_dayShortNames[7] = {
+    "周一", "周二", "周三", "周四", "周五", "周六", "周日" };
+static const char* const xdt_dayLongNames[7] = {
+    "星期一", "星期二", "星期三", "星期四", "星期五",
+    "星期六", "星期日" };
+static const char* const xdt_amText = "上午";
+static const char* const xdt_pmText = "下午";
+
 /** @brief 按单个记号渲染当前值到 buf；返回写入字节数（渲染与
  *         sectionText 共用，保证两路输出一致）。
  * @note  上下午/星期文案固定中文（框架无完整 locale，与库内既有中文化
@@ -185,16 +197,11 @@ static int xdt_renderToken(const XDateTimeEdit* self,
     case 'd':
         if (tok->width >= 3) {
             /* XDate_dayOfWeek 1=周一..7=周日；无星期文案起始日偏移。 */
-            static const char* const shortNames[7] = {
-                "周一", "周二", "周三", "周四", "周五", "周六", "周日" };
-            static const char* const longNames[7] = {
-                "星期一", "星期二", "星期三", "星期四", "星期五",
-                "星期六", "星期日" };
             int dow = XDate_dayOfWeek(&self->m_dateTime.m_date);
             int idx = (dow >= 1 && dow <= 7) ? dow - 1 : 0;
             return XSnprintf(buf, cap, "%s",
-                             (tok->width >= 4 ? longNames
-                                              : shortNames)[idx]);
+                             (tok->width >= 4 ? xdt_dayLongNames
+                                              : xdt_dayShortNames)[idx]);
         }
         return XSnprintf(buf, cap, "%02d",
                          XDate_day(&self->m_dateTime.m_date));
@@ -229,7 +236,7 @@ static int xdt_renderToken(const XDateTimeEdit* self,
     }
     case 'A': {
         int h = XTime_hour(&self->m_dateTime.m_time);
-        return XSnprintf(buf, cap, "%s", (h < 12) ? "上午" : "下午");
+        return XSnprintf(buf, cap, "%s", (h < 12) ? xdt_amText : xdt_pmText);
     }
     default:
         break;
@@ -354,6 +361,51 @@ static void xdt_emitChanged(XDateTimeEdit* self)
     }
 }
 
+/** @brief 发射日期变化信号 dateChanged(XDate*)（P1-4：此前全文件无发射
+ *         点；对标 QDateTimeEdit::dateChanged——setDate/setDateTime/
+ *         键入提交/stepBy/范围钳位等任何日期部分变化路径都发射）。 */
+static void xdt_emitDate(XDateTimeEdit* self)
+{
+    XDate* ptr = &self->m_dateTime.m_date;
+    XVarList* args = XVarList_Create(XVar(XDate*, ptr));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XDateTimeEdit_dateChanged_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief 发射时间变化信号 timeChanged(XTime*)（P1-4：对标
+ *         QDateTimeEdit::timeChanged，时间部分变化的各路径均发射）。 */
+static void xdt_emitTime(XDateTimeEdit* self)
+{
+    XTime* ptr = &self->m_dateTime.m_time;
+    XVarList* args = XVarList_Create(XVar(XTime*, ptr));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XDateTimeEdit_timeChanged_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief 统一提交发射：dateTimeChanged 恒发射（保持既有 API 语义），
+ *         dateChanged/timeChanged 按日期/时间部分是否实际变化分别发射
+ *         （P1-4，对标 QDateTimeEdit 三信号随部分变化齐发）。 */
+static void xdt_emitPartChanged(XDateTimeEdit* self, const XDateTime* old)
+{
+    xdt_emitChanged(self);
+    if (XDate_compare(&old->m_date, &self->m_dateTime.m_date) != 0)
+        xdt_emitDate(self);
+    if (XTime_compare(&old->m_time, &self->m_dateTime.m_time) != 0)
+        xdt_emitTime(self);
+}
+
 /** @brief 发射用户改期信号 userDateChanged(XDate*)（步进路径专用）。 */
 static void xdt_emitUserDate(XDateTimeEdit* self)
 {
@@ -447,6 +499,13 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
             xdt_emitUserDate(edit);
         if (XTime_compare(&old.m_time, &edit->m_dateTime.m_time) != 0)
             xdt_emitUserTime(edit);
+        /* P1-4：步进路径同步发射 dateChanged/timeChanged（对标
+         * QDateTimeEdit：方向键/箭头步进改变日期或时间部分时对应部分
+         * 信号同样发射）。 */
+        if (XDate_compare(&old.m_date, &edit->m_dateTime.m_date) != 0)
+            xdt_emitDate(edit);
+        if (XTime_compare(&old.m_time, &edit->m_dateTime.m_time) != 0)
+            xdt_emitTime(edit);
     }
 }
 
@@ -457,10 +516,234 @@ static int XDateTimeEdit_stepEnabled(const XAbstractSpinBox* self)
            (int)XAbstractSpinBoxStepEnabledFlag_StepDownEnabled;
 }
 
+/** @brief 从 text[*pos] 起跳过非数字并截取数字串（P1-5 键入解析的取数
+ *         原语，对标 Qt 分节 parse 的按位取数字）。
+ * @param text      编辑文本。
+ * @param pos       入/出字节游标；截到数字时推进越过数字串。
+ * @param maxDigits 最多截取位数（yyyy=4/MM..ss=2/z=3）：与记号位宽
+ *                  对齐可避免字面字符被删除后数字串串位。
+ * @param outValue  截到的数值（无数字时不写）。
+ * @return 是否截到数字。 */
+static bool xdt_takeDigits(const char* text, int* pos, int maxDigits,
+                           int* outValue)
+{
+    int p = *pos;
+    int value = 0;
+    int digits = 0;
+    if (!text) return false;
+    while (text[p] != '\0' && (text[p] < '0' || text[p] > '9')) ++p;
+    while (text[p] >= '0' && text[p] <= '9' && digits < maxDigits) {
+        value = value * 10 + (text[p] - '0');
+        ++p;
+        ++digits;
+    }
+    if (digits == 0) return false;
+    *pos = p;
+    *outValue = value;
+    return true;
+}
+
+/** @brief 在 text[pos] 起 16 字节窗口内查找文案（AmPm 中文文案定位用）。
+ * @return 命中字节偏移；未命中返回 -1。 */
+static int xdt_findText(const char* text, int pos, const char* needle)
+{
+    size_t n = XStrlen(needle);
+    int i;
+    for (i = pos; i <= pos + 16 && text[i] != '\0'; ++i) {
+        if (XStrncmp(&text[i], needle, n) == 0) return i;
+    }
+    return -1;
+}
+
+/** @brief 尝试在 text[pos] 精确匹配星期文案（长名优先）；命中返回字节
+ *         长度，否则 0。星期节为展示档，仅用于解析游标跳过。 */
+static int xdt_matchDayName(const char* text, int pos)
+{
+    int i;
+    for (i = 0; i < 7; ++i) {
+        size_t len = XStrlen(xdt_dayLongNames[i]);
+        if (XStrncmp(&text[pos], xdt_dayLongNames[i], len) == 0)
+            return (int)len;
+    }
+    for (i = 0; i < 7; ++i) {
+        size_t len = XStrlen(xdt_dayShortNames[i]);
+        if (XStrncmp(&text[pos], xdt_dayShortNames[i], len) == 0)
+            return (int)len;
+    }
+    return 0;
+}
+
+/** @brief 按显示格式把编辑文本分节解析回日期时间候选值（P1-5 键入提交
+ *         的解析核心，对标 QDateTimeEdit 私有 parse/interpret 路径：
+ *         格式串与编辑文本并行游走——数字节截数字串、AmPm 节识别
+ *         「上午/下午」、星期节为展示档跳过、字面字符宽松对齐）。
+ * @details 各节初值取自当前值，未键入的节保持不变（对标 Qt 分段独立
+ *          编辑语义）；12 小时制 'h' 节配合上下午文案折算回 24 小时制
+ *          （13→下午1，0→上午12）；最终经 XDate_setDate/XTime_setHMS
+ *          合法性校验。
+ * @retval true  out 写入解析结果。
+ * @retval false 非法输入（越界/非法组合），调用方回退旧值。 */
+static bool xdt_parseEditText(const XDateTimeEdit* self, const char* text,
+                              XDateTime* out)
+{
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    const char* fmt;
+    int textLen;
+    int ti = 0;
+    size_t i = 0; /* 格式串字节游标（size_t 对齐记号 pos，避免符号比较）。 */
+    int t = 0;    /* 编辑文本字节游标。 */
+    int n;
+    int year, month, day, hour, minute, second, msec;
+    bool amSeen = false;
+    bool pmSeen = false;
+    bool has12h = false;
+    if (!self || !text || !out) return false;
+    fmt = xdt_effectiveFormat(self);
+    n = xdt_tokenize(fmt, toks, XDT_SECTION_MAX);
+    textLen = (int)XStrlen(text);
+    year = XDate_year(&out->m_date);
+    month = XDate_month(&out->m_date);
+    day = XDate_day(&out->m_date);
+    hour = XTime_hour(&out->m_time);
+    minute = XTime_minute(&out->m_time);
+    second = XTime_second(&out->m_time);
+    msec = XTime_msec(&out->m_time);
+    while (fmt[i] != '\0' && t < textLen) {
+        if (ti < n && i == toks[ti].pos) {
+            const XdtSectionTok* tok = &toks[ti];
+            ++ti;
+            switch (tok->spec) {
+            case 'y':
+                (void)xdt_takeDigits(text, &t, 4, &year);
+                break;
+            case 'M':
+                (void)xdt_takeDigits(text, &t, 2, &month);
+                break;
+            case 'd':
+                if (tok->width >= 3) {
+                    /* 星期节：展示档不带数据，跳过文案即可（对标 Qt）。 */
+                    int len = xdt_matchDayName(text, t);
+                    if (len > 0) t += len;
+                } else {
+                    (void)xdt_takeDigits(text, &t, 2, &day);
+                }
+                break;
+            case 'H':
+                (void)xdt_takeDigits(text, &t, 2, &hour);
+                break;
+            case 'h':
+                has12h = true;
+                (void)xdt_takeDigits(text, &t, 2, &hour);
+                break;
+            case 'm':
+                (void)xdt_takeDigits(text, &t, 2, &minute);
+                break;
+            case 's':
+                (void)xdt_takeDigits(text, &t, 2, &second);
+                break;
+            case 'z':
+                (void)xdt_takeDigits(text, &t, 3, &msec);
+                break;
+            case 'A': {
+                /* 上下午节：定位「上午/下午」文案记录极性（对标 Qt
+                 * AmPm 节 parse；未找到时保持 24 小时直读）。 */
+                int am = xdt_findText(text, t, xdt_amText);
+                int pm = xdt_findText(text, t, xdt_pmText);
+                if (am >= 0 && (pm < 0 || am <= pm)) {
+                    amSeen = true;
+                    t = am + (int)XStrlen(xdt_amText);
+                } else if (pm >= 0) {
+                    pmSeen = true;
+                    t = pm + (int)XStrlen(xdt_pmText);
+                }
+                break;
+            }
+            default:
+                break;
+            }
+            i += tok->width; /* 记号均为 ASCII：宽度=格式字节长。 */
+            continue;
+        }
+        /* 字面字符：优先逐字节精确对齐；不一致（用户编辑导致错位）时
+         * 在 16 字节窗口内找同一字面再对齐，找不到则只推进格式游标。 */
+        if (text[t] == fmt[i]) {
+            ++t;
+            ++i;
+            continue;
+        }
+        {
+            int k = t + 1;
+            while (k <= t + 16 && text[k] != '\0' && text[k] != fmt[i]) ++k;
+            if (k <= t + 16 && text[k] == fmt[i]) t = k + 1;
+        }
+        ++i;
+    }
+    if (has12h && (amSeen || pmSeen)) {
+        /* 12 小时制 + 上下午文案合并回 24 小时制（对标 Qt：12AM→0、
+         * 12PM→12、PM 其余 +12）；无 AP 文案时按 24 小时直读。 */
+        if (pmSeen) hour = (hour % 12) + 12;
+        else hour = hour % 12;
+    }
+    {
+        XDate d;
+        XTime tm;
+        /* 合法性终检（对标 QDateTimeEdit 非法文本拒绝提交）：日期经
+         * 闰年/月天数校验，时间经时分秒毫秒范围校验。 */
+        if (!XDate_setDate(&d, year, month, day)) return false;
+        if (!XTime_setHMS(&tm, hour, minute, second, msec)) return false;
+        out->m_date = d;
+        out->m_time = tm;
+    }
+    return true;
+}
+
+/** @brief 提交虚槽重载（P1-5：基类默认空操作导致键入不生效；对标
+ *         QDateTimeEdit::interpretText / 私有 interpret）：把编辑框
+ *         键入文本按当前格式分节解析回值并提交。基类 Enter/失焦/
+ *         隐藏/关闭路径（XAbstractSpinBox interpretText 分派）随之
+ *         生效。@details 解析失败或基类 cleared 待解释态时回退旧值
+ *         重渲染（对标 correctionMode=CorrectToPreviousValue）；成功
+ *         且值变化时刷新显示并发射 dateTimeChanged/dateChanged/
+ *         timeChanged。 */
+static void XDateTimeEdit_interpret(XAbstractSpinBox* self)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)self;
+    XLineEdit* line;
+    const char* text;
+    XDateTime old;
+    XDateTime parsed;
+    if (!edit) return;
+    if (self->m_cleared) {
+        /* 基类 clear() 后的待解释态：不回填值（对标 Qt 私有 cleared）。 */
+        self->m_cleared = false;
+        return;
+    }
+    line = XAbstractSpinBox_lineEdit(self);
+    if (!line) return;
+    text = XLineEdit_text(line);
+    if (!text) return;
+    old = edit->m_dateTime;
+    parsed = old;
+    if (!xdt_parseEditText(edit, text, &parsed)) {
+        /* 非法键入：回退旧值并按当前节重渲染（对标 Qt 回退上次有效值）。 */
+        xdt_refreshText(edit);
+        xdt_selectCurrentSection(edit);
+        return;
+    }
+    edit->m_dateTime = parsed;
+    xdt_clamp(edit);
+    /* 值未变也重渲染：把键入的非规范文本（如缺前导零）规整回显示格式。 */
+    xdt_refreshText(edit);
+    xdt_selectCurrentSection(edit);
+    if (XDateTime_compare(&old, &edit->m_dateTime) != 0)
+        xdt_emitPartChanged(edit, &old);
+}
+
 /** @brief 键盘按下：Left/Right 在分段间移动并整段选中当前段（对标
- *         QDateTimeEdit 方向键跨段导航，段间不循环）；其余按键交基类
- *         （Up/Down/PageUp/PageDown 步进、Home/End 边界、其余转发
- *         内嵌编辑框）。 */
+ *         QDateTimeEdit 方向键跨段导航，段间不循环）；Home/End 拦截为
+ *         光标到当前节首/节尾、值不动（P1-6，对标 Qt 行编辑语义，覆写
+ *         基类的 min/max 值跳转）；其余按键交基类（Up/Down/PageUp/
+ *         PageDown 步进、Return 提交、其余转发内嵌编辑框）。 */
 static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
@@ -487,6 +770,42 @@ static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
             return;
         }
         /* 无分段格式：退回基类，让方向键回到编辑框光标移动。 */
+    }
+    if (key == XKey_Home || key == XKey_End) {
+        /* P1-6：基类（XAbstractSpinBox keyPressEvent）把 Home/End 实现
+         * 为 min/max 值跳转（大步数 stepBy），对日期时间控件属数据破坏；
+         * Qt 6.8.3 的 QDateTimeEdit::keyPressEvent 不消费 Home/End，
+         * 事件落到 QAbstractSpinBox 行编辑做光标移动。此处子类拦截：
+         * Home/End = 光标到当前节首/节尾，值不动（对标行编辑语义）。 */
+        XdtSectionRange ranges[XDT_SECTION_MAX];
+        XdtSectionTok toks[XDT_SECTION_MAX];
+        XLineEdit* line =
+            XAbstractSpinBox_lineEdit((XAbstractSpinBox*)edit);
+        char buf[128];
+        int count = 0;
+        int n;
+        int index = -1;
+        int i;
+        xdt_render(edit, buf, sizeof(buf), ranges, XDT_SECTION_MAX, &count);
+        n = xdt_tokenize(xdt_effectiveFormat(edit), toks, XDT_SECTION_MAX);
+        for (i = 0; i < n; ++i) {
+            if (toks[i].code == edit->m_currentSection) { index = i; break; }
+        }
+        if (!line) {
+            XEvent_ignore(event);
+            return;
+        }
+        if (index >= 0 && index < count && ranges[index].len > 0) {
+            XLineEdit_setCursorPosition(line,
+                (key == XKey_Home) ? ranges[index].start
+                                   : ranges[index].start + ranges[index].len);
+        } else {
+            /* 当前分段不在格式中：退回行编辑整文本 home/end。 */
+            int total = xdt_utf8Chars(buf, (int)XStrlen(buf));
+            XLineEdit_setCursorPosition(line, (key == XKey_Home) ? 0 : total);
+        }
+        XEvent_accept(event);
+        return;
     }
     XClass_Parent(XAbstractSpinBox, EXWidget_KeyPressEvent,
                   void (*)(XWidget*, XEvent*))((XWidget*)self, event);
@@ -519,6 +838,11 @@ XVtable* XDateTimeEdit_class_init(void)
                              XDateTimeEdit_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepEnabled,
                              XDateTimeEdit_stepEnabled);
+    /* P1-5：覆写 Interpret——基类默认空操作导致键入数字既不改值也不
+     * 重渲染；覆写后基类 Enter/失焦/隐藏/关闭的 interpretText 分派
+     * 路径均把键入文本提交回值（对标 QDateTimeEdit::interpretText）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Interpret,
+                             XDateTimeEdit_interpret);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              XDateTimeEdit_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDateTimeEdit_deinit);
@@ -552,7 +876,9 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     (void)now;
     xdt_refreshText(self);
 
-    self->m_calendarPopup = true;
+    /* P2：calendarPopup 默认 false（对标 QDateTimeEdit::calendarPopup
+     * 默认值；框架当前无弹出面板接线，true 默认会误导调用方）。 */
+    self->m_calendarPopup = false;
     self->m_timeSpec = 0;
 }
 
@@ -573,11 +899,15 @@ XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
 void XDateTimeEdit_setDateTime(XDateTimeEdit* self,
                                const XDateTime* dateTime)
 {
+    XDateTime old;
     if (!self || !dateTime) return;
+    old = self->m_dateTime;
     self->m_dateTime = *dateTime;
     xdt_clamp(self);
     xdt_refreshText(self);
-    xdt_emitChanged(self);
+    /* P1-4：dateChanged/timeChanged 随对应部分实际变化发射（对标
+     * QDateTimeEdit::setDateTime 三信号齐发语义）。 */
+    xdt_emitPartChanged(self, &old);
 }
 
 const XDateTime* XDateTimeEdit_dateTime(const XDateTimeEdit* self)
@@ -587,11 +917,15 @@ const XDateTime* XDateTimeEdit_dateTime(const XDateTimeEdit* self)
 
 void XDateTimeEdit_setDate(XDateTimeEdit* self, const XDate* date)
 {
+    XDateTime old;
     if (!self || !date) return;
+    old = self->m_dateTime;
     XDateTime_setDate(&self->m_dateTime, *date);
     xdt_clamp(self);
     xdt_refreshText(self);
-    xdt_emitChanged(self);
+    /* P1-4：setDate 路径发射 dateChanged（对标 QDateTimeEdit::setDate，
+     * 同时经 emitPartChanged 保持 dateTimeChanged 语义）。 */
+    xdt_emitPartChanged(self, &old);
 }
 
 XDate XDateTimeEdit_date(const XDateTimeEdit* self)
@@ -604,11 +938,15 @@ XDate XDateTimeEdit_date(const XDateTimeEdit* self)
 
 void XDateTimeEdit_setTime(XDateTimeEdit* self, const XTime* time)
 {
+    XDateTime old;
     if (!self || !time) return;
+    old = self->m_dateTime;
     XDateTime_setTime(&self->m_dateTime, *time);
     xdt_clamp(self);
     xdt_refreshText(self);
-    xdt_emitChanged(self);
+    /* P1-4：setTime 路径发射 timeChanged（对标 QDateTimeEdit::setTime，
+     * 同时经 emitPartChanged 保持 dateTimeChanged 语义）。 */
+    xdt_emitPartChanged(self, &old);
 }
 
 XTime XDateTimeEdit_time(const XDateTimeEdit* self)
@@ -627,9 +965,15 @@ const XDateTime* XDateTimeEdit_minimumDateTime(const XDateTimeEdit* self)
 void XDateTimeEdit_setMinimumDateTime(XDateTimeEdit* self,
                                       const XDateTime* dateTime)
 {
+    XDateTime old;
     if (!self || !dateTime) return;
+    old = self->m_dateTime;
     self->m_minimum = *dateTime;
     xdt_clamp(self);
+    /* P1-4：下界钳位实际改动当前值时补发三信号（对标
+     * QAbstractSpinBoxPrivate::setRange 的值变化发射语义）。 */
+    if (XDateTime_compare(&old, &self->m_dateTime) != 0)
+        xdt_emitPartChanged(self, &old);
 }
 
 const XDateTime* XDateTimeEdit_maximumDateTime(const XDateTimeEdit* self)
@@ -640,9 +984,15 @@ const XDateTime* XDateTimeEdit_maximumDateTime(const XDateTimeEdit* self)
 void XDateTimeEdit_setMaximumDateTime(XDateTimeEdit* self,
                                       const XDateTime* dateTime)
 {
+    XDateTime old;
     if (!self || !dateTime) return;
+    old = self->m_dateTime;
     self->m_maximum = *dateTime;
     xdt_clamp(self);
+    /* P1-4：上界钳位实际改动当前值时补发三信号（对标
+     * QAbstractSpinBoxPrivate::setRange 的值变化发射语义）。 */
+    if (XDateTime_compare(&old, &self->m_dateTime) != 0)
+        xdt_emitPartChanged(self, &old);
 }
 
 XDate XDateTimeEdit_minimumDate(const XDateTimeEdit* self)
@@ -887,8 +1237,9 @@ void* XDateTimeEdit_userTimeChanged_signal(XDateTimeEdit* self,
 
 void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup)
 { if (self) self->m_calendarPopup = popup; }
+/* P2：NULL 回退值随默认值改为 false（对标 QDateTimeEdit 默认）。 */
 bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self)
-{ return self ? self->m_calendarPopup : true; }
+{ return self ? self->m_calendarPopup : false; }
 
 #if XCALENDARWIDGET_ON
 

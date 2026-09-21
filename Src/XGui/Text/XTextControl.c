@@ -33,6 +33,20 @@
 #include "XTextMenu.h"
 #endif
 
+/* ==================== 裁剪兜底（XGUI_ON=0 巡检，XPainter.c 先例） ======= */
+/* 被裁剪子系统遗留使用点的纯值常量兜底：值口径与对应头文件枚举一致
+   （XClipboardMode：Clipboard=0/Selection=1；XFocusReason：
+   ActiveWindow=3/Popup=4——Mouse0/Tab1/Backtab2 之后）。类型与函数
+   不做兜底，使用点按各自 X*_ON 分流。 */
+#if !XCLIPBOARD_ON
+#define XClipboardMode_Clipboard 0
+#define XClipboardMode_Selection 1
+#endif /* !XCLIPBOARD_ON */
+#if !XWINDOWEVENT_ON
+#define XFocusReason_ActiveWindow 3
+#define XFocusReason_Popup 4
+#endif /* !XWINDOWEVENT_ON */
+
 #if XTEXTCONTROL_ON
 
 /* ==================== 常量（对标 QApplication 缺省交互参数） ==================== */
@@ -131,6 +145,558 @@ static int xtc_lineColToPos(const XTextControl* self, int line, int col)
 static bool xtc_isPreediting(const XTextControl* self)
 {
     return self && self->m_preedit && self->m_preedit[0] != '\0';
+}
+
+/* ==================== preedit 视觉映射 ==================== */
+
+/** @brief preedit 所在 (行, 列)；非组合态返回 false。 */
+static bool xtc_preeditLineCol(const XTextControl* self, int* line, int* col)
+{
+    if (!xtc_isPreediting(self)) return false;
+    xtc_posToLineCol(self, self->m_preeditPos, line, col);
+    return true;
+}
+
+/** @brief preedit 字节长。 */
+static int xtc_preeditLen(const XTextControl* self)
+{
+    return xtc_isPreediting(self) ? (int)XStrlen(self->m_preedit) : 0;
+}
+
+/** @brief 文档列 → 视觉列（组合行上考虑 preedit 占位）。 */
+static int xtc_docColToVisualCol(const XTextControl* self, int line, int col)
+{
+    int pLine;
+    int pCol;
+    if (!xtc_preeditLineCol(self, &pLine, &pCol)) return col;
+    if (line != pLine) return col;
+    if (col >= pCol) return col + xtc_preeditLen(self);
+    return col;
+}
+
+/** @brief 视觉列 → 文档列（命中测试逆映射；preedit 区间归并到插入点）。 */
+static int xtc_visualColToDocCol(const XTextControl* self, int line, int col)
+{
+    int pLine;
+    int pCol;
+    int preLen;
+    if (!xtc_preeditLineCol(self, &pLine, &pCol)) return col;
+    if (line != pLine) return col;
+    preLen = xtc_preeditLen(self);
+    if (col <= pCol) return col;
+    if (col <= pCol + preLen) return pCol;
+    return col - preLen;
+}
+
+/* ==================== 软换行布局缓存（对标 QTextLayout 行内 wrap） ==== */
+
+/** @brief 布局缓存失效（惰性重建；编辑/字体/宽度/模式变更时调用）。 */
+static void xtc_invalidateLayout(XTextControl* self)
+{
+    if (self) self->m_layoutValid = false;
+}
+
+/** @brief 折行宽度（px）：仅 WidgetWidth 且 textWidth>0 且断行规则非
+ *         NoWrap/ManualWrap 时生效（对标 QTextOption::NoWrap 关闭折行）；
+ *         0 = 不折。 */
+static int xtc_wrapWidthOf(const XTextControl* self)
+{
+    if (!self || self->m_lineWrapMode != (int)XTextControlLineWrap_WidgetWidth)
+        return 0;
+    if (self->m_wordWrapMode == (int)XTextControlWrap_NoWrap ||
+        self->m_wordWrapMode == (int)XTextControlWrap_ManualWrap)
+        return 0;
+    return self->m_textWidth > 0 ? self->m_textWidth : 0;
+}
+
+/**
+ * @brief      逻辑行"视觉文本"：preedit 组合行把组合串 splice 进文档行
+ *             （IME 预编辑串计入布局，对标 Qt preeditArea 参与折行）。
+ * @param      heap 输出堆缓冲（非组合行为 NULL，无需释放）。
+ * @return     视觉文本借用/堆指针；长度 = 行长 + preedit 字节长。
+ */
+static const char* xtc_visualLineText(const XTextControl* self, int line,
+                                      char** heap)
+{
+    int pLine;
+    int pCol;
+    *heap = NULL;
+    const char* docText = xtc_lineText(self, line);
+    int docLen = xtc_lineLen(self, line);
+    if (!xtc_preeditLineCol(self, &pLine, &pCol) || pLine != line)
+        return docText;
+    {
+        int preLen = xtc_preeditLen(self);
+        if (pCol > docLen) pCol = docLen;
+        *heap = (char*)XMalloc_System((size_t)docLen + (size_t)preLen + 1);
+        if (!*heap) return docText;
+        XMemcpy(*heap, docText, (size_t)pCol);
+        XMemcpy(*heap + pCol, self->m_preedit, (size_t)preLen);
+        XMemcpy(*heap + pCol + preLen, docText + pCol,
+                (size_t)(docLen - pCol) + 1);
+    }
+    return *heap;
+}
+
+/** @brief 逻辑行视觉文本字节长（行长 + 组合行 preedit 占位）。 */
+static int xtc_visualLineLen(const XTextControl* self, int line)
+{
+    int pLine;
+    int pCol;
+    int len = xtc_lineLen(self, line);
+    if (xtc_preeditLineCol(self, &pLine, &pCol) && pLine == line)
+        len += xtc_preeditLen(self);
+    return len;
+}
+
+/** @brief 解码 s 处一个 UTF-8 码点；seq 输出字节长（与 XTextUtf8 同口径）。 */
+static uint32_t xtc_decodeCp(const char* s, int remain, int* seq)
+{
+    unsigned char c0 = (unsigned char)s[0];
+    int n = XTextUtf8_seqLen(s, remain);
+    *seq = n > 0 ? n : 1;
+    if (*seq >= 2 && (c0 & 0xE0) == 0xC0)
+        return ((uint32_t)(c0 & 0x1F) << 6) | (uint32_t)(s[1] & 0x3F);
+    if (*seq >= 3 && (c0 & 0xF0) == 0xE0)
+        return ((uint32_t)(c0 & 0x0F) << 12) |
+               ((uint32_t)(s[1] & 0x3F) << 6) | (uint32_t)(s[2] & 0x3F);
+    if (*seq >= 4 && (c0 & 0xF8) == 0xF0)
+        return ((uint32_t)(c0 & 0x07) << 18) |
+               ((uint32_t)(s[1] & 0x3F) << 12) |
+               ((uint32_t)(s[2] & 0x3F) << 6) | (uint32_t)(s[3] & 0x3F);
+    return c0;
+}
+
+/** @brief CJK 码点判定（断行"逐字可断"类的简化 UAX#14 承载）。 */
+static bool xtc_isCjkCp(uint32_t cp)
+{
+    return (cp >= 0x1100 && cp <= 0x11FF) ||   /* Hangul Jamo */
+           (cp >= 0x2E80 && cp <= 0x9FFF) ||   /* CJK 部首/假名/统一表意 */
+           (cp >= 0xAC00 && cp <= 0xD7A3) ||   /* Hangul 音节 */
+           (cp >= 0xF900 && cp <= 0xFAFF) ||   /* 兼容表意 */
+           (cp >= 0xFE30 && cp <= 0xFE4F) ||   /* CJK 兼容形式 */
+           (cp >= 0xFF00 && cp <= 0xFF60) ||   /* 全角形式 */
+           (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+           (cp >= 0x20000 && cp <= 0x3FFFD);   /* 扩展表意平面 */
+}
+
+/** @brief 码点断行类（对标 UAX#14 简化：空白/CJK/词/标点）。 */
+typedef enum XtcCpClass
+{
+    XTC_CP_SPACE = 0, /**< ASCII 空白。 */
+    XTC_CP_CJK,       /**< CJK/全角（逐字可断）。 */
+    XTC_CP_WORD,      /**< 词字符（字母数字下划线/其它非 CJK 文字）。 */
+    XTC_CP_PUNCT      /**< 标点/符号。 */
+} XtcCpClass;
+
+/** @brief 码点断行类判定。 */
+static int xtc_cpClass(uint32_t cp)
+{
+    if (cp == ' ' || cp == '\t' || cp == 0x0B || cp == 0x0C)
+        return XTC_CP_SPACE;
+    if (xtc_isCjkCp(cp)) return XTC_CP_CJK;
+    if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||
+        (cp >= '0' && cp <= '9') || cp == '_' || cp >= 0x80)
+        return XTC_CP_WORD;
+    return XTC_CP_PUNCT;
+}
+
+/** 行禁首字符（kinsoku：这些标点不落行首，对标中文排版禁则）。 */
+static const uint32_t xtc_kinsokuBefore[] = {
+    0x3001, 0x3002, 0x3009, 0x300B, 0x300D, 0x300F, 0x3011, 0x3015,
+    0x3017, 0x3019, 0x301B, 0xFF01, 0xFF09, 0xFF0C, 0xFF1A, 0xFF1B,
+    0xFF1F, 0xFF5D, 0x2019, 0x201D, 0x2026, 0x2014
+};
+/** 行禁尾字符（开括号/引号不落行尾）。 */
+static const uint32_t xtc_kinsokuAfter[] = {
+    0x3008, 0x300A, 0x300C, 0x300E, 0x3010, 0x3014, 0xFF08, 0xFF5B,
+    0x2018, 0x201C
+};
+
+/** @brief 禁则查表。 */
+static bool xtc_inCpTable(const uint32_t* table, int count, uint32_t cp)
+{
+    int i;
+    for (i = 0; i < count; ++i)
+        if (table[i] == cp) return true;
+    return false;
+}
+
+/**
+ * @brief      prev 与 cur 之间是否可断行（cur 落行首的断点判定）。
+ * @details    对标 QTextOption::WrapMode：WordWrap 下 CJK 逐字可断、
+ *             Latin 按词边界（空白后断）、长词由扫描兜底硬断；
+ *             WrapAnywhere 逐字断；行首不留空白；CJK 禁则成对约束。
+ */
+static bool xtc_canBreakBefore(int mode, uint32_t prevCp, int prevClass,
+                               uint32_t curCp, int curClass)
+{
+    if (curClass == XTC_CP_SPACE) return false; /* 行首不留空白（空格悬挂行尾）。 */
+    if (mode == (int)XTextControlWrap_Anywhere) return true;
+    if (xtc_inCpTable(xtc_kinsokuBefore,
+                      (int)(sizeof(xtc_kinsokuBefore) / sizeof(uint32_t)),
+                      curCp))
+        return false;
+    if (xtc_inCpTable(xtc_kinsokuAfter,
+                      (int)(sizeof(xtc_kinsokuAfter) / sizeof(uint32_t)),
+                      prevCp))
+        return false;
+    if (prevClass == XTC_CP_SPACE) return true;  /* 词界（空白之后）。 */
+    if (curClass == XTC_CP_CJK) return true;     /* CJK 逐字可断。 */
+    if (prevClass == XTC_CP_CJK) return true;    /* CJK 后接西文/标点可断。 */
+    if (prevClass == XTC_CP_PUNCT) return true;  /* 逗号/分号等后可断。 */
+    return false;                                /* 词内（WORD|WORD/标点粘前）。 */
+}
+
+/**
+ * @brief      可视行入数组（容量不足倍增扩容）。
+ * @details    全量重建与增量更新共用：arr/count/cap 既可以指向缓存本体
+ *             （m_visualRows/m_visualCount/m_visualCap），也可以指向增量
+ *             路径的暂存数组，保证两条路径产物逐条一致。
+ */
+static bool xtc_layoutPushRow(XTextControlVisualRow** arr, int* count,
+                              int* cap, int line, int start, int len,
+                              int width)
+{
+    if (*count >= *cap) {
+        int newCap = *cap > 0 ? *cap * 2 : XTC_CAP_GROW;
+        XTextControlVisualRow* grown = (XTextControlVisualRow*)XRealloc_System(
+            *arr, (size_t)newCap * sizeof(XTextControlVisualRow));
+        if (!grown) return false;
+        *arr = grown;
+        *cap = newCap;
+    }
+    (*arr)[*count].line = line;
+    (*arr)[*count].start = start;
+    (*arr)[*count].len = len;
+    (*arr)[*count].width = width;
+    ++*count;
+    return true;
+}
+
+/**
+ * @brief      单逻辑行断行扫描（宽度优先贪心，对标 QTextLayout 断行）。
+ * @details    逐码点累宽；越界时优先回退到最近断点（词界/CJK 码点间），
+ *             行内无断点则当前码点前硬断（长词超行宽，对标 Qt 长词
+ *             hard-break）；行首码点恒被接纳（避免死循环）。行段写入
+ *             arr/count/cap 指向的数组（全量/增量共用，见
+ *             xtc_layoutPushRow）；任一段入队失败返回 false。
+ */
+static bool xtc_layoutLine(int wrapMode, const XFont* fontSrc,
+                           XTextControlVisualRow** arr, int* count, int* cap,
+                           int line, const char* text, int len, int wrapW)
+{
+    XFont font;
+    int rowStart = 0;
+    int x = 0;
+    int off = 0;
+    int lastBreak = -1;   /* 最近断点（视觉文本字节偏移，断在其前）。 */
+    int lastBreakW = 0;   /* 断点前累计像素宽。 */
+    uint32_t prevCp = 0;
+    int prevClass = -1;
+    int mode = wrapMode;
+    /* 只读浅拷贝（与源字体共享字符串指针，禁止 deinit）。 */
+    XMemcpy(&font, fontSrc, sizeof(XFont));
+    while (off < len) {
+        uint32_t cp;
+        int seq;
+        int cls;
+        int w;
+        cp = xtc_decodeCp(text + off, len - off, &seq);
+        cls = xtc_cpClass(cp);
+        w = XPainter_textWidthRange(&font, text, off, off + seq);
+        if (w < 0) w = 0;
+        /* 先记录本码点前的断点机会，再判断溢出：溢出发生时优先断在
+           当前码点前（贪心最满行，对标 Qt 断行取最后可行断点）。 */
+        if (prevClass >= 0 &&
+            xtc_canBreakBefore(mode, prevCp, prevClass, cp, cls)) {
+            lastBreak = off;
+            lastBreakW = x;
+        }
+        if (x + w > wrapW && off > rowStart) {
+            /* 越界：优先词界/码点断点，否则硬断当前码点前。 */
+            int soft = lastBreak > rowStart;
+            int cut = soft ? lastBreak : off;
+            int cutW = soft ? lastBreakW : x;
+            if (!xtc_layoutPushRow(arr, count, cap, line, rowStart,
+                                   cut - rowStart, cutW))
+                return false;
+            rowStart = cut;
+            /* 软断时 [cut, off) 已属新行：其像素宽结转入新行累计值
+               （否则新行宽度漏计导致越界残留）；prevCp/prevClass 亦
+               保持（off 的前码点未变）。硬断则新行自 off 重计。 */
+            x = soft ? (x - lastBreakW) : 0;
+            lastBreak = -1;
+            lastBreakW = 0;
+            if (!soft) prevClass = -1; /* 硬断新行首无前字符。 */
+            continue;
+        }
+        x += w;
+        off += seq;
+        prevCp = cp;
+        prevClass = cls;
+    }
+    return xtc_layoutPushRow(arr, count, cap, line, rowStart, len - rowStart,
+                             x);
+}
+
+/** @brief 重建布局缓存（逻辑行 → 可视行平铺；编辑/度量变更后惰性调用）。 */
+static void xtc_rebuildLayout(XTextControl* self)
+{
+    int i;
+    int wrapW = xtc_wrapWidthOf(self);
+    self->m_visualCount = 0;
+    for (i = 0; i < self->m_lineCount; ++i) {
+        char* heap = NULL;
+        const char* text = xtc_visualLineText(self, i, &heap);
+        int len = xtc_visualLineLen(self, i);
+        if (wrapW <= 0) {
+            /* 不折行：可视行与逻辑行 1:1（对标 NoWrap）。 */
+            XFont font;
+            int w;
+            XMemcpy(&font, &self->m_font, sizeof(XFont));
+            w = XPainter_textWidthRange(&font, text, 0, len);
+            if (!xtc_layoutPushRow(&self->m_visualRows, &self->m_visualCount,
+                                   &self->m_visualCap, i, 0, len,
+                                   w > 0 ? w : 0))
+                break;
+        } else {
+            if (!xtc_layoutLine(self->m_wordWrapMode, &self->m_font,
+                                &self->m_visualRows, &self->m_visualCount,
+                                &self->m_visualCap, i, text, len, wrapW))
+                break;
+        }
+        if (heap) XFree_System(heap);
+    }
+    self->m_layoutValid = true;
+}
+
+/** @brief 确保布局缓存有效（全部几何/绘制查询的统一入口）。 */
+static void xtc_ensureLayout(XTextControl* self)
+{
+    if (!self || self->m_layoutValid) return;
+    xtc_rebuildLayout(self);
+}
+
+/** @brief 可视行数（确保布局后读取；0 逻辑行时为 0）。 */
+static int xtc_visualCountOf(XTextControl* self)
+{
+    if (!self || self->m_lineCount <= 0) return 0;
+    xtc_ensureLayout(self);
+    return self->m_visualCount > 0 ? self->m_visualCount : 0;
+}
+
+/** @brief 内容高度（可视行数 x 行高；滚动范围/文档尺寸同源口径）。 */
+static int xtc_contentHeight(XTextControl* self)
+{
+    return xtc_visualCountOf(self) * self->m_lineHeight;
+}
+
+/** @brief 首个 line >= L 的可视行下标（行序单调，二分）。 */
+static int xtc_rowLowerBound(const XTextControl* self, int line)
+{
+    int lo = 0;
+    int hi = self->m_visualCount;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (self->m_visualRows[mid].line < line)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+/**
+ * @brief      增量布局：单个逻辑行内容变化时仅重算该行的可视行段。
+ * @details    前置：编辑前缓存有效（由调用方在整体失效前捕获），且变更
+ *             仅落在单个逻辑行（编辑串不含 '\n'，逻辑行数不变）。做法：
+ *             按当前内容（含 preedit 视觉串，
+ *             与全量重建同一套 xtc_visualLineText/xtc_layoutLine 度量）
+ *             重算该行新可视行段，整体替换旧可视行区间 [first,last)
+ *             （相当于"保留前缀 + 变更行段 + 保留后缀"三段中的前/后缀
+ *             原样保留、变更段重算）。start 为逻辑行内相对字节
+ *             （XTextControlVisualRow 的承载口径），其它逻辑行的
+ *             (line,start,len,width) 不受单行编辑影响，无需平移；本次
+ *             编辑造成的字节差体现在替换段自身的 len/width 重算里。
+ *             护栏：核对缓存覆盖行与当前文档行数一致（0 与 lineCount-1），
+ *             setText 等绕过 rawInsert/rawRemove 直改行模型的场景回退
+ *             全量重建。任一步失败保持缓存失效（惰性全量，正确性优先）。
+ * @return     true = 缓存已增量更新并置有效；false = 保持失效。
+ */
+static bool xtc_incrementalLayoutLine(XTextControl* self, int line)
+{
+    XTextControlVisualRow* rows = NULL; /* 新行段暂存（独立扩容数组）。 */
+    int count = 0;
+    int cap = 0;
+    int wrapW;
+    int first;
+    int last;
+    int diff;
+    char* heap = NULL;
+    const char* text;
+    int len;
+    bool ok = false;
+
+    if (!self) return false;
+    /* 注意：进入本函数时 m_layoutValid 恒为 false（调用方 rawInsert/
+       rawRemove 已先整体失效）；"编辑前缓存有效"由调用方以局部快照
+       捕获并自行判定，此处不再重复检查。 */
+    if (line < 0 || line >= self->m_lineCount) return false;
+    if (self->m_visualCount <= 0 || !self->m_visualRows) return false;
+    /* 护栏：缓存须恰好覆盖 0..lineCount-1 行（行序单调 + 首尾行号核对）。 */
+    if (self->m_visualRows[0].line != 0 ||
+        self->m_visualRows[self->m_visualCount - 1].line !=
+            self->m_lineCount - 1)
+        return false;
+    wrapW = xtc_wrapWidthOf(self);
+    text = xtc_visualLineText(self, line, &heap);
+    len = xtc_visualLineLen(self, line);
+    if (wrapW <= 0) {
+        /* 不折行：该行可视行恒 1 条（与全量重建同口径）。 */
+        XFont font;
+        int w;
+        XMemcpy(&font, &self->m_font, sizeof(XFont));
+        w = XPainter_textWidthRange(&font, text, 0, len);
+        if (!xtc_layoutPushRow(&rows, &count, &cap, line, 0, len,
+                               w > 0 ? w : 0))
+            goto done;
+    } else {
+        if (!xtc_layoutLine(self->m_wordWrapMode, &self->m_font, &rows,
+                            &count, &cap, line, text, len, wrapW))
+            goto done;
+    }
+    /* 定位旧可视行区间 [first, last) 并原位拼接。 */
+    first = xtc_rowLowerBound(self, line);
+    last = first;
+    while (last < self->m_visualCount &&
+           self->m_visualRows[last].line == line)
+        ++last;
+    diff = count - (last - first);
+    if (diff > 0) {
+        /* 行段变多：先一次性扩容再搬移（新行段变宽，尾部让位）。 */
+        if (self->m_visualCount + diff > self->m_visualCap) {
+            int newCap = self->m_visualCap > 0 ? self->m_visualCap
+                                               : XTC_CAP_GROW;
+            XTextControlVisualRow* grown;
+            while (newCap < self->m_visualCount + diff) newCap *= 2;
+            grown = (XTextControlVisualRow*)XRealloc_System(
+                self->m_visualRows,
+                (size_t)newCap * sizeof(XTextControlVisualRow));
+            if (!grown) goto done;
+            self->m_visualRows = grown;
+            self->m_visualCap = newCap;
+        }
+    }
+    if (diff != 0) {
+        /* 尾段 [last, visualCount) 搬到新行段之后：目的地 = first + count
+           （新行段宽度），增减两向通用；memmove 容忍区间重叠。 */
+        XMemmove(&self->m_visualRows[first + count], &self->m_visualRows[last],
+                 (size_t)(self->m_visualCount - last) *
+                     sizeof(XTextControlVisualRow));
+    }
+    XMemcpy(&self->m_visualRows[first], rows,
+            (size_t)count * sizeof(XTextControlVisualRow));
+    self->m_visualCount += diff;
+    self->m_layoutValid = true;
+    ok = true;
+done:
+    if (heap) XFree_System(heap);
+    if (rows) XFree_System(rows);
+    return ok;
+}
+
+/**
+ * @brief      绝对位置 → (可视行, 可视行内字节列)。
+ * @details    位置 → 逻辑 (行,列) → preedit 视觉列 → 该逻辑行可视行段内
+ *             查找归属行（软断点处光标归属前行行尾，对标 Qt）。
+ */
+static void xtc_posToVisualRowCol(XTextControl* self, int pos, int* outRow,
+                                  int* outCol)
+{
+    int line;
+    int col;
+    int vcol;
+    int row;
+    if (outRow) *outRow = 0;
+    if (outCol) *outCol = 0;
+    if (!self || self->m_visualCount <= 0) return;
+    xtc_posToLineCol(self, pos, &line, &col);
+    vcol = xtc_docColToVisualCol(self, line, col);
+    row = xtc_rowLowerBound(self, line);
+    if (row >= self->m_visualCount) row = self->m_visualCount - 1;
+    while (row + 1 < self->m_visualCount &&
+           self->m_visualRows[row].line == line &&
+           vcol > self->m_visualRows[row].start + self->m_visualRows[row].len)
+        ++row;
+    if (self->m_visualRows[row].line != line) {
+        /* 位置钳到行外（越界入参兜底）：取该行首可视行。 */
+        row = xtc_rowLowerBound(self, line);
+        if (row >= self->m_visualCount) row = self->m_visualCount - 1;
+        vcol = self->m_visualRows[row].start;
+    }
+    /* 软断点字节归属歧义：Home 触发的光标边沿把行首字节解析到下一
+       可视行行首（对标 Qt 光标边沿跟踪）。 */
+    if (pos == self->m_cursorPosition && self->m_cursorAtRowStart &&
+        vcol == self->m_visualRows[row].start + self->m_visualRows[row].len &&
+        vcol < xtc_visualLineLen(self, line) &&
+        row + 1 < self->m_visualCount)
+        ++row;
+    if (outRow) *outRow = row;
+    if (outCol) *outCol = vcol - self->m_visualRows[row].start;
+}
+
+/**
+ * @brief      可视行 + X 像素 → 行内字节列（对标 hitTest 列扫描，行内钳位）。
+ */
+static int xtc_rowXToCol(XTextControl* self, int row, int x)
+{
+    XFont font;
+    const char* text;
+    char* heap = NULL;
+    int line;
+    int from;
+    int to;
+    int off;
+    if (!self || row < 0 || row >= self->m_visualCount) return 0;
+    line = self->m_visualRows[row].line;
+    from = self->m_visualRows[row].start;
+    to = from + self->m_visualRows[row].len;
+    text = xtc_visualLineText(self, line, &heap);
+    /* 只读浅拷贝（与 self->m_font 共享字符串指针，禁止 deinit）。 */
+    XMemcpy(&font, &self->m_font, sizeof(XFont));
+    off = from;
+    if (x > 0) {
+        while (off < to) {
+            int seq = XTextUtf8_seqLen(text + off, to - off);
+            int w = XPainter_textWidthRange(&font, text, off, off + seq);
+            if (w < 0) w = 0;
+            if (x < w) break;
+            x -= w;
+            off += seq;
+        }
+    }
+    if (heap) XFree_System(heap);
+    return off - self->m_visualRows[row].start;
+}
+
+/**
+ * @brief      (可视行, 行内字节列) → 绝对位置（经视觉列→文档列逆映射）。
+ */
+static int xtc_visualRowColToPos(XTextControl* self, int row, int col)
+{
+    int line;
+    int vcol;
+    int docCol;
+    int len;
+    if (!self || row < 0 || row >= self->m_visualCount) return 0;
+    line = self->m_visualRows[row].line;
+    len = self->m_visualRows[row].len;
+    if (col < 0) col = 0;
+    if (col > len) col = len;
+    vcol = self->m_visualRows[row].start + col;
+    docCol = xtc_visualColToDocCol(self, line, vcol);
+    return xtc_lineColToPos(self, line, docCol);
 }
 
 /** @brief 是否有选区。 */
@@ -293,7 +859,8 @@ static void xtc_emitRect(XTextControl* self,
         area = *rect;
     } else {
         int width = self->m_textWidth > 0 ? self->m_textWidth : 0;
-        XRect_init(&area, 0, 0, width, self->m_lineCount * self->m_lineHeight);
+        /* 全文档矩形高度按可视行数（软换行计入）。 */
+        XRect_init(&area, 0, 0, width, xtc_contentHeight(self));
     }
     args = XVarList_Create(XVar(XRect, area));
     if (!args) return;
@@ -434,7 +1001,7 @@ static void xtc_setCursorVisible(XTextControl* self, bool visible)
     xtc_repaintCursor(self);
 }
 
-/** @brief 当前选区矩形（内容坐标；含跨行与行内部分选中）。 */
+/** @brief 当前选区矩形（内容坐标；跨可视行逐行条带并集，含行内部分选中）。 */
 static XRect xtc_selectionRectImpl(const XTextControl* self, int position,
                                    int anchor)
 {
@@ -442,11 +1009,14 @@ static XRect xtc_selectionRectImpl(const XTextControl* self, int position,
     XFont font;
     int start;
     int end;
-    int startLine;
+    int startRow;
     int startCol;
-    int endLine;
+    int endRow;
     int endCol;
     int i;
+    char* heap = NULL;
+    int builtLine = -1;
+    const char* builtText = NULL;
     if (!self) {
         XRect_init(&r, 0, 0, 0, 0);
         return r;
@@ -455,27 +1025,42 @@ static XRect xtc_selectionRectImpl(const XTextControl* self, int position,
         return XTextControl_cursorRectAt(self, position);
     start = position < anchor ? position : anchor;
     end = position < anchor ? anchor : position;
-    xtc_posToLineCol(self, start, &startLine, &startCol);
-    xtc_posToLineCol(self, end, &endLine, &endCol);
+    xtc_ensureLayout((XTextControl*)self);
+    xtc_posToVisualRowCol((XTextControl*)self, start, &startRow, &startCol);
+    xtc_posToVisualRowCol((XTextControl*)self, end, &endRow, &endCol);
     /* 只读浅拷贝:与 self->m_font 共享 m_family/m_styleName,使用后禁止
        deinit(会释放控制器自有字符串,下一读点即踩悬垂指针)。 */
     XMemcpy(&font, &self->m_font, sizeof(XFont));
     XRect_init(&r, 0, 0, 0, 0);
-    for (i = startLine; i <= endLine && i < self->m_lineCount; ++i) {
-        const char* text = xtc_lineText(self, i);
-        int from = (i == startLine) ? startCol : 0;
-        int to = (i == endLine) ? endCol : xtc_lineLen(self, i);
+    for (i = startRow; i <= endRow && i < self->m_visualCount; ++i) {
+        const XTextControlVisualRow* row = &self->m_visualRows[i];
+        const char* text;
+        int from = (i == startRow) ? startCol : 0;
+        int to = (i == endRow) ? endCol : row->len;
         XRect lineRect;
+        if (row->line != builtLine) {
+            if (heap) {
+                XFree_System(heap);
+                heap = NULL;
+            }
+            builtText = xtc_visualLineText(self, row->line, &heap);
+            builtLine = row->line;
+        }
+        text = builtText;
+        if (to > row->len) to = row->len;
         XRect_init(&lineRect,
-                   XPainter_textWidthRange(&font, text, 0, from),
+                   XPainter_textWidthRange(&font, text, row->start,
+                                           row->start + from),
                    i * self->m_lineHeight,
-                   XPainter_textWidthRange(&font, text, from, to),
+                   XPainter_textWidthRange(&font, text, row->start + from,
+                                           row->start + to),
                    self->m_lineHeight);
-        if (i == startLine)
+        if (i == startRow)
             r = lineRect;
         else
             xtc_rectUnion(&r, &lineRect);
     }
+    if (heap) XFree_System(heap);
     /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
     /* 对标 Qt：有效选区矩形 ±1 外扩。 */
     r.x -= 1;
@@ -577,8 +1162,12 @@ static void xtc_recordCommand(XTextControl* self, int pos, const char* removed,
             int lastLen = (int)XStrlen(last->inserted);
             int addLen = (int)XStrlen(inserted);
             if (pos == last->pos + lastLen) {
-                char* merged = xtc_strdupN(last->inserted, lastLen + addLen);
+                /* 分配与拷贝分离：strdupN(len=合并长) 会从旧串越界读
+                   （ASan 基线扫查抓到的堆越界）。 */
+                char* merged = (char*)XMalloc_System(
+                    (size_t)lastLen + (size_t)addLen + 1);
                 if (merged) {
+                    XMemcpy(merged, last->inserted, (size_t)lastLen);
                     XMemcpy(merged + lastLen, inserted, (size_t)addLen);
                     merged[lastLen + addLen] = '\0';
                     XFree_System(last->inserted);
@@ -593,8 +1182,10 @@ static void xtc_recordCommand(XTextControl* self, int pos, const char* removed,
             int remLen = (int)XStrlen(removed);
             /* 向后连续删除（退格）：新命令在旧命令左侧。 */
             if (pos + remLen == last->pos) {
-                char* merged = xtc_strdupN(removed, remLen + lastLen);
+                char* merged = (char*)XMalloc_System(
+                    (size_t)remLen + (size_t)lastLen + 1);
                 if (merged) {
+                    XMemcpy(merged, removed, (size_t)remLen);
                     XMemcpy(merged + remLen, last->removed, (size_t)lastLen);
                     merged[remLen + lastLen] = '\0';
                     XFree_System(last->removed);
@@ -605,8 +1196,10 @@ static void xtc_recordCommand(XTextControl* self, int pos, const char* removed,
             }
             /* 向前连续删除（Delete）：新命令在旧命令右侧。 */
             if (last->pos + lastLen == pos) {
-                char* merged = xtc_strdupN(last->removed, remLen + lastLen);
+                char* merged = (char*)XMalloc_System(
+                    (size_t)remLen + (size_t)lastLen + 1);
                 if (merged) {
+                    XMemcpy(merged, last->removed, (size_t)lastLen);
                     XMemcpy(merged + lastLen, removed, (size_t)remLen);
                     merged[lastLen + remLen] = '\0';
                     XFree_System(last->removed);
@@ -657,14 +1250,23 @@ static void xtc_groupEnd(XTextControl* self)
 
 /**
  * @brief      在绝对位置 pos 插入 UTF-8 文本（可含 '\n'，按需拆行/建行）。
+ * @details    布局失效策略：编辑前缓存有效且插入串不含 '\n'（单逻辑行
+ *             编辑，绝大多数键入场景）时，增量重算该逻辑行的可视行段；
+ *             含 '\n'（跨行/建行）或缓存本已失效时仅整体失效，惰性全量
+ *             重建（正确性优先）。中途分配失败经早退跳过增量收尾，同样
+ *             落入全量重建。
  */
 static void xtc_rawInsert(XTextControl* self, int pos, const char* utf8)
 {
     int line;
     int col;
+    bool layoutWasValid;
+    bool multiline = false;
     const char* src;
     XTextControlLine* target;
     if (!self || !utf8 || !utf8[0]) return;
+    layoutWasValid = self->m_layoutValid; /* 增量前提：编辑前缓存有效。 */
+    xtc_invalidateLayout(self); /* 文档变更 → 可视行缓存失效。 */
     if (self->m_lineCount <= 0) {
         /* 空文档兜底：保证至少一行。 */
         if (self->m_lineCap <= 0) {
@@ -706,6 +1308,7 @@ static void xtc_rawInsert(XTextControl* self, int pos, const char* utf8)
         }
         if (!nl) break;
         /* '\n'：当前行 [col, len) 下移到新行，并在 col 处断开。 */
+        multiline = true; /* 跨行编辑 → 增量不适用，回退全量。 */
         {
             int tailLen = target->len - col;
             char* tail = NULL;
@@ -743,27 +1346,43 @@ static void xtc_rawInsert(XTextControl* self, int pos, const char* utf8)
         }
         src = nl + 1;
     }
+    /* 单逻辑行插入：只重算该逻辑行的可视行段（失败保持失效 → 全量）。 */
+    if (layoutWasValid && !multiline)
+        xtc_incrementalLayoutLine(self, line);
 }
 
 /**
  * @brief      删除绝对区间 [pos, pos+len)（跨 '\n' 时合并/删除行）。
+ * @details    布局失效策略与 xtc_rawInsert 对偶：编辑前缓存有效且删除
+ *             未跨行（未触及行间 '\n'，逻辑行数不变）时，增量重算该
+ *             逻辑行的可视行段；跨行合并或缓存本已失效时仅整体失效，
+ *             惰性全量重建。区间钳位后实际未删除任何字节（pos 越界等）
+ *             且缓存此前有效时，文档未变，缓存仍与文档一致，恢复有效
+ *             标记避免无谓重建。
  */
 static void xtc_rawRemove(XTextControl* self, int pos, int len)
 {
     int total;
+    int removedBytes = 0;   /* 实际删除的行内容字节（含被删的行间 '\n'）。 */
+    int firstLine = -1;     /* 删除起点所在逻辑行（未跨行时即受影响行）。 */
+    bool layoutWasValid;
+    bool crossedLine = false;
     if (!self || len <= 0) return;
+    layoutWasValid = self->m_layoutValid; /* 增量前提：编辑前缓存有效。 */
+    xtc_invalidateLayout(self); /* 文档变更 → 可视行缓存失效。 */
     total = xtc_documentLength(self);
     if (pos < 0) {
         len += pos;
         pos = 0;
     }
-    if (pos >= total) return;
+    if (pos >= total) len = 0; /* 越界：无实际删除，走收尾恢复有效标记。 */
     if (pos + len > total) len = total - pos;
     while (len > 0) {
         int line;
         int col;
         XTextControlLine* target;
         xtc_posToLineCol(self, pos, &line, &col);
+        if (firstLine < 0) firstLine = line;
         target = &self->m_lines[line];
         if (col < target->len) {
             int avail = target->len - col;
@@ -771,11 +1390,14 @@ static void xtc_rawRemove(XTextControl* self, int pos, int len)
             XMemmove(target->data + col, target->data + col + take,
                      (size_t)(target->len - col - take) + 1);
             target->len -= take;
+            removedBytes += take;
             len -= take;
             continue;
         }
         /* 列在行尾：删除行间 '\n'，与下一行合并。 */
         if (line + 1 >= self->m_lineCount) break;
+        crossedLine = true; /* 跨行删除 → 增量不适用，回退全量。 */
+        ++removedBytes;
         {
             XTextControlLine* next = &self->m_lines[line + 1];
             int need = target->len + next->len + 1;
@@ -808,6 +1430,14 @@ static void xtc_rawRemove(XTextControl* self, int pos, int len)
             --self->m_lineCount;
             --len;
         }
+    }
+    /* 收尾：未跨行的实际删除增量重算受影响行；未删除且缓存此前有效则
+       文档未变，恢复有效标记；其余保持失效（惰性全量重建）。 */
+    if (layoutWasValid && !crossedLine) {
+        if (removedBytes > 0 && firstLine >= 0)
+            xtc_incrementalLayoutLine(self, firstLine);
+        else if (removedBytes == 0)
+            self->m_layoutValid = true;
     }
 }
 
@@ -876,6 +1506,8 @@ static void xtc_syncDocumentMirror(XTextControl* self)
     XTextDocument_setPlainText(self->m_textDoc, text);
     XFree_System(text);
 #endif
+    /* 文档变更后字节位置整体位移：光标软行首边沿失效。 */
+    self->m_cursorAtRowStart = false;
 }
 
 /**
@@ -894,7 +1526,8 @@ static void xtc_afterContentsChanged(XTextControl* self, int oldLineCount,
     if (self->m_lineCount != oldLineCount)
         xtc_emitInt(self, XTextControl_blockCountChanged_signal,
                     self->m_lineCount);
-    newHeight = self->m_lineCount * self->m_lineHeight;
+    /* 对标 Qt documentSize：高度按可视行数（软换行计入）。 */
+    newHeight = xtc_contentHeight(self);
     size = XTextControl_size(self);
     if (newHeight != oldHeight)
         xtc_emitSize(self, XTextControl_documentSizeChanged_signal, &size);
@@ -917,7 +1550,7 @@ static void xtc_editInsert(XTextControl* self, int pos, const char* utf8,
     int useGroup;
     if (!self || !utf8 || !utf8[0]) return;
     oldLineCount = self->m_lineCount;
-    oldHeight = self->m_lineCount * self->m_lineHeight;
+    oldHeight = xtc_contentHeight(self); /* 对标 Qt：高度按可视行数。 */
     useGroup = group >= 0 ? group
                           : (self->m_editBlockDepth > 0 ? self->m_groupCounter : 0);
     xtc_recordCommand(self, pos, NULL, utf8, useGroup);
@@ -939,7 +1572,7 @@ static void xtc_editRemove(XTextControl* self, int pos, int len, int group)
         len = xtc_documentLength(self) - pos;
     if (len <= 0) return;
     oldLineCount = self->m_lineCount;
-    oldHeight = self->m_lineCount * self->m_lineHeight;
+    oldHeight = xtc_contentHeight(self); /* 对标 Qt：高度按可视行数。 */
     removed = xtc_getRange(self, pos, len);
     useGroup = group >= 0 ? group
                           : (self->m_editBlockDepth > 0 ? self->m_groupCounter : 0);
@@ -1009,6 +1642,8 @@ static void xtc_clearPreeditState(XTextControl* self)
     if (self->m_preedit) {
         XFree_System(self->m_preedit);
         self->m_preedit = NULL;
+        /* 组合串参与视觉文本（计入折行布局）：清空即失效缓存。 */
+        xtc_invalidateLayout(self);
     }
     self->m_preeditPos = 0;
     self->m_preeditCursor = 0;
@@ -1113,47 +1748,6 @@ static void xtc_wordRangeUnder(const XTextControl* self, int pos, int* start,
     if (end) *end = e;
 }
 
-/* ==================== preedit 视觉映射 ==================== */
-
-/** @brief preedit 所在 (行, 列)；非组合态返回 false。 */
-static bool xtc_preeditLineCol(const XTextControl* self, int* line, int* col)
-{
-    if (!xtc_isPreediting(self)) return false;
-    xtc_posToLineCol(self, self->m_preeditPos, line, col);
-    return true;
-}
-
-/** @brief preedit 字节长。 */
-static int xtc_preeditLen(const XTextControl* self)
-{
-    return xtc_isPreediting(self) ? (int)XStrlen(self->m_preedit) : 0;
-}
-
-/** @brief 文档列 → 视觉列（组合行上考虑 preedit 占位）。 */
-static int xtc_docColToVisualCol(const XTextControl* self, int line, int col)
-{
-    int pLine;
-    int pCol;
-    if (!xtc_preeditLineCol(self, &pLine, &pCol)) return col;
-    if (line != pLine) return col;
-    if (col >= pCol) return col + xtc_preeditLen(self);
-    return col;
-}
-
-/** @brief 视觉列 → 文档列（命中测试逆映射；preedit 区间归并到插入点）。 */
-static int xtc_visualColToDocCol(const XTextControl* self, int line, int col)
-{
-    int pLine;
-    int pCol;
-    int preLen;
-    if (!xtc_preeditLineCol(self, &pLine, &pCol)) return col;
-    if (line != pLine) return col;
-    preLen = xtc_preeditLen(self);
-    if (col <= pCol) return col;
-    if (col <= pCol + preLen) return pCol;
-    return col - preLen;
-}
-
 /* ==================== 光标定位/移动（对标 QTextCursor::movePosition） ==== */
 
 /**
@@ -1165,6 +1759,7 @@ static void xtc_setCursorPos(XTextControl* self, int pos, int mode)
     if (!self) return;
     if (pos < 0) pos = 0;
     if (pos > xtc_documentLength(self)) pos = xtc_documentLength(self);
+    self->m_cursorAtRowStart = false; /* 常规移动清边沿（仅 Home 置位）。 */
     if (mode == (int)XTextControlMoveMode_KeepAnchor) {
         self->m_cursorPosition = pos;
     } else {
@@ -1188,9 +1783,6 @@ static void xtc_extendWordwise(XTextControl* self, int suggestedPos, int mouseX)
     int wordStart;
     int wordEnd;
     XFont font;
-    const char* text;
-    int line;
-    int lineStart;
     int wordStartX;
     int wordEndX;
     bool selectable = (self->m_interactionFlags &
@@ -1208,11 +1800,33 @@ static void xtc_extendWordwise(XTextControl* self, int suggestedPos, int mouseX)
     /* 只读浅拷贝:与 self->m_font 共享 m_family/m_styleName,使用后禁止
        deinit(会释放控制器自有字符串,下一读点即踩悬垂指针)。 */
     XMemcpy(&font, &self->m_font, sizeof(XFont));
-    xtc_posToLineCol(self, suggestedPos, &line, NULL);
-    text = xtc_lineText(self, line);
-    lineStart = xtc_lineColToPos(self, line, 0);
-    wordStartX = XPainter_textWidthRange(&font, text, 0, wordStart - lineStart);
-    wordEndX = XPainter_textWidthRange(&font, text, 0, wordEnd - lineStart);
+    /* 词界像素 X 按可视行内坐标度量（软换行后每行 X 归零，对标 Qt
+       行内坐标比较）。 */
+    {
+        char* heap = NULL;
+        int row;
+        const char* text;
+        int rowBase;
+        int wsV;
+        int weV;
+        int line;
+        int lineStart;
+        xtc_ensureLayout(self);
+        xtc_posToVisualRowCol(self, suggestedPos, &row, NULL);
+        line = self->m_visualRows[row].line;
+        rowBase = self->m_visualRows[row].start;
+        text = xtc_visualLineText(self, line, &heap);
+        xtc_posToLineCol(self, suggestedPos, &line, NULL);
+        lineStart = xtc_lineColToPos(self, line, 0);
+        wsV = xtc_docColToVisualCol(self, line, wordStart - lineStart);
+        weV = xtc_docColToVisualCol(self, line, wordEnd - lineStart);
+        if (wsV < rowBase) wsV = rowBase;
+        if (weV > rowBase + self->m_visualRows[row].len)
+            weV = rowBase + self->m_visualRows[row].len;
+        wordStartX = XPainter_textWidthRange(&font, text, rowBase, wsV);
+        wordEndX = XPainter_textWidthRange(&font, text, rowBase, weV);
+        if (heap) XFree_System(heap);
+    }
     /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
     if (!self->m_wordSelectionEnabled &&
         (mouseX < wordStartX || mouseX > wordEndX))
@@ -1261,6 +1875,11 @@ static void xtc_extendBlockwise(XTextControl* self, int suggestedPos)
 
 /**
  * @brief      光标移动操作（对标 cursorMoveKeyEvent 的 op/mode 分解）。
+ * @details    Left/Right/Up/Down/Home/End 经"字节位置 ↔ (可视行, 列)"
+ *             双向映射（软换行后可视行即光标移动单位，对标 Qt 在
+ *             QTextLayout 行间移动）；StartOfBlock/EndOfBlock/Previous-
+ *             Block/NextBlock 保持段（逻辑行）语义；Up/Down 以像素 X
+ *             为列目标（对标 cursor x 保持）。
  * @return     操作被接受返回 true（位置变化或保持锚点的扩展）。
  */
 static bool xtc_movePosition(XTextControl* self, int op, int mode)
@@ -1279,33 +1898,82 @@ static bool xtc_movePosition(XTextControl* self, int op, int mode)
         return false;
     case (int)XTextControlMove_Left:
     case (int)XTextControlMove_PreviousCharacter: {
-        if (col > 0) {
-            const char* text = xtc_lineText(self, line);
-            int prev = (int)XTextUtf8_prevBoundary(text, (size_t)col);
-            xtc_setCursorPos(self, xtc_lineColToPos(self, line, prev), mode);
-        } else if (line > 0) {
+        /* 视觉列口径左移：软断点处自动落到上一可视行行尾。 */
+        int row;
+        int rowCol;
+        xtc_ensureLayout(self);
+        xtc_posToVisualRowCol(self, self->m_cursorPosition, &row, &rowCol);
+        if (rowCol > 0) {
+            char* heap = NULL;
+            const char* text =
+                xtc_visualLineText(self, self->m_visualRows[row].line, &heap);
+            int base = self->m_visualRows[row].start + rowCol;
+            int prev = (int)XTextUtf8_prevBoundary(text, (size_t)base);
+            int pos = xtc_visualRowColToPos(self, row,
+                                            prev - self->m_visualRows[row].start);
+            if (heap) XFree_System(heap);
+            xtc_setCursorPos(self, pos, mode);
+        } else if (self->m_visualRows[row].start == 0 && line > 0) {
+            /* 段首：跨 '\n' 到上一段尾（分隔符单字节）。 */
             xtc_setCursorPos(self, self->m_cursorPosition - 1, mode);
         }
+        /* 软断点（rowCol==0 且 start>0）：绝对位置即上一行行尾，无移动。 */
         break;
     }
     case (int)XTextControlMove_Right:
     case (int)XTextControlMove_NextCharacter: {
-        int lineLen = xtc_lineLen(self, line);
-        const char* text = xtc_lineText(self, line);
-        if (col < lineLen) {
-            int seq = XTextUtf8_seqLen(text + col, lineLen - col);
-            xtc_setCursorPos(self, self->m_cursorPosition + seq, mode);
+        int row;
+        int rowCol;
+        xtc_ensureLayout(self);
+        xtc_posToVisualRowCol(self, self->m_cursorPosition, &row, &rowCol);
+        if (rowCol < self->m_visualRows[row].len) {
+            char* heap = NULL;
+            const char* text =
+                xtc_visualLineText(self, self->m_visualRows[row].line, &heap);
+            int base = self->m_visualRows[row].start + rowCol;
+            int vlen = xtc_visualLineLen(self, self->m_visualRows[row].line);
+            int seq = base < vlen
+                          ? XTextUtf8_seqLen(text + base, vlen - base) : 0;
+            int pos;
+            if (heap) XFree_System(heap);
+            pos = xtc_visualRowColToPos(self, row,
+                                        rowCol + (seq > 0 ? seq : 1));
+            xtc_setCursorPos(self, pos, mode);
         } else if (line + 1 < self->m_lineCount) {
+            /* 段尾：跨 '\n' 到下一段首。 */
             xtc_setCursorPos(self, self->m_cursorPosition + 1, mode);
         }
         break;
     }
     case (int)XTextControlMove_Up:
     case (int)XTextControlMove_PreviousBlock: {
-        if (line > 0) {
-            int goal = self->m_goalCol >= 0 ? self->m_goalCol : col;
-            xtc_setCursorPos(self, xtc_lineColToPos(self, line - 1, goal), mode);
+        int row;
+        xtc_ensureLayout(self);
+        xtc_posToVisualRowCol(self, self->m_cursorPosition, &row, NULL);
+        if (op == (int)XTextControlMove_PreviousBlock) {
+            /* 段移动保持逻辑行语义（对标 PreviousBlock）。 */
+            if (line > 0) {
+                int goal = self->m_goalCol >= 0 ? self->m_goalCol : col;
+                xtc_setCursorPos(self, xtc_lineColToPos(self, line - 1, goal),
+                                 mode);
+                if (keep) self->m_goalCol = goal;
+            } else if (keep) {
+                xtc_setCursorPos(self, 0, mode);
+            }
+            break;
+        }
+        if (row > 0) {
+            /* 上一可视行，像素 X 目标（对标 cursor x 保持）。 */
+            int goal = self->m_goalCol >= 0
+                           ? self->m_goalCol
+                           : XTextControl_cursorRect(self).x;
+            int goalCol = xtc_rowXToCol(self, row - 1, goal);
+            xtc_setCursorPos(self, xtc_visualRowColToPos(self, row - 1,
+                                                         goalCol),
+                             mode);
             if (keep) self->m_goalCol = goal;
+            /* X 目标落在软行首（像素 0）：边沿归属上一行行首。 */
+            self->m_cursorAtRowStart = goalCol == 0;
         } else if (keep && op == (int)XTextControlMove_Up) {
             /* 对标 SelectPreviousLine 在首行退化为选到文档头。 */
             xtc_setCursorPos(self, 0, mode);
@@ -1314,10 +1982,33 @@ static bool xtc_movePosition(XTextControl* self, int op, int mode)
     }
     case (int)XTextControlMove_Down:
     case (int)XTextControlMove_NextBlock: {
-        if (line + 1 < self->m_lineCount) {
-            int goal = self->m_goalCol >= 0 ? self->m_goalCol : col;
-            xtc_setCursorPos(self, xtc_lineColToPos(self, line + 1, goal), mode);
+        int row;
+        xtc_ensureLayout(self);
+        xtc_posToVisualRowCol(self, self->m_cursorPosition, &row, NULL);
+        if (op == (int)XTextControlMove_NextBlock) {
+            /* 段移动保持逻辑行语义（对标 NextBlock）。 */
+            if (line + 1 < self->m_lineCount) {
+                int goal = self->m_goalCol >= 0 ? self->m_goalCol : col;
+                xtc_setCursorPos(self, xtc_lineColToPos(self, line + 1, goal),
+                                 mode);
+                if (keep) self->m_goalCol = goal;
+            } else if (keep) {
+                xtc_setCursorPos(self, total, mode);
+            }
+            break;
+        }
+        if (row + 1 < self->m_visualCount) {
+            /* 下一可视行，像素 X 目标（对标 cursor x 保持）。 */
+            int goal = self->m_goalCol >= 0
+                           ? self->m_goalCol
+                           : XTextControl_cursorRect(self).x;
+            int goalCol = xtc_rowXToCol(self, row + 1, goal);
+            xtc_setCursorPos(self, xtc_visualRowColToPos(self, row + 1,
+                                                         goalCol),
+                             mode);
             if (keep) self->m_goalCol = goal;
+            /* X 目标落在软行首（像素 0）：边沿归属下一行行首。 */
+            self->m_cursorAtRowStart = goalCol == 0;
         } else if (keep && op == (int)XTextControlMove_Down) {
             /* 对标 SelectNextLine 在末行退化为选到文档尾。 */
             xtc_setCursorPos(self, total, mode);
@@ -1331,15 +2022,38 @@ static bool xtc_movePosition(XTextControl* self, int op, int mode)
         xtc_setCursorPos(self, total, mode);
         break;
     case (int)XTextControlMove_StartOfLine:
-    case (int)XTextControlMove_StartOfBlock:
-        xtc_setCursorPos(self, xtc_lineColToPos(self, line, 0), mode);
+    case (int)XTextControlMove_StartOfBlock: {
+        if (op == (int)XTextControlMove_StartOfLine) {
+            /* 对标 StartOfLine：可视行行首（软换行行首）。 */
+            int row;
+            xtc_ensureLayout(self);
+            xtc_posToVisualRowCol(self, self->m_cursorPosition, &row, NULL);
+            xtc_setCursorPos(self, xtc_visualRowColToPos(self, row, 0), mode);
+            /* 行首字节可能是软断点：置边沿让视觉/后续操作归属本行行首。 */
+            self->m_cursorAtRowStart = true;
+        } else {
+            xtc_setCursorPos(self, xtc_lineColToPos(self, line, 0), mode);
+        }
         break;
+    }
     case (int)XTextControlMove_EndOfLine:
-    case (int)XTextControlMove_EndOfBlock:
-        xtc_setCursorPos(self, xtc_lineColToPos(self, line,
-                                                xtc_lineLen(self, line)),
-                         mode);
+    case (int)XTextControlMove_EndOfBlock: {
+        if (op == (int)XTextControlMove_EndOfLine) {
+            /* 对标 EndOfLine：可视行行尾（软换行行尾）。 */
+            int row;
+            xtc_ensureLayout(self);
+            xtc_posToVisualRowCol(self, self->m_cursorPosition, &row, NULL);
+            xtc_setCursorPos(self,
+                             xtc_visualRowColToPos(self, row,
+                                                   self->m_visualRows[row].len),
+                             mode);
+        } else {
+            xtc_setCursorPos(self, xtc_lineColToPos(self, line,
+                                                    xtc_lineLen(self, line)),
+                             mode);
+        }
         break;
+    }
     case (int)XTextControlMove_WordLeft:
     case (int)XTextControlMove_PreviousWord:
     case (int)XTextControlMove_StartOfWord:
@@ -1714,7 +2428,7 @@ static void xtc_commitPreedit(XTextControl* self)
     int oldLineCount;
     if (!xtc_isPreediting(self)) return;
     oldLineCount = self->m_lineCount;
-    oldHeight = self->m_lineCount * self->m_lineHeight;
+    oldHeight = xtc_contentHeight(self); /* 对标 Qt：高度按可视行数。 */
     xtc_editInsert(self, self->m_preeditPos, self->m_preedit, -1);
     self->m_cursorAnchor = self->m_cursorPosition =
         self->m_preeditPos + xtc_preeditLen(self);
@@ -1744,7 +2458,9 @@ static void xtc_pasteFromMode(XTextControl* self, int mode);
  */
 static bool xtc_middleClickPaste(XTextControl* self, const XMouseEvent* e)
 {
+#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
     XClipboard* clipObj;
+#endif
     XPoint pos;
     int cursorPos;
     int oldPos;
@@ -1753,11 +2469,16 @@ static bool xtc_middleClickPaste(XTextControl* self, const XMouseEvent* e)
         !(self->m_interactionFlags &
           (int)XTextControlInteraction_TextEditable))
         return false;
+#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
     /* 对标 Qt：中键 Selection 粘贴仅当平台后端声明支持选择区
        （QGuiApplication::clipboard()->supportsSelection() 门禁）。 */
     clipObj = XGuiApplication_clipboard();
     if (!clipObj || !XClipboard_supportsSelection(clipObj))
         return false;
+#else
+    /* 剪贴板子系统裁剪：无系统门禁可查，直通共享层回退（与
+       xtc_pasteFromMode 的 systemOnly=false 路径同语义）。 */
+#endif
     pos = e->m_position;
     /* 对标 Qt cursorForPosition(点击处)：FuzzyHit 未命中（<0）不动作。 */
     cursorPos = XTextControl_hitTest(
@@ -2132,6 +2853,7 @@ static void xtc_mouseDoubleClickEvent(XTextControl* self, XMouseEvent* e)
  * @details    preedit 不入文档（与 Qt 一致）：组合串旁路挂载在光标处，
  *             参与命中测试/绘制；提交串经撤销跟踪写入文档。
  */
+#if XINPUTMETHOD_ON
 static void xtc_inputMethodEvent(XTextControl* self, XInputMethodEvent* e)
 {
     int flags;
@@ -2206,6 +2928,21 @@ static void xtc_inputMethodEvent(XTextControl* self, XInputMethodEvent* e)
                                     ? e->m_cursorPosition
                                     : (int)XStrlen(preedit);
         self->m_hideCursor = false;
+        /* 组合串计入布局（IME 预编辑参与折行）：失效缓存并同步内容
+           高度（组合串可能增减可视行数，对标 Qt preeditArea 布局）。 */
+        {
+            int oldHeight = xtc_contentHeight(self);
+            xtc_invalidateLayout(self);
+            {
+                int newHeight = xtc_contentHeight(self);
+                if (newHeight != oldHeight) {
+                    XSize size = XTextControl_size(self);
+                    xtc_emitSize(self,
+                                 XTextControl_documentSizeChanged_signal,
+                                 &size);
+                }
+            }
+        }
     } else {
         xtc_clearPreeditState(self);
     }
@@ -2216,9 +2953,11 @@ static void xtc_inputMethodEvent(XTextControl* self, XInputMethodEvent* e)
         xtc_emitVoid(self, XTextControl_microFocusChanged_signal);
     XEvent_accept((XEvent*)e);
 }
+#endif /* XINPUTMETHOD_ON */
 
 /* ==================== 拖放（对标 dragEnter/Move/Leave/Drop） ==== */
 
+#if XWINDOWEVENT_ON
 /**
  * @brief      拖放事件路由（对标 Private::dragEnterEvent / dragMoveEvent /
  *             dragLeaveEvent / dropEvent 的平铺承载）。
@@ -2290,9 +3029,11 @@ static void xtc_dropEventRoute(XTextControl* self, XDropEvent* e)
         break;
     }
 }
+#endif /* XWINDOWEVENT_ON */
 
 /* ==================== 焦点 / 定时器（对标 focusEvent / timerEvent） ==== */
 
+#if XWINDOWEVENT_ON
 /**
  * @brief      焦点事件（对标 focusEvent：光标可见性、焦点指示选区清理）。
  */
@@ -2322,6 +3063,7 @@ static void xtc_focusEvent(XTextControl* self, XFocusEvent* e)
     }
     self->m_hasFocus = XFocusEvent_gotFocus(e);
 }
+#endif /* XWINDOWEVENT_ON */
 
 /**
  * @brief      定时器事件（对标 timerEvent：光标闪烁 + 三击判定截止）。
@@ -2556,59 +3298,83 @@ int XTextControl_hitTest(const XTextControl* self, const XPoint* point,
                          int accuracy)
 {
     XFont font;
+    int row;
     int line;
-    int lineLen;
-    int off = 0;
+    char* heap = NULL;
+    const char* text;
+    int base;
+    int to;
+    int off;
     int x;
-    int width;
-    int col;
+    const XTextControlVisualRow* vr;
     if (!self || !point || self->m_lineCount <= 0) return -1;
-    line = point->y / (self->m_lineHeight > 0 ? self->m_lineHeight : 1);
-    if (line < 0) line = 0;
-    if (line >= self->m_lineCount) line = self->m_lineCount - 1;
-    lineLen = xtc_lineLen(self, line);
+    xtc_ensureLayout((XTextControl*)self);
+    if (self->m_visualCount <= 0) return -1;
+    /* 对标 Qt hitTest：y 反查可视行（软换行行），x 反查行内列。 */
+    row = point->y / (self->m_lineHeight > 0 ? self->m_lineHeight : 1);
+    if (row < 0) row = 0;
+    if (row >= self->m_visualCount) row = self->m_visualCount - 1;
+    vr = &self->m_visualRows[row];
+    line = vr->line;
+    base = vr->start;
+    to = vr->start + vr->len;
+    text = xtc_visualLineText(self, line, &heap);
     /* 只读浅拷贝:与 self->m_font 共享 m_family/m_styleName,使用后禁止
        deinit(会释放控制器自有字符串,下一读点即踩悬垂指针)。 */
     XMemcpy(&font, &self->m_font, sizeof(XFont));
-    width = XPainter_textWidthRange(&font, xtc_lineText(self, line), 0, lineLen);
     x = point->x;
-    col = 0;
-    if (x > 0 && lineLen > 0) {
-        const char* text = xtc_lineText(self, line);
-        while (off < lineLen) {
-            int seq = XTextUtf8_seqLen(text + off, lineLen - off);
+    off = base;
+    if (x > 0 && to > base) {
+        while (off < to) {
+            int seq = XTextUtf8_seqLen(text + off, to - off);
             int w = XPainter_textWidthRange(&font, text, off, off + seq);
             if (w < 0) w = 0;
             if (x < w) break;
             x -= w;
             off += seq;
         }
-        col = off;
     }
+    if (heap) XFree_System(heap);
     /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
     if (accuracy == (int)XTextControlHitTestAccuracy_ExactHit) {
-        /* 精确命中：须落在文本区（[0, 行宽]），空行仅 x<=0。 */
-        if (lineLen > 0) {
-            if (point->x < 0 || point->x > width) return -1;
+        /* 精确命中：须落在文本区（[0, 可视行宽]），空行仅 x<=0。 */
+        if (vr->len > 0) {
+            if (point->x < 0 || point->x > vr->width) return -1;
         } else if (point->x > 0) {
             return -1;
         }
     }
-    col = xtc_visualColToDocCol(self, line, col);
-    return xtc_lineColToPos(self, line, col);
+    {
+        int vcol = off;
+        int docCol = xtc_visualColToDocCol(self, line, vcol);
+        return xtc_lineColToPos(self, line, docCol);
+    }
 }
 
 XRect XTextControl_blockBoundingRect(const XTextControl* self, int line)
 {
     XRect r;
     int width;
+    int row;
+    int rowEnd;
+    int rowsInBlock;
     if (!self || line < 0 || line >= self->m_lineCount) {
         XRect_init(&r, 0, 0, 0, 0);
         return r;
     }
+    xtc_ensureLayout((XTextControl*)self);
+    /* 对标 Qt blockBoundingRect：条带覆盖该块全部可视行（软换行计入）。 */
+    row = xtc_rowLowerBound(self, line);
+    rowEnd = row;
+    while (rowEnd < self->m_visualCount &&
+           self->m_visualRows[rowEnd].line == line)
+        ++rowEnd;
+    rowsInBlock = rowEnd - row;
+    if (rowsInBlock < 1) rowsInBlock = 1;
     width = self->m_textWidth;
-    XRect_init(&r, 0, line * self->m_lineHeight, width > 0 ? width : 0x7FFFFFF0,
-               self->m_lineHeight);
+    XRect_init(&r, 0, row * self->m_lineHeight,
+               width > 0 ? width : 0x7FFFFFF0,
+               rowsInBlock * self->m_lineHeight);
     return r;
 }
 
@@ -2622,6 +3388,10 @@ XRect XTextControl_cursorRectAt(const XTextControl* self, int position)
     int lineLen;
     int visualCol;
     int x;
+    int row;
+    char* heap = NULL;
+    const char* vtext;
+    const XTextControlVisualRow* vr;
     if (!self) {
         XRect_init(&r, 0, 0, 0, 0);
         return r;
@@ -2643,18 +3413,45 @@ XRect XTextControl_cursorRectAt(const XTextControl* self, int position)
         else
             visualCol = xtc_docColToVisualCol(self, line, col);
     }
+    xtc_ensureLayout((XTextControl*)self);
+    if (self->m_visualCount <= 0 || !self->m_visualRows) {
+        /* 布局兜底（重建失败等）：退回逻辑行条带。 */
+        XRect_init(&r, 0, line * self->m_lineHeight,
+                   self->m_cursorWidth > 0 ? self->m_cursorWidth : 1,
+                   self->m_lineHeight);
+        return r;
+    }
+    row = xtc_rowLowerBound(self, line);
+    while (row + 1 < self->m_visualCount &&
+           self->m_visualRows[row].line == line &&
+           visualCol > self->m_visualRows[row].start +
+                           self->m_visualRows[row].len)
+        ++row;
+    if (row >= self->m_visualCount) row = self->m_visualCount > 0
+                                              ? self->m_visualCount - 1 : 0;
+    /* 软断点歧义：Home 边沿把行首字节渲染到下一可视行行首
+       （与 posToVisualRowCol 同一归属规则）。 */
+    if (position == self->m_cursorPosition && self->m_cursorAtRowStart &&
+        row + 1 < self->m_visualCount &&
+        visualCol == self->m_visualRows[row].start +
+                         self->m_visualRows[row].len &&
+        visualCol < xtc_visualLineLen(self, line))
+        ++row;
+    vr = &self->m_visualRows[row];
+    vtext = xtc_visualLineText(self, line, &heap);
     /* 只读浅拷贝:与 self->m_font 共享 m_family/m_styleName,使用后禁止
        deinit(会释放控制器自有字符串,下一读点即踩悬垂指针)。 */
     XMemcpy(&font, &self->m_font, sizeof(XFont));
-    x = XPainter_textWidthRange(&font, text, 0, visualCol > lineLen + xtc_preeditLen(self)
-                                                        ? lineLen
-                                                        : visualCol);
+    /* X 按可视行内偏移度量（软换行行 X 归零，对标 Qt 行内光标 X）。 */
+    x = XPainter_textWidthRange(&font, vtext, vr->start,
+                                visualCol < vr->start ? vr->start : visualCol);
     if (self->m_overwriteMode && col < lineLen) {
         int seq = XTextUtf8_seqLen(text + col, lineLen - col);
         x += XPainter_textWidthRange(&font, text, col, col + seq);
     }
+    if (heap) XFree_System(heap);
     /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
-    XRect_init(&r, x, line * self->m_lineHeight,
+    XRect_init(&r, x, row * self->m_lineHeight,
                self->m_cursorWidth > 0 ? self->m_cursorWidth : 1,
                self->m_lineHeight);
     return r;
@@ -2733,10 +3530,13 @@ static int xtc_drawRun(XPainter* painter, const XFont* font, const char* text,
 
 /**
  * @brief      绘制入口（对标 drawContents → layout draw + PaintContext）。
- * @details    逐行渲染：组合行先把 preedit splice 进视觉缓冲；随后收集
- *             分段边界（选区边缘/锚点边缘/preedit 边缘/行端），逐段两色
- *             文本 + 选区高亮 + 锚点下划线（Link 色）+ IME 组合下划线；
- *             末尾按 blink 态绘制光标与拖放反馈光标。
+ * @details    逐可视行渲染（软换行后一行逻辑行折为多可视行，对标
+ *             QTextLayout 逐 Line 绘制）：组合行先把 preedit splice 进
+ *             视觉缓冲；随后收集分段边界（选区边缘/锚点边缘/preedit
+ *             边缘/行端），逐段两色文本 + 选区高亮 + 锚点下划线
+ *             （Link 色）+ IME 组合下划线；每行裁剪到"文本区 ∩ 行带"
+ *             （任何模式下文本绝不越出边框，视觉兜底）；末尾按 blink
+ *             态绘制光标与拖放反馈光标。
  */
 void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
 {
@@ -2745,19 +3545,25 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
     uint32_t highlight;
     uint32_t highlightedText;
     uint32_t linkColor;
-    int firstLine;
-    int lastLine;
+    int firstRow;
+    int lastRow;
     int selStart;
     int selEnd;
-    int i;
+    int r;
+    char* heap = NULL;
+    int builtLine = -1;
+    const char* builtText = NULL;
     if (!self || !painter || !XPainter_isActive(painter)) return;
     XPainter_save(painter);
+#if XPAINTER_CLIP_ON
     if (rect && rect->width > 0 && rect->height > 0)
         XPainter_setClipRect(painter, rect, XPainterClipOperation_IntersectClip);
+#endif /* XPAINTER_CLIP_ON */
     /* 只读浅拷贝:与 self->m_font 共享 m_family/m_styleName,使用后禁止
        deinit(会释放控制器自有字符串,下一读点即踩悬垂指针)。 */
     XMemcpy(&font, &self->m_font, sizeof(XFont));
     XPainter_setFont(painter, &font);
+#if XPALETTE_ON
     textColor = xtc_paletteColor(self, XPaletteColorRole_Text);
     if (!textColor) textColor = 0xFF000000u;
     highlight = xtc_paletteColor(self, XPaletteColorRole_Highlight);
@@ -2766,6 +3572,14 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
     if (!highlightedText) highlightedText = 0xFFFFFFFFu;
     linkColor = xtc_paletteColor(self, XPaletteColorRole_Link);
     if (!linkColor) linkColor = 0xFF0000FFu;
+#else
+    /* 调色板子系统裁剪：直接取活动路径的常量回退值（与上方 if(!x)
+       兜底同口径）。 */
+    textColor = 0xFF000000u;
+    highlight = 0xFF308CC6u;
+    highlightedText = 0xFFFFFFFFu;
+    linkColor = 0xFF0000FFu;
+#endif /* XPALETTE_ON */
 
     selStart = 0;
     selEnd = 0;
@@ -2774,67 +3588,86 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
         selEnd = xtc_selectionEnd(self);
     }
 
-    firstLine = 0;
-    lastLine = self->m_lineCount - 1;
+    firstRow = 0;
+    lastRow = xtc_visualCountOf(self) - 1;
     if (rect) {
         int unit = self->m_lineHeight > 0 ? self->m_lineHeight : 1;
-        firstLine = rect->y / unit;
-        lastLine = (rect->y + rect->height) / unit;
-        if (firstLine < 0) firstLine = 0;
-        if (firstLine > self->m_lineCount - 1) firstLine = self->m_lineCount - 1;
-        if (lastLine >= self->m_lineCount) lastLine = self->m_lineCount - 1;
+        firstRow = rect->y / unit;
+        lastRow = (rect->y + rect->height) / unit;
+        if (firstRow < 0) firstRow = 0;
+        if (firstRow > lastRow) firstRow = lastRow;
+        if (lastRow >= self->m_visualCount) lastRow = self->m_visualCount - 1;
     }
 
-    for (i = firstLine; i <= lastLine && i < self->m_lineCount; ++i) {
-        const char* docText = xtc_lineText(self, i);
-        int docLen = xtc_lineLen(self, i);
-        int lineStart = xtc_lineColToPos(self, i, 0);
-        int lineEnd = lineStart + docLen;
-        int baseline = i * self->m_lineHeight + self->m_lineAscent;
+    for (r = firstRow; r <= lastRow && r >= 0 && r < self->m_visualCount; ++r) {
+        const XTextControlVisualRow* row = &self->m_visualRows[r];
+        int i = row->line;
+        int rowStart = row->start;
+        int rowEnd = row->start + row->len;
+        int baseline = r * self->m_lineHeight + self->m_lineAscent;
         int pLine = -1;
         int pCol = -1;
         bool isPreeditLine = xtc_preeditLineCol(self, &pLine, &pCol) &&
                              pLine == i;
         int preLen = isPreeditLine ? xtc_preeditLen(self) : 0;
-        const char* text = docText;
-        int lineLen = docLen;
-        char* visual = NULL;
+        const char* text;
+        int lineStart = xtc_lineColToPos(self, i, 0);
+        int lineEnd = lineStart + xtc_lineLen(self, i);
         int selVs = -1;
         int selVe = -1;
 
-        /* 组合行：preedit splice 进视觉缓冲。 */
-        if (isPreeditLine) {
-            visual = (char*)XMalloc_System((size_t)docLen + (size_t)preLen + 1);
-            if (visual) {
-                XMemcpy(visual, docText, (size_t)pCol);
-                XMemcpy(visual + pCol, self->m_preedit, (size_t)preLen);
-                XMemcpy(visual + pCol + preLen, docText + pCol,
-                        (size_t)(docLen - pCol) + 1);
-                text = visual;
-                lineLen = docLen + preLen;
-            } else {
-                isPreeditLine = false;
-                preLen = 0;
+        /* 视觉文本（组合行 splice preedit；同行可视行复用缓冲）。 */
+        if (i != builtLine) {
+            if (heap) {
+                XFree_System(heap);
+                heap = NULL;
             }
+            builtText = xtc_visualLineText(self, i, &heap);
+            builtLine = i;
+        }
+        text = builtText;
+
+        /* 0) 行带裁剪兜底：任何模式下文本绝不越出文本矩形（rect 为
+           文本区内容坐标；NoWrap 长行在此被硬裁）。save/restore 防止
+           行带裁剪跨行累积（IntersectClip 逐行收缩会清空后续行）。 */
+        {
+            XRect rowClip;
+            XPainter_save(painter);
+#if XPAINTER_CLIP_ON
+            if (rect)
+                XRect_init(&rowClip, rect->x, r * self->m_lineHeight,
+                           rect->width, self->m_lineHeight);
+            else
+                XRect_init(&rowClip, 0, r * self->m_lineHeight, 0x7FFFFFF0,
+                           self->m_lineHeight);
+            XPainter_setClipRect(painter, &rowClip,
+                                 XPainterClipOperation_IntersectClip);
+#else
+            (void)rowClip; /* 裁剪子系统裁剪：行带裁剪退化无操作。 */
+#endif /* XPAINTER_CLIP_ON */
         }
 
-        /* 文档选区 → 本行视觉区间。 */
+        /* 文档选区 → 本行视觉区间（再钳到本可视行）。 */
         if (selEnd > selStart && lineEnd > lineStart) {
             int rs = selStart < lineStart ? lineStart : selStart;
             int re = selEnd > lineEnd ? lineEnd : selEnd;
             if (re > rs) {
                 selVs = xtc_docColToVisualCol(self, i, rs - lineStart);
                 selVe = xtc_docColToVisualCol(self, i, re - lineStart);
+                if (selVs < rowStart) selVs = rowStart;
+                if (selVe > rowEnd) selVe = rowEnd;
+                if (selVe < rowStart) selVe = rowStart;
+                if (selVs > rowEnd) selVs = rowEnd;
             }
         }
 
-        /* 1) 选区背景。 */
+        /* 1) 选区背景（可视行内 X 自行首度量）。 */
         if (selVe > selVs && selVs >= 0) {
             XFont f = font;
             XRect bg;
             XRect_init(&bg,
-                       XPainter_textWidthRange(&f, text, 0, selVs),
-                       i * self->m_lineHeight,
+                       XPainter_textWidthRange(&f, text, rowStart, selVs),
+                       r * self->m_lineHeight,
                        XPainter_textWidthRange(&f, text, selVs, selVe),
                        self->m_lineHeight);
             XPainter_fillRect(painter, &bg, highlight);
@@ -2845,41 +3678,50 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
             for (k = 0; k < self->m_extraSelectionCount; ++k) {
                 const XTextControlExtraSelection* es =
                     &self->m_extraSelections[k];
+                int vs;
+                int ve;
                 if (es->end <= es->start) continue;
                 if (es->end <= lineStart || es->start >= lineEnd) continue;
                 {
                     int rs = es->start < lineStart ? lineStart : es->start;
                     int re = es->end > lineEnd ? lineEnd : es->end;
-                    int vs = xtc_docColToVisualCol(self, i, rs - lineStart);
-                    int ve = xtc_docColToVisualCol(self, i, re - lineStart);
-                    if (ve > vs) {
-                        XFont f = font;
-                        XRect bg;
-                        XRect_init(&bg,
-                                   XPainter_textWidthRange(&f, text, 0, vs),
-                                   i * self->m_lineHeight,
-                                   XPainter_textWidthRange(&f, text, vs, ve),
-                                   self->m_lineHeight);
-                        XPainter_fillRect(painter, &bg, es->color);
-                    }
+                    vs = xtc_docColToVisualCol(self, i, rs - lineStart);
+                    ve = xtc_docColToVisualCol(self, i, re - lineStart);
+                }
+                if (vs < rowStart) vs = rowStart;
+                if (ve > rowEnd) ve = rowEnd;
+                if (ve < rowStart) ve = rowStart;
+                if (vs > rowEnd) vs = rowEnd;
+                if (ve > vs) {
+                    XFont f = font;
+                    XRect bg;
+                    XRect_init(&bg,
+                               XPainter_textWidthRange(&f, text, rowStart, vs),
+                               r * self->m_lineHeight,
+                               XPainter_textWidthRange(&f, text, vs, ve),
+                               self->m_lineHeight);
+                    XPainter_fillRect(painter, &bg, es->color);
                 }
             }
         }
 
-        /* 3) 文本分段着色 + 锚点/组合下划线。 */
+        /* 3) 文本分段着色 + 锚点/组合下划线（边界为行内字节坐标）。 */
         {
             int bounds[XTC_MAX_DRAW_BOUNDS];
             int boundCount = 0;
             int k;
             int x = 0;
             int b;
-            xtc_boundsAdd(bounds, &boundCount, 0);
-            xtc_boundsAdd(bounds, &boundCount, lineLen);
-            if (selVs > 0) xtc_boundsAdd(bounds, &boundCount, selVs);
-            if (selVe > 0) xtc_boundsAdd(bounds, &boundCount, selVe);
+            xtc_boundsAdd(bounds, &boundCount, rowStart);
+            xtc_boundsAdd(bounds, &boundCount, rowEnd);
+            if (selVs > rowStart) xtc_boundsAdd(bounds, &boundCount, selVs);
+            if (selVe > rowStart && selVe < rowEnd)
+                xtc_boundsAdd(bounds, &boundCount, selVe);
             if (isPreeditLine) {
-                xtc_boundsAdd(bounds, &boundCount, pCol);
-                xtc_boundsAdd(bounds, &boundCount, pCol + preLen);
+                if (pCol > rowStart && pCol < rowEnd)
+                    xtc_boundsAdd(bounds, &boundCount, pCol);
+                if (pCol + preLen > rowStart && pCol + preLen < rowEnd)
+                    xtc_boundsAdd(bounds, &boundCount, pCol + preLen);
             }
             for (k = 0; k < self->m_anchorCount; ++k) {
                 if (self->m_anchors[k].end <= lineStart ||
@@ -2892,8 +3734,10 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
                                  ? self->m_anchors[k].end : lineEnd;
                     int vsA = xtc_docColToVisualCol(self, i, as - lineStart);
                     int veA = xtc_docColToVisualCol(self, i, ae - lineStart);
-                    xtc_boundsAdd(bounds, &boundCount, vsA);
-                    xtc_boundsAdd(bounds, &boundCount, veA);
+                    if (vsA > rowStart && vsA < rowEnd)
+                        xtc_boundsAdd(bounds, &boundCount, vsA);
+                    if (veA > rowStart && veA < rowEnd)
+                        xtc_boundsAdd(bounds, &boundCount, veA);
                 }
             }
             for (b = 0; b + 1 < boundCount; ++b) {
@@ -2932,15 +3776,16 @@ void XTextControl_draw(XTextControl* self, XPainter* painter, const XRect* rect)
                 if (inPreedit) {
                     XRect underline;
                     XRect_init(&underline, x,
-                               i * self->m_lineHeight + self->m_lineHeight - 2,
+                               r * self->m_lineHeight + self->m_lineHeight - 2,
                                xEnd - x, 1);
                     XPainter_fillRect(painter, &underline, textColor);
                 }
                 x = xEnd;
             }
         }
-        if (visual) XFree_System(visual);
+        XPainter_restore(painter); /* 恢复行带裁剪（对标逐行绘制隔离）。 */
     }
+    if (heap) XFree_System(heap);
 
     /* 4) 光标（组合态按 preedit 内偏移；对标 ctx.cursorPosition 语义）。 */
     if (self->m_cursorOn && self->m_isEnabled && !self->m_hideCursor) {
@@ -2991,6 +3836,7 @@ void XTextControl_setTextCursor(XTextControl* self, int position, int anchor,
     (void)selectionClipboard; /* 对标差异：XGui 无 selection 剪贴板。 */
     total = xtc_documentLength(self);
     self->m_cursorIsFocusIndicator = false;
+    self->m_cursorAtRowStart = false;
     oldPos = self->m_cursorPosition;
     if (position < 0) position = 0;
     if (position > total) position = total;
@@ -3204,6 +4050,9 @@ static void xtc_resetDocument(XTextControl* self, const char* text)
         XMemset(&self->m_lines[i], 0, sizeof(XTextControlLine));
     }
     self->m_lineCount = 1;
+    /* 行模型已直改（绕过 rawInsert/rawRemove）：可视行缓存整体失效。
+       （空文本时下方 rawInsert 早退，不会代为失效。） */
+    xtc_invalidateLayout(self);
     self->m_cursorPosition = 0;
     self->m_cursorAnchor = 0;
     self->m_goalCol = -1;
@@ -3282,6 +4131,7 @@ void XTextControl_copy(XTextControl* self)
     /* 对标 Qt：写 QGuiApplication::clipboard()（统一剪贴板抽象），
      * 跨控件/跨类复制粘贴共享同一数据源；XTextClipboard 镜像一份
      * 供未接 XGuiApplication 的环境回退。 */
+#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
     {
         XClipboard* clip = XGuiApplication_clipboard();
         if (clip) {
@@ -3292,6 +4142,7 @@ void XTextControl_copy(XTextControl* self)
             }
         }
     }
+#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     XTextClipboard_setText(text);
     XFree_System(text);
 }
@@ -3307,13 +4158,26 @@ static void xtc_pasteFromMode(XTextControl* self, int mode)
 {
     const char* clip = NULL;
     char* owned = NULL;
+    bool systemOnly = false;
     if (!self || !(self->m_interactionFlags &
                    (int)XTextControlInteraction_TextEditable))
         return;
     /* 对标 Qt：优先统一剪贴板（QGuiApplication::clipboard()），
      * 无平台/应用剪贴板时回退 XTextClipboard 兼容层。 */
+#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
     {
         XClipboard* clipObj = XGuiApplication_clipboard();
+        /* 对标 Qt 中键语义（QWidgetTextControl::paste(Selection) 与
+           QWidgetLineControl::paste(Selection) 同护栏）：Selection 模式
+           且系统后端可用并声明支持选择区（supportsSelection）时仅取
+           系统 PRIMARY，读回为空则整段不动作——不回退共享层，避免 X11
+           下中键在 PRIMARY 为空时粘出 CLIPBOARD 旧内容（串台，Qt 明确
+           避免）。Clipboard 模式维持「系统剪贴板→共享层」回退链零回归；
+           无系统后端（嵌入式裁剪）时 systemOnly 恒 false，Selection 仍
+           走共享层回退（同 XLineControl_paste 的 systemOnly 护栏）。 */
+        systemOnly = (clipObj != NULL &&
+                      mode == (int)XClipboardMode_Selection &&
+                      XClipboard_supportsSelection(clipObj));
         if (clipObj) {
             XString* st = XClipboard_text(clipObj, (XClipboardMode)mode);
             if (st) {
@@ -3323,8 +4187,9 @@ static void xtc_pasteFromMode(XTextControl* self, int mode)
             }
         }
     }
+#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     clip = owned;
-    if (!clip) clip = XTextClipboard_getText();
+    if (!clip && !systemOnly) clip = XTextClipboard_getText();
     if (clip && clip[0])
         XTextControl_insertFromMimeData(self, clip);
     if (owned) XFree_System(owned);
@@ -3628,6 +4493,8 @@ void XTextControl_setTextWidth(XTextControl* self, int width)
     XSize size;
     if (!self || self->m_textWidth == width) return;
     self->m_textWidth = width;
+    /* 宽度即 WidgetWidth 折行宽度来源：失效缓存后经 size() 重建。 */
+    xtc_invalidateLayout(self);
     size = XTextControl_size(self);
     xtc_emitSize(self, XTextControl_documentSizeChanged_signal, &size);
     xtc_emitRect(self, XTextControl_updateRequest_signal, NULL);
@@ -3659,8 +4526,81 @@ XSize XTextControl_size(const XTextControl* self)
     }
     /* 浅拷贝不拥有堆串:无需释放(所有权在 self->m_font)。 */
     size.width = self->m_textWidth > 0 ? self->m_textWidth : contentWidth;
-    size.height = self->m_lineCount * self->m_lineHeight;
+    /* 高度按可视行数（软换行计入，对标 Qt documentSize）。 */
+    size.height = xtc_contentHeight((XTextControl*)self);
     return size;
+}
+
+/* ==================== 公共 API：换行模式（对标 QPlainTextEdit） ==== */
+
+int XTextControl_lineWrapMode(const XTextControl* self)
+{
+    return self ? self->m_lineWrapMode : (int)XTextControlLineWrap_WidgetWidth;
+}
+
+void XTextControl_setLineWrapMode(XTextControl* self, int mode)
+{
+    XSize size;
+    if (!self || self->m_lineWrapMode == mode) return;
+    self->m_lineWrapMode = mode;
+    xtc_invalidateLayout(self);
+    size = XTextControl_size(self); /* 触发重布局并取新文档尺寸。 */
+    xtc_emitSize(self, XTextControl_documentSizeChanged_signal, &size);
+    xtc_emitRect(self, XTextControl_updateRequest_signal, NULL);
+}
+
+int XTextControl_wordWrapMode(const XTextControl* self)
+{
+    return self ? self->m_wordWrapMode : (int)XTextControlWrap_WordWrap;
+}
+
+void XTextControl_setWordWrapMode(XTextControl* self, int mode)
+{
+    XSize size;
+    if (!self || self->m_wordWrapMode == mode) return;
+    self->m_wordWrapMode = mode;
+    xtc_invalidateLayout(self);
+    size = XTextControl_size(self);
+    xtc_emitSize(self, XTextControl_documentSizeChanged_signal, &size);
+    xtc_emitRect(self, XTextControl_updateRequest_signal, NULL);
+}
+
+int XTextControl_lineCount(const XTextControl* self)
+{
+    if (!self || self->m_lineCount <= 0) return 0;
+    return xtc_visualCountOf((XTextControl*)self);
+}
+
+int XTextControl_blockCount(const XTextControl* self)
+{
+    return self ? self->m_lineCount : 0;
+}
+
+void XTextControl_posToVisualLineCol(const XTextControl* self, int pos,
+                                     int* line, int* col)
+{
+    int row = 0;
+    int rowCol = 0;
+    if (line) *line = 0;
+    if (col) *col = 0;
+    if (!self || self->m_lineCount <= 0) return;
+    xtc_ensureLayout((XTextControl*)self);
+    xtc_posToVisualRowCol((XTextControl*)self, pos, &row, &rowCol);
+    if (line) *line = row;
+    if (col) *col = rowCol;
+}
+
+int XTextControl_visualLineColToPos(const XTextControl* self, int line, int col)
+{
+    XTextControl* s = (XTextControl*)self;
+    int rows;
+    if (!s || s->m_lineCount <= 0) return 0;
+    xtc_ensureLayout(s);
+    rows = s->m_visualCount;
+    if (rows <= 0) return 0;
+    if (line < 0) line = 0;
+    if (line >= rows) line = rows - 1;
+    return xtc_visualRowColToPos(s, line, col);
 }
 
 void XTextControl_setOpenExternalLinks(XTextControl* self, bool open)
@@ -3969,9 +4909,11 @@ void XTextControl_processEvent(XTextControl* control, XEvent* event)
     case XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK:
         xtc_mouseDoubleClickEvent(control, (XMouseEvent*)event);
         break;
+#if XINPUTMETHOD_ON
     case XEVENT_TYPE_INPUT_METHOD:
         xtc_inputMethodEvent(control, (XInputMethodEvent*)event);
         break;
+#endif /* XINPUTMETHOD_ON */
     case XEVENT_TYPE_CONTEXT_MENU: {
 #if XMENU_ON
         XContextMenuEvent* ctx = (XContextMenuEvent*)event;
@@ -3988,10 +4930,12 @@ void XTextControl_processEvent(XTextControl* control, XEvent* event)
 #endif
         break;
     }
+#if XWINDOWEVENT_ON
     case XEVENT_TYPE_FOCUS_IN:
     case XEVENT_TYPE_FOCUS_OUT:
         xtc_focusEvent(control, (XFocusEvent*)event);
         break;
+#endif /* XWINDOWEVENT_ON */
     case XEVENT_TYPE_ENABLED_CHANGE:
         control->m_isEnabled = XEvent_isAccepted(event);
         break;
@@ -4003,17 +4947,20 @@ void XTextControl_processEvent(XTextControl* control, XEvent* event)
                 XEvent_accept(event);
         }
         break;
+#if XWINDOWEVENT_ON
     case XEVENT_TYPE_DRAG_ENTER:
     case XEVENT_TYPE_DRAG_MOVE:
     case XEVENT_TYPE_DRAG_LEAVE:
     case XEVENT_TYPE_DROP:
         xtc_dropEventRoute(control, (XDropEvent*)event);
         break;
+#endif /* XWINDOWEVENT_ON */
     default:
         break;
     }
 }
 
+#if XWINDOWEVENT_ON
 void XTextControl_setFocus(XTextControl* self, bool focus, XFocusReason reason)
 {
     XFocusEvent ev;
@@ -4023,6 +4970,7 @@ void XTextControl_setFocus(XTextControl* self, bool focus, XFocusReason reason)
                      reason);
     XTextControl_processEvent(self, (XEvent*)&ev);
 }
+#endif /* XWINDOWEVENT_ON */
 
 bool XTextControl_inputMethodQuery(const XTextControl* self, int property,
                                    int argument, XTextControlImValue* out)
@@ -4031,6 +4979,7 @@ bool XTextControl_inputMethodQuery(const XTextControl* self, int property,
     XMemset(out, 0, sizeof(*out));
     out->type = 0;
     if (!self) return false;
+#if XINPUTMETHOD_ON
     switch (property) {
     case (int)XInputMethodQuery_ImEnabled:
         out->type = 2;
@@ -4110,6 +5059,12 @@ bool XTextControl_inputMethodQuery(const XTextControl* self, int property,
            无平铺对应（对标差异）。 */
         return false;
     }
+#else
+    /* 输入法子系统裁剪：无 IM 承载，一切查询按不支持退化。 */
+    (void)property;
+    (void)argument;
+    return false;
+#endif /* XINPUTMETHOD_ON */
 }
 
 /* ==================== 公共 API：调色板 / 字体 ==================== */
@@ -4142,6 +5097,7 @@ void XTextControl_setFont(XTextControl* self, const XFont* font)
     int oldDescent;
     const char* oldFamily;
     const char* newFamily;
+    bool familyChanged;
     if (!self) return;
     if (font) {
         XMemcpy(&f, font, sizeof(XFont));
@@ -4152,11 +5108,20 @@ void XTextControl_setFont(XTextControl* self, const XFont* font)
     oldDescent = self->m_lineHeight - self->m_lineAscent;
     oldFamily = XFont_family(&self->m_font);
     newFamily = XFont_family(&f);
+    /* 家族比较必须在释放旧字体之前完成：oldFamily 指向旧字体家族串的
+       toUtf8 缓存，deinit 连缓存一起释放，事后 strcmp 是 use-after-free
+       （ASan 基线扫查发现）。 */
+    familyChanged = (oldFamily != newFamily) &&
+                    (oldFamily == NULL || newFamily == NULL ||
+                     strcmp(oldFamily, newFamily) != 0);
     XFont_deinit_base((XClass*)&self->m_font);
     /* 深拷贝（对标 XWidget_font 的 Phase 3.2 裁定）：XFont 值拷贝共享
        XString 指针，浅拷贝会在任一持有方 deinit 后留下悬空指针。 */
     XFont_init(&self->m_font);
     XCopy(&self->m_font, &f);
+    /* 注意：f.m_family/f.m_styleName 归调用方字体对象所有（setFont
+       无权释放）；XCopy 已为 self 深拷贝出新串，调用方稍后自行
+       deinit 其副本。 */
     ascent = XPainter_textAscent(&self->m_font);
     descent = XPainter_textDescent(&self->m_font);
     if (ascent <= 0) ascent = XTC_DEFAULT_BASELINE;
@@ -4164,11 +5129,14 @@ void XTextControl_setFont(XTextControl* self, const XFont* font)
     self->m_lineAscent = ascent;
     self->m_lineHeight = (ascent + descent) > 0 ? ascent + descent
                                                 : XTC_DEFAULT_LINE_HEIGHT;
-    /* 度量或家族真变化才请求重绘：壳在绘制/度量入口做无差别字体同步，
-       无条件 emit 会形成 paint→update 重绘回路。 */
-    if (ascent != oldAscent || descent != oldDescent ||
-        (oldFamily != newFamily && strcmp(oldFamily, newFamily) != 0))
+    /* 度量或家族真变化才失效布局并请求重绘：壳在绘制/度量入口做无差别
+       字体同步，无条件失效会使每次事件整篇重布局（含 paint→update
+       重绘回路风险）。 */
+    if (ascent != oldAscent || descent != oldDescent || familyChanged) {
+        /* 字体度量变化 → 可视行像素宽/折行全部失效（重布局）。 */
+        xtc_invalidateLayout(self);
         xtc_emitRect(self, XTextControl_updateRequest_signal, NULL);
+    }
 }
 
 void XTextControl_font(const XTextControl* self, XFont* out)
@@ -4359,6 +5327,11 @@ static void VXTextControl_deinit(XTextControl* self)
     self->m_lines = NULL;
     self->m_lineCount = 0;
     self->m_lineCap = 0;
+    if (self->m_visualRows) XFree_System(self->m_visualRows);
+    self->m_visualRows = NULL;
+    self->m_visualCount = 0;
+    self->m_visualCap = 0;
+    self->m_layoutValid = false;
     xtc_commandStackClear(&self->m_undoStack, &self->m_undoCount,
                           &self->m_undoCap);
     xtc_commandStackClear(&self->m_redoStack, &self->m_redoCount,
@@ -4432,6 +5405,11 @@ void XTextControl_init(XTextControl* self)
     self->m_dndFeedbackPos = -1;
     self->m_lineHeight = XTC_DEFAULT_LINE_HEIGHT;
     self->m_lineAscent = XTC_DEFAULT_BASELINE;
+    /* 软换行缺省（对标 QPlainTextEdit 默认：WidgetWidth +
+       QTextOption::WordWrap；textWidth 未设置（<=0）时不折行）。 */
+    self->m_lineWrapMode = (int)XTextControlLineWrap_WidgetWidth;
+    self->m_wordWrapMode = (int)XTextControlWrap_WordWrap;
+    self->m_layoutValid = false;
     XFont_init(&self->m_font);
     XPalette_init_default(&palette);
     XPalette_copy((XPalette*)&self->m_palette, &palette);

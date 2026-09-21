@@ -24,6 +24,31 @@
 /** @brief 进程级当前光标位置；无平台后端时由 setPos 维护。 */
 static XPoint g_cursorPos = {0, 0};
 
+/** @brief 平台光标后端（由平台原生窗口后端注册；NULL 表示无后端）。 */
+static const XCursorPlatformBackend* g_cursorBackend = NULL;
+
+void XCursor_installPlatformBackend(const XCursorPlatformBackend* backend)
+{
+    g_cursorBackend = backend;
+}
+
+bool XCursor_applyToWindow(uintptr_t nativeWindowId, const XCursor* cursor)
+{
+    /* 平台应用光标（XDefineCursor 路径）；无后端/窗口无效时静默 false。 */
+    if (!g_cursorBackend || !g_cursorBackend->m_applyWindowCursor ||
+        nativeWindowId == 0)
+        return false;
+    return g_cursorBackend->m_applyWindowCursor(nativeWindowId, cursor);
+}
+
+bool XCursor_clearForWindow(uintptr_t nativeWindowId)
+{
+    if (!g_cursorBackend || !g_cursorBackend->m_clearWindowCursor ||
+        nativeWindowId == 0)
+        return false;
+    return g_cursorBackend->m_clearWindowCursor(nativeWindowId);
+}
+
 /* ==================== 资源复制辅助 ==================== */
 
 /** @brief 深拷贝位图；源为 NULL 返回 NULL。 */
@@ -232,6 +257,14 @@ void XCursor_setHotSpot(XCursor* self, int x, int y)
 
 XPoint XCursor_pos(void)
 {
+    int x, y;
+    /* 对标 QCursor::pos：平台后端可用时优先取真实系统光标位置并同步
+       进程级缓存；查询失败/无后端时回落缓存值（静默）。 */
+    if (g_cursorBackend && g_cursorBackend->m_queryPos &&
+        g_cursorBackend->m_queryPos(&x, &y)) {
+        g_cursorPos.x = x;
+        g_cursorPos.y = y;
+    }
     return g_cursorPos;
 }
 
@@ -239,11 +272,22 @@ void XCursor_setPos(int x, int y)
 {
     g_cursorPos.x = x;
     g_cursorPos.y = y;
+    /* 平台后端转发原生定位（X11 XWarpPointer）；失败静默，缓存已同步。 */
+    if (g_cursorBackend && g_cursorBackend->m_warpPos)
+        (void)g_cursorBackend->m_warpPos(x, y);
 }
 
 void XCursor_setPos_point(const XPoint* pos)
 {
-    g_cursorPos = pos ? *pos : (XPoint){0, 0};
+    int x, y;
+    if (pos) {
+        x = pos->x;
+        y = pos->y;
+    } else {
+        x = 0;
+        y = 0;
+    }
+    XCursor_setPos(x, y); /* 与整型版本同一平台转发路径。 */
 }
 
 /* ==================== 形状判断 ==================== */

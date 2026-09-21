@@ -184,15 +184,18 @@ void XCursor_setHotSpot(XCursor* self, int x, int y);
 
 /**
  * @brief      返回进程级当前光标位置（对标 QCursor::pos，无屏幕版本）。
- * @details    无平台输入后端时由 XCursor_setPos 维护，初始为 (0,0)；未来
- *             输入后端会在收到指针移动事件时同步更新。
+ * @details    平台后端已注册时优先查询真实系统光标位置（XQueryPointer
+ *             等）并同步进程级缓存；无后端时返回 XCursor_setPos 维护的
+ *             缓存值，初始为 (0,0)。
  * @return     当前光标位置。
  */
 XPoint XCursor_pos(void);
 
 /**
  * @brief      设置进程级当前光标位置（对标 QCursor::setPos(int,int)）。
- * @details    无平台后端时仅记录坐标；平台后端接入后转发原生光标定位。
+ * @details    平台后端已注册时转发原生光标定位（X11 XWarpPointer），
+ *             同时更新进程级缓存；无后端/定位失败时仅记录坐标（静默，
+ *             与 Qt 无平台插件时行为一致）。
  * @param      x 目标 X 坐标。
  * @param      y 目标 Y 坐标。
  */
@@ -210,6 +213,55 @@ void XCursor_setPos_point(const XPoint* pos);
  * @return     shape 不在 Bitmap/Custom 范围内时返回 true。
  */
 bool XCursor_isShapeCursor(const XCursor* self);
+
+/**
+ * @brief      平台光标后端钩子表（对标 Qt QPlatformCursor）。
+ * @details    由平台原生窗口后端（如 Linux X11）在原生连接建立后经
+ *             XCursor_installPlatformBackend 注册，XCursor 公共 API 与
+ *             派生消费方（XWidget 光标接线）保持平台无关：查询/定位进程
+ *             级光标位置（XQueryPointer/XWarpPointer）与把光标应用到
+ *             原生窗口（XCreateFontCursor+XDefineCursor）。未注册后端或
+ *             窗口未映射时所有钩子调用静默失败（返回 false），行为与
+ *             无平台后端时一致。钩子表必须为静态存储期（后端保存指针，
+ *             不拷贝）。
+ */
+typedef struct XCursorPlatformBackend
+{
+    bool (*m_queryPos)(int* x, int* y);
+                      /**< 查询全局光标位置；失败返回 false。 */
+    bool (*m_warpPos)(int x, int y);
+                      /**< 定位全局光标（对标 QCursor::setPos 平台转发）。 */
+    bool (*m_applyWindowCursor)(uintptr_t nativeWindowId,
+                                const XCursor* cursor);
+                      /**< 把光标（形状/自定义）应用到原生窗口；
+                           nativeWindowId 为平台窗口 id（X11 Window）。 */
+    bool (*m_clearWindowCursor)(uintptr_t nativeWindowId);
+                      /**< 取消窗口光标，恢复默认（XUndefineCursor 语义）。 */
+} XCursorPlatformBackend;
+
+/**
+ * @brief      注册平台光标后端（全进程单后端；重复注册覆盖前者）。
+ * @param      backend 钩子表指针；可为 NULL 注销。必须为静态存储期。
+ */
+void XCursor_installPlatformBackend(const XCursorPlatformBackend* backend);
+
+/**
+ * @brief      把光标应用到原生窗口（XWidget::setCursor 生效路径；对标
+ *             QWindowSystemInterface 内部的窗口光标应用）。
+ * @details    内部转发平台后端 applyWindowCursor；无后端或窗口无效时
+ *             静默返回 false（对标 Qt 平台插件不可用时光标仅存储）。
+ * @param      nativeWindowId 平台窗口 id（X11 Window / Win32 HWND）。
+ * @param      cursor 目标光标；可为 NULL（等价清除，恢复窗口默认）。
+ * @return     平台应用成功返回 true。
+ */
+bool XCursor_applyToWindow(uintptr_t nativeWindowId, const XCursor* cursor);
+
+/**
+ * @brief      取消原生窗口光标（恢复默认箭头；XWidget::unsetCursor 路径）。
+ * @param      nativeWindowId 平台窗口 id。
+ * @return     平台清除成功返回 true；无后端或窗口无效时静默 false。
+ */
+bool XCursor_clearForWindow(uintptr_t nativeWindowId);
 /** @brief 交换两个光标（对标 QCursor::swap）。
  * @param a 第一个光标；可为 NULL。
  * @param b 第二个光标；可为 NULL。

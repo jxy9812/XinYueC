@@ -47,6 +47,14 @@
 #define XLC_COMPLETER_ON 1
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
 
+/* 剪贴板子系统裁剪时的模式常量兜底（XGUI_ON=0 巡检，值口径与
+   XClipboard.h 枚举一致：Clipboard=0/Selection=1；键位分流仅以整数
+   传参 copy/paste，§8.0g9）。 */
+#if !XCLIPBOARD_ON
+#define XClipboardMode_Clipboard 0
+#define XClipboardMode_Selection 1
+#endif /* !XCLIPBOARD_ON */
+
 #if XLINECONTROL_ON
 
 /* ==================== 常量 ==================== */
@@ -3766,6 +3774,10 @@ void XLineControl_setFont(XLineControl* self, const XFont* font)
         if (self->m_font) {
             XMemset(self->m_font, 0, sizeof(XFont));
             XCopy(self->m_font, (const XClass*)font); /* 深拷贝（对标 QFont 值语义）。 */
+            /* 壳为堆分配：登记堆所有权位（XCopy 不继承；缺位时
+               delete_base 只 deinit 不 free，逐替换泄漏 880B 壳，
+               §8.0g7 ASan 定位）。 */
+            Set_Class_IsHeap(self->m_font, true);
         }
     }
     /* 字体变更只需重排（updateDisplayText 内恒经 redoTextLayout），

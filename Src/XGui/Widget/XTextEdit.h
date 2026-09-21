@@ -1,9 +1,13 @@
 ﻿/**
  * @file       XTextEdit.h
  * @brief      XTextEdit 富文本编辑控件（对标 Qt 6.8 QTextEdit 核心公共 API）。
- * @details    继承 XPlainTextEdit，增加逐块字符格式：粗体/斜体/下划线/
- *             颜色/对齐；setHtml 解析基础 HTML 子集（b/i/u/br/p/font）；
- *             toHtml 生成对应 HTML；信号 textChanged/selectionChanged。
+ * @details    继承 XAbstractScrollArea，内嵌 XPlainTextEdit 承载纯文本
+ *             编辑（所见即所存，标签不展开进缓冲）；富文本渲染子集以
+ *             只读预览模式承载（setHtml/显式开关进入：隐藏编辑器、壳
+ *             逐块绘制 b/i/u/s、font color/size、br、p align、a href，
+ *             嵌套上限一层；编辑类接口自动退出预览）。另含逐块字符
+ *             格式状态、toHtml 导出、anchor 悬停/点击信号（对标 QLabel
+ *             链接模式）；信号 textChanged/selectionChanged。
  * @note       模块总开关 XTEXTEDIT_ON。依赖 XPLAINTEXTEDIT_ON。
  * @author     XinYueC 团队
  */
@@ -69,6 +73,14 @@ typedef struct XTextEdit
     XString* m_markdown;    /**< Markdown 原文（对象拥有；setMarkdown
                                   写入、内容被替换接口清除）。 */
     uint32_t m_textBackgroundColor; /**< 文本背景色（ARGB；0=默认）。 */
+    bool m_richPreview;     /**< 只读富文本预览态：true=隐藏内嵌编辑器、
+                                  壳按渲染子集逐块绘制 m_textDoc（对标
+                                  QTextEdit::setHtml 进入富文本呈现；
+                                  编辑缓冲保持纯文本语义——所见即所存）。 */
+    XString* m_hoverAnchor; /**< 预览态悬停链接 URL（对象拥有；NULL=无；
+                                  对标 QLabel 悬停按 href 去重）。 */
+    XString* m_pressedAnchor; /**< 预览态按压链接 URL（对象拥有；NULL=无；
+                                  对标 QLabel 按下记录、释放同链触发）。 */
 } XTextEdit;
 
 /** @brief X文本Editclassinit（对标 Qt 同名接口）。
@@ -177,13 +189,37 @@ bool XTextEdit_canRedo(const XTextEdit* self);
 
 /* HTML */
 /**
- * @brief      设置 HTML 内容（b/i/u/br/p 子集）。
+ * @brief      设置 HTML 内容（渲染子集解析；编辑缓冲同步剥离文本）。
+ * @details    渲染子集（b/i/u/s、font color/size、br、p align、a href，
+ *             嵌套上限一层）解析写入富文本文档（toHtml 导出与只读预览
+ *             的真源）；编辑缓冲同步剥离标签后的纯文本（标签不展开进
+ *             缓冲——所见即所存，对标 QPlainTextEdit 无 setHtml 的纯
+ *             文本语义）。富文本视觉呈现不在此切换：经
+ *             XTextEdit_setRichPreview(true) 显式进入只读预览（保持
+ *             编辑态下 toHtml 以编辑器为文本源的既有语义）。
  */
 void XTextEdit_setHtml(XTextEdit* self, const char* html);
 /**
  * @brief      导出 HTML 文本（含实体转义；对标 toHtml）。
  */
 char* XTextEdit_toHtml(const XTextEdit* self);
+
+/** @brief 设置只读富文本预览开关（渲染子集的显式呈现入口）。
+ * @details on=true：隐藏内嵌编辑器，壳按渲染子集逐块绘制当前富文本文
+ *          档（锚点悬停高亮、手型光标、点击发射链接信号）；on=false：
+ *          回到纯文本编辑态（编辑器恢复显示）。编辑类接口（输入/粘贴/
+ *          撤销等）与 setPlainText/setText 纯文本分支自动退出预览。
+ * @param self 目标控件指针；NULL 无操作。
+ * @param on true 进入预览；false 退出预览。
+ * @return 无返回值。
+ */
+void XTextEdit_setRichPreview(XTextEdit* self, bool on);
+
+/** @brief 查询只读富文本预览态。
+ * @param self 目标控件指针；NULL 返回 false。
+ * @return 预览态返回 true。
+ */
+bool XTextEdit_isRichPreview(const XTextEdit* self);
 
 /* 纯文本 / setText */
 /** @brief 导出纯文本（对标 QTextEdit::toPlainText；去除全部标记）。
@@ -215,6 +251,27 @@ void* XTextEdit_textChanged_signal(XTextEdit* self);
 /** @brief currentCharFormatChanged() 信号（对标 QTextEdit::currentCharFormatChanged；
  *         光标格式变化时触发，Task 2.3 接线）。 */
 void* XTextEdit_currentCharFormatChanged_signal(XTextEdit* self);
+
+/** @brief linkHovered(const char*) 信号（对标 QLabel::linkHovered）。
+ * @details 载荷：悬停链接 URL（XString* 堆拷贝随参数表释放；离开链接
+ *          时为空串）。真实发射点：只读富文本预览态下鼠标移入/切换/
+ *          离开链接（URL 去重变化）时，由壳鼠标移动处理发射，同时驱动
+ *          悬停高亮重绘与手型光标（对标 QLabel 悬停链路）。
+ * @param      self 目标控件指针；可为 NULL。
+ * @param      url 悬停链接 URL（UTF-8）；可为 NULL，视为空串。
+ * @return     不透明的 linkHovered 信号标识；不得解引用/释放。
+ */
+void* XTextEdit_linkHovered_signal(XTextEdit* self, const char* url);
+
+/** @brief linkActivated(const char*) 信号（对标 QLabel::linkActivated）。
+ * @details 载荷：激活链接 URL（XString* 堆拷贝随参数表释放）。真实发射
+ *          点：只读富文本预览态下鼠标按下与释放命中同一链接时发射
+ *          （对标 QLabel 按下记录+释放同链激活模式）。
+ * @param      self 目标控件指针；可为 NULL。
+ * @param      url 激活链接 URL（UTF-8）；可为 NULL，视为空串。
+ * @return     不透明的 linkActivated 信号标识；不得解引用/释放。
+ */
+void* XTextEdit_linkActivated_signal(XTextEdit* self, const char* url);
 
 #ifdef __cplusplus
 }
@@ -553,15 +610,16 @@ bool XTextEdit_find_2(XTextEdit* self, const char* exp, int flags);
 XRect XTextEdit_cursorRect(const XTextEdit* self);
 
 /** @brief 返回坐标 pos 处的超链接锚点（对标 QTextEdit::anchorAt）。
- * @details XTextEdit 的富文本模型尚未建立锚点几何（XTextDocument 无
- *          锚点/链接块信息），本函数仅为对标 Qt 接口存在性而提供，
- *          行为与 XPlainTextEdit_anchorAt 一致。
- * @note       锚点几何未建：恒返回 0 长度字符串；pos 仅用于保持签名
- *             一致，不被使用。
+ * @details 以富文本文档片段的 anchorHref 为承载，与只读预览绘制路径
+ *          （VX_textEdit_paintEvent 经 xte_walkRich）同一套逐块几何
+ *          命中：块高随片段字体度量、块宽实测、按块对齐定位起笔 X；
+ *          命中返回片段 href 拷贝，未命中返回 0 长度字符串对象。
+ * @note       非预览态文档按纯文本口径承载（无锚点片段），同样返回
+ *             0 长度字符串。
  * @param self 目标控件指针；可为 NULL。
- * @param pos 控件局部坐标点；可为 NULL，不被使用。
- * @return 堆上新建的 0 长度 XString*，调用方以 XString_delete_base
- *         释放；内存分配失败返回 NULL。
+ * @param pos 控件局部坐标点；可为 NULL。
+ * @return 堆上新建的 XString*（锚点 href 或空串），调用方以
+ *         XString_delete_base 释放；内存分配失败返回 NULL。
  */
 XString* XTextEdit_anchorAt(const XTextEdit* self, const XPoint* pos);
 
@@ -698,11 +756,11 @@ void XTextEdit_mergeCurrentCharFormat(XTextEdit* self, int format);
  */
 void XTextEdit_setCurrentCharFormat(XTextEdit* self, int format);
 
-/** @brief 滚动到指定锚点（对标 QTextEdit::scrollToAnchor 的平铺降级）。
- * @details Qt 按锚点几何位置设置垂直滚动条取值；XTextEdit 富文本锚点
- *          几何未建（XTextDocument 无锚点位置信息），无法定位。
- * @note       锚点几何未建：本函数仅为对标 Qt 接口存在性而提供，当前
- *             为无操作；anchor 仅保持签名一致，不被使用。
+/** @brief 滚动到指定锚点（对标 QTextEdit::scrollToAnchor 的子集降级）。
+ * @details 渲染子集仅承载 <a href> 链接锚（不解析 <a name> 目标锚），
+ *          无目标锚几何可定位；本函数保持接口存在性，当前为无操作。
+ * @note       子集边界：name 目标锚不在渲染子集内；anchor 仅保持签名
+ *             一致，不被使用。
  * @param self 目标控件指针；可为 NULL。
  * @param anchor 锚点名称；可为 NULL，不被使用。
  * @return 无返回值。

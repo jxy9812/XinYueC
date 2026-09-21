@@ -90,6 +90,10 @@ void XMimeData_clear(XMimeData* self);
  * @details    MIME 类型名大小写不敏感；内置格式名：text/plain、text/html、
  *             application/x-color、application/x-qt-image；自定义格式与
  *             setData 登记的格式名逐一比对（不含参数部分，如 ";charset=utf-8"）。
+ *             对标 Qt：hasFormat 走存储检查、不经 formats() 列表，因此
+ *             application/x-qt* 内部类型（如 setImageData 登记的
+ *             application/x-qt-image）可被直接命中，即使 formats() 已把
+ *             内部类型从对外列表剔除（批次二十二模块决策）。
  * @param      self     目标对象；可为 NULL（视为空）。
  * @param      mimeType UTF-8 编码的 MIME 类型名；可为 NULL。
  * @return     存在返回 true。
@@ -105,6 +109,11 @@ void XMimeData_setUrls(XMimeData* self, const XStringList* urls);
 
 /**
  * @brief      返回全部可用格式名（对标 QMimeData::formats）。
+ * @details    对标 Qt：剔除全部 application/x-qt* 框架内部类型（批次二十二
+ *             模块决策——Qt 的对外 formats 列表不呈现 x-qt* 内部通道，如
+ *             setImageData 登记的 application/x-qt-image）；框架内部消费方
+ *             （XClipboard 图像派生推送等）改走 hasImage/imageData 等
+ *             内部查询，不依赖 formats() 列出内部类型。
  * @return     新建的 XStringList，按内置格式优先、自定义格式在后的顺序；
  *             调用方用 XStringList_delete_base 释放。
  */

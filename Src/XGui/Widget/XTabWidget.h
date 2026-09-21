@@ -129,6 +129,20 @@ XTabBar* XTabWidget_tabBar(const XTabWidget* self);
  * @return 无返回值。
  */
 void XTabWidget_setCurrentWidget(XTabWidget* self, XWidget* page);
+/** @brief 设置当前页的内容控件（对标 setWidget 系列替换语义）。
+ * @details 当前页已有内容时：旧控件经 XWidget_setParent(NULL) 摘除
+ *          父链转独立顶层（不销毁，所有权转移调用方，Qt setWidget
+ *          家族同语义），随后装入新控件（reparent 到当前页容器）并
+ *          重排布局、同步显隐。widget 与现有内容同指针时幂等忽略；
+ *          传 NULL 等价清空当前页内容。新控件若已登记在其它页
+ *          （indexOf 命中），仅解除该页借用记录——控件实体随
+ *          reparent 归入当前页，原页转为无内容。尚无任何页时不动作
+ *          （建页须页签文本，走 addTab/insertTab）。
+ * @param self 目标控件；传入 NULL 时函数不执行任何操作。
+ * @param widget 内容控件借用指针；可为 NULL（清空当前页）。
+ * @return 无返回值。
+ */
+void XTabWidget_setWidget(XTabWidget* self, XWidget* widget);
 /** @brief 设置页签图标路径（XString 主版本；嵌入式路径表达）。
  * @param self 目标控件。
  * @param index 页签号。

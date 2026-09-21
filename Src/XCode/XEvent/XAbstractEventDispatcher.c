@@ -691,18 +691,28 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         && !XAtomic_load_bool(&self->d_ptr->m_interrupt, XAtomic_MemoryOrder_Acquire)
         && XThreadData_canWait(XThreadData_current()))
     {
-        /* 计算超时：优先使用高精度定时器的下次到期时间 */
+        /* 计算超时：统一截止查询（高精度红黑树 + 主线程的全局时间轮普通
+         * 定时器，见 XDeviceTimer_nextPreciseDeadline），对标 Qt 6.8
+         * QEventDispatcherUNIX 的"阻塞时长 = 最近一个定时器的剩余时间"。 */
+        uint64_t deadlineNs = XDeviceTimer_nextPreciseDeadline(self);
         int timeoutMs = -1;
-        if (XDeviceTimer_nextPreciseDeadline(self) != UINT64_MAX)
+        if (deadlineNs != UINT64_MAX)
         {
-            int64_t ns = (int64_t)XDeviceTimer_nextPreciseDeadline(self)
-                       - XDateTime_currentNSecsSinceEpoch();
-            timeoutMs = (int)(ns / 1000000);
-            if (timeoutMs < 0) timeoutMs = 0;
-            if (timeoutMs > 999999999) timeoutMs = 0;
+            int64_t ns = (int64_t)deadlineNs - XDateTime_currentNSecsSinceEpoch();
+            /* 1ms 粒度向上取整（§23.4 规划 5）：时间轮到期刻度按毫秒量化，
+             * 向上取整保证唤醒时 tick 已推进到到期毫秒、定时器即刻兑现；
+             * 若向下截断，残余亚毫秒会不断产生 0 超时的空转迭代（忙等）。 */
+            int64_t remainMs = (ns <= 0) ? 0 : (ns + 999999) / 1000000;
+            /* 远期定时器封顶，防止超出 int 及各等待后端的毫秒范围 */
+            if (remainMs > 999999999) remainMs = 999999999;
+            timeoutMs = (int)remainMs;
         }
-        /* 限制最大阻塞时间，确保时间轮/定时器定期轮询 */
-        if (timeoutMs < 0 || timeoutMs > 20) timeoutMs = 20;
+        /* 空转保护：无任何定时器（截止查询返回 UINT64_MAX）时维持既有
+         * 20ms 心跳节拍，兜底驱动周期轮询回调（USB/串口/原生事件泵）；
+         * 有定时器时严格按最近截止等待，不再钳到 20ms——醒来必有进展：
+         * 要么 I/O/投递事件就绪，要么定时器到期由下一轮开头的
+         * XDeviceTimer_process 兑现并重设截止，因此不引入忙等。 */
+        if (timeoutMs < 0) timeoutMs = 20;
 
         if (XAbstractEventDispatcher_isMainThread(self))
         {

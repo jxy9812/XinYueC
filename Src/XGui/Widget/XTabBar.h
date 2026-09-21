@@ -48,7 +48,8 @@ bool    m_autoHide;              /**< 自动隐藏。 */
     int     m_shape;                 /**< 页签形状（Qt::TabShape；0=Rounded，1=Triangular）。 */
     int     m_iconSize;              /**< 页签图标尺寸（单 int 方边值；0=默认）。 */
     bool    m_changeCurrentOnDrag;   /**< 拖拽悬停切换（仅存状态；拖放切换未实现）。 */
-    bool    m_usesScrollButtons;     /**< 滚动按钮。 */
+    bool    m_usesScrollButtons;     /**< 滚动按钮（默认 true，对标 Qt）。 */
+    int     m_scrollOffset;          /**< 滚动偏移（px；溢出态下最左可见内容 x）。 */
     bool    m_documentMode;          /**< 文档模式（无边框）。 */
     bool    m_drawBase;              /**< 绘制基底（默认 true）。 */
     uint32_t* m_tabTextColors;       /**< 各项文本颜色（0=默认；平行数组）。 */
@@ -223,10 +224,31 @@ int XTabBar_elideMode(const XTabBar* self);
 void XTabBar_setExpanding(XTabBar* self, bool enable);
 /** @brief 查询扩展模式。 @param self 目标控件。 @return 扩展返回 true。 */
 bool XTabBar_expanding(const XTabBar* self);
-/** @brief 设置滚动按钮。 @param self 目标控件。 @param enable true 显示。 */
+/** @brief 设置滚动按钮（对标 QTabBar::setUsesScrollButtons；Qt 默认 true）。
+ * @details 开启且页签总宽超出选项卡条时进入溢出态：单行布局 +
+ *          两端滚动按钮 + 偏移滚动；关闭时维持旧换行挤压布局。
+ * @param self 目标控件。 @param enable true 启用。
+ */
 void XTabBar_setUsesScrollButtons(XTabBar* self, bool enable);
-/** @brief 查询滚动按钮。 @param self 目标控件。 @return 显示返回 true。 */
+/** @brief 查询滚动按钮（默认 true）。 @param self 目标控件。 @return 启用返回 true。 */
 bool XTabBar_usesScrollButtons(const XTabBar* self);
+/** @brief 溢出态查询（页签总宽 > 选项卡条宽；与开关无关）。
+ * @param self 目标控件；NULL 返回 false。
+ * @return 溢出返回 true。
+ */
+bool XTabBar_isOverflowed(const XTabBar* self);
+/** @brief 有效滚动偏移（clamp 后 px；非溢出态恒 0）。
+ * @param self 目标控件；NULL 返回 0。
+ * @return 当前滚动偏移。
+ */
+int XTabBar_scrollOffset(const XTabBar* self);
+/** @brief 选项卡条布局高度提示（供容器按宽预留高度；非 Qt 对标项）。
+ * @details 溢出滚动模式恒单行（XTABBAR_TAB_H）；否则按换行布局行数计。
+ * @param self 目标控件；NULL 返回 0。
+ * @param forWidth 假定宽度（px）。
+ * @return 建议高度（行数 * XTABBAR_TAB_H）。
+ */
+int XTabBar_barHeightHint(const XTabBar* self, int forWidth);
 /** @brief 设置基底绘制。 @param self 目标控件。 @param enable true 绘制。 */
 void XTabBar_setDrawBase(XTabBar* self, bool enable);
 /** @brief 查询基底绘制。 @param self 目标控件。 @return 绘制返回 true。 */

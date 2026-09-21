@@ -34,6 +34,19 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision);
 void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group,size_t slotsCount);
 void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group);
 size_t XTimeWheelGroup_count(XTimeWheelGroup* group);
+/**
+ * @brief 查询组内最近一个未取消定时器的绝对到期时刻（无锁只读，§23.4 规划 5）。
+ * @details 时间轮当前设计仅支持毫秒精度，到期刻度即 Unix 纪元毫秒；为与
+ *          XHrTimerGroup_getNextExpireTime 同口径比较，此处换算为纳秒返回，
+ *          供事件分发器把普通定时器并入阻塞等待的最近截止。可与时间轮消费
+ *          线程并发调用：遍历持有 m_activeProducers 护栏，消费者对退休节点
+ *          的回收在护栏计数非零时推迟，遍历不会读到已释放内存；并发清扫对
+ *          链表的瞬时改写最多导致漏看个别节点（下一次查询自愈），对等待
+ *          超时属可容忍的近似。
+ * @param group 定时器轮组指针，可为 NULL。
+ * @return 最近到期时刻（纳秒，Unix 纪元）；组为空或全部已取消返回 UINT64_MAX。
+ */
+uint64_t XTimeWheelGroup_getNextExpireTime(XTimeWheelGroup* group);
 #define XTimeWheelGroup_addTimerMs_base				XTimerGroupBase_addTimerMs
 #define XTimeWheelGroup_removeTimer_base			XTimerGroupBase_removeTimer_base
 #define XTimeWheelGroup_timeRange					XTimerGroupBase_timeRange

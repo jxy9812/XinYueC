@@ -5,8 +5,12 @@
  *             - 每个 block = 一段文本 + 段落格式（对齐/缩进/列表级别）；
  *             - 每个 fragment = 字符范围内联格式（粗/斜/下划线/删除线/
  *               字色/背景色/字体族/字号/上标/下标）；
- *             - setHtml 解析 HTML 子集（b/i/u/s/br/p/div/h1-h6/
- *               font/ul/ol/li/a/span/img 13 类标签 + style 属性）；
+ *             - setHtml 解析 HTML 渲染子集（内联嵌套上限两层：栈深 3，
+ *               三层格式如 <b><i><u> 同时生效）：b/strong、i/em、u、
+ *               s/strike/del、
+ *               font(color/size)、br（继承对齐）、p/div(align)、
+ *               h1-h6、ul/ol/li、a(href)；实体 &amp;/&lt;/&gt;/&quot;/
+ *               &apos;/&#39;/&nbsp;/&#NN;；appendHtml 尾部追加同口径；
  *             - toHtml 生成对应 HTML；
  *             - toPlainText 导出纯文本；
  *             - 对标 QTextDocument 核心公共 API 全部方法。
@@ -27,6 +31,7 @@ extern "C" {
 #include "XEvent.h"
 #include "XVarList.h"
 #include "XString.h"
+#include "XImage.h"
 
 #if XTEXTDOCUMENT_ON
 
@@ -52,8 +57,11 @@ typedef struct XTDCharFormat
 /** @brief 文本片段（连续相同格式的字符范围）。 */
 typedef struct XTDFragment
 {
-    XString* text;        /**< UTF-8 文本（对象拥有）。 */
+    XString* text;        /**< UTF-8 文本（对象拥有）；图片片段为空串。 */
     XTDCharFormat fmt;
+    XImage* image;        /**< 行内图片（对象拥有深拷贝；NULL=文本片段，
+                               经 insertImage 编程接口写入——<img> 按名取
+                               图的资源体系未建，见该接口注释）。 */
 } XTDFragment;
 
 /** @brief 段落对齐（对标 Qt::Alignment）。 */
@@ -74,9 +82,12 @@ typedef struct XTDBlock
     XTDFragment fragments[XTD_MAX_FRAGMENTS_PER_BLOCK];
     int fragmentCount;
     int alignment;         /**< XTDAlignment 位组合。 */
-    int indentLevel;       /**< 列表缩进级别（0=非列表）。 */
+    int indentLevel;       /**< 列表缩进级别（0=非列表，1 起）。 */
     bool isListItem;       /**< 是否为列表项。 */
     bool isOrdered;        /**< 有序列表（<ol>）。 */
+    bool listFresh;        /**< 本层列表的首个列表项（§8.0g5：同层新列表
+                                序号重起标记——</ul><ul> 相邻两列表靠它
+                                区别于同列表兄弟项）。 */
     int headingLevel;      /**< h1-h6，0=普通段落。 */
     XString* blockFormat;  /**< 附加块级格式（对象拥有；CSS 类名等）。 */
 } XTDBlock;
@@ -118,6 +129,11 @@ int XTextDocument_characterCount(const XTextDocument* self);
 char* XTextDocument_toPlainText(const XTextDocument* self);
 void XTextDocument_setPlainText(XTextDocument* self, const char* utf8);
 char* XTextDocument_toHtml(const XTextDocument* self);
+/** @brief 设置 HTML 内容（渲染子集；嵌套上限一层）。
+ * @param self 目标文档。
+ * @param html UTF-8 HTML 文本；NULL 忽略。
+ * @return 无返回值（解析完成发射 contentsChanged）。
+ */
 void XTextDocument_setHtml(XTextDocument* self, const char* html);
 
 /* ===== 块级格式 ===== */
@@ -138,7 +154,22 @@ void XTextDocument_insertText(XTextDocument* self, int blockIndex,
 void XTextDocument_appendBlock(XTextDocument* self, const XTDCharFormat* fmt);
 void XTextDocument_appendText(XTextDocument* self, const char* text,
                               const XTDCharFormat* fmt);
+/** @brief 尾部追加 HTML（渲染子集；末块非空时另起新段）。
+ * @param self 目标文档。
+ * @param html UTF-8 HTML 片段；NULL 忽略。
+ * @return 无返回值（解析完成发射 contentsChanged）。
+ */
 void XTextDocument_appendHtml(XTextDocument* self, const char* html);
+/** @brief 末块尾部插入行内图片（图片片段最小子集）。
+ * @details 所有权：文档对 image 做 XImage_copyRect 深拷贝并持有，调用方
+ *          传入后自行管理原对象生命周期；图片按原尺寸承载（width/height
+ *          缩放属性不做——子集边界）。渲染侧（XTextEdit 预览）按图片
+ *          原尺寸占一个不可断行的原子片段，底边贴基线绘制。
+ * @param self 目标文档。
+ * @param image 源图片；NULL 或空图忽略。
+ * @return 新片段在末块内的索引；失败返回 -1。
+ */
+int XTextDocument_insertImage(XTextDocument* self, const XImage* image);
 
 /* ===== 元信息 ===== */
 void XTextDocument_setMetaInformation(XTextDocument* self, int info, const char* value);

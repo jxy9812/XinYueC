@@ -11,6 +11,9 @@
  *               AdjustToContentsOnFirstShow=1/AdjustToMinimumContents
  *               LengthWithIcon=2）——字段保留，尺寸自适应按
  *               AdjustToContents 实现于内部重排；
+ *             - 补全器：setCompleter 接通 XCompleter（借用；无模型时
+ *               接通条目模型并驱动内置补全路径，NULL 仅解除），内置
+ *               completerMode 仍为补全 UI 承载（见下）；
  *             - 弹出：showPopup/hidePopup（虚槽；第一版以回调窗口
  *               形式弹出项列表，选中回调 activated）；
  *             - 可编辑：setEditable + 内嵌 XLineEdit（editText 路径），
@@ -26,7 +29,10 @@
  *               NoInsert 不插入；duplicates 关闭且文本已存在仅置当前
  *               项；InsertAtTop/InsertAtBottom/InsertAfterCurrent/
  *               InsertBeforeCurrent/InsertAlphabetically 按位插入新
- *               条目，InsertAtCurrent 以编辑文本替换当前项文本；用户
+ *               条目（AtCurrent/AfterCurrent/BeforeCurrent 无当前项
+ *               时不动作，对标 Qt），InsertAtCurrent 以编辑文本替换
+ *               当前项文本，InsertAlphabetically 大小写不敏感按
+ *               UTF-8 字节序（等价码点序，中文参与排序）；用户
  *               激活路径（Enter）结算后发射 activated/textActivated；
  *             - 信号：activated(int)/textActivated(const char*)/
  *               highlighted(int)/currentIndexChanged(int)/
@@ -411,12 +417,18 @@ XString* XComboBox_inputMethodQuery(XComboBox* self, int query);
  * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
  */
 int XComboBox_currentIndex(const XComboBox* self);
-/** @brief 读取当前项文本（返回新建 XString*，调用方负责 delete_base；对标 QComboBox::currentText）。
+/** @brief 读取当前文本（返回新建 XString*，调用方负责 delete_base；对标 QComboBox::currentText）。
+ * @details 对标 Qt 6.8 文档：可编辑时 current text 即行编辑显示值——
+ *          编辑框文本与当前项文本分叉（用户编辑中/程序化 setEditText
+ *          未命中项）时返回编辑框文本；同步态或不可编辑时返回当前项
+ *          文本（无当前项返回空文本）。
  * @param self 目标控件指针。
  * @return 新建 XString*；无当前项时返回空 XString*。
  */
 XString* XComboBox_currentText(const XComboBox* self);
-/** @brief 读取当前项文本（UTF-8 借用；对标 QComboBox::currentText）。
+/** @brief 读取当前文本（UTF-8 借用；对标 QComboBox::currentText）。
+ * @details 分叉语义同 XComboBox_currentText；分叉态借用的是行编辑框
+ *          内部缓冲（行编辑文本变更后失效），同步态借用项文本存储。
  * @param self 目标控件指针。
  * @return 内部 UTF-8 借用指针；无当前项时返回空串，不得释放或修改。
  */
@@ -622,13 +634,28 @@ const XString* XComboBox_currentData(const XComboBox* self);
 int XComboBox_findData(const XComboBox* self, const XString* data);
 /** @brief 按数据查找项（UTF-8 兼容重载）。 */
 int XComboBox_findData_2(const XComboBox* self, const char* data);
-/** @brief 设置补全器（对标 QComboBox::setCompleter；借用，不拥有）。
- * @param self 目标控件。
- * @param completer 补全器借用指针；可为 NULL（清除）。
- * @return 无返回值。
+/**
+ * @brief      设置补全器（对标 QComboBox::setCompleter；借用，不拥有）。
+ * @details    降级承载注记：XGui 无 QCompleter 弹出栈，补全 UI 由内置
+ *             completerMode 前缀过滤弹层承载（PopupCompletion 子集），
+ *             setCompleter 为预留接通位——安装非空补全器时：
+ *             - 补全器无模型则接通组合框条目模型（对标 Qt 安装时的
+ *               completer->setModel(d->model)），并记录关联控件；
+ *             - 驱动内置补全路径（completerMode 置位），语义对标
+ *               "安装补全器后行编辑获得 popup 补全"；
+ *             - setCompleter(NULL) 仅解除指针，不改 completerMode
+ *               开关（内置补全路径保留，由 setCompleterMode 独立控制）；
+ *             - 替换/解除时清原补全器对本组合框的关联位（借用卫生）。
+ *             生存期：组合框不取得补全器所有权，补全器对组合框/条目
+ *             模型为借用（组合框析构不回调补全器，简化承载），调用方
+ *             须保证补全器不悬空使用失效模型。
+ * @param      self 目标控件。
+ * @param      completer 补全器借用指针；可为 NULL（仅清除）。
+ * @return     无返回值。
  */
 void XComboBox_setCompleter(XComboBox* self, XCompleter* completer);
-/** @brief 查询补全器。 @param self 目标控件。 @return 借用指针。 */
+/** @brief 查询补全器（借用指针；内置补全路径见 setCompleterMode）。
+ * @param self 目标控件。 @return 借用指针；未设置返回 NULL。 */
 XCompleter* XComboBox_completer(const XComboBox* self);
 /**
  * @brief      设置前缀补全过滤开关（对标 QComboBox 可编辑内建 completer

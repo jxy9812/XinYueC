@@ -57,7 +57,18 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
             return;
         }
     }
-    XWidget_keyPressEvent_base(self, event);
+    /* 对标 QDialog::keyPressEvent 非 Esc 分支静态调用基类实现
+       （QWidget::keyPressEvent 默认 ignore 以便沿父链传播）。
+       此前经 XWidget_keyPressEvent_base 转发：该 _base 入口按对象
+       虚表再分派回最派生重载 VXDialog_keyPressEvent，非 Esc 按键
+       即形成无界自递归栈溢出（复扫 P0-1；XWizard/XInputDialog/
+       XColorDialog/XFileDialog/XProgressDialog/XErrorMessage 均未
+       覆写 keyPress，收到按键全数命中）。现按 XDockWidget/
+       XToolBar 的 XClass_Parent 口径静态取 XWidget 类虚表 keyPress
+       槽位（即 XWidget 本类默认实现 XWidget_ignoreEvent_default，
+       与 VXWidget_event 分派到 XWidget 本类时所用同一层）。 */
+    XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 XVtable* XDialog_class_init(void)

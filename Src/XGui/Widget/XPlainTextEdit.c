@@ -186,8 +186,9 @@ static XRect xpe_viewportRect(const XPlainTextEdit* self)
 
 /**
  * @brief      控制器行高（px）。
- * @details    控制器未公开行高查询：blockBoundingRect(0).height 即行高
- *             （行条带 y = line x 行高），字体度量失败回退 16。
+ * @details    控制器未公开行高查询：cursorRectAt(0).height 即行高（光标
+ *             矩形高度恒为一行行高，软换行/NoWrap 同一口径），字体度量
+ *             失败回退 16。
  * @param      ctl 目标控制器；可为 NULL。
  * @return     行高像素值。
  */
@@ -195,112 +196,51 @@ static int xpe_ctlLineHeight(const XTextControl* ctl)
 {
     XRect r;
     if (!ctl) return XPE_FALLBACK_LINE_HEIGHT;
-    r = XTextControl_blockBoundingRect(ctl, 0);
+    r = XTextControl_cursorRectAt(ctl, 0);
     return r.height > 0 ? r.height : XPE_FALLBACK_LINE_HEIGHT;
 }
 
 /**
- * @brief      控制器行数（对标 blockCount）。
- * @details    控制器未公开行数查询：blockBoundingRect 越界返回零矩形，
- *             以指数扩界 + 二分定位第一个无效行，O(log n) 次查询。
+ * @brief      控制器逻辑块数（对标 blockCount；不含软换行拆分）。
+ * @details    块数上限裁剪与 blockCount 查询的口径（Qt blockCount 为
+ *             逻辑块，永不随折行变化）。
  * @param      ctl 目标控制器；可为 NULL。
- * @return     行数（恒 >= 1；控制器为空时返回 0）。
+ * @return     逻辑块数（恒 >= 1；控制器为空时返回 0）。
  */
-static int xpe_ctlLineCount(const XTextControl* ctl)
+static int xpe_ctlBlockCount(const XTextControl* ctl)
 {
-    int lo = 0;
-    int hi = 1;
-    if (!ctl) return 0;
-    if (XTextControl_blockBoundingRect(ctl, 0).height <= 0) return 0;
-    while (XTextControl_blockBoundingRect(ctl, hi).height > 0) {
-        lo = hi;
-        hi *= 2;
-        if (hi > (1 << 24)) break; /* 安全上限：行数不超过 16M。 */
-    }
-    while (hi - lo > 1) {
-        int mid = lo + (hi - lo) / 2;
-        if (XTextControl_blockBoundingRect(ctl, mid).height > 0)
-            lo = mid;
-        else
-            hi = mid;
-    }
-    return lo + 1;
+    return XTextControl_blockCount(ctl);
 }
 
 /**
- * @brief      控制器绝对位置 → (行, 行内字节列)。
- * @details    行经 cursorRectAt 的 y = line x 行高反查；列经
- *             inputMethodQuery(ImCursorPosition) 查询（均为公开 API）。
+ * @brief      控制器绝对位置 → (可视行, 可视行内字节列)。
+ * @details    对标 QPlainTextEdit 可视行口径（lineCount 即可视行）：
+ *             委托控制器 posToVisualLineCol（软换行行内含 preedit 视觉
+ *             列换算）。
  * @param      ctl 目标控制器；可为 NULL。
  * @param      pos 文档绝对 UTF-8 字节位置（越界由控制器钳位）。
- * @param      line 输出行号；可为 NULL。
- * @param      col 输出行内字节列；可为 NULL。
+ * @param      line 输出可视行号；可为 NULL。
+ * @param      col 输出可视行内字节列；可为 NULL。
  * @return     无返回值。
  */
 static void xpe_ctlPosToLineCol(const XTextControl* ctl, int pos,
                                 int* line, int* col)
 {
-    int lh = xpe_ctlLineHeight(ctl);
-    if (line) {
-        XRect r;
-        r = XTextControl_cursorRectAt(ctl, pos);
-        *line = lh > 0 ? r.y / lh : 0;
-        if (*line < 0) *line = 0;
-    }
-    if (col) {
-        XTextControlImValue value;
-        *col = 0;
-        XMemset(&value, 0, sizeof(value));
-        if (XTextControl_inputMethodQuery(
-                ctl, (int)XInputMethodQuery_ImCursorPosition, pos, &value) &&
-            value.type == 1)
-            *col = value.i;
-    }
+    XTextControl_posToVisualLineCol(ctl, pos, line, col);
 }
 
 /**
- * @brief      控制器 (行, 行内字节列) → 绝对位置。
- * @details    控制器未公开 lineColToPos：经 toPlainText 按 '\n' 走位
- *             （程序化设置光标/额外选区的低频路径，O(文档长) 可接受）。
+ * @brief      控制器 (可视行, 行内字节列) → 绝对位置。
+ * @details    可视行口径（与 xpe_ctlPosToLineCol 互逆）：委托控制器
+ *             visualLineColToPos（行列越界由控制器钳位）。
  * @param      ctl 目标控制器；可为 NULL。
- * @param      line 目标行（0 起，越界钳位）。
- * @param      col 目标列（行内 UTF-8 字节偏移，越界钳位）。
+ * @param      line 目标可视行（0 起，越界钳位）。
+ * @param      col 目标列（可视行内 UTF-8 字节偏移，越界钳位）。
  * @return     文档绝对字节位置。
  */
 static int xpe_ctlLineColToPos(const XTextControl* ctl, int line, int col)
 {
-    char* text;
-    int result = 0;
-    int lineCount;
-    int curLine = 0;
-    size_t i = 0;
-    size_t len;
-    if (!ctl) return 0;
-    lineCount = xpe_ctlLineCount(ctl);
-    if (lineCount <= 0) return 0;
-    if (line < 0) line = 0;
-    if (line > lineCount - 1) line = lineCount - 1;
-    text = XTextControl_toPlainText(ctl);
-    if (!text) return 0;
-    len = XStrlen(text);
-    while (curLine < line && i < len) {
-        if (text[i] == 0x0A) ++curLine;
-        ++i;
-    }
-    result = (int)i;
-    if (curLine == line) {
-        int lineLen = 0;
-        size_t j = i;
-        while (j < len && text[j] != 0x0A) {
-            ++lineLen;
-            ++j;
-        }
-        if (col < 0) col = 0;
-        if (col > lineLen) col = lineLen;
-        result = (int)i + col;
-    }
-    XFree_System(text);
-    return result;
+    return XTextControl_visualLineColToPos(ctl, line, col);
 }
 
 /**
@@ -315,7 +255,7 @@ static bool xpe_documentEmpty(const XPlainTextEdit* self)
     char* text;
     bool empty;
     if (!ctl) return true;
-    if (xpe_ctlLineCount(ctl) > 1) return false;
+    if (xpe_ctlBlockCount(ctl) > 1) return false;
     text = XTextControl_toPlainText(ctl);
     empty = (!text || text[0] == '\0');
     if (text) XFree_System(text);
@@ -440,7 +380,7 @@ static void xpe_enforceMaxBlockCount(XPlainTextEdit* self)
     max = self->m_maxBlockCount;
     if (max <= 0) return;
     ctl = self->m_control;
-    count = xpe_ctlLineCount(ctl);
+    count = xpe_ctlBlockCount(ctl);
     if (count <= max) return;
     text = XTextControl_toPlainText(ctl);
     if (!text) return;
@@ -817,6 +757,28 @@ static void xpe_syncControlFont(XPlainTextEdit* self)
     XFont_deinit_base(&font);
 }
 
+/**
+ * @brief      按换行模式把折行宽度下发控制器（对标 Qt WidgetWidth 模式
+ *             下文档 textWidth = 视口宽的私有同步路径）。
+ * @details    WidgetWidth：折行宽 = 控件宽 - 行左留白（视口文本区宽）；
+ *             NoWrap：清除定宽（-1），长行改由水平滚动/逐行裁剪承载。
+ *             取值未变化时控制器 setTextWidth 幂等无操作。
+ * @param      self 目标控件；可为 NULL。
+ * @return     无返回值。
+ */
+static void xpe_updateWrapWidth(XPlainTextEdit* self)
+{
+    if (!self || !self->m_control) return;
+    if (self->m_wrapMode == (int)XPlainTextEditMode_WidgetWidth) {
+        int w = XWidget_width((XWidget*)self) - XPE_TEXT_LEFT;
+        if (w < 1) w = 1;
+        XTextControl_setTextWidth(self->m_control, w);
+    } else {
+        /* 对标 Qt textWidth = -1（无固定宽）：不软换行。 */
+        XTextControl_setTextWidth(self->m_control, -1);
+    }
+}
+
 static void xpe_forwardMouseEvent(XPlainTextEdit* self, XEvent* event)
 {
     XMouseEvent translated;
@@ -906,6 +868,112 @@ static void VX_plainTextEdit_inputMethodEvent(XWidget* self, XEvent* event)
     XTextControl_processEvent(edit->m_control, event);
     XEvent_accept(event);
 }
+
+#if XINPUTMETHOD_ON
+/** @brief 基类默认查询复刻（对标 QWidget::inputMethodQuery 默认实现）。
+ *  @note  基类实现为 XWidget.c 内部静态，虚槽重载后无法显式回调，按其
+ *         文档契约逐项复刻：ImCursorRectangle=(w/2,0,1,h)、
+ *         ImInputItemClipRectangle=控件矩形浮点副本、ImHints=hints、
+ *         ImEnabled=true，其余查询项返回 NULL（等价无效 QVariant）。 */
+static XVariant* xpe_inputMethodQueryBase(const XWidget* self,
+                                          XInputMethodQuery query)
+{
+    if (!self) return NULL;
+    switch (query) {
+    case XInputMethodQuery_ImCursorRectangle: {
+        XRectF rect;
+        rect.x = (float)XWidget_width(self) / 2.0f;
+        rect.y = 0.0f;
+        rect.width = 1.0f;
+        rect.height = (float)XWidget_height(self);
+        return XVariant_create(&rect, sizeof(rect), XVariantType_User);
+    }
+    case XInputMethodQuery_ImInputItemClipRectangle: {
+        XRect rect = XWidget_rect(self);
+        XRectF rectF;
+        rectF.x = (float)rect.x;
+        rectF.y = (float)rect.y;
+        rectF.width = (float)rect.width;
+        rectF.height = (float)rect.height;
+        return XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+    }
+    case XInputMethodQuery_ImHints: {
+        int32_t value = (int32_t)XWidget_inputMethodHints(self);
+        return XVariant_create(&value, sizeof(value), XVariantType_Int32);
+    }
+    case XInputMethodQuery_ImEnabled: {
+        bool enabled = true;
+        return XVariant_create(&enabled, sizeof(enabled), XVariantType_Bool);
+    }
+    default:
+        return NULL;
+    }
+}
+
+/**
+ * @brief      输入法查询虚槽：委托控制器全枚举（对标 QPlainTextEdit::
+ *             inputMethodQuery 转发 QTextDocument 控制层，使 IME 拿到
+ *             真实光标矩形/环绕文本/选区态，而非基类兜底的居中假矩形）。
+ * @details    控制器平铺结果转 XVariant（1 整数→Int32 / 2 布尔→Bool /
+ *             3 文本→String / 4 矩形→User 的 XRectF）；矩形再按
+ *             XPlainTextEdit_cursorRect 同口径做视口换算（+行左留白
+ *             XPE_TEXT_LEFT、扣垂直/水平滚动取值），输出控件局部坐标
+ *             （对标 Qt 平台输入法以焦点控件坐标系消费 ImCursorRectangle）。
+ *             控制器缺席或无对应查询项时回落基类默认复刻；查询本身
+ *             不修改控件状态。
+ */
+static XVariant* VX_plainTextEdit_inputMethodQuery(const XWidget* self,
+                                                   XInputMethodQuery query)
+{
+    XPlainTextEdit* edit = (XPlainTextEdit*)self;
+    XTextControlImValue value;
+    XVariant* var = NULL;
+    if (!edit || !edit->m_control)
+        return xpe_inputMethodQueryBase(self, query);
+    XMemset(&value, 0, sizeof(value));
+    if (!XTextControl_inputMethodQuery(edit->m_control, (int)query, -1,
+                                       &value))
+        return xpe_inputMethodQueryBase(self, query);
+    switch (value.type) {
+    case 1: {
+        int32_t i = value.i;
+        var = XVariant_create(&i, sizeof(i), XVariantType_Int32);
+        break;
+    }
+    case 2: {
+        bool b = value.b;
+        var = XVariant_create(&b, sizeof(b), XVariantType_Bool);
+        break;
+    }
+    case 3:
+        /* 文本为堆拷贝（XString_toVariant_utf8 内部再拷，搬运后即释）。 */
+        var = value.text ? XString_toVariant_utf8(value.text) : NULL;
+        break;
+    case 4: {
+        /* 内容坐标 → 控件局部：行左留白与滚动扣除（与
+           XPlainTextEdit_cursorRect 逐项同口径）。 */
+        XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+            (XAbstractScrollArea*)edit);
+        XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(
+            (XAbstractScrollArea*)edit);
+        XRectF rectF;
+        rectF.x = (float)(value.rect.x + XPE_TEXT_LEFT -
+                          (hsb ? XScrollBar_value(hsb) : 0));
+        rectF.y = (float)(value.rect.y -
+                          (vsb ? XScrollBar_value(vsb) : 0));
+        rectF.width = (float)value.rect.width;
+        rectF.height = (float)value.rect.height;
+        var = XVariant_create(&rectF, sizeof(rectF), XVariantType_User);
+        break;
+    }
+    default:
+        break;
+    }
+    /* 类别 3 的堆文本用后即释（XTextControlImValue 契约）。 */
+    if (value.text) XFree_System(value.text);
+    return var ? var : xpe_inputMethodQueryBase(self, query);
+}
+#endif /* XINPUTMETHOD_ON */
 
 #if XMENU_ON
 /** @brief 右键菜单事件：弹出标准编辑菜单（菜单数据源为控制器
@@ -1064,6 +1132,16 @@ static void VX_plainTextEdit_timerEvent(XObject* object, XTimerEvent* event)
                   void (*)(XObject*, XTimerEvent*))(object, event);
 }
 
+/** @brief 尺寸变化：父类完成视口/滚动条几何联动后重发折行宽度
+ *         （对标 Qt WidgetWidth 模式 resize → 文档 textWidth 重设）。 */
+static void VX_plainTextEdit_resizeEvent(XWidget* self, XEvent* event)
+{
+    XPlainTextEdit* edit = (XPlainTextEdit*)self;
+    XClass_Parent(XAbstractScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    if (edit) xpe_updateWrapWidth(edit);
+}
+
 static void VX_plainTextEdit_scrollContentsBy(XAbstractScrollArea* self, int dx, int dy)
 {
     XPlainTextEdit* edit;
@@ -1136,8 +1214,14 @@ XVtable* XPlainTextEdit_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VX_plainTextEdit_focusEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VX_plainTextEdit_focusEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VX_plainTextEdit_inputMethodEvent);
+#if XINPUTMETHOD_ON
+    /* 输入法查询虚槽：委托控制器真实状态（对标 QPlainTextEdit::
+       inputMethodQuery 转发文档控制层；基类兜底只回居中假矩形）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery, VX_plainTextEdit_inputMethodQuery);
+#endif /* XINPUTMETHOD_ON */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, VX_plainTextEdit_contextMenuEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_plainTextEdit_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_plainTextEdit_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy, VX_plainTextEdit_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_plainTextEdit_deinit);
     return XVTABLE_DEFAULT;
@@ -1156,7 +1240,9 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
     self->m_undoEnabled = true;
     self->m_backgroundVisible = true;
     self->m_tabStopDistance = 40;
-    self->m_wordWrapMode = 0;
+    /* 断行规则缺省 WordWrap（对标 QPlainTextEdit 默认
+       QTextOption::WordWrap：CJK 逐字可断、Latin 按词边界）。 */
+    self->m_wordWrapMode = (int)XTextControlWrap_WordWrap;
     self->m_documentTitle = XString_create();
     self->m_extraSelCache = XVector_Create(XPlainTextEditExtraSelection);
     self->m_autoScrollTimer = XTIMER_INVALID_ID;
@@ -1188,6 +1274,9 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
            用完即释放。 */
         XTextControl_setFont(self->m_control, &font);
         XFont_deinit_base((XClass*)&font);
+        /* 换行开关/断行规则下发控制器（折行行为由控制器承载）。 */
+        XTextControl_setLineWrapMode(self->m_control, self->m_wrapMode);
+        XTextControl_setWordWrapMode(self->m_control, self->m_wordWrapMode);
         xpe_connectControl(self);
     }
     /* 对标 QPlainTextEditPrivate::init 的 StrongFocus（qplaintextedit.cpp:790）：
@@ -1197,6 +1286,8 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
     hint.width = 240;
     hint.height = 180;
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* 初始几何就绪后下发折行宽度（WidgetWidth = 视口文本区宽）。 */
+    xpe_updateWrapWidth(self);
 }
 
 XPlainTextEdit* XPlainTextEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -1283,8 +1374,13 @@ int XPlainTextEdit_lineWrapMode(const XPlainTextEdit* self)
 
 void XPlainTextEdit_setLineWrapMode(XPlainTextEdit* self, int mode)
 {
-    if (!self) return;
+    if (!self || self->m_wrapMode == mode) return;
     self->m_wrapMode = mode;
+    /* 对标 QPlainTextEdit::setLineWrapMode：开关下发控制器（重布局 +
+       documentSize/updateRequest 通知），并同步折行宽度
+       （WidgetWidth=视口文本区宽 / NoWrap=清除定宽）。 */
+    if (self->m_control) XTextControl_setLineWrapMode(self->m_control, mode);
+    xpe_updateWrapWidth(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -1401,7 +1497,7 @@ void XPlainTextEdit_setTextCursor(XPlainTextEdit* self, int line, int col)
     int pos;
     if (!self || !self->m_control) return;
     ctl = self->m_control;
-    if (xpe_ctlLineCount(ctl) <= 0) return;
+    if (XTextControl_lineCount(ctl) <= 0) return;
     pos = xpe_ctlLineColToPos(ctl, line, col);
     /* 无选区收拢（旧口径无选区语义）。 */
     XTextControl_setTextCursor(ctl, pos, pos, false);
@@ -1518,7 +1614,15 @@ void* XPlainTextEdit_cursorPositionChanged_signal(XPlainTextEdit* self)
 
 int XPlainTextEdit_blockCount(const XPlainTextEdit* self)
 {
-    return (self && self->m_control) ? xpe_ctlLineCount(self->m_control) : 0;
+    /* 对标 QPlainTextEdit::blockCount：逻辑块口径（不含软换行拆分）。 */
+    return (self && self->m_control) ? xpe_ctlBlockCount(self->m_control) : 0;
+}
+
+int XPlainTextEdit_lineCount(const XPlainTextEdit* self)
+{
+    /* 对标 QPlainTextEdit::lineCount：可视行口径（折行后总行数）。 */
+    return (self && self->m_control) ? XTextControl_lineCount(self->m_control)
+                                     : 0;
 }
 
 bool XPlainTextEdit_canPaste(const XPlainTextEdit* self)
@@ -1585,10 +1689,17 @@ bool XPlainTextEdit_overwriteMode(const XPlainTextEdit* self)
 }
 
 void XPlainTextEdit_setWordWrapMode(XPlainTextEdit* self, int mode)
-{ if (self) { self->m_wordWrapMode = mode; XWidget_update((XWidget*)self); } }
+{
+    if (!self || self->m_wordWrapMode == mode) return;
+    self->m_wordWrapMode = mode;
+    /* 对标 QTextOption::setWrapMode：断行规则下发控制器并触发重布局
+       （documentSize/updateRequest 由控制器发射，随重绘生效）。 */
+    if (self->m_control) XTextControl_setWordWrapMode(self->m_control, mode);
+    XWidget_update((XWidget*)self);
+}
 
 int XPlainTextEdit_wordWrapMode(const XPlainTextEdit* self)
-{ return self ? self->m_wordWrapMode : 0; }
+{ return self ? self->m_wordWrapMode : (int)XTextControlWrap_WordWrap; }
 
 void XPlainTextEdit_setTextInteractionFlags(XPlainTextEdit* self, int flags)
 {

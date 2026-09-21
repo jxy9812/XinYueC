@@ -8,11 +8,24 @@
 #include "XVarList.h"
 #include "XEvent.h"
 #include "XEventType.h"
+#include "XItemDelegate.h"
+#include "XCoreApplication.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
 static void VXAbstractItemView_deinit(XAbstractItemView* self);
-/* ==================== 选择应用（键盘导航/修饰键点击共用） ==================== */
+static bool VXAbstractItemView_visualRect(const XAbstractItemView* self,
+                                          int row, int col, XRect* out);
+static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event);
+static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
+                                                 XEvent* event);
+static void VXAbstractItemView_mouseDoubleClickEvent(XWidget* self,
+                                                     XEvent* event);
+static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event);
+static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event);
+static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
+                                       int x, int y,
+                                       int* outRow, int* outCol);
 
 /** @brief 仅移动当前索引（不触碰选择集合；对标 Ctrl+方向键的移动）。 */
 static void xaiv_setCurrentPreservingSelection(XAbstractItemView* view,
@@ -85,6 +98,8 @@ static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
                                        int x, int y,
                                        int* outRow, int* outCol);
 
+/* ==================== 选择应用（键盘导航/修饰键点击共用） ==================== */
+
 /* 平行表（持久编辑器标记/条目控件指针）使用的内存池类型：与本类堆创建
  * 默认类型一致（XAbstractItemView_create_ex 默认走该类型），分配与释放
  * 使用同一常量保证配对。 */
@@ -95,6 +110,7 @@ static void xaiv_indexWidgetRelease(XAbstractItemView* self);
 static void xaiv_delegateRelease(XAbstractItemView* self);
 static void xaiv_persistentResetTable(XAbstractItemView* self);
 static void xaiv_indexWidgetResetTable(XAbstractItemView* self);
+static void xaiv_roleRelease(XAbstractItemView* self);
 
 XVtable* XAbstractItemView_class_init(void)
 {
@@ -113,6 +129,8 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt,
                              VXAbstractItemView_indexAt);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
+                             VXAbstractItemView_visualRect);
     return XVTABLE_DEFAULT;
 }
 
@@ -128,8 +146,11 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_selectionMode = XAbstractItemViewSelectionMode_ExtendedSelection;
     self->m_selectionBehavior =
         XAbstractItemViewSelectionBehavior_SelectItems;
-    self->m_editTriggers = XAbstractItemViewEditTrigger_CurrentChanged |
-        XAbstractItemViewEditTrigger_DoubleClicked |
+    /* 对标 Qt 6.8 QAbstractItemView::editTriggers 缺省
+     * DoubleClicked|EditKeyPressed（文档：除 QTableView 外全部视图的
+     * 默认值；QTableView/QTreeView 为 DoubleClicked|AnyKeyPressed）。
+     * 此前多出 CurrentChanged 使单击按压即进编辑，非 Qt 默认行为。 */
+    self->m_editTriggers = XAbstractItemViewEditTrigger_DoubleClicked |
         XAbstractItemViewEditTrigger_EditKeyPressed;
     self->m_alternatingRowColors = false;
     self->m_autoScroll = true;
@@ -165,6 +186,17 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_columnDelegateCount = 0;
     self->m_rowDelegates = NULL;
     self->m_rowDelegateCount = 0;
+    /* 编辑闭环会话状态（对标 Qt 视图内部 editor/editorIndex 会话）。 */
+    self->m_editor = NULL;
+    self->m_editRow = -1;
+    self->m_editCol = -1;
+    self->m_editCommitted = false;
+    self->m_editClosing = false;
+    self->m_itemsEditable = false;
+    self->m_defaultDelegate = NULL;
+    self->m_roleTable = NULL;
+    self->m_roleRows = 0;
+    self->m_roleCols = 0;
 }
 
 XAbstractItemView* XAbstractItemView_create_ex(XMemoryType memory,
@@ -188,6 +220,17 @@ static void VXAbstractItemView_deinit(XAbstractItemView* self)
     xaiv_persistentRelease(self);
     xaiv_indexWidgetRelease(self);
     xaiv_delegateRelease(self);
+    xaiv_roleRelease(self);
+    /* 编辑器为视图子控件：随控件树统一析构（若已 deleteLater 挂起，
+     * 其析构会撤销挂起事件，双路均安全）；此处仅清引用。 */
+    self->m_editor = NULL;
+    self->m_editRow = -1;
+    self->m_editCol = -1;
+    /* 默认委托为视图拥有的独立对象（无父对象）：显式析构。 */
+    if (self->m_defaultDelegate) {
+        XItemDelegate_delete_base(self->m_defaultDelegate);
+        self->m_defaultDelegate = NULL;
+    }
     if (self->m_selectionModel) {
         XItemSelectionModel_delete_base(self->m_selectionModel);
         self->m_selectionModel = NULL;
@@ -235,6 +278,13 @@ void XAbstractItemView_reset(XAbstractItemView* self)
     /* 对齐 Qt 6.8 reset：当前索引、选择（含选择模型当前索引）、根索引
      * 全部复位；持久编辑器标记与条目控件承载清空（索引随模型重建失效，
      * 同 Qt 关闭全部编辑器），平行表容量保留复用。 */
+    /* 活动编辑器随 reset 收敛：放弃分支直接关闭不写模型（模型重建后
+     * 原编辑坐标失效，提交无意义；对标 Qt reset/_q_modelReset 对打开
+     * 编辑器的收回。setModel 路径此前已有同款收敛，此处补齐 reset
+     * 路径）。 */
+    if (self->m_editor)
+        XAbstractItemView_closeEditor(self, self->m_editor,
+                                      XItemDelegateEndEditHint_RevertModelCache);
     self->m_currentRow = -1;
     self->m_currentColumn = -1;
     self->m_rootRow = -1;
@@ -273,18 +323,194 @@ void XAbstractItemView_setEditTriggers(XAbstractItemView* self, int triggers)
 int XAbstractItemView_editTriggers(const XAbstractItemView* self)
 { return self ? self->m_editTriggers : 0; }
 
+/* ==================== 编辑闭环（对标 QAbstractItemView 编辑器会话） ==================== */
+
+/** @brief 委托 commitData(editor) 信号槽：转发视图提交（对标 Qt 视图
+ *         连接委托 commitData 信号的私有槽）。 */
+static void xaiv_delegateCommitSlot(XObject* receiver, XVarList* args)
+{
+    XAbstractItemView* view = (XAbstractItemView*)receiver;
+    XWidget* editor;
+    if (!view || !args) return;
+    XVarList_start(args);
+    editor = XVarList_arg(args, XWidget*);
+    XAbstractItemView_commitData(view, editor);
+}
+
+/** @brief 委托 closeEditor(editor, hint) 信号槽：转发视图关闭（对标 Qt
+ *         视图连接委托 closeEditor 信号的私有槽）。 */
+static void xaiv_delegateCloseSlot(XObject* receiver, XVarList* args)
+{
+    XAbstractItemView* view = (XAbstractItemView*)receiver;
+    XWidget* editor;
+    int hint;
+    if (!view || !args) return;
+    XVarList_start(args);
+    editor = XVarList_arg(args, XWidget*);
+    hint = XVarList_arg(args, int);
+    XAbstractItemView_closeEditor(view, editor, hint);
+}
+
+/** @brief 解析编辑生效委托（行级→列级→默认；全部未设置时懒创建默认
+ *         委托，对标 Qt 视图恒持有缺省 QStyledItemDelegate）。 */
+static XItemDelegate* xaiv_resolveDelegate(XAbstractItemView* self,
+                                           int row, int col)
+{
+    void* delegate;
+    if (!self) return NULL;
+    delegate = XAbstractItemView_itemDelegateForIndex(self, row, col);
+    if (delegate) return (XItemDelegate*)delegate;
+    if (!self->m_defaultDelegate)
+        self->m_defaultDelegate = XItemDelegate_create();
+    return self->m_defaultDelegate;
+}
+
+/** @brief 挂接委托编辑信号到视图槽（断旧再连保证幂等，规避重复连接
+ *         叠加；对标 Qt 视图对所用委托的信号挂接）。 */
+static void xaiv_wireDelegate(XAbstractItemView* self,
+                              XItemDelegate* delegate)
+{
+    XObject* d;
+    if (!self || !delegate) return;
+    d = (XObject*)delegate;
+    if (d->m_signalSlot) {
+        XObject_disconnect_1(d, (size_t)XItemDelegate_commitData_signal,
+                             (XObject*)self, xaiv_delegateCommitSlot);
+        XObject_disconnect_1(d, (size_t)XItemDelegate_closeEditor_signal,
+                             (XObject*)self, xaiv_delegateCloseSlot);
+    }
+    XObject_connect_1(d, (size_t)XItemDelegate_commitData_signal,
+                      (XObject*)self, xaiv_delegateCommitSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1(d, (size_t)XItemDelegate_closeEditor_signal,
+                      (XObject*)self, xaiv_delegateCloseSlot,
+                      XConnectionType_Direct);
+}
+
+/** @brief 提交核心：委托 setModelData → 模型 setData（commitData/
+ *         closeEditor 提交分支共用；会话级幂等，同 Qt 提交一次性）。 */
+static void xaiv_commitCore(XAbstractItemView* self)
+{
+    XItemDelegate* delegate;
+    if (!self || !self->m_editor || self->m_editCommitted) return;
+    delegate = xaiv_resolveDelegate(self, self->m_editRow, self->m_editCol);
+    if (!delegate) return;
+    XItemDelegate_setModelData(delegate, self->m_editor, self,
+                               self->m_editRow, self->m_editCol);
+    self->m_editCommitted = true;
+}
+
 bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column)
 {
+    XAbstractItemModel* model;
+    XItemDelegate* delegate;
+    XWidget* editor;
+    XRect rect;
     if (!self || row < 0 || column < 0) return false;
+    model = self->m_model;
+    if (!model || row >= model->m_rows || column >= model->m_cols)
+        return false;
     /* 同 Qt edit(index, AllEditTriggers, nullptr)：触发集不含任何编辑
      * 触发时判定不通过（NoEditTriggers 直接失败）。 */
     if (self->m_editTriggers ==
         XAbstractItemViewEditTrigger_NoEditTriggers) return false;
-    /* 编辑器体系未建：委托 createEditor/提交回写（commitData、
-     * closeEditor）尚未实现，本句柄完成触发合法性判定后预留——当前
-     * 无编辑器可开，返回 false（同 Qt 无委托时的失败路径）。 */
-    return false;
+    /* 对标 model flags ItemIsEditable 门禁（本库以视图开关承载）。 */
+    if (!self->m_itemsEditable) return false;
+    /* 同格已在编辑：直接成功（同 Qt 重复 edit(index) 语义）。 */
+    if (self->m_editor && self->m_editRow == row &&
+        self->m_editCol == column)
+        return true;
+    /* 他格在编辑：先按提交分支收敛（同 Qt 单编辑器会话）。 */
+    if (self->m_editor)
+        XAbstractItemView_closeEditor(self, self->m_editor,
+                                      XItemDelegateEndEditHint_NoHint);
+    delegate = xaiv_resolveDelegate(self, row, column);
+    if (!delegate) return false;
+    xaiv_wireDelegate(self, delegate);
+    editor = XItemDelegate_createEditor(delegate, self, row, column);
+    if (!editor) return false;
+    /* 先滚动保证目标格可见再取几何（滚动偏移影响 visualRect 坐标）。 */
+    XAbstractItemView_scrollTo(self, row, column);
+    if (!XAbstractItemView_visualRect(self, row, column, &rect) ||
+        rect.width <= 0 || rect.height <= 0) {
+        /* 条目不可见（隐藏行/列/空几何）：不开编辑器（同 Qt 不可见
+         * 条目无条目矩形可布局）。 */
+        XObject_deleteLater((XObject*)editor);
+        return false;
+    }
+    XItemDelegate_setEditorData(delegate, editor, self, row, column);
+    XItemDelegate_updateEditorGeometry(delegate, editor, &rect);
+    /* 会话状态先于显示/授焦点登记（显示期间的同步焦点事件须能看到
+     * 有效会话）。 */
+    self->m_editor = editor;
+    self->m_editRow = row;
+    self->m_editCol = column;
+    self->m_editCommitted = false;
+    self->m_editClosing = false;
+    XWidget_show(editor);
+    XWidget_raise(editor);
+    XWidget_setFocus(editor);
+    XWidget_update((XWidget*)self);
+    return true;
 }
+
+bool XAbstractItemView_isEditing(const XAbstractItemView* self)
+{ return self && self->m_editor != NULL; }
+
+void XAbstractItemView_commitData(XAbstractItemView* self, XWidget* editor)
+{
+    if (!self || !editor) return;
+    /* 编辑器不是当前会话编辑器：忽略（对标 Qt 校验会话归属）。 */
+    if (self->m_editor != editor) return;
+    xaiv_commitCore(self);
+}
+
+void XAbstractItemView_closeEditor(XAbstractItemView* self, XWidget* editor,
+                                   int hint)
+{
+    bool submit;
+    if (!self || !editor) return;
+    if (self->m_editor != editor) return;
+    /* 两分支（对齐 Qt）：RevertModelCache=放弃（不写模型）；其余提示
+     * 为提交分支（尚未提交时先落库再关闭）。 */
+    submit = (hint != XItemDelegateEndEditHint_RevertModelCache);
+    /* 关闭门禁：抑制隐藏/延迟析构编辑器引发的失焦回调重入。 */
+    self->m_editClosing = true;
+    if (submit && !self->m_editCommitted) xaiv_commitCore(self);
+    XWidget_hide(editor);
+    /* 延迟析构（对标 Qt releaseEditor 的 deleteLater）：编辑器可能仍
+     * 处于自身按键回调栈内，立即析构有悬空风险。 */
+    XObject_deleteLater((XObject*)editor);
+    self->m_editor = NULL;
+    self->m_editRow = -1;
+    self->m_editCol = -1;
+    self->m_editCommitted = false;
+    self->m_editClosing = false;
+    XWidget_update((XWidget*)self);
+    /* 编辑链提示（对标 Qt closeEditor 的 EditNextItem/EditPreviousItem
+     * 处理）：移动当前项并按需重开编辑（Tab 逐格编辑链）。 */
+    if (submit &&
+        (hint == XItemDelegateEndEditHint_EditNextItem ||
+         hint == XItemDelegateEndEditHint_EditPreviousItem)) {
+        XAbstractItemModel* model = self->m_model;
+        int row = self->m_currentRow +
+                  (hint == XItemDelegateEndEditHint_EditNextItem ? 1 : -1);
+        int col = self->m_currentColumn;
+        if (model && col >= 0 && col < model->m_cols &&
+            row >= 0 && row < model->m_rows) {
+            XAbstractItemView_setCurrentIndex(self, row, col);
+            if (self->m_itemsEditable)
+                XAbstractItemView_edit(self, row, col);
+        }
+    }
+}
+
+void XAbstractItemView_setItemsEditable(XAbstractItemView* self,
+                                        bool editable)
+{ if (self) self->m_itemsEditable = editable; }
+
+bool XAbstractItemView_itemsEditable(const XAbstractItemView* self)
+{ return self ? self->m_itemsEditable : false; }
 
 /* ==================== 委托（不透明承载） ==================== */
 
@@ -511,6 +737,151 @@ static void xaiv_delegateRelease(XAbstractItemView* self)
     self->m_rowDelegateCount = 0;
 }
 
+/* ==================== role 叠加存储（对标 model data(role) 的非文本维度） ==================== */
+
+/**
+ * @brief 单格 role 叠加条目。
+ * @note  Qt 以 model data(index, role) 承载各 role；本库模型通路
+ *        （XAbstractItemModel data/setData）无 role 参数仅承载文本，
+ *        非文本 role 由视图基类按 (row,col) 叠加存储（基类扩展，
+ *        XItemDataRole 语义不变）。文本 role（Display/Edit）不经此表，
+ *        直连模型文本通路。
+ */
+typedef struct XAivRoleEntry
+{
+    int m_checkState;          /**< CheckStateRole（XItemCheckState；-1=未设置）。 */
+    int m_alignment;           /**< TextAlignmentRole（XAlignment 位组合；0=未设置）。 */
+    const XFont* m_font;       /**< FontRole（借用指针；NULL=未设置）。 */
+    const void* m_decoration;  /**< DecorationRole（借用指针；NULL=未设置）。 */
+} XAivRoleEntry;
+
+/** @brief 清空 role 叠加存储并释放容量（setModel 行/列变化入口与析构同步）。 */
+static void xaiv_roleRelease(XAbstractItemView* self)
+{
+    if (self->m_roleTable) {
+        XMemory_free(self->m_roleTable, XAIV_TABLE_MEMORY);
+        self->m_roleTable = NULL;
+    }
+    self->m_roleRows = 0;
+    self->m_roleCols = 0;
+}
+
+/** @brief 只读定位单格 role 条目（未分配、越界或 self 为空返回 NULL）。 */
+static const XAivRoleEntry* xaiv_roleEntry(const XAbstractItemView* self,
+                                           int row, int col)
+{
+    if (!self || !self->m_roleTable || row < 0 || col < 0 ||
+        row >= self->m_roleRows || col >= self->m_roleCols)
+        return NULL;
+    return (const XAivRoleEntry*)self->m_roleTable +
+        (size_t)row * (size_t)self->m_roleCols + (size_t)col;
+}
+
+/** @brief 定位（按需扩容）单格 role 条目；写入口专用。 */
+static XAivRoleEntry* xaiv_roleEntryForWrite(XAbstractItemView* self,
+                                             int row, int col)
+{
+    void* table;
+    if (!self || row < 0 || col < 0) return NULL;
+    table = self->m_roleTable;
+    if (!xaiv_tableEnsure(&table, &self->m_roleRows, &self->m_roleCols,
+                          row + 1, col + 1, sizeof(XAivRoleEntry)))
+        return NULL;
+    self->m_roleTable = table;
+    return (XAivRoleEntry*)self->m_roleTable +
+        (size_t)row * (size_t)self->m_roleCols + (size_t)col;
+}
+
+const char* XAbstractItemView_itemText(const XAbstractItemView* self,
+                                       int row, int col, int role)
+{
+    if (!self) return "";
+    /* 文本 role 走模型文本通路（基类平铺模型单文本承载，Display/Edit
+     * 同通道，同 Qt 默认模型两 role 同值语义）；其余 role 非文本。 */
+    if (role != XItemDataRole_DisplayRole && role != XItemDataRole_EditRole)
+        return "";
+    return XAbstractItemModel_data_2(self->m_model, row, col);
+}
+
+bool XAbstractItemView_setItemText(XAbstractItemView* self, int row, int col,
+                                   int role, const char* text)
+{
+    if (!self || !self->m_model) return false;
+    if (role != XItemDataRole_DisplayRole && role != XItemDataRole_EditRole)
+        return false;
+    /* 转发模型 setData（发射 dataChanged 驱动视图刷新，对标 Qt 提交链）。 */
+    return XAbstractItemModel_setData_2(self->m_model, row, col, text);
+}
+
+int XAbstractItemView_itemCheckState(const XAbstractItemView* self,
+                                     int row, int col)
+{
+    const XAivRoleEntry* entry = xaiv_roleEntry(self, row, col);
+    return entry ? entry->m_checkState : -1;
+}
+
+void XAbstractItemView_setItemCheckState(XAbstractItemView* self,
+                                         int row, int col, int state)
+{
+    XAivRoleEntry* entry = xaiv_roleEntryForWrite(self, row, col);
+    if (!entry) return;
+    if (state < 0 || state > XItemCheckState_Checked) state = -1;
+    if (entry->m_checkState == state) return;
+    entry->m_checkState = state;
+    XWidget_update((XWidget*)self);
+}
+
+int XAbstractItemView_itemTextAlignment(const XAbstractItemView* self,
+                                        int row, int col)
+{
+    const XAivRoleEntry* entry = xaiv_roleEntry(self, row, col);
+    return entry ? entry->m_alignment : 0;
+}
+
+void XAbstractItemView_setItemTextAlignment(XAbstractItemView* self,
+                                            int row, int col, int alignment)
+{
+    XAivRoleEntry* entry = xaiv_roleEntryForWrite(self, row, col);
+    if (!entry) return;
+    if (entry->m_alignment == alignment) return;
+    entry->m_alignment = alignment;
+    XWidget_update((XWidget*)self);
+}
+
+const XFont* XAbstractItemView_itemFont(const XAbstractItemView* self,
+                                        int row, int col)
+{
+    const XAivRoleEntry* entry = xaiv_roleEntry(self, row, col);
+    return entry ? entry->m_font : NULL;
+}
+
+void XAbstractItemView_setItemFont(XAbstractItemView* self, int row, int col,
+                                   const XFont* font)
+{
+    XAivRoleEntry* entry = xaiv_roleEntryForWrite(self, row, col);
+    if (!entry) return;
+    if (entry->m_font == font) return;
+    entry->m_font = font; /* 借用承载：生命周期归调用方（对标 role 变体）。 */
+    XWidget_update((XWidget*)self);
+}
+
+const void* XAbstractItemView_itemDecoration(const XAbstractItemView* self,
+                                             int row, int col)
+{
+    const XAivRoleEntry* entry = xaiv_roleEntry(self, row, col);
+    return entry ? entry->m_decoration : NULL;
+}
+
+void XAbstractItemView_setItemDecoration(XAbstractItemView* self, int row,
+                                         int col, const void* decoration)
+{
+    XAivRoleEntry* entry = xaiv_roleEntryForWrite(self, row, col);
+    if (!entry) return;
+    if (entry->m_decoration == decoration) return;
+    entry->m_decoration = decoration; /* 借用承载（通常为 XImage*）。 */
+    XWidget_update((XWidget*)self);
+}
+
 void XAbstractItemView_openPersistentEditor(XAbstractItemView* self,
                                             int row, int col)
 {
@@ -598,32 +969,34 @@ bool XAbstractItemView_keyboardSearch(const XAbstractItemView* self)
 /* ==================== 键盘搜索（对标 keyboardSearch 行为本体） ==================== */
 
 /* 键盘搜索累积前缀（简化语义，见头文件 @note）：
- * - 全库共享一份静态缓冲，非每视图状态（最后调用者生效）；
- * - 容量 64 字节（含结尾 NUL），超出容量的追加字符被丢弃；
+ * - 每视图实例状态（m_searchPrefix/m_searchPrefixLen/m_searchLastMs，
+ *   对标 Qt 视图私有的键盘搜索前缀成员；此前为全库共享静态缓冲，
+ *   多视图交替键入时前缀互相污染）；
+ * - 容量 XABSTRACTITEMVIEW_SEARCH_CAPACITY 字节（含结尾 NUL），超出
+ *   容量的追加字符被丢弃；
  * - 2000ms 内连续调用累积前缀，超时自动重置为本次文本。 */
-#define XAIV_SEARCH_CAPACITY 64
 #define XAIV_SEARCH_INTERVAL_MS 2000
-static char xaiv_searchPrefix[XAIV_SEARCH_CAPACITY];
-static size_t xaiv_searchLen = 0;
-static int64_t xaiv_searchLastMs = 0;
 
-/** @brief 清空键盘搜索累积前缀。 */
-static void xaiv_searchReset(void)
+/** @brief 清空本视图的键盘搜索累积前缀。 */
+static void xaiv_searchReset(XAbstractItemView* self)
 {
-    xaiv_searchPrefix[0] = '\0';
-    xaiv_searchLen = 0;
+    self->m_searchPrefix[0] = '\0';
+    self->m_searchPrefixLen = 0;
 }
 
-/** @brief 追加文本到累积前缀（容量受限，超出部分丢弃）。 */
-static void xaiv_searchAppend(const char* text, size_t len)
+/** @brief 追加文本到本视图累积前缀（容量受限，超出部分丢弃）。 */
+static void xaiv_searchAppend(XAbstractItemView* self, const char* text,
+                              size_t len)
 {
     size_t i;
     for (i = 0; i < len; ++i) {
-        if (xaiv_searchLen + 1 >= XAIV_SEARCH_CAPACITY) break;
-        xaiv_searchPrefix[xaiv_searchLen] = text[i];
-        ++xaiv_searchLen;
+        if (self->m_searchPrefixLen + 1 >=
+            XABSTRACTITEMVIEW_SEARCH_CAPACITY)
+            break;
+        self->m_searchPrefix[self->m_searchPrefixLen] = text[i];
+        ++self->m_searchPrefixLen;
     }
-    xaiv_searchPrefix[xaiv_searchLen] = '\0';
+    self->m_searchPrefix[self->m_searchPrefixLen] = '\0';
 }
 
 /** @brief 从当前行下一行起环形遍历当前列，返回前缀匹配命中行；无命中 -1。 */
@@ -633,7 +1006,7 @@ static int xaiv_searchHitRow(const XAbstractItemView* self, int col)
     int start;
     int i;
     int row;
-    if (!self->m_model || xaiv_searchLen == 0) return -1;
+    if (!self->m_model || self->m_searchPrefixLen == 0) return -1;
     rows = self->m_model->m_rows;
     if (rows <= 0) return -1;
     if (col < 0 || col >= self->m_model->m_cols) col = 0;
@@ -646,7 +1019,7 @@ static int xaiv_searchHitRow(const XAbstractItemView* self, int col)
         cell = XAbstractItemModel_data_2(self->m_model, row, col);
         if (!cell) continue;
         /* XStrstr 返回命中起始位置：等于串首即前缀匹配。 */
-        if (XStrstr(cell, xaiv_searchPrefix) == cell) return row;
+        if (XStrstr(cell, self->m_searchPrefix) == cell) return row;
     }
     return -1;
 }
@@ -660,24 +1033,24 @@ bool XAbstractItemView_keyboardSearch_2(XAbstractItemView* self,
     int hitRow;
     if (!self) return false;
     if (!text || text[0] == '\0') {
-        xaiv_searchReset();
+        xaiv_searchReset(self);
         return false;
     }
     if (!self->m_keyboardSearch) return false;
     textLen = XStrlen(text);
     nowMs = XDateTime_currentMSecsSinceEpoch();
-    if (xaiv_searchLen > 0 &&
-        nowMs - xaiv_searchLastMs > XAIV_SEARCH_INTERVAL_MS)
-        xaiv_searchReset();
-    xaiv_searchAppend(text, textLen);
-    xaiv_searchLastMs = nowMs;
+    if (self->m_searchPrefixLen > 0 &&
+        nowMs - self->m_searchLastMs > XAIV_SEARCH_INTERVAL_MS)
+        xaiv_searchReset(self);
+    xaiv_searchAppend(self, text, textLen);
+    self->m_searchLastMs = nowMs;
     col = self->m_currentColumn;
     if (col < 0) col = 0; /* 无当前列时在首列搜索（与命中后移动保持一致）。 */
     hitRow = xaiv_searchHitRow(self, col);
-    if (hitRow < 0 && xaiv_searchLen > textLen) {
+    if (hitRow < 0 && self->m_searchPrefixLen > textLen) {
         /* 同 Qt：累积前缀无命中时回退为仅本次键入文本重新搜索。 */
-        xaiv_searchReset();
-        xaiv_searchAppend(text, textLen);
+        xaiv_searchReset(self);
+        xaiv_searchAppend(self, text, textLen);
         hitRow = xaiv_searchHitRow(self, col);
     }
     if (hitRow < 0) return false;
@@ -935,6 +1308,11 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
                                 XAbstractItemModel* model)
 {
     if (!self) return;
+    /* 模型替换前收敛打开的编辑器（提交分支落库旧模型后关闭；对标 Qt
+     * setModel 关闭全部编辑器）。 */
+    if (self->m_editor)
+        XAbstractItemView_closeEditor(self, self->m_editor,
+                                      XItemDelegateEndEditHint_NoHint);
     /* 对标 Qt：模型替换时断开旧模型信号、连接新模型信号（此前不
      * 连接，外部改模型后视图不刷新）。 */
     if (self->m_model) {
@@ -954,9 +1332,10 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
     }
     self->m_model = model;
     /* 行/列变化入口同步：模型替换使全部 (row,col) 失效，释放持久编辑器
-     * 标记表与条目控件表（控件指针归调用方，仅解除承载）。 */
+     * 标记表、条目控件表与 role 叠加存储表（指针归调用方，仅解除承载）。 */
     xaiv_persistentRelease(self);
     xaiv_indexWidgetRelease(self);
+    xaiv_roleRelease(self);
     if (model) {
         if (self->m_currentRow >= model->m_rows)
             self->m_currentRow = model->m_rows - 1;
@@ -997,6 +1376,13 @@ static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args)
         if (view->m_currentColumn >= model->m_cols)
             view->m_currentColumn = model->m_cols - 1;
     }
+    /* 编辑格随行/列删除失效：放弃分支关闭（不写已失效坐标，对标 Qt
+     * 对删除索引处编辑器的收回）。 */
+    if (view->m_editor && model &&
+        (view->m_editRow >= model->m_rows ||
+         view->m_editCol >= model->m_cols))
+        XAbstractItemView_closeEditor(view, view->m_editor,
+                                      XItemDelegateEndEditHint_RevertModelCache);
     XWidget_update((XWidget*)view);
 }
 
@@ -1105,12 +1491,27 @@ bool XAbstractItemView_indexAt_base(const XAbstractItemView* self, int x,
     return fn(self, x, y, outRow, outCol);
 }
 
-bool XAbstractItemView_visualRect(const XAbstractItemView* self,
-                                  int row, int col, XRect* out)
+/** @brief 基类矩形实现：默认网格布局（行高 24、列宽 80）。 */
+static bool VXAbstractItemView_visualRect(const XAbstractItemView* self,
+                                          int row, int col, XRect* out)
 {
     if (!self || !out || row < 0 || col < 0) return false;
     XRect_init(out, col * 80, row * 24, 80, 24);
     return true;
+}
+
+bool XAbstractItemView_visualRect(const XAbstractItemView* self,
+                                  int row, int col, XRect* out)
+{
+    bool (*fn)(const XAbstractItemView*, int, int, XRect*);
+    if (!self || !out) return false;
+    /* 虚分派（对标 visualRect 为 QAbstractItemView 纯虚函数）：派生
+       视图覆写条目几何；编辑器摆放/scrollTo/尺寸提示共用该通路。 */
+    fn = (bool (*)(const XAbstractItemView*, int, int, XRect*))
+        XVtableGetFunc(XClassGetVtable((XClass*)self),
+                       EXAbstractItemView_VisualRect, void*);
+    if (!fn) return false;
+    return fn(self, row, col, out);
 }
 
 void XAbstractItemView_setIconSize(XAbstractItemView* self, int w, int h)
@@ -1186,6 +1587,13 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
     }
     if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
         XAbstractItemViewSelectionMode mode = view->m_selectionMode;
+        /* 点击他格先按提交分支关闭编辑器（对标 Qt 点击编辑格以外的
+         * 位置收敛打开的编辑器；点击编辑格本体由编辑器子控件承接）。 */
+        if (view->m_editor &&
+            (row != view->m_editRow || col != view->m_editCol)) {
+            XAbstractItemView_closeEditor(view, view->m_editor,
+                                          XItemDelegateEndEditHint_NoHint);
+        }
         XItemSelectionModel* sm = view->m_selectionModel;
         bool ctrl = (XMouseEvent_modifiers(me) &
                      XKeyboardModifier_ControlModifier) != 0;
@@ -1222,6 +1630,12 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
         }
         xaiv_emitIndex(view, (size_t)XAbstractItemView_pressed_signal,
                        row, col);
+        /* CurrentChanged 触发位（对标 Qt mousePressEvent 尾部的编辑
+         * 判定）：按压改变当前项后按触发位进入编辑。 */
+        if ((view->m_editTriggers &
+             XAbstractItemViewEditTrigger_CurrentChanged) &&
+            view->m_itemsEditable)
+            XAbstractItemView_edit(view, row, col);
     }
     XEvent_accept(event);
 }
@@ -1246,6 +1660,13 @@ static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
                        row, col);
         xaiv_emitIndex(view, (size_t)XAbstractItemView_activated_signal,
                        row, col);
+        /* SelectedClicked 触发位：选中条目上单击释放进入编辑（对标 Qt
+         * mouseReleaseEvent 的编辑判定；拖拽识别简化为选中即触发）。 */
+        if ((view->m_editTriggers &
+             XAbstractItemViewEditTrigger_SelectedClicked) &&
+            view->m_itemsEditable && view->m_selectionModel &&
+            XItemSelectionModel_isSelected(view->m_selectionModel, row, col))
+            XAbstractItemView_edit(view, row, col);
     }
     XEvent_accept(event);
 }
@@ -1265,6 +1686,12 @@ static void VXAbstractItemView_mouseDoubleClickEvent(XWidget* self,
         xaiv_emitIndex(view,
                        (size_t)XAbstractItemView_doubleClicked_signal,
                        row, col);
+        /* DoubleClicked 触发位（对标 Qt mouseDoubleClickEvent：发射
+         * doubleClicked 后进入编辑判定）。 */
+        if ((view->m_editTriggers &
+             XAbstractItemViewEditTrigger_DoubleClicked) &&
+            view->m_itemsEditable)
+            XAbstractItemView_edit(view, row, col);
     }
     XEvent_accept(event);
 }
@@ -1304,6 +1731,18 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
     key = XKeyEvent_key(ke);
     modifiers = XKeyEvent_modifiers(ke);
     if (key == XKey_Return || key == XKey_Enter) {
+        /* EditKeyPressed 触发位下 Return 先尝试编辑当前项（对标 Qt
+         * keyPressEvent 的 Return/Enter 分支：先 edit(EditKeyPressed)
+         * 拦截，开启失败——不可编辑/门禁关——再回落激活语义）。 */
+        if (view->m_itemsEditable &&
+            (view->m_editTriggers &
+             XAbstractItemViewEditTrigger_EditKeyPressed) &&
+            view->m_currentRow >= 0 && view->m_currentColumn >= 0 &&
+            XAbstractItemView_edit(view, view->m_currentRow,
+                                   view->m_currentColumn)) {
+            XEvent_accept(event);
+            return;
+        }
         if (view->m_currentRow >= 0 && view->m_currentColumn >= 0) {
             xaiv_emitIndex(view,
                            (size_t)XAbstractItemView_activated_signal,
@@ -1311,6 +1750,17 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
         }
         XEvent_accept(event);
         return;
+    }
+    /* F2（EditKeyPressed 触发位，对标 Qt 键盘编辑键）：编辑当前项。 */
+    if (key == (int)XKey_F2 && view->m_itemsEditable &&
+        (view->m_editTriggers &
+         XAbstractItemViewEditTrigger_EditKeyPressed) &&
+        view->m_currentRow >= 0 && view->m_currentColumn >= 0) {
+        if (XAbstractItemView_edit(view, view->m_currentRow,
+                                   view->m_currentColumn)) {
+            XEvent_accept(event);
+            return;
+        }
     }
     /* 键盘导航（对标 QAbstractItemView）：方向键/翻页/Home/End 移动
        当前项；Shift 从锚点扩选；Ctrl 仅移动不改选择；无修饰按选择
@@ -1399,6 +1849,21 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
                       XKeyboardModifier_AltModifier |
                       XKeyboardModifier_MetaModifier)) == 0) {
         char text[2];
+        /* AnyKeyPressed 触发位（对标 Qt 键入即编辑；Qt 的
+         * QTableView/QTreeView 缺省触发位即含 AnyKeyPressed）：打开
+         * 当前项编辑器并转发本次按键给编辑器（键入字符进入编辑器）；
+         * 开启失败（不可编辑/无当前项）时回落键盘搜索——同 Qt 在编辑
+         * 未开启时不吞键入搜索。 */
+        if (view->m_itemsEditable &&
+            (view->m_editTriggers &
+             XAbstractItemViewEditTrigger_AnyKeyPressed) &&
+            view->m_currentRow >= 0 && view->m_currentColumn >= 0 &&
+            XAbstractItemView_edit(view, view->m_currentRow,
+                                   view->m_currentColumn)) {
+            XCoreApplication_sendEvent((XObject*)view->m_editor, event);
+            XEvent_accept(event);
+            return;
+        }
         if (view->m_keyboardSearch) {
             text[0] = (char)key;
             text[1] = '\0';

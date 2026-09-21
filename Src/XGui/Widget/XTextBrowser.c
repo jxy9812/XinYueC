@@ -7,6 +7,7 @@
  */
 
 #include "XTextBrowser.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -32,6 +33,8 @@ static bool xtb_history_alloc(XTextBrowser* self);
 static XString* xtb_history_entry(const XTextBrowser* self, int logical);
 static void xtb_history_set(XTextBrowser* self, int logical, XString* value);
 static const XString* xtb_history_relative(const XTextBrowser* self, int index);
+static void xtb_linkActivatedForward(XObject* receiver, XVarList* args);
+static void xtb_linkHoveredForward(XObject* receiver, XVarList* args);
 
 /**
  * @brief      懒分配历史环形数组（容量 XTB_HISTORY_MAX，槽位清空）。
@@ -225,6 +228,42 @@ static void xtb_emitText(XTextBrowser* self, size_t signal, const char* text)
                        XEVENT_PRIORITY_NORMAL);
 }
 
+/** @brief 基类 linkActivated → 浏览器导航语义转发槽（预览态链接路径）。
+ * @details 对标 QTextBrowser 链接点击链路：先发 anchorClicked(url)；
+ *          openExternalLinks 开启时交平台服务按桌面方式打开，否则在
+ *          openLinks 默认语义下以该 URL 触发 setSource 导航（与编辑器
+ *          事件过滤器路径 VX_browser_eventFilter 同一套决策）。 */
+static void xtb_linkActivatedForward(XObject* receiver, XVarList* args)
+{
+    XTextBrowser* browser = (XTextBrowser*)receiver;
+    XVarList_args_1(args, XString*, link);
+    const char* url;
+    if (!browser || !args) return;
+    url = (link && XString_toUtf8(link)) ? XString_toUtf8(link) : "";
+    if (!url[0]) return;
+    xtb_emitText(browser, (size_t)XTextBrowser_anchorClicked_signal, url);
+    if (browser->m_openExternalLinks) {
+        XPlatformServices* svc = XPlatformServices_create();
+        if (svc) {
+            XPlatformServices_openUrl_2(svc, url);
+            XClass_delete_base((XClass*)svc);
+        }
+    } else if (browser->m_openLinks) {
+        XTextBrowser_setSource(browser, url);
+    }
+}
+
+/** @brief 基类 linkHovered → highlighted 转发槽（离开链接载荷空串）。 */
+static void xtb_linkHoveredForward(XObject* receiver, XVarList* args)
+{
+    XTextBrowser* browser = (XTextBrowser*)receiver;
+    XVarList_args_1(args, XString*, link);
+    const char* url;
+    if (!browser || !args) return;
+    url = (link && XString_toUtf8(link)) ? XString_toUtf8(link) : "";
+    xtb_emitText(browser, (size_t)XTextBrowser_highlighted_signal, url);
+}
+
 /** @brief 编辑器事件过滤器：链接按下→anchorClicked（+导航/外链开关），
  *         鼠标移动→进出链接发射 highlighted（对标 QTextBrowser）。
  * @note   编辑器局部坐标即浏览器局部坐标（编辑器常驻 (0,0) 铺满）；
@@ -334,6 +373,18 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
      * 移动→highlighted；见 VX_browser_eventFilter）。 */
     XObject_installEventFilter((XObject*)self->m_base.m_editor,
                                (XObject*)self);
+    /* 只读富文本预览路径：基类 XTextEdit 链接信号（预览态壳鼠标处理
+     * 发射）→ 浏览器导航语义转发（anchorClicked/openLinks/openExternal
+     * Links 与 highlighted）。编辑器隐藏后过滤器路径自然静默，无重复
+     * 发射。 */
+    XObject_connect_1((XObject*)self,
+                      (size_t)XTextEdit_linkActivated_signal,
+                      (XObject*)self, xtb_linkActivatedForward,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)self,
+                      (size_t)XTextEdit_linkHovered_signal,
+                      (XObject*)self, xtb_linkHoveredForward,
+                      XConnectionType_Direct);
 }
 
 XTextBrowser* XTextBrowser_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -374,6 +425,19 @@ void XTextBrowser_setOpenLinks(XTextBrowser* self, bool open)
 {
     if (!self) return;
     self->m_openLinks = open;
+}
+
+void XTextBrowser_setHtml(XTextBrowser* self, const char* html)
+{
+    if (!self) return;
+    /* 对标 QTextBrowser（继承 QTextEdit）::setHtml：以渲染子集解析并
+     * 进入只读富文本预览（浏览器场景默认呈现富文本）；浏览器编辑器恒
+     * 只读。链接点击/悬停经基类链接信号转发为 anchorClicked/
+     * highlighted（见 xtb_linkActivatedForward）。 */
+    XTextEdit_setHtml(&self->m_base, html);
+    if (self->m_base.m_editor)
+        XPlainTextEdit_setReadOnly(self->m_base.m_editor, true);
+    XTextEdit_setRichPreview(&self->m_base, true);
 }
 
 bool XTextBrowser_openLinks(const XTextBrowser* self)
@@ -744,17 +808,16 @@ XString* XTextBrowser_anchorAt(const XTextBrowser* self, const XPoint* pos)
 
 void* XTextBrowser_anchorClicked_signal(XTextBrowser* self, const char* url)
 {
+    /* 标识入口：真实发射经 xtb_emitText（预览态基类 linkActivated 转
+       发路径 xtb_linkActivatedForward，或编辑器事件过滤器路径）。 */
     (void)self; (void)url;
     return (void*)(size_t)XTextBrowser_anchorClicked_signal;
 }
 
 void* XTextBrowser_highlighted_signal(XTextBrowser* self, const char* url)
 {
-    /* 句柄预留：Qt 中鼠标悬停/点击指向链接时发射 highlighted(const
-       QUrl&)；本版锚点几何与链接点击接线（Task 2.3）未建，XTextBrowser
-       附近不存在可接入的锚点点击路径（anchorClicked 同为句柄预留），
-       故仅返回信号标识，待链接高亮路径建立后与 anchorClicked 成对
-       接入真发射。 */
+    /* 标识入口：真实发射经 xtb_emitText（预览态基类 linkHovered 转发
+       路径 xtb_linkHoveredForward，离开链接载荷为空串）。 */
     (void)self; (void)url;
     return (void*)(size_t)XTextBrowser_highlighted_signal;
 }

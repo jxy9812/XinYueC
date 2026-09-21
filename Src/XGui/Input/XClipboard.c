@@ -18,16 +18,35 @@
 /** @brief 单个剪贴板模式的数据单元。 */
 static XClipboardBackend g_clipboardBackend;
 static int g_clipboardBackendInstalled = 0;
+/** @brief 当前生效的 INCR 读超时（前端进程内记录，装后端时下发；
+ *  先 set 后 install 的顺序同样生效）。 */
+static int g_clipboardIncrTimeoutMs = XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS;
 
 void XClipboard_installBackend(const XClipboardBackend* backend)
 {
     if (backend) {
         g_clipboardBackend = *backend;
         g_clipboardBackendInstalled = 1;
+        if (g_clipboardBackend.setIncrTimeoutMs)
+            g_clipboardBackend.setIncrTimeoutMs(g_clipboardBackend.ud,
+                                                g_clipboardIncrTimeoutMs);
     } else {
         XMemset(&g_clipboardBackend, 0, sizeof(g_clipboardBackend));
         g_clipboardBackendInstalled = 0;
     }
+}
+
+void XClipboard_setIncrTimeoutMs(int ms)
+{
+    g_clipboardIncrTimeoutMs = (ms > 0) ? ms : XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS;
+    if (g_clipboardBackendInstalled && g_clipboardBackend.setIncrTimeoutMs)
+        g_clipboardBackend.setIncrTimeoutMs(g_clipboardBackend.ud,
+                                            g_clipboardIncrTimeoutMs);
+}
+
+int XClipboard_incrTimeoutMs(void)
+{
+    return g_clipboardIncrTimeoutMs;
 }
 
 static bool xclipboard_backendActive(void)
@@ -435,12 +454,12 @@ const XMimeData* XClipboard_mimeData(const XClipboard* self, XClipboardMode mode
  *           canEncode 运行时复核；编码失败时平台侧不出现图像原子，
  *           进程内自有 mime 语义不受影响）。
  *           注意：Qt 的 QMimeData::formats() 不列出 application/x-qt-image
- *           （QMimeDataPrivate::formats 剔除 application/x-qt* 内部类型）；
- *           本框架 XMimeData_formats 既有行为会列出该内部类型，为保持
- *           平台镜像对外原子集合与 Qt 一致（TARGETS 只见 image/png），
- *           该内部类型在此被消费为 image/png 派生推送而不以原名登记。
- *           mime 已显式携带自定义 image/png 时跳过派生，交由通用循环
- *           照常镜像，避免同名原子重复登记。 */
+ *           （QMimeDataPrivate::formats 剔除 application/x-qt* 内部类型；
+ *           批次二十二模块决策，XMimeData_formats 自此对齐剔除）；
+ *           为保持平台镜像对外原子集合与 Qt 一致（TARGETS 只见
+ *           image/png），该内部类型在推送前被显式消费为 image/png 派生
+ *           原子而不以原名登记。mime 已显式携带自定义 image/png 时跳过
+ *           派生，交由通用循环照常镜像，避免同名原子重复登记。 */
 static void clipboard_pushImagePngToBackend(int mode, const XMimeData* mime)
 {
     XImage* image;
@@ -482,10 +501,13 @@ static void clipboard_pushImagePngToBackend(int mode, const XMimeData* mime)
  *           挂到 m_owner[mode]（旧内容随之整体替换），再按格式映射为
  *           X11 TARGETS 原子供其他应用协商。这里先经既有 clear 回调
  *           清平台镜像再逐格式写入，保证平台侧只含本次内容。
- *           application/x-qt-image 派生为 image/png 原子推送（PNG 编码
- *           见 clipboard_pushImagePngToBackend，对标 Qt 平台层对图像
- *           格式的特殊处理）；application/x-color 仍无对应 X11 目标
- *           约定，跳过；自定义格式（如 image/png 字节）以原子名直传。
+ *           application/x-qt-image 内部类型在循环前经
+ *           XMimeData_hasImage（内部查询，不依赖 formats() 列表——
+ *           formats 已按批次二十二决策剔除 x-qt* 内部类型）识别并派生
+ *           为 image/png 原子推送（PNG 编码见
+ *           clipboard_pushImagePngToBackend，对标 Qt 平台层对图像格式
+ *           的特殊处理）；application/x-color 仍无对应 X11 目标约定，
+ *           跳过；自定义格式（如 image/png 字节）以原子名直传。
  *           后端未注册 setMimeData 时不做任何事。 */
 static void clipboard_pushMimeToBackend(int mode, const XMimeData* mime)
 {
@@ -495,6 +517,12 @@ static void clipboard_pushMimeToBackend(int mode, const XMimeData* mime)
         return;
     if (g_clipboardBackend.clear)
         g_clipboardBackend.clear(g_clipboardBackend.ud, mode);
+#if XIMAGECODEC_ON
+    /* 内部图像类型派生推送：hasImage 走存储检查（对标 Qt hasFormat 命中
+     * 内部类型不依赖 formats 列表），platform 镜像只见 image/png 原子。 */
+    if (XMimeData_hasImage(mime))
+        clipboard_pushImagePngToBackend(mode, mime);
+#endif /* XIMAGECODEC_ON */
     formats = XMimeData_formats((XMimeData*)mime);
     if (!formats)
         return;
@@ -507,14 +535,6 @@ static void clipboard_pushMimeToBackend(int mode, const XMimeData* mime)
             continue;
         if (clipboard_asciiIcmp(fmt, "application/x-color") == 0)
             continue; /* 颜色格式暂无对应 X11 目标约定，维持跳过。 */
-        if (clipboard_asciiIcmp(fmt, "application/x-qt-image") == 0) {
-#if XIMAGECODEC_ON
-            /* 图像格式派生推送：PNG 编码后以 image/png 原子进平台镜像
-             * （对标 Qt setImage 后 xcb 端 TARGETS 含 image/png）。 */
-            clipboard_pushImagePngToBackend(mode, mime);
-#endif /* XIMAGECODEC_ON */
-            continue; /* 内部类型不以原名登记（对外原子集合对标 Qt）。 */
-        }
         /* 字节通道取载荷（二进制透明；对标 Qt 平台层透传 QMimeData
          * 保存的原始字节），镜像侧按字节流深拷贝。 */
         bytes = XMimeData_data_bytes((XMimeData*)mime, fmt);

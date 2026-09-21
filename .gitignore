@@ -394,3 +394,12 @@ XCTemplate.zip
 # TinyUSB 下载缓存（源码已解压到 Library/tinyusb/src/）
 Library/tinyusb/*.zip
 .tmpdbg/
+
+# 源码镜像副本目录（未知同步工具生成，2026-09-21 已删除；防再生成时误提交）
+Tests/
+
+# ZCode 工具目录（工作流脚本/运行记录/集成脚本，工具资产不入仓库）
+.zcode/
+
+# 动态工作流运行产物
+*.mjs

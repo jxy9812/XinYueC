@@ -21,8 +21,10 @@
  *             - 剪贴板：copy/cut/paste（XTextClipboard，选区语义）；
  *             - selectAll（锚点/位置模型）；undo/redo（命令差量栈）；
  *             - 只读 setReadOnly/isReadOnly（映射控制器可编辑标志）；
- *             - LineWrapMode 枚举（NoWrap/WidgetWidth，数值对齐；平铺
- *               模型存储不换行绘制，与控制器一致）；
+ *             - LineWrapMode 枚举（NoWrap/WidgetWidth，数值对齐）；
+ *               WidgetWidth 软换行由控制器 XTextControl 承载（对标
+ *               QTextLayout 行内 wrap）：视口宽经 setTextWidth 下发作
+ *               折行宽度，滚动范围/光标/选区/命中按可视行口径；
  *             - maximumBlockCount（块数上限，超限丢弃最旧块）；
  *             - placeholderText 占位文本（空内容灰显）；
  *             - 信号 textChanged/selectionChanged/cursorPositionChanged/
@@ -117,7 +119,8 @@ typedef struct XPlainTextEdit
     bool m_centerOnScroll;      /**< 滚动跟随光标。 */
     bool m_tabChangesFocus;     /**< Tab 切焦点（默认 false）。 */
     int  m_tabStopDistance;     /**< Tab 步进（px，默认 40）。 */
-    int  m_wordWrapMode;        /**< 换行模式（对标 QTextOption::WrapMode）。 */
+    int  m_wordWrapMode;        /**< 断行规则（对标 QTextOption::WrapMode；
+                                     默认 WordWrap，下发控制器承载）。 */
     XString* m_documentTitle;   /**< 文档标题（对象拥有）。 */
     int  m_textInteractionFlags;/**< 文本交互标志位集（壳存储镜像）。 */
     XTimerId m_autoScrollTimer; /**< 拖选边缘自动滚动定时器（100ms 启动；
@@ -289,6 +292,12 @@ void XPlainTextEdit_undo(XPlainTextEdit* self);
 /* ==================== 状态族与信号（2026-09-18 批次） ==================== */
 
 int XPlainTextEdit_blockCount(const XPlainTextEdit* self);
+/**
+ * @brief      可视行数（对标 QPlainTextEdit::lineCount，可视行口径）。
+ * @details    WidgetWidth 软换行时逻辑行折为多可视行，本查询返回折行
+ *             后的总行数；NoWrap 时与 blockCount 相等。
+ */
+int XPlainTextEdit_lineCount(const XPlainTextEdit* self);
 bool XPlainTextEdit_canPaste(const XPlainTextEdit* self);
 void XPlainTextEdit_setCursorWidth(XPlainTextEdit* self, int width);
 int XPlainTextEdit_cursorWidth(const XPlainTextEdit* self);

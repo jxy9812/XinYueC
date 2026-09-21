@@ -197,7 +197,16 @@ typedef struct XClipboardBackend
                      const unsigned char** data, int* len); /**< 读指定格式字节（借用语义：*data 指向平台内部镜像/接收缓冲，免拷贝，仅在下次后端调用前有效；对标 Qt 平台 mimeData 直接借用 QMimeData）。 */
     bool (*setMimeData)(void* ud, int mode, const char* format,
                         const unsigned char* data, int len); /**< 写指定格式字节进平台剪贴板（平台内部深拷贝；对标 QXcbClipboard::setMimeData 逐格式登记）。 */
+    /* ---- INCR 增量读超时参数化（可选回调）：X11 大数据 INCR 读方向的
+     * 整体超时由应用按需调整（慢生产者/大载荷/慢速远程连接场景）。
+     * 追加在结构体尾部保持既有位置初始化兼容；无 INCR 语义的平台
+     * （进程内/Win32）留 NULL 为 no-op。 */
+    void (*setIncrTimeoutMs)(void* ud, int ms); /**< 设置 INCR 增量读整体超时（毫秒；平台内部对 ms<=0 恢复默认值）。 */
 } XClipboardBackend;
+
+/** @brief INCR 增量读整体超时默认值（毫秒；读方向对端死亡兜底口径，
+ *  与 posix 后端 ICCCM 2.5 读路径一致）。 */
+#define XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS 5000
 
 /** @brief 后端格式名缓冲上限（含结束符；与 formats 回调的 outFormats
  *  第二维一致，供上层在栈上分配格式名表）。 */
@@ -207,6 +216,26 @@ typedef struct XClipboardBackend
 
 /** @brief 安装平台后端（NULL 恢复进程内存储语义）。 */
 void XClipboard_installBackend(const XClipboardBackend* backend);
+
+/**
+ * @brief      设置 INCR 增量读整体超时（毫秒）。
+ * @details    仅影响读方向（本进程作为请求方从外部所有者增量收集大数据
+ *             时的整体兜底超时，ICCCM 2.5）；服务方向不受影响（由闲置
+ *             回收治理）。Qt 无公开对应（QXcbClipboard 内部常量），此为
+ *             框架自有运维参数：慢生产者/大载荷场景可调大，紧凑环境可
+ *             调小。值在前端进程内记录，经后端契约 setIncrTimeoutMs
+ *             可选回调下发（未装后端时先设后装亦生效）；无 INCR 语义的
+ *             平台为 no-op。ms<=0 恢复默认
+ *             XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS。
+ * @param      ms 超时毫秒数；<=0 恢复默认值。
+ */
+void XClipboard_setIncrTimeoutMs(int ms);
+
+/**
+ * @brief      读取当前生效的 INCR 增量读整体超时（毫秒）。
+ * @return     当前值（未设置过则返回 XCLIPBOARD_INCR_TIMEOUT_DEFAULT_MS）。
+ */
+int XClipboard_incrTimeoutMs(void);
 
 /**
  * @brief      平台反向通知入口：指定模式的选择区所有权被其他应用夺走

@@ -595,6 +595,56 @@ size_t XTimeWheelGroup_count(XTimeWheelGroup* group)
 {
     return group ? XAtomic_load_size_t(&group->m_count, XAtomic_MemoryOrder_Relaxed) : 0;
 }
+/*
+ * 最近到期查询（§23.4 规划 5）：把时间轮内最近的普通定时器到期并入事件
+ * 分发器阻塞等待的超时计算，替代固定 20ms 心跳量化。对标 Qt 6.8 事件分发
+ * 器"阻塞时长 = 最近一个定时器的剩余时间"的语义（对标/为什么：时间轮原本
+ * 只被周期性 handler 消费，等待循环不感知它的最近截止，普通定时器精度被
+ * 钳制在心跳节拍上）。
+ * 并发安全性：只读遍历，任意线程可调用。
+ *  1) 与槽头生产者共用 m_activeProducers 护栏：消费者（时间轮 handler 所在
+ *     线程）的 reclaim_retired_nodes 在计数非零时推迟回收退休节点，遍历
+ *     不会解引用已释放节点；
+ *  2) 消费者清扫/降级先原子摘整条链再改写节点 next，并发遍历可能看到瞬时
+ *     旧链或提前遇到 NULL，最坏结果是漏看个别节点（等待超时近似，下一次
+ *     查询自愈），不产生悬垂访问。
+ */
+uint64_t XTimeWheelGroup_getNextExpireTime(XTimeWheelGroup* group)
+{
+    uint64_t min_ticks = UINT64_MAX;
+    size_t wheel_count, i;
+    if (!group) return UINT64_MAX;
+    wheel_count = XContainerSize(&group->m_timeWheel);
+    XAtomic_fetch_add_size_t(&group->m_activeProducers, 1, XAtomic_MemoryOrder_SeqCst);
+    for (i = 0; i < wheel_count; ++i)
+    {
+        XTimeWheel* wheel = XVector_at_base(&group->m_timeWheel, i);
+        size_t slot_count = XContainerSize(&wheel->m_slots);
+        size_t j;
+        for (j = 0; j < slot_count; ++j)
+        {
+            XAtomic_uintptr_t* slot = XVector_at_base(&wheel->m_slots, j);
+            XListSNode* node = (XListSNode*)XAtomic_load_uintptr_t(
+                slot, XAtomic_MemoryOrder_SeqCst);
+            while (node)
+            {
+                XTimerWheelData* timer = (XTimerWheelData*)XListSNode_DataPtr(node);
+                /* 已取消但尚未被消费者清扫的节点不参与最近到期，
+                 * 避免阻塞等待被幽灵定时器提前唤醒 */
+                if (!XAtomic_load_bool(&timer->m_deleted, XAtomic_MemoryOrder_Acquire)
+                    && timer->m_expire_ticks < min_ticks)
+                    min_ticks = timer->m_expire_ticks;
+                node = node->next;
+            }
+        }
+    }
+    XAtomic_fetch_sub_size_t(&group->m_activeProducers, 1, XAtomic_MemoryOrder_SeqCst);
+    if (min_ticks == UINT64_MAX) return UINT64_MAX;
+    /* 刻度(纪元毫秒) × 精度(ms) × 1e6 → 纳秒；全局轮精度为 1ms
+     * （见 XTimeWheelGroup_global_init 的 XTimeWheelGroup_create(1)），
+     * 换算不丢精度，与 XDateTime_currentNSecsSinceEpoch 同为纪元时间轴 */
+    return min_ticks * group->m_class.m_precision * 1000000ULL;
+}
 static XTimeWheelGroup* global_XTimeWheelGroup = NULL;
 static void XTimeWheelGroup_global_init()
 {

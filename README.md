@@ -28,6 +28,10 @@ XinYueC 是一个使用纯 C 语言实现的、功能丰富的面向对象库。
 - **面向对象风格**: 通过结构体和函数指针模拟类、继承和多态。
 - **跨平台**: 提供了针对不同操作系统的抽象层，确保代码可移植性。
 - **内存安全**: 容器支持自定义的元素拷贝、移动和析构回调，有效管理复杂对象的生命周期。
+- **GUI 框架 (XGui)**: 对标 Qt Widgets 的纯 C GUI 模块——控件族/文本控制器/
+  条目视图/停靠与对话框，X11 与 Windows 双后端（窗口、输入法、剪贴板
+  Selection 全协议含 INCR、拖放、屏幕与 DPI、触摸/平板派发），
+  目标格式渲染内核表（ARGB32/RGB565，可注册 NEON/DMA2D 加速变体）。
 
 ### 许可证
 
@@ -41,35 +45,48 @@ XinYueC 是一个使用纯 C 语言实现的、功能丰富的面向对象库。
 XinYueC/
 ├── Src/                      # 源代码目录
 │   ├── XClass/               # 面向对象基础模块
-│   ├── XCode/                # 核心代码模块
+│   ├── XCode/                # 核心代码模块（应用/事件循环/信号槽/线程）
 │   ├── XContainer/           # 容器模块
-│   ├── XData/                # 数据处理模块
-│   ├── XEvent/               # 事件系统模块
+│   ├── XData/                # 数据处理模块（String/DateTime/JSON 等）
+│   ├── XDevice/              # 设备抽象模块
+│   ├── XGui/                 # GUI 模块（对标 Qt Widgets，详见 XGui.md）
+│   │   ├── Application/      #   应用单例/剪贴板/输入法装配
+│   │   ├── Charts/           #   图表
+│   │   ├── Graphics/         #   画家/渲染内核表/图像编解码/图片
+│   │   ├── Icon/ Style/      #   图标与样式
+│   │   ├── Input/            #   输入法/剪贴板/光标/无障碍
+│   │   ├── Platform/         #   平台集成抽象（QPA 对标）
+│   │   ├── Text/             #   文本控制器（XLineControl/XTextControl）
+│   │   ├── Widget/ Window/   #   控件族 / 窗口与视图族
+│   │   └── XLayout/          #   布局
+│   ├── XIO/                  # IO 模块
 │   ├── XMemory/              # 内存管理模块
-│   └── XTimer/               # 定时器模块
+│   ├── XPlatform/            # 平台公共抽象
+│   ├── XProtocol/            # 协议栈模块
+│   ├── XTimer/               # 定时器模块
+│   └── XTui/                 # 终端 UI 模块
 ├── Drive/                    # 平台驱动实现
-│   ├── msvc/                 # MSVC编译器实现（原子操作）
-│   ├── gcc/                  # GCC编译器实现（原子操作）
-│   ├── windows/              # Windows平台实现（线程、互斥锁、IOCP等）
-│   ├── Posix/                # POSIX平台实现（线程、互斥锁等）
-│   ├── FreeRTOS/             # FreeRTOS实时操作系统实现
-│   ├── keil/                 # Keil编译器实现
-│   └── STM32/                # STM32单片机实现
+│   ├── Posix/                # POSIX 实现（X11 窗口/剪贴板/DnD/IME/fbdev 模板）
+│   ├── windows/              # Windows 实现（线程、IOCP、剪贴板等）
+│   ├── Unsupported/          # 未支持平台的空实现桩
+│   ├── FreeRTOS/ keil/ STM32/ msvc/ gcc/  # 嵌入式与编译器相关
 ├── Test/                     # 测试代码目录
-│   ├── XMenuTest.c/h         # 菜单测试框架（交互式测试入口）
-│   ├── XCodeTest/            # XCode模块测试
-│   ├── XContainerTest/       # XContainer模块测试
-│   ├── XTimerTest/           # XTimer模块测试
-│   ├── XDeviceTest/          # 设备测试
-│   ├── XIOTest/              # IO测试
-│   ├── XLibraryTest/         # 库测试
-│   ├── XMemoryTest/          # 内存测试
-│   └── XProtocolTest/   # 协议栈测试
+│   ├── XGuiTest/             # XGui 控件测试
+│   ├── XCodeTest/ XContainerTest/ XDataTest/ XMemoryTest/
+│   ├── XDeviceTest/ XIOTest/ XLibraryTest/ XProtocolTest/ XTimerTest/
+│   └── XTestMenu*            # 交互式测试菜单入口
+├── xgui_regression_test.c    # XGui 回归测试（控件全家族）
+├── xgui_linecontrol_acceptance_test.c  # XLineControl 验收测试
+├── xgui_window_demo.c        # XGui 演示程序（autotest/截图支持）
+├── XGui.md                   # XGui 模块文档（架构/批次记录/遗留清单）
 ├── CMakeLists.txt            # CMake配置文件
 └── README.md                 # 项目说明文档
 ```
 
-> **平台支持说明**：因一人精力有限，目前完整的实现只有 **Windows 平台**。其他平台（Linux、macOS、FreeRTOS、STM32等）的部分功能可能尚未完成或未经充分测试，欢迎贡献代码！
+> **平台支持说明**：Windows 与 Linux(X11) 均已完整实现图形栈（窗口、
+> 输入法、剪贴板 Selection/INCR 协议、拖放、屏幕与 DPI、主循环双源
+> 等待）；嵌入式方向提供 FreeRTOS/STM32 适配与 RGB565 渲染内核、
+> fbdev 驱动模板。部分平台功能仍在完善，欢迎贡献代码！
 
 ------
 
@@ -83,9 +100,13 @@ XinYueC 由多个独立模块组成，每个模块都有详细的文档说明。
 | **XCode** | 核心代码（原子操作、信号槽、线程、线程池、同步原语） | [XCode.md](Src/XCode/XCode.md) |
 | **XContainer** | 泛型容器（Vector、List、Map、HashMap、Set等） | [XContainer.md](Src/XContainer/XContainer.md) |
 | **XData** | 数据处理（String、ByteArray、DateTime、JSON、BSON） | [XData.md](Src/XData/XData.md) |
-| **XEvent** | 事件系统（Event、EventLoop、EventDispatcher、XObject） | [XEvent.md](Src/XEvent/XEvent.md) |
+| **XEvent** | 事件系统（Event、EventLoop、EventDispatcher、XObject） | （随 XCode 模块提供，见 Src/XCode/XEvent） |
+| **XGui** | GUI 框架（控件族、文本控制器、条目视图、剪贴板、渲染内核表） | [XGui.md](XGui.md) |
 | **XMemory** | 内存管理（内存池、智能指针、分配器） | [XMemory.md](Src/XMemory/XMemory.md) |
+| **XPlatform** | 平台公共抽象（跨平台接口层） | [XPlatform.md](Src/XPlatform/XPlatform.md) |
 | **XTimer** | 定时器（单次定时器、周期定时器、高精度定时器） | [XTimer.md](Src/XTimer/XTimer.md) |
+| **XTui** | 终端 UI | [XTui.md](Src/XTui/XTui.md) |
+| **XDevice** | 设备抽象 | [XDevice统一设备抽象设计.md](Src/XDevice/XDevice统一设备抽象设计.md) |
 
 ### 模块详情
 
@@ -199,6 +220,23 @@ XTimer模块提供了定时器功能。
 - 高精度定时器
 
 **详细文档：** [XTimer.md](Src/XTimer/XTimer.md)
+
+---
+
+#### XGui GUI 框架
+
+XGui 是对标 Qt Widgets 的纯 C GUI 模块，覆盖从渲染内核到控件族的完整图形栈。
+
+**主要组成：**
+- **Widget/Window** - 控件族（按钮/输入/视图/对话框/停靠/主窗口）与窗口系统
+- **Text** - 文本控制器（XLineControl/XTextControl，软换行/IME/撤销重做）
+- **Graphics** - 画家、目标格式渲染内核表（ARGB32/RGB565）、图像编解码
+- **Input** - 剪贴板（X11 Selection 全协议含 INCR）、输入法、光标、无障碍
+- **Platform** - 平台集成抽象（QPA 对标），X11 与 Windows 双后端
+
+**详细文档：** [XGui.md](XGui.md)（架构、验证协议、批次记录与遗留清单）
+
+---
 
 ------
 
@@ -479,6 +517,25 @@ XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`
 ------
 
 ## 快速开始
+
+### XGui 演示与测试（Linux/X11）
+
+```bash
+# 全量构建（含 XGui 演示程序与三套测试）
+cmake -S . -B build && cmake --build build -j
+
+# 运行 GUI 演示（含 autotest/截图模式）
+./bin/XGuiWindowDemo_Test --autotest
+./bin/XGuiWindowDemo_Test --screenshot demo.png --page 0
+
+# 三套验证
+./bin/XGuiRegression_Test          # 控件回归
+./bin/XLineControl_Acceptance_Test # 文本控制器验收
+./bin/XGuiGpu_Test                 # GPU 渲染
+```
+
+嵌入式 RGB565 直显构建：`-DXGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16=1`
+（目标格式渲染内核表，详见 XGui.md §23）。
 
 ### CMake 集成
 

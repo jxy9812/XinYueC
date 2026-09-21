@@ -16,6 +16,19 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEvent.h"
+/* 真实弹窗依赖（对标 Qt 静态便捷函数的对话框组装路径）： */
+#include <stdio.h>             /* snprintf：浮点初值文本化 */
+#include <stdlib.h>            /* strtod：浮点输入解析 */
+#include "XCoreApplication.h"  /* qApp 等价物：有应用实例才允许模态循环 */
+#include "XGuiApplication.h"   /* 主屏查询（弹窗居中） */
+#include "XScreen.h"           /* 屏幕几何 */
+#include "XLabel.h"            /* 提示标签 */
+#include "XLineEdit.h"         /* 文本/浮点输入 */
+#include "XSpinBox.h"          /* 整数输入 */
+#include "XComboBox.h"         /* 下拉选择 */
+#include "XPushButton.h"       /* OK/Cancel */
+#include "XPlainTextEdit.h"    /* 多行文本输入 */
+#include "XBoxLayout.h"        /* 对话框布局 */
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -326,7 +339,233 @@ void XInputDialog_setOptions(XInputDialog* self, XInputDialogOptions options)
 XInputDialogOptions XInputDialog_options(const XInputDialog* self)
 { return self ? self->m_options : 0; }
 
-/* ==================== 静态便捷函数 ==================== */
+/* ==================== 静态便捷函数（真实弹窗） ====================
+ * 对标 Qt QInputDialog::getText/getMultiLineText/getInt/getDouble/getItem
+ * 静态便捷函数：构造 XDialog + 内嵌输入控件 + OK/Cancel 按钮行，经
+ * XDialog_exec 阻塞式模态循环（应用模态，Escape→reject）至用户确认；
+ * 无 GUI 环境（无 XCoreApplication 实例，如无头测试）保持桩约定：
+ * 返回默认值且 *ok=false。 */
+
+/** @brief GUI 环境探测：存在 XCoreApplication 实例才执行真实模态循环。 */
+static bool xid_guiReady(void)
+{
+    return XCoreApplication_instance() != NULL;
+}
+
+/** @brief 以 UTF-8 设置对象 objectName（对标 QObject::setObjectName）。 */
+static void xid_setName(XObject* obj, const char* name)
+{
+    XString tmp;
+    if (!obj) return;
+    XString_init(&tmp);
+    XString_assign_utf8(&tmp, name);
+    XObject_setObjectName(obj, &tmp);
+    XClass_deinit_base((XClass*)&tmp);
+}
+
+/* 子控件 objectName 常量（对标 Qt 对话框私有子对象命名；槽内经
+ * findChild 取回，避免 C 语言的 d-pointer 方案）。 */
+#define XID_NAME_EDIT  "qt_input_dialog_edit"
+#define XID_NAME_SPIN  "qt_input_dialog_spin"
+#define XID_NAME_COMBO "qt_input_dialog_combo"
+#define XID_NAME_PLAIN "qt_input_dialog_plain"
+#define XID_NAME_OK    "qt_input_dialog_ok"
+#define XID_NAME_CANCEL "qt_input_dialog_cancel"
+
+/** @brief 按 objectName 查找对话框直接子控件（对标 QObject::findChild）。 */
+static XWidget* xid_childByName(XDialog* dlg, const char* name)
+{
+    XString tmp;
+    XWidget* w;
+    if (!dlg) return NULL;
+    XString_init(&tmp);
+    XString_assign_utf8(&tmp, name);
+    w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
+                                    XFindDirectChildrenOnly);
+    XClass_deinit_base((XClass*)&tmp);
+    return w;
+}
+
+/** @brief 弹窗主屏居中（对标 Qt 静态便捷函数把对话框定位于屏幕中央）。 */
+static void xid_centerOnScreen(XWidget* w)
+{
+    XScreen* screen;
+    XRect g;
+    if (!w) return;
+    screen = XGuiApplication_primaryScreen();
+    if (!screen) return;
+    g = XScreen_geometry(screen);
+    if (g.width <= 0 || g.height <= 0) return;
+    XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
+                    g.y + (g.height - XWidget_height(w)) / 2);
+}
+
+/** @brief OK 槽：把内嵌控件当前值结算进对话框存储后 accept（对标 Qt
+ *  QInputDialog 在 accept 前由输入控件同步 d->value 的路径）。 */
+static void xid_acceptSlot(XObject* receiver, XVarList* args);
+
+/** @brief Cancel 槽：reject 关闭（对标 cancel 按钮触发 reject()）。 */
+static void xid_rejectSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver) XDialog_reject((XDialog*)receiver);
+}
+
+/** @brief 组装对话框骨架：Dialog 窗口标志 + 标题 + 垂直布局 + 可选标签。
+ * @param outRoot 输出顶层布局；调用方在对话框删除后负责
+ *                XLayout_delete_base（布局不随控件析构释放）。 */
+static XInputDialog* xid_buildDialog(XWidget* parent, const XString* title,
+                                     const XString* label,
+                                     XBoxLayout** outRoot)
+{
+    XInputDialog* dlg;
+    XBoxLayout* root;
+    if (!outRoot) return NULL;
+    *outRoot = NULL;
+    /* 对标 Qt：静态便捷函数创建顶层对话框（Dialog 窗口标志，parent 仅
+     * 用于归属/定位）。 */
+    dlg = XInputDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent,
+                                 (XWidgetFlags)XWindowType_Dialog);
+    if (!dlg) return NULL;
+    if (title)
+        XWidget_setWindowTitle((XWidget*)dlg, title);
+    root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, (XWidget*)dlg);
+    if (!root) {
+        XInputDialog_delete_base((XClass*)dlg);
+        return NULL;
+    }
+    XLayout_setContentsMargins((XLayout*)root, 12, 12, 12, 12);
+    XLayout_setSpacing((XLayout*)root, 8);
+    if (label) {
+        XLabel* lb = XLabel_create((XWidget*)dlg, 0);
+        if (lb) {
+            XLabel_setText(lb, label);
+            XBoxLayout_addWidget(root, (XWidget*)lb);
+        }
+    }
+    *outRoot = root;
+    return dlg;
+}
+
+/** @brief 组装 OK/Cancel 按钮行并连接 accept/reject 槽（按钮文本与
+ *  XDialogButtonBox 标准按钮一致：确定/取消）。
+ * @param outBar 输出按钮行布局；调用方负责删除（addLayout 子布局不归
+ *               父布局所有，对标 QLayout 所有权语义）。 */
+static void xid_addButtons(XInputDialog* dlg, XBoxLayout* root,
+                           XBoxLayout** outBar)
+{
+    XPushButton* ok;
+    XPushButton* cancel;
+    XBoxLayout* bar;
+    if (!dlg || !root || !outBar) return;
+    *outBar = NULL;
+    bar = XBoxLayout_create(XBoxLayoutDirection_LeftToRight, NULL);
+    if (!bar) return;
+    XBoxLayout_addStretch(bar, 1);
+    ok = XPushButton_create((XWidget*)dlg, 0);
+    if (ok) {
+        XAbstractButton_setText_2((XAbstractButton*)ok, "确定");
+        XWidget_setMinimumSize((XWidget*)ok, 80, 28);
+        xid_setName((XObject*)ok, XID_NAME_OK);
+        XBoxLayout_addWidget(bar, (XWidget*)ok);
+        XObject_connect_1((XObject*)ok,
+                          (size_t)XAbstractButton_clicked_signal,
+                          (XObject*)dlg, xid_acceptSlot,
+                          XConnectionType_Direct);
+    }
+    cancel = XPushButton_create((XWidget*)dlg, 0);
+    if (cancel) {
+        XAbstractButton_setText_2((XAbstractButton*)cancel, "取消");
+        XWidget_setMinimumSize((XWidget*)cancel, 80, 28);
+        xid_setName((XObject*)cancel, XID_NAME_CANCEL);
+        XBoxLayout_addWidget(bar, (XWidget*)cancel);
+        XObject_connect_1((XObject*)cancel,
+                          (size_t)XAbstractButton_clicked_signal,
+                          (XObject*)dlg, xid_rejectSlot,
+                          XConnectionType_Direct);
+    }
+    XBoxLayout_addLayout(root, (XLayout*)bar);
+    *outBar = bar;
+}
+
+/** @brief 阻塞模态执行：定尺寸、主屏居中、exec（复用 XDialog 阻塞
+ *  循环：应用模态 + Escape→reject）。返回是否接受。 */
+static bool xid_execDialog(XInputDialog* dlg, int w, int h)
+{
+    int rc;
+    if (!dlg) return false;
+    XWidget_resize((XWidget*)dlg, w, h);
+    xid_centerOnScreen((XWidget*)dlg);
+    rc = XDialog_exec(&dlg->m_base);
+    return rc == 1; /* 对标 QDialog::Accepted。 */
+}
+
+/** @brief 收尾：先删布局（不随控件析构）再删对话框（子控件随对象树
+ *  递归销毁，对标 Qt 父子所有权）。 */
+static void xid_teardown(XInputDialog* dlg, XBoxLayout* root, XBoxLayout* bar)
+{
+    if (root) XLayout_delete_base((XLayout*)root);
+    if (bar) XLayout_delete_base((XLayout*)bar);
+    if (dlg) XInputDialog_delete_base((XClass*)dlg);
+}
+
+static void xid_acceptSlot(XObject* receiver, XVarList* args)
+{
+    XInputDialog* dlg = (XInputDialog*)receiver;
+    (void)args;
+    if (!dlg) return;
+    switch (XInputDialog_inputMode(dlg)) {
+    case XInputDialog_IntInput: {
+        XSpinBox* spin =
+            (XSpinBox*)xid_childByName(&dlg->m_base, XID_NAME_SPIN);
+        if (spin)
+            XInputDialog_setIntValue(dlg, XSpinBox_value(spin));
+        break;
+    }
+    case XInputDialog_DoubleInput: {
+        /* 浮点输入用行编辑承载（显示真实小数文本），accept 时解析并
+         * 钳位到当前范围（对标 QInputDialog double 输入结算）。 */
+        XLineEdit* edit =
+            (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
+        if (edit) {
+            const char* txt = XLineEdit_text(edit);
+            char* end = NULL;
+            double v = txt ? strtod(txt, &end) : dlg->m_doubleValue;
+            if (!txt || end == txt) v = dlg->m_doubleValue;
+            if (v < dlg->m_doubleMinimum) v = dlg->m_doubleMinimum;
+            if (v > dlg->m_doubleMaximum) v = dlg->m_doubleMaximum;
+            XInputDialog_setDoubleValue(dlg, v);
+        }
+        break;
+    }
+    case XInputDialog_ComboBoxInput: {
+        XComboBox* combo =
+            (XComboBox*)xid_childByName(&dlg->m_base, XID_NAME_COMBO);
+        if (combo) {
+            XString* t = XComboBox_currentText(combo);
+            if (t) {
+                XInputDialog_setTextValue(dlg, t);
+                XString_delete_base((XClass*)t);
+            }
+        }
+        break;
+    }
+    case XInputDialog_TextInput:
+    default: {
+        XLineEdit* edit =
+            (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
+        if (edit) {
+            XString* v = XString_create_utf8(XLineEdit_text(edit));
+            if (v) {
+                XInputDialog_setTextValue(dlg, v);
+                XString_delete_base((XClass*)v);
+            }
+        }
+        break;
+    }
+    }
+    XDialog_accept(&dlg->m_base);
+}
 
 /** @brief 创建临时实例并按静态参数应用存储 setter（无模态执行）。 */
 static XInputDialog* xinputdialog_tempSetup(XWidget* parent,
@@ -346,15 +585,41 @@ XString* XInputDialog_getText(XWidget* parent, const XString* title,
                               const XString* text, bool* ok)
 {
     XInputDialog* dlg;
+    XBoxLayout* root = NULL;
+    XBoxLayout* bar = NULL;
     XString* result;
+    bool accepted = false;
     if (ok) *ok = false;
-    dlg = xinputdialog_tempSetup(parent, title, label);
+    if (!xid_guiReady()) {
+        /* 无 GUI 环境（无头测试）：返回空串，*ok=false（桩约定）。 */
+        dlg = xinputdialog_tempSetup(parent, title, label);
+        if (!dlg) return XString_create();
+        XInputDialog_setInputMode(dlg, XInputDialog_TextInput);
+        XInputDialog_setTextValue(dlg, text);
+        result = XString_create();
+        XInputDialog_delete_base(dlg);
+        return result;
+    }
+    dlg = xid_buildDialog(parent, title, label, &root);
     if (!dlg) return XString_create();
     XInputDialog_setInputMode(dlg, XInputDialog_TextInput);
-    XInputDialog_setTextValue(dlg, text);
-    dlg->m_echoMode = echo;
-    result = XString_create();
-    XInputDialog_delete_base(dlg);
+    XInputDialog_setTextEchoMode(dlg, echo);
+    {
+        XLineEdit* edit = XLineEdit_create((XWidget*)dlg, 0);
+        if (edit) {
+            XLineEdit_setEchoMode(edit, (int)echo);
+            if (text)
+                XLineEdit_setText(edit, XString_toUtf8(text));
+            XWidget_setMinimumSize((XWidget*)edit, 220, 24);
+            if (root)
+                XBoxLayout_addWidget(root, (XWidget*)edit);
+        }
+    }
+    xid_addButtons(dlg, root, &bar);
+    accepted = xid_execDialog(dlg, 360, 140);
+    if (ok) *ok = accepted;
+    result = XInputDialog_textValue(dlg);
+    xid_teardown(dlg, root, bar);
     return result;
 }
 
@@ -377,14 +642,55 @@ XString* XInputDialog_getMultiLineText(XWidget* parent, const XString* title,
                                        bool* ok)
 {
     XInputDialog* dlg;
+    XBoxLayout* root = NULL;
+    XBoxLayout* bar = NULL;
     XString* result;
+    bool accepted = false;
     if (ok) *ok = false;
-    dlg = xinputdialog_tempSetup(parent, title, label);
+    if (!xid_guiReady()) {
+        /* 无 GUI 环境（无头测试）：返回空串，*ok=false（桩约定）。 */
+        dlg = xinputdialog_tempSetup(parent, title, label);
+        if (!dlg) return XString_create();
+        XInputDialog_setInputMode(dlg, XInputDialog_TextInput);
+        XInputDialog_setTextValue(dlg, text);
+        result = XString_create();
+        XInputDialog_delete_base(dlg);
+        return result;
+    }
+    dlg = xid_buildDialog(parent, title, label, &root);
     if (!dlg) return XString_create();
     XInputDialog_setInputMode(dlg, XInputDialog_TextInput);
-    XInputDialog_setTextValue(dlg, text);
-    result = XString_create();
-    XInputDialog_delete_base(dlg);
+    {
+        XPlainTextEdit* plain = XPlainTextEdit_create((XWidget*)dlg, 0);
+        if (plain) {
+            if (text)
+                XPlainTextEdit_setPlainText(plain, XString_toUtf8(text));
+            XWidget_setMinimumSize((XWidget*)plain, 260, 120);
+            if (root)
+                XBoxLayout_addWidget(root, (XWidget*)plain);
+        }
+    }
+    xid_addButtons(dlg, root, &bar);
+    accepted = xid_execDialog(dlg, 400, 260);
+    if (ok) *ok = accepted;
+    {
+        /* 多行编辑 harvest：toPlainText 返回堆缓冲，取值后按系统堆释放。 */
+        XPlainTextEdit* plain =
+            (XPlainTextEdit*)xid_childByName(&dlg->m_base, XID_NAME_PLAIN);
+        if (plain) {
+            char* buf = XPlainTextEdit_toPlainText(plain);
+            if (buf) {
+                XString* v = XString_create_utf8(buf);
+                if (v) {
+                    XInputDialog_setTextValue(dlg, v);
+                    XString_delete_base((XClass*)v);
+                }
+                XFree_System(buf);
+            }
+        }
+        result = XInputDialog_textValue(dlg);
+    }
+    xid_teardown(dlg, root, bar);
     return result;
 }
 
@@ -407,14 +713,41 @@ int XInputDialog_getInt(XWidget* parent, const XString* title,
                         int maxValue, int step, bool* ok)
 {
     XInputDialog* dlg;
-    (void)minValue; (void)maxValue; (void)step;
+    XBoxLayout* root = NULL;
+    XBoxLayout* bar = NULL;
+    int result;
+    bool accepted = false;
     if (ok) *ok = false;
-    dlg = xinputdialog_tempSetup(parent, title, label);
+    if (!xid_guiReady()) {
+        /* 无 GUI 环境（无头测试）：返回入参 value，*ok=false（桩约定）。 */
+        dlg = xinputdialog_tempSetup(parent, title, label);
+        if (!dlg) return value;
+        XInputDialog_setInputMode(dlg, XInputDialog_IntInput);
+        XInputDialog_setIntValue(dlg, value);
+        XInputDialog_delete_base(dlg);
+        return value;
+    }
+    dlg = xid_buildDialog(parent, title, label, &root);
     if (!dlg) return value;
     XInputDialog_setInputMode(dlg, XInputDialog_IntInput);
-    XInputDialog_setIntValue(dlg, value);
-    XInputDialog_delete_base(dlg);
-    return value;
+    {
+        XSpinBox* spin = XSpinBox_create((XWidget*)dlg, 0);
+        if (spin) {
+            if (minValue < maxValue)
+                XSpinBox_setRange(spin, minValue, maxValue);
+            XSpinBox_setSingleStep(spin, step > 0 ? step : 1);
+            XSpinBox_setValue(spin, value);
+            XWidget_setMinimumSize((XWidget*)spin, 160, 24);
+            if (root)
+                XBoxLayout_addWidget(root, (XWidget*)spin);
+        }
+    }
+    xid_addButtons(dlg, root, &bar);
+    accepted = xid_execDialog(dlg, 340, 140);
+    if (ok) *ok = accepted;
+    result = XInputDialog_intValue(dlg);
+    xid_teardown(dlg, root, bar);
+    return result;
 }
 
 int XInputDialog_getInt_2(XWidget* parent, const char* title, const char* label,
@@ -436,14 +769,46 @@ double XInputDialog_getDouble(XWidget* parent, const XString* title,
                               bool* ok)
 {
     XInputDialog* dlg;
-    (void)minValue; (void)maxValue; (void)decimals;
+    XBoxLayout* root = NULL;
+    XBoxLayout* bar = NULL;
+    double result;
+    bool accepted = false;
     if (ok) *ok = false;
-    dlg = xinputdialog_tempSetup(parent, title, label);
+    if (!xid_guiReady()) {
+        /* 无 GUI 环境（无头测试）：返回入参 value，*ok=false（桩约定）。 */
+        dlg = xinputdialog_tempSetup(parent, title, label);
+        if (!dlg) return value;
+        XInputDialog_setInputMode(dlg, XInputDialog_DoubleInput);
+        XInputDialog_setDoubleValue(dlg, value);
+        XInputDialog_delete_base(dlg);
+        return value;
+    }
+    dlg = xid_buildDialog(parent, title, label, &root);
     if (!dlg) return value;
     XInputDialog_setInputMode(dlg, XInputDialog_DoubleInput);
+    {
+        /* 浮点输入用行编辑（XSpinBox 为整数值域，无法按 decimals 显示
+         * 小数）；初值按 decimals 位小数文本化，accept 时解析钳位。 */
+        XLineEdit* edit = XLineEdit_create((XWidget*)dlg, 0);
+        if (edit) {
+            char buf[64];
+            int dec = decimals < 0 ? 6 : (decimals > 10 ? 10 : decimals);
+            snprintf(buf, sizeof(buf), "%.*f", dec, value);
+            XLineEdit_setText(edit, buf);
+            XWidget_setMinimumSize((XWidget*)edit, 220, 24);
+            if (root)
+                XBoxLayout_addWidget(root, (XWidget*)edit);
+        }
+    }
+    dlg->m_doubleMinimum = minValue;
+    dlg->m_doubleMaximum = maxValue;
     XInputDialog_setDoubleValue(dlg, value);
-    XInputDialog_delete_base(dlg);
-    return value;
+    xid_addButtons(dlg, root, &bar);
+    accepted = xid_execDialog(dlg, 360, 140);
+    if (ok) *ok = accepted;
+    result = XInputDialog_doubleValue(dlg);
+    xid_teardown(dlg, root, bar);
+    return result;
 }
 
 double XInputDialog_getDouble_2(XWidget* parent, const char* title,
@@ -465,21 +830,58 @@ XString* XInputDialog_getItem(XWidget* parent, const XString* title,
                               int current, bool editable, bool* ok)
 {
     XInputDialog* dlg;
+    XBoxLayout* root = NULL;
+    XBoxLayout* bar = NULL;
     XString* result;
-    XString* item = NULL;
+    bool accepted = false;
     if (ok) *ok = false;
-    dlg = xinputdialog_tempSetup(parent, title, label);
+    if (!xid_guiReady()) {
+        /* 无 GUI 环境（无头测试）：返回 items[current]（越界空串），
+         * *ok=false（桩约定）。 */
+        XString* item = NULL;
+        dlg = xinputdialog_tempSetup(parent, title, label);
+        if (!dlg) return XString_create();
+        XInputDialog_setInputMode(dlg, XInputDialog_ComboBoxInput);
+        XInputDialog_setComboBoxItems(dlg, items);
+        if (items && current >= 0) {
+            int64_t n = XStringList_size_base((const XContainer*)items);
+            if ((int64_t)current < n)
+                item = (XString*)(void*)XStringList_at_base(
+                    (const XVector*)items, current);
+        }
+        result = item ? XString_create_copy(item) : XString_create();
+        XInputDialog_delete_base(dlg);
+        return result;
+    }
+    dlg = xid_buildDialog(parent, title, label, &root);
     if (!dlg) return XString_create();
     XInputDialog_setInputMode(dlg, XInputDialog_ComboBoxInput);
-    XInputDialog_setComboBoxItems(dlg, items);
-    XInputDialog_setComboBoxEditable(dlg, editable);
-    if (items && current >= 0) {
-        int64_t n = XStringList_size_base((const XContainer*)items);
-        if ((int64_t)current < n)
-            item = (XString*)XStringList_at_base(items, current);
+    {
+        XComboBox* combo = XComboBox_create((XWidget*)dlg, 0);
+        if (combo) {
+            XComboBox_setEditable(combo, editable);
+            if (items) {
+                int64_t i, n =
+                    XStringList_size_base((const XContainer*)items);
+                for (i = 0; i < n; ++i) {
+                    XString* item = (XString*)(void*)XStringList_at_base(
+                        (const XVector*)items, i);
+                    if (item)
+                        XComboBox_insertItem((XComboBox*)combo, (int)i, item);
+                }
+            }
+            if (current > 0)
+                XComboBox_setCurrentIndex(combo, current);
+            XWidget_setMinimumSize((XWidget*)combo, 200, 26);
+            if (root)
+                XBoxLayout_addWidget(root, (XWidget*)combo);
+        }
     }
-    result = item ? XString_create_copy(item) : XString_create();
-    XInputDialog_delete_base(dlg);
+    xid_addButtons(dlg, root, &bar);
+    accepted = xid_execDialog(dlg, 360, 150);
+    if (ok) *ok = accepted;
+    result = XInputDialog_textValue(dlg);
+    xid_teardown(dlg, root, bar);
     return result;
 }
 
@@ -488,19 +890,28 @@ XString* XInputDialog_getItem_2(XWidget* parent, const char* title,
                                 int count, int current, bool editable, bool* ok)
 {
     XStringList* list;
+    XString* t = title ? XString_create_utf8(title) : NULL;
+    XString* l = label ? XString_create_utf8(label) : NULL;
     XString* result;
     int i;
     if (ok) *ok = false;
     list = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    if (!list) return XString_create();
+    if (!list) {
+        if (t) XString_delete_base((XClass*)t);
+        if (l) XString_delete_base((XClass*)l);
+        return XString_create();
+    }
     for (i = 0; i < count; ++i) {
         if (items && items[i])
             XStringList_push_back_utf8(list, items[i]);
         else
             XStringList_push_back_utf8(list, "");
     }
-    result = XInputDialog_getItem(parent, NULL, NULL, list, current, editable, NULL);
+    /* 对标 Qt：UTF-8 重载与 XString 重载等价（修正此前标题/标签丢失）。 */
+    result = XInputDialog_getItem(parent, t, l, list, current, editable, ok);
     XStringList_delete_base((XClass*)list);
+    if (t) XString_delete_base((XClass*)t);
+    if (l) XString_delete_base((XClass*)l);
     return result;
 }
 
