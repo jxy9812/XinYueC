@@ -82,10 +82,32 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self);
 
 /**
  * @brief      是否请求 GPU 渲染后端（读 XGUI_RENDER_BACKEND / XGPU_BACKEND
- *             环境变量，首次调用后缓存）。
+ *             环境变量，首次调用后缓存；addRequestedOverride 的运行期覆盖
+ *             优先于环境变量）。
  * @return     true 请求 GPU；false 默认软件。
  */
 bool XGpuRenderBackend_requested(void);
+
+/**
+ * @brief      运行期请求覆盖：显式置位/禁用 GPU 渲染请求（优先于环境变量）。
+ * @details    供宿主程序在 XGuiApplication 初始化前调用——「自动探测」
+ *             模式下宿主先探测显卡可用性（XGpuRenderBackend_probeAvailable），
+ *             成功则 addRequestedOverride(true) 让本进程默认走 GPU 直通，
+ *             失败/无独显则保持软件。见 probeAvailable 注。
+ * @param      on true=请求 GPU；false=撤销请求（回软件）。
+ */
+void XGpuRenderBackend_addRequestedOverride(bool on);
+
+/**
+ * @brief      轻量 GPU 可用性探测（1x1 离屏 GL 会话试创建，幂等缓存）。
+ * @details    「自动探测」入口：创建 1x1 离屏 GL 上下文并验证核心函数
+ *             加载——成功说明本机存在可用 OpenGL（独立/集成显卡均可），
+ *             失败（无显卡/驱动缺失）说明应保持软件。结果进程内缓存；
+ *             首次调用有一次性窗口创建成本（微秒级，无像素渲染）。
+ * @return     true 本机存在可用 OpenGL 上下文能力；false 不可用。
+ */
+bool XGpuRenderBackend_probeAvailable(void);
+
 
 /**
  * @brief      把当前窗口设为「GPU 直通活动窗口」并返回其窗口会话。

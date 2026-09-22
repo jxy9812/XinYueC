@@ -725,6 +725,25 @@ static bool xchart_unregisterSeries(XChart* self, const void* series,
     return false;
 }
 
+/**
+ * @brief 类型化数组去重守卫：同指针已在对应类型数组中时拒绝重复加入。
+ *
+ * P0-2 随批审查发现的存量缺口：泛型注册表（m_series）已在
+ * xchart_registerSeries 去重，但类型化直加入口（addLineSeries 等）对同
+ * 指针重复加入不去重——xchart_unlinkSeries 每次只摘每类数组的一个副本，
+ * removeSeries 会残留悬空项。各类型化入口在本守卫后追加。
+ *
+ * @return true=可继续加入；false=同指针已存在（跳过）。
+ */
+static bool xchart_typeArrayContains(const void* const* array, int count,
+                                     const void* series)
+{
+    int i;
+    for (i = 0; i < count; ++i)
+        if (array[i] == series) return true;
+    return false;
+}
+
 void XChart_addSeries(XChart* self, void* series, XChartSeriesType type)
 {
     if (!self || !series) return;
@@ -1502,6 +1521,8 @@ void* XChart_plotAreaChanged_signal(XChart* self)
 void XChart_addLineSeries(XChart* self, XLineSeries* series)
 {
     if (!self || !series || self->m_lineCount >= 8) return;
+    if (xchart_typeArrayContains((const void* const*)self->m_lineSeries,
+                                 self->m_lineCount, series)) return;
     self->m_lineSeries[self->m_lineCount++] = series;
 }
 
@@ -1535,24 +1556,32 @@ XPieSeries* XChart_pieSeries(const XChart* self)
 void XChart_addBarSeries(XChart* self, XBarSeries* series)
 {
     if (!self || !series || self->m_barCount >= 4) return;
+    if (xchart_typeArrayContains((const void* const*)self->m_barSeries,
+                                 self->m_barCount, series)) return;
     self->m_barSeries[self->m_barCount++] = series;
 }
 
 void XChart_addScatterSeries(XChart* self, XScatterSeries* series)
 {
     if (!self || !series || self->m_scatterCount >= 4) return;
+    if (xchart_typeArrayContains((const void* const*)self->m_scatterSeries,
+                                 self->m_scatterCount, series)) return;
     self->m_scatterSeries[self->m_scatterCount++] = series;
 }
 
 void XChart_addAreaSeries(XChart* self, XAreaSeries* series)
 {
     if (!self || !series || self->m_areaCount >= 4) return;
+    if (xchart_typeArrayContains((const void* const*)self->m_areaSeries,
+                                 self->m_areaCount, series)) return;
     self->m_areaSeries[self->m_areaCount++] = series;
 }
 
 void XChart_addSplineSeries(XChart* self, XSplineSeries* series)
 {
     if (!self || !series || self->m_splineCount >= 4) return;
+    if (xchart_typeArrayContains((const void* const*)self->m_splineSeries,
+                                 self->m_splineCount, series)) return;
     self->m_splineSeries[self->m_splineCount++] = series;
 }
 

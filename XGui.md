@@ -886,8 +886,8 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
 | 复扫 P1×22 修复批次 | ✅ 已修 | 2026-09-22 七路并行：XLineControl 反选格像素/字节混用+掩码门禁+中键双粘贴（Text）；SpinBox NoButtons 折叠+InputDialog 死信号（输入）；XMenu 子菜单打不开+XToolBar 借用动作 UAF+XToolButton popupMode 死存储+XMenuBar hovered 死信号（菜单工具）；XTreeView/XTableView paintOffset+indexAt 越界+XTreeWidget 表头渲染/键盘导航（视图）；图例字体泄漏循环+PieSlice setValue 重置外观+面积图 128 点截断+视图侧主题色全局序（Charts）；WSI 焦点窗口更新+XWindow active/raise/lower 语义（窗口）；XMdiArea resize 重铺+XWizard 横幅叠印（容器）。全量门全绿+截图亲验 |
 | 复扫 P2×71 修复批次 | ✅ 已修 | 2026-09-22 七路并行（40 文件）：itemClicked 迁移 release 语义/entered 差分/editItem 接通/滚动条菜单/Shift 横滚/ensureVisible 最小滚动/RS-fail 清理；setCurrentCell 收敛/setRowCount 同步/四处视图配色走 XPalette；图表悬停坐标与 UAF/PieSeries move/BarSet 越界/轴 reverse+visible；XLabel 字体 deinit 错位/XRadioButton 图标/LCD 整串解析/TabBar removeTab 语义/MessageBox 关闭信号/Dialog modal 默认；ToolButton 图标镜像/ToolBox 残影/ProgressDialog 自动显示/DockWidget 标题栏/Wizard setButton/TabWidget 角部件/默认按钮互斥；QSS 简写/级联/伪类/特异度/蚀刻文本/Fusion Inactive 组/刻度护栏；XLayout 泄漏/windowPropertyChanged UAF/焦点更新等。deferred：XTreeWidget 数据模型（四期：③itemEntered 已于 §8.0g16 落地，余①②④）、XAction 图标承载（✅ §8.0g14）、XDialog Enter 派发（✅ §8.0g14）、轴 reverse 对侧迁移（✅ §8.0g14 经 Qt 源码核对推翻登记）、SVG 矢量直渲（✅ §8.0g15 含渲染器 AA）、GCC14 指针惯用法清理（✅ §8.0g14 重登记关闭：全库既定风格）。全量门全绿+调色板零漂移亲验 |
 | Release/-O2 口径堆损坏（主题引擎栈残影） | ✅ 已修 | 2026-09-22 §8.0g13：Debug 门全绿后 Release 补测确定性 `corrupted top size`；根因=theme_loadFile 等栈上 XPixmap 未清零，vtable 残影被 isInitializedObject 误判为重初始化→释放陈旧 m_data（活对象重复 unref→提前释放→堆损坏）。XIconThemeInternal.c 8 处局部补 XMemset；Release/-O2 回归全绿+三套件复验；排查工具链与探针陷阱教训入册 §8.0g13 |
-| 序列 SIMD 填充（光栅 2.5~4×） | 中 | 2026-09-22 实测勘误与量化：图表序列 1.2~1.6ms 中 area 填充占 92%；已落地覆盖光栅器 span 内部像素免逐子采样测试（数学等价，Debug 口径 FPS 无感）——**瓶颈在逐像素 source-over 混合而非覆盖计算**，SIMD 化对象应为实色 span 混合内循环；**Release 口径评估已闭合（§10.4）：-O2 下 288 FPS 非瓶颈，SIMD 随板级档位评估** |
-| Release 口径纳入常规门（g13 教训） | ✅ 落地 | 2026-09-22：`.zcode/final_gate_release.sh`（-O2 构建→bin-release/，与 Debug 门同套件×3 轮+图表基准单样）；CMakeLists 输出目录加 -D 覆盖守卫防 bin/ 互踩。首跑全绿（API 2727×3/autotest 129×3/回归/验收/GPU/diff CLEAN），基准中位 288 FPS 入册 §10.4 |
+| 序列 SIMD 填充（光栅 2.5~4×） | 中 | 2026-09-22 实测勘误与量化：图表序列 1.2~1.6ms 中 area 填充占 92%；部分落地（半开区间正确性修复入库；fastBlend 行级快路径此前被 A/B 脚手架 `if(0)` 禁用，2026-09-22 已启用）覆盖光栅器 span 内部像素免逐子采样测试（数学等价，Debug 口径 FPS 无感）——**瓶颈在逐像素 source-over 混合而非覆盖计算**，SIMD 化对象应为实色 span 混合内循环；**Release 口径评估已闭合（§10.4）：-O2 下 288 FPS 非瓶颈，SIMD 随板级档位评估** |
+| Release 口径纳入常规门（g13 教训） | ✅ 落地 | 2026-09-22：`Tools/final_gate_release.sh`（-O2 构建→bin-release/，与 Debug 门同套件×3 轮+图表基准单样）；CMakeLists 输出目录加 -D 覆盖守卫防 bin/ 互踩。首跑全绿（API 2727×3/autotest 129×3/回归/验收/GPU/diff CLEAN），基准中位 288 FPS 入册 §10.4 |
 | deferred 小项六路（StyleHints/QSS 注释/Dialog Enter/toDouble/GCC14/轴 reverse） | ✅ 已修 | 2026-09-22 §8.0g14：工作流配额中断由主线接续收口；轴 reverse"移至对侧"登记经 Qt 源码核对**推翻**（reverse 仅翻转映射与刻度序）；toDouble 全串口径连带调用方枚举；GCC14 惯用法触碰文件清零+**全库重登记关闭**（13524 处/303 文件=既定 C 继承风格不阻断构建，机械转型不立项） |
 | 对话框键盘路由（真键盘 Esc/Enter 全无响应） | ✅ 已修 | 2026-09-22 §8.0g14：单原生窗口模型下平台键固定投主窗，应用内对话框 XWindow 永远收不到键+open/exec 不抢焦点+子控件形态对话框 autoDefault 误判关，三层缺口两笔根修（notify 键重定向到焦点控件顶层窗口/dialog_grabInitialFocus/子树内 Auto 视为候选）——xdotool 真键盘复验：开框按 Return → 默认按钮 → 关框 → result=1 回传 |
 | SIMD 内核（NEON/Helium/DMA2D 变体注册） | 中 | 需板级验证 |
@@ -945,7 +945,7 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 > --page 4 导致测的是按钮页）与后台负载干扰；本节数据均为
 > --page 4 --tab 20 图表页专测（五段剖析在位证明 chart 真被绘制）。
 
-### 10.1 背景实测（2026-09-21，本机 2752×1089）
+### 10.1 背景实测（2026-09-21，Windows 本机 2752×1089 口径；与 §10.2 尾部 Linux/Xvfb 口径数字不可直接互比，口径差异见两节各自标注）
 
 | 场景 | 数据 |
 |---|---|
@@ -955,7 +955,7 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 | 小窗口 520×360 图表 | 2033 FPS（历史 852，已提升 2.4×） |
 | 上屏成本 | 12MB 帧 SetDIBitsToDevice ≈ 1～1.3ms，软件路径物理下限 ≈700 FPS |
 
-### 10.2 第一期：XChartView 静态层缓存（嵌入式基线，预期 357→450～550）
+### 10.2 第一期：XChartView 静态层缓存（嵌入式基线）
 
 对标 Qt QGraphicsItem::DeviceCoordinateCache。XChart 全部 setter 为纯模型写
 入、零自动失效（失效完全由应用层 updateChart 驱动）——指纹比对方案
@@ -982,16 +982,77 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 预期：repaint 357→450～550（25～50%，视 Phase A 数据）；上屏 12MB
 拷贝是物理下限（≈700 FPS），1000+ FPS 需第二期 GPU 路径。
 
+> **落地状态（2026-09-22）**：Phase A 插桩（XCHARTVIEW_PROFILE 编译+
+> 环境变量双门控）与 Phase B 静态层均已落地（Linux/Xvfb 口径
+> 185→211 FPS，+14%，稳态 rebuild=0us；本机 Windows 口径另测，两口径
+> 不可互比）。**Phase C 已补齐（2026-09-22，本机）**：回归新增 t218c
+> 静态层开/关逐位 diff 断言（XChartView_setStaticLayerBypass 运行期
+> A/B 开关 + 260×180 含面积半透明序列场景，mismatch==0 通过）；
+> Windows 645 目标构建全绿 + 回归全绿（软件/GL 口径 0 FAIL）。
+> 遗留：STATIC_LAYER=0/1 双编译配置的构建级对拍与真机位一致验证
+> 仍待板级。
+>
+> **同批修复（2026-09-22，RX 6800 XT 真硬件）**：
+> - XImage_paintDevice vtable 校验根修（t211g 未 init image 断言在
+>   Windows Debug 栈 0xcc 填充下必然 AV，Linux 侥幸——已修并入库）；
+> - fastBlend 行级混合启用（最大化图表 357→551 FPS，+54%）；
+> - GPU 口径回归 runnable：非 SYNC 模式 195 FAIL 为 GL 预乘舍入
+>   序列与软件整数合成的固有差异（精确整值断言），SYNC 模式
+>   （XGUI_GPU_SYNC=1 每命令读回）0 FAIL 全绿——软件精确契约测试
+>   已由回归 gpuRequested() 门跳过，剩余 FAIL 属 GPU 预乘管线
+>   与软件舍入口径差异，非缺陷；GPU 加速路径由 gl 冒烟+回归+
+>   基准（静态场景缓存 8558 FPS）覆盖。
+
 ### 10.3 第二期：GPU 直通增强（有 GPU 硬件，数千 FPS 潜力）
 
-- 前置：查 GPU 回归套件 exit=3 既有问题（父提交已存在，非新
-  回归；XGuiGpu_Test 单跑正常）。
+- 前置（✅ 已闭合，2026-09-22 §8.2 勘误）："exit=3" 系 X11
+  BadWindow code=3 误记，实为 exit=1/ctest=8；t211g 后端期望已改
+  环境分支（GPU 请求→Gpu），ctest#3 软件与 GPU 口径双绿。**新发现**：
+  vulkan 后端 lavapipe SIGSEGV（违反回退契约，需真硬件+VK validation）。
 - 图表页 GPU 直通验证与补齐（demo 已有 acquireForWindow/
   presentToWindow/frameDegraded 挂点，非 PARTIAL 模式生效）。
 - 静态层作为 GPU 纹理与软件路径协同；GPU 不可用时框架自动
   回退软件（零回归）。
 - 验收：GPU 直通下最大化图表 FPS 显著高于软件路径；回退
   路径零回归。
+
+> **GPU 直通诊断结论（2026-09-22，RX 6800 XT 实测）——状态改为「架构
+> 缺陷待重构」**：GL 驱动（XGpuRenderDriver_gl.c，已迁移至
+> Drive/windows/）在 Windows/AMD 上功能正确（冒烟/回归/SYNC 全绿），
+> 但性能病态：所有页面 GPU 模式 0.4～2.5 FPS（软件同场景 572～6235）。
+> 根因（cdb 抓栈 + 逐命令审计确认）：
+> - **逐命令局部提交**：图表页 ~140 个绘制命令不匹配 GPU 快速路径
+>   条件（渐变逐行填充/半透明面积/虚线/非 SourceOver），每条触发
+>   painterGpuSubmitSoftwareCommand——创建全尺寸临时 XImage +
+>   glReadPixels 全帧读回（GPU 管线完全冲刷）+ 软件画一笔 +
+>   glTexSubImage2D 全帧回传 + draw quad。140 次/帧 × 每次 2 次 GPU
+>   同步停顿 ≈ 400ms/帧。
+> - **次要根因（已修）**：GL 函数指针调用约定缺失（cdecl 配 stdcall
+>   驱动，/RTC 栈检查报错）——XGLAPI __stdcall 已全覆盖（43 处）；
+>   GL 驱动文件已从 Src/ 迁移至 Drive/windows/（平台代码分层约束）。
+> - **本批已修**：半透明 fillRect 的 GL 原语路径启用（非 SYNC 实渲染
+ *   时 GL 预乘混合原语替代逐命令局部提交）；XImage_paintDevice
+>   vtable 校验（t211g 未 init image AV 根修）。
+> - **剩余工作量估计**：局部提交批量化（攒一批命令一次
+>   upload/readback，1~2 周）或 GPU 快速路径扩展覆盖渐变/虚线
+>   （2~3 周）。**在重构完成前，--gpu 开关保留但性能不达预期，
+>   生产使用软件路径（572 FPS 已满足 60Hz 需求）。**
+
+### 10.3.1 同批修复清单（2026-09-22）
+
+| 修复 | 文件 | 说明 |
+|---|---|---|
+| XImage_paintDevice vtable 校验 | XImage.c | 未初始化栈上 image AV 根修（t211g 必崩 → 返回 NULL） |
+| fastBlend 行级混合启用 | XPainter.c | A/B 脚手架 if(0) 移除，最大化图表 357→572 FPS |
+| XChart 类型化 add 去重 | XChart.c | 五入口同指针重复加入悬空项缺口 |
+| XDialog 死条件清理 | XDialog.c | XTextControl 继承 XObject 非 Widget |
+| 回归 GPU 跳过门 | xgui_regression_test.c | 软件契约测试组 GPU 口径跳过 |
+| t218c 位一致断言 | xgui_regression_test.c | 静态层 0/1 A/B 逐位 diff |
+| GL 驱动迁移 | Drive/windows/ | Src→Drive 平台代码分层约束 |
+| XGLAPI stdcall | GL 驱动 | 43 处调用约定修复 |
+| RGB16 同格式直拷 | XPainter.c | 静态层 565 blit 免逐像素转换 |
+| 焦点 probe 重置 | xgui_regression_test.c | 4 FAIL 根修（OS 焦点事件污染计数）|
+| Tools/final_gate_release.sh | Tools/ | Release 终门入库 |
 
 ### 10.4 后续批次（按板测数据排序，不在本期）
 
@@ -1000,7 +1061,7 @@ RGB332/1bpp 内核（打开 MCU+SPI 屏档位）、图片资源离线编译
 （RLE/C 数组，零解码零 IO）、点阵字体整字缓存。
 
 > **2026-09-22 Release 口径勘测（SIMD 决策数据，此前登记"收益评估需
-> Release 口径"已闭合）**：新增 `.zcode/final_gate_release.sh`（Release
+> Release 口径"已闭合）**：新增 `Tools/final_gate_release.sh`（Release
 > 门常设化：-O2 构建输出 bin-release/，CMakeLists 输出目录已加
 > `-DCMAKE_RUNTIME_OUTPUT_DIRECTORY` 覆盖守卫，不触碰 bin/ Debug
 > 产物）。首跑全绿：API 2727×3 / autotest 129×3 / 回归 / 验收 / GPU /

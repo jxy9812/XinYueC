@@ -137,6 +137,12 @@ static bool painterGpuTextEquals(const char* value, const char* expected)
  *          保持环境变量未设置即可继续使用软件光栅，同时保留运行时切换
  *          和显式禁用路径，不增加第二个编译开关。
  */
+static bool painterGpuSyncRequested(void)
+{
+    const char* value = XSystem_environment("XGUI_GPU_SYNC");
+    return value && *value && !(value[0] == '0' && value[1] == 0);
+}
+
 static bool painterGpuRequested(void)
 {
     const char* value;
@@ -2555,8 +2561,14 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
                 state->m_compositionMode == XPainterCompositionMode_Source ||
                 state->m_compositionMode == XPainterCompositionMode_SourceOver;
             /* 半透明色经 GL 预乘管线的舍入序列与 XImage 非预乘整数
-               合成不一致（回归要求精确整值）：半透明色一律局部提交。 */
-            if (compOk && ((color >> 24) != 0xffu))
+               合成有 ±1 LSB 差异：SYNC 回归口径（每命令读回比对精确
+               整值）保持局部提交；实渲染（非 SYNC）走 GL 预乘混合
+               原语（xgld_fill_rect 内部预乘 + 标准 source-over，
+               视觉正确）——图表面积序列等大面积半透明填充不再
+               退化为逐命令上传+读回的局部提交（--gpu 图表页卡顿
+               的主因，1900 次/帧 local-submit 实测）。 */
+            if (compOk && ((color >> 24) != 0xffu) &&
+                painterGpuSyncRequested())
                 compOk = false;
             /* 标准图案画刷无 GPU 原语：强制软件局部提交。 */
             if (painterPatternActive(self))
@@ -2784,6 +2796,42 @@ static bool painterRaster_blitImageRegion(XPainter* self, const XImage* image,
          srcFormat == XImageFormat_RGB32) &&
         kernelOps != NULL;
 #endif /* XPAINTER_ON */
+    /* 同格式 RGB16（565→565）行级直拷：静态层缓存（§10.2）命中 blit 在
+     * RGB16 表面组合下源/目标同为 565，此处无 uint32 规范色可喂内核
+     * （契约源行为 ARGB32 系），直接按行 memcpy——与逐像素
+     * writePixelValue 位等价（565 位复制展开再截断回 565 无损），省去
+     * 逐像素展开/压缩循环（对标 Skia S32A_D16 的同格式 memcpy 捷径）。 */
+    if (!kernelBlit && srcFormat == dstFormat &&
+        srcFormat == XImageFormat_RGB16)
+    {
+        int dstBpp2 = XImage_depth(self->m_image) / 8;
+        const uint8_t* sRow;
+        uint8_t* dRow;
+        int sy2;
+        if (dstBpp2 != 2) return false;
+        src = XImage_constBits(image);
+        dst = XImage_bits(self->m_image);
+        if (!src || !dst) return false;
+        srcBpl = XImage_bytesPerLine(image);
+        dstBpl = XImage_bytesPerLine(self->m_image);
+        destW = XImage_width(self->m_image);
+        destH = XImage_height(self->m_image);
+        if (dx0 < 0) { sx0 -= dx0; cw += dx0; dx0 = 0; }
+        if (dy0 < 0) { sy0 -= dy0; ch += dy0; dy0 = 0; }
+        if (dx0 + cw > destW) cw = destW - dx0;
+        if (dy0 + ch > destH) ch = destH - dy0;
+        if (cw <= 0 || ch <= 0) return true;
+        if (srcBpl < (sx0 + cw) * 2 || dstBpl < (dx0 + cw) * 2) return false;
+        for (sy2 = 0; sy2 < ch; ++sy2)
+        {
+            sRow = src + (size_t)(sy0 + sy2) * (size_t)srcBpl +
+                   (size_t)sx0 * 2u;
+            dRow = dst + (size_t)(dy0 + sy2) * (size_t)dstBpl +
+                   (size_t)dx0 * 2u;
+            XMemcpy(dRow, sRow, (size_t)cw * 2u);
+        }
+        return true;
+    }
     if (!kernelBlit && srcFormat != dstFormat &&
         !((srcFormat == XImageFormat_ARGB32 &&
            dstFormat == XImageFormat_ARGB32_Premultiplied) ||
@@ -4696,13 +4744,13 @@ static bool painterScanFillDevice(XPainter* self, int n,
        无表面裁剪时，逐像素 putPixel 的四层裁剪判定与函数调用开销是
        图表面积序列（~15K 像素/帧，area 填充 1.2ms 的 ~90%）主成本。
        混合数学与 painterComposeColor SourceOver 通用分支逐位一致。 */
-    int fastBlend = 0; /* A/B: 强制 0 */
+    int fastBlend = 0;
     unsigned fastSa = 0u, fastSr = 0u, fastSg = 0u, fastSb = 0u;
     unsigned fastSpR = 0u, fastSpG = 0u, fastSpB = 0u, fastIsr = 255u;
     uint8_t* fastBits = NULL;
     int fastBpl = 0;
     {
-        if (0 && !gradient && !bulkSolid &&
+        if (!gradient && !bulkSolid &&
             self->m_state.m_compositionMode ==
                 XPainterCompositionMode_SourceOver &&
             ((solidColor >> 24) & 255u) != 0u &&

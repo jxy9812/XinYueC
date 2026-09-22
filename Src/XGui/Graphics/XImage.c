@@ -5862,7 +5862,13 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
 #if XPAINTDEVICE_ON
 XPaintDevice* XImage_paintDevice(XImage* self)
 {
-    if (!self || !self->m_data) return NULL;
+    /* 初始化校验：vtable 与 XImage 类表一致才算已构造。未初始化的栈上
+     * XImage（m_data=栈填充 0xcccccccc，非 NULL）会通过下方 m_data 判空
+     * 并在解引用 m_paintDevice 时 AV（t211g 回归实测，2026-09-22）。
+     * 对标 XPixmap_vtableIs 的 vtable 比对口径。 */
+    if (!self ||
+        XClassGetVtable(self) != XImage_class_init() ||
+        !self->m_data) return NULL;
     /* §8.0g10 begin 泛化：首次访问时惰性装配设备绘制入口（回调静态，
        幂等；装配失败保持 NULL=设备不开放 begin_device）。 */
     if (!self->m_data->m_paintDevice.m_beginPainter)

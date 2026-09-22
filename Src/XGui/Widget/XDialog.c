@@ -100,16 +100,16 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
  *  @details    对标 Qt 6.8 qdialog.cpp keyPressEvent：焦点在
  *              QTextEdit/QPlainTextEdit 类多行编辑器时 Enter 交给
  *              编辑器换行，对话框不得抢去派发默认按钮。XGui 侧按
- *              vtable 精确比对：XTextEdit/XPlainTextEdit 与其内层
- *              XTextControl（焦点可能落在内部控件上）。 */
+ *              vtable 精确比对：XTextEdit/XPlainTextEdit。注意
+ *              XTextControl（多行编辑的模型控制器）继承 XObject 而非
+ *              XWidget，不可能成为焦点控件，不参与判定。 */
 static bool dialog_focusIsMultilineEditor(const XWidget* widget)
 {
     XVtable* vtable;
     if (!widget) return false;
     vtable = XClassGetVtable(widget);
     return vtable == XTextEdit_class_init() ||
-           vtable == XPlainTextEdit_class_init() ||
-           vtable == XTextControl_class_init();
+           vtable == XPlainTextEdit_class_init();
 }
 
 /** @brief      先序遍历对话框子树找默认按钮。

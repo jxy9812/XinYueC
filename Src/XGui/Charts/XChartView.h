@@ -93,6 +93,20 @@ XChart* XChartView_chart(const XChartView* self);
 /** @brief 请求重绘（模型变化后调用）。 @param self 目标视图指针。 @return 无返回值。 */
 void XChartView_updateChart(XChartView* self);
 
+#if XCHARTVIEW_STATIC_LAYER_ON
+/**
+ * @brief      设置静态层缓存运行期旁路（Phase C 位一致断言的 A/B 开关）。
+ * @details    on=true 时渲染入口视层为永久失效（指纹命中判定被短路），
+ *             全部内容走直画路径——与 XCHARTVIEW_STATIC_LAYER_ON=0 的
+ *             编译期裁剪语义一致；on=false 恢复正常缓存。供回归测试在
+ *             同一进程内做「层开/层关逐位 diff」（对标 Qt 渲染优化的
+ *             A/B 验证纪律）；生产代码无需调用。
+ * @param      self 目标视图指针。
+ * @param      bypass true=绕过层直画；false=恢复正常缓存。
+ */
+void XChartView_setStaticLayerBypass(XChartView* self, bool bypass);
+#endif /* XCHARTVIEW_STATIC_LAYER_ON */
+
 /**
  * @brief 离屏渲染整张图表到目标图像（对标 QChartView 绘制的测试/导出路径）。
  *

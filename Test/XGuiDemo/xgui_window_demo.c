@@ -2892,6 +2892,14 @@ int main(int argc, char* argv[])
         else if (strcmp(argv[argi], "--benchmark-full") == 0) {
             g_benchmarkFullRedraw = true;
         }
+        else if (strcmp(argv[argi], "--gpu") == 0) {
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+            /* GPU 直通显式开关：请求 GPU 渲染后端（窗口直通会话，
+               会话创建失败自动回退软件——xgpu_create_ex 有序回退链）。
+               对标 QtQuick 的 QSG_RHI 切换：显式选择优于静默自动。 */
+            XGpuRenderBackend_addRequestedOverride(true);
+#endif
+        }
         else if (strcmp(argv[argi], "--screenshot") == 0 &&
                  argi + 1 < argc) {
             screenshotPath = argv[++argi];

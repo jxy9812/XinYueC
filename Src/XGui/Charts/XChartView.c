@@ -560,6 +560,16 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
 #if XCHARTVIEW_STATIC_LAYER_ON
 /* ==================== Phase B 静态层缓存（§10.2，对标 DeviceCoordinateCache） ==================== */
 
+/** @brief 运行期层旁路（setStaticLayerBypass 的 A/B 开关；仅回归测试
+ *  使用，生产恒 false）。GUI 主线程单写，与指纹命中判定同线程纪律。 */
+static bool g_xcvLayerBypass;
+
+void XChartView_setStaticLayerBypass(XChartView* self, bool bypass)
+{
+    (void)self;
+    g_xcvLayerBypass = bypass;
+}
+
 /** @brief FNV-1a 64 位散列字节流增量（自行实现的静态指纹算法；
  *         offset basis 14695981039346656037，prime 1099511628211）。 */
 static uint64_t xcv_fnv1aBytes(uint64_t hash, const void* data, size_t len)
@@ -1658,7 +1668,8 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image,
      * 历史像素，层无法复现，保持直画（计时计入 rebuild 段：静态内容
      * 渲染本就是"无层重建"，两配置剖析口径一致）。 */
     layerHit = cv->m_chart->m_backgroundVisible &&
-               bounds.width > 0 && bounds.height > 0;
+               bounds.width > 0 && bounds.height > 0 &&
+               !g_xcvLayerBypass; /* A/B 旁路（回归位一致断言用）。 */
     if (layerHit) {
         /* 入口失效比对：resize 事件即时清 m_staticValid，此处再按指纹
          * 兜底（尺寸/格式变化的离屏场景、模型外观字段变化都在此命中

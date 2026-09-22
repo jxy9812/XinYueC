@@ -175,6 +175,7 @@ static bool g_xgpuLastFramePresented = false;           /**< 最近一帧是否 
 static bool g_xgpuWindowProbeFailed = false;            /**< 窗口 GL 上下文创建失败缓存。 */
 static bool g_xgpuWindowAtExitRegistered = false;
 static int g_xgpuRequested = -1;                        /**< -1 未探测；0/1 缓存。 */
+static int g_xgpuRequestedOverride = -1;                /**< 运行期覆盖（addRequestedOverride）；-1 未设置。 */
 
 static bool xgpu_text_equals(const char* value, const char* expected)
 {
@@ -198,6 +199,12 @@ bool XGpuRenderBackend_requested(void)
 {
     const char* value;
     if (g_xgpuRequested >= 0) return g_xgpuRequested != 0;
+    /* 运行期覆盖（自动探测宿主调用 addRequestedOverride）优先于环境变量。 */
+    if (g_xgpuRequestedOverride >= 0)
+    {
+        g_xgpuRequested = g_xgpuRequestedOverride;
+        return g_xgpuRequested != 0;
+    }
     value = XSystem_environment("XGUI_RENDER_BACKEND");
     if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
     g_xgpuRequested =
@@ -486,6 +493,30 @@ XGpuRenderBackend* XGpuRenderBackend_createForWindow(XWindow* window,
                                                      int width, int height)
 {
     return xgpu_create_ex(window, width, height);
+}
+
+void XGpuRenderBackend_addRequestedOverride(bool on)
+{
+    /* -1→0/1 的覆盖写入即生效（requested 下次调用读覆盖值）。 */
+    g_xgpuRequestedOverride = on ? 1 : 0;
+    g_xgpuRequested = g_xgpuRequestedOverride;
+}
+
+bool XGpuRenderBackend_probeAvailable(void)
+{
+    /* 进程内缓存：探测有一次性成本（离屏 1x1 窗口 + GL 上下文创建）。 */
+    static int probed = -1;
+    if (probed >= 0) return probed != 0;
+    {
+        /* 1x1 离屏会话试创建：sessionCreate 内部完成 makeCurrent + 核心
+           GL 函数加载 + FBO/纹理完整性校验（xgld_initialize），任一步
+           失败即判定本机无可用 OpenGL——探测会话随即销毁，不留资源。
+           成功后销毁探测会话；正式渲染会话由宿主流程另行创建。 */
+        XGpuRenderBackend* probe = XGpuRenderBackend_create(1, 1);
+        probed = XGpuRenderBackend_isValid(probe) ? 1 : 0;
+        if (probe) XGpuRenderBackend_destroy(probe);
+    }
+    return probed != 0;
 }
 
 void XGpuRenderBackend_destroy(XGpuRenderBackend* self)

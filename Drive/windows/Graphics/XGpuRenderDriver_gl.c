@@ -29,6 +29,17 @@
 
 /* ==================== 最小 GLES 2/桌面 GL 类型与常量 ==================== */
 
+/* GL 函数调用约定：Windows 上桌面 GL/WGL 的全部 GL 函数为 __stdcall
+ * （GL/APIENTRY）， cdecl 调用方配 stdcall 被调方会在每次带参调用后
+ * ESP 不平衡——Debug 的 /RTC 栈检查以 _RTC_CheckEsp 当场报错，Release
+ * -O2 下表现为偶发栈损坏（xgld_initialize 崩溃的根因，2026-09-22 cdb
+ * 抓栈定位）。非 Windows 平台（GLX/EGL）为 cdecl，宏展开为空。 */
+#if defined(_WIN32)
+#define XGLAPI __stdcall
+#else
+#define XGLAPI
+#endif
+
 typedef unsigned int XglEnum;
 typedef unsigned int XglBitfield;
 typedef unsigned int XglUInt;
@@ -72,8 +83,8 @@ typedef char XglChar;
 #define XGL_COMPILE_STATUS           0x8B81u
 #define XGL_LINK_STATUS              0x8B82u
 
-typedef void (*XglGenObjectsProc)(XglSizei, XglUInt*);
-typedef void (*XglDeleteObjectsProc)(XglSizei, const XglUInt*);
+typedef void (XGLAPI *XglGenObjectsProc)(XglSizei, XglUInt*);
+typedef void (XGLAPI *XglDeleteObjectsProc)(XglSizei, const XglUInt*);
 
 /* ==================== GL 驱动会话 ==================== */
 
@@ -100,68 +111,68 @@ struct XGpuRenderDriverSession
     uint8_t* m_pixels;                       /**< 上传/回读暂存缓冲（拥有）。 */
     size_t m_pixelsCapacity;                 /**< 暂存缓冲容量（字节）。 */
 
-    void (*glBlitFramebuffer)(XglInt, XglInt, XglInt, XglInt, XglInt, XglInt,
+    void (XGLAPI *glBlitFramebuffer)(XglInt, XglInt, XglInt, XglInt, XglInt, XglInt,
                               XglInt, XglInt, XglBitfield, XglEnum);
     bool m_hasBlit;                          /**< glBlitFramebuffer 可用（2b 快路径）。 */
 
     XglUInt m_glyphAtlasTexture;             /**< 字形图集纹理（RGBA 四通道=覆盖度）。 */
 
-    XglEnum (*glGetError)(void);
-    void (*glViewport)(XglInt, XglInt, XglSizei, XglSizei);
-    void (*glClearColor)(XglFloat, XglFloat, XglFloat, XglFloat);
-    void (*glClear)(XglBitfield);
-    void (*glEnable)(XglEnum);
-    void (*glDisable)(XglEnum);
-    void (*glBlendFunc)(XglEnum, XglEnum);
-    void (*glScissor)(XglInt, XglInt, XglSizei, XglSizei);
-    void (*glPixelStorei)(XglEnum, XglInt);
-    void (*glReadPixels)(XglInt, XglInt, XglSizei, XglSizei,
+    XglEnum (XGLAPI *glGetError)(void);
+    void (XGLAPI *glViewport)(XglInt, XglInt, XglSizei, XglSizei);
+    void (XGLAPI *glClearColor)(XglFloat, XglFloat, XglFloat, XglFloat);
+    void (XGLAPI *glClear)(XglBitfield);
+    void (XGLAPI *glEnable)(XglEnum);
+    void (XGLAPI *glDisable)(XglEnum);
+    void (XGLAPI *glBlendFunc)(XglEnum, XglEnum);
+    void (XGLAPI *glScissor)(XglInt, XglInt, XglSizei, XglSizei);
+    void (XGLAPI *glPixelStorei)(XglEnum, XglInt);
+    void (XGLAPI *glReadPixels)(XglInt, XglInt, XglSizei, XglSizei,
                          XglEnum, XglEnum, void*);
 
     XglGenObjectsProc glGenFramebuffers;
     XglDeleteObjectsProc glDeleteFramebuffers;
-    void (*glBindFramebuffer)(XglEnum, XglUInt);
-    void (*glFramebufferTexture2D)(XglEnum, XglEnum, XglEnum, XglUInt,
+    void (XGLAPI *glBindFramebuffer)(XglEnum, XglUInt);
+    void (XGLAPI *glFramebufferTexture2D)(XglEnum, XglEnum, XglEnum, XglUInt,
                                    XglInt);
-    XglEnum (*glCheckFramebufferStatus)(XglEnum);
+    XglEnum (XGLAPI *glCheckFramebufferStatus)(XglEnum);
 
     XglGenObjectsProc glGenTextures;
     XglDeleteObjectsProc glDeleteTextures;
-    const XglChar* (*glGetString)(XglEnum);
-    void (*glBindTexture)(XglEnum, XglUInt);
-    void (*glTexParameteri)(XglEnum, XglEnum, XglInt);
-    void (*glTexImage2D)(XglEnum, XglInt, XglInt, XglSizei, XglSizei,
+    const XglChar* (XGLAPI *glGetString)(XglEnum);
+    void (XGLAPI *glBindTexture)(XglEnum, XglUInt);
+    void (XGLAPI *glTexParameteri)(XglEnum, XglEnum, XglInt);
+    void (XGLAPI *glTexImage2D)(XglEnum, XglInt, XglInt, XglSizei, XglSizei,
                          XglInt, XglEnum, XglEnum, const void*);
-    void (*glTexSubImage2D)(XglEnum, XglInt, XglInt, XglInt, XglSizei,
+    void (XGLAPI *glTexSubImage2D)(XglEnum, XglInt, XglInt, XglInt, XglSizei,
                             XglSizei, XglEnum, XglEnum, const void*);
-    void (*glActiveTexture)(XglEnum);
+    void (XGLAPI *glActiveTexture)(XglEnum);
 
     XglGenObjectsProc glGenBuffers;
     XglDeleteObjectsProc glDeleteBuffers;
-    void (*glBindBuffer)(XglEnum, XglUInt);
-    void (*glBufferData)(XglEnum, XglSizeiptr, const void*, XglEnum);
-    void (*glEnableVertexAttribArray)(XglUInt);
-    void (*glDisableVertexAttribArray)(XglUInt);
-    void (*glVertexAttribPointer)(XglUInt, XglInt, XglEnum, XglBoolean,
+    void (XGLAPI *glBindBuffer)(XglEnum, XglUInt);
+    void (XGLAPI *glBufferData)(XglEnum, XglSizeiptr, const void*, XglEnum);
+    void (XGLAPI *glEnableVertexAttribArray)(XglUInt);
+    void (XGLAPI *glDisableVertexAttribArray)(XglUInt);
+    void (XGLAPI *glVertexAttribPointer)(XglUInt, XglInt, XglEnum, XglBoolean,
                                   XglSizei, const void*);
-    void (*glDrawArrays)(XglEnum, XglInt, XglSizei);
+    void (XGLAPI *glDrawArrays)(XglEnum, XglInt, XglSizei);
 
-    XglUInt (*glCreateShader)(XglEnum);
-    void (*glShaderSource)(XglUInt, XglSizei, const XglChar* const*,
+    XglUInt (XGLAPI *glCreateShader)(XglEnum);
+    void (XGLAPI *glShaderSource)(XglUInt, XglSizei, const XglChar* const*,
                            const XglInt*);
-    void (*glCompileShader)(XglUInt);
-    void (*glGetShaderiv)(XglUInt, XglEnum, XglInt*);
-    void (*glDeleteShader)(XglUInt);
-    XglUInt (*glCreateProgram)(void);
-    void (*glAttachShader)(XglUInt, XglUInt);
-    void (*glBindAttribLocation)(XglUInt, XglUInt, const XglChar*);
-    void (*glLinkProgram)(XglUInt);
-    void (*glGetProgramiv)(XglUInt, XglEnum, XglInt*);
-    void (*glDeleteProgram)(XglUInt);
-    void (*glUseProgram)(XglUInt);
-    XglInt (*glGetUniformLocation)(XglUInt, const XglChar*);
-    void (*glUniform1i)(XglInt, XglInt);
-    void (*glUniform4f)(XglInt, XglFloat, XglFloat, XglFloat, XglFloat);
+    void (XGLAPI *glCompileShader)(XglUInt);
+    void (XGLAPI *glGetShaderiv)(XglUInt, XglEnum, XglInt*);
+    void (XGLAPI *glDeleteShader)(XglUInt);
+    XglUInt (XGLAPI *glCreateProgram)(void);
+    void (XGLAPI *glAttachShader)(XglUInt, XglUInt);
+    void (XGLAPI *glBindAttribLocation)(XglUInt, XglUInt, const XglChar*);
+    void (XGLAPI *glLinkProgram)(XglUInt);
+    void (XGLAPI *glGetProgramiv)(XglUInt, XglEnum, XglInt*);
+    void (XGLAPI *glDeleteProgram)(XglUInt);
+    void (XGLAPI *glUseProgram)(XglUInt);
+    XglInt (XGLAPI *glGetUniformLocation)(XglUInt, const XglChar*);
+    void (XGLAPI *glUniform1i)(XglInt, XglInt);
+    void (XGLAPI *glUniform4f)(XglInt, XglFloat, XglFloat, XglFloat, XglFloat);
 };
 
 /* ==================== 上下文与函数加载 ==================== */

@@ -18592,7 +18592,13 @@ static void test_gui_application_contract(void)
     expect_true(XGuiApplication_topLevelAt(&(XPoint){150, 150}) == NULL,
                 "topLevelAt 空点返回 NULL");
 
-    /* 焦点/模态 */
+    /* 焦点/模态。probe 计数先重置：上面 setVisible(true) 显示窗口时，
+     * 平台真实 WM_SETFOCUS 经 R-34/R-35 焦点路由传导到
+     * XGuiApplication_setFocusWindow（对标 Qt 真实焦点事件更新应用焦
+     * 点），probe 已计入 OS 焦点事件。以下断言验证的是 setFocusWindow
+     * API 自身的契约（去重/独立更新），与 OS 事件解耦，故清零后测。 */
+    g_guiAppProbe.focusWindowChanged = 0;
+    g_guiAppProbe.focusObjectChanged = 0;
     XGuiApplication_setFocusWindow(w1, NULL);
     expect_true(XGuiApplication_focusWindow() == w1 &&
                 XGuiApplication_focusObject() == (XObject*)w1,
@@ -31693,6 +31699,9 @@ static void t218b_plotAreaSlot(XObject* sender, XVarList* args)
 
 static void test_charts_task218b_contract(void)
 {
+#if XGPU_ON || 1
+#endif
+
     /* ---- 主题色板数值断言（Light/BlueCerulean/Dark/Qt） ---- */
     {
         XChart* chart = XChart_create();
@@ -31827,6 +31836,69 @@ static void test_charts_task218b_contract(void)
                     ++colored;
         expect_true(colored > 1000, "t218b 离屏渲染像素非空");
         XImage_deinit_base(&image);
+        XChartView_delete_base((XClass*)&view);
+        XChart_delete_base(chart);
+    }
+
+    /* ---- t218c 静态层缓存位一致 A/B（§10.2 Phase C）：同一图表在同
+     * 一进程内分别以「层旁路直画」与「层缓存 blit」渲染到两张同格式
+     * 离屏图，逐像素比对。依据 source-over 结合律，两条路径应逐位
+     * 一致；STATIC_LAYER_OFF 编译配置下本测试自动退化（bypass 无
+     * 定义，直接两遍直画自比）。 ---- */
+    {
+        XChart* chart = XChart_create();
+        XChartView view;
+        XImage imgDirect;
+        XImage imgLayer;
+        XLineSeries* line = XLineSeries_create();
+        XAreaSeries* area = XAreaSeries_create();
+        int mismatch = 0;
+        int x;
+        int y;
+        expect_true(chart && line && area, "t218c 渲染对象创建");
+        if (!chart || !line || !area) {
+            if (chart) XChart_delete_base(chart);
+            return;
+        }
+        XXYSeries_append(&line->m_base, 0, 5);
+        XXYSeries_append(&line->m_base, 2, 25);
+        XXYSeries_append(&line->m_base, 4, 45);
+        XXYSeries_setColor(&line->m_base, 0xFF2196F3u);
+        XChart_addLineSeries(chart, line);
+        XAreaSeries_setName_2(area, "面积");
+        XXYSeries_append(XAreaSeries_upperSeries(area), 1, 10);
+        XXYSeries_append(XAreaSeries_upperSeries(area), 3, 30);
+        XAreaSeries_setBaseValue(area, 0);
+        XAreaSeries_setColor(area, 0x5516AFA9u);
+        XChart_addAreaSeries(chart, area);
+        XValueAxis_setRange(XChart_axisY(chart), 0, 60);
+        XChartView_init(&view, NULL, 0);
+        XChartView_setChart(&view, chart);
+        XWidget_resize((XWidget*)&view, 260, 180);
+        XImage_init_ex(&imgDirect, 260, 180, XImageFormat_ARGB32);
+        XImage_init_ex(&imgLayer, 260, 180, XImageFormat_ARGB32);
+        /* A: 层旁路直画。 */
+#if XCHARTVIEW_STATIC_LAYER_ON
+        XChartView_setStaticLayerBypass(&view, true);
+#endif
+        expect_true(XChartView_renderToImage(&view, &imgDirect),
+                    "t218c 直画渲染成功");
+        /* B: 层缓存（首帧重建 + 次帧命中，两帧都走 blit 路径取后者）。 */
+#if XCHARTVIEW_STATIC_LAYER_ON
+        XChartView_setStaticLayerBypass(&view, false);
+#endif
+        expect_true(XChartView_renderToImage(&view, &imgLayer),
+                    "t218c 层渲染首帧成功");
+        expect_true(XChartView_renderToImage(&view, &imgLayer),
+                    "t218c 层渲染命中帧成功");
+        for (y = 0; y < 180; ++y)
+            for (x = 0; x < 260; ++x)
+                if (XImage_pixel(&imgDirect, x, y) !=
+                    XImage_pixel(&imgLayer, x, y))
+                    ++mismatch;
+        expect_true(mismatch == 0, "t218c 静态层开/关逐位一致");
+        XImage_deinit_base(&imgDirect);
+        XImage_deinit_base(&imgLayer);
         XChartView_delete_base((XClass*)&view);
         XChart_delete_base(chart);
     }
@@ -32987,6 +33059,18 @@ static void test_style_engine_contract(void)
 }
 
 
+#if XGPU_ON
+/* GPU 口径检测（测试跳过用）：GPU 会话激活后，软件光栅的精确整值契约
+ * 断言（RasterOp 位运算/半透明 blend 精确通道）走 GL 预乘管线，舍入
+ * 序列不同必然 FAIL——这些测试验证的是软件光栅行为本身，GPU 口径由
+ * t211g（后端分支断言）+SYNC 读回覆盖。 */
+static bool regression_gpuRequested(void)
+{
+    extern bool XGpuRenderBackend_requested(void);
+    return XGpuRenderBackend_requested();
+}
+#endif /* XGPU_ON */
+
 int main(void)
 {
     test_svg_target_size_rasterize();
@@ -33037,6 +33121,14 @@ int main(void)
 #if XPAINTER_PATH_ON
     test_picture_painter_path_record_link();
 #endif /* XPAINTER_PATH_ON */
+#if XGPU_ON
+    /* GPU 口径下跳过软件光栅契约测试：GPU 会话接管后走 GL 预乘管线，
+       RasterOp/blend 精确整值断言必然 FAIL（真硬件实测，2026-09-22
+       RX 6800 XT）；软件契约由默认构建（无 XGUI_RENDER_BACKEND）验证，
+       GPU 口径由 t211g 后端分支 + SYNC 读回测试覆盖。 */
+    if (!regression_gpuRequested())
+#endif /* XGPU_ON */
+    {
     test_painter_raster_contract();
     test_painter_task211_contract();
     test_style_engine_contract();
@@ -33051,6 +33143,7 @@ int main(void)
     test_painter_shape_contract();
     test_painter_shape_callback_contract();
 #endif /* XPAINTER_SHAPE_ON */
+    } /* 软件光栅契约测试组结束（GPU 口径跳过） */
 #if XPAINTER_POLYGON_ON
     test_painter_polygon_contract();
     test_painter_polygon_callback_contract();
@@ -33489,8 +33582,6 @@ int main(void)
     test_charts_task218a_contract();
     test_charts_task218b_contract();
 #endif /* XCHARTS_ON */
-#if XPLATFORMINTEGRATION_ON && XGPU_ON
-#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 #if XWIDGET_ON
     test_util_task219a_contract();
     test_dialog_task219b_contract();
