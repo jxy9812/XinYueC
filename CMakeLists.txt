@@ -61,8 +61,11 @@ if(UNIX AND NOT APPLE)
     add_compile_definitions(_GNU_SOURCE)
 endif()
 
-#设置可执行文件的输出目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
+#设置可执行文件的输出目录（可用 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=... 覆盖，
+#供 Release 门等旁路构建输出到独立目录，避免覆盖 bin/ 的既有产物）
+if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
+endif()
 
 # ==================== GBK转换实现切换 ====================
 # 启用文件读写方式实现GBK转换（适用于嵌入式），注释此行则使用平台系统API
@@ -89,6 +92,12 @@ file(GLOB_RECURSE TEST_FILE "Test/*.c" )
 file(GLOB_RECURSE XGUI_DEMO_FILE "Test/XGuiDemo/*.c" )
 if(XGUI_DEMO_FILE)
     list(REMOVE_ITEM TEST_FILE ${XGUI_DEMO_FILE})
+endif()
+# XGuiApiTest 同理：自带 main 的独立 API 测试套件（XGuiApi_Test 目标，
+# 接线见文件尾注释），不得卷入主程序。
+file(GLOB_RECURSE XGUI_API_TEST_FILE "Test/XGuiApiTest/*.c" )
+if(XGUI_API_TEST_FILE)
+    list(REMOVE_ITEM TEST_FILE ${XGUI_API_TEST_FILE})
 endif()
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
@@ -386,6 +395,15 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
     "./Test/XGuiDemo/xgui_demo_page_advanced.c"
     "./Test/XGuiDemo/xgui_demo_page_effects.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_input.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_text.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_views.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_containers.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_dialogs.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_menus.c"
+    "./Test/XGuiDemo/xgui_demo_apitest_core.c"
 )
 if(UNIX)
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)

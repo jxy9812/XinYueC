@@ -603,8 +603,9 @@ static int xtd_parseAlign(const char* val)
 /** @brief 向当前块追加 len 字节（ASCII 时 len=1；UTF-8 多字节序列须
  *         整序列写入——XString 的 UTF-8 流转换对单字节残序列拒收）：
  *         同格式并入末片段；格式变化新建片段；末片段为图片片段时不可
- *         并入（文本新开片段——图片是原子承载）；片段槽满时并入末片段
- *         （格式差异丢弃、文本不丢——子集边界）。 */
+ *         并入（文本新开片段——图片是原子承载）；片段槽满时一律并入
+ *         末片段（含尾片段为图片的情形——格式差异与图片原子性丢弃、
+ *         文本不丢——子集边界）。 */
 static void xtd_appendSpan(XTextDocument* self, int blockIdx,
                            const char* s, int len,
                            const XTDCharFormat* cur)
@@ -619,15 +620,31 @@ static void xtd_appendSpan(XTextDocument* self, int blockIdx,
     if (blockIdx >= self->m_blockCount) self->m_blockCount = blockIdx + 1;
     blk = &self->m_blocks[blockIdx];
     fi = blk->fragmentCount;
+    if (fi < 0) fi = 0; /* 防御边界：脏负计数钳回合法区，防负下标越界。 */
+    if (fi >= XTD_MAX_FRAGMENTS_PER_BLOCK) {
+        /* P0 根因修复（钳位）：旧实现池满且尾片段为图片时绕过合并分支
+         * 直落新建片段分支，&blk->fragments[fi]（= fragmentCount 标量区
+         * 起点）被 XMemset/formatAssign 越界写覆写，并置
+         * fragmentCount=fi+1 级联越界；触发链：256 块上限致
+         * advanceBlock 拒绝推进后同块继续追加。对标同文件
+         * addFragment/insertImage 的池满钳位：满池不再新建片段，一律
+         * 并入末片段保文本不丢（图片片段 text 本为空串，并入即顺延
+         * 追加）。 */
+        XTDFragment* pf =
+            &blk->fragments[XTD_MAX_FRAGMENTS_PER_BLOCK - 1];
+        if (!pf->text) pf->text = XString_create();
+        if (pf->text) XString_append_with_length_utf8(pf->text, s, (size_t)len);
+        return;
+    }
     if (fi > 0 && !blk->fragments[fi - 1].image &&
-        (fi >= XTD_MAX_FRAGMENTS_PER_BLOCK ||
-         xtd_formatEqual(&blk->fragments[fi - 1].fmt, cur))) {
+        xtd_formatEqual(&blk->fragments[fi - 1].fmt, cur)) {
         XTDFragment* pf = &blk->fragments[fi - 1];
         if (!pf->text) pf->text = XString_create();
         if (pf->text) XString_append_with_length_utf8(pf->text, s, (size_t)len);
         return;
     }
     {
+        /* 新建片段分支：fi < XTD_MAX_FRAGMENTS_PER_BLOCK 由上方钳位保证。 */
         XTDFragment* nf = &blk->fragments[fi];
         XMemset(nf, 0, sizeof(XTDFragment));
         xtd_formatAssign(&nf->fmt, cur);
@@ -1086,8 +1103,13 @@ static void xtd_parseHtml(XTextDocument* self, const char* html,
                 xtd_appendSpan(self, blockIdx, p, seq, &cur);
                 p += seq;
             } else {
-                xtd_appendByte(self, blockIdx, *p, &cur);
-                ++p;
+                /* 可见文本与 pre 同口径：UTF-8 序列整段承载。此前逐字节
+                 * xtd_appendByte 会把多字节字符拆成残序列，XChar_
+                 * fromUtf8Stream 拒收导致 setHtml/appendHtml 静默丢弃
+                 * 全部非 ASCII 字符（P0：富文本预览只剩 ASCII 子串）。 */
+                int seq = xtd_utf8SeqLen(p);
+                xtd_appendSpan(self, blockIdx, p, seq, &cur);
+                p += seq;
             }
         }
     }

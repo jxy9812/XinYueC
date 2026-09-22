@@ -42,6 +42,9 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XAlignment.h"
+/* 复扫 R-76 配套：默认位互斥需识别 XPushButton 全部现役派生（vtable
+ * 无父链可遍历，见 pushbutton_clearSiblingDefaults 注）。 */
+#include "XCommandLinkButton.h"
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
 
@@ -67,20 +70,27 @@ static uint32_t pushbutton_color(const XPushButton* self,
 #endif /* XPALETTE_ON */
 }
 
-/** @brief 是否三态 Auto 且当前上下文判定为对话框默认按钮。
+/** @brief 沿父链查找所属对话框（窗口边界截停）。
  * @details 对标 Qt 6.8 QPushButtonPrivate::dialogParent/autoDefault：
- *          沿父链向上遍历到第一个窗口前，若命中窗口类型为 Dialog 的
- *          父控件则返回 true；按钮自身为窗口或父链无对话框返回 false。 */
-static bool pushbutton_autoDefaultActive(const XPushButton* self)
+ *          沿父链向上遍历到第一个窗口前，命中窗口类型为 Dialog 的祖先
+ *          控件即返回之；按钮自身为窗口或父链无对话框返回 NULL。
+ *          autoDefault 判定与 setDefault 的默认位互斥共用本解析。 */
+static XWidget* pushbutton_dialogParent(const XPushButton* self)
 {
     const XWidget* p = (const XWidget*)self;
 
     while (p && !XWidget_isWindow(p)) {
         p = XWidget_parentWidget(p);
         if (p && XWidget_windowType(p) == XWindowType_Dialog)
-            return true;
+            return (XWidget*)p;
     }
-    return false;
+    return NULL;
+}
+
+/** @brief 是否三态 Auto 且当前上下文判定为对话框默认按钮。 */
+static bool pushbutton_autoDefaultActive(const XPushButton* self)
+{
+    return pushbutton_dialogParent(self) != NULL;
 }
 
 /** @brief 是否把当前尺寸视为显式图标尺寸（字段位于 XAbstractButton 基类）。 */
@@ -267,10 +277,66 @@ bool XPushButton_isDefault(const XPushButton* self)
     return self ? self->m_defaultButton : false;
 }
 
+/** @brief 递归清位：对话框子树内其他默认按钮解除 default 位。
+ * @details 对标 Qt QPushButton::setDefault(true) 的
+ *          dlg->findChildren<QPushButton*>() 清位循环。框架 vtable 无
+ *          父类链可遍历（XVtable 无继承元数据），无法做「XPushButton
+ *          及其派生」的通用 qobject_cast 等价判定，故按现役派生清单
+ *          （XPushButton/XCommandLinkButton）精确匹配 vtable；新增
+ *          派生类需在此补登记，否则其默认位不参与互斥（保守方向：
+ *          只可能漏清位，不会误清非按钮对象）。 */
+static void pushbutton_clearSiblingDefaults(XObject* object,
+                                            XPushButton* except)
+{
+    const XVector* children;
+    XVector* kids;
+    int64_t i;
+    int64_t n;
+    if (!object) return;
+    children = XObject_children(object);
+    if (!children) return;
+    kids = (XVector*)children;
+    n = XVector_size_base((const XContainer*)kids);
+    for (i = 0; i < n; ++i) {
+        XObject** slot = (XObject**)XVector_at_base(kids, i);
+        XObject* child;
+        if (!slot) continue;
+        child = *slot;
+        if (!child) continue;
+        if (child != (XObject*)except) {
+            XVtable* vt = XClassGetVtable(child);
+
+            if (vt == XPushButton_class_init()
+#if XCOMMANDLINKBUTTON_ON
+                || vt == XCommandLinkButton_class_init()
+#endif
+            ) {
+                XPushButton* btn = (XPushButton*)child;
+                if (btn->m_defaultButton) {
+                    btn->m_defaultButton = false;
+                    XWidget_update((XWidget*)btn);
+                }
+            }
+        }
+        pushbutton_clearSiblingDefaults(child, except);
+    }
+}
+
 void XPushButton_setDefault(XPushButton* self, bool enable)
 {
     if (!self || self->m_defaultButton == enable) return;
     self->m_defaultButton = enable;
+    /* 复扫 R-76（PushButton 半边）：默认位对话框内互斥——此前纯存储
+     * 可多个同真。对标 Qt：setDefault(true) 沿父链找所属对话框，清掉
+     * 其子树内其他按钮的 default 位。注：对话框级 Enter→默认按钮派发
+     * 属 XDialog 键盘路径（XDialog.c VXDialog_keyPressEvent 补 Enter
+     * 分支），不在本文件所有权内（事件过滤器与快捷键路径经查证均不
+     * 覆盖控件按键，见 XWidget_sendEvent/XShortcut.h @note）。 */
+    if (enable) {
+        XWidget* dlg = pushbutton_dialogParent(self);
+        if (dlg)
+            pushbutton_clearSiblingDefaults((XObject*)dlg, self);
+    }
     XWidget_update((XWidget*)self);
 }
 

@@ -104,6 +104,7 @@ typedef struct XAction
     XObject      m_base;                  /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
     XString*     m_text;                  /**< 主文本（对标 QAction::text）；对象拥有。 */
     XString*     m_iconText;              /**< 图标文本（对标 QAction::iconText）；对象拥有。 */
+    XString*     m_iconPath;              /**< 图标路径（对标 QAction::icon；XGui §8.1 图标以路径字符串承载）；对象拥有。 */
     XString*     m_toolTip;               /**< 工具提示（对标 QAction::toolTip）；对象拥有。 */
     XString*     m_statusTip;             /**< 状态栏提示（对标 QAction::statusTip）；对象拥有。 */
     XString*     m_whatsThis;             /**< What's This 帮助文本（对标 QAction::whatsThis）；对象拥有。 */
@@ -326,6 +327,39 @@ void XAction_setToolTip(XAction* self, const XString* tip);
  * @return     无返回值；内容真正变化时发射 changed 信号。
  */
 void XAction_setToolTip_2(XAction* self, const char* utf8);
+
+/**
+ * @brief      获取图标路径的拷贝（对标 QAction::icon；XGui §8.1 图标
+ *             以路径字符串承载，故 icon() 返回路径文本）。
+ * @param      self 动作对象的借用指针；可为 NULL。
+ * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
+ *             XString_delete_base；self 为 NULL 或未设置时返回 NULL。
+ */
+XString* XAction_icon(const XAction* self);
+
+/**
+ * @brief      获取图标路径的内部借用指针。
+ * @param      self 动作对象的借用指针；可为 NULL。
+ * @return     内部路径借用指针；未设置或 self 为 NULL 时返回 NULL，不得
+ *             释放或修改。
+ */
+const XString* XAction_icon_const(const XAction* self);
+
+/**
+ * @brief      设置图标路径（对标 QAction::setIcon）。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @param      path 源路径借用指针；可为 NULL 表示清空图标。
+ * @return     无返回值；内容真正变化时发射 changed 信号。
+ */
+void XAction_setIcon(XAction* self, const XString* path);
+
+/**
+ * @brief      使用 UTF-8 字符串设置图标路径（UTF-8 兼容重载）。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @param      utf8 以 '\0' 结尾的 UTF-8 路径；可为 NULL 表示清空图标。
+ * @return     无返回值；内容真正变化时发射 changed 信号。
+ */
+void XAction_setIcon_2(XAction* self, const char* utf8);
 
 /**
  * @brief      获取状态栏提示的拷贝（对标 QAction::statusTip）。

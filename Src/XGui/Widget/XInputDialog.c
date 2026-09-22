@@ -514,12 +514,19 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
     XInputDialog* dlg = (XInputDialog*)receiver;
     (void)args;
     if (!dlg) return;
+    /* P1-R26：Qt 语义下 *ValueSelected 由 done(Accepted) 发射（发射
+     * 于 QDialog::done 之前）。本实现的 accept 收口在本槽：各分支
+     * 结算完输入控件当前值后随即发射对应确认信号，再走
+     * XDialog_accept（其内部发 finished/accepted）。 */
     switch (XInputDialog_inputMode(dlg)) {
     case XInputDialog_IntInput: {
         XSpinBox* spin =
             (XSpinBox*)xid_childByName(&dlg->m_base, XID_NAME_SPIN);
-        if (spin)
-            XInputDialog_setIntValue(dlg, XSpinBox_value(spin));
+        if (spin) {
+            int v = XSpinBox_value(spin);
+            XInputDialog_setIntValue(dlg, v);
+            XInputDialog_intValueSelected_signal(dlg, v);
+        }
         break;
     }
     case XInputDialog_DoubleInput: {
@@ -535,6 +542,7 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
             if (v < dlg->m_doubleMinimum) v = dlg->m_doubleMinimum;
             if (v > dlg->m_doubleMaximum) v = dlg->m_doubleMaximum;
             XInputDialog_setDoubleValue(dlg, v);
+            XInputDialog_doubleValueSelected_signal(dlg, v);
         }
         break;
     }
@@ -544,7 +552,10 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
         if (combo) {
             XString* t = XComboBox_currentText(combo);
             if (t) {
+                /* 对标 Qt：下拉值结算走 textValue 通道，确认信号为
+                 * textValueSelected（载荷=当前选中项文本）。 */
                 XInputDialog_setTextValue(dlg, t);
+                XInputDialog_textValueSelected_signal(dlg, t);
                 XString_delete_base((XClass*)t);
             }
         }
@@ -554,12 +565,28 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
     default: {
         XLineEdit* edit =
             (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
+        XString* v = NULL;
         if (edit) {
-            XString* v = XString_create_utf8(XLineEdit_text(edit));
-            if (v) {
-                XInputDialog_setTextValue(dlg, v);
-                XString_delete_base((XClass*)v);
+            v = XString_create_utf8(XLineEdit_text(edit));
+        } else {
+            /* getMultiLineText 的多行编辑承载（XID_NAME_PLAIN）：
+             * 对齐 Qt——输入控件值在 done(Accepted) 时点结算并发射
+             * 确认信号，不留到 exec 返回后补采（那时确认信号已错
+             * 过）。exec 返回后的同值回填因 setter 相等短路而幂等。 */
+            XPlainTextEdit* plain = (XPlainTextEdit*)xid_childByName(
+                &dlg->m_base, XID_NAME_PLAIN);
+            if (plain) {
+                char* buf = XPlainTextEdit_toPlainText(plain);
+                if (buf) {
+                    v = XString_create_utf8(buf);
+                    XFree_System(buf);
+                }
             }
+        }
+        if (v) {
+            XInputDialog_setTextValue(dlg, v);
+            XInputDialog_textValueSelected_signal(dlg, v);
+            XString_delete_base((XClass*)v);
         }
         break;
     }
@@ -1021,18 +1048,28 @@ void XInputDialog_setTextEchoMode(XInputDialog* self,
                                   XInputDialogEchoMode mode)
 { if (self) self->m_echoMode = mode; }
 
+/* P1-R26：*ValueSelected 与 *Changed 是两个独立信号（对标 Qt
+ * QInputDialog：textValueSelected 等仅由 done(Accepted) 路径发射，
+ * 与 textValueChanged/intValueChanged/doubleValueChanged 无任何联
+ * 动）。信号函数只发射自身，不再交叉调用 *Changed 信号函数（修复
+ * 前手动调确认信号会连带真发射对应 *Changed）。 */
+
 void* XInputDialog_textValueSelected_signal(XInputDialog* self,
                                             const XString* text)
 {
     if (!self) return (void*)(size_t)XInputDialog_textValueSelected_signal;
-    XInputDialog_textValueChanged_signal(self, text);
+    xinputdialog_emitString(self,
+                            (size_t)XInputDialog_textValueSelected_signal,
+                            text);
     return (void*)(size_t)XInputDialog_textValueSelected_signal;
 }
 
 void* XInputDialog_intValueSelected_signal(XInputDialog* self, int value)
 {
     if (!self) return (void*)(size_t)XInputDialog_intValueSelected_signal;
-    XInputDialog_intValueChanged_signal(self, value);
+    xinputdialog_emitInt(self,
+                         (size_t)XInputDialog_intValueSelected_signal,
+                         value);
     return (void*)(size_t)XInputDialog_intValueSelected_signal;
 }
 
@@ -1040,7 +1077,9 @@ void* XInputDialog_doubleValueSelected_signal(XInputDialog* self,
                                               double value)
 {
     if (!self) return (void*)(size_t)XInputDialog_doubleValueSelected_signal;
-    XInputDialog_doubleValueChanged_signal(self, value);
+    xinputdialog_emitDouble(self,
+                            (size_t)XInputDialog_doubleValueSelected_signal,
+                            value);
     return (void*)(size_t)XInputDialog_doubleValueSelected_signal;
 }
 
@@ -1049,7 +1088,10 @@ void* XInputDialog_comboBoxTextValueSelected_signal(XInputDialog* self,
 {
     if (!self)
         return (void*)(size_t)XInputDialog_comboBoxTextValueSelected_signal;
-    XInputDialog_comboBoxTextChanged_signal(self, text);
+    /* 只发射确认信号自身；不再借道 comboBoxTextChanged_signal
+     * （其兼有 m_comboBoxText 属性存储副作用，属 *Changed 通道）。 */
+    xinputdialog_emitString(
+        self, (size_t)XInputDialog_comboBoxTextValueSelected_signal, text);
     return (void*)(size_t)XInputDialog_comboBoxTextValueSelected_signal;
 }
 

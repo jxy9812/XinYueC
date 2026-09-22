@@ -6,6 +6,8 @@
 #include "XPainter.h"
 #include "XFont.h"
 #include "XObject.h"
+#include "XVariant.h" /* XVariant_data 显式声明（此前隐式声明按 int 取返回，
+                       * 64 位下指针截断，属实际隐患，顺带归位）。 */
 
 #if XSTYLE_ON
 
@@ -182,6 +184,17 @@ static uint32_t xsss_statePseudos(uint32_t state)
     return ps;
 }
 
+/** @brief 关系链前段伪类通配位（全 1：`(伪类集 & ANY) == 伪类集` 恒真，
+ *         即伪类约束被忽略）。
+ *
+ *  口径声明（R-90，对标 Qt 6.8 qcssparser：Selector::pseudoClass 只读
+ *  basicSelectors.last()，祖先/父段伪类一律不参与匹配、规则照常应用）：
+ *  此前前段以 statePseudos(0) 求值——state=0 映射出 Disabled 位，致
+ *  :enabled/:hover/:focus 永不命中、:disabled 恒命中，整条关系规则
+ *  失效/误应用，偏差方向恰与 Qt 相反。现按 Qt 口径忽略前段伪类。
+ */
+#define XSSS_PSEUDOS_ANY 0xFFFFFFFFu
+
 /** @brief 属性选择器匹配（[name] 存在 / [name=value] 相等）。
  *
  *  属性值来源：XObject 动态属性（XObject_property），对标 QSS 的
@@ -269,8 +282,9 @@ static bool xsss_basicMatches(const XCssBasicSelector* sel,
 
 /** @brief 选择器链匹配（对标 CSS 关系选择器）。
  *
- *  末段在 obj 上匹配；前段按 relationToPrev 沿 XObject parent 链回溯
- *  （Ancestor=任意祖先，Parent=直接父）。 */
+ *  末段在 obj 上匹配（伪类按 obj 状态求值）；前段按 relationToPrev 沿
+ *  XObject parent 链回溯（Ancestor=任意祖先，Parent=直接父），前段伪类
+ *  一律忽略（XSSS_PSEUDOS_ANY，对标 Qt 6.8「伪类仅末段生效」口径）。 */
 static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
                                  uint32_t statePseudos)
 {
@@ -288,14 +302,14 @@ static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
         if (rel == XCssRelation_Parent) {
             if (parent &&
                 xsss_basicMatches(&sel->m_basics[idx], parent,
-                                  xsss_statePseudos(0)))
+                                  XSSS_PSEUDOS_ANY))
                 matched = true;
             cur = parent;
         } else if (rel == XCssRelation_Ancestor) {
             const XObject* a = parent;
             while (a) {
                 if (xsss_basicMatches(&sel->m_basics[idx], a,
-                                      xsss_statePseudos(0))) {
+                                      XSSS_PSEUDOS_ANY)) {
                     matched = true;
                     break;
                 }
@@ -307,7 +321,7 @@ static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
             /* None：同级顺序无关，按父匹配一次。 */
             if (parent &&
                 xsss_basicMatches(&sel->m_basics[idx], parent,
-                                  xsss_statePseudos(0)))
+                                  XSSS_PSEUDOS_ANY))
                 matched = true;
             cur = parent;
         }
@@ -316,10 +330,24 @@ static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
     return true;
 }
 
+/** @brief 全表是否存在 !important 声明（O(声明数) 直扫，不做选择器
+ *         匹配；作缓存快路径的保守门禁）。 */
+static bool xsss_sheetHasImportant(const XCssStyleSheet* sheet)
+{
+    int ri;
+    int i;
+    for (ri = 0; ri < sheet->m_ruleCount; ++ri) {
+        const XCssStyleRule* rule = &sheet->m_rules[ri];
+        for (i = 0; i < rule->m_declarationCount; ++i)
+            if (rule->m_declarations[i].m_important) return true;
+    }
+    return false;
+}
+
 /**
  * @brief 在样式表中查最优先命中的声明（!important > 特异度 > 后定义；
- *        对标 CSS 级联）。带单槽渲染规则缓存：命中 (对象,状态) 时直接
- *        复用最高特异度规则，未命中时全表扫描并回填缓存。
+ *        对标 CSS 级联）。带单槽渲染规则缓存：命中 (对象,状态) 时复用
+ *        最高特异度规则，未命中时全表扫描并回填缓存。
  */
 static const XCssDeclaration* xsss_lookup(XStyleSheetStyle* self,
                                           const XObject* obj, uint32_t state,
@@ -340,16 +368,22 @@ static const XCssDeclaration* xsss_lookup(XStyleSheetStyle* self,
     sheet = &self->m_sheet;
     if (!sheet || sheet->m_ruleCount == 0) return NULL;
     statePseudos = xsss_statePseudos(state);
-    /* 缓存命中：同一 (对象,状态) 直接复用最高特异度规则。 */
+    /* 缓存命中：同一 (对象,状态) 复用缓存规则。
+     * 根因修正（R-29）：命中此前盲目直返缓存规则声明，绕过 !important
+     * 级联——低特异度 !important 同属性声明会被高特异度非 important
+     * 规则遮蔽，首绘与二次绘制取值不一致。现加保守门禁：仅当全表无
+     * 任何 !important 声明时，「缓存规则=最高特异度且同分取后者（见
+     * 回填）」才等价于完整级联裁决，方可直返；否则回落全表扫描按
+     * !important > 特异度 > 次序在该属性声明集内裁决。 */
     if (self->m_cacheValid && self->m_cacheObj == obj &&
         self->m_cacheState == state) {
         const XCssDeclaration* d = self->m_cacheRule
             ? xsss_findDecl(self->m_cacheRule, id) : NULL;
-        if (d) return d;
+        if (d && !xsss_sheetHasImportant(sheet)) return d;
         cacheRule = self->m_cacheRule;
         cacheSel = self->m_cacheSel;
         cacheSpec = self->m_cacheSpec;
-        /* 缓存规则未声明该属性时回落全表扫描（缓存本身仍有效）。 */
+        /* 缓存规则未声明该属性或表含 !important → 回落全表扫描。 */
     }
     for (ri = 0; ri < sheet->m_ruleCount; ++ri) {
         const XCssStyleRule* rule = &sheet->m_rules[ri];
@@ -371,8 +405,11 @@ static const XCssDeclaration* xsss_lookup(XStyleSheetStyle* self,
                     bestIndex = ri;
                 }
             }
-            /* 回填最高特异度规则（无论是否声明目标属性）。 */
-            if (!cacheRule || sel->m_specificity > cacheSpec) {
+            /* 回填最高特异度规则（无论是否声明目标属性）；同特异度取
+             * 后出现者——与上方裁决 tie-break（ri > bestIndex 胜）一致。
+             * 根因：此前严格大于使缓存停在先出现者，命中路径与扫描
+             * 路径对同特异度规则的取舍相反。 */
+            if (!cacheRule || sel->m_specificity >= cacheSpec) {
                 cacheRule = rule;
                 cacheSel = sel;
                 cacheSpec = sel->m_specificity;
@@ -594,20 +631,71 @@ static void xsss_applyBackground(XStyleSheetStyle* self, const XObject* obj,
                           color);
 }
 
-/** @brief 查询盒模型内边距（padding 系列声明；CSS 四值简写展开）。 */
+/** @brief CSS 盒简写多值展开（对标 qtbase qcssparser
+ *         ValueExtractor::lengthValues）。
+ *
+ *  根因（R-28）：此前简写值整体喂给 XCssParseLength，前缀解析把
+ *  "4px 8px" 吞成 4 当单值四边；margin 的多值展开分支因此成死代码，
+ *  且其 2/4 值映射未换算到 out 的 左/上/右/下 序（上下/左右互换）。
+ *  CSS 盒语义（Qt 同）：token 序为顺时针「上 右 下 左」——
+ *  1 值=四边；2 值=上下/左右；3 值=上/左右/下；4 值=上右下左。
+ *  out 为调用方约定的 左/上/右/下 序；返回有效长度 token 数（0=无
+ *  可解析长度，交由单侧声明回落）。
+ */
+static int xsss_boxExpand(const char* value, int out[4])
+{
+    int vals[4] = { 0, 0, 0, 0 };
+    int n = 0;
+    while (value && *value && n < 4) {
+        const char* tok = value;
+        int val;
+        while (*value && !XIsSpace((unsigned char)*value)) ++value;
+        if (value > tok) {
+            char buf[32];
+            size_t tl = (size_t)(value - tok);
+            if (tl < sizeof(buf)) {
+                XMemcpy(buf, tok, tl);
+                buf[tl] = '\0';
+                if (XCssParseLength(buf, &val)) vals[n++] = val;
+            }
+        }
+        while (*value && XIsSpace((unsigned char)*value)) ++value;
+    }
+    switch (n) {
+    case 1: /* 单值四边。 */
+        out[0] = out[1] = out[2] = out[3] = vals[0];
+        break;
+    case 2: /* 上下=值1、左右=值2。 */
+        out[1] = out[3] = vals[0];
+        out[0] = out[2] = vals[1];
+        break;
+    case 3: /* 上=值1、左右=值2、下=值3。 */
+        out[1] = vals[0];
+        out[0] = out[2] = vals[1];
+        out[3] = vals[2];
+        break;
+    case 4: /* 顺时针 上右下左 → 左/上/右/下。 */
+        out[1] = vals[0];
+        out[2] = vals[1];
+        out[3] = vals[2];
+        out[0] = vals[3];
+        break;
+    default:
+        break;
+    }
+    return n;
+}
+
+/** @brief 查询盒模型内边距（padding 系列声明；1/2/3/4 值简写展开）。 */
 static void xsss_padding(XStyleSheetStyle* self, const XObject* obj,
                          uint32_t state, int out[4])
 {
     const XCssDeclaration* d;
-    int v = 0;
     out[0] = out[1] = out[2] = out[3] = 0; /* 左/上/右/下。 */
     d = xsss_lookup(self, obj, state, XCssProperty_Padding);
     if (d && d->m_value &&
-        XCssParseLength(XString_toUtf8(d->m_value), &v)) {
-        /* 简写：单值四边。 */
-        out[0] = out[1] = out[2] = out[3] = v;
-        return;
-    }
+        xsss_boxExpand(XString_toUtf8(d->m_value), out) > 0)
+        return; /* 简写可解析 → 四边生效（多值按 CSS 盒序展开）。 */
     d = xsss_lookup(self, obj, state, XCssProperty_PaddingLeft);
     if (d && d->m_value) XCssParseLength(XString_toUtf8(d->m_value), &out[0]);
     d = xsss_lookup(self, obj, state, XCssProperty_PaddingTop);
@@ -618,51 +706,19 @@ static void xsss_padding(XStyleSheetStyle* self, const XObject* obj,
     if (d && d->m_value) XCssParseLength(XString_toUtf8(d->m_value), &out[3]);
 }
 
-/** @brief 查询盒模型外边距（margin 系列声明；CSS 四值简写展开）。 */
+/** @brief 查询盒模型外边距（margin 声明；1/2/3/4 值简写展开）。
+ *
+ *  注：属性表（XCssStyleSheet 的枚举与 k_propNames）只有 margin 整体
+ *  声明、无 margin-left 等单侧成员，故仅简写一源（与枚举一致）。
+ */
 static void xsss_margin(XStyleSheetStyle* self, const XObject* obj,
                         uint32_t state, int out[4])
 {
     const XCssDeclaration* d;
-    int v = 0;
     out[0] = out[1] = out[2] = out[3] = 0; /* 左/上/右/下。 */
     d = xsss_lookup(self, obj, state, XCssProperty_Margin);
-    if (d && d->m_value &&
-        XCssParseLength(XString_toUtf8(d->m_value), &v)) {
-        out[0] = out[1] = out[2] = out[3] = v;
-        return;
-    }
-    if (d && d->m_value) {
-        /* 简写多值展开：1 值四边 / 2 值 上下/左右 / 4 值 上右下左。 */
-        const char* vstr = XString_toUtf8(d->m_value);
-        int vals[4] = { 0, 0, 0, 0 };
-        int n = 0;
-        while (vstr && *vstr && n < 4) {
-            int val;
-            const char* tok = vstr;
-            while (*vstr && !XIsSpace((unsigned char)*vstr)) ++vstr;
-            {
-                char buf[32];
-                size_t tl = (size_t)(vstr - tok);
-                if (tl > 0 && tl < sizeof(buf)) {
-                    XMemcpy(buf, tok, tl);
-                    buf[tl] = '\0';
-                    if (XCssParseLength(buf, &val)) vals[n++] = val;
-                }
-            }
-            while (*vstr && XIsSpace((unsigned char)*vstr)) ++vstr;
-        }
-        if (n == 1) {
-            out[0] = out[1] = out[2] = out[3] = vals[0];
-        } else if (n == 2) {
-            out[0] = out[2] = vals[0];
-            out[1] = out[3] = vals[1];
-        } else if (n == 4) {
-            out[0] = vals[0]; /* 上 */
-            out[1] = vals[1]; /* 右 */
-            out[2] = vals[2]; /* 下 */
-            out[3] = vals[3]; /* 左 */
-        }
-    }
+    if (d && d->m_value)
+        xsss_boxExpand(XString_toUtf8(d->m_value), out);
 }
 
 /** @brief 绘制 QSS 边框（border-style/width/color/radius 命中时；

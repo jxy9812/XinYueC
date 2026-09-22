@@ -700,20 +700,22 @@ int demo_page_views_autotest(XWidget* page)
      *    带 x<10px，绘制位于 x∈[2,6]）→ 展开态经 visualItemRect 行带
      *    几何断言（行 0 子树 3 行：展开时行 1 y=72，折叠后 y=24）。 */
     {
-        views_injectClick((XWidget*)&g_views.tree, 40, 12);
+        /* P1 批次起 XTreeWidget 绘制 20px 表头带：行带整体下移 20，
+         * 点击坐标按新几何取各行带中心（行 0 中心=20+12）。 */
+        views_injectClick((XWidget*)&g_views.tree, 40, 32);
         VIEWS_EXPECT(XTreeWidget_currentItem((XTreeWidget*)&g_views.tree) == 0,
                      "树点击「设备」当前节点=行 0");
-        views_injectClick((XWidget*)&g_views.tree, 40, 84);
+        views_injectClick((XWidget*)&g_views.tree, 40, 104);
         VIEWS_EXPECT(XTreeWidget_currentItem((XTreeWidget*)&g_views.tree) == 1,
                      "树点击「外设」当前节点=行 1");
         VIEWS_EXPECT(XTreeWidget_visualItemRect((XTreeWidget*)&g_views.tree,
                                                 1).y == 72,
                      "树行 0 展开时行 1 行带 y=72");
-        views_injectClick((XWidget*)&g_views.tree, 4, 12);
+        views_injectClick((XWidget*)&g_views.tree, 4, 32);
         VIEWS_EXPECT(XTreeWidget_visualItemRect((XTreeWidget*)&g_views.tree,
                                                 1).y == 24,
                      "指示器点击折叠行 0（行 1 y=24）");
-        views_injectClick((XWidget*)&g_views.tree, 4, 12);
+        views_injectClick((XWidget*)&g_views.tree, 4, 32);
         VIEWS_EXPECT(XTreeWidget_visualItemRect((XTreeWidget*)&g_views.tree,
                                                 1).y == 72,
                      "指示器再点展开行 0（行 1 y=72）");

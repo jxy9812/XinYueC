@@ -61,6 +61,30 @@ static XRect xstyle_alignedRectInt(int alignment, int cw, int ch,
     return r;
 }
 
+/** @brief 单行文本按对齐标志在矩形内绘制（对标 QPainter::drawText(rect,
+ *         flags, text)；XAlignment_* 与 XPAINTER_TEXT_ALIGN_* 数值一致，
+ *         均对标 Qt::Alignment）。 */
+static void xstyle_drawAlignedText(XPainter* painter, const XRect* rect,
+                                   int alignment, const char* text,
+                                   uint32_t color)
+{
+#if XPAINTER_TEXTLAYOUT_ON
+    XPainter_drawTextRect(painter, rect,
+                          (uint32_t)alignment | XPAINTER_TEXT_SINGLE_LINE,
+                          text, color);
+#else
+    /* 无文本布局能力：按对齐定位后走基线绘制（保持水平/垂直对齐语义）。 */
+    {
+        XFont* font = XPainter_font(painter);
+        int tw = XPainter_textWidth(font, text);
+        int th = XPainter_textHeight(font);
+        XRect r = xstyle_alignedRectInt(alignment, tw, th, rect);
+        XPainter_drawText(painter, r.x, r.y + XPainter_textAscent(font),
+                          text, color);
+    }
+#endif
+}
+
 /** @brief 基础标准调色板（对标 QStyle::standardPalette）。 */
 static void xstyle_standardPalette(XPalette* out)
 {
@@ -101,8 +125,13 @@ static void xstyle_standardPalette(XPalette* out)
     XColor_setRgba(&c, 0xFFFFFFFFu);
     XPalette_setColor(out, XPaletteColorGroup_Active,
                       XPaletteColorRole_Base, c);
-    /* 禁用组：windowText/text/buttonText=dark，base=background。 */
-    for (g = XPaletteColorGroup_Disabled; g < XPaletteColorGroup_NColorGroups;
+    /* 禁用组：windowText/text/buttonText=dark，base=background。仅覆写
+     * Disabled 组——对标 Qt 6.8.3 QStyle::standardPalette（7 参 QPalette
+     * 构造后仅 setBrush(Disabled,…)×4）。循环上界若含 Inactive/Current：
+     * Current 会经 XPalette_setColor 的组归一化映射到 Active，把常规组
+     * 刚写入的 windowText/text/buttonText=black、base=white 反向污染成
+     * dark/background（回归：standardPalette Base/WindowText 断言失败）。 */
+    for (g = XPaletteColorGroup_Disabled; g <= XPaletteColorGroup_Disabled;
          ++g) {
         XColor_setRgba(&c, dark);
         XPalette_setColor(out, (XPaletteColorGroup)g,
@@ -419,7 +448,7 @@ void XStyle_drawItemText(XStyle* self, XPainter* painter,
         fn(self, painter, rect, alignment, palette, enabled, text, textRole);
         return;
     }
-    /* 基类默认（对标 QStyle::drawItemText 的 etch 分支子集）。 */
+    /* 基类默认（对标 QStyle::drawItemText）。 */
     if (!text || !text[0]) return;
     if (textRole != XPaletteColorRole_NoRole && palette) {
         XColor c = XPalette_color((XPalette*)palette,
@@ -430,22 +459,33 @@ void XStyle_drawItemText(XStyle* self, XPainter* painter,
     }
     if (!enabled && self &&
         XStyle_styleHint(self, XStyleSH_EtchDisabledText, NULL, NULL)) {
+        /* 蚀刻（Qt SH_EtchDisabledText 分支）：影=Light 色 (+1,+1) 偏移，
+         * 主体=Dark 色（Qt pal.dark()）按 alignment 于原矩形绘制。
+         * 根因修正（R-87）：此前主体沿用 penColor——影绘制已把画笔置为
+         * light，禁用文本整体画成 light；且 alignment 参数全程被忽略
+         * （固定 y+height-4 基线）。 */
         XRect off = *rect;
         uint32_t light = 0xFFFFFFFFu;
+        uint32_t dark = 0xFF000000u;
         if (palette) {
             XColor lc = XPalette_color((XPalette*)palette,
                                        XPaletteColorGroup_Active,
                                        XPaletteColorRole_Light);
+            XColor dc = XPalette_color((XPalette*)palette,
+                                       XPaletteColorGroup_Active,
+                                       XPaletteColorRole_Dark);
             light = XColor_rgba(&lc);
+            dark = XColor_rgba(&dc);
         }
         off.x += 1;
         off.y += 1;
-        XPainter_setPen(painter, light);
-        XPainter_drawText(painter, off.x, off.y + off.height - 4, text,
-                          light);
+        xstyle_drawAlignedText(painter, &off, alignment, text, light);
+        xstyle_drawAlignedText(painter, rect, alignment, text, dark);
+        return;
     }
-    XPainter_drawText(painter, rect->x, rect->y + rect->height - 4, text,
-                      XPainter_penColor(painter));
+    /* 常规：按 alignment 于矩形内绘制（角色色或画笔现有色）。 */
+    xstyle_drawAlignedText(painter, rect, alignment, text,
+                           XPainter_penColor(painter));
 }
 
 void XStyle_drawItemPixmap(XStyle* self, XPainter* painter,

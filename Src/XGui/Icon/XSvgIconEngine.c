@@ -14,19 +14,58 @@
 #include "XImage.h"
 #include "XPixmap.h"
 #include "XMemory.h"
+#include "XImageCodecInternal.h"  /* decodeSvg_ex：目标尺寸矢量直渲。 */
+#include "XFile.h"
+#include "XIODevice.h"
+#include "XByteArray.h"
 
 
-/** @brief Pixmap 虚槽：解码 SVG 文件为像素图。 */
+/** @brief Pixmap 虚槽：解码 SVG 文件为像素图（按请求尺寸光栅化）。 */
 static void VSvgEngine_pixmap(const XIconEngine* self, const XSize* size,
                               XIconMode mode, XIconState state, XPixmap* out)
 {
     XSvgIconEngine* se = (XSvgIconEngine*)self;
     XImage image;
-    (void)size;
+    XImage scaled;
+    XImage* renderImage;
+    bool scaledInited = false;
     (void)mode;
     (void)state;
     if (!out || !se || !se->m_fileName) return;
     XImage_init(&image);
+    /* 矢量直渲优先（R-108 矢量级锐度）：有效请求尺寸时读文件字节走
+       decodeSvg_ex 按目标尺寸出图，viewBox 几何按目标比例映射，消除
+       「固有尺寸光栅化+平滑放大」的插值模糊（对标 QSvgIconEngine 经
+       QSvgRenderer::render(targetRect) 的行为）。失败回退下方既有
+       XImage_load 缓存路径（不空手）。注意直渲路径绕过 XImageCache
+       （键为 fileName+format 不分尺寸，避免错尺寸命中）；重复请求的
+       成本由上层 XIconScaledPixmapCache 的最终位图缓存吸收。 */
+    if (size && size->width > 0 && size->height > 0) {
+        XString* path = XString_create_utf8(XString_toUtf8(se->m_fileName));
+        XFile* file = path ? XFile_create_2(path) : NULL;
+        XByteArray* bytes = NULL;
+        if (file && XIODevice_open_base((XIODevice*)file,
+                                        XIODevice_ReadOnly)) {
+            bytes = XIODevice_readAll_3((XIODevice*)file);
+            XIODevice_close_base((XIODevice*)file);
+        }
+        if (file) XClass_delete_base((XClass*)file);
+        if (path) XString_delete_base((XClass*)path);
+        if (bytes && XByteArray_size_base((const XContainer*)bytes) > 0 &&
+            XImageCodecInternal_decodeSvg_ex(
+                (const uint8_t*)XByteArray_data(bytes),
+                XByteArray_size_base((const XContainer*)bytes),
+                size->width, size->height, &image) &&
+            !XImage_isNull(&image)) {
+            XByteArray_delete_base((XClass*)bytes);
+            XPixmap_fromImage(&image, 0, out);
+            XImage_deinit_base(&image);
+            return;
+        }
+        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        XImage_deinit_base(&image);
+        XImage_init(&image);
+    }
     /* 对标 QSvgIconEngine 的 pixmap 缓存诉求：每次请求都完整「读文件 +
        解析 SVG + 光栅化」代价毫秒级，hover/状态切换/窗口重绘高频触发。
        XImageCache（默认开）在此路径命中后跳过全部 IO 与解析，是本缓存
@@ -35,7 +74,22 @@ static void VSvgEngine_pixmap(const XIconEngine* self, const XSize* size,
         XImage_deinit_base(&image);
         return;
     }
-    XPixmap_fromImage(&image, 0, out);
+    /* 根因（R-108）：此前 (void)size 显式忽略请求尺寸，按 SVG 固有尺寸
+     * 出图且引擎路径无事后缩放。对标 QSvgIconEngine::pixmap 按请求尺寸
+     * 渲染（QSvgRenderer::render 默认保持宽高比装入目标矩形）：有效请求
+     * 尺寸且与固有尺寸不同时缩放出图，缩放失败回退固有尺寸（不空手）。 */
+    renderImage = &image;
+    if (size && size->width > 0 && size->height > 0 &&
+        (size->width != XImage_width(&image) ||
+         size->height != XImage_height(&image))) {
+        XImage_init(&scaled);
+        scaledInited = true;
+        /* aspectMode=1 KeepAspectRatio；mode=1 平滑插值（矢量观感）。 */
+        XImage_scaled(&image, size->width, size->height, 1u, 1u, &scaled);
+        if (!XImage_isNull(&scaled)) renderImage = &scaled;
+    }
+    XPixmap_fromImage(renderImage, 0, out);
+    if (scaledInited) XImage_deinit_base(&scaled);
     XImage_deinit_base(&image);
 }
 

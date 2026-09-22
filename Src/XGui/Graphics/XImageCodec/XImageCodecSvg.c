@@ -2913,7 +2913,8 @@ static bool svgRenderNode(SvgRenderer* r, SvgNode* n,
 
 /* viewBox 与 preserveAspectRatio 计算根变换。 */
 static bool svgRootTransform(SvgRenderer* r, SvgNode* root,
-                             double width, double height, SvgMatrix* ctm)
+                             double width, double height, SvgMatrix* ctm,
+                             double implicitVbW, double implicitVbH)
 {
     const char* vb = svgNodeAttr(root, "viewBox");
     (void)r;
@@ -2928,7 +2929,19 @@ static bool svgRootTransform(SvgRenderer* r, SvgNode* root,
         svgParseNumberList(vb, values, 4, &count);
         if (count < 4) return false;
     }
-    if (!vb) return true;
+    if (!vb) {
+        /* 隐式 viewBox：根元素缺 viewBox 时以固有尺寸充当（对标 Qt
+         * QSvgTinyDocument 缺省 viewBox=viewport），使目标尺寸直渲时
+         * 几何整体缩放到目标矩形而非保持 1:1 用户单位。 */
+        if (implicitVbW > 0.0 && implicitVbH > 0.0) {
+            values[0] = 0.0;
+            values[1] = 0.0;
+            values[2] = implicitVbW;
+            values[3] = implicitVbH;
+        } else {
+            return true;
+        }
+    }
     if (par) {
         if (XStrstr(par, "none")) {
             stretch = true;
@@ -2972,7 +2985,50 @@ static bool svgRootTransform(SvgRenderer* r, SvgNode* root,
 }
 
 /* SVG 矢量解码主体。 */
-static bool svgVectorDecode(const char* text, size_t size, XImage* out)
+/** 超采样倍数：4×4=16 级覆盖，近似解析式 AA 观感（对标 QSvgRenderer
+ *  矢量化抗锯齿；内存上限 4096² 目标下超采样面 16384² 封顶）。 */
+#define SVG_AA_FACTOR 4
+
+/** @brief 4×4 盒式降采样：子像素 ARGB32 先预乘平均再非预乘还原，
+ *         等价于对覆盖度做 16 级积分——直线/曲线边缘产生 1px 过渡带
+ *         （二值光栅化的锯齿在目标分辨率重建为平滑边界）。dst 须已
+ *         按目标尺寸初始化。 */
+static bool svgDownsampleAA(const XImage* src, XImage* dst)
+{
+    int w;
+    int h;
+    int x;
+    int y;
+    w = XImage_width(src) / SVG_AA_FACTOR;
+    h = XImage_height(src) / SVG_AA_FACTOR;
+    if (w <= 0 || h <= 0) return false;
+    for (y = 0; y < h; ++y)
+        for (x = 0; x < w; ++x) {
+            unsigned sa = 0, sr = 0, sg = 0, sb = 0;
+            int sx, sy;
+            for (sy = 0; sy < SVG_AA_FACTOR; ++sy)
+                for (sx = 0; sx < SVG_AA_FACTOR; ++sx) {
+                    uint32_t px = XImage_pixel(src,
+                        x * SVG_AA_FACTOR + sx, y * SVG_AA_FACTOR + sy);
+                    unsigned a = (px >> 24) & 0xffu;
+                    sa += a;
+                    sr += a * ((px >> 16) & 0xffu);
+                    sg += a * ((px >> 8) & 0xffu);
+                    sb += a * (px & 0xffu);
+                }
+            if (sa) {
+                XImage_setPixel(dst, x, y,
+                    ((sa / SVG_AA_FACTOR / SVG_AA_FACTOR) << 24) |
+                    ((sr / sa) << 16) | ((sg / sa) << 8) | (sb / sa));
+            } else {
+                XImage_setPixel(dst, x, y, 0u);
+            }
+        }
+    return true;
+}
+
+static bool svgVectorDecode(const char* text, size_t size,
+                            int targetWidth, int targetHeight, XImage* out)
 {
     SvgArena arena;
     SvgNode* root;
@@ -3007,12 +3063,39 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
             if (height <= 0.0) height = values[3];
         }
     }
-    if (width <= 0.0 || height <= 0.0) {
-        svgArenaCleanup(&arena);
-        return false;
-    }
-    r.m_width = svgClip((int)(width + 0.5), 1, 16384);
-    r.m_height = svgClip((int)(height + 0.5), 1, 16384);
+    {
+        /* 矢量直渲（对标 QSvgRenderer::render 按目标矩形出图）：目标
+         * 尺寸覆写表面大小，viewBox 根变换按目标比例映射矢量几何，消
+         * 除「固有尺寸光栅化+平滑放大」的插值模糊（R-108 矢量级锐
+         * 度）。固有尺寸覆写前留作隐式 viewBox；纵横比由
+         * preserveAspectRatio（默认 xMidYMid meet）保持。目标须为正，
+         * 否则按固有尺寸出图（既有口径）。
+         *
+         * 渲染器级 AA（§8.0g15 登记）：4× 超采样后盒式降采样（16 级
+         * 覆盖积分）把二值光栅化的锯齿重建为 1px 平滑边界；目标超
+         * 4096 时超采样面将超 16384 上限，回退无 AA。 */
+        double intrinsicWidth = width;
+        double intrinsicHeight = height;
+        int outWidth;
+        int outHeight;
+        int renderWidth;
+        int renderHeight;
+        int aaActive;
+        if (targetWidth > 0 && targetHeight > 0) {
+            width = targetWidth;
+            height = targetHeight;
+        }
+    outWidth = svgClip((int)(width + 0.5), 1, 16384);
+    outHeight = svgClip((int)(height + 0.5), 1, 16384);
+    /* AA 仅在显式目标尺寸（decodeSvg_ex 传入正目标）时启用：新 API
+     * 契约为「矢量直渲+超采样 AA」；既有 decodeSvg 固有尺寸路径保持
+     * 逐字节历史基线（渐变中心/三角形/宽行覆盖等像素级断言不变）。 */
+    aaActive = targetWidth > 0 && targetHeight > 0 &&
+               outWidth <= 4096 && outHeight <= 4096;
+    renderWidth = aaActive ? outWidth * SVG_AA_FACTOR : outWidth;
+    renderHeight = aaActive ? outHeight * SVG_AA_FACTOR : outHeight;
+    r.m_width = renderWidth;
+    r.m_height = renderHeight;
     XImage_init_ex(&temp, r.m_width, r.m_height, XImageFormat_ARGB32);
     if (XImage_isNull(&temp)) {
         XImage_deinit_base(&temp);
@@ -3026,7 +3109,8 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
         XImage_deinit_base(&temp);
         return false;
     }
-    if (!svgRootTransform(&r, root, r.m_width, r.m_height, &rootCtm)) {
+    if (!svgRootTransform(&r, root, r.m_width, r.m_height, &rootCtm,
+                           intrinsicWidth, intrinsicHeight)) {
         svgArenaCleanup(&arena);
         XImage_deinit_base(&temp);
         return false;
@@ -3039,9 +3123,24 @@ static bool svgVectorDecode(const char* text, size_t size, XImage* out)
             return false;
         }
     }
-    svgArenaCleanup(&arena);
-    XMove(out, &temp);
-    return true;
+        svgArenaCleanup(&arena);
+        if (aaActive) {
+            XImage finalImage;
+            XImage_init_ex(&finalImage, outWidth, outHeight,
+                           XImageFormat_ARGB32);
+            if (XImage_isNull(&finalImage) ||
+                !svgDownsampleAA(&temp, &finalImage)) {
+                XImage_deinit_base(&finalImage);
+                XImage_deinit_base(&temp);
+                return false;
+            }
+            XImage_deinit_base(&temp);
+            XMove(out, &finalImage);
+            return true;
+        }
+        XMove(out, &temp);
+        return true;
+    }
 }
 
 #endif /* XIMAGECODEC_SVG_VECTOR_ON */
@@ -3281,7 +3380,15 @@ bool XImageCodecInternal_probeSvgSize(const uint8_t* data, size_t size,
  * @param out   输出图像对象，成功后由调用者负责释放。
  * @return 成功返回 true。
  */
-bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out)
+bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size,
+                                   XImage* out)
+{
+    return XImageCodecInternal_decodeSvg_ex(data, size, 0, 0, out);
+}
+
+bool XImageCodecInternal_decodeSvg_ex(const uint8_t* data, size_t size,
+                                      int targetWidth, int targetHeight,
+                                      XImage* out)
 {
     const char* marker = "data:image/png;base64,";
     const uint8_t* p;
@@ -3293,7 +3400,9 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
         size_t inflatedSize = 0;
         bool result = svgInflateGzip(data, size, &inflated, &inflatedSize);
         if (!result) return false;
-        result = XImageCodecInternal_decodeSvg(inflated, inflatedSize, out);
+        result = XImageCodecInternal_decodeSvg_ex(inflated, inflatedSize,
+                                                  targetWidth, targetHeight,
+                                                  out);
         XFree_Hybrid(inflated);
         return result;
     }
@@ -3319,8 +3428,9 @@ bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out
     }
 
 #if XIMAGECODEC_SVG_VECTOR_ON
-    /* 形态 2：矢量渲染。 */
-    if (svgVectorDecode(text, textSize, out)) {
+    /* 形态 2：矢量渲染（目标尺寸直渲；位图/纯色形态无矢量几何，
+     * target 尺寸不适用，保持原口径）。 */
+    if (svgVectorDecode(text, textSize, targetWidth, targetHeight, out)) {
         XFree_Hybrid(text);
         return true;
     }

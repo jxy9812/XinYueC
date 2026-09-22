@@ -157,10 +157,25 @@ static void VXPieSeries_move(XPieSeries* self, XPieSeries* other)
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XPieSeries_init(self);
+    /* 根因（R-104）：此前在父类 move（已把 other 的 name/图表链移入
+     * self）之后才调 VXPieSeries_deinit——基类析构把刚移入的 name/
+     * axes 连带释放，move 后序列名称/图表链丢失（状态损毁）。对照
+     * VXXYSeries_move（XXYSeries.c:295-333）正确范式：先清「自身扩展」
+     * （切片集合为派生类独有资源），再父类 move（基类 deinit+资源转移
+     * 恰好一次），最后转移 other 扩展。此处只清切片、不整体 deinit，
+     * 避免基类资源被二次析构。 */
+    {
+        int i;
+        for (i = 0; i < self->m_count; ++i)
+            if (self->m_slices[i]) XPieSlice_delete_base(self->m_slices[i]);
+        if (self->m_slices) XFree_System(self->m_slices);
+        self->m_slices = NULL;
+        self->m_count = 0;
+        self->m_capacity = 0;
+    }
     XClass_Parent(XAbstractSeries, EXClass_Move,
                   void(*)(XAbstractSeries*, XAbstractSeries*))(
         (XAbstractSeries*)self, (XAbstractSeries*)other);
-    VXPieSeries_deinit(self);
     self->m_slices = other->m_slices;
     other->m_slices = NULL;
     self->m_count = other->m_count;
@@ -361,8 +376,11 @@ double XPieSeries_pieSize(const XPieSeries* self)
 void XPieSeries_setPieStartAngle(XPieSeries* self, double startAngle)
 { if (self) self->m_pieStartAngle = startAngle; }
 
+/* 根因（R-107）：空指针回退值此前为 90.0，与 XPieSeries_init 置的构造
+ * 默认 0.0 口径矛盾（NULL 序列与刚构造序列 getter 返回不同）。以 init
+ * 值为准统一（endAngle 回退 360.0 与 init 一致，无需改）。 */
 double XPieSeries_pieStartAngle(const XPieSeries* self)
-{ return self ? self->m_pieStartAngle : 90.0; }
+{ return self ? self->m_pieStartAngle : 0.0; }
 
 void XPieSeries_setPieEndAngle(XPieSeries* self, double endAngle)
 { if (self) self->m_pieEndAngle = endAngle; }

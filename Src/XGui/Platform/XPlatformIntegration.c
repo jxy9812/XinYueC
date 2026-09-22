@@ -543,6 +543,10 @@ static int integration_styleInt(const XPlatformIntegration* self,
             return XStyleHints_mouseQuickSelectionThreshold(sh);
         case XPlatformIntegrationStyleHint_MouseDoubleClickDistance:
             return XStyleHints_mouseDoubleClickDistance(sh);
+        /* 根因(R-98)：映射表此前漏接 MousePressAndHoldInterval，注入的
+           XStyleHints 单例值被 fallback 短路。 */
+        case XPlatformIntegrationStyleHint_MousePressAndHoldInterval:
+            return XStyleHints_mousePressAndHoldInterval(sh);
         default:
             return fallback;
     }
@@ -623,11 +627,13 @@ XVariant* XPlatformIntegration_styleHint(const XPlatformIntegration* self,
         }
 #endif /* XSTYLEHINTS_ON */
         case XPlatformIntegrationStyleHint_SetFocusOnTouchRelease:
-            return XVariant_create_bool(integration_styleBool(self, hint, true));
+            /* 对标 Qt 6.8 QPlatformTheme::defaultThemeHints：默认 false。 */
+            return XVariant_create_bool(integration_styleBool(self, hint, false));
         case XPlatformIntegrationStyleHint_ShowIsMaximized:
             return XVariant_create_bool(integration_styleBool(self, hint, false));
         case XPlatformIntegrationStyleHint_MousePressAndHoldInterval:
-            return XVariant_create_int(integration_styleInt(self, hint, 500));
+            /* 对标 Qt 6.8 QPlatformTheme::defaultThemeHints：默认 800。 */
+            return XVariant_create_int(integration_styleInt(self, hint, 800));
         case XPlatformIntegrationStyleHint_TabFocusBehavior:
             return XVariant_create_int(integration_styleInt(self, hint, 0xff));
         case XPlatformIntegrationStyleHint_ReplayMousePressOutsidePopup:

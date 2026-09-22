@@ -56,6 +56,10 @@ static void xtw_ensureRows(XTableWidget* self, int rows)
     p = (XTableWidgetItem**)XRealloc_System(self->m_cells,
         sizeof(XTableWidgetItem*) * (size_t)cap);
     if (!p) return;
+    /* 扩容区必须清零：realloc 复用块里的旧内容是野行指针（曾实测为已释放
+       字符串的残余字节），后续插入/释放路径读到即破坏堆。 */
+    XMemset(p + self->m_rows, 0,
+            sizeof(XTableWidgetItem*) * (size_t)(cap - self->m_rows));
     self->m_cells = p;
     self->m_rowCapacity = cap;
 }
@@ -209,6 +213,42 @@ static void xtw_cwOnColumnRemoved(XTableWidget* self, int column)
     }
 }
 
+/** @brief 单元格数据随列插入右移：[column..oldCols) → [column+1..oldCols+1)，新列清零。
+ *         对标 QTableWidget::insertColumn 的空列插入语义；调用方已先把 m_columns +1。 */
+static void xtw_shiftColumnsRight(XTableWidget* self, int column)
+{
+    int i;
+    int c;
+    int oldCols = self->m_columns - 1; /* 增列前的逻辑列数。 */
+    for (i = 0; i < self->m_rows; ++i) {
+        XTableWidgetItem* row = self->m_cells[i];
+        if (!row) continue;
+        for (c = oldCols; c >= column; --c)
+            row[c + 1] = row[c];
+        XMemset(&row[column], 0, sizeof(XTableWidgetItem));
+    }
+}
+
+/** @brief 单元格数据随列删除左移：释放被删列文本，[column+1..oldCols) → [column..oldCols-1)，
+ *         末位清零。对标 QTableWidget::removeColumn；调用方已先把 m_columns -1。 */
+static void xtw_shiftColumnsLeft(XTableWidget* self, int column)
+{
+    int i;
+    int c;
+    int oldCols = self->m_columns + 1; /* 减列前的逻辑列数。 */
+    for (i = 0; i < self->m_rows; ++i) {
+        XTableWidgetItem* row = self->m_cells[i];
+        if (!row) continue;
+        if (row[column].text) {
+            XString_delete_base((XClass*)row[column].text);
+            row[column].text = NULL;
+        }
+        for (c = column + 1; c < oldCols; ++c)
+            row[c - 1] = row[c];
+        XMemset(&row[oldCols - 1], 0, sizeof(XTableWidgetItem));
+    }
+}
+
 /** @brief 行数收缩：解除行号 >= keepRows 的挂载条目。 */
 static void xtw_cwTruncateRows(XTableWidget* self, int keepRows)
 {
@@ -297,7 +337,7 @@ static void xtw_freeRowItems(XTableWidgetItem* row, int cols)
     if (!row) return;
     for (i = 0; i < cols; ++i)
         if (row[i].text) {
-            XString_delete_base(row[i].text);
+            XString_delete_base((XClass*)row[i].text);
             row[i].text = NULL;
         }
     XFree_System(row);
@@ -316,7 +356,7 @@ static void VXTableWidget_deinit(XTableWidget* self)
     if (self->m_hHeaders) {
         for (i = 0; i < self->m_base.m_colCapacity; ++i) {
             if (self->m_hHeaders[i]) {
-                XString_delete_base(self->m_hHeaders[i]);
+                XString_delete_base((XClass*)self->m_hHeaders[i]);
                 self->m_hHeaders[i] = NULL;
             }
         }
@@ -326,7 +366,7 @@ static void VXTableWidget_deinit(XTableWidget* self)
     if (self->m_vHeaders) {
         for (i = 0; i < self->m_vHeaderCapacity; ++i) {
             if (self->m_vHeaders[i]) {
-                XString_delete_base(self->m_vHeaders[i]);
+                XString_delete_base((XClass*)self->m_vHeaders[i]);
                 self->m_vHeaders[i] = NULL;
             }
         }
@@ -405,6 +445,12 @@ void XTableWidget_setRowCount(XTableWidget* self, int rows)
     if (self->m_base.m_base.m_currentRow >= rows) self->m_base.m_base.m_currentRow = rows - 1;
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
+    /* 内建模型维度同步（根因：setColumnCount/insertRow/removeRow 等
+       均同步模型，唯本函数漏发——先 setColumnCount 后 setRowCount 的
+       调用序下模型恒 0 行，编辑/键盘搜索/role 通路失真）。 */
+    if (self->m_model)
+        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
+                                        self->m_columns);
 }
 
 int XTableWidget_rowCount(const XTableWidget* self) { return self ? self->m_rows : 0; }
@@ -442,7 +488,8 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
     if (!self || row < 0 || row > self->m_rows) return;
     xtw_ensureRows(self, self->m_rows + 1);
     xtw_ensureCols(self, self->m_columns > 0 ? self->m_columns : 1);
-    self->m_cells[self->m_rows] = xtw_newRow(self->m_base.m_colCapacity);
+    /* 行指针整体后移后，新行只落在插入位一处：
+       不可先在 m_cells[m_rows] 预置新行——移位/追加两条路径都会把它覆盖，纯泄漏。 */
     for (i = self->m_rows; i > row; --i) self->m_cells[i] = self->m_cells[i-1];
     self->m_cells[row] = xtw_newRow(self->m_base.m_colCapacity);
     self->m_rows++;
@@ -459,6 +506,7 @@ void XTableWidget_insertColumn(XTableWidget* self, int column)
     if (!self || column < 0 || column > self->m_columns) return;
     self->m_columns++;
     xtw_ensureCols(self, self->m_columns);
+    xtw_shiftColumnsRight(self, column); /* 单元格数据右移，新列置空（对标 Qt）。 */
     xtw_cwOnColumnInserted(self, column); /* 挂载表随列号平移。 */
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
@@ -471,13 +519,13 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
 {
     int i;
     if (!self || row < 0 || row >= self->m_rows) return;
+    /* 先释放被删行自身的单元格数组，再做指针前移：
+       若先移位后释放 m_cells[m_rows-1]，该槽位经移位后是 m_cells[m_rows-2]
+       的别名，会释放仍被引用的活行（UAF，后续分配复用该块即崩溃）。 */
+    xtw_freeRowItems(self->m_cells[row], self->m_base.m_colCapacity);
     for (i = row; i < self->m_rows - 1; ++i)
         self->m_cells[i] = self->m_cells[i+1];
-    if (self->m_cells[self->m_rows - 1]) {
-        xtw_freeRowItems(self->m_cells[self->m_rows - 1],
-                         self->m_base.m_colCapacity);
-        self->m_cells[self->m_rows - 1] = NULL;
-    }
+    self->m_cells[self->m_rows - 1] = NULL; /* 前移后的孤位（悬空重复指针）清除。 */
     self->m_rows--;
     xtw_cwOnRowRemoved(self, row); /* 挂载表随行号平移/解除。 */
     xtw_updateContentSize(self);
@@ -491,6 +539,7 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
 {
     if (!self || column < 0 || column >= self->m_columns) return;
     self->m_columns--;
+    xtw_shiftColumnsLeft(self, column); /* 释放被删列文本并左移补位（对标 Qt）。 */
     xtw_cwOnColumnRemoved(self, column); /* 挂载表随列号平移/解除。 */
     xtw_updateContentSize(self);
     XWidget_update((XWidget*)self);
@@ -507,7 +556,7 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
     XTableWidgetItem* cell = xtw_cell(self, row, column);
     if (!cell || !item) return;
     if (cell->text) {
-        XString_delete_base(cell->text);
+        XString_delete_base((XClass*)cell->text);
         cell->text = NULL;
     }
     if (item->text)
@@ -559,22 +608,31 @@ void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column)
     if (!self) return;
     prevR = self->m_base.m_base.m_currentRow;
     prevC = self->m_base.m_base.m_currentColumn;
+    /* 越界收敛（对标 QTableWidget::setCurrentCell→setCurrentIndex 对
+       无效模型索引清除当前项）：任一维越界即把当前格清为 -1。根因：
+       此前越界行列被原样写入当前格，绘制高亮永不命中，成不可见脏态。 */
+    if (row < 0 || row >= self->m_rows ||
+        column < 0 || column >= self->m_columns) {
+        row = -1;
+        column = -1;
+    }
+    /* 变化门禁：同格重设不移动、不发射（对标 QItemSelectionModel
+       setCurrentIndex 仅在当前索引变化时发射 currentChanged）。 */
+    if (row == prevR && column == prevC) return;
     self->m_base.m_base.m_currentRow = row;
     self->m_base.m_base.m_currentColumn = column;
     XTableWidget_scrollToItem(self, row, column);
     xtw_emitCellSignal(self,
         (size_t)XTableWidget_currentCellChanged_signal, row, column);
-    if (row != prevR || column != prevC) {
-        xtw_emitItemSignal(self,
-            (size_t)XTableWidget_currentItemChanged_signal,
-            xtw_cell(self, row, column));
-        if (self->m_selectionRow != row ||
-            self->m_selectionColumn != column) {
-            self->m_selectionRow = row;
-            self->m_selectionColumn = column;
-            xtw_emit0(self,
-                (size_t)XTableWidget_itemSelectionChanged_signal);
-        }
+    xtw_emitItemSignal(self,
+        (size_t)XTableWidget_currentItemChanged_signal,
+        xtw_cell(self, row, column));
+    if (self->m_selectionRow != row ||
+        self->m_selectionColumn != column) {
+        self->m_selectionRow = row;
+        self->m_selectionColumn = column;
+        xtw_emit0(self,
+            (size_t)XTableWidget_itemSelectionChanged_signal);
     }
     XWidget_update((XWidget*)self);
 }
@@ -792,7 +850,7 @@ void XTableWidget_clear(XTableWidget* self)
             if (!self->m_cells[i]) continue;
             for (k = 0; k < self->m_base.m_colCapacity; ++k) {
                 if (self->m_cells[i][k].text) {
-                    XString_delete_base(self->m_cells[i][k].text);
+                    XString_delete_base((XClass*)self->m_cells[i][k].text);
                     self->m_cells[i][k].text = NULL;
                 }
             }
@@ -808,7 +866,7 @@ void XTableWidget_clear(XTableWidget* self)
     if (self->m_hHeaders) {
         for (i = 0; i < self->m_base.m_colCapacity; ++i) {
             if (self->m_hHeaders[i]) {
-                XString_delete_base(self->m_hHeaders[i]);
+                XString_delete_base((XClass*)self->m_hHeaders[i]);
                 self->m_hHeaders[i] = NULL;
             }
         }
@@ -816,7 +874,7 @@ void XTableWidget_clear(XTableWidget* self)
     if (self->m_vHeaders) {
         for (i = 0; i < self->m_vHeaderCapacity; ++i) {
             if (self->m_vHeaders[i]) {
-                XString_delete_base(self->m_vHeaders[i]);
+                XString_delete_base((XClass*)self->m_vHeaders[i]);
                 self->m_vHeaders[i] = NULL;
             }
         }
@@ -842,7 +900,7 @@ void XTableWidget_clearContents(XTableWidget* self)
         if (!self->m_cells[i]) continue;
         for (k = 0; k < self->m_base.m_colCapacity; ++k) {
             if (self->m_cells[i][k].text) {
-                XString_delete_base(self->m_cells[i][k].text);
+                XString_delete_base((XClass*)self->m_cells[i][k].text);
                 self->m_cells[i][k].text = NULL;
             }
         }
@@ -850,9 +908,16 @@ void XTableWidget_clearContents(XTableWidget* self)
                sizeof(XTableWidgetItem) * (size_t)self->m_base.m_colCapacity);
     }
     XWidget_update((XWidget*)self);
-    if (self->m_model)
-        XAbstractItemModel_setDimension(self->m_model, self->m_rows,
-                                        self->m_columns);
+    if (self->m_model) {
+        /* 同步内建模型：逐格写 NULL 清空文本。setDimension 同维调用
+           幂等早退清不掉数据；维度与表头保持不变，对标 Qt clearContents
+           不改行列数。 */
+        int r;
+        int c;
+        for (r = 0; r < self->m_rows; ++r)
+            for (c = 0; c < self->m_columns; ++c)
+                XAbstractItemModel_setData(self->m_model, r, c, NULL);
+    }
 }
 
 void XTableWidget_scrollToItem(XTableWidget* self, int row, int column)
@@ -1154,7 +1219,7 @@ XVector* XTableWidget_items(const XTableWidget* self, const char* text)
             rowNo = row;
             if (!XVector_push_back_1_base(rows, &rowNo)) {
                 /* 分配失败：容器归还调用方语义不成立，整体置空返回 NULL。 */
-                XVector_delete_base(rows);
+                XVector_delete_base((XClass*)rows);
                 return NULL;
             }
             break; /* 每行至多输出一次。 */
@@ -1472,9 +1537,20 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
            行号列（行号列钉在内容区左缘，对标 Qt 表头子控件层级）。 */
         XPainter_fillRect(&painter,
             &(XRect){0, cy, tw->m_headerWidth, tw->m_base.m_rowHeight}, button);
-        XPainter_drawText(&painter, 4, cy + tw->m_base.m_rowHeight - 8,
-                          XTableWidget_verticalHeaderItem(tw, row),
-                          windowText);
+        {
+            /* 对标 Qt 6.8 QTableWidget 垂直表头默认行号：
+             * QTableModel::headerData 对 Vertical+DisplayRole 返回
+             * section+1（1 基行号）。未显式设置行头文本时绘制行号，
+             * 修复行头列只渲染成空白灰条（无行号）的问题。 */
+            const char* vlabel = XTableWidget_verticalHeaderItem(tw, row);
+            char rowno[16];
+            if (!vlabel || vlabel[0] == '\0') {
+                snprintf(rowno, sizeof(rowno), "%d", row + 1);
+                vlabel = rowno;
+            }
+            XPainter_drawText(&painter, 4, cy + tw->m_base.m_rowHeight - 8,
+                              vlabel, windowText);
+        }
         XPainter_drawLine(&painter, 0, cy + tw->m_base.m_rowHeight - 1,
                           tw->m_headerWidth - 1, cy + tw->m_base.m_rowHeight - 1);
     }

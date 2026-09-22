@@ -515,15 +515,47 @@ void XPlatformNativeInterface_setWindowProperty_2(
 }
 
 
+/** @brief windowPropertyChanged 参数释放回调：释放发射时拷贝的属性名。
+ *  根因(R-36)：属性名此前以借用指针直传且 del=NULL，违反头文件
+ *  「新建 XString，由信号系统释放」契约——queued 连接下
+ *  setWindowProperty_2 的临时 XString 在 emit 返回后即被删除，槽执行
+ *  时已悬垂。对齐 XObject_objectNameChanged 范式：发射前拷贝、由
+ *  信号系统经本回调释放。 */
+static void windowPropertyChanged_args_del(XVarList* list)
+{
+    XVarList_args_2(list, XPlatformWindow*, platformWindow,
+                    XString*, propertyName);
+    (void)platformWindow;
+    if (propertyName)
+        XString_delete_base(propertyName);
+}
+
 void* XPlatformNativeInterface_windowPropertyChanged_signal(
         XPlatformNativeInterface* self, XPlatformWindow* platformWindow,
         const XString* propertyName)
 {
+    XString* copy;
+    XVarList* args;
     if (!self) return (void*)(size_t)XPlatformNativeInterface_windowPropertyChanged_signal;
-    platformNativeInterface_emit(self,
-        (size_t)XPlatformNativeInterface_windowPropertyChanged_signal,
-        XVarList_Create(XVar(XPlatformWindow*, platformWindow),
-                        XVar(XString*, propertyName)));
+    copy = propertyName ? XString_create_copy(propertyName) : NULL;
+    args = XVarList_Create(XVar(XPlatformWindow*, platformWindow),
+                           XVar(XString*, copy));
+    if (!args) {
+        if (copy) XString_delete_base(copy);
+        return (void*)(size_t)XPlatformNativeInterface_windowPropertyChanged_signal;
+    }
+    /* 属性名拷贝归信号系统所有：有接收者时经 del 回调释放，无接收者
+       时挂 del 后就地删除（与 XObject_objectNameChanged 同范式）。 */
+    if (((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self,
+            (size_t)XPlatformNativeInterface_windowPropertyChanged_signal,
+            args, windowPropertyChanged_args_del, NULL,
+            XEVENT_PRIORITY_NORMAL);
+    else
+    {
+        XVarList_setArgsDel(args, windowPropertyChanged_args_del);
+        XVarList_delete(args);
+    }
     return (void*)(size_t)XPlatformNativeInterface_windowPropertyChanged_signal;
 }
 

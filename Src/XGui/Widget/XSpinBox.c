@@ -279,18 +279,38 @@ static char* spinbox_textFromValue(const XSpinBox* self, int val)
 
 /**
  * @brief      数字校验回调（装到内嵌编辑框，对标 QIntValidator）。
- * @details    空/纯数字（可带负号）→ Acceptable；部分可构成数字 →
- *             Intermediate；含其他字符 → Invalid（编辑框拒绝该次
- *             编辑，字母等无法进入文本）。
+ * @details    P0-5 根因修复：回调收到的 text 是整段显示文本
+ *             （prefix + 数字段 + suffix；值==minimum 且设置特殊值
+ *             文本时整段为特殊值文本）。修复前按整段逐字符验数字——
+ *             设置前缀/后缀/特殊值文本后任何键入都判 Invalid，控制器
+ *             按"可用→不可用"翻转回滚该次编辑（XLineControl
+ *             xlc_finishChange），编辑框完全不可用。对标 Qt
+ *             QSpinBoxPrivate::validateAndInterpret：先剥离前后缀、
+ *             识别特殊值文本，再仅校验数字段；空段按 Intermediate
+ *             口径（允许清空/继续键入）。
  */
 static XLineEditValidatorState spinbox_validateNumeric(
     XLineEdit* edit, const char* text, void* userData)
 {
+    const XSpinBox* spin = (const XSpinBox*)userData;
     const char* p;
     int digits = 0;
+    char stripped[1024];
     (void)edit;
-    (void)userData;
     if (!text || text[0] == '\0') return XLineEditValidatorState_Intermediate;
+    if (spin) {
+        /* 特殊值文本整段精确匹配即可接受（与 VXSpinBox_validate、
+           spinbox_onTextChanged 的特殊值口径一致）。 */
+        if (spinbox_specialText(spin)[0] &&
+            XStrcmp(text, spinbox_specialText(spin)) == 0)
+            return XLineEditValidatorState_Acceptable;
+        /* 宽松剥离前缀/后缀（按匹配与否部分剥离），千分位逗号与首尾
+           空白同步去除——与 cleanText/interpret 解析口径一致。 */
+        if (!spinbox_stripText(spin, text, stripped, sizeof(stripped), false))
+            return XLineEditValidatorState_Invalid;
+        text = stripped;
+    }
+    if (text[0] == '\0') return XLineEditValidatorState_Intermediate;
     p = text;
     if (p[0] == '-' || p[0] == '+') ++p; /* 允许符号开头 */
     for (; *p; ++p) {
@@ -461,7 +481,13 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
     (void)event;
     if (!spin || r.width <= 2 || r.height <= 2) return;
     symbols = XAbstractSpinBox_buttonSymbols((XAbstractSpinBox*)spin);
-    if (symbols == XAbstractSpinBoxButtonSymbols_NoButtons) return;
+    /* P1-R30 根因修复：取消 NoButtons 整段早退。对标 Qt 6.8
+     * QAbstractSpinBox::initStyleOption——NoButtons 时 subControls
+     * 仍含 SC_SpinBoxFrame|SC_SpinBoxEditField（EditField 全宽），
+     * 仅不含 SC_SpinBoxUp|SC_SpinBoxDown；此前早退使 CC_SpinBox
+     * 整体不再绘制，边框连带消失。按钮列的跳过改由两处完成：
+     * 样式路径经 m_spinSymbols 原值透传（=2 时样式侧不画
+     * bevel/箭头），非样式回退路径经下方 NoButtons 分支。 */
     r.x = 0; r.y = 0;
     button = spinbox_color(spin, XPaletteColorRole_Button);
     dark   = spinbox_color(spin, XPaletteColorRole_Dark);
@@ -493,8 +519,13 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
         /* frame 对接基类属性（对标 Qt：setFrame(false) 时样式不再绘制
          * 微调框边框；XStyle 按该标志裁剪边框绘制与 EditField 边距）。 */
         opt.m_spinFrame = spin->m_base.m_frame;
-        opt.m_spinSymbols = symbols ==
-            XAbstractSpinBoxButtonSymbols_PlusMinus ? 1 : 0;
+        /* P1-R30：m_spinSymbols 原值透传（0 上下箭头/1 加减号/
+         * 2 无按钮）。原 `==PlusMinus?1:0` 折叠把 NoButtons=2 折成
+         * 0，样式照画步进按钮列+箭头，setButtonSymbols 公共 API
+         * 静默失效；样式侧本已支持 2（XCommonStyle.c subControlRect
+         * :3493 EditField 全宽/Up-Down 空矩形、sizeFromContents
+         * :2929 不加按钮宽、绘制 :1189 跳过 bevel/箭头）。 */
+        opt.m_spinSymbols = symbols;
         opt.m_spinStepEnabled =
             XAbstractSpinBox_stepEnabled_base((XAbstractSpinBox*)spin);
         opt.m_spinActiveUp = spin->m_activeUp;
@@ -509,6 +540,15 @@ static void VXSpinBox_paintEvent(XWidget* self, XEvent* event)
         return;
     }
 #endif /* XSTYLE_ON */
+    /* P1-R30 配套：非样式回退路径同步修——NoButtons 不画按钮列
+     * （列背景/分隔线/符号全免；编辑框几何由基类 resizeEvent 在
+     * NoButtons 下保证全宽，对标 Qt 无样式时 CC_SpinBox 仅
+     * Frame+EditField）。 */
+    if (symbols == XAbstractSpinBoxButtonSymbols_NoButtons) {
+        XPainter_end(&painter);
+        XPainter_deinit(&painter);
+        return;
+    }
     bx = r.x + r.width - XSPINBOX_BUTTON_W;
     bh = r.height / 2;
     {
@@ -808,6 +848,10 @@ static void VXSpinBox_copy(XSpinBox* self, const XSpinBox* other)
         XObject_connect_2((XObject*)edit,
                           (size_t)XLineEdit_editingFinished_signal(edit),
                           spinbox_onEditingFinished);
+        /* P0-5 配套：重建的编辑框未装数字校验器，此处重挂并让
+           userData 指向拷贝目标自身（保持与 init 一致的数字门禁，
+           也避免 userData 遗留指向源对象）。 */
+        XLineEdit_setValidator(edit, spinbox_validateNumeric, self);
         spinbox_refreshText(self);
     }
 }
@@ -815,6 +859,7 @@ static void VXSpinBox_copy(XSpinBox* self, const XSpinBox* other)
 /** @brief 移动语义：基类移动后转移数值字段与前后缀，源对象归默认值。 */
 static void VXSpinBox_move(XSpinBox* self, XSpinBox* other)
 {
+    XLineEdit* edit;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XSpinBox_init(self, NULL, 0);
     XClass_Parent(XAbstractSpinBox, EXClass_Move,
@@ -850,6 +895,12 @@ static void VXSpinBox_move(XSpinBox* self, XSpinBox* other)
     other->m_textDirty = false;
     other->m_activeUp = false;
     other->m_activeDown = false;
+    /* P0-5 配套：基类 move 转移的编辑框其校验器 userData 仍指向源
+       对象，改指本对象——否则源对象析构后任何键入经校验回调读
+       悬垂指针（修复前回调不读 userData，此隐患由 P0-5 激活）。 */
+    edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
+    if (edit)
+        XLineEdit_setValidator(edit, spinbox_validateNumeric, self);
 }
 
 /** @brief 析构：释放前后缀后转父类。 */

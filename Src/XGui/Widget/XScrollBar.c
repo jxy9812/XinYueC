@@ -346,6 +346,88 @@ static void VX_scrollBar_mouseReleaseEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/* ==================== 右键标准菜单动作执行 ==================== */
+
+/* 上下文目标记录：菜单为模态弹出，同一时刻至多一个滚动条菜单在途。
+ * 记录拥有者与右击沿滚动方向分量（"滚动到此处"的目标坐标——此前
+ * 右击位置被丢弃、动作零连接），动作触发时校验拥有者防串扰。 */
+static const XScrollBar* xsb_ctxOwner = NULL;
+static int xsb_ctxPos = 0;
+
+/** @brief "滚动到此处"：右击点沿滑轨映射为滑块原点值并定位
+ *         （映射公式与拖动 VX_scrollBar_mouseMoveEvent 同源，
+ *         pressOffset 已由 contextMenuEvent 清零）。 */
+static void xsb_actScrollHereSlot(XObject* receiver, XVarList* args)
+{
+    XScrollBar* sb = (XScrollBar*)receiver;
+    int contentLen;
+    int value = 0;
+    (void)args;
+    if (!sb || (const XScrollBar*)sb != xsb_ctxOwner) return;
+    contentLen = xsb_horizontal(sb) ? XWidget_width((XWidget*)sb)
+                                    : XWidget_height((XWidget*)sb);
+    xsb_posToValue(sb, xsb_ctxPos - xsb_sliderOrigin(sb, contentLen),
+                   xsb_sliderLen(sb, contentLen), &value);
+    XAbstractSlider_setValue((XAbstractSlider*)sb, value);
+}
+
+/** @brief "顶部/左缘"：滚动到最小值。 */
+static void xsb_actMinimumSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver)
+        XAbstractSlider_setValue((XAbstractSlider*)receiver,
+                                 XAbstractSlider_minimum(
+                                     (const XAbstractSlider*)receiver));
+}
+
+/** @brief "底部/右缘"：滚动到最大值（本库滚动条最大值即可滚跨度，
+ *         对标 QScrollArea 的 range 收敛）。 */
+static void xsb_actMaximumSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver)
+        XAbstractSlider_setValue((XAbstractSlider*)receiver,
+                                 XAbstractSlider_maximum(
+                                     (const XAbstractSlider*)receiver));
+}
+
+/** @brief "向上(左)翻页"。 */
+static void xsb_actPageSubSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver)
+        XAbstractSlider_triggerAction((XAbstractSlider*)receiver,
+            XAbstractSliderSliderAction_PageStepSub);
+}
+
+/** @brief "向下(右)翻页"。 */
+static void xsb_actPageAddSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver)
+        XAbstractSlider_triggerAction((XAbstractSlider*)receiver,
+            XAbstractSliderSliderAction_PageStepAdd);
+}
+
+/** @brief "向上(左)滚动"（单步）。 */
+static void xsb_actStepSubSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver)
+        XAbstractSlider_triggerAction((XAbstractSlider*)receiver,
+            XAbstractSliderSliderAction_SingleStepSub);
+}
+
+/** @brief "向下(右)滚动"（单步）。 */
+static void xsb_actStepAddSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver)
+        XAbstractSlider_triggerAction((XAbstractSlider*)receiver,
+            XAbstractSliderSliderAction_SingleStepAdd);
+}
+
 /** @brief 右键标准菜单（对标 QScrollBar::contextMenuEvent）：滚动到此处/
  *         上(左)缘/下(右)缘/翻页/单步，条目文本随方向变化；
  *         popup + DeleteOnClose 呈现。 */
@@ -360,14 +442,15 @@ static void VX_scrollBar_contextMenuEvent(XWidget* self, XEvent* event)
         XEvent_type(event) != XEVENT_TYPE_CONTEXT_MENU) return;
     menu = XScrollBar_createStandardContextMenu(sb);
     if (!menu) return;
-    /* 记录右击位置："滚动到此处"动作以该局部坐标为目标。 */
+    horiz = xsb_horizontal(sb);
+    /* 记录右击位置："滚动到此处"动作以该局部坐标为目标（此前坐标被
+     * 丢弃）；同时清拖动偏移基线，供滑轨→值映射按零偏移复用。 */
     if (ctx) {
         XPoint pos = XContextMenuEvent_position(ctx);
         sb->m_pressOffset = 0;
-        (void)pos;
+        xsb_ctxOwner = sb;
+        xsb_ctxPos = horiz ? pos.x : pos.y;
     }
-    horiz = xsb_horizontal(sb);
-    (void)horiz;
     global = XContextMenuEvent_globalPosition(ctx);
     XWidget_setAttribute((XWidget*)menu, XWidgetAttribute_DeleteOnClose,
                          true);
@@ -451,6 +534,18 @@ XScrollBar* XScrollBar_create_ex_2(XMemoryType memory, int orientation,
 
 /* ==================== 右键标准菜单 ==================== */
 
+/** @brief 追加动作并接通触发槽（动作由菜单拥有，连接随任一侧析构
+ *         自动摘除；此前动作零连接、选择无效果）。 */
+static void xsb_addWiredAction(XMenu* menu, const char* utf8, XScrollBar* sb,
+                               XSlotFunc1 slot)
+{
+    XAction* action = XMenu_addAction_2(menu, utf8);
+    if (!action) return;
+    XObject_connect_1((XObject*)action,
+                      XSignal(XAction_triggered_signal),
+                      (XObject*)sb, slot, XConnectionType_Direct);
+}
+
 XMenu* XScrollBar_createStandardContextMenu(XScrollBar* self)
 {
     XMenu* menu;
@@ -459,16 +554,22 @@ XMenu* XScrollBar_createStandardContextMenu(XScrollBar* self)
     menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, "ctx");
     if (!menu) return NULL;
     horiz = xsb_horizontal(self);
-    XMenu_addAction_2(menu, horiz ? "滚动到此处" : "滚动到此处");
+    xsb_addWiredAction(menu, "滚动到此处", self, xsb_actScrollHereSlot);
     XMenu_addSeparator(menu);
-    XMenu_addAction_2(menu, horiz ? "左缘" : "顶部");
-    XMenu_addAction_2(menu, horiz ? "右缘" : "底部");
+    xsb_addWiredAction(menu, horiz ? "左缘" : "顶部", self,
+                       xsb_actMinimumSlot);
+    xsb_addWiredAction(menu, horiz ? "右缘" : "底部", self,
+                       xsb_actMaximumSlot);
     XMenu_addSeparator(menu);
-    XMenu_addAction_2(menu, horiz ? "向左翻页" : "向上翻页");
-    XMenu_addAction_2(menu, horiz ? "向右翻页" : "向下翻页");
+    xsb_addWiredAction(menu, horiz ? "向左翻页" : "向上翻页", self,
+                       xsb_actPageSubSlot);
+    xsb_addWiredAction(menu, horiz ? "向右翻页" : "向下翻页", self,
+                       xsb_actPageAddSlot);
     XMenu_addSeparator(menu);
-    XMenu_addAction_2(menu, horiz ? "向左滚动" : "向上滚动");
-    XMenu_addAction_2(menu, horiz ? "向右滚动" : "向下滚动");
+    xsb_addWiredAction(menu, horiz ? "向左滚动" : "向上滚动", self,
+                       xsb_actStepSubSlot);
+    xsb_addWiredAction(menu, horiz ? "向右滚动" : "向下滚动", self,
+                       xsb_actStepAddSlot);
     return menu;
 }
 

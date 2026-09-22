@@ -21,13 +21,14 @@
 /* ==================== 内部工具 ==================== */
 
 /** @brief 滚轮：转发到滚动条步进（对标 QScrollArea 视口滚轮滚动）。
- *         默认滚垂直条（Shift 滚水平条），120 角度 = 3 倍单步，
+ *         默认滚垂直条，按住 Shift 滚水平条，120 角度 = 3 倍单步，
  *         保证滚动幅度肉眼可见。 */
 static void VX_asa_wheelEvent(XWidget* self, XEvent* event)
 {
     XAbstractScrollArea* area = (XAbstractScrollArea*)self;
     XScrollBar* bar;
     int steps = 0;
+    bool shift = false;
     if (!area || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
 #if XWINDOWEVENT_ON
     {
@@ -35,11 +36,15 @@ static void VX_asa_wheelEvent(XWidget* self, XEvent* event)
         XPoint delta = XWheelEvent_angleDelta(we);
         int dy = (delta.y != 0) ? delta.y : delta.x;
         steps = dy / 120;
+        shift = (XWheelEvent_modifiers(we) &
+                 XKeyboardModifier_ShiftModifier) != 0;
     }
 #endif
     if (steps == 0) { XEvent_accept(event); return; }
-    /* Shift 横滚：水平条；默认竖滚：垂直条。 */
-    bar = XAbstractScrollArea_verticalScrollBar(area);
+    /* Shift 横滚：水平条；默认竖滚：垂直条（此前修饰键从不读取，
+     * 注释声明与实现矛盾）。 */
+    bar = shift ? XAbstractScrollArea_horizontalScrollBar(area)
+                : XAbstractScrollArea_verticalScrollBar(area);
     if (bar) XAbstractSlider_stepBy_base((XAbstractSlider*)bar, steps * 3);
     XEvent_accept(event);
 }
@@ -410,6 +415,9 @@ void XAbstractScrollArea_setVerticalScrollBar(XAbstractScrollArea* self,
                                               XScrollBar* scrollbar)
 {
     if (!self) return;
+    /* 对标 Qt 6.8 首行判空拒绝（qWarning 后 return）：此前接受 NULL
+     * ——删旧条后视口恒 w-16 留 16px 死列且滚动静默失效。 */
+    if (!scrollbar) return;
     if (self->m_vScrollBar == scrollbar) return;
     if (self->m_vScrollBar) {
         xasa_disconnectBar(self, self->m_vScrollBar, false);
@@ -427,6 +435,8 @@ void XAbstractScrollArea_setHorizontalScrollBar(XAbstractScrollArea* self,
                                                 XScrollBar* scrollbar)
 {
     if (!self) return;
+    /* 同 setVerticalScrollBar：NULL 入参拒绝（Qt 对两个 setter 同一口径）。 */
+    if (!scrollbar) return;
     if (self->m_hScrollBar == scrollbar) return;
     if (self->m_hScrollBar) {
         xasa_disconnectBar(self, self->m_hScrollBar, true);

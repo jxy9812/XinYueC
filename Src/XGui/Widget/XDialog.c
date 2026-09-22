@@ -17,6 +17,15 @@
 #include "XCoreApplication.h"
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XWindowEvent.h"
+#include "XImage.h"
+#include "XPalette.h"
+#include "XContainer.h"
+#include "XVector.h"
+#include "XPushButton.h"
+#include "XTextEdit.h"
+#include "XPlainTextEdit.h"
+#include "XTextControl.h"
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -45,6 +54,146 @@ static void xdlg_emitFinished(XDialog* self, int result)
     }
 }
 
+/** @brief 对话框面板背景绘制（对标 QDialog 由平台回填 palette Window 底）。
+ *  @details 框架层根因说明（XWidget.c 不在本次修复所有权内，故在对话框
+ *           层自绘面板）：XWidget_paintEvent_default（autofill 路径）把
+ *           事件脏区先加 paintOffset 折算到顶层后备存储坐标，再用控件
+ *           自身"局部尺寸"去裁剪——任何不在窗口原点的子控件，其填充矩形
+ *           都会被错误裁剪（demo 对话框位于 (232,238)、尺寸 320x140，
+ *           裁出负高直接整块跳过填充），面板因此永不上屏，文字/按钮
+ *           悬浮在未渲染底色上，表现为"对话框弹不出"。本重载按正确
+ *           顺序绘制：先在控件局部坐标用局部尺寸裁剪，再平移折算。 */
+static void VXDialog_paintEvent(XWidget* self, XEvent* event)
+{
+    XPaintEvent* pe;
+    XImage* image;
+    XRect rect;
+    XPoint offset;
+    XPalette palette;
+    XColor color;
+    int w;
+    int h;
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    pe = (XPaintEvent*)event;
+    image = XWidget_paintImage(self);
+    if (!image) return;
+    palette = XWidget_palette(self);
+    color = XPalette_color(&palette, XPaletteColorGroup_Active,
+                           XPaletteColorRole_Window);
+    rect = XPaintEvent_rect(pe);
+    w = XWidget_width(self);
+    h = XWidget_height(self);
+    /* 1) 控件局部坐标：脏区 ∩ 控件矩形。 */
+    if (rect.x < 0) { rect.width += rect.x; rect.x = 0; }
+    if (rect.y < 0) { rect.height += rect.y; rect.y = 0; }
+    if (rect.x + rect.width > w) rect.width = w - rect.x;
+    if (rect.y + rect.height > h) rect.height = h - rect.y;
+    if (rect.width <= 0 || rect.height <= 0) return;
+    /* 2) 平移到顶层后备存储坐标后填充。 */
+    offset = XWidget_paintOffset(self);
+    rect.x += offset.x;
+    rect.y += offset.y;
+    XImage_fillRect(image, &rect, XColor_rgba(&color));
+}
+
+/** @brief      多行文本编辑判定（对话框 Enter 让键豁免）。
+ *  @details    对标 Qt 6.8 qdialog.cpp keyPressEvent：焦点在
+ *              QTextEdit/QPlainTextEdit 类多行编辑器时 Enter 交给
+ *              编辑器换行，对话框不得抢去派发默认按钮。XGui 侧按
+ *              vtable 精确比对：XTextEdit/XPlainTextEdit 与其内层
+ *              XTextControl（焦点可能落在内部控件上）。 */
+static bool dialog_focusIsMultilineEditor(const XWidget* widget)
+{
+    XVtable* vtable;
+    if (!widget) return false;
+    vtable = XClassGetVtable(widget);
+    return vtable == XTextEdit_class_init() ||
+           vtable == XPlainTextEdit_class_init() ||
+           vtable == XTextControl_class_init();
+}
+
+/** @brief      先序遍历对话框子树找默认按钮。
+ *  @details    对标 Qt 6.8 QDialog::keyPressEvent 无显式默认时回落
+ *              「第一个可见可用 autoDefault 按钮」（findChildren 顺
+ *              序=插入序，先序遍历同序）。显式 setDefault 的按钮全
+ *              树最高优先（Qt d->defaultButton 语义），命中即短路。
+ *              可见性取有效可见（XWidget_isVisible 已对齐 Qt 的
+ *              isVisible 语义），可用性按 WA_Disabled 位（同 Qt
+ *              isEnabled）。 */
+static void dialog_walkForDefaultButton(XObject* object,
+                                        XPushButton** explicitDefault,
+                                        XPushButton** firstAutoDefault)
+{
+    int count;
+    int i;
+    if (!object || *explicitDefault) return;
+    if (XClassGetVtable(object) == XPushButton_class_init()) {
+        XPushButton* button = (XPushButton*)object;
+        if (XWidget_isVisible((XWidget*)button) &&
+            XWidget_isEnabled((XWidget*)button)) {
+            if (button->m_defaultButton) {
+                *explicitDefault = button;
+                return;
+            }
+            /* 对标 Qt 6.8 QPushButton::autoDefault 语义：对话框内的
+             * QPushButton 默认即 autoDefault（autoDefaultControl 是
+             * 按父链 windowType==Dialog 判定，而 XGui 存在以
+             * parent+flags=0 构造的子控件形态对话框——如 XMessageBox
+             * 便捷路径——其内按钮按该判定会失去 autoDefault）。本遍
+             * 历起点即对话框，子树内按钮仅显式 Off 才退出候选。 */
+            if (!*firstAutoDefault &&
+                button->m_autoDefault != XPushButtonAutoDefault_Off)
+                *firstAutoDefault = button;
+        }
+    }
+    if (object->m_children) {
+        count = XVector_size_base((const XContainer*)object->m_children);
+        for (i = 0; i < count; ++i) {
+            XObject* const* children =
+                (XObject* const*)XContainerDataAddr(object->m_children);
+            dialog_walkForDefaultButton(children[i],
+                                        explicitDefault, firstAutoDefault);
+            if (*explicitDefault) return;
+        }
+    }
+}
+
+/** @brief      解析对话框当前生效的默认按钮（显式优先，回落首个
+ *              可见可用 autoDefault）；无则 NULL。 */
+static XPushButton* dialog_defaultButton(XDialog* dialog)
+{
+    XPushButton* explicitDefault = NULL;
+    XPushButton* firstAutoDefault = NULL;
+    dialog_walkForDefaultButton((XObject*)dialog,
+                                &explicitDefault, &firstAutoDefault);
+    return explicitDefault ? explicitDefault : firstAutoDefault;
+}
+
+/** @brief      对话框子树内是否已持有应用焦点控件。 */
+static bool dialog_containsFocus(const XDialog* self)
+{
+    const XWidget* focus = XWidget_appFocusWidget();
+    const XWidget* w;
+    if (!focus) return false;
+    for (w = focus; w; w = XWidget_parentWidget(w))
+        if ((const XWidget*)self == w) return true;
+    return false;
+}
+
+/** @brief      对话框可见后抢占初始焦点（对标 Qt showModal 的
+ *              initialFocusWidget 落点：默认按钮优先，无则对话框
+ *              自身）。不抢焦点时平台键按原生窗口树投递，对话框收
+ *              不到任何按键（配合 VXGuiApplication_notify 的键重定
+ *              向注释）。 */
+static void dialog_grabInitialFocus(XDialog* self)
+{
+    XPushButton* button;
+    if (!self || dialog_containsFocus(self)) return;
+    button = dialog_defaultButton(self);
+    XWidget_setFocusReason(button ? (XWidget*)button : (XWidget*)self,
+                           XFocusReason_Other);
+}
+
 static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
 {
     XDialog* dialog = (XDialog*)self;
@@ -55,6 +204,24 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
             XDialog_reject(dialog);
             XEvent_accept(event);
             return;
+        }
+        /* 对标 QDialog::keyPressEvent 的 Enter/Return 分支：主键盘
+           回车与小键盘回车（Qt::Key_Return/Key_Enter）都派发默认按
+           钮；多行文本编辑持焦时让键。命中即 click——accept/reject
+           由按钮 clicked 信号链驱动（对话框按钮框的接线），与 Qt
+           同不在按键路径直接 accept。无默认按钮回落基类（沿父链
+           传播），与 Qt 的「无 autoDefault 则继续默认处理」一致。 */
+        if (((XKeyEvent*)event)->m_key == (int)XKey_Return ||
+            ((XKeyEvent*)event)->m_key == (int)XKey_Enter) {
+            XWidget* focus = XWidget_focusWidget(self);
+            if (!dialog_focusIsMultilineEditor(focus)) {
+                XPushButton* button = dialog_defaultButton(dialog);
+                if (button) {
+                    XPushButton_click(button);
+                    XEvent_accept(event);
+                    return;
+                }
+            }
         }
     }
     /* 对标 QDialog::keyPressEvent 非 Esc 分支静态调用基类实现
@@ -75,6 +242,7 @@ XVtable* XDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDialog)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXDialog_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXDialog_keyPressEvent);
     return XVTABLE_DEFAULT;
 }
@@ -87,7 +255,17 @@ void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags)
     XClassSetVtable(self, XDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_modal = true;
+    /* 对标 Qt：QDialog 恒为顶层窗口、自动回填 palette Window 背景。
+     * 本框架允许以 parent+flags=0 构造出"子控件形态"对话框（demo
+     * 对话框页即此形态），子控件默认 autoFillBackground=false 且
+     * XDialog 无自绘面板——对话框除按钮盒外整块透明，文本黑字落在
+     * 未渲染底上即"弹不出"。此处开启背景回补面板底色。 */
+    XWidget_setAutoFillBackground((XWidget*)self, true);
+    /* R-81 根因：m_modal 默认 true 与 Qt QDialog 默认 false 相反，且
+       show() 不消费该属性（只有 exec/open 模态化），isModal() 查询值
+       与实际行为不自洽。对标 Qt 6.8.3：modal 默认 false，仅 exec（无
+       条件应用模态）/open（setModal(true)）时模态化。 */
+    self->m_modal = false;
     self->m_result = 0;
     self->m_inExec = false;
     self->m_sizeGripEnabled = false;
@@ -108,14 +286,25 @@ int XDialog_exec(XDialog* self)
     if (!self) return 0;
     self->m_inExec = true;
     XWidget_show((XWidget*)self);
-    if (self->m_modal)
-        XWidget_setApplicationModalWidget((XWidget*)self);
+    /* 显示即标脏本对话框矩形：子控件形态的对话框（flags 无 Window 位）
+     * 走 XWidget_setVisible 的非窗口分支，该分支不调度重绘（只有顶层
+     * 窗口分支才有 show→update），脏区合成器只重画脏矩形，导致对话框
+     * 已 visible 却永远不上屏（复现：demo 对话框页九键中六个非阻塞/
+     * 常驻对话框点击后屏幕无任何面板墨迹）。此处对窗口形态是冗余的
+     * 一次重复标脏，无副作用。 */
+    XWidget_update((XWidget*)self);
+    /* 对标 QDialog::exec（Qt 6.8.3 qdialog.cpp）：exec 期间无条件
+       应用模态（setWindowModality(ApplicationModal)），不受 modal
+       属性默认值影响——m_modal 默认改 false 后若仍以此门禁，存量
+       未调 setModal(true) 的 exec 调用将静默失去模态。 */
+    XWidget_setApplicationModalWidget((XWidget*)self);
     /* 对标 QDialog::exec：阻塞于事件循环直到 done()。此前仅处理一批
        事件即返回，模态语义不成立。 */
+    dialog_grabInitialFocus(self);
     while (self->m_inExec) {
         XCoreApplication_processEvents(XEventLoop_AllEvents |
                                        XEventLoop_WaitForMoreEvents);
-        if (self->m_modal && self->m_inExec)
+        if (self->m_inExec)
             XWidget_setApplicationModalWidget((XWidget*)self);
     }
     if (XWidget_applicationModalWidget() == (XWidget*)self)
@@ -131,6 +320,10 @@ void XDialog_done(XDialog* self, int result)
     if (XWidget_applicationModalWidget() == (XWidget*)self)
         XWidget_setApplicationModalWidget(NULL);
     XWidget_setVisible((XWidget*)self, false);
+    /* 隐藏后标脏原矩形：子控件形态对话框走非窗口隐藏分支，无重绘
+       调度，屏幕残留对话框最后一帧鬼影；把矩形折算进顶层脏区后，
+       合成器按可见内容重画该区域（对话框已隐藏即父级/邻居内容）。 */
+    XWidget_update((XWidget*)self);
     xdlg_emitFinished(self, result);
 }
 
@@ -167,7 +360,12 @@ void XDialog_open(XDialog* self)
     if (!self) return;
     XDialog_setModal(self, true);
     XWidget_show((XWidget*)self);
+    /* 显示即标脏本对话框矩形（根因同 XDialog_exec 注）：子控件形态
+     * 对话框 show 不产生脏区，open 后对话框永远不可见，需在此补一次
+     * update 让下一帧把面板/文本/按钮真实画上屏幕。 */
+    XWidget_update((XWidget*)self);
     XWidget_setApplicationModalWidget((XWidget*)self);
+    dialog_grabInitialFocus(self);
 }
 
 void XDialog_setSizeGripEnabled(XDialog* self, bool enable)

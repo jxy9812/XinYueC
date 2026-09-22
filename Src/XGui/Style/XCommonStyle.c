@@ -9,6 +9,7 @@
 #include "XImage.h"
 #include "XPixmap.h"
 #include "XIcon.h"
+#include <limits.h> /* INT_MAX（刻度循环溢出护栏）。 */
 #include <math.h>
 
 #if XSTYLE_ON
@@ -1539,19 +1540,22 @@ static void xcs_drawGroupBox(XStyle* self, const XStyleOption* option,
 }
 
 
-/** @brief 绘制滑块（CC_Slider：凹槽 + 子页高亮 + 刻度 + 凸起把手）。
+/** @brief 绘制滑块（CC_Slider：凹槽 + 子页高亮 + 刻度 + 把手）。
  *
- *  几何与视觉完整复刻原 XSlider 实现（凹槽 Base+Dark 描边、
- *  handle 中心前 Highlight 子页、Button 把手 Light/Dark 凸起边）。
+ *  几何复刻原 XSlider 实现；凹槽 Base+Dark 描边、handle 中心前
+ *  Highlight 子页保持不变。把手对标 Qt 6.8 QFusionStyle
+ *  drawComplexControl(CC_Slider) "draw handle" 段：buttonColor 填充 +
+ *  outline（window().darker(140)）整圈描边 + innerContrastLine
+ *  （白 alpha 30）内衬线 + 黑 alpha 40 投影。
  */
 static void xcs_drawSlider(XStyle* self, const XStyleOption* option,
                            XPainter* painter, const XWidget* widget)
 {
     uint32_t baseC;
     uint32_t dark;
-    uint32_t light;
     uint32_t button;
     uint32_t highlight;
+    uint32_t windowC;
     XRect r;
     int handlePos;
     XRect groove;
@@ -1564,14 +1568,14 @@ static void xcs_drawSlider(XStyle* self, const XStyleOption* option,
     if (r.width <= 2 || r.height <= 2) return;
     baseC     = xcs_color(option, XPaletteColorRole_Base);
     dark      = xcs_color(option, XPaletteColorRole_Dark);
-    light     = xcs_color(option, XPaletteColorRole_Light);
     button    = xcs_color(option, XPaletteColorRole_Button);
     highlight = xcs_color(option, XPaletteColorRole_Highlight);
+    windowC   = xcs_color(option, XPaletteColorRole_Window);
     if (baseC == 0) baseC = 0xFFFFFFFFu;
     if (dark == 0) dark = 0xFF808080u;
-    if (light == 0) light = 0xFFE0E0E0u;
     if (button == 0) button = 0xFFCFCFCFu;
     if (highlight == 0) highlight = 0xFF2A82DAu;
+    if (windowC == 0) windowC = 0xFFCFCFCFu;
     range = option->m_sliderMax - option->m_sliderMin;
     frac = (range > 0)
         ? (double)(option->m_sliderValue - option->m_sliderMin) / range : 0.0;
@@ -1635,8 +1639,7 @@ static void xcs_drawSlider(XStyle* self, const XStyleOption* option,
                 ? option->m_sliderPageStep
                 : (option->m_sliderSingleStep > 0
                        ? option->m_sliderSingleStep : 1);
-        for (v = option->m_sliderMin; v <= option->m_sliderMax;
-             v += interval) {
+        for (v = option->m_sliderMin; v <= option->m_sliderMax;) {
             double fv = (range > 0)
                 ? (double)(v - option->m_sliderMin) / range : 0.0;
             int pos = 8 + (int)(avail *
@@ -1656,21 +1659,74 @@ static void xcs_drawSlider(XStyle* self, const XStyleOption* option,
                     XPainter_fillRect(painter,
                         &(XRect){r.x + r.width - 4, pos - 1, 3, 3}, dark);
             }
+            /* 溢出护栏（R-89，对标 qtbase 同位置循环）：sliderMax 近
+             * INT_MAX 时 v+=interval 有符号溢出（UB）。加法前先判——
+             * 先算 next 再比 next<v 本身已构成 UB（UBSan 实测），
+             * 故以 v > INT_MAX-interval 预判等价拦截。 */
+            if (v > INT_MAX - interval) break;
+            v += interval;
         }
     }
-    /* 把手：Button 底 + Light 顶/左 + Dark 底/右（凸起）。 */
+    /* 把手（对标 Qt 6.8 QFusionStyle::drawComplexControl CC_Slider
+     * "draw handle" 段，qfusionstyle.cpp SC_SliderHandle 分支）：
+     * 黑 alpha 40 投影 + buttonColor 填充 + outline 整圈描边 +
+     * innerContrastLine 白 alpha 30 内衬线；键盘焦点
+     * （HasFocus+KeyboardFocusChange，对标 State_KeyboardFocusChange）
+     * 时描边换 highlightedOutline=Highlight.darker(125)。
+     * 此前把手为 Button 底 + Light/Dark 单侧凸起角，浅色主题下
+     * Button==Window==#EFEFEF，把手与轨道/背景几乎同色不可见；
+     * Qt 把手的可见性正来自整圈窗色加深描边，两主题下均清晰。 */
     if (handle.x < r.x) handle.x = r.x;
     if (handle.y < r.y) handle.y = r.y;
-    XPainter_fillRect(painter, &handle, button);
-    XPainter_fillRect(painter, &(XRect){handle.x, handle.y,
-                                        handle.width, 1}, light);
-    XPainter_fillRect(painter, &(XRect){handle.x, handle.y, 1,
-                                        handle.height}, light);
-    XPainter_fillRect(painter, &(XRect){handle.x + handle.width - 1,
-                                        handle.y, 1, handle.height}, dark);
-    XPainter_fillRect(painter, &(XRect){handle.x,
-                                        handle.y + handle.height - 1,
-                                        handle.width, 1}, dark);
+    {
+        uint32_t outlineC;
+        uint32_t fillC;
+        if ((option->m_state & XStyleState_HasFocus) &&
+            (option->m_state & XStyleState_KeyboardFocusChange)) {
+            /* highlightedOutline = highlight.darker(125)（Qt 私有头
+             * qfusionstyle_p_p.h；亮色值钳制 l=160 未复刻）。 */
+            outlineC = xcs_darker(highlight, 125);
+        } else {
+            /* outline = window().darker(140)（qfusionstyle_p_p.h
+             * QFusionStylePrivate::outline）。 */
+            outlineC = xcs_darker(windowC, 140);
+        }
+        fillC = xcs_buttonColor(button); /* 对标 d->buttonColor(pal)。 */
+        /* 投影：右下 1px 偏移的黑 alpha 40（QColor(0,0,0,40)）。 */
+        XPainter_fillRect(painter,
+            &(XRect){handle.x + 1, handle.y + 1,
+                     handle.width, handle.height}, 0x28000000u);
+        /* 本体填充。 */
+        XPainter_fillRect(painter, &handle, fillC);
+        /* 整圈 outline 描边（把手对比度主体）。 */
+        XPainter_fillRect(painter, &(XRect){handle.x, handle.y,
+                                            handle.width, 1}, outlineC);
+        XPainter_fillRect(painter, &(XRect){handle.x,
+                                            handle.y + handle.height - 1,
+                                            handle.width, 1}, outlineC);
+        XPainter_fillRect(painter, &(XRect){handle.x, handle.y, 1,
+                                            handle.height}, outlineC);
+        XPainter_fillRect(painter, &(XRect){handle.x + handle.width - 1,
+                                            handle.y, 1, handle.height},
+                          outlineC);
+        /* 内衬 innerContrastLine（白 alpha 30，qfusionstyle_p_p.h:39）。 */
+        if (handle.width > 3 && handle.height > 3) {
+            XPainter_fillRect(painter, &(XRect){handle.x + 1, handle.y + 1,
+                                                handle.width - 2, 1},
+                              0x1EFFFFFFu);
+            XPainter_fillRect(painter,
+                              &(XRect){handle.x + 1,
+                                       handle.y + handle.height - 2,
+                                       handle.width - 2, 1}, 0x1EFFFFFFu);
+            XPainter_fillRect(painter, &(XRect){handle.x + 1, handle.y + 1,
+                                                1, handle.height - 2},
+                              0x1EFFFFFFu);
+            XPainter_fillRect(painter,
+                              &(XRect){handle.x + handle.width - 2,
+                                       handle.y + 1, 1, handle.height - 2},
+                              0x1EFFFFFFu);
+        }
+    }
 }
 
 

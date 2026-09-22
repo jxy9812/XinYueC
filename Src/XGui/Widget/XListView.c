@@ -190,7 +190,7 @@ static int xlv_drawDecoration(XPainter* painter, const XRect* cell,
 static void xlv_drawRowText(XPainter* painter, const XListView* lv,
                             const XRect* cell, const char* text,
                             int roleAlign, const XFont* roleFont,
-                            int contentX)
+                            int contentX, uint32_t ink)
 {
     int flags;
     if (!painter || !lv || !cell || !text || text[0] == '\0') return;
@@ -204,12 +204,13 @@ static void xlv_drawRowText(XPainter* painter, const XListView* lv,
     if (lv->m_wordWrap) flags |= XPAINTER_TEXT_WORD_WRAP;
     if (flags == 0) {
         /* 默认路径：与历史渲染一致（左缘 4px、基线 y+行高-6）。
-         * 颜色必须显式传不透明黑：XPainter_drawText 直接以该参数作
-         * ink（透明色写入=无像素），setPen 不影响此路径。 */
-        XPainter_setPen(painter, 0xFF000000u);
+         * 颜色必须显式传不透明色：XPainter_drawText 直接以该参数作
+         * ink（透明色写入=无像素），setPen 不影响此路径；ink 由调用
+         * 方按选中态给 HighlightedText/WindowText（对标 Qt）。 */
+        XPainter_setPen(painter, ink);
         XPainter_drawText(painter, contentX + 4,
                           cell->y + xlv_effectiveRowHeight(lv) - 6,
-                          text, 0xFF000000u);
+                          text, ink);
         if (roleFont) XPainter_setFont(painter, NULL);
         return;
     }
@@ -223,7 +224,7 @@ static void xlv_drawRowText(XPainter* painter, const XListView* lv,
         XRect_init(&textRect, contentX, cell->y,
                    cell->x + cell->width - contentX, cell->height);
         XPainter_drawTextRect(painter, &textRect, (uint32_t)flags, text,
-                              0xFF000000u);
+                              ink);
     }
     if (roleFont) XPainter_setFont(painter, NULL);
 }
@@ -235,8 +236,8 @@ static void xlv_drawRowText(XPainter* painter, const XListView* lv,
 /** @brief 读取滚动偏移（视口原点在内容坐标中的位置）。 */
 static void xlv_scrollOffsets(XListView* self, int* outX, int* outY)
 {
-    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(&self->m_base);
-    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(&self->m_base);
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar((const XAbstractScrollArea*)&self->m_base);
+    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar((const XAbstractScrollArea*)&self->m_base);
     if (outX) *outX = hsb ? XScrollBar_value(hsb) : 0;
     if (outY) *outY = vsb ? XScrollBar_value(vsb) : 0;
 }
@@ -245,8 +246,8 @@ static void xlv_scrollOffsets(XListView* self, int* outX, int* outY)
 static void xlv_updateScrollRanges(XListView* self, int contentHeight,
                                    int contentWidth, int viewW, int viewH)
 {
-    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(&self->m_base);
-    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(&self->m_base);
+    XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar((const XAbstractScrollArea*)&self->m_base);
+    XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar((const XAbstractScrollArea*)&self->m_base);
     int vMax = contentHeight > viewH ? contentHeight - viewH : 0;
     int hMax = contentWidth > viewW ? contentWidth - viewW : 0;
     if (vsb && XScrollBar_maximum(vsb) != vMax)
@@ -286,6 +287,20 @@ static bool xlv_indexAt(XListView* self, int x, int y,
     return false;
 }
 
+/** @brief 调色板取色助手（对照 XTableWidget.c xtw_color 范式；
+ *  根因：自绘配色硬编码不读调色板，非默认调色板下仍白底黑字）。 */
+static uint32_t xlv_color(const XListView* self, XPaletteColorRole role)
+{
+#if XPALETTE_ON
+    XPalette palette = XWidget_palette((XWidget*)self);
+    XColor c = XPalette_color(&palette, XPaletteColorGroup_Current, role);
+    return XColor_rgba(&c);
+#else
+    (void)self; (void)role;
+    return 0xFF000000u;
+#endif
+}
+
 static void VXListView_paintEvent(XWidget* self, XEvent* event)
 {
     XListView* lv = (XListView*)self;
@@ -304,6 +319,11 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
     int offY;
     int bottom;
     XPoint offset;
+    uint32_t base;
+    uint32_t highlight;
+    uint32_t highlightedText;
+    uint32_t windowText;
+    uint32_t alternateBase;
     (void)event;
     if (!lv) return;
     image = XWidget_paintImage(self);
@@ -319,7 +339,16 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
-    XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
+    /* 视图族配色消费调色板（对标 Qt item view 的
+     * Base/Highlight/HighlightedText/WindowText/AlternateBase）：
+     * 默认调色板下 AlternateBase=(247,247,247) 与历史硬编码逐位一致，
+     * 零视觉漂移；非默认调色板下随板取色。 */
+    base            = xlv_color(lv, XPaletteColorRole_Base);
+    highlight       = xlv_color(lv, XPaletteColorRole_Highlight);
+    highlightedText = xlv_color(lv, XPaletteColorRole_HighlightedText);
+    windowText      = xlv_color(lv, XPaletteColorRole_WindowText);
+    alternateBase   = xlv_color(lv, XPaletteColorRole_AlternateBase);
+    XPainter_fillRect(&painter, &r, base);
     if (!model) {
         XPainter_end(&painter);
         XPainter_deinit(&painter);
@@ -352,11 +381,11 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
             cur = (view->m_currentRow == row &&
                    view->m_currentColumn == lv->m_modelColumn);
             if (sel)
-                XPainter_fillRect(&painter, &cell, 0xFFCCE4FFu);
+                XPainter_fillRect(&painter, &cell, highlight);
             else if (view->m_alternatingRowColors && (row & 1))
-                XPainter_fillRect(&painter, &cell, 0xFFF7F7F7u);
+                XPainter_fillRect(&painter, &cell, alternateBase);
             if (cur && !sel)
-                XPainter_fillRect(&painter, &cell, 0xFFE8F1FFu);
+                XPainter_fillRect(&painter, &cell, highlight);
             {
                 /* role 叠加存储渲染消费（对标 QStyledItemDelegate::paint
                  * 的 role 消费子集；此前写入端零消费）：布局顺序同 Qt
@@ -381,7 +410,8 @@ static void VXListView_paintEvent(XWidget* self, XEvent* event)
                                                         lv->m_modelColumn),
                     XAbstractItemView_itemFont(view, row,
                                                lv->m_modelColumn),
-                    contentX);
+                    contentX,
+                    sel ? highlightedText : windowText);
             }
             if (lv->m_spacing > 0) {
                 XPainter_setPen(&painter, 0xFFDDDDDDu);

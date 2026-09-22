@@ -622,8 +622,10 @@ void XGroupBox_setCheckable(XGroupBox* self, bool checkable)
         if (!self->m_checked)
             XGroupBox_setChecked(self, true);
     } else {
-        /* 关闭 checkable：对标 Qt（qgroupbox.cpp setCheckable else 支）
-           取消选中并发射 toggled(false)，同时恢复子控件可用。 */
+        /* 关闭 checkable：Qt 6.8.3 qgroupbox.cpp setCheckable else 支仅
+           置 NoFocus 并恢复子控件可用、不发射 toggled；本库口径为若
+           此前已勾选则取消选中并补发 toggled(false)（反映可见状态翻
+           转），已处于未勾选时不重复发射。 */
         policy = XWidget_focusPolicy((XWidget*)self);
         XWidget_setFocusPolicy((XWidget*)self,
                                (XWidgetFocusPolicy)(policy &

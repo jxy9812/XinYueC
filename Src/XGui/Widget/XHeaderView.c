@@ -3,7 +3,6 @@
  * @brief      XHeaderView 表头视图实现。
  * @author     XinYueC 团队
  ******************************************************************************/
-#include <stdio.h>
 #include "XHeaderView.h"
 
 #include "XAlgorithm.h"
@@ -533,6 +532,9 @@ void XHeaderView_setMaximumSectionSize(XHeaderView* self, int size)
         return;
     }
     if (size < 0 || size > XHEADERVIEW_SECTION_SIZE_LIMIT) return;
+    /* 上限落库（此前漏写：仅钳制既有段/抬高下限，maximumSectionSize
+       查询恒返回缺省值，resizeSection 的钳制随之失效）。 */
+    self->m_maximumSectionSize = size;
     /* 新上限低于既有限制时，Qt 同步抬高最小值，维持 min<=max 不变式。 */
     if (self->m_minimumSectionSize > size)
         self->m_minimumSectionSize = size;
@@ -653,8 +655,11 @@ void XHeaderView_setSectionResizeModeAt(XHeaderView* self, int section,
 {
     int n;
     if (!self || !self->m_sections || section < 0) return;
-    if (mode < (int)XHeaderViewResizeMode_Interactive ||
-        mode > (int)XHeaderViewResizeMode_ResizeToContents)
+    /* -1 哨兵=清除覆写（读侧以越界值判"未设置"回落全局模式），其余
+       非法模式值仍拒绝。 */
+    if (mode != -1 &&
+        (mode < (int)XHeaderViewResizeMode_Interactive ||
+         mode > (int)XHeaderViewResizeMode_ResizeToContents))
         return;
     n = (int)XVector_size_base((const XContainer*)self->m_sections);
     if (section >= n || !self->m_sectionModes) return;
@@ -925,79 +930,81 @@ bool XHeaderView_restoreState(XHeaderView* self, const XByteArray* state)
     int* modes = NULL;
     int i;
     bool changed;
-    if (!self || !state) do { fprintf(stderr, "[RS-fail] #1\n"); return false; } while(0);
+    if (!self || !state) return false;
     data = (const char*)XByteArray_constData((XByteArray*)state); /* 只读借用。 */
-    if (!data) do { fprintf(stderr, "[RS-fail] #2\n"); return false; } while(0);
+    if (!data) return false;
     end = data + (int)XByteArray_size_base((const XContainer*)state);
     cur = data;
-    /* 校验先行：任何字段非法即整体拒绝（不做部分恢复）。 */
+    /* 校验先行：任何字段非法即整体拒绝（不做部分恢复）；失败路径
+     * 静默（生产路径无诊断输出，§8.0c2/R4 静默化纪律——此前 25 处
+     * [RS-fail] fprintf 已移除）。 */
     if (end - cur < 6 || XStrncmp(cur, "XHV", 3) != 0 ||
         XStrncmp(cur + 3, XHEADERVIEW_STATE_VERSION, 3) != 0)
-        do { fprintf(stderr, "[RS] magic fail\n"); do { fprintf(stderr, "[RS-fail] #3\n"); return false; } while(0); } while(0);
+        return false;
     cur += 6;
     if (!xhv_stateReadInt(&cur, end, &orientation) ||
         (orientation != 0 && orientation != 1) ||
         orientation != self->m_orientation)
-        do { fprintf(stderr, "[RS-fail] #4\n"); return false; } while(0);
+        return false;
     if (!xhv_stateReadInt(&cur, end, &count) || count < 0 ||
         count > XHEADERVIEW_SECTION_SIZE_LIMIT)
-        do { fprintf(stderr, "[RS-fail] #5\n"); return false; } while(0);
+        return false;
     if (!xhv_stateReadInt(&cur, end, &defaultSize) || defaultSize <= 0)
-        do { fprintf(stderr, "[RS-fail] #6\n"); return false; } while(0);
+        return false;
     if (!xhv_stateReadInt(&cur, end, &minSize) || minSize < 0 ||
         minSize > XHEADERVIEW_SECTION_SIZE_LIMIT)
-        do { fprintf(stderr, "[RS-fail] #7\n"); return false; } while(0);
+        return false;
     if (!xhv_stateReadInt(&cur, end, &maxSize) || maxSize <= 0 ||
         maxSize > XHEADERVIEW_SECTION_SIZE_LIMIT || minSize > maxSize)
-        do { fprintf(stderr, "[RS-fail] #8\n"); return false; } while(0);
+        return false;
     {
         char flag;
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #9\n"); return false; } while(0);
+            return false;
         stretchLast = (flag == '1');
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #10\n"); return false; } while(0);
+            return false;
         sortShown = (flag == '1');
         if (!xhv_stateReadInt(&cur, end, &sortSection) ||
             sortSection < -1 || sortSection >= count)
-            do { fprintf(stderr, "[RS-fail] #11\n"); return false; } while(0);
+            return false;
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #12\n"); return false; } while(0);
+            return false;
         sortOrder = (flag == '1')
                 ? (int)XHeaderViewSortOrder_Descending
                 : (int)XHeaderViewSortOrder_Ascending;
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #13\n"); return false; } while(0);
+            return false;
         sortClearable = (flag == '1');
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #14\n"); return false; } while(0);
+            return false;
         clickable = (flag == '1');
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #15\n"); return false; } while(0);
+            return false;
         movable = (flag == '1');
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #16\n"); return false; } while(0);
+            return false;
         firstMovable = (flag == '1');
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #17\n"); return false; } while(0);
+            return false;
         highlight = (flag == '1');
         if (!xhv_stateReadChar(&cur, end, &flag) ||
             (flag != '0' && flag != '1'))
-            do { fprintf(stderr, "[RS-fail] #18\n"); return false; } while(0);
+            return false;
         cascading = (flag == '1');
     }
     if (!xhv_stateReadInt(&cur, end, &precision) || precision < -1)
-        do { fprintf(stderr, "[RS-fail] #19\n"); return false; } while(0);
+        return false;
     if (!xhv_stateReadInt(&cur, end, &alignment) || alignment < 0)
-        do { fprintf(stderr, "[RS-fail] #20\n"); return false; } while(0);
+        return false;
     /* 每段尺寸/隐藏/模式字段；校验同时暂存（应用阶段使用）。 */
     if (count > 0) {
         sizes = (int*)XMalloc_System(sizeof(int) * (size_t)count);
@@ -1007,7 +1014,7 @@ bool XHeaderView_restoreState(XHeaderView* self, const XByteArray* state)
             XFree_System(sizes);
             XFree_System(hiddens);
             XFree_System(modes);
-            do { fprintf(stderr, "[RS-fail] #21\n"); return false; } while(0);
+            return false;
         }
     }
     for (i = 0; i < count; ++i) {
@@ -1017,19 +1024,19 @@ bool XHeaderView_restoreState(XHeaderView* self, const XByteArray* state)
         if (!xhv_stateReadInt(&cur, end, &size) || size <= 0 ||
             size > XHEADERVIEW_SECTION_SIZE_LIMIT) {
             xhv_freeStateArrays(sizes, hiddens, modes);
-            do { fprintf(stderr, "[RS-fail] #22\n"); return false; } while(0);
+            return false;
         }
         if (!xhv_stateReadChar(&cur, end, &hidden) ||
             (hidden != '0' && hidden != '1')) {
             xhv_freeStateArrays(sizes, hiddens, modes);
-            do { fprintf(stderr, "[RS-fail] #23\n"); return false; } while(0);
+            return false;
         }
         if (!xhv_stateReadChar(&cur, end, &mode) ||
             (mode != 'g' &&
              (mode < '0' ||
               mode > '0' + (int)XHeaderViewResizeMode_ResizeToContents))) {
             xhv_freeStateArrays(sizes, hiddens, modes);
-            do { fprintf(stderr, "[RS-fail] #24\n"); return false; } while(0);
+            return false;
         }
         sizes[i] = size;
         hiddens[i] = (hidden == '1');
@@ -1039,7 +1046,7 @@ bool XHeaderView_restoreState(XHeaderView* self, const XByteArray* state)
     }
     if (cur != end) {
         xhv_freeStateArrays(sizes, hiddens, modes);
-        do { fprintf(stderr, "[RS-fail] #25\n"); return false; } while(0);
+        return false;
     }
     /* ==================== 应用阶段 ==================== */
     /* 段数变化经 setCount 发射 sectionCountChanged/geometriesChanged。 */

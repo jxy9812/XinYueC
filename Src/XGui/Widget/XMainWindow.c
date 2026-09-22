@@ -754,6 +754,12 @@ static XVector* xmw_dockGroupAttach(XMainWindow* self, XDockWidget* first,
     if (!self || !first || !second || first == second ||
         !self->m_dockTabGroups)
         return NULL;
+    /* 先摘 second 再定位/建组：detach 在组内余员 <2 时解散并释放该
+       组——second 与 first 同组时旧序（先取 group 后 detach）会拿着
+       已释放的组指针继续 indexOf（use-after-free 段错误）。detach 后
+       按 first 重新定位，同组情形自然落入新建组分支，终态
+       [first, second] 不变。 */
+    xmw_dockGroupDetach(self, second);
     group = xmw_dockGroupOf(self, first);
     if (!group) {
         group = XVector_Create(XDockWidget*);
@@ -761,7 +767,6 @@ static XVector* xmw_dockGroupAttach(XMainWindow* self, XDockWidget* first,
         XVector_push_back_1_base(group, &first);
         XVector_push_back_1_base(self->m_dockTabGroups, &group);
     }
-    xmw_dockGroupDetach(self, second);
     if (XVector_indexOf(group, &second, 0) < 0)
         XVector_push_back_1_base(group, &second);
     return group;
@@ -1281,17 +1286,21 @@ int XMainWindow_tabShape(const XMainWindow* self)
 
 void XMainWindow_setCorner(XMainWindow* self, int corner, int area)
 {
-    int mask;
-    if (!self) return;
-    mask = 1 << corner;
-    self->m_corner &= ~mask;
-    if (area != 0) self->m_corner |= mask;
+    int shift;
+    if (!self || corner < 0 || corner > 3) return;
+    if (area < 0 || area > 0xF) return;
+    /* 每角 4bit 承载停靠区域码（0..0xF，可完整往返 setCorner/corner；
+     * 旧实现按 1bit 置位，corner() 恒返回 0/1，偏离头文件“返回区域
+     * 码”契约——如 Bottom=8 无法表示）。 */
+    shift = corner * 4;
+    self->m_corner &= ~(0xF << shift);
+    self->m_corner |= area << shift;
 }
 
 int XMainWindow_corner(const XMainWindow* self, int corner)
 {
-    if (!self) return 0;
-    return ((self->m_corner >> corner) & 1) ? 1 : 0;
+    if (!self || corner < 0 || corner > 3) return 0;
+    return (self->m_corner >> (corner * 4)) & 0xF;
 }
 
 void XMainWindow_addToolBarBreak(XMainWindow* self)

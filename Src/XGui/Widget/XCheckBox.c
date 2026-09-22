@@ -169,11 +169,14 @@ void XCheckBox_setTristate(XCheckBox* self, bool tristate)
 {
     if (!self || self->m_tristate == tristate)
         return;
+    /* 对标 Qt 6.8.3 qcheckbox.cpp：setTristate 只翻转 tristate 标志，
+     * 不触碰 noChange/checked。PartiallyChecked 期间 checked 真值已由
+     * setCheckState（setChecked(state != Unchecked)）置 true，故关闭
+     * 三态后 checkState() 的 tristate&&noChange 门失效，按真值报
+     * Checked（isChecked 同为 true）；重新开启三态则 noChange 保留、
+     * 恢复 Partial。此前"清除 noChange 落到 Unchecked"既偏离 Qt，也
+     * 与实际行为（报 Checked）不符。 */
     self->m_tristate = tristate;
-    if (!tristate) {
-        /* 关闭三态时回到二态：清除 noChange，PartiallyChecked 落到 Unchecked。 */
-        self->m_noChange = false;
-    }
     XWidget_update((XWidget*)self);
 }
 

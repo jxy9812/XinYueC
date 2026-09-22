@@ -477,6 +477,17 @@ static XPalette VXFusionStyle_standardPalette(XStyle* self)
     XColor_setRgba(&c, XFS_PAL_PLACEHOLDER);
     XPalette_setColor(&pal, XPaletteColorGroup_Active,
                       XPaletteColorRole_PlaceholderText, c);
+    /* Inactive 组逐角色镜像 Active（R-88 根因修正：此前只填 Active
+     * 全角色 + Disabled 子集，Inactive 组保持 XMemset 全零无效色，一旦
+     * 被消费即渲染为透明/黑块。对标 qt_fusionPalette 的
+     * setColor(QPalette::All, ...) 语义：Inactive 与 Active 同基色，
+     * 仅 Disabled 另设降级子集）。 */
+    for (g = 0; g < XPaletteColorRole_NColorRoles; ++g) {
+        XPalette_setColor(&pal, XPaletteColorGroup_Inactive,
+                          (XPaletteColorRole)g,
+                          XPalette_color(&pal, XPaletteColorGroup_Active,
+                                         (XPaletteColorRole)g));
+    }
     return pal;
 }
 

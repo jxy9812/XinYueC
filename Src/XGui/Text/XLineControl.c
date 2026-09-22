@@ -3891,19 +3891,27 @@ static bool xlc_drawSelections(XLineControl* self, XPainter* painter,
             XPainter_fillRect(painter, &selRect, self->m_palette.m_highlight);
         return true;
     }
-    if (cursorPhase) {
-        /* 掩码反选一格：背景 Text、前景 Window（光标在可编辑位上）。 */
-        int cursorX = xlc_layoutCursorToX(self,
-                                          xlc_mapTextToLayout(self, self->m_cursor));
+    if (cursorPhase && self->m_maskData) {
+        /* 掩码反选一格：背景 Text、前景 Window（光标在可编辑位上）。
+         * 门禁（R-32 内层，Qt // mask selection 分支语义）：此格为掩码
+         * 行编辑专属——仅当 m_maskData 存在（NULL=无掩码）时绘制；
+         * 无掩码时细光标归壳层 Cursor 旗标承担，两者互斥。 */
+        int cursorV = xlc_mapTextToLayout(self, self->m_cursor);
+        int cursorX = xlc_layoutCursorToX(self, cursorV);
         int seq = xlc_seqLenAt(self->m_layoutText, self->m_layoutLen,
-                               cursorX);
+                               cursorV);
         if (seq <= 0) seq = 1;
         selRect.x = offset->x + cursorX;
         selRect.y = offset->y;
+        /* 根因修复（R-31）：段宽必须走字节口径（与 XLineControl_draw
+         * Text 分支的 blinkStart/nextBoundary 同口径）——cursorX 是
+         * xlc_layoutCursorToX 返回的像素 X，旧代码把它当字节偏移喂给
+         * seqLenAt/textWidthRange：等宽字库下光标过 len/8 处即读出
+         * layoutText 越界字节并得出 0/垃圾宽。字节定段、像素定 x。 */
         selRect.width = XPainter_textWidthRange(
-            self->m_font, self->m_layoutText, cursorX, cursorX + seq);
+            self->m_font, self->m_layoutText, cursorV, cursorV + seq);
         selRect.height = self->m_layoutLineHeight;
-        if (self->m_cursor < self->m_layoutLen
+        if (cursorV < self->m_layoutLen
             && (!clip || (selRect.x < clip->x + clip->width
                           && selRect.x + selRect.width > clip->x)))
             XPainter_fillRect(painter, &selRect, self->m_palette.m_text);
@@ -3982,7 +3990,11 @@ void XLineControl_draw(XLineControl* self, XPainter* painter,
     }
 
     if (flags & (int)XLineControlDrawFlag_Cursor) {
-        if (cursorPhase) {
+        /* 门禁（R-32 内层）：有掩码时不画细光标——Qt 壳层仅在
+         * inputMask 为空时下发 DrawCursor（qlineedit.cpp paintEvent），
+         * 此处再挡一层，保证掩码反选格与细光标互斥，宿主误传双旗标
+         * 也不出现两态同屏。 */
+        if (cursorPhase && !self->m_maskData) {
             int cursor = xlc_cursorLayoutPos(self);
             {
                 XRect cursorRect;

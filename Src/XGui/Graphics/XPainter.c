@@ -18,6 +18,7 @@
 #include "XAlgorithm.h"
 #include "XPainter.h"
 #include "XMemory.h"
+#include "XDateTime.h"
 #if XPAINTDEVICE_ON
 #include "XPaintDevice.h"
 #endif /* XPAINTDEVICE_ON */
@@ -1002,6 +1003,21 @@ static bool painterSpanPixelRange(float left, float right,
     if (last > (float)INT_MAX) *outLast = INT_MAX;
     else if (last < (float)INT_MIN) *outLast = INT_MIN;
     else *outLast = (int)last;
+    return *outFirst <= *outLast;
+}
+
+/* 移位半像素约定（像素 px 覆盖 [px-0.5, px+0.5)）的像素范围：字形灰度
+   光栅器的子采样点位于 px-0.5+(i+0.5)/subdiv，与 painterSpanPixelRange
+   的中心约定差半像素——右端若按中心约定取整，末端含大量覆盖的像素列
+   会被整列丢弃（细笔画在特定字号下消失，如 14px"件"竖笔）。右端放宽
+   一像素；多出的列由逐子采样精确测试过滤（0 覆盖像素跳过），只多测
+   不会错画。 */
+static bool painterSpanPixelRangeHalfOpen(float left, float right,
+                                          int* outFirst, int* outLast)
+{
+    if (!painterSpanPixelRange(left, right, outFirst, outLast))
+        return false;
+    if (*outLast < INT_MAX) *outLast += 1;
     return *outFirst <= *outLast;
 }
 
@@ -4675,6 +4691,51 @@ static bool painterScanFillDevice(XPainter* self, int n,
         if (painterPatternActive(self))
             bulkSolid = false;
     }
+    /* 半透明实色 span 快路径判定（P2 复扫 R-72 附带优化）：SourceOver
+       + 半透明 alpha + ARGB32 目标 + 无图案/无路径裁剪/单矩形裁剪/
+       无表面裁剪时，逐像素 putPixel 的四层裁剪判定与函数调用开销是
+       图表面积序列（~15K 像素/帧，area 填充 1.2ms 的 ~90%）主成本。
+       混合数学与 painterComposeColor SourceOver 通用分支逐位一致。 */
+    int fastBlend = 0; /* A/B: 强制 0 */
+    unsigned fastSa = 0u, fastSr = 0u, fastSg = 0u, fastSb = 0u;
+    unsigned fastSpR = 0u, fastSpG = 0u, fastSpB = 0u, fastIsr = 255u;
+    uint8_t* fastBits = NULL;
+    int fastBpl = 0;
+    {
+        if (0 && !gradient && !bulkSolid &&
+            self->m_state.m_compositionMode ==
+                XPainterCompositionMode_SourceOver &&
+            ((solidColor >> 24) & 255u) != 0u &&
+            ((solidColor >> 24) & 255u) != 255u &&
+            XImage_format(self->m_image) == XImageFormat_ARGB32 &&
+            !painterPatternActive(self) &&
+            !self->m_state.m_hasClipPath &&
+            self->m_state.m_clipRegion.count <= 1 &&
+            !g_surfaceClipActive)
+        {
+            fastBlend = 1;
+            fastSa = (solidColor >> 24) & 255u;
+            fastSr = (solidColor >> 16) & 255u;
+            fastSg = (solidColor >> 8) & 255u;
+            fastSb = solidColor & 255u;
+            fastIsr = 255u - fastSa;
+            fastSpR = painterMul255(fastSr, fastSa);
+            fastSpG = painterMul255(fastSg, fastSa);
+            fastSpB = painterMul255(fastSb, fastSa);
+            fastBits = XImage_bits(self->m_image);
+            fastBpl = XImage_bytesPerLine(self->m_image);
+            /* 行界收口到裁剪矩形（等价 putPixel 的逐像素 y 判定）。 */
+            if (self->m_state.m_hasClip)
+            {
+                if (py0 < self->m_state.m_clipRect.y)
+                    py0 = self->m_state.m_clipRect.y;
+                if (py1 >= self->m_state.m_clipRect.y +
+                               self->m_state.m_clipRect.height)
+                    py1 = self->m_state.m_clipRect.y +
+                          self->m_state.m_clipRect.height - 1;
+            }
+        }
+    }
     for (py = py0; py <= py1; ++py)
     {
         float yc = (float)py + 0.5f;
@@ -4800,6 +4861,53 @@ static bool painterScanFillDevice(XPainter* self, int n,
                     XImage_fillRect(self->m_image, &span, solidColor);
                 }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
+            }
+            else if (fastBlend && xl <= xr)
+            {
+                /* 半透明实色 span 快路径：putPixel 的四层裁剪判定与
+                   函数调用开销提升到行级/调用级（裁剪矩形 x/y 收口），
+                   compose SourceOver 通用分支内联展开——混合数学与
+                   painterComposeColor 逐位一致。 */
+                uint8_t* rowBase = fastBits +
+                                   (size_t)py * (size_t)fastBpl;
+                int fx0 = xl;
+                int fx1 = xr;
+                int px2;
+                if (self->m_state.m_hasClip)
+                {
+                    if (fx0 < self->m_state.m_clipRect.x)
+                        fx0 = self->m_state.m_clipRect.x;
+                    if (fx1 >= self->m_state.m_clipRect.x +
+                                   self->m_state.m_clipRect.width)
+                        fx1 = self->m_state.m_clipRect.x +
+                              self->m_state.m_clipRect.width - 1;
+                }
+                for (px2 = fx0; px2 <= fx1; ++px2)
+                {
+                    uint8_t* d = rowBase + (size_t)px2 * 4u;
+                    unsigned da = d[3];
+                    unsigned dpR = painterMul255(d[2], da);
+                    unsigned dpG = painterMul255(d[1], da);
+                    unsigned dpB = painterMul255(d[0], da);
+                    unsigned outA = fastSa + da;
+                    unsigned outPR;
+                    unsigned outPG;
+                    unsigned outPB;
+                    unsigned outR;
+                    unsigned outG;
+                    unsigned outB;
+                    if (outA > 255u) outA = 255u;
+                    outPR = fastSpR + painterMul255(dpR, fastIsr);
+                    outPG = fastSpG + painterMul255(dpG, fastIsr);
+                    outPB = fastSpB + painterMul255(dpB, fastIsr);
+                    outR = painterUnpremultiply(outPR, outA);
+                    outG = painterUnpremultiply(outPG, outA);
+                    outB = painterUnpremultiply(outPB, outA);
+                    d[0] = (uint8_t)outB;
+                    d[1] = (uint8_t)outG;
+                    d[2] = (uint8_t)outR;
+                    d[3] = (uint8_t)outA;
+                }
             }
             else for (px = xl; px <= xr; ++px)
             {
@@ -5574,7 +5682,9 @@ static bool painterGlyphContoursAlphaCoverage(
 
     if (!contours || contourCount <= 0 || !alpha ||
         width <= 0 || height <= 0 || subdiv < 1)
+    {
         return false;
+    }
     viewBytes = (size_t)contourCount * sizeof(*workContours);
     for (c = 0; c < contourCount; ++c)
     {
@@ -5588,7 +5698,9 @@ static bool painterGlyphContoursAlphaCoverage(
     if (totalPoints < 3 ||
         totalPoints > ((size_t)-1) / sizeof(*crossings) ||
         totalPoints > ((size_t)-1) / sizeof(*spans))
+    {
         return true; /* 退化路径：无有效覆盖，缓冲保持清零。 */
+    }
     crossingBytes = totalPoints * sizeof(*crossings);
     spanBytes = totalPoints * sizeof(*spans);
     if (totalPoints > ((size_t)-1) / (sizeof(float) * 2u))
@@ -5618,7 +5730,9 @@ static bool painterGlyphContoursAlphaCoverage(
                 float x = source->m_xs[i] + offsetX;
                 float y = source->m_ys[i] + offsetY;
                 if (!isfinite(x) || !isfinite(y))
+                {
                     goto fail;
+                }
                 writeXs[i] = x;
                 writeYs[i] = y;
                 if (!haveBounds)
@@ -5698,8 +5812,9 @@ static bool painterGlyphContoursAlphaCoverage(
                     int spanFirst;
                     int spanLast;
                     int px;
-                    if (!painterSpanPixelRange(spans[j], spans[j + 1],
-                                               &spanFirst, &spanLast))
+                    if (!painterSpanPixelRangeHalfOpen(spans[j],
+                                                       spans[j + 1],
+                                                       &spanFirst, &spanLast))
                         continue;
                     if (spanFirst < 0) spanFirst = 0;
                     if (spanLast >= width) spanLast = width - 1;
@@ -5717,8 +5832,7 @@ static bool painterGlyphContoursAlphaCoverage(
                             if (sx >= spans[j] && sx < spans[j + 1])
                                 ++counts[px];
                         }
-                    }
-                }
+                    }                }
             }
         }
         if (pxLast >= pxFirst)
@@ -8052,6 +8166,61 @@ static float painterBitmapScaleForFont(const XFont* font)
     return painterBitmapScaleForTable(font, &table);
 }
 
+/* 缺字形 ASCII 代理（统一字体回退链的最后一环）：内置 XFontOutlineCommon
+   仅覆盖 ASCII + GB2312 一级汉字，全角标点/破折号/箭头等常用符号缺字形，
+   此前表现是 M 宽空白占位不画（advance 有、墨迹无）。本表把常用缺字形
+   码点映射到字库必有的 ASCII 代理字形（对标 Qt 无候选字体做字形合并时
+   的可见回退）；调用方必须先用原码点查字库、失败才落到这里——外挂系统
+   字库收录这些字形时不受影响。代理仍未收录的码点维持既有空白占位口径。 */
+static uint32_t painterGlyphProxyCodepoint(uint32_t cp)
+{
+    /* 全角 ASCII 形态（＃Ａｚ　！＂…）整体平移映射，覆盖 FF01-FF5E。 */
+    if (cp >= 0xFF01u && cp <= 0xFF5Eu)
+        return cp - 0xFEE0u;
+    /* 圆序号 ①-⑨ 代理数字。 */
+    if (cp >= 0x2460u && cp <= 0x2468u)
+        return cp - 0x2460u + (uint32_t)'1';
+    switch (cp)
+    {
+        /* CJK 标点/括号。 */
+        case 0x3001u: return (uint32_t)',';   /* 、 */
+        case 0x3002u: return (uint32_t)'.';   /* 。 */
+        case 0x300Au: return (uint32_t)'<';   /* 《 */
+        case 0x300Bu: return (uint32_t)'>';   /* 》 */
+        case 0x300Cu: return (uint32_t)'[';   /* 「 */
+        case 0x300Du: return (uint32_t)']';   /* 」 */
+        case 0x3010u: return (uint32_t)'[';   /* 【 */
+        case 0x3011u: return (uint32_t)']';   /* 】 */
+        /* 破折号/连接号（U+2010-U+2015 统一代理连字符）。 */
+        case 0x2010u:
+        case 0x2011u:
+        case 0x2012u:
+        case 0x2013u:
+        case 0x2014u:
+        case 0x2015u: return (uint32_t)'-';
+        /* 曲引号。 */
+        case 0x2018u:
+        case 0x2019u: return (uint32_t)'\'';
+        case 0x201Cu:
+        case 0x201Du: return (uint32_t)'"';
+        /* 省略号/项目符号/间隔号。 */
+        case 0x2022u:
+        case 0x2026u:
+        case 0x00B7u: return (uint32_t)'.';
+        /* 箭头（ASCII 尖括号近似）。 */
+        case 0x2190u: return (uint32_t)'<';
+        case 0x2191u: return (uint32_t)'^';
+        case 0x2192u: return (uint32_t)'>';
+        case 0x2193u: return (uint32_t)'v';
+        /* 常用符号单字形代理。 */
+        case 0x00A7u: return (uint32_t)'S';   /* § */
+        case 0x00D7u: return (uint32_t)'x';   /* × */
+        case 0x2212u: return (uint32_t)'-';   /* − */
+        case 0x2248u: return (uint32_t)'~';   /* ≈ */
+        default: return cp;
+    }
+}
+
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
 typedef struct PainterOutlinePathSink
 {
@@ -8187,8 +8356,24 @@ static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
     if (!XFontFace_loadOutlineGlyph_base(face, font, codepoint, metrics,
                                          &sink))
     {
+        /* 缺字形代理回退：原码点字库未收录时改画 ASCII 代理字形（见
+           painterGlyphProxyCodepoint 注）；代理亦未收录才按缺字形失败
+           返回。路径按原码点入缓存（键不变，数据自洽）。 */
+        uint32_t proxy = painterGlyphProxyCodepoint(codepoint);
+        if (proxy == codepoint)
+        {
+            XPainterPath_deinit(path);
+            return false;
+        }
         XPainterPath_deinit(path);
-        return false;
+        XPainterPath_init(path);
+        XMemset(metrics, 0, sizeof(*metrics));
+        if (!XFontFace_loadOutlineGlyph_base(face, font, proxy, metrics,
+                                             &sink))
+        {
+            XPainterPath_deinit(path);
+            return false;
+        }
     }
     return true;
 }
@@ -8421,8 +8606,18 @@ static int painterOutlineGlyphAdvance(const XFont* font, uint32_t cp,
     int cached;
     if (painterGlyphAdvanceCacheGet(face, cp, scaleKey, &cached))
         return cached;
-    if (XFontFace_loadOutlineGlyph_base(face, font, cp, &metrics, NULL) &&
-        metrics.advance > 0)
+    if (!(XFontFace_loadOutlineGlyph_base(face, font, cp, &metrics, NULL) &&
+          metrics.advance > 0))
+    {
+        /* 缺字形：先试 ASCII 代理字形步进（同绘制回退口径），代理亦
+           失败清零按 M 宽空白占位（既有口径）。缓存按原码点记。 */
+        uint32_t proxy = painterGlyphProxyCodepoint(cp);
+        if (proxy == cp ||
+            !XFontFace_loadOutlineGlyph_base(face, font, proxy, &metrics,
+                                             NULL))
+            XMemset(&metrics, 0, sizeof(metrics));
+    }
+    if (metrics.advance > 0)
     {
         value = (float)metrics.advance * scale;
         cached = value < 1.0f ? 1 : (int)(value + 0.5f);
@@ -9169,6 +9364,26 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
     ok = XFontFace_loadOutlineGlyph_base(
         XFont_face(&painter->m_state.m_font), &painter->m_state.m_font,
         cp, &metrics, &sink);
+    if (!ok)
+    {
+        /* 缺字形代理回退（同 painterOutlineBuildPath 口径）：清空半途
+           路径后改用 ASCII 代理字形重建。 */
+        uint32_t proxy = painterGlyphProxyCodepoint(cp);
+        if (proxy != cp)
+        {
+            if (reusablePath)
+                painterOutlinePathReset(path);
+            else
+            {
+                XPainterPath_deinit(path);
+                XPainterPath_init(path);
+            }
+            XMemset(&metrics, 0, sizeof(metrics));
+            ok = XFontFace_loadOutlineGlyph_base(
+                XFont_face(&painter->m_state.m_font),
+                &painter->m_state.m_font, proxy, &metrics, &sink);
+        }
+    }
     if (outMetrics) *outMetrics = metrics;
     if (ok && XPainterPath_elementCount(path) > 0)
     {
@@ -9257,9 +9472,21 @@ static int painterCodepointAdvance(const XFont* font,
     if (painterGlyphAdvanceCacheGet(face, cp, scaleKey, &cached))
         return cached;
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
-    cached = XFontFace_loadBitmapGlyph_base(face, font, cp, &dsc, NULL, 0)
-                 ? painter8x16GlyphAdvance(&dsc, table, scale)
-                 : painter8x16Metric(table ? table->m_width : 0, scale);
+    if (XFontFace_loadBitmapGlyph_base(face, font, cp, &dsc, NULL, 0))
+    {
+        cached = painter8x16GlyphAdvance(&dsc, table, scale);
+    }
+    else
+    {
+        /* 缺字形代理回退（与绘制路径同口径）：点阵字库未收录的码点
+           先试 ASCII 代理字形步进，仍失败按表宽空白占位。 */
+        uint32_t proxy = painterGlyphProxyCodepoint(cp);
+        if (proxy != cp &&
+            XFontFace_loadBitmapGlyph_base(face, font, proxy, &dsc, NULL, 0))
+            cached = painter8x16GlyphAdvance(&dsc, table, scale);
+        else
+            cached = painter8x16Metric(table ? table->m_width : 0, scale);
+    }
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
     painterGlyphAdvanceCachePut(face, cp, scaleKey, cached);
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
@@ -9273,10 +9500,18 @@ static bool painterLoadGlyph(const XFont* font, uint32_t cp,
 {
     XFontFaceInfo faceInfo;
     const XFontFace* face;
-    if (!table || !dsc || !data ||
-        !(face = XFont_face(font)) ||
-        !XFontFace_loadBitmapGlyph_base(face, font, cp, dsc, data, dataSize))
+    if (!table || !dsc || !data || !(face = XFont_face(font)))
         return false;
+    if (!XFontFace_loadBitmapGlyph_base(face, font, cp, dsc, data, dataSize))
+    {
+        /* 缺字形代理回退（与 outline 路径同口径）：点阵字库未收录的
+           码点改用 ASCII 代理字形。 */
+        uint32_t proxy = painterGlyphProxyCodepoint(cp);
+        if (proxy == cp ||
+            !XFontFace_loadBitmapGlyph_base(face, font, proxy, dsc, data,
+                                            dataSize))
+            return false;
+    }
     XMemset(&faceInfo, 0, sizeof(faceInfo));
     if (!XFontFace_info_base(face, font, &faceInfo) ||
         faceInfo.m_kind != XFontFace_Bitmap)

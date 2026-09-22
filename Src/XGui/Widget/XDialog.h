@@ -24,7 +24,7 @@ typedef struct XDialog
 {
     XWidget m_base;    /**< 基类成员；必须是第一个。 */
     int m_result;      /**< 对标 result()；accepted=1/rejected=0。 */
-    bool m_modal;      /**< 对标 modal 属性（默认 true）。 */
+    bool m_modal;      /**< 对标 modal 属性（默认 false，对标 QDialog::modal；exec 路径显式模态化）。 */
     bool m_inExec;     /**< exec() 循环标志。 */
     bool m_sizeGripEnabled; /**< 对标 QDialog::sizeGripEnabled；仅存储位
                                 （XSizeGrip 控件未自动嵌入）。 */

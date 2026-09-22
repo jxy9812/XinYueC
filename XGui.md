@@ -701,6 +701,141 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   （completer 模型 static 可达不计泄漏）。注意 LSan 检出泄漏时进程
   exit=1，与断言结果无关。
 
+### 8.0g13 Release/-O2 堆损坏根修（主题引擎栈残影误判）✓（2026-09-22，§8.2 长尾·交付后补测揪出）
+
+- **现象**：最终门全绿（Debug 口径）后补测 Release/-O2，回归套件
+  确定性 `malloc(): corrupted top size`（exit=134）；-O0 全绿，
+  ASan 快照全绿，旗标二分（严格别名/浮点收缩/向量化关闭）均无效。
+- **根因**：`theme_loadFile`（XIconThemeInternal.c）栈上
+  `XPixmap candidate` 未清零即 `XPixmap_init`。该栈槽残留上一次
+  XPixmap 的字节——vtable 指针恰好匹配 → `XPixmap_isInitializedObject`
+  误判为「已初始化对象（重初始化）」→ 先 `XPixmap_releaseData`
+  释放残影里的陈旧 m_data：普通 -O2 下陈旧指针恰为活对象 → 重复
+  unref → 引用计数提前归零释放 → 后续使用即堆损坏（损坏 glibc
+  top 块，在下一次主分配区扩顶 malloc 才惰性 abort）；残影为垃圾值
+  时直接野指针（调试分配器下实测 0xd1）。**检测完全依赖栈布局**：
+  -O0 残影恰为 NULL、ASan 换分配器布局、零初始化换栈帧填充，
+  三者均"修好"假象。
+- **修复**：XIconThemeInternal.c 8 处栈上 XPixmap 局部
+  （theme_loadFile candidate、tryParsedTheme 两 candidate、
+  tryTheme/searchTheme 两 best、scaledToSizeRect scaled、
+  fallback 扫描 pixmap）声明处 `XMemset 0` 再 init（对已初始化
+  路径零 memset 无害，unref(NULL) 安全空操作）；`out` 参数不动
+  （契约由调用方保证，且需保留重初始化释放语义）。
+- **排查工具链（可复用）**：①`-ftrivial-auto-var-init=zero` 全绿
+  ⇒ 类别锁定为未初始化局部（GCC14 支持，替代不可用的
+  MSan/valgrind）；②按文件注入 plain/zero 旗标二分须强制
+  touch 变更文件（CMake 每源旗标变更不保证重编，首轮二分因此
+  误定位 XAtomic_GCC——翻转复验证伪）；③core 离线 gdb 不走
+  ptrace；④`LD_PRELOAD=libc_malloc_debug.so.0 +
+  GLIBC_TUNABLES=glibc.malloc.check=3:tcache_count=0` 把惰性
+  abort 变成写点 SEGV，core 栈直接暴露野指针；⑤expect 探针
+  `malloc(1MB)` 走 mmap 不校验 top、96KB 探针因 bin 复用不保证
+  走 top——探针"通过"≠堆完好，勿据此定性。
+- **顺带**：XPainter.c 排查期 TEMP 调试打印 10 处清零；
+  `painterFillContoursAntialiased` 的 ok 赋值/检查顺序复核为正确。
+- **验证**：Release -O2 回归全量绿（exit=0）；Debug 回归全绿；
+  apitest 0 FAIL；autotest 全过；TEMP 残留 0。
+
+### 8.0g14 deferred 小项六路收口 + 对话框键盘路由根修 ✓（2026-09-22，§8.2 长尾）
+
+- **批次形态**：六路 Flash 工作流派发至中途配额耗尽（1310，重置
+  09-24），主线单线程接续收口——已落盘的两路（StyleHints 默认值、
+  QSS 头注释×2）直接采纳，未落盘的三路主线亲手补齐，轴 reverse 一
+  路代理已完整落盘直接采纳。
+- **六项 deferred 收口**：①XStyleHints 默认值对齐 Qt（长按
+  500→800、触摸释放焦点 true→false，qplatformtheme.cpp
+  defaultThemeHint 依据，头文档同步）；②XCssStyleSheet.h:132 特异
+  度注释改 0x100/0x10/1 实现口径；③XStyleSheetStyle.h 缓存字段注
+  释同步新契约（同分取后+!important 门禁）；④**XDialog Enter 派
+  发**（VXDialog_keyPressEvent 补 Return/Enter 分支：显式 default
+  优先、回落子树首个可见可用 autoDefault 按钮，命中即 click；多行
+  文本编辑持焦豁免）；⑤toDouble/toFloat 家族改 Qt 全串口径
+  （XStringView/XByteArrayView 四函数：跳过首尾空白后整串消费，
+  尾随垃圾判失败——调用方全库枚举确认仅 XVariant 依赖、其 Qt 对
+  应 QVariant::toDouble 本就全串；QSS/XInputDialog 用裸 strtod 不
+  受影响）；⑥**轴 reverse 登记推翻**：核对 Qt 6.8.3
+  verticalaxis/horizontalaxis.cpp——轴线（arrow）定位不读
+  isReverse()，"setReverse 把轴线移至对侧"的 deferred 登记不成立，
+  reverse 仅镜像刻度/网格/标签排列；已落盘实现=映射翻转+刻度值翻
+  转+指纹纳入 reverse，即为对标行为。
+- **GCC14 指针惯用法清理**：32 处显式转型（XTreeWidget×3/
+  XListView×4/XListWidget×2+XStringUtils 头/XChartView×13/
+  XStringView×9+XVariant 等连带）；实测 Debian gcc-14 该诊断文本
+  为 error 但 exit=0 不阻断构建（P2 批次"硬错误级"系文案误读），
+  清理为防御性；错误诊断已清零。
+- **对话框键盘路由根修（真键盘目验揪出，"对话框弹不出"同族）**：
+  真键盘路径下打开的消息框 Esc/Enter 全部无响应——链条两层缺口：
+  ①平台键固定投递原生窗口对象，而 XGui 对话框为应用内 XWindow（
+  单原生窗口模型）永远收不到键 → **VXGuiApplication_notify 键事
+  件重定向到焦点控件顶层窗口**（对标 QGuiApplicationPrivate::
+  processKeyEvent 的 focusWindow 交付）；②对话框 open/exec 只
+  show+登记模态、从不抢焦点 → **dialog_grabInitialFocus**（对标
+  showModal initialFocusWidget：默认按钮优先，已持有焦点则不动）。
+  ③连带修正 autoDefault 判定：对话框子树内按钮仅显式 Off 才退出
+  候选（XMessageBox 便捷路径以 parent+flags=0 构造为子控件形态，
+  windowType≠Dialog 使 autoDefault 误判关——Qt 语义对话框内按钮
+  默认即 autoDefault）。**真键盘复验全通**：xdotool 开框→按
+  Return→默认按钮点击→对话框关闭→状态栏"接受(result=1)"。
+- **排查教训**：后台长活进程用 `pkill -f` 会误杀同名包装 shell
+  （-f 匹配整条命令行），须用 `pkill -x`/comm 精确匹配；测试实例
+  必须先 ps 核对唯一性（本轮曾两个实例叠跑导致连续误判"修复无
+  效"）；autotest 直发事件路径与平台真键路径不等价——对话框键盘
+  行为必须有真键盘目验。
+- **追加收口（同日）**：⑦**XAction 图标承载**（deferred 末项落地：
+  m_iconPath 字段 + icon/icon_const/setIcon/setIcon_2 四 API（复用
+  XACTION_DEFINE_TEXT_SET 宏族，changed 联动）+ XToolButton 镜像
+  经 XIcon_init_file 落按钮；apitest menus 族新增 5 断言全过——注
+  意 set(NULL) 置空串为文本族约定非 NULL 指针）；⑧autotest 补对话
+  框 Enter 派发锁定断言 4 条（Return 直发→默认按钮→accept 关闭，
+  含焦点清理防悬垂——此前真键盘行为零自动化覆盖）；⑨**GCC14 惯用
+  法项重登记并关闭**：全库扫描实为 13524 处/303 文件的既定 C 继承
+  风格（诊断文本 error 但 exit=0 不阻断构建），P2"16 处"仅所有权
+  六文件巧合计数——机械转型不立项，仅触碰文件顺手清理。
+- **验证（终态）**：Debug（API 2732/autotest 133/回归/验收/GPU）+
+  Release（同套件×3+diff CLEAN+基准 280 FPS）双口径终门全绿；探
+  针零残留；改动未提交等授权。
+
+### 8.0g15 SVG 目标尺寸矢量直渲 ✓（2026-09-22，大件首项落地）
+
+- **管线**：`XImageCodecInternal_decodeSvg_ex(data,size,tw,th,out)`
+  新入口——`svgVectorDecode` 目标尺寸覆写表面（viewBox 根变换按目
+  标比例映射矢量几何），消除「固有尺寸光栅化+平滑放大」的插值模
+  糊（对标 QSvgRenderer::render 按目标矩形出图）；根元素缺 viewBox
+  时以固有尺寸充当隐式 viewBox（Qt QSvgTinyDocument 缺省语义），
+  保证目标表面整体缩放；preserveAspectRatio（默认 xMidYMid meet）
+  纵横比语义保持。位图/纯色回退形态无矢量几何，target 不适用按原
+  口径。`decodeSvg` 委托 `_ex(0,0)`，gzip 递归透传目标。
+- **引擎接线**：`XSvgIconEngine` pixmap 槽有效请求尺寸时读文件字
+  节走直渲优先，失败回退既有 XImageCache 路径（不空手）；直渲绕过
+  XImageCache（键 fileName+format 不分尺寸防错尺寸命中），重复成
+  本由上层 XIconScaledPixmapCache 最终位图缓存吸收。
+- **渲染器级 AA 已实现（同日，登记项闭环）**：探针实测原光栅化器
+  为二值覆盖（非对齐圆周半透明像素=0）→ 落地 **4× 超采样+盒式降
+  采样**（16 级覆盖积分，预乘平均/非预乘还原；目标>4096 时超采样
+  面超 16384 上限自动回退无 AA）。**AA 仅在显式目标尺寸时启用**
+  （decodeSvg_ex 传正目标=「矢量直渲+AA」新契约；既有 decodeSvg
+  固有尺寸路径保持渐变中心/三角形/宽行覆盖等像素级历史基线）。
+  回归新增 1 断言（非对齐圆周过渡像素>0）全过。SVG 侧 Qt 对齐项
+  至此清零。
+- **验证**：回归新增 5 断言（尺寸×4+AA 过渡像素）全过；双口径终
+  门全绿（API 2732/autotest 133/回归/验收/GPU/diff CLEAN/基准
+  284 FPS）；探针零残留。
+
+### 8.0g16 XTreeWidget itemEntered（数据模型四期③）✓（2026-09-22）
+
+- **落地**：VXTreeWidget_mouseMoveEvent 覆写（XClass_Parent 走
+  XTreeView 基类移动路径保 entered 抽象信号）+ m_enteredRow 差分判
+  重（-2 初值同 XListWidget 口径）+ 命中走 xtw_rowAtY 展开态行带
+  （无模型便利类不适用基类 indexAt 的模型行数校验，与点击同口径）
+  + itemEntered_signal 由句柄预留转真实发射 + 头注同步。
+- **测试**：apitest views 族 +2 断言（进入新行发射 itemEntered(1)/
+  同行悬停差分判重不重发）——注入坐标须 visualItemRect 内容坐标
+  加回 20px 表头带（与点击注入 +20 同口径）。2732→2734。
+- **验证**：双口径终门全绿（API 2734/autotest 133/回归/验收/GPU/
+  diff CLEAN/基准 281 FPS）。四期剩余①②④（数据模型扩展/模型桥
+  接/绘制消费）仍为独立批。
+
 ### 8.1 架构裁剪/平台边界（声明式偏差，非漏实现）
 
 - XPaintEngine 绘制命令接口由 XPainter 承担；XImage/XPixmap/XBitmap/
@@ -735,12 +870,26 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
 | XGraphicsEffect 视觉目验 | ✅ 完成 | 2026-09-21 无头自动化目验：Xvfb 真实渲染四按钮同屏（基准+三效果）→ 原生 Xlib 截图 PNG 视检+像素差分——Opacity 亮度 -39%、Blur 边缘发散可见、Shadow 下方投影带 18 vs 基准 0；blurRadius 4/12 逐位相同=§8.1 已声明固定核偏差（非缺陷）；截图存 /tmp/effect_review/ 供人工复核；§8.0g12 效果页把三效果挂到真控件并纳入 demo autotest+像素差分常态化 |
 | ~~文档重构阶段三（architecture/ 分册）~~ | ✅ 完成 | 2026-09-21：render-pipeline/text-system/clipboard-input/platform/widgets-dialogs 五册落地 docs/xgui/architecture/ |
 | Qt 6.8.3 二次全量对齐复扫 | 大 | 大量代码变更后的回归性复扫 |
+| 图表序列绘制热点（area 填充 1.2ms+图例已修） | 中 | §8.0g12 后勘测：area drawPolygon 占序列耗时 92%（Debug 口径）；**2026-09-22 Release 口径勘测后降级**：-O2 下图表页 288 FPS（中位五样），混合成本非桌面瓶颈，SIMD 随板级档位评估（§10.4） |
+| XGuiGpu 回归 GPU 口径 t211g 勘误 | ✅ 已修 | 2026-09-22：后端期望改为环境分支（GPU 请求→Gpu），ctest#3 XGuiRegressionGpu 软件与 GPU 口径双绿；"exit=3" 系 X11 BadWindow code=3 误记，实为 exit=1/ctest=8；新发现 vulkan 后端 lavapipe SIGSEGV（违反回退契约，需真硬件+VK validation） |
 | Qt+LVGL 融合优化专项 | 大 | 内核表已按 LVGL 组织，续：嵌入式显存/局部刷新策略 |
 | 富文本引擎深化（换行/嵌套/图片） | ✅ 收口 | 换行/嵌套/图片/列表标记+嵌套分级/上下标/背景色/斜体合成（§8.0g2/g4/g5/g11）全部落地；§8.2 无剩余项 |
 | XPlainTextEdit 增量布局 | ✅ 已修 | 2026-09-21 §8.0e：单逻辑行编辑局部更新可视行段（原位替换+尾段 memmove，跨行回退全量），2000 次编辑全增量与全量参照逐条一致 |
 | MULTIPLE 进 TARGETS 广播、INCR 读超时参数化 | ✅ 已修 | 2026-09-21 §8.0g3：setIncrTimeoutMs API + TARGETS 应答补 MULTIPLE 原子（Xvfb 独立客户端探针实证） |
 | XPaintDevice 接入绘制派发（begin 泛化） | ✅ 已修 | 2026-09-21 §8.0g10：beginPainter 回调+XPainter_begin_device；Image/Picture 堆外壳绑定（ASan 两轮实证定方案），Pixmap/Bitmap 转发继承，Widget 按对标不开放；ASan 与基线逐字节一致 |
 | XGuiDemo 全量 Widget 接入+全量测试 | ✅ 完成 | 2026-09-21 §8.0g12：9 页 129 断言 autotest 全过 + 逐页目验 + 样式三套矩阵 + 效果像素差分 + ASan 零新增泄漏；随批根修框架 paintOffset/drawText 真缺陷两笔（§8.3） |
+| XTextEdit 富文本预览非 ASCII 字形缺失 | ✅ 已修 | 2026-09-22 三重根因：①parseHtml 逐字节拆散多字节序列（改按 UTF-8 整序列追加）；②字库缺 §/—/→/全角括号字形（XPainter 加 ASCII 代理回退表：全角平移/箭头/曲引号等）；③AA 光栅半像素约定错位系统性丢右端墨迹列（改半开区间+逐子采样过滤）。探针+离屏渲染亲验：中文粗斜体/§/破折号/黄底高亮/列表全部呈现 |
+| 对话框子控件形态 show/hide 不标脏（"弹不出"根因） | ✅ 已修 | 2026-09-22：XWidget_setVisible 非 m_isWindow 分支缺 XWidget_update（show 永不出现/hide 残影）+ XWidget_paintEvent_default 裁剪坐标混淆（offset 折算后按局部尺寸裁剪）两笔框架根修；XDialog/XMessageBox/XProgressDialog 补 update 中继与自绘面板；xdotool 真点击复验：面板/文本/按钮完整、关闭无鬼影、结果回传正确 |
+| 图表图例五项修复 | ✅ 已修 | 2026-09-22：addXxxSeries 系列从不登记全局注册表→主题色按类型内索引分配（销量/月销同色）；xchart_seriesGlobalIndex 加跨类型位置回退；柱状图例色板回退链（序列色→首柱组色→全局序主题色，修白色空板）；图例高度 4→6 行（样条条目曾被 +80 上限裁掉） |
+| demo 巡检 P2 批次（外观） | ✅ 已修 | 2026-09-22：棋盘格移至标题栏右端 24x24；命令链接按钮双行自适应居中+14x14 右向大箭头（首版方向镜像已勘误）；XTableWidget 垂直表头补 1 基行号；滑块手柄对标 Qt Fusion 四层画法（投影/填充/描边/内衬）；输入页三控件初值统一 30；insertTab 恢复 0→20 递增（Error/表格位次归位）。全部截图亲验 |
+| Qt 6.8.3 二次全量对齐复扫（第二次） | ✅ 报告已出 | 2026-09-22：9 域扫描+独立复核，115→113 确认→去重 111 项修复队列（P0=8/P1=32/P2=71），报告 docs/xgui/history/2026-09-22-qt-full-rescan.md；P0×6 已修复过全量门（XXYSeries 选中位图扩容/XChart 注册表摘除+去重/XTextControl 撤销截断/XTextDocument 片段池钳位/XSpinBox 校验剥前后缀/XTabWidget 界检），P1×32/P2×71 分波派修中 |
+| 复扫 P1×22 修复批次 | ✅ 已修 | 2026-09-22 七路并行：XLineControl 反选格像素/字节混用+掩码门禁+中键双粘贴（Text）；SpinBox NoButtons 折叠+InputDialog 死信号（输入）；XMenu 子菜单打不开+XToolBar 借用动作 UAF+XToolButton popupMode 死存储+XMenuBar hovered 死信号（菜单工具）；XTreeView/XTableView paintOffset+indexAt 越界+XTreeWidget 表头渲染/键盘导航（视图）；图例字体泄漏循环+PieSlice setValue 重置外观+面积图 128 点截断+视图侧主题色全局序（Charts）；WSI 焦点窗口更新+XWindow active/raise/lower 语义（窗口）；XMdiArea resize 重铺+XWizard 横幅叠印（容器）。全量门全绿+截图亲验 |
+| 复扫 P2×71 修复批次 | ✅ 已修 | 2026-09-22 七路并行（40 文件）：itemClicked 迁移 release 语义/entered 差分/editItem 接通/滚动条菜单/Shift 横滚/ensureVisible 最小滚动/RS-fail 清理；setCurrentCell 收敛/setRowCount 同步/四处视图配色走 XPalette；图表悬停坐标与 UAF/PieSeries move/BarSet 越界/轴 reverse+visible；XLabel 字体 deinit 错位/XRadioButton 图标/LCD 整串解析/TabBar removeTab 语义/MessageBox 关闭信号/Dialog modal 默认；ToolButton 图标镜像/ToolBox 残影/ProgressDialog 自动显示/DockWidget 标题栏/Wizard setButton/TabWidget 角部件/默认按钮互斥；QSS 简写/级联/伪类/特异度/蚀刻文本/Fusion Inactive 组/刻度护栏；XLayout 泄漏/windowPropertyChanged UAF/焦点更新等。deferred：XTreeWidget 数据模型（四期：③itemEntered 已于 §8.0g16 落地，余①②④）、XAction 图标承载（✅ §8.0g14）、XDialog Enter 派发（✅ §8.0g14）、轴 reverse 对侧迁移（✅ §8.0g14 经 Qt 源码核对推翻登记）、SVG 矢量直渲（✅ §8.0g15 含渲染器 AA）、GCC14 指针惯用法清理（✅ §8.0g14 重登记关闭：全库既定风格）。全量门全绿+调色板零漂移亲验 |
+| Release/-O2 口径堆损坏（主题引擎栈残影） | ✅ 已修 | 2026-09-22 §8.0g13：Debug 门全绿后 Release 补测确定性 `corrupted top size`；根因=theme_loadFile 等栈上 XPixmap 未清零，vtable 残影被 isInitializedObject 误判为重初始化→释放陈旧 m_data（活对象重复 unref→提前释放→堆损坏）。XIconThemeInternal.c 8 处局部补 XMemset；Release/-O2 回归全绿+三套件复验；排查工具链与探针陷阱教训入册 §8.0g13 |
+| 序列 SIMD 填充（光栅 2.5~4×） | 中 | 2026-09-22 实测勘误与量化：图表序列 1.2~1.6ms 中 area 填充占 92%；已落地覆盖光栅器 span 内部像素免逐子采样测试（数学等价，Debug 口径 FPS 无感）——**瓶颈在逐像素 source-over 混合而非覆盖计算**，SIMD 化对象应为实色 span 混合内循环；**Release 口径评估已闭合（§10.4）：-O2 下 288 FPS 非瓶颈，SIMD 随板级档位评估** |
+| Release 口径纳入常规门（g13 教训） | ✅ 落地 | 2026-09-22：`.zcode/final_gate_release.sh`（-O2 构建→bin-release/，与 Debug 门同套件×3 轮+图表基准单样）；CMakeLists 输出目录加 -D 覆盖守卫防 bin/ 互踩。首跑全绿（API 2727×3/autotest 129×3/回归/验收/GPU/diff CLEAN），基准中位 288 FPS 入册 §10.4 |
+| deferred 小项六路（StyleHints/QSS 注释/Dialog Enter/toDouble/GCC14/轴 reverse） | ✅ 已修 | 2026-09-22 §8.0g14：工作流配额中断由主线接续收口；轴 reverse"移至对侧"登记经 Qt 源码核对**推翻**（reverse 仅翻转映射与刻度序）；toDouble 全串口径连带调用方枚举；GCC14 惯用法触碰文件清零+**全库重登记关闭**（13524 处/303 文件=既定 C 继承风格不阻断构建，机械转型不立项） |
+| 对话框键盘路由（真键盘 Esc/Enter 全无响应） | ✅ 已修 | 2026-09-22 §8.0g14：单原生窗口模型下平台键固定投主窗，应用内对话框 XWindow 永远收不到键+open/exec 不抢焦点+子控件形态对话框 autoDefault 误判关，三层缺口两笔根修（notify 键重定向到焦点控件顶层窗口/dialog_grabInitialFocus/子树内 Auto 视为候选）——xdotool 真键盘复验：开框按 Return → 默认按钮 → 关框 → result=1 回传 |
 | SIMD 内核（NEON/Helium/DMA2D 变体注册） | 中 | 需板级验证 |
 | XGUI_ON=0 下其余文件同类裁剪错误 | ✅ 已修 | 2026-09-21 §8.0g9：XLineControl/XTextControl 守卫补齐 + demo 可执行/install 按 XGUI_ON 分流，静态+动态库裁剪构建双 0 错误 |
 | XTabBar 多选项卡溢出 | ✅ 已修 | 滚动按钮+偏移滚动+自动露出+滚轮（2026-09-21，见 §8.0f）；elide/按住连发已收口（§8.0g11）；触摸滚动随 XI2 专项 |
@@ -785,9 +934,16 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 
 ## 10. 规划：图表最大化性能优化（两期，对标 Qt DeviceCoordinateCache）
 
-> 状态：计划已定未开工。路线决策：软件静态层缓存（嵌入式基线，普适收益）
+> 状态：**第一期已落地（2026-09-22）**，Linux/Xvfb Debug 实测：静态层
+> 命中路径逐帧生效（稳态 rebuild=0us），同口径对比 185→211 FPS
+> （+14%）；剖析发现本机口径下序列绘制占图表耗时 ~75%
+> （1.2~1.6ms），下一个量级提升在 §10.4 序列 SIMD 填充。路线决策：
+> 软件静态层缓存（嵌入式基线，普适收益）
 > 先行，GPU 直通增强（有 GPU 硬件，数千 FPS 潜力）随后；框架已有
 > vulkan→gl→软件自动回退，两路径互斥自动切换。
+> 测量纪律教训：早期 357/676 等数字混入了错误页面口径（缺
+> --page 4 导致测的是按钮页）与后台负载干扰；本节数据均为
+> --page 4 --tab 20 图表页专测（五段剖析在位证明 chart 真被绘制）。
 
 ### 10.1 背景实测（2026-09-21，本机 2752×1089）
 
@@ -842,6 +998,19 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 序列 SIMD 填充（光栅 2.5～4×）、样条细分降档、vsync 门控消费、
 RGB332/1bpp 内核（打开 MCU+SPI 屏档位）、图片资源离线编译
 （RLE/C 数组，零解码零 IO）、点阵字体整字缓存。
+
+> **2026-09-22 Release 口径勘测（SIMD 决策数据，此前登记"收益评估需
+> Release 口径"已闭合）**：新增 `.zcode/final_gate_release.sh`（Release
+> 门常设化：-O2 构建输出 bin-release/，CMakeLists 输出目录已加
+> `-DCMAKE_RUNTIME_OUTPUT_DIRECTORY` 覆盖守卫，不触碰 bin/ Debug
+> 产物）。首跑全绿：API 2727×3 / autotest 129×3 / 回归 / 验收 / GPU /
+> diff-check 全过。**Release 图表基准五样：265.2 / 288.0 / 287.9 /
+> 295.6 / 280.7，中位 288 FPS（±6% 带宽）**，对比 Debug 口径中位
+> 160~211（-O2 提升 ~+37%），每帧 3.5ms 已远超交互需求（60 FPS）。
+> **§10.4 序列 SIMD 优先级据此降级为"中等"**：Debug -O0 放大的混合
+> 成本在 -O2 下约缩至 0.4~0.6ms/帧（按帧占比推算），非当前瓶颈；
+> SIMD 批次建议与嵌入式板级档位（MCU+SPI 屏）一起评估，桌面口径
+> 无近效需求。
 
 ## 附：历史战役归档索引（docs/xgui/history/）
 

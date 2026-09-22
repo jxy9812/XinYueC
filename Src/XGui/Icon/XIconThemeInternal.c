@@ -101,6 +101,10 @@ static bool theme_loadFile(const char* path, XPixmap* out)
     XPixmap candidate;
     bool ok;
     if (!path || !path[0]) return false;
+    /* 栈残影可能残留上一次的 XPixmap vtable 与 m_data：不清零时
+       XPixmap_init 会误判为重初始化并释放陈旧 m_data（重复 unref
+       导致提前释放/堆损坏，仅在高优化级别栈布局下显现）。 */
+    XMemset(&candidate, 0, sizeof(XPixmap));
     XPixmap_init(&candidate);
     ok = XPixmap_load_2(&candidate, path, NULL, 0) &&
          !XPixmap_isNull(&candidate);
@@ -1365,6 +1369,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
         XPixmap candidate;
         int distance = INT_MAX;
         int formatPriority = INT_MAX;
+        XMemset(&candidate, 0, sizeof(XPixmap));
         if (skipGenericContext &&
             (ctx->m_meta[di].m_context == ThemeDir_Applications ||
              ctx->m_meta[di].m_context == ThemeDir_MimeTypes))
@@ -1411,6 +1416,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
         XPixmap candidate;
         int distance = INT_MAX;
         int formatPriority = INT_MAX;
+        XMemset(&candidate, 0, sizeof(XPixmap));
         if (skipGenericContext &&
             (ctx->m_meta[di].m_context == ThemeDir_Applications ||
              ctx->m_meta[di].m_context == ThemeDir_MimeTypes))
@@ -1542,6 +1548,9 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
     int bestFormatPriority = INT_MAX;
     size_t bestRootIndex = 0;
     size_t bestDirIndex = 0;
+    /* 栈残影防误判：未清零的 XPixmap 可能带有效 vtable，导致后续
+       init/deinit 误释放陈旧 m_data（见 theme_loadFile 注记）。 */
+    XMemset(&best, 0, sizeof(XPixmap));
     XStringList* parents = NULL;
     size_t pathIndex;
     size_t parentIndex;
@@ -1598,6 +1607,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
             XPixmap candidate;
             int distance = INT_MAX;
+            XMemset(&candidate, 0, sizeof(XPixmap));
             if (!root || !root[0]) continue;
             XPixmap_init(&candidate);
             if (theme_tryTheme(root, theme, name, target, &candidate,
@@ -1812,6 +1822,7 @@ static bool theme_scaledToSizeRect(XPixmap* pixmap, int targetWidth,
     int w;
     int h;
     XPixmap scaled;
+    XMemset(&scaled, 0, sizeof(XPixmap));
     if (!pixmap || XPixmap_isNull(pixmap) || targetWidth <= 0 ||
         targetHeight <= 0) return false;
     w = XPixmap_width(pixmap);
@@ -2162,6 +2173,7 @@ static bool theme_collectFallbackSizes(const XStringList* paths,
             XSize size;
             size_t sizeIndex;
             bool duplicate = false;
+            XMemset(&pixmap, 0, sizeof(XPixmap));
             if (!theme_extAllowed(ext)) continue;
             theme_buildRootPath(filePath, sizeof(filePath), root, name, ext);
             if (!theme_fileExists(filePath)) continue;
@@ -2209,6 +2221,7 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
     ThemeVisitStack visited;
     bool any = false;
     bool found;
+    XMemset(&best, 0, sizeof(XPixmap));
     if (!name || !name[0] || !out) return false;
     if (size <= 0) size = 48;
     if (iconScale <= 0) iconScale = 1;

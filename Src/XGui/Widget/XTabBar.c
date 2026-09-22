@@ -994,7 +994,11 @@ int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
 }
 int XTabBar_insertTab_2(XTabBar* self, int index, const char* text)
 {
-    XString_Init_Utf8(tmp, text ? text : "");
+    /* NULL 文本按头文件前置条件（“不能为 NULL”）拒绝：与 XString 主
+       版本 insertTab 的 !text→-1 守卫同口径，不再静默降级为空标题
+       （静默插入会令 addTab_2(NULL) 偏离同族契约并扰动计数口径）。 */
+    if (!text) return -1;
+    XString_Init_Utf8(tmp, text);
     index = XTabBar_insertTab(self, index, tmp);
     XString_deinit_base(tmp);
     return index;
@@ -1055,8 +1059,34 @@ void XTabBar_removeTab(XTabBar* self, int index)
         XMemmove(&self->m_tabButtons[index], &self->m_tabButtons[index + 1],
                  sizeof(XAbstractButton*) * (size_t)(self->m_count - index - 1));
     --self->m_count;
-    if (self->m_currentIndex >= self->m_count)
-        self->m_currentIndex = self->m_count - 1;
+    /* R-79 根因：删当前页之前的页签时 m_currentIndex 不左移，同下标
+       改指后一页签（选中右移一位）且不发射 currentChanged，偏离
+       Qt 6.8.3 qtabbar.cpp removeTab。对标：index<current 经
+       setCurrentIndex(current-1) 左移并发射；index==current 先复位
+       -1，按 selectionBehaviorOnRemove 定新当前页（SelectPreviousTab
+       需逐页 lastTab 跟踪，本类未存，按 Qt 语义回退 SelectRightTab），
+       当前页变化必发 currentChanged（列表清空发射 -1）。 */
+    if (index < self->m_currentIndex) {
+        XTabBar_setCurrentIndex(self, self->m_currentIndex - 1);
+    } else if (index == self->m_currentIndex) {
+        int newIndex;
+        switch (self->m_selectionBehavior) {
+        case 0: newIndex = index - 1; break; /* SelectLeftTab */
+        default: newIndex = index; break;    /* SelectRightTab/Previous 回退 */
+        }
+        if (self->m_count > 0) {
+            if (newIndex < 0) newIndex = 0;
+            if (newIndex > self->m_count - 1)
+                newIndex = self->m_count - 1;
+            self->m_currentIndex = -1; /* 强制 setCurrentIndex 视为变化。 */
+            XTabBar_setCurrentIndex(self, newIndex);
+        } else {
+            self->m_currentIndex = -1;
+            xtabbar_emitInt(self,
+                            (size_t)XTabBar_currentChanged_signal(self, -1),
+                            -1);
+        }
+    }
     xtabbar_ensureVisible(self, self->m_currentIndex); /* 移除后当前页露出。 */
     XWidget_update((XWidget*)self);
 }

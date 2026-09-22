@@ -69,6 +69,9 @@ typedef struct XTreeWidget
     int m_sortColumn;             /**< 最近排序列（便捷族 sortItems 承载；
                                        -1=未排序）。 */
     int m_sortOrder;              /**< 最近排序序：0=升序，1=降序。 */
+    int m_enteredRow;             /**< 上次发射 itemEntered 的顶层行号；
+                                       -2=尚未进入任何行（同 XListWidget
+                                       差分口径）。 */
     bool* m_topExpanded;          /**< 顶层行展开状态表（平行数组，下标与
                                        m_topItems 对齐；对象拥有）。默认
                                        展开（与历史"子树恒绘制"行为一致）；
@@ -329,13 +332,12 @@ void* XTreeWidget_itemPressed_signal(XTreeWidget* self, int row);
  *       事件处理，句柄先行预留，待键盘导航接入后补发射点。
  */
 void* XTreeWidget_itemActivated_signal(XTreeWidget* self, int row);
-/** @brief itemEntered(row) 信号句柄（预留；暂无真实发射点）。
+/** @brief itemEntered(row) 信号（鼠标进入新顶层行时发射并返回地址）。
  * @param self 目标控件。
  * @param row 行号（平铺顶层行号）。
  * @return 信号槽地址（连接用句柄）。
- * @note 句柄预留：本控件基线无 mouseMoveEvent 处理路径、亦未开启
- *       鼠标追踪（hover），悬停进入无从触发；待悬停路径建立后
- *       接入真实发射。本函数只返回地址、不发射。
+ * @note 真实发射点：mouseMoveEvent 悬停进入新顶层行（m_enteredRow
+ *       差分判重；命中几何与点击同走 xtw_rowAtY 展开态行带）。
  */
 void* XTreeWidget_itemEntered_signal(XTreeWidget* self, int row);
 /** @brief itemChanged(row) 信号（调用即发射并返回地址）。

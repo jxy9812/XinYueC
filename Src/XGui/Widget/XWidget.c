@@ -1439,12 +1439,18 @@ static void XWidget_paintEvent_default(XWidget* self, XEvent* event)
        而小区域刷新（性能浮层/光标闪烁）的常见脏区远小于控件矩形。
        Qt 的 fillRegion 语义同样是按事件区域回填背景。 */
     {
+        /* rect 已折算为顶层后备存储坐标：裁剪须按控件在顶层的实际
+         * 矩形 (offset, w, h)。此前按局部 (0,0,w,h) 裁剪，非窗口原点
+         * 的子控件（offset 非 0）填充矩形被整体裁掉（填充缺失根因）。
+         * 顶层窗口 offset=(0,0)，行为与旧实现逐位一致。 */
         int w = XWidget_width(self);
         int h = XWidget_height(self);
-        if (rect.x < 0) { rect.width += rect.x; rect.x = 0; }
-        if (rect.y < 0) { rect.height += rect.y; rect.y = 0; }
-        if (rect.x + rect.width > w) rect.width = w - rect.x;
-        if (rect.y + rect.height > h) rect.height = h - rect.y;
+        int wx = offset.x;
+        int wy = offset.y;
+        if (rect.x < wx) { rect.width -= wx - rect.x; rect.x = wx; }
+        if (rect.y < wy) { rect.height -= wy - rect.y; rect.y = wy; }
+        if (rect.x + rect.width > wx + w) rect.width = wx + w - rect.x;
+        if (rect.y + rect.height > wy + h) rect.height = wy + h - rect.y;
         if (rect.width <= 0 || rect.height <= 0) return;
     }
     image = XWidget_paintImage(self);
@@ -3397,8 +3403,12 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
         XWidget* deep;
         if (!child || !child->is_widget) continue;
         widget = (XWidget*)child;
-        if (!widget->m_visible) continue;
-        if (!widget->m_explicitShow) continue;
+        /* 对标 Qt 6.8 QWidgetPrivate::childAtRecursiveHelper：只跳过
+         * isHidden()（显式隐藏位 WA_WState_Hidden）与窗口型子控件，
+         * 不要求生效可见（isVisible 含父链）——父窗口未 show 时命中
+         * 测试仍按几何进行，事件投递路径（可见窗口内）等价。 */
+        if (XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
+            continue;
         if (!XRect_contains(&widget->m_windowRect, point->x, point->y)) continue;
         local.x = point->x - widget->m_windowRect.x;
         local.y = point->y - widget->m_windowRect.y;
@@ -3789,7 +3799,13 @@ bool XWidget_isVisible(const XWidget* self)
 
 bool XWidget_isHidden(const XWidget* self)
 {
-    return self ? (self->m_explicitShow == 0) : false;
+    /* 对标 Qt 6.8（qwidget.h：isHidden()==testAttribute(WA_WState_Hidden)）：
+     * “隐藏”指显式隐藏位，与“从未显式 show”解耦——新建子控件（父未
+     * 显示）不算隐藏，随父链首次 show 自动显示。构造期置位规则见
+     * XWidget_init（顶层=Hidden、有父=不 Hidden），hide()/show() 经
+     * XWidget_setExplicitVisibleRecursive 翻转同一属性位。 */
+    return self ? XWidget_testAttribute(self, XWidgetAttribute_WState_Hidden)
+                : false;
 }
 
 bool XWidget_isVisibleTo(const XWidget* self, const XWidget* ancestor)
@@ -3800,13 +3816,16 @@ bool XWidget_isVisibleTo(const XWidget* self, const XWidget* ancestor)
         return XWidget_isVisible(self);
     /* Qt 6.8 的实现不会验证 ancestor 是否确为祖先，也不会检查
      * ancestor 自身的显式隐藏状态：循环只检查 self 到 ancestor
-     * 之前的父链，遇到窗口或父链末端即返回当前节点的 isHidden 结果。 */
+     * 之前的父链，遇到窗口或父链末端即返回当前节点的 isHidden 结果。
+     * isHidden 读显式隐藏位（WA_WState_Hidden），见 XWidget_isHidden。 */
     w = self;
-    while (w && w->m_explicitShow && !w->m_isWindow &&
+    while (w &&
+           !XWidget_testAttribute(w, XWidgetAttribute_WState_Hidden) &&
+           !w->m_isWindow &&
            XObject_parent((XObject*)w) &&
            XObject_parent((XObject*)w) != (const XObject*)ancestor)
         w = (const XWidget*)XObject_parent((XObject*)w);
-    return w && w->m_explicitShow;
+    return w && !XWidget_testAttribute(w, XWidgetAttribute_WState_Hidden);
 }
 
 void XWidget_setVisible(XWidget* self, bool visible)
@@ -3833,6 +3852,14 @@ void XWidget_setVisible(XWidget* self, bool visible)
         }
     }
     XWidget_setExplicitVisibleRecursive(self, visible, self->m_isWindow);
+    if (!self->m_isWindow && wasVisible != visible) {
+        /* 子控件显隐同样驱动顶层脏区合成（对标 Qt show/hide 后的重绘
+         * 语义）：parent+flags=0 的子控件形态对话框 show/hide 不标脏时，
+         * 脏区合成器只重画已有脏矩形——show 后内容永不出现（"弹不出"）、
+         * hide 后残影永不消失。XWidget_update 按子控件矩形折算进顶层
+         * 脏区，show 与 hide 两个方向都需要。 */
+        XWidget_update(self);
+    }
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_StateChanged, self);
 #endif
@@ -4496,13 +4523,17 @@ void XWidget_setTabletTracking(XWidget* self, bool enable)
 
 bool XWidget_acceptDrops(const XWidget* self)
 {
-    return self ? (self->m_acceptDrops != 0) : false;
+    /* 对标 Qt 6.8：acceptDrops()==testAttribute(WA_AcceptDrops)，
+     * 与属性位同源（XWidget_setAttribute 同步便捷字段）。 */
+    return XWidget_testAttribute(self, XWidgetAttribute_AcceptDrops);
 }
 
 void XWidget_setAcceptDrops(XWidget* self, bool enable)
 {
-    if (!self) return;
-    self->m_acceptDrops = enable ? 1 : 0;
+    /* 对标 Qt 6.8（qwidget.cpp：setAcceptDrops 即
+     * setAttribute(WA_AcceptDrops)）：统一走属性位入口，
+     * 经 XWidget_setAttribute 同步 m_acceptDrops 便捷字段。 */
+    XWidget_setAttribute(self, XWidgetAttribute_AcceptDrops, enable);
 }
 
 void XWidget_setApplicationModalWidget(XWidget* widget)

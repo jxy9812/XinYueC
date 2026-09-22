@@ -23,6 +23,7 @@ static void VXAbstractItemView_mouseDoubleClickEvent(XWidget* self,
                                                      XEvent* event);
 static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event);
+static void VXAbstractItemView_leaveEvent(XWidget* self, XEvent* event);
 static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
                                        int x, int y,
                                        int* outRow, int* outCol);
@@ -105,6 +106,71 @@ static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
  * 使用同一常量保证配对。 */
 #define XAIV_TABLE_MEMORY XCLASS_DEFAULT_MEMORY_TYPE
 
+/* ==================== 悬停差分旁表（entered/viewportEntered 判重） ==================== */
+
+/* 头文件无悬停字段的替代承载：视图 → 上次悬停索引 的单链旁表
+ * （对照 XListWidget m_enteredRow 差分范式，行列成对并含失效态）。
+ * 节点仅随首次悬停创建、随视图析构移除（VXAbstractItemView_deinit
+ * 为全路径唯一析构入口）与 LeaveEvent 复位，无泄漏与悬垂键。 */
+typedef struct XAivHoverEntry
+{
+    struct XAivHoverEntry* m_next;   /**< 链表后继。 */
+    const XAbstractItemView* m_view; /**< 键（视图借用指针）。 */
+    int m_row;                       /**< 上次悬停行；-1=悬停失效（空白/未知）。 */
+    int m_col;                       /**< 上次悬停列；-1=同上。 */
+} XAivHoverEntry;
+
+static XAivHoverEntry* xaiv_hoverEntries = NULL;
+
+/** @brief 读视图的上次悬停索引；无记录时保持出参 (-1,-1)。 */
+static void xaiv_hoverGet(const XAbstractItemView* view, int* row, int* col)
+{
+    const XAivHoverEntry* e;
+    for (e = xaiv_hoverEntries; e; e = e->m_next) {
+        if (e->m_view == view) {
+            *row = e->m_row;
+            *col = e->m_col;
+            return;
+        }
+    }
+}
+
+/** @brief 写视图的上次悬停索引（无记录则头插建节点；分配失败忽略——
+ *         下次判定仍按无记录基准，最多退化为重复发射，不误吞信号）。 */
+static void xaiv_hoverSet(const XAbstractItemView* view, int row, int col)
+{
+    XAivHoverEntry* e;
+    for (e = xaiv_hoverEntries; e; e = e->m_next) {
+        if (e->m_view == view) {
+            e->m_row = row;
+            e->m_col = col;
+            return;
+        }
+    }
+    e = (XAivHoverEntry*)XMemory_calloc(1, sizeof(*e), XAIV_TABLE_MEMORY);
+    if (!e) return;
+    e->m_next = xaiv_hoverEntries;
+    e->m_view = view;
+    e->m_row = row;
+    e->m_col = col;
+    xaiv_hoverEntries = e;
+}
+
+/** @brief 移除视图的悬停记录（LeaveEvent 复位与析构路径）。 */
+static void xaiv_hoverRelease(const XAbstractItemView* view)
+{
+    XAivHoverEntry** p = &xaiv_hoverEntries;
+    while (*p) {
+        if ((*p)->m_view == view) {
+            XAivHoverEntry* dead = *p;
+            *p = dead->m_next;
+            XMemory_free(dead, XAIV_TABLE_MEMORY);
+            return;
+        }
+        p = &(*p)->m_next;
+    }
+}
+
 static void xaiv_persistentRelease(XAbstractItemView* self);
 static void xaiv_indexWidgetRelease(XAbstractItemView* self);
 static void xaiv_delegateRelease(XAbstractItemView* self);
@@ -127,6 +193,8 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VXAbstractItemView_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent,
+                             VXAbstractItemView_leaveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt,
                              VXAbstractItemView_indexAt);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
@@ -215,6 +283,8 @@ XAbstractItemView* XAbstractItemView_create_ex(XMemoryType memory,
 static void VXAbstractItemView_deinit(XAbstractItemView* self)
 {
     if (!self) return;
+    /* 悬停差分旁表节点随视图析构移除（防悬垂键；旁表头为静态承载）。 */
+    xaiv_hoverRelease(self);
     /* 平行表（持久编辑器标记/条目控件指针）随视图析构释放（全路径唯一
      * 析构入口；派生视图经 XClass_Deinit_Parent 分派至此）。 */
     xaiv_persistentRelease(self);
@@ -1696,23 +1766,52 @@ static void VXAbstractItemView_mouseDoubleClickEvent(XWidget* self,
     XEvent_accept(event);
 }
 
+/** @brief 移动：悬停索引差分——进入新条目才发射 entered（边沿一次）；
+ *         由条目移入视口空白（悬停失效）才发射 viewportEntered。 */
 static void VXAbstractItemView_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XAbstractItemView* view = (XAbstractItemView*)self;
     XMouseEvent* me;
     XPoint pos;
-    int row;
-    int col;
+    int row = -1;
+    int col = -1;
+    int prevRow = -1;
+    int prevCol = -1;
     if (!view || !event) return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
-        xaiv_emitIndex(view, (size_t)XAbstractItemView_entered_signal,
-                       row, col);
+    /* 前后索引差分（对照 XListWidget m_enteredRow 范式并升级为行列
+     * 成对+失效态）：修正此前命中即发射——每次移动重复发 entered，
+     * 且 viewportEntered 在条目上发射（与 Qt 相反：Qt 在悬停离开
+     * 条目进入视口空白区的边沿发射）。 */
+    (void)XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col);
+    xaiv_hoverGet(view, &prevRow, &prevCol);
+    if (row >= 0 && col >= 0) {
+        if (row != prevRow || col != prevCol) {
+            xaiv_emitIndex(view, (size_t)XAbstractItemView_entered_signal,
+                           row, col);
+            xaiv_hoverSet(view, row, col);
+        }
+    }
+    else if (prevRow >= 0) {
+        /* 悬停失效（移入空白/无效区）：上一次悬停在有效条目上才发射
+         * （对标 Qt viewportEntered 的进入视口空白语义）并复位基准。 */
         xaiv_emitVoid(view,
                       (size_t)XAbstractItemView_viewportEntered_signal);
+        xaiv_hoverSet(view, -1, -1);
     }
     XEvent_accept(event);
+}
+
+/** @brief 离开：复位悬停差分基准（不发射——对标 Qt HoverLeave 仅复位
+ *         悬停索引；再次进入时 entered 重新发射）。 */
+static void VXAbstractItemView_leaveEvent(XWidget* self, XEvent* event)
+{
+    if (!self) return;
+    if (event && XEvent_type(event) == XEVENT_TYPE_LEAVE)
+        xaiv_hoverRelease((XAbstractItemView*)self);
+    XClass_Parent(XAbstractScrollArea, EXWidget_LeaveEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 /* ==================== 键盘事件（Enter 激活 + 键盘搜索接入） ==================== */

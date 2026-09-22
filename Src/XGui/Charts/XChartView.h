@@ -49,6 +49,15 @@ typedef struct XChartView
     XAbstractSeries* m_hoverSeries; /**< 悬停命中的序列（借用；无命中 NULL）。 */
     int m_hoverIndex;         /**< 悬停命中的点下标（无命中 -1）。 */
     bool m_hovering;          /**< 当前是否处于悬停命中状态。 */
+#if XCHARTVIEW_STATIC_LAYER_ON
+    /* 静态层缓存（§10.2 第一期 Phase B，对标 Qt QGraphicsItem::
+     * DeviceCoordinateCache）：缓存背景/背景笔/标题/坐标轴网格五件套，
+     * 序列/饼图/图例每帧现绘。XCHARTVIEW_STATIC_LAYER_ON=0 时三字段
+     * 整体裁剪，内存与渲染路径与无层现状一致。 */
+    XImage m_staticLayer;     /**< 静态层离屏画布；格式=目标表面格式，尺寸=控件尺寸。 */
+    uint64_t m_staticFp;      /**< 静态层内容指纹（FNV-1a 64 位静态实现）。 */
+    bool m_staticValid;       /**< 静态层是否与当前指纹一致（false 强制重建）。 */
+#endif
 } XChartView;
 
 XVtable* XChartView_class_init(void);

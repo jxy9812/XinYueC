@@ -334,6 +334,39 @@ static void VXXYSeries_move(XXYSeries* self, XXYSeries* other)
 
 /* ==================== 数据操作 ==================== */
 
+/**
+ * @brief 选中位图与点数组容量同步扩容（P0-1 根因修复）。
+ *
+ * 根因：m_selected 仅在首次按需分配时取当时 m_capacity，append/insert 使
+ * m_points 倍增后位图未同步扩容，isPointSelected/setPointSelected 按新
+ * m_count 索引旧容量位图 → 越界读/越界写（堆溢出）。本文件统一维护不变式：
+ * m_selected 非 NULL ⇒ 分配长度 == m_capacity（对标 Qt 选中状态随数据
+ * 增删同步平移/扩容的语义）。
+ *
+ * @param self        目标序列指针。
+ * @param newCapacity 点数组倍增后的新容量。
+ * @return 无返回值。调用点约定在 m_capacity 更新之前调用。
+ */
+static void xxy_syncSelectedCapacity(XXYSeries* self, int newCapacity)
+{
+    bool* s;
+    int i;
+    if (!self || !self->m_selected) return;   /* 未分配：按需分配时直接取 m_capacity。 */
+    if (newCapacity <= self->m_capacity) return;
+    s = (bool*)XRealloc_System(self->m_selected,
+                               sizeof(bool) * (size_t)newCapacity);
+    if (!s) {
+        /* realloc 失败：丢弃位图退化为“全未选”（NULL 语义），杜绝半扩容
+         * 状态（位图短于 m_capacity）下的后续越界访问。 */
+        XFree_System(self->m_selected);
+        self->m_selected = NULL;
+        return;
+    }
+    /* 新增尾段 [旧容量, 新容量) 清零；旧区由 realloc 保留原选中状态。 */
+    for (i = self->m_capacity; i < newCapacity; ++i) s[i] = false;
+    self->m_selected = s;
+}
+
 void XXYSeries_append(XXYSeries* self, double x, double y)
 {
     XPointF* p;
@@ -344,6 +377,8 @@ void XXYSeries_append(XXYSeries* self, double x, double y)
             sizeof(XPointF) * (size_t)cap);
         if (!p) return;
         self->m_points = p;
+        /* P0-1：点数组倍增时选中位图同步倍增（须在 m_capacity 更新前调用）。 */
+        xxy_syncSelectedCapacity(self, cap);
         self->m_capacity = cap;
     }
     self->m_points[self->m_count].x = x;
@@ -414,6 +449,8 @@ bool XXYSeries_removeAt(XXYSeries* self, int index)
         self->m_points[i] = self->m_points[i + 1];
     self->m_count--;
     if (self->m_selected) {
+        /* 平移同步检查：写 [index, 新count)，读 [index+1, 旧count)，均落在
+         * 位图容量（== m_capacity >= 旧count）之内，无越界。 */
         for (i = index; i < self->m_count; ++i)
             self->m_selected[i] = self->m_selected[i + 1];
         for (i = 0; i < self->m_count; ++i) {
@@ -437,6 +474,8 @@ void XXYSeries_removePoints(XXYSeries* self, int index, int count)
         self->m_points[i] = self->m_points[i + count];
     self->m_count -= count;
     if (self->m_selected) {
+        /* 平移同步检查：写 [index, 新count)，读上界 (新count-1)+count == 旧count-1，
+         * 均落在位图容量（== m_capacity >= 旧count）之内，无越界。 */
         for (i = index; i < self->m_count; ++i)
             self->m_selected[i] = self->m_selected[i + count];
         for (i = 0; i < self->m_count; ++i) {
@@ -461,6 +500,9 @@ bool XXYSeries_insert(XXYSeries* self, int index, const XPointF* point)
             sizeof(XPointF) * (size_t)cap);
         if (!p) return false;
         self->m_points = p;
+        /* P0-1：点数组倍增时选中位图同步倍增（须在 m_capacity 更新前调用），
+         * 保证下方重建循环对旧位图的读取不越界。 */
+        xxy_syncSelectedCapacity(self, cap);
         self->m_capacity = cap;
     }
     for (i = self->m_count; i > index; --i)
@@ -640,7 +682,10 @@ uint32_t XXYSeries_pointLabelsColor(const XXYSeries* self)
 
 bool XXYSeries_isPointSelected(const XXYSeries* self, int index)
 {
-    if (!self || !self->m_selected || index < 0 || index >= self->m_count)
+    /* 防御性边界检查：index 须同时落在点数与容量内；容量异常（位图短于
+     * 下标）时按未选处理，拒绝索引以免越界读。 */
+    if (!self || !self->m_selected || index < 0 ||
+        index >= self->m_count || index >= self->m_capacity)
         return false;
     return self->m_selected[index];
 }
@@ -657,6 +702,9 @@ void XXYSeries_setPointSelected(XXYSeries* self, int index, bool selected)
         XMemset(s, 0, sizeof(bool) * (size_t)cap);
         self->m_selected = s;
     }
+    /* 防御性边界检查：不变式保证位图分配长度 == m_capacity，index 超容量
+     * 即状态异常，拒绝写入以免堆溢出（正常路径不可达）。 */
+    if (index >= self->m_capacity) return;
     if (self->m_selected[index] == selected) return;
     self->m_selected[index] = selected;
     xxy_emitVoid(self, (size_t)XXYSeries_selectedPointsChanged_signal);
@@ -676,6 +724,8 @@ void XXYSeries_selectAllPoints(XXYSeries* self)
     for (i = 0; i < self->m_count; ++i) {
         int cap;
         bool* s;
+        /* 防御性边界检查：下标超容量视为状态异常，跳过以免越界写。 */
+        if (i >= self->m_capacity) continue;
         if (!self->m_selected) {
             cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
             s = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
@@ -991,6 +1041,8 @@ void XXYSeries_selectPoints(XXYSeries* self, const int* indexes, int count)
         int cap;
         bool* s;
         if (idx < 0 || idx >= self->m_count) continue;
+        /* 防御性边界检查：下标超容量视为状态异常，跳过以免越界写。 */
+        if (idx >= self->m_capacity) continue;
         if (!self->m_selected) {
             cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
             s = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
@@ -1034,6 +1086,8 @@ void XXYSeries_toggleSelection(XXYSeries* self, const int* indexes, int count)
         int cap;
         bool* s;
         if (idx < 0 || idx >= self->m_count) continue;
+        /* 防御性边界检查：下标超容量视为状态异常，跳过以免越界写。 */
+        if (idx >= self->m_capacity) continue;
         if (!self->m_selected) {
             cap = self->m_capacity > 0 ? self->m_capacity : self->m_count;
             s = (bool*)XMalloc_System(sizeof(bool) * (size_t)cap);
@@ -1121,14 +1175,30 @@ void XXYSeries_setPointConfiguration(XXYSeries* self, int index,
     if (index >= self->m_pointConfigCapacity) {
         int cap = self->m_pointConfigCapacity > 0
             ? self->m_pointConfigCapacity : 8;
+        int oldCap = self->m_pointConfigCapacity;
+        int i;
         while (cap <= index) cap *= 2;
+        /* 根因（R-109）：双数组先后 realloc，此前第二块失败即 return——
+         * 第一块已被 realloc 搬迁而 self 指针未回写（悬垂，后续读旧址），
+         * 新块又无人引用（泄漏）。改为容量记账：谁成功就地收编谁
+         * （realloc 保留旧数据，块长度 ≥ 容量），失败路径容量保持旧值，
+         * 「块长度 ≥ m_pointConfigCapacity」不变式恒成立；两块齐备才
+         * 推进容量。 */
         pc = (uint32_t*)XRealloc_System(self->m_pointColors,
             sizeof(uint32_t) * (size_t)cap);
+        if (pc) {
+            /* 新增区清零：0 是「未配置」哨兵，杜绝未初始化值被
+             * pointColor/pointSize 读成有效配置（XRealloc 不清零）。 */
+            for (i = oldCap; i < cap; ++i) pc[i] = 0;
+            self->m_pointColors = pc;
+        }
         ps = (double*)XRealloc_System(self->m_pointSizes,
             sizeof(double) * (size_t)cap);
+        if (ps) {
+            for (i = oldCap; i < cap; ++i) ps[i] = 0.0;
+            self->m_pointSizes = ps;
+        }
         if (!pc || !ps) return;
-        self->m_pointColors = pc;
-        self->m_pointSizes = ps;
         self->m_pointConfigCapacity = cap;
     }
     if (color != 0 && self->m_pointColors) {

@@ -89,15 +89,67 @@ bool XWindowSystemInterface_handlePaintEvent(XWindow* window, const XRegion* reg
     return handled;
 }
 
-void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window, XFocusReason reason)
+void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window,
+                                                     XFocusReason reason)
 {
+    XWindow* oldFocused;
     XFocusEvent* event;
-    if (!window) return;
-    event = XFocusEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                  XEVENT_TYPE_FOCUS_IN, reason);
-    if (!event) return;
-    XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+
+    /* 根因修复（复扫 R-34）：此前只向新窗口投递 FocusIn，从不更新
+       XGuiApplication 焦点窗口——focusWindow() 脱钩、focusWindowChanged
+       不发射、IME setFocusObject 链不触发。对标
+       QGuiApplicationPrivate::processFocusWindowChanged 在本入口收口
+       完整焦点切换语义：
+       1) 非顶层窗口折算到其顶层（Qt: window = window->window()）；
+       2) 向旧焦点窗口补发 FocusOut（先失焦后聚焦，与 Qt 同序）；
+       3) 向新焦点窗口派发 FocusIn；
+       4) 经 XGuiApplication_setFocusWindow 更新焦点窗口（值变化时内部
+          发射 focusWindowChanged，并联动 focusObject / 平台输入上下文
+          setFocusObject 的 IME 链）。
+       新旧窗口的 m_active / activeChanged 联动由 XWindow 焦点事件路由
+       （XWindow.c VXWindow_event）在事件派发时统一完成，与本入口解耦。 */
+
+    /* Qt 语义：子窗口获得焦点即其顶层获得焦点（沿普通父链上溯）。 */
+    while (window) {
+        XWindow* parent = XWindow_parent(window,
+                                         XWindowAncestor_ExcludeTransients);
+        if (!parent) break;
+        window = parent;
+    }
+
+    oldFocused = XGuiApplication_focusWindow();
+    if (oldFocused == window) return; /* Qt：焦点窗口未变直接返回。 */
+
+    /* 旧窗口补发 FocusOut。仅当旧窗口仍处于激活态时补发：按本头文件
+       既有约定，平台后端会在切换前自行向旧窗口投递 FocusOut（X11
+       FocusOut 原生事件直投路径），以 isActive 守卫保证同一失焦只
+       派发一次；纯 WSI 注入路径（平台未先派发）则由此处补齐 Qt 语义。 */
+    if (oldFocused && XWindow_isActive(oldFocused)) {
+        event = XFocusEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                      XEVENT_TYPE_FOCUS_OUT, reason);
+        if (event) {
+            XGuiApplication_sendSpontaneousEvent((XObject*)oldFocused,
+                                                 (XEvent*)event);
+            XEvent_delete_base((XEvent*)event);
+        }
+    }
+
+    /* 新窗口 FocusIn（window 为 NULL 表示整体失焦：跳过聚焦、仅走
+       下方焦点窗口清空，与 Qt processFocusWindowChanged(NULL) 一致）。 */
+    if (window) {
+        event = XFocusEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                      XEVENT_TYPE_FOCUS_IN, reason);
+        if (!event) return;
+        XGuiApplication_sendSpontaneousEvent((XObject*)window,
+                                             (XEvent*)event);
+        XEvent_delete_base((XEvent*)event);
+    }
+
+    /* 更新应用焦点窗口与焦点对象：内部发射 focusWindowChanged /
+       focusObjectChanged，并经平台输入上下文 setFocusObject 触发
+       IME 聚焦链（此三件事此前全部脱钩）。object 传 NULL 按应用层
+       既有语义缺省为窗口自身。 */
+    XGuiApplication_setFocusWindow(window, NULL);
 }
 
 void XWindowSystemInterface_handleWindowStateChanged(XWindow* window,

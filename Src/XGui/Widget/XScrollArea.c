@@ -192,34 +192,107 @@ void XScrollArea_setAlignment(XScrollArea* self, int alignment)
     xsa_updateWidgetGeometry(self);
 }
 
+/** @brief 最小滚动使目标点连同边距可见（对标 QScrollArea::ensureVisible
+ *         的可见性判定：已可见不动；越上/左缘滚到 点-边距，越下/右缘
+ *         滚到 点+边距-视口。此前恒滚到原点+边距，已可见也跳动）。 */
 void XScrollArea_ensureVisible(XScrollArea* self, int x, int y,
                                int xmargin, int ymargin)
 {
     XScrollBar* hsb;
     XScrollBar* vsb;
+    XWidget* viewport;
+    int pw;
+    int ph;
+    int relX;
+    int relY;
     if (!self) return;
-    hsb = XAbstractScrollArea_horizontalScrollBar(self);
-    vsb = XAbstractScrollArea_verticalScrollBar(self);
+    hsb = XAbstractScrollArea_horizontalScrollBar(
+        (const XAbstractScrollArea*)self);
+    vsb = XAbstractScrollArea_verticalScrollBar(
+        (const XAbstractScrollArea*)self);
+    viewport = XAbstractScrollArea_viewport(
+        (const XAbstractScrollArea*)self);
+    pw = viewport ? XWidget_width(viewport) : 0;
+    ph = viewport ? XWidget_height(viewport) : 0;
+    relX = x - (hsb ? XScrollBar_value(hsb) : 0);
+    relY = y - (vsb ? XScrollBar_value(vsb) : 0);
     if (hsb) {
-        int target = x - xmargin;
-        if (target < 0) target = 0;
-        XScrollBar_setValue(hsb, target);
+        if (relX < xmargin)
+            XScrollBar_setValue(hsb, x - xmargin);
+        else if (relX + xmargin > pw)
+            XScrollBar_setValue(hsb, x + xmargin - pw);
     }
     if (vsb) {
-        int target = y - ymargin;
-        if (target < 0) target = 0;
-        XScrollBar_setValue(vsb, target);
+        if (relY < ymargin)
+            XScrollBar_setValue(vsb, y - ymargin);
+        else if (relY + ymargin > ph)
+            XScrollBar_setValue(vsb, y + ymargin - ph);
     }
 }
 
+/** @brief 最小滚动使子控件矩形连同边距可见（对标
+ *         QScrollArea::ensureWidgetVisible：消费宽/高维度，左右/上下
+ *         缘按矩形边界判定；此前只取子控件原点转发点版，恒滚原点）。 */
 void XScrollArea_ensureWidgetVisible(XScrollArea* self,
                                      XWidget* childWidget,
                                      int xmargin, int ymargin)
 {
+    XScrollBar* hsb;
+    XScrollBar* vsb;
+    XWidget* viewport;
+    XWidget* content;
     XRect geom;
+    int pw;
+    int ph;
+    int left;
+    int right;
+    int top;
+    int bottom;
     if (!self || !childWidget) return;
+    content = self->m_widget;
+    /* 对标 Qt：目标即内容控件本体时无可确保（整体恒可见），直接返回。 */
+    if (childWidget == content) return;
     geom = XWidget_geometry(childWidget);
-    XScrollArea_ensureVisible(self, geom.x, geom.y, xmargin, ymargin);
+    /* 子控件几何逐级映射到内容控件坐标（Qt 仅支持直接子控件并告警；
+     * 此处向上累加偏移，父链不达内容控件时整体忽略）。 */
+    {
+        XWidget* p = XWidget_parentWidget(childWidget);
+        while (p && p != content) {
+            XRect pg = XWidget_geometry(p);
+            geom.x += pg.x;
+            geom.y += pg.y;
+            p = XWidget_parentWidget(p);
+        }
+        if (p != content) return;
+    }
+    viewport = XAbstractScrollArea_viewport(
+        (const XAbstractScrollArea*)self);
+    pw = viewport ? XWidget_width(viewport) : 0;
+    ph = viewport ? XWidget_height(viewport) : 0;
+    if (xmargin * 2 > pw) xmargin = pw / 2;
+    if (ymargin * 2 > ph) ymargin = ph / 2;
+    left = geom.x;
+    top = geom.y;
+    right = geom.x + geom.width - 1;
+    bottom = geom.y + geom.height - 1;
+    hsb = XAbstractScrollArea_horizontalScrollBar(
+        (const XAbstractScrollArea*)self);
+    vsb = XAbstractScrollArea_verticalScrollBar(
+        (const XAbstractScrollArea*)self);
+    if (hsb) {
+        int value = XScrollBar_value(hsb);
+        if (left < xmargin + value)
+            XScrollBar_setValue(hsb, left - xmargin);
+        else if (right + xmargin > value + pw)
+            XScrollBar_setValue(hsb, right + xmargin - pw);
+    }
+    if (vsb) {
+        int value = XScrollBar_value(vsb);
+        if (top < ymargin + value)
+            XScrollBar_setValue(vsb, top - ymargin);
+        else if (bottom + ymargin > value + ph)
+            XScrollBar_setValue(vsb, bottom + ymargin - ph);
+    }
 }
 
 XSize XScrollArea_sizeHint(const XScrollArea* self)

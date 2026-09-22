@@ -21,6 +21,9 @@
 
 #if XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON
 
+/* 动作所有权判定（复扫 R-19；定义见「动作与控件管理」节）。 */
+static bool xtb_ownsAction(const XToolBar* self, const XAction* action);
+
 /* ==================== 内部桥接（per-action 转发） ==================== */
 
 XCLASS_DEFINE_BEGING(XTBBridge)
@@ -284,7 +287,11 @@ static void VX_toolBar_deinit(XToolBar* self)
         for (i = 0; i < n; ++i) {
             XAction** item =
                 (XAction**)XVector_at_base(self->m_actions, i);
-            if (item && *item)
+            /* 仅销毁工具栏自建动作（QObject 父=本栏）；外部注入的借用
+             * 动作归调用方/其父对象，析构只摘除不释放——防悬垂/双重
+             * 释放（复扫 R-19，比照 XMenuBar 借用语义）。显式删除时
+             * 动作会自摘出本栏 XObject 子列表，后续基类级联不重删。 */
+            if (item && *item && xtb_ownsAction(self, *item))
                 XAction_delete_base(*item);
         }
         XVector_delete_base(self->m_actions);
@@ -317,22 +324,32 @@ static void VX_toolBar_deinit(XToolBar* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
-/** @brief 显示事件：发射 visibilityChanged(true) 后转发父类。 */
+/** @brief 显示事件：同步开关动作选中态并发射 visibilityChanged(true)。
+ *  对标 Qt 6.8 qtoolbar.cpp QToolBar::event 的 Show 分支：
+ *  d->toggleViewAction->setChecked(true)。 */
 static void VX_toolBar_showEvent(XWidget* self, XEvent* event)
 {
-    if (self)
+    if (self) {
+        if (((XToolBar*)self)->m_toggleAction)
+            XAction_setChecked(((XToolBar*)self)->m_toggleAction, true);
         xtb_emitBool((XToolBar*)self,
                      (size_t)XToolBar_visibilityChanged_signal, true);
+    }
     XClass_Parent(XWidget, EXWidget_ShowEvent,
                   void(*)(XWidget*, XEvent*))(self, event);
 }
 
-/** @brief 隐藏事件：发射 visibilityChanged(false) 后转发父类。 */
+/** @brief 隐藏事件：同步开关动作选中态并发射 visibilityChanged(false)。
+ *  对标 Qt 6.8 qtoolbar.cpp QToolBar::event 的 Hide 分支：
+ *  d->toggleViewAction->setChecked(false)。 */
 static void VX_toolBar_hideEvent(XWidget* self, XEvent* event)
 {
-    if (self)
+    if (self) {
+        if (((XToolBar*)self)->m_toggleAction)
+            XAction_setChecked(((XToolBar*)self)->m_toggleAction, false);
         xtb_emitBool((XToolBar*)self,
                      (size_t)XToolBar_visibilityChanged_signal, false);
+    }
     XClass_Parent(XWidget, EXWidget_HideEvent,
                   void(*)(XWidget*, XEvent*))(self, event);
 }
@@ -498,6 +515,19 @@ int XToolBar_toolButtonStyle(const XToolBar* self)
 
 /* ==================== 动作与控件管理 ==================== */
 
+/** @brief 查询动作是否为工具栏自建所有（复扫 R-19）。
+ *  对标 Qt 父子所有权：本类创建的动作以工具栏为 QObject 父对象
+ *  （addAction_2/addSeparator/insertSeparator/insertWidget 占位），
+ * addAction(XAction*) 注入的外部动作不改父对象、仅为借用——比照
+ *  XMenuBar 的 m_actionOwned 语义，借用动作在 removeAction/clear/
+ *  析构只摘除、不释放（此前无条件 XAction_delete_base 产生悬垂/
+ *  双重释放可达路径：调用方与父对象树仍各持一份所有权）。 */
+static bool xtb_ownsAction(const XToolBar* self, const XAction* action)
+{
+    return self && action &&
+           XObject_parent((XObject*)action) == (XObject*)self;
+}
+
 /** @brief 查找动作索引；未找到返回 -1。 */
 static int xtb_findIndex(const XToolBar* self, XAction* action)
 {
@@ -581,7 +611,11 @@ XAction* XToolBar_addAction_2(XToolBar* self, const char* utf8)
 {
     XAction* action;
     if (!self) return NULL;
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* 动作以工具栏为 QObject 父（复扫 R-19，对标 Qt addAction(text)
+     * 的父子所有权）：所有权判定与析构/clear 的级联删除都以父对象
+     * 关系为准；addAction(XAction*) 注入的外部动作则保持借用。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                               (XObject*)self, NULL);
     if (!action) return NULL;
     XAction_setText_2(action, utf8 ? utf8 : "");
     XToolBar_addAction(self, action);
@@ -592,7 +626,9 @@ XAction* XToolBar_addSeparator(XToolBar* self)
 {
     XAction* action;
     if (!self) return NULL;
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* 分隔动作由工具栏创建并以工具栏为 QObject 父（复扫 R-19）。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                               (XObject*)self, NULL);
     if (!action) return NULL;
     XAction_setSeparator(action, true);
     XToolBar_addAction(self, action);
@@ -604,7 +640,9 @@ XAction* XToolBar_insertSeparator(XToolBar* self, XAction* before)
     XAction* action;
     int index;
     if (!self) return NULL;
-    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* 分隔动作由工具栏创建并以工具栏为 QObject 父（复扫 R-19）。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                               (XObject*)self, NULL);
     if (!action) return NULL;
     XAction_setSeparator(action, true);
     index = xtb_findIndex(self, before);
@@ -623,7 +661,9 @@ void XToolBar_insertWidget(XToolBar* self, XAction* before,
     XAction* placeholder;
     int index;
     if (!self || !widget) return;
-    placeholder = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
+    /* 占位动作由工具栏创建并以工具栏为 QObject 父（复扫 R-19）。 */
+    placeholder = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                    (XObject*)self, NULL);
     if (!placeholder) return;
     index = xtb_findIndex(self, before);
     xtb_insertAt(self, index, placeholder, widget);
@@ -673,7 +713,11 @@ void XToolBar_removeAction(XToolBar* self, XAction* action)
                 i < (int64_t)XVector_size_base(
                         (const XContainer*)self->m_widgets))
                 XVector_remove_base(self->m_widgets, i, 1);
-            XAction_delete_base(action);
+            /* 对标 QWidget::removeAction（复扫 R-19）：移除即解除工具
+             * 栏持有，不释放对象；仅工具栏自建动作（QObject 父=本栏）
+             * 随移除销毁，外部注入的借用动作归还调用方。 */
+            if (xtb_ownsAction(self, action))
+                XAction_delete_base(action);
             xtb_relayout(self);
             return;
         }
@@ -690,7 +734,9 @@ void XToolBar_clear(XToolBar* self)
         for (i = 0; i < n; ++i) {
             XAction** item =
                 (XAction**)XVector_at_base(self->m_actions, i);
-            if (item && *item)
+            /* 仅销毁工具栏自建动作；借用动作（addAction(XAction*) 注入）
+             * 只随容器摘除，不释放（复扫 R-19，对标 QToolBar::clear）。 */
+            if (item && *item && xtb_ownsAction(self, *item))
                 XAction_delete_base(*item);
         }
         XVector_clear_base(self->m_actions);
@@ -835,13 +881,24 @@ XRect XToolBar_actionGeometry(const XToolBar* self, XAction* action)
     return out;
 }
 
-/** @brief toggleViewAction 槽：切换工具栏可见性。 */
+/** @brief toggleViewAction 槽：切换工具栏可见性。
+ *  对标 Qt 6.8 qtoolbar.cpp QToolBarPrivate::_q_toggleView(bool)：
+ *  动作载荷即目标显隐（true=show/false=close），并以 isHidden()（显式
+ *  隐藏位）作冗余守卫——不按 isVisible() 取反（生效可见性含父链，父级
+ *  隐藏时取反恒为 show，开关动作会卡死在单方向）。 */
 static void xtb_toggleVisibilitySlot(XObject* receiver, XVarList* args)
 {
     XToolBar* bar = (XToolBar*)receiver;
-    (void)args;
-    if (!bar) return;
-    XWidget_setVisible((XWidget*)bar, !XWidget_isVisible((XWidget*)bar));
+    bool show;
+    if (!bar || !args) return;
+    XVarList_args_1(args, bool, checked);
+    show = checked;
+    if (show == XWidget_isHidden((XWidget*)bar)) {
+        if (show)
+            XWidget_show((XWidget*)bar);
+        else
+            XWidget_close((XWidget*)bar);
+    }
 }
 
 XAction* XToolBar_toggleViewAction(XToolBar* self)
@@ -851,6 +908,13 @@ XAction* XToolBar_toggleViewAction(XToolBar* self)
         self->m_toggleAction =
             XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, NULL);
         if (!self->m_toggleAction) return NULL;
+        /* 对标 Qt 6.8：toggleViewAction 为可选中动作，checked 与工具栏
+         * 显隐状态联动（Qt 经 Show/Hide 事件同步 setChecked，不变式为
+         * checked ⟺ !isHidden）。无头场景无事件流，创建时按同一不变式
+         * 取显式隐藏位初始化，保证首个触发即按目标方向动作。 */
+        XAction_setCheckable(self->m_toggleAction, true);
+        XAction_setChecked(self->m_toggleAction,
+                           !XWidget_isHidden((XWidget*)self));
         XObject_connect_1((XObject*)self->m_toggleAction,
                           XSignal(XAction_triggered_signal),
                           (XObject*)self, xtb_toggleVisibilitySlot,

@@ -1469,6 +1469,21 @@ void XComboBox_setCurrentIndex(XComboBox* self, int index)
     old = self->m_currentIndex;
     if (index == old) return;
     self->m_currentIndex = index;
+    /* 可编辑时程序化置当前项回填内嵌编辑框（对标 Qt
+     * QComboBoxPrivate::updateLineEdit）：currentText 分叉态口径
+     * 「程序化置当前项后一致」（见 xcombo_editTextSource 注），回填后
+     * 编辑框与当前项文本同步、分叉态收敛，currentTextChanged 载荷才
+     * 能取到当前项文本而非残留编辑文本。须在发射前回填。 */
+    if (self->m_editable && self->m_lineEdit) {
+        const char* itemText =
+            (index >= 0 && index < self->m_itemCount &&
+             self->m_items[index])
+                ? XString_toUtf8(self->m_items[index]) : "";
+        const char* edit = XLineEdit_text(self->m_lineEdit);
+        if (!edit || XStrcmp(edit, itemText ? itemText : "") != 0)
+            XLineEdit_setText(self->m_lineEdit,
+                              itemText ? itemText : "");
+    }
     xcombo_emitInt(self, (size_t)XComboBox_currentIndexChanged_signal(self, index), index);
     xcombo_emitText(self, (size_t)XComboBox_currentTextChanged_signal(
                             self, XComboBox_currentText_2(self)),

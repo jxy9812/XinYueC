@@ -110,9 +110,10 @@ bool XLcdNumberTest_runAll(void)
     ln_expect(XLcdNumber_value(lcd) == 3.7, "display_3(3.7) 值一致");
     ln_expect(XLcdNumber_intValue(lcd) == 4, "intValue 四舍五入为 4");
 
-    /* 8. 字符串显示：可解析前缀同步 value（对标 display(QString)）。 */
+    /* 8. 字符串显示：对标 Qt display(QString) 整串解析（P2 批次
+     * R-77 勘误，旧前缀解析口径已移除）。 */
     XLcdNumber_display(lcd, "12.5abc");
-    ln_expect(XLcdNumber_value(lcd) == 12.5, "字符串前缀解析 12.5");
+    ln_expect(XLcdNumber_value(lcd) == 0.0, "整串解析失败置 0（12.5abc）");
     XLcdNumber_display(lcd, "hello");
     ln_expect(XLcdNumber_value(lcd) == 0.0, "不可解析串值为 0");
 

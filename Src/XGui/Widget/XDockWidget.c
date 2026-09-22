@@ -127,6 +127,28 @@ static void xdw_layoutContent(XDockWidget* dock)
     XWidget_setGeometryRect(dock->m_widget, &r);
 }
 
+/**
+ * @brief      把自定义标题条摆满标题条区（复扫 R-83 配套）。
+ * @details    对标 Qt QDockWidgetLayout：自定义标题条由面板布局接管，
+ *             置于标题条区呈现。本框架标题条区高度恒 XDW_TITLE_H（与
+ *             内容区起点同口径），自定义条沿该区铺满宽度；控件自身已
+ *             有有效高度（0<h<=XDW_TITLE_H）时尊重其高度。
+ * @param      dock 目标停靠面板；可为 NULL。
+ * @return     无返回值。
+ */
+static void xdw_layoutTitleBar(XDockWidget* dock)
+{
+    XRect r;
+    int w;
+    int h;
+    if (!dock || !dock->m_titleBar) return;
+    w = XWidget_width((XWidget*)dock);
+    h = XWidget_height(dock->m_titleBar);
+    if (h < 1 || h > XDW_TITLE_H) h = XDW_TITLE_H;
+    XRect_init(&r, 0, 0, w, h);
+    XWidget_setGeometryRect(dock->m_titleBar, &r);
+}
+
 /* ==================== 事件处理 ==================== */
 
 static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
@@ -167,7 +189,10 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
     windowText = 0xFF000000u;
 #endif /* XPALETTE_ON */
 #if XSTYLE_ON
-    if (XStyle_defaultStyle() != NULL) {
+    /* 复扫 R-83：自定义标题条接管呈现时，默认标题带不再由本控件绘制
+     * （对标 Qt QDockWidgetLayout——自定义条即标题区的唯一呈现者），
+     * 该区域交由自定义条子控件自绘。 */
+    if (XStyle_defaultStyle() != NULL && !dock->m_titleBar) {
         /* Fusion/公共风格接管：标题栏走 CE_DockWidgetTitle
          * （highlight 标题条 + 标题文本 + 底部分隔线）。 */
         XStyle* style = XStyle_defaultStyle();
@@ -189,6 +214,11 @@ static void VX_dockWidget_paintEvent(XWidget* self, XEvent* event)
         return;
     }
 #endif /* XSTYLE_ON */
+    if (dock->m_titleBar) {
+        /* 自定义标题条接管：跳过默认标题带/分隔线绘制。 */
+        XPainter_deinit(&painter);
+        return;
+    }
     XRect_init(&head, 0, 0, w, 20);
     XPainter_fillRect(&painter, &head, highlight);
     XPainter_drawText(&painter, 6, 14,
@@ -227,13 +257,17 @@ static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
     }
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    if (xdw_closeHit(dock, &pos) && (dock->m_features & 0x1)) {
+    /* 复扫 R-83：自定义标题条接管标题区交互——关闭钮/拖动属默认标题
+     * 条行为；自定义条在位时按下事件归其子控件（子 ignore 才落到本
+     * 处理），此处一律不再按默认条命中处理。 */
+    if (!dock->m_titleBar && xdw_closeHit(dock, &pos) &&
+        (dock->m_features & 0x1)) {
         /* 对标 Qt：标题条关闭按钮关闭面板；简化为隐藏（保持登记）。 */
         XWidget_setVisible(self, false);
         XEvent_accept(event);
         return;
     }
-    if (dock->m_floating && xdw_titleHit(&pos) &&
+    if (!dock->m_titleBar && dock->m_floating && xdw_titleHit(&pos) &&
         (dock->m_features & 0x2 /* Movable：标题条可拖动 */) &&
         XMouseEvent_button(me) == XMouseButton_LeftButton) {
         XPoint g = XMouseEvent_globalPosition(me);
@@ -328,8 +362,10 @@ static void VX_dockWidget_hideEvent(XWidget* self, XEvent* event)
 static void VX_dockWidget_resizeEvent(XWidget* self, XEvent* event)
 {
     xdw_callParent(self, ResizeEvent, event);
-    if (self)
+    if (self) {
+        xdw_layoutTitleBar((XDockWidget*)self);
         xdw_layoutContent((XDockWidget*)self);
+    }
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -349,6 +385,13 @@ static void VX_dockWidget_deinit(XDockWidget* self)
         /* 切换动作归面板所有（对标 Qt toggleViewAction 归 dock 所有）。 */
         XAction_delete_base(self->m_toggleAction);
         self->m_toggleAction = NULL;
+    }
+    if (self->m_titleBar) {
+        /* 复扫 R-83 配套：自定义标题条为借用承载——析构级联删子前先
+         * 摘除父链，控件归还调用方（面板不删除，见 setter 注）。 */
+        if (XWidget_parentWidget(self->m_titleBar) == (XWidget*)self)
+            XWidget_setParent(self->m_titleBar, NULL, 0);
+        self->m_titleBar = NULL;
     }
     if (self->m_host) {
         /* 析构时摘除宿主销毁监听（setHost 建立的回链）。 */
@@ -515,8 +558,29 @@ bool XDockWidget_isAreaAllowed(const XDockWidget* self, int area)
 
 void XDockWidget_setTitleBarWidget(XDockWidget* self, XWidget* widget)
 {
-    if (!self) return;
+    XWidget* old;
+    if (!self || self->m_titleBar == widget) return;
+    old = self->m_titleBar;
+    if (old) {
+        /* 借用承载（头文件契约 m_titleBar 为借用）：旧自定义标题条
+         * 不删除，若曾挂到本面板则摘父链归还调用方（同 setWidget 的
+         * 摘除语义）。 */
+        XWidget_setVisible(old, false);
+        if (XWidget_parentWidget(old) == (XWidget*)self)
+            XWidget_setParent(old, NULL, 0);
+    }
     self->m_titleBar = widget;
+    if (widget) {
+        /* 复扫 R-83：此前纯存储——自定义标题条不 reparent/不入标题条
+         * 区布局/paint 不消费，永不可见。现对标 Qt QDockWidget::
+         * setTitleBarWidget 的接管呈现：挂为本面板子控件、铺满标题条
+         * 区、显式 show（框架显式 show 语义）；绘制分流与标题区鼠标
+         * 门禁见 paintEvent/mousePressEvent。传 NULL 恢复默认标题条。 */
+        XWidget_setParent(widget, (XWidget*)self, 0);
+        xdw_layoutTitleBar(self);
+        XWidget_show(widget);
+    }
+    XWidget_update((XWidget*)self);
 }
 
 XWidget* XDockWidget_titleBarWidget(const XDockWidget* self)

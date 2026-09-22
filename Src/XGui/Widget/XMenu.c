@@ -11,8 +11,10 @@
  *             - 信号：aboutToShow/aboutToHide/triggered(XAction*)/
  *               hovered(XAction*)。
  *             绘制使用固定调色（无 XPalette 主题依赖），键盘支持
- *             Up/Down/Enter/Escape。本实现只使用 XinYueC 的 XWidget/
- *             XAction/XString/XPainter 抽象层，不依赖任何平台 API。
+ *             Up/Down/Left/Right/Enter/Escape；子菜单条目支持悬停延时
+ *             展开/点击展开/Right 展开/Left 收起。本实现只使用 XinYueC
+ *             的 XWidget/XAction/XString/XPainter 抽象层，不依赖任何
+ *             平台 API。
  */
 #include "XMenu.h"
 
@@ -27,6 +29,8 @@
 #include "XFont.h"
 #include "XCoreApplication.h"
 #include "XVarList.h"
+#include "XObject.h"
+#include "XVariant.h"
 
 
 #if XWIDGET_ON && XMENU_ON
@@ -63,14 +67,19 @@ static void xmenu_emitAction(XMenu* self, size_t signal, XAction* action)
 
 /* ==================== 动作管理 ==================== */
 
-/* 动作 triggered 转发槽：动作被触发时转发菜单 triggered(action) 信号。 */
+/* 动作 triggered 转发槽：动作被触发时转发菜单 triggered(action) 信号。
+ * 根因修复（复扫 R-18）：子菜单容器动作（addMenu 产物）被"触发"在对标
+ * Qt 里是打开子菜单而非激活条目，QMenu::triggered 从不为它发射；此前
+ * addActionInternal/insertActionInternal 对容器动作照连 triggered 转发，
+ * 导致打开子菜单路径误发菜单 triggered(容器动作)。此处按发射时点鉴别
+ * 容器动作并抑制转发，同时覆盖 addMenu/insertMenu 两条挂接路径。 */
 static void xmenu_actionTriggeredSlot(XObject* receiver, XVarList* args)
 {
     XMenu* self = (XMenu*)receiver;
     XObject* sender = XObject_sender(receiver);
 
     (void)args;
-    if (self && sender)
+    if (self && sender && !XAction_menu((XAction*)sender))
         xmenu_emitAction(self, (size_t)XMenu_triggered_signal,
                          (XAction*)sender);
 }
@@ -441,11 +450,168 @@ void XMenu_setTearOffEnabled(XMenu* self, bool enable)
 
 /* ==================== 弹出（对标 QMenu） ==================== */
 
+/* ---- 子菜单弹出状态（复扫 R-18） ----
+ * XMenu.h 归主线头文件批次、不在本批改动范围：悬停延时弹出定时器与
+ * 当前展开子菜单的记账经对象动态属性（XObject_setProperty，XVariant
+ * 随对象析构自动释放）承载，对标 Qt QMenuPrivate 的 popupDelay 定时器
+ * 与 sloppy/active 状态，不引入跨对象静态量。 */
+
+/** @brief 动态属性键：未决的悬停弹出定时器 id（int64 变体承载 XTimerId）。 */
+#define XMENU_PROP_HOVER_TIMER "xgui.menu.hoverTimer"
+/** @brief 动态属性键：当前展开的子菜单（Ptr 变体承载 XMenu*，借用）。 */
+#define XMENU_PROP_OPEN_SUB "xgui.menu.openSub"
+
+/** @brief 悬停子菜单条目后的延时弹出间隔（对标 Qt
+ *         SH_Menu_SubMenuPopupDelay 缺省 300ms）。 */
+#define XMENU_SUBMENU_POPUP_DELAY_MS 300
+
+static void xmenu_removeProp(XMenu* self, const char* keyUtf8)
+{
+    XString key;
+
+    if (!self || !keyUtf8)
+        return;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    XObject_removeProperty((XObject*)self, &key);
+    XString_deinit_base(&key);
+}
+
+static void xmenu_setInt64Prop(XMenu* self, const char* keyUtf8,
+                               int64_t value)
+{
+    XString key;
+    XVariant* v;
+
+    if (!self || !keyUtf8)
+        return;
+    v = XVariant_create_int64(value);
+    if (!v)
+        return;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
+    if (!XObject_setProperty((XObject*)self, &key, v))
+        XVariant_delete_base((XClass*)v);
+    XString_deinit_base(&key);
+}
+
+static int64_t xmenu_int64Prop(const XMenu* self, const char* keyUtf8,
+                               int64_t fallback)
+{
+    XString key;
+    XVariant* v;
+
+    if (!self || !keyUtf8)
+        return fallback;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    v = XObject_property((const XObject*)self, &key);
+    XString_deinit_base(&key);
+    return v ? XVariant_toInt64(v) : fallback;
+}
+
+static void xmenu_setPtrProp(XMenu* self, const char* keyUtf8, void* value)
+{
+    XString key;
+    XVariant* v;
+
+    if (!self || !keyUtf8)
+        return;
+    v = XVariant_create_ptr(value);
+    if (!v)
+        return;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    if (!XObject_setProperty((XObject*)self, &key, v))
+        XVariant_delete_base((XClass*)v);
+    XString_deinit_base(&key);
+}
+
+static void* xmenu_ptrProp(const XMenu* self, const char* keyUtf8)
+{
+    XString key;
+    XVariant* v;
+
+    if (!self || !keyUtf8)
+        return NULL;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    v = XObject_property((const XObject*)self, &key);
+    XString_deinit_base(&key);
+    return v ? XVariant_toPtr(v) : NULL;
+}
+
+/** @brief 取消未决的悬停弹出定时器（无未决时为幂等）。 */
+static void xmenu_cancelHoverPopup(XMenu* self)
+{
+    int64_t id;
+
+    if (!self)
+        return;
+    id = xmenu_int64Prop(self, XMENU_PROP_HOVER_TIMER,
+                         (int64_t)XTIMER_INVALID_ID);
+    if (id != (int64_t)XTIMER_INVALID_ID)
+        XObject_killTimer((XObject*)self, (XTimerId)id);
+    xmenu_removeProp(self, XMENU_PROP_HOVER_TIMER);
+}
+
+/** @brief 为子菜单条目安排延时弹出（悬停展开，对标 QMenu 悬停延时）。 */
+static void xmenu_scheduleHoverPopup(XMenu* self, XAction* action)
+{
+    int64_t id;
+
+    if (!self || !action || !XAction_menu(action))
+        return;
+    if (XAction_menu(action)->m_popupActive)
+        return;
+    xmenu_cancelHoverPopup(self);
+    id = (int64_t)XObject_startTimer_ms(
+        (XObject*)self, XMENU_SUBMENU_POPUP_DELAY_MS,
+        XTimerType_PreciseTimer);
+    if (id == (int64_t)XTIMER_INVALID_ID)
+        return;
+    xmenu_setInt64Prop(self, XMENU_PROP_HOVER_TIMER, id);
+}
+
+/** @brief 立即展开 action 承载的子菜单：弹出位置对标 QMenu（条目右缘
+ *         外侧、顶对齐），并登记为父菜单当前展开子菜单（悬停切换/
+ *         再次点击可收起、父级关闭时级联收起）。幂等：已展开不重复弹。 */
+static void xmenu_popupSubmenu(XMenu* self, XAction* action)
+{
+    XMenu* sub;
+    XRect geo;
+    XPoint local;
+    XPoint global;
+
+    if (!self || !action)
+        return;
+    sub = XAction_menu(action);
+    if (!sub || sub->m_popupActive)
+        return;
+    geo = XMenu_actionGeometry(self, action);
+    local.x = geo.x + geo.width;
+    local.y = geo.y;
+    global = XWidget_mapToGlobal((XWidget*)self, &local);
+    xmenu_setPtrProp(self, XMENU_PROP_OPEN_SUB, sub);
+    XMenu_popup(sub, &global);
+}
+
 static void xmenu_close(XMenu* self)
 {
     if (!self || !self->m_popupActive)
         return;
     self->m_popupActive = false;
+    /* 对标 QMenu：父菜单关闭时级联收起其展开的子菜单（子菜单是独立
+     * 顶层弹窗，父级 hide 不会自动带隐）；先摘记账再收起，防自删后
+     * 悬垂（DeleteOnClose）。 */
+    {
+        XMenu* openSub = xmenu_ptrProp(self, XMENU_PROP_OPEN_SUB);
+        xmenu_removeProp(self, XMENU_PROP_OPEN_SUB);
+        xmenu_cancelHoverPopup(self);
+        if (openSub && openSub != self && openSub->m_popupActive)
+            xmenu_close(openSub);
+    }
     if (self->m_grabTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)self, self->m_grabTimer);
         self->m_grabTimer = XTIMER_INVALID_ID;
@@ -457,6 +623,10 @@ static void xmenu_close(XMenu* self)
         if (handle)
             XWindow_setMouseGrabEnabled(handle, false);
     }
+    /* 本菜单若为子菜单：清父菜单的展开记账，防父菜单悬挂本对象。 */
+    if (self->m_parentMenu &&
+        xmenu_ptrProp(self->m_parentMenu, XMENU_PROP_OPEN_SUB) == self)
+        xmenu_removeProp(self->m_parentMenu, XMENU_PROP_OPEN_SUB);
     xmenu_emitVoid(self, (size_t)XMenu_aboutToHide_signal);
     XWidget_hide((XWidget*)self);
     /* 对标 Qt WA_DeleteOnClose：设置该属性的弹出菜单在关闭时自删。
@@ -795,6 +965,20 @@ static void VXMenu_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
+    /* 子菜单条目按下即展开（复扫 R-18，对标 QMenu）：不触发容器动作、
+     * 不关父菜单；对已展开的子菜单再次按下则收起（Qt 反复点击切换）。 */
+    if (!XAction_isSeparator(action) && XAction_isEnabled(action) &&
+        XAction_menu(action)) {
+        if (action != menu->m_activeAction) {
+            XMenu_setActiveAction(menu, action);
+            xmenu_emitAction(menu, (size_t)XMenu_hovered_signal, action);
+        }
+        xmenu_cancelHoverPopup(menu);
+        if (xmenu_ptrProp(menu, XMENU_PROP_OPEN_SUB) == XAction_menu(action))
+            xmenu_close(XAction_menu(action));
+        else
+            xmenu_popupSubmenu(menu, action);
+    }
     XEvent_accept(event);
 }
 
@@ -820,6 +1004,13 @@ static void VXMenu_mouseReleaseEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
+    if (XAction_menu(action)) {
+        /* 子菜单条目（复扫 R-18）：release 只确保子菜单展开，不触发
+         * 容器动作、不关父菜单；press 路径已展开时此处幂等 no-op。 */
+        xmenu_popupSubmenu(menu, action);
+        XEvent_accept(event);
+        return;
+    }
     menu->m_execResult = action;
     /* 先触发后关闭：动作由菜单拥有，设置 DeleteOnClose 的菜单会在
        关闭路径中自删，必须保证触发时对象仍存活。 */
@@ -840,10 +1031,26 @@ static void VXMenu_mouseMoveEvent(XWidget* self, XEvent* event)
     mouseEvent = (XMouseEvent*)event;
     pos = XMouseEvent_position(mouseEvent);
     action = XMenu_actionAt(menu, &pos);
-    if (action && action != menu->m_activeAction &&
-        !XAction_isSeparator(action)) {
-        XMenu_setActiveAction(menu, action);
-        xmenu_emitAction(menu, (size_t)XMenu_hovered_signal, action);
+    if (action && !XAction_isSeparator(action)) {
+        if (action != menu->m_activeAction) {
+            /* 移入新条目（复扫 R-18）：取消未决的悬停弹出并收起上一个
+             * 已展开的子菜单（对标 QMenu 悬停切换条目），随后高亮 +
+             * hovered。 */
+            xmenu_cancelHoverPopup(menu);
+            {
+                XMenu* openSub = xmenu_ptrProp(menu, XMENU_PROP_OPEN_SUB);
+                if (openSub && openSub != XAction_menu(action) &&
+                    openSub->m_popupActive)
+                    xmenu_close(openSub);
+            }
+            XMenu_setActiveAction(menu, action);
+            xmenu_emitAction(menu, (size_t)XMenu_hovered_signal, action);
+        }
+        /* 子菜单条目悬停即安排延时展开——高亮未变（如键盘选中后再悬停
+         * 同一条目）而子菜单未开时同样适用（对标 QMenu 悬停展开；
+         * xmenu_scheduleHoverPopup 内部幂等：已展开不再安排）。 */
+        if (XAction_isEnabled(action))
+            xmenu_scheduleHoverPopup(menu, action);
     }
 }
 
@@ -856,21 +1063,50 @@ static void VXMenu_keyPressEvent(XWidget* self, XEvent* event)
         return;
     key = XKeyEvent_key((XKeyEvent*)event);
     if (key == XKey_Up) {
+        xmenu_cancelHoverPopup(menu);
         xmenu_moveActive(menu, -1);
         XEvent_accept(event);
     } else if (key == XKey_Down) {
+        xmenu_cancelHoverPopup(menu);
         xmenu_moveActive(menu, 1);
         XEvent_accept(event);
+    } else if (key == XKey_Right) {
+        /* Right 打开高亮条目的子菜单（复扫 R-18，对标 QMenu 键盘导航）。 */
+        XAction* action = menu->m_activeAction;
+
+        if (action && XAction_isEnabled(action) &&
+            !XAction_isSeparator(action) && XAction_menu(action)) {
+            xmenu_cancelHoverPopup(menu);
+            xmenu_popupSubmenu(menu, action);
+        }
+        XEvent_accept(event);
+    } else if (key == XKey_Left) {
+        /* Left 收起当前子菜单回到父菜单（对标 QMenu）；顶层菜单无父级
+         * 不消费，交由上层（菜单栏）处理。 */
+        if (menu->m_parentMenu) {
+            menu->m_execResult = NULL;
+            xmenu_close(menu);
+            XEvent_accept(event);
+        } else {
+            XEvent_ignore(event);
+        }
     } else if (key == XKey_Return || key == XKey_Enter) {
         XAction* action = menu->m_activeAction;
 
         if (action && XAction_isEnabled(action) &&
             !XAction_isSeparator(action)) {
-            menu->m_execResult = action;
-            /* 先触发后关闭（动作由菜单拥有，DeleteOnClose 自删后
-               不得再访问 action）。 */
-            XAction_trigger(action);
-            xmenu_close(menu);
+            if (XAction_menu(action)) {
+                /* 高亮条目是子菜单入口：Enter 展开，不触发动作、不关
+                 * 父菜单（复扫 R-18）。 */
+                xmenu_cancelHoverPopup(menu);
+                xmenu_popupSubmenu(menu, action);
+            } else {
+                menu->m_execResult = action;
+                /* 先触发后关闭（动作由菜单拥有，DeleteOnClose 自删后
+                   不得再访问 action）。 */
+                XAction_trigger(action);
+                xmenu_close(menu);
+            }
         }
         XEvent_accept(event);
     } else if (key == XKey_Escape) {
@@ -887,6 +1123,9 @@ static void VXMenu_leaveEvent(XWidget* self, XEvent* event)
     XMenu* menu = (XMenu*)self;
 
     if (menu && event) {
+        /* 指针移出菜单：未决的悬停弹出一并取消（已展开的子菜单保留，
+         * 指针可能正移入该子菜单，对标 QMenu 的 sloppy 保留语义）。 */
+        xmenu_cancelHoverPopup(menu);
         XMenu_setActiveAction(menu, NULL);
         XEvent_accept(event);
     }
@@ -920,6 +1159,22 @@ static void VXMenu_timerEvent(XObject* object, XTimerEvent* event)
         handle = XWidget_windowHandle((XWidget*)self);
         if (handle)
             XWindow_setMouseGrabEnabled(handle, true);
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    /* 悬停延时弹出（复扫 R-18）：到期弹出当前高亮条目的子菜单；先摘
+     * 定时器记账再展开（展开内部会登记 OPEN_SUB 记账，二者互不冲突）。 */
+    if (self && event &&
+        XTimerEvent_timerId(event) ==
+            (XTimerId)xmenu_int64Prop(self, XMENU_PROP_HOVER_TIMER,
+                                      (int64_t)XTIMER_INVALID_ID)) {
+        XAction* action;
+
+        xmenu_removeProp(self, XMENU_PROP_HOVER_TIMER);
+        action = self->m_activeAction;
+        if (action && XAction_isEnabled(action) &&
+            !XAction_isSeparator(action))
+            xmenu_popupSubmenu(self, action);
         XEvent_accept((XEvent*)event);
         return;
     }
@@ -1030,6 +1285,9 @@ static void VXMenu_deinit(XMenu* self)
     if (!self)
         return;
 
+    /* 防御：析构前撤销未决的悬停弹出定时器（动态属性随 XObject 析构
+     * 自动释放，无需手工清理）。 */
+    xmenu_cancelHoverPopup(self);
     self->m_defaultAction = NULL;
     self->m_activeAction = NULL;
     self->m_execResult = NULL;

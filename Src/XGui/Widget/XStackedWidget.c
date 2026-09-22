@@ -39,11 +39,6 @@ void XStackedWidget_init(XStackedWidget* self, XWidget* parent,
     XMemset(self, 0, sizeof(*self));
     XFrame_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XStackedWidget);
-    fprintf(stderr, "[sw-dbg] init self=%p layout=%p szS=%d szL=%d vt=%p deinit=%p\n",
-            (void*)self, (void*)&self->m_layout,
-            (int)sizeof(XStackedWidget), (int)sizeof(XStackedLayout),
-            (void*)XClassGetVtable(self),
-            (void*)XClassGetVirtualFunc(self, EXClass_Deinit, void*));
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     /* 内部堆叠布局挂到本控件（对标 QStackedWidget 持有 QStackedLayout）。 */
@@ -78,15 +73,37 @@ XStackedWidget* XStackedWidget_create_ex(XMemoryType memory, XWidget* parent,
 
 int XStackedWidget_addWidget(XStackedWidget* self, XWidget* widget)
 {
+    int old;
+    int idx;
+    int cur;
     if (!self || !widget) return -1;
-    return XStackedLayout_addWidget(&self->m_layout, widget);
+    old = XStackedLayout_currentIndex(&self->m_layout);
+    idx = XStackedLayout_addWidget(&self->m_layout, widget);
+    /* Qt 口径：QStackedWidget::addWidget 委托 QStackedLayout，空容器
+       首件加入使当前页 -1→0 并发射 currentChanged；布局层无信号槽，
+       由本控件代发。仅空容器首件发射（Qt 对追加不迁移当前页）。 */
+    (void)idx;
+    cur = XStackedLayout_currentIndex(&self->m_layout);
+    if (old < 0 && cur >= 0)
+        XStackedWidget_currentChanged_signal(self, cur);
+    return idx;
 }
 
 int XStackedWidget_insertWidget(XStackedWidget* self, int index,
                                 XWidget* widget)
 {
+    int old;
+    int idx;
+    int cur;
     if (!self || !widget) return -1;
-    return XStackedLayout_insertWidget(&self->m_layout, index, widget);
+    old = XStackedLayout_currentIndex(&self->m_layout);
+    idx = XStackedLayout_insertWidget(&self->m_layout, index, widget);
+    /* 同 addWidget：仅空容器首件发射；Qt 对前插导致的当前页序号私移
+       （qstackedlayout d->index++ 直改不发）不发射 currentChanged。 */
+    cur = XStackedLayout_currentIndex(&self->m_layout);
+    if (old < 0 && cur >= 0)
+        XStackedWidget_currentChanged_signal(self, cur);
+    return idx;
 }
 
 void XStackedWidget_removeWidget(XStackedWidget* self, XWidget* widget)

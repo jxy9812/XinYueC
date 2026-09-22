@@ -1893,7 +1893,13 @@ void XWindow_requestActivate(XWindow* self)
     if (data->m_nativeWindowAttached)
         (void)XPlatformNativeWindow_requestActivate(self);
 #endif /* XPLATFORMNATIVEWINDOW_ON */
-    data->m_active = true;
+    /* 无平台回退：直置激活并按值变化发射 activeChanged（对标 Qt 激活
+       标志随焦点窗口变化联动；有平台时真实 FocusIn 回报仍会经事件
+       路由二次联动，值去重保证信号不重复）。 */
+    if (!data->m_active) {
+        data->m_active = true;
+        XWindow_activeChanged_signal(self);
+    }
 #if XGUIAPPLICATION_ON
     XGuiApplication_setFocusWindow(self, NULL);
 #endif /* XGUIAPPLICATION_ON */
@@ -1909,8 +1915,14 @@ void XWindow_setVisible(XWindow* self, bool visible)
         data->m_visible = visible;
         XWindow_visibleChanged_signal(self, visible);
         XWindow_updateVisibility(self);
-    } else if (self->m_data->m_platform) {
-        return; /* 已处于目标状态的可见性不重复处理。 */
+    } else if (data->m_created || data->m_platform || !visible) {
+        /* 根因(R-96)：无平台句柄路径此前只在挂接平台时去重，同值重复
+           setVisible 重发 Show/HideEvent 并重设 exposed，与有句柄路径
+           语义不一致。现句柄已建、已挂平台及隐藏同值一律早退；仅保留
+           「未建句柄且请求显示」的同值重入——那是 setParent 在父窗口
+           补建句柄后重放可见性的合法路径（见 XWindow_setParent 尾部
+           setVisible(true) 重入）。 */
+        return;
     }
     /* 显示时若原生窗口尚未创建则延迟创建（挂接/未挂接统一入口）。
        已挂接真实原生窗口的可见性变化在下方统一同步给平台后端。 */
@@ -2006,16 +2018,19 @@ bool XWindow_close(XWindow* self)
 
 void XWindow_raise(XWindow* self)
 {
-    XWindowPrivate* data;
-    if (!self || !(data = self->m_data)) return;
-    data->m_active = true;
+    /* 根因修复（复扫 R-35）：Z 序与激活解耦（对标 QWindow::raise——
+       只提升堆叠顺序，不改激活态；激活唯一来源是焦点窗口变化，
+       见 VXWindow_event 焦点路由与 requestActivate）。此前 raise 直置
+       m_active=true 造成 isActive 与真实焦点永久脱钩。当前无平台 Z 序
+       接口（XPlatformNativeWindow 无 raise/lower），保持参数校验后
+       no-op，与 Qt 无平台窗口时 raise 为空操作一致。 */
+    if (!self || !self->m_data) return;
 }
 
 void XWindow_lower(XWindow* self)
 {
-    XWindowPrivate* data;
-    if (!self || !(data = self->m_data)) return;
-    data->m_active = false;
+    /* 对标 QWindow::lower：仅降低堆叠顺序，不改激活态（同 raise 解耦）。 */
+    if (!self || !self->m_data) return;
 }
 
 /** @brief 判断边缘组合是否为 Qt 合法 resize 边缘（单边或两条直角邻边）。 */
@@ -2260,10 +2275,22 @@ static bool VXWindow_event(XWindow* self, XEvent* event)
         break;
     case XEVENT_TYPE_FOCUS_IN:
         XWindow_focusInEvent_base(self, event);
+        /* 根因修复（复扫 R-35）：窗口级 FocusIn 派发后本窗口即焦点
+           窗口，激活标志在此联动并发射 activeChanged——此前该信号全库
+           零生产发射、isActive 与真实焦点脱钩。事件先派发、标志后翻转，
+           与 Qt processFocusWindowChanged 同序。 */
+        if (self->m_data && !self->m_data->m_active) {
+            self->m_data->m_active = true;
+            XWindow_activeChanged_signal(self);
+        }
         XEvent_accept(event);
         break;
     case XEVENT_TYPE_FOCUS_OUT:
         XWindow_focusOutEvent_base(self, event);
+        if (self->m_data && self->m_data->m_active) {
+            self->m_data->m_active = false;
+            XWindow_activeChanged_signal(self);
+        }
         XEvent_accept(event);
         break;
     case XEVENT_TYPE_SHOW:

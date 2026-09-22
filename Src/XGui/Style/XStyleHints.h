@@ -118,7 +118,7 @@ void XStyleHints_setKeyboardInputInterval(XStyleHints* self, int keyboardInputIn
 int  XStyleHints_mouseDoubleClickInterval(const XStyleHints* self);
 void XStyleHints_setMouseDoubleClickInterval(XStyleHints* self, int mouseDoubleClickInterval);
 
-/** @brief 鼠标长按判定间隔（毫秒）；默认 500。对标 mousePressAndHoldInterval。 */
+/** @brief 鼠标长按判定间隔（毫秒）；默认 800。对标 mousePressAndHoldInterval。 */
 int  XStyleHints_mousePressAndHoldInterval(const XStyleHints* self);
 void XStyleHints_setMousePressAndHoldInterval(XStyleHints* self, int mousePressAndHoldInterval);
 
@@ -171,7 +171,7 @@ uint32_t XStyleHints_passwordMaskCharacter(const XStyleHints* self);
 /** @brief 密码掩码延迟（毫秒）；默认 0。对标 passwordMaskDelay。 */
 int XStyleHints_passwordMaskDelay(const XStyleHints* self);
 
-/** @brief 触摸释放时是否设置焦点；默认 true。对标 setFocusOnTouchRelease。 */
+/** @brief 触摸释放时是否设置焦点；默认 false。对标 setFocusOnTouchRelease。 */
 bool XStyleHints_setFocusOnTouchRelease(const XStyleHints* self);
 
 /** @brief 窗口显示时是否应全屏；默认 false（平台注入）。对标 showIsFullScreen。 */

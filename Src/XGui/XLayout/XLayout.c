@@ -1162,6 +1162,12 @@ void XLayout_addWidget(XLayout* self, XWidget* widget)
     if (!self || !widget) return;
     item = XLayoutItem_createWidgetItem(widget);
     if (!item) return;
+    /* 根因(R-92)：条目由本入口创建、调用方无法释放，须归布局所有
+       （XLayout.h 所有权契约：addWidget 等自动创建的内部条目 deinit
+       时自动释放）。基类/子类 addItem 虚路径只按 owned 入参置位、
+       从不清除 m_ownedByLayout，故挂入前置位即可；子类 insert*
+       路径本就传 owned=true，行为不变无回归。 */
+    item->m_ownedByLayout = 1;
     XLayout_addItem_base(self, item);
 }
 

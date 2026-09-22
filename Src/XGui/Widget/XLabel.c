@@ -399,7 +399,8 @@ static void label_htmlPutEscapedText(char* out, int cap, int* o,
  * @brief      由显示文本与链接表合成控制器 HTML 子集装载串。
  * @details    文本经实体转义后可被控制器解析端逐字节还原（解析端仅对
  *             '&' 触发实体解码，而 '&' 已全部转义）；链接区间以
- *             <a href>...</a> 登记，锚点字节区间与标签自有链接表一致。
+ *             <a href>...</a> 登记且闭合标签 </a> 显式写入，锚点字节
+ *             区间与标签自有链接表一致。
  *             href 原样写入（控制器注册表中的 href 仅供键盘导航等内部
  *             路径消费；激活/悬停发射始终使用标签自有 href 保真）。
  * @return     堆缓冲（XMEMORY_TYPE_HYBRID，调用方释放）；失败返回 NULL。
@@ -437,6 +438,10 @@ static char* label_buildControlHtml(const XLabel* self)
         }
         label_htmlPutRaw(out, cap, &o, "\">", 2);
         label_htmlPutEscapedText(out, cap, &o, utf8, s, e);
+        /* 闭链标签必须落盘：控制器解析端仅在 </a> 处回调登记锚点区间，
+           缺失则控制器锚点注册表为空，悬停（linkHovered/手型光标）与
+           键盘锚点导航全部失效（对标 Qt 链接区间闭合语义）。 */
+        label_htmlPutRaw(out, cap, &o, "</a>", 4);
         i = e;
     }
     label_htmlPutEscapedText(out, cap, &o, utf8, i, total);
@@ -1661,8 +1666,10 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
                 cursor += glyphWidth;
                 byteAt += glyphLen;
                 ++glyphIndex;
-            XFont_deinit_base(&font);
             }
+            /* R-72 根因：XFont_deinit_base 曾错放循环体内，首次迭代即析构
+               深拷贝字体，后续字形退回默认字库度量使命中位置漂移；
+               现移出循环，仅在度量全程结束后析构一次。 */
             XFont_deinit_base(&font);
         }
     }
@@ -1787,8 +1794,9 @@ static int label_posToUtf16(const XLabel* self, const XPoint* pos)
             cursor += glyphWidth;
             p += glyphLen;
             ++glyphIndex;
-        XFont_deinit_base(&font);
         }
+        /* R-72 同款根因：deinit 曾错放循环体内，首迭代后字体即被析构、
+           后续字形按默认字库度量漂移；移出循环仅析构一次。 */
         XFont_deinit_base(&font);
         if (glyphIndex > lineGlyphs) glyphIndex = lineGlyphs;
     }

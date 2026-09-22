@@ -790,6 +790,43 @@ int demo_page_dialogs_autotest(XWidget* page)
             XMessageBox_delete_base(box); /* 堆对象即测即毁防泄漏。 */
         }
     }
+
+    /* ---- 1b. 对话框 Enter 键派发（§8.0g14 锁定）：open 非阻塞显示
+     *         后向对话框直发 Return 键事件——默认按钮（首个可见可用
+     *         标准按钮=Ok）应被点击 → accept 关闭 → accepted 计数；
+     *         结束后显式清焦点防堆对象销毁后应用焦点悬垂。 ---- */
+    {
+        XMessageBox* box = XMessageBox_create(page, 0);
+        int acceptedBefore = s_dlgpg.m_acceptedCount;
+        DLGPG_EXPECT(box != NULL, "Enter 派发消息框堆构造成功");
+        if (box) {
+            XKeyEvent* keyEvent;
+            XMessageBox_setStandardButtons(
+                box, (int)XDialogButtonBoxStandard_Ok |
+                     (int)XDialogButtonBoxStandard_Cancel);
+            XObject_connect_1((XObject*)box,
+                              (size_t)XDialog_accepted_signal(NULL),
+                              (XObject*)box, dlgpg_countAcceptedSlot,
+                              XConnectionType_Direct);
+            XDialog_open(&box->m_base);
+            DLGPG_EXPECT(XWidget_isVisible((XWidget*)box),
+                         "Enter 派发消息框 open 后可见");
+            keyEvent = XKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                           XEVENT_TYPE_KEY_PRESS,
+                                           (int)XKey_Return, 0);
+            DLGPG_EXPECT(keyEvent != NULL, "Return 键事件构造成功");
+            if (keyEvent) {
+                XObject_event_base((XObject*)box, (XEvent*)keyEvent);
+                XEvent_delete_base((XEvent*)keyEvent);
+            }
+            DLGPG_EXPECT(!XWidget_isVisible((XWidget*)box) &&
+                         XDialog_result(&box->m_base) == 1 &&
+                         s_dlgpg.m_acceptedCount == acceptedBefore + 1,
+                         "Return 直发命中默认按钮 accept 关闭");
+            XWidget_clearFocus((XWidget*)box);
+            XMessageBox_delete_base(box);
+        }
+    }
 #endif /* DLGPG_MSGBOX_ON */
 
 #if DLGPG_INPUT_ON

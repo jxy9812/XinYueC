@@ -1144,17 +1144,44 @@ static void xtc_setModifiedNotify(XTextControl* self, bool modified)
 }
 
 /**
+ * @brief      新编辑前截断重做栈（对标 Qt QUndoStack::push 的截断语义：
+ *             undo 后产生的新命令使既有 redo 段全部过期——redo 段的
+ *             pos/文本基于旧文档状态，重放会按过期位置错位修改，直接
+ *             损坏文档）。
+ * @details    逐条 xtc_commandClear 释放 removed/inserted 堆串防泄漏；
+ *             仅清零计数、保留数组容量（undo→键入→undo 高频交替场景
+ *             避免反复释放/重分配）；计数翻转后经 xtc_notifyUndoRedo
+ *             发 redoAvailable(false)。
+ */
+static void xtc_truncateRedo(XTextControl* self)
+{
+    int i;
+    if (!self || self->m_redoCount <= 0) return;
+    for (i = 0; i < self->m_redoCount; ++i)
+        xtc_commandClear(&self->m_redoStack[i]);
+    self->m_redoCount = 0;
+    xtc_notifyUndoRedo(self);
+}
+
+/**
  * @brief      记录一条撤销命令（自动分组时与栈顶相邻命令合并，对标
  *             QTextDocument 的键入/删除分组）。
  * @details    合并规则：同为纯插入且位置相接（pos == 上条 pos + 插入长）
  *             → 追加文本；同为纯删除且位置相接（向前/向后两个方向）
  *             → 合并删除串。显式组命令（group != 0）不与任何命令合并。
+ *             P0 根因修复：所有新命令记录路径（含合并路径——合并等同
+ *             一次新编辑）先截断重做栈；旧实现只压 undo 栈不清 redo
+ *             栈，undo→输入→redo 时 redo() 按旧位置重放过期命令损坏
+ *             文档。undo 栈唯一写点即本函数（undo/redo 搬移除外），
+ *             editInsert/editRemove 及其上游（键入/粘贴/预编辑提交）
+ *             全部经此收口。
  */
 static void xtc_recordCommand(XTextControl* self, int pos, const char* removed,
                               const char* inserted, int group)
 {
     XTextControlUndoCommand cmd;
     if (!self || !self->m_undoEnabled) return;
+    xtc_truncateRedo(self);
     if (self->m_undoCount > 0 && group == 0) {
         XTextControlUndoCommand* last = &self->m_undoStack[self->m_undoCount - 1];
         if (last->group == 0 && last->inserted && !last->removed &&
@@ -2703,7 +2730,8 @@ static void xtc_mouseMoveEvent(XTextControl* self, XMouseEvent* e)
 
 /**
  * @brief      鼠标释放（对标 mouseReleaseEvent：起拖取消、拖选收尾、
- *             中键粘贴、链接激活）。
+ *             链接激活；中键粘贴不在 release 侧——见函数体内 R-33 注释，
+ *             单点在 press 侧 xtc_middleClickPaste）。
  */
 static void xtc_mouseReleaseEvent(XTextControl* self, XMouseEvent* e)
 {
@@ -2730,21 +2758,13 @@ static void xtc_mouseReleaseEvent(XTextControl* self, XMouseEvent* e)
     if (self->m_mousePressed) {
         self->m_mousePressed = false;
         xtc_notifySelection(self, true);
-    } else if (button == (int)XMouseButton_MiddleButton &&
-               (flags & (int)XTextControlInteraction_TextEditable)) {
-        /* 对标差异：XGui 无主选择区剪贴板，中键粘贴退化为普通剪贴板。 */
-        const char* clip = XTextClipboard_getText();
-        xtc_setCursorPos(self, XTextControl_hitTest(
-                                   self, &pos,
-                                   (int)XTextControlHitTestAccuracy_FuzzyHit),
-                         (int)XTextControlMoveMode_MoveAnchor);
-        if (clip && clip[0]) {
-            int p = self->m_cursorPosition;
-            xtc_editInsert(self, p, clip, -1);
-            self->m_cursorAnchor = self->m_cursorPosition =
-                p + (int)XStrlen(clip);
-        }
     }
+    /* 根因修复（R-33）：此处旧有中键遗留粘贴分支（共享剪贴板文本再插
+     * 一次），与 press 侧 xtc_middleClickPaste 的 PRIMARY 单点粘贴对同
+     * 一次中键各插一次，两份文本叠加入文档。对标 Qt 6.8.3
+     * QWidgetTextControlPrivate::mouseReleaseEvent——中键粘贴仅存在于
+     * mousePressEvent（Selection 模式 + supportsSelection 门禁），
+     * release 侧无中键分支；故删除遗留路径，保留 press 侧单路径。 */
 
     xtc_repaintOldAndNewSelection(self, oldPos, oldAnchor);
     xtc_notifyCursorPosition(self, oldPos);

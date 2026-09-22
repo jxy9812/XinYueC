@@ -989,7 +989,8 @@ static int xtv_drawDecoration(XPainter* painter, int cellX, int cellY,
 static void xtv_drawCellContent(XPainter* painter,
                                 const XAbstractItemView* view,
                                 int row, int col,
-                                int x, int y, int w, int cellH)
+                                int x, int y, int w, int cellH,
+                                uint32_t ink)
 {
     const char* text = XAbstractItemModel_data_2(view->m_model, row, col);
     int check = XAbstractItemView_itemCheckState(view, row, col);
@@ -1005,11 +1006,11 @@ static void xtv_drawCellContent(XPainter* painter,
     if (roleFont) XPainter_setFont(painter, roleFont);
     if (roleAlign == 0 && check < 0 && !decoration) {
         /* 历史快速路径（像素零漂移）：左缘 4px、基线 y+cellH-6。
-         * 颜色必须显式传不透明黑：XPainter_drawText 直接以该参数作
-         * ink（透明色写入=无像素），setPen 不影响此路径。 */
-        XPainter_setPen(painter, 0xFF000000u);
-        XPainter_drawText(painter, x + 4, y + cellH - 6, text,
-                          0xFF000000u);
+         * 颜色必须显式传不透明色：XPainter_drawText 直接以该参数作
+         * ink（透明色写入=无像素），setPen 不影响此路径。ink 由调用
+         * 方按选中态给 HighlightedText/WindowText。 */
+        XPainter_setPen(painter, ink);
+        XPainter_drawText(painter, x + 4, y + cellH - 6, text, ink);
         if (roleFont) XPainter_setFont(painter, NULL);
         return;
     }
@@ -1025,10 +1026,23 @@ static void xtv_drawCellContent(XPainter* painter,
         if (!(flags & XPAINTER_TEXT_ALIGN_VERTICAL_MASK))
             flags |= XPAINTER_TEXT_ALIGN_BOTTOM;
         XRect_init(&textRect, contentX, y, x + w - contentX, cellH);
-        XPainter_drawTextRect(painter, &textRect, flags, text,
-                              0xFF000000u);
+        XPainter_drawTextRect(painter, &textRect, flags, text, ink);
     }
     if (roleFont) XPainter_setFont(painter, NULL);
+}
+
+/** @brief 调色板取色助手（对照 XTableWidget.c xtw_color 范式；
+ *  根因：自绘配色硬编码不读调色板，非默认调色板下仍白底黑字）。 */
+static uint32_t xtv_color(const XTableView* self, XPaletteColorRole role)
+{
+#if XPALETTE_ON
+    XPalette palette = XWidget_palette((XWidget*)self);
+    XColor c = XPalette_color(&palette, XPaletteColorGroup_Current, role);
+    return XColor_rgba(&c);
+#else
+    (void)self; (void)role;
+    return 0xFF000000u;
+#endif
 }
 
 static void VXTableView_paintEvent(XWidget* self, XEvent* event)
@@ -1039,6 +1053,12 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
     XPainter painter;
     XImage* image;
     XRect r;
+    XPoint offset;
+    uint32_t base;
+    uint32_t highlight;
+    uint32_t highlightedText;
+    uint32_t windowText;
+    uint32_t alternateBase;
     int row;
     int col;
     int cols;
@@ -1057,7 +1077,22 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
         XPainter_deinit(&painter);
         return;
     }
-    XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
+    /* paintImage 返回的是顶层窗口后备存储，须按控件偏移平移到局部
+     * 原点（对标 XListView 已修范式与派生类 XTableWidget.c 同款；
+     * 根因：缺平移时非零嵌入偏移下全部内容直绘到窗口 (0,0)）。 */
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    /* 视图族配色消费调色板（对标 Qt item view 的
+     * Base/Highlight/HighlightedText/WindowText/AlternateBase）：
+     * 默认调色板下 AlternateBase=(247,247,247) 与历史硬编码逐位一致，
+     * 零视觉漂移；非默认调色板下随板取色。 */
+    base            = xtv_color(tv, XPaletteColorRole_Base);
+    highlight       = xtv_color(tv, XPaletteColorRole_Highlight);
+    highlightedText = xtv_color(tv, XPaletteColorRole_HighlightedText);
+    windowText      = xtv_color(tv, XPaletteColorRole_WindowText);
+    alternateBase   = xtv_color(tv, XPaletteColorRole_AlternateBase);
+    XPainter_fillRect(&painter, &r, base);
     if (!model) {
         /* 无模型：画空表头提示。 */
         XPainter_setPen(&painter, 0xFF888888u);
@@ -1148,16 +1183,17 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
             {
                 XRect cell = { x, y, w, cellH };
                 if (sel)
-                    XPainter_fillRect(&painter, &cell, 0xFFCCE4FFu);
+                    XPainter_fillRect(&painter, &cell, highlight);
                 else if (view->m_alternatingRowColors && (row & 1))
-                    XPainter_fillRect(&painter, &cell, 0xFFF7F7F7u);
+                    XPainter_fillRect(&painter, &cell, alternateBase);
             }
             {
                 /* role 叠加存储渲染消费（对标 QStyledItemDelegate::paint
                  * 的 role 消费子集；此前写入端零消费）：勾选框/装饰/
                  * 对齐/字体按格生效，无 role 时走历史快速路径。 */
                 xtv_drawCellContent(&painter, view, row, col, x, y, w,
-                                    cellH);
+                                    cellH,
+                                    sel ? highlightedText : windowText);
             }
             if (tv->m_gridVisible) {
                 XPainter_setPen(&painter, 0xFFDDDDDDu);

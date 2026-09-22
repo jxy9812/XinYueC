@@ -201,10 +201,63 @@ static void xmdi_emitStateChanged(XMdiSubWindow* sw,
     }
 }
 
+/**
+ * @brief      派生判定子窗是否仍处 tileSubWindows 铺出的网格态
+ *             （对标 Qt 6.8.3 QMdiAreaPrivate::isSubWindowsTiled）。
+ * @details    根因（二次复扫 R-24）：resizeEvent 曾无条件 tileSubWindows，
+ *             默认 SubWindowView 下用户摆位每次区域尺寸变化即被摧毁。
+ *             Qt 6.8.3 的 resizeEvent 仅在 isSubWindowsTiled 为真时重铺
+ *             （qmdiarea.cpp:2288），该标志由 tileSubWindows 置位、用户
+ *             移动/缩放子窗清零。本实现 XMdiArea 结构体在头文件中
+ *             （本修复不可改头文件）且子窗无 move/resize 事件挂点，无
+ *             字段承载该标志，故按几何派生：平铺网格（cols=2）的特征
+ *             是全部子窗等宽等高、第 i 窗位于基准窗 +(列*宽, 行*高)
+ *             的网格点。区域 resize 不移动子窗、相对关系保持 → 判定为
+ *             平铺并随新尺寸重铺；用户挪动任一子窗即破坏网格 → 不再
+ *             重铺。单子窗（n==1）时"平铺铺满整域"与"用户随意摆位"
+ *             在 resize 后几何上不可区分，保守判否不重铺，保证永不毁
+ *             摆位（退化：单子窗少了"铺满新域"一步）。
+ */
+static bool xmdi_isTiled(const XMdiArea* self)
+{
+    int64_t i;
+    int64_t n;
+    XMdiSubWindow* base;
+    int baseX;
+    int baseY;
+    int baseW;
+    int baseH;
+    if (!self || !self->m_subWindows) return false;
+    n = XVector_size_base((const XContainer*)self->m_subWindows);
+    if (n < 2) return false;
+    base = *(XMdiSubWindow**)XVector_at_base(self->m_subWindows, 0);
+    if (!base) return false;
+    baseX = XWidget_x((XWidget*)base);
+    baseY = XWidget_y((XWidget*)base);
+    baseW = XWidget_width((XWidget*)base);
+    baseH = XWidget_height((XWidget*)base);
+    for (i = 1; i < n; ++i) {
+        XMdiSubWindow* sw =
+            *(XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
+        int col = (int)(i % 2); /* 与 XMdiArea_tileSubWindows 的列布局一致。 */
+        int row = (int)(i / 2);
+        if (!sw) return false;
+        if (XWidget_x((XWidget*)sw) != baseX + col * baseW ||
+            XWidget_y((XWidget*)sw) != baseY + row * baseH ||
+            XWidget_width((XWidget*)sw) != baseW ||
+            XWidget_height((XWidget*)sw) != baseH)
+            return false;
+    }
+    return true;
+}
+
 static void VX_mdiArea_resizeEvent(XWidget* self, XEvent* event)
 {
     (void)event;
-    XMdiArea_tileSubWindows((XMdiArea*)self);
+    /* 对标 Qt 6.8.3 QMdiArea::resizeEvent：仅子窗仍处平铺网格态时才
+       随区域尺寸重铺；默认 SubWindowView 下用户摆位不再被无条件摧毁。 */
+    if (xmdi_isTiled((const XMdiArea*)self))
+        XMdiArea_tileSubWindows((XMdiArea*)self);
 }
 
 static void VX_mdiArea_deinit(XMdiArea* self)

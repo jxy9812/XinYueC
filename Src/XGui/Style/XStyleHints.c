@@ -76,11 +76,13 @@ void XStyleHints_init(XStyleHints* self)
     self->m_data->m_keyboardInputInterval    = 400;
     self->m_data->m_mouseDoubleClickInterval = 400;
     self->m_data->m_mouseDoubleClickDistance = 5;
-    self->m_data->m_mousePressAndHoldInterval = 500;
+    /* Qt 6.8.3 qplatformtheme.cpp defaultThemeHint()：MousePressAndHoldInterval → 800。 */
+    self->m_data->m_mousePressAndHoldInterval = 800;
     self->m_data->m_mouseQuickSelectionThreshold = 0;
     self->m_data->m_passwordMaskDelay        = 0;
     self->m_data->m_passwordMaskCharacter    = 0x2022; /* U+2022 BULLET */
-    self->m_data->m_setFocusOnTouchRelease   = true;
+    /* Qt 6.8.3 qplatformtheme.cpp defaultThemeHint()：SetFocusOnTouchRelease → false。 */
+    self->m_data->m_setFocusOnTouchRelease   = false;
     self->m_data->m_showIsFullScreen         = false;
     self->m_data->m_showIsMaximized          = false;
     self->m_data->m_showShortcutsInContextMenus = false;

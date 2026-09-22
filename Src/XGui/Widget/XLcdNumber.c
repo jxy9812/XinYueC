@@ -573,13 +573,32 @@ void XLcdNumber_display(XLcdNumber* self, const char* utf8)
     size_t i = 0;
     if (!self) return;
     s = utf8 ? utf8 : "";
-    /* 对标 display(const QString&)：值取字符串可解析前缀的数值，
-       不可解析为 0；显示串忽略 mode/smallDecimalPoint。 */
+    /* 对标 display(const QString&) → QString::toDouble(&ok)：整串解析
+       （允许首尾 ASCII 空白），尾部存在其余字符即失败置 0；显示串忽略
+       mode/smallDecimalPoint。 */
     {
-        /* 前缀解析（对标 XStrtod）："12.5px"→12.5。 */
-        char* end = NULL;
-        double v = XStrtod(s, &end);
-        self->m_value = (end && end != s) ? v : 0.0;
+        /* R-77 根因：此前为 XStrtod 前缀解析（"12.5px"→12.5），与 Qt
+           整串口径（失败置 0）不一致，value()/intValue() 可观察结果
+           不同。注意 XStrtod 无转换时 endptr 指向"跳过前导空白后的
+           start"，故先自行裁去首尾空白再要求整串耗尽，避免空白串
+           误判成功。 */
+        const char* begin = s;
+        while (*begin == ' ' || *begin == '\t' || *begin == '\n' ||
+               *begin == '\r' || *begin == '\f' || *begin == '\v')
+            ++begin;
+        {
+            char* end = NULL;
+            double v = XStrtod(begin, &end);
+            bool ok = (end && end != begin);
+            if (ok) {
+                while (*end == ' ' || *end == '\t' || *end == '\n' ||
+                       *end == '\r' || *end == '\f' || *end == '\v')
+                    ++end;
+                if (*end != '\0')
+                    ok = false;
+            }
+            self->m_value = ok ? v : 0.0;
+        }
     }
     for (i = 0; s[i] != '\0' && i < XLCDNUMBER_STR_MAX - 1; ++i)
         cleaned[i] = s[i];

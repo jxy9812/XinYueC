@@ -96,12 +96,15 @@ static XSize radiobutton_computeSizeHint(const XRadioButton* self)
     XSize out;
     XFont font;
     const char* text;
+    bool hasIcon;
+    XSize iconSize;
     int w = 0;
     int h = 0;
 
     if (!self) { XSize_init(&out, -1, -1); return out; }
     w = RADIOBUTTON_INDICATOR_SIZE + RADIOBUTTON_LABEL_SPACING;
     h = RADIOBUTTON_INDICATOR_SIZE;
+    hasIcon = !XIcon_isNull(&ab->m_icon);
     font = XWidget_font((XWidget*)self);
     text = ab->m_text ? XString_toUtf8(ab->m_text) : NULL;
     if (!text) text = "";
@@ -115,6 +118,17 @@ static XSize radiobutton_computeSizeHint(const XRadioButton* self)
             h = XPainter_textHeight(&font);
     }
     XFont_deinit_base(&font);
+    /* R-75 根因：QRadioButton 继承 QAbstractButton 却从不消费 m_icon，
+       sizeHint 不计入图标宽度/高度（同族 XCheckBox 已计入），带图标
+       单选钮布局缺位。比照 checkbox_computeSizeHint 补齐。 */
+    if (hasIcon) {
+        XSize_init(&iconSize, 16, 16);
+        if (radiobutton_hasIconSize(self))
+            iconSize = ab->m_iconSize;
+        w += iconSize.width + 4;
+        if (h < iconSize.height)
+            h = iconSize.height;
+    }
     w += 4; /* 左右边距 */
     h += 4;
     XSize_init(&out, w, h);
@@ -160,6 +174,8 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
     uint32_t window, textColor, light, dark, mid;
     XFont font;
     const char* text;
+    bool drawIcon;
+    int iconW, iconH, iconX, iconY;
 
     if (!self || !painter) return;
     if (!XPainter_save(painter)) return;
@@ -186,13 +202,18 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
 
     /* 对标 Qt：单选钮不绘制自身背景（透明）。 */
 
+    /* indicator 外接矩形两条绘制路径共用（样式分支与回退绘制）。 */
+    ind = radiobutton_indicatorRect(self);
+
 #if XSTYLE_ON
     if (XStyle_defaultStyle() != NULL) {
-        /* Fusion/公共风格接管：指示器 + 标签走 CE_RadioButton。 */
+        /* Fusion/公共风格接管：指示器走 PE_IndicatorRadioButton；
+           标签（图标+文本）由下方公共尾部绘制（比照 XCheckBox——
+           样式选项不携带图标，CE 只画指示器+文本会让图标无处落位）。 */
         XStyle* style = XStyle_defaultStyle();
         XStyleOption opt;
-        XStyleOption_init(&opt, XStyleCE_RadioButton);
-        opt.m_rect = rect;
+        XStyleOption_init(&opt, XStylePE_IndicatorRadioButton);
+        opt.m_rect = ind;
         opt.m_state = XWidget_isEnabled((XWidget*)self)
             ? XStyleState_Enabled : 0;
         if (ab->m_checked)
@@ -206,21 +227,17 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
             opt.m_state |= XStyleState_MouseOver;
         if (XWidget_hasFocus((XWidget*)self))
             opt.m_state |= XStyleState_HasFocus;
-        opt.m_text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
-        opt.m_textColor = textColor;
 #if XPALETTE_ON
         opt.m_palette = XWidget_palette((XWidget*)self);
 #endif
-        XStyle_drawControl(style, XStyleCE_RadioButton, &opt, painter,
-                           (XWidget*)self);
-        XPainter_restore(painter);
-        return;
+        XStyle_drawPrimitive(style, XStylePE_IndicatorRadioButton, &opt,
+                             painter, (XWidget*)self);
+        goto radiobutton_style_label;
     }
 #endif /* XSTYLE_ON */
 
     /* 圆形 indicator：外侧深色、内侧浅色双圈近似立体感。
        XPAINTER_SHAPE_ON=0（硬裁剪）时以矩形描边退化为方框。 */
-    ind = radiobutton_indicatorRect(self);
     XPainter_setPen(painter, dark);
 #if XPAINTER_SHAPE_ON
     XPainter_drawEllipse(painter, &ind);
@@ -261,14 +278,36 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter)
         XPainter_fillRect(painter, &dot, textColor);
     }
 
-    /* 文本（indicator 右侧）。 */
+radiobutton_style_label:
+    /* R-75 根因：drawContents 从不消费 m_icon，setIcon 后图标不显示
+       （同族 QCheckBox/QPushButton 均支持）。比照 XCheckBox 在
+       indicator 与文本之间绘制图标并让文本区让位。 */
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
     text = XString_toUtf8(ab->m_text ? ab->m_text : NULL);
+    drawIcon = !XIcon_isNull(&ab->m_icon);
+    iconW = 16;
+    iconH = 16;
+    if (radiobutton_hasIconSize(self)) {
+        iconW = ab->m_iconSize.width;
+        iconH = ab->m_iconSize.height;
+    }
+    /* 文本（indicator 右侧，带图标时先画图标再让位）。 */
     textRect.x = ind.x + ind.width + RADIOBUTTON_LABEL_SPACING;
     textRect.y = rect.y;
     textRect.width = rect.width - (textRect.x - rect.x);
     textRect.height = rect.height;
+    if (drawIcon) {
+        iconX = textRect.x;
+        iconY = rect.y + (rect.height - iconH) / 2;
+        textRect.x += iconW + 4;
+        textRect.width -= iconW + 4;
+        XIcon_paint(&ab->m_icon, painter, iconX, iconY, iconW, iconH,
+                    XAlignment_Center,
+                    XWidget_isEnabled((XWidget*)self) ? XIconMode_Normal
+                                                      : XIconMode_Disabled,
+                    ab->m_checked ? XIconState_On : XIconState_Off);
+    }
     if (text && text[0] != '\0') {
         if (textRect.width < 4) textRect.width = 4;
 #if XPAINTER_TEXTLAYOUT_ON

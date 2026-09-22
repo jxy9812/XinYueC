@@ -1002,8 +1002,15 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
     tx = xlineedit_textStartX(edit);
     if (edit->m_control) {
         XPoint origin;
-        int flags = (int)(XLineControlDrawFlag_Text |
-                          XLineControlDrawFlag_Selections);
+        /* 根因修复（R-32）壳层门禁（对标 Qt 6.8.3 QLineEdit::paintEvent
+         * 旗标分流）：DrawSelections 仅在有选区或（有 inputMask 且光标
+         * 亮且非只读）；DrawCursor 仅在光标亮且非只读且 inputMask 为空
+         * ——掩码反选格与细光标互斥。旧代码恒传 Selections+焦点即传
+         * Cursor，普通行编辑 blink 亮相时反相格+细光标同屏。 */
+        bool cursorVisible = XWidget_hasFocus(self);
+        bool hasMask = XLineControl_inputMask(edit->m_control)[0] != '\0';
+        bool readOnly = XLineControl_isReadOnly(edit->m_control);
+        int flags = (int)XLineControlDrawFlag_Text;
         int textEndPx = XWidget_width((XWidget*)self) -
                         (edit->m_frame ? 4 : 2) - edit->m_textMargins.right -
                         ((edit->m_clearButtonEnabled &&
@@ -1017,8 +1024,11 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
         textClip.height = r.height;
         origin.x = tx - edit->m_viewOffset;
         origin.y = ty;
-        /* 光标：焦点内常显（blinkStatus 由 focusIn 置位）。 */
-        if (XWidget_hasFocus(self))
+        /* 光标亮 = 焦点内常显（blinkStatus 由 focusIn 置位）。 */
+        if (XLineControl_hasSelectedText(edit->m_control) ||
+            (cursorVisible && hasMask && !readOnly))
+            flags |= (int)XLineControlDrawFlag_Selections;
+        if (cursorVisible && !readOnly && !hasMask)
             flags |= (int)XLineControlDrawFlag_Cursor;
         XPainter_save(&painter);
         XPainter_setClipRect(&painter, &textClip,

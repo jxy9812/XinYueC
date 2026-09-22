@@ -354,6 +354,17 @@ void XToolBox_removeItem(XToolBox* self, int index)
     item = *(XToolBoxItem**)XVector_at_base(self->m_items, index);
     widget = item ? item->widget : NULL;
     wasCurrent = (index == self->m_currentIndex);
+    /* 复扫 R-74：移除当前页后旧页残留可见——此前仅出表，被移除页仍
+     * 是本工具箱的可见子控件，叠印在新当前页上方成残影。Qt 契约为
+     * 「widget 本身不删除」（QToolBox::removeItem 仅断开条目登记）；
+     * 此处先隐藏并摘除父链再出表，控件归还调用方管理（后续 addItem
+     * 会重新挂回）。隐藏须无条件执行：不能以 isVisible 门禁跳过——
+     * 工具箱自身未显示时子页生效可见恒 false，门禁会漏清显式 show
+     * 位（探针实测），残留位在后续 reparent/show 时旧页复现。 */
+    if (widget) {
+        XWidget_setVisible(widget, false);
+        XWidget_setParent(widget, NULL, 0);
+    }
     XVector_remove_base(self->m_items, index, 1);
     xtb2_itemDestroy(item);
     if (wasCurrent) {

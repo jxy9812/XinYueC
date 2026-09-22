@@ -189,10 +189,11 @@ void XSplashScreen_showMessage(XSplashScreen* self, const char* utf8,
 void XSplashScreen_clearMessage(XSplashScreen* self)
 {
     if (!self) return;
-    if (!self->m_message ||
-        !XString_toUtf8(self->m_message) ||
-        XString_toUtf8(self->m_message)[0] == '\0') return;
-    XString_assign_utf8(self->m_message, "");
+    /* 对标 Qt 6.8 qsplashscreen.cpp QSplashScreen::clearMessage：无条件
+     * 置空并发射 messageChanged("")（Qt 不做空串判定，空消息再清除仍
+     * 发射）；此前"空消息早退不发射"为对 Qt 的偏离，已收口。 */
+    if (self->m_message)
+        XString_assign_utf8(self->m_message, "");
     xsp2_emitMessageChanged(self, "");
     XWidget_update((XWidget*)self);
 }

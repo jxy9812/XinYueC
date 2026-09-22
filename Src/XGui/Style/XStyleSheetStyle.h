@@ -31,7 +31,9 @@ typedef struct XStyleSheetStyle
     XStyle* m_source;          /**< 底层样式（NULL=用全局默认）。 */
     bool m_sourceOwned;        /**< m_source 是否由本对象拥有（析构时释放）。 */
     /* ---- 渲染规则缓存（对标 QStyleSheetStylePrivate::renderRules 的
-     *      单槽近似：按 (对象指针,状态) 缓存最高特异度命中规则） ---- */
+     *      单槽近似：按 (对象指针,状态) 缓存最高特异度命中规则，同特异度
+     *      取后出现者；仅当全表无任何 !important 时命中才直返缓存规则
+     *      声明，否则回落全表扫描按 !important > 特异度 > 后定义裁决） ---- */
     const XObject* m_cacheObj;      /**< 缓存对象指针。 */
     uint32_t m_cacheState;          /**< 缓存状态位。 */
     const XCssStyleRule* m_cacheRule; /**< 缓存命中规则。 */

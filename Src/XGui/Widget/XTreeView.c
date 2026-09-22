@@ -968,18 +968,40 @@ static bool VXTreeView_indexAt(const XAbstractItemView* view, int x, int y,
                                int* outRow, int* outCol)
 {
     XTreeView* tv = (XTreeView*)view;
+    int rows;
+    int row;
     int yAcc;
     int rh;
+    int bandTop;
+    (void)x;
     if (outRow) *outRow = -1;
     if (outCol) *outCol = -1;
     if (!tv) return false;
-    rh = tv->m_rowHeight > 0 ? tv->m_rowHeight : XTREEVIEW_DEFAULT_ROW_H;
-    yAcc = y - (tv->m_headerHidden ? 0 : XTREEVIEW_HEADER_H) +
-           xtvw_scrollOffsetY(tv);
+    /* 行数变化生效入口：先同步行隐藏状态表覆盖当前模型尺寸（同
+     * XTableView xtv_syncHiddenTables 的前置口径）。 */
+    xtv_refreshRowStates(tv);
+    rows = xtv_modelRows(tv);
+    /* 模型行数校验（对标 xlv_indexAt）：无模型/空模型返回 invalid。 */
+    if (rows <= 0) return false;
+    rh = xtv_effectiveRowHeight(tv);
+    yAcc = y - xtv_headerOffset(tv) + xtvw_scrollOffsetY(tv);
     if (yAcc < 0) return false;
-    if (outRow) *outRow = yAcc / rh;
-    if (outCol) *outCol = 0;
-    return true;
+    /* 可见行带累计反查：隐藏行占高 0 不参与累计（对标 Qt 隐藏行不在
+     * 视口命中）；y 落在模型行带之外（表尾空白点击）返回 invalid，
+     * 基类 mousePress/Release 据此不再写当前项、不以越界载荷发射
+     * pressed/clicked/activated（此前直接 y/rh 反推行号且无上界，
+     * 越界行号直达信号与选择写入）。 */
+    bandTop = 0;
+    for (row = 0; row < rows; ++row) {
+        if (XTreeView_isRowHidden(tv, row)) continue;
+        if (yAcc < bandTop + rh) {
+            if (outRow) *outRow = row;
+            if (outCol) *outCol = 0;
+            return true;
+        }
+        bandTop += rh;
+    }
+    return false;
 }
 
 /* 条目几何虚槽：转发到树视图既有 (row,col) 几何（含表头区/行高/列宽/
@@ -994,6 +1016,20 @@ static bool VXTreeView_visualRect(const XAbstractItemView* view, int row,
     return out->width > 0 && out->height > 0;
 }
 
+/** @brief 调色板取色助手（对照 XTableWidget.c xtw_color 范式；
+ *  根因：自绘配色硬编码不读调色板，非默认调色板下仍白底黑字）。 */
+static uint32_t xtv_color(const XTreeView* self, XPaletteColorRole role)
+{
+#if XPALETTE_ON
+    XPalette palette = XWidget_palette((XWidget*)self);
+    XColor c = XPalette_color(&palette, XPaletteColorGroup_Current, role);
+    return XColor_rgba(&c);
+#else
+    (void)self; (void)role;
+    return 0xFF000000u;
+#endif
+}
+
 static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
 {
     XTreeView* tv = (XTreeView*)self;
@@ -1002,6 +1038,12 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
     XImage* image;
     XPainter painter;
     XRect r;
+    XPoint offset;
+    uint32_t base;
+    uint32_t highlight;
+    uint32_t highlightedText;
+    uint32_t windowText;
+    uint32_t alternateBase;
     int row;
     int rows;
     int y;
@@ -1017,7 +1059,22 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
         XPainter_deinit(&painter);
         return;
     }
-    XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
+    /* paintImage 返回的是顶层窗口后备存储，须按控件偏移平移到局部
+     * 原点（对标 XListView 已修范式；根因：缺平移时非零嵌入偏移下
+     * 全部内容直绘到窗口 (0,0)）。 */
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    /* 视图族配色消费调色板（对标 Qt item view 的
+     * Base/Highlight/HighlightedText/WindowText/AlternateBase）：
+     * 默认调色板下 AlternateBase=(247,247,247) 与历史硬编码逐位一致，
+     * 零视觉漂移；非默认调色板下随板取色。 */
+    base          = xtv_color(tv, XPaletteColorRole_Base);
+    highlight     = xtv_color(tv, XPaletteColorRole_Highlight);
+    highlightedText = xtv_color(tv, XPaletteColorRole_HighlightedText);
+    windowText    = xtv_color(tv, XPaletteColorRole_WindowText);
+    alternateBase = xtv_color(tv, XPaletteColorRole_AlternateBase);
+    XPainter_fillRect(&painter, &r, base);
     if (!model) {
         XPainter_end(&painter);
         XPainter_deinit(&painter);
@@ -1058,11 +1115,11 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
                   view->m_selectionModel, row, 0);
         cur = (view->m_currentRow == row && view->m_currentColumn == 0);
         if (sel)
-            XPainter_fillRect(&painter, &cell, 0xFFCCE4FFu);
+            XPainter_fillRect(&painter, &cell, highlight);
         else if (view->m_alternatingRowColors && (row & 1))
-            XPainter_fillRect(&painter, &cell, 0xFFF7F7F7u);
+            XPainter_fillRect(&painter, &cell, alternateBase);
         if (cur && !sel)
-            XPainter_fillRect(&painter, &cell, 0xFFE8F1FFu);
+            XPainter_fillRect(&painter, &cell, highlight);
         if (!col0Hidden) {
             const char* text = XAbstractItemModel_data_2(model, row, 0);
             if (tv->m_rootIsDecorated) {
@@ -1079,9 +1136,12 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
             if (text && text[0]) {
                 int indent = (tv->m_indentation > 0)
                                  ? tv->m_indentation : 0;
-                XPainter_setPen(&painter, 0xFF000000u);
+                /* 选中行走 HighlightedText、普通行走 WindowText
+                 * （对标 QStyledItemDelegate 选中态文本取色）。 */
+                XPainter_setPen(&painter, sel ? highlightedText
+                                              : windowText);
                 XPainter_drawText(&painter, indent + 12, y + rh - 6, text,
-                              0xFF000000u);
+                              sel ? highlightedText : windowText);
             }
         }
         XPainter_setPen(&painter, 0xFFDDDDDDu);

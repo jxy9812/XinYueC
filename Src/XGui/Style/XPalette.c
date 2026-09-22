@@ -65,7 +65,7 @@ void XPalette_init_default(XPalette* self)
         XColor mid         = palette_rgb(184, 184, 184);   /* background.darker(130) */
         XColor shadow      = palette_rgb(118, 118, 118);   /* dark.darker(135) */
         XColor brightText  = palette_rgb(255, 255, 255);   /* #ffffff */
-        XColor highlight   = palette_rgb(61, 142, 201);    /* #3d8ec9 Fusion 高亮 */
+        XColor highlight   = palette_rgb(48, 140, 198);   /* #308cc6 qt_fusionPalette 高亮（浅/深同值） */
         XColor hiText      = palette_rgb(255, 255, 255);
         XColor link        = palette_rgb(0, 0, 255);       /* #0000ff */
         XColor linkVisited = palette_rgb(255, 0, 255);     /* Qt::magenta */

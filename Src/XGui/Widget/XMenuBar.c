@@ -22,6 +22,7 @@
 #if XWIDGET_ON && XMENU_ON && XMENUBAR_ON
 #include "XAbstractButton.h"
 static uint32_t xsb_color_bar(const XMenuBar* bar, XPaletteColorRole role);
+static int xmenubar_itemWidth(const XMenuBar* bar, const XAction* action);
 
 
 /* ==================== 内部工具 ==================== */
@@ -187,11 +188,13 @@ static void xmb_bridgeHoveredSlot(XObject* receiver, XVarList* args)
 {
     XMBBridge* bridge = (XMBBridge*)receiver;
     if (!bridge || !bridge->m_bar) return;
-    /* 对标 QMenuBar::hovered(action)：悬停动作经菜单栏转发。 */
-    if (bridge->m_bar->m_activeAction)
-        xmb_emitAction(bridge->m_bar,
-                       (size_t)XMenuBar_hovered_signal,
-                       bridge->m_bar->m_activeAction);
+    /* 对标 QMenuBar::hovered(action)：载荷是被悬停的动作本身（此前
+     * 取 m_activeAction，若悬停先于激活动作同步则载荷错位）。
+     * XAction_hovered_signal 为无参信号（空 VarList），args 不可解包。 */
+    (void)args;
+    xmb_emitAction(bridge->m_bar,
+                   (size_t)XMenuBar_hovered_signal,
+                   bridge->m_action);
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -255,6 +258,14 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                     }
                     mi.m_state = XWidget_isEnabled(self)
                         ? XStyleState_Enabled : 0;
+                    if (*item == bar->m_activeAction) {
+                        /* 悬停高亮（复扫 R-70）：激活条目按 Fusion 口径
+                         * 置 selected+sunken（CE_MenuBarItem 据此画高亮
+                         * 框，对标 Qt 菜单栏活动项）。 */
+                        mi.m_state |= XStyleState_Selected |
+                                      XStyleState_Sunken;
+                        mi.m_selected = true;
+                    }
                     mi.m_text = title ? XString_toUtf8(title) : "";
 #if XPALETTE_ON
                     mi.m_palette = XWidget_palette(self);
@@ -280,6 +291,14 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
             const XString* title;
             if (item && *item) {
                 title = XAction_text_const(*item);
+                if (*item == bar->m_activeAction) {
+                    /* 悬停高亮（复扫 R-70）：高亮条与 actionAt 命中判定
+                     * 同宽（xmenubar_itemWidth）。 */
+                    XRect hl;
+                    XRect_init(&hl, x, 0, xmenubar_itemWidth(bar, *item),
+                               XWidget_height(self));
+                    XPainter_fillRect(&painter, &hl, 0xFFB0C4DEu);
+                }
                 if (title && XString_length_base(title) > 0) {
                     XPainter_setFont(&painter, &font);
                     XPainter_drawText(&painter, x, 16,
@@ -352,11 +371,53 @@ static void VX_menuBar_mousePressEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     action = XMenuBar_actionAt(bar, &pos);
     if (action) {
+        /* 对标 QMenuBar：按下即激活条目（高亮）再触发，triggered 桥接
+         * 负责弹出关联菜单。 */
+        if (action != bar->m_activeAction) {
+            bar->m_activeAction = action;
+            XWidget_update(self);
+        }
         XAction_trigger(action);
         XEvent_accept(event);
         return;
     }
     XEvent_ignore(event);
+}
+
+/** @brief 悬停：高亮条目并发射 hovered(action)（复扫 R-70，对标
+ *  QMenuBar 悬停驱动：内部 hover 处理对任意动作——含不关联菜单的普通
+ *  动作——发 hovered；条目变化才发射，避免同条目内移动重复刷）。 */
+static void VX_menuBar_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XMenuBar* bar = (XMenuBar*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    XAction* action;
+    if (!bar || !event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE)
+        return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    action = XMenuBar_actionAt(bar, &pos);
+    if (action && action != bar->m_activeAction) {
+        bar->m_activeAction = action;
+        XWidget_update(self);
+        xmb_emitAction(bar, (size_t)XMenuBar_hovered_signal, action);
+        XEvent_accept(event);
+        return;
+    }
+    XEvent_ignore(event);
+}
+
+/** @brief 指针离开菜单栏：清除悬停高亮（对标 QMenuBar 移出条目去激活）。 */
+static void VX_menuBar_leaveEvent(XWidget* self, XEvent* event)
+{
+    XMenuBar* bar = (XMenuBar*)self;
+    if (!bar || !event) return;
+    if (bar->m_activeAction) {
+        bar->m_activeAction = NULL;
+        XWidget_update(self);
+    }
+    XEvent_accept(event);
 }
 
 XVtable* XMenuBar_class_init(void)
@@ -366,6 +427,9 @@ XVtable* XMenuBar_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_menuBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VX_menuBar_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VX_menuBar_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_LeaveEvent, VX_menuBar_leaveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_menuBar_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -421,6 +485,11 @@ XAction* XMenuBar_addMenu(XMenuBar* self, XMenu* menu)
     }
     XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)bridge, xmb_bridgeTriggeredSlot,
+                      XConnectionType_Direct);
+    /* 悬停桥接（复扫 R-70）：桥槽此前已实现但从未连接，hovered 永不
+     * 发射；动作被外部悬停驱动（XAction_hover）时经此转发菜单栏。 */
+    XObject_connect_1((XObject*)action, XSignal(XAction_hovered_signal),
+                      (XObject*)bridge, xmb_bridgeHoveredSlot,
                       XConnectionType_Direct);
     XVector_push_back_1_base(self->m_actions, &action);
     XVector_push_back_1_base(self->m_menus, &menu);
@@ -509,6 +578,10 @@ XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu)
     }
     XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
                       (XObject*)bridge, xmb_bridgeTriggeredSlot,
+                      XConnectionType_Direct);
+    /* 悬停桥接（复扫 R-70）：与 addMenu 同款连接。 */
+    XObject_connect_1((XObject*)action, XSignal(XAction_hovered_signal),
+                      (XObject*)bridge, xmb_bridgeHoveredSlot,
                       XConnectionType_Direct);
     XVector_insert_1_base(self->m_actions, index, &action, 1);
     XVector_insert_1_base(self->m_menus, index, &menu, 1);

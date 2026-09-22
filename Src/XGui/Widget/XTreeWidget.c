@@ -31,8 +31,21 @@ static int xtw_scrollOffsetY(const XTreeWidget* self)
         (XAbstractScrollArea*)&self->m_base.m_base);
     return vbar ? XScrollBar_value(vbar) : 0;
 }
+
+/** @brief 表头带占用的视口顶部偏移（headerHidden 时 0；对标 QTreeWidget
+ *         默认 headerVisible，表头绘制于视口顶部、行带整体下移）。
+ * @param self 目标控件。
+ * @return 表头带高度（像素）。
+ * @note 绘制/命中/滚动三路共用同一偏移口径，行带几何与鼠标命中不脱节。 */
+static int xtw_headerOffset(const XTreeWidget* self)
+{
+    return (self && !XTreeView_isHeaderHidden(&self->m_base)) ? XTW_HEADER_H
+                                                              : 0;
+}
 static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event);
+static void VXTreeWidget_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event);
+static void VXTreeWidget_keyPressEvent(XWidget* self, XEvent* event);
 
 static void xtwitem_freeSubtree(XTreeWidgetItem* item);
 
@@ -100,7 +113,7 @@ XTreeWidgetItem* XTreeWidgetItem_create_2(const char* text,
         if (!tmp) return NULL;
     }
     item = XTreeWidgetItem_create(tmp, parent);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XString_delete_base((XClass*)tmp);
     return item;
 }
 
@@ -123,7 +136,7 @@ static void xtwitem_freeSubtree(XTreeWidgetItem* item)
         }
     }
     if (item->children) XFree_System(item->children);
-    if (item->text) XString_delete_base(item->text);
+    if (item->text) XString_delete_base((XClass*)item->text);
     item->children = NULL;
     item->childCount = 0;
     item->childCapacity = 0;
@@ -165,7 +178,7 @@ void XTreeWidgetItem_setText_2(XTreeWidgetItem* item, const char* text)
         if (!tmp) return;
     }
     XTreeWidgetItem_setText(item, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XString_delete_base((XClass*)tmp);
 }
 
 bool XTreeWidgetItem_addChild(XTreeWidgetItem* item,
@@ -373,10 +386,12 @@ static void xtw_scrollRowVisible(XTreeWidget* self, int row)
     r = XTreeWidget_visualItemRect(self, row);
     value = XScrollBar_value(vbar);
     target = value;
-    if (r.y < value)
+    /* 行带在表头带之下（screen y = headerOffset + 行带 y − 滚动值）：
+     * 可见窗口为 [headerOffset, visibleH]，两边界条件随之收口。 */
+    if (r.y + xtw_headerOffset(self) < value)
         target = r.y;
-    else if (r.y + r.height > value + visibleH)
-        target = r.y + r.height - visibleH;
+    else if (r.y + r.height > value + visibleH - xtw_headerOffset(self))
+        target = r.y + r.height + xtw_headerOffset(self) - visibleH;
     if (target != value) XScrollBar_setValue(vbar, target);
 }
 
@@ -435,7 +450,10 @@ static int xtw_rowAtY(const XTreeWidget* self, int y, int* outRowY)
     int top = 0;
     if (outRowY) *outRowY = -1;
     if (!self) return -1;
-    y += xtw_scrollOffsetY(self); /* 视口坐标 → 内容坐标 */
+    /* 视口坐标 → 内容坐标：先扣除表头带（行带在表头之下，与绘制
+     * 同一口径），再加滚动偏移；表头带内点击不命中任何行。 */
+    y += xtw_scrollOffsetY(self) - xtw_headerOffset(self);
+    if (y < 0) return -1;
     rh = xtw_effectiveRowHeight(self);
     for (i = 0; i < self->m_topCount; ++i) {
         const XTreeWidgetItem* item = self->m_topItems[i];
@@ -511,8 +529,12 @@ XVtable* XTreeWidget_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXTreeWidget_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXTreeWidget_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VXTreeWidget_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VXTreeWidget_mouseDoubleClickEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
+                             VXTreeWidget_keyPressEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -524,6 +546,7 @@ void XTreeWidget_init(XTreeWidget* self, XWidget* parent,
     XTreeView_init(&self->m_base, parent, flags);
     self->m_sortColumn = -1;
     self->m_sortOrder = 0;
+    self->m_enteredRow = -2; /* itemEntered 差分基准（同 XListWidget）。 */
     self->m_columnCount = 1; /* 默认单列（同 Qt 新建 QTreeWidget）。 */
     /* 不可见根条目（Qt 语义：顶层条目的逻辑父节点）；children 借用
      * 顶层存储，owner 挂本控件供 addChild 钩子回写。 */
@@ -1138,10 +1161,9 @@ void* XTreeWidget_itemActivated_signal(XTreeWidget* self, int row)
 
 void* XTreeWidget_itemEntered_signal(XTreeWidget* self, int row)
 {
-    /* 句柄预留：无 mouseMoveEvent 处理路径与鼠标追踪（hover），
-     * 暂无真实发射点，只返回地址（见 @note）。 */
-    (void)self;
-    (void)row;
+    /* 真实发射点：VXTreeWidget_mouseMoveEvent 进入新顶层行（§8.0g16
+     * 数据模型四期③；连接方亦可直接调用本句柄手动发射）。 */
+    xtw_emitRow(self, (size_t)XTreeWidget_itemEntered_signal, row);
     return (void*)(size_t)XTreeWidget_itemEntered_signal;
 }
 
@@ -1179,6 +1201,20 @@ void* XTreeWidget_itemSelectionChanged_signal(XTreeWidget* self)
 
 /* ==================== 渲染 ==================== */
 
+/** @brief 调色板取色助手（对照 XTableWidget.c xtw_color 范式；
+ *  根因：自绘配色硬编码不读调色板，非默认调色板下仍白底黑字）。 */
+static uint32_t xtw_color(const XTreeWidget* self, XPaletteColorRole role)
+{
+#if XPALETTE_ON
+    XPalette palette = XWidget_palette((XWidget*)self);
+    XColor c = XPalette_color(&palette, XPaletteColorGroup_Current, role);
+    return XColor_rgba(&c);
+#else
+    (void)self; (void)role;
+    return 0xFF000000u;
+#endif
+}
+
 static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
                          XPainter* painter, int depth, int* y, int maxY,
                          int topRow)
@@ -1188,22 +1224,27 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
     int indent = (tv->m_indentation > 0 ? tv->m_indentation : 20);
     XRect cell;
     const char* text;
+    uint32_t base;
+    uint32_t windowText;
     int y0 = *y;
     if (y0 >= maxY) return;
+    base = xtw_color(self, XPaletteColorRole_Base);
+    windowText = xtw_color(self, XPaletteColorRole_WindowText);
     cell.x = 0;
     cell.y = y0;
     cell.width = XWidget_width((XWidget*)self);
     cell.height = rh;
     if (item->parent == NULL) {
-        XPainter_fillRect(painter, &cell, 0xFFFFFFFFu);
+        XPainter_fillRect(painter, &cell, base);
     }
     text = XTreeWidgetItem_text_2(item);
     if (text && text[0]) {
-        XPainter_setPen(painter, 0xFF000000u);
+        XPainter_setPen(painter, windowText);
         /* drawText 第 4 参是墨水色：传 0=透明，条目文本任何路径都不
-         * 出字（对标 XTableWidget 传 palette windowText）。 */
+         * 出字；传 palette WindowText（对标 XTableWidget，此处实现
+         * 与注释曾自相矛盾——注释自称传 windowText 实为硬编码黑）。 */
         XPainter_drawText(painter, indent * depth + 12, y0 + rh - 6,
-                          text, 0xFF000000u);
+                          text, windowText);
     }
     /* 子节点指示（顶层行按展开态绘制 +/-：折叠补竖线）。 */
     if (item->childCount > 0) {
@@ -1233,6 +1274,64 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
     }
 }
 
+/** @brief 绘制视口顶部表头带（此前 setHeaderLabels/setHeaderItem 只
+ *         存储不渲染；对标 QTreeWidget 默认 headerVisible，表头由
+ *         QHeaderView 渲染于视口顶部）。列标签读 setHeaderLabels/
+ *         setHeaderItem 回填的 m_headerLabels，缺省回退列号；列宽
+ *         显式值（XTreeView_setColumnWidth，>0）优先、其余列均摊
+ *         剩余宽度（对标 XTreeView 自动铺满口径的公开 API 近似）。 */
+static void xtw_drawHeader(const XTreeWidget* tw, XPainter* painter,
+                           int width)
+{
+    int cols;
+    int fixedSum;
+    int autoCount;
+    int autoShare;
+    int c;
+    int x;
+    XRect band;
+    if (!tw || !painter) return;
+    cols = XTreeWidget_columnCount(tw);
+    if (cols <= 0 || width <= 0) return;
+    fixedSum = 0;
+    autoCount = 0;
+    for (c = 0; c < cols; ++c) {
+        int w = XTreeView_columnWidth(&tw->m_base, c);
+        if (w > 0) fixedSum += w;
+        else ++autoCount;
+    }
+    autoShare = (autoCount > 0 && width > fixedSum)
+                    ? (width - fixedSum) / autoCount
+                    : 0;
+    XRect_init(&band, 0, 0, width, XTW_HEADER_H);
+    XPainter_fillRect(painter, &band, 0xFFF0F0F0u);
+    x = 0;
+    for (c = 0; c < cols && x < width; ++c) {
+        int w = XTreeView_columnWidth(&tw->m_base, c);
+        const char* text;
+        /* 声明在列循环层：buf 指针经 text 活到 drawText 之后
+         * （块内声明出块即死，ASan stack-use-after-scope）。 */
+        char buf[16];
+        if (w <= 0) w = autoShare;
+        if (w <= 0) continue; /* 零宽列（显式 0 且无均摊空间）跳过。 */
+        text = NULL;
+        if (c < tw->m_headerCount && tw->m_headerLabels &&
+            tw->m_headerLabels[c])
+            text = XString_toUtf8(tw->m_headerLabels[c]);
+        if (!text || !text[0]) {
+            XSnprintf(buf, sizeof(buf), "%d", c + 1);
+            text = buf;
+        }
+        XPainter_setPen(painter, 0xFF444444u);
+        XPainter_drawText(painter, x + 4, XTW_HEADER_H - 6, text,
+                          0xFF444444u);
+        XPainter_setPen(painter, 0xFFCCCCCCu);
+        XPainter_drawLine(painter, x + w - 1, 1, x + w - 1,
+                          XTW_HEADER_H - 1);
+        x += w;
+    }
+}
+
 static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
 {
     XTreeWidget* tw = (XTreeWidget*)self;
@@ -1240,9 +1339,11 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
     XPainter painter;
     XRect r;
     XPoint offset;
+    uint32_t base;
     int y;
     int i;
     int h;
+    int offY;
     (void)event;
     if (!tw) return;
     image = XWidget_paintImage(self);
@@ -1259,37 +1360,164 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
-    XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
+    /* 视图族配色消费调色板：视图底色走 Base（对标 Qt item view，
+     * 默认调色板下与历史硬编码白一致，零视觉漂移）。 */
+    base = xtw_color(tw, XPaletteColorRole_Base);
+    XPainter_fillRect(&painter, &r, base);
     {
-        /* 滚动范围维护 + 偏移平移（此前滚动条值变化不触发重绘）。 */
+        /* 滚动范围维护 + 偏移平移（此前滚动条值变化不触发重绘）。
+         * 表头带计入内容高度（对标 QHeaderView 占位视口顶部，
+         * headerHidden 时为 0）。 */
         XScrollBar* vbar = XAbstractScrollArea_verticalScrollBar(
             (XAbstractScrollArea*)&tw->m_base.m_base);
+        int headerOffset = xtw_headerOffset(tw);
         int rows = 0;
         int i2;
         for (i2 = 0; i2 < tw->m_topCount; ++i2)
             rows += (tw->m_topItems[i2] && xtw_isExpanded(tw, i2))
                         ? xtw_subtreeRows(tw->m_topItems[i2])
                         : 1;
-        int vMax = rows * xtw_effectiveRowHeight(tw) > h
-                       ? rows * xtw_effectiveRowHeight(tw) - h
-                       : 0;
-        int offY = xtw_scrollOffsetY(tw);
-        if (vbar && XScrollBar_maximum(vbar) != vMax)
-            XScrollBar_setRange(vbar, 0, vMax);
+        {
+            int contentH = headerOffset + rows * xtw_effectiveRowHeight(tw);
+            int vMax = contentH > h ? contentH - h : 0;
+            if (vbar && XScrollBar_maximum(vbar) != vMax)
+                XScrollBar_setRange(vbar, 0, vMax);
+        }
+        /* 表头带绘制于视口顶部（不随内容滚动；headerHidden 时不占位）。 */
+        if (headerOffset > 0) xtw_drawHeader(tw, &painter, r.width);
+        offY = xtw_scrollOffsetY(tw);
         if (offY != 0)
             XPainter_translate(&painter, 0.0f, -(float)offY);
+        if (headerOffset != 0)
+            XPainter_translate(&painter, 0.0f, (float)headerOffset);
         y = 0;
         for (i = 0; i < tw->m_topCount; ++i) {
             if (tw->m_topItems[i]) {
-                /* 行绘制下限同步下移（跳过视口上方内容）。 */
+                /* 行绘制下限同步下移（跳过视口上方内容；行带下移表头
+                 * 高度，内容坐标下限相应收窄）。 */
                 xtw_drawItem(tw, tw->m_topItems[i], &painter, 0, &y,
-                             h + offY, i);
+                             h + offY - headerOffset, i);
             }
         }
         y = 0; /* 复位供后续逻辑（如有） */
     }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
+}
+
+/** @brief 键盘导航（对标 QTreeWidget::moveCursor）：根因——条目存
+ *  自有链表（m_topItems/m_topCount）而基类导航以 m_model 为界
+ *  （rows=cols=0 一律 ignore），方向键/翻页/Home/End 整体失效；本类
+ *  按平铺顶层行先行消费：Up/Down/翻页按行步进，Home/End 落首末行；
+ *  Left 于展开行收拢（对标 QTreeView 折叠分支），Right 于折叠行展开，
+ *  均无折叠可做时回退列横移（多列承载下对标 QAbstractItemView）；
+ *  其余按键回落基类（Return/F2 编辑触发、可打印字符键盘搜索；基类
+ *  导航分支因 m_model 为空自然 ignore，不产生越界移动）。 */
+static void VXTreeWidget_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XTreeWidget* tw = (XTreeWidget*)self;
+    XWidget* viewport;
+    int key;
+    int current;
+    int target = -1;
+    int pageRows;
+    bool handled = false;
+    if (!tw || !event || XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
+    key = XKeyEvent_key((XKeyEvent*)event);
+    current = tw->m_base.m_base.m_currentRow;
+    /* 翻页步幅按视口高度/行高（对标 Qt 翻页以视口计页）。 */
+    viewport = XAbstractScrollArea_viewport(
+        (XAbstractScrollArea*)&tw->m_base.m_base);
+    pageRows = XWidget_height(viewport ? viewport : self) /
+               xtw_effectiveRowHeight(tw);
+    if (pageRows < 1) pageRows = 1;
+    switch (key) {
+    case XKey_Left: {
+        XTreeWidgetItem* item =
+            (current >= 0 && current < tw->m_topCount)
+                ? tw->m_topItems[current]
+                : NULL;
+        if (item && item->childCount > 0 && xtw_isExpanded(tw, current)) {
+            /* 展开的当前行收拢（发射 itemCollapsed，同指示器点击）。 */
+            xtw_setRowExpanded(tw, current, false);
+            target = current; /* 当前行不变，仅确保可见。 */
+            handled = true;
+        } else if (item && tw->m_base.m_base.m_currentColumn > 0) {
+            /* 无折叠可做回退列左移（当前行仅列变化，行号不变）。 */
+            XAbstractItemView_setCurrentIndex(
+                &tw->m_base.m_base, current,
+                tw->m_base.m_base.m_currentColumn - 1);
+            XWidget_update(self);
+            target = current;
+            handled = true;
+        }
+        break;
+    }
+    case XKey_Right: {
+        XTreeWidgetItem* item =
+            (current >= 0 && current < tw->m_topCount)
+                ? tw->m_topItems[current]
+                : NULL;
+        if (item && item->childCount > 0 && !xtw_isExpanded(tw, current)) {
+            xtw_setRowExpanded(tw, current, true);
+            target = current;
+            handled = true;
+        } else if (item && tw->m_base.m_base.m_currentColumn + 1 <
+                               XTreeWidget_columnCount(tw)) {
+            XAbstractItemView_setCurrentIndex(
+                &tw->m_base.m_base, current,
+                tw->m_base.m_base.m_currentColumn + 1);
+            XWidget_update(self);
+            target = current;
+            handled = true;
+        }
+        break;
+    }
+    case XKey_Up:
+        handled = true;
+        target = (current >= 0) ? current - 1 : 0;
+        break;
+    case XKey_Down:
+        handled = true;
+        target = (current >= 0) ? current + 1 : 0;
+        break;
+    case XKey_PageUp:
+        handled = true;
+        target = (current >= 0) ? current - pageRows : 0;
+        break;
+    case XKey_PageDown:
+        handled = true;
+        target = (current >= 0) ? current + pageRows : 0;
+        break;
+    case XKey_Home:
+        handled = true;
+        target = 0;
+        break;
+    case XKey_End:
+        handled = true;
+        target = tw->m_topCount - 1;
+        break;
+    default:
+        break;
+    }
+    if (handled) {
+        if (tw->m_topCount > 0) {
+            /* 收敛到合法顶层行带（同基类"增量后钳位"口径；Up/上翻页
+             * 越过首行的负目标钳回首行）。 */
+            if (target > tw->m_topCount - 1) target = tw->m_topCount - 1;
+            if (target < 0) target = 0;
+            /* 统一当前行路径：currentItemChanged/itemSelectionChanged
+             * 发射 + SelectCurrent 选择联动；EnsureVisible 滚动跟随。 */
+            xtw_setCurrentRow(tw, target);
+            xtw_scrollRowVisible(tw, target);
+        }
+        XEvent_accept(event);
+        return;
+    }
+    /* 静态取父类槽位回落（同 XDialog 对 XWidget 的 XClass_Parent
+     * 口径：经对象虚表再分派会回到本重载形成自递归）。 */
+    XClass_Parent(XTreeView, EXWidget_KeyPressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
@@ -1322,6 +1550,32 @@ static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
         }
     }
     XEvent_accept(event);
+}
+
+/** @brief 移动：进入新顶层行发射 itemEntered（m_enteredRow 差分判
+ *         重；命中走 xtw_rowAtY——无模型便利类的展开态几何，与点击
+ *         命中同口径，基类 indexAt 的模型行数校验不适用）。 */
+static void VXTreeWidget_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XTreeWidget* tw = (XTreeWidget*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int row;
+    if (!tw) return;
+    /* 基类移动路径：发射 XAbstractItemView entered 抽象信号。 */
+    XClass_Parent(XTreeView, EXWidget_MouseMoveEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    if (!event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    row = xtw_rowAtY(tw, pos.y, NULL);
+    if (row < 0 || row >= tw->m_topCount) return;
+    /* itemEntered 真实发射点：进入新行才发射（同 XListWidget
+     * itemEntered 口径；-2=尚未进入任何行，行 0 首次进入须发射）。 */
+    if (row != tw->m_enteredRow) {
+        tw->m_enteredRow = row;
+        XTreeWidget_itemEntered_signal(tw, row);
+    }
 }
 
 static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)

@@ -385,9 +385,16 @@ void XBarSet_remove(XBarSet* self, int index, int count)
     int removeCount;
     int i;
     int changed;
-    if (!self || index < 0 || self->m_count == 0 || count <= 0) return;
-    if (index + count > self->m_count) removeCount = self->m_count - index;
-    else removeCount = count;
+    /* 根因（R-105）：此前仅挡 index<0 与空表——index>=m_count 时
+     * 「index+count>m_count」成立，removeCount 被算成 m_count-index
+     * 负值：m_count 反向膨胀（未初始化内存当有效柱值），更极端时
+     * Memmove 负长度回绕成巨尺寸。对标 QBarSet::remove：越界 pos
+     * 忽略、不改任何状态（index>=0 已含空表 m_count==0 情形）。 */
+    if (!self || index < 0 || index >= self->m_count || count <= 0) return;
+    /* 防御 index+count 整型回绕：removeCount 一律钳到表内剩余长度。 */
+    removeCount = count;
+    if (index + count > self->m_count || index + count < 0)
+        removeCount = self->m_count - index;
     XMemmove(&self->m_values[index], &self->m_values[index + removeCount],
              sizeof(double) * (size_t)(self->m_count - index - removeCount));
     self->m_count -= removeCount;

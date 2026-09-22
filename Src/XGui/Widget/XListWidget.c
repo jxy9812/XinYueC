@@ -5,6 +5,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XListWidget.h"
+#include "XStringUtils.h"   /* XStrlen：GCC14 隐式声明即诊断（六文件惯用法清理连带） */
 
 #include "XAlgorithm.h"
 #include "XMemory.h"
@@ -18,6 +19,7 @@
 
 static void VXListWidget_deinit(XListWidget* self);
 static void VXListWidget_mousePressEvent(XWidget* self, XEvent* event);
+static void VXListWidget_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VXListWidget_mouseDoubleClickEvent(XWidget* self,
                                                XEvent* event);
 static void VXListWidget_mouseMoveEvent(XWidget* self, XEvent* event);
@@ -187,6 +189,8 @@ XVtable* XListWidget_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXListWidget_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXListWidget_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXListWidget_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VXListWidget_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
@@ -262,7 +266,7 @@ int XListWidget_addItem_2(XListWidget* self, const char* text)
     tmp = XString_create_utf8(text);
     if (!tmp) return -1;
     row = XListWidget_addItem(self, tmp);
-    XString_delete_base(tmp);
+    XString_delete_base((XClass*)tmp);
     return row;
 }
 
@@ -331,7 +335,7 @@ int XListWidget_insertItem_2(XListWidget* self, int row, const char* text)
     tmp = XString_create_utf8(text);
     if (!tmp) return -1;
     out = XListWidget_insertItem(self, row, tmp);
-    XString_delete_base(tmp);
+    XString_delete_base((XClass*)tmp);
     return out;
 }
 
@@ -465,18 +469,24 @@ void XListWidget_setCurrentRow(XListWidget* self, int row)
     XItemSelectionModel* selection;
     int previous;
     bool selectionChanged = false;
+    bool targetWasSelected = false;
     if (!self) return;
     /* 越界忽略（row 负数=清除当前项与选中）。 */
     if (row >= XListWidget_count(self)) return;
     selection = self->m_base.m_base.m_selectionModel;
     previous = self->m_base.m_base.m_currentRow;
+    /* 选择集合变化判定：setCurrentIndex 携带 SelectCurrent 先行写入
+       目标行，其后的 select 同格必为无操作返回 false，不得以该返回值
+       判定集合变化——以下方进入前快照对照为准。 */
+    if (selection && row >= 0)
+        targetWasSelected = XItemSelectionModel_isSelected(selection, row, 0);
     XAbstractItemView_setCurrentIndex(&self->m_base.m_base, row, 0);
     if (selection) {
         if (row >= 0) {
             /* 选择联动（行模型单选语义）：当前行写入选择模型。 */
-            selectionChanged =
-                XItemSelectionModel_select(selection, row, 0, true);
+            XItemSelectionModel_select(selection, row, 0, true);
             XItemSelectionModel_setCurrentIndex(selection, row, 0);
+            selectionChanged = !targetWasSelected;
         } else {
             /* row<0：清除当前项时同步清空选中（对标 Qt
              * setCurrentRow(-1) 的 ClearAndSelect 语义）。 */
@@ -712,9 +722,12 @@ int XListWidget_row(const XListWidget* self, const char* text)
 
 void XListWidget_editItem(XListWidget* self, int row)
 {
-    /* 句柄预留：无编辑器/委托机制，编辑触发无从落地（见 @note）；
-     * 仅做入参校验。编辑路径建立后应在此发射 itemChanged(row)。 */
+    /* 对标 Qt editItem(item) → edit(index)：行号有效时转发基类编辑
+     * 触发判定（单列恒列 0；编辑器体系已建于 XAbstractItemView_edit，
+     * 是否真开由 itemsEditable/editTriggers 门禁决定——此前为空操作
+     * 桩，与已接通的 XTableWidget_editItem 行为分裂）。 */
     if (!self || row < 0 || row >= XListWidget_count(self)) return;
+    (void)XAbstractItemView_edit(&self->m_base.m_base, row, 0);
 }
 
 void XListWidget_setItemWidget(XListWidget* self, int row, XWidget* widget)
@@ -751,8 +764,8 @@ XAbstractItemModel* XListWidget_model(const XListWidget* self)
 
 /* ==================== 事件（叠加行号信号发射，基类行为保留） ==================== */
 
-/** @brief 按下：基类命中选中后按行号发射 itemPressed/itemClicked；
- *         当前行随点击变化时补发 currentRowChanged/currentTextChanged。 */
+/** @brief 按下：基类命中选中后按行号发射 itemPressed；当前行随点击
+ *         变化时补发 currentRowChanged/currentTextChanged。 */
 static void VXListWidget_mousePressEvent(XWidget* self, XEvent* event)
 {
     XListWidget* lw = (XListWidget*)self;
@@ -778,9 +791,38 @@ static void VXListWidget_mousePressEvent(XWidget* self, XEvent* event)
     if (row < 0 || row >= XListWidget_count(lw)) return;
     /* 当前行随点击变化：补发射 currentRowChanged/currentTextChanged。 */
     if (row != previous) xlw_emitCurrentChanged(lw, row, previous);
-    /* itemPressed/itemClicked 真实发射点（先按压后点击，同
-     * XTreeWidget/XTableWidget 约定）。 */
+    /* itemPressed 真实发射点（press 路径；itemClicked 已迁至 release
+     * 路径——对标 Qt clicked 须等释放、pressed 在按压的时序，与基类
+     * 抽象 pressed/clicked 语义一致）。 */
     XListWidget_itemPressed_signal(lw, row);
+}
+
+/** @brief 释放：基类 release 路径（发射抽象 clicked/activated）后按
+ *         释放点行号发射 itemClicked（对标 Qt clicked 在 RELEASE
+ *         发射；此前与 itemPressed 同在按压时发射，时序矛盾）。 */
+static void VXListWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XListWidget* lw = (XListWidget*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int row;
+    int col;
+    if (!lw) return;
+    /* 基类释放路径：发射 XAbstractItemView clicked/activated 抽象
+     * 信号（XListView 未覆载 release，直接落基类实现）。 */
+    XClass_Parent(XListView, EXWidget_MouseReleaseEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    if (!event || XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE)
+        return;
+    me = (XMouseEvent*)event;
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
+    pos = XMouseEvent_position(me);
+    if (!XAbstractItemView_indexAt_base(&lw->m_base.m_base, pos.x, pos.y,
+                                        &row, &col))
+        return;
+    if (row < 0 || row >= XListWidget_count(lw)) return;
+    /* itemClicked 真实发射点（release 语义，与基类抽象 clicked 同次
+     * 同位）。 */
     XListWidget_itemClicked_signal(lw, row);
 }
 

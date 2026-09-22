@@ -25,6 +25,8 @@ typedef struct XStatusBarItem
 {
     XWidget* widget;   /**< 承载控件（借用，归调用方）。 */
     int stretch;       /**< 拉伸因子（第一版仅存储）。 */
+    bool hiddenByMessage; /**< 因临时消息致隐（hideOrShow 记账，
+                               仅恢复此类隐藏，不动调用方显式隐藏）。 */
 } XStatusBarItem;
 
 static XStatusBarItem* xsb_itemCreate(XWidget* widget, int stretch)
@@ -34,6 +36,7 @@ static XStatusBarItem* xsb_itemCreate(XWidget* widget, int stretch)
     if (!item) return NULL;
     item->widget = widget;
     item->stretch = stretch;
+    item->hiddenByMessage = false;
     return item;
 }
 
@@ -243,6 +246,12 @@ int XStatusBar_insertWidget(XStatusBar* self, int index, XWidget* widget,
     if (index < 0 || (int64_t)index > n) index = (int)n;
     XVector_insert_1_base(self->m_items, index, &item, 1);
     XWidget_setParent(widget, (XWidget*)self, 0);
+    /* 对标 Qt 6.8 qstatusbar.cpp QStatusBar::insertWidget：临时消息显示
+     * 期间插入的普通区控件需隐藏（与 addWidget 同款消息在场判定；
+     * 此前插入路径漏做，控件会叠在消息文本上）。 */
+    XWidget_setVisible(widget, !self->m_currentMessage ||
+                        !XString_toUtf8(self->m_currentMessage) ||
+                        XString_toUtf8(self->m_currentMessage)[0] == '\0');
     return index;
 }
 
@@ -255,6 +264,10 @@ void XStatusBar_addPermanentWidget(XStatusBar* self, XWidget* widget,
     if (!item) return;
     XVector_push_back_1_base(self->m_permanents, &item);
     XWidget_setParent(widget, (XWidget*)self, 0);
+    /* 对标 Qt 6.8 qstatusbar.cpp insertPermanentWidget：加入永久区即
+     * widget->show()（常驻语义，不被临时消息遮挡；hideOrShow 只遍历
+     * 普通区，永久区此后不受消息显隐影响）。 */
+    XWidget_show(widget);
 }
 
 int XStatusBar_insertPermanentWidget(XStatusBar* self, int index,
@@ -269,6 +282,9 @@ int XStatusBar_insertPermanentWidget(XStatusBar* self, int index,
     if (index < 0 || (int64_t)index > n) index = (int)n;
     XVector_insert_1_base(self->m_permanents, index, &item, 1);
     XWidget_setParent(widget, (XWidget*)self, 0);
+    /* 同 addPermanentWidget：对标 Qt 6.8 insertPermanentWidget 的
+     * widget->show() 常驻语义。 */
+    XWidget_show(widget);
     return index;
 }
 
@@ -301,6 +317,36 @@ void XStatusBar_setSizeGripEnabled(XStatusBar* self, bool on)
 
 /* ==================== 消息槽 ==================== */
 
+/** @brief 对标 Qt 6.8 qstatusbar.cpp QStatusBar::hideOrShow：消息显示
+ *  期间隐藏普通区（非永久）控件，消息清除后恢复；永久区不受影响。
+ *  hiddenByMessage 标记等价 Qt 的 WA_WState_ExplicitShowHide 复位技巧：
+ *  只恢复"消息致隐"的控件，调用方显式隐藏（hide）过的不动。 */
+static void xsb_hideOrShow(XStatusBar* self, bool haveMessage)
+{
+    int64_t i;
+    int64_t n;
+    if (!self || !self->m_items) return;
+    n = XVector_size_base((const XContainer*)self->m_items);
+    for (i = 0; i < n; ++i) {
+        XStatusBarItem** it =
+            (XStatusBarItem**)XVector_at_base(
+                (const XContainer*)self->m_items, i);
+        if (!it || !*it || !(*it)->widget) continue;
+        if (haveMessage) {
+            if (!(*it)->hiddenByMessage &&
+                !XWidget_isHidden((*it)->widget)) {
+                (*it)->hiddenByMessage = true;
+                XWidget_hide((*it)->widget);
+            }
+        } else {
+            if ((*it)->hiddenByMessage) {
+                (*it)->hiddenByMessage = false;
+                XWidget_show((*it)->widget);
+            }
+        }
+    }
+}
+
 void XStatusBar_showMessage(XStatusBar* self, const char* utf8, int timeout)
 {
     const char* s;
@@ -320,6 +366,7 @@ void XStatusBar_showMessage(XStatusBar* self, const char* utf8, int timeout)
         self->m_messageTimer = XObject_startTimer_ms(
             (XObject*)self, (unsigned)timeout, XTimerType_CoarseTimer);
     }
+    xsb_hideOrShow(self, true);
     XStatusBar_messageChanged_signal(self, XString_toUtf8(self->m_currentMessage));
     XWidget_update((XWidget*)self);
 }
@@ -331,10 +378,12 @@ void XStatusBar_clearMessage(XStatusBar* self)
         XObject_killTimer((XObject*)self, self->m_messageTimer);
         self->m_messageTimer = XTIMER_INVALID_ID;
     }
-    if (!self->m_currentMessage ||
-        !XString_toUtf8(self->m_currentMessage) ||
-        XString_toUtf8(self->m_currentMessage)[0] == '\0') return;
-    XString_assign_utf8(self->m_currentMessage, "");
+    /* 对标 Qt 6.8 hideOrShow：messageChanged 无条件发射（空消息再清除
+     * 仍发射，此前空串早退为对 Qt 的偏离）；恢复被消息致隐的普通区
+     * 控件。 */
+    if (self->m_currentMessage)
+        XString_assign_utf8(self->m_currentMessage, "");
+    xsb_hideOrShow(self, false);
     XStatusBar_messageChanged_signal(self, "");
     XWidget_update((XWidget*)self);
 }

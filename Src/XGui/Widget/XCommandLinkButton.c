@@ -11,12 +11,14 @@
  *               - 构造默认图标尺寸 20x20（对标 qcommandlinkbutton.cpp:189）、
  *                 尺寸策略 Preferred/Preferred + PushButton（对标 :185）；
  *               - drawContents 绘制 Window 背景 + 左侧大图标 + 标题/描述
- *                 双行文本（描述使用次要角色色）+ 右侧箭头；
+ *                 双行文本（双行块垂直居中，描述使用次要角色色）+
+ *                 右侧大号右向箭头（对标 SP_CommandLink→SP_ArrowRight）；
  *               - 重载 ContentChanged 刷新双行 sizeHint；
  *             - 不依赖任何平台 API；嵌入式由 XCOMMANDLINKBUTTON_ON 裁剪，
  *               且依赖 XPUSHBUTTON_ON。
  * @note       近似边界：heightForWidth（描述按宽度换行计算高度）未实现，
- *             按固定双行高度返回 sizeHint；SP_CommandLink 标准图标未接入。
+ *             按固定双行高度返回 sizeHint；SP_CommandLink 标准图标未以
+ *             图标对象接入（drawContents 以 14x14 实心右向三角直接绘制）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XCommandLinkButton.h"
@@ -219,19 +221,24 @@ void XCommandLinkButton_drawContents(XCommandLinkButton* self,
     window = commandlink_color(self, group, XPaletteColorRole_Window);
     titleColor = commandlink_color(self, group, XPaletteColorRole_ButtonText);
     descColor = commandlink_color(self, group, XPaletteColorRole_PlaceholderText);
-    arrowColor = commandlink_color(self, group, XPaletteColorRole_Mid);
+    /* 箭头取 ButtonText（对标 Qt 6.8：QCommandLinkButton 默认图标为
+     * standardIcon(SP_CommandLink)，QCommonStyle 将其映射为
+     * SP_ArrowRight 右向箭头标准图标，以文本类深色渲染）。 */
+    arrowColor = commandlink_color(self, group, XPaletteColorRole_ButtonText);
 #else
     window = 0xFFCFCFCFu;
     titleColor = 0xFF000000u;
     descColor = 0xFF808080u;
-    arrowColor = 0xFFA0A0A0u;
-#endif
+    arrowColor = 0xFF000000u;
+#endif /* XPALETTE_ON */
     if (window == 0u)
         window = 0xFFCFCFCFu;
     if (titleColor == 0u)
         titleColor = 0xFF000000u;
     if (descColor == 0u)
         descColor = 0xFF808080u;
+    if (arrowColor == 0u)
+        arrowColor = 0xFF000000u;
 
 #if XSTYLE_ON
     if (XStyle_defaultStyle() != NULL) {
@@ -295,37 +302,63 @@ xcl_style_label:
                     ab->m_checked ? XIconState_On : XIconState_Off);
     }
 
-    /* 标题（第一行）+ 描述（第二行）。 */
-    if (title[0] != '\0') {
+    /* 标题（第一行）+ 描述（第二行）双行块整体垂直居中排布。
+     * 结构对标 Qt 6.8 QCommandLinkButtonPrivate::titleRect()/
+     * descriptionRect()（标题行在上、描述行紧随，行距
+     * COMMANDLINK_LINE_SPACING）；但 Qt 固定 topMargin/bottomMargin=10
+     * （qcommandlinkbutton.cpp:81-84），在 320x54 固定几何与本库字体
+     * 度量（行高 22px 量级）下描述行会越过按钮下缘被削掉半截，故改为
+     * 按双行块实际高度在按钮高度内垂直居中（整块高于按钮的极端情况
+     * 退化为 2px 顶边距顶对齐，标题行优先保持可见）。 */
+    if (title[0] != '\0' || desc[0] != '\0') {
         int ascent = XPainter_textAscent(&font);
-        titleBaseline = rect.y + COMMANDLINK_MARGIN + ascent;
-        XPainter_drawText(painter, textX, titleBaseline, title, titleColor);
-        if (desc[0] != '\0') {
-            descBaseline = titleBaseline + lineHeight +
-                           COMMANDLINK_LINE_SPACING;
+        int blockH = lineHeight;
+        int top;
+        if (title[0] != '\0' && desc[0] != '\0')
+            blockH += COMMANDLINK_LINE_SPACING + lineHeight;
+        top = rect.y + (rect.height - blockH) / 2;
+        if (top < rect.y + 2)
+            top = rect.y + 2;
+        if (title[0] != '\0') {
+            titleBaseline = top + ascent;
+            XPainter_drawText(painter, textX, titleBaseline, title,
+                              titleColor);
+            if (desc[0] != '\0') {
+                descBaseline = titleBaseline + lineHeight +
+                               COMMANDLINK_LINE_SPACING;
+                XPainter_drawText(painter, textX, descBaseline, desc,
+                                  descColor);
+            }
+        } else {
+            descBaseline = top + ascent;
             XPainter_drawText(painter, textX, descBaseline, desc, descColor);
         }
-    } else if (desc[0] != '\0') {
-        int ascent = XPainter_textAscent(&font);
-        descBaseline = rect.y + COMMANDLINK_MARGIN + ascent;
-        XPainter_drawText(painter, textX, descBaseline, desc, descColor);
     }
 
-    /* 右侧箭头（> 三角形，近似 QCommandLinkButton 的指示箭头）。 */
+    /* 右侧大号右向箭头（14x14 实心三角，垂直居中）。
+     * 对标 Qt 6.8 QCommandLinkButton：构造时以
+     * style()->standardIcon(SP_CommandLink) 为默认图标（图标尺寸
+     * 20x20），而 QCommonStyle::standardIcon 将 SP_CommandLink 映射为
+     * SP_ArrowRight 右向箭头（qcommonstyle.cpp case SP_CommandLink）；
+     * 旧实现仅 5x5 小三角，在按钮右缘视觉上只是一个针尖大的"+"状
+     * 斑点，与 Qt 的大号箭头图标观感不符。 */
     if (rect.width >= COMMANDLINK_MARGIN * 2 + COMMANDLINK_ARROW_WIDTH) {
-        int arrowX = rect.x + rect.width - COMMANDLINK_MARGIN - 5;
-        int arrowY = rect.y + (rect.height / 2) - 2;
-        XRect tri;
-        tri.x = arrowX + 2; tri.y = arrowY; tri.width = 1; tri.height = 1;
-        XPainter_fillRect(painter, &tri, arrowColor);
-        tri.x = arrowX + 1; tri.y = arrowY + 1; tri.width = 3; tri.height = 1;
-        XPainter_fillRect(painter, &tri, arrowColor);
-        tri.x = arrowX; tri.y = arrowY + 2; tri.width = 5; tri.height = 1;
-        XPainter_fillRect(painter, &tri, arrowColor);
-        tri.x = arrowX + 1; tri.y = arrowY + 3; tri.width = 3; tri.height = 1;
-        XPainter_fillRect(painter, &tri, arrowColor);
-        tri.x = arrowX + 2; tri.y = arrowY + 4; tri.width = 1; tri.height = 1;
-        XPainter_fillRect(painter, &tri, arrowColor);
+        int arrowX = rect.x + rect.width - COMMANDLINK_MARGIN -
+                     COMMANDLINK_ARROW_WIDTH;
+        int arrowY = rect.y + (rect.height - COMMANDLINK_ARROW_WIDTH) / 2;
+        int k;
+        for (k = 0; k < COMMANDLINK_ARROW_WIDTH; ++k) {
+            int t = (k < COMMANDLINK_ARROW_WIDTH / 2)
+                        ? k
+                        : (COMMANDLINK_ARROW_WIDTH - 1 - k);
+            int rowW = 2 * (t + 1);
+            if (rowW > COMMANDLINK_ARROW_WIDTH)
+                rowW = COMMANDLINK_ARROW_WIDTH;
+            /* 左对齐行：左缘竖直、右缘向中线收尖，成右向三角（▶）。
+             * 右对齐会得到镜像的左向三角（◀，方向 bug）。 */
+            XPainter_fillRect(painter,
+                &(XRect){arrowX, arrowY + k, rowW, 1}, arrowColor);
+        }
     }
     XFont_deinit_base(&font);
     XPainter_restore(painter);

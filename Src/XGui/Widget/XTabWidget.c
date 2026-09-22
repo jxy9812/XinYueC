@@ -291,7 +291,8 @@ static void VXTabWidget_deinit(XTabWidget* self)
         XFree_System(self->m_clients);
         self->m_clients = NULL;
     }
-    /* 角部件为借用指针：仅解除登记，不销毁部件本体。 */
+    /* 角部件登记表为借用记录：此处仅解除登记；部件本体经由父子链随
+       下方 XWidget 基类析构级联释放（见 setCornerWidget 注）。 */
     {
         int c;
         for (c = 0; c < 4; ++c) self->m_cornerWidgets[c] = NULL;
@@ -512,11 +513,17 @@ bool XTabWidget_isTabEnabled(const XTabWidget* self, int index)
 
 void XTabWidget_setTabEnabled(XTabWidget* self, int index, bool enabled)
 {
-    if (self) {
-        XTabBar_setTabEnabled(&self->m_tabBar, index, enabled);
-        if (self->m_clients[index])
-            XWidget_setEnabled(self->m_clients[index], enabled);
-    }
+    /* P0-6 根因：index 无界检即索引 m_clients[]——index<0/越界读堆
+       越界数据；且 removeTab 后尾槽残留悬垂指针（memmove 左移不清
+       尾槽，被删页的内容控件已随页容器级联析构），越界一档穿透非空
+       判定经 XWidget_setEnabled 写已释放内存构成 UAF（indexOf 未命中
+       返回 -1 被直传即触发）。对标 QTabWidget::setTabEnabled 对无效
+       index 无操作；比照本函数委托的 XTabBar_setTabEnabled（含完整
+       界检早退）补界检。 */
+    if (!self || index < 0 || index >= self->m_count) return;
+    XTabBar_setTabEnabled(&self->m_tabBar, index, enabled);
+    if (self->m_clients[index])
+        XWidget_setEnabled(self->m_clients[index], enabled);
 }
 
 XTabBar* XTabWidget_tabBar(const XTabWidget* self)
@@ -736,13 +743,20 @@ void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner)
     XWidget* old;
     if (!self || corner < 0 || corner > 3) return;
     if (widget == (XWidget*)self) return;
-    /* 借用挂载：Qt 同语义——角部件尚未挂到本控件时先 reparent。 */
+    /* 挂载：Qt 同语义——角部件尚未挂到本控件时先 reparent。登记表
+       仅为借用记录；本体经父子链随本控件析构级联释放（Qt setCornerWidget
+       同：tab widget 销毁时删除角部件，除非调用方另行 reparent 接管）。 */
     if (widget && XWidget_parentWidget(widget) != (XWidget*)self)
         XWidget_setParent(widget, (XWidget*)self, 0);
     old = self->m_cornerWidgets[corner];
     if (old && old != widget)
         XWidget_setVisible(old, false); /* 旧角部件隐藏（不销毁）。 */
     self->m_cornerWidgets[corner] = widget;
+    /* 复扫 R-85：reparent 只挂父链不产生可见性——框架显式 show 语义下
+     * 新角部件 m_explicitShow=0 恒不可见（clients 已补 show 而角部件
+     * 漏，见 xtabwidget_showCurrent 同口径注释），setter 补显式 show。 */
+    if (widget)
+        XWidget_show(widget);
     xtabwidget_layout(self);
 }
 

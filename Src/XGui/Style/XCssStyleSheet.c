@@ -170,13 +170,25 @@ static XCssSelector* xcss_appendSelectorSlot(XCssStyleRule* rule)
     return sel;
 }
 
+/** @brief 伪类位数（对标 Qt 特异度按伪类个数逐个计权）。 */
+static int xcss_pseudoCount(uint32_t v)
+{
+    int n = 0;
+    while (v) {
+        v &= v - 1;
+        ++n;
+    }
+    return n;
+}
+
 /** @brief 向选择器链追加一个基础段（relation 为与前段的关系）。
  *
  *  element/id/attrName/attrValue 为 XString 拥有型 token（可为 NULL）；
- *  成功后由选择器接管所有权，失败时本函数负责释放。
+ *  成功后由选择器接管所有权，失败时本函数负责释放。isClass 标记该段
+ *  元素 token 源自 .Class 类选择器（剥点前以 '.' 开头）。
  */
 static bool xcss_appendBasic(XCssSelector* sel, XCssRelation rel,
-                             XString* element, XString* id,
+                             XString* element, bool isClass, XString* id,
                              uint32_t pseudos,
                              XString* attrName, XString* attrValue,
                              XCssValueMatch match)
@@ -208,8 +220,17 @@ static bool xcss_appendBasic(XCssSelector* sel, XCssRelation rel,
     b->m_attribute.m_value = attrValue;
     b->m_attribute.m_match = match;
     sel->m_basicCount++;
-    sel->m_specificity += (idlen ? 100 : 0) + (pseudos ? 10 : 0) +
-                          (elen ? 1 : 0);
+    /* 特异度（对标 Qt 6.8.3 qcssparser Selector::specificity：
+     * element=1、伪类/属性/.class 各 0x10、#id 0x100）。
+     * 根因（R-91）：.Foo 此前被剥点后当元素名计 1，与类型选择器同权，
+     * class>type 级联序丢失可错色；Qt 中 .Foo 等价 class~=Foo 属性
+     * 选择器，与伪类/属性同入 0x10 档，显著高于 element 的 1。
+     * 注：头文件 XCssStyleSheet.h:132 的旧注释（id*100+class*10+element）
+     * 未同步，实现以 Qt 为准。 */
+    sel->m_specificity += (idlen ? 0x100 : 0) +
+                          (xcss_pseudoCount(pseudos) + (anlen ? 1 : 0) +
+                           (elen && isClass ? 1 : 0)) * 0x10 +
+                          (elen && !isClass ? 1 : 0);
     return true;
 }
 
@@ -294,6 +315,7 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                 size_t anlen = 0;
                 size_t avlen = 0;
                 uint32_t pseudos = 0;
+                int isClass = 0; /* 元素 token 源自 .Class（剥点前带 '.'）。 */
                 XCssValueMatch match = XCssValueMatch_NoMatch;
                 p = xcss_skipWs(p, end);
                 if (p >= end || *p == '{' || *p == '}' || *p == ',') break;
@@ -302,7 +324,8 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                     rel = XCssRelation_Parent;
                     p = xcss_skipWs(p + 1, end);
                 }
-                /* 元素名（.ClassName 亦视为元素名）。 */
+                /* 元素名（.ClassName 剥点后按类选择器存储，计权见
+                 * xcss_appendBasic 的 0x10 档）。 */
                 {
                     const char* n = p;
                     while (p < end && (XIsAlnum((unsigned char)*p) ||
@@ -310,6 +333,7 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                         ++p;
                     elen = (size_t)(p - n);
                     if (elen > 0 && n[0] == '.') {
+                        isClass = 1;
                         ++n;
                         --elen;
                     }
@@ -410,8 +434,8 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
                 }
                 /* 伪类。 */
                 p = xcss_parsePseudos(p, end, &pseudos);
-                if (!xcss_appendBasic(sel, rel, element, idbuf, pseudos,
-                                      attrN, attrV, match))
+                if (!xcss_appendBasic(sel, rel, element, isClass != 0, idbuf,
+                                      pseudos, attrN, attrV, match))
                     return false;
                 element = NULL;
                 idbuf = NULL;

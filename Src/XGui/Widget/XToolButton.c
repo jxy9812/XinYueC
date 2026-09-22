@@ -177,6 +177,18 @@ static void toolbutton_mirrorFromAction(XToolButton* self)
     XAbstractButton_setText((XAbstractButton*)self, text);
     if (text)
         XString_delete_base((XClass*)text);
+    /* 对标 Qt 6.8 QToolButton::setDefaultAction：图标随动作镜像
+       （QToolButtonPrivate 与动作 icon 联动）。XGui 动作图标以路径
+       承载（XAction_icon），经 XIcon_init_file 落到按钮；动作无图
+       标时置空按钮图标（动作镜像为覆盖语义）。 */
+    if (action) {
+        const XString* iconPath = XAction_icon_const(action);
+        XIcon mirroredIcon;
+        XIcon_init_file(&mirroredIcon,
+                        iconPath); /* NULL 路径=空图标，置空按钮图标。 */
+        XAbstractButton_setIcon((XAbstractButton*)self, &mirroredIcon);
+        XIcon_deinit_base((XClass*)&mirroredIcon);
+    }
     XAbstractButton_setCheckable((XAbstractButton*)self,
                                  action ? XAction_isCheckable(action) : false);
     XAbstractButton_setChecked((XAbstractButton*)self,
@@ -193,6 +205,59 @@ static void toolbutton_refresh(XToolButton* self)
     XAbstractButton_contentChanged_base((XAbstractButton*)self);
     XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
+}
+
+/* ==================== 菜单弹出区（复扫 R-20） ==================== */
+
+/** @brief 菜单箭头区宽度（与 sizeHint 为菜单预留的 14px 同口径；
+ *         按钮过窄时整钮都算菜单区）。 */
+static int toolbutton_menuZoneWidth(const XToolButton* self)
+{
+    XRect rect;
+
+    if (!self)
+        return 0;
+    rect = XWidget_rect((XWidget*)self);
+    return rect.width < 14 ? rect.width : 14;
+}
+
+/** @brief 局部坐标是否落在右侧菜单箭头区（MenuButtonPopup 命中判定，
+ *         对标 QToolButton::MenuButtonPopup 的独立菜单按钮分区）。 */
+static bool toolbutton_inMenuZone(const XToolButton* self,
+                                  const XPoint* pos)
+{
+    XRect rect;
+    int zone;
+
+    if (!self || !pos)
+        return false;
+    rect = XWidget_rect((XWidget*)self);
+    zone = toolbutton_menuZoneWidth(self);
+    return pos->x >= rect.x + rect.width - zone &&
+           pos->x < rect.x + rect.width && pos->y >= rect.y &&
+           pos->y < rect.y + rect.height;
+}
+
+/** @brief 按 popupMode 与命中位置判定本次左键按下是否应当弹出菜单
+ *         （复扫 R-20：popupMode 此前为死存储）：
+ *         - InstantPopup：整钮弹出（对标 Qt）；
+ *         - MenuButtonPopup：仅箭头区弹出（对标 Qt；箭头区外走普通
+ *           按钮路径触发动作）；
+ *         - DelayedPopup：点击弹出菜单（本实现无按压计时器，按需求
+ *           口径以点击替代 Qt 的按住延时弹出）。 */
+static bool toolbutton_shouldPopup(XToolButton* self, const XPoint* pos)
+{
+    if (!self || !self->m_menu)
+        return false;
+    switch (self->m_popupMode) {
+    case XToolButtonPopupMode_InstantPopup:
+        return true;
+    case XToolButtonPopupMode_MenuButtonPopup:
+        return toolbutton_inMenuZone(self, pos);
+    case XToolButtonPopupMode_DelayedPopup:
+    default:
+        return true;
+    }
 }
 
 /* ==================== 默认动作 ==================== */
@@ -339,7 +404,7 @@ XSize XToolButton_sizeHint(const XToolButton* self)
     font = XWidget_font((XWidget*)self);
     textW = ab->m_text ? XPainter_textWidth(&font, XString_toUtf8(ab->m_text)) : 0;
     textH = ab->m_text ? XPainter_textHeight(&font) : 0;
-    XFont_deinit_base(&font);
+    XFont_deinit_base((XClass*)&font);
 
     switch (toolbutton_effectiveStyle(self)) {
     case XToolButtonStyle_IconOnly:
@@ -553,13 +618,28 @@ xtb_style_label:
                           enabled ? 0xFF000000u : 0xFF808080u);
     }
 
-    /* 箭头：菜单优先，其次 arrowType，绘制在右下角。 */
+    /* 箭头：菜单优先，其次 arrowType。MenuButtonPopup 画分区竖线 +
+     * 箭头居中（复扫 R-20：让箭头区命中判定可见可发现）；其余模式
+     * 绘制在右下角。 */
     {
         XToolButtonArrowType arrow = tb->m_arrowType;
 
         if (tb->m_menu && arrow == XToolButtonArrowType_NoArrow)
             arrow = XToolButtonArrowType_Down;
-        if (arrow != XToolButtonArrowType_NoArrow) {
+        if (tb->m_menu &&
+            tb->m_popupMode == XToolButtonPopupMode_MenuButtonPopup &&
+            arrow != XToolButtonArrowType_NoArrow) {
+            int zone = toolbutton_menuZoneWidth(tb);
+            int zx = rect.x + rect.width - zone;
+            XRect sepLine;
+
+            XRect_init(&sepLine, zx, rect.y + 2, 1,
+                       rect.height > 4 ? rect.height - 4 : rect.height);
+            XPainter_fillRect(&painter, &sepLine, 0xFFA0A0A0u);
+            toolbutton_drawArrow(&painter, zx + zone / 2,
+                                 rect.y + rect.height / 2, 3, arrow,
+                                 0xFF606060u);
+        } else if (arrow != XToolButtonArrowType_NoArrow) {
             int ax = rect.x + rect.width - 8;
             int ay = rect.y + rect.height - 8;
 
@@ -567,13 +647,54 @@ xtb_style_label:
         }
     }
 
-    XFont_deinit_base(&font);
+    XFont_deinit_base((XClass*)&font);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 #endif /* XWINDOWEVENT_ON */
 }
 
 /* ==================== 虚槽实现（尺寸与生命周期） ==================== */
+
+/* 左键按下：按 popupMode 与箭头区分流弹层与触发（复扫 R-20，对标
+ * QToolButton::mousePressEvent）。弹层路径直接 showMenu 且不链基类——
+ * 不进入按钮按下/释放流程，菜单弹出路径不会触发默认动作。 */
+static void VXToolButton_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XToolButton* tb = (XToolButton*)self;
+
+    if (tb && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
+        XMouseEvent_button((XMouseEvent*)event) ==
+            XMouseButton_LeftButton &&
+        XWidget_isEnabled(self)) {
+        XPoint pos = XMouseEvent_position((XMouseEvent*)event);
+
+        if (toolbutton_shouldPopup(tb, &pos)) {
+            XEvent_accept(event);
+            XToolButton_showMenu(tb);
+            return;
+        }
+    }
+    XClass_Parent(XAbstractButton, EXWidget_MousePressEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+/* 左键释放：弹出菜单仍打开时吞掉释放——按下开菜单后、菜单关闭前到来的
+ * release 不得转成 clicked 误触发动作（对标 Qt 由弹出窗口抓取鼠标承接
+ * 释放；无抓取环境由此分支兜底）。 */
+static void VXToolButton_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XToolButton* tb = (XToolButton*)self;
+
+    if (tb && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE &&
+        tb->m_menu && tb->m_menu->m_popupActive) {
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XAbstractButton, EXWidget_MouseReleaseEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
 
 static void VXToolButton_contentChanged(XAbstractButton* base)
 {
@@ -661,6 +782,10 @@ XVtable* XToolButton_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractButton_ContentChanged,
                              VXToolButton_contentChanged);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXToolButton_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VXToolButton_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXToolButton_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXToolButton_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXToolButton_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXToolButton_deinit);

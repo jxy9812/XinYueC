@@ -501,7 +501,7 @@ typedef struct XWheelEvent
     XPoint m_position;            /**< 事件源对象局部坐标（对标 QWheelEvent::position）。 */
     XPoint m_globalPosition;      /**< 屏幕全局坐标（对标 QWheelEvent::globalPosition）。 */
     XPoint m_angleDelta;          /**< 滚动角度增量；垂直滚轮 ±120/格，水平滚轮在 x 轴（对标 QWheelEvent::angleDelta）。 */
-    XPoint m_pixelDelta;          /**< 像素增量（对标 QWheelEvent::pixelDelta；非平滑滚轮由角度换算）。 */
+    XPoint m_pixelDelta;          /**< 像素增量（对标 QWheelEvent::pixelDelta；无高分辨率滚轮平台恒 (0,0)，消费方非零才优先）。 */
     int m_phase;                  /**< 滚动阶段（XWheelEventPhase）。 */
     bool m_inverted;              /**< 是否反向（对标 QWheelEvent::inverted）。 */
     int m_source;                 /**< 事件来源（XWheelEventSource）。 */
@@ -514,8 +514,9 @@ typedef struct XWheelEvent
  *             buttons, modifiers)）。
  * @details    Qt 6.8 约定：angleDelta 以 1/8 度为基本单位，普通刻度滚轮
  *             每次滚动 ±120；垂直滚动在 y 轴、水平滚动在 x 轴，向上/向右
- *             为正。像素增量（pixelDelta）在非平滑滚轮上由角度增量换算，
- *             本简化实现不单独承载（可用角度增量推导）。
+ *             为正。像素增量（pixelDelta）仅在高分辨率（像素级）滚轮
+ *             平台有效；本平台无该增量源，恒为 (0,0)（对齐 Qt 语义：
+ *             非 (0,0) 才优先于角度增量）。
  * @param      memory        内存类型；通常传 XCLASS_DEFAULT_MEMORY_TYPE。
  * @param      type          事件类型；必须为 XEVENT_TYPE_WHEEL。
  * @param      position      局部坐标；可为 NULL（按 0,0）。

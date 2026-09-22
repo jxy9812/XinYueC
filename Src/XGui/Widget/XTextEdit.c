@@ -1879,7 +1879,8 @@ void XTextEdit_mergeCurrentCharFormat(XTextEdit* self, int format)
     if (format & XTextEditCharFormat_Bold) self->m_bold = true;
     if (format & XTextEditCharFormat_Italic) self->m_italic = true;
     if (format & XTextEditCharFormat_Underline) self->m_underline = true;
-    /* 信号为标识桩：保留 currentCharFormatChanged 接线点。 */
+    /* 对标 Qt mergeCurrentCharFormat：格式入口发射 currentCharFormatChanged
+     * （真发射；平铺模型无变化探测，入口恒发射为已声明简化）。 */
     XTextEdit_currentCharFormatChanged_signal(self);
 }
 
@@ -1890,6 +1891,8 @@ void XTextEdit_setCurrentCharFormat(XTextEdit* self, int format)
     self->m_bold = (format & XTextEditCharFormat_Bold) ? true : false;
     self->m_italic = (format & XTextEditCharFormat_Italic) ? true : false;
     self->m_underline = (format & XTextEditCharFormat_Underline) ? true : false;
+    /* 对标 Qt setCurrentCharFormat：格式入口发射 currentCharFormatChanged
+     * （真发射，见 currentCharFormatChanged_signal 发射点注释）。 */
     XTextEdit_currentCharFormatChanged_signal(self);
 }
 
@@ -2009,7 +2012,15 @@ void XTextEdit_moveCursor_2(XTextEdit* self, int operation, int mode) { (void)se
 bool XTextEdit_cursorCanPaste(const XTextEdit* self) { (void)self; return false; }
 void* XTextEdit_currentCharFormatChanged_signal(XTextEdit* self)
 {
-    (void)self;
+    if (!self || !((XObject*)self)->m_signalSlot)
+        return (void*)(size_t)XTextEdit_currentCharFormatChanged_signal;
+    /* 真发射点：setCurrentCharFormat/mergeCurrentCharFormat 入口显式调用
+       触发（对标 Qt 信号函数即发射点，同 linkHovered/linkActivated 定
+       式）。Qt 载荷 const QTextCharFormat& 在平铺格式模型下以无参简化
+       承载（对标 XAbstractSlider void 信号 args=NULL 定式）。 */
+    XObject_emitSignal((XObject*)self,
+                       (size_t)XTextEdit_currentCharFormatChanged_signal,
+                       NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)(size_t)XTextEdit_currentCharFormatChanged_signal;
 }
 

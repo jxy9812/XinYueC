@@ -682,11 +682,47 @@ bool XChart_isLegendVisible(const XChart* self)
 static void xchart_registerSeries(XChart* self, void* series,
                                   XChartSeriesType type)
 {
+    int i;
     if (!self || !series) return;
+    /* 防御性边界检查：兑现“去重”契约。同一指针重复入表会使
+     * removeSeries/removeAllSeries 对其释放两次（双重释放）。 */
+    for (i = 0; i < self->m_seriesCount; ++i)
+        if (self->m_series[i] == series) return;
     if (self->m_seriesCount >= XCHART_SERIES_CAPACITY) return;
     self->m_series[self->m_seriesCount] = series;
     self->m_seriesTypes[self->m_seriesCount] = type;
     ++self->m_seriesCount;
+}
+
+/**
+ * @brief 从泛型注册表摘除序列（memmove 收缩；不释放对象）。
+ *
+ * P0-2：注册表摘除的唯一路径，供 removeSeries 与 setPieSeries（删除旧
+ * 饼图前）共用，保证注册表与被管对象生命周期一致，杜绝悬空登记项。
+ *
+ * @param self    目标图表指针。
+ * @param series  序列指针。
+ * @param typeOut 非空时输出被摘除项的类型。
+ * @return 摘除成功返回 true；未登记返回 false。
+ */
+static bool xchart_unregisterSeries(XChart* self, const void* series,
+                                    XChartSeriesType* typeOut)
+{
+    int i;
+    if (!self || !series) return false;
+    for (i = 0; i < self->m_seriesCount; ++i) {
+        if (self->m_series[i] != series) continue;
+        if (typeOut) *typeOut = self->m_seriesTypes[i];
+        XMemmove(&self->m_series[i], &self->m_series[i + 1],
+                 (size_t)(self->m_seriesCount - i - 1) * sizeof(self->m_series[0]));
+        XMemmove(&self->m_seriesTypes[i], &self->m_seriesTypes[i + 1],
+                 (size_t)(self->m_seriesCount - i - 1) * sizeof(self->m_seriesTypes[0]));
+        --self->m_seriesCount;
+        /* 防御性边界检查：收缩后清空尾部槽位，注册表不留悬空指针。 */
+        self->m_series[self->m_seriesCount] = NULL;
+        return true;
+    }
+    return false;
 }
 
 void XChart_addSeries(XChart* self, void* series, XChartSeriesType type)
@@ -775,20 +811,10 @@ static void xchart_unlinkSeries(XChart* self, void* series)
 void XChart_removeSeries(XChart* self, void* series)
 {
     XChartSeriesType type = XChartSeriesType_Line;
-    int i;
-    int found = 0;
+    int found;
     if (!self || !series) return;
-    for (i = 0; i < self->m_seriesCount; ++i) {
-        if (self->m_series[i] != series) continue;
-        type = self->m_seriesTypes[i];
-        found = 1;
-        XMemmove(&self->m_series[i], &self->m_series[i + 1],
-                (size_t)(self->m_seriesCount - i - 1) * sizeof(self->m_series[0]));
-        XMemmove(&self->m_seriesTypes[i], &self->m_seriesTypes[i + 1],
-                (size_t)(self->m_seriesCount - i - 1) * sizeof(self->m_seriesTypes[0]));
-        --self->m_seriesCount;
-        break;
-    }
+    /* 先从泛型注册表摘除（P0-2：唯一摘除路径，memmove 收缩 + 尾部清空）。 */
+    found = xchart_unregisterSeries(self, series, &type) ? 1 : 0;
     xchart_unlinkSeries(self, series);
     if (found) xchart_deleteSeriesByType(series, type);
 }
@@ -796,8 +822,21 @@ void XChart_removeSeries(XChart* self, void* series)
 void XChart_removeAllSeries(XChart* self)
 {
     if (!self) return;
-    while (self->m_seriesCount > 0)
-        XChart_removeSeries(self, self->m_series[0]);
+    while (self->m_seriesCount > 0) {
+        void* s = self->m_series[0];
+        if (!s) {
+            /* 防御性边界检查：空槽位直接收缩注册表，避免 removeSeries(NULL)
+             * 空转导致死循环。 */
+            XMemmove(&self->m_series[0], &self->m_series[1],
+                     (size_t)(self->m_seriesCount - 1) * sizeof(self->m_series[0]));
+            XMemmove(&self->m_seriesTypes[0], &self->m_seriesTypes[1],
+                     (size_t)(self->m_seriesCount - 1) * sizeof(self->m_seriesTypes[0]));
+            --self->m_seriesCount;
+            self->m_series[self->m_seriesCount] = NULL;
+            continue;
+        }
+        XChart_removeSeries(self, s);
+    }
 }
 
 int XChart_seriesCount(const XChart* self)
@@ -863,9 +902,35 @@ void XChart_createDefaultAxes(XChart* self)
 static int xchart_seriesGlobalIndex(const XChart* self, const void* series)
 {
     int i;
+    int g;
     if (!self || !series) return -1;
+    /* 泛型 addSeries 路径：直接查注册表。 */
     for (i = 0; i < self->m_seriesCount; ++i)
         if (self->m_series[i] == series) return i;
+    /* 类型化 addXxxSeries 路径（不入注册表，C1 契约）：按固定类型顺序
+     * 累计位置推全局序号，保证主题色跨类型连续分配（对标 Qt Charts
+     * 按 series 全局序取主题色，修"每类型首序列同色"）。 */
+    g = 0;
+    for (i = 0; i < self->m_lineCount; ++i) {
+        if (self->m_lineSeries[i] == series) return g;
+        ++g;
+    }
+    for (i = 0; i < self->m_splineCount; ++i) {
+        if (self->m_splineSeries[i] == series) return g;
+        ++g;
+    }
+    for (i = 0; i < self->m_areaCount; ++i) {
+        if (self->m_areaSeries[i] == series) return g;
+        ++g;
+    }
+    for (i = 0; i < self->m_barCount; ++i) {
+        if (self->m_barSeries[i] == series) return g;
+        ++g;
+    }
+    for (i = 0; i < self->m_scatterCount; ++i) {
+        if (self->m_scatterSeries[i] == series) return g;
+        ++g;
+    }
     return -1;
 }
 
@@ -1444,6 +1509,12 @@ void XChart_setPieSeries(XChart* self, XPieSeries* series)
 {
     if (!self) return;
     if (self->m_pieSeries && self->m_pieSeries != series) {
+        /* P0-2 根因：泛型 addSeries(Pie) 会把旧饼图登记进 m_series 注册表，
+         * 此处删除旧饼图前必须同步摘除注册项（参照 removeSeries 的 memmove
+         * 收缩逻辑），否则注册表残留悬空指针，removeSeries/removeAllSeries
+         * 会对已释放对象二次释放。类型化直设路径未登记，摘除为无操作，
+         * 语义不变。 */
+        xchart_unregisterSeries(self, self->m_pieSeries, NULL);
         XPieSeries_delete_base(self->m_pieSeries);
     }
     self->m_pieSeries = series;

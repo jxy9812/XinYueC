@@ -68,7 +68,12 @@ static int xsp_contentLen(const XSplitter* self)
     int i;
     for (i = 0; i < count; ++i) {
         XWidget* child = xsp_childAt(self, i);
-        if (!child || !xsp_childVisible(self, i)) continue;
+        /* Qt 口径：QSplitterPrivate::layoutChildren 以 isHidden()（控件
+           自身显式隐藏位）判页是否占分隔条位，不随父链 effective
+           visible 波动——顶层分割器未 show 时子页同样扣把位（headless
+           与已显示口径一致；xsp_layout 对全部子页分配几何，两处判据
+           必须一致，否则把位泄漏使页宽偏大）。 */
+        if (!child || XWidget_isHidden(child)) continue;
         len -= hw; /* 每页之后一个分隔条（最后一页之后的忽略误差）。 */
     }
     if (len < 0) len = 0;
@@ -277,7 +282,12 @@ static void xsp_ensureCollapsibleCap(XSplitter* self, int pages)
         int newCap = pages + 8;
         int* p = (int*)XRealloc_System(self->m_collapsible,
                                        (size_t)newCap * sizeof(int));
+        int i;
         if (!p) return;
+        /* 新槽位必须补 -1（未覆写哨兵）：isCollapsible 以 <0 回退
+           childrenCollapsible 全局开关；realloc 遗留垃圾曾使全局回退
+           失效（垃圾非 0 即被当作“已覆写=true”）。 */
+        for (i = self->m_collapsibleCap; i < newCap; ++i) p[i] = -1;
         self->m_collapsible = p;
         self->m_collapsibleCap = newCap;
     }
@@ -394,7 +404,11 @@ XWidget* XSplitter_replaceWidget(XSplitter* self, int index, XWidget* widget)
     /* Qt 护栏：新控件已是本分割器子控件（兄弟）时不替换。 */
     if (XSplitter_indexOf(self, widget) >= 0) return NULL;
     geom = XWidget_geometry(current);
-    wasVisible = XWidget_isVisible(current);
+    /* Qt 口径：replaceWidget 以 isHidden()（控件自身显式显隐位）继承
+     * 可见性，不取 effective visible——后者随父链（顶层分割器未 show
+     * 时恒 false）波动，headless 下会把新页误标隐藏，进而被把位扣除
+     * 跳过（与 xsp_contentLen 同口径）。 */
+    wasVisible = !XWidget_isHidden(current);
     /* 旧控件解除父子关系（自 children 向量移除）并隐藏，交还调用方
        管理（不销毁，对标 Qt replaceWidget 的 setParent(nullptr)）。 */
     XWidget_setParent(current, NULL, 0);

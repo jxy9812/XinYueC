@@ -423,6 +423,19 @@
 #ifndef XCHARTS_ON
 #define XCHARTS_ON 1
 #endif
+/* XChartView 静态层缓存与渲染剖析（§10.2 第一期，对标 Qt
+ * QGraphicsItem::DeviceCoordinateCache）：STATIC_LAYER_ON 置 1 时把
+ * 背景/背景笔/标题/坐标轴网格五件套渲进控件私有离屏层，入口指纹命中
+ * 直接 blit、未命中重建；置 0 时渲染路径与无层现状逐位一致。
+ * PROFILE 置 1 时在 xcv_renderToImage 埋五段计时，但运行期还须
+ * XCHARTVIEW_PROFILE 环境变量非 0 才输出每秒均值（不污染正常基准）。
+ * 两开关随 XGUI_ON=0 级联裁剪（见文件尾总开关区块）。 */
+#ifndef XCHARTVIEW_STATIC_LAYER_ON
+#define XCHARTVIEW_STATIC_LAYER_ON 1
+#endif
+#ifndef XCHARTVIEW_PROFILE
+#define XCHARTVIEW_PROFILE 1
+#endif
 #ifndef XDIALOG_ON
 #define XDIALOG_ON 1
 #endif
@@ -912,6 +925,10 @@
 #define XDOCKWIDGET_ON 0
 #undef XCHARTS_ON
 #define XCHARTS_ON 0
+#undef XCHARTVIEW_STATIC_LAYER_ON
+#define XCHARTVIEW_STATIC_LAYER_ON 0
+#undef XCHARTVIEW_PROFILE
+#define XCHARTVIEW_PROFILE 0
 #undef XMAINWINDOW_ON
 #define XMAINWINDOW_ON 0
 #undef XTOOLBOX_ON

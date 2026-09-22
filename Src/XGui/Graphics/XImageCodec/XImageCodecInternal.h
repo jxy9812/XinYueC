@@ -463,6 +463,22 @@ bool XImageCodecInternal_encodeJpeg(const XImage* image, int quality,
 bool XImageCodecInternal_decodeSvg(const uint8_t* data, size_t size, XImage* out);
 
 /**
+ * @brief 解码 SVG 数据到 XImage（带目标尺寸，矢量直渲）。
+ * @param data         输入 SVG 数据；不能为 NULL。
+ * @param size         输入数据字节数。
+ * @param targetWidth  目标宽度；与 targetHeight 同 >0 时矢量几何按目标
+ *                     表面映射（viewBox/preserveAspectRatio 语义保持），
+ *                     消除「固有尺寸光栅化+平滑放大」的插值模糊。
+ * @param targetHeight 目标高度；同上。
+ * @param out          输出图像对象，成功后由调用者负责释放。
+ * @return 成功返回 true。
+ * @note  位图/纯色回退形态无矢量几何，目标尺寸不适用时按原口径出图。
+ */
+bool XImageCodecInternal_decodeSvg_ex(const uint8_t* data, size_t size,
+                                      int targetWidth, int targetHeight,
+                                      XImage* out);
+
+/**
  * @brief 从 SVG 数据中探测默认宽与高。
  * @param data   输入 SVG 数据；不能为 NULL。
  * @param size   输入数据字节数。

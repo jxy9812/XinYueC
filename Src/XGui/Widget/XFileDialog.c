@@ -24,6 +24,8 @@
 #include "XCoreApplication.h"  /* qApp 等价物：有应用实例才允许模态循环 */
 #include "XGuiApplication.h"   /* 主屏查询（弹窗居中） */
 #include "XScreen.h"           /* 屏幕几何 */
+#include "XObject.h"           /* 动态属性：delegate/proxy 借用登记 */
+#include "XVariant.h"          /* Ptr 变体承载不透明指针 */
 #include "XLabel.h"            /* 目录/文件名/类型标签 */
 #include "XLineEdit.h"         /* 文件名编辑 */
 #include "XComboBox.h"         /* 目录路径与过滤器下拉 */
@@ -1574,26 +1576,66 @@ void* XFileDialog_iconProvider(const XFileDialog* self)
     return self ? self->m_iconProvider : NULL;
 }
 
+/* ---- 不透明借用登记（delegate/proxy）：结构体无专用槽位（XFileDialog.h
+ * 归属主线头文件批次），经对象动态属性（XObject_setProperty，XVariant
+ * Ptr 变体）承载，随对象析构自动释放；对标 Qt setItemDelegate/
+ * setProxyModel 的"记录"语义（类型不映射，仅保存指针供回读）。 ---- */
+
+/** @brief 写入一条不透明借用登记；指针为 NULL 时撤销登记。 */
+static void xfiledialog_setOpaqueRecord(XFileDialog* self,
+                                        const char* keyUtf8, void* value)
+{
+    XString key;
+    if (!self || !keyUtf8) return;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    if (value) {
+        XVariant* v = XVariant_create_ptr(value);
+        if (v) {
+            /* setProperty 成功后所有权转移给对象；失败则自回滚防泄漏。 */
+            if (!XObject_setProperty((XObject*)self, &key, v))
+                XVariant_delete_base(v);
+        }
+    } else {
+        XObject_removeProperty((XObject*)self, &key);
+    }
+    XString_deinit_base(&key);
+}
+
+/** @brief 读回一条不透明借用登记；未登记返回 NULL。 */
+static void* xfiledialog_opaqueRecord(const XFileDialog* self,
+                                      const char* keyUtf8)
+{
+    XString key;
+    XVariant* v;
+    void* out = NULL;
+    if (!self || !keyUtf8) return NULL;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    v = XObject_property((const XObject*)self, &key);
+    if (v) out = XVariant_toPtr(v);
+    XString_deinit_base(&key);
+    return out;
+}
+
 void XFileDialog_setItemDelegate(XFileDialog* self, void* delegate)
 {
-    (void)self; (void)delegate;
+    xfiledialog_setOpaqueRecord(self, "xgui.itemDelegate", delegate);
 }
 
 void* XFileDialog_itemDelegate(const XFileDialog* self)
 {
-    (void)self;
-    return NULL;
+    return xfiledialog_opaqueRecord(self, "xgui.itemDelegate");
 }
 
 void XFileDialog_setProxyModel(XFileDialog* self, void* model)
 {
-    (void)self; (void)model;
+    xfiledialog_setOpaqueRecord(self, "xgui.proxyModel", model);
 }
 
 void* XFileDialog_proxyModel(const XFileDialog* self)
 {
-    (void)self;
-    return NULL;
+    return xfiledialog_opaqueRecord(self, "xgui.proxyModel");
 }
 
 #endif /* XWIDGET_ON && XDIALOG_ON */

@@ -113,10 +113,140 @@ static void xprogressdialog_cancelClickedSlot(XObject* receiver, XVarList* args)
 }
 #endif
 
+/* ==================== 最小时长自动显示定时器（复扫 R-82） ==================== */
+
+/** @brief 定时器状态槽表容量（同屏进度对话框超过该数时新对象退化为一
+ *         律不自动显示，行为安全）。 */
+#define XPD_TIMER_SLOTS 8
+
+/**
+ * @brief 每对话框定时器状态槽（复扫 R-82 配套）。
+ * @details 头文件结构体不在本批修复所有权内、无法新增字段，以文件级
+ *          静态表按对象指针登记（init 登记/deinit 摘除；init 前先按
+ *          同指针清旧，防重复 init 复用内存时残留旧定时器）。
+ */
+typedef struct XProgressDialogTimerSlot
+{
+    XProgressDialog* owner; /**< 登记的对话框（NULL=空槽）。 */
+    XTimerId timerId;       /**< forceShow 定时器；XTIMER_INVALID_ID=未起。 */
+    bool shownOnce;         /**< 对标 Qt shownOnce：已显示过则超时不再强显。 */
+    bool durationArmed;     /**< 对标 Qt setValueCalled：首个有效 setValue 已起计时。 */
+} XProgressDialogTimerSlot;
+
+static XProgressDialogTimerSlot g_progressTimerSlots[XPD_TIMER_SLOTS];
+
+/** @brief 查对象状态槽；未登记返回 NULL。 */
+static XProgressDialogTimerSlot* xpd_slotFind(XProgressDialog* self)
+{
+    int i;
+    if (!self) return NULL;
+    for (i = 0; i < XPD_TIMER_SLOTS; ++i) {
+        if (g_progressTimerSlots[i].owner == self)
+            return &g_progressTimerSlots[i];
+    }
+    return NULL;
+}
+
+/** @brief 登记对象状态槽（重复 init 复用同内存时先清旧定时器）。 */
+static void xpd_slotAcquire(XProgressDialog* self)
+{
+    XProgressDialogTimerSlot* slot;
+    int i;
+    if (!self) return;
+    slot = xpd_slotFind(self);
+    if (!slot) {
+        for (i = 0; i < XPD_TIMER_SLOTS; ++i) {
+            if (!g_progressTimerSlots[i].owner) {
+                slot = &g_progressTimerSlots[i];
+                break;
+            }
+        }
+    }
+    if (!slot) return; /* 表满：退化为不自动显示。 */
+    if (slot->owner == self && slot->timerId != XTIMER_INVALID_ID)
+        XObject_killTimer((XObject*)self, slot->timerId);
+    slot->owner = self;
+    slot->timerId = XTIMER_INVALID_ID;
+    slot->shownOnce = false;
+    slot->durationArmed = false;
+}
+
+/** @brief 摘除对象状态槽（停定时器并归还槽位）。 */
+static void xpd_slotRelease(XProgressDialog* self)
+{
+    XProgressDialogTimerSlot* slot = xpd_slotFind(self);
+    if (!slot) return;
+    if (slot->timerId != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, slot->timerId);
+        slot->timerId = XTIMER_INVALID_ID;
+    }
+    slot->owner = NULL;
+}
+
+/** @brief 起最小时长计时（对标 Qt forceTimer->start(showTime)）。 */
+static void xpd_timerArm(XProgressDialog* self,
+                         XProgressDialogTimerSlot* slot)
+{
+    if (!self || !slot) return;
+    if (slot->timerId != XTIMER_INVALID_ID)
+        return; /* 已在计时（对标 Qt restart 前先 stop 的幂等口径）。 */
+    if (self->m_minimumDuration <= 0) {
+        /* 时长 0：对标 Qt 的 0 间隔定时器即时超时——首个 setValue 立即显示。 */
+        XProgressDialog_forceShow(self);
+        return;
+    }
+    slot->timerId = XObject_startTimer_ms(
+        (XObject*)self, (uint64_t)self->m_minimumDuration,
+        XTimerType_PreciseTimer);
+}
+
+/** @brief 停最小时长计时。 */
+static void xpd_timerStop(XProgressDialog* self,
+                          XProgressDialogTimerSlot* slot)
+{
+    if (!self || !slot) return;
+    if (slot->timerId != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, slot->timerId);
+        slot->timerId = XTIMER_INVALID_ID;
+    }
+}
+
+/** @brief 定时器超时 → 对标 Qt forceShow 槽：自动显示对话框。 */
+static void VXProgressDialog_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XProgressDialog* self = (XProgressDialog*)object;
+    XProgressDialogTimerSlot* slot =
+        self ? xpd_slotFind(self) : NULL;
+
+    if (slot && slot->timerId != XTIMER_INVALID_ID &&
+        XTimerEvent_timerId(event) == slot->timerId) {
+        xpd_timerStop(self, slot);
+        XProgressDialog_forceShow(self);
+        return;
+    }
+    XClass_Parent(XDialog, EXObject_TimerEvent,
+                  void (*)(XObject*, XTimerEvent*))((XObject*)self, event);
+}
+
+/** @brief 显示事件：一经显示停表（对标 Qt showEvent 的
+ *         forceTimer->stop()——超时强显不再触发）。 */
+static void VXProgressDialog_showEvent(XWidget* self, XEvent* event)
+{
+    XProgressDialog* dlg = (XProgressDialog*)self;
+    XProgressDialogTimerSlot* slot;
+    XClass_Parent(XDialog, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    slot = dlg ? xpd_slotFind(dlg) : NULL;
+    if (slot)
+        xpd_timerStop(dlg, slot);
+}
+
 /** @brief 释放对话框自有拥有字段，再委托父类。 */
 static void VXProgressDialog_deinit(XProgressDialog* self)
 {
     if (!self) return;
+    /* 复扫 R-82 配套：停掉自动显示定时器并摘除状态槽登记。 */
+    xpd_slotRelease(self);
     xprogressdialog_freeString(&self->m_labelText);
     xprogressdialog_freeString(&self->m_cancelButtonText);
 #if XFRAME_ON && XLABEL_ON
@@ -140,6 +270,9 @@ XVtable* XProgressDialog_class_init(void)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXProgressDialog_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXProgressDialog_resizeEvent);
+    /* 复扫 R-82：最小时长自动显示定时器接线（超时强显 + 显示即停表）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXProgressDialog_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXProgressDialog_showEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -162,6 +295,8 @@ void XProgressDialog_init(XProgressDialog* self, XWidget* parent,
     self->m_labelText = NULL;
     self->m_cancelButtonText = NULL;
     self->m_bar = NULL;
+    /* 复扫 R-82 配套：登记自动显示定时器状态槽。 */
+    xpd_slotAcquire(self);
 }
 
 void XProgressDialog_init_full(XProgressDialog* self, const XString* labelText,
@@ -223,8 +358,20 @@ int XProgressDialog_maximum(const XProgressDialog* self)
 
 void XProgressDialog_setValue(XProgressDialog* self, int progress)
 {
+    XProgressDialogTimerSlot* slot;
     if (!self) return;
+    slot = xpd_slotFind(self);
     self->m_value = xprogressdialog_clamp(self, progress);
+    /* 复扫 R-82：minimumDuration 此前为纯存储。对标 Qt
+     * QProgressDialog::setValue——首个有效调用起按 minimumDuration
+     * 计时，超时经 forceShow 槽自动显示（Qt 6.8 的
+     * forceTimer->start(d->showTime) 分支）。已取消（wasCanceled）
+     * 后不再自动显示，与 Qt 的 cancellationFlag 门禁同口径；reset()
+     * 复位后恢复。 */
+    if (slot && !slot->durationArmed && !self->m_wasCanceled) {
+        slot->durationArmed = true;
+        xpd_timerArm(self, slot);
+    }
     /* Qt：入参等于 maximum 且 autoReset 时复位。 */
     if (progress == self->m_maximum && self->m_autoReset)
         XProgressDialog_reset(self);
@@ -235,9 +382,22 @@ int XProgressDialog_value(const XProgressDialog* self)
 
 void XProgressDialog_reset(XProgressDialog* self)
 {
+    XProgressDialogTimerSlot* slot;
     if (!self) return;
-    if (self->m_autoClose)
+    /* 复扫 R-82 配套：对标 Qt reset——停计时并清 shownOnce/
+     * setValueCalled，下一轮 setValue 重新起计时、超时可再强显。 */
+    slot = xpd_slotFind(self);
+    if (slot) {
+        xpd_timerStop(self, slot);
+        slot->shownOnce = false;
+        slot->durationArmed = false;
+    }
+    if (self->m_autoClose) {
         XWidget_setVisible((XWidget*)self, false);
+        /* autoClose 隐藏后标脏原矩形：子控件形态对话框隐藏不调度
+           重绘，屏幕残留最后一帧鬼影（同 XDialog_done 注）。 */
+        XWidget_update((XWidget*)self);
+    }
     self->m_value = self->m_minimum;
     self->m_wasCanceled = false;
 }
@@ -350,6 +510,8 @@ void XProgressDialog_cancel(XProgressDialog* self)
     xprogressdialog_emitVoid(self, (size_t)XProgressDialog_canceled_signal);
     XProgressDialog_reset(self);
     XWidget_setVisible((XWidget*)self, false);
+    /* 无条件隐藏后标脏原矩形，清除屏幕残影（同 XDialog_done 注）。 */
+    XWidget_update((XWidget*)self);
     self->m_wasCanceled = true;
 }
 
@@ -371,14 +533,36 @@ bool XProgressDialog_autoClose(const XProgressDialog* self)
 { return self ? self->m_autoClose : true; }
 
 void XProgressDialog_setMinimumDuration(XProgressDialog* self, int ms)
-{ if (self) self->m_minimumDuration = ms; }
+{
+    XProgressDialogTimerSlot* slot;
+    if (!self) return;
+    self->m_minimumDuration = ms;
+    /* 复扫 R-82 配套：对标 Qt setMinimumDuration——尚未产生进度
+     * （值仍在 minimum）且计时已起时，改时长即按新时长重启。 */
+    slot = xpd_slotFind(self);
+    if (slot && slot->durationArmed && self->m_value == self->m_minimum) {
+        xpd_timerStop(self, slot);
+        if (!self->m_wasCanceled)
+            xpd_timerArm(self, slot);
+    }
+}
 
 int XProgressDialog_minimumDuration(const XProgressDialog* self)
 { return self ? self->m_minimumDuration : 4000; }
 
 void XProgressDialog_forceShow(XProgressDialog* self)
 {
+    XProgressDialogTimerSlot* slot;
     if (!self) return;
+    slot = xpd_slotFind(self);
+    if (slot) {
+        /* 对标 Qt forceShow：先停表；已显示过（shownOnce）则不再强显
+         * （reset 复位 shownOnce 后可再次显示）。 */
+        xpd_timerStop(self, slot);
+        if (slot->shownOnce)
+            return;
+        slot->shownOnce = true;
+    }
     XWidget_show((XWidget*)self);
 }
 

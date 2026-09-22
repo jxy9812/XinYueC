@@ -512,6 +512,11 @@ XPushButton* XDialogButtonBox_button(
     int64_t i;
     int64_t n;
     if (!self || !self->m_buttons || !self->m_standards) return NULL;
+    /* 对标 Qt QDialogButtonBox::button：查的是"标准按钮槽位"，NoButton
+     * 永不存在成员 → 返回 NULL。addButton(button, role) 登记的自定义
+     * 按钮在 m_standards 平行表里以 0（NoButton）哨兵占位，此前查询
+     * NoButton 会误命中该哨兵返回自定义按钮，偏离 Qt 文档口径。 */
+    if (which == XDialogButtonBoxStandard_NoButton) return NULL;
     n = XVector_size_base((const XContainer*)self->m_buttons);
     for (i = 0; i < n; ++i) {
         int* std = (int*)XVector_at_base(self->m_standards, i);

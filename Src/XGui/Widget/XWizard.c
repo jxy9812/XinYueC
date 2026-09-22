@@ -16,6 +16,10 @@
 
 /* ==================== XWizardPage ==================== */
 
+/* 前向声明：页标题/副标题运行期变更需联动向导横幅（定义在后）。 */
+static int xwiz_bannerHeight(const XWizard* self);
+static void xwiz_layoutCurrentPage(XWizard* self);
+
 static void VXWizardPage_deinit(XWizardPage* self)
 {
     int i;
@@ -178,6 +182,31 @@ struct XWizard* XWizardPage_wizard(const XWizardPage* self)
     return self ? self->m_wizard : NULL;
 }
 
+/**
+ * @brief      页标题/副标题变更后联动向导横幅（仅本页为当前页时生效）。
+ * @details    根因（二次复扫 R-26）：横幅（标题/副标题）画在向导自身
+ *             的 paintEvent 里且按事件脏区裁剪，页控件失效产生的脏区
+ *             位于横幅之下、不含横幅——运行期 setTitle/setSubTitle 仅
+ *             update 页自身时横幅永远不上屏。此处按 xwiz_bannerHeight
+ *             使向导横幅区失效；副标题有无还决定横幅高度（32/56），
+ *             relayout 为真时先按新横幅高度重铺当前页几何（对标
+ *             QWizard 横幅伸缩后 updateLayout 的重排语义）。
+ */
+static void xwiz_pageTextChanged(XWizardPage* self, bool relayout)
+{
+    XWizard* wiz;
+    XRect r;
+    if (!self || !self->m_wizard) return;
+    wiz = self->m_wizard;
+    if (wiz->m_currentIndex < 0 || wiz->m_currentIndex >= wiz->m_pageCount)
+        return;
+    if (wiz->m_pages[wiz->m_currentIndex] != self) return;
+    if (relayout) xwiz_layoutCurrentPage(wiz);
+    XRect_init(&r, 0, 0, XWidget_width((XWidget*)wiz),
+               xwiz_bannerHeight(wiz));
+    XWidget_updateRect((XWidget*)wiz, &r);
+}
+
 void XWizardPage_setTitle(XWizardPage* self, const char* utf8)
 {
     if (!self) return;
@@ -185,6 +214,8 @@ void XWizardPage_setTitle(XWizardPage* self, const char* utf8)
     if (self->m_title)
         XString_assign_utf8(self->m_title, utf8 ? utf8 : "");
     XWidget_update((XWidget*)self);
+    /* 横幅标题由向导 paintEvent 绘制，须补向导横幅区失效才会上屏。 */
+    xwiz_pageTextChanged(self, false);
 }
 
 const char* XWizardPage_title(const XWizardPage* self)
@@ -201,6 +232,9 @@ void XWizardPage_setSubTitle(XWizardPage* self, const char* utf8)
     if (!self->m_subTitle) self->m_subTitle = XString_create();
     if (self->m_subTitle)
         XString_assign_utf8(self->m_subTitle, utf8 ? utf8 : "");
+    /* 副标题有无决定横幅高度（32/56）且横幅由向导绘制：重铺当前页
+       几何并补向导横幅区失效，变更才完整上屏。 */
+    xwiz_pageTextChanged(self, true);
 }
 
 const char* XWizardPage_subTitle(const XWizardPage* self)
@@ -370,15 +404,22 @@ static void xwiz_updateButtons(XWizard* self)
        completeChanged() 实时更新）。 */
     currentComplete = current ? XWizardPage_isComplete(current) : true;
 #if XPUSHBUTTON_ON
+    /* 复扫 R-84：槽位被 setButton 登记的自定义按钮占用时内建按钮一律
+     * 隐藏（对标 Qt setButton 的替换入布局语义；借用承载下以内建隐藏
+     * 替代删除），显隐仍随页状态（isFirst/isLast）联动。 */
     if (self->m_btnBack) {
-        XWidget_setVisible((XWidget*)self->m_btnBack, !isFirst);
+        XWidget_setVisible((XWidget*)self->m_btnBack,
+                           !isFirst &&
+                           !self->m_customButtons[XWizardButton_BackButton]);
         const char* txt = XWizard_buttonText(self, XWizardButton_BackButton);
         if (!txt || !txt[0])
             txt = xwiz_defaultButtonText(XWizardButton_BackButton);
         XAbstractButton_setText_2((XAbstractButton*)self->m_btnBack, txt);
     }
     if (self->m_btnNext) {
-        XWidget_setVisible((XWidget*)self->m_btnNext, !isLast);
+        XWidget_setVisible((XWidget*)self->m_btnNext,
+                           !isLast &&
+                           !self->m_customButtons[XWizardButton_NextButton]);
         const char* txt = XWizard_buttonText(self, XWizardButton_NextButton);
         if (!txt || !txt[0])
             txt = xwiz_defaultButtonText(XWizardButton_NextButton);
@@ -387,10 +428,18 @@ static void xwiz_updateButtons(XWizard* self)
                                    !isLast && currentComplete);
     }
     if (self->m_btnFinish) {
-        XWidget_setVisible((XWidget*)self->m_btnFinish, isLast);
+        XWidget_setVisible((XWidget*)self->m_btnFinish,
+                           isLast &&
+                           !self->m_customButtons[XWizardButton_FinishButton]);
         XWidget_setEnabled((XWidget*)self->m_btnFinish,
                                    isLast && currentComplete);
     }
+    if (self->m_btnCancel)
+        XWidget_setVisible((XWidget*)self->m_btnCancel,
+                           !self->m_customButtons[XWizardButton_CancelButton]);
+    if (self->m_btnHelp)
+        XWidget_setVisible((XWidget*)self->m_btnHelp,
+                           !self->m_customButtons[XWizardButton_HelpButton]);
 #endif
 }
 
@@ -483,6 +532,39 @@ static void xwiz_btnHelpSlot(XObject* receiver, XVarList* args)
     xwiz_emitVoid((XWizard*)receiver, (size_t)XWizard_helpRequested_signal);
 }
 #endif
+
+#if XABSTRACTBUTTON_ON
+/** @brief 自定义按钮 clicked → customButtonClicked(which)（复扫 R-84）。
+ *  @details 同一槽挂全部登记按钮，经 XObject_sender 反查槽位得到 which
+ *           （对标 QWizard::_q_buttonClicked(sender)→customButtonClicked
+ *           发射链路）；查表未命中（登记已清除）静默忽略。 */
+static void xwiz_customButtonClickedSlot(XObject* receiver, XVarList* args)
+{
+    XWizard* self = (XWizard*)receiver;
+    XObject* sender = XObject_sender(receiver);
+    int which;
+    (void)args;
+    if (!self || !sender) return;
+    for (which = 0; which < XWizardButton_NStandardButtons; ++which) {
+        if ((XObject*)self->m_customButtons[which] == sender) {
+            xwiz_emitInt(self,
+                         (size_t)XWizard_customButtonClicked_signal, which);
+            return;
+        }
+    }
+}
+
+/** @brief 断开自定义按钮的点击转发（setButton 替换/清除与析构摘链共用）。 */
+static void xwiz_customButtonDisconnect(XWizard* self,
+                                        struct XAbstractButton* btn)
+{
+    if (!self || !btn) return;
+    XObject_disconnect_1(
+        (XObject*)btn,
+        (size_t)XAbstractButton_clicked_signal((XAbstractButton*)btn, false),
+        (XObject*)self, xwiz_customButtonClickedSlot);
+}
+#endif /* XABSTRACTBUTTON_ON */
 
 /* ==================== XWizard 生命周期与虚表 ==================== */
 
@@ -640,16 +722,46 @@ static void VX_wizard_deinit(XWizard* self)
         }
         self->m_defaultPropCount = 0;
     }
+#if XABSTRACTBUTTON_ON
+    {
+        /* 复扫 R-84 配套：登记按钮为借用承载——析构级联删子前先断开
+         * 点击转发并摘除父链，按钮归还调用方（头文件契约：向导不删除）。
+         * 若不摘链，VXObject_deinit 会把借用按钮当普通子控件级联删除，
+         * 调用方再删除即双重释放。 */
+        int ci;
+        for (ci = 0; ci < XWizardButton_NStandardButtons; ++ci) {
+            XWidget* cb = (XWidget*)self->m_customButtons[ci];
+            if (!cb) continue;
+            xwiz_customButtonDisconnect(self, self->m_customButtons[ci]);
+            if (XWidget_parentWidget(cb) == (XWidget*)self)
+                XWidget_setParent(cb, NULL, 0);
+            self->m_customButtons[ci] = NULL;
+        }
+    }
+#endif
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
 /* ==================== 布局（按钮行随尺寸重排） ==================== */
 
+/** @brief 单个按钮槽位布局：setButton 登记的自定义按钮优先占用槽位
+ *         （复扫 R-84），无登记时落回内建按钮；槽位无任何按钮跳过。 */
+static void xwiz_layoutButtonSlot(XWizard* self, XWizardButton which,
+                                  int x, int by, int bw, int bh)
+{
+    XWidget* btn;
+    if (!self) return;
+    btn = (XWidget*)XWizard_button(self, (int)which);
+    if (btn)
+        XWidget_setGeometry(btn, x, by, bw, bh);
+}
+
 /** @brief 底部按钮行布局（从当前控件尺寸推导；init 与 resizeEvent 共用）。
  * @param self 目标向导。
  * @note 布局规则与创建序一致：Help 最左（x=8）、取消最右、完成/
- *       下一页/上一页依次左移（bw=80、gap=6、边距 8）；按钮未创建
- *       （选项裁剪）跳过。 */
+ *       下一页/上一页依次左移（bw=80、gap=6、边距 8）；Commit 无内建
+ *       按钮，登记自定义按钮时占 Back 左侧一槽；各槽位经
+ *       XWizard_button 取「自定义优先」的活动按钮摆位。 */
 static void xwiz_layoutButtons(XWizard* self)
 {
     int bw = 80;
@@ -662,20 +774,17 @@ static void xwiz_layoutButtons(XWizard* self)
     w = XWidget_width((XWidget*)self);
     h = XWidget_height((XWidget*)self);
     by = h - bh - 8;
-    if (self->m_btnHelp)
-        XWidget_setGeometry((XWidget*)self->m_btnHelp, 8, by, bw, bh);
-    if (self->m_btnCancel)
-        XWidget_setGeometry((XWidget*)self->m_btnCancel,
-                            w - bw - 8, by, bw, bh);
-    if (self->m_btnFinish)
-        XWidget_setGeometry((XWidget*)self->m_btnFinish,
-                            w - bw * 2 - gap - 8, by, bw, bh);
-    if (self->m_btnNext)
-        XWidget_setGeometry((XWidget*)self->m_btnNext,
-                            w - bw * 3 - gap * 2 - 8, by, bw, bh);
-    if (self->m_btnBack)
-        XWidget_setGeometry((XWidget*)self->m_btnBack,
-                            w - bw * 4 - gap * 3 - 8, by, bw, bh);
+    xwiz_layoutButtonSlot(self, XWizardButton_HelpButton, 8, by, bw, bh);
+    xwiz_layoutButtonSlot(self, XWizardButton_CancelButton,
+                          w - bw - 8, by, bw, bh);
+    xwiz_layoutButtonSlot(self, XWizardButton_FinishButton,
+                          w - bw * 2 - gap - 8, by, bw, bh);
+    xwiz_layoutButtonSlot(self, XWizardButton_NextButton,
+                          w - bw * 3 - gap * 2 - 8, by, bw, bh);
+    xwiz_layoutButtonSlot(self, XWizardButton_BackButton,
+                          w - bw * 4 - gap * 3 - 8, by, bw, bh);
+    xwiz_layoutButtonSlot(self, XWizardButton_CommitButton,
+                          w - bw * 5 - gap * 4 - 8, by, bw, bh);
 }
 
 /** @brief 尺寸变化：重排底部按钮行与当前页几何（否则按钮仍停留在
@@ -821,15 +930,17 @@ int XWizard_addPage(XWizard* self, XWizardPage* page)
                       (XObject*)self, xwizard_pageCompleteChanged,
                       XConnectionType_Direct);
     if (idx == 0) {
-        XRect r;
         XWidget_setVisible((XWidget*)page, true);
         self->m_visited[0] = true;
-        /* 首页挂载即铺内容区（与 xwiz_switchTo 同口径：高 -40 留按钮带）；
-           否则首次导航前页面保持 0 尺寸不可见。 */
-        XRect_init(&r, 0, 0,
-                   XWidget_width((XWidget*)self),
-                   XWidget_height((XWidget*)self) - 40);
-        XWidget_setGeometryRect((XWidget*)page, &r);
+        /* 首页挂载即成为当前页（对标 QWizard::showEvent → restart()
+           进入起始页）；显式置 0 以覆盖"移除全部页后重加"时
+           m_currentIndex == -1 的现场。此前此处手工铺 y=0 起的矩形，
+           首页盖住横幅（与 xwiz_switchTo 的 y=bannerH 口径不一致，
+           二次复扫 R-25）；且 m_currentIndex 已为 0 时 switchTo 与
+           restart 均早退、永不自愈——统一走 xwiz_layoutCurrentPage
+           同口径铺页（横幅之下、按钮带之上）。 */
+        self->m_currentIndex = 0;
+        xwiz_layoutCurrentPage(self);
         /* 对标 QWizard::showEvent 里的 restart()：首页首次显示即触发
            initializePage 虚槽（默认空操作，子类覆盖后生效）。 */
         if (!page->m_initialized) {
@@ -1104,9 +1215,41 @@ struct XAbstractButton* XWizard_button(const XWizard* self, int which)
 
 void XWizard_setButton(XWizard* self, int which, struct XAbstractButton* btn)
 {
+    struct XAbstractButton* old;
     if (!self || which < 0 || which >= XWizardButton_NStandardButtons) return;
-    /* 借用承载：不删除旧按钮、不改父控件；NULL 表示清除登记。 */
+    old = self->m_customButtons[which];
+    if (old == (struct XAbstractButton*)btn) return;
+#if XABSTRACTBUTTON_ON
+    if (old) {
+        /* 借用承载（头文件契约）：旧登记按钮不删除；断开点击转发，
+         * 曾代挂到本向导的摘父链归还调用方。 */
+        xwiz_customButtonDisconnect(self, old);
+        if (XWidget_parentWidget((XWidget*)old) == (XWidget*)self)
+            XWidget_setParent((XWidget*)old, NULL, 0);
+    }
     self->m_customButtons[which] = btn;
+    if (btn) {
+        /* 复扫 R-84：此前「不入布局/不转发点击/死信号」。现对标 Qt
+         * QWizard::setButton 接管呈现——挂为向导子控件入按钮行布局
+         * （xwiz_layoutButtons 槽位化，自定义按钮优先占位）、显式
+         * show（框架显式 show 语义）、点击经 xwiz_customButtonClickedSlot
+         * 发射 customButtonClicked(which)。 */
+        XWidget_setParent((XWidget*)btn, (XWidget*)self, 0);
+        XWidget_show((XWidget*)btn);
+        XObject_connect_1(
+            (XObject*)btn,
+            (size_t)XAbstractButton_clicked_signal(
+                (XAbstractButton*)btn, false),
+            (XObject*)self, xwiz_customButtonClickedSlot,
+            XConnectionType_Direct);
+    }
+#else
+    /* 无按钮子系统：保留原登记语义（仅 button() 查询可见）。 */
+    self->m_customButtons[which] = btn;
+#endif
+    xwiz_updateButtons(self);
+    xwiz_layoutButtons(self);
+    XWidget_update((XWidget*)self);
 }
 
 void XWizard_setDefaultProperty(XWizard* self, const char* name, void* value)

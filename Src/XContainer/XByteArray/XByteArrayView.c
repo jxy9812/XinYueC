@@ -757,44 +757,44 @@ uint64_t XByteArrayView_toULongLong(const XByteArrayView* self, bool* ok, int ba
     return val;
 }
 
+/* Qt 6.8 QByteArray::toDouble/toFloat 全串口径（qlocale.cpp
+ * bytearrayToDouble 同语义）：跳过首尾空白后必须整串消费——空串、
+ * 纯空白、解析失败或尾随垃圾一律 *ok=false 返回 0。此前仅查
+ * endptr==str 的前缀解析会把 "12abc" 判成功，违背自述的 Qt 等价
+ * 口径（复扫 R-77 同族 deferred）。view_to_cstr 对超缓冲视图返回
+ * NULL，无静默截断歧义。 */
+static bool xbytearrayview_parseFull(const char* str, double* value)
+{
+    char* endptr = NULL;
+    double val;
+    val = strtod(str, &endptr);
+    if (endptr == str) return false;
+    while (*endptr == ' ' || *endptr == '\t' || *endptr == '\n' ||
+           *endptr == '\r' || *endptr == '\f' || *endptr == '\v')
+        ++endptr;
+    if (*endptr != '\0') return false;
+    *value = val;
+    return true;
+}
+
 float XByteArrayView_toFloat(const XByteArrayView* self, bool* ok)
 {
     char buf[256];
     const char* str = view_to_cstr(self, buf, sizeof(buf));
-    if (str == NULL)
-    {
-        if (ok) *ok = false;
-        return 0.0f;
-    }
-    char* endptr = NULL;
-    float val = (float)strtof(str, &endptr);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0.0f;
-    }
-    if (ok) *ok = true;
-    return val;
+    double value = 0.0;
+    bool parsed = str != NULL && xbytearrayview_parseFull(str, &value);
+    if (ok) *ok = parsed;
+    return parsed ? (float)value : 0.0f;
 }
 
 double XByteArrayView_toDouble(const XByteArrayView* self, bool* ok)
 {
     char buf[256];
     const char* str = view_to_cstr(self, buf, sizeof(buf));
-    if (str == NULL)
-    {
-        if (ok) *ok = false;
-        return 0.0;
-    }
-    char* endptr = NULL;
-    double val = strtod(str, &endptr);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0.0;
-    }
-    if (ok) *ok = true;
-    return val;
+    double value = 0.0;
+    bool parsed = str != NULL && xbytearrayview_parseFull(str, &value);
+    if (ok) *ok = parsed;
+    return parsed ? value : 0.0;
 }
 
 /* ============================== 编码检测 ============================== */

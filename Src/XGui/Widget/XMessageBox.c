@@ -75,19 +75,26 @@ static void VX_messageBox_resizeEvent(XWidget* self, XEvent* event)
     xmsg_setupButtonBox(box);
 }
 
-/* 按钮盒 accepted/rejected → 结束 exec 循环。 */
+/* R-80 根因：按钮盒 accepted/rejected 槽此前只置 m_inExec=false，
+   不发射 finished/accepted/rejected，与 Esc 路径（KeyPressEvent →
+   XDialog_reject → 真发射 finished(0)+rejected）不对称。对标
+   QDialog::done(r)：按钮点击同样经 XDialog_accept/reject 统一收口
+   （done 式：隐藏+标脏+finished+accepted/rejected），再由 done 置
+   m_inExec=false 结束 exec 循环。 */
+/* 按钮盒 accepted → QDialog::accept 式收口。 */
 static void xmsg_acceptedSlot(XObject* receiver, XVarList* args)
 {
     XMessageBox* box = (XMessageBox*)receiver;
     (void)args;
-    if (box) box->m_inExec = false;
+    if (box) XDialog_accept(&box->m_base);
 }
 
+/* 按钮盒 rejected → QDialog::reject 式收口。 */
 static void xmsg_rejectedSlot(XObject* receiver, XVarList* args)
 {
     XMessageBox* box = (XMessageBox*)receiver;
     (void)args;
-    if (box) box->m_inExec = false;
+    if (box) XDialog_reject(&box->m_base);
 }
 
 /** @brief 按钮盒 clicked → 记录 clickedButton 并发射 buttonClicked。 */
@@ -332,11 +339,17 @@ XDialogButtonBoxStandardButton XMessageBox_exec(XMessageBox* self)
     if (!self) return XDialogButtonBoxStandard_NoButton;
     parent = (XWidget*)XObject_parent((XObject*)self);
     XWidget_show((XWidget*)self);
+    /* 显示即标脏（根因同 XDialog_exec 注）：information/warning 等
+       静态便捷路径的 MessageBox 以 parent+flags=0 构造为子控件形态，
+       show 不调度重绘，exec 面板永远不上屏。 */
+    XWidget_update((XWidget*)self);
     self->m_inExec = true;
     self->m_clicked = NULL;
     while (self->m_inExec)
         XCoreApplication_processEvents(XEventLoop_AllEvents);
     XWidget_hide((XWidget*)self);
+    /* 隐藏后标脏原矩形，清除屏幕残影（同 XDialog_done 注）。 */
+    XWidget_update((XWidget*)self);
     if (self->m_clicked)
         return XDialogButtonBox_standardButton(self->m_buttonBox,
                                                self->m_clicked);
@@ -559,17 +572,13 @@ XVector* XMessageBox_buttons(const XMessageBox* self)
 int XMessageBox_standardButton(const XMessageBox* self,
                                XAbstractButton* button)
 {
-    int i;
-    int n;
-    if (!self || !button || !self->m_standards) return 0;
-    n = (int)XVector_size_base((const XContainer*)self->m_standards);
-    for (i = 0; i < n; ++i) {
-        int st = XVector_At_Base(self->m_standards, (int64_t)i, int);
-        XAbstractButton* b = (XAbstractButton*)XDialogButtonBox_button(
-            self->m_buttonBox, st);
-        if (b == button) return st;
-    }
-    return XDialogButtonBoxStandard_NoButton;
+    /* 对标 Qt QMessageBox::standardButton：标准值登记在按钮盒的
+     * m_buttons/m_standards 平行表里，直接委托反查（自定义按钮返回
+     * NoButton）。此前走自持 m_standards 向量——该向量 init 创建后
+     * 从未写入，恒为空，任何按钮都反查成 NoButton。 */
+    if (!self || !self->m_buttonBox)
+        return (int)XDialogButtonBoxStandard_NoButton;
+    return (int)XDialogButtonBox_standardButton(self->m_buttonBox, button);
 }
 
 void XMessageBox_setOptions(XMessageBox* self, int options)

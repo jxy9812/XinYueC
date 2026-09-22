@@ -567,7 +567,7 @@ int64_t XStringView_indexOf_regularExpression(const XStringView* self,
     int64_t position = hasMatch ?
             XRegularExpressionMatch_capturedStart(result, 0) : -1;
     if (match && hasMatch) XCopy(match, result);
-    XRegularExpressionMatch_delete_base(result);
+    XRegularExpressionMatch_delete_base((XClass*)result);
     return position;
 }
 
@@ -591,7 +591,7 @@ int64_t XStringView_lastIndexOf_regularExpression(const XStringView* self,
             expression, self, 0, XRegularExpression_NormalMatch,
             XRegularExpression_NoMatchOption);
     if (!iterator || !XRegularExpressionMatchIterator_isValid(iterator)) {
-        if (iterator) XRegularExpressionMatchIterator_delete_base(iterator);
+        if (iterator) XRegularExpressionMatchIterator_delete_base((XClass*)iterator);
         return -1;
     }
 
@@ -602,16 +602,16 @@ int64_t XStringView_lastIndexOf_regularExpression(const XStringView* self,
         if (!current) break;
         int64_t position = XRegularExpressionMatch_capturedStart(current, 0);
         if (position < 0 || position >= endPosition) {
-            XRegularExpressionMatch_delete_base(current);
+            XRegularExpressionMatch_delete_base((XClass*)current);
             break;
         }
-        if (last) XRegularExpressionMatch_delete_base(last);
+        if (last) XRegularExpressionMatch_delete_base((XClass*)last);
         last = current;
         resultPosition = position;
     }
     if (match && last) XCopy(match, last);
-    if (last) XRegularExpressionMatch_delete_base(last);
-    XRegularExpressionMatchIterator_delete_base(iterator);
+    if (last) XRegularExpressionMatch_delete_base((XClass*)last);
+    XRegularExpressionMatchIterator_delete_base((XClass*)iterator);
     return resultPosition;
 }
 
@@ -640,7 +640,7 @@ int64_t XStringView_count_regularExpression(const XStringView* self,
                 XRegularExpression_NoMatchOption);
         if (!match) break;
         if (!XRegularExpressionMatch_hasMatch(match)) {
-            XRegularExpressionMatch_delete_base(match);
+            XRegularExpressionMatch_delete_base((XClass*)match);
             break;
         }
         ++count;
@@ -649,7 +649,7 @@ int64_t XStringView_count_regularExpression(const XStringView* self,
                 XChar_isHighSurrogate(self->m_data[index])) {
             ++index;
         }
-        XRegularExpressionMatch_delete_base(match);
+        XRegularExpressionMatch_delete_base((XClass*)match);
     }
     return count;
 }
@@ -664,7 +664,7 @@ XStringList* XStringView_split_regularExpression(const XStringView* self,
     if (!value) return NULL;
     XStringList* result = XString_split_regularExpression(value, separator,
                                                            keepEmptyParts);
-    XString_delete_base(value);
+    XString_delete_base((XClass*)value);
     return result;
 }
 #endif
@@ -986,44 +986,45 @@ uint64_t XStringView_toULongLong(const XStringView* self, bool* ok, int base)
     return val;
 }
 
+/* Qt 6.8 QString::toDouble/toFloat 全串口径（qlocale.cpp
+ * bytearrayToDouble 同语义）：跳过首尾空白后必须整串消费——空串、
+ * 纯空白、解析失败或尾随垃圾一律 *ok=false 返回 0。此前仅查
+ * endptr==str 的前缀解析会把 "12abc" 判成功，违背自述的 Qt 等价
+ * 口径（复扫 R-77 同族 deferred）。注意 view_to_utf8 对超 256 字
+ * 节的视图静默截断（预存口径）：截断后的合法长数字仍会成功解析
+ * （值有损，与既有行为一致）；截断引入的垃圾尾则被本检查拒绝。 */
+static bool xstringview_parseFull(const char* str, double* value)
+{
+    char* endptr = NULL;
+    double val;
+    val = strtod(str, &endptr);
+    if (endptr == str) return false;
+    while (*endptr == ' ' || *endptr == '\t' || *endptr == '\n' ||
+           *endptr == '\r' || *endptr == '\f' || *endptr == '\v')
+        ++endptr;
+    if (*endptr != '\0') return false;
+    *value = val;
+    return true;
+}
+
 float XStringView_toFloat(const XStringView* self, bool* ok)
 {
     char buf[256];
     const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
-    {
-        if (ok) *ok = false;
-        return 0.0f;
-    }
-    char* endptr = NULL;
-    float val = (float)strtof(str, &endptr);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0.0f;
-    }
-    if (ok) *ok = true;
-    return val;
+    double value = 0.0;
+    bool parsed = str != NULL && xstringview_parseFull(str, &value);
+    if (ok) *ok = parsed;
+    return parsed ? (float)value : 0.0f;
 }
 
 double XStringView_toDouble(const XStringView* self, bool* ok)
 {
     char buf[256];
     const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
-    {
-        if (ok) *ok = false;
-        return 0.0;
-    }
-    char* endptr = NULL;
-    double val = strtod(str, &endptr);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0.0;
-    }
-    if (ok) *ok = true;
-    return val;
+    double value = 0.0;
+    bool parsed = str != NULL && xstringview_parseFull(str, &value);
+    if (ok) *ok = parsed;
+    return parsed ? value : 0.0;
 }
 
 #endif // XString_ON

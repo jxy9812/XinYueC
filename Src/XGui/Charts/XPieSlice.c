@@ -206,14 +206,15 @@ const char* XPieSlice_label_2(const XPieSlice* self)
 
 void XPieSlice_setValue(XPieSlice* self, double value)
 {
+    /* 根因（R-38）：此前把 init_ex 初始化体整段复制进 setter——每次改值
+     * 都把用户设置的 pen/brush/labelBrush 颜色清零、m_labelFontFamily
+     * 置 NULL（旧串不释放＝内存泄漏），外观被静默清空。对标 Qt 6.8.3
+     * QPieSlice::setValue：只更新数值并发 valueChanged，由 series 侧
+     * 基于该信号触发百分比/角度重算（本库入口 XPieSeries_updateAngles，
+     * 对标 QPieSeriesPrivate 的 sliceUpdated 处理），setter 不触碰
+     * pen/brush/labelFont 等样式状态。 */
     if (!self || self->m_value == value) return;
     self->m_value = value;
-    self->m_penWidth = 1.0;
-    self->m_penColor = 0;
-    self->m_brushColor = 0;
-    self->m_labelBrushColor = 0;
-    self->m_labelFontFamily = NULL;
-    self->m_labelFontSize = 0;
     xpieslice_emit0(self, (size_t)XPieSlice_valueChanged_signal);
 }
 

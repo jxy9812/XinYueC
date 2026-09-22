@@ -118,6 +118,7 @@ static XString* xaction_copyString(const XString* field)
 XACTION_DEFINE_TEXT_SET(Text, m_text)
 XACTION_DEFINE_TEXT_SET(IconText, m_iconText)
 XACTION_DEFINE_TEXT_SET(ToolTip, m_toolTip)
+XACTION_DEFINE_TEXT_SET(Icon, m_iconPath)
 XACTION_DEFINE_TEXT_SET(StatusTip, m_statusTip)
 XACTION_DEFINE_TEXT_SET(WhatsThis, m_whatsThis)
 
@@ -153,6 +154,15 @@ XString* XAction_toolTip(const XAction* self)
 const XString* XAction_toolTip_const(const XAction* self)
 {
     return self ? self->m_toolTip : NULL;
+}
+
+XString* XAction_icon(const XAction* self)
+{
+    return self ? xaction_copyString(self->m_iconPath) : NULL;
+}
+const XString* XAction_icon_const(const XAction* self)
+{
+    return self ? self->m_iconPath : NULL;
 }
 
 XString* XAction_statusTip(const XAction* self)
@@ -526,6 +536,10 @@ static void xaction_freeStrings(XAction* self)
     if (self->m_iconText) {
         XString_delete_base((XClass*)self->m_iconText);
         self->m_iconText = NULL;
+    }
+    if (self->m_iconPath) {
+        XString_delete_base((XClass*)self->m_iconPath);
+        self->m_iconPath = NULL;
     }
     if (self->m_toolTip) {
         XString_delete_base((XClass*)self->m_toolTip);

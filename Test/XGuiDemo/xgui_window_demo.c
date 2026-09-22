@@ -37,6 +37,7 @@
 #include "XWindow.h"
 #include "XWindowEvent.h"
 #include "xgui_demo_pages.h"
+#include "xgui_demo_apitest.h"
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #include "XGpuRenderBackend.h"
 #endif
@@ -623,7 +624,8 @@ static bool demo_performance_contains(DemoWin* self, XPoint position)
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
 /** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
  * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色，
- *          右上角保留一小块棋盘格用于验证脏区提交。 */
+ *          标题栏右端保留一小块棋盘格用于验证脏区提交（棋盘格必须避开
+ *          内容区，否则会与各页控件相互压叠）。 */
 static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
 {
     XFont painterFont;
@@ -637,7 +639,12 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
     demo_fill_rect(painter, 0, 0, w, 40, 0xff1f4e79u);      /* 标题栏基底 */
     /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
      * 不能画在根背景里）。 */
-    demo_draw_checker(painter, w - 116, 84, 2, 2, 24);      /* 右上角装饰 */
+    /* 棋盘格装饰：移入标题栏右端（占位 (w-60,8) 24x24，y∈[8,32] 落在
+     * 标题栏 [4,36] 内、右缘内缩 36px）。原位置 (w-116,84) 落在内容区，
+     * 会压住页 3 分组框上边框、页 4 "按钮盒"页签、页 5 "XHeaderView
+     * 几何"标签；新位置在标题文本右侧、导航行(y=44)之上，也远离右下角
+     * FPS 悬浮层，仍用于验证脏区提交。 */
+    demo_draw_checker(painter, w - 60, 8, 2, 2, 12);
     /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
 }
 
@@ -953,10 +960,11 @@ static void demo_input_autotest(DemoWin* self)
         XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                          XMouseButton_LeftButton, 0, pos);
         XObject_event_base((XObject*)spin, (XEvent*)&me);
-        DEMO_EXPECT(XSpinBox_value(spin) == 1, "SpinBox 上箭头点击步进到 1");
-        DEMO_EXPECT(XProgressBar_value(bar) == 1, "进度条同步到 1");
-        DEMO_EXPECT(XAbstractSlider_value((XAbstractSlider*)slider) == 1,
-                    "滑块同步到 1");
+        /* 输入页初值已统一为 30（P2 外观批次）：上箭头步进 30→31。 */
+        DEMO_EXPECT(XSpinBox_value(spin) == 31, "SpinBox 上箭头点击步进到 31");
+        DEMO_EXPECT(XProgressBar_value(bar) == 31, "进度条同步到 31");
+        DEMO_EXPECT(XAbstractSlider_value((XAbstractSlider*)slider) == 31,
+                    "滑块同步到 31");
     }
 
     /* 2. 点击滑块凹槽中点：handle 跳转约中值并回写微调框。 */
@@ -2284,6 +2292,10 @@ static DemoWin* DemoWin_create(void)
     XSpinBox_init(&self->m_spinBox, (XWidget*)&self->m_groupBox, 0);
     demo_set_widget_default_font((XWidget*)&self->m_spinBox);
     XSpinBox_setRange(&self->m_spinBox, 0, 100);
+    /* 初值三联动控件统一为 30：setValue 置于 connect 之前（对标 Qt
+       先设初值再 connect 的惯用法），初始化不触发 valueChanged 联动槽，
+       状态行保持"就绪"。此前仅进度条设 30，滑块/微调框停在 0 不同步。 */
+    XSpinBox_setValue(&self->m_spinBox, 30);
     XObject_connect_1((XObject*)&self->m_spinBox,
                       (size_t)XSpinBox_valueChanged_signal(&self->m_spinBox),
                       (XObject*)self, demo_input_spinChangedSlot,
@@ -2292,6 +2304,7 @@ static DemoWin* DemoWin_create(void)
     XSlider_init(&self->m_slider, (XWidget*)&self->m_groupBox, 0);
     demo_set_widget_default_font((XWidget*)&self->m_slider);
     XAbstractSlider_setRange((XAbstractSlider*)&self->m_slider, 0, 100);
+    XAbstractSlider_setValue((XAbstractSlider*)&self->m_slider, 30); /* 初值同步，见上 */
     XObject_connect_1((XObject*)&self->m_slider,
                       (size_t)XSlider_valueChanged_signal(&self->m_slider, 0),
                       (XObject*)self, demo_input_sliderChangedSlot,
@@ -2300,7 +2313,7 @@ static DemoWin* DemoWin_create(void)
     XProgressBar_init(&self->m_progressBar, (XWidget*)&self->m_groupBox, 0);
     demo_set_widget_default_font((XWidget*)&self->m_progressBar);
     XProgressBar_setRange(&self->m_progressBar, 0, 100);
-    XProgressBar_setValue(&self->m_progressBar, 30);
+    XProgressBar_setValue(&self->m_progressBar, 30); /* 初值 30（与滑块/微调框同步，见上） */
 
     XLabel_init(&self->m_inputStatus, (XWidget*)&self->m_pageInputs, 0);
     demo_set_widget_default_font((XWidget*)&self->m_inputStatus);
@@ -2548,6 +2561,13 @@ static DemoWin* DemoWin_create(void)
     XButtonGroup_addButton(&self->m_btnGroup, (XAbstractButton*)&self->m_bgBtn1, 1);
     XWidget_show((XWidget*)&self->m_bgBtn0);
     XWidget_show((XWidget*)&self->m_bgBtn1);
+    /* 同页签 8：6 字符标题（约 83px）超页签单元格宽，缩短为 3 字。 */
+    /* 尾段页签按 index 递增顺序插入（16 堆叠组/17 Wizard/18 Error/
+       19 表格/20 图表）：对标 QTabWidget::insertTab——index 超过当前
+       页签数时按 Qt 语义收缩为"追加"，乱序调用会使实际位次与字面
+       index 对调（原 17→19→20→18→16 调用导致 18 表格/19 Error 互换）。 */
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 16,
+                               demo_wrapTabPage(self, (XWidget*)&self->m_stackedW), "堆叠组");
 
 #if XWIZARD_ON && XLABEL_ON
     /* 页十八：XWizard 向导。 */
@@ -2575,6 +2595,16 @@ static DemoWin* DemoWin_create(void)
     XWizard_addPage(&self->m_wizard, &self->m_wizPage2);
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 17,
                                (XWidget*)&self->m_wizard, "Wizard");
+#endif
+#if XERRORMESSAGE_ON
+    /* 页十九：XErrorMessage。（置于表格之前插入，保证尾段页签按
+       16→17→18→19→20 顺序落位，见上方堆叠组页签处的说明。） */
+    XErrorMessage_init(&self->m_errMsg, (XWidget*)&self->m_tabWidget, 0);
+    XErrorMessage_showMessage(&self->m_errMsg, "Test error message");
+    XWidget_setGeometry((XWidget*)&self->m_errMsg, 10, 10, 300, 120);
+    XWidget_show((XWidget*)&self->m_errMsg);
+    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 18,
+                               demo_wrapTabPage(self, (XWidget*)&self->m_errMsg), "Error");
 #endif
 #if XTABLEWIDGET_ON
     /* 页二十：XTableWidget 表格（对标 QTableWidget 核心用法）。 */
@@ -2728,18 +2758,6 @@ static DemoWin* DemoWin_create(void)
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 20,
                                (XWidget*)&self->m_chartView, "图表");
 #endif
-#if XERRORMESSAGE_ON
-    /* 页十九：XErrorMessage。 */
-    XErrorMessage_init(&self->m_errMsg, (XWidget*)&self->m_tabWidget, 0);
-    XErrorMessage_showMessage(&self->m_errMsg, "Test error message");
-    XWidget_setGeometry((XWidget*)&self->m_errMsg, 10, 10, 300, 120);
-    XWidget_show((XWidget*)&self->m_errMsg);
-    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 18,
-                               demo_wrapTabPage(self, (XWidget*)&self->m_errMsg), "Error");
-#endif
-    /* 同页签 8：6 字符标题（约 83px）超页签单元格宽，缩短为 3 字。 */
-    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 16,
-                               demo_wrapTabPage(self, (XWidget*)&self->m_stackedW), "堆叠组");
 #endif
 
     XLabel_init(&self->m_tabStatus, (XWidget*)&self->m_pageTabs, 0);
@@ -2793,6 +2811,42 @@ static DemoWin* DemoWin_create(void)
 
 /* ==================== 主函数 ==================== */
 
+/** @brief 控件 API 全量测试调度（--apitest）：逐族运行 xgui_demo_apitest.h
+ *         契约的 9 个测试族，汇总失败数（任一失败退出码 1）。无头运行，
+ *         不创建演示窗口；族内事件经 XObject_event_base 直发。 */
+static int demo_apitest_run(XGuiApplication* app, const char* onlyFamily)
+{
+    struct {
+        const char* name;
+        int (*run)(void);
+    } const kSuites[] = {
+        { "buttons",    xapi_buttons_run },
+        { "labels",     xapi_labels_run },
+        { "input",      xapi_input_run },
+        { "text",       xapi_text_run },
+        { "views",      xapi_views_run },
+        { "containers", xapi_containers_run },
+        { "dialogs",    xapi_dialogs_run },
+        { "menus",      xapi_menus_run },
+        { "core",       xapi_core_run },
+    };
+    int total = 0;
+    int i;
+    (void)app;
+    for (i = 0; i < (int)(sizeof(kSuites) / sizeof(kSuites[0])); ++i) {
+        int failures;
+        if (onlyFamily && strcmp(kSuites[i].name, onlyFamily) != 0)
+            continue;
+        failures = kSuites[i].run();
+        XPrintf("XGuiApiTest: 套件%-12s %s（失败=%d）\n", kSuites[i].name,
+                failures == 0 ? "PASS" : "FAIL", failures);
+        total += failures;
+    }
+    XPrintf("XGuiApiTest: 总计失败=%d %s\n", total,
+            total == 0 ? "ALL PASS" : "HAS FAILURES");
+    return total == 0 ? 0 : 1;
+}
+
 int main(int argc, char* argv[])
 {
     XGuiApplication* app;
@@ -2806,6 +2860,8 @@ int main(int argc, char* argv[])
     int screenshotPage;
     int screenshotTab;
     bool autoTest;
+    bool apiTestSuite;
+    const char* apiTestFamily;
     int argi;
     int eventLoopResult;
 
@@ -2816,6 +2872,8 @@ int main(int argc, char* argv[])
     screenshotPath = NULL;
     styleOpt = NULL;
     autoTest = false;
+    apiTestSuite = false;
+    apiTestFamily = NULL;
     screenshotPage = 0;
     screenshotTab = -1;
     for (argi = 1; argi < argc; ++argi) {
@@ -2849,6 +2907,13 @@ int main(int argc, char* argv[])
              * fusion=仅 Fusion / fusion-css=Fusion+样式表（缺省，历史口径）。 */
             styleOpt = argv[argi] + 8;
         }
+        else if (strcmp(argv[argi], "--apitest") == 0 ||
+                 strncmp(argv[argi], "--apitest=", 10) == 0) {
+            apiTestSuite = true;
+            apiTestFamily = strcmp(argv[argi], "--apitest") == 0
+                                ? NULL
+                                : argv[argi] + 10;
+        }
         else if (strcmp(argv[argi], "--autotest") == 0) {
             autoTest = true;
         }
@@ -2879,6 +2944,13 @@ int main(int argc, char* argv[])
     if (!app) {
         XPrintf("XGuiWindowDemo: XGuiApplication_create_ex 失败\n");
         return 1;
+    }
+
+    /* 1.5) --apitest：控件 API 全量测试（无头，不进窗口流程）。 */
+    if (apiTestSuite) {
+        int rc = demo_apitest_run(app, apiTestFamily);
+        XGuiApplication_delete_base(app);
+        return rc;
     }
 
     /* 2) 创建演示窗口并设置标题/几何。show() 会在框架内部惰性创建平台窗口。 */

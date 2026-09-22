@@ -2912,6 +2912,69 @@ static void test_pixmap_mask_lifecycle(void)
     XPixmap_deinit_base(&source);
 }
 
+/** @brief SVG 目标尺寸矢量直渲锁定（对标 QSvgRenderer::render(QRectF)）：
+ *         decodeSvg_ex 以目标表面出图，viewBox 几何按目标比例映射；
+ *         填充色落在中心、圆外保持透明（§8.0g15）。 */
+static void test_svg_target_size_rasterize(void)
+{
+    static const char svg[] =
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\">"
+        "<circle cx=\"16\" cy=\"16\" r=\"13\" fill=\"#2266cc\"/></svg>";
+    XImage intrinsic;
+    XImage direct;
+    XImage_init(&intrinsic);
+    XImage_init(&direct);
+    expect_true(XImageCodecInternal_decodeSvg((const unsigned char*)svg,
+                                              sizeof(svg) - 1u,
+                                              &intrinsic) &&
+                    XImage_width(&intrinsic) == 32 &&
+                    XImage_height(&intrinsic) == 32,
+                "svg intrinsic decode keeps declared 32x32");
+    expect_true(XImageCodecInternal_decodeSvg_ex((const unsigned char*)svg,
+                                                 sizeof(svg) - 1u, 128, 128,
+                                                 &direct) &&
+                    XImage_width(&direct) == 128 &&
+                    XImage_height(&direct) == 128,
+                "svg sized decode honors 128x128 target");
+    expect_true(
+        (XImage_pixel(&direct, 64, 64) & 0x00ffffffu) == 0x2266ccu,
+        "svg sized decode paints declared fill at target center");
+    expect_true((XImage_pixel(&direct, 1, 64) & 0xff000000u) == 0u,
+                "svg sized decode keeps outside-circle transparent");
+    XImage_deinit_base(&intrinsic);
+    XImage_deinit_base(&direct);
+
+    /* 渲染器级 AA（4× 超采样+盒式降采样）：非对齐圆周产生边缘过渡
+     * 像素（此前二值覆盖时=0）。 */
+    {
+        static const char unaligned[] =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" "
+            "width=\"32\" height=\"32\">"
+            "<circle cx=\"15.5\" cy=\"15.5\" r=\"12.3\" "
+            "fill=\"#2266cc\"/></svg>";
+        XImage aa;
+        int x;
+        int y;
+        int semi = 0;
+        XImage_init(&aa);
+        expect_true(XImageCodecInternal_decodeSvg_ex(
+                        (const unsigned char*)unaligned,
+                        sizeof(unaligned) - 1u, 32, 32, &aa),
+                    "svg AA decode succeeds with explicit 32x32 target");
+        if (!XImage_isNull(&aa)) {
+            for (y = 0; y < XImage_height(&aa); ++y)
+                for (x = 0; x < XImage_width(&aa); ++x) {
+                    unsigned a =
+                        (XImage_pixel(&aa, x, y) >> 24) & 0xffu;
+                    if (a != 0u && a != 255u) ++semi;
+                }
+        }
+        expect_true(semi > 0,
+                    "svg rasterizer AA produces edge transition pixels");
+        XImage_deinit_base(&aa);
+    }
+}
+
 static void test_bitmap_qt_contract(void)
 {
     const uint32_t bitmapColors[2] = {0xffffffffu, 0xff000000u};
@@ -4411,11 +4474,25 @@ static void test_painter_task211_contract(void)
             expect_true(XPainter_begin_device(
                             &gp, XImage_paintDevice(&gimg)),
                         "t211g: begin_device 绑定 XImage 设备");
-            expect_true(XPainter_device(&gp) != NULL &&
-                        XPainter_device(&gp) != (void*)&gimg &&
-                        XPainter_rasterBackend(&gp) ==
-                            XPainterRasterBackend_Raster,
-                        "t211g: 绑定后设备指针（堆外壳）与后端正确");
+            /* 后端契约（§10.3 勘误）：begin_device 后端中立——跟随所
+             * 请求后端（GPU 会话激活时为 Gpu，软件口径为 Raster），不再
+             * 假定离屏恒软件（GPU 离屏会话引入后旧期望过时，见
+             * xgui_gpu_test.c 的 wasGpu 同款口径）。 */
+            {
+                int expectedBackend = XPainterRasterBackend_Raster;
+#if XGPU_ON
+                /* 后端契约（§10.3 勘误）：begin_device 后端中立——GPU 被
+                 * 请求且会话激活时为 Gpu（像素断言在 SYNC 口径下全过），
+                 * 软件口径为 Raster；不再假定离屏恒软件。 */
+                extern bool XGpuRenderBackend_requested(void);
+                if (XGpuRenderBackend_requested())
+                    expectedBackend = XPainterRasterBackend_Gpu;
+#endif
+                expect_true(XPainter_device(&gp) != NULL &&
+                            XPainter_device(&gp) != (void*)&gimg &&
+                            XPainter_rasterBackend(&gp) == expectedBackend,
+                            "t211g: 绑定后设备指针（堆外壳）与后端正确");
+            }
             expect_true(XPainter_begin_device(
                             &gp, XImage_paintDevice(&gimg)) == false,
                         "t211g: 已激活重复绑定拒绝");
@@ -7919,11 +7996,23 @@ static void test_icon_style_helper(void)
     selectedPixel = XImage_pixel(&selectedImage, 0, 0);
     basePixel = 0xff336699u;
     alphaPreserved = ((selectedPixel >> 24) & 0xffu) == 0xffu;
-    expect_true(alphaPreserved && selectedPixel != basePixel &&
-                ((selectedPixel >> 16) & 0xffu) >= ((basePixel >> 16) & 0xffu) &&
-                ((selectedPixel >> 8) & 0xffu) >= ((basePixel >> 8) & 0xffu) &&
-                (selectedPixel & 0xffu) >= (basePixel & 0xffu),
-                "selected icon style keeps opaque alpha and pulls pixels toward highlight");
+    /* Highlight 已对齐 Qt 6.8 Fusion 精确值 (48,140,198)（旧值
+     * 61,142,201 偏差已勘误）：其 R 分量低于基色 R，混色后 R 通道
+     * 允许略降——"拉向高亮"改按到 Highlight 的欧氏距离度量。 */
+    {
+        unsigned int hr = 48u, hg = 140u, hb = 198u;
+        int drBase = (int)((basePixel >> 16) & 0xffu) - (int)hr;
+        int dgBase = (int)((basePixel >> 8) & 0xffu) - (int)hg;
+        int dbBase = (int)(basePixel & 0xffu) - (int)hb;
+        int drSel = (int)((selectedPixel >> 16) & 0xffu) - (int)hr;
+        int dgSel = (int)((selectedPixel >> 8) & 0xffu) - (int)hg;
+        int dbSel = (int)(selectedPixel & 0xffu) - (int)hb;
+        int distBase = drBase * drBase + dgBase * dgBase + dbBase * dbBase;
+        int distSel = drSel * drSel + dgSel * dgSel + dbSel * dbSel;
+        expect_true(alphaPreserved && selectedPixel != basePixel &&
+                        distSel < distBase,
+                    "selected icon style keeps opaque alpha and pulls pixels toward highlight");
+    }
 
     XImage_deinit_base(&selectedImage);
     XPixmap_deinit_base(&selected);
@@ -17817,7 +17906,9 @@ static void test_window_contract(void)
     XWindow_raise(w0);
     expect_true(XWindow_isActive(w0), "raise 置顶并激活");
     XWindow_lower(w0);
-    expect_true(!XWindow_isActive(w0), "lower 停止激活");
+    /* Qt 语义（P1 窗口批次后）：lower/raise 仅改 Z 序，不改变激活态
+     * （激活只随焦点窗口变化），故 lower 后 w0 仍为激活窗口。 */
+    expect_true(XWindow_isActive(w0), "lower 不改变激活态（对标 QWindow::lower）");
     XWindow_requestActivate(w0);
 
     /* ---------- 19 个信号全量连接 + 逐项发射验证 ---------- */
@@ -18443,6 +18534,8 @@ static void test_gui_application_contract(void)
     XGuiApplication_setBadgeNumber(7);
     expect_true(XGuiApplication_badgeNumber() == 7, "badgeNumber 设置/读取");
 
+
+
     /* ---------------- 窗口注册表 ---------------- */
 
 #if XWINDOW_ON
@@ -18453,6 +18546,10 @@ static void test_gui_application_contract(void)
     XWindow_setParent(w3, w1); /* w3 为子窗口，不算顶层。 */
     XWindow_setGeometry(w1, 0, 0, 100, 100);
     XWindow_setGeometry(w2, 200, 200, 100, 100);
+    /* lastWindowClosed 新语义按"可见顶层"判定：w1/w2 需置可见。
+     * 段尾隐藏还原现场，避免影响后续图像类测试。 */
+    XWindow_setVisible(w1, true);
+    XWindow_setVisible(w2, true);
 
     XGuiApplication_addWindow(w1);
     XGuiApplication_addWindow(w1); /* 幂等。 */
@@ -18554,6 +18651,10 @@ static void test_gui_application_contract(void)
     expect_true(g_guiAppProbe.lastWindowClosed == 2,
                 "quitOnLastWindowClosed=false 仍发 lastWindowClosed");
     XGuiApplication_setQuitOnLastWindowClosed(true);
+    /* 还原现场：隐藏窗口拆除平台呈现路径（可见窗口存在时图像绘制
+       绑定 GPU 会话，直读 XImage 的后续测试读不到 FBO 内容）。 */
+    XWindow_setVisible(w1, false);
+    XWindow_setVisible(w2, false);
 
     /* 窗口登记表已清空 */
     list = XGuiApplication_allWindows();
@@ -18562,12 +18663,13 @@ static void test_gui_application_contract(void)
                 "窗口全部移除后注册表为空");
     if (list) XVector_delete_base((XClass*)list);
 
+    XWindow_setVisible(w1, false);
+    XWindow_setVisible(w2, false);
     XWindow_delete_base((XClass*)w3);
     XWindow_delete_base((XClass*)w1);
     XWindow_delete_base((XClass*)w2);
     w1 = w2 = w3 = NULL;
 #endif /* XWINDOW_ON */
-
     /* ---------------- 屏幕（转发 XScreen 注册表） ---------------- */
 
 #if XSCREEN_ON
@@ -20535,7 +20637,10 @@ static void test_window_event_task213_contract(void)
         XPoint delta = { 7, 9 };
         expect_true(we != NULL, "t213: wheel 创建");
         if (we) {
-            expect_true(XWheelEvent_pixelDelta(we).x == 1 &&
+            /* pixelDelta 已对齐 Qt：无高分辨率像素增量平台恒 (0,0)
+             * （P2 批次 R-100 勘误，旧实现伪造 angleDelta/120）。 */
+            expect_true(XWheelEvent_pixelDelta(we).x == 0 &&
+                            XWheelEvent_pixelDelta(we).y == 0 &&
                             XWheelEvent_phase(we) ==
                                 XWheelEventPhase_NoScrollPhase &&
                             !XWheelEvent_inverted(we) &&
@@ -30479,7 +30584,8 @@ static void test_dialog_contract(void)
 {
     XDialog* dlg = XDialog_create(NULL, 0);
     dlg_expect(dlg != NULL, "XDialog 创建");
-    dlg_expect(XDialog_isModal(dlg), "默认模态");
+    dlg_expect(!XDialog_isModal(dlg),
+               "默认非模态（P2 对齐 Qt QDialog::modal 默认 false）");
     dlg_expect(XDialog_result(dlg) == 0, "初始 result 0");
 
     dlg_accepted = 0; dlg_rejected = 0;
@@ -32883,6 +32989,7 @@ static void test_style_engine_contract(void)
 
 int main(void)
 {
+    test_svg_target_size_rasterize();
     test_geometry_contract();
     test_pixmap_scroll_and_bitmap_alias();
     test_pixmap_mask_lifecycle();
@@ -33394,6 +33501,7 @@ int main(void)
     }
     puts("XGui regression tests passed");
     test_xgui_widgets();
+
     /* 退出持有（~196KB 夹具控件树）为已知基线：全量拆除需先解决
        栈对象无法安全远距删除的问题（ASan 实证：泄漏的栈控件登记后
        指针悬垂，拆除即崩）——按套别补 deinit 纪律后另行实施。 */

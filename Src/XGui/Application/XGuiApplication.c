@@ -69,6 +69,7 @@
 
 #if XWIDGET_ON
 #include "XWidget.h"
+#include "XWidget_Protected.h"   /* XWidget_appFocusWidget：notify 键重定向需查应用焦点控件 */
 #endif /* XWIDGET_ON */
 
 #if XPALETTE_ON && XAPPLICATION_ON
@@ -220,6 +221,26 @@ static bool VXGuiApplication_notify(XObject* receiver, XEvent* event)
      * 两条过滤路径互不打架；空后端默认恒 false，派发行为不变。 */
     if (event && (event->type == XEVENT_TYPE_KEY_PRESS ||
                   event->type == XEVENT_TYPE_KEY_RELEASE)) {
+#if XWIDGET_ON
+        /* 对标 Qt QGuiApplicationPrivate::processKeyEvent：平台键事件
+         * 交付给应用焦点窗口（focusWindow()），而不是发起投递的原生
+         * 窗口。XGui 单原生窗口模型下，对话框/消息框是应用内 XWindow
+         * （不占原生窗口）：对话框 open() 抢焦点后，焦点控件的顶层窗
+         * 口≠原生窗口对象，若仍按原生窗口投递，活动对话框永远收不到
+         * 任何按键（真键盘路径 Esc/Enter 全部无响应——实测 demo 消息
+         * 框开箱后按 Esc/Return 均无效）。焦点控件为空或其顶层就在
+         * 原生窗口树内（与 receiver 同一对象）时保持原投递对象。 */
+        {
+            XWidget* focusWidget = XWidget_appFocusWidget();
+            if (focusWidget) {
+                XWidget* top = focusWidget->m_isWindow
+                    ? focusWidget : XWidget_topLevelWidget(focusWidget);
+                if (top && top->m_windowHandle &&
+                    (XObject*)top != receiver)
+                    receiver = (XObject*)top->m_windowHandle;
+            }
+        }
+#endif /* XWIDGET_ON */
         XGuiApplication* app = XGuiApplication_instance();
         XPlatformInputContext* inputContext =
             XGuiApplication_activeInputContext(app);
@@ -721,12 +742,24 @@ void XGuiApplication_removeWindow(XWindow* win)
     if (app->m_modalWindow == win)
         app->m_modalWindow = NULL;
 
-    /* 移除最后一个顶层窗口时发射 lastWindowClosed；若启用退出策略再请求退出。 */
+    /* 移除最后一个可见顶层窗口时发射 lastWindowClosed；若启用退出策略
+       再请求退出。根因(R-97)：此前仅在注册表完全清空时发射，不查剩余
+       窗口可见性——隐藏的顶层窗口会永久阻断信号与退出策略。对标 Qt
+       QGuiApplicationPrivate::shouldQuit：按「是否还有可见顶层」判定。 */
     if (wasTopLevel) {
         /* Do not re-enter topLevelWindows() here: all entries are borrowed,
            and callers may be in a nested destruction path. */
-        bool empty = XVector_size_base((const XContainer*)app->m_windows) == 0;
-        if (empty) {
+        bool anyVisibleTopLevel = false;
+        for (size_t i = 0; i < n; ++i) {
+            XWindow* remaining =
+                XVector_At_Base(app->m_windows, (int64_t)i, XWindow*);
+            if (remaining && XWindow_isTopLevel(remaining) &&
+                XWindow_isVisible(remaining)) {
+                anyVisibleTopLevel = true;
+                break;
+            }
+        }
+        if (!anyVisibleTopLevel) {
             XGuiApplication_lastWindowClosed_signal(app);
             if (app->m_quitOnLastWindowClosed)
                 XCoreApplication_quit();

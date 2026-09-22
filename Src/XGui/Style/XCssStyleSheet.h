@@ -129,7 +129,7 @@ typedef struct XCssSelector
 {
     XCssBasicSelector* m_basics; /**< 基础选择器链（堆；对象拥有）。 */
     int m_basicCount;            /**< 链长（>=1）。 */
-    int m_specificity;           /**< 特异度（id*100 + class*10 + element）。 */
+    int m_specificity;           /**< 特异度（逐段累加：#id=0x100、伪类/属性/.class 各 0x10、element=1；对标 Qt 6.8.3 qcssparser Selector::specificity）。 */
 } XCssSelector;
 
 /**

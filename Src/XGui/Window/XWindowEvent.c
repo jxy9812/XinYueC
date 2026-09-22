@@ -683,9 +683,13 @@ void XWheelEvent_init(XWheelEvent* event, XEventType type,
     if (angleDelta) event->m_angleDelta = *angleDelta;
     event->m_buttons = buttons;
     event->m_modifiers = modifiers;
-    /* 扩展字段默认值：像素增量按角度换算，非平滑滚轮 120 度≈1 格。 */
-    event->m_pixelDelta.x = event->m_angleDelta.x / 120;
-    event->m_pixelDelta.y = event->m_angleDelta.y / 120;
+    /* 根因(R-99)：平台无像素级（高分辨率）滚轮源时 pixelDelta 必须恒
+       (0,0)（对标 Qt：pixelDelta 仅在高精度增量平台有效，非平滑滚轮
+       上为 (0,0)，消费方以「非零才优先」判别回退 angleDelta）。此前
+       伪造为 angleDelta/120 会使「pixelDelta 优先」的惯用代码按每刻度
+       1 像素错误步进。仓库现无 pixelDelta 消费者，置 (0,0) 无回归。 */
+    event->m_pixelDelta.x = 0;
+    event->m_pixelDelta.y = 0;
     event->m_phase = XWheelEventPhase_NoScrollPhase;
     event->m_inverted = false;
     event->m_source = XWheelEventSource_NotSynthesized;
