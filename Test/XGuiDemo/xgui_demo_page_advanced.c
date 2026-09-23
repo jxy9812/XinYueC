@@ -702,6 +702,10 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         XWidget_setGeometry((XWidget*)s_adv.completerEdit, 12, 244, 220, 26);
         XLineEdit_setPlaceholderText(s_adv.completerEdit,
                                      "输入前缀（试 Ope）");
+        /* 接通补全器（对标 QLineEdit::setCompleter）：此前补全器为
+           孤儿对象（无 setCompleter 安装），键入不触发任何补全链路
+           ——安装后 XLineControl 键入即驱动前缀匹配+默认弹层。 */
+        XLineEdit_setCompleter(s_adv.completerEdit, s_adv.completer);
         XObject_connect_1((XObject*)s_adv.completerEdit,
                           (size_t)XLineEdit_textChanged_signal(NULL),
                           (XObject*)page, adv_completerTextChangedSlot,

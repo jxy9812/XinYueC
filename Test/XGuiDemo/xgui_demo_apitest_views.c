@@ -2053,6 +2053,113 @@ int xapi_views_run(void)
         hitCount = XTreeWidget_findItems(&tree, "mu", 1, hits, 8);
         XAPI_EXPECT(hitCount == 0,
                     "findItems 区分大小写");
+        /* ---- 逐列夹具（隔离实例：列 1 写入/未写入列探测） ---- */
+        {
+            XTreeWidget colTree;
+            const char* colNames[3] = { "Mu", "Epsilon", "Alpha" };
+            XTreeWidgetItem* r0;
+            XTreeWidgetItem* r1;
+            int ci;
+            XTreeWidget_init(&colTree, NULL, 0);
+            XTreeWidget_setColumnCount(&colTree, 3);
+            for (ci = 0; ci < 3; ++ci) {
+                XTreeWidgetItem* cItem =
+                    XTreeWidgetItem_create_2(colNames[ci], NULL);
+                XAPI_EXPECT(cItem != NULL, "逐列夹具条目构造");
+                XAPI_EXPECT(XTreeWidget_addTopLevelItem(&colTree, cItem),
+                            "逐列夹具条目挂树");
+            }
+            XAPI_EXPECT(XTreeWidget_topLevelItem(&colTree, 0) !=
+                            XTreeWidget_topLevelItem(&colTree, 1) &&
+                        XTreeWidget_topLevelItem(&colTree, 2) != NULL,
+                        "逐列块顶层行访问有效");
+            XTreeWidget_setTextAt_2(&colTree, 0, 1, "列1-Mu");
+            XTreeWidget_setTextAt_2(&colTree, 1, 1, "列1-Epsilon");
+            XTreeWidget_setTextAt_2(&colTree, 2, 1, "列1-Alpha");
+            XAPI_EXPECT(strcmp(XTreeWidgetItem_textAt_2(
+                                   XTreeWidget_topLevelItem(&colTree, 1), 1),
+                               "列1-Epsilon") == 0,
+                        "setTextAt_2 列 1 写入 textAt_2 往返");
+            XAPI_EXPECT(strcmp(xapi_cstr(XTreeWidgetItem_text_2(
+                                   XTreeWidget_topLevelItem(&colTree, 1))),
+                               "Epsilon") == 0,
+                        "列 1 写入不影响列 0 兼容槽");
+            XAPI_EXPECT(XTreeWidgetItem_textAt_2(
+                            XTreeWidget_topLevelItem(&colTree, 0), 2) ==
+                            NULL &&
+                        XTreeWidgetItem_textAt_2(
+                            XTreeWidget_topLevelItem(&colTree, 0), -1) ==
+                            NULL,
+                        "未写入列/负列 textAt 返回 NULL");
+            vsig_reset();
+            XTreeWidget_sortItems(&colTree, 1, 0);
+            /* 升序按列 1 键：Alpha(原行 2) Epsilon(原行 1) Mu(原行 0)
+             * ——整行随动（列 0 与列 1 同步）。 */
+            r0 = XTreeWidget_topLevelItem(&colTree, 0);
+            r1 = XTreeWidget_topLevelItem(&colTree, 1);
+            XAPI_EXPECT(strcmp(xapi_cstr(XTreeWidgetItem_text_2(r0)),
+                               "Alpha") == 0 &&
+                        strcmp(XTreeWidgetItem_textAt_2(r0, 1),
+                               "列1-Alpha") == 0 &&
+                        strcmp(xapi_cstr(XTreeWidgetItem_text_2(r1)),
+                               "Epsilon") == 0,
+                        "sortItems(1,0) 按列 1 键升序整行随动");
+            XTreeWidget_deinit_base(&colTree);
+        }
+        /* ---- 内建模型桥（§8.0g22 四期②）：行=顶层行、列=列号文本
+         *      同步；排序后模型行序经桥同步跟随。本块 sortItems(0,0)
+         *      后夹具升序，恰为下方排序段升序起点。 ---- */
+        {
+            const XAbstractItemView* bridgeView =
+                (const XAbstractItemView*)&tree.m_base;
+            XAbstractItemModel* bridge = XAbstractItemView_model(bridgeView);
+            XTreeWidgetItem* rowItem;
+            const char* cell;
+            XAPI_EXPECT(bridge != NULL, "内建模型桥已挂基类");
+            XAPI_EXPECT(bridge &&
+                        XAbstractItemModel_rowCount(bridge) ==
+                            XTreeWidget_topLevelItemCount(&tree) &&
+                        XAbstractItemModel_columnCount(bridge) ==
+                            XTreeWidget_columnCount(&tree),
+                        "模型桥维度=顶层行数×列数");
+            rowItem = XTreeWidget_topLevelItem(&tree, 0);
+            cell = bridge ? XAbstractItemModel_data_2(bridge, 0, 0) : NULL;
+            XAPI_EXPECT(cell && rowItem &&
+                        strcmp(cell, xapi_cstr(
+                                       XTreeWidgetItem_text_2(rowItem))) == 0,
+                        "模型桥首格=首条目列 0 文本");
+            XTreeWidget_sortItems(&tree, 0, 0);
+            rowItem = XTreeWidget_topLevelItem(&tree, 0);
+            cell = bridge ? XAbstractItemModel_data_2(bridge, 0, 0) : NULL;
+            XAPI_EXPECT(cell && rowItem &&
+                        strcmp(cell, xapi_cstr(
+                                       XTreeWidgetItem_text_2(rowItem))) == 0,
+                        "排序后模型桥首行仍与首条目一致");
+        }
+        /* ---- 勾选指示器（四期④：存储往返+itemChanged 发射） ---- */
+        {
+            XTreeWidgetItem* crow = XTreeWidget_topLevelItem(&tree, 1);
+            XAPI_EXPECT(crow != NULL && XTreeWidgetItem_checkState(crow) ==
+                            XItemCheckState_Unchecked,
+                        "条目默认勾选态=Unchecked");
+            XTreeWidgetItem_setCheckState(crow, XItemCheckState_Checked);
+            XAPI_EXPECT(XTreeWidgetItem_checkState(crow) ==
+                            XItemCheckState_Checked,
+                        "setCheckState(Checked) 往返");
+            vsig_reset();
+            XTreeWidgetItem_setCheckState(crow,
+                                          XItemCheckState_PartiallyChecked);
+            XAPI_EXPECT(XTreeWidgetItem_checkState(crow) ==
+                            XItemCheckState_PartiallyChecked &&
+                        g_sig.twItemChanged >= 1,
+                        "setCheckState 部分选中发射 itemChanged");
+            vsig_reset();
+            XTreeWidgetItem_setCheckState(crow,
+                                          XItemCheckState_PartiallyChecked);
+            XAPI_EXPECT(g_sig.twItemChanged == 0,
+                        "同态 setCheckState 相等短路不重发");
+            XTreeWidgetItem_setCheckState(crow, XItemCheckState_Unchecked);
+        }
         /* ---- 排序（对标 sortItems；结果写入 sortColumn） ---- */
         XTreeWidget_sortItems(&tree, 0, 0);
         XAPI_EXPECT(XTreeWidget_sortColumn(&tree) == 0 &&

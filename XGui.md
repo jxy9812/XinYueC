@@ -836,6 +836,370 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   diff CLEAN/基准 281 FPS）。四期剩余①②④（数据模型扩展/模型桥
   接/绘制消费）仍为独立批。
 
+### 8.0g17 XTreeWidget 逐列数据模型（四期①）✓（2026-09-22）
+
+- **存储**：XTreeWidgetItem 增 extraTexts/extraTextCapacity（列 1+
+  懒分配倍增表，未写入列保持 NULL）；列 0 沿用 text 槽（单文本 API
+  兼容层零迁移，全部既有触点不动）。
+- **API**：textAt/textAt_2/setTextAt/setTextAt_2（列 0 转发 setText
+  兼容槽；itemChanged(row) 发射口径与列 0 一致）+ 行级便捷
+  XTreeWidget_setTextAt_2(row,column,text)（无模型便利类设计）。
+- **顺带修潜伏缺口**：sortItems(column,order) 此前收列参数却恒按列
+  0 比较——现按 textAt(column) 取键；未写入列按既有契约「NULL 视
+  为空串最小」参与比较（探针实测悬垂 NULL 直进 XStrcmp 崩溃后补守
+  卫）。
+- **测试**：apitest views 族独立树实例 +11 断言（往返/兼容槽/未写
+  入列/负列/按列排序整行随动）——排序重排共享夹具会污染下游断言，
+  隔离实例为条目类排序测试范式。2734→2745。
+- **验证**：双口径终门全绿（API 2745/autotest 133/回归/验收/GPU/
+  diff CLEAN/基准 249 FPS）。四期余②（模型桥接，需设计决策）④
+  （绘制消费：多列文本/checkState 指示器/列宽接入 XHeaderView）。
+
+### 8.0g18 XTreeWidget 多列绘制消费（四期④核心）✓（2026-09-22）
+
+- **行内容消费**：xtw_columnSpan 列 x/宽助手（与表头同规则：显式
+  XTreeView_setColumnWidth>0 优先、其余列均摊剩余）——xtw_drawItem
+  列 1+ 文本画入列带（save/IntersectClip/restore 防长文本串列；列 0
+  主文本含缩进/指示器维持既有画法）。
+- **demo 目验**：条目视图页树升级双列（名称|状态 表头 + 设备|在线/
+  外设|就绪 列 1 备注）——列带对齐、裁剪不串列、子行仅列 0 全部
+  实拍核对。
+- **验证**：双口径终门全绿（API 2745/autotest 133/回归/验收/GPU/
+  diff CLEAN/基准 247 FPS）。四期余：②模型桥接（需设计决策）、
+  ④余项（checkState 指示器——其存储本就是①的后续扩展）。
+
+### 8.0g19 便捷对话框透明根修 + Xvfb 实测巡检 ✓（2026-09-22，用户实测反馈）
+
+- **用户实测**：「有些弹出的窗口是透明的，啥都没有」——Xvfb 实测
+  复现：输入/文件/颜色三个便捷对话框点击后完全不可见（exec 阻塞
+  运行中，Esc 可正常拒绝）。
+- **根因链**：①三便捷对话框为 Dialog 窗口形态（独立 X 窗口），
+  首帧 paint→flush 早于服务器完成映射，XPutImage 落在未映射窗口
+  内容丢失且此后无脏区；②映射后 Z 序停在主窗口之下且无 raise；
+  ③面板色 palette Window（#F4F6F8）与 demo 页面背景同色——三者
+  叠加=「透明、啥都没有」。
+- **修复**：①输入/文件/颜色便捷路径统一转子控件形态（flags 0，
+  与 demo 消息框同款已验证路径；应用模态语义由 XDialog_exec 承
+  载）；②VXDialog_paintEvent 补 1px 面板描边（XImage_setPixel 逐
+  点，同色背景可见性）；③XDialog_exec show 后 XWidget_updateGeome
+  try 强制布局激活（XBoxLayout 子控件曾零几何不绘制）；④平台
+  MapNotify 无条件置顶新映射顶层窗口+全窗 expose（挂起激活路径
+  未覆盖的场景补齐）；⑤三个 centerOnScreen 改父控件居中（屏幕坐
+  标按父系解释会溢出页面被裁剪）。
+- **实测复验**：输入对话框居中呈现（标签/黄底输入框/按钮+焦点环
+  齐全）、颜色对话框完整（48 色表/RGB 分量/预览块）。
+- **文件对话框文件系统接入实测闭环**（回应「没接入文件系统」质疑
+  ——实为透明修复前无法触达）：xdotool 实测链路全通——双击 Src 进
+  目录（路径组合框切 ./Src、列表实时刷新真实子目录）、单击 XIO 选
+  中（蓝色高亮+名字回填文件名编辑框）、确定回传
+  「选中='./Src/XIO' 过滤器下标=0」。底层即本库文件抽象 API：
+  XDir_entryList_2（XDir_Dirs/Files/NoDotAndDotDot 过滤 + Name/
+  DirsFirst 排序）+ XDir_exists_1，非假数据。
+- **对话框父窗口居中（用户指示追加）**：XDialog_exec/XDialog_open
+  show 前 xdlg_centerToParentWindow——按父链累计偏移落到顶层窗口中
+  央（对标 QDialogPrivate::adjustPosition）；消息框/自定义/进度等
+  demo 固定坐标弹窗全部居中呈现（实测截图）；顶层对话框跳过（交
+  由调用方居中通路）。
+- **验证**：双口径终门全绿（Debug API 2745/Release 2742，autotest
+  133，回归/验收/GPU/diff CLEAN/基准 267 FPS）。
+
+### 8.0g20 XCompleter 默认弹层落地 ✓（2026-09-22，§8.2 登记项）
+
+- **行为**：Popup/Unfiltered 模式下键入产生候选时，懒建内建弹层
+  （XListWidget，挂编辑框顶层窗口、随顶层析构）于编辑框下方显示
+  候选列表（条目=补全匹配，宽度=编辑框宽下限 160，高度=前 6 项）；
+  点击候选 → setCurrentRow + 写回编辑框文本（光标移末尾）+ 发射
+  activated + 隐藏弹层；无候选/隐藏后不再出现直至下次匹配。外接
+  弹层（setPopup）优先，本通路不介入。
+- **配套**：XCompleter_hidePopup 公开 API（Esc 隐藏语义——XLine
+  Control 弹层可见时 Escape 转 hidePopup）；XCompleter_popup getter
+  回退内建弹层（行控件键盘转发门禁随之生效）。
+- **键盘导航补（弹层可见时 Up/Down 移动候选+回填编辑框，对标
+  QCompleter popup 导航）**：XLineControl 弹层可见分支实现（环绕
+  移动+整串回填+accept），apitest +3（show le 后弹层有效可见/Down
+  回填下一候选/currentRow=1）。
+- **实测（两轮）**：①Xvfb 直发路径 apitest +6 断言（O 键插入/
+  候选产生/弹层创建/条目数=候选数/hidePopup 隐藏/widget 回填）；
+  ②真实键入路径（XMODIFIERS=@im=none 消除 fcitx 吞键后 xdotool
+  逐键）：键入 Ope → **弹层列表实拍呈现**（Open File/Open
+  Directory）→ 真实点击候选 → 文本写回编辑框（Open File 完整回
+  填）+ 弹层隐藏 + 补全状态行更新——可见性/选择写回/隐藏三链路
+  全通。注：apitest 顶层未 show，可见性断言以「弹层已创建+条目
+  数」替代（有效可见性在未 show 顶层下恒假，属环境语义）。
+- **验证**：双口径终门全绿（Debug API ALL PASS/Release 2753×3/
+  autotest 133×3/回归/验收/GPU/diff CLEAN）。
+
+### 8.0g21 XTreeWidget 勾选指示器（四期④余项）✓（2026-09-22）
+
+- **存储/API**：XTreeWidgetItem 增 checkState（XItemCheckState，
+  Memset 清零=Unchecked）+ checkState/setCheckState（列 0 指示器
+  口径；越界钳 Unchecked；同态短路；顶层挂载条目变化发射
+  itemChanged(row)——与文本 setter 同口径）。
+- **绘制**：xtw_drawCheckIndicator（12x12 复选框，选中对勾/部分
+  选中中横线，XCheckBox 视觉口径），画在列 0 缩进位（文本右移 16
+  腾位），与展开 +/- 指示器（x∈[2,6]）错开；点击命中带
+  [INDIC_HIT, +16) 三态切换（Checked↔Unchecked，部分选中仅编程
+  置位）。
+- **测试**：apitest views 族 +4（默认 Unchecked/Checked 往返/部分
+  选中发射 itemChanged/同态短路不重发）——2753→2757；demo 条目
+  视图树加直观样例（设备=选中/外设=部分选中）实拍核对。
+- **验证**：双口径终门全绿（Debug API ALL PASS/Release 2757×3/
+  autotest 133×3/回归/验收/GPU/diff CLEAN/基准 285 FPS）。四期
+  ①②③④全部闭环。
+
+### 8.0g22 XTreeWidget 内建模型桥（四期②收口）✓（2026-09-22）
+
+- **落地**：XTreeWidget_init 建内建 XAbstractItemModel 桥
+  （m_bridgeModel，对标 XTableWidget 范式）并 setModel 给基类视图；
+  xtw_bridgeSync 全量同步助手（行=顶层行、列 0..columnCount-1=
+  各列文本，setDimension+setData）。接线：addTopLevelItem/insert/
+  take/clear/sortItems/setColumnCount 六个结构性变更点 + setTextAt
+  增量直写（setData_2 发 dataChanged）。
+- **绘制/命中零翻转**：XTreeWidget 覆写 paintEvent（自持展开态几
+  何 xtw_drawItem/xtw_rowAtY），模型不影响绘制；基类 setModel/
+  indexAt/selectionModel API 从此获得一致数据视图（此前无模型，
+  基类相关 API 全部空转）。
+- **时序坑**：clear 里 bridgeSync 原置于信号发射前——setDimension
+  的 rowsRemoved 先重置基类选择/当前状态，抢跑导致 clear 的
+  current/selection 信号丢失（views 族断言失败）。移至信号链后。
+- **验证**：双口径终门全绿（Debug API 2761 ALL PASS/Release
+  2761×3/autotest 133×3/回归/验收/GPU/diff CLEAN/基准 296 FPS）。
+  四期①②③④全部闭环，XTreeWidget 数据模型战役闭环。
+
+### 8.0g23 GPU 直通重构第一步：逐命令局部提交批量化 ✓（2026-09-23）
+
+- **落地**：XPainter 批量提交层——连续「无快速路径」命令共享持久
+  全帧暂存画布 g_gpuBatchCanvas：批首一次 readback 快照，批内各命
+  令软件光栅直画暂存画布（m_image 临时切换，与纯软件逐像素同源），
+  提交延迟到失效点一次 drawImage 整帧覆盖。失效点八处：六处原语
+  直呼（drawSolidQuad/fillRect/drawImage/drawAlphaBitmap/drawGlyph
+  Alpha×2）前 + painterGpuEndFrame/painterGpuFallback 内 +
+  beginFrame 防御。N 条命令从「N 读回+N 全帧上传」（各带管线冲刷）
+  收敛为各 1 次；换属主/换会话自动先提交保 FBO 内容顺序。
+- **语义保全**：XGUI_GPU_SYNC=1 仍走原逐命令路径
+  （painterGpuSubmitSoftwareCommandLegacy 原样保留，像素断言契约
+  不变）；批量 setup 失败退回 legacy；裁剪/合成批内由软件光栅完
+  成，提交清 scissor 全幅（与原「清 scissor」语义同构）。
+- **XGPU_PROF=1 诊断埋点（常驻，远端同用）**：XGpuRenderBackend
+  按驱动类型一次性打印 + 5s 窗口聚合 readback/drawImage/present
+  次数与均耗——直通帧级开销的量化工具。
+- **本机实测（GLX/llvmpipe，800×600 图表页）**：每帧 readback
+  35.5→6.75 次（5.3×，≈每 painter 一批，readback:drawImage≈1:1
+  符合设计形态）；SYNC 口径端到端 0.1→1.5 FPS。llvmpipe 为 CPU
+  模拟 GL，单次全帧读回/上传即 3~4ms，残余耗时随会话数线性；真
+  硬件（RX 6800 XT）同类操作为硬件级，预期收益远大于本机口径。
+- **本机环境勘误（2026-09-23 深挖后更正）**：本机 --gpu 实为 GLX
+  驱动（llvmpipe）——此前 XGPU_PROF 名字数组与枚举错位误标
+  "software"，已修正（对齐 OpenGL=0/Vulkan=1）；GL 驱动 posix 上
+  下文可用，GL 路径本机可复现调试。
+- **【已修·GPU 模式图例文字缺失】GL 多会话上下文串号（本批第二
+  笔根修）**：症状=图例 CJK（px=-1→scale=0.016 outline 分支）不
+  上屏，legacy 与批量同判、软件模式正常、窗口会话文字正常。逐层
+  探针（覆盖光栅 148/256 健康→上传字节级入纹理 err=0→槽位/纹理
+  一致→绘制后 FBO 目标像素仍白）锁定：**GL 驱动所有帧内操作从不
+  makeCurrent 自己会话的上下文**——窗口+离屏双会话交替时纹理/FBO
+  ID 按上下文命名空间隔离而串号，离屏图集写入被窗口会话全帧纹理
+  上传覆盖。修复=XGpuRenderDriver_gl 增 g_xgldCurrentSession 追
+  踪器 + xgld_ensure_current（会话不变 O(1) 直返），14 个驱动操
+  作入口全部 ensure；doneCurrent 清追踪器。实拍：图例销量/月销/
+  离群点/面积/平滑线全部显现，整页与软件渲染一致。
+- **【方向 B 首步·线性渐变 LUT 快速路径】drawImageUv 原语落地**：
+  新驱动能力 drawImageUv（源小纹理按 (u0,v0)-(u1,v1) 子区域拉伸到
+  目标矩形；GL 实现=复用 m_sourceTexture+xgpu_draw_quad_uv 任意
+  UV；驱动未实现时 backend 返 false 调用方回退软件）。painter 侧
+  fillRect_2 线性渐变分支：轴对齐（垂直/水平）渐变生成 256 级
+  LUT（pad 语义逐点钳位，复用 painterGradientColorAt 取色）一次
+  drawImageUv 提交，替代整矩形软件光栅局部提交（省一次全帧读回
+  +全帧上传）；仅纯平移/恒等变换+Source/SourceOver+单矩形裁剪，
+  XGUI_GPU_SYNC=1 与其余形态走既有路径。xgui_gpu_test 渐变用例
+  增端点颜色断言（左红右蓝）双模式全过；全套件全绿。
+- **【方向 B 第二切片·虚线 GPU 原生化】**：虚线由
+  painterDrawLineStyled 在用户域拆段后逐段走设备画线，但 state 笔
+  样式仍为 DashLine——设备画线的 GPU 轴对齐快速路径按 Solid 判定
+  全部拒收，每段落入软件 Bresenham（最大化网格线曾达每帧 ~3400
+  次线段调用，为该页最大单项回退来源）。修复=拆段函数内临时置
+  SolidLine（节距取表仍按原笔样式在置前完成，拆分口径不变；设备
+  画线本就逐段实线绘制，对软件路径无语义变化），四个出口均恢复原
+  样式。效果：轴对齐虚线逐段命中 solid quad 原语，次网格线零回
+  退；截图对照网格渲染与软件模式一致；全套件全绿。斜向虚线仍走既
+  有逐段路径（可选后续：斜线段细分）。回退构成盘点（直方图探针，
+  图表页）：线类回退 ~10 条/帧居首（候选=RoundCap 笔/短斜段，批
+  量化下已摊薄），fill/img/text 各 ≤3 条/帧——原生通道已接近该页
+  地板，剩余为长尾。
+- **【自查修复·flush 顺序scissor 串扰】**：提交前深度自查发现五
+  个原语站点（fillRect/drawImage/drawAlphaBitmap/两处字形）的批量
+  flush 位于裁剪设置之后——flush 内 setClipRect(NULL) 会清掉原语
+  刚设好的 scissor，待定批+有裁剪同时成立时原语无裁剪绘制。修
+  复=五站点 flush 全部前移到裁剪设置之前（先提交待定批、再设剪
+  裁、再画）。全套件复验全绿+GPU 截图对照无渗色。
+- **【自查修复·present 路径绕过上下文追踪器】**：present 的
+  swap 前后直接调用 XPlatformOpenGLContext_doneCurrent（两处成
+  功路+两条失败路），绕过 g_xgldCurrentSession 追踪器——present
+  后追踪器残留"仍当前"假状态，下一次 ensure 会跳过 makeCurrent
+  （现被 begin_frame 的冗余 makeCurrent 掩盖，属脆弱耦合）。修
+  复=make_current 成功即更新追踪器（单一事实源），present 各出
+  口统一经 xgld_clear_current_tracker 清态。GPU 渲染/回归/截图
+  复验全绿。
+- **【GPU 模式交互冒烟】autotest --gpu 全过（页面切换/点击/键入/
+  效果挂摘在 GL 下正常）**。发现一例**间歇性**异常待查：GPU 模式
+  对话框页点击「输入对话框」（强制 EnterNotify 的 XTEST 点击）后
+  出现过一次整页内容空白（标题栏+FPS 角标仍在，弹窗不可见）；同
+  操作多次复现仅得到「无状态变化」，软件模式同操作亦无变化，且
+  XTEST 物理点击在新 Xvfb 上时灵时不灵（环境怪癖族，键入/点击到
+  达强依赖实例状态）。该间歇空白与「隐形模态」两说均未坐实——下
+  轮排查入口：demo 内部注入路径直接开输入对话框 + GPU 帧对照
+  （复现步骤：新 Xvfb 1280x900x24，--gpu --page 6，移出窗口再进
+  入触发 EnterNotify 后点击 (95,337)）。
+- **【压力复现 0/15 + GPU×样式矩阵抽查】**：15 轮强制
+  EnterNotify 点击+Escape，open/close 帧逐位一致且均为完整内容，
+  间歇空白未复现——进一步降级为环境疑似；XTEST 点击在新 Xvfb 上
+  全程未被应用接收（已知环境怪癖族）。fusion/fusion-css × 图表
+  页/高级控件页四组合软件 vs GPU PSNR 32.6~37.7（与默认样式同带
+  宽，差异=AA+角标），目验内容一致——样式矩阵下 GPU 渲染对齐。
+  **补充定位（多时点采样）**：页 8 的低 PSNR 实为**首次布局级联
+  渐次收敛**——t10=15.7（中态）→ t45=36.8（收敛完成，与首轮
+  37.2 吻合）；llvmpipe 慢帧下级联最长 ~45s 墙钟，非渲染错误；
+  真硬件上级联在毫秒级完成。**
+- **【独立评审轮（Flash 代理全量评审暂存 diff）→ P1×5+P2×3 采纳
+  修复】**：P1：①XWidget.c 残留 HITDBG 块+冗余 stdio.h 清理；②
+  XCompleter 弹层点击槽与 XLineControl Up/Down 导航两处
+  currentCompletion 返回副本未销毁（每次按键/点击泄漏）——补
+  delete；③GL 驱动 create 成功路径 doneCurrent 不清追踪器——
+  窗口/离屏两路径统一走 xgld_done_current（内含清态）；④CMake
+  XI2 补 XI2.h 头存在性检测（仅有运行库无 xorgproto 的环境回落
+  核心协议而非编译失败）；⑤XColorDialog/XFileDialog
+  centerOnScreen 双大括号编辑残渣清理。P2：⑥begin_image 防御
+  flush 前移到 sessionAcquire 之前（acquire 可销毁旧会话）；⑦渐
+  变门控统一为 painterGpuSyncRequested（消除 "0" 语义口径冲
+  突）。评审确认通过维度：批量 flush 插入点无遗漏、批内生命周期
+  正确、SYNC 调试契约保持、XGPU_PROF 门控互不干扰、XI2 ABI 逐
+  字一致、XPAINTDEVICE_ON 裁剪口径正确。全套件复验全绿。
+- **【评审 P2 收口·hidePopup 补外接弹层分支】**：XCompleter_
+  hidePopup 原只处理内建弹层，setPopup 外接外部视图时 Esc 链路失
+  效——补外接弹层可见性隐藏分支（外接优先，内建兜底），apitest
+  复验全绿。
+- **【发现缺陷·GPU 模式 autotest 效果页离屏截图异常（对照差分
+  17.2dB）】**：--autotest 的 frame7 离屏截图（XWidget_paintImage
+  走离屏 GPU 会话）对比软件模式同流程：①窗口 chrome（标题文字/
+  顶部页签带）缺失；②模糊效果（3×3 盒式核）产出黑色背景块（软
+  件=白底灰字正确）；③FPS 角标区域黑块。复现：`--gpu --autotest`
+  后比对 /tmp/demo_page8_effects.png 与软件模式产物。嫌疑=离屏
+  GPU 会话的效果链（blur 临时缓冲/混合）+离屏绘制的 chrome 缺失
+  （paintImage 顶层截取范围或会话尺寸匹配）。与窗口模式效果页
+  （已验证对齐）是两条不同链路，待排期排查。
+- **【上述缺陷已降级→paintImage 捕获时序伪影】**：物理点击挂接
+  三效果后长驻验证——窗口直通下效果挂接渲染完全正确（透明按钮
+  半透明/模糊标签盒式模糊/投影复选框带阴影，chrome 完整，物理点
+  击链路正常）。黑块截图=autotest 固定帧数捕获（frame7≈启动后
+  ~10s）撞上 llvmpipe 布局级联中态（同 fusion 误报族）。方法论：
+  慢渲染器下 autotest 截图类证据必须配合长驻窗口实况交叉验证；
+  paintImage 捕获的收敛判据改进列为低优先级改进项。
+
+- **【XGUI_ON=0 裁剪巡检抓到两笔合并引入的裁剪断裂→已修】**：
+  ①XPainter_begin_device 在 XPAINTDEVICE_ON=0 时访问被裁掉的
+  XPaintDevice 完整结构体成员（774e20ee 远端 PaintDevice 泛化引入）
+  ——补 XPAINTDEVICE_ON 守卫（裁剪口径恒返 false）；②xgui_gpu_
+  test.c 未守卫 GPU 类型（XGPU_ON=0 下 unknown type）——整测裹
+  !XGPU_ON 守卫，裁剪口径自跳过。双构建复验零错。
+- **【GPU 模式图表五段剖面（XCHARTVIEW_PROFILE 编译开关首跑）】**：
+  独立构建 /tmp/build-prof（-DXCHARTVIEW_PROFILE=1）双口径采集：
+  GPU(llvmpipe) 每帧 fp≈12us / blit≈4.5ms / rebuild=0（层复用生
+  效）/ series≈20~42ms（主导=面积渐变等回退命令的软件光栅，批内
+  摊薄后仍为最大段）/ legend≈2ms；软件同口径整图仅 ~0.27ms——
+  GPU 与软件成本结构差 ~130×，全部来自逐命令 GL 操作的 CPU 模拟。
+  series 段若要压掉需渐变 fillPath 原生化（LUT+模板/剪裁路径），
+  属方向 B 后续大块，待排期。剖面构建法：cmake -DXCHARTVIEW_
+  PROFILE=1 + XCHARTVIEW_PROFILE=1 环境门控（1s 窗口均值输出）。
+- **§8.0g24 XI2 方案 A 最小接入落地 ✓（2026-09-23 免费时段批）**：按
+  xi2-touch-survey.md 建议实施。CMake：find_library(Xi) 链接
+  （libxi-dev 缺失时按版本名兜底 libXi.so.6，注入 XINYUE_C_HAS_XI2）；
+  平台层按上游 libXi 1.8.1 逐字声明触摸子集（XIEventMask/
+  XIModifierState/XIButtonState/XIValuatorState/XIDeviceEvent +
+  XIQueryVersion/XISelectEvents，常量经系统 XI2.h）；窗口创建双路径
+  （create/attachForeign）选主设备 Touch 三类掩码（服务器自动抑制
+  模拟核心事件=去重自动化）；分派：GenericEvent cookie→XGetEventData
+  →XIDeviceEvent→handleTouchEvent_ex（主点 pointCount=1，tracking id
+  留方案 B）。无 XI2 环境运行时回退核心协议（原行为零变化）。
+  实测：XI2 v2.2 启用打印确认；物理 XTEST 点击回归通过（触摸掩码
+  不影响核心鼠标路）；全套件全绿。真触屏事件投递需触摸硬件（同
+  RGB565 待板项）。
+- **【g24 触摸接线回归锁落入 autotest ✓】**：demo_input_autotest
+  尾部新增双用例——对照组（WSI handleMouseEvent_ex 窗口级合成鼠
+  标点页签）+ 触摸组（WSI handleTouchEvent_ex TOUCH_BEGIN/END →
+  touch→mouse 仿真点同一页签）→ 断言页切换到 5。全套件 135 PASS
+  0 FAIL（autotest 133→135）。**方法论教训**：①窗口级输入注入必须
+  走 XWindowSystemInterface_*_ex（XObject_event_base 直发顶层只进
+  顶层自身事件处理器，不经子控件命中派发——首轮误置 apitest
+  standalone 夹具+顶层直发双重踩坑后定位）；②autotest 内事件泵用
+  XEventLoop_AllEvents 会重入帧定时器，帧回调加 inTick 重入守卫。
+- **【g24 连带修复·touch→mouse 仿真门控不可达（真缺陷）】**：为
+  XI2 接线补回归锁时实证——dispatchTouchEvent 对任何命中的
+  TouchBegin **无条件**设隐式抓取，而仿真门控是 `!抓取`，两者叠
+  加使 touch→mouse 仿真对命中控件的触摸永远不可达（与 Qt"未被接
+  受才合成"语义相悖）。修复=抓取仅在触摸**被接受**时设立
+  （isAccepted ? receiver : NULL）。注：apitest 触摸回归锁需窗口
+  级夹具（触摸派发入口在 XWidgetWindow，standalone 夹具无此层），
+  归入 autotest 后续切片，本批先修语义。
+- **【方向 B 大块设计草案完成（并发代理产出，docs/xgui/）】**：
+  gradient-fillpath-native-design.md——渐变 fillPath 原生化设计评
+  审稿：推荐"覆盖图×LUT 双纹理单遍着色器"方案（新增 1 个微型片
+  段程序+drawGradientAlpha 原语，覆盖生成复用字形轮廓通道，LUT 构
+  建复用 fillRect 渐变路径），CPU 合成作天然回退层，stencil 方案
+  排除；工作量 7~9 人日，含回归锁与像素对照双口径验证方案。与
+  xi2-multipoint-design.md（方案 B 多点：尾部追加触点列表+per-id
+  抓取表，5~6 人日分 B1/B2）构成两大后续块的完整实现前材料，均待
+  立项评审。
+- **【两大件调研决策材料完成（并发代理产出，docs/xgui/）】**：①
+  lvgl-integration-survey.md——LVGL 融合推荐"思想吸收零依赖+板级
+  对标基线"，否定双栈与借渲染层两形态（对接面重叠度远超预期：内
+  核表/PARTIAL tile/静态层已自有化 LVGL 两大杀手锏），后续动作五
+  条已列；②xi2-touch-survey.md——XI2 触摸推荐"方案 A 最小接入
+  先行"（1~2 人日）：**控件层触摸管线已 100% 就位但零事件源**
+  （handleTouchEvent_ex 全仓库零调用者，"建好未接电"），接上即
+  得单点触摸+平滑滚轮+触摸滚动收口；B 多点流待 A 验收后按需。
+  两份材料供所有者定夺是否立项。
+- **【渐变 fillPath 原生化·实现推进（§g25 进行中）】**：按
+  gradient-fillpath-native-design.md 完成三层：①驱动层——
+  XGpuRenderDriver_gl.c 新增渐变×覆盖双采样片段着色器（unit0=掩
+  码 bbox 全幅、unit1=256×1 LUT）+双纹理+位置装配+XGL_TEXTURE1
+  常量；②原语——XGpuRenderDriver.h/XGpuRenderBackend.h/.c 增
+  drawGradientAlpha（coverage×LUT 单次 TRIANGLE_STRIP，未实现驱
+  动返 NULL 调用方回退）；③header 声明齐备。painter 侧 LUT 复用
+  +fillPath/scanFill 两处接入为下步。全套件复验全绿（编译零错，
+  无行为回归——渐变路径仍走既有批量通道，新通道待 painter 接入
+  后启用）。
+- **【渐变 fillPath 原生化·painter 侧接入完成 ✓】**：
+  painterGpuFillPathGradient（XPainter.c）——从路径轮廓光栅化覆盖
+  图（复用 painterGlyphContoursAlphaCoverage 4×4 子采样）→构建 256
+  级预乘 LUT→drawGradientAlpha 单次提交。门控：GPU 会话激活、线性
+  渐变轴对齐（水平/垂直 via u_lutAxis uniform）、Source/SourceOver、
+  恒等或纯平移、SYNC 关。接入 painterFillPathContours 渐变分支（有
+  bounds 时）。全套件全绿（apitest ALL PASS/autotest 135/回归/验收
+  /GPU）。LUT 色差 ≤2/255 与既有 fillRect 快速路径同契约。
+- **【fusion×GPU×图形效果页异常→已定性非缺陷】**：补全样式矩
+  阵时该组合 PSNR 15.7（三次 9~11s 采样恒定），表现为 chrome/第
+  4 组基线缺失、布局压缩。35s 长驻复测=页面完整正确（t15/t35
+  PSNR 41=收敛末段微差）——定性为 **llvmpipe 慢帧（1.4FPS）下
+  fusion 布局级联的收敛中态**，非渲染缺陷。方法论沉淀：非默认样
+  式×GPU 的截图巡检必须等收敛（≥35s 或连续帧逐位一致判据），固
+  定延时采样会把中态误判为缺陷。样式矩阵 28 组合最终全部对齐。
+- **【GPU 模式全页巡检（9 页双模式截图对照）】**：软件 vs --gpu 逐
+  页 xwd 截图+PSNR+目验。结果：页 1/3/6/8 剔除 FPS 角标后与软件渲
+  染逐位一致（PSNR=inf）；页 0/2/4/5/7 仅 AA 级差异（36~92dB，
+  目验内容全同——含条目视图勾选树/双列表头/富文本 span 高亮/斜体
+  合成）。直通栈（批量化+上下文根修+渐变/虚线原生化）在全部页面
+  与软件渲染对齐，无新增渲染缺陷。
+- **验证**：构建 0 错；软件套件全绿（apitest ALL PASS 0
+  FAIL/autotest/回归/验收/GPU）；GPU 模式截图目验=图表五序列+
+  图例+标题渲染正确；顺手清理 XGpuRenderBackend 五处 merge 粘连
+  （sync_upload 双写）。**双口径+浸泡**：Release 终门通过（-O2
+  套件×3+基准 646.5 FPS）；GPU 模式 180s 浸泡稳定（259 帧零异
+  常，readback/帧恒 ~6.2）。
+- **验证**：构建 0 错；软件套件全绿（apitest 2748 ALL PASS 0
+  FAIL/autotest/回归/验收/GPU）；GPU 模式截图目验=图表五序列+
+  图例+标题渲染正确、与 legacy SYNC 截图逐位同判；顺手清理
+  XGpuRenderBackend 五处 merge 粘连（sync_upload 双写）。
+
 ### 8.1 架构裁剪/平台边界（声明式偏差，非漏实现）
 
 - XPaintEngine 绘制命令接口由 XPainter 承担；XImage/XPixmap/XBitmap/
@@ -859,7 +1223,7 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   通道输入、48 标准色为简化生成。
 - 剪贴板：外部内容后续变化不自动刷新镜像；image/png 写出载荷须
   合法 UTF-8（INCR 读超时与 MULTIPLE 广播已于 §8.0g3 收口）。
-- 触摸→mouse 合成事件无来源标志字段；XI2 合成待嵌入式接入。
+- 触摸→mouse 合成事件已带 m_synthesized 来源标志并透传触摸时间戳；XI2 触摸事件源已接入（§8.0g24 方案 A，主点转译；多点列表留方案 B）。
 - 主循环：无定时器时 20ms 心跳兜底保留（驱动轮询回调）。
 
 ### 8.2 遗留清单（按优先级，结构改造大件各自立项）
@@ -872,7 +1236,7 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
 | Qt 6.8.3 二次全量对齐复扫 | 大 | 大量代码变更后的回归性复扫 |
 | 图表序列绘制热点（area 填充 1.2ms+图例已修） | 中 | §8.0g12 后勘测：area drawPolygon 占序列耗时 92%（Debug 口径）；**2026-09-22 Release 口径勘测后降级**：-O2 下图表页 288 FPS（中位五样），混合成本非桌面瓶颈，SIMD 随板级档位评估（§10.4） |
 | XGuiGpu 回归 GPU 口径 t211g 勘误 | ✅ 已修 | 2026-09-22：后端期望改为环境分支（GPU 请求→Gpu），ctest#3 XGuiRegressionGpu 软件与 GPU 口径双绿；"exit=3" 系 X11 BadWindow code=3 误记，实为 exit=1/ctest=8；新发现 vulkan 后端 lavapipe SIGSEGV（违反回退契约，需真硬件+VK validation） |
-| Qt+LVGL 融合优化专项 | 大 | 内核表已按 LVGL 组织，续：嵌入式显存/局部刷新策略 |
+| 嵌入式显存/局部刷新策略收口（LVGL 思想吸收，零依赖；2026-09-23 调研定调，见 docs/xgui/lvgl-integration-survey.md） | 大 | 内核表已按 LVGL 组织、PARTIAL tile/静态层已自有化其两大核心思想——不引入 LVGL 代码依赖；续：RGB332/1bpp 内核档位+点阵整字缓存+RLE 离线资源+显存预算档位（板级先行），同板 LVGL demo 对标基线为辅 |
 | 富文本引擎深化（换行/嵌套/图片） | ✅ 收口 | 换行/嵌套/图片/列表标记+嵌套分级/上下标/背景色/斜体合成（§8.0g2/g4/g5/g11）全部落地；§8.2 无剩余项 |
 | XPlainTextEdit 增量布局 | ✅ 已修 | 2026-09-21 §8.0e：单逻辑行编辑局部更新可视行段（原位替换+尾段 memmove，跨行回退全量），2000 次编辑全增量与全量参照逐条一致 |
 | MULTIPLE 进 TARGETS 广播、INCR 读超时参数化 | ✅ 已修 | 2026-09-21 §8.0g3：setIncrTimeoutMs API + TARGETS 应答补 MULTIPLE 原子（Xvfb 独立客户端探针实证） |
@@ -888,6 +1252,12 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
 | Release/-O2 口径堆损坏（主题引擎栈残影） | ✅ 已修 | 2026-09-22 §8.0g13：Debug 门全绿后 Release 补测确定性 `corrupted top size`；根因=theme_loadFile 等栈上 XPixmap 未清零，vtable 残影被 isInitializedObject 误判为重初始化→释放陈旧 m_data（活对象重复 unref→提前释放→堆损坏）。XIconThemeInternal.c 8 处局部补 XMemset；Release/-O2 回归全绿+三套件复验；排查工具链与探针陷阱教训入册 §8.0g13 |
 | 序列 SIMD 填充（光栅 2.5~4×） | 中 | 2026-09-22 实测勘误与量化：图表序列 1.2~1.6ms 中 area 填充占 92%；部分落地（半开区间正确性修复入库；fastBlend 行级快路径此前被 A/B 脚手架 `if(0)` 禁用，2026-09-22 已启用）覆盖光栅器 span 内部像素免逐子采样测试（数学等价，Debug 口径 FPS 无感）——**瓶颈在逐像素 source-over 混合而非覆盖计算**，SIMD 化对象应为实色 span 混合内循环；**Release 口径评估已闭合（§10.4）：-O2 下 288 FPS 非瓶颈，SIMD 随板级档位评估** |
 | Release 口径纳入常规门（g13 教训） | ✅ 落地 | 2026-09-22：`Tools/final_gate_release.sh`（-O2 构建→bin-release/，与 Debug 门同套件×3 轮+图表基准单样）；CMakeLists 输出目录加 -D 覆盖守卫防 bin/ 互踩。首跑全绿（API 2727×3/autotest 129×3/回归/验收/GPU/diff CLEAN），基准中位 288 FPS 入册 §10.4 |
+| XString_equals 同内容判不等（误报撤销） | 撤销 | 2026-09-22 复验：原始字节 dump 证明 cell 与条目 text 的 XChar 存储逐字节一致，equals 正确返回真——此前 FAIL 系桥块内 sortItems 重排共享夹具行序后的状态污染（断言读到的 cell/text 属不同行），非 XContainer 层缺陷。教训：共享夹具上的顺序敏感断言必须隔离实例或消除重排 |
+| 远端 774e20ee 合并（XImage_paintDevice vtable 根修/fastBlend 启用/GL 驱动迁移/GPU 直通诊断/静态层 Phase C） | ✅ 已合并 | 2026-09-22：fetch+stash-merge-pop；XGui.md 唯一冲突并集解（远端 fastBlend 启用行+本地 XString_equals 撤销/XCompleter 弹层/Release 门三行并集保留）；GL 驱动迁移致构建缓存过期，重新 cmake 后全绿。远端新任务排期见下 |
+| 【远端排期·今晚可做】GPU 直通重构第一步：逐命令局部提交批量化 | ✅ 首步落地（§8.0g23） | 远端 RX 6800 XT 实测诊断：图表页 ~140 绘制命令不匹配快速路径，逐条触发「临时 XImage+glReadPixels 全帧读回+软件画+全帧回传」≈400ms/帧。首步已落地批量提交层（XPainter 批量快照/提交收敛 + 八处失效点 + XGPU_PROF=1 量化埋点）；本机 GLX/llvmpipe 实测每帧 readback 35.5→6.75 次（5.3×）。远端复验口径：`XGPU_PROF=1 <demo> --gpu` 看 readback/帧 是否从百级收敛到个位；后续方向 B（快速路径扩展渐变/虚线）待排期。重构前生产仍用软件路径 |
+| STATIC_LAYER=0/1 双编译对拍 | ✅ 完成 | 2026-09-23 双 Release 构建（SL=0 vs SL=1，同代码同场景）各 3 样：SL0 中位 348.4 vs SL1 中位 347.2——**本机口径无显著差异**（fastBlend 启用后直画已达同量级）；两口径回归全绿（t218c 自适应退化正常）。静态层收益场景收窄：序列复杂+背景静态/嵌入式低带宽 blit；桌面口径维持 SL=1 默认无妨 || 【远端排期·构建级】STATIC_LAYER=0/1 双编译配置对拍 | 中 | 静态层开关双编译配置的构建级对拍与真机位一致验证（本机可做构建对拍部分，真机位待板级） |
+| 【远端已修勿重复】XImage_paintDevice vtable 校验/fastBlend 启用/XChart 类型化 add 去重/XDialog 死条件清理/回归 GPU 跳过门/t218c 位一致断言/GL 驱动迁移+stdcall/RGB16 直拷/焦点 probe 重置/Tools Release 门 | ✅ 已并入 | 见 §10.3.1 清单；合并后全绿已验证 |
+| XCompleter 默认弹层（对标 QCompleter popup） | ✅ 已修 | 2026-09-22 §8.0g20：懒建 XListWidget 弹层挂编辑框顶层窗口，键入候选自动呈现+点击写回编辑框+Esc 隐藏；外接 setPopup 优先。apitest +6 断言全过 |
 | deferred 小项六路（StyleHints/QSS 注释/Dialog Enter/toDouble/GCC14/轴 reverse） | ✅ 已修 | 2026-09-22 §8.0g14：工作流配额中断由主线接续收口；轴 reverse"移至对侧"登记经 Qt 源码核对**推翻**（reverse 仅翻转映射与刻度序）；toDouble 全串口径连带调用方枚举；GCC14 惯用法触碰文件清零+**全库重登记关闭**（13524 处/303 文件=既定 C 继承风格不阻断构建，机械转型不立项） |
 | 对话框键盘路由（真键盘 Esc/Enter 全无响应） | ✅ 已修 | 2026-09-22 §8.0g14：单原生窗口模型下平台键固定投主窗，应用内对话框 XWindow 永远收不到键+open/exec 不抢焦点+子控件形态对话框 autoDefault 误判关，三层缺口两笔根修（notify 键重定向到焦点控件顶层窗口/dialog_grabInitialFocus/子树内 Auto 视为候选）——xdotool 真键盘复验：开框按 Return → 默认按钮 → 关框 → result=1 回传 |
 | SIMD 内核（NEON/Helium/DMA2D 变体注册） | 中 | 需板级验证 |

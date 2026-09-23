@@ -9,6 +9,8 @@
  */
 
 #include "XCompleter.h"
+#include "XListWidget.h"
+#include "XLineEdit.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XVector.h"
@@ -501,10 +503,130 @@ void XCompleter_setPopup(XCompleter* self, XWidget* popup)
 
 /* ==================== 补全结果（对标 QCompleter） ==================== */
 
+/* ---------- 默认弹层（对标 QCompleter popup；懒建于首次匹配） ---------- */
+
+/** @brief 补全弹层点击槽：行号 -> 候选文本 -> 写回编辑框并隐藏。 */
+static void xc_popupClickedSlot(XObject* receiver, XVarList* args)
+{
+    XCompleter* self = (XCompleter*)receiver;
+    XString* text;
+    XWidget* editor;
+    if (!self || !args) return;
+    XVarList_args_1(args, int, row);
+    if (row < 0) return;
+    XCompleter_setCurrentRow(self, row);
+    text = XCompleter_currentCompletion(self);
+    editor = self->m_widget;
+    /* 写回编辑框（默认弹层服务于 XLineEdit 场景；其余编辑控件仅发
+       activated 信号供调用方接线）。 */
+    if (editor && XClassGetVtable(editor) == XLineEdit_class_init()) {
+        XLineEdit_setText((XLineEdit*)editor,
+                          text ? XString_toUtf8(text) : "");
+        XLineEdit_cursorForward((XLineEdit*)editor, false, 1 << 20);
+    }
+    if (text) XString_delete_base((XClass*)text);
+    XCompleter_hidePopup(self);
+}
+
+/** @brief 编辑框在其顶层窗口中的偏移（弹层定位用）。 */
+static void xc_editorTopOffset(XCompleter* self, int* outX, int* outY)
+{
+    XWidget* editor;
+    XWidget* top;
+    XWidget* w;
+    int ox = 0;
+    int oy = 0;
+    editor = self ? self->m_widget : NULL;
+    if (!editor) {
+        if (outX) *outX = 0;
+        if (outY) *outY = 0;
+        return;
+    }
+    top = XWidget_topLevelWidget(editor);
+    w = editor;
+    while (w && w != top) {
+        ox += XWidget_x(w);
+        oy += XWidget_y(w);
+        w = XWidget_parentWidget(w);
+    }
+    if (outX) *outX = ox;
+    if (outY) *outY = oy;
+}
+
+void XCompleter_hidePopup(XCompleter* self)
+{
+    if (!self) return;
+    /* 外接弹层优先：setPopup 挂接的外部视图同样响应隐藏（Esc 链路
+       对两种弹层形态一致）。 */
+    if (self->m_popup && XWidget_isVisible(self->m_popup))
+        XWidget_setVisible(self->m_popup, false);
+    if (!self->m_defaultPopup) return;
+    if (XWidget_isVisible((XWidget*)self->m_defaultPopup))
+        XWidget_setVisible((XWidget*)self->m_defaultPopup, false);
+}
+
+static void xc_defaultPopupSync(XCompleter* self)
+{
+    XWidget* editor;
+    int count;
+    int rows;
+    int ex = 0;
+    int ey = 0;
+    int i;
+    if (!self) return;
+    editor = self->m_widget;
+    count = XCompleter_completionCount(self);
+    if (!editor || self->m_popup) return; /* 外接弹层优先，本通路不介入。 */
+    if (count <= 0) {
+        XCompleter_hidePopup(self);
+        return;
+    }
+    if (!self->m_defaultPopup) {
+        XWidget* top = XWidget_topLevelWidget(editor);
+        if (!top) return;
+        self->m_defaultPopup =
+            XListWidget_create((XWidget*)top, 0);
+        if (!self->m_defaultPopup) return;
+        /* 弹层挂顶层窗口（随顶层析构，本类不重复拥有）；点击经槽
+           回写编辑框并隐藏。 */
+        XObject_connect_1((XObject*)self->m_defaultPopup,
+                          (size_t)XListWidget_itemClicked_signal(NULL, 0),
+                          (XObject*)self, xc_popupClickedSlot,
+                          XConnectionType_Direct);
+    }
+    XListWidget_clear(self->m_defaultPopup);
+    for (i = 0; i < count; ++i) {
+        int* modelRow = (int*)XVector_at_base(self->m_matches, i);
+        const XString* cell;
+        char buf[256];
+        if (!modelRow || !self->m_model) continue;
+        cell = XAbstractItemModel_data(self->m_model, *modelRow,
+                                       self->m_completionColumn);
+        if (!cell) continue;
+        snprintf(buf, sizeof(buf), "%s",
+                 XString_toUtf8(cell) ? XString_toUtf8(cell) : "");
+        XListWidget_addItem_2(self->m_defaultPopup, buf);
+    }
+    rows = count > 6 ? 6 : count;
+    xc_editorTopOffset(self, &ex, &ey);
+    XWidget_setGeometry((XWidget*)self->m_defaultPopup,
+                        ex, ey + XWidget_height(editor),
+                        XWidget_width(editor) > 160 ? XWidget_width(editor) : 160,
+                        rows * 24 + 4);
+    XWidget_setVisible((XWidget*)self->m_defaultPopup, true);
+}
+
 void XCompleter_complete(XCompleter* self)
 {
     if (!self) return;
     xcompleter_rebuild(self);
+    /* 默认弹层同步：Popup/Unfiltered 模式且候选非空时于编辑框下方
+       显示候选列表（对标 QCompleter popup）；无候选隐藏。 */
+    if (self->m_completionMode == XCompleterCompletionMode_PopupCompletion ||
+        self->m_completionMode ==
+            XCompleterCompletionMode_UnfilteredPopupCompletion) {
+        xc_defaultPopupSync(self);
+    }
 }
 
 XString* XCompleter_currentCompletion(const XCompleter* self)
@@ -610,7 +732,9 @@ void XCompleter_splitPath_2(const XCompleter* self, const char* path,
 
 XWidget* XCompleter_popup(const XCompleter* self)
 {
-    return self ? self->m_popup : NULL;
+    if (!self) return NULL;
+    if (self->m_popup) return self->m_popup;
+    return (XWidget*)self->m_defaultPopup;
 }
 
 /* ==================== 信号 ==================== */

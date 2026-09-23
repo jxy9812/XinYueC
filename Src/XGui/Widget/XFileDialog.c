@@ -472,15 +472,29 @@ static XWidget* xff_childByName(XDialog* dlg, const char* name)
 /** @brief 弹窗主屏居中（对标 Qt 静态便捷函数把对话框定位于屏幕中央）。 */
 static void xff_centerOnScreen(XWidget* w)
 {
-    XScreen* screen;
-    XRect g;
-    if (!w) return;
-    screen = XGuiApplication_primaryScreen();
-    if (!screen) return;
-    g = XScreen_geometry(screen);
-    if (g.width <= 0 || g.height <= 0) return;
-    XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
-                    g.y + (g.height - XWidget_height(w)) / 2);
+    /* 子控件形态对话框居中于父控件（几何为父系坐标；屏幕坐标会落
+     * 到页面坐标系外被裁剪）。无父时回退屏幕居中。 */
+    XWidget* parent = w ? XWidget_parentWidget(w) : NULL;
+    if (parent) {
+        int pw = XWidget_width(parent);
+        int ph = XWidget_height(parent);
+        int dw = XWidget_width(w);
+        int dh = XWidget_height(w);
+        XWidget_move(w, pw > dw ? (pw - dw) / 2 : 0,
+                        ph > dh ? (ph - dh) / 2 : 0);
+        return;
+    }
+    {
+        XScreen* screen;
+        XRect g;
+        if (!w) return;
+        screen = XGuiApplication_primaryScreen();
+        if (!screen) return;
+        g = XScreen_geometry(screen);
+        if (g.width <= 0 || g.height <= 0) return;
+        XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
+                        g.y + (g.height - XWidget_height(w)) / 2);
+    }
 }
 
 #if XFILE_ON && XDIR_ON
@@ -901,9 +915,9 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
     XAbstractItemModel* model;
     if (!ls) return NULL;
     ls->root = ls->dirRow = ls->filterRow = ls->nameRow = ls->bar = NULL;
-    /* 对标 Qt：静态便捷函数创建顶层对话框（Dialog 窗口标志）。 */
-    dlg = XFileDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent,
-                                (XWidgetFlags)XWindowType_Dialog);
+    /* 子控件形态：见 XInputDialog 同款注记（单原生窗口模型下窗口
+     * 形态首帧 flush 不可靠）。 */
+    dlg = XFileDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, 0);
     if (!dlg) return NULL;
     if (caption)
         XWidget_setWindowTitle((XWidget*)dlg, caption);

@@ -568,6 +568,19 @@ XWidget* demo_page_views_build(XWidget* parent,
                                                                  outer));
         XTreeWidget_addTopLevelItem((XTreeWidget*)&g_views.tree, device);
         XTreeWidget_addTopLevelItem((XTreeWidget*)&g_views.tree, outer);
+        /* 勾选指示器直观样例（四期④）：设备=选中、外设=部分选中。 */
+        XTreeWidgetItem_setCheckState(device, XItemCheckState_Checked);
+        XTreeWidgetItem_setCheckState(outer,
+                                      XItemCheckState_PartiallyChecked);
+        /* 双列展示（§8.0g17 四期④绘制消费）：列 1 备注 + 表头标签。 */
+        XTreeWidget_setColumnCount((XTreeWidget*)&g_views.tree, 2);
+        XTreeWidgetItem_setTextAt_2(device, 1, "在线");
+        XTreeWidgetItem_setTextAt_2(outer, 1, "就绪");
+        {
+            static const char* headerLabels[2] = {"名称", "状态"};
+            XTreeWidget_setHeaderLabels((XTreeWidget*)&g_views.tree,
+                                        headerLabels, 2);
+        }
     }
     XWidget_setGeometry((XWidget*)&g_views.tree, 436, 28, 160, 130);
     XObject_connect_1((XObject*)&g_views.tree,

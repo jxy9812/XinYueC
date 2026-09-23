@@ -1020,6 +1020,46 @@ static void demo_input_autotest(DemoWin* self)
                     "微调框键入字母被数字校验器拒绝");
     }
 
+    /* XI2 方案 A 回归锁：窗口级触摸按下/抬起 → touch→mouse 仿真点击
+       顶部页签「条目视图」→ 页切换到 5（触摸派发在 XWidgetWindow；
+       抓取语义修复后，未被接受的触摸按 Qt 语义合成鼠标）。测试后
+       恢复输入页（扩展页自动化自行切页）。 */
+    {
+        /* XI2 方案 A 回归锁：经 XWindowSystemInterface（与平台 XI2 分派
+           完全同层）注入触摸按下/抬起 → touch→mouse 仿真点击顶部页签
+           「条目视图」→ 页切换到 5。对照组用 handleMouseEvent_ex 验证
+           投递链。 */
+        XWindow* xwin = (XWindow*)self->m_base.m_windowHandle;
+        XPoint tpos;
+        XPoint tglobal;
+        XTouchEvent te;
+        XPoint_init(&tpos, 483, 58);
+        tglobal = tpos;
+        /* 对照组：窗口级合成鼠标按下/抬起点页签。 */
+        XWindowSystemInterface_handleMouseEvent_ex(
+            xwin, XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton,
+            XMouseButton_LeftButton, XKeyboardModifier_NoModifier, tpos,
+            &tglobal, 0);
+        XWindowSystemInterface_handleMouseEvent_ex(
+            xwin, XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+            0, XKeyboardModifier_NoModifier, tpos, &tglobal, 0);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        DEMO_EXPECT(XStackedLayout_currentIndex(&self->m_stackLayout) == 5,
+                    "对照：窗口级合成鼠标点击页签切换到条目视图");
+        demo_switchPage(self, 3);
+        /* 触摸组：TOUCH_BEGIN/END → touch→mouse 仿真点同一页签。 */
+        XTouchEvent_init(&te, XEVENT_TYPE_TOUCH_BEGIN, &tpos, &tglobal, 1);
+        XWindowSystemInterface_handleTouchEvent_ex(
+            xwin, XEVENT_TYPE_TOUCH_BEGIN, tpos, &tglobal, 1, 0);
+        XTouchEvent_init(&te, XEVENT_TYPE_TOUCH_END, &tpos, &tglobal, 1);
+        XWindowSystemInterface_handleTouchEvent_ex(
+            xwin, XEVENT_TYPE_TOUCH_END, tpos, &tglobal, 1, 0);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        DEMO_EXPECT(XStackedLayout_currentIndex(&self->m_stackLayout) == 5,
+                    "窗口级触摸按下/抬起经 touch→mouse 仿真切换页签（XI2-A 接线回归锁）");
+        demo_switchPage(self, 3);
+    }
+
 #undef DEMO_EXPECT
     XPrintf("XGuiAutoTest: %s\n",
             failures == 0 ? "PASS" : "FAIL");
@@ -1061,7 +1101,22 @@ static void demo_ext_pages_autotest(DemoWin* demo)
 }
 #endif /* XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
 
+static bool demo_framePumpBody(void* userData);
+
+/** @brief 帧泵（重入守卫）：autotest 内 XGuiApplication_processEvents
+ *         会重入本帧定时器，守卫位防递归（触摸接线断言引入事件泵）。 */
 static bool demo_framePump(void* userData)
+{
+    static bool inTick = false;
+    bool result;
+    if (inTick) return false;
+    inTick = true;
+    result = demo_framePumpBody(userData);
+    inTick = false;
+    return result;
+}
+
+static bool demo_framePumpBody(void* userData)
 {
     DemoWin* demo = (DemoWin*)userData;
     if (!demo || demo->m_closed)

@@ -60,6 +60,30 @@ static void xtw_emitRow(XTreeWidget* self, size_t signal, int row)
                        XEVENT_PRIORITY_NORMAL);
 }
 
+/** @brief 全量同步内建桥模型：行=顶层行、列 0..columnCount-1 =
+ *         各列文本。条目级变更走增量（setCheckState/setTextAt 直写
+         *），结构性变更（增删行/排序/列数变化）后调用本函数兜底。 */
+static void xtw_bridgeSync(XTreeWidget* self)
+{
+    XAbstractItemModel* model;
+    int row;
+    int col;
+    if (!self || !self->m_bridgeModel) return;
+    XAbstractItemModel_setDimension(self->m_bridgeModel,
+                                    self->m_topCount,
+                                    XTreeWidget_columnCount(self));
+    for (row = 0; row < self->m_topCount; ++row) {
+        XTreeWidgetItem* item = self->m_topItems[row];
+        if (!item) continue;
+        for (col = 0; col < XTreeWidget_columnCount(self); ++col) {
+            const XString* cell = XTreeWidgetItem_textAt(item, col);
+            if (cell)
+                XAbstractItemModel_setData(
+                    self->m_bridgeModel, row, col, cell);
+        }
+    }
+}
+
 /** @brief 发射双 int 载荷信号（currentItemChanged：current, previous）。 */
 static void xtw_emitRow2(XTreeWidget* self, size_t signal, int a, int b)
 {
@@ -137,6 +161,15 @@ static void xtwitem_freeSubtree(XTreeWidgetItem* item)
     }
     if (item->children) XFree_System(item->children);
     if (item->text) XString_delete_base((XClass*)item->text);
+    if (item->extraTexts) {
+        int eci;
+        for (eci = 0; eci < item->extraTextCapacity; ++eci)
+            if (item->extraTexts[eci])
+                XString_delete_base((XClass*)item->extraTexts[eci]);
+        XFree_System(item->extraTexts);
+        item->extraTexts = NULL;
+    }
+    item->extraTextCapacity = 0;
     item->children = NULL;
     item->childCount = 0;
     item->childCapacity = 0;
@@ -179,6 +212,113 @@ void XTreeWidgetItem_setText_2(XTreeWidgetItem* item, const char* text)
     }
     XTreeWidgetItem_setText(item, tmp);
     if (tmp) XString_delete_base((XClass*)tmp);
+}
+
+const XString* XTreeWidgetItem_textAt(const XTreeWidgetItem* item,
+                                      int column)
+{
+    if (!item || column < 0) return NULL;
+    if (column == 0) return item->text;
+    if (column - 1 >= item->extraTextCapacity) return NULL;
+    return item->extraTexts[column - 1];
+}
+
+const char* XTreeWidgetItem_textAt_2(const XTreeWidgetItem* item,
+                                     int column)
+{
+    const XString* s = XTreeWidgetItem_textAt(item, column);
+    return s ? XString_toUtf8(s) : NULL;
+}
+
+/** @brief 列 1+ 文本槽定位（懒分配；失败返回 NULL）。
+ *  @note  容量按需倍增（起点 4），分配失败返回 NULL 不部分写入。 */
+static XString** xtwitem_ensureExtraSlot(XTreeWidgetItem* item, int column)
+{
+    int need = column; /* 列 col -> 下标 col-1，需容量 >= column。 */
+    int capacity;
+    XString** grown;
+    if (item->extraTextCapacity >= need) return item->extraTexts;
+    capacity = item->extraTextCapacity ? item->extraTextCapacity : 4;
+    while (capacity < need) capacity *= 2;
+    grown = (XString**)XRealloc_System(
+        item->extraTexts,
+        (size_t)capacity * sizeof(XString*));
+    if (!grown) return NULL;
+    XMemset(grown + item->extraTextCapacity, 0,
+            (size_t)(capacity - item->extraTextCapacity) *
+                sizeof(XString*));
+    item->extraTexts = grown;
+    item->extraTextCapacity = capacity;
+    return item->extraTexts;
+}
+
+void XTreeWidgetItem_setTextAt(XTreeWidgetItem* item, int column,
+                               const XString* text)
+{
+    XString** slots;
+    if (!item || column < 0) return;
+    if (column == 0) {
+        XTreeWidgetItem_setText(item, text);
+        return;
+    }
+    slots = xtwitem_ensureExtraSlot(item, column);
+    if (!slots) return;
+    if (!slots[column - 1]) {
+        slots[column - 1] = XString_create();
+        if (!slots[column - 1]) return;
+    }
+    if (text)
+        XString_assign(slots[column - 1], text);
+    else
+        XString_assign_utf8(slots[column - 1], "");
+    /* itemChanged(row)：与列 0 同口径（顶层挂载条目按 owner 定位行
+     * 号发射；子条目与未挂树条目不发射）。 */
+    if (item->owner) {
+        XTreeWidget* owner = item->owner;
+        int row = xtw_topLevelRowOf(owner, item);
+        if (row >= 0) {
+            XTreeWidget_itemChanged_signal(owner, row);
+            /* 四期②：桥模型同格直写（dataChanged）。 */
+            if (owner->m_bridgeModel)
+                XAbstractItemModel_setData_2(owner->m_bridgeModel, row,
+                                             column, text);
+        }
+    }
+}
+
+void XTreeWidgetItem_setTextAt_2(XTreeWidgetItem* item, int column,
+                                 const char* text)
+{
+    XString* tmp = NULL;
+    if (text) {
+        tmp = XString_create_utf8(text);
+        if (!tmp) return;
+    }
+    XTreeWidgetItem_setTextAt(item, column, tmp);
+    if (tmp) XString_delete_base((XClass*)tmp);
+}
+
+int XTreeWidgetItem_checkState(const XTreeWidgetItem* item)
+{
+    return item ? item->checkState : 0; /* NULL 视为 Unchecked。 */
+}
+
+void XTreeWidgetItem_setCheckState(XTreeWidgetItem* item, int state)
+{
+    int row;
+    if (!item) return;
+    if (state != XItemCheckState_Unchecked &&
+        state != XItemCheckState_PartiallyChecked &&
+        state != XItemCheckState_Checked)
+        state = XItemCheckState_Unchecked;
+    if (item->checkState == state) return;
+    item->checkState = state;
+    /* itemChanged(row)：与文本 setter 同口径（顶层挂载条目按 owner
+     * 定位行号发射；子条目与未挂树条目不发射）。 */
+    if (item->owner) {
+        row = xtw_topLevelRowOf(item->owner, item);
+        if (row >= 0) XTreeWidget_itemChanged_signal(item->owner, row);
+    }
 }
 
 bool XTreeWidgetItem_addChild(XTreeWidgetItem* item,
@@ -544,6 +684,14 @@ void XTreeWidget_init(XTreeWidget* self, XWidget* parent,
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XTreeView_init(&self->m_base, parent, flags);
+    /* 四期②内建模型桥（对标 XTableWidget 范式）：便利类的顶层条目
+       文本同步进模型（行=顶层行、列=列号），基类 setModel/indexAt/
+       selectionModel 等 API 由此获得一致的数据视图；绘制/命中仍走
+       自持展开态几何（xtw_drawItem/xtw_rowAtY），不受模型影响。 */
+    self->m_bridgeModel = XAbstractItemModel_create();
+    if (self->m_bridgeModel)
+        XAbstractItemView_setModel(&self->m_base.m_base,
+                                   self->m_bridgeModel);
     self->m_sortColumn = -1;
     self->m_sortOrder = 0;
     self->m_enteredRow = -2; /* itemEntered 差分基准（同 XListWidget）。 */
@@ -631,6 +779,7 @@ bool XTreeWidget_addTopLevelItem(XTreeWidget* self, XTreeWidgetItem* item)
     item->parent = NULL;
     item->owner = self; /* itemChanged(row) 发射定位借用。 */
     xtw_syncRoot(self); /* 顶层存储数量变化：同步不可见根。 */
+    xtw_bridgeSync(self); /* 四期②：模型桥行/列同步。 */
     XWidget_update((XWidget*)self);
     return true;
 }
@@ -659,6 +808,7 @@ bool XTreeWidget_insertTopLevelItem(XTreeWidget* self, int index,
     item->owner = self;
     self->m_topCount++;
     xtw_syncRoot(self); /* 顶层存储数量变化：同步不可见根。 */
+    xtw_bridgeSync(self); /* 四期②：模型桥行/列同步。 */
     XWidget_update((XWidget*)self);
     return true;
 }
@@ -703,6 +853,7 @@ XTreeWidgetItem* XTreeWidget_takeTopLevelItem(XTreeWidget* self, int index)
     item->parent = NULL;
     item->owner = NULL; /* 所有权归还调用方，退出 itemChanged 发射定位。 */
     xtw_syncRoot(self); /* 顶层存储数量变化：同步不可见根。 */
+    xtw_bridgeSync(self); /* 四期②：模型桥行同步。 */
     XWidget_update((XWidget*)self);
     return item;
 }
@@ -732,6 +883,10 @@ void XTreeWidget_clear(XTreeWidget* self)
     if (previous != -1)
         XTreeWidget_currentItemChanged_signal(self, -1, previous);
     if (selectionChanged) XTreeWidget_itemSelectionChanged_signal(self);
+    /* 模型桥清空放信号链之后：setDimension 发射 rowsRemoved 会先重
+       置基类选择/当前状态，抢在信号发射前导致 current/selection 信
+       号丢失（实测 clear 信号断言失败）。 */
+    xtw_bridgeSync(self);
     XWidget_update((XWidget*)self);
 }
 
@@ -958,8 +1113,14 @@ void XTreeWidget_sortItems(XTreeWidget* self, int column, int order)
      * （空文本视为 ""）；稳定比较、相等不换位。 */
     for (i = 0; i < self->m_topCount; ++i) {
         for (j = 0; j < self->m_topCount - 1 - i; ++j) {
-            const char* a = XTreeWidgetItem_text_2(self->m_topItems[j]);
-            const char* b = XTreeWidgetItem_text_2(self->m_topItems[j + 1]);
+            const char* a = XTreeWidgetItem_textAt_2(self->m_topItems[j],
+                                                     column);
+            const char* b = XTreeWidgetItem_textAt_2(self->m_topItems[j + 1],
+                                                     column);
+            /* 未写入列 textAt_2 返回 NULL：按既有契约「NULL 视为空串
+               最小」参与比较（实测悬垂 NULL 会直进 XStrcmp）。 */
+            if (!a) a = "";
+            if (!b) b = "";
             bool swap = (order == 0) ? (XStrcmp(a, b) > 0)
                                      : (XStrcmp(a, b) < 0);
             if (swap) {
@@ -978,6 +1139,7 @@ void XTreeWidget_sortItems(XTreeWidget* self, int column, int order)
                     self->m_topExpanded[j] = self->m_topExpanded[j + 1];
                     self->m_topExpanded[j + 1] = expanded;
                 }
+                xtw_bridgeSync(self); /* 四期②：排序后模型桥行序同步。 */
             }
         }
     }
@@ -1093,6 +1255,16 @@ void XTreeWidget_collapseItem(XTreeWidget* self, int row)
     xtw_setRowExpanded(self, row, false);
 }
 
+void XTreeWidget_setTextAt_2(XTreeWidget* self, int row, int column,
+                             const char* text)
+{
+    XTreeWidgetItem* item;
+    if (!self) return;
+    item = XTreeWidget_topLevelItem(self, row);
+    if (!item) return;
+    XTreeWidgetItem_setTextAt_2(item, column, text);
+}
+
 int XTreeWidget_indexOfTopLevelItem(const XTreeWidget* self,
                                     const char* text)
 {
@@ -1130,6 +1302,7 @@ void XTreeWidget_setColumnCount(XTreeWidget* self, int count)
     if (count > self->m_cellColCapacity)
         xtw_ensureCellCols(self, count);
     self->m_columnCount = count;
+    xtw_bridgeSync(self); /* 四期②：列数变化同步模型列数与内容。 */
     XWidget_update((XWidget*)self);
 }
 
@@ -1215,6 +1388,79 @@ static uint32_t xtw_color(const XTreeWidget* self, XPaletteColorRole role)
 #endif
 }
 
+/** @brief 列 x/宽（行内容消费与表头同规则：显式列宽
+ *         XTreeView_setColumnWidth>0 优先，其余列均摊剩余宽度）。
+ *         超出视口宽的列回报 x=width/w=0。 */
+static void xtw_columnSpan(const XTreeWidget* tw, int column, int width,
+                           int* outX, int* outW)
+{
+    int c;
+    int fixedSum = 0;
+    int autoCount = 0;
+    int autoShare = 0;
+    int x = 0;
+    if (!tw || column < 0 || width <= 0) {
+        if (outX) *outX = 0;
+        if (outW) *outW = 0;
+        return;
+    }
+    for (c = 0; c < XTreeWidget_columnCount(tw); ++c) {
+        int w = XTreeView_columnWidth(&tw->m_base, c);
+        if (w > 0) fixedSum += w;
+        else ++autoCount;
+    }
+    autoShare = (autoCount > 0 && width > fixedSum)
+                    ? (width - fixedSum) / autoCount
+                    : 0;
+    for (c = 0; c <= column && x < width; ++c) {
+        int w = XTreeView_columnWidth(&tw->m_base, c);
+        if (w <= 0) w = autoShare;
+        if (c == column) {
+            if (outX) *outX = x;
+            if (outW) *outW = w;
+            return;
+        }
+        x += w;
+    }
+    if (outX) *outX = x;
+    if (outW) *outW = 0;
+}
+
+/** @brief 列 0 勾选指示器绘制（checkState != Unchecked 时呈现；
+ *         对标 QTreeWidgetItem 指示器：12x12 复选框，选中画对勾、
+ *         部分选中画中横线，复用 XCheckBox 视觉口径）。 */
+static void xtw_drawCheckIndicator(XTreeWidgetItem* item,
+                                   XPainter* painter, int x, int y0,
+                                   int rh, uint32_t windowText)
+{
+    XRect box;
+    uint32_t frame;
+    if (!item || item->checkState == XItemCheckState_Unchecked) return;
+    frame = 0xFF7A7A7Au;
+    box.x = x;
+    box.y = y0 + (rh - 12) / 2;
+    box.width = 12;
+    box.height = 12;
+    XPainter_fillRect(painter, &box, 0xFFFFFFFFu);
+    XPainter_fillRect(painter, &(XRect){box.x, box.y, box.width, 1}, frame);
+    XPainter_fillRect(painter, &(XRect){box.x, box.y, 1, box.height}, frame);
+    XPainter_fillRect(painter, &(XRect){box.x, box.y + box.height - 1,
+                                        box.width, 1}, frame);
+    XPainter_fillRect(painter, &(XRect){box.x + box.width - 1, box.y,
+                                        1, box.height}, frame);
+    if (item->checkState == XItemCheckState_PartiallyChecked) {
+        XPainter_setPen(painter, windowText);
+        XPainter_drawLine(painter, box.x + 3, box.y + box.height / 2,
+                          box.x + box.width - 3, box.y + box.height / 2);
+    } else {
+        XPainter_setPen(painter, windowText);
+        XPainter_drawLine(painter, box.x + 3, box.y + 7,
+                          box.x + 6, box.y + 10);
+        XPainter_drawLine(painter, box.x + 6, box.y + 10,
+                          box.x + 10, box.y + 3);
+    }
+}
+
 static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
                          XPainter* painter, int depth, int* y, int maxY,
                          int topRow)
@@ -1238,13 +1484,48 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
         XPainter_fillRect(painter, &cell, base);
     }
     text = XTreeWidgetItem_text_2(item);
-    if (text && text[0]) {
+    if (item->checkState != XItemCheckState_Unchecked) {
+        int ix = indent * depth + 12;
+        xtw_drawCheckIndicator(item, painter, ix, y0, rh, windowText);
+        if (text && text[0]) {
+            XPainter_setPen(painter, windowText);
+            XPainter_drawText(painter, ix + 16, y0 + rh - 6,
+                              text, windowText);
+        }
+    } else if (text && text[0]) {
         XPainter_setPen(painter, windowText);
         /* drawText 第 4 参是墨水色：传 0=透明，条目文本任何路径都不
          * 出字；传 palette WindowText（对标 XTableWidget，此处实现
          * 与注释曾自相矛盾——注释自称传 windowText 实为硬编码黑）。 */
         XPainter_drawText(painter, indent * depth + 12, y0 + rh - 6,
                           text, windowText);
+    }
+    /* 列 1+ 文本消费（四期④）：各列画在 xtw_columnSpan 的列带内
+     * （save/clip/restore 防长文本串列；列 0 主文本含展开缩进/指示
+     * 器，维持既有画法不裁剪）。 */
+    if (XTreeWidget_columnCount(self) > 1) {
+        int viewW = XWidget_width((XWidget*)self);
+        int col;
+        for (col = 1; col < XTreeWidget_columnCount(self); ++col) {
+            const char* colText = XTreeWidgetItem_textAt_2(item, col);
+            int colX = 0;
+            int colW = 0;
+            XRect colRect;
+            if (!colText || !colText[0]) continue;
+            xtw_columnSpan(self, col, viewW, &colX, &colW);
+            if (colW <= 8) continue;
+            colRect.x = colX;
+            colRect.y = y0;
+            colRect.width = colW;
+            colRect.height = rh;
+            XPainter_save(painter);
+            XPainter_setClipRect(painter, &colRect,
+                                 XPainterClipOperation_IntersectClip);
+            XPainter_setPen(painter, windowText);
+            XPainter_drawText(painter, colX + 4, y0 + rh - 6, colText,
+                              windowText);
+            XPainter_restore(painter);
+        }
     }
     /* 子节点指示（顶层行按展开态绘制 +/-：折叠补竖线）。 */
     if (item->childCount > 0) {
@@ -1541,6 +1822,17 @@ static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
         if (item && item->childCount > 0 && pos.x < XTW_INDIC_HIT) {
             /* 展开指示器：切换展开并发射 itemExpanded/itemCollapsed。 */
             xtw_toggleExpanded(tw, row);
+        } else if (item->checkState != XItemCheckState_Unchecked &&
+                   pos.x >= XTW_INDIC_HIT &&
+                   pos.x < XTW_INDIC_HIT + 16) {
+            /* 勾选指示器命中（缩进 12px 起 12x12 框，余量到 28px）：
+               三态循环 Unchecked→Checked→Unchecked（部分选中态仅在
+               编程置位时出现，点击不产生）。 */
+            XTreeWidgetItem_setCheckState(
+                item, item->checkState == XItemCheckState_Checked
+                          ? XItemCheckState_Unchecked
+                          : XItemCheckState_Checked);
+            xtw_setCurrentRow(tw, row);
         } else {
             /* itemPressed/itemClicked 真实发射点（先按压后点击，
              * 同 XTableWidget 约定；选中经 xtw_setCurrentRow 联动）。 */

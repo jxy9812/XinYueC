@@ -1366,9 +1366,13 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
         receiver = XEvent_isAccepted(event) ? g_touchGrabWidget : NULL;
     } else {
         receiver = XWidget_dispatchInputAt(top, event);
-        /* 对标 Qt：TouchBegin 被接受 → 隐式抓取接收控件。 */
+        /* 对标 Qt：TouchBegin **被接受** → 隐式抓取接收控件；未被接受
+           （控件无视触摸）则不抓取，落入下方 touch→mouse 仿真——
+           此前无条件抓取使仿真门控永远不可达（回归锁
+           「touch→mouse 仿真 itemClicked」实证）。 */
         if (type == XEVENT_TYPE_TOUCH_BEGIN && receiver)
-            g_touchGrabWidget = receiver;
+            g_touchGrabWidget = XEvent_isAccepted(event) ? receiver
+                                                         : NULL;
     }
     /* touch→mouse 仿真：仅在 BEGIN 未被接受（无触点抓取）时进入，之后
        整条序列持续合成，END 合成释放后复位（对标 Qt per-point 状态机）。 */

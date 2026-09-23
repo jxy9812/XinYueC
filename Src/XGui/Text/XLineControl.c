@@ -3371,9 +3371,37 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
         if ((completionMode == XCompleterCompletionMode_PopupCompletion
              || completionMode == XCompleterCompletionMode_UnfilteredPopupCompletion)
             && popup && XWidget_isVisible(popup)) {
-            /* 弹窗下的按键转发给补全器（Escape 交还补全器默认行为）。 */
+            /* 弹窗下的按键转发给补全器：Escape 隐藏弹层（对标
+               QCompleter popup 的 Esc 隐藏语义）并忽略本按键。 */
             if (key == XKey_Escape) {
+                XCompleter_hidePopup(self->m_completer);
                 XEvent_ignore((XEvent*)event);
+                return;
+            }
+            /* 对标 QCompleter popup 键盘导航：弹层可见时 Up/Down 环绕
+               移动当前候选，并把当前候选文本回填编辑框（Qt 语义：
+               popup 高亮 + 行编辑同步为当前候选）。回填走整串替换，
+               不触发前缀重算/弹层重建（导航期间候选列表保持不变）；
+               textChanged 触发的 demo 状态行更新无害。 */
+            if (key == XKey_Up || key == XKey_Down) {
+                int cur = XCompleter_currentRow(self->m_completer);
+                int count = XCompleter_completionCount(self->m_completer);
+                int target = cur + (key == XKey_Down ? 1 : -1);
+                XString* text;
+                if (count > 0) {
+                    if (target < 0) target = count - 1;
+                    if (target >= count) target = 0;
+                    if (XCompleter_setCurrentRow(self->m_completer, target)) {
+                        text = XCompleter_currentCompletion(self->m_completer);
+                        if (text)
+                        {
+                            XLineControl_setText(self,
+                                                 XString_toUtf8(text));
+                            XString_delete_base((XClass*)text);
+                        }
+                    }
+                }
+                XEvent_accept((XEvent*)event);
                 return;
             }
         } else if (completionMode == XCompleterCompletionMode_InlineCompletion) {
@@ -3978,9 +4006,13 @@ void XLineControl_draw(XLineControl* self, XPainter* painter,
     if (flags & (int)XLineControlDrawFlag_Text) {
         int blinkStart = -1;
         int blinkEnd = -1;
-        if (!hasSelection && cursorPhase
+        /* 掩码反选格仅掩码场景（inputMask 占位以 Window 色呈现）：
+         * 此前门禁缺失，普通行编辑光标亮相时光标处字符被背景色清除
+         * ——用户实测「光标左移后右侧字符变空白」。无掩码时字符恒
+         * Text 色绘制，光标竖线由 DrawFlag_Cursor 分支覆盖（对标
+         * qlineedit.cpp paintEvent：字符先绘、光标竖线覆盖其上）。 */
+        if (self->m_maskData && !hasSelection && cursorPhase
             && self->m_cursor < self->m_layoutLen) {
-            /* 掩码反选格的字符区间（布局坐标），字符以 Window 前景绘制。 */
             blinkStart = xlc_mapTextToLayout(self, self->m_cursor);
             blinkEnd = xlc_nextBoundary(self->m_layoutText, self->m_layoutLen,
                                         blinkStart);

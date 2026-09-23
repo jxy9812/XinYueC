@@ -35,6 +35,8 @@
 
 #if XWIDGET_ON && XLINEEDIT_ON
 #include "XLineEdit.h"
+#include "XCompleter.h"
+#include "XAbstractItemModel.h"
 #include "XAlignment.h"
 #include "XWindowEvent.h" /* XWheelEvent（滚轮步进注入）。 */
 #endif
@@ -710,6 +712,71 @@ int xapi_input_run(void)
         XLineEdit_setReadOnly(&le, false);
         XAPI_EXPECT(!XLineEdit_isReadOnly(&le),
                     "LineEdit readOnly 恢复可编辑");
+
+        /* ---- 补全器默认弹层（§8.0g19 追加）：setCompleter 安装后
+         *      直发字符键事件 -> 前缀匹配 -> 内建弹层可见。 ---- */
+        {
+            XCompleter* comp = XCompleter_create((XObject*)&le);
+            XAbstractItemModel* cmodel = XAbstractItemModel_create();
+            XKeyEvent* kev;
+            XWidget* popupView;
+            XAPI_EXPECT(comp != NULL, "补全器堆构造成功");
+            XAPI_EXPECT(cmodel != NULL, "补全词条模型创建成功");
+            if (comp && cmodel) {
+                XAbstractItemModel_setDimension(cmodel, 2, 1);
+                XAbstractItemModel_setData_2(cmodel, 0, 0, "Open File");
+                XAbstractItemModel_setData_2(cmodel, 1, 0, "Open Project");
+                XCompleter_setModel(comp, cmodel);
+                XLineEdit_setCompleter(&le, comp);
+                XLineEdit_clear(&le);
+                XAPI_EXPECT(XCompleter_widget(comp) == (XWidget*)&le,
+                            "setCompleter 安装时回填 widget 借用");
+                kev = XKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                          XEVENT_TYPE_KEY_PRESS,
+                                          (int)XKey_O, 0);
+                XAPI_EXPECT(kev != NULL, "补全键事件构造成功");
+                if (kev) {
+                    XObject_event_base((XObject*)&le, (XEvent*)kev);
+                    XEvent_delete_base((XEvent*)kev);
+                }
+                XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_text(&le)), "O") == 0,
+                            "直发 O 键插入字符");
+                XAPI_EXPECT(XCompleter_completionCount(comp) >= 1,
+                            "键入后前缀匹配产生候选");
+                popupView = XCompleter_popup(comp);
+                /* apitest 环境顶层窗口未 show：有效可见性恒假，改断
+                   言「弹层已创建且条目数=候选数」（创建+重建证明）。 */
+                XAPI_EXPECT(popupView != NULL,
+                            "键入后内建默认弹层自动创建");
+                XAPI_EXPECT(XListWidget_count((XListWidget*)popupView) ==
+                                XCompleter_completionCount(comp),
+                            "默认弹层条目数=候选数");
+                /* 键盘导航：le 顶层先 show（否则子弹层有效可见性恒
+                   假），弹层随之可见，直发 Down 驱动候选移动+回填。 */
+                XWidget_show((XWidget*)&le);
+                XAPI_EXPECT(XWidget_isVisible(popupView),
+                            "弹层 show 后有效可见");
+                {
+                    XKeyEvent* down = XKeyEvent_create_ex(
+                        XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_KEY_PRESS,
+                        (int)XKey_Down, 0);
+                    if (down) {
+                        XObject_event_base((XObject*)&le, (XEvent*)down);
+                        XEvent_delete_base((XEvent*)down);
+                    }
+                }
+                XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_text(&le)),
+                                   "Open Project") == 0,
+                            "弹层可见时 Down 回填下一候选文本");
+                XAPI_EXPECT(XCompleter_currentRow(comp) == 1,
+                            "Down 后 currentRow=1");
+                XCompleter_setCompletionPrefix_2(comp, "");
+                XCompleter_hidePopup(comp);
+                XLineEdit_setCompleter(&le, NULL);
+            }
+            if (cmodel) XAbstractItemModel_delete_base((XClass*)cmodel);
+            if (comp) XCompleter_delete_base((XClass*)comp);
+        }
 
         /* ---- placeholder/margins/alignment/frame 等属性往返 ---- */
         XLineEdit_setPlaceholderText(&le, "请输入");

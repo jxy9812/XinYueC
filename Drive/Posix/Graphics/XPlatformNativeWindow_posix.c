@@ -117,6 +117,72 @@ extern XRRMonitorInfo* XRRGetMonitors(Display* dpy, Window window,
 extern void XRRFreeMonitors(XRRMonitorInfo* monitors);
 extern int XRRUpdateConfiguration(X11_XEvent* event);
 #endif /* XINYUE_C_HAS_XRANDR */
+
+/* ==================== XI2 触摸接入（方案 A 最小接入，§8.0g23 后续） ====================
+ * 本机无 libxi-dev 的 XInput2.h，但有运行库 libXi.so.6 与协议常量头 XI2.h
+ *（xorgproto）。以下结构/原型按上游 libXi 1.8.1 的 XInput2.h 逐字声明
+ *（仅触摸接入所需子集）；事件类型/掩码常量经 XI2.h 取得。XI2 不可用
+ * 时运行时回退核心协议事件（原行为零变化）。 */
+#ifdef XINYUE_C_HAS_XI2
+#include <X11/extensions/XI2.h>
+
+typedef struct
+{
+    int    base;
+    int    latched;
+    int    locked;
+    int    effective;
+} XGuiXIModifierState;
+
+typedef struct {
+    int           mask_len;
+    unsigned char *mask;
+} XGuiXIButtonState;
+
+typedef struct {
+    int           mask_len;
+    unsigned char *mask;
+    double        *values;
+} XGuiXIValuatorState;
+
+typedef struct
+{
+    int                 deviceid;
+    int                 mask_len;
+    unsigned char*      mask;
+} XGuiXIEventMask;
+
+typedef struct {
+    int           type;         /* GenericEvent */
+    unsigned long serial;
+    Bool          send_event;
+    Display       *display;
+    int           extension;
+    int           evtype;
+    XID           cookie;
+    Time          time;
+    int           deviceid;
+    int           sourceid;
+    int           detail;
+    Window        root;
+    Window        event;
+    Window        child;
+    double        root_x;
+    double        root_y;
+    double        event_x;
+    double        event_y;
+    int           flags;
+    XGuiXIButtonState   buttons;
+    XGuiXIValuatorState valuators;
+    XGuiXIModifierState mods;
+    XGuiXIModifierState group;
+} XGuiXIDeviceEvent;
+
+extern Status XIQueryVersion(Display* dpy, int* major_inout,
+                             int* minor_inout);
+extern int XISelectEvents(Display* dpy, Window win,
+                          XGuiXIEventMask* masks, int num_masks);
+#endif /* XINYUE_C_HAS_XI2 */
 #include <dbus/dbus.h>
 #undef XImage
 #undef XPoint
@@ -2559,8 +2625,98 @@ static bool xpw_clipServeMultiple(XSelectionRequestEvent* req)
 /* ==================== 事件泵（平台后端提供） ==================== */
 
 /** @brief 单条 XEvent 翻译为窗口事件注入；返回是否注入了事件。 */
+#ifdef XINYUE_C_HAS_XI2
+/* XI2 触摸事件选择与分派（方案 A 最小接入）。探测一次：XI 2.2 起支
+   持触摸事件；对主设备（XIAllMasterDevices）选择 Touch 三类掩码后，
+   服务器对该窗口不再投递触摸模拟出的核心指针事件（去重自动化），
+   真实鼠标事件仍走核心协议——两路并存不双投。 */
+static int g_xpwnXi2Opcode = -2; /* -2 未探测，-1 不可用，>=0 opcode */
+
+static void xpwn_xi2SelectTouch(Window win)
+{
+    static int probed = 0;
+    int major = 2, minor = 2;
+    int event_base = 0, error_base = 0;
+    unsigned char bits[4] = { 0, 0, 0, 0 };
+    XGuiXIEventMask mask;
+    if (!probed)
+    {
+        probed = 1;
+        if (XQueryExtension(g_xpwnDisplay, "XInputExtension",
+                            &g_xpwnXi2Opcode, &event_base, &error_base) &&
+            XIQueryVersion(g_xpwnDisplay, &major, &minor) == Success)
+        {
+            fprintf(stderr, "xpwn: XI2 touch enabled (v%d.%d)\n",
+                    major, minor);
+        }
+        else
+        {
+            fprintf(stderr, "xpwn: XI2 unavailable (ext=%d ver=%d.%d)\n",
+                    g_xpwnXi2Opcode, major, minor);
+            g_xpwnXi2Opcode = -1; /* 无 XI2：回退核心协议输入。 */
+        }
+    }
+    if (g_xpwnXi2Opcode < 0) return;
+    mask.deviceid = XIAllMasterDevices;
+    mask.mask_len = sizeof(bits);
+    mask.mask = bits;
+    bits[XI_TouchBegin / 8] |= (unsigned char)(1u << (XI_TouchBegin % 8));
+    bits[XI_TouchUpdate / 8] |= (unsigned char)(1u << (XI_TouchUpdate % 8));
+    bits[XI_TouchEnd / 8] |= (unsigned char)(1u << (XI_TouchEnd % 8));
+    XISelectEvents(g_xpwnDisplay, win, &mask, 1);
+}
+
+/** @brief XI2 触摸事件转译：Touch 三类 → handleTouchEvent_ex（主点，
+ *         pointCount=1；tracking id 留待多点方案 B）。非触摸 XI2 事
+ *         件按已消费忽略。 */
+static bool xpwn_dispatchXi2TouchEvent(const X11_XEvent* ev)
+{
+    XGenericEventCookie* cookie;
+    XGuiXIDeviceEvent* dev;
+    XWNPendingEntry* entry;
+    XEventType type;
+    XPoint local;
+    XPoint global;
+    if (ev->type != GenericEvent || g_xpwnXi2Opcode < 0 ||
+        ev->xcookie.extension != g_xpwnXi2Opcode)
+        return false;
+    cookie = (XGenericEventCookie*)&ev->xcookie;
+    if (cookie->evtype != XI_TouchBegin &&
+        cookie->evtype != XI_TouchUpdate &&
+        cookie->evtype != XI_TouchEnd)
+        return true; /* 其他 XI2 事件：消费但不处理。 */
+    if (!XGetEventData(g_xpwnDisplay, cookie)) return true;
+    dev = (XGuiXIDeviceEvent*)cookie->data;
+    entry = xpwn_findByNativeWindow(dev->event);
+    if (entry && entry->m_window)
+    {
+        switch (cookie->evtype)
+        {
+        case XI_TouchBegin: type = XEVENT_TYPE_TOUCH_BEGIN; break;
+        case XI_TouchUpdate: type = XEVENT_TYPE_TOUCH_UPDATE; break;
+        default: type = XEVENT_TYPE_TOUCH_END; break;
+        }
+        local.x = (short)dev->event_x;
+        local.y = (short)dev->event_y;
+        global.x = (short)dev->root_x;
+        global.y = (short)dev->root_y;
+        XWindowSystemInterface_handleTouchEvent_ex(
+            entry->m_window, type, local, &global, 1,
+            (uint32_t)(dev->time & 0xffffffffu));
+    }
+    XFreeEventData(g_xpwnDisplay, cookie);
+    return true;
+}
+#endif /* XINYUE_C_HAS_XI2 */
+
 static bool xpwn_dispatchEvent(const X11_XEvent* ev)
 {
+    /* XI2 触摸事件（GenericEvent cookie）：先于核心事件分派。 */
+#ifdef XINYUE_C_HAS_XI2
+    if (ev->type == GenericEvent && g_xpwnXi2Opcode >= 0 &&
+        ev->xcookie.extension == g_xpwnXi2Opcode)
+        return xpwn_dispatchXi2TouchEvent(ev);
+#endif /* XINYUE_C_HAS_XI2 */
     XWNPendingEntry* entry;
     XEventType type;
     XFocusEvent* focusEvent;
@@ -2574,10 +2730,36 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xmap.window);
         if (entry && entry->m_window && entry->m_deferredActivation) {
             entry->m_deferredActivation = false;
-            XRaiseWindow(g_xpwnDisplay, entry->m_win);
             XSetInputFocus(g_xpwnDisplay, entry->m_win,
                            RevertToParent, CurrentTime);
+            delivered = true;
+        }
+        /* 对标 Qt xcb：新映射的顶层窗口置顶。无 WM 环境下 show() 后
+         * 的对话框若不主动 raise，将停在主窗口之下被永久遮盖——实测
+         * 弹窗「透明、啥都没有」（输入/文件/颜色对话框全部命中）。
+         * XMapWindow 本应置顶，但此前挂起的激活路径未覆盖无挂起场
+         * 景，这里无条件补一次置顶（幂等）。 */
+        if (entry && entry->m_win) {
+            XRaiseWindow(g_xpwnDisplay, entry->m_win);
             XFlush(g_xpwnDisplay);
+        }
+        /* 映射完成后补一次全窗 expose：show()->首绘->flush 可能早于
+         * 服务器完成映射（map 请求异步），首帧 XPutImage 落在未完成
+         * 映射的窗口上内容丢失，且此后无脏区不再重绘——表现为顶层
+         * 对话框「透明、啥都没有」（用户实测弹窗透明根因）。映射完
+         * 成后再请求一次全窗重绘，保证首帧上屏。 */
+        if (entry && entry->m_window) {
+            XRegion mapRegion;
+            XRect mapRect;
+            XRegion_init(&mapRegion);
+            mapRect.x = 0;
+            mapRect.y = 0;
+            mapRect.width = XWindow_width(entry->m_window);
+            mapRect.height = XWindow_height(entry->m_window);
+            XRegion_addRect(&mapRegion, &mapRect);
+            XWindowSystemInterface_handleExposeEvent(entry->m_window,
+                                                     &mapRegion);
+            XRegion_deinit(&mapRegion);
             delivered = true;
         }
         break;
@@ -4315,6 +4497,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
     /* 注册 WM_DELETE_WINDOW 协议，窗口装饰栏关闭按钮经 WM 送达本泵。 */
     XSetWMProtocols(g_xpwnDisplay, xwin, &g_xpwnWmDelete, 1);
     XFlush(g_xpwnDisplay);
+#ifdef XINYUE_C_HAS_XI2
+    xpwn_xi2SelectTouch(xwin); /* XI2 可用：补选触摸三类掩码。 */
+#endif /* XINYUE_C_HAS_XI2 */
     return true;
 }
 
@@ -4350,6 +4535,9 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
                  KeyPressMask | KeyReleaseMask | ButtonPressMask |
                  ButtonReleaseMask | PointerMotionMask | EnterWindowMask |
                  LeaveWindowMask);
+#ifdef XINYUE_C_HAS_XI2
+    xpwn_xi2SelectTouch(entry->m_win); /* XI2 可用：补选触摸三类掩码。 */
+#endif /* XINYUE_C_HAS_XI2 */
     XFlush(g_xpwnDisplay);
     return true;
 }

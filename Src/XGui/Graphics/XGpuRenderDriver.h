@@ -199,6 +199,41 @@ typedef struct XGpuRenderDriverProcs
                       bool sourceOver);
 
     /**
+     * @brief      任意 UV 子矩形绘制：源图像按 (u0,v0)-(u1,v1) 子区域
+     *             拉伸到目标矩形（方向 B：渐变 LUT 等小纹理复用）。
+     * @param      image 源图像（借用，调用期间有效；可为任意尺寸小纹理，
+     *             与目标矩形尺寸解耦）。
+     * @param      x/y/width/height 目标矩形（设备坐标）。
+     * @param      u0/v0 采样起点、u1/v1 采样终点（纹理归一化坐标，
+     *             (u0,v0) 对应矩形左上角、(u1,v1) 对应右下角）。
+     * @param      opacity 整体透明度（0.0~1.0）。
+     * @param      sourceOver true 预乘 SourceOver 混合；false 直接覆盖。
+     * @return     true 已提交；false 参数非法、会话无效或驱动未实现
+     *             （调用方应回退软件路径）。
+     */
+    bool (*drawImageUv)(XGpuRenderDriverSession* session,
+                        const XImage* image, int x, int y, int width,
+                        int height, float u0, float v0, float u1, float v1,
+                        float opacity, bool sourceOver);
+
+    /**
+     * @brief      渐变×覆盖双纹理绘制（方向 B fillPath 原生化）。
+     * @param      coverage 路径覆盖图（每像素 1 字节，bbox 局部；借用）。
+     * @param      width/height 覆盖图尺寸（>0）。
+     * @param      x/y 目标位置（设备坐标，= bbox 左上）。
+     * @param      lutRgba 256×1 预乘 ARGB32 渐变 LUT（u 轴承载 t；借用）。
+     * @param      opacity 整体不透明度（0.0~1.0）。
+     * @param      sourceOver true 预乘 SourceOver 混合；false 直接覆盖。
+     * @return     true 已提交；false 参数非法、会话无效或驱动未实现
+     *             （调用方回退软件路径）。
+     */
+    bool (*drawGradientAlpha)(XGpuRenderDriverSession* session,
+                              const unsigned char* coverage, int width,
+                              int height, int x, int y,
+                              const unsigned char* lutRgba, int lutAxis,
+                              float opacity, bool sourceOver);
+
+    /**
      * @brief      上传 CPU alpha 覆盖图并以指定颜色绘制（一次性，不缓存）。
      * @param      session 驱动会话。
      * @param      alpha 覆盖图（每像素 1 字节；借用，调用期间有效）。

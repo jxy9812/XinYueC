@@ -179,15 +179,29 @@ static XWidget* xcd_childByName(XDialog* dlg, const char* name)
 /** @brief 弹窗主屏居中（对标 Qt 静态便捷函数把对话框定位于屏幕中央）。 */
 static void xcd_centerOnScreen(XWidget* w)
 {
-    XScreen* screen;
-    XRect g;
-    if (!w) return;
-    screen = XGuiApplication_primaryScreen();
-    if (!screen) return;
-    g = XScreen_geometry(screen);
-    if (g.width <= 0 || g.height <= 0) return;
-    XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
-                    g.y + (g.height - XWidget_height(w)) / 2);
+    /* 子控件形态对话框居中于父控件（几何为父系坐标；屏幕坐标会落
+     * 到页面坐标系外被裁剪）。无父时回退屏幕居中。 */
+    XWidget* parent = w ? XWidget_parentWidget(w) : NULL;
+    if (parent) {
+        int pw = XWidget_width(parent);
+        int ph = XWidget_height(parent);
+        int dw = XWidget_width(w);
+        int dh = XWidget_height(w);
+        XWidget_move(w, pw > dw ? (pw - dw) / 2 : 0,
+                        ph > dh ? (ph - dh) / 2 : 0);
+        return;
+    }
+    {
+        XScreen* screen;
+        XRect g;
+        if (!w) return;
+        screen = XGuiApplication_primaryScreen();
+        if (!screen) return;
+        g = XScreen_geometry(screen);
+        if (g.width <= 0 || g.height <= 0) return;
+        XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
+                        g.y + (g.height - XWidget_height(w)) / 2);
+    }
 }
 
 /** @brief 初始化 48 槽位标准色表。
@@ -434,8 +448,10 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
         XColorDialog_delete_base(dlg);
         return initial;
     }
-    dlg = XColorDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, initial, parent,
-                                 (XWidgetFlags)XWindowType_Dialog);
+    /* 子控件形态：见 XInputDialog 同款注记（单原生窗口模型下窗口
+     * 形态首帧 flush 不可靠）。 */
+    dlg = XColorDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, initial,
+                                 parent, 0);
     if (!dlg) return initial;
     if (title)
         XWidget_setWindowTitle((XWidget*)dlg, title);

@@ -20,7 +20,106 @@
 
 #include "XImage.h"
 #include "XMemory.h"
+#include "XDateTime.h"
 #include <limits.h>
+
+/* ==================== 帧级诊断埋点（XGPU_PROF=1 启用） ==================== */
+/* 直通重构量化工具：按 5s 窗口聚合 readback/drawImage/present 次数与
+   均耗，并一次性打印实际驱动类型。远端 RX 6800 XT 与本机同口径。 */
+
+/** @brief XGPU_PROF 环境开关（进程内缓存）。 */
+static bool xgpu_prof_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PROF");
+        requested = value && *value ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/** @brief 逐段计数器（µs 累计 + 次数）。 */
+static struct XGpuProf
+{
+    uint64_t m_readbackUs;   /**< readback 累计耗时。 */
+    uint32_t m_readbackCount; /**< readback 次数（批量后应≈帧数）。 */
+    uint64_t m_drawImageUs;  /**< drawImage 累计耗时。 */
+    uint32_t m_drawImageCount; /**< drawImage 次数（含原语与批量提交）。 */
+    uint32_t m_fillRectCount; /**< fillRect 原语次数（逐行填充诊断）。 */
+    uint32_t m_solidQuadCount; /**< solidQuad 原语次数（虚线段诊断）。 */
+    uint64_t m_presentUs;    /**< presentToWindow 累计耗时。 */
+    uint32_t m_presentCount; /**< present 次数。 */
+    uint32_t m_frameCount;   /**< beginFrame 次数。 */
+    uint64_t m_windowStartUs; /**< 窗口起点（5s 聚合）。 */
+    bool m_driverPrinted;    /**< 驱动类型已打印。 */
+} g_xgpuProf;
+
+/** @brief 当前 µs 时钟。 */
+static uint64_t xgpu_prof_now_us(void)
+{
+    return (uint64_t)(XDateTime_currentNSecsSinceEpoch() / 1000);
+}
+
+/** @brief beginFrame 时驱动类型一次性打印与 5s 窗口聚合输出。
+ *  @note  本节位于会话结构定义之前，windowMode 由调用方传入。 */
+static void xgpu_prof_frame_tick(const XGpuRenderBackend* self,
+                                 bool windowMode)
+{
+    if (!xgpu_prof_requested()) return;
+    if (!g_xgpuProf.m_driverPrinted)
+    {
+        /* 对齐 XGpuRenderDriverType 枚举序（OpenGL=0, Vulkan=1）。 */
+        static const char* const names[] = { "opengl", "vulkan" };
+        int type = (int)XGpuRenderBackend_driverType(self);
+        fprintf(stderr, "[xgpu-prof] driver=%s window=%d\n",
+                (type >= 0 && type <= 1) ? names[type] : "?",
+                (int)windowMode);
+        g_xgpuProf.m_driverPrinted = true;
+        g_xgpuProf.m_windowStartUs = xgpu_prof_now_us();
+    }
+    ++g_xgpuProf.m_frameCount;
+    {
+        uint64_t now = xgpu_prof_now_us();
+        if (now - g_xgpuProf.m_windowStartUs >= 5000000u)
+        {
+            double secs = (double)(now - g_xgpuProf.m_windowStartUs) /
+                          1e6;
+            fprintf(stderr,
+                    "[xgpu-prof] %.1fs frames=%u readback=%u (%.3fms/次) "
+                    "drawImage=%u (%.3fms/次) fillRect=%u solidQuad=%u "
+                    "present=%u (%.3fms/次)\n",
+                    secs, g_xgpuProf.m_frameCount,
+                    g_xgpuProf.m_readbackCount,
+                    g_xgpuProf.m_readbackCount
+                        ? (double)g_xgpuProf.m_readbackUs /
+                              (double)g_xgpuProf.m_readbackCount / 1000.0
+                        : 0.0,
+                    g_xgpuProf.m_drawImageCount,
+                    g_xgpuProf.m_drawImageCount
+                        ? (double)g_xgpuProf.m_drawImageUs /
+                              (double)g_xgpuProf.m_drawImageCount / 1000.0
+                        : 0.0,
+                    g_xgpuProf.m_fillRectCount,
+                    g_xgpuProf.m_solidQuadCount,
+                    g_xgpuProf.m_presentCount,
+                    g_xgpuProf.m_presentCount
+                        ? (double)g_xgpuProf.m_presentUs /
+                              (double)g_xgpuProf.m_presentCount / 1000.0
+                        : 0.0);
+            g_xgpuProf.m_readbackUs = 0;
+            g_xgpuProf.m_readbackCount = 0;
+            g_xgpuProf.m_drawImageUs = 0;
+            g_xgpuProf.m_drawImageCount = 0;
+            g_xgpuProf.m_fillRectCount = 0;
+            g_xgpuProf.m_solidQuadCount = 0;
+            g_xgpuProf.m_presentUs = 0;
+            g_xgpuProf.m_presentCount = 0;
+            g_xgpuProf.m_frameCount = 0;
+            g_xgpuProf.m_windowStartUs = now;
+        }
+    }
+}
 
 /* ==================== 字形图集（阶段 3） ==================== */
 
@@ -556,6 +655,7 @@ bool XGpuRenderBackend_beginFrameImage(XGpuRenderBackend* self,
                                        const XImage* initialImage)
 {
     if (!XGpuRenderBackend_isValid(self)) return false;
+    xgpu_prof_frame_tick(self, self->m_windowMode);
     return self->m_driver->beginFrame(self->m_session, initialImage);
 }
 
@@ -583,11 +683,11 @@ bool XGpuRenderBackend_fillRect(XGpuRenderBackend* self, const XRect* rect,
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
     xgpu_sync_upload_if_requested(self);
-    xgpu_sync_upload_if_requested(self);
     {
         bool primitiveOk = self->m_driver->fillRect(self->m_session, rect,
                                                     color, opacity,
                                                     sourceOver);
+        ++g_xgpuProf.m_fillRectCount;
         xgpu_sync_readback_if_requested(self);
         return primitiveOk;
     }
@@ -604,11 +704,67 @@ bool XGpuRenderBackend_drawImage(XGpuRenderBackend* self, const XImage* image,
     if (XImage_width(image) != width || XImage_height(image) != height)
         return false;
     xgpu_sync_upload_if_requested(self);
-    xgpu_sync_upload_if_requested(self);
     {
+        uint64_t profT0 = xgpu_prof_requested()
+                              ? xgpu_prof_now_us()
+                              : 0;
         bool primitiveOk = self->m_driver->drawImage(self->m_session, image,
                                                      x, y, width, height,
                                                      opacity, sourceOver);
+        if (xgpu_prof_requested())
+        {
+            g_xgpuProf.m_drawImageUs += xgpu_prof_now_us() - profT0;
+            ++g_xgpuProf.m_drawImageCount;
+        }
+        xgpu_sync_readback_if_requested(self);
+        return primitiveOk;
+    }
+}
+
+bool XGpuRenderBackend_drawImageUv(XGpuRenderBackend* self,
+                                   const XImage* image, int x, int y,
+                                   int width, int height, float u0, float v0,
+                                   float u1, float v1, float opacity,
+                                   bool sourceOver)
+{
+    if (!XGpuRenderBackend_isValid(self) || !image || width <= 0 ||
+        height <= 0)
+        return false;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    if (XImage_width(image) <= 0 || XImage_height(image) <= 0)
+        return false;
+    if (!self->m_driver->drawImageUv)
+        return false; /* 驱动未实现：调用方回退软件路径。 */
+    xgpu_sync_upload_if_requested(self);
+    {
+        bool primitiveOk = self->m_driver->drawImageUv(
+            self->m_session, image, x, y, width, height, u0, v0, u1, v1,
+            opacity, sourceOver);
+        xgpu_sync_readback_if_requested(self);
+        return primitiveOk;
+    }
+}
+
+bool XGpuRenderBackend_drawGradientAlpha(XGpuRenderBackend* self,
+                                         const unsigned char* coverage,
+                                         int width, int height, int x, int y,
+                                         const unsigned char* lutPremul,
+                                         int lutAxis, float opacity,
+                                         bool sourceOver)
+{
+    if (!XGpuRenderBackend_isValid(self) || !coverage || width <= 0 ||
+        height <= 0 || !lutPremul)
+        return false;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    if (!self->m_driver->drawGradientAlpha)
+        return false; /* 驱动未实现：调用方回退软件路径。 */
+    xgpu_sync_upload_if_requested(self);
+    {
+        bool primitiveOk = self->m_driver->drawGradientAlpha(
+            self->m_session, coverage, width, height, x, y, lutPremul,
+            lutAxis, opacity, sourceOver);
         xgpu_sync_readback_if_requested(self);
         return primitiveOk;
     }
@@ -625,7 +781,6 @@ bool XGpuRenderBackend_drawAlphaBitmap(XGpuRenderBackend* self,
         return false;
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
-    xgpu_sync_upload_if_requested(self);
     xgpu_sync_upload_if_requested(self);
     {
         bool primitiveOk = self->m_driver->drawAlphaBitmap(
@@ -717,7 +872,6 @@ bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
                                                 colorA) << 8) |
                   (uint32_t)xgpu_mul255_scalar(color & 0xffu, colorA);
     xgpu_sync_upload_if_requested(self);
-    xgpu_sync_upload_if_requested(self);
     {
         bool drawOk = self->m_driver->glyphAtlasDraw(
             self->m_session, entry->m_x, entry->m_y, width, height,
@@ -734,11 +888,11 @@ bool XGpuRenderBackend_drawSolidQuad(XGpuRenderBackend* self, float x1,
 {
     if (!XGpuRenderBackend_isValid(self)) return false;
     xgpu_sync_upload_if_requested(self);
-    xgpu_sync_upload_if_requested(self);
     {
         bool primitiveOk = self->m_driver->drawSolidQuad(
             self->m_session, x1, y1, x2, y2, x3, y3, x4, y4, premulColor,
             sourceOver);
+        ++g_xgpuProf.m_solidQuadCount;
         xgpu_sync_readback_if_requested(self);
         return primitiveOk;
     }
@@ -746,11 +900,21 @@ bool XGpuRenderBackend_drawSolidQuad(XGpuRenderBackend* self, float x1,
 
 bool XGpuRenderBackend_readback(XGpuRenderBackend* self, XImage* target)
 {
+    uint64_t profT0;
     if (!XGpuRenderBackend_isValid(self) || !target ||
         XImage_width(target) != self->m_width ||
         XImage_height(target) != self->m_height)
         return false;
-    return self->m_driver->readback(self->m_session, target);
+    profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
+    {
+        bool ok = self->m_driver->readback(self->m_session, target);
+        if (xgpu_prof_requested())
+        {
+            g_xgpuProf.m_readbackUs += xgpu_prof_now_us() - profT0;
+            ++g_xgpuProf.m_readbackCount;
+        }
+        return ok;
+    }
 }
 
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self)
@@ -763,9 +927,18 @@ void XGpuRenderBackend_endFrame(XGpuRenderBackend* self)
 
 bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self)
 {
+    uint64_t profT0;
+    bool ok;
     if (!XGpuRenderBackend_isValid(self) || !self->m_windowMode)
         return false;
-    return self->m_driver->presentToWindow(self->m_session);
+    profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
+    ok = self->m_driver->presentToWindow(self->m_session);
+    if (xgpu_prof_requested())
+    {
+        g_xgpuProf.m_presentUs += xgpu_prof_now_us() - profT0;
+        ++g_xgpuProf.m_presentCount;
+    }
+    return ok;
 }
 
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */

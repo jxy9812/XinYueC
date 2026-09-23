@@ -33,9 +33,15 @@ extern "C" {
 /* ==================== 树条目 ==================== */
 
 /** @brief 树条目（对标 QTreeWidgetItem；文本 + 子节点，对象拥有）。 */
+typedef struct XAbstractItemModel XAbstractItemModel;
+
 typedef struct XTreeWidgetItem
 {
-    XString* text;                /**< 显示文本（对象拥有）。 */
+    XString* text;                /**< 列 0 文本（对象拥有）——单文本
+                                       API 兼容层直达槽。 */
+    XString** extraTexts;         /**< 列 1+ 逐列文本表（extraTexts[col-1]
+                                       对应列 col；对象拥有；懒分配，
+                                       未写入列保持 NULL）。 */
     struct XTreeWidgetItem** children; /**< 子节点数组（对象拥有）。 */
     int childCount;               /**< 子节点数。 */
     int childCapacity;            /**< 子节点容量。 */
@@ -45,6 +51,11 @@ typedef struct XTreeWidgetItem
                                        时清空；仅用于 itemChanged(row) 的
                                        发射定位（子条目不挂 owner，平铺行
                                        模型无子行号）。 */
+    int extraTextCapacity;        /**< 逐列文本表容量（覆盖列 1..容量）；
+                                       未分配为 0。 */
+    int checkState;               /**< 勾选态（XItemCheckState：0 未选/
+                                       1 部分/2 选中；列 0 指示器承载，
+                                       对标 QTreeWidgetItem checkState）。 */
 } XTreeWidgetItem;
 
 /* ==================== 类定义 ==================== */
@@ -69,6 +80,8 @@ typedef struct XTreeWidget
     int m_sortColumn;             /**< 最近排序列（便捷族 sortItems 承载；
                                        -1=未排序）。 */
     int m_sortOrder;              /**< 最近排序序：0=升序，1=降序。 */
+    XAbstractItemModel* m_bridgeModel; /**< 内建模型桥（四期②；行=顶层行、
+                                       列=列号，与条目文本同步；对象拥有）。 */
     int m_enteredRow;             /**< 上次发射 itemEntered 的顶层行号；
                                        -2=尚未进入任何行（同 XListWidget
                                        差分口径）。 */
@@ -157,6 +170,39 @@ const char* XTreeWidgetItem_text_2(const XTreeWidgetItem* item);
 void XTreeWidgetItem_setText(XTreeWidgetItem* item, const XString* text);
 /** @brief 设置条目文本（UTF-8 兼容重载，转发主版本）。 */
 void XTreeWidgetItem_setText_2(XTreeWidgetItem* item, const char* text);
+/** @brief 读取指定列文本（内部借用 XString*；不得释放）。
+ * @param item   目标条目；可为 NULL。
+ * @param column 列号（0=主文本兼容槽；>=1 走逐列表）。
+ * @return 借用文本指针；未写入或参数非法返回 NULL。
+ */
+const XString* XTreeWidgetItem_textAt(const XTreeWidgetItem* item,
+                                      int column);
+/** @brief 读取指定列文本（UTF-8 借用）。 */
+const char* XTreeWidgetItem_textAt_2(const XTreeWidgetItem* item,
+                                     int column);
+/** @brief 设置指定列文本（XString 主版本）。
+ * @param item   目标条目；可为 NULL（NULL 不执行操作）。
+ * @param column 列号；<0 忽略。列 0 转发 XTreeWidgetItem_setText。
+ * @param text   借用 XString*；可为 NULL（清空该列）。
+ * @return 无返回值；顶层挂载条目内容变化发射 itemChanged(row)。
+ */
+void XTreeWidgetItem_setTextAt(XTreeWidgetItem* item, int column,
+                               const XString* text);
+/** @brief 设置指定列文本（UTF-8 兼容重载，转发主版本）。 */
+void XTreeWidgetItem_setTextAt_2(XTreeWidgetItem* item, int column,
+                                 const char* text);
+/** @brief 读取条目勾选态（列 0 指示器；对标 QTreeWidgetItem::
+ *          checkState(0)）。
+ * @param item 目标条目；可为 NULL。
+ * @return XItemCheckState 值；item 为 NULL 返回 Unchecked。
+ */
+int XTreeWidgetItem_checkState(const XTreeWidgetItem* item);
+/** @brief 设置条目勾选态（列 0 指示器）。
+ * @param item  目标条目；可为 NULL（NULL 不执行操作）。
+ * @param state XItemCheckState 值（0/1/2；越界钳为 Unchecked）。
+ * @return 无返回值；顶层挂载条目变化发射 itemChanged(row)。
+ */
+void XTreeWidgetItem_setCheckState(XTreeWidgetItem* item, int state);
 /** @brief 追加子条目。
  * @param item 目标条目。
  * @param child 子条目（所有权转移给 item）。
@@ -470,6 +516,16 @@ int XTreeWidget_findItems(const XTreeWidget* self, const char* text,
  *       （sortColumn 读取）。
  */
 void XTreeWidget_sortItems(XTreeWidget* self, int column, int order);
+
+/** @brief 设置指定顶层行/列的文本（无模型便利类；行级便捷转发）。
+ * @param self   目标控件；可为 NULL。
+ * @param row    顶层行号；越界忽略。
+ * @param column 列号；<0 忽略。列 0 与条目主文本同槽。
+ * @param text   UTF-8 文本；可为 NULL（清空该列）。
+ * @return 无返回值；顶层挂载条目内容变化发射 itemChanged(row)。
+ */
+void XTreeWidget_setTextAt_2(XTreeWidget* self, int row, int column,
+                             const char* text);
 /** @brief 位置反查行号（对标 itemAt）。
  * @param self 目标控件。
  * @param x 控件内容坐标 x（同 mousePressEvent 命中坐标口径）。

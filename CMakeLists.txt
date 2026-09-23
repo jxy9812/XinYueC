@@ -134,6 +134,23 @@ if(UNIX AND NOT APPLE)
             target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XRANDR_LIBRARY})
             target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XRANDR_LIBRARY})
         endif()
+        # XI2（触摸/平滑滚轮，XPlatformNativeWindow_posix.c XI2 段）：
+        # 优先 dev 链接名 Xi；仅有运行库（libXi.so.6）时按版本名兜底
+        #（结构与函数原型内联在平台文件中，无需 libxi-dev 头）。
+        # 未检出时不注入 XINYUE_C_HAS_XI2，输入回落核心协议。
+        find_library(XINYUE_XI_LIBRARY NAMES Xi)
+        if(NOT XINYUE_XI_LIBRARY)
+            find_library(XINYUE_XI_LIBRARY NAMES libXi.so.6 Xi.so.6)
+        endif()
+        # 头文件（XI2.h 协议常量，xorgproto 提供）必须与运行库同时存在：
+        # 只有运行库无头（无 libxi-dev/xorgproto）时编译不过，回落核心协议。
+        include(CheckIncludeFiles)
+        check_include_files("X11/extensions/XI2.h" XINYUE_XI2_HEADER)
+        if(XINYUE_XI_LIBRARY AND XINYUE_XI2_HEADER)
+            add_compile_definitions(XINYUE_C_HAS_XI2=1)
+            target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_XI_LIBRARY})
+            target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_XI_LIBRARY})
+        endif()
     endif()
 
     # XPlatformGraphics 的 GLX 后端只在同时检测到 X11 与 OpenGL 时启用。

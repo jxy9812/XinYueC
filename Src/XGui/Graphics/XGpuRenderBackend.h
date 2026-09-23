@@ -186,6 +186,29 @@ bool XGpuRenderBackend_drawImage(XGpuRenderBackend* self, const XImage* image,
                                  int x, int y, int width, int height,
                                  float opacity, bool sourceOver);
 
+/** @brief 任意 UV 子矩形绘制：源小纹理按 (u0,v0)-(u1,v1) 子区域拉伸
+ *         到目标矩形（方向 B：渐变 LUT 等复用通道）。
+ * @return true 已提交；false 参数非法、会话无效或驱动未实现。 */
+bool XGpuRenderBackend_drawImageUv(XGpuRenderBackend* self,
+                                   const XImage* image, int x, int y,
+                                   int width, int height, float u0, float v0,
+                                   float u1, float v1, float opacity,
+                                   bool sourceOver);
+
+/** @brief 渐变×覆盖双纹理绘制（方向 B fillPath 原生化通道）。
+ *  @param coverage 路径覆盖图（每像素 1 字节；借用，调用期间有效）。
+ *  @param width/height 覆盖图尺寸（>0）。
+ *  @param x/y 目标位置（设备坐标，= 覆盖图左上）。
+ *  @param lutPremul 256×1 预乘 ARGB32 渐变 LUT（u 轴承载 t；借用）。
+ *  @return true 已提交；false 参数非法、会话无效或驱动未实现
+ *          （调用方回退软件路径）。 */
+bool XGpuRenderBackend_drawGradientAlpha(XGpuRenderBackend* self,
+                                         const unsigned char* coverage,
+                                         int width, int height, int x, int y,
+                                         const unsigned char* lutPremul,
+                                         int lutAxis, float opacity,
+                                         bool sourceOver);
+
 /** @brief 上传 CPU 字形 alpha 位图并以指定颜色绘制。 */
 bool XGpuRenderBackend_drawAlphaBitmap(XGpuRenderBackend* self,
                                        const uint8_t* alpha, int width,

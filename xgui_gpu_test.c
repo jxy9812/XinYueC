@@ -28,6 +28,14 @@
 #define setenv(name, value, overwrite) _putenv_s((name), (value))
 #endif
 
+#if !XGPU_ON
+/* 裁剪口径：GPU 子系统未编译，本测试整体短路（保持目标可构建）。 */
+int main(void)
+{
+    fprintf(stderr, "gpu-test: XGPU_ON=0, skipped\n");
+    return 0;
+}
+#else /* !XGPU_ON */
 int main(void)
 {
     XImage image;
@@ -381,6 +389,22 @@ int main(void)
                     fprintf(stderr, "gpu-test: gradient not drawn\n");
                     ok = 0;
                 }
+                /* 渐变方向与端点色校验（左红右蓝，覆盖 LUT 快速路径）：
+                   t≈0.05 处红占优、t≈0.9 处蓝占优。 */
+                {
+                    uint32_t gl_ = XImage_pixel(&lineFrame, 41, 4);
+                    uint32_t gr_ = XImage_pixel(&lineFrame, 58, 4);
+                    if (((gl_ >> 16) & 0xffu) < 200 ||
+                        (gl_ & 0xffu) > 80 ||
+                        ((gr_ & 0xffu) < 200) ||
+                        ((gr_ >> 16) & 0xffu) > 80)
+                    {
+                        fprintf(stderr,
+                                "gpu-test: gradient LUT colors wrong "
+                                "left=%08x right=%08x\n", gl_, gr_);
+                        ok = 0;
+                    }
+                }
 #endif /* XPAINTER_BRUSH_ON */
                 /* 像素断言在 end/readback 之后（GPU 模式帧末才落回目标）。 */
                 {
@@ -447,3 +471,4 @@ int main(void)
     fprintf(stderr, "gpu-test: done\n");
     return ok ? 0 : 1;
 }
+#endif /* !XGPU_ON */

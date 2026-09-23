@@ -121,12 +121,16 @@ XCLASS_DEFINE_EXTEND_END(XCompleter, XObject)
  *             m_prefix/m_currentCompletion 为对象拥有的 XString；
  *             m_matches 为命中行号数组（int 元素，对象拥有）。
  */
+/* 前置声明（默认弹层借用指针；完整类型见 XListWidget.h）。 */
+typedef struct XListWidget XListWidget;
+
 typedef struct XCompleter
 {
     XObject                    m_base;            /**< 基类成员；必须是第一个，由 XClass 管理。 */
     XAbstractItemModel*        m_model;           /**< 补全数据模型（借用，不拥有）。 */
     XWidget*                   m_widget;          /**< 关联编辑控件（借用，不拥有）。 */
     XWidget*                   m_popup;           /**< 弹出视图借用指针（默认 NULL；自绘弹出列表不使用，不拥有）。 */
+    XListWidget*               m_defaultPopup;    /**< 内建默认弹层（懒建于首次匹配；挂编辑框顶层窗口，随顶层析构，本类不拥有）。 */
     XCompleterCompletionMode   m_completionMode;  /**< 补全模式（默认 PopupCompletion）。 */
     XCompleterFilterMode       m_filterMode;      /**< 过滤模式（默认 StartsWith）。 */
     XCompleterModelSorting     m_modelSorting;    /**< 模型排序假设（默认 UnsortedModel）。 */
@@ -399,6 +403,12 @@ void XCompleter_setPopup(XCompleter* self, XWidget* popup);
  * @return     无返回值。
  */
 void XCompleter_complete(XCompleter* self);
+/** @brief      隐藏补全弹层（内建默认弹层或外接弹层；对标 QCompleter
+ *              popup 在 Esc/失焦时的隐藏语义）。
+ * @param      self 补全对象；可为 NULL。
+ * @return     无返回值。
+ */
+void XCompleter_hidePopup(XCompleter* self);
 
 /**
  * @brief      查询当前补全文本的拷贝（对标 QCompleter::currentCompletion）。

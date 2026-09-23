@@ -63,6 +63,44 @@ static void xdlg_emitFinished(XDialog* self, int result)
  *           裁出负高直接整块跳过填充），面板因此永不上屏，文字/按钮
  *           悬浮在未渲染底色上，表现为"对话框弹不出"。本重载按正确
  *           顺序绘制：先在控件局部坐标用局部尺寸裁剪，再平移折算。 */
+/** @brief      对话框首显居中到父窗口中央。
+ *  @details    对标 QDialogPrivate::adjustPosition（QDialog 首次显示
+ *              按父窗口居中）。子控件形态对话框几何为父系坐标，落点
+ *              = 父窗口中央；顶层对话框（m_isWindow）交由调用方的
+ *              平台居中处理，此处跳过。exec/open 每次显示均居中——
+ *              demo 弹窗为常驻复用件，二次打开同样回到中央。 */
+static void xdlg_centerToParentWindow(XDialog* self)
+{
+    XWidget* selfw = (XWidget*)self;
+    XWidget* parent;
+    XWidget* top;
+    XWidget* w;
+    int pw = 0;
+    int py = 0;
+    int dw;
+    int dh;
+    int tw;
+    int th;
+    if (!selfw || selfw->m_isWindow) return;
+    parent = XWidget_parentWidget(selfw);
+    if (!parent) return;
+    top = XWidget_topLevelWidget(selfw);
+    if (!top || top == selfw) return;
+    dw = XWidget_width(selfw);
+    dh = XWidget_height(selfw);
+    tw = XWidget_width(top);
+    th = XWidget_height(top);
+    w = parent;
+    while (w && w != top) {
+        pw += XWidget_x(w);
+        py += XWidget_y(w);
+        w = XWidget_parentWidget(w);
+    }
+    XWidget_move(selfw,
+                 pw + (tw > dw ? (tw - dw) / 2 : 0),
+                 py + (th > dh ? (th - dh) / 2 : 0));
+}
+
 static void VXDialog_paintEvent(XWidget* self, XEvent* event)
 {
     XPaintEvent* pe;
@@ -94,6 +132,27 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
     rect.x += offset.x;
     rect.y += offset.y;
     XImage_fillRect(image, &rect, XColor_rgba(&color));
+    /* 子控件形态对话框画 1px 面板描边：面板色（palette Window）与
+     * 页面背景相同时（如 Fusion #F4F6F8 页面）无边框的对话框视觉
+     * 不可见——用户实测「弹窗透明啥都没有」实为同色面板+未布局子
+     * 控件。对标 QFrame 对话框面板的窗口边框语义。 */
+    {
+        /* 1px 面板描边用 setPixel 逐点画（XImage 无 drawLine；四边
+           各一条水平/垂直线，量小代价可忽略）。 */
+        int dw = XWidget_width(self);
+        int dh = XWidget_height(self);
+        uint32_t frame = 0xFF7A7A7Au;
+        XPoint o2 = XWidget_paintOffset(self);
+        int px;
+        for (px = 0; px < dw; ++px) {
+            XImage_setPixel(image, o2.x + px, o2.y, frame);
+            XImage_setPixel(image, o2.x + px, o2.y + dh - 1, frame);
+        }
+        for (px = 0; px < dh; ++px) {
+            XImage_setPixel(image, o2.x, o2.y + px, frame);
+            XImage_setPixel(image, o2.x + dw - 1, o2.y + px, frame);
+        }
+    }
 }
 
 /** @brief      多行文本编辑判定（对话框 Enter 让键豁免）。
@@ -285,6 +344,7 @@ int XDialog_exec(XDialog* self)
 {
     if (!self) return 0;
     self->m_inExec = true;
+    xdlg_centerToParentWindow(self);
     XWidget_show((XWidget*)self);
     /* 显示即标脏本对话框矩形：子控件形态的对话框（flags 无 Window 位）
      * 走 XWidget_setVisible 的非窗口分支，该分支不调度重绘（只有顶层
@@ -298,6 +358,9 @@ int XDialog_exec(XDialog* self)
        属性默认值影响——m_modal 默认改 false 后若仍以此门禁，存量
        未调 setModal(true) 的 exec 调用将静默失去模态。 */
     XWidget_setApplicationModalWidget((XWidget*)self);
+    /* show 后强制激活布局：子控件形态下布局的挂起激活不保证随 show
+     * 走到（XBoxLayout 子控件曾零几何不绘制）。幂等。 */
+    XWidget_updateGeometry((XWidget*)self);
     /* 对标 QDialog::exec：阻塞于事件循环直到 done()。此前仅处理一批
        事件即返回，模态语义不成立。 */
     dialog_grabInitialFocus(self);
@@ -359,6 +422,7 @@ void XDialog_open(XDialog* self)
 {
     if (!self) return;
     XDialog_setModal(self, true);
+    xdlg_centerToParentWindow(self);
     XWidget_show((XWidget*)self);
     /* 显示即标脏本对话框矩形（根因同 XDialog_exec 注）：子控件形态
      * 对话框 show 不产生脏区，open 后对话框永远不可见，需在此补一次

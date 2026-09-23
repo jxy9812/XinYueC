@@ -389,15 +389,30 @@ static XWidget* xid_childByName(XDialog* dlg, const char* name)
 /** @brief 弹窗主屏居中（对标 Qt 静态便捷函数把对话框定位于屏幕中央）。 */
 static void xid_centerOnScreen(XWidget* w)
 {
-    XScreen* screen;
-    XRect g;
-    if (!w) return;
-    screen = XGuiApplication_primaryScreen();
-    if (!screen) return;
-    g = XScreen_geometry(screen);
-    if (g.width <= 0 || g.height <= 0) return;
-    XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
-                    g.y + (g.height - XWidget_height(w)) / 2);
+    /* 子控件形态对话框居中于父控件（几何为父系坐标；按屏幕坐标
+     * move 会落到页面坐标系 right-bottom 之外被裁剪——实测溢出右
+     * 缘）。无父时回退屏幕居中。 */
+    XWidget* parent = w ? XWidget_parentWidget(w) : NULL;
+    if (parent) {
+        int pw = XWidget_width(parent);
+        int ph = XWidget_height(parent);
+        int dw = XWidget_width(w);
+        int dh = XWidget_height(w);
+        XWidget_move(w, pw > dw ? (pw - dw) / 2 : 0,
+                        ph > dh ? (ph - dh) / 2 : 0);
+        return;
+    }
+    {
+        XScreen* screen;
+        XRect g;
+        if (!w) return;
+        screen = XGuiApplication_primaryScreen();
+        if (!screen) return;
+        g = XScreen_geometry(screen);
+        if (g.width <= 0 || g.height <= 0) return;
+        XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
+                        g.y + (g.height - XWidget_height(w)) / 2);
+    }
 }
 
 /** @brief OK 槽：把内嵌控件当前值结算进对话框存储后 accept（对标 Qt
@@ -422,10 +437,12 @@ static XInputDialog* xid_buildDialog(XWidget* parent, const XString* title,
     XBoxLayout* root;
     if (!outRoot) return NULL;
     *outRoot = NULL;
-    /* 对标 Qt：静态便捷函数创建顶层对话框（Dialog 窗口标志，parent 仅
-     * 用于归属/定位）。 */
-    dlg = XInputDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent,
-                                 (XWidgetFlags)XWindowType_Dialog);
+    /* XGui 单原生窗口模型：Dialog 窗口形态的独立 X 窗口首帧 flush
+     * 不保证可达（映射前 flush 丢失后无脏区，表现为「透明、啥都没有」
+     * ——用户实测输入/文件/颜色便捷路径全部命中）。便捷路径统一以
+     * 子控件形态挂 parent（与 demo 消息框同款已验证路径），模态语义
+     * 由 XDialog_exec 的应用模态承载。 */
+    dlg = XInputDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, 0);
     if (!dlg) return NULL;
     if (title)
         XWidget_setWindowTitle((XWidget*)dlg, title);

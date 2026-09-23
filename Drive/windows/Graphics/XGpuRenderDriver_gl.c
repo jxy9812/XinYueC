@@ -64,6 +64,7 @@ typedef char XglChar;
 #define XGL_FRAMEBUFFER_COMPLETE     0x8CD5u
 #define XGL_TEXTURE_2D              0x0DE1u
 #define XGL_TEXTURE0                0x84C0u
+#define XGL_TEXTURE1                0x84C1u
 #define XGL_RGBA                    0x1908u
 #define XGL_UNSIGNED_BYTE           0x1401u
 #define XGL_TEXTURE_MIN_FILTER      0x2801u
@@ -104,9 +105,16 @@ struct XGpuRenderDriverSession
     XglUInt m_vertexBuffer;                  /**< 全屏/quad 顶点缓冲。 */
     XglUInt m_solidProgram;                  /**< 纯色填充 program。 */
     XglUInt m_textureProgram;                /**< 纹理采样 program。 */
+    XglUInt m_gradientProgram;               /**< 渐变×覆盖双采样 program。 */
+    XglUInt m_gradientLutTexture;            /**< 渐变 LUT 纹理（256×1 预乘）。 */
+    XglUInt m_gradientMaskTexture;           /**< 渐变覆盖掩码纹理（路径 bbox）。 */
     XglInt m_solidColorLocation;             /**< u_color 位置。 */
     XglInt m_textureSamplerLocation;         /**< u_texture 位置。 */
     XglInt m_textureModulateLocation;        /**< u_modulate 位置。 */
+    XglInt m_gradientMaskLocation;           /**< u_mask 位置（unit0）。 */
+    XglInt m_gradientLutLocation;            /**< u_lut 位置（unit1）。 */
+    XglInt m_gradientModulateLocation;       /**< 渐变 u_modulate 位置。 */
+    XglInt m_gradientLutAxisLocation;        /**< u_lutAxis 位置（0=水平 t 沿 x，1=沿 y）。 */
 
     uint8_t* m_pixels;                       /**< 上传/回读暂存缓冲（拥有）。 */
     size_t m_pixelsCapacity;                 /**< 暂存缓冲容量（字节）。 */
@@ -189,14 +197,39 @@ static void* xgld_proc(XGpuRenderDriverSession* self, const char* name)
         : NULL;
 }
 
+/* 当前已 makeCurrent 的会话追踪：GL 纹理/FBO ID 按上下文命名空间
+   隔离，多会话（窗口+离屏）交替操作时必须先 ensure 自己的上下文，
+   否则上传/采样/读回全部串号（实测图集字形跨会话不可见的根因）。 */
+static XGpuRenderDriverSession* g_xgldCurrentSession = NULL;
+
 static bool xgld_make_current(XGpuRenderDriverSession* self)
 {
     if (!self) return false;
     if (self->m_windowSession)
-        return self->m_windowContext &&
-               XPlatformOpenGLContext_makeCurrent(self->m_windowContext);
-    return self->m_surface &&
-           XPlatformOffscreenSurface_makeCurrent(self->m_surface);
+    {
+        if (self->m_windowContext &&
+            XPlatformOpenGLContext_makeCurrent(self->m_windowContext))
+        {
+            g_xgldCurrentSession = self;
+            return true;
+        }
+        return false;
+    }
+    if (self->m_surface &&
+        XPlatformOffscreenSurface_makeCurrent(self->m_surface))
+    {
+        g_xgldCurrentSession = self;
+        return true;
+    }
+    return false;
+}
+
+static bool xgld_ensure_current(XGpuRenderDriverSession* self)
+{
+    if (g_xgldCurrentSession == self) return true;
+    if (!xgld_make_current(self)) return false;
+    g_xgldCurrentSession = self;
+    return true;
 }
 
 static void xgld_done_current(XGpuRenderDriverSession* self)
@@ -209,6 +242,13 @@ static void xgld_done_current(XGpuRenderDriverSession* self)
     }
     else if (self->m_surface)
         XPlatformOffscreenSurface_doneCurrent(self->m_surface);
+    g_xgldCurrentSession = NULL;
+}
+
+/* present 路径的直接 doneCurrent（绕过助手）同样要清追踪器。 */
+static void xgld_clear_current_tracker(void)
+{
+    g_xgldCurrentSession = NULL;
 }
 
 static void xgld_context_destroy(XGpuRenderDriverSession* self)
@@ -594,6 +634,21 @@ static bool xgld_initialize(XGpuRenderDriverSession* self, int width, int height
         "uniform vec4 u_modulate;"
         "varying vec2 v_texcoord;"
         "void main(){gl_FragColor=texture2D(u_texture,v_texcoord)*u_modulate;}";
+    /* 渐变×覆盖双采样（方向 B：fillPath 原生化的 LUT 通道）：unit0=
+       路径覆盖掩码（bbox 全幅 0..1），unit1=256×1 渐变 LUT（u 轴承载
+       渐变参数 t，v 固定 0.5）。片元输出 = LUT 色 × 覆盖度 × 调制。 */
+    const char gradientFragment[] =
+        "#ifdef GL_ES\nprecision mediump float;\n#endif\n"
+        "uniform sampler2D u_mask;"
+        "uniform sampler2D u_lut;"
+        "uniform int u_lutAxis;"
+        "uniform vec4 u_modulate;"
+        "varying vec2 v_texcoord;"
+        "void main(){"
+        "vec4 m=texture2D(u_mask,v_texcoord);"
+        "float t=(u_lutAxis==0)?v_texcoord.x:v_texcoord.y;"
+        "vec4 c=texture2D(u_lut,vec2(t,0.5));"
+        "gl_FragColor=c*m*u_modulate;}";;
     if (!self || width <= 0 || height <= 0) return false;
 
     XGPU_LOAD(glGetError);
@@ -653,6 +708,7 @@ static bool xgld_initialize(XGpuRenderDriverSession* self, int width, int height
         return false;
     self->m_solidProgram = xgld_create_program(self, solidFragment);
     self->m_textureProgram = xgld_create_program(self, textureFragment);
+    self->m_gradientProgram = xgld_create_program(self, gradientFragment);
     if (!self->m_solidProgram || !self->m_textureProgram) return false;
     self->m_solidColorLocation = self->glGetUniformLocation(
         self->m_solidProgram, "u_color");
@@ -663,6 +719,32 @@ static bool xgld_initialize(XGpuRenderDriverSession* self, int width, int height
     if (self->m_solidColorLocation < 0 || self->m_textureSamplerLocation < 0 ||
         self->m_textureModulateLocation < 0)
         return false;
+    /* 渐变通道（可选能力：装配失败仅禁用渐变快速路径，回退软件）。 */
+    self->glGenTextures(1, &self->m_gradientLutTexture);
+    self->glGenTextures(1, &self->m_gradientMaskTexture);
+    if (!self->m_gradientLutTexture || !self->m_gradientMaskTexture)
+        return false;
+    xgld_prepare_texture(self, self->m_gradientLutTexture, 256, 1);
+    if (self->m_gradientProgram)
+    {
+        self->m_gradientMaskLocation = self->glGetUniformLocation(
+            self->m_gradientProgram, "u_mask");
+        self->m_gradientLutLocation = self->glGetUniformLocation(
+            self->m_gradientProgram, "u_lut");
+        self->m_gradientModulateLocation = self->glGetUniformLocation(
+            self->m_gradientProgram, "u_modulate");
+        self->m_gradientLutAxisLocation = self->glGetUniformLocation(
+            self->m_gradientProgram, "u_lutAxis");
+        if (self->m_gradientMaskLocation < 0 ||
+            self->m_gradientLutLocation < 0 ||
+            self->m_gradientModulateLocation < 0 ||
+            self->m_gradientLutAxisLocation < 0)
+            return false;
+        self->glUseProgram(self->m_gradientProgram);
+        self->glUniform1i(self->m_gradientMaskLocation, 0);
+        self->glUniform1i(self->m_gradientLutLocation, 1);
+        self->glUseProgram(0);
+    }
     self->glBindFramebuffer(XGL_FRAMEBUFFER, 0);
     return true;
 
@@ -695,7 +777,7 @@ static XGpuRenderDriverSession* xgld_session_create_window(XWindow* window,
         goto failed;
     if (!xgld_initialize(self, width, height)) goto failed;
     self->m_valid = true;
-    XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
+    xgld_done_current(self); /* 清追踪器：create 后上下文不保持当前。 */
     return self;
 
 failed:
@@ -720,7 +802,7 @@ static XGpuRenderDriverSession* xgld_session_create_offscreen(int width,
         goto failed;
     if (!xgld_initialize(self, width, height)) goto failed;
     self->m_valid = true;
-    XPlatformOffscreenSurface_doneCurrent(self->m_surface);
+    xgld_done_current(self); /* 清追踪器：create 后上下文不保持当前。 */
     return self;
 
 failed:
@@ -767,6 +849,7 @@ static void xgld_session_destroy(XGpuRenderDriverSession* self)
 static bool xgld_begin_frame(XGpuRenderDriverSession* self,
                              const XImage* initialImage)
 {
+    if (!xgld_ensure_current(self)) return false;
     if (!self || !xgld_make_current(self))
         return false;
     self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
@@ -814,6 +897,7 @@ static bool xgld_begin_frame(XGpuRenderDriverSession* self,
 
 static void xgld_end_frame(XGpuRenderDriverSession* self)
 {
+    xgld_ensure_current(self);
     if (!self) return;
     self->glBindFramebuffer(XGL_FRAMEBUFFER, 0);
     xgld_done_current(self);
@@ -821,6 +905,7 @@ static void xgld_end_frame(XGpuRenderDriverSession* self)
 
 static bool xgld_present_to_window(XGpuRenderDriverSession* self)
 {
+    if (!xgld_ensure_current(self)) return false;
     float vertices[16];
     float modulate[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     static unsigned profCount;
@@ -854,9 +939,11 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
         if (!XPlatformOpenGLContext_swapBuffers(self->m_windowContext))
         {
             XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
+            xgld_clear_current_tracker();
             return false;
         }
         XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
+        xgld_clear_current_tracker();
         return true;
     }
     /* 全屏 quad 采样合成（NDC 直接映射：FBO 与窗口默认帧缓冲同为
@@ -892,6 +979,7 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
     if (!XPlatformOpenGLContext_swapBuffers(self->m_windowContext))
     {
         XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
+        xgld_clear_current_tracker();
         return false;
     }
     if (profOn)
@@ -909,11 +997,13 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
         }
     }
     XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
+    xgld_clear_current_tracker();
     return true;
 }
 
 static bool xgld_readback(XGpuRenderDriverSession* self, XImage* target)
 {
+    if (!xgld_ensure_current(self)) return false;
     size_t bytes;
     int y;
     if (!self || !target ||
@@ -979,6 +1069,7 @@ static bool xgld_readback(XGpuRenderDriverSession* self, XImage* target)
 
 static void xgld_clear(XGpuRenderDriverSession* self, uint32_t argb)
 {
+    xgld_ensure_current(self);
     unsigned a;
     if (!self) return;
     a = (argb >> 24) & 0xffu;
@@ -994,6 +1085,7 @@ static void xgld_clear(XGpuRenderDriverSession* self, uint32_t argb)
 
 static void xgld_set_clip_rect(XGpuRenderDriverSession* self, const XRect* rect)
 {
+    xgld_ensure_current(self);
     int x0, y0, x1, y1;
     if (!self) return;
     if (!rect)
@@ -1020,6 +1112,7 @@ static void xgld_set_clip_rect(XGpuRenderDriverSession* self, const XRect* rect)
 static bool xgld_fill_rect(XGpuRenderDriverSession* self, const XRect* rect,
                            uint32_t color, float opacity, bool sourceOver)
 {
+    if (!xgld_ensure_current(self)) return false;
     float rgba[4];
     unsigned a;
     if (!self || !rect || rect->width <= 0 || rect->height <= 0)
@@ -1042,6 +1135,7 @@ static bool xgld_draw_image(XGpuRenderDriverSession* self, const XImage* image,
                             int x, int y, int width, int height,
                             float opacity, bool sourceOver)
 {
+    if (!xgld_ensure_current(self)) return false;
     float modulate[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     if (!self || !image || width <= 0 || height <= 0)
         return false;
@@ -1063,12 +1157,43 @@ static bool xgld_draw_image(XGpuRenderDriverSession* self, const XImage* image,
                           modulate, true);
 }
 
+static bool xgld_draw_image_uv(XGpuRenderDriverSession* self,
+                               const XImage* image, int x, int y, int width,
+                               int height, float u0, float v0, float u1,
+                               float v1, float opacity, bool sourceOver)
+{
+    if (!xgld_ensure_current(self)) return false;
+    float modulate[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    int iw;
+    int ih;
+    if (!self || !image || width <= 0 || height <= 0)
+        return false;
+    iw = XImage_width(image);
+    ih = XImage_height(image);
+    if (iw <= 0 || ih <= 0) return false;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    if (!xgpu_upload_image(self, image, self->m_sourceTexture, iw, ih))
+        return false;
+    /* 源纹理为预乘布局：opacity 对 RGB/A 同步缩放后再预乘混合。 */
+    modulate[0] = opacity;
+    modulate[1] = opacity;
+    modulate[2] = opacity;
+    modulate[3] = opacity;
+    xgpu_set_blend(self, sourceOver);
+    return xgpu_draw_quad_uv(self, self->m_textureProgram,
+                             self->m_sourceTexture,
+                             (float)x, (float)y, (float)width, (float)height,
+                             u0, v0, u1, v1, modulate, true);
+}
+
 static bool xgld_draw_alpha_bitmap(XGpuRenderDriverSession* self,
                                    const uint8_t* alpha, int width,
                                    int height, int stride, int x, int y,
                                    uint32_t color, float opacity,
                                    bool sourceOver)
 {
+    if (!xgld_ensure_current(self)) return false;
     float modulate[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     if (!self || !xgpu_upload_alpha(self, alpha, width, height, stride,
                                     color, opacity))
@@ -1079,11 +1204,96 @@ static bool xgld_draw_alpha_bitmap(XGpuRenderDriverSession* self,
                           modulate, true);
 }
 
+/* 渐变×覆盖双纹理绘制（方向 B fillPath 原生化核心）：coverage 为路径
+   覆盖图（每像素 1 字节，bbox 局部），lutRgba 为 256×1 预乘 ARGB LUT
+   （u 轴承载渐变参数 t）。掩码整幅上传专用纹理，LUT 常驻专用纹理；
+   片元 = LUT(t) × 覆盖度 × 不透明度，单次 TRIANGLE_STRIP 完成。 */
+static bool xgld_draw_gradient_alpha(XGpuRenderDriverSession* self,
+                                     const unsigned char* coverage,
+                                     int width, int height, int x, int y,
+                                     const unsigned char* lutRgba,
+                                     int lutAxis, float opacity,
+                                     bool sourceOver)
+{
+    float modulate[4];
+    float vertices[16];
+    size_t bytes;
+    int px, py;
+    if (!self || !coverage || !lutRgba || width <= 0 || height <= 0)
+        return false;
+    if (!xgld_ensure_current(self)) return false;
+    bytes = (size_t)width * (size_t)height * 4u;
+    if (!xgpu_reserve_pixels(self, bytes)) return false;
+    for (py = 0; py < height; ++py)
+    {
+        const unsigned char* src =
+            coverage + (size_t)py * (size_t)width;
+        unsigned char* row =
+            self->m_pixels + (size_t)py * (size_t)width * 4u;
+        for (px = 0; px < width; ++px)
+        {
+            unsigned char c = src[px];
+            row[px * 4] = c;
+            row[px * 4 + 1] = c;
+            row[px * 4 + 2] = c;
+            row[px * 4 + 3] = c;
+        }
+    }
+    /* 掩码纹理：路径 bbox 尺寸独立分配（texImage2D 重定尺寸）。 */
+    self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientMaskTexture);
+    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA, width, height,
+                       0, XGL_RGBA, XGL_UNSIGNED_BYTE, self->m_pixels);
+    /* LUT：256×1 预乘 ARGB 每次同步（渐变停止点可变）。 */
+    self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientLutTexture);
+    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    self->glTexSubImage2D(XGL_TEXTURE_2D, 0, 0, 0, 256, 1, XGL_RGBA,
+                          XGL_UNSIGNED_BYTE, lutRgba);
+    modulate[0] = opacity;
+    modulate[1] = opacity;
+    modulate[2] = opacity;
+    modulate[3] = opacity;
+    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
+    self->glViewport(0, 0, self->m_width, self->m_height);
+    xgpu_set_blend(self, sourceOver);
+    self->glUseProgram(self->m_gradientProgram);
+    self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
+    xgpu_rect_vertices_uv(self, (float)x, (float)y, (float)width,
+                          (float)height, vertices, true, 0.0f, 0.0f, 1.0f,
+                          1.0f);
+    self->glBufferData(XGL_ARRAY_BUFFER, (XglSizeiptr)sizeof(vertices),
+                       vertices, XGL_DYNAMIC_DRAW);
+    self->glEnableVertexAttribArray(0);
+    self->glEnableVertexAttribArray(1);
+    self->glVertexAttribPointer(0, 2, XGL_FLOAT, XGL_FALSE,
+                                (XglSizei)(sizeof(float) * 4u),
+                                (const void*)0);
+    self->glVertexAttribPointer(1, 2, XGL_FLOAT, XGL_FALSE,
+                                (XglSizei)(sizeof(float) * 4u),
+                                (const void*)(sizeof(float) * 2u));
+    /* unit0=掩码（UV 全幅），unit1=LUT（片元内 vec2(x,0.5) 采样）。 */
+    self->glActiveTexture(XGL_TEXTURE0);
+    self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientMaskTexture);
+    self->glActiveTexture(XGL_TEXTURE1);
+    self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientLutTexture);
+    self->glUniform1i(self->m_gradientMaskLocation, 0);
+    self->glUniform1i(self->m_gradientLutLocation, 1);
+    self->glUniform1i(self->m_gradientLutAxisLocation, lutAxis);
+    self->glUniform4f(self->m_gradientModulateLocation,
+                      modulate[0], modulate[1], modulate[2], modulate[3]);
+    self->glDrawArrays(XGL_TRIANGLE_STRIP, 0, 4);
+    self->glDisableVertexAttribArray(0);
+    self->glDisableVertexAttribArray(1);
+    self->glActiveTexture(XGL_TEXTURE0);
+    return true;
+}
+
 static bool xgld_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
                                  float y1, float x2, float y2, float x3,
                                  float y3, float x4, float y4,
                                  uint32_t premulColor, bool sourceOver)
 {
+    if (!xgld_ensure_current(self)) return false;
     float vertices[16];
     float rgba[4];
     if (!self) return false;
@@ -1125,6 +1335,7 @@ static bool xgld_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
 static bool xgld_upload_target_image(XGpuRenderDriverSession* self,
                                      const XImage* image)
 {
+    if (!xgld_ensure_current(self)) return false;
     if (!self || !image || XImage_width(image) != self->m_width ||
         XImage_height(image) != self->m_height)
         return false;
@@ -1136,6 +1347,7 @@ static bool xgld_glyph_atlas_upload(XGpuRenderDriverSession* self,
                                     const uint8_t* coverage, int width,
                                     int height, int atlasX, int atlasY)
 {
+    if (!xgld_ensure_current(self)) return false;
     size_t bytes;
     int y;
     if (!self || !coverage || width <= 0 || height <= 0 ||
@@ -1171,6 +1383,7 @@ static bool xgld_glyph_atlas_draw(XGpuRenderDriverSession* self, int atlasX,
                                   int y, uint32_t premulColor,
                                   bool sourceOver)
 {
+    if (!xgld_ensure_current(self)) return false;
     float modulate[4];
     if (!self || width <= 0 || height <= 0 || atlasX < 0 || atlasY < 0 ||
         atlasX + width > XGPU_RENDER_GLYPH_ATLAS_SIZE ||
@@ -1195,6 +1408,7 @@ static bool xgld_glyph_atlas_readback(XGpuRenderDriverSession* self,
                                       int atlasX, int atlasY, int atlasWidth,
                                       int atlasHeight, uint8_t* outCoverage)
 {
+    if (!xgld_ensure_current(self)) return false;
     size_t bytes;
     XglUInt tempFbo = 0;
     int y;
@@ -1255,6 +1469,8 @@ static const XGpuRenderDriverProcs g_xgldOpenGLProcs =
     .setClipRect = xgld_set_clip_rect,
     .fillRect = xgld_fill_rect,
     .drawImage = xgld_draw_image,
+    .drawImageUv = xgld_draw_image_uv,
+    .drawGradientAlpha = xgld_draw_gradient_alpha,
     .drawAlphaBitmap = xgld_draw_alpha_bitmap,
     .drawSolidQuad = xgld_draw_solid_quad,
     .glyphAtlasUpload = xgld_glyph_atlas_upload,
