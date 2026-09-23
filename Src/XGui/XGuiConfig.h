@@ -90,6 +90,23 @@
 #ifndef XGPU_ON
 #define XGPU_ON 1
 #endif
+/* GPU 运行时默认口径：在没有任何外部设置（XGUI_RENDER_BACKEND /
+ * XGPU_BACKEND 环境变量、--gpu/--software 命令行、宿主
+ * addRequestedOverride 运行期覆盖）时，是否默认请求 GPU 直通。
+ *   桌面系统（Windows/Linux/macOS/BSD）默认 1 —— 启动即请求 GPU，
+ *     平台探测失败（无 GL/Vulkan 上下文、FBO 不完整）自动回退
+ *     软件光栅（零回归契约，见 XGpuRenderBackend_requested 注）；
+ *   裸机 / RTOS / 裁剪构建（XGPU_ON=0）默认 0 —— 纯软件渲染。
+ * 外部覆盖：编译期 #define XGPU_RUNTIME_DEFAULT_ON 0/1（先于本
+ * 头文件定义即生效）；运行期设 XGUI_RENDER_BACKEND=software 强制
+ * 软件、=opengl 强制 GPU（运行期设置优先于本默认值）。 */
+#ifndef XGPU_RUNTIME_DEFAULT_ON
+#if XGPU_ON && XPLATFORMINTEGRATION_ON && XPLATFORM_DESKTOP
+#define XGPU_RUNTIME_DEFAULT_ON 1
+#else
+#define XGPU_RUNTIME_DEFAULT_ON 0
+#endif
+#endif
 #ifndef XPIXMAP_ON
 #define XPIXMAP_ON 1
 #endif

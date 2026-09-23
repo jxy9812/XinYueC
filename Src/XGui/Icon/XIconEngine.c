@@ -29,6 +29,7 @@ static void VXIconEngine_pixmap(const XIconEngine* self, const XSize* size,
 {
     XImage image;
     XPixmap generated;
+    XMemset(&generated, 0, sizeof(generated)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XPainter painter;
     XRect rect;
     bool active;

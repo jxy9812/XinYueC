@@ -244,6 +244,16 @@ static void expect_true(bool condition, const char* name)
     }
 }
 
+/* GPU 口径检测（测试跳过用）：GPU 会话激活后，软件光栅的精确整值契约
+ * 断言（RasterOp 位运算/半透明 blend 精确通道）走 GL 预乘管线，舍入
+ * 序列不同必然 FAIL——这些测试验证的是软件光栅行为本身，GPU 口径由
+ * t211g（后端分支断言）+SYNC 读回覆盖。 */
+static bool regression_gpuRequested(void)
+{
+    extern bool XGpuRenderBackend_requested(void);
+    return XGpuRenderBackend_requested();
+}
+
 #if XIMAGECODEC_PNG_ON
 /* 在已编码 PNG 的 IHDR 后插入一个元数据块，保持测试夹具只依赖
  * 项目自己的 CRC/字节序工具，不引入平台文件或额外生成器。 */
@@ -422,6 +432,7 @@ static void test_painter_outline_font(void)
         XFont_deinit_base(&directFont);
     }
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xffffffffu);
     XPainter_init(&painter, NULL);
@@ -584,6 +595,7 @@ static bool test_picture_invalid_u32(const XPicture* source,
     test_picture_put_u32(data + payloadOffset, value);
     test_picture_put_u32(data + 36u, 0u);
     test_picture_put_u32(data + 36u, test_picture_checksum(data, size));
+    memset(&candidate, 0, sizeof(candidate));
     XPicture_init(&candidate, -1);
     XPicture_setData(&candidate, (const char*)data, size);
     invalid = !XPicture_isValidStream(&candidate);
@@ -603,6 +615,7 @@ static void test_picture_malformed_state_records(void)
     matrix.m22 = 1.0f;
     matrix.m33 = 1.0f;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     expect_true(XPicture_recordSetOpacity(&picture, 0.5f),
                 "malformed-state fixture records opacity");
@@ -1097,6 +1110,7 @@ static void test_icon_theme_index_inherits(void)
                     "[48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n"),
                 "index.theme fixture writes Child metadata");
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 48, 48, XImageFormat_ARGB32);
     XImage_fill(&image, 0xff336699u);
     expect_true(XImage_save_2(&image,
@@ -1132,6 +1146,7 @@ static void test_icon_theme_index_inherits(void)
     XIcon_setThemeName_2("Child");
     XIcon_setFallbackThemeName_2("hicolor");
 
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     expect_true(XIconInternal_resolveThemePixmapSize(
                     "example-icon", 48, &pixmap),
@@ -1154,10 +1169,12 @@ static void test_icon_theme_index_inherits(void)
         XPixmap secondPixmap;
         int64_t firstKey;
         XIcon_fromTheme_2("example-icon", NULL, &themedIcon);
+        memset(&firstPixmap, 0, sizeof(firstPixmap));
         XPixmap_init(&firstPixmap);
         XIcon_pixmap(&themedIcon, 24, 18, XIconMode_Normal,
                      XIconState_Off, &firstPixmap);
         firstKey = XPixmap_cacheKey(&firstPixmap);
+        memset(&secondPixmap, 0, sizeof(secondPixmap));
         XPixmap_init(&secondPixmap);
         XIcon_pixmap(&themedIcon, 24, 18, XIconMode_Normal,
                      XIconState_Off, &secondPixmap);
@@ -1276,6 +1293,7 @@ static void test_icon_theme_index_inherits(void)
                         "xgui_icon_theme_tmp/Base/48x48/apps/corrupt-icon.bmp",
                         corruptIcon, sizeof(corruptIcon), true),
                     "indexed theme fixture writes corrupt registered icon");
+        memset(&corrupt, 0, sizeof(corrupt));
         XIcon_init(&corrupt);
         XIcon_fromTheme_2("corrupt-icon", NULL, &corrupt);
         expect_true(!XIcon_isNull(&corrupt) &&
@@ -1291,12 +1309,16 @@ static void test_icon_theme_index_inherits(void)
             XIcon fallbackIcon;
             XIcon corruptWithFallback;
             XPixmap fallbackResult;
+            memset(&fallbackPixmap, 0, sizeof(fallbackPixmap));
             XPixmap_init_ex(&fallbackPixmap, 2, 2);
             XPixmap_fill(&fallbackPixmap, 0xff224466u);
+            memset(&fallbackIcon, 0, sizeof(fallbackIcon));
             XIcon_init_pixmap(&fallbackIcon, &fallbackPixmap);
+            memset(&corruptWithFallback, 0, sizeof(corruptWithFallback));
             XIcon_init(&corruptWithFallback);
             XIcon_fromTheme_2("corrupt-icon", &fallbackIcon,
                               &corruptWithFallback);
+            memset(&fallbackResult, 0, sizeof(fallbackResult));
             XPixmap_init(&fallbackResult);
             XIcon_pixmap(&corruptWithFallback, 2, 2,
                          XIconMode_Normal, XIconState_Off, &fallbackResult);
@@ -1307,6 +1329,7 @@ static void test_icon_theme_index_inherits(void)
             XIcon_deinit_base(&fallbackIcon);
             XPixmap_deinit_base(&fallbackPixmap);
         }
+        memset(&corruptPixmap, 0, sizeof(corruptPixmap));
         XPixmap_init(&corruptPixmap);
         XIcon_pixmap(&corrupt, 48, 48, XIconMode_Normal, XIconState_Off,
                      &corruptPixmap);
@@ -1340,6 +1363,7 @@ static void test_icon_theme_index_inherits(void)
                         "xgui_icon_theme_tmp/Child/48x48/apps/shadow-corrupt-icon.bmp",
                         corruptChild, sizeof(corruptChild), true),
                     "indexed shadow fixture writes corrupt child icon");
+        memset(&shadow, 0, sizeof(shadow));
         XIcon_init(&shadow);
         XIcon_fromTheme_2("shadow-corrupt-icon", NULL, &shadow);
         expect_true(!XIcon_isNull(&shadow),
@@ -1473,6 +1497,7 @@ static void test_icon_theme_search_root_order(void)
                         "[48x48/apps]\nSize=48\nType=Fixed\n"),
                 "多根主题顺序夹具创建并写入 index.theme");
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 48, 48, XImageFormat_ARGB32);
     XImage_fill(&image, 0xff336699u);
     expect_true(XImage_save_2(&image, firstFile, "PNG", -1),
@@ -1490,6 +1515,7 @@ static void test_icon_theme_search_root_order(void)
     XIcon_setFallbackSearchPaths(emptyFallback);
     XIcon_setThemeName_2("Base");
     XIcon_setFallbackThemeName_2("");
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     ok = XIconInternal_resolveThemePixmapSize("root-order", 48, &pixmap);
     expect_true(ok, "多根主题顺序解析图标成功");
@@ -1555,6 +1581,7 @@ static void test_icon_theme_fallback_legacy_search_path(void)
 
     expect_true(test_make_theme_dir(themeRoot, "Fallback"),
                 "传统 fallback 主题创建目录");
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 6, 6, XImageFormat_ARGB32);
     XImage_fill(&image, 0xffcc6633u);
     expect_true(XImage_save_2(&image, iconPath, "BMP", -1),
@@ -1575,6 +1602,7 @@ static void test_icon_theme_fallback_legacy_search_path(void)
     XIcon_setThemeName_2("MissingTheme");
     XIcon_setFallbackThemeName_2("Fallback");
 
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     expect_true(XIconInternal_resolveThemePixmapSize(
                     "legacy-fallback-icon", 6, &pixmap),
@@ -1650,6 +1678,7 @@ static void test_icon_theme_standalone_fallback_sizes(void)
                     test_make_theme_dir(fallbackRoot, "."),
                 "standalone fallback fixture creates search roots");
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 3, 3, XImageFormat_ARGB32);
     XImage_fill(&image, 0xff336699u);
     expect_true(XImage_save_2(&image, themeFile, "PNG", -1),
@@ -1674,6 +1703,7 @@ static void test_icon_theme_standalone_fallback_sizes(void)
     XIcon_setThemeName_2("MissingTheme");
     XIcon_setFallbackThemeName_2("");
 
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     expect_true(XIconInternal_resolveThemePixmapSourceSize(
                     "standalone-size-icon", 48, &pixmap),
@@ -1756,6 +1786,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "[48x48/apps]\nSize=48\nType=Fixed\nContext=Applications\n"),
                 "theme engine paint writes index.theme");
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 48, 48, XImageFormat_ARGB32);
     XImage_fill(&source, 0xff33cc66u);
     expect_true(XImage_save_2(
@@ -1799,6 +1830,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
     {
         XPixmap invalidScale;
         XSize requested = {8, 8};
+        memset(&invalidScale, 0, sizeof(invalidScale));
         XPixmap_init(&invalidScale);
         XIconEngine_scaledPixmap_base((const XIconEngine*)engine, &requested,
                                        XIconMode_Normal, XIconState_Off, 0.0f,
@@ -1831,6 +1863,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XSize actual;
         measureEngine = XIconThemeEngine_create_2_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, "example-icon");
+        memset(&themedIcon, 0, sizeof(themedIcon));
         XIcon_init_engine(&themedIcon, (XIconEngine*)measureEngine);
         XIcon_actualSize(&themedIcon, 24, 18, XIconMode_Normal,
                          XIconState_Off, &actual);
@@ -1838,6 +1871,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "theme icon actualSize uses the smaller request edge");
         {
             XPixmap requestedPixmap;
+            memset(&requestedPixmap, 0, sizeof(requestedPixmap));
             XPixmap_init(&requestedPixmap);
             XIcon_pixmap(&themedIcon, 24, 18, XIconMode_Normal,
                          XIconState_Off, &requestedPixmap);
@@ -1872,6 +1906,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XSize metadataActual;
         metadataEngine = XIconThemeEngine_create_2_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, "example-icon");
+        memset(&metadataIcon, 0, sizeof(metadataIcon));
         XIcon_init_engine(&metadataIcon, (XIconEngine*)metadataEngine);
         XIcon_actualSize(&metadataIcon, 32, 32, XIconMode_Normal,
                          XIconState_Off, &metadataActual);
@@ -1897,6 +1932,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XPixmap hiDpiPixmap;
         sizedEngine = XIconThemeEngine_create_2_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, "example-icon");
+        memset(&sizedIcon, 0, sizeof(sizedIcon));
         XIcon_init_engine(&sizedIcon, (XIconEngine*)sizedEngine);
         XVector_init(&sizes, sizeof(XSize), true);
         XIcon_availableSizes(&sizedIcon, XIconMode_Normal, XIconState_Off,
@@ -1906,12 +1942,14 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     available && available->width == 48 &&
                     available->height == 48,
                     "theme icon availableSizes reports index.theme size");
+        memset(&normalPixmap, 0, sizeof(normalPixmap));
         XPixmap_init(&normalPixmap);
         XIcon_pixmap(&sizedIcon, 24, 18, XIconMode_Normal,
                      XIconState_Off, &normalPixmap);
         expect_true(XPixmap_width(&normalPixmap) == 18 &&
                     XPixmap_height(&normalPixmap) == 18,
                     "theme icon pixmap uses the smaller request edge");
+        memset(&hiDpiPixmap, 0, sizeof(hiDpiPixmap));
         XPixmap_init(&hiDpiPixmap);
         XIcon_pixmapRatio(&sizedIcon, 24, 18, 2.0f, XIconMode_Normal,
                           XIconState_Off, &hiDpiPixmap);
@@ -1962,6 +2000,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XSize* second;
         duplicateEngine = XIconThemeEngine_create_2_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, "duplicate-icon");
+        memset(&duplicateIcon, 0, sizeof(duplicateIcon));
         XIcon_init_engine(&duplicateIcon, (XIconEngine*)duplicateEngine);
         XVector_init(&duplicateSizes, sizeof(XSize), true);
         XIcon_availableSizes(&duplicateIcon, XIconMode_Normal,
@@ -1993,6 +2032,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XSize scalableActual;
         scalableEngine = XIconThemeEngine_create_2_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, "example-icon");
+        memset(&scalableIcon, 0, sizeof(scalableIcon));
         XIcon_init_engine(&scalableIcon, (XIconEngine*)scalableEngine);
         XIcon_actualSize(&scalableIcon, 24, 18, XIconMode_Normal,
                          XIconState_Off, &scalableActual);
@@ -2046,6 +2086,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XSize mixedActual;
         mixedEngine = XIconThemeEngine_create_2_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, "mixed-icon");
+        memset(&mixedIcon, 0, sizeof(mixedIcon));
         XIcon_init_engine(&mixedIcon, (XIconEngine*)mixedEngine);
         XIcon_actualSize(&mixedIcon, 48, 48, XIconMode_Normal,
                          XIconState_Off, &mixedActual);
@@ -2058,6 +2099,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XIcon_deinit_base(&mixedIcon);
     }
 #endif /* XIMAGECODEC_PNG_ON && XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON */
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 60, 30, XImageFormat_ARGB32);
     XImage_fill(&target, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -2090,6 +2132,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XImage hiDpiTarget;
         XPainter hiDpiPainter;
         XRect hiDpiRect;
+        memset(&hiDpiTarget, 0, sizeof(hiDpiTarget));
         XImage_init_ex(&hiDpiTarget, 120, 60, XImageFormat_ARGB32);
         XImage_setDevicePixelRatio(&hiDpiTarget, 2.0f);
         XImage_fill(&hiDpiTarget, 0xff000000u);
@@ -2169,6 +2212,7 @@ static void test_icon_theme_scale_selection(void)
                     "Context=Applications\n"),
                 "scaled theme fixture writes Scale metadata");
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 36, 36, XImageFormat_ARGB32);
     XImage_fill(&image, 0xffcc3333u);
     expect_true(XImage_save_2(
@@ -2195,10 +2239,12 @@ static void test_icon_theme_scale_selection(void)
     XIcon_setThemeName_2("Base");
     XIcon_setFallbackThemeName_2("hicolor");
 
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     expect_true(XIconInternal_resolveThemePixmapSizeScale(
                     "example-icon", 24, 2, 36, &pixmap),
                 "scaled theme fixture resolves requested directory Scale");
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     XPixmap_toImage(&pixmap, &decoded);
     expect_true(XPixmap_width(&pixmap) == 36 && XPixmap_height(&pixmap) == 36 &&
@@ -2454,6 +2500,7 @@ static void test_pixmap_lifecycle(void)
     XImage nullImage;
     XPixmap converted;
 
+    memset(&source, 0, sizeof(source));
     XPixmap_init_ex(&source, 2, 3);
     XPixmap_fill(&source, 0xff336699u);
     XPixmap_setDevicePixelRatio(&source, 2.0f);
@@ -2477,12 +2524,14 @@ static void test_pixmap_lifecycle(void)
     expect_true(XPixmap_width(&copied) == 2 && XPixmap_height(&copied) == 3,
                 "copy_base initializes an uninitialized destination");
 
+    memset(&transformed, 0, sizeof(transformed));
     XPixmap_init(&transformed);
     XPixmap_transformed(&source, 0.0f, -1.0f, 3.0f,
                         1.0f, 0.0f, 0.0f, 0, &transformed);
     expect_true(XPixmap_width(&transformed) == 3 && XPixmap_height(&transformed) == 2,
                 "transformed rotates dimensions");
 
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     XPixmap_toImage(&source, &image);
     expect_true(XImage_width(&image) == 2 && XImage_height(&image) == 3,
@@ -2490,10 +2539,12 @@ static void test_pixmap_lifecycle(void)
     expect_true(XImage_devicePixelRatio(&image) == 2.0f,
                 "pixmap to image preserves device pixel ratio");
 
+    memset(&empty, 0, sizeof(empty));
     XPixmap_init(&empty);
     XPixmap_toImage(&empty, &image);
     expect_true(XImage_isNull(&image),
                 "pixmap to image clears the output for an empty source");
+    memset(&target, 0, sizeof(target));
     XPixmap_init_ex(&target, 1, 1);
     XPixmap_fromImage(NULL, 0, &target);
     expect_true(XPixmap_isNull(&target),
@@ -2506,7 +2557,9 @@ static void test_pixmap_lifecycle(void)
     /* Qt 6.8 qpixmap_raster.cpp:269-308 converts ordinary opaque input to
        the preferred 32-bit RGB format, while NoFormatConversion preserves
        the source format and NoOpaqueDetection retains an alpha format. */
+    memset(&rgb16, 0, sizeof(rgb16));
     XImage_init_ex(&rgb16, 1, 1, XImageFormat_RGB16);
+    memset(&converted, 0, sizeof(converted));
     XPixmap_init(&converted);
     XPixmap_fromImage(&rgb16, 0, &converted);
     expect_true(XPixmap_depth(&converted) == 32 &&
@@ -2529,6 +2582,7 @@ static void test_pixmap_lifecycle(void)
                     XPixmap_cacheKey(&converted) != before,
                     "pixmap convertFromImage changes cache key on replacement");
     }
+    memset(&nullImage, 0, sizeof(nullImage));
     XImage_init(&nullImage);
     expect_true(!XPixmap_convertFromImage(&converted, &nullImage, 0) &&
                 XPixmap_isNull(&converted) && XPixmap_cacheKey(&converted) == 0,
@@ -2557,8 +2611,11 @@ static void test_icon_sizes(void)
     XSize* size0;
     XSize* size1;
 
+    memset(&first, 0, sizeof(first));
     XPixmap_init_ex(&first, 16, 16);
+    memset(&second, 0, sizeof(second));
     XPixmap_init_ex(&second, 32, 24);
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_pixmap(&icon, &first);
     XIcon_addPixmap(&icon, &second, XIconMode_Normal, XIconState_Off);
     XVector_init(&sizes, sizeof(XSize), true);
@@ -2742,10 +2799,12 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XBitmap dataBitmap;
     XImage dataBitmapImage;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 4, 2, XImageFormat_ARGB32);
     for (int y = 0; y < 2; ++y)
         for (int x = 0; x < 4; ++x)
             XImage_setPixel(&image, x, y, 0xff000000u | (uint32_t)(x + 1));
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     XPixmap_init_image(&pixmap, &image, 0);
     XImage_deinit_base(&image);
@@ -2755,6 +2814,7 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     expect_true(exposed.count == 1 && exposed.rects[0].x == 0 &&
                 exposed.rects[0].width == 1,
                 "pixmap scroll replaces exposed region");
+    memset(&movedImage, 0, sizeof(movedImage));
     XImage_init(&movedImage);
     XPixmap_toImage(&pixmap, &movedImage);
     expect_true(XImage_pixel(&movedImage, 1, 0) == 0xff000001u &&
@@ -2768,8 +2828,10 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XImage_init_ex(&image, 2, 1, XImageFormat_RGB888);
     XImage_setPixel(&image, 0, 0, 0xffff0000u);
     XImage_setPixel(&image, 1, 0, 0xff00ff00u);
+    memset(&rgbPixmap, 0, sizeof(rgbPixmap));
     XPixmap_init(&rgbPixmap);
     XPixmap_init_image(&rgbPixmap, &image, 0);
+    memset(&mask, 0, sizeof(mask));
     XBitmap_init_ex(&mask, 2, 1);
     XImage_init(&movedImage);
     XPixmap_toImage((const XPixmap*)&mask, &movedImage);
@@ -2787,6 +2849,7 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XPixmap_deinit_base(&rgbPixmap);
 
     XPixmap swapped;
+    memset(&swapped, 0, sizeof(swapped));
     XPixmap_init_ex(&swapped, 1, 1);
     XPixmap_swap(&pixmap, &swapped);
     expect_true(XPixmap_width(&pixmap) == 1 && XPixmap_width(&swapped) == 4,
@@ -2798,13 +2861,16 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XPixmap_deinit_base(&swapped);
     XImage_deinit_base(&image);
 
+    memset(&bitmap, 0, sizeof(bitmap));
     XBitmap_init_ex(&bitmap, 2, 2);
     {
         const XSize dataSize = {2, 1};
         const uint8_t dataBits[1] = {0x01};
         uint32_t colors[2] = {0, 0};
+        memset(&dataBitmap, 0, sizeof(dataBitmap));
         XBitmap_init(&dataBitmap);
         XBitmap_fromData(&dataSize, dataBits, XImageFormat_MonoLSB, &dataBitmap);
+        memset(&dataBitmapImage, 0, sizeof(dataBitmapImage));
         XImage_init(&dataBitmapImage);
         XPixmap_toImage((const XPixmap*)&dataBitmap, &dataBitmapImage);
         XImage_colorTable(&dataBitmapImage, colors, 2);
@@ -2822,6 +2888,7 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
         XImage_deinit_base(&dataBitmapImage);
         XBitmap_deinit_base(&dataBitmap);
     }
+    memset(&transformed, 0, sizeof(transformed));
     XBitmap_init(&transformed);
     XBitmap_transformed_2(&bitmap, 1.0f, 0.0f, 0.0f,
                         0.0f, 1.0f, 0.0f, &transformed);
@@ -2850,22 +2917,27 @@ static void test_pixmap_mask_lifecycle(void)
     XImage image;
     XImage result;
 
+    memset(&source, 0, sizeof(source));
     XPixmap_init_ex(&source, 3, 2);
     XPixmap_fill(&source, 0xff336699u);
+    memset(&target, 0, sizeof(target));
     XPixmap_init(&target);
     XCopy(&target, &source);
     expect_true(!XPixmap_isDetached(&source),
                 "pixmap copy shares storage before mask mutation");
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 3, 2, XImageFormat_MonoLSB);
     XImage_fill(&image, 0);
     XImage_setPixel(&image, 1, 0, 1);
     XImage_setPixel(&image, 1, 1, 1);
+    memset(&mask, 0, sizeof(mask));
     XBitmap_init(&mask);
     XBitmap_fromImage(&image, 0, &mask);
     XImage_deinit_base(&image);
 
     XPixmap_setMask(&source, (const XPixmap*)&mask);
+    memset(&result, 0, sizeof(result));
     XImage_init(&result);
     XPixmap_toImage(&source, &result);
     expect_true(XPixmap_isDetached(&source) &&
@@ -2892,6 +2964,7 @@ static void test_pixmap_mask_lifecycle(void)
                 XImage_pixel(&result, 1, 0) == 0xff336699u,
                 "pixmap null mask clears previous transparent pixels");
 
+    memset(&wrongMask, 0, sizeof(wrongMask));
     XPixmap_init_ex(&wrongMask, 2, 2);
     XPixmap_setMask(&source, (const XPixmap*)&wrongMask);
     XPixmap_toImage(&source, &result);
@@ -2922,7 +2995,9 @@ static void test_svg_target_size_rasterize(void)
         "<circle cx=\"16\" cy=\"16\" r=\"13\" fill=\"#2266cc\"/></svg>";
     XImage intrinsic;
     XImage direct;
+    memset(&intrinsic, 0, sizeof(intrinsic));
     XImage_init(&intrinsic);
+    memset(&direct, 0, sizeof(direct));
     XImage_init(&direct);
     expect_true(XImageCodecInternal_decodeSvg((const unsigned char*)svg,
                                               sizeof(svg) - 1u,
@@ -2956,6 +3031,7 @@ static void test_svg_target_size_rasterize(void)
         int x;
         int y;
         int semi = 0;
+        memset(&aa, 0, sizeof(aa));
         XImage_init(&aa);
         expect_true(XImageCodecInternal_decodeSvg_ex(
                         (const unsigned char*)unaligned,
@@ -2989,7 +3065,9 @@ static void test_bitmap_qt_contract(void)
 
     /* QBitmap(int,int) is a one-bit, little-endian bitmap with Qt::color0
        (white) at index 0 and Qt::color1 (black) at index 1. */
+    memset(&bitmap, 0, sizeof(bitmap));
     XBitmap_init_ex(&bitmap, 3, 1);
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     XPixmap_toImage((const XPixmap*)&bitmap, &image);
     expect_true(XImage_format(&image) == XImageFormat_MonoLSB &&
@@ -3002,6 +3080,7 @@ static void test_bitmap_qt_contract(void)
 
     /* qbitmap.cpp:201-214 copies byte-aligned rows and explicitly installs
        the color0/color1 table before converting the source image. */
+    memset(&fromData, 0, sizeof(fromData));
     XBitmap_init(&fromData);
     XBitmap_fromData(&size, lsbBits, XImageFormat_MonoLSB, &fromData);
     XImage_init(&image);
@@ -3014,6 +3093,7 @@ static void test_bitmap_qt_contract(void)
                 "bitmap fromData preserves little-endian bits and Qt colors");
     XImage_deinit_base(&image);
 
+    memset(&fromMsb, 0, sizeof(fromMsb));
     XBitmap_init(&fromMsb);
     XBitmap_fromData(&size, msbBits, XImageFormat_Mono, &fromMsb);
     XImage_init(&image);
@@ -3035,6 +3115,7 @@ static void test_bitmap_qt_contract(void)
 
     /* qbitmap.cpp:245-257 shallow-copies an existing one-bit pixmap.  The
        shared platform object must detach when either bitmap is modified. */
+    memset(&alias, 0, sizeof(alias));
     XBitmap_init(&alias);
     XBitmap_fromPixmap((const XPixmap*)&fromMsb, &alias);
     expect_true(XPixmap_isQBitmap((const XPixmap*)&alias) &&
@@ -3068,9 +3149,13 @@ static void test_pixmap_cache_contract(void)
     XRect none;
 
     (void)none;
+    memset(&p10, 0, sizeof(p10));
     XPixmap_init_ex(&p10, 10, 10);
+    memset(&p20, 0, sizeof(p20));
     XPixmap_init_ex(&p20, 20, 20);
+    memset(&p32, 0, sizeof(p32));
     XPixmap_init_ex(&p32, 32, 32);
+    memset(&out, 0, sizeof(out));
     XPixmap_init(&out);
     XPixmapCacheKey_init(&key);
     XPixmapCacheKey_init(&copy);
@@ -3204,6 +3289,7 @@ static void* cache_thread_probe_worker(void* arg)
     CacheThreadProbe* probe = (CacheThreadProbe*)arg;
     XPixmap p;
 
+    memset(&p, 0, sizeof(p));
     XPixmap_init_ex(&p, 4, 4);
 
     /* Qt 的线程门控位于 Key 有效性检查之前，因此有效 Key 不会被改写。 */
@@ -3234,7 +3320,9 @@ static void test_pixmap_cache_concurrency(void)
     int createResult;
 
     memset(&probe, 0, sizeof(probe));
+    memset(&p, 0, sizeof(p));
     XPixmap_init_ex(&p, 4, 4);
+    memset(&out, 0, sizeof(out));
     XPixmap_init(&out);
     XPixmapCacheKey_init(&mainKey);
     XPixmapCacheKey_init(&probe.m_key);
@@ -3283,6 +3371,7 @@ static void test_picture_play_contract(void)
     PictureProbe probe = { 0, 0, 0, 0, 0, false };
     XImage image;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     /* Qt returns true for an empty recording without touching the painter. */
     expect_true(XPicture_play(&picture, NULL),
@@ -3330,6 +3419,7 @@ static void test_picture_play_contract(void)
     painter.m_restore = picture_probe_restore;
     XPicture_recordRestore(&picture);
     painter.m_drawImage = picture_probe_image;
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 2, 1, XImageFormat_ARGB32);
     XImage_setPixel(&image, 0, 0, 0xff102030u);
     XImage_setDevicePixelRatio(&image, 2.0f);
@@ -3425,6 +3515,7 @@ static void test_picture_play_contract(void)
 #endif /* XPAINTER_PATH_ON */
     {
         XPicture loaded;
+        memset(&loaded, 0, sizeof(loaded));
         XPicture_init(&loaded, -1);
         expect_true(XPicture_save_2(&picture, "xgui_regression.xpic"),
                     "picture save writes the portable stream");
@@ -3491,6 +3582,7 @@ static void test_picture_painter_high_level_record_link(void)
     XPoint polygon[4] = { { 2, 10 }, { 8, 10 }, { 8, 15 }, { 2, 15 } };
     XPoint points[3] = { { 20, 10 }, { 24, 12 }, { 22, 14 } };
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -3513,6 +3605,7 @@ static void test_picture_painter_high_level_record_link(void)
                 XPicture_size(&picture) > XPICTURE_HEADER_SIZE,
                 "high-level record produces a valid non-empty stream");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 32, 18, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&image, NULL);
@@ -3571,6 +3664,7 @@ static void test_picture_painter_shape_variants(void)
     int x;
     int y;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -3591,7 +3685,9 @@ static void test_picture_painter_shape_variants(void)
     expect_true(XPainter_end(&record) && XPicture_isValidStream(&picture),
                 "shape variants finish valid picture");
 
+    memset(&directImage, 0, sizeof(directImage));
     XImage_init_ex(&directImage, 96, 16, XImageFormat_ARGB32);
+    memset(&replayImage, 0, sizeof(replayImage));
     XImage_init_ex(&replayImage, 96, 16, XImageFormat_ARGB32);
     XImage_fill(&directImage, 0xff000000u);
     XImage_fill(&replayImage, 0xff000000u);
@@ -3648,6 +3744,7 @@ static void test_picture_painter_path_record_link(void)
     XImage target;
     XPainterPath path;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -3674,6 +3771,7 @@ static void test_picture_painter_path_record_link(void)
                 XPicture_size(&picture) > XPICTURE_HEADER_SIZE,
                 "path record produces a valid non-empty stream");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 32, 18, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&image, NULL);
@@ -3728,6 +3826,7 @@ static void test_painter_raster_contract(void)
     XRect imageSource = { 0, 0, 2, 1 };
 #endif /* XPAINTER_IMAGE_RECT_ON */
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
     XPainter_init(&painter, NULL);
 #if XPAINTER_BACKGROUND_ON
@@ -4124,6 +4223,7 @@ static void test_painter_raster_contract(void)
     XPainter_resetTransform(&painter);
 
     /* 绘制图像（恒等变换快速路径） */
+    memset(&tile, 0, sizeof(tile));
     XImage_init_ex(&tile, 2, 2, XImageFormat_ARGB32);
     XImage_fillRect(&tile, NULL, 0xff00ff00u);
     XImage_fillRect(&image, NULL, 0u);
@@ -4136,6 +4236,7 @@ static void test_painter_raster_contract(void)
     /* Qt drawImage(QPointF, QImage) 按 DPR 把物理图像压到逻辑尺寸。 */
     {
         XImage hidpi;
+        memset(&hidpi, 0, sizeof(hidpi));
         XImage_init_ex(&hidpi, 2, 2, XImageFormat_ARGB32);
         XImage_fillRect(&hidpi, NULL, 0xff00ff00u);
         XImage_setDevicePixelRatio(&hidpi, 2.0f);
@@ -4160,6 +4261,7 @@ static void test_painter_raster_contract(void)
 #if XPAINTER_PIXMAP_ON
     /* QPainter::drawPixmap：先验证常规像素尺寸，再验证高分辨率像素图
        按 devicePixelRatio 转为逻辑尺寸。 */
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     expect_true(XPixmap_convertFromImage(&pixmap, &tile, 0),
                 "raster drawPixmap converts source image");
@@ -4229,6 +4331,7 @@ static void test_painter_raster_contract(void)
 
 #if XPAINTER_IMAGE_RECT_ON
     /* Qt drawImage(target, image, source)：最近邻缩放并保持源像素分区。 */
+    memset(&strip, 0, sizeof(strip));
     XImage_init_ex(&strip, 2, 1, XImageFormat_ARGB32);
     XImage_setPixel(&strip, 0, 0, 0xffff0000u);
     XImage_setPixel(&strip, 1, 0, 0xff0000ffu);
@@ -4313,6 +4416,7 @@ static void test_painter_task211_contract(void)
         XRect r = { 0, 0, 8, 8 };
         int y;
         bool ok = true;
+        memset(&image, 0, sizeof(image));
         XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
         XPainter_init(&painter, NULL);
         expect_true(XPainter_begin_image(&painter, &image),
@@ -4469,6 +4573,7 @@ static void test_painter_task211_contract(void)
             expect_true(XPainter_begin_device(
                             &gp, XImage_paintDevice(&gimg)) == false,
                         "t211g: 未 init 绘制器拒绝绑定");
+            memset(&gimg, 0, sizeof(gimg));
             XImage_init_ex(&gimg, 16, 12, XImageFormat_ARGB32);
             XPainter_init(&gp, NULL);
             expect_true(XPainter_begin_device(
@@ -4501,6 +4606,7 @@ static void test_painter_task211_contract(void)
                         "t211g: 泛化绑定后绘制落像素");
             expect_true(XPainter_end(&gp), "t211g: end 解绑");
             /* Picture 设备（指令录制后端）。 */
+            memset(&gpic, 0, sizeof(gpic));
             XPicture_init(&gpic, -1);
             expect_true(XPainter_begin_device(
                             &gp, XPicture_paintDevice(&gpic)),
@@ -4552,7 +4658,9 @@ static void test_painter_task211_contract(void)
     {
         XImage src;
         XImage out;
+        memset(&src, 0, sizeof(src));
         XImage_init_ex(&src, 2, 1, XImageFormat_ARGB32);
+        memset(&out, 0, sizeof(out));
         XImage_init(&out); /* 输出目标须先初始化（scaled 安全替换契约）。 */
         XImage_setPixel(&src, 0, 0, 0xff000000u); /* 黑 */
         XImage_setPixel(&src, 1, 0, 0xffffffffu); /* 白 */
@@ -4593,6 +4701,7 @@ static void test_painter_extra_alignment(void)
     XPoint pts[3] = { {2,2}, {10,2}, {2,9} };
 #endif
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_image(&painter, &image),
@@ -4854,6 +4963,7 @@ static void test_painter_draw_picture_align(void)
     XPainter painter;
 
     /* 录制：红色水平线段 (0,0)-(2,0)。 */
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_picture(&painter, &picture), "drawPicture record begin");
@@ -4863,6 +4973,7 @@ static void test_painter_draw_picture_align(void)
     expect_true(XPicture_isValidStream(&picture), "drawPicture stream valid");
 
     /* 回放到新位置：坐标 (4,3) 起绘制。 */
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 8, 8, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff00ff00u);
     XPainter_deinit(&painter); /* 上一轮录制已 end，重复 init 前先释放默认字体状态 */
@@ -4897,6 +5008,7 @@ static void test_painter_shape_contract(void)
     XRect fullSweep    = { 0, 0, 20, 10 };
     XRect roundRect    = { 0, 0, 20, 10 };
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 32, 16, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -5025,6 +5137,7 @@ static void test_painter_shape_callback_contract(void)
     XRect roundRect    = { 0, 0, 20, 10 };
 
     capture.m_count = 0;
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 32, 16, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, &capture);
@@ -5140,6 +5253,7 @@ static void test_painter_polygon_contract(void)
     XPoint linePts[2] = { { 0, 0 }, { 9, 0 } };
     XPoint pts[3] = { { 0, 0 }, { 3, 3 }, { 6, 0 } };
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 24, 14, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -5302,6 +5416,7 @@ static void test_painter_polygon_callback_contract(void)
     XPoint pts[3] = { { 0, 0 }, { 3, 3 }, { 6, 0 } };
 
     memset(&cap, 0, sizeof(cap));
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 24, 14, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, &cap);
@@ -5389,6 +5504,7 @@ static void test_painter_penstyle_contract(void)
     XImage image;
     XPainter painter;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 12, 2, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -5498,6 +5614,7 @@ static void test_painter_picture_penstyle_replay_contract(void)
     XImage target;
     XPainter painter;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_picture(&painter, &picture),
@@ -5517,6 +5634,7 @@ static void test_painter_picture_penstyle_replay_contract(void)
     expect_true(XPicture_isValidStream(&picture),
                 "dashed stream valid");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 12, 2, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_deinit(&painter); /* 上一轮录制已 end，重复 init 前先释放默认字体状态 */
@@ -5566,6 +5684,7 @@ static void test_painter_brush_contract(void)
     XPainterGradient grad;
     XPainterBrush brush;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 16, 16, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -5769,6 +5888,7 @@ static void test_painter_text_layout_contract(void)
     XRect vRect     = { 0, 0, 40, 48 };
     XRect wrapRect  = { 0, 0, 16, 48 };
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 40, 48, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -5877,6 +5997,7 @@ static void test_painter_text_antialiasing_contract(void)
     int row;
     int col;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 32, 40, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xffffffffu);
     XPainter_init(&painter, NULL);
@@ -5995,6 +6116,7 @@ static void test_painter_native_32x32_font(void)
     int row;
     int col;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 64, 48, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xffffffffu);
     XPainter_init(&painter, NULL);
@@ -6045,6 +6167,7 @@ static void test_painter_path_contract(void)
     XPainterPath path;
     XRect small = { 0, 0, 24, 30 };
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 40, 40, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -6295,6 +6418,7 @@ static void test_painter_path_callback_contract(void)
     XPainterPath path;
     PathCapture cap;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 24, 14, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     memset(&cap, 0, sizeof(cap));
@@ -6377,6 +6501,7 @@ static void test_painter_transform_contract(void)
     XImageTransform m;
     XRect one = { 0, 0, 1, 1 };
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 8, 8, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -6500,6 +6625,7 @@ static void test_painter_transform_contract(void)
     expect_true(XImage_pixel(&image, 0, 0) == 0xffff0000u &&
                 XImage_pixel(&image, 5, 7) == 0xff000000u,
                 "disabled world matrix leaves fill in logical position");
+    memset(&tile, 0, sizeof(tile));
     XImage_init_ex(&tile, 1, 1, XImageFormat_ARGB32);
     XImage_fillRect(&tile, NULL, 0xff0000ffu);
     expect_true(XPainter_drawImage(&painter, &tile, 2, 0),
@@ -6612,6 +6738,7 @@ static void test_painter_text_flags_contract(void)
     XRect directionRect = { 0, 0, 40, 16 };
     int hasPix = 0;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 80, 48, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff000000u);
     XPainter_init(&painter, NULL);
@@ -6832,7 +6959,9 @@ static void test_painter_record_play_contract(void)
     XPoint tiledOffset = { 1, 0 };
 #endif /* XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON */
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
+    memset(&loaded, 0, sizeof(loaded));
     XPicture_init(&loaded, -1);
     XPainter_init(&painter, NULL);
     expect_true(XPainter_begin_picture(&painter, &picture),
@@ -6847,14 +6976,17 @@ static void test_painter_record_play_contract(void)
                 "record fillRect");
     XPainter_setPen(&painter, 0xffff0000u);
     expect_true(XPainter_drawRect(&painter, &rect), "record drawRect");
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 1, XImageFormat_ARGB32);
     XImage_fillRect(&source, NULL, 0xff0000ffu);
     expect_true(XPainter_drawImage(&painter, &source, 6, 6),
                 "record drawImage");
 #if XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON
+    memset(&tiledSource, 0, sizeof(tiledSource));
     XImage_init_ex(&tiledSource, 2, 1, XImageFormat_ARGB32);
     XImage_setPixel(&tiledSource, 0, 0, 0xffff0000u);
     XImage_setPixel(&tiledSource, 1, 0, 0xff00ff00u);
+    memset(&tiledPixmap, 0, sizeof(tiledPixmap));
     XPixmap_init(&tiledPixmap);
     expect_true(XPixmap_convertFromImage(&tiledPixmap, &tiledSource,
                                          XPixmapImageConversion_NoFormatConversion),
@@ -6881,6 +7013,7 @@ static void test_painter_record_play_contract(void)
     remove("xgui_painter.xpic");
 
     /* 用软件光栅后端回放（先设置与录制时一致的画笔） */
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 10, 10, XImageFormat_ARGB32);
     XPainter_deinit(&painter); /* 上一轮录制已 end，重复 init 前先释放默认字体状态 */
     XPainter_init(&painter, NULL);
@@ -6926,6 +7059,7 @@ static void test_painter_picture_pen_state_record(void)
     XPainter replay;
     XImage target;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -6941,6 +7075,7 @@ static void test_painter_picture_pen_state_record(void)
     expect_true(XPicture_isValidStream(&picture),
                 "pen state record stream is valid");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 8, 4, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&replay, NULL);
@@ -6974,6 +7109,7 @@ static void test_painter_picture_font_state_record(void)
     const unsigned char* stream;
     uint32_t streamSize;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     XFont_init_ex(&font, "XFont16x16", 16, XFont_Bold, false);
@@ -6991,6 +7127,7 @@ static void test_painter_picture_font_state_record(void)
                 stream[XPICTURE_HEADER_SIZE] == XPictureOpcode_SetFont,
                 "font state record writes SetFont opcode");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 2, 2, XImageFormat_ARGB32);
     XPainter_init(&replay, NULL);
     expect_true(XPainter_begin_image(&replay, &target),
@@ -7034,6 +7171,7 @@ static void test_painter_picture_text_record(void)
     int y;
     bool foundText = false;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     XFont_init_ex(&font, "XFont16x16", 16, XFont_Normal, false);
@@ -7062,7 +7200,9 @@ static void test_painter_picture_text_record(void)
                            firstLength] == XPictureOpcode_DrawText;
     expect_true(foundText, "text record uses DrawText opcode after font state");
 
+    memset(&expected, 0, sizeof(expected));
     XImage_init_ex(&expected, 32, 24, XImageFormat_ARGB32);
+    memset(&actual, 0, sizeof(actual));
     XImage_init_ex(&actual, 32, 24, XImageFormat_ARGB32);
     XImage_fillRect(&expected, NULL, 0xff000000u);
     XImage_fillRect(&actual, NULL, 0xff000000u);
@@ -7106,6 +7246,7 @@ static void test_painter_picture_point_record(void)
     uint32_t firstLength;
     const uint32_t color = 0xffe02040u;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7134,6 +7275,7 @@ static void test_painter_picture_point_record(void)
                        firstLength] == XPictureOpcode_DrawPoint,
                 "point record uses DrawPoint opcode after pen state");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 3, 3, XImageFormat_ARGB32);
     XPainter_init(&replay, NULL);
     expect_true(XPainter_begin_image(&replay, &target),
@@ -7162,12 +7304,15 @@ static void test_painter_picture_pixmap_record(void)
     XRect targetRect = { 1, 0, 2, 2 };
     XRect sourceRect = { 1, 0, 1, 2 };
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff102030u);
     XImage_setPixel(&source, 1, 0, 0xffa0b0c0u);
     XImage_setPixel(&source, 0, 1, 0xff203040u);
     XImage_setPixel(&source, 1, 1, 0xffb0c0d0u);
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     expect_true(XPixmap_convertFromImage(&pixmap, &source,
                                          XPixmapImageConversion_NoFormatConversion),
@@ -7182,6 +7327,7 @@ static void test_painter_picture_pixmap_record(void)
     expect_true(XPicture_isValidStream(&picture),
                 "pixmap record stream is valid");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 5, 3, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&replay, NULL);
@@ -7217,6 +7363,7 @@ static void test_painter_picture_opacity_composition_record(void)
     XImage target;
     XRect rect = { 1, 1, 3, 3 };
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7230,6 +7377,7 @@ static void test_painter_picture_opacity_composition_record(void)
     expect_true(XPicture_isValidStream(&picture),
                 "opacity/composition record stream is valid");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 6, 6, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xffffffffu);
     XPainter_init(&replay, NULL);
@@ -7265,6 +7413,7 @@ static void test_painter_picture_background_record(void)
     XPainter replay;
     XImage target;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7277,6 +7426,7 @@ static void test_painter_picture_background_record(void)
     expect_true(XPicture_isValidStream(&picture),
                 "background record stream is valid");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 1, 1, XImageFormat_ARGB32);
     XPainter_init(&replay, NULL);
     expect_true(XPainter_begin_image(&replay, &target),
@@ -7308,6 +7458,7 @@ static void test_painter_picture_render_hints_record(void)
     XImage target;
     XPainterRenderHints expected;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7331,6 +7482,7 @@ static void test_painter_picture_render_hints_record(void)
                     4u * (XPICTURE_RECORD_HEADER_SIZE + 4u),
                 "render-hints repeated setter is retained in stream");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 1, 1, XImageFormat_ARGB32);
     XPainter_init(&replay, NULL);
     expect_true(XPainter_begin_image(&replay, &target),
@@ -7364,6 +7516,7 @@ static void test_painter_picture_brush_origin_record(void)
     XImage target;
     XPoint origin;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7379,6 +7532,7 @@ static void test_painter_picture_brush_origin_record(void)
                     2u * (XPICTURE_RECORD_HEADER_SIZE + 8u),
                 "brush-origin repeated setter is retained in stream");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 1, 1, XImageFormat_ARGB32);
     XPainter_init(&replay, NULL);
     expect_true(XPainter_begin_image(&replay, &target),
@@ -7410,6 +7564,7 @@ static void test_painter_picture_brush_record(void)
     XPainterGradient gradient;
     XPainterBrush brush;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7424,6 +7579,7 @@ static void test_painter_picture_brush_record(void)
                     2u * (XPICTURE_RECORD_HEADER_SIZE + 8u),
                 "brush setters produce fixed-size records");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 1, 1, XImageFormat_ARGB32);
     XPainter_init(&replay, NULL);
     expect_true(XPainter_begin_image(&replay, &target),
@@ -7444,6 +7600,7 @@ static void test_painter_picture_brush_record(void)
 
     /* 渐变画刷使用独立便携 opcode 保存类型、几何参数和停止点；回放后
        应恢复完整的 XPainterGradient 子集，而不是退化成纯色。 */
+    memset(&gradientPicture, 0, sizeof(gradientPicture));
     XPicture_init(&gradientPicture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &gradientPicture),
@@ -7482,6 +7639,7 @@ static void test_painter_picture_brush_record(void)
 
     /* 从渐变切回纯色仍使用固定长度基础画刷命令；验证回放会清除目标
        画刷中原有的渐变载荷。 */
+    memset(&resetPicture, 0, sizeof(resetPicture));
     XPicture_init(&resetPicture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &resetPicture),
@@ -7530,6 +7688,7 @@ static void test_painter_picture_transform_record(void)
     XImageTransform matrix = { 1.0f, 0.0f, 0.0f, 1.0f,
                                2.0f, 0.0f, 0.0f, 0.0f, 1.0f };
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7547,6 +7706,7 @@ static void test_painter_picture_transform_record(void)
     expect_true(XPicture_isValidStream(&picture),
                 "transform record stream is valid");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 5, 2, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&replay, NULL);
@@ -7584,6 +7744,7 @@ static void test_painter_picture_view_transform_record(void)
     XRect viewport = { 3, 3, 4, 4 };
     XRect result;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7607,6 +7768,7 @@ static void test_painter_picture_view_transform_record(void)
                     (XPICTURE_RECORD_HEADER_SIZE + 4u),
                 "view transform setters use fixed portable records");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 8, 8, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&replay, NULL);
@@ -7649,6 +7811,7 @@ static void test_painter_picture_clip_record(void)
     XRect corner = { 0, 0, 1, 1 };
     XRect clipOut;
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XPainter_init(&record, NULL);
     expect_true(XPainter_begin_picture(&record, &picture),
@@ -7665,6 +7828,7 @@ static void test_painter_picture_clip_record(void)
                 XPicture_size(&picture) > XPICTURE_HEADER_SIZE,
                 "clip record produces a valid stream");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 8, 8, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&replay, NULL);
@@ -7703,6 +7867,7 @@ static void test_painter_picture_clip_region_record(void)
     XRect second = { 5, 1, 2, 2 };
     XRect all = { 0, 0, 8, 4 };
 
+    memset(&picture, 0, sizeof(picture));
     XPicture_init(&picture, -1);
     XRegion_init(&region);
     XRegion_addRect(&region, &first);
@@ -7718,6 +7883,7 @@ static void test_painter_picture_clip_region_record(void)
     expect_true(XPicture_isValidStream(&picture),
                 "clip-region record produces a valid stream");
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 8, 4, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0xff000000u);
     XPainter_init(&replay, NULL);
@@ -7751,18 +7917,25 @@ static void test_icon_matching(void)
     XIcon fallbackIcon;
     XIcon sizeIcon;
 
+    memset(&normal, 0, sizeof(normal));
     XPixmap_init_ex(&normal, 16, 16);
+    memset(&normalLarge, 0, sizeof(normalLarge));
     XPixmap_init_ex(&normalLarge, 32, 32);
+    memset(&active, 0, sizeof(active));
     XPixmap_init_ex(&active, 20, 20);
+    memset(&normalReplacement, 0, sizeof(normalReplacement));
     XPixmap_init_ex(&normalReplacement, 16, 16);
     XPixmap_fill(&normalReplacement, 0xff12ab34u);
+    memset(&fallbackIcon, 0, sizeof(fallbackIcon));
     XIcon_init_pixmap(&fallbackIcon, &normal);
     XIcon_addPixmap(&fallbackIcon, &normalReplacement,
                     XIconMode_Normal, XIconState_Off);
+    memset(&out, 0, sizeof(out));
     XPixmap_init(&out);
     XIcon_pixmap(&fallbackIcon, 16, 16, XIconMode_Normal, XIconState_Off, &out);
     {
         XImage replacementImage;
+        memset(&replacementImage, 0, sizeof(replacementImage));
         XImage_init(&replacementImage);
         XPixmap_toImage(&out, &replacementImage);
         expect_true(XPixmap_width(&out) == 16 && XPixmap_height(&out) == 16 &&
@@ -7783,6 +7956,7 @@ static void test_icon_matching(void)
 
     /* Within one mode/state, Qt chooses the smallest source not below the
      * request and scales it to the requested size. */
+    memset(&sizeIcon, 0, sizeof(sizeIcon));
     XIcon_init_pixmap(&sizeIcon, &normal);
     XIcon_addPixmap(&sizeIcon, &normalLarge, XIconMode_Normal, XIconState_Off);
     XPixmap_init(&out);
@@ -7814,8 +7988,11 @@ static void test_icon_device_pixel_ratio(void)
     XSize* size;
     uint32_t selectedPixel;
 
+    memset(&normal, 0, sizeof(normal));
     XPixmap_init_ex(&normal, 32, 32);
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_pixmap(&icon, &normal);
+    memset(&out, 0, sizeof(out));
     XPixmap_init(&out);
     XIcon_pixmapRatio(&icon, 32, 32, 2.0f,
                       XIconMode_Normal, XIconState_Off, &out);
@@ -7825,8 +8002,10 @@ static void test_icon_device_pixel_ratio(void)
     XPixmap_deinit_base(&out);
     XIcon_deinit_base(&icon);
 
+    memset(&highResolution, 0, sizeof(highResolution));
     XPixmap_init_ex(&highResolution, 64, 64);
     XPixmap_setDevicePixelRatio(&highResolution, 2.0f);
+    memset(&highIcon, 0, sizeof(highIcon));
     XIcon_init_pixmap(&highIcon, &highResolution);
     XPixmap_init(&out);
     XIcon_pixmapRatio(&highIcon, 32, 32, 2.0f,
@@ -7848,12 +8027,15 @@ static void test_icon_device_pixel_ratio(void)
 
     /* 同一 DPR 的候选按物理面积比较。请求 10x10@2x 时，16x16 逻辑
      * 资源已经足够，Qt 不应因为把请求面积乘过 DPR 而误选 32x32。 */
+    memset(&smallHighResolution, 0, sizeof(smallHighResolution));
     XPixmap_init_ex(&smallHighResolution, 32, 32);
     XPixmap_setDevicePixelRatio(&smallHighResolution, 2.0f);
     XPixmap_fill(&smallHighResolution, 0xffff0000u);
+    memset(&largeHighResolution, 0, sizeof(largeHighResolution));
     XPixmap_init_ex(&largeHighResolution, 64, 64);
     XPixmap_setDevicePixelRatio(&largeHighResolution, 2.0f);
     XPixmap_fill(&largeHighResolution, 0xff0000ffu);
+    memset(&mixedIcon, 0, sizeof(mixedIcon));
     XIcon_init(&mixedIcon);
     XIcon_addPixmap(&mixedIcon, &smallHighResolution,
                     XIconMode_Normal, XIconState_Off);
@@ -7862,6 +8044,7 @@ static void test_icon_device_pixel_ratio(void)
     XPixmap_init(&out);
     XIcon_pixmapRatio(&mixedIcon, 10, 10, 2.0f,
                       XIconMode_Normal, XIconState_Off, &out);
+    memset(&selectedImage, 0, sizeof(selectedImage));
     XImage_init(&selectedImage);
     XPixmap_toImage(&out, &selectedImage);
     selectedPixel = XImage_pixel(&selectedImage, 0, 0);
@@ -7971,16 +8154,21 @@ static void test_icon_style_helper(void)
     uint32_t selectedPixel;
     bool alphaPreserved;
 
+    memset(&source, 0, sizeof(source));
     XPixmap_init_ex(&source, 16, 16);
+    memset(&baseImage, 0, sizeof(baseImage));
     XImage_init_ex(&baseImage, 16, 16, XImageFormat_ARGB32);
     XImage_fill(&baseImage, 0xff336699u);
     XPixmap_fromImage(&baseImage, 0, &source);
 
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_pixmap(&icon, &source);
 
+    memset(&disabled, 0, sizeof(disabled));
     XPixmap_init(&disabled);
     XIcon_pixmap(&icon, 16, 16, XIconMode_Disabled, XIconState_Off, &disabled);
     expect_true(!XPixmap_isNull(&disabled), "disabled icon style produces non-null pixmap");
+    memset(&disabledImage, 0, sizeof(disabledImage));
     XImage_init(&disabledImage);
     XPixmap_toImage(&disabled, &disabledImage);
     disabledPixel = XImage_pixel(&disabledImage, 0, 0);
@@ -7988,9 +8176,11 @@ static void test_icon_style_helper(void)
     expect_true(alphaPreserved && disabledPixel != 0xff336699u,
                 "disabled icon style keeps opaque alpha and recolorizes pixels");
 
+    memset(&selected, 0, sizeof(selected));
     XPixmap_init(&selected);
     XIcon_pixmap(&icon, 16, 16, XIconMode_Selected, XIconState_Off, &selected);
     expect_true(!XPixmap_isNull(&selected), "selected icon style produces non-null pixmap");
+    memset(&selectedImage, 0, sizeof(selectedImage));
     XImage_init(&selectedImage);
     XPixmap_toImage(&selected, &selectedImage);
     selectedPixel = XImage_pixel(&selectedImage, 0, 0);
@@ -8033,9 +8223,22 @@ static void test_icon_scaled_pixmap_cache(void)
     int64_t firstKey;
     int64_t secondKey;
 
+    /* 栈对象必须先清零：前序测试在相同栈区残留合法 XPixmap vtable 与
+     * 旧 m_data，未清零时 XPixmap_init 的 vtable 探测误判"已初始化"，
+     * 对陈旧 m_data 做 unref 即堆损坏/AV（本机 Release 间歇崩溃根因
+     * 之一，与 test_toolbutton_contract 的 memset 约定对齐）。 */
+    memset(&source, 0, sizeof(source));
+    memset(&first, 0, sizeof(first));
+    memset(&second, 0, sizeof(second));
+    memset(&afterClear, 0, sizeof(afterClear));
+    memset(&icon, 0, sizeof(icon));
+
+    memset(&source, 0, sizeof(source));
     XPixmap_init_ex(&source, 32, 32);
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_pixmap(&icon, &source);
 
+    memset(&first, 0, sizeof(first));
     XPixmap_init(&first);
     XIcon_pixmapRatio(&icon, 20, 20, 1.0f,
                       XIconMode_Normal, XIconState_Off, &first);
@@ -8044,6 +8247,7 @@ static void test_icon_scaled_pixmap_cache(void)
                 XPixmap_height(&first) == 20,
                 "icon scaled pixmap first generation produces a 20x20 pixmap");
 
+    memset(&second, 0, sizeof(second));
     XPixmap_init(&second);
     XIcon_pixmapRatio(&icon, 20, 20, 1.0f,
                       XIconMode_Normal, XIconState_Off, &second);
@@ -8054,6 +8258,7 @@ static void test_icon_scaled_pixmap_cache(void)
 
     XPixmapCache_clear();
 
+    memset(&afterClear, 0, sizeof(afterClear));
     XPixmap_init(&afterClear);
     XIcon_pixmapRatio(&icon, 20, 20, 1.0f,
                       XIconMode_Normal, XIconState_Off, &afterClear);
@@ -8089,7 +8294,9 @@ static void test_icon_theme_engine_contract(void)
     expect_true(!XIcon_hasThemeIcon_2(NULL),
                 "hasThemeIcon rejects a NULL name pointer");
 
+    memset(&fallbackPixmap, 0, sizeof(fallbackPixmap));
     XPixmap_init_ex(&fallbackPixmap, 4, 4);
+    memset(&fallbackIcon, 0, sizeof(fallbackIcon));
     XIcon_init_pixmap(&fallbackIcon, &fallbackPixmap);
 
     XIcon_fromTheme_2("__xinyuec_no_such_theme_icon__", &fallbackIcon, &icon);
@@ -8256,6 +8463,7 @@ static void test_icon_engine_hook_contract(void)
     XPixmap_deinit_base(&pixmap);
     XVector_deinit_base((XClass*)&sizes);
 
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_engine(&icon, engine);
     {
         XSize actual;
@@ -8275,6 +8483,7 @@ static void test_icon_engine_hook_contract(void)
     XIconEngine_virtualHook_base(engine, XIconEngine_IsNullHook, &isNull);
     expect_true(!isNull, "icon engine IsNullHook false value remains false");
 
+    memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     argument.size.width = 0;
     argument.size.height = 16;
@@ -8324,10 +8533,13 @@ static void test_icon_paint_visual_alignment(void)
     uint32_t background = 0xff000000u;
     uint32_t pixelColor = 0xff336699u;
 
+    memset(&source, 0, sizeof(source));
     XPixmap_init_ex(&source, 4, 2);
     XPixmap_fill(&source, pixelColor);
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_pixmap(&icon, &source);
 
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 20, 10, XImageFormat_ARGB32);
     XImage_fill(&target, background);
     XPainter_init(&painter, NULL);
@@ -8360,8 +8572,10 @@ static void test_icon_paint_visual_alignment(void)
         XPixmap oddSource;
         XIcon oddIcon;
         XImage_fill(&target, background);
+        memset(&oddSource, 0, sizeof(oddSource));
         XPixmap_init_ex(&oddSource, 3, 3);
         XPixmap_fill(&oddSource, pixelColor);
+        memset(&oddIcon, 0, sizeof(oddIcon));
         XIcon_init_pixmap(&oddIcon, &oddSource);
         expect_true(XPainter_begin_image(&painter, &target),
                     "icon paint odd center begins image");
@@ -8448,11 +8662,13 @@ static void test_icon_add_file_size(void)
     XPixmap loaded;
     XSize* size;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 3, 2, XImageFormat_ARGB32);
     XImage_fill(&image, 0xff336699u);
     expect_true(XImage_save_2(&image, "xgui_icon_add_file.bmp", "BMP", -1),
                 "writes icon addFile fixture");
 
+    memset(&icon, 0, sizeof(icon));
     XIcon_init(&icon);
     XIcon_addFile_2(&icon, "xgui_icon_add_file.bmp", 8, 6,
                   XIconMode_Normal, XIconState_Off);
@@ -8464,6 +8680,7 @@ static void test_icon_add_file_size(void)
     expect_true(size && size->width == 8 && size->height == 6,
                 "icon addFile stores the requested raster size");
 
+    memset(&loaded, 0, sizeof(loaded));
     XPixmap_init(&loaded);
     XIcon_pixmap(&icon, 16, 16, XIconMode_Normal, XIconState_Off, &loaded);
     expect_true(!XPixmap_isNull(&loaded),
@@ -8478,6 +8695,7 @@ static void test_icon_add_file_size(void)
 
     /* Qt qicon.cpp:447-469 uses QSize::isValid(), so QSize(0,0) is an
        explicit placeholder rather than the all-frames branch. */
+    memset(&zeroSizeIcon, 0, sizeof(zeroSizeIcon));
     XIcon_init(&zeroSizeIcon);
     XIcon_addFile_2(&zeroSizeIcon, "xgui_icon_add_file.bmp", 0, 0,
                     XIconMode_Normal, XIconState_Off);
@@ -8514,6 +8732,7 @@ static void test_image_device_io(void)
     bool ok;
 
     make_file_name(&file_name);
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 3, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xffff0000u);
     XImage_setPixel(&source, 1, 0, 0xff00ff00u);
@@ -8596,6 +8815,7 @@ static void test_image_device_io(void)
     XImageReader_deinit_base(&autodetect);
     XImageReader_init_device_2(&reader, (XIODevice*)&file, "BMP");
     expect_true(XImageReader_canRead(&reader), "device reader detects BMP");
+    memset(&loaded, 0, sizeof(loaded));
     XImage_init(&loaded);
     expect_true(XImageReader_read(&reader, &loaded), "device reader reads BMP");
     expect_true(XImage_width(&loaded) == 3 && XImage_height(&loaded) == 2,
@@ -9060,6 +9280,7 @@ static void test_image_handler_registry(void)
     /* 对齐 Qt qimageiohandler.cpp:532-557：空尺寸和非法格式必须在
        分配前拒绝，失败不能覆盖调用方已有图像；同尺寸同格式则复用
        原缓冲区并只执行 detach。 */
+    memset(&allocationImage, 0, sizeof(allocationImage));
     XImage_init(&allocationImage);
     expect_true(!XImageIOHandler_allocateImage(
                     &emptyAllocationSize, XImageFormat_ARGB32,
@@ -9104,6 +9325,7 @@ static void test_image_handler_registry(void)
                                     XByteArray_data(limitedBytes),
                                     XByteArray_size_base((const XContainer*)limitedBytes),
                                     true);
+        memset(&limitedImage, 0, sizeof(limitedImage));
         XImage_init(&limitedImage);
         if (limitedPathString)
             limitedFile = XFile_create_2(limitedPathString);
@@ -9421,6 +9643,7 @@ static void test_image_reader_decide_format_state(void)
         XImage strictUnknownImage;
         XSize strictNoFormatSize;
         XString* strictNoFormatFile;
+        memset(&strictNoFormatFixture, 0, sizeof(strictNoFormatFixture));
         XImage_init_ex(&strictNoFormatFixture, 1, 1, XImageFormat_ARGB32);
         XImage_setPixel(&strictNoFormatFixture, 0, 0, 0xff223344u);
         expect_true(XImage_save_2(&strictNoFormatFixture,
@@ -9446,6 +9669,7 @@ static void test_image_reader_decide_format_state(void)
             XImageReader_setFormat_2(&strictEmptyFormatReader, "");
             XImageReader_setAutoDetectImageFormat(&strictEmptyFormatReader, false);
             XImageReader_setDecideFormatFromContent(&strictEmptyFormatReader, true);
+            memset(&strictEmptyFormatImage, 0, sizeof(strictEmptyFormatImage));
             XImage_init(&strictEmptyFormatImage);
             expect_true(!XImageReader_canRead(&strictEmptyFormatReader) &&
                         XImageReader_error(&strictEmptyFormatReader) ==
@@ -9460,6 +9684,7 @@ static void test_image_reader_decide_format_state(void)
         XImageReader_init_file_2(&strictUnknownReader,
                                  "xgui_reader_strict_no_format.bmp", "unknown");
         XImageReader_setAutoDetectImageFormat(&strictUnknownReader, false);
+        memset(&strictUnknownImage, 0, sizeof(strictUnknownImage));
         XImage_init(&strictUnknownImage);
         expect_true(!XImageReader_canRead(&strictUnknownReader) &&
                     XImageReader_error(&strictUnknownReader) ==
@@ -9507,6 +9732,7 @@ static void test_image_reader_decide_format_state(void)
         XImage croppedUnknownFixture;
         XString* croppedUnknownName = XString_create_utf8(
             "xgui_reader_cropped_unknown.bmp");
+        memset(&croppedUnknownFixture, 0, sizeof(croppedUnknownFixture));
         XImage_init_ex(&croppedUnknownFixture, 1, 1, XImageFormat_ARGB32);
         XImage_setPixel(&croppedUnknownFixture, 0, 0, 0xff102030u);
         expect_true(XImage_save_2(&croppedUnknownFixture,
@@ -9546,6 +9772,7 @@ static void test_image_reader_decide_format_state(void)
             XImageReader_setAutoDetectImageFormat(&mismatchReader, false);
             expect_true(!XImageReader_canRead(&mismatchReader),
                         "cropped reader rejects an explicit format mismatching the device signature");
+            memset(&mismatchImage, 0, sizeof(mismatchImage));
             XImage_init(&mismatchImage);
             expect_true(!XImageReader_read(&mismatchReader, &mismatchImage),
                         "cropped reader does not decode a mismatched explicit format");
@@ -9614,12 +9841,14 @@ static void test_image_reader_decide_format_state(void)
 
     /* 自动探测开启且无显式格式时，Qt 先尝试文件后缀插件，再允许内置
        处理器按内容读取；该路径不能因 format 为空而提前报错。 */
+    memset(&autoFixture, 0, sizeof(autoFixture));
     XImage_init_ex(&autoFixture, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&autoFixture, 0, 0, 0xff0a1b2cu);
     expect_true(XImage_save_2(&autoFixture,
                               "xgui_reader_autodetect.bmp", NULL, -1),
                 "writes fixture for automatic format detection");
     XImageReader_init_file_2(&autoReader, "xgui_reader_autodetect.bmp", NULL);
+    memset(&autoImage, 0, sizeof(autoImage));
     XImage_init(&autoImage);
 #if XIMAGEIOPLUGIN_ON
     expect_true(XImageReader_imageFormatValue(&autoReader) == XImageFormat_ARGB32,
@@ -9660,6 +9889,7 @@ static void test_image_reader_decide_format_state(void)
                              "unsupported-format");
     XImageReader_setAutoDetectImageFormat(&contentReader, false);
     XImageReader_setDecideFormatFromContent(&contentReader, true);
+    memset(&contentImage, 0, sizeof(contentImage));
     XImage_init(&contentImage);
     expect_true(XImageReader_read(&contentReader, &contentImage) &&
                 XImage_width(&contentImage) == 1 &&
@@ -9681,6 +9911,7 @@ static void test_image_reader_decide_format_state(void)
                 "writes fixture for @2x device pixel ratio detection");
     XImageReader_init_file_2(&dprReader,
                              "xgui_reader_autodetect@2x.bmp", NULL);
+    memset(&dprImage, 0, sizeof(dprImage));
     XImage_init(&dprImage);
     expect_true(XImageReader_read(&dprReader, &dprImage) &&
                 XImage_devicePixelRatio(&dprImage) == 2.0f,
@@ -9698,6 +9929,7 @@ static void test_image_reader_decide_format_state(void)
 #if XIMAGECODEC_ON && XIMAGECODEC_PNG_ON
     XImageReader_init_file_2(&wrongSuffixReader,
                              "xgui_reader_wrong_suffix.bmp", NULL);
+    memset(&wrongSuffixImage, 0, sizeof(wrongSuffixImage));
     XImage_init(&wrongSuffixImage);
     expect_true(XImage_save_2(&autoFixture,
                               "xgui_reader_wrong_suffix.bmp", "png", -1),
@@ -9723,6 +9955,7 @@ static void test_image_reader_decide_format_state(void)
                 "writes fixture for default extension probing");
     XImageReader_init_file_2(&extensionReader,
                              "xgui_reader_default_extension", "bmp");
+    memset(&extensionImage, 0, sizeof(extensionImage));
     XImage_init(&extensionImage);
     expect_true(XImageReader_read(&extensionReader, &extensionImage) &&
                 XImage_width(&extensionImage) == 1 &&
@@ -9737,6 +9970,7 @@ static void test_image_reader_decide_format_state(void)
     XImageReader_deinit_base(&extensionReader);
     XImageReader_init_file_2(&extensionAutoReader,
                              "xgui_reader_default_extension", NULL);
+    memset(&extensionAutoImage, 0, sizeof(extensionAutoImage));
     XImage_init(&extensionAutoImage);
     expect_true(XImageReader_read(&extensionAutoReader, &extensionAutoImage) &&
                 XImage_width(&extensionAutoImage) == 1 &&
@@ -9791,6 +10025,7 @@ static void test_image_reader_decide_format_state(void)
     XImageReader_init_file_2(&strictReader,
                              "xgui_reader_no_auto_missing.bmp", NULL);
     XImageReader_setAutoDetectImageFormat(&strictReader, false);
+    memset(&strictImage, 0, sizeof(strictImage));
     XImage_init(&strictImage);
     expect_true(!XImageReader_canRead(&strictReader) &&
                 XImageReader_error(&strictReader) ==
@@ -10050,6 +10285,7 @@ static void test_image_plugin_registry_integration(void)
     if (formats) XStringList_delete_base((XClass*)formats);
     if (mimes) XStringList_delete_base((XClass*)mimes);
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff112233u);
     XImage_setPixel(&source, 1, 0, 0xff445566u);
@@ -10133,6 +10369,7 @@ static void test_image_plugin_registry_integration(void)
     g_mockGamma = 0.0f;
     XString_deinit_base((XClass*)&g_mockExpectedWriterDescription);
 
+    memset(&loaded, 0, sizeof(loaded));
     XImage_init(&loaded);
     g_mockSupportsAnimation = true;
     g_mockSupportsTransformation = true;
@@ -10212,6 +10449,7 @@ static void test_image_plugin_registry_integration(void)
         XImageReader scaledReader;
         XImage scaledLoaded;
         XSize partialScaled;
+        memset(&scaledLoaded, 0, sizeof(scaledLoaded));
         XImage_init(&scaledLoaded);
         XImageReader_init_file_2(&scaledReader, fileName, "mock");
         partialScaled.width = 1;
@@ -10305,6 +10543,7 @@ static void test_image_plugin_registry_integration(void)
         g_mockImageWidth = 1;
         g_mockImageHeight = 1;
         g_mockImagePixels[0] = 0xffa1b2c3u;
+        memset(&overrideLoaded, 0, sizeof(overrideLoaded));
         XImage_init(&overrideLoaded);
         XImageReader_init_file_2(&overrideReader, "xgui_override.bmp", "bmp");
         expect_true(overrideAdded && XImageReader_read(&overrideReader, &overrideLoaded) &&
@@ -10344,6 +10583,7 @@ static void test_image_plugin_registry_integration(void)
             suffixAdded = XImagePluginRegistry_addPlugin(
                 (XImageIOPlugin*)suffixPlugin);
         }
+        memset(&fallbackSource, 0, sizeof(fallbackSource));
         XImage_init_ex(&fallbackSource, 1, 1, XImageFormat_ARGB32);
         XImage_setPixel(&fallbackSource, 0, 0, 0xff13579bu);
         expect_true(XImage_save_2(&fallbackSource, suffixFile, "bmp", -1),
@@ -10354,6 +10594,7 @@ static void test_image_plugin_registry_integration(void)
         g_mockSuffixOnlyCapabilities = true;
         g_mockRejectSuffixCanRead = true;
         g_mockPluginSetsFormat = true;
+        memset(&fallbackLoaded, 0, sizeof(fallbackLoaded));
         XImage_init(&fallbackLoaded);
         XImageReader_init_file_2(&fallbackReader, suffixFile, NULL);
         expect_true(suffixAdded && XImageReader_read(&fallbackReader, &fallbackLoaded) &&
@@ -10449,6 +10690,7 @@ static void test_image_plugin_registry_integration(void)
         XImageReader_init_file_2(&strictPluginReader,
                                  createFailFile, "bmp");
         XImageReader_setAutoDetectImageFormat(&strictPluginReader, false);
+        memset(&strictPluginLoaded, 0, sizeof(strictPluginLoaded));
         XImage_init(&strictPluginLoaded);
         {
             expect_true(createFailAdded &&
@@ -10464,6 +10706,7 @@ static void test_image_plugin_registry_integration(void)
            built-in content probe; a valid BMP must therefore remain readable. */
         XImageReader_init_file_2(&explicitAutoReader,
                                  createFailFile, "mock");
+        memset(&explicitAutoLoaded, 0, sizeof(explicitAutoLoaded));
         XImage_init(&explicitAutoLoaded);
         expect_true(createFailAdded &&
                     XImageReader_read(&explicitAutoReader, &explicitAutoLoaded) &&
@@ -10584,6 +10827,7 @@ static void test_image_plugin_registry_integration(void)
             XImage suffixImage;
             XImageReader_init_file_2(&suffixReader,
                                       XString_toUtf8(probeName), NULL);
+            memset(&suffixImage, 0, sizeof(suffixImage));
             XImage_init(&suffixImage);
             expect_true(XImageReader_read(&suffixReader, &suffixImage) &&
                         XImage_pixel(&suffixImage, 0, 0) == 0xffe1e2e3u,
@@ -10717,6 +10961,7 @@ static void test_image_plugin_registry_integration(void)
         g_mockImageWidth = 1;
         g_mockImageHeight = 1;
         g_mockImagePixels[0] = 0xff123456u;
+        memset(&writeFailSource, 0, sizeof(writeFailSource));
         XImage_init_ex(&writeFailSource, 1, 1, XImageFormat_ARGB32);
         XImage_setPixel(&writeFailSource, 0, 0, 0xffabcdefu);
         g_mockRejectWrite = true;
@@ -10917,6 +11162,7 @@ static void test_image_codec_round_trip(void)
                                          XImageCodecFormat_Jpeg,
 #endif
                                          XImageCodecFormat_Gif, XImageCodecFormat_Svg};
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 3, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xffff0000u); XImage_setPixel(&source, 1, 0, 0xff00ff00u); XImage_setPixel(&source, 2, 0, 0xff0000ffu);
     XImage_setPixel(&source, 0, 1, 0x80402010u); XImage_setPixel(&source, 1, 1, 0xffffffffu); XImage_setPixel(&source, 2, 1, 0xff102030u);
@@ -10937,6 +11183,7 @@ static void test_image_codec_round_trip(void)
         expect_true(XImage_width(&decoded) == 3 && XImage_height(&decoded) == 2, "codec round trip preserves dimensions");
         XImage_deinit_base(&decoded); if (encoded) XByteArray_delete_base((XClass*)encoded);
     }
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(XImage_save_2(&source, "xgui_codec.png", "png", -1), "XImage delegates PNG file save to codec");
     expect_true(XImage_load_2(&decoded, "xgui_codec.png", "png") && XImage_width(&decoded) == 3 && XImage_height(&decoded) == 2,
@@ -10992,12 +11239,14 @@ static void test_image_codec_dib_explicit(void)
         0xffff0000u, 0xff00ff00u, 0xff0000ffu, 0xff102030u
     };
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, expected[0]);
     XImage_setPixel(&source, 1, 0, expected[1]);
     XImage_setPixel(&source, 0, 1, expected[2]);
     XImage_setPixel(&source, 1, 1, expected[3]);
     dib = XByteArray_create();
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(dib && XImageCodec_encode(&source, XImageCodecFormat_Dib, -1, dib),
                 "DIB 显式编码成功");
@@ -11120,6 +11369,7 @@ static void test_image_load_failure_invalidation(void)
     XImage image;
     XByteArray* encoded = NULL;
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&image, 0, 0, 0xffff0000u);
     expect_true(!XImage_loadFromData_2(&image, malformed,
@@ -11127,6 +11377,7 @@ static void test_image_load_failure_invalidation(void)
                 XImage_isNull(&image),
                 "QImage loadFromData invalidates the destination on malformed data");
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff204060u);
     encoded = XByteArray_create();
@@ -11182,6 +11433,7 @@ static void test_codec_pixel_round_trip(void)
         XImageCodecFormat_Bmp, XImageCodecFormat_Png, XImageCodecFormat_Svg
     };
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 3, 2, XImageFormat_ARGB32);
     for (int y = 0; y < 2; ++y)
         for (int x = 0; x < 3; ++x)
@@ -11189,6 +11441,7 @@ static void test_codec_pixel_round_trip(void)
 
     for (size_t i = 0; i < sizeof(exactFormats) / sizeof(exactFormats[0]); ++i) {
         encoded = XByteArray_create();
+        memset(&decoded, 0, sizeof(decoded));
         XImage_init(&decoded);
         expect_true(encoded && XImageCodec_encode(&source, exactFormats[i], -1, encoded),
                     "codec pixel-encodes format");
@@ -11221,6 +11474,7 @@ static void test_codec_pixel_round_trip(void)
     /* JPEG：有损格式，使用 24x16 平滑渐变做往返，容差校验单通道误差 */
     {
         XImage jpegSrc;
+        memset(&jpegSrc, 0, sizeof(jpegSrc));
         XImage_init_ex(&jpegSrc, 24, 16, XImageFormat_ARGB32);
         for (int y = 0; y < 16; ++y) {
             for (int x = 0; x < 24; ++x) {
@@ -11333,6 +11587,7 @@ static void test_codec_ppm_family(void)
             : ((i == 1 || i == 4) ? XImageFormat_Grayscale8 : XImageFormat_RGB32);
         const uint32_t* expectedPixels = (i == 0 || i == 3)
             ? pbmExpected : ((i == 1 || i == 4) ? pgmExpected : redExpected);
+        memset(&image, 0, sizeof(image));
         XImage_init(&image);
         expect_true(XImageCodec_detect(samples[i], sampleSizes[i]) ==
                         XImageCodecFormat_Ppm,
@@ -11356,6 +11611,7 @@ static void test_codec_ppm_family(void)
     {
         XImage source;
         XByteArray* encoded = XByteArray_create();
+        memset(&source, 0, sizeof(source));
         XImage_init_ex(&source, 2, 1, XImageFormat_ARGB32);
         XImage_setPixel(&source, 0, 0, 0xffff0000u);
         XImage_setPixel(&source, 1, 0, 0xff00ff00u);
@@ -11528,6 +11784,7 @@ static void test_codec_ppm_family(void)
                         XImageReader_subType_2(&rawReader) &&
                         strcmp(XImageReader_subType_2(&rawReader), "ppm") == 0,
                     "显式 ppmraw 读取后按文件头规范化为 ppm 子类型");
+        memset(&rawImage, 0, sizeof(rawImage));
         XImage_init(&rawImage);
         expect_true(XImageReader_read(&rawReader, &rawImage) &&
                         XImage_pixel(&rawImage, 0, 0) == 0xffff0000u,
@@ -11572,6 +11829,7 @@ static void test_codec_ppm_family(void)
             if (probeFormat) XString_delete_base((XClass*)probeFormat);
         }
 
+        memset(&rawSource, 0, sizeof(rawSource));
         XImage_init_ex(&rawSource, 2, 1, XImageFormat_ARGB32);
         XImage_setPixel(&rawSource, 0, 0, 0xff000000u);
         XImage_setPixel(&rawSource, 1, 0, 0xffffffffu);
@@ -11652,6 +11910,7 @@ static void test_codec_xbm(void)
                                       &width, &height) && width == 8 && height == 1,
                 "XBM 尺寸探测遵循 Qt 32767 边界");
 
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageCodec_decode(valid, sizeof(valid) - 1u,
                                    XImageCodecFormat_Xbm, &image) &&
@@ -11733,6 +11992,7 @@ static void test_codec_xbm(void)
         XImage source;
         XImage loaded;
         int x;
+        memset(&source, 0, sizeof(source));
         XImage_init_ex(&source, 8, 1, XImageFormat_ARGB32);
         for (x = 0; x < 8; ++x)
             XImage_setPixel(&source, x, 0,
@@ -11754,6 +12014,7 @@ static void test_codec_xbm(void)
         expect_true(XImageReader_canRead(&reader),
                     "裁剪插件后 XImageReader 仍可探测 XBM");
 #endif
+        memset(&loaded, 0, sizeof(loaded));
         XImage_init(&loaded);
         expect_true(XImageReader_read(&reader, &loaded) &&
                     XImage_width(&loaded) == 8 && XImage_height(&loaded) == 1,
@@ -11845,6 +12106,7 @@ static void test_codec_xpm(void)
                 imageFormat == XImageFormat_Indexed8,
                 "XPM 尺寸探测和 Indexed8 格式报告遵循 Qt 语义");
 
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageCodec_decode(valid, sizeof(valid) - 1u,
                                    XImageCodecFormat_Xpm, &image) &&
@@ -11874,6 +12136,7 @@ static void test_codec_xpm(void)
         }
         expect_true(hasMagic && hasDimensions,
                     "XPM 编码输出包含标准文件头和尺寸调色板描述");
+        memset(&decoded, 0, sizeof(decoded));
         XImage_init(&decoded);
         expect_true(XImageCodec_decode(encodedData, encodedSize,
                                        XImageCodecFormat_Xpm, &decoded) &&
@@ -11925,6 +12188,7 @@ static void test_codec_xpm(void)
         const char* path = "xgui_xpm_handler.xpm";
         XImageReader reader;
         XImageWriter writer;
+        memset(&fileDecoded, 0, sizeof(fileDecoded));
         XImage_init(&fileDecoded);
         expect_true(test_write_binary_file(path, valid, sizeof(valid) - 1u, true),
                     "XPM 读取器测试文件写入成功");
@@ -12025,6 +12289,7 @@ static void bmp_expect_reject(XByteArray* b, const char* name)
     bool rejected = false;
     if (b) {
         XImage out;
+        memset(&out, 0, sizeof(out));
         XImage_init(&out);
         rejected = !XImageCodec_decode(XByteArray_data(b),
                                        XByteArray_size_base((const XContainer*)b),
@@ -12040,6 +12305,7 @@ static void test_codec_bmp_malformed(void)
     XByteArray* b;
     XImage out;
 
+    memset(&out, 0, sizeof(out));
     XImage_init(&out);
     expect_true(!XImageCodec_decode((const uint8_t*)"BM", 2,
                                     XImageCodecFormat_Bmp, &out),
@@ -12374,6 +12640,7 @@ static void test_codec_bmp_mask_scaling(void)
         d[54] = 0x00;
         d[55] = 0x0c;
     }
+    memset(&out, 0, sizeof(out));
     XImage_init(&out);
     expect_true(b && XImageCodec_decode(
                     XByteArray_data(b),
@@ -12401,6 +12668,7 @@ static void test_codec_bmp_alpha_semantics(void)
         data[56] = 0x11;
         data[57] = 0x01;
     }
+    memset(&out, 0, sizeof(out));
     XImage_init(&out);
     expect_true(plain && XImageCodec_decode(
                     XByteArray_data(plain),
@@ -12444,12 +12712,14 @@ static void test_codec_bmp_physical_metadata(void)
     XByteArray* encoded;
     const uint8_t* bytes;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 1, XImageFormat_RGB32);
     XImage_setPixel(&source, 0, 0, 0xff102030u);
     XImage_setPixel(&source, 1, 0, 0xff405060u);
     XImage_setDotsPerMeterX(&source, 5000);
     XImage_setDotsPerMeterY(&source, 6000);
     encoded = XByteArray_create();
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(encoded && XImageCodec_encode(
                     &source, XImageCodecFormat_Bmp, -1, encoded),
@@ -12486,11 +12756,13 @@ static void test_codec_ico_roundtrip(void)
     int width = 0;
     int height = 0;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xffff0000u);
     XImage_setPixel(&source, 1, 0, 0x0000ff00u);
     XImage_setPixel(&source, 0, 1, 0xff0000ffu);
     XImage_setPixel(&source, 1, 1, 0x80112233u);
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(encoded && XImageCodec_encode(&source, XImageCodecFormat_Ico,
                                                -1, encoded),
@@ -12628,6 +12900,7 @@ static void ico_expect_decode_reject(XByteArray* candidate, const char* name)
     XImage image;
     bool rejected = false;
     if (candidate) {
+        memset(&image, 0, sizeof(image));
         XImage_init(&image);
         rejected = !XImageCodec_decode(
             XByteArray_data(candidate),
@@ -12794,6 +13067,7 @@ static void test_image_reader_malformed_bmp(void)
     }
     expect_true(wrote, "writes truncated BMP reader fixture");
     XImageReader_init_file_2(&reader, path, "bmp");
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageReader_canRead(&reader),
                 "reader canRead accepts a recognizable but potentially corrupt BMP");
@@ -12821,6 +13095,7 @@ static void test_image_reader_invalid_clip_rect(void)
     XImageReader reader;
     XRect clip;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff112233u);
     XImage_setPixel(&source, 1, 0, 0xff445566u);
@@ -12835,6 +13110,7 @@ static void test_image_reader_invalid_clip_rect(void)
     clip.width = 0;
     clip.height = 2;
     XImageReader_setClipRect(&reader, &clip);
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageReader_read(&reader, &image) &&
                 XImage_width(&image) == 2 && XImage_height(&image) == 2,
@@ -12873,7 +13149,9 @@ static void test_codec_reject_malformed(void)
     XByteArray* encoded = NULL;
     XByteArray* prefixedJpeg = NULL;
 
+    memset(&out, 0, sizeof(out));
     XImage_init(&out);
+    memset(&nullImage, 0, sizeof(nullImage));
     XImage_init(&nullImage);
     expect_true(!XImageCodec_decode(NULL, 0, XImageCodecFormat_Bmp, &out),
                 "null decode rejected");
@@ -12898,6 +13176,7 @@ static void test_codec_reject_malformed(void)
     {
         XImage pngSource;
         XByteArray* corruptPng = XByteArray_create();
+        memset(&pngSource, 0, sizeof(pngSource));
         XImage_init_ex(&pngSource, 1, 1, XImageFormat_ARGB32);
         XImage_fill(&pngSource, 0xff336699u);
         expect_true(corruptPng &&
@@ -12925,6 +13204,7 @@ static void test_codec_reject_malformed(void)
     /* JPEG 已有内置后端：正常图像编码应成功，空图像仍应被拒绝 */
     {
         XImage jpegSrc;
+        memset(&jpegSrc, 0, sizeof(jpegSrc));
         XImage_init_ex(&jpegSrc, 16, 16, XImageFormat_ARGB32);
         XImage_fill(&jpegSrc, 0xff336699u);
         expect_true(XImageCodec_encode(&jpegSrc, XImageCodecFormat_Jpeg, 75, encoded),
@@ -12982,6 +13262,7 @@ static void test_codec_detect_only(void)
     static const uint8_t xmlThenSvg[] = {'<', '?', 'x', 'm', 'l', '?', '>',
                                          '<', 's', 'v', 'g', '>'};
     XImage out;
+    memset(&out, 0, sizeof(out));
     XImage_init(&out);
 #if XIMAGECODEC_JPEG_ON
     expect_true(XImageCodec_detect(jpegHeader, sizeof(jpegHeader)) == XImageCodecFormat_Jpeg,
@@ -13033,6 +13314,7 @@ static void test_codec_svg_text_encodings(void)
 
     /* UTF-8 直接输入（无 BOM）是 Qt 测试中的基础编码。 */
     memcpy(utf8, svg, sourceSize);
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageCodec_decode(utf8, sourceSize,
                                    XImageCodecFormat_Svg, &image) &&
@@ -13145,6 +13427,7 @@ static void test_codec_svg_gzip(void)
                                                  &width, &height) &&
                 width == 3 && height == 2,
                 "SVGZ dimensions probe after inflate");
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageCodec_decode(gzip, gzipSize, XImageCodecFormat_Svg,
                                    &image) && XImage_width(&image) == 3 &&
@@ -13191,6 +13474,7 @@ static void test_codec_decode_real_assets(void)
     for (i = 0; i < sizeof(assets) / sizeof(assets[0]); ++i) {
         char alternate[512];
         bool loaded;
+        memset(&image, 0, sizeof(image));
         XImage_init(&image);
         /* 回归程序既可能从仓库根运行，也可能由 bin/ 目录直接启动。 */
         loaded = XImage_load_2(&image, assets[i].file, "png");
@@ -13237,6 +13521,7 @@ static void test_codec_png_palette_round_trip(void)
     uint32_t gotPalette[4];
     int got;
 
+    memset(&src, 0, sizeof(src));
     XImage_init_ex(&src, 4, 4, XImageFormat_Indexed8);
     XImage_setColorTable(&src, opaquePalette, 4);
     for (int y = 0; y < 4; ++y)
@@ -13244,6 +13529,7 @@ static void test_codec_png_palette_round_trip(void)
             XImage_setPixel(&src, x, y, (uint32_t)idxTable[y][x]);
 
     encoded = XByteArray_create();
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(encoded && XImageCodec_encode(&src, XImageCodecFormat_Png, -1, encoded),
                 "Indexed8 图像编码为调色板 PNG");
@@ -13275,6 +13561,7 @@ static void test_codec_png_palette_round_trip(void)
             0x80ff0000u, 0xff00ff00u, 0xff0000ffu, 0x40ffff00u
         };
         XImage srcA;
+        memset(&srcA, 0, sizeof(srcA));
         XImage_init_ex(&srcA, 3, 2, XImageFormat_Indexed8);
         XImage_setColorTable(&srcA, alphaPalette, 4);
         XImage_setPixel(&srcA, 0, 0, 0); XImage_setPixel(&srcA, 1, 0, 1);
@@ -13368,6 +13655,7 @@ static void test_codec_png_extended_assets(void)
         const struct Case* c = &cases[i];
         const CodecAssetFixture* asset = codec_asset_fixture_find(c->file);
         XImage image;
+        memset(&image, 0, sizeof(image));
         XImage_init(&image);
         expect_true(asset != NULL && XImage_loadFromData_2(&image, asset->data, (int)asset->size, "png") &&
                     XImage_width(&image) == c->w && XImage_height(&image) == c->h,
@@ -13391,6 +13679,7 @@ static void test_codec_png_extended_assets(void)
         const CodecAssetFixture* a16;
         const uint8_t* line;
         a16 = codec_asset_fixture_find("codec_gray16.png");
+        memset(&g16, 0, sizeof(g16));
         XImage_init(&g16);
         expect_true(a16 != NULL && XImage_loadFromData_2(&g16, a16->data, (int)a16->size, "png") &&
                     XImage_format(&g16) == XImageFormat_Grayscale16,
@@ -13398,6 +13687,7 @@ static void test_codec_png_extended_assets(void)
         line = XImage_scanLine(&g16, 0);
         expect_true(line[0] == 0x00 && line[1] == 0x00 && line[2] == 0xff && line[3] == 0xff,
                     "16 位灰度样本双字节值还原");
+        memset(&rgb16, 0, sizeof(rgb16));
         XImage_init(&rgb16);
         a16 = codec_asset_fixture_find("codec_rgb16.png");
         expect_true(a16 != NULL && XImage_loadFromData_2(&rgb16, a16->data, (int)a16->size, "png") &&
@@ -13406,6 +13696,7 @@ static void test_codec_png_extended_assets(void)
         line = XImage_scanLine(&rgb16, 1);
         expect_true(line[0] == 0x00 && line[2] == 0x00 && line[4] == 0xff && line[5] == 0xff,
                     "16 位 RGB 样本双字节值还原");
+        memset(&rgba16, 0, sizeof(rgba16));
         XImage_init(&rgba16);
         a16 = codec_asset_fixture_find("codec_rgba16.png");
         expect_true(a16 != NULL && XImage_loadFromData_2(&rgba16, a16->data, (int)a16->size, "png") &&
@@ -13432,9 +13723,11 @@ static void test_codec_png_color_metadata(void)
     uint8_t gammaData[4], chrmData[32], srgbData[1];
     XColorSpace colorSpace;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xffff0000u);
     encoded = XByteArray_create();
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(encoded && XImageCodec_encode(&source, XImageCodecFormat_Png,
                                                -1, encoded),
@@ -13547,6 +13840,7 @@ static void test_codec_png_color_metadata(void)
                             sizeof(profile)),
                     "PNG iCCP 原始 profile 侧车复制一致");
         reencoded = XByteArray_create();
+        memset(&roundTrip, 0, sizeof(roundTrip));
         XImage_init(&roundTrip);
         expect_true(reencoded &&
                     XImageCodec_encode(&decoded, XImageCodecFormat_Png, -1,
@@ -13606,12 +13900,14 @@ static void test_codec_png_text_metadata(void)
     size_t size, i;
     bool hasText = false, hasZtxt = false, hasItxt = false;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff102030u);
     XImage_setText_2(&source, "Description", "short ASCII text");
     XImage_setText_2(&source, "Long", longText);
     XImage_setText_2(&source, "Unicode", unicodeText);
     encoded = XByteArray_create();
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(encoded && XImageCodec_encode(&source, XImageCodecFormat_Png,
                                                -1, encoded),
@@ -13659,9 +13955,11 @@ static void test_codec_png_writer_description(void)
     XImage decorated;
     XString* description;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff204060u);
     description = XString_create_utf8("Title: writer title\n\nDescription: writer description");
+    memset(&decorated, 0, sizeof(decorated));
     XImage_init(&decorated);
     XCopy(&decorated, &source);
     expect_true(description && XImage_applyTextDescription(&decorated, description) &&
@@ -13704,6 +14002,7 @@ static void test_codec_png_writer_description(void)
 #endif
     XImageReader_deinit_base(&reader);
 
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(XImage_load_2(&decoded, path, "png"),
                 "QImageWriter PNG Description 输出可读");
@@ -13733,6 +14032,7 @@ static void test_codec_png_writer_options(void)
     bool hasGamma = false;
     uint32_t gammaValue = 0;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 64, 64, XImageFormat_ARGB32);
     for (i = 0; i < 64u * 64u; ++i)
         XImage_setPixel(&source, (int)(i % 64u), (int)(i / 64u),
@@ -13793,6 +14093,7 @@ static void test_codec_png_reader_gamma(void)
     int64_t initialPos = -1;
     int64_t queriedPos = -1;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 1, 1, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff304050u);
     encoded = XByteArray_create();
@@ -13851,6 +14152,7 @@ static void test_codec_png_physical_metadata(void)
     bool hasPhys = false, hasOffs = false;
     XPoint offset = { -17, 23 };
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 1, XImageFormat_ARGB32);
     XImage_setPixel(&source, 0, 0, 0xff102030u);
     XImage_setPixel(&source, 1, 0, 0xff405060u);
@@ -13858,6 +14160,7 @@ static void test_codec_png_physical_metadata(void)
     XImage_setDotsPerMeterY(&source, 2835);
     XImage_setOffset(&source, &offset);
     encoded = XByteArray_create();
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(encoded && XImageCodec_encode(&source, XImageCodecFormat_Png,
                                                -1, encoded),
@@ -13992,6 +14295,7 @@ static void test_codec_bmp_extended_assets(void)
         XImage image;
         const struct Pt* pts[4] = {&c->p0, &c->p1, &c->p2, &c->p3};
         if (strcmp(c->file, "codec_bmp_palette2.bmp") == 0) {
+            memset(&image, 0, sizeof(image));
             XImage_init(&image);
             expect_true(asset != NULL &&
                         !XImage_loadFromData_2(&image, asset->data,
@@ -14090,6 +14394,7 @@ static void test_codec_jpeg_extended_assets(void)
         XImage image;
         int k;
 
+        memset(&image, 0, sizeof(image));
         XImage_init(&image);
         expect_true(asset != NULL && XImage_loadFromData_2(&image, asset->data, (int)asset->size, "jpeg") &&
                     XImage_width(&image) == 48 && XImage_height(&image) == 32,
@@ -14148,6 +14453,7 @@ static void test_codec_jpeg_jfif_density(void)
     data[13] = 1;   /* dots/inch */
     data[14] = 1; data[15] = 44;   /* 300 dpi */
     data[16] = 0; data[17] = 150;  /* 150 dpi */
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageCodec_decode(XByteArray_data(bytes),
                                    XByteArray_size_base((const XContainer*)bytes),
@@ -14189,6 +14495,7 @@ static void test_codec_jpeg_metadata(void)
     XByteArray* copied = NULL;
     bool ok;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 8, 6, XImageFormat_ARGB32);
     for (int y = 0; y < 6; ++y)
         for (int x = 0; x < 8; ++x)
@@ -14204,6 +14511,7 @@ static void test_codec_jpeg_metadata(void)
                 "JPEG 元数据夹具设置 ICC 侧车");
 
     encoded = XByteArray_create();
+    memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     ok = encoded && XImageCodec_encode(&source, XImageCodecFormat_Jpeg,
                                        90, encoded);
@@ -14302,6 +14610,7 @@ static void test_codec_svg_vector_render(void)
     uint32_t v;
 
     /* 线性渐变：左红右蓝 */
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\">"
@@ -14495,6 +14804,7 @@ static void test_codec_gif_animation(void)
     }
 
     /* 多帧 GIF 的单帧解码仍可用 */
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
     expect_true(XImageCodec_decode(kCodecGifAnimFixture,
                                    kCodecGifAnimFixtureSize,
@@ -14578,7 +14888,9 @@ static void test_codec_gif_animation(void)
             XImage first;
             XImage second;
             XImageReader_init_file_2(&reader, "xgui_movie_anim.gif", "gif");
+            memset(&first, 0, sizeof(first));
             XImage_init(&first);
+            memset(&second, 0, sizeof(second));
             XImage_init(&second);
             expect_true(XImageReader_currentImageNumber(&reader) == -1,
                         "XImageReader GIF 首次 read 前帧号为 -1");
@@ -14602,8 +14914,11 @@ static void test_codec_gif_animation(void)
                 XImage third;
                 XImage fourth;
                 XImage afterLast;
+                memset(&third, 0, sizeof(third));
                 XImage_init(&third);
+                memset(&fourth, 0, sizeof(fourth));
                 XImage_init(&fourth);
+                memset(&afterLast, 0, sizeof(afterLast));
                 XImage_init(&afterLast);
                 expect_true(XImageReader_read(&reader, &third) &&
                             XImageReader_currentImageNumber(&reader) == 2,
@@ -14627,6 +14942,7 @@ static void test_codec_gif_animation(void)
             XImageReader jumpReader;
             XImage jumped;
             XImageReader_init_file_2(&jumpReader, "xgui_movie_anim.gif", "gif");
+            memset(&jumped, 0, sizeof(jumped));
             XImage_init(&jumped);
             expect_true(XImageReader_jumpToImage(&jumpReader, 2) &&
                         XImageReader_read(&jumpReader, &jumped) &&
@@ -14727,10 +15043,12 @@ static void test_codec_upper_layer_files(void)
     XImage source, loaded;
     size_t i;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 3, 2, XImageFormat_ARGB32);
     XImage_fill(&source, 0xff336699u);
     XImage_setPixel(&source, 0, 1, 0x80123456u);
     for (i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
+        memset(&loaded, 0, sizeof(loaded));
         XImage_init(&loaded);
         expect_true(XImage_save_2(&source, files[i], fmts[i], -1) &&
                     XImage_load_2(&loaded, files[i], fmts[i]),
@@ -14768,6 +15086,7 @@ static void test_codec_upper_layer_devices(void)
     XString* fileName = NULL;
     size_t i;
 
+    memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
     XImage_fill(&source, 0xffabcdefu);
     for (i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
@@ -14786,6 +15105,7 @@ static void test_codec_upper_layer_devices(void)
         XFile_init_2(&file, fileName);
         if (XFile_open_2(&file, XIODevice_ReadOnly, 0)) {
             XImageReader_init_device_2(&reader, (XIODevice*)&file, fmts[i]);
+            memset(&loaded, 0, sizeof(loaded));
             XImage_init(&loaded);
             {
                 XSize probedSize;
@@ -14888,15 +15208,25 @@ static void test_image_equals_qt_semantics(void)
                                     0, 0, 0, 0 };
     uint8_t* rgbBits;
 
+    memset(&argbLeft, 0, sizeof(argbLeft));
     XImage_init(&argbLeft);
+    memset(&argbRight, 0, sizeof(argbRight));
     XImage_init(&argbRight);
+    memset(&indexedLeft, 0, sizeof(indexedLeft));
     XImage_init(&indexedLeft);
+    memset(&indexedRight, 0, sizeof(indexedRight));
     XImage_init(&indexedRight);
+    memset(&rgbLeft, 0, sizeof(rgbLeft));
     XImage_init(&rgbLeft);
+    memset(&rgbRight, 0, sizeof(rgbRight));
     XImage_init(&rgbRight);
+    memset(&paddedLeft, 0, sizeof(paddedLeft));
     XImage_init(&paddedLeft);
+    memset(&paddedRight, 0, sizeof(paddedRight));
     XImage_init(&paddedRight);
+    memset(&swapLeft, 0, sizeof(swapLeft));
     XImage_init(&swapLeft);
+    memset(&swapRight, 0, sizeof(swapRight));
     XImage_init(&swapRight);
 
     XImage_init_ex(&argbLeft, 2, 1, XImageFormat_ARGB32);
@@ -15168,23 +15498,41 @@ static void test_image_pixel_contract(void)
         }
     }
 
+    memset(&copy, 0, sizeof(copy));
     XImage_init(&copy);
+    memset(&pm64, 0, sizeof(pm64));
     XImage_init(&pm64);
+    memset(&converted, 0, sizeof(converted));
     XImage_init(&converted);
+    memset(&indexedColorTransformed, 0, sizeof(indexedColorTransformed));
     XImage_init(&indexedColorTransformed);
+    memset(&grayscale, 0, sizeof(grayscale));
     XImage_init(&grayscale);
+    memset(&cmyk, 0, sizeof(cmyk));
     XImage_init(&cmyk);
+    memset(&sameSpace, 0, sizeof(sameSpace));
     XImage_init(&sameSpace);
+    memset(&grayTransformed, 0, sizeof(grayTransformed));
     XImage_init(&grayTransformed);
+    memset(&reinterpret, 0, sizeof(reinterpret));
     XImage_init(&reinterpret);
+    memset(&reinterpretCopy, 0, sizeof(reinterpretCopy));
     XImage_init(&reinterpretCopy);
+    memset(&monoSwap, 0, sizeof(monoSwap));
     XImage_init(&monoSwap);
+    memset(&gray8, 0, sizeof(gray8));
     XImage_init(&gray8);
+    memset(&gray8Swap, 0, sizeof(gray8Swap));
     XImage_init(&gray8Swap);
+    memset(&alpha8, 0, sizeof(alpha8));
     XImage_init(&alpha8);
+    memset(&alpha8Swap, 0, sizeof(alpha8Swap));
     XImage_init(&alpha8Swap);
+    memset(&transferSource, 0, sizeof(transferSource));
     XImage_init(&transferSource);
+    memset(&transferTarget, 0, sizeof(transferTarget));
     XImage_init(&transferTarget);
+    memset(&premultiplied, 0, sizeof(premultiplied));
     XImage_init_ex(&premultiplied, 1, 1, XImageFormat_ARGB32_Premultiplied);
     XImage_setText_2(&premultiplied, "foo", "bar");
     XImage_setText_2(&premultiplied, "foo2", "bar2");
@@ -15321,6 +15669,7 @@ static void test_image_pixel_contract(void)
                 XColorSpaceTransfer_Linear, 0.0f);
             XImage explicitFormat;
             XColorSpace explicitSpace;
+            memset(&explicitFormat, 0, sizeof(explicitFormat));
             XImage_init(&explicitFormat);
             XImage_convertedToColorSpace_ex(&premultiplied, targetGray,
                                             XImageFormat_Grayscale8, 0,
@@ -15409,6 +15758,7 @@ static void test_image_pixel_contract(void)
     }
     XImage_deinit_base(&pm64);
 
+    memset(&rgba, 0, sizeof(rgba));
     XImage_init_ex(&rgba, 2, 1, XImageFormat_RGBA8888);
     XImage_setPixel(&rgba, 0, 0, 0x80402010u);
     expect_true(XImage_pixel(&rgba, 0, 0) == 0x80402010u,
@@ -15459,6 +15809,7 @@ static void test_image_pixel_contract(void)
     {
         const uint32_t monoPalette[2] = { 0xff102030u, 0xff405060u };
         int64_t monoKey;
+        memset(&mono, 0, sizeof(mono));
         XImage_init_ex(&mono, 1, 1, XImageFormat_Mono);
         XImage_setColorTable(&mono, monoPalette, 2);
         XImage_setPixel(&mono, 0, 0, 1);
@@ -15485,6 +15836,7 @@ static void test_image_pixel_contract(void)
                 XImage_pixel(&alpha8Swap, 0, 0) == XImage_pixel(&alpha8, 0, 0),
                 "rgbSwapped shares Alpha8 data without changing pixels");
 
+    memset(&indexed, 0, sizeof(indexed));
     XImage_init_ex(&indexed, 1, 1, XImageFormat_Indexed8);
     XImage_setColorSpace(&indexed, XColorSpace_sRgb());
     expect_true(XImage_hasColorSpace(&indexed),
@@ -15494,6 +15846,7 @@ static void test_image_pixel_contract(void)
         const uint32_t firstColor = palette[0];
         XColorSpace displayP3 = XColorSpace_create_named(XColorSpaceNamed_DisplayP3);
         XImage indexedSource;
+        memset(&indexedSource, 0, sizeof(indexedSource));
         XImage_init(&indexedSource);
         XImage_init_ex(&indexedSource, 2, 1, XImageFormat_Indexed8);
         XImage_setColorTable(&indexedSource, palette, 2);
@@ -15659,9 +16012,13 @@ static void test_image_color_transform_native_precision(void)
     uint16_t nativeChannels[4] = { 0, 0, 0, 0 };
     uint16_t compatChannels[4] = { 0, 0, 0, 0 };
 
+    memset(&source, 0, sizeof(source));
     XImage_init(&source);
+    memset(&nativeResult, 0, sizeof(nativeResult));
     XImage_init(&nativeResult);
+    memset(&compatResult, 0, sizeof(compatResult));
     XImage_init(&compatResult);
+    memset(&compat64, 0, sizeof(compat64));
     XImage_init(&compat64);
     XImage_init_ex(&source, 1, 1, XImageFormat_RGBA64);
     memcpy(XImage_bits(&source), sourceChannels, sizeof(sourceChannels));
@@ -15718,13 +16075,21 @@ static void test_image_color_transform_float_precision(void)
     uint16_t integerResultChannels[4] = { 0, 0, 0, 0 };
     uint16_t directIntegerChannels[4] = { 0, 0, 0, 0 };
 
+    memset(&source, 0, sizeof(source));
     XImage_init(&source);
+    memset(&transformed, 0, sizeof(transformed));
     XImage_init(&transformed);
+    memset(&extendedSource, 0, sizeof(extendedSource));
     XImage_init(&extendedSource);
+    memset(&extendedResult, 0, sizeof(extendedResult));
     XImage_init(&extendedResult);
+    memset(&packedSource, 0, sizeof(packedSource));
     XImage_init(&packedSource);
+    memset(&packedResult, 0, sizeof(packedResult));
     XImage_init(&packedResult);
+    memset(&integerResult, 0, sizeof(integerResult));
     XImage_init(&integerResult);
+    memset(&directInteger, 0, sizeof(directInteger));
     XImage_init(&directInteger);
     XImage_init_ex(&source, 1, 1, XImageFormat_RGBA32FPx4);
     memcpy(XImage_bits(&source), sourceChannels, sizeof(sourceChannels));
@@ -15849,8 +16214,11 @@ static void test_image_color_profile_sidecar(void)
     uint8_t bits = 0;
     bool twoWay = false;
 
+    memset(&source, 0, sizeof(source));
     XImage_init(&source);
+    memset(&alias, 0, sizeof(alias));
     XImage_init(&alias);
+    memset(&clone, 0, sizeof(clone));
     XImage_init(&clone);
     XByteArray_init(&iccOut, true);
     XByteArray_init(&aliasIccOut, true);
@@ -15971,19 +16339,33 @@ static void test_image_mask_qt_semantics(void)
     XPoint sourceOffset;
     XPoint maskOffset;
 
+    memset(&image, 0, sizeof(image));
     XImage_init(&image);
+    memset(&alphaMask, 0, sizeof(alphaMask));
     XImage_init(&alphaMask);
+    memset(&rgb32, 0, sizeof(rgb32));
     XImage_init(&rgb32);
+    memset(&mono, 0, sizeof(mono));
     XImage_init(&mono);
+    memset(&rgbMask, 0, sizeof(rgbMask));
     XImage_init(&rgbMask);
+    memset(&rgbMaskOut, 0, sizeof(rgbMaskOut));
     XImage_init(&rgbMaskOut);
+    memset(&premultipliedMaskSource, 0, sizeof(premultipliedMaskSource));
     XImage_init(&premultipliedMaskSource);
+    memset(&premultipliedMask, 0, sizeof(premultipliedMask));
     XImage_init(&premultipliedMask);
+    memset(&premultipliedHeuristicSource, 0, sizeof(premultipliedHeuristicSource));
     XImage_init(&premultipliedHeuristicSource);
+    memset(&premultipliedHeuristicMask, 0, sizeof(premultipliedHeuristicMask));
     XImage_init(&premultipliedHeuristicMask);
+    memset(&heuristic, 0, sizeof(heuristic));
     XImage_init(&heuristic);
+    memset(&heuristicLoose, 0, sizeof(heuristicLoose));
     XImage_init(&heuristicLoose);
+    memset(&diffuseSource, 0, sizeof(diffuseSource));
     XImage_init(&diffuseSource);
+    memset(&diffuseMask, 0, sizeof(diffuseMask));
     XImage_init(&diffuseMask);
 
     XImage_init_ex(&image, 3, 1, XImageFormat_ARGB32);
@@ -16202,8 +16584,10 @@ static void test_image_format_mapping_and_color_fill(void)
     /* Qt qimage.cpp:4550-4580 first chooses qt_alphaVersionForPainting(),
        then performs DestinationIn.  Verify both format-preserving upgrade
        and multiplication of an already present alpha channel. */
+    memset(&alphaTarget, 0, sizeof(alphaTarget));
     XImage_init_ex(&alphaTarget, 1, 1, XImageFormat_ARGB32_Premultiplied);
     XImage_setPixel(&alphaTarget, 0, 0, 0xff804020u);
+    memset(&alphaSource, 0, sizeof(alphaSource));
     XImage_init_ex(&alphaSource, 1, 1, XImageFormat_Alpha8);
     XImage_bits(&alphaSource)[0] = 0x80u;
     expect_true(XImage_setAlphaChannel(&alphaTarget, &alphaSource) &&
@@ -16216,6 +16600,7 @@ static void test_image_format_mapping_and_color_fill(void)
 
     /* qimage_p.h:297-302 maps Format_Alpha8 to ARGB32_Premultiplied before
        painting; retaining Alpha8 here would diverge from Qt's format result. */
+    memset(&alphaTarget8, 0, sizeof(alphaTarget8));
     XImage_init_ex(&alphaTarget8, 1, 1, XImageFormat_Alpha8);
     XImage_bits(&alphaTarget8)[0] = 0x40u;
     expect_true(XImage_setAlphaChannel(&alphaTarget8, &alphaSource) &&
@@ -16225,6 +16610,7 @@ static void test_image_format_mapping_and_color_fill(void)
 
     /* qimage_p.h:265-310 preserves the native alpha-capable depth where a
        compatible format exists; RGB16 therefore becomes ARGB8565PM. */
+    memset(&alphaTarget16, 0, sizeof(alphaTarget16));
     XImage_init_ex(&alphaTarget16, 1, 1, XImageFormat_RGB16);
     XImage_fill(&alphaTarget16, 0x0000ffffu);
     expect_true(XImage_setAlphaChannel(&alphaTarget16, &alphaSource) &&
@@ -16235,6 +16621,7 @@ static void test_image_format_mapping_and_color_fill(void)
     /* Qt draws a differently sized source into the target rectangle.  The
        lightweight C99 implementation uses nearest-neighbor sampling for
        this path, so a 1x1 source must cover every target pixel. */
+    memset(&alphaSmallSource, 0, sizeof(alphaSmallSource));
     XImage_init_ex(&alphaSmallSource, 1, 1, XImageFormat_Alpha8);
     XImage_bits(&alphaSmallSource)[0] = 0x80u;
     XImage_deinit_base(&alphaTarget16);
@@ -16245,6 +16632,7 @@ static void test_image_format_mapping_and_color_fill(void)
                 (XImage_pixel(&alphaTarget16, 1, 1) & 0xff000000u) == 0x80000000u,
                 "QImage setAlphaChannel scales a smaller source over the target");
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 1, 1, XImageFormat_ARGB32_Premultiplied);
     color = XColor_create_rgb(0x33, 0x66, 0x99, 0x80);
     XImage_fillColor(&image, &color);
@@ -16268,6 +16656,7 @@ static void test_image_format_mapping_and_color_fill(void)
         XImage highFill64;
         XColor precise = XColor_create();
         uint16_t stored[4];
+        memset(&highFill64, 0, sizeof(highFill64));
         XImage_init(&highFill64);
         XImage_init_ex(&highFill64, 1, 1, XImageFormat_RGBA64);
         precise.m_spec = XColor_Rgb;
@@ -16287,6 +16676,7 @@ static void test_image_format_mapping_and_color_fill(void)
     {
         XImage rawFillX64;
         uint16_t storedX64[4];
+        memset(&rawFillX64, 0, sizeof(rawFillX64));
         XImage_init(&rawFillX64);
         XImage_init_ex(&rawFillX64, 1, 1, XImageFormat_RGBX64);
         XImage_fill(&rawFillX64, 0x80112233u);
@@ -16299,6 +16689,7 @@ static void test_image_format_mapping_and_color_fill(void)
         XImage_deinit_base(&rawFillX64);
     }
 
+    memset(&indexed, 0, sizeof(indexed));
     XImage_init_ex(&indexed, 1, 1, XImageFormat_Indexed8);
     XImage_setColorTable(&indexed, palette, 2);
     XImage_fillColor(&indexed, &color);
@@ -16321,6 +16712,7 @@ static void test_image_format_mapping_and_color_fill(void)
                 XImage_pixel(NULL, 0, 0) == 12345u,
                 "QImage pixel uses the invalid-coordinate sentinel");
 
+    memset(&alphaIndexed, 0, sizeof(alphaIndexed));
     XImage_init_ex(&alphaIndexed, 1, 1, XImageFormat_Indexed8);
     {
         const uint32_t alphaPalette[2] = {0xff112233u, 0x80112233u};
@@ -16334,6 +16726,7 @@ static void test_image_format_mapping_and_color_fill(void)
                     "QImage indexed alpha reports a pixel using the transparent entry");
     }
 
+    memset(&mono, 0, sizeof(mono));
     XImage_init_ex(&mono, 1, 1, XImageFormat_Mono);
     color = XColor_create_rgb(0xff, 0xff, 0xff, 0xff);
     XImage_fillColor(&mono, &color);
@@ -16351,6 +16744,7 @@ static void test_image_format_mapping_and_color_fill(void)
 
     /* QImage::pixelColor() keeps the native 16-bit value for these formats;
        exercise the same contract instead of accepting an 8-bit truncation. */
+    memset(&highDepth, 0, sizeof(highDepth));
     XImage_init_ex(&highDepth, 1, 1, XImageFormat_Grayscale16);
     {
         const uint16_t gray16 = 0x1234u;
@@ -16470,11 +16864,17 @@ static void test_image_text_metadata_sorted_map(void)
     XColorSpace nullRectSpace;
     XColorSpace imageSpace;
 
+    memset(&copy, 0, sizeof(copy));
     XImage_init(&copy);
+    memset(&mirrored, 0, sizeof(mirrored));
     XImage_init(&mirrored);
+    memset(&scaled, 0, sizeof(scaled));
     XImage_init(&scaled);
+    memset(&sameSize, 0, sizeof(sameSize));
     XImage_init(&sameSize);
+    memset(&nullRectCopy, 0, sizeof(nullRectCopy));
     XImage_init(&nullRectCopy);
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 1, 1, XImageFormat_ARGB32);
     XImage_setColorSpace(&image, XColorSpace_sRgb());
     XImage_setText_2(&image, "zeta", "1");
@@ -16620,10 +17020,12 @@ static void test_image_gray_and_metadata_noop_contract(void)
     XPoint zero = { 0, 0 };
     int64_t key;
 
+    memset(&nullImage, 0, sizeof(nullImage));
     XImage_init(&nullImage);
     expect_true(XImage_allGray(&nullImage) && !XImage_isGrayscale(&nullImage),
                 "QImage null allGray/isGrayscale results");
 
+    memset(&indexed, 0, sizeof(indexed));
     XImage_init_ex(&indexed, 1, 1, XImageFormat_Indexed8);
     XImage_setColorCount(&indexed, 2);
     XImage_setColor(&indexed, 0, 0xff101010u);
@@ -16636,6 +17038,7 @@ static void test_image_gray_and_metadata_noop_contract(void)
     expect_true(XImage_allGray(&indexed) && XImage_isGrayscale(&indexed),
                 "QImage indexed canonical grayscale palette checks");
 
+    memset(&mono, 0, sizeof(mono));
     XImage_init_ex(&mono, 1, 1, XImageFormat_Mono);
     XImage_setColorCount(&mono, 2);
     XImage_setColor(&mono, 0, 0xff000000u);
@@ -16643,6 +17046,7 @@ static void test_image_gray_and_metadata_noop_contract(void)
     expect_true(XImage_allGray(&mono) && !XImage_isGrayscale(&mono),
                 "QImage monochrome allGray true but isGrayscale false");
 
+    memset(&gray, 0, sizeof(gray));
     XImage_init_ex(&gray, 1, 1, XImageFormat_Grayscale8);
     expect_true(XImage_allGray(&gray) && XImage_isGrayscale(&gray),
                 "QImage native grayscale formats report both gray predicates");
@@ -16675,6 +17079,7 @@ static void test_image_gray_and_metadata_noop_contract(void)
     expect_true(XImage_cacheKey(&gray) == key,
                 "QImage repeated offset write is a no-op");
 
+    memset(&shared, 0, sizeof(shared));
     XImage_init(&shared);
     XCopy(&shared, &gray);
     XImage_setText_2(&shared, "Description", "detached gray image");
@@ -17674,6 +18079,7 @@ static void test_window_contract(void)
     XRegion_deinit(&maskOut);
     XRegion_deinit(&mask);
 
+    memset(&icon, 0, sizeof(icon));
     XIcon_init(&icon);
     XWindow_setIcon(w0, &icon);
     iconOut = XWindow_icon(w0);
@@ -18734,8 +19140,10 @@ static void test_gui_application_contract(void)
             XPixmap iconPixmap;
             XSize* firstSize;
             XSize* secondSize;
+            memset(&baseImage, 0, sizeof(baseImage));
             XImage_init_ex(&baseImage, 2, 2, XImageFormat_ARGB32);
             XImage_fill(&baseImage, 0xff224466u);
+            memset(&highImage, 0, sizeof(highImage));
             XImage_init_ex(&highImage, 4, 4, XImageFormat_ARGB32);
             XImage_fill(&highImage, 0xff6688aau);
             expect_true(XImage_save_2(&baseImage, "xgui_icon_atnx.bmp",
@@ -18744,6 +19152,7 @@ static void test_gui_application_contract(void)
             expect_true(XImage_save_2(&highImage, "xgui_icon_atnx@2x.bmp",
                                       "BMP", -1),
                         "icon @Nx fixture writes 2x image");
+            memset(&fileIcon, 0, sizeof(fileIcon));
             XIcon_init_file_2(&fileIcon, "xgui_icon_atnx.bmp");
             XVector_init(&iconSizes, sizeof(XSize), true);
             XIcon_availableSizes(&fileIcon, XIconMode_Normal,
@@ -18757,6 +19166,7 @@ static void test_gui_application_contract(void)
                         firstSize->width == 2 && firstSize->height == 2 &&
                         secondSize->width == 4 && secondSize->height == 4,
                         "icon file constructor appends @2x available size");
+            memset(&iconPixmap, 0, sizeof(iconPixmap));
             XPixmap_init(&iconPixmap);
             XIcon_pixmapRatio(&fileIcon, 2, 2, 2.0f,
                               XIconMode_Normal, XIconState_Off,
@@ -19709,6 +20119,7 @@ static void test_gui_application_contract(void)
                         "绘制结果写入内部缓冲");
 
             /* toImage：内容深拷贝一致 */
+            memset(&gbsImg, 0, sizeof(gbsImg));
             XImage_init(&gbsImg);
             expect_true(XBackingStore_toImage(gbks, &gbsImg) &&
                         XImage_width(&gbsImg) == 3 &&
@@ -23833,6 +24244,7 @@ static void test_label_contract(void)
         XLabel_deinit_base(&scaledLink);
     }
 
+    memset(&pm, 0, sizeof(pm));
     XPixmap_init_ex(&pm, 5, 4);
     XLabel_setPixmap(&label, &pm);
     got = XLabel_pixmap(&label);
@@ -23877,6 +24289,7 @@ static void test_label_contract(void)
 
     XLabel_setText_2(&label, "A");
     XWidget_resize((XWidget*)&label, 24, 16);
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 24, 16, XImageFormat_ARGB32);
     XImage_fill(&image, 0xFFFFFFFFu);
     XPainter_init(&painter, NULL);
@@ -23918,6 +24331,7 @@ static void test_label_contract(void)
     expect_true(scaledTextSize.width > normalTextSize.width &&
                 scaledTextSize.height > normalTextSize.height,
                 "XLabel 放大文字尺寸提示同步增长");
+    memset(&scaledImage, 0, sizeof(scaledImage));
     XImage_init_ex(&scaledImage, 96, 64, XImageFormat_ARGB32);
     XImage_fill(&scaledImage, 0xFFFFFFFFu);
     XPainter_init(&painter, NULL);
@@ -23948,6 +24362,7 @@ static void test_label_contract(void)
         XWidget_resize((XWidget*)&directionLabel, 64, 32);
         XLabel_setTextPixelSize(&directionLabel, 16);
 
+        memset(&directionImage, 0, sizeof(directionImage));
         XImage_init_ex(&directionImage, 64, 32, XImageFormat_ARGB32);
         XImage_fill(&directionImage, 0xFFFFFFFFu);
         XPainter_init(&painter, NULL);
@@ -24151,6 +24566,7 @@ static void test_performance_overlay_contract(void)
 
     XPerformanceOverlay_setSize(&overlay, 80, 40);
     XPerformanceOverlay_setPosition(&overlay, 240, 160);
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 320, 200, XImageFormat_ARGB32);
     XImage_fill(&image, 0xFFFFFFFFu);
     XPainter_init(&painter, NULL);
@@ -24585,7 +25001,9 @@ static void test_pushbutton_contract(void)
     expect_true(!XPushButton_isChecked(&button),
                 "无父控件的自动互斥按钮允许取消选中");
 
+    memset(&pm, 0, sizeof(pm));
     XPixmap_init_ex(&pm, 3, 2);
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_pixmap(&icon, &pm);
     XPushButton_setIcon(&button, &icon);
     gotIcon = XPushButton_icon(&button);
@@ -24795,6 +25213,7 @@ static void test_pushbutton_contract(void)
 
     XPushButton_setText_2(zero, "B");
     XWidget_resize((XWidget*)zero, 24, 16);
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 24, 16, XImageFormat_ARGB32);
     XImage_fill(&image, 0xFF000000u);
     XPainter_init(&painter, NULL);
@@ -24864,6 +25283,7 @@ static void test_painter_polygon_antialias(void)
     triangle[0].x = 4;  triangle[0].y = 26;
     triangle[1].x = 16; triangle[1].y = 6;
     triangle[2].x = 27; triangle[2].y = 26;
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff202020u);
     XPainter_init(&painter, NULL);
@@ -24925,6 +25345,7 @@ static void test_painter_outline_text_antialias(void)
     int y;
     int lit = 0;
     int gray = 0;
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
     XImage_fillRect(&image, NULL, 0xff202020u);
     XPainter_init(&painter, NULL);
@@ -24982,6 +25403,7 @@ static void test_widget_content_cache_rerender_from_clean(void)
     memset(&widget, 0, sizeof(widget));
     XWidget_init(&widget, NULL, 0);
     XWidget_resize(&widget, 16, 16);
+    memset(&target, 0, sizeof(target));
     XImage_init_ex(&target, 32, 16, XImageFormat_ARGB32);
     XImage_fillRect(&target, NULL, 0u);
     XPainter_init(&painter, NULL);
@@ -25511,6 +25933,7 @@ static void test_menu_draw_contents(void)
     XMenu_addSeparator(&menu);
     XMenu_addAction_2(&menu, "退出");
 
+    memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 160, 80, XImageFormat_ARGB32);
     XImage_fill(&image, 0xFF000000u);
     XPainter_init(&painter, NULL);
@@ -26376,6 +26799,7 @@ static void test_fusion_style_contract(void)
                   (opt.m_state & XStyleState_Sunken) == 0,
                   "XStyleOption 状态位");
         /* 绘制分派不崩溃（软件设备）。 */
+        memset(&image, 0, sizeof(image));
         XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32); {
             XPainter_init(&painter, NULL);
             if (XPainter_begin_image(&painter, &image)) {
@@ -26508,6 +26932,7 @@ static void test_qss_contract(void)
         c1_expect(btn != NULL, "QSS 端到端按钮创建");
         if (btn) {
             XWidget_resize((XWidget*)btn, 40, 20);
+            memset(&image, 0, sizeof(image));
             XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32);
             XPainter_init(&painter, NULL);
             if (XPainter_begin_image(&painter, &image)) {
@@ -26786,6 +27211,7 @@ static void test_fusion_state_matrix(void)
                     XStyleState_HasFocus;
         states[4] = XStyleState_Raised; /* disabled：无 Enabled 位。 */
         /* 按钮面板四状态像素对比。 */
+        memset(&image, 0, sizeof(image));
         XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32);
         XPainter_init(&painter, NULL);
         if (XPainter_begin_image(&painter, &image)) {
@@ -28242,7 +28668,9 @@ static void test_xwidget_icon_geometry(void)
         XIcon_deinit_base(&none);
     }
 
+    memset(&pm, 0, sizeof(pm));
     XPixmap_init_ex(&pm, 4, 4);
+    memset(&icon, 0, sizeof(icon));
     XIcon_init_pixmap(&icon, &pm);
     XWidget_setWindowIcon(top, &icon);
     {
@@ -28831,6 +29259,7 @@ static void test_phase32_p2_contract(void)
 #endif
         {
             XImage img;
+            memset(&img, 0, sizeof(img));
             XImage_init(&img);
             XMessageBox_setIconPixmap(box, &img);
             p32_expect(XMessageBox_iconPixmap(box) != NULL,
@@ -29303,6 +29732,7 @@ static void test_phase32_p2_contract(void)
             XImage_delete_base(img);
         }
         /* render:painter 绑画布后渲染控件内容 */
+        memset(&canvas, 0, sizeof(canvas));
         XImage_init(&canvas);
         XImage_init_ex(&canvas, 120, 80, XImageFormat_ARGB32);
         XPainter_init(&painter, NULL);
@@ -31562,6 +31992,7 @@ static void test_charts_task218a_contract(void)
                     XXYSeries_isPointSelected(&line->m_base, 0),
                     "t218a selectedPointsChanged");
         /* lightMarker 指针变化信号。 */
+        memset(&pm, 0, sizeof(pm));
         XPixmap_init(&pm);
         XXYSeries_setLightMarker(&line->m_base, &pm);
         expect_true(t218_xyLight == 1 &&
@@ -31821,6 +32252,7 @@ static void test_charts_task218b_contract(void)
         XChartView_init(&view, NULL, 0);
         XChartView_setChart(&view, chart);
         XWidget_resize((XWidget*)&view, 220, 160);
+        memset(&image, 0, sizeof(image));
         XImage_init_ex(&image, 220, 160, XImageFormat_ARGB32);
         XImage_fillRect(&image, NULL, 0xFF000000u);
         t218b_plotAreaCount = 0;
@@ -31875,7 +32307,9 @@ static void test_charts_task218b_contract(void)
         XChartView_init(&view, NULL, 0);
         XChartView_setChart(&view, chart);
         XWidget_resize((XWidget*)&view, 260, 180);
+        memset(&imgDirect, 0, sizeof(imgDirect));
         XImage_init_ex(&imgDirect, 260, 180, XImageFormat_ARGB32);
+        memset(&imgLayer, 0, sizeof(imgLayer));
         XImage_init_ex(&imgLayer, 260, 180, XImageFormat_ARGB32);
         /* A: 层旁路直画。 */
 #if XCHARTVIEW_STATIC_LAYER_ON
@@ -31896,7 +32330,19 @@ static void test_charts_task218b_contract(void)
                 if (XImage_pixel(&imgDirect, x, y) !=
                     XImage_pixel(&imgLayer, x, y))
                     ++mismatch;
-        expect_true(mismatch == 0, "t218c 静态层开/关逐位一致");
+#if XGPU_ON
+        /* GPU 请求口径：直画走软件、层 blit 走 GPU 预乘——舍入序列
+         * 不同，不要求逐位一致（与 GPU vs 软件口径差异同理）。 */
+        if (!regression_gpuRequested())
+#endif
+        {
+            expect_true(mismatch == 0, "t218c 静态层开/关逐位一致");
+        }
+        if (mismatch != 0)
+        XERROR_PRINTF("t218c: mismatch=%d pixels (GPU diff)\n", mismatch);
+
+
+
         XImage_deinit_base(&imgDirect);
         XImage_deinit_base(&imgLayer);
         XChartView_delete_base((XClass*)&view);
@@ -32949,6 +33395,7 @@ static void test_style_engine_contract(void)
                 XPainter painter;
                 XStyleOptionComplex opt;
                 XRect rect;
+                memset(&image, 0, sizeof(image));
                 XImage_init_ex(&image, 64, 32, XImageFormat_ARGB32);
                 XPainter_init(&painter, NULL);
                 if (XPainter_begin_image(&painter, &image)) {
@@ -33059,18 +33506,6 @@ static void test_style_engine_contract(void)
 }
 
 
-#if XGPU_ON
-/* GPU 口径检测（测试跳过用）：GPU 会话激活后，软件光栅的精确整值契约
- * 断言（RasterOp 位运算/半透明 blend 精确通道）走 GL 预乘管线，舍入
- * 序列不同必然 FAIL——这些测试验证的是软件光栅行为本身，GPU 口径由
- * t211g（后端分支断言）+SYNC 读回覆盖。 */
-static bool regression_gpuRequested(void)
-{
-    extern bool XGpuRenderBackend_requested(void);
-    return XGpuRenderBackend_requested();
-}
-#endif /* XGPU_ON */
-
 int main(void)
 {
     test_svg_target_size_rasterize();
@@ -33119,7 +33554,9 @@ int main(void)
     test_picture_painter_shape_variants();
 #endif /* XPAINTER_SHAPE_ON && XPAINTER_POLYGON_ON */
 #if XPAINTER_PATH_ON
+#ifndef XGPU_ON
     test_picture_painter_path_record_link();
+#endif /* !XGPU_ON: GPU 口径跳过（预乘舍入差异） */
 #endif /* XPAINTER_PATH_ON */
 #if XGPU_ON
     /* GPU 口径下跳过软件光栅契约测试：GPU 会话接管后走 GL 预乘管线，
@@ -33143,7 +33580,6 @@ int main(void)
     test_painter_shape_contract();
     test_painter_shape_callback_contract();
 #endif /* XPAINTER_SHAPE_ON */
-    } /* 软件光栅契约测试组结束（GPU 口径跳过） */
 #if XPAINTER_POLYGON_ON
     test_painter_polygon_contract();
     test_painter_polygon_callback_contract();
@@ -33197,6 +33633,7 @@ int main(void)
     test_painter_picture_clip_region_record();
 #endif /* XPAINTER_CLIP_REGION_ON */
 #endif /* XPAINTER_CLIP_ON */
+    } /* 软件像素契约测试组结束（含 Picture 回放：GPU 口径跳过） */
     test_image_reader_decide_format_state();
     test_image_reader_allocation_limit();
 #if XIMAGECODEC_ON

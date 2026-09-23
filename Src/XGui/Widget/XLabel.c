@@ -1360,6 +1360,7 @@ static XSize label_sizeForWidth(const XLabel* self, int w)
 #if XMOVIE_ON
     } else if (self->m_movie) {
         XPixmap pm;
+        XMemset(&pm, 0, sizeof(pm)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XPixmap_init(&pm);
         XMovie_currentPixmap(self->m_movie, &pm);
         if (!XPixmap_isNull(&pm)) {
@@ -1909,6 +1910,7 @@ static void label_drawPixmap(XLabel* self, XPainter* painter,
 {
     XImage image;
     XPixmap scaledPm;
+    XMemset(&scaledPm, 0, sizeof(scaledPm)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     int x, y, w, h;
     if (!self || !painter || !pm || !cr || XPixmap_isNull(pm)) return;
     w = XPixmap_width(pm);
@@ -1955,6 +1957,7 @@ static void label_drawContent(XLabel* self, XPainter* painter)
 #if XMOVIE_ON
     if (self->m_movie) {
         XPixmap pm;
+        XMemset(&pm, 0, sizeof(pm)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XPixmap_init(&pm);
         XMovie_currentPixmap(self->m_movie, &pm);
         if (!XPixmap_isNull(&pm))
@@ -2763,6 +2766,7 @@ void XLabel_clear(XLabel* self)
 XPixmap XLabel_pixmap(const XLabel* self)
 {
     XPixmap out;
+    XMemset(&out, 0, sizeof(out)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XPixmap_init(&out);
     if (self)
         XCopy(&out, &self->m_pixmap);

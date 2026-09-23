@@ -40,6 +40,7 @@ bool XIconScaledPixmapCache_find(const char* prefix, const char* sourceKey,
     char keyBuffer[320];
     XString* key;
     XPixmap cached;
+    XMemset(&cached, 0, sizeof(cached)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     bool found;
     if (!out || !cacheKeyBuild(keyBuffer, sizeof(keyBuffer), prefix, sourceKey,
                                paletteKey, mode, width, height, dprThousand))

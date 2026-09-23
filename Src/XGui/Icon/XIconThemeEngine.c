@@ -118,7 +118,9 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
 {
     XPainter* target = (XPainter*)painter;
     XPixmap pixmap;
+    XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XPixmap scaled;
+    XMemset(&scaled, 0, sizeof(scaled)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     const XPixmap* drawPixmap;
     XImage image;
     XRect sourceRect;
@@ -147,6 +149,7 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
                               drawRect->height, &pixmap);
     if (!XPixmap_isNull(&pixmap)) {
         XPixmap styled;
+        XMemset(&styled, 0, sizeof(styled)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XMemset(&styled, 0, sizeof(styled)); XPixmap_init(&styled);
         XIconStyleHelper_apply(mode, &pixmap, &styled);
         if (!XPixmap_isNull(&styled))
@@ -188,6 +191,7 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
                                          XIconState state, XSize* out)
 {
     XPixmap pixmap;
+    XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XVector available;
     int target;
     int declaredSize = 0;
@@ -546,6 +550,7 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
                               iconScale, physicalWidth, physicalHeight, out);
     if (!XPixmap_isNull(out)) {
         XPixmap styled;
+        XMemset(&styled, 0, sizeof(styled)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XMemset(&styled, 0, sizeof(styled)); XPixmap_init(&styled);
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))

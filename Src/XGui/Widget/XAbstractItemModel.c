@@ -251,15 +251,24 @@ void XAbstractItemModel_setDimension(XAbstractItemModel* self,
     oldRows = self->m_rows;
     oldCols = self->m_cols;
     if (rows == oldRows && cols == oldCols) return;
-    /* 扩容：先保证容量。 */
+    /* 扩容：先保证容量。行数组长度存在不变式「= m_capCols，且
+     * [m_cols, m_capCols) 槽位为 NULL」——xaim_growCols 以
+     * m_capCols 判定"无需扩容"并跳过补齐，新行若只 calloc(cols)
+     * 等小于当前容量的定值，晚于容量增长分配的行会保持短数组，
+     * setData 按逻辑列数索引即越界读写邻接堆块（demo views 页树
+     * 控件 1→2 列场景实测堆损坏崩溃，交互启动 AV/白屏同源）。
+     * 故每行先 growCols 保证 m_capCols ≥ cols，再按 m_capCols
+     * 分配尚无行数组的行为全零满容量行。 */
     if (!xaim_growRows(self, rows)) return;
     for (r = 0; r < rows; ++r) {
+        if (!xaim_growCols(self, r, cols)) return;
         if (!self->m_cells[r]) {
+            size_t rowCap = (size_t)(self->m_capCols > 0
+                                         ? self->m_capCols : 1);
             self->m_cells[r] = (XString**)XCalloc_System(
-                (size_t)cols, sizeof(XString*));
+                rowCap, sizeof(XString*));
             if (!self->m_cells[r]) return;
         }
-        if (!xaim_growCols(self, r, cols)) return;
     }
     /* 缩容：释放被裁剪的列/行。 */
     for (r = 0; r < rows && r < oldRows; ++r) {

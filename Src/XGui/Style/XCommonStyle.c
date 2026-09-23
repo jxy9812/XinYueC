@@ -3954,6 +3954,7 @@ static XIcon* xcsi_build(XcsiIconPainter fn)
 {
     XImage img;
     XPixmap pm;
+    XMemset(&pm, 0, sizeof(pm)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XIcon* icon = NULL;
     XPainter painter;
     XImage_init(&img);

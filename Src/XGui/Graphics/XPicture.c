@@ -2479,6 +2479,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             float dpr;
             XImage image;
             XPixmap pixmap;
+            XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
             XRect targetRect;
             XRect sourceRect;
             bool drawOk;
@@ -2547,6 +2548,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             float dpr;
             XImage image;
             XPixmap pixmap;
+            XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
             XRect rect;
             XPoint offsetPoint;
             uint32_t i;

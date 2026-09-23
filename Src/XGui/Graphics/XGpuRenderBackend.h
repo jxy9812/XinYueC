@@ -81,10 +81,15 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self);
 /* ==================== 全局会话管理（阶段 2 直通接线） ==================== */
 
 /**
- * @brief      是否请求 GPU 渲染后端（读 XGUI_RENDER_BACKEND / XGPU_BACKEND
- *             环境变量，首次调用后缓存；addRequestedOverride 的运行期覆盖
- *             优先于环境变量）。
- * @return     true 请求 GPU；false 默认软件。
+ * @brief      是否请求 GPU 渲染后端（优先级：addRequestedOverride 运行期
+ *             覆盖 > XGUI_RENDER_BACKEND / XGPU_BACKEND 环境变量 > 编译期
+ *             默认 XGPU_RUNTIME_DEFAULT_ON；首次调用后缓存）。
+ * @details    编译期默认：桌面系统（Windows/Linux 等 XPLATFORM_DESKTOP）
+ *             默认请求 GPU 直通，平台探测失败自动回退软件光栅（零回归
+ *             契约）；裸机/RTOS/裁剪构建（XGPU_ON=0）默认软件。外部可
+ *             覆盖：编译期 #define XGPU_RUNTIME_DEFAULT_ON 0/1，运行期
+ *             设 XGUI_RENDER_BACKEND=software 强制软件。
+ * @return     true 请求 GPU；false 软件。
  */
 bool XGpuRenderBackend_requested(void);
 
@@ -302,6 +307,27 @@ void XGpuRenderBackend_setClipRect(XGpuRenderBackend* self,
  * @return     true 成功；false 会话无效或目标非法。
  */
 bool XGpuRenderBackend_readback(XGpuRenderBackend* self, XImage* target);
+
+/**
+ * @brief      渲染目标子矩形回读到目标 ARGB32 图像的指定偏移。
+ * @details    局部提交批量快照原语：只搬运待绘制区域，避免全帧
+ *             GPU→CPU 往返。坐标自动钳位到渲染目标；仅支持
+ *             ARGB32/ARGB32_Premultiplied 目标。驱动未实现时返回
+ *             false，调用方回退全帧 readback。
+ */
+bool XGpuRenderBackend_readbackRect(XGpuRenderBackend* self, int x, int y,
+                                    int width, int height, XImage* target,
+                                    int dx, int dy);
+
+/**
+ * @brief      图像子矩形上传并绘制到渲染目标同位置矩形。
+ * @details    局部提交批量提交原语：与 readbackRect 配对，快照区
+ *             之外的目标像素不受影响。sourceOver=false 矩形直接
+ *             覆盖。驱动未实现时返回 false。
+ */
+bool XGpuRenderBackend_drawImageRect(XGpuRenderBackend* self,
+                                     const XImage* image, int x, int y,
+                                     int width, int height, bool sourceOver);
 
 /** @brief 结束一帧：解除 FBO 绑定并 doneCurrent。 */
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self);

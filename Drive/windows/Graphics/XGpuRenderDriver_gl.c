@@ -1067,6 +1067,117 @@ static bool xgld_readback(XGpuRenderDriverSession* self, XImage* target)
     return true;
 }
 
+/* 子矩形回读（局部提交批量的快照原语）：与 xgld_readback 快速路径
+   同一翻转/R/B 交换布局，只搬运 (x,y,w,h) —— 全帧 12MB → 批内裁剪
+   bbox（通常 KB 量级）。慢路径格式返回 false，调用方回退全帧。 */
+static bool xgld_readback_rect(XGpuRenderDriverSession* self, int x, int y,
+                               int width, int height, XImage* target,
+                               int dx, int dy)
+{
+    int y2;
+    int x2;
+    int rows;
+    int glY0;
+    if (!xgld_ensure_current(self)) return false;
+    if (!self || !target || width <= 0 || height <= 0) return false;
+    if (XImage_format(target) != XImageFormat_ARGB32 &&
+        XImage_format(target) != XImageFormat_ARGB32_Premultiplied)
+        return false;
+    /* 钳位到渲染目标（越界部分无内容可读）。 */
+    if (x < 0) { dx -= x; width += x; x = 0; }
+    if (y < 0) { dy -= y; height += y; y = 0; }
+    x2 = x + width; y2 = y + height;
+    if (x2 > self->m_width) { width = self->m_width - x; x2 = self->m_width; }
+    if (y2 > self->m_height) { height = self->m_height - y; y2 = self->m_height; }
+    if (width <= 0 || height <= 0) return true;
+    if (dx < 0 || dy < 0 || dx + width > XImage_width(target) ||
+        dy + height > XImage_height(target))
+        return false;
+    if (!xgpu_reserve_pixels(self, (size_t)width * (size_t)height * 4u))
+        return false;
+    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
+    self->glPixelStorei(XGL_PACK_ALIGNMENT, 1);
+    /* GL 原点左下：目标顶行 y 对应 GL 行 m_height-1-y。 */
+    glY0 = self->m_height - (y + height);
+    self->glReadPixels(x, glY0, width, height, XGL_RGBA, XGL_UNSIGNED_BYTE,
+                       self->m_pixels);
+    {
+        uint8_t* dst = XImage_bits(target);
+        int bpl = XImage_bytesPerLine(target);
+        int i;
+        for (i = 0; i < height; ++i)
+        {
+            /* 暂存行 (height-1-i) = GL 行 glY0+(height-1-i) = 目标行 y+i。 */
+            const uint8_t* row = self->m_pixels +
+                (size_t)(height - 1 - i) * (size_t)width * 4u;
+            uint8_t* line = dst + (size_t)(dy + i) * (size_t)bpl +
+                            (size_t)dx * 4u;
+            int j;
+            for (j = 0; j < width; ++j)
+            {
+                const uint8_t* p = row + (size_t)j * 4u;
+                line[j * 4 + 0] = p[2]; /* B */
+                line[j * 4 + 1] = p[1]; /* G */
+                line[j * 4 + 2] = p[0]; /* R */
+                line[j * 4 + 3] = p[3]; /* A */
+            }
+        }
+    }
+    return true;
+}
+
+/* 图像子矩形上传+同位绘制（局部提交批量的提交原语）：源画布整帧
+   尺寸但只回传快照矩形；R/B 交换后 texImage2D 小矩形 + UV 全幅
+   quad（与 draw_image 无翻转上传同布局），sourceOver=false 矩形
+   直接覆盖（= 原全帧 flush 语义的子矩形版）。 */
+static bool xgld_draw_image_rect(XGpuRenderDriverSession* self,
+                                 const XImage* image, int x, int y,
+                                 int width, int height, bool sourceOver)
+{
+    float modulate[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    const uint8_t* src;
+    int bpl;
+    int ry;
+    if (!xgld_ensure_current(self)) return false;
+    if (!self || !image || width <= 0 || height <= 0) return false;
+    if (XImage_format(image) != XImageFormat_ARGB32 &&
+        XImage_format(image) != XImageFormat_ARGB32_Premultiplied)
+        return false;
+    if (x < 0 || y < 0 || width > XImage_width(image) - x ||
+        height > XImage_height(image) - y)
+        return false;
+    src = XImage_constBits(image);
+    bpl = XImage_bytesPerLine(image);
+    if (!src || bpl < XImage_width(image) * 4) return false;
+    if (!xgpu_reserve_pixels(self, (size_t)width * (size_t)height * 4u))
+        return false;
+    for (ry = 0; ry < height; ++ry)
+    {
+        const uint8_t* srow = src + (size_t)(y + ry) * (size_t)bpl +
+                              (size_t)x * 4u;
+        uint8_t* drow = self->m_pixels + (size_t)ry * (size_t)width * 4u;
+        int rx;
+        for (rx = 0; rx < width; ++rx)
+        {
+            drow[rx * 4 + 0] = srow[rx * 4 + 2]; /* R <- B */
+            drow[rx * 4 + 1] = srow[rx * 4 + 1]; /* G */
+            drow[rx * 4 + 2] = srow[rx * 4 + 0]; /* B <- R */
+            drow[rx * 4 + 3] = srow[rx * 4 + 3]; /* A */
+        }
+    }
+    self->glBindTexture(XGL_TEXTURE_2D, self->m_sourceTexture);
+    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA, width, height,
+                       0, XGL_RGBA, XGL_UNSIGNED_BYTE, self->m_pixels);
+    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
+    self->glViewport(0, 0, self->m_width, self->m_height);
+    xgpu_set_blend(self, sourceOver);
+    return xgpu_draw_quad_uv(self, self->m_textureProgram,
+                             self->m_sourceTexture, (float)x, (float)y,
+                             (float)width, (float)height, 0.0f, 0.0f, 1.0f,
+                             1.0f, modulate, true);
+}
+
 static void xgld_clear(XGpuRenderDriverSession* self, uint32_t argb)
 {
     xgld_ensure_current(self);
@@ -1465,6 +1576,8 @@ static const XGpuRenderDriverProcs g_xgldOpenGLProcs =
     .endFrame = xgld_end_frame,
     .presentToWindow = xgld_present_to_window,
     .readback = xgld_readback,
+    .readbackRect = xgld_readback_rect,
+    .drawImageRect = xgld_draw_image_rect,
     .clear = xgld_clear,
     .setClipRect = xgld_set_clip_rect,
     .fillRect = xgld_fill_rect,

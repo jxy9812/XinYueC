@@ -1386,27 +1386,174 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 - 验收：GPU 直通下最大化图表 FPS 显著高于软件路径；回退
   路径零回归。
 
-> **GPU 直通诊断结论（2026-09-22，RX 6800 XT 实测）——状态改为「架构
-> 缺陷待重构」**：GL 驱动（XGpuRenderDriver_gl.c，已迁移至
-> Drive/windows/）在 Windows/AMD 上功能正确（冒烟/回归/SYNC 全绿），
-> 但性能病态：所有页面 GPU 模式 0.4～2.5 FPS（软件同场景 572～6235）。
-> 根因（cdb 抓栈 + 逐命令审计确认）：
-> - **逐命令局部提交**：图表页 ~140 个绘制命令不匹配 GPU 快速路径
->   条件（渐变逐行填充/半透明面积/虚线/非 SourceOver），每条触发
->   painterGpuSubmitSoftwareCommand——创建全尺寸临时 XImage +
->   glReadPixels 全帧读回（GPU 管线完全冲刷）+ 软件画一笔 +
->   glTexSubImage2D 全帧回传 + draw quad。140 次/帧 × 每次 2 次 GPU
->   同步停顿 ≈ 400ms/帧。
-> - **次要根因（已修）**：GL 函数指针调用约定缺失（cdecl 配 stdcall
->   驱动，/RTC 栈检查报错）——XGLAPI __stdcall 已全覆盖（43 处）；
->   GL 驱动文件已从 Src/ 迁移至 Drive/windows/（平台代码分层约束）。
-> - **本批已修**：半透明 fillRect 的 GL 原语路径启用（非 SYNC 实渲染
- *   时 GL 预乘混合原语替代逐命令局部提交）；XImage_paintDevice
->   vtable 校验（t211g 未 init image AV 根修）。
-> - **剩余工作量估计**：局部提交批量化（攒一批命令一次
->   upload/readback，1~2 周）或 GPU 快速路径扩展覆盖渐变/虚线
->   （2~3 周）。**在重构完成前，--gpu 开关保留但性能不达预期，
->   生产使用软件路径（572 FPS 已满足 60Hz 需求）。**
+> **GPU 直通诊断结论（2026-09-23，RX 6800 XT 实测，含 8a174def
+> 批量化重构后复测）——批量化已落地但性能仍不达标，状态保持
+> 「架构缺陷待重构」**：
+> - 批量化后本机实测（--gpu 图表页）：0.3 FPS（软件同场景 572）。
+>   XGPU_PROF：readback≈6.2/帧 + drawImage≈6.2/帧（每次 10.2/9.4ms，
+>   12MB 全帧）→ GPU 同步 121ms/帧。**剩余 2800ms/帧在 CPU 侧**：
+>   批内命令把 12MB 暂存画布当渲染目标做软件光栅（面积系列扫描
+>   填充、字形轮廓等在 2752×1089 画布上逐命令执行），且快速路径
+>   原语（solidQuad 3647/帧）与无快速路径命令交错，把批切碎——
+>   实测批次极小（readback 257 次/83 帧 ≈ 每批 1~2 条命令）。
+> - **调用约定与堆损坏已修**（XGLAPI __stdcall 43 处；setDimension
+>   行 calloc 容量不足 → growCols 写越界堆损坏——views 页树控件
+>   1→2 列场景实测 AV，容量对齐 growCols 语义修复）。
+> - **结论：GPU 直通的「整帧暂存画布 + 命令级批间往返」模型在
+>   2752×1089 大分辨率下不可行**——每像素软件重画 + 全帧往返的
+>   成本无法通过批量化消除。可行方向（二选一，均为独立专项）：
+>   ①GPU 原语全覆盖（渐变 LUT 已做，需补：面积多边形原生化、
+>   字形图集覆盖全字号、虚线全形态），让快速路径命中率 >95%，
+>   批间往返归零；②放弃整帧 FBO 模型，回到「软件光栅 + GPU 仅
+>   present/缩放」（gl 关键词现状已隐式实现）。在 ① 完成前，
+>   --gpu 开关保留但性能不达预期，生产使用软件路径（572 FPS
+>   已满足 60Hz 需求）。
+>
+> **--gpu 开关实测（2026-09-23，RX 6800 XT + 2752×1089）**：
+> demo 新增 `--gpu` 命令行开关（显式请求 GPU 直通）——功能正确
+> （渲染正确、不崩溃），但所有页面 GPU 模式均 0.3～0.4 FPS
+> （软件同场景 535～8760 FPS），根因见上（逐命令局部提交）。
+> GPU 加速需按 ① 或 ② 完成架构重构后方有实用价值。
+
+> **子矩形脏区批量落地（2026-09-23 深夜，AMD 真硬件口径勘误 +
+> 1.7→79 FPS 根修）——「架构缺陷待重构」状态解除，方向①推进**：
+> - **口径勘误**：此前「0.3 FPS + 剩余 2800ms CPU 侧」结论作废——
+>   当时 GL 上下文落在 GDI Generic 软件 OpenGL（虚拟显示器环境）。
+>   本机（RX 6800 XT 物理屏）裸 GL 验证：Renderer=AMD Radeon
+>   RX 6800 XT / GL 4.6 / clear+swap 基准 6194 FPS，通道全健康。
+> - **profiler 实测定案**（XGPU_PROF=1）：每顶层帧 ≈82 次全帧
+>   readback（4.26ms/次）+ ≈81 次全帧 drawImage（2.93ms/次）≈
+>   584ms/帧——GPU↔CPU 全帧搬运占帧时间 98%，软件光栅本身无责。
+>   批量化共享画布被「每控件/每 painter 切换重开批」打碎，每批
+>   仍付整帧 12MB 往返。
+> - **根修（三层）**：驱动新增 `readbackRect`（FBO 子矩形回读，
+>   与全帧同翻转/R-B 交换布局）与 `drawImageRect`（图像子矩形
+>   上传+同位 quad，sourceOver=false 覆盖语义）；backend 转发
+>   （驱动未实现时返回 false 回退全帧）；painter 批改为
+>   「批首不读回，逐命令按当前裁剪 bbox(+2px)∩帧 差集快照
+>   （至多 4 条带），失效点仅提交快照矩形」——软件光栅输出像素
+>   必然落在裁剪区内（clip 是光栅硬边界），快照覆盖裁剪 bbox 即
+>   完备；XGUI_GPU_SYNC=1 与 legacy 路径不变。
+> - **实测**（--gpu 最大化，AMD 真硬件）：图表页 1.7→79 FPS
+>   （47×），全页 19~79 FPS；单次回读 4.26→0.183ms（23×），
+>   单次提交 2.93→0.014ms（209×）。软件口径 15600 FPS 仍领先
+>   （benchmark=repaint 整帧重绘口径），GPU 直通当前定位=
+>   「可用但非最快」，后续按方向①提升原语命中率继续收敛。
+> - **Vulkan 驱动零影响**：两原语未实现（procs=NULL）自动回退
+>   整帧快照/整帧提交，行为与旧口径逐位同源。
+>
+> **本机回归套件环境敏感崩溃（2026-09-23，非拉取引入）**：
+> Release 口径回归在本机（3 显示器：OrayIddDriver/MTT 虚拟屏 +
+> 物理屏；远程会话活跃）于「菜单像素测试 → XToolButton 契约」
+> 之间段错误。c00000fd 栈溢出 + XMultiPool 池耗尽（32/40 字节块）
+> 无限刷屏=无界递归逐层分配；Debug 口径全绿（池增长策略不同）。
+> **二分定案：父提交 774e20ee 同样崩溃**——非 8a174def 引入，
+> 系本机显示环境触发的既有路径（另一台机器 Release 终门四轮
+> 通过佐证）。补充（同日深夜）：**GPU 口径回归在本机初始化即崩
+> （0 行输出；纯 8a174def + XGUI_RENDER_BACKEND=opengl 同样秒崩，
+> 与子矩形改动无关）**。两类崩溃均待无虚拟屏环境复跑确认；
+> 后续专项排查屏幕信号/菜单弹层的重入路径。
+
+> **交互模式白屏/崩溃（2026-09-23 深夜，用户报障，二分定性=8a174def
+> 交互路径缺陷，与 GPU 默认开关无关）**：
+> - 症状：demo 无参数交互运行，内容区只剩页面底色（按钮/状态栏
+>   全无），性能悬浮窗正常刷新且闪烁；`--screenshot` 口径内容
+>   完整（GPU=软件逐位一致）。
+> - 定性（PrintWindow 抓窗对照）：父提交 774e20ee 交互完整正常
+>   （15098 FPS 软件口径）；**8a174def x64 交互启动即段错误**；
+>   8a174def+本批改动在 x64 呈白屏、用户 32 位构建呈白屏——同
+>   一根因不同表现（崩溃点栈被 FPO 污染，ILT 线索指向页 0 控
+>   件区）。基准/截图口径不受影响（此前误判「验证通过」的原因：
+>   没跑过交互口径）。
+> - 待办（下轮专项）：cdb 对 XCompleter/XTreeWidget/对话框页构
+>   建路径下断定位；本机回归栈溢出（菜单→ToolButton）疑似同源。
+> - 临时规避：交互演示用父提交构建，或 32 位构建 + `--sw`（若
+>   仍白则回退 demo 相关三文件）。
+
+> **交互路径缺陷三连根修（2026-09-24，cdb 符号化定案，上节待办
+> 闭环；换机存档）**：
+> - **缺陷一=交互启动 AV 根因：XAbstractItemModel_setDimension
+>   容量/逻辑列数错配**。cdb 纯 8a174def 构建（/Zi+/DEBUG）抓到
+>   完整符号栈：`main→DemoWin_create→demo_page_views_build→
+>   XTreeWidgetItem_setTextAt_2→XAbstractItemModel_setData→
+>   XClass_delete_base`，rcx=垃圾指针（0x8c000600_83d5d2e4，与
+>   前轮 ttxt_slotTeTextChanged 崩溃的 0x8e000600_... 同形=堆损
+>   坏特征）。机制：行数组按逻辑列数 calloc，而 xaim_growCols 以
+>   m_capCols 判定「无需扩容」即跳过——树控件默认 1 列灌行（首行
+>   恰逢容量 0→4 扩容被补齐，其余行保持 1 槽短数组）→
+>   setColumnCount(2) 后 bridgeSync 对短行 setData(col=1) 越界读
+>   邻接堆块拿到垃圾，`if (cells[col]) XString_delete_base(...)` AV。
+>   **修复**：每行先 growCols 保证 m_capCols≥cols，新行按
+>   m_capCols 全零分配，维持「行数组长度=m_capCols 且
+>   [m_cols,m_capCols) 槽位恒 NULL」不变式（比中途出现的
+>   max(4,cols) 局部修复更一般：capCols>4 场景同样闭合）。
+>   验证：纯 8a174def+修复交互直跑 8 秒必崩→稳定存活且窗口内容
+>   完整（PrintWindow 对照）。
+> - **缺陷二=回归套件堆损坏根因：XPixmap_init 的 vtable 探测把裸
+>   栈残留误判为已初始化**。回归 Release 在本机 100% 段错误（崩点
+>   随布局漂移：图标缓存测试/`test_label_contract` 的
+>   XPixmap_deinit/上一轮报告的菜单→ToolButton 之间 c00000fd 池耗
+>   尽，同族不同表）。XGUI_PIX_TRACE=1 引用计数追踪（插桩
+>   ref/unref/create 打点）实锤：`XLabel_pixmap` 内部局部
+>   `XPixmap out;` 未清零，第二次调用时与首次调用同栈槽残留
+>   vtable+m_data=共享块 P1，XPixmap_init 的
+>   XPixmap_vtableIs 探测误判「已初始化」→ releaseData 对 P1 多扣
+>   一次引用 → rc 提前归 0 被 free，pm 仍持有 → 末次 deinit 对已
+>   释放块 `lock xadd` AV（cdb 现场_rcx 为已释放堆块且 [rcx] 不可
+>   读）。**修复两层**：①库内 28 处裸栈 `XPixmap/XBitmap` 局部在
+>   声明处 XMemset 清零（XPicture/XPixmap/XIcon/XIconEngine/
+>   XIconScaledPixmapCache/XIconThemeEngine/XIconThemeInternal/
+>   XCommonStyle/XLabel）；②回归测试 415 处栈对象 memset（对齐
+>   test_toolbutton_contract 的既有约定，脚本批插于函数内首次
+>   init 之前，合法 re-init 语义不受影响）。验证：修复前 5/5 段
+>   错误 → 修复后 5/5 全绿。
+> - **同源性定案**：交互 AV 与回归堆损坏**不同根因**（模型容量
+>   越界写 vs pixmap 裸栈误判释放），但同属堆损坏家族；「ILT 线
+>   索指向页 0 控件区」系 FPO 污染栈回溯+堆损坏崩点漂移的表象，
+>   非真实调用链。本机回归栈溢出+池耗尽=提前 free 后的布局随机
+>   下游表现，非独立缺陷。父提交 774e20ee 同崩与此结论相容（两
+>   缺陷均早于 8a174def，交互 AV 只是在 8a174def 才被交互口径踩
+>   中）。
+> - **遗留（下轮专项，分析进行中）**：主仓工作树（GPU 子矩形批
+>   量化 WIP，未提交）构建的交互 demo 仍**白屏**——内容区仅底色、
+>   标题带与 FPS 悬浮窗正常（GPU 直通默认开，FPS 78）；而纯
+>   8a174def+缺陷一修复无白屏 → 白屏根因在子矩形批次改动与窗口
+>   绘制的交互（疑点：painterGpuBatchEnsureClip/Flush 的快照矩形
+>   计算与子控件裁剪/静态场景缓存的配合），XPainter.c 批提交层
+>   diff 已读到一半。临时规避：`XGUI_RENDER_BACKEND=sw`。
+> - **环境事故备忘**：排查中途一次 bat 的 `cd` 失败导致 cmake 在
+>   源码根目录原地配置，NTFS 大小写不敏感使生成的
+>   `cmake_install.cmake` 覆盖了被跟踪的 `CMake_Install.cmake`
+>   （主仓+worktree 双双中招），已 `git checkout` 恢复并清除全部
+>   原地配置残留；后续构建一律走 bat 内 `mkdir+cd` 且失败即退。
+>   调试用 worktree `out/wt_8a174def`（8a174def+全部修复+插桩，
+>   含符号化验证现场）验证完成后已删除。
+
+> **桌面默认启用 GPU（2026-09-23 深夜，用户指令落地）**：
+> - **配置宏**（XGuiConfig.h，`#ifndef` 包裹、外部定义优先）：
+>   `XGPU_RUNTIME_DEFAULT_ON` —— 桌面系统（`XGPU_ON &&
+>   XPLATFORMINTEGRATION_ON && XPLATFORM_DESKTOP`，即 Windows/
+>   Linux/macOS/BSD）默认 1；裸机/RTOS/裁剪构建默认 0。
+> - **运行时优先级**（单点收敛在 `XGpuRenderBackend_requested()`，
+>   painter begin/XWidget 直通/回归门全链路生效）：
+>   `addRequestedOverride` 运行期覆盖 > `XGUI_RENDER_BACKEND`/
+>   `XGPU_BACKEND` 环境变量 > `XGPU_RUNTIME_DEFAULT_ON` 编译期默认。
+>   环境变量识别 `gpu/opengl/vulkan/1/true/on` 走 GPU，其余
+>   （software/sw/cpu/0/off/false 及任意未知值）走软件——外部
+>   覆盖永远优先于默认值。
+> - **失败回退**：探测/会话创建失败（无 GL、FBO 不完整、GDI
+>   Generic 软 OpenGL 均过不了 xgld_initialize）→ probeFailed
+>   → 全链路软件光栅，零回归契约不变。
+> - **demo 对称开关**：新增 `--software`/`--sw`（CLI 强制软件，
+>   覆盖默认 GPU 与环境变量，供性能对比/回归软件基线）。
+> - **本机实测三口径**：默认=GPU 78.5 FPS（driver=opengl
+>   window=1）；`--sw`=15512 FPS；`XGUI_RENDER_BACKEND=software`
+>   =14354 FPS。GPU 渲染正确、截图正常产出。
+> - **口径注记**：桌面默认切 GPU 后，裸跑回归套件即 GPU 口径
+>   （软件精度断言由门控自动跳过）；跑软件基线请显式
+>   `XGUI_RENDER_BACKEND=software`。当前 GPU 口径整帧重绘仍慢于
+>   软件（50~79 vs 15600 FPS），生产需峰值吞吐可 `--sw`/env 回
+>   软件——后续原语覆盖率提升后收敛差距。
 
 ### 10.3.1 同批修复清单（2026-09-22）
 

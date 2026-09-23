@@ -2955,6 +2955,15 @@ int main(int argc, char* argv[])
             XGpuRenderBackend_addRequestedOverride(true);
 #endif
         }
+        else if (strcmp(argv[argi], "--software") == 0 ||
+                 strcmp(argv[argi], "--sw") == 0) {
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+            /* 软件渲染显式开关：覆盖桌面默认 GPU 口径（XGPU_RUNTIME_
+               DEFAULT_ON）与 XGUI_RENDER_BACKEND 环境变量——性能对比/
+               回归软件基线用（--gpu 的对称反向）。 */
+            XGpuRenderBackend_addRequestedOverride(false);
+#endif
+        }
         else if (strcmp(argv[argi], "--screenshot") == 0 &&
                  argi + 1 < argc) {
             screenshotPath = argv[++argi];

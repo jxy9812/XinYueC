@@ -99,6 +99,7 @@ static void theme_buildRootPath(char* out, size_t outSize, const char* root,
 static bool theme_loadFile(const char* path, XPixmap* out)
 {
     XPixmap candidate;
+    XMemset(&candidate, 0, sizeof(candidate)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     bool ok;
     if (!path || !path[0]) return false;
     /* 栈残影可能残留上一次的 XPixmap vtable 与 m_data：不清零时
@@ -1367,6 +1368,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
        separate first pass, independent of directory order or distance. */
     for (di = 0; di < ctx->m_metaCount; ++di) {
         XPixmap candidate;
+        XMemset(&candidate, 0, sizeof(candidate)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         int distance = INT_MAX;
         int formatPriority = INT_MAX;
         XMemset(&candidate, 0, sizeof(XPixmap));
@@ -1414,6 +1416,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
     /* No exact match: choose the first minimum-distance entry, as Qt does. */
     for (di = 0; di < ctx->m_metaCount; ++di) {
         XPixmap candidate;
+        XMemset(&candidate, 0, sizeof(candidate)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         int distance = INT_MAX;
         int formatPriority = INT_MAX;
         XMemset(&candidate, 0, sizeof(XPixmap));
@@ -1544,6 +1547,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
 {
     ThemeContext ctx;
     XPixmap best;
+    XMemset(&best, 0, sizeof(best)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     int bestDistance = INT_MAX;
     int bestFormatPriority = INT_MAX;
     size_t bestRootIndex = 0;
@@ -1606,6 +1610,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
                 (const XVector*)paths, (int64_t)pathIndex);
             const char* root = rootStr ? XString_toUtf8(rootStr) : NULL;
             XPixmap candidate;
+            XMemset(&candidate, 0, sizeof(candidate)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
             int distance = INT_MAX;
             XMemset(&candidate, 0, sizeof(XPixmap));
             if (!root || !root[0]) continue;
@@ -1822,6 +1827,7 @@ static bool theme_scaledToSizeRect(XPixmap* pixmap, int targetWidth,
     int w;
     int h;
     XPixmap scaled;
+    XMemset(&scaled, 0, sizeof(scaled)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XMemset(&scaled, 0, sizeof(XPixmap));
     if (!pixmap || XPixmap_isNull(pixmap) || targetWidth <= 0 ||
         targetHeight <= 0) return false;
@@ -2170,6 +2176,7 @@ static bool theme_collectFallbackSizes(const XStringList* paths,
                  sizeof(theme_fallback_exts[0]); ++extIndex) {
             const char* ext = theme_fallback_exts[extIndex];
             XPixmap pixmap;
+            XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
             XSize size;
             size_t sizeIndex;
             bool duplicate = false;
@@ -2218,6 +2225,7 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
     const char* themeUtf8 = NULL;
     const char* fallbackUtf8 = NULL;
     XPixmap best;
+    XMemset(&best, 0, sizeof(best)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     ThemeVisitStack visited;
     bool any = false;
     bool found;

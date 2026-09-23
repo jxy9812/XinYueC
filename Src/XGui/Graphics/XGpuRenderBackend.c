@@ -306,13 +306,24 @@ bool XGpuRenderBackend_requested(void)
     }
     value = XSystem_environment("XGUI_RENDER_BACKEND");
     if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
-    g_xgpuRequested =
-        xgpu_text_equals(value, "gpu") ||
-        xgpu_text_equals(value, "opengl") ||
-        xgpu_text_equals(value, "vulkan") ||
-        xgpu_text_equals(value, "1") ||
-        xgpu_text_equals(value, "true") ||
-        xgpu_text_equals(value, "on") ? 1 : 0;
+    if (value && *value)
+    {
+        /* 显式设置：识别的 GPU 族名走 GPU；其余（含 software/sw/cpu/
+         * 0/off/false）一律软件——外部覆盖永远优先于配置默认。 */
+        g_xgpuRequested =
+            xgpu_text_equals(value, "gpu") ||
+            xgpu_text_equals(value, "opengl") ||
+            xgpu_text_equals(value, "vulkan") ||
+            xgpu_text_equals(value, "1") ||
+            xgpu_text_equals(value, "true") ||
+            xgpu_text_equals(value, "on") ? 1 : 0;
+    }
+    else
+    {
+        /* 无外部设置：按编译期默认（桌面系统默认 GPU 直通，探测
+         * 失败回退软件；裸机/裁剪构建保持软件）。 */
+        g_xgpuRequested = XGPU_RUNTIME_DEFAULT_ON ? 1 : 0;
+    }
     return g_xgpuRequested != 0;
 }
 
@@ -915,6 +926,52 @@ bool XGpuRenderBackend_readback(XGpuRenderBackend* self, XImage* target)
         }
         return ok;
     }
+}
+
+bool XGpuRenderBackend_readbackRect(XGpuRenderBackend* self, int x, int y,
+                                    int width, int height, XImage* target,
+                                    int dx, int dy)
+{
+    uint64_t profT0;
+    bool ok;
+    if (!XGpuRenderBackend_isValid(self) || !target || width <= 0 ||
+        height <= 0)
+        return false;
+    if (!self->m_driver->readbackRect)
+        return false; /* 驱动未实现：调用方回退全帧 readback。 */
+    profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
+    ok = self->m_driver->readbackRect(self->m_session, x, y, width, height,
+                                      target, dx, dy);
+    if (xgpu_prof_requested())
+    {
+        /* 计入 readback 口径：批量后逐批快照仍属回读流量。 */
+        g_xgpuProf.m_readbackUs += xgpu_prof_now_us() - profT0;
+        ++g_xgpuProf.m_readbackCount;
+    }
+    return ok;
+}
+
+bool XGpuRenderBackend_drawImageRect(XGpuRenderBackend* self,
+                                     const XImage* image, int x, int y,
+                                     int width, int height, bool sourceOver)
+{
+    uint64_t profT0;
+    bool ok;
+    if (!XGpuRenderBackend_isValid(self) || !image || width <= 0 ||
+        height <= 0)
+        return false;
+    if (!self->m_driver->drawImageRect)
+        return false; /* 驱动未实现：调用方回退全帧 drawImage。 */
+    xgpu_sync_upload_if_requested(self);
+    profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
+    ok = self->m_driver->drawImageRect(self->m_session, image, x, y, width,
+                                       height, sourceOver);
+    if (xgpu_prof_requested())
+    {
+        g_xgpuProf.m_drawImageUs += xgpu_prof_now_us() - profT0;
+        ++g_xgpuProf.m_drawImageCount;
+    }
+    return ok;
 }
 
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self)

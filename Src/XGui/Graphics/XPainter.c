@@ -119,39 +119,239 @@ static bool g_xgpuRenderSessionInUse = false;
 static int g_xgpuRenderMode = -1; /* 0=software/default, 1=GPU. */
 
 /* ========== 局部提交批量化（直通重构方向 A 首步） ========== */
-/* 连续「无快速路径」命令共享一张全帧暂存画布：批首一次 readback
-   快照，批内各命令由软件光栅直接画在暂存画布上，失效点（下一条
-   原语直呼/帧末/整帧降级）一次 drawImage 提交回 FBO。N 条命令从
-   「N 次读回 + N 次全帧纹理上传」（各带一次管线冲刷；图表页
-   ~140 命令实测 ≈400ms/帧）收敛为各 1 次。快照事实源=FBO（窗口
-   直通模式帧中 m_image 不回读），批内语义与原逐命令局部提交逐位
-   同源；XGUI_GPU_SYNC=1 调试模式仍走原逐命令路径（像素断言契约
-   不变）。 */
+/* 连续「无快速路径」命令共享一张全帧暂存画布：批首不整帧读回，逐
+   命令按「当前裁剪 bbox（+余量）∩帧」差集快照（子矩形 readback，
+   至多 4 条带），失效点（下一条原语直呼/帧末/整帧降级）仅把快照
+   矩形一次 drawImageRect 提交回 FBO。软件光栅的输出像素必然落在
+   裁剪区内（clip 是光栅硬边界），故快照覆盖裁剪 bbox 即完备；N 条
+   命令的 GPU↔CPU 搬运从「N×2 次全帧 12MB」（图表页实测 ≈580ms/帧，
+   占帧时间 98%）收敛为「每批 2 次裁剪 bbox 子矩形」（KB 量级）。
+   快照事实源=FBO（窗口直通模式帧中 m_image 不回读），批内语义与
+   逐位同源；XGUI_GPU_SYNC=1 调试模式仍走原逐命令路径（像素断言
+   契约不变）；驱动无子矩形原语（Vulkan 未实现）时自动退整帧快照。 */
 static XPainter* g_gpuBatchPainter = NULL; /**< 批内待提交命令属主。 */
 static XGpuRenderBackend* g_gpuBatchBackend = NULL; /**< 批首会话（防串会话提交）。 */
 static XImage g_gpuBatchCanvas;              /**< 持久全帧暂存画布（ARGB32）。 */
 static bool g_gpuBatchCanvasInited = false;  /**< 暂存画布已 init。 */
 static bool g_gpuBatchActive = false;        /**< 存在待提交批。 */
+static bool g_gpuBatchSnapValid = false;     /**< 快照矩形有效（本批有可提交内容）。 */
+static XRect g_gpuBatchSnapRect;             /**< 快照区域并集（设备坐标）。 */
+static bool g_gpuBatchSubrectOk = true;      /**< 驱动子矩形读回可用（否则整帧兜底）。 */
 
-/** @brief 提交待定批：清 scissor 后整帧覆盖提交回 FBO。
- *  @note  批内裁剪/合成已由软件光栅在暂存画布上完成，提交必须全幅
- *         （同构于原提交路径的「清 scissor」语义）；可重复调用，无
- *         待定批时直返。 */
+/** @brief 快照并集扩张（设备坐标矩形并）。 */
+static void painterGpuBatchSnapUnion(int x, int y, int w, int h)
+{
+    if (!g_gpuBatchSnapValid)
+    {
+        g_gpuBatchSnapRect.x = x;
+        g_gpuBatchSnapRect.y = y;
+        g_gpuBatchSnapRect.width = w;
+        g_gpuBatchSnapRect.height = h;
+        g_gpuBatchSnapValid = true;
+        return;
+    }
+    {
+        int x1 = g_gpuBatchSnapRect.x + g_gpuBatchSnapRect.width;
+        int y1 = g_gpuBatchSnapRect.y + g_gpuBatchSnapRect.height;
+        int nx1 = x + w;
+        int ny1 = y + h;
+        if (x < g_gpuBatchSnapRect.x) g_gpuBatchSnapRect.x = x;
+        if (y < g_gpuBatchSnapRect.y) g_gpuBatchSnapRect.y = y;
+        if (nx1 > x1) x1 = nx1;
+        if (ny1 > y1) y1 = ny1;
+        g_gpuBatchSnapRect.width = x1 - g_gpuBatchSnapRect.x;
+        g_gpuBatchSnapRect.height = y1 - g_gpuBatchSnapRect.y;
+    }
+}
+
+/** @brief 整帧快照兜底（驱动无子矩形原语时；行为=旧全帧口径）。 */
+static void painterGpuBatchSnapFullFrame(void)
+{
+    XGpuRenderBackend* backend = g_gpuBatchBackend;
+    if (!backend || !XGpuRenderBackend_isValid(backend)) return;
+    if (XGpuRenderBackend_readback(backend, &g_gpuBatchCanvas))
+    {
+        painterGpuBatchSnapUnion(0, 0,
+                                 XGpuRenderBackend_width(backend),
+                                 XGpuRenderBackend_height(backend));
+    }
+}
+
+/** @brief 确保暂存画布上 [x,x+w)×[y,y+h) 区域持有 FBO 快照内容。
+ *  @details 已快照区域不重读（重读会把本批先前命令的光栅结果覆盖
+ *           回 FBO 旧内容）；差集至多 4 条带（左/右全高、中上/中下）。 */
+static void painterGpuBatchEnsureRect(int x, int y, int w, int h)
+{
+    XGpuRenderBackend* backend = g_gpuBatchBackend;
+    int fw;
+    int fh;
+    if (!backend || !g_gpuBatchActive) return;
+    fw = XGpuRenderBackend_width(backend);
+    fh = XGpuRenderBackend_height(backend);
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (w > fw - x) w = fw - x;
+    if (h > fh - y) h = fh - y;
+    if (w <= 0 || h <= 0) return; /* 空裁剪：命令不会写任何像素 */
+    if (g_gpuBatchSnapValid &&
+        g_gpuBatchSnapRect.x <= x && g_gpuBatchSnapRect.y <= y &&
+        g_gpuBatchSnapRect.x + g_gpuBatchSnapRect.width >= x + w &&
+        g_gpuBatchSnapRect.y + g_gpuBatchSnapRect.height >= y + h)
+        return; /* 已被快照矩形覆盖 */
+    if (!g_gpuBatchSubrectOk)
+    {
+        if (!g_gpuBatchSnapValid) painterGpuBatchSnapFullFrame();
+        return;
+    }
+    if (!g_gpuBatchSnapValid)
+    {
+        if (XGpuRenderBackend_readbackRect(backend, x, y, w, h,
+                                           &g_gpuBatchCanvas, x, y))
+        {
+            painterGpuBatchSnapUnion(x, y, w, h);
+        }
+        else
+        {
+            /* 首次读回失败（驱动未实现）：整帧兜底（本批尚无光栅结果，
+             * 无覆盖风险）；此后快照=全帧，差集恒空。 */
+            g_gpuBatchSubrectOk = false;
+            painterGpuBatchSnapFullFrame();
+        }
+        return;
+    }
+    {
+        const int sx = g_gpuBatchSnapRect.x;
+        const int sy = g_gpuBatchSnapRect.y;
+        const int sw = g_gpuBatchSnapRect.width;
+        const int sh = g_gpuBatchSnapRect.height;
+        if (x < sx)
+            XGpuRenderBackend_readbackRect(backend, x, y, sx - x, h,
+                                           &g_gpuBatchCanvas, x, y);
+        if (x + w > sx + sw)
+            XGpuRenderBackend_readbackRect(backend, sx + sw, y,
+                                           x + w - (sx + sw), h,
+                                           &g_gpuBatchCanvas, sx + sw, y);
+        {
+            int mx0 = x > sx ? x : sx;
+            int mx1 = x + w < sx + sw ? x + w : sx + sw;
+            if (mx1 > mx0)
+            {
+                if (y < sy)
+                    XGpuRenderBackend_readbackRect(backend, mx0, y,
+                                                   mx1 - mx0, sy - y,
+                                                   &g_gpuBatchCanvas, mx0, y);
+                if (y + h > sy + sh)
+                    XGpuRenderBackend_readbackRect(backend, mx0, sy + sh,
+                                                   mx1 - mx0,
+                                                   y + h - (sy + sh),
+                                                   &g_gpuBatchCanvas, mx0,
+                                                   sy + sh);
+            }
+        }
+        painterGpuBatchSnapUnion(x, y, w, h);
+    }
+}
+
+/** @brief 按当前 painter 裁剪状态计算本命令的快照 bound 并确保快照。
+ *  @details 裁剪源与 painterGpuApplyStateClip 同源：路径裁剪/无裁剪
+ *           无界（整帧）；矩形/单矩形区域取该矩形；多矩形区域取全
+ *           区域 bbox（保守超集）。+2px 余量防边界舍入，钳位到帧。 */
+static void painterGpuBatchEnsureClip(XPainter* self)
+{
+    XGpuRenderBackend* backend = g_gpuBatchBackend;
+    int fw;
+    int fh;
+    if (!backend || !self || !g_gpuBatchActive) return;
+    fw = XGpuRenderBackend_width(backend);
+    fh = XGpuRenderBackend_height(backend);
+#if XPAINTER_CLIP_ON
+    if (self->m_state.m_hasClip)
+    {
+        XRect bound = self->m_state.m_clipRect;
+        bool unbounded = false;
+#if XPAINTER_PATH_ON
+        if (self->m_state.m_hasClipPath) unbounded = true;
+#endif /* XPAINTER_PATH_ON */
+#if XPAINTER_CLIP_REGION_ON
+        if (!unbounded && XRegion_isEmpty(&self->m_state.m_clipRegion))
+            return; /* 空区域裁剪：命令不会写任何像素 */
+        if (!unbounded && self->m_state.m_clipRegion.count == 1)
+            bound = self->m_state.m_clipRegion.rects[0];
+        else if (!unbounded && self->m_state.m_clipRegion.count > 1)
+        {
+            int i;
+            int x1;
+            int y1;
+            bound = self->m_state.m_clipRegion.rects[0];
+            x1 = bound.x + bound.width;
+            y1 = bound.y + bound.height;
+            for (i = 1; i < self->m_state.m_clipRegion.count; ++i)
+            {
+                const XRect* r = &self->m_state.m_clipRegion.rects[i];
+                if (r->x < bound.x) bound.x = r->x;
+                if (r->y < bound.y) bound.y = r->y;
+                if (r->x + r->width > x1) x1 = r->x + r->width;
+                if (r->y + r->height > y1) y1 = r->y + r->height;
+            }
+            bound.width = x1 - bound.x;
+            bound.height = y1 - bound.y;
+        }
+#endif /* XPAINTER_CLIP_REGION_ON */
+        if (!unbounded)
+        {
+            if (bound.width <= 0 || bound.height <= 0) return;
+            bound.x -= 2; bound.y -= 2;
+            bound.width += 4; bound.height += 4;
+            painterGpuBatchEnsureRect(bound.x, bound.y, bound.width,
+                                      bound.height);
+        }
+        else
+            painterGpuBatchEnsureRect(0, 0, fw, fh);
+        return;
+    }
+#endif /* XPAINTER_CLIP_ON */
+    painterGpuBatchEnsureRect(0, 0, fw, fh); /* 无裁剪：整帧快照 */
+}
+
+/** @brief 提交待定批：清 scissor 后仅把快照矩形覆盖提交回 FBO。
+ *  @note  批内裁剪/合成已由软件光栅在暂存画布快照区上完成；快照区
+ *         外的画布像素未定义，不得采样/提交。可重复调用，无待定批
+ *         时直返。 */
 static void painterGpuBatchFlush(void)
 {
+    XRect snap;
+    bool hasSnap;
     if (!g_gpuBatchActive) return;
     g_gpuBatchActive = false;
     g_gpuBatchPainter = NULL;
+    hasSnap = g_gpuBatchSnapValid;
+    snap = g_gpuBatchSnapRect;
+    g_gpuBatchSnapValid = false;
     if (!g_gpuBatchBackend || !XGpuRenderBackend_isValid(g_gpuBatchBackend))
     {
         g_gpuBatchBackend = NULL;
         return;
     }
-    XGpuRenderBackend_setClipRect(g_gpuBatchBackend, NULL);
-    XGpuRenderBackend_drawImage(
-        g_gpuBatchBackend, &g_gpuBatchCanvas, 0, 0,
-        XImage_width(&g_gpuBatchCanvas), XImage_height(&g_gpuBatchCanvas),
-        1.0f, false);
+    if (hasSnap && snap.width > 0 && snap.height > 0)
+    {
+        bool fullCoverage =
+            snap.x <= 0 && snap.y <= 0 &&
+            snap.width >= XGpuRenderBackend_width(g_gpuBatchBackend) &&
+            snap.height >= XGpuRenderBackend_height(g_gpuBatchBackend);
+        XGpuRenderBackend_setClipRect(g_gpuBatchBackend, NULL);
+        if (!XGpuRenderBackend_drawImageRect(
+                g_gpuBatchBackend, &g_gpuBatchCanvas, snap.x, snap.y,
+                snap.width, snap.height, false))
+        {
+            /* 驱动缺子矩形提交（读回同样不可用的构建，快照=全帧）：
+             * 退整帧覆盖；快照非全帧时宁弃本批也不采样未定义像素。 */
+            if (fullCoverage)
+                XGpuRenderBackend_drawImage(
+                    g_gpuBatchBackend, &g_gpuBatchCanvas, 0, 0,
+                    XImage_width(&g_gpuBatchCanvas),
+                    XImage_height(&g_gpuBatchCanvas), 1.0f, false);
+        }
+    }
     g_gpuBatchBackend = NULL;
 }
 
@@ -174,11 +374,9 @@ static bool painterGpuTextEquals(const char* value, const char* expected)
 }
 
 /**
- * @brief 读取 GPU 运行时选择。
- * @details 软件后端是默认值；设置 XGUI_RENDER_BACKEND=gpu（或
- *          XGPU_BACKEND=opengl/1）才启用阶段 1 GPU。这样嵌入式产品只需
- *          保持环境变量未设置即可继续使用软件光栅，同时保留运行时切换
- *          和显式禁用路径，不增加第二个编译开关。
+ * @brief 读取 XGUI_GPU_SYNC 调试口径开关。
+ * @details 置 1 时 GPU 命令走原逐命令局部提交（每命令立即可见的
+ *          像素断言契约），与 XGUI_RENDER_BACKEND 无关。
  */
 static bool painterGpuSyncRequested(void)
 {
@@ -192,24 +390,61 @@ static bool painterGpuRequested(void)
     if (g_xgpuRenderMode >= 0) return g_xgpuRenderMode != 0;
     value = XSystem_environment("XGUI_RENDER_BACKEND");
     if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
-    g_xgpuRenderMode =
-        painterGpuTextEquals(value, "gpu") ||
-        painterGpuTextEquals(value, "opengl") ||
-        painterGpuTextEquals(value, "vulkan") ||
-        painterGpuTextEquals(value, "1") ||
-        painterGpuTextEquals(value, "true") ||
-        painterGpuTextEquals(value, "on") ? 1 : 0;
+    if (value && *value)
+    {
+        /* 显式设置优先于编译期默认：GPU 族名走 GPU，其余（含
+         * software/sw/cpu/0/off/false）一律软件。 */
+        g_xgpuRenderMode =
+            painterGpuTextEquals(value, "gpu") ||
+            painterGpuTextEquals(value, "opengl") ||
+            painterGpuTextEquals(value, "vulkan") ||
+            painterGpuTextEquals(value, "1") ||
+            painterGpuTextEquals(value, "true") ||
+            painterGpuTextEquals(value, "on") ? 1 : 0;
+    }
+    else
+    {
+        /* 无外部设置：桌面系统默认请求 GPU 直通（探测失败回退
+         * 软件，XGPU_RUNTIME_DEFAULT_ON 可编译期覆盖）；裸机/裁剪
+         * 构建保持软件渲染。 */
+        g_xgpuRenderMode = XGPU_RUNTIME_DEFAULT_ON ? 1 : 0;
+    }
     return g_xgpuRenderMode != 0;
 }
 
+
+
+/* ==================== 多尺寸会话缓存（GPU 直通 thrash 根修） ==================== */
+
+/** @brief 会话缓存条目容量（LRU；每条目一个完整 GL 会话）。 */
+#define XGPU_SESSION_CACHE_SIZE 4
+
+/** @brief 会话缓存条目（尺寸键 + 会话指针 + LRU 时钟）。 */
+typedef struct XGpuSessionCacheEntry
+{
+    XGpuRenderBackend* m_session; /**< 会话（拥有）。 */
+    int m_width;                  /**< 渲染宽度。 */
+    int m_height;                 /**< 渲染高度。 */
+    unsigned m_lastUse;           /**< LRU 时钟（单调递增）。 */
+} XGpuSessionCacheEntry;
+
+static XGpuSessionCacheEntry
+    g_gpuSessionCache[XGPU_SESSION_CACHE_SIZE]; /**< 会话缓存池。 */
+static int g_gpuSessionCacheCount = 0;          /**< 当前缓存条目数。 */
+static unsigned g_gpuSessionCacheClock = 0;      /**< LRU 时钟。 */
+
 static void painterGpuSessionDestroyAtExit(void)
 {
-    if (g_xgpuRenderSession)
+    int i;
+    /* g_xgpuRenderSession 是缓存内条目的借用别名（非独立拥有）：
+     * 所有权在缓存条目上，逐条目销毁一次即清空全部。双重销毁会 AV。 */
+    for (i = 0; i < g_gpuSessionCacheCount; ++i)
     {
-        XGpuRenderBackend_destroy(g_xgpuRenderSession);
-        g_xgpuRenderSession = NULL;
-        g_xgpuRenderSessionInUse = false;
+        XGpuRenderBackend_destroy(g_gpuSessionCache[i].m_session);
     }
+    g_gpuSessionCacheCount = 0;
+    g_xgpuRenderSession = NULL;
+    g_xgpuRenderSessionInUse = false;
 }
 
 static XGpuRenderBackend* painterGpuSessionAcquire(int width, int height)
@@ -217,19 +452,65 @@ static XGpuRenderBackend* painterGpuSessionAcquire(int width, int height)
     if (g_xgpuRenderProbeFailed || width <= 0 || height <= 0) return NULL;
     /* One shared context cannot safely serve two active painters. */
     if (g_xgpuRenderSessionInUse) return NULL;
-    if (g_xgpuRenderSession &&
-        (XGpuRenderBackend_width(g_xgpuRenderSession) != width ||
-         XGpuRenderBackend_height(g_xgpuRenderSession) != height))
+    /* 多尺寸会话缓存（GPU 直通 thrash 根修，2026-09-23）：GUI 帧内不同
+     * 控件以不同尺寸的 XImage 绘制（主窗 2752×1089、状态栏 60×20…），
+     * 旧逻辑尺寸不符即销毁重建整个 GL 会话（FBO+纹理+program 全套），
+     * 一帧内可达数十次——每次重建含上下文操作与驱动资源分配，实测
+     * GPU 口径 0.3 FPS 的主因。现按 (width,height) 缓存最多
+     * XGPU_SESSION_CACHE 个会话，尺寸命中直接复用，仅全部未命中时
+     * 淘汰最旧并创建新会话。绘制目标内容在会话的 FBO 中持久保留
+     * （窗口会话首帧上传语义不变），切回时无需重传。 */
     {
-        XGpuRenderBackend_destroy(g_xgpuRenderSession);
-        g_xgpuRenderSession = NULL;
-    }
-    if (!g_xgpuRenderSession)
-    {
-        g_xgpuRenderSession = XGpuRenderBackend_create(width, height);
+        int i;
+        int oldest = -1;
+        for (i = 0; i < g_gpuSessionCacheCount; ++i)
+        {
+            if (g_gpuSessionCache[i].m_width == width &&
+                g_gpuSessionCache[i].m_height == height)
+            {
+                g_xgpuRenderSession = g_gpuSessionCache[i].m_session;
+                g_gpuSessionCache[i].m_lastUse = ++g_gpuSessionCacheClock;
+                break;
+            }
+        }
+        if (i == g_gpuSessionCacheCount)
+        {
+            /* 未命中：缓存满时淘汰最旧（LRU），否则追加。 */
+            if (g_gpuSessionCacheCount >= XGPU_SESSION_CACHE_SIZE)
+            {
+                oldest = 0;
+                for (i = 1; i < XGPU_SESSION_CACHE_SIZE; ++i)
+                    if (g_gpuSessionCache[i].m_lastUse <
+                        g_gpuSessionCache[oldest].m_lastUse)
+                        oldest = i;
+                if (g_xgpuRenderSession ==
+                    g_gpuSessionCache[oldest].m_session)
+                {
+                    g_xgpuRenderSession = NULL;
+                    g_xgpuRenderSessionInUse = false;
+                }
+                XGpuRenderBackend_destroy(g_gpuSessionCache[oldest].m_session);
+                for (i = oldest; i < XGPU_SESSION_CACHE_SIZE - 1; ++i)
+                    g_gpuSessionCache[i] = g_gpuSessionCache[i + 1];
+                --g_gpuSessionCacheCount;
+            }
+            g_xgpuRenderSession = XGpuRenderBackend_create(width, height);
+            if (!g_xgpuRenderSession)
+            {
+                g_xgpuRenderProbeFailed = true;
+                return NULL;
+            }
+            g_gpuSessionCache[g_gpuSessionCacheCount].m_session =
+                g_xgpuRenderSession;
+            g_gpuSessionCache[g_gpuSessionCacheCount].m_width = width;
+            g_gpuSessionCache[g_gpuSessionCacheCount].m_height = height;
+            g_gpuSessionCache[g_gpuSessionCacheCount].m_lastUse =
+                ++g_gpuSessionCacheClock;
+            ++g_gpuSessionCacheCount;
+        }
         if (!g_xgpuRenderSession)
         {
-            g_xgpuRenderProbeFailed = true; /* 无 GL 驱动：此后保持软件渲染。 */
+            g_xgpuRenderProbeFailed = true;
             return NULL;
         }
         if (!g_xgpuRenderAtExitRegistered)
@@ -553,16 +834,22 @@ static bool painterGpuSubmitSoftwareCommand(XPainter* self,
                 g_gpuBatchCanvasInited =
                     !XImage_isNull(&g_gpuBatchCanvas);
             }
-            if (g_gpuBatchCanvasInited &&
-                XGpuRenderBackend_readback(backend, &g_gpuBatchCanvas))
+            if (g_gpuBatchCanvasInited)
             {
+                /* 批首不再整帧读回：快照延迟到逐命令的裁剪 bbox
+                 * 差集（painterGpuBatchEnsureClip），提交仅回传
+                 * 快照矩形（painterGpuBatchFlush）。 */
                 g_gpuBatchActive = true;
                 g_gpuBatchPainter = self;
                 g_gpuBatchBackend = backend;
+                g_gpuBatchSnapValid = false;
             }
         }
         if (g_gpuBatchActive)
         {
+            /* 本命令快照保障：当前裁剪 bbox（+余量）差集子矩形读回。
+             * 必须在 drawCommand 之前（光栅要以此为合成底色）。 */
+            painterGpuBatchEnsureClip(self);
             savedImage = self->m_image;
             savedGpu = self->m_gpuActive;
             self->m_image = &g_gpuBatchCanvas;

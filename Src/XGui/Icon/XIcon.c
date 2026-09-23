@@ -420,6 +420,7 @@ static void XIconPrivate_addFileEntries(XIconPrivate* d,
     imageCount = XImageReader_imageCount(&reader);
     if (imageCount <= 0) {
         XPixmap pixmap;
+        XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XMemset(&pixmap, 0, sizeof(pixmap)); XPixmap_init(&pixmap);
         if (XPixmap_load(&pixmap, fileName, NULL, 0))
             XIconPrivate_addEntry(d, &pixmap, mode, state);
@@ -431,6 +432,7 @@ static void XIconPrivate_addFileEntries(XIconPrivate* d,
     for (frame = 0; frame < imageCount; ++frame) {
         XImage image;
         XPixmap pixmap;
+        XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XImage_init(&image);
         if (!XImageReader_read(&reader, &image)) {
             XImage_deinit_base(&image);
@@ -1044,6 +1046,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         actual.height != XPixmap_height(&best->m_pixmap))
     {
         XPixmap scaled;
+        XMemset(&scaled, 0, sizeof(scaled)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XMemset(&scaled, 0, sizeof(scaled)); XPixmap_init(&scaled);
         XPixmap_scaled(&best->m_pixmap, actual.width, actual.height, 0, 0,
                        &scaled);
@@ -1057,6 +1060,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
     if (best->m_mode != mode && mode != XIconMode_Normal)
     {
         XPixmap styled;
+        XMemset(&styled, 0, sizeof(styled)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XMemset(&styled, 0, sizeof(styled)); XPixmap_init(&styled);
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
@@ -1266,6 +1270,7 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
     XPainter* target = (XPainter*)painter;
     XSize actual;
     XPixmap pixmap;
+    XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XImage image;
     int drawX;
     int drawY;

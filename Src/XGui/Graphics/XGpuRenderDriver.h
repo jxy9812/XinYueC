@@ -156,6 +156,40 @@ typedef struct XGpuRenderDriverProcs
     bool (*readback)(XGpuRenderDriverSession* session, XImage* target);
 
     /**
+     * @brief      渲染目标子矩形回读到目标 ARGB32 图像的指定偏移。
+     * @details    局部提交批量的快照原语：软件光栅只写裁剪区，快照
+     *             只需覆盖待绘制区域即可，避免全帧 12MB GPU→CPU 搬运
+     *             （GPU 直通逐命令局部提交的性能根洞，2026-09-23）。
+     *             (x,y,width,height) 为渲染目标设备坐标（自动钳位）；
+     *             (dx,dy) 为写入 target 的像素偏移。仅支持
+     *             ARGB32/ARGB32_Premultiplied 目标（与全帧回读快速
+     *             路径同布局契约）；行内容与全帧回读逐位一致。
+     * @param      session 驱动会话。
+     * @param      target 目标图像（借用）；偏移+尺寸越界返回 false。
+     * @return     true 成功；false 参数非法、会话无效或驱动未实现
+     *             （调用方回退全帧 readback）。
+     */
+    bool (*readbackRect)(XGpuRenderDriverSession* session, int x, int y,
+                         int width, int height, XImage* target, int dx,
+                         int dy);
+
+    /**
+     * @brief      图像子矩形上传并绘制到渲染目标的同位置矩形。
+     * @details    局部提交批量的提交原语：暂存画布为整帧尺寸，但批
+     *             内快照/光栅只覆盖子矩形，提交只回传该矩形（其余
+     *             像素未定义，不得采样）。源子矩形 (x,y,width,height)
+     *             同时也是目标设备矩形（快照坐标=回传坐标）。仅支持
+     *             ARGB32/ARGB32_Premultiplied 源；sourceOver=false
+     *             时矩形内容直接覆盖（与全帧 drawImage 同语义）。
+     * @param      session 驱动会话。
+     * @param      image 源图像（借用）；须不小于子矩形范围。
+     * @return     true 已提交；false 参数非法、会话无效或驱动未实现。
+     */
+    bool (*drawImageRect)(XGpuRenderDriverSession* session,
+                          const XImage* image, int x, int y, int width,
+                          int height, bool sourceOver);
+
+    /**
      * @brief      用预乘 ARGB32 颜色清空整帧。
      * @param      session 驱动会话。
      * @param      argb 预乘 ARGB32 颜色。

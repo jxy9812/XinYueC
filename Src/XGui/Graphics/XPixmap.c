@@ -409,6 +409,7 @@ void XPixmap_maskBitmap(const XPixmap* self, XBitmap* out)
 void XPixmap_mask(const XPixmap* self, XBitmap* out)
 {
     XPixmap mask;
+    XMemset(&mask, 0, sizeof(mask)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     if (!out) return;
     XPixmap_init(&mask);
     XPixmap_mask_2(self, &mask);
