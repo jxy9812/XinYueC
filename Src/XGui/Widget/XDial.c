@@ -99,9 +99,13 @@ static int xdial_posToValue(const XDial* self, const XPoint* pos)
         rel = (rel < 0.0) ? 0.0 : rel;
         if (rel >= 360.0) rel = 359.999;
     } else if (rel > XDIAL_SWEEP_ANGLE) {
-        /* 270° 之外的死角：就近吸附到两端。 */
-        rel = (rel < XDIAL_START_ANGLE + 360.0 - 45.0) ? 0.0 : XDIAL_SWEEP_ANGLE;
-        if (rel > XDIAL_SWEEP_ANGLE) rel = XDIAL_SWEEP_ANGLE;
+        /* 死角钳位（对标 QDialPrivate::valueFromPoint 的 bound）：Qt
+         * 输入域 a∈[-90°,270°) 直接代入 v=min+r*(240°-a)/300° 后
+         * bound——上死角 a∈[-90°,-60°) 钳到 max，下死角 a∈(240°,270°)
+         * 钳到 min；换算到 rel：300<rel<=330 → max，330<rel<360 → min。
+         * 修复 night #54：此前死角恒吸附 0，恰在 6 点方向（rel=330，
+         * Qt 得 max）点击结果与 Qt 相反。 */
+        rel = (rel <= XDIAL_START_ANGLE + 90.0) ? XDIAL_SWEEP_ANGLE : 0.0;
     }
     if (range <= 0) return XAbstractSlider_minimum((const XAbstractSlider*)self);
     value = XAbstractSlider_minimum((const XAbstractSlider*)self) +

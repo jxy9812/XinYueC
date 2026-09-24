@@ -501,8 +501,55 @@ static void xid_addButtons(XInputDialog* dlg, XBoxLayout* root,
                           (XObject*)dlg, xid_rejectSlot,
                           XConnectionType_Direct);
     }
+    /* 对标 Qt 模态对话框内 Tab 焦点链不越出对话框的窗口级语义（详
+     * 见 XDialogButtonBox.c xdb_relayout 同款注记）：以 setTabOrder
+     * 单跳链接把确定/取消围成显式闭环，Tab/Shift+Tab 在两钮间环绕，
+     * 不被 XWidget 的顶层窗口全域 Tab 兜底送出模态子树（夜间台账
+     * #23/#24）。 */
+    if (ok && cancel) {
+        XWidget_setTabOrder((XWidget*)ok, (XWidget*)cancel);
+        XWidget_setTabOrder((XWidget*)cancel, (XWidget*)ok);
+    }
     XBoxLayout_addLayout(root, (XLayout*)bar);
     *outBar = bar;
+}
+
+/** @brief 初始焦点落到输入控件（对标 Qt 6.8 qinputdialog.cpp
+ *  QInputDialog::setVisible：显示即 d->inputWidget->setFocus()，行
+ *  编辑/自旋框同时 selectAll）。此前 exec 后初始焦点被
+ *  dialog_grabInitialFocus 抢到默认按钮「确定」上，弹出后直接打字
+ *  无效（夜间台账 #26）。exec 内 grabInitialFocus 见焦点已在对话
+ *  框子树内即不抢占（dialog_containsFocus 门禁），故此处先聚焦。 */
+static void xid_focusInputWidget(XInputDialog* dlg)
+{
+    XWidget* input = NULL;
+    if (!dlg) return;
+    switch (XInputDialog_inputMode(dlg)) {
+    case XInputDialog_IntInput:
+        input = xid_childByName(&dlg->m_base, XID_NAME_SPIN);
+        break;
+    case XInputDialog_DoubleInput:
+        input = xid_childByName(&dlg->m_base, XID_NAME_EDIT);
+        break;
+    case XInputDialog_ComboBoxInput:
+        input = xid_childByName(&dlg->m_base, XID_NAME_COMBO);
+        break;
+    case XInputDialog_TextInput:
+    default: {
+        XLineEdit* edit =
+            (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
+        if (edit) {
+            /* 对标 Qt：文本输入聚焦即全选预置文本，键入直接替换。 */
+            XLineEdit_selectAll(edit);
+            input = (XWidget*)edit;
+        } else {
+            input = xid_childByName(&dlg->m_base, XID_NAME_PLAIN);
+        }
+        break;
+    }
+    }
+    if (input)
+        XWidget_setFocusReason(input, XFocusReason_Other);
 }
 
 /** @brief 阻塞模态执行：定尺寸、主屏居中、exec（复用 XDialog 阻塞
@@ -513,6 +560,7 @@ static bool xid_execDialog(XInputDialog* dlg, int w, int h)
     if (!dlg) return false;
     XWidget_resize((XWidget*)dlg, w, h);
     xid_centerOnScreen((XWidget*)dlg);
+    xid_focusInputWidget(dlg);
     rc = XDialog_exec(&dlg->m_base);
     return rc == 1; /* 对标 QDialog::Accepted。 */
 }
@@ -655,6 +703,11 @@ XString* XInputDialog_getText(XWidget* parent, const XString* title,
             if (text)
                 XLineEdit_setText(edit, XString_toUtf8(text));
             XWidget_setMinimumSize((XWidget*)edit, 220, 24);
+            /* 对标 Qt 对话框私有子对象命名（xid_childByName 依赖）：
+               此前漏登记 XID_NAME_EDIT，accept 结算 findChild 落空，
+               m_textValue 保持 NULL，getText 回传空串而编辑框所见为
+               「预置文本 …」（夜间台账 #25 所见非所回根因）。 */
+            xid_setName((XObject*)edit, XID_NAME_EDIT);
             if (root)
                 XBoxLayout_addWidget(root, (XWidget*)edit);
         }
@@ -710,6 +763,9 @@ XString* XInputDialog_getMultiLineText(XWidget* parent, const XString* title,
             if (text)
                 XPlainTextEdit_setPlainText(plain, XString_toUtf8(text));
             XWidget_setMinimumSize((XWidget*)plain, 260, 120);
+            /* 对标 Qt 私有子对象命名：accept 结算经 findChild 取多行
+               编辑当前文本（同 getText 的 #25 根因）。 */
+            xid_setName((XObject*)plain, XID_NAME_PLAIN);
             if (root)
                 XBoxLayout_addWidget(root, (XWidget*)plain);
         }
@@ -782,6 +838,10 @@ int XInputDialog_getInt(XWidget* parent, const XString* title,
             XSpinBox_setSingleStep(spin, step > 0 ? step : 1);
             XSpinBox_setValue(spin, value);
             XWidget_setMinimumSize((XWidget*)spin, 160, 24);
+            /* 对标 Qt 私有子对象命名：accept 结算经 findChild 取自旋
+               框当前值（同 getText 的 #25 根因，getInt 此前确认后恒
+               回初值）。 */
+            xid_setName((XObject*)spin, XID_NAME_SPIN);
             if (root)
                 XBoxLayout_addWidget(root, (XWidget*)spin);
         }
@@ -840,6 +900,10 @@ double XInputDialog_getDouble(XWidget* parent, const XString* title,
             snprintf(buf, sizeof(buf), "%.*f", dec, value);
             XLineEdit_setText(edit, buf);
             XWidget_setMinimumSize((XWidget*)edit, 220, 24);
+            /* 对标 Qt 私有子对象命名：accept 结算经 findChild 解析行
+               编辑当前文本（同 getText 的 #25 根因，此前确认后恒回
+               初值）。 */
+            xid_setName((XObject*)edit, XID_NAME_EDIT);
             if (root)
                 XBoxLayout_addWidget(root, (XWidget*)edit);
         }
@@ -917,6 +981,9 @@ XString* XInputDialog_getItem(XWidget* parent, const XString* title,
             if (current > 0)
                 XComboBox_setCurrentIndex(combo, current);
             XWidget_setMinimumSize((XWidget*)combo, 200, 26);
+            /* 对标 Qt 私有子对象命名：accept 结算经 findChild 取下拉
+               当前项文本（同 getText 的 #25 根因）。 */
+            xid_setName((XObject*)combo, XID_NAME_COMBO);
             if (root)
                 XBoxLayout_addWidget(root, (XWidget*)combo);
         }

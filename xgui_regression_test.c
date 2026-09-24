@@ -22221,11 +22221,11 @@ static void test_widget_contract(void)
         expect_true(!XWidget_isVisible(&reparentChild->m_base) &&
                         XWidget_isHidden(&reparentChild->m_base),
                     "setParentPlain 后控件隐藏且需显式 show");
-        expect_true(XWidget_x(&reparentChild->m_base) == 0 &&
-                        XWidget_y(&reparentChild->m_base) == 0 &&
+        expect_true(XWidget_x(&reparentChild->m_base) == 12 &&
+                        XWidget_y(&reparentChild->m_base) == 14 &&
                         XWidget_width(&reparentChild->m_base) == 40 &&
                         XWidget_height(&reparentChild->m_base) == 20,
-                    "setParentPlain 将子控件位置归零并保持尺寸");
+                    "setParentPlain 换父保留子控件几何（对标 Qt setParent_sys 不写 crect）");
         XWidget_show(&reparentChild->m_base);
         expect_true(XWidget_isVisible(&reparentChild->m_base),
                     "setParentPlain 后显式 show 恢复可见");
@@ -31307,6 +31307,11 @@ static void test_xgui_widgets(void)
     expect_true(XSliderTest_runAll(), "XSlider 控件功能");
     expect_true(XSpinBoxTest_runAll(), "XSpinBox 控件功能");
     expect_true(XGroupBoxTest_runAll(), "XGroupBox 控件功能");
+    {
+        extern int XTouchMultiPointTest_run(void);
+        int tpFails = XTouchMultiPointTest_run();
+        expect_true(tpFails == 0, "多点触摸 per-id 路由与生命周期（XI2-B B1）");
+    }
     expect_true(XProgressBarTest_runAll(), "XProgressBar 控件功能");
     expect_true(XDialTest_runAll(), "XDial 控件功能");
     expect_true(XComboBoxTest_runAll(), "XComboBox 控件功能");

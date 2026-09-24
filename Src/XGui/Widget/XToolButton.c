@@ -23,6 +23,7 @@
 #include "XWidget_Protected.h"
 #include "XMemory.h"
 #include "XString.h"
+#include "XVariant.h"
 #include "XIcon.h"
 #include "XAlignment.h"
 #include "XPainter.h"
@@ -36,6 +37,84 @@
 
 static void toolbutton_refresh(XToolButton* self);
 static void toolbutton_mirrorFromAction(XToolButton* self);
+
+/* DelayedPopup 按住延时弹层的定时器记账（对标 Qt SH_ToolButton_PopupDelay
+ * 的按住弹出）。定时器 ID 存动态属性，避免改动公开契约头（同 XMenu.c
+ * hover 定时器的既有模式）。 */
+#define XTOOLBUTTON_PROP_POPUP_TIMER "xgui.toolbutton.popupTimer"
+/* 按住弹出延时（对标 QCommonStyle::SH_ToolButton_PopupDelay 缺省 500ms）。 */
+#define XTOOLBUTTON_POPUP_DELAY_MS 500u
+
+static int64_t toolbutton_int64Prop(const XToolButton* self,
+                                    const char* keyUtf8, int64_t fallback)
+{
+    XString key;
+    XVariant* v;
+
+    if (!self || !keyUtf8)
+        return fallback;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    v = XObject_property((const XObject*)self, &key);
+    XString_deinit_base(&key);
+    return v ? XVariant_toInt64(v) : fallback;
+}
+
+static void toolbutton_setInt64Prop(XToolButton* self, const char* keyUtf8,
+                                    int64_t value)
+{
+    XString key;
+    XVariant* v;
+
+    if (!self || !keyUtf8)
+        return;
+    v = XVariant_create_int64(value);
+    if (!v)
+        return;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
+    if (!XObject_setProperty((XObject*)self, &key, v))
+        XVariant_delete_base((XClass*)v);
+    XString_deinit_base(&key);
+}
+
+static void toolbutton_removeProp(XToolButton* self, const char* keyUtf8)
+{
+    XString key;
+
+    if (!self || !keyUtf8)
+        return;
+    XString_init(&key);
+    XString_assign_utf8(&key, keyUtf8);
+    XObject_removeProperty((XObject*)self, &key);
+    XString_deinit_base(&key);
+}
+
+/** @brief 取消未决的按住弹出定时器（无未决时为幂等）。 */
+static void toolbutton_cancelPopupTimer(XToolButton* self)
+{
+    int64_t id = toolbutton_int64Prop(self, XTOOLBUTTON_PROP_POPUP_TIMER,
+                                      (int64_t)XTIMER_INVALID_ID);
+
+    if (id != (int64_t)XTIMER_INVALID_ID)
+        XObject_killTimer((XObject*)self, (XTimerId)id);
+    toolbutton_removeProp(self, XTOOLBUTTON_PROP_POPUP_TIMER);
+}
+
+/** @brief 启动 DelayedPopup 按住弹出定时器（对标 Qt popupTimer.start）。 */
+static void toolbutton_startPopupTimer(XToolButton* self)
+{
+    XTimerId id;
+
+    toolbutton_cancelPopupTimer(self);
+    id = XObject_startTimer_ms((XObject*)self,
+                               XTOOLBUTTON_POPUP_DELAY_MS,
+                               XTimerType_PreciseTimer);
+    if (id != XTIMER_INVALID_ID)
+        toolbutton_setInt64Prop(self, XTOOLBUTTON_PROP_POPUP_TIMER,
+                                (int64_t)id);
+}
 
 /* 有效样式：FollowStyle 按 TextBesideIcon 处理。 */
 static XToolButtonStyle toolbutton_effectiveStyle(const XToolButton* self)
@@ -238,26 +317,17 @@ static bool toolbutton_inMenuZone(const XToolButton* self,
            pos->y < rect.y + rect.height;
 }
 
-/** @brief 按 popupMode 与命中位置判定本次左键按下是否应当弹出菜单
- *         （复扫 R-20：popupMode 此前为死存储）：
- *         - InstantPopup：整钮弹出（对标 Qt）；
- *         - MenuButtonPopup：仅箭头区弹出（对标 Qt；箭头区外走普通
- *           按钮路径触发动作）；
- *         - DelayedPopup：点击弹出菜单（本实现无按压计时器，按需求
- *           口径以点击替代 Qt 的按住延时弹出）。 */
-static bool toolbutton_shouldPopup(XToolButton* self, const XPoint* pos)
+/** @brief 按 popupMode 判定左键按下是否立即弹出菜单（对标
+ *         QToolButtonPrivate::onButtonPressed 的分流：InstantPopup 或
+ *         延时为 0 → 立即弹出；DelayedPopup → 走按住定时器；
+ *         MenuButtonPopup → 仅箭头区在 mousePressEvent 里弹出）。 */
+static bool toolbutton_popupImmediately(XToolButton* self)
 {
     if (!self || !self->m_menu)
         return false;
-    switch (self->m_popupMode) {
-    case XToolButtonPopupMode_InstantPopup:
+    if (self->m_popupMode == XToolButtonPopupMode_InstantPopup)
         return true;
-    case XToolButtonPopupMode_MenuButtonPopup:
-        return toolbutton_inMenuZone(self, pos);
-    case XToolButtonPopupMode_DelayedPopup:
-    default:
-        return true;
-    }
+    return false;
 }
 
 /* ==================== 默认动作 ==================== */
@@ -360,6 +430,8 @@ void XToolButton_showMenu(XToolButton* self)
         return;
     if (!XWidget_isEnabled((XWidget*)self))
         return;
+    /* 菜单即将展开，取消未决的按住弹出定时器，防止到点后重复弹层。 */
+    toolbutton_cancelPopupTimer(self);
     XAbstractButton_setDown((XAbstractButton*)self, true);
     XObject_disconnect_1((XObject*)self->m_menu,
                          XSignal(XMenu_aboutToHide_signal),
@@ -655,9 +727,15 @@ xtb_style_label:
 
 /* ==================== 虚槽实现（尺寸与生命周期） ==================== */
 
-/* 左键按下：按 popupMode 与箭头区分流弹层与触发（复扫 R-20，对标
- * QToolButton::mousePressEvent）。弹层路径直接 showMenu 且不链基类——
- * 不进入按钮按下/释放流程，菜单弹出路径不会触发默认动作。 */
+/* 左键按下：按 popupMode 与箭头区分流弹层与触发（对标
+ * QToolButton::mousePressEvent + QToolButtonPrivate::onButtonPressed）：
+ * - InstantPopup：立即弹层且不链基类（Qt 同款吞掉按压，菜单弹出路径
+ *   不触发默认动作）；
+ * - MenuButtonPopup：仅箭头区弹层，其余走普通按钮链；
+ * - DelayedPopup：链基类进入正常按压（保留点击触发动作的回退路径），
+ *   同时启动按住延时定时器，按住到点弹层（Qt popupTimer 语义）。
+ * 修复 night #1：原实现 DelayedPopup 一律 accept+return 吞掉整条点击
+ * 链且无回退，菜单未可见时按钮彻底无响应。 */
 static void VXToolButton_mousePressEvent(XWidget* self, XEvent* event)
 {
     XToolButton* tb = (XToolButton*)self;
@@ -669,7 +747,10 @@ static void VXToolButton_mousePressEvent(XWidget* self, XEvent* event)
         XWidget_isEnabled(self)) {
         XPoint pos = XMouseEvent_position((XMouseEvent*)event);
 
-        if (toolbutton_shouldPopup(tb, &pos)) {
+        if (toolbutton_popupImmediately(tb) ||
+            (tb->m_popupMode ==
+                 XToolButtonPopupMode_MenuButtonPopup &&
+             toolbutton_inMenuZone(tb, &pos))) {
             XEvent_accept(event);
             XToolButton_showMenu(tb);
             return;
@@ -677,11 +758,22 @@ static void VXToolButton_mousePressEvent(XWidget* self, XEvent* event)
     }
     XClass_Parent(XAbstractButton, EXWidget_MousePressEvent,
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+    /* 对标 Qt onButtonPressed：DelayedPopup 在基类按压（pressed）之后
+     * 启动按住弹出定时器；快速释放则由 mouseReleaseEvent 取消，按压
+     * 保持普通点击语义。 */
+    if (tb && tb->m_menu &&
+        tb->m_popupMode == XToolButtonPopupMode_DelayedPopup &&
+        XWidget_isEnabled(self))
+        toolbutton_startPopupTimer(tb);
 }
 
-/* 左键释放：弹出菜单仍打开时吞掉释放——按下开菜单后、菜单关闭前到来的
- * release 不得转成 clicked 误触发动作（对标 Qt 由弹出窗口抓取鼠标承接
- * 释放；无抓取环境由此分支兜底）。 */
+/* 左键释放：两种分流（对标 Qt）：
+ * - 弹出菜单仍打开：吞掉释放——按下开菜单后、菜单关闭前到来的
+ *   release 不得转成 clicked 误触发动作（对标 Qt 由弹出窗口抓取鼠标
+ *   承接释放；无抓取环境由此分支兜底）；
+ * - 按住弹出定时器未到期就释放：取消定时器并链基类，本次按压回归
+ *   普通点击（对标 QToolButtonPrivate::onButtonReleased 停表后由
+ *   QAbstractButton 正常发 clicked）——即 night #1 要求的回退路径。 */
 static void VXToolButton_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XToolButton* tb = (XToolButton*)self;
@@ -692,8 +784,36 @@ static void VXToolButton_mouseReleaseEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
+    if (tb && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE) {
+        int64_t id = toolbutton_int64Prop(
+            tb, XTOOLBUTTON_PROP_POPUP_TIMER, (int64_t)XTIMER_INVALID_ID);
+
+        if (id != (int64_t)XTIMER_INVALID_ID) {
+            toolbutton_cancelPopupTimer(tb);
+        }
+    }
     XClass_Parent(XAbstractButton, EXWidget_MouseReleaseEvent,
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+/* 定时器事件：DelayedPopup 按住延时到点弹层（对标 QToolButton::
+ * timerEvent → QToolButtonPrivate::popupTimerDone）。 */
+static void VXToolButton_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XToolButton* tb = (XToolButton*)object;
+
+    if (tb && event &&
+        XTimerEvent_timerId(event) ==
+            (XTimerId)toolbutton_int64Prop(
+                tb, XTOOLBUTTON_PROP_POPUP_TIMER,
+                (int64_t)XTIMER_INVALID_ID)) {
+        toolbutton_removeProp(tb, XTOOLBUTTON_PROP_POPUP_TIMER);
+        XToolButton_showMenu(tb);
+        return;
+    }
+    XClass_Parent(XObject, EXObject_TimerEvent,
+                  void(*)(XObject*, XTimerEvent*))(object, event);
 }
 
 static void VXToolButton_contentChanged(XAbstractButton* base)
@@ -786,6 +906,7 @@ XVtable* XToolButton_class_init(void)
                              VXToolButton_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
                              VXToolButton_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXToolButton_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXToolButton_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXToolButton_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXToolButton_deinit);

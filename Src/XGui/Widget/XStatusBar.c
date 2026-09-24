@@ -78,6 +78,104 @@ static void xsb_destroyVector(XVector* vec)
     XVector_delete_base(vec);
 }
 
+/** @brief sizegrip 角位条带宽度（对标 QStyle::PM_SizeGripSize 的 16px
+ *         简化；QStatusBar::reformat 把 d->resizer 以 addWidget 压入
+ *         行尾角位，qstatusbar.cpp:465-466）。 */
+#define XSTATUSBAR_GRIP_W 16
+
+static void xsb_layoutItems(XStatusBar* self);
+
+/** @brief 常驻控件几何排版（二次复扫 #68 伴随问题根修）。
+ *  @details 此前 addWidget/insertWidget 只登记借用记录从不给子控件
+ *  几何：标签停在构造默认矩形上，页签容器把状态栏拉伸成整页后该
+ *  矩形既不随容器更新也不再被任何布局触达——实测「普通区标签」整页
+ *  只余 (25,123) 两个残迹像素（rescan p4_t15 像素表）；面板底
+ *  fillRect 在 paintTree「自先子后」的次序下并不会覆盖子控件
+ *  （XWidget.c paintEvent 派发先于 children 递归），病根在子控件
+ *  从未获得随容器的几何。对标 Qt：qstatusbar.cpp:420-472 reformat()
+ *  把普通区/永久区控件装入 QBoxLayout（普通区左起、永久区右置、
+ *  sizegrip 压角），resizeEvent 经布局自动重排——本函数即该排版的
+ *  简化实现：stretch>0 的条目按拉伸因子分摊弹性宽，stretch<=0 保持
+ *  自身现宽，条目占满条高（Preferred 竖直策略控件在行内拉满，与
+ *  Qt 状态栏文本垂直居中的经典形态一致）。 */
+static void xsb_layoutSection(XVector* vec, int xStart, int xEnd, int h,
+                              bool fromRight)
+{
+    int64_t i;
+    int64_t n;
+    int flexible = 0;
+    int avail;
+    int x;
+    if (!vec) return;
+    n = XVector_size_base((const XContainer*)vec);
+    for (i = 0; i < n; ++i) {
+        XStatusBarItem** it =
+            (XStatusBarItem**)XVector_at_base((const XContainer*)vec, i);
+        if (it && *it && (*it)->widget && (*it)->stretch > 0)
+            flexible += (*it)->stretch;
+    }
+    avail = xEnd - xStart;
+    if (avail < 0) avail = 0;
+    x = fromRight ? xEnd : xStart;
+    for (i = 0; i < n; ++i) {
+        XStatusBarItem** it =
+            (XStatusBarItem**)XVector_at_base((const XContainer*)vec, i);
+        XWidget* w;
+        int iw;
+        XRect r;
+        if (!it || !*it) continue;
+        w = (*it)->widget;
+        if (!w) continue;
+        if ((*it)->stretch > 0 && flexible > 0)
+            iw = avail * (*it)->stretch / flexible;
+        else
+            iw = XWidget_width(w);
+        if (fromRight) {
+            if (iw > x - xStart) iw = x - xStart;
+            XRect_init(&r, x - iw, 0, iw > 0 ? iw : 0, h);
+        } else {
+            if (iw > xEnd - x) iw = xEnd - x;
+            XRect_init(&r, x, 0, iw > 0 ? iw : 0, h);
+        }
+        XWidget_setGeometryRect(w, &r);
+        if (fromRight) x -= iw;
+        else x += iw;
+    }
+}
+
+/** @brief 全量排版：永久区占右端（登记序自左向右），普通区占其余
+ *         自左向右，sizegrip 角位预留。 */
+static void xsb_layoutItems(XStatusBar* self)
+{
+    int w;
+    int h;
+    int grip;
+    int rightEnd;
+    int pw = 0;
+    int64_t i;
+    int64_t n;
+    if (!self) return;
+    w = XWidget_width((XWidget*)self);
+    h = XWidget_height((XWidget*)self);
+    if (w <= 0 || h <= 0) return;
+    grip = self->m_sizeGripEnabled ? XSTATUSBAR_GRIP_W : 0;
+    if (grip > w) grip = 0;
+    rightEnd = w - grip;
+    /* 永久区宽度先测（各条目现宽，按登记序紧贴右端）。 */
+    n = self->m_permanents
+            ? XVector_size_base((const XContainer*)self->m_permanents) : 0;
+    for (i = 0; i < n; ++i) {
+        XStatusBarItem** it =
+            (XStatusBarItem**)XVector_at_base(
+                (const XContainer*)self->m_permanents, i);
+        if (it && *it && (*it)->widget)
+            pw += XWidget_width((*it)->widget);
+    }
+    if (pw > rightEnd) pw = rightEnd;
+    xsb_layoutSection(self->m_permanents, rightEnd - pw, rightEnd, h, true);
+    xsb_layoutSection(self->m_items, 0, rightEnd - pw, h, false);
+}
+
 /** @brief 取调色板角色颜色（无调色板时回退黑/白）。 */
 static uint32_t xsb_color(const XStatusBar* self, XPaletteColorRole role)
 {
@@ -94,17 +192,19 @@ static uint32_t xsb_color(const XStatusBar* self, XPaletteColorRole role)
 
 /* ==================== 事件处理 ==================== */
 
-/** @brief paintEvent：顶部 1px 分隔线 + 消息文本（普通区被临时消息
- *         隐藏期间显示消息，永久区控件保持可见）。 */
+/** @brief paintEvent：状态条底色 + 顶部 1px 凹槽分隔线 + 消息文本
+ *         （普通区被临时消息隐藏期间显示消息，永久区控件保持可见）。 */
 static void VX_statusBar_paintEvent(XWidget* self, XEvent* event)
 {
     XStatusBar* sb = (XStatusBar*)self;
     XPainter painter;
     XImage* image;
     XPoint offset;
+    XRect panel;
     XRect line;
     XRect msgRect;
     uint32_t dark;
+    uint32_t button;
     uint32_t text;
     int w;
     int h;
@@ -124,6 +224,12 @@ static void VX_statusBar_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     dark = xsb_color(sb, XPaletteColorRole_Dark);
     text = xsb_color(sb, XPaletteColorRole_WindowText);
+    button = xsb_color(sb, XPaletteColorRole_Button);
+    /* 状态条底色（对标 QStatusBar 的 PE_PanelStatusBarSunk 面板底：
+     * Button 色铺底；此前仅画 1px 分隔线，被页签容器拉伸后整片透底，
+     * 条形感全无——台账 #68）。 */
+    XRect_init(&panel, 0, 0, w, h);
+    XPainter_fillRect(&painter, &panel, button);
     XRect_init(&line, 0, 0, w, 1);
     XPainter_fillRect(&painter, &line, dark);
     if (sb->m_currentMessage && XString_toUtf8(sb->m_currentMessage) &&
@@ -182,11 +288,22 @@ static void VXStatusBar_deinit(XStatusBar* self)
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 
+/** @brief resizeEvent：容器尺寸变化后重排普通区/永久区条目（对标
+ *         QStatusBar 的 QBoxLayout 随 resizeEvent 自动重排）。 */
+static void VX_statusBar_resizeEvent(XWidget* self, XEvent* event)
+{
+    if (!self) return;
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    xsb_layoutItems((XStatusBar*)self);
+}
+
 XVtable* XStatusBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XStatusBar)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_statusBar_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_statusBar_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_statusBar_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStatusBar_deinit);
     return XVTABLE_DEFAULT;
@@ -232,6 +349,7 @@ void XStatusBar_addWidget(XStatusBar* self, XWidget* widget, int stretch)
     XWidget_setVisible(widget, !self->m_currentMessage ||
                         !XString_toUtf8(self->m_currentMessage) ||
                         XString_toUtf8(self->m_currentMessage)[0] == '\0');
+    xsb_layoutItems(self); /* 对标 Qt：加入即入布局并获得几何。 */
 }
 
 int XStatusBar_insertWidget(XStatusBar* self, int index, XWidget* widget,
@@ -252,6 +370,7 @@ int XStatusBar_insertWidget(XStatusBar* self, int index, XWidget* widget,
     XWidget_setVisible(widget, !self->m_currentMessage ||
                         !XString_toUtf8(self->m_currentMessage) ||
                         XString_toUtf8(self->m_currentMessage)[0] == '\0');
+    xsb_layoutItems(self); /* 对标 Qt：插入即入布局并获得几何。 */
     return index;
 }
 
@@ -268,6 +387,7 @@ void XStatusBar_addPermanentWidget(XStatusBar* self, XWidget* widget,
      * widget->show()（常驻语义，不被临时消息遮挡；hideOrShow 只遍历
      * 普通区，永久区此后不受消息显隐影响）。 */
     XWidget_show(widget);
+    xsb_layoutItems(self); /* 对标 Qt：加入即入布局并获得几何。 */
 }
 
 int XStatusBar_insertPermanentWidget(XStatusBar* self, int index,
@@ -285,6 +405,7 @@ int XStatusBar_insertPermanentWidget(XStatusBar* self, int index,
     /* 同 addPermanentWidget：对标 Qt 6.8 insertPermanentWidget 的
      * widget->show() 常驻语义。 */
     XWidget_show(widget);
+    xsb_layoutItems(self); /* 对标 Qt：插入即入布局并获得几何。 */
     return index;
 }
 
@@ -312,6 +433,7 @@ void XStatusBar_setSizeGripEnabled(XStatusBar* self, bool on)
 {
     if (!self || self->m_sizeGripEnabled == on) return;
     self->m_sizeGripEnabled = on;
+    xsb_layoutItems(self); /* 角位预留变化 → 重排条目。 */
     XWidget_update((XWidget*)self);
 }
 

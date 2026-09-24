@@ -399,7 +399,7 @@ static void adv_btnSplashSlot(XObject* receiver, XVarList* args)
         XSplashScreen_showMessage(s_adv.splash,
                                   "XGui 高级控件页启动画面…",
                                   XAlignment_Left | XAlignment_Bottom,
-                                  0xFF202020u);
+                                  0xFFE6E6E6u); /* 黑底浅灰字，保证对比度可读 */
     }
     XWidget_show((XWidget*)s_adv.splash);
     XTimer_singleShot1(1500, (XObject*)s_adv.splash, adv_splashTimeoutSlot,

@@ -20,6 +20,8 @@
 #include "XStyleOption.h"
 #include "XIcon.h"
 #include "XImage.h"
+#include "XPixmap.h"
+#include "XPainter.h"
 #if XCHECKBOX_ON
 #include "XCheckBox.h"
 #endif
@@ -28,12 +30,41 @@
 
 /* ==================== 内部工具 ==================== */
 
+/** @brief 图标区是否存在（对标 Qt QMessageBoxPrivate::setupLayout 的
+ *         hasIcon：iconPixmap 优先，其次非 NoIcon 的分级标准图标）。 */
+static bool xmsg_hasIconArea(const XMessageBox* self)
+{
+    if (!self) return false;
+    if (self->m_iconPixmap) return true;
+    return self->m_icon != (int)XMessageBoxIcon_NoIcon;
+}
+
+/** @brief 内容区顶部 y（对标 Qt：标题栏以下为内容区起点；XGui 子控
+ *         件形态对话框的标题由 XDialog 面板顶部带内绘制，有标题时
+ *         内容下移让出标题文本条，无标题保持原布局不占位）。 */
+static int xmsg_contentTop(const XMessageBox* self)
+{
+    const XString* title;
+    const char* utf8;
+    if (!self) return 12;
+    title = XWidget_windowTitle((const XWidget*)self);
+    utf8 = title ? XString_toUtf8(title) : NULL;
+    return (utf8 && utf8[0]) ? 28 : 12;
+}
+
 static void xmsg_setupText(XMessageBox* self)
 {
     XRect r;
     int w = XWidget_width((XWidget*)self);
+    int top;
+    int x;
     if (!self || !self->m_textLabel) return;
-    XRect_init(&r, 16, 12, w > 32 ? w - 32 : 0, 60);
+    top = xmsg_contentTop(self);
+    /* 对标 Qt QMessageBox 布局：图标列在文本左侧（indentSpacer 7px +
+     * 图标区），无图标时文本占满内容行。 */
+    x = xmsg_hasIconArea(self) ? 56 : 16;
+    XRect_init(&r, x, top,
+               w > x + 16 ? w - x - 16 : 0, 60);
     XWidget_setGeometry((XWidget*)self->m_textLabel,
                         r.x, r.y, r.width, r.height);
 }
@@ -43,10 +74,12 @@ static void xmsg_setupCheckBox(XMessageBox* self)
 #if XCHECKBOX_ON
     int w = XWidget_width((XWidget*)self);
     int h = XWidget_height((XWidget*)self);
+    int top;
     if (!self || !self->m_checkBox) return;
-    /* 复选框行固定位于消息文本（y=12,h=60）与按钮盒（底部 40）之间。 */
-    if (h > 76 + 20 + 40)
-        XWidget_setGeometry((XWidget*)self->m_checkBox, 16, 76,
+    top = xmsg_contentTop(self);
+    /* 复选框行固定位于消息文本（top,h=60）与按钮盒（底部 40）之间。 */
+    if (h > top + 64 + 20 + 40)
+        XWidget_setGeometry((XWidget*)self->m_checkBox, 16, top + 64,
                             w > 32 ? w - 32 : 0, 20);
 #else
     (void)self;
@@ -188,12 +221,71 @@ static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
+/** @brief 图标区绘制（对标 Qt 6.8 qmessagebox.cpp
+ *         QMessageBoxPrivate::standardIcon + setupLayout：图标按
+ *         PM_MessageBoxIconSize 尺寸显示于文本左侧、内容区顶部对
+ *         齐。此前 setIcon 仅存 m_icon、全文件无绘制调用，四种级别
+ *         标准图标全部不渲染——夜间台账 #19）。图标来源优先级与
+ *         Qt 一致：setIconPixmap 自定义位图优先，其次按 m_icon 分
+ *         级取样式标准图标（XMessageBox_standardIcon → 样式
+ *         SP_MessageBox* 图标，调用方持有，画后即删）。 */
+static void xmsg_drawIcon(XMessageBox* box, XEvent* event)
+{
+    XImage* image;
+    XPainter painter;
+    XPoint offset;
+    XIcon* icon = NULL;
+    int top;
+    if (!box || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    if (!xmsg_hasIconArea(box)) return;
+    image = XWidget_paintImage((XWidget*)box);
+    if (!image) return;
+    if (box->m_iconPixmap) {
+        XPixmap pm;
+        icon = XIcon_create();
+        if (!icon) return;
+        XPixmap_init(&pm);
+        XPixmap_init_image(&pm, (const XImage*)box->m_iconPixmap, 0);
+        XIcon_init_pixmap(icon, &pm);
+        XPixmap_deinit_base(&pm);
+    } else {
+        icon = XMessageBox_standardIcon(box->m_icon);
+    }
+    if (!icon) return;
+    XPainter_init(&painter, NULL);
+    if (XPainter_begin_image(&painter, image)) {
+        offset = XWidget_paintOffset((XWidget*)box);
+        if (offset.x != 0 || offset.y != 0)
+            XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+        top = xmsg_contentTop(box);
+        XIcon_paint(icon, &painter, 16, top, 32, 32,
+                    (uint32_t)(XAlignment_Left | XAlignment_Top),
+                    XIconMode_Normal, XIconState_Off);
+        XPainter_end(&painter);
+    }
+    XPainter_deinit(&painter);
+    XIcon_delete_base(icon);
+}
+
+/** @brief 绘制：先静态父调用 XDialog 面板绘制，再叠画图标区。 */
+static void VXMessageBox_paintEvent(XWidget* self, XEvent* event)
+{
+    XMessageBox* box = (XMessageBox*)self;
+    if (!self || !event) return;
+    /* 面板底色/描边/标题沿用 XDialog 实现（XClass_Parent 静态父调
+       用，避免经对象虚表再分派回本重载）。 */
+    XClass_Parent(XDialog, EXWidget_PaintEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    xmsg_drawIcon(box, event);
+}
+
 XVtable* XMessageBox_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XMessageBox)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
                              VX_messageBox_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXMessageBox_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VXMessageBox_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMessageBox_deinit);
@@ -279,6 +371,10 @@ void XMessageBox_setTitle(XMessageBox* self, const char* utf8)
     /* 对标 Qt：标题同步到窗口（此前仅存内部字符串，原生标题不变）。 */
     XWidget_setWindowTitle((XWidget*)self,
                            XString_create_utf8(utf8 ? utf8 : ""));
+    /* 标题条出现/消失改变内容区起点（对标 Qt 标题栏下的内容布局）。 */
+    xmsg_setupText(self);
+    xmsg_setupCheckBox(self);
+    XWidget_update((XWidget*)self);
 }
 
 const char* XMessageBox_title(const XMessageBox* self)
@@ -294,7 +390,11 @@ const char* XMessageBox_title(const XMessageBox* self)
 void XMessageBox_setIcon(XMessageBox* self, XMessageBoxIcon icon)
 {
     if (!self) return;
+    if (self->m_icon == (int)icon) return;
     self->m_icon = (int)icon;
+    /* 图标区存在性/内容随分级变化（对标 Qt setIcon → updateIcon）。 */
+    xmsg_setupText(self);
+    XWidget_update((XWidget*)self);
 }
 
 XMessageBoxIcon XMessageBox_icon(const XMessageBox* self)
@@ -638,6 +738,10 @@ void XMessageBox_setIconPixmap(XMessageBox* self, const XImage* pixmap)
         if (self->m_iconPixmap) {
             XImage_delete_base((XClass*)self->m_iconPixmap);
             self->m_iconPixmap = NULL;
+            /* 清除后图标列可能消失，文本回填让位（对标 Qt setPixmap
+               (QPixmap()) → updateIcon 布局刷新）。 */
+            xmsg_setupText(self);
+            XWidget_update((XWidget*)self);
         }
         return;
     }
@@ -646,6 +750,9 @@ void XMessageBox_setIconPixmap(XMessageBox* self, const XImage* pixmap)
         if (!self->m_iconPixmap) return;
     }
     XCopy(self->m_iconPixmap, (const XClass*)pixmap);
+    /* 对标 Qt setPixmap → 图标列布局与重绘（文本为图标让位）。 */
+    xmsg_setupText(self);
+    XWidget_update((XWidget*)self);
 }
 
 const XImage* XMessageBox_iconPixmap(const XMessageBox* self)

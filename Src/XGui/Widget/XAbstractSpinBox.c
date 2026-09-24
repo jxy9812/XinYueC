@@ -280,6 +280,14 @@ static void VXAbstractSpinBox_keyPressEvent(XWidget* self, XEvent* event)
         spinbox_emitVoidSignal(
             spin, (size_t)XAbstractSpinBox_editingFinished_signal(spin));
         return;
+    case XKey_Tab:
+    case XKey_Backtab:
+        /* Tab/Backtab 不转发内嵌编辑框（单行编辑从不插 Tab）：显式忽略，
+         * 让框架焦点遍历迁焦到下一候选（对标 Qt QWidget::event 对 Tab 的
+         * 焦点链拦截先于 keyPressEvent，qwidget.cpp:9324 前段）。此前被
+         * 编辑框消费致 SpinBox→Slider 焦点链断岛（复扫-3 #41 残）。 */
+        XEvent_ignore(event);
+        return;
     default:
         break;
     }
@@ -334,21 +342,44 @@ static void VXAbstractSpinBox_wheelEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 获得焦点：转发父类。 */
+/** @brief 获得焦点：把焦点事件先转发内嵌编辑框再链父类（对标 Qt
+ *         QAbstractSpinBox::focusInEvent 的 d->edit->event(event)）。
+ *         编辑框收到焦点事件会同步焦点态并自行重绘——修复 night #40：
+ *         Tab 进入时焦点落在微调框本体，父控件带焦重绘把子编辑框像素
+ *         抹掉而无人重画，编辑区整白、值文本不可见；鼠标点击路径因
+ *         mousePressEvent 直发编辑框（编辑框自取焦点重绘）故正常。
+ *         随后 Tab/Backtab 原因进入时全选编辑框文本（对标 Qt 同函数
+ *         的 selectAll 分支）。 */
 static void VXAbstractSpinBox_focusInEvent(XWidget* self, XEvent* event)
 {
-    if (self && event) {
-        XClass_Parent(XWidget, EXWidget_FocusInEvent,
-                      void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+    XAbstractSpinBox* spin = (XAbstractSpinBox*)self;
+    if (!spin || !event ||
+        XEvent_type(event) != XEVENT_TYPE_FOCUS_IN) return;
+    if (spin->m_lineEdit)
+        XObject_event_base((XObject*)spin->m_lineEdit, event);
+    if (((XFocusEvent*)event)->m_reason == XFocusReason_Tab ||
+        ((XFocusEvent*)event)->m_reason == XFocusReason_Backtab) {
+        if (spin->m_lineEdit)
+            XLineEdit_selectAll(spin->m_lineEdit);
     }
+    XClass_Parent(XWidget, EXWidget_FocusInEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
-/** @brief 失去焦点：先解释当前文本，再转发父类并发射 editingFinished。 */
+/** @brief 失去焦点：先解释当前文本，再刷新编辑框显示并转发父类、发射
+ *         editingFinished。对标 Qt QAbstractSpinBox::focusOutEvent 的
+ *         d->updateEdit()：失焦后父控件无焦重绘同样会抹掉子编辑框像素，
+ *         经 updateEdit 链（子类刷新编辑框文本→编辑框重绘）恢复显示。
+ *         注意不把失焦事件转发编辑框：编辑框失焦门禁会经既有转发线重复
+ *         发射 editingFinished（Qt 中二者是不同信号，XGui 已把编辑框
+ *         editingFinished 转发为本控件同名信号，详见
+ *         spinbox_forwardEditingFinished）。 */
 static void VXAbstractSpinBox_focusOutEvent(XWidget* self, XEvent* event)
 {
     XAbstractSpinBox* spin = (XAbstractSpinBox*)self;
     if (!spin || !event) return;
     XAbstractSpinBox_interpretText(spin);
+    XAbstractSpinBox_updateEdit_base(spin);
     XClass_Parent(XWidget, EXWidget_FocusOutEvent,
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
     spinbox_emitVoidSignal(
@@ -537,6 +568,11 @@ void XAbstractSpinBox_init(XAbstractSpinBox* self, XWidget* parent,
     if (!self) return;
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XAbstractSpinBox);
+    /* 对标 QAbstractSpinBoxPrivate::init 的 setFocusPolicy（qabstractspinbox.cpp
+     * :797 Qt::StrongFocus）：容器可经 Tab 到达，Tab/方向键由 keyPressEvent
+     * 分工（Tab 显式 ignore 交焦点遍历，见 VXAbstractSpinBox_keyPressEvent）。
+     * 此前默认 NoFocus，SpinBox 不入 Tab 候选集（复扫-3 #41 残）。 */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
 
     self->m_lineEdit = NULL;
     self->m_buttonSymbols = XAbstractSpinBoxButtonSymbols_UpDownArrows;

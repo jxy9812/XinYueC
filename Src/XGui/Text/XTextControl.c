@@ -2350,14 +2350,29 @@ static void xtc_keyPressEvent(XTextControl* self, XKeyEvent* e)
         }
 
         /* 可接受输入：可打印 ASCII + 无 Ctrl/Meta/Alt（对标
-           isAcceptableInput；覆盖模式先行删除未选中的下一码点）。 */
+           isAcceptableInput；覆盖模式先行删除未选中的下一码点）。
+           拉丁字母大小写按 Shift 派生（问题 #32 收官，对标 Qt
+           qxcbkeyboard.cpp handleKeyEvent:865-866 键值与文本并行、
+           字母键值恒 Key_T 大写口径，qwidgettextcontrol.cpp:1357
+           cursor.insertText(e->text())；平台字母键值经大写归一恒
+           [0x41,0x5A]，
+           兼容小写键值；CapsLock 无修饰位承载，平台层 LockMask 守卫
+           留 IME 提交通道，不入本分支）。 */
         if (key >= 0x20 && key <= 0x7E &&
             (mods & ((int)XKeyboardModifier_ControlModifier |
                      (int)XKeyboardModifier_MetaModifier |
                      (int)XKeyboardModifier_AltModifier)) == 0) {
             char ch[2];
             int pos;
-            ch[0] = (char)key;
+            int letter = key;
+            if (letter >= 'a' && letter <= 'z') letter -= 'a' - 'A';
+            if (letter >= 'A' && letter <= 'Z') {
+                ch[0] = (char)((mods & (int)XKeyboardModifier_ShiftModifier)
+                                   ? letter
+                                   : letter + ('a' - 'A'));
+            } else {
+                ch[0] = (char)key;
+            }
             ch[1] = '\0';
             if (self->m_overwriteMode && !xtc_hasSelection(self) &&
                 self->m_cursorPosition < xtc_documentLength(self)) {

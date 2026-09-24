@@ -170,13 +170,23 @@ static const char* xsss_objectName(const XObject* obj)
     return n ? XString_toUtf8(n) : NULL;
 }
 
-/** @brief 由 XStyleState 位映射伪类位（用于规则匹配）。 */
+/** @brief 由 XStyleState 位映射伪类位（用于规则匹配）。
+ *  @note  night #5 状态合成门禁：按下（Sunken）期间不发 Hover 伪类——
+ *         对标 Qt State_Sunken 优先于 State_MouseOver（qfusionstyle.cpp:806
+ *         `setBrush(isDown ? darker(110) : gradient(hover…))`，isDown 分支
+ *         先于 hover）：此前 MouseOver 无条件映射 Hover，:hover 实底
+ *         （xsss_applyBackground 后叠绘制）盖住底层样式的 sunken 凹陷面，
+ *         按压态与悬停态逐位不可分。影响面仅「按下+悬停」组合：未按下
+ *         的 :hover 照旧命中；:pressed/:focus/基规则不受影响，demo 无需
+ *         补 :pressed 规则即恢复原生按压视觉。 */
 static uint32_t xsss_statePseudos(uint32_t state)
 {
     uint32_t ps = 0;
     if (state & XStyleState_Enabled) ps |= XCssPseudo_Enabled;
     else ps |= XCssPseudo_Disabled;
-    if (state & XStyleState_MouseOver) ps |= XCssPseudo_Hover;
+    if ((state & XStyleState_MouseOver) &&
+        !(state & XStyleState_Sunken))
+        ps |= XCssPseudo_Hover;
     if (state & XStyleState_Sunken) ps |= XCssPseudo_Pressed;
     if (state & XStyleState_HasFocus) ps |= XCssPseudo_Focus;
     if (state & XStyleState_On) ps |= XCssPseudo_Checked;

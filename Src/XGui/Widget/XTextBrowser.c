@@ -368,6 +368,11 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
     XWidget_setGeometry((XWidget*)self->m_base.m_editor, 0, 0,
                         XWidget_width((XWidget*)self),
                         XWidget_height((XWidget*)self));
+    /* 编辑器显式 show（对标 QTextBrowser 的正文视图恒可见语义；
+     * XTextEdit 编辑态约定「正文由内嵌编辑器子控件绘制」，壳的
+     * paintEvent 只铺白底——若编辑器停留在隐藏态，整页只剩白底，
+     * 即台账 #49 全白症状的一类根因；已可见时 show 为幂等 no-op）。 */
+    XWidget_show((XWidget*)self->m_base.m_editor);
     self->m_openLinks = true;
     /* 链接交互：以过滤器监视编辑器鼠标事件（按下→anchorClicked、
      * 移动→highlighted；见 VX_browser_eventFilter）。 */

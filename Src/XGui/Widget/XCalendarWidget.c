@@ -234,6 +234,18 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
                 XPainter_fillRect(&painter, &bg, highlight);
             }
             XPainter_drawText(&painter, cx, cy, buf, windowText);
+            /* 今日标记：日期数字下加下划线（对标 Qt QCalendarModel 数据
+             * 里 Today 角色的 Underline 文本格式，paintCell 呈现）。
+             * 修复 night #67 的"今日无任何视觉标记"半边。 */
+            if (cal->m_showTodayDate) {
+                XDate today = XDate_currentDate();
+                if (XDate_compare(&d, &today) == 0) {
+                    XRect ul;
+                    XRect_init(&ul, col7 * w / 7 + w / 14 - 5,
+                               cy + 3, XStrlen(buf) * 8 + 2, 1);
+                    XPainter_fillRect(&painter, &ul, windowText);
+                }
+            }
         }
         if (cal->m_gridVisible) {
             for (row = 0; row <= 6; ++row) {
@@ -334,9 +346,12 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     XMemset(&self->m_selected, 0, sizeof(XDate));
-    XDate_setDate(&self->m_selected, 2026, 9, 9);
-    self->m_shownYear = 2026;
-    self->m_shownMonth = 9;
+    /* 对标 QCalendarWidgetPrivate::init 的 setSelectedDate(QDate::
+     * currentDate())：初始选中与展示页为今天——修复 night #67：此前
+     * 硬编码 2026-09-09，既非今日也无从体现"今日/选中"语义。 */
+    self->m_selected = XDate_currentDate();
+    self->m_shownYear = XDate_year(&self->m_selected);
+    self->m_shownMonth = XDate_month(&self->m_selected);
     self->m_firstDayOfWeek = 1;
     self->m_gridVisible = false;
     self->m_navBarVisible = true;

@@ -303,8 +303,10 @@ static void xlcd_drawSegment(XLcdNumber* self, XPainter* painter,
 {
     uint32_t color = (self->m_segmentStyle ==
                       (int)XLcdNumberSegmentStyle_Outline) ? off : on;
+    /* 段厚对标 QLCDNumberPrivate::drawSegment（qlcdnumber.cpp:844
+     * width = segLen/5；此前 /8 偏细）。Flat 风格保持 1px 细段。 */
     int w = (self->m_segmentStyle == (int)XLcdNumberSegmentStyle_Flat)
-                ? 1 : (segLen / 8 < 1 ? 1 : segLen / 8);
+                ? 1 : (segLen / 5 < 1 ? 1 : segLen / 5);
     XRect r;
     switch (seg) {
     case 0: XRect_init(&r, x, y, segLen, w); break;                          /* a 顶 */
@@ -379,13 +381,27 @@ static void VX_lcdNumber_paintEvent(XWidget* self, XEvent* event)
         XPainter_deinit(&painter);
         return;
     }
-    dw = (r.width - 2 * fw) / ndigits;
-    segLen = (r.height - 2 * fw - 6) / 2;
-    if (segLen < 2 || dw < 6) {
-        XPainter_deinit(&painter);
-        return;
+    /* 段几何对标 QLCDNumberPrivate::drawString（qlcdnumber.cpp:739-751）：
+       segLen 取「宽度约束 xSegLen」与「高度约束 ySegLen」的较小值——
+       此前只按高度取段长，控件被页签拉伸为大宽矮矩形时段长远超位宽，
+       数字互相重叠且末位段码越出右缘（页签2 黑块病灶）。 */
+    {
+        int digitSpace = 1; /* 非 smallPoint 模式的位间距（对标
+                               smallPoint?2:1；本简化版无 smallPoint）。 */
+        int xSegLen = r.width * 5 / (ndigits * (5 + digitSpace) + digitSpace);
+        int ySegLen = (r.height - 2 * fw) * 5 / 12;
+        segLen = ySegLen > xSegLen ? xSegLen : ySegLen;
+        if (segLen < 2) {
+            XPainter_deinit(&painter);
+            return;
+        }
+        dw = segLen * (5 + digitSpace) / 5;
+        if (dw < 6) {
+            XPainter_deinit(&painter);
+            return;
+        }
+        startX = fw + (r.width - 2 * fw - ndigits * dw + segLen / 5) / 2;
     }
-    startX = fw + (r.width - 2 * fw - ndigits * dw) / 2;
     for (i = 0; i < ndigits; ++i) {
         int x = startX + i * dw;
         int y = fw + (r.height - 2 * fw - (2 * segLen + 5)) / 2;

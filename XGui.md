@@ -1140,6 +1140,23 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   （isAccepted ? receiver : NULL）。注：apitest 触摸回归锁需窗口
   级夹具（触摸派发入口在 XWidgetWindow，standalone 夹具无此层），
   归入 autotest 后续切片，本批先修语义。
+- **§8.0g26 XI2 方案 B B1：多点触摸落地 ✓（2026-09-23 用户点名启动）**：
+  按 xi2-multipoint-design.md 实施 B1（结构体扩展+WSI 入口+per-id 抓
+  取；B2 平台聚合/pressure 留二期）。①XTouchPoint 值类型（id/state/
+  position/globalPosition/pressure；state 按 Qt6 QEventPoint 逐字对
+  齐）+XTouchEvent 尾部追加 m_points 列表（事件拥有；Deinit/Clone
+  虚槽管理生命周期，对标 XExposeEvent 先例）；旧 init/create 签名不
+  动（主点字段兼容视图），新 setPoints/points API。②WSI
+  handleTouchPoints_ex 新入口（旧 handleTouchEvent_ex 不变，与平台
+  XI2 分派同层）。③控件层 per-id 抓取表（容量 8）：BEGIN 命中被接
+  受→该 id 抓取，未接受→占槽走 touch→mouse 仿真（一个序列只合成一
+  组鼠标）；UPDATE/END 按 id 路由；END 释放槽位、CANCEL 清全部；控
+  件销毁按 widget 清理全部 id。④回归测试 XTouchMultiPointTest（并
+  入 XGuiRegression_Test）：双触点交错序列不串扰/多点负载主点同步/
+  生命周期 clone/deinit 无泄漏。**调试要点**：测试桩需正式 XCLASS
+  子类（运行时克隆虚表在 deinit 链上段错误）；WSI 注入窗口参数必须
+  是桥接窗口句柄（XWidget_windowHandle）而非栈上 widget 强转。
+  全套件全绿（apitest ALL PASS/autotest/回归含新测试/验收/GPU）。
 - **【方向 B 大块设计草案完成（并发代理产出，docs/xgui/）】**：
   gradient-fillpath-native-design.md——渐变 fillPath 原生化设计评
   审稿：推荐"覆盖图×LUT 双纹理单遍着色器"方案（新增 1 个微型片
@@ -1603,3 +1620,22 @@ RGB332/1bpp 内核（打开 MCU+SPI 屏档位）、图片资源离线编译
 
 其余参考：`代码风格，类的创建，虚函数的重载注意，api命名风格和注意事项.md`；
 Qt 源码对照路径与 off-screen 探针方法见 git 历史（8a24b127 前版本）。
+
+### 10.5 夜间全量测试修复战役（2026-09-23 夜 ~ 09-24 晨，免费窗口 23:40-07:40）
+
+三轮完整「全量扫描→统一修复→复扫验证」循环 + 定点收口（工作流五开并行，Flash 子代理，全部 Qt 6.8.3 源码对照口径——本机 /home/xinyue/Qt/6.8.3/Src 逐条读真实现后落修）。
+
+**战果**：发现 76+ 条缺陷（用户亲测"很多控件显示/功能有问题"而仓库自动测试全绿的实证清算）；修复 79 条次全部落地；复扫三轮 76 项次实测转绿（截图/像素/gdb 证据）；每轮重建 0 error + 三套件 + autotest 135 PASS 全绿；全程零 git 写操作。
+
+**框架级根修（对标 Qt 源码逐条）**：
+- 平台键事件三段（XPlatformNativeWindow_posix.c）：Ctrl 守卫（防 IME 提交吞 Ctrl+字母，对标 qxcbkeyboard handleKeyEvent）、直映键双通道（Space/数字/符号/Tab 走按键路径，文本提交并行）、拉丁大写归一（XShortcut/KSE 键值匹配）
+- 弹层上屏（跨深度遮挡根因，xtrace+最小客户端矩阵实锚）：Popup/ToolTip/Splash 族改屏幕默认 visual/depth（对标 qxcbwindow createVisual——仅请求 alpha 才选 ARGB32）
+- XWidget：Tab 焦点链启动 + 生效可见性过滤 + 焦点事件默认 update + ENTER/LEAVE 派发 + 按压隐式抓取（qt_button_down）+ setParent 保几何（setParent_sys 不写 crect，原注释误标）+ 效果管线
+- 选择/焦点族：setCurrentIndex ClearAndSelect、视图 StrongFocus+点击聚焦、树子条目高亮三元组、树滚轮/表头钉顶、表头 sectionClicked 真发射
+- 对话框族：居中公式双计页偏移根修（对标 qdialog.cpp adjustPosition）、模态子树门禁（对标 isWindowBlocked）、Tab 闭环+Return 聚焦钮、消息框分级图标、输入框 objectName 五处（xid 链）
+- 布局/控件族：XStackedLayout 切页回贴、XScrollArea ShowEvent+WheelEvent、XToolBox 页高、XSplitter 拖拽（moveSplitter 对标）+把手 off-by-one、XStatusBar xsb_layoutItems、XLcdNumber qlcdnumber 几何、XMdiArea 视口挂接+exposedRect 脏区、XMenuBar aboutToHide 回链、XToolTip 全链（唤起 700ms/到期/LEAVE 宽限/祖先回溯/底填充）、XToolButton DelayedPopup 三态、XDial 死角、XCalendarWidget 今日、图表样条/图例/裁剪/轴标签
+- 样式族：Fusion sunken darker(110)（qfusionstyle.cpp:805）、:hover 与 Sunken 优先级门禁（XStyleSheetStyle）
+
+**验证方法论沉淀**：复扫像素级复核撤误报 5 条（坐标口径/放大误读类）；「自动全绿」与手测缺陷并存的根因=autotest 覆盖面不足（页0-2 真实输入链零覆盖）；跨文件调用只许头文件公开声明；xtrace+最小客户端矩阵+独立探针三件套定位 X Server 跨深度遮挡。
+
+**遗留（日间清单）**：#32 裸字母键需控件层文本推导配套（设计裁定）；#41 页3 Tab→Slider 一跳、#35 ToolTip 黑条复验、#8 效果激活态交互擦除、#37 SizeGrip 真人终验、#50 MDI 子窗拖拽为功能性新增；#38 字形需字库方案裁定（全字库 provider 或系统字形后端）。全量明细：Test/XGuiDemo/overnight_report/{final_report,issues_ledger,rescan_r*_lane*}.md。

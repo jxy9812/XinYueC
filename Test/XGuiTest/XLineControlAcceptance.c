@@ -173,11 +173,19 @@ static void ac_keyMod(int key, int mods)
     XLineControl_processKeyEvent(&ac_ctl, &ke);
 }
 
-/** @brief 可打印字符键入（单字节码位即字符）。 */
+/** @brief 可打印字符键入（单字节码位即字符）。大写字母携带 Shift 修饰位
+ *  （平台大写归一契约：键值恒大写、大小写由 Shift 表达——对标
+ *  qxcbkeyboard handleKeyEvent 的 Key 恒大写 + text/Shift 表达）。 */
 static void ac_type(const char* ascii)
 {
     const char* p;
-    for (p = ascii; *p; ++p) ac_key((int)(unsigned char)*p);
+    for (p = ascii; *p; ++p) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch >= 'A' && ch <= 'Z')
+            ac_keyMod(ch, (int)XKeyboardModifier_ShiftModifier);
+        else
+            ac_key((int)ch);
+    }
 }
 
 static void ac_left(void) { ac_key(XKey_Left); }

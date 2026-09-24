@@ -179,6 +179,27 @@ static void xdb_relayout(XDialogButtonBox* self)
             XWidget_setGeometryRect((XWidget*)*item, &r);
         x += bw + gap;
     }
+    /* 对标 Qt 模态对话框内 Tab 焦点链不越出对话框的窗口级语义：Qt
+     * 的 QDialog 是独立原生窗口，QApplicationPrivate::focusNextPrev
+     * Child_helper 的候选遍历天然以对话框窗口为界。XGui 单原生窗口
+     * 模型下，XWidget 事件层 Tab 兜底按顶层窗口全域文档序移动焦点
+     * （XWidget_focusChainTarget），消息框内 Tab×2 即越出模态子树
+     * ——焦点落到页面触发按钮上，Esc 随即失效、对话框滞留（夜间台
+     * 账 #23/#24）。以 setTabOrder 单跳链接把盒内按钮围成显式闭环
+     * （i→i+1、末钮→首钮），XWidget 焦点链优先走显式链接，Tab/
+     * Shift+Tab 在盒内按钮间环绕，永不越界。每次重排全量重建，增删
+     * 按钮后不留悬空链接。单按钮不建链（无可环绕对象）。 */
+    if (n > 1) {
+        for (i = 0; i < n; ++i) {
+            XAbstractButton** a =
+                (XAbstractButton**)XVector_at_base(self->m_buttons, i);
+            XAbstractButton** b =
+                (XAbstractButton**)XVector_at_base(
+                    self->m_buttons, (i + 1) % n);
+            if (a && *a && b && *b)
+                XWidget_setTabOrder((XWidget*)*a, (XWidget*)*b);
+        }
+    }
 }
 
 static void VX_dialogButtonBox_resizeEvent(XWidget* self, XEvent* event)

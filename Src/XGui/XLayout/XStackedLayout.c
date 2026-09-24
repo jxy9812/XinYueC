@@ -385,6 +385,19 @@ void XStackedLayout_setCurrentIndex(XStackedLayout* self, int index)
     }
     self->m_currentIndex = index;
     XWidget_setVisible(next, true);
+    /* 对标 Qt qwidget.cpp QWidgetPrivate::setVisible（hide 分支"invalidate
+     * layout similar to updateGeometry()"）+ qlayout.cpp widgetEvent 的
+     * LayoutRequest→activate()：StackOne 切页隐藏旧页会使布局整体失效
+     * 重跑，QStackedLayout::setGeometry 把同一矩形重新分配给新的当前页
+     * （qstackedlayout.cpp:440 setGeometry 在 StackOne 下只写当前页，靠
+     * 切页后的重激活保证每页首次显示即带正确几何）。XGui 最小等价：切页
+     * 后把布局既有几何直接回贴给新当前页，避免新页保持 0 几何错位到
+     * 容器左上角（问题 #2：内层堆叠第 2 页文本错位）。 */
+    if (self->m_stackingMode == XStackedLayoutStackOne) {
+        const XRect* geometry = &self->m_base.m_base.m_geometry;
+        if (geometry->width > 0 && geometry->height > 0)
+            XWidget_setGeometryRect(next, geometry);
+    }
 }
 
 void XStackedLayout_setCurrentWidget(XStackedLayout* self, XWidget* widget)

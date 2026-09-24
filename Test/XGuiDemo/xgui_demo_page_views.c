@@ -457,13 +457,25 @@ static void views_viewClickedSlot(XObject* receiver, XVarList* args)
 static void views_treeClickedSlot(XObject* receiver, XVarList* args)
 {
     char buf[96];
-    XTreeWidgetItem* item;
+    XTreeWidgetItem* shown;
     (void)receiver;
-    XVarList_args_1(args, int, row);
+    /* 信号第二参为真实命中条目（含子节点，对标 QTreeWidget::itemClicked
+     * 载荷）；旧载荷/空载荷时回退顶层行条目。 */
+    XVarList_args_2(args, int, row, XTreeWidgetItem*, item);
     if (row < 0) return;
-    item = XTreeWidget_topLevelItem((XTreeWidget*)&g_views.tree, row);
-    snprintf(buf, sizeof(buf), "树点击: 顶层行 %d「%s」", row,
-             item ? XTreeWidgetItem_text_2(item) : "");
+    shown = item ? item : XTreeWidget_topLevelItem((XTreeWidget*)&g_views.tree, row);
+    snprintf(buf, sizeof(buf), "树点击: 行 %d「%s」", row,
+             shown ? XTreeWidgetItem_text_2(shown) : "");
+    views_setState(buf);
+}
+
+/** @brief 表头段点击：状态行反馈（对标 QHeaderView::sectionClicked）。 */
+static void views_headerClickedSlot(XObject* receiver, XVarList* args)
+{
+    char buf[64];
+    (void)receiver;
+    XVarList_args_1(args, int, section);
+    snprintf(buf, sizeof(buf), "表头段点击: %d", section);
     views_setState(buf);
 }
 
@@ -597,6 +609,12 @@ XWidget* demo_page_views_build(XWidget* parent,
     XHeaderView_resizeSection((XHeaderView*)&g_views.header, 0, 90);
     XHeaderView_resizeSection((XHeaderView*)&g_views.header, 1, 46);
     XHeaderView_setSectionsClickable((XHeaderView*)&g_views.header, true);
+    /* 段点击联动状态行（库侧 sectionClicked 已真实发射，demo 补消费）。 */
+    XObject_connect_1((XObject*)&g_views.header,
+                      (size_t)XHeaderView_sectionClicked_signal(
+                          (XHeaderView*)&g_views.header, 0),
+                      (XObject*)&g_views.header, views_headerClickedSlot,
+                      XConnectionType_Direct);
     XWidget_setGeometry((XWidget*)&g_views.header, 612, 28, 140, 26);
     XWidget_show((XWidget*)&g_views.header);
 

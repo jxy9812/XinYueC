@@ -26,6 +26,7 @@
 #include "XTextEdit.h"
 #include "XPlainTextEdit.h"
 #include "XTextControl.h"
+#include "XPainter.h"
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -64,11 +65,19 @@ static void xdlg_emitFinished(XDialog* self, int result)
  *           悬浮在未渲染底色上，表现为"对话框弹不出"。本重载按正确
  *           顺序绘制：先在控件局部坐标用局部尺寸裁剪，再平移折算。 */
 /** @brief      对话框首显居中到父窗口中央。
- *  @details    对标 QDialogPrivate::adjustPosition（QDialog 首次显示
- *              按父窗口居中）。子控件形态对话框几何为父系坐标，落点
- *              = 父窗口中央；顶层对话框（m_isWindow）交由调用方的
- *              平台居中处理，此处跳过。exec/open 每次显示均居中——
- *              demo 弹窗为常驻复用件，二次打开同样回到中央。 */
+ *  @details    对标 QDialogPrivate::adjustPosition（qdialog.cpp:871，
+ *              QDialog 首次显示按父窗口居中）：Qt 以父窗口中心
+ *              p = mapToGlobal(0,0) + parent->size()/2 为基准，再
+ *              p -= size()/2 得全局落点。子控件形态对话框几何为父
+ *              系坐标，把全局落点换算回父系坐标必须减去父控件在顶
+ *              层窗口内的偏移——此前公式误用加法（pw + (tw-dw)/2），
+ *              页偏移被双倍计入，对话框整体被推向右下：文件/颜色
+ *              便捷对话框（400/340 高）底缘因此越出 800x600 窗口
+ *              底部（实测文件框 window y=256..656，底缘溢出 56px，
+ *              确定/取消完全不可见——夜间台账 #27/#28）。顶层对话
+ *              框（m_isWindow）交由调用方的平台居中处理，此处跳
+ *              过。exec/open 每次显示均居中——demo 弹窗为常驻复用
+ *              件，二次打开同样回到中央。 */
 static void xdlg_centerToParentWindow(XDialog* self)
 {
     XWidget* selfw = (XWidget*)self;
@@ -96,9 +105,13 @@ static void xdlg_centerToParentWindow(XDialog* self)
         py += XWidget_y(w);
         w = XWidget_parentWidget(w);
     }
+    /* 对标 qdialog.cpp adjustPosition 落点换算：目标=顶层窗口中心
+     * 邻域（全局坐标 (tw-dw)/2, (th-dh)/2），换算回父系坐标减去父
+     * 控件偏移 (pw,py)。Qt 的 WM 框架余量 extraw/extrah（10/40）仅
+     * 对有原生装饰的窗口有意义，XGui 子控件形态无装饰，取 0。 */
     XWidget_move(selfw,
-                 pw + (tw > dw ? (tw - dw) / 2 : 0),
-                 py + (th > dh ? (th - dh) / 2 : 0));
+                 (tw > dw ? (tw - dw) / 2 : 0) - pw,
+                 (th > dh ? (th - dh) / 2 : 0) - py);
 }
 
 static void VXDialog_paintEvent(XWidget* self, XEvent* event)
@@ -151,6 +164,48 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
         for (px = 0; px < dh; ++px) {
             XImage_setPixel(image, o2.x, o2.y + px, frame);
             XImage_setPixel(image, o2.x + dw - 1, o2.y + px, frame);
+        }
+    }
+    /* 对标 QDialog 作为窗口时平台标题栏显示 windowTitle()：XGui 便
+       捷路径对话框为子控件形态（单原生窗口模型，XGui.md §8.0g 声
+       明边界），无标题栏可承载窗口标题——最小等价落地：面板顶部带
+       内居中绘制 windowTitle 文本（无标题不占位，子控件布局不变）。
+       夜间台账 #20：setTitle 后标题不可见。 */
+    {
+        const XString* title = XWidget_windowTitle(self);
+        const char* utf8 = title ? XString_toUtf8(title) : NULL;
+        /* 顶层窗口形态有平台标题栏承载标题，不再带内重画（避免双重
+           标题）；仅子控件形态补画。 */
+        if (utf8 && utf8[0] && !self->m_isWindow) {
+            XPainter painter;
+            XRect tr;
+            XFont font = XWidget_font(self);
+            XColor textColor = XPalette_color(&palette,
+                                              XPaletteColorGroup_Active,
+                                              XPaletteColorRole_WindowText);
+            XPoint to = XWidget_paintOffset(self);
+            tr.x = to.x + 8;
+            tr.y = to.y + 4;
+            tr.width = w - 16 > 0 ? w - 16 : 0;
+            tr.height = 18;
+            XPainter_init(&painter, NULL);
+            if (XPainter_begin_image(&painter, image)) {
+                XPainter_setFont(&painter, &font);
+#if XPAINTER_TEXTLAYOUT_ON
+                XPainter_drawTextRect(&painter, &tr,
+                                      XPAINTER_TEXT_ALIGN_HCENTER |
+                                      XPAINTER_TEXT_ALIGN_VCENTER |
+                                      XPAINTER_TEXT_SINGLE_LINE,
+                                      utf8, XColor_rgba(&textColor));
+#else
+                XPainter_drawText(&painter, tr.x + 2,
+                                  tr.y + tr.height - 6, utf8,
+                                  XColor_rgba(&textColor));
+#endif
+                XPainter_end(&painter);
+            }
+            XFont_deinit_base(&font);
+            XPainter_deinit(&painter);
         }
     }
 }
@@ -253,6 +308,86 @@ static void dialog_grabInitialFocus(XDialog* self)
                            XFocusReason_Other);
 }
 
+/** @brief      先序收集对话框子树内可 Tab 聚焦的子控件。
+ *  @details    对标 Qt 6.8 qapplication.cpp
+ *              focusNextPrevChild_helper 的候选判定：enabled、可见、
+ *              focusPolicy 含 TabFocus 位（StrongFocus 含该位）。文档
+ *              序（先序）即 Qt 焦点链顺序。 */
+static void xdlg_collectTabCandidates(XObject* object, XVector* out)
+{
+    int count;
+    int i;
+    if (!object || !out) return;
+    if (object->is_widget) {
+        XWidget* w = (XWidget*)object;
+        if (XWidget_isEnabled(w) && XWidget_isVisible(w) &&
+            (XWidget_focusPolicy(w) & XWidgetFocusPolicy_TabFocus))
+            XVector_push_back_1_base(out, &w);
+    }
+    if (object->m_children) {
+        count = XVector_size_base((const XContainer*)object->m_children);
+        for (i = 0; i < count; ++i) {
+            XObject* const* children =
+                (XObject* const*)XContainerDataAddr(object->m_children);
+            xdlg_collectTabCandidates(children[i], out);
+        }
+    }
+}
+
+/** @brief      模态子树内 Tab/Shift+Tab 焦点环绕（不越出对话框）。
+ *  @details    对标 Qt 6.8 QWidget::focusNextPrevChild：QDialog 是独
+ *              立原生窗口，焦点链天然局限在对话框子树内。XGui 单原
+ *              生窗口模型下，XWidget 事件层 Tab 兜底按顶层窗口全域
+ *              文档序移动焦点（XWidget_focusChainTarget），Tab×N 会
+ *              越出模态子树（夜间台账 #23：Tab×2 后焦点落在页面触
+ *              发按钮上，Esc 随即失效、对话框滞留）。本函数把移动限
+ *              制在对话框子树内并环绕。注意：按键自子控件沿父链上
+ *              抛到达本对话框时，子控件自身的窗口域兜底可能已消费
+ *              Tab——按钮盒路径由盒的显式 Tab 环链（XWidget_setTab
+ *              Order 闭环，见 XDialogButtonBox.c xdb_relayout）先行
+ *              在子树内消费；本函数兜住其余情形（焦点在对话框自身
+ *              或非 Tab 候选控件上）。 */
+static bool xdlg_focusNextPrevChild(XDialog* self, bool next)
+{
+    XVector* list;
+    XWidget* current;
+    XWidget* target = NULL;
+    int count;
+    int i;
+    int idx = -1;
+    if (!self) return false;
+    list = XVector_Create(XWidget*);
+    if (!list) return false;
+    xdlg_collectTabCandidates((XObject*)self, list);
+    count = (int)XVector_size_base((const XContainer*)list);
+    if (count == 0) {
+        XVector_delete_base((XClass*)list);
+        return false;
+    }
+    current = XWidget_appFocusWidget();
+    for (i = 0; i < count; ++i) {
+        if (XVector_At_Base(list, (int64_t)i, XWidget*) == current) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) {
+        /* 焦点不在子树内（如初始焦点落在对话框自身）：Qt 语义从链
+         * 首（Tab）/链尾（Shift+Tab）进入。 */
+        target = XVector_At_Base(list, next ? 0 : (int64_t)count - 1,
+                                 XWidget*);
+    } else {
+        int step = next ? 1 : count - 1;
+        target = XVector_At_Base(list, (int64_t)((idx + step) % count),
+                                 XWidget*);
+    }
+    XVector_delete_base((XClass*)list);
+    if (!target || target == current) return false;
+    XWidget_setFocusReason(target, next ? XFocusReason_Tab
+                                        : XFocusReason_Backtab);
+    return true;
+}
+
 static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
 {
     XDialog* dialog = (XDialog*)self;
@@ -264,17 +399,43 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
             XEvent_accept(event);
             return;
         }
-        /* 对标 QDialog::keyPressEvent 的 Enter/Return 分支：主键盘
-           回车与小键盘回车（Qt::Key_Return/Key_Enter）都派发默认按
-           钮；多行文本编辑持焦时让键。命中即 click——accept/reject
-           由按钮 clicked 信号链驱动（对话框按钮框的接线），与 Qt
-           同不在按键路径直接 accept。无默认按钮回落基类（沿父链
-           传播），与 Qt 的「无 autoDefault 则继续默认处理」一致。 */
+        /* 对标 Qt 6.8 qpushbutton.cpp QPushButton::keyPressEvent：焦
+           点落在 autoDefault 按钮上时，Enter/Return 点击的是聚焦按
+           钮本身而非默认按钮。XGui 子控件形态对话框以 parent+flags=0
+           构造，XPushButton_autoDefault 的「父链 windowType==Dialog」
+           判定失效（Auto 恒解为 false），聚焦取消钮后回车仍触发确
+           定（夜间台账 #24）——此处按 dialog_walkForDefaultButton 同
+           口径直接判 m_autoDefault != Off。 */
+        if (((XKeyEvent*)event)->m_key == (int)XKey_Tab ||
+            ((XKeyEvent*)event)->m_key == (int)XKey_Backtab) {
+            /* 对标 QWidget::event 的 Tab/Shift+Tab 焦点遍历，限定在
+               模态子树内环绕（详见 xdlg_focusNextPrevChild 注）。
+               Shift 修饰按 Qt 惯例把 Tab 反向为 Backtab。 */
+            int key = ((XKeyEvent*)event)->m_key;
+            int mods = (int)((XKeyEvent*)event)->m_modifiers;
+            bool next = (key == (int)XKey_Tab) ==
+                        ((mods & (int)XKeyboardModifier_ShiftModifier) == 0);
+            if ((mods & ~(int)XKeyboardModifier_ShiftModifier) == 0 &&
+                xdlg_focusNextPrevChild(dialog, next)) {
+                XEvent_accept(event);
+                return;
+            }
+        }
         if (((XKeyEvent*)event)->m_key == (int)XKey_Return ||
             ((XKeyEvent*)event)->m_key == (int)XKey_Enter) {
             XWidget* focus = XWidget_focusWidget(self);
             if (!dialog_focusIsMultilineEditor(focus)) {
                 XPushButton* button = dialog_defaultButton(dialog);
+                /* 焦点在可见可用 autoDefault 按钮上：点击聚焦按钮
+                   （Qt QPushButton::keyPressEvent 语义，见上注）。 */
+                if (focus &&
+                    XClassGetVtable(focus) == XPushButton_class_init()) {
+                    XPushButton* focused = (XPushButton*)focus;
+                    if (XWidget_isVisible(focus) &&
+                        XWidget_isEnabled(focus) &&
+                        focused->m_autoDefault != XPushButtonAutoDefault_Off)
+                        button = focused;
+                }
                 if (button) {
                     XPushButton_click(button);
                     XEvent_accept(event);

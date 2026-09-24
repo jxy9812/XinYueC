@@ -548,11 +548,23 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
 #endif /* XPAINTER_PENSTYLE_ON */
         }
         XSnprintf(buf, sizeof(buf), XString_toUtf8(ax->m_labelFormat), v);
-        if (xcv_textVisible(dirty, x - 12,
-                            plotR->y + plotR->height + 16,
-                            (int)XStrlen(buf) * 8))
-            XPainter_drawText(painter, x - 12,
-                              plotR->y + plotR->height + 16, buf, textX);
+        {
+            /* 标签按刻度横向居中并钳位在控件内（对标 Qt Charts 轴标签
+             * 以刻度为中心、sizeHint 预留边距保证末刻度标签不被视窗
+             * 裁掉的语义）。修复 night #66：末刻度标签以 x-12 左对齐
+             * 落位，"10" 在右缘被裁半个字。 */
+            int lw = (int)XStrlen(buf) * 8;
+            int vw = XWidget_width((XWidget*)self);
+            int lx = x - lw / 2;
+            if (lx < 0) lx = 0;
+            if (lx + lw > vw - 1) lx = vw - 1 - lw;
+            if (lx < 0) lx = 0;
+            if (xcv_textVisible(dirty, lx,
+                                plotR->y + plotR->height + 16, lw))
+                XPainter_drawText(painter, lx,
+                                  plotR->y + plotR->height + 16, buf,
+                                  textX);
+        }
     }
     XFont_deinit_base((XClass*)&font);
 }
@@ -1451,27 +1463,35 @@ static void xcv_paintSpline(XChartView* self, XPainter* painter,
         XPainter_setPen(painter, color);
         for (pi = 0; pi < s->m_base.m_count - 1; ++pi) {
             int sub;
-            XPointF p0 = s->m_base.m_points[pi];
-            XPointF p1 = s->m_base.m_points[pi + 1];
-            XPointF pm1 = pi > 0 ? s->m_base.m_points[pi - 1] : p0;
-            XPointF p2 = pi + 2 < s->m_base.m_count ? s->m_base.m_points[pi + 2] : p1;
+            /* 标准插值 Catmull-Rom：段 [P[i]→P[i+1]] 的四控制点
+             * (P0,P1,P2,P3) = (P[i-1],P[i],P[i+1],P[i+2])，端点外取
+             * 重复端点（与 Qt SplineChartItem::calculateControlPoints
+             * 的端点控制点回退口径一致；Qt 本体走三对角 Bezier 控制
+             * 点解，此处为其最小等价的参数化样条，@note）。修复
+             * night #63：原实现把段终点写为 P[i+1]、P3 侧错取
+             * P[i-1]，段末切线方向镜像导致相邻段过冲自交成小环。 */
+            XPointF p1 = s->m_base.m_points[pi];          /* P1 段起点 */
+            XPointF p2 = s->m_base.m_points[pi + 1];      /* P2 段终点 */
+            XPointF p0 = pi > 0 ? s->m_base.m_points[pi - 1] : p1;  /* P0 */
+            XPointF p3 = pi + 2 < s->m_base.m_count
+                             ? s->m_base.m_points[pi + 2] : p2;     /* P3 */
             for (sub = 0; sub < 8; ++sub) {
                 double t0 = (double)sub / 8;
                 double t1 = (double)(sub + 1) / 8;
                 double x0; double y0; double x1; double y1;
                 int sx0; int sy0; int sx1; int sy1;
                 x0 = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t0 +
-                     (2 * p0.x - 5 * p1.x + 4 * p2.x - pm1.x) * t0 * t0 +
-                     (-p0.x + 3 * p1.x - 3 * p2.x + pm1.x) * t0 * t0 * t0);
+                     (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t0 * t0 +
+                     (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t0 * t0 * t0);
                 y0 = 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t0 +
-                     (2 * p0.y - 5 * p1.y + 4 * p2.y - pm1.y) * t0 * t0 +
-                     (-p0.y + 3 * p1.y - 3 * p2.y + pm1.y) * t0 * t0 * t0);
+                     (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t0 * t0 +
+                     (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t0 * t0 * t0);
                 x1 = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t1 +
-                     (2 * p0.x - 5 * p1.x + 4 * p2.x - pm1.x) * t1 * t1 +
-                     (-p0.x + 3 * p1.x - 3 * p2.x + pm1.x) * t1 * t1 * t1);
+                     (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t1 * t1 +
+                     (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t1 * t1 * t1);
                 y1 = 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t1 +
-                     (2 * p0.y - 5 * p1.y + 4 * p2.y - pm1.y) * t1 * t1 +
-                     (-p0.y + 3 * p1.y - 3 * p2.y + pm1.y) * t1 * t1 * t1);
+                     (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t1 * t1 +
+                     (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t1 * t1 * t1);
                 xcv_mapPoint(self, plotR, x0, y0, &sx0, &sy0);
                 xcv_mapPoint(self, plotR, x1, y1, &sx1, &sy1);
                 XPainter_drawLine(painter, sx0, sy0, sx1, sy1);
@@ -1509,22 +1529,21 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
         for (k = 0; k < self->m_chart->m_barCount && y < legendR->y + legendR->height; ++k) {
             XBarSeries* b = self->m_chart->m_barSeries[k];
             uint32_t color;
-            /* 色板取第一个柱组的实际填充色（对标 Qt 图例展示柱组色）：
-             * 柱色在 set 级渐变，序列级 m_color 通常为 0，回退
-             * themeColor(k) 会与折线首序列同色。 */
-            /* 色板回退链：序列色 → 首柱组色 → 全局序主题色（柱组画刷
-               未烘焙时为 0，直用会画成透明）。 */
+            /* 色板取第一个柱组的实际填充色（对标 Qt 图例展示柱组色：
+             * QLegendMarker 取 BarSet brush）。与 xcv_paintBars 的取色
+             * 链逐环对齐：序列色 → 柱组画刷(XBarSet_brush) → 与柱体同
+             * 源的主题渐变中点色——修复 night #64：此前取 XBarSet_color
+             * （柱色为渐变画刷时恒 0）再回退 themeColor(全局序)，
+             * 图例色板与实际柱色不同源（月销紫色 vs 柱体青色）。 */
             {
                 XBarSet* set0 = XAbstractBarSeries_barSetAt(&b->m_base, 0);
-                uint32_t setColor = set0 ? XBarSet_color(set0) : 0;
-                int gi = self->m_chart->m_lineCount +
-                         self->m_chart->m_splineCount +
-                         self->m_chart->m_areaCount + k;
+                uint32_t setBrush = set0 ? XBarSet_brush(set0) : 0;
                 color = b->m_color != 0
                     ? b->m_color
-                    : (setColor != 0
-                           ? setColor
-                           : XChart_themeColor(self->m_chart, gi));
+                    : (setBrush != 0
+                           ? setBrush
+                           : XChart_themeGradientColor(self->m_chart, k,
+                                                       0.5));
             }
             if (xcv_textVisible(dirty, legendR->x, y, 140)) {
                 XPainter_fillRect(painter,

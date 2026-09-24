@@ -161,6 +161,15 @@ static void VXSlider_mousePressEvent(XWidget* self, XEvent* event)
         return;
     }
     if (base->m_max == base->m_min) { XEvent_ignore(event); return; }
+    /* 左键按下交付键盘焦点（对标 Qt QApplicationPrivate::
+     * giveFocusAccordingToFocusPolicy 点击聚焦：QSlider 经
+     * qslider.cpp:46 SH_Button_FocusPolicy 取 Qt::StrongFocus，点击
+     * 即持焦点、方向键步进可达；XGui 无应用级点击聚焦层，沿
+     * XLineEdit.c:768 / XTreeWidget.c:2038 首轮范式在按下路径显式
+     * setFocus，窗口型滑块不抢焦点）。修复 night #41②：此前焦点
+     * 滞留页3 行编辑，Right 被其消费，XAbstractSlider::keyPressEvent
+     * 永不触达（41y_mid_r_srow.png 手柄恒 50% 实证）。 */
+    if (!self->m_isWindow) XWidget_setFocus(self);
     pos = XMouseEvent_position(me);
     pickPos = xslider_pick(base, pos);
     handlePos = xslider_valueToPos(slider, base->m_value);
@@ -495,6 +504,13 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags)
     self->m_tickPosition = XSliderTickPosition_NoTicks;
     self->m_tickInterval = 0;
     self->m_dragOffset = 0;
+    /* 对标 Qt QSliderPrivate::init 的
+     * setFocusPolicy(style()->styleHint(SH_Button_FocusPolicy))
+     * （QCommonStyle 该 hint 恒为 Qt::StrongFocus）：滑块可经 Tab/
+     * 点击取得焦点并接受方向键步进——修复 night #41：默认 NoFocus
+     * 使 Tab 焦点链跳过滑块、XAbstractSlider::keyPressEvent 的方向
+     * 键步进永不触发。 */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
 }
 
 XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,

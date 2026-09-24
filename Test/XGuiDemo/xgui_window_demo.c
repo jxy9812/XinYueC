@@ -593,13 +593,14 @@ static void demo_performance_init(DemoWin* self)
     /* 状态栏固定占用窗口底部 26px。把浮层缩至三行文字所需高度，
        并在状态栏上方保留同样的 26px 间距，避免每帧脏区同时重绘/遮挡
        状态标签。 */
-    XPerformanceOverlay_setSize(&self->m_performanceOverlay, 180, 54);
+    XPerformanceOverlay_setSize(&self->m_performanceOverlay, 210, 50);
     XPerformanceOverlay_setFontFamily(&self->m_performanceOverlay,
                                       XGUI_DEMO_DEFAULT_FONT_FAMILY);
-    XPerformanceOverlay_setTextPixelSize(&self->m_performanceOverlay, 14);
+    XPerformanceOverlay_setTextPixelSize(&self->m_performanceOverlay, 12);
     XPerformanceOverlay_setPresetPosition(
         &self->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-        520, 360, 26);
+        520, 360, 26); /* 右下角（用户指定）；SizeGrip 按压穿透已由
+                          childAt 跳过 TransparentForMouseEvents 修复 */
     XPerformanceOverlay_setFixed(&self->m_performanceOverlay, true);
 }
 
@@ -940,7 +941,9 @@ static void demo_input_autotest(DemoWin* self)
             XObject_event_base((XObject*)editW, (XEvent*)&left);
             for (ki = 0; ki < 2; ++ki) {
                 XKeyEvent ke;
-                XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'X' + ki, 0);
+                /* 大写字母按平台大写归一契约携带 Shift 修饰位。 */
+                XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'X' + ki,
+                               (int)XKeyboardModifier_ShiftModifier);
                 XObject_event_base((XObject*)editW, (XEvent*)&ke);
             }
         }
@@ -1436,9 +1439,17 @@ static void demo_chartGridSlot(XObject* receiver, XVarList* args)
     (void)args;
     if (!self) return;
     chart = XChartView_chart(&self->m_chartView);
-    if (!chart || !chart->m_axisY) return;
-    XValueAxis_setGridVisible(chart->m_axisY,
-                              !XValueAxis_isGridVisible(chart->m_axisY));
+    if (!chart) return;
+    /* 网格开关双轴联动：只切 axisY 会让从未被切过的 axisX 竖线在前后对比中
+       像「网格自行恢复」（第一轮台账 #52 复核结论）。 */
+    if (chart->m_axisX) {
+        XValueAxis_setGridVisible(chart->m_axisX,
+                                  !XValueAxis_isGridVisible(chart->m_axisX));
+    }
+    if (chart->m_axisY) {
+        XValueAxis_setGridVisible(chart->m_axisY,
+                                  !XValueAxis_isGridVisible(chart->m_axisY));
+    }
     XChartView_updateChart(&self->m_chartView);
     demo_set_status(self, "图表: 网格切换");
 }
@@ -1868,7 +1879,8 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
         XPerformanceOverlay_setPresetPosition(
             &demo->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-            XWidget_width(self), XWidget_height(self), 26);
+            XWidget_width(self), XWidget_height(self), 26); /* 与 init 同角
+                （BottomRight，用户指定）；按压穿透见 childAt 修复 */
     }
 #endif
     demo_repaint(demo);
@@ -2392,6 +2404,11 @@ static DemoWin* DemoWin_create(void)
     /* ---- 页面 5：选项卡演示（TabWidget 内嵌 ComboBox/Dial/Progress） ---- */
     XTabWidget_init(&self->m_tabWidget, (XWidget*)&self->m_pageTabs, 0);
     demo_set_widget_default_font((XWidget*)&self->m_tabWidget);
+    /* 页签切换联动状态行（demo_tab_changedSlot 此前从未接线，状态行恒「就绪」）。 */
+    XObject_connect_1((XObject*)&self->m_tabWidget,
+                      (size_t)XTabWidget_currentChanged_signal(&self->m_tabWidget, 0),
+                      (XObject*)self, demo_tab_changedSlot,
+                      XConnectionType_Direct);
     {
         /* 页一：下拉框。 */
         XComboBox_init(&self->m_comboBox, (XWidget*)&self->m_tabWidget, 0);
@@ -2446,10 +2463,11 @@ static DemoWin* DemoWin_create(void)
     XAbstractSlider_setValue((XAbstractSlider*)&self->m_scrollBar, 1888);
     XWidget_setGeometry((XWidget*)&self->m_lcd, 10, 10, 160, 60);
     XWidget_setGeometry((XWidget*)&self->m_scrollBar, 10, 80, 24, 180);
-    /* 数码管直插（铺满）：包裹容器下其分段绘制缓存偏移与清屏错位
-     * （reparent 后 paintOffset 失效问题），先恢复直插保证完整渲染。 */
+    /* 页签2/3 均经 wrapTabPage 包裹（setParent 已对标 Qt 保几何，
+       旧「分段绘制缓存偏移」问题随 XLcdNumber 按 qlcdnumber 几何
+       重写而失效，直插铺满不再需要）。 */
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 2,
-                               (XWidget*)&self->m_lcd, "数码管");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_lcd), "数码管");
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 3,
                                demo_wrapTabPage(self, (XWidget*)&self->m_scrollBar), "滚动条");
 #endif
@@ -2464,7 +2482,7 @@ static DemoWin* DemoWin_create(void)
         XScrollArea_setWidget(&self->m_scrollArea, (XWidget*)big);
     }
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 4,
-                               (XWidget*)&self->m_scrollArea, "滚动");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_scrollArea), "滚动");
 #endif
 #if XSPLITTER_ON && XFRAME_ON && XLABEL_ON
     /* 页五：XSplitter。 */
@@ -2573,6 +2591,9 @@ static DemoWin* DemoWin_create(void)
         "帮助内容\n第二段\n第三段");
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 13,
                                (XWidget*)&self->m_textBrowser, "浏览器");
+    /* 直插型页签须显式 show（页一~十二经 demo_wrapTabPage 已带 show；
+       页签内容随当前页显示对标 QTabWidget::insertTab 后页面可见语义）。 */
+    XWidget_show((XWidget*)&self->m_textBrowser);
 #endif
 #if XMDIAREA_ON && XFRAME_ON && XLABEL_ON
     /* 页十三：XMdiArea。 */
@@ -2590,6 +2611,7 @@ static DemoWin* DemoWin_create(void)
     }
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 14,
                                (XWidget*)&self->m_mdiArea, "MDI");
+    XWidget_show((XWidget*)&self->m_mdiArea); /* 直插型页签显式 show（同页签13） */
 #endif
 #if XSTATUSBAR_ON && XLABEL_ON
     /* 页十四：XStatusBar。 */

@@ -1055,6 +1055,14 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                                   (XObject*)dlg, xff_rejectSlot,
                                   XConnectionType_Direct);
             }
+            /* 对标 Qt 模态对话框内 Tab 焦点链不越出对话框的窗口级语
+               义（详见 XDialogButtonBox.c xdb_relayout 同款注记）：
+               显式 Tab 环链把确定/取消围成子树内闭环（夜间台账
+               #23/#24 同根防范）。 */
+            if (ok && cancel) {
+                XWidget_setTabOrder((XWidget*)ok, (XWidget*)cancel);
+                XWidget_setTabOrder((XWidget*)cancel, (XWidget*)ok);
+            }
             XBoxLayout_addLayout(ls->root, (XLayout*)ls->bar);
         }
     }

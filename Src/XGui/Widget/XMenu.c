@@ -23,6 +23,7 @@
 #include "XStyleOption.h"
 #include "XWidget_Protected.h"
 #include "XWindow.h"
+#include "XGuiApplication.h"
 #include "XMemory.h"
 #include "XVector.h"
 #include "XPainter.h"
@@ -616,12 +617,31 @@ static void xmenu_close(XMenu* self)
         XObject_killTimer((XObject*)self, self->m_grabTimer);
         self->m_grabTimer = XTIMER_INVALID_ID;
     }
-    /* 释放模态鼠标抓取：公共层直投 + 平台 XUngrabPointer。 */
+    /* 释放模态鼠标抓取：公共层直投 + 平台 XUngrabPointer。
+       键盘抓取同步解除（对标 Qt closePopup→ungrabMouseForPopup/
+       ungrabKeyboardForPopup 成对解抓，qapplication.cpp:3362-3365）；
+       漏解会使菜单收起后全局按键仍被劫持。 */
     XWidget_releaseMouse((XWidget*)self);
+    XWidget_releaseKeyboard((XWidget*)self);
     {
         XWindow* handle = XWidget_windowHandle((XWidget*)self);
-        if (handle)
+        if (handle) {
             XWindow_setMouseGrabEnabled(handle, false);
+            XWindow_setKeyboardGrabEnabled(handle, false);
+        }
+    }
+    /* 嵌套弹层交接（对标 QApplicationPrivate::closePopup 的
+       qapplication.cpp:3379-3386「A popup was closed, so the previous
+       popup gets the focus … grabForPopup(popupWin->widget())」）：
+       子菜单关闭后由仍存活的父菜单重新抓取鼠标+键盘，否则父菜单失去
+       平台抓取，Esc/菜单外点击关闭随之失效。 */
+    if (self->m_parentMenu && self->m_parentMenu->m_popupActive) {
+        XWindow* parentHandle =
+            XWidget_windowHandle((XWidget*)self->m_parentMenu);
+        if (parentHandle) {
+            XWindow_setMouseGrabEnabled(parentHandle, true);
+            XWindow_setKeyboardGrabEnabled(parentHandle, true);
+        }
     }
     /* 本菜单若为子菜单：清父菜单的展开记账，防父菜单悬挂本对象。 */
     if (self->m_parentMenu &&
@@ -629,6 +649,17 @@ static void xmenu_close(XMenu* self)
         xmenu_removeProp(self->m_parentMenu, XMENU_PROP_OPEN_SUB);
     xmenu_emitVoid(self, (size_t)XMenu_aboutToHide_signal);
     XWidget_hide((XWidget*)self);
+    /* 焦点回交（对标 Qt closePopup 的焦点还原，qapplication.cpp:
+       3368-3377）：弹出时 activateWindow 曾把应用焦点窗口指向菜单
+       窗口；收起后若焦点仍滞留菜单窗口，按键会投递给已隐藏窗口，
+       宿主顶层窗口重新激活以恢复按键链。 */
+    {
+        XWidget* host = XWidget_topLevelWidget((XWidget*)self);
+        if (host && host != (XWidget*)self && host->m_isWindow &&
+            XGuiApplication_focusWindow() ==
+                (XWindow*)XWidget_windowHandle((XWidget*)self))
+            XWidget_activateWindow(host);
+    }
     /* 对标 Qt WA_DeleteOnClose：设置该属性的弹出菜单在关闭时自删。
        仅在交互关闭路径（动作触发/菜单外点击/Escape）执行；对象析构
        路径不经过本函数，无二次删除风险。 */
@@ -699,6 +730,17 @@ void XMenu_popup(XMenu* self, const XPoint* pos)
     xmenu_emitVoid(self, (size_t)XMenu_aboutToShow_signal);
     XWidget_setGeometryRect((XWidget*)self, &rect);
     XWidget_show((XWidget*)self);
+    /* 对标 Qt QWidgetPrivate::show_helper 的 Popup 分支（qwidget.cpp:
+     * 8038-8043「new popups and tools need to be raised」）：弹层每次
+     * show 都必须置顶。XWidget_raise→XWindow_raise 当前为平台无关
+     * no-op（XWindow.c:2019 无平台 Z 序接口），而 X11 规范 MapWindow
+     * 不改堆叠序（x11protocol.txt MapWindow 节）——菜单 X11 窗口若早
+     * 于主窗口建立即永居其下，表现为「已映射、缓冲有内容、屏幕不可
+     * 见」。平台唯一置顶通道是 requestActivate→XRaiseWindow
+     * （XPlatformNativeWindow_posix.c:5144）；未映射窗口的激活在平台
+     * 层挂起（m_deferredActivation，MapNotify 后补做），旧注释担忧的
+     * BadMatch 已由该挂起机制消除。 */
+    XWidget_activateWindow((XWidget*)self);
     XWidget_raise((XWidget*)self);
     /* 立即建立后备存储并完成首帧绘制上屏：菜单作为独立顶层窗口没有
      * 宿主帧泵，若不主动 flush，backingStore 一直为空、paintDevice 返回
@@ -706,16 +748,16 @@ void XMenu_popup(XMenu* self, const XPoint* pos)
     XWidget_flushBackingStore((XWidget*)self, NULL);
     /* 模态鼠标抓取（对标 QMenu 弹窗）：公共层立即设置直投目标；平台层
      * XGrabPointer 需要窗口已完成映射，因此延迟到 1ms 定时器（事件循环
-     * 处理时窗口已映射）再执行，避免对未映射窗口抓取失败。 */
+     * 处理时窗口已映射）再执行，避免对未映射窗口抓取失败。
+     * 键盘抓取同步建立（对标 Qt openPopup→grabForPopup 鼠标+键盘成对
+     * 抓取，qapplication.cpp:3327-3396）——Esc/方向键直达菜单，修复
+     * 「Esc 不关闭、点击外部不关闭」。 */
     XWidget_grabMouse((XWidget*)self);
+    XWidget_grabKeyboard((XWidget*)self);
     if (self->m_grabTimer == XTIMER_INVALID_ID) {
         self->m_grabTimer = XObject_startTimer_ms(
             (XObject*)self, 1u, XTimerType_PreciseTimer);
     }
-    /* 注意：不在 show() 后立即 activateWindow/setFocus。X11 的
-     * XSetInputFocus 要求窗口已完成映射，而 show() 的映射是异步的，
-     * 立即激活会对未映射窗口触发 BadMatch 崩溃；焦点交由平台在用户
-     * 与菜单窗口实际交互时自然授予。 */
     self->m_popupActive = true;
 }
 
@@ -1157,8 +1199,12 @@ static void VXMenu_timerEvent(XObject* object, XTimerEvent* event)
         self->m_grabTimer = XTIMER_INVALID_ID;
         XObject_killTimer((XObject*)self, id);
         handle = XWidget_windowHandle((XWidget*)self);
-        if (handle)
+        if (handle) {
             XWindow_setMouseGrabEnabled(handle, true);
+            /* 对标 Qt grabForPopup 双抓取：平台 XGrabKeyboard 同在此
+             * 延迟点执行（需窗口完成映射）；键盘事件自此直达菜单。 */
+            XWindow_setKeyboardGrabEnabled(handle, true);
+        }
         XEvent_accept((XEvent*)event);
         return;
     }

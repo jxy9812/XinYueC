@@ -103,6 +103,95 @@ static void VX_scrollArea_deinit(XScrollArea* self)
                          (XAbstractScrollArea*)self);
 }
 
+/** @brief resizeEvent：先由基类完成视口/滚动条重排，再重排版内容。
+ *  对标 QScrollArea::resizeEvent（qscrollarea.cpp:313-316 →
+ *  updateScrollBars → updateWidgetPosition）：容器尺寸变化（如页签
+ *  容器拉伸页面）后内容对齐位与滚动范围必须重算——此前缺失该重载，
+ *  对齐/内容尺寸停留在旧视口尺寸上（页签4 内容呈现异常的组成部分）。 */
+static void VX_scrollArea_resizeEvent(XWidget* self, XEvent* event)
+{
+    if (!self) return;
+    XClass_Parent(XAbstractScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    xsa_updateWidgetGeometry((XScrollArea*)self);
+}
+
+/** @brief showEvent：以当前实际尺寸重排视口/滚动条与内容几何。
+ *  对标 Qt「show 时补排版」语义（WA_PendingResizeEvent 在 show 统一
+ *  刷新 + QScrollArea::eventFilter 对内容 Resize 的 updateScrollBars
+ *  联动，qscrollarea.cpp:328）：构造期容器尚未显示，页签容器此后的
+ *  拉伸虽同步派发 resize，但视口/内容的中间态几何（负宽夹 0 等）不
+ *  会自发重算——显示瞬间按最终几何再断言一次，消除隐藏期遗留的
+ *  陈旧视口尺寸（页签4 六行文本被裁成 ~1px 残条的收口）。 */
+static void VX_scrollArea_showEvent(XWidget* self, XEvent* event)
+{
+    if (!self) return;
+    XClass_Parent(XWidget, EXWidget_ShowEvent,
+                  XWidgetEventSlot)(self, event);
+    VX_scrollArea_resizeEvent(self, event);
+}
+
+/** @brief 滚轮 → 滚动条步进（复扫 r2 #48 根修）。
+ *  @note  对标 QAbstractScrollArea::wheelEvent 的主导轴选条
+ *         （qabstractscrollarea.cpp:1170-1176：|x|>|y| 事件走水平条、
+ *         否则走垂直条）与 QScrollBarPrivate::scrollByDelta 的步进口径
+ *         （qabstractslider.cpp:668 起：offset=delta/120，缺省
+ *         wheelScrollLines=3 行/格，横向 delta 取反）；单步 20px 取
+ *         QScrollArea 构造口径（qscrollarea.cpp:108/121 vbar/hbar
+ *         setSingleStep(20)）。方向与 XTreeWidget 滚轮修复同口径
+ *         （XTreeWidget.c:2197-2199）：value = 当前值 − steps*3*20，
+ *         正角度（滚向内容开头）减小值、下滚值增大。此前依赖基类
+ *         VX_asa_wheelEvent 的 stepBy(steps*3)：其符号与 scrollByDelta
+ *         相反（下滚 steps=−1 → 值减 → 顶部钳位 0），且单步仅缺省
+ *         1px（XAbstractSlider.c:397）——「下滚×3 视口 0 像素差、把手
+ *         拖拽可滚」即此二因叠加（复扫 r2 lane1 #48 实证）。直接
+ *         setValue 由内部钳位兜底（XAbstractSlider.c:599-602），
+ *         valueChanged → scrollContentsBy → 重绘链既有。 */
+static void VX_scrollArea_wheelEvent(XWidget* self, XEvent* event)
+{
+    XScrollArea* area = (XScrollArea*)self;
+    XAbstractScrollArea* base;
+    XScrollBar* bar;
+    XPoint delta;
+    int steps;
+    int value;
+    if (!area || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+#if XWINDOWEVENT_ON
+    delta = XWheelEvent_angleDelta((XWheelEvent*)event);
+#else
+    delta.x = 0;
+    delta.y = 0;
+#endif
+    {
+        /* 主导轴分派（同 XTreeWidget 口径：dy 优先，|x|>|y| 才走横向
+         * 并按 Qt scrollByDelta 对横向 delta 取反）。 */
+        int ay = delta.y >= 0 ? delta.y : -delta.y;
+        int ax = delta.x >= 0 ? delta.x : -delta.x;
+        base = (XAbstractScrollArea*)area;
+        if (ax > ay) {
+            steps = -(delta.x / 120); /* 横向取反（Qt scrollByDelta）。 */
+            bar = XAbstractScrollArea_horizontalScrollBar(base);
+        } else {
+            steps = delta.y / 120;
+            bar = XAbstractScrollArea_verticalScrollBar(base);
+        }
+    }
+    if (steps == 0) {
+        XEvent_accept(event); /* 不足一格：消费不滚动（同基类口径）。 */
+        return;
+    }
+    if (!bar) {
+        XEvent_accept(event);
+        return;
+    }
+    /* 单步 20px × 3 行/格（qscrollarea.cpp:108/121 +
+     * scrollByDelta wheelScrollLines）；setValue 内部钳位到
+     * [minimum,maximum]，越界即自然停在端点。 */
+    value = XScrollBar_value(bar) - steps * 3 * 20;
+    XScrollBar_setValue(bar, value);
+    XEvent_accept(event);
+}
+
 XVtable* XScrollArea_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XScrollArea)
@@ -110,6 +199,12 @@ XVtable* XScrollArea_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(
         EXAbstractScrollArea_ScrollContentsBy,
         VX_scrollArea_scrollContentsBy);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VX_scrollArea_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent,
+                             VX_scrollArea_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent,
+                             VX_scrollArea_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_scrollArea_deinit);
     return XVTABLE_DEFAULT;
 }

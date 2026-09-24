@@ -197,6 +197,31 @@ static void xmb_bridgeHoveredSlot(XObject* receiver, XVarList* args)
                    bridge->m_action);
 }
 
+static void xmb_bridgeMenuAboutToHideSlot(XObject* receiver, XVarList* args)
+{
+    XMBBridge* bridge = (XMBBridge*)receiver;
+    XMenuBar* bar;
+    (void)args;
+    if (!bridge || !bridge->m_bar) return;
+    bar = bridge->m_bar;
+    /* 对标 QMenu::hideEvent 的菜单栏回链（qmenu.cpp:2728-2730：
+     * 「if (QMenuBar *mb = qobject_cast<QMenuBar*>(d->causedPopup.widget))
+     * mb->d_func()->setCurrentAction(nullptr)」→ QMenuBarPrivate::
+     * setCurrentAction 清 currentAction 并 q->update，qmenubar.cpp:341-373）：
+     * 弹层关闭链必须复位菜单栏按压高亮并重绘——此前缺失该回链，Esc/
+     * 点外/触发任一路径关闭弹层后「文件」蓝色按压态永不复位
+     * （复扫 r2 lane2 #59 像素实证：基线 (40,126)=RGB(239,239,239) vs
+     * 关闭后 RGB(48,140,198)）。Qt 侧该回链仅在弹层确由本菜单栏弹出
+     * （causedPopup.widget==mb）时生效；此处回链挂在 addMenu/insertMenu
+     * 建立的桥上，与 Qt 的弹出归因一一对应（demo/常规用法中该菜单
+     * 仅经本菜单栏弹出）。aboutToHide 在 XMenu 关闭链中先于 hide 发射
+     * （XMenu.c xmenu_close），此时菜单栏对象必然存活。 */
+    if (bar->m_activeAction) {
+        bar->m_activeAction = NULL;
+        XWidget_update((XWidget*)bar);
+    }
+}
+
 /* ==================== 生命周期与虚表 ==================== */
 
 static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
@@ -491,6 +516,12 @@ XAction* XMenuBar_addMenu(XMenuBar* self, XMenu* menu)
     XObject_connect_1((XObject*)action, XSignal(XAction_hovered_signal),
                       (XObject*)bridge, xmb_bridgeHoveredSlot,
                       XConnectionType_Direct);
+    /* 弹层关闭回链（复扫 r2 #59）：菜单收起（Esc/点外/动作触发）时
+     * 复位菜单栏按压高亮——对标 QMenu::hideEvent →
+     * QMenuBarPrivate::setCurrentAction(nullptr)。 */
+    XObject_connect_1((XObject*)menu, XSignal(XMenu_aboutToHide_signal),
+                      (XObject*)bridge, xmb_bridgeMenuAboutToHideSlot,
+                      XConnectionType_Direct);
     XVector_push_back_1_base(self->m_actions, &action);
     XVector_push_back_1_base(self->m_menus, &menu);
     /* 动作由本函数创建：登记为菜单栏拥有（对标 Qt 父子所有权）。 */
@@ -582,6 +613,10 @@ XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu)
     /* 悬停桥接（复扫 R-70）：与 addMenu 同款连接。 */
     XObject_connect_1((XObject*)action, XSignal(XAction_hovered_signal),
                       (XObject*)bridge, xmb_bridgeHoveredSlot,
+                      XConnectionType_Direct);
+    /* 弹层关闭回链（复扫 r2 #59）：与 addMenu 同款连接。 */
+    XObject_connect_1((XObject*)menu, XSignal(XMenu_aboutToHide_signal),
+                      (XObject*)bridge, xmb_bridgeMenuAboutToHideSlot,
                       XConnectionType_Direct);
     XVector_insert_1_base(self->m_actions, index, &action, 1);
     XVector_insert_1_base(self->m_menus, index, &menu, 1);

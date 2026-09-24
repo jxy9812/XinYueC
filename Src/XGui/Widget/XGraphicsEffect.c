@@ -417,9 +417,21 @@ bool XGraphicsEffect_drawWidget(XGraphicsEffect* self, XWidget* widget,
     if (slot) slot(self, &ctx);
     else VXGraphicsEffect_draw(self, &ctx);
     /* 回贴：画布按 destRect 平移到控件局部坐标，再叠加绘制偏移写入
-       绘制目标；paintTree 设定的表面裁剪（脏区外接框）照常限幅。 */
+       绘制目标。离屏段（xwidget_drawWithGraphicsEffect）已摘除设备
+       坐标的表面裁剪，回贴以自身输出矩形自限：效果输出恰好覆盖
+       boundingRectFor(脏区∩控件区域)，越界部分为效果外扩环（投影/
+       模糊边带），其内容来自本轮全新快照，重绘是正确语义；自限同时
+       防止越界写邻接控件区域（对标 Qt：效果结果绘制受绘制引擎裁剪
+       限定在其包围盒内）。 */
     XPainter_init(&painter, NULL);
     if (XPainter_begin_image(&painter, target)) {
+        XRect blitClip;
+        blitClip.x = offset.x + destRect.x;
+        blitClip.y = offset.y + destRect.y;
+        blitClip.width = destRect.width;
+        blitClip.height = destRect.height;
+        XPainter_setClipRect(&painter, &blitClip,
+                             XPainterClipOperation_ReplaceClip);
         XPainter_drawImage(&painter, dest,
                            offset.x + destRect.x, offset.y + destRect.y);
         XPainter_end(&painter);

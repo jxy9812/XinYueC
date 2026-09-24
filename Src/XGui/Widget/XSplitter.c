@@ -17,6 +17,9 @@
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
+#include "XObject.h"
+#include "XVariant.h"
+#include "XString.h"
 #include "XWidget_Protected.h"
 #include <stdio.h>
 
@@ -43,15 +46,16 @@ static XWidget* xsp_childAt(const XSplitter* self, int index)
     return (XWidget*)*slot;
 }
 
-static bool xsp_childVisible(const XSplitter* self, int index)
-{
-    XWidget* child = xsp_childAt(self, index);
-    return child ? XWidget_isVisible(child) : false;
-}
+/* xsp_childVisible 已移除：把手绘制隐藏口径统一为 isHidden（与
+   xsp_contentLen/xsp_layout 同判据，见 xsp_hasLaterPage）。 */
 
 /* ==================== 内部工具 ==================== */
 
 #define XSPLITTER_MIN_SIZE 0
+
+/** @brief 查询单页在拖动方向上的当前尺寸（水平取宽、垂直取高）。
+ *  @note  定义于页面管理节，此处前置声明供 xsp_layout 使用。 */
+static int xsp_pageSize(const XSplitter* self, int index);
 
 static int xsp_horiz(const XSplitter* self)
 {
@@ -89,13 +93,21 @@ static void xsp_layout(XSplitter* self)
     int perPage;
     int x = 0;
     int y = 0;
+    int curTotal = 0;
     if (!self || count <= 0) return;
     len = xsp_contentLen(self);
+    /* 比例保持（对标 Qt 拖动/setsizes 后容器缩放按既有尺寸比例重排，
+       QSplitterPrivate::doResize）：存在非零现尺寸时按现尺寸比例分配
+       len，拖动结果不因容器 resize 丢失；首次布局（现尺寸全零）均分。 */
+    for (i = 0; i < count; ++i)
+        curTotal += xsp_pageSize(self, i);
     perPage = len / (count > 0 ? count : 1);
     for (i = 0; i < count; ++i) {
         XWidget* child = xsp_childAt(self, i);
         XRect r;
-        int size = perPage;
+        int size = (curTotal > 0)
+            ? (int)(((long long)len * xsp_pageSize(self, i)) / curTotal)
+            : perPage;
         if (!child) continue;
         /* 几何分配不依赖当前可见性：子控件在隐藏时也需要正确尺寸，
          * 否则 show 后因 0x0 仍不可见（对标 QSplitterPrivate::layoutChildren）。 */
@@ -148,6 +160,22 @@ static void VX_splitter_resizeEvent(XWidget* self, XEvent* event)
 
 static void VX_splitBar_paintEvent(XWidget* self, XEvent* event);
 
+/** @brief index 之后是否还存在参与布局的页（对标 Qt 把手数量 =
+ *  非隐藏页数-1：最后一页之后没有把手）。隐藏口径与 xsp_contentLen/
+ *  xsp_layout 一致取 isHidden（控件自身显隐位）。 */
+static bool xsp_hasLaterPage(const XSplitter* self, int index)
+{
+    int i;
+    int count;
+    if (!self) return false;
+    count = xsp_childCount(self);
+    for (i = index + 1; i < count; ++i) {
+        XWidget* child = xsp_childAt(self, i);
+        if (child && !XWidget_isHidden(child)) return true;
+    }
+    return false;
+}
+
 static void VX_splitter_paintEvent(XWidget* self, XEvent* event)
 {
     XSplitter* sp = (XSplitter*)self;
@@ -182,12 +210,19 @@ static void VX_splitter_paintEvent(XWidget* self, XEvent* event)
     for (i = 0; i < count; ++i) {
         XWidget* child = xsp_childAt(self, i);
         XStyle* style = NULL;
-        if (!child || !xsp_childVisible(self, i)) continue;
+        /* 隐藏口径与 xsp_contentLen/xsp_layout 一致（isHidden）——此前
+         * 绘制用 effective visible 而布局用 isHidden，两口径混用会使
+         * 把手位置与页几何错位。 */
+        if (!child || XWidget_isHidden(child)) continue;
 #if XSTYLE_ON
         style = XStyle_defaultStyle();
 #endif
         if (xsp_horiz(sp)) {
             x += XWidget_width(child);
+            /* off-by-one 根修：最后一页之后不再绘制把手（对标 Qt 把手
+             * 数=非隐藏页数-1，QSplitter 在最后一页右缘没有把手条带）；
+             * 此前循环对每页都画，页右缘多出一条同款灰竖线+凹槽白点。 */
+            if (!xsp_hasLaterPage(sp, i)) break;
             XRect_init(&line, x, 0, sp->m_handleWidth, h);
 #if XSTYLE_ON
             if (style != NULL) {
@@ -208,6 +243,7 @@ static void VX_splitter_paintEvent(XWidget* self, XEvent* event)
             x += sp->m_handleWidth;
         } else {
             y += XWidget_height(child);
+            if (!xsp_hasLaterPage(sp, i)) break;
             XRect_init(&line, 0, y, w, sp->m_handleWidth);
 #if XSTYLE_ON
             if (style != NULL) {
@@ -239,16 +275,228 @@ static void VX_splitBar_paintEvent(XWidget* self, XEvent* event)
     (void)event;
 }
 
+/* ---- 拖动状态（XSplitter.h 为契约头不扩字段）：按压偏移经对象动态
+ * 属性承载（同 XMenu 悬停弹出记账的定式，XObject_setProperty）；
+ * 把手索引用既有 m_dragIndex 字段（此前为死状态，见台账 #60）。 ---- */
+#define XSPLITTER_PROP_PRESS_OFFSET "xgui.splitter.pressOffset"
+
+static void xsp_setPressOffset(XSplitter* self, int64_t value)
+{
+    XString key;
+    XVariant* v;
+    if (!self) return;
+    v = XVariant_create_int64(value);
+    if (!v) return;
+    XString_init(&key);
+    XString_assign_utf8(&key, XSPLITTER_PROP_PRESS_OFFSET);
+    /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
+    if (!XObject_setProperty((XObject*)self, &key, v))
+        XVariant_delete_base((XClass*)v);
+    XString_deinit_base(&key);
+}
+
+static int64_t xsp_pressOffset(const XSplitter* self)
+{
+    XString key;
+    XVariant* v;
+    if (!self) return 0;
+    XString_init(&key);
+    XString_assign_utf8(&key, XSPLITTER_PROP_PRESS_OFFSET);
+    v = XObject_property((const XObject*)self, &key);
+    XString_deinit_base(&key);
+    return v ? XVariant_toInt64(v) : 0;
+}
+
+/** @brief 拾取坐标（水平分割取 x、垂直取 y，对标 QSplitterPrivate::pick）。 */
+static int xsp_pick(int x, int y, bool horiz)
+{
+    return horiz ? x : y;
+}
+
+/** @brief 命中测试：局部坐标落在第 index 个分隔条条带内则返回其索引。 */
+static int xsp_handleAt(XSplitter* self, int x, int y)
+{
+    int count;
+    int i;
+    if (!self) return -1;
+    count = xsp_childCount(self);
+    for (i = 0; i < count - 1; ++i) {
+        XRect hr;
+        if (!XSplitter_handle(self, i, &hr)) continue;
+        if (xsp_horiz(self)) {
+            if (x >= hr.x && x < hr.x + hr.width) return i;
+        } else {
+            if (y >= hr.y && y < hr.y + hr.height) return i;
+        }
+    }
+    return -1;
+}
+
+/** @brief 把分隔条 index 移到 pos（对标 QSplitter::moveSplitter，
+ *  qsplitter.cpp:1391-1419：先夹取到合法区间，index 页吸收位移、
+ *  index+1 页让出，其后各页整体平移；末端发射 splitterMoved）。
+ *  非透明拖动（m_opaqueResize=false）简化为同实时路径。
+ *  @note  pos 语义 = 分隔条条带原点 = 页 index 右缘/下缘（本文件
+ *  xsp_handleAt/XSplitter_handle 的条带坐标口径，即 Qt handle 的
+ *  pick(s->rect.bottomRight())+1）。二次复扫钉死的破坏性根因：此前
+ *  oldPos 取页 index 左/上缘（页 0 恒 0），首次 MOVE 的 delta 被放大
+ *  成「目标位-0」（按复扫 d1→d2 帧推算 ≈ +381），next 页几何立即负
+ *  宽归零、把手推出容器外——整页擦空且把手/右页永不恢复（rescan
+ *  d1~d4 四帧证据）。
+ *  Qt 的 oldP= pick(页 index rect.topLeft()) 之所以可用，是因为其 pos
+ *  以「页 index 左缘」为坐标（setGeo: positions[index]=hPos+hs，把位
+ *  = 页左缘-hs）；本实现的 pos 以条带原点为坐标，两口径差一个页宽，
+ *  不得混用。 */
+static void xsp_moveSplitter(XSplitter* self, int pos, int index)
+{
+    XWidget* cur;
+    XWidget* next;
+    int min;
+    int max;
+    int oldPos;
+    int delta;
+    int count;
+    int i;
+    int trailing;
+    if (!self) return;
+    count = xsp_childCount(self);
+    if (index < 0 || index >= count - 1) return;
+    cur = xsp_childAt(self, index);
+    next = xsp_childAt(self, index + 1);
+    if (!cur || !next) return;
+    /* 合法区间（折叠语义并入，见 getRange；对标 adjustPos 的夹取）。 */
+    if (!XSplitter_getRange(self, index, &min, &max)) return;
+    if (pos < min) pos = min;
+    if (pos > max) pos = max;
+    /* 旧把位 = 条带原点 = 页 index 右缘（水平）/下缘（垂直）。 */
+    oldPos = xsp_horiz(self)
+        ? XWidget_x(cur) + XWidget_width(cur)
+        : XWidget_y(cur) + XWidget_height(cur);
+    delta = pos - oldPos;
+    if (delta == 0) return;
+    /* 防御：夹取后两页尺寸均不得为负（Qt setGeo 允许折叠为 0，
+       但不允许负几何——负值经 clampSize 归 0 会让页永久消失）。 */
+    if (xsp_pageSize(self, index) + delta < 0) delta = -xsp_pageSize(self, index);
+    if (xsp_pageSize(self, index + 1) - delta < 0) delta = xsp_pageSize(self, index + 1);
+    if (delta == 0) return;
+    if (xsp_horiz(self)) {
+        XRect r;
+        XRect_init(&r, XWidget_x(cur), 0,
+                   XWidget_width(cur) + delta, XWidget_height(cur));
+        XWidget_setGeometryRect(cur, &r);
+        XRect_init(&r, XWidget_x(next) + delta, 0,
+                   XWidget_width(next) - delta, XWidget_height(next));
+        XWidget_setGeometryRect(next, &r);
+        /* 后续页保持自身尺寸整体平移（对标 doMove 的尾页处理简化）。
+           next 的几何已按新尺寸落位，其右缘 + 把手宽 = 后续页起点。 */
+        trailing = XWidget_x(next) + XWidget_width(next)
+                   + self->m_handleWidth;
+        for (i = index + 2; i < count; ++i) {
+            XWidget* ch = xsp_childAt(self, i);
+            if (!ch) continue;
+            XRect_init(&r, trailing, 0, XWidget_width(ch),
+                       XWidget_height((XWidget*)self));
+            XWidget_setGeometryRect(ch, &r);
+            trailing += XWidget_width(ch) + self->m_handleWidth;
+        }
+    } else {
+        XRect r;
+        XRect_init(&r, 0, XWidget_y(cur), XWidget_width((XWidget*)self),
+                   XWidget_height(cur) + delta);
+        XWidget_setGeometryRect(cur, &r);
+        XRect_init(&r, 0, XWidget_y(next) + delta,
+                   XWidget_width((XWidget*)self),
+                   XWidget_height(next) - delta);
+        XWidget_setGeometryRect(next, &r);
+        /* 同水平分支：next 已按新几何落位，下缘 + 把手高 = 后续页起点。 */
+        trailing = XWidget_y(next) + XWidget_height(next)
+                   + self->m_handleWidth;
+        for (i = index + 2; i < count; ++i) {
+            XWidget* ch = xsp_childAt(self, i);
+            if (!ch) continue;
+            XRect_init(&r, 0, trailing, XWidget_width((XWidget*)self),
+                       XWidget_height(ch));
+            XWidget_setGeometryRect(ch, &r);
+            trailing += XWidget_height(ch) + self->m_handleWidth;
+        }
+    }
+    XWidget_update((XWidget*)self);
+    xsp_emitMoved(self, pos, index);
+}
+
 static void VX_splitter_mousePressEvent(XWidget* self, XEvent* event)
 {
     XSplitter* sp = (XSplitter*)self;
     XMouseEvent* me = (XMouseEvent*)event;
+    XPoint pos;
+    XRect hr;
+    int handle;
     if (!sp || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
         XEvent_ignore(event);
         return;
     }
+    pos = XMouseEvent_position(me);
+    handle = xsp_handleAt(sp, pos.x, pos.y);
+    if (handle < 0) {
+        /* 非把手区域：不占用事件（页内点击照常穿透）。 */
+        XEvent_ignore(event);
+        return;
+    }
+    if (XSplitter_handle(sp, handle, &hr)) {
+        int offset = xsp_pick(pos.x, pos.y, xsp_horiz(sp) != 0)
+                     - xsp_pick(hr.x, hr.y, xsp_horiz(sp) != 0);
+        xsp_setPressOffset(sp, offset);
+    }
+    sp->m_dragIndex = handle;
+    /* 抓取鼠标：释放点可能已移出分割器（快速拖动），不抓取会把
+       RELEASE 路由给别的控件、m_dragIndex 卡在拖动态（对标 QWidget::
+       grabMouse 的拖动语义，同 XScrollBar 拖滑块口径）。 */
+    XWidget_grabMouse((XWidget*)sp);
+    XEvent_accept(event);
+}
+
+/** @brief 拖动中：把手目标位 = 指针拾取坐标 - 按压偏移（对标
+ *  QSplitterHandle::mouseMoveEvent，qsplitter.cpp:255-265）。 */
+static void VX_splitter_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XSplitter* sp = (XSplitter*)self;
+    XMouseEvent* me = (XMouseEvent*)event;
+    XPoint pos;
+    int target;
+    if (!sp || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
+    if (sp->m_dragIndex < 0) {
+        XEvent_ignore(event);
+        return;
+    }
+    pos = XMouseEvent_position(me);
+    target = xsp_pick(pos.x, pos.y, xsp_horiz(sp) != 0)
+             - (int)xsp_pressOffset(sp);
+    xsp_moveSplitter(sp, target, sp->m_dragIndex);
+    XEvent_accept(event);
+}
+
+/** @brief 释放结束拖动（对标 QSplitterHandle::mouseReleaseEvent，
+ *  qsplitter.cpp:286-300：收尾并把手回到静止态）。 */
+static void VX_splitter_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XSplitter* sp = (XSplitter*)self;
+    XMouseEvent* me = (XMouseEvent*)event;
+    if (!sp || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
+    if (sp->m_dragIndex < 0) {
+        XEvent_ignore(event);
+        return;
+    }
+    if (XMouseEvent_button(me) != XMouseButton_NoButton &&
+        XMouseEvent_button(me) != XMouseButton_LeftButton) {
+        XEvent_ignore(event);
+        return;
+    }
+    sp->m_dragIndex = -1;
+    XWidget_releaseMouse((XWidget*)sp);
     XEvent_accept(event);
 }
 
@@ -271,6 +519,12 @@ XVtable* XSplitter_class_init(void)
     XVTABLE_INHERIT_XCLASS(XFrame);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_splitter_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_splitter_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VX_splitter_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VX_splitter_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VX_splitter_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_splitter_deinit);
     return XVTABLE_DEFAULT;
 }

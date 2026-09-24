@@ -30,6 +30,38 @@ static uint32_t xfs_lerp(uint32_t a, uint32_t b, double t)
            ((uint32_t)g << 8) | (uint32_t)bl;
 }
 
+/** @brief 颜色按百分比加深/提亮（对标 QColor::darker/lighter 的 factor
+ *         语义：darker(110) 即各通道 ×100/110；RGB 通道直算、alpha 保持，
+ *         与 XCommonStyle.c xcs_darker 同一实现口径，两条样式路径视觉
+ *         一致）。 */
+static uint32_t xfs_darker(uint32_t c, int factor)
+{
+    int r = (int)((c >> 16) & 0xFF);
+    int g = (int)((c >> 8) & 0xFF);
+    int b = (int)(c & 0xFF);
+    int a = (int)((c >> 24) & 0xFF);
+    if (factor <= 0) return c;
+    r = r * 100 / factor;
+    g = g * 100 / factor;
+    b = b * 100 / factor;
+    return ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+           ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+static uint32_t xfs_lighter(uint32_t c, int factor)
+{
+    int r = (int)((c >> 16) & 0xFF);
+    int g = (int)((c >> 8) & 0xFF);
+    int b = (int)(c & 0xFF);
+    int a = (int)((c >> 24) & 0xFF);
+    if (factor <= 100) return c;
+    r = r * factor / 100; if (r > 255) r = 255;
+    g = g * factor / 100; if (g > 255) g = 255;
+    b = b * factor / 100; if (b > 255) b = 255;
+    return ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+           ((uint32_t)g << 8) | (uint32_t)b;
+}
+
 /* Fusion 主题色（对标 qfusionstyle.cpp FusionStyle 默认调色板）。 */
 #define XFS_HIGHLIGHT_DEFAULT 0xFF2A82DAu
 #define XFS_BUTTON_BASE       0xFFEFEFEFu
@@ -104,6 +136,14 @@ static void xfs_drawPanelButtonCommand(XFusionStyle* self,
     /* 渐变填充：逐行插值 gradTop→gradBot。 */
     gradH = r.height > 1 ? r.height : 1;
     if (sunken) {
+        /* 按下加深（问题 #5，与 XCommonStyle 已落修复同一视觉口径）：
+           对标 isDown ? QBrush(buttonColor.darker(110)) : gradient
+           （qfusionstyle.cpp:805）——原实现仅反转渐变方向，浅色主题下
+           两端近同色时按压态均值差 ≈1%，肉眼不可辨；现渐变两端先各
+           darker(110) 再参与逐行插值，整面均值同步加深 ≈10%（与整面
+           后叠 darker(110) 等效），保留渐变方向反转的凹陷感。 */
+        gradTop = xfs_darker(gradTop, 110);
+        gradBot = xfs_darker(gradBot, 110);
         /* 按下：整体下移渐变方向并加深。 */
         for (i = 0; i < gradH; ++i) {
             double t = (double)i / (double)(gradH - 1);
@@ -112,6 +152,14 @@ static void xfs_drawPanelButtonCommand(XFusionStyle* self,
                 &(XRect){r.x, r.y + i, r.width, 1}, c);
         }
     } else {
+        /* 悬停提亮（同口径）：Qt 非悬停渐变基于
+           buttonColor.darker(104)、悬停切回 buttonColor
+           （qfusionstyle.cpp:803），相对提亮 ≈105%；按下态优先，
+           sunken 时不再叠加悬停提亮。 */
+        if (hover) {
+            gradTop = xfs_lighter(gradTop, 105);
+            gradBot = xfs_lighter(gradBot, 105);
+        }
         for (i = 0; i < gradH; ++i) {
             double t = (double)i / (double)(gradH - 1);
             uint32_t c = xfs_lerp(gradTop, gradBot, t);

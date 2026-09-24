@@ -461,6 +461,36 @@ bool XWindowSystemInterface_handleTouchEvent_ex(XWindow* window, XEventType type
     return true;
 }
 
+bool XWindowSystemInterface_handleTouchPoints_ex(XWindow* window,
+                                                 XEventType type,
+                                                 const XTouchPoint* points,
+                                                 int count,
+                                                 uint32_t timestamp)
+{
+    XTouchEvent* event;
+    if (!window || !points || count < 1 ||
+        (type != XEVENT_TYPE_TOUCH_BEGIN &&
+         type != XEVENT_TYPE_TOUCH_UPDATE &&
+         type != XEVENT_TYPE_TOUCH_END &&
+         type != XEVENT_TYPE_TOUCH_CANCEL))
+        return false;
+    g_touchTimestamp = timestamp;
+    /* 先建 1 点事件（旧 init 签名，主点取 points[0]），再注入完整列
+       表（深拷贝+主点同步在 setPoints 内完成）。 */
+    event = XTouchEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type,
+                                  &points[0].m_position,
+                                  &points[0].m_globalPosition, 1);
+    if (!event) {
+        g_touchTimestamp = 0;
+        return false;
+    }
+    XTouchEvent_setPoints(event, points, count);
+    XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
+    XEvent_delete_base((XEvent*)event);
+    g_touchTimestamp = 0;
+    return true;
+}
+
 uint32_t XWindowSystemInterface_touchTimestamp(void)
 {
     return g_touchTimestamp;

@@ -76,7 +76,45 @@ static int xtb2_currentIndexOf(const XToolBox* self)
     return self->m_currentIndex;
 }
 
-/** @brief 布局：当前页控件占满工具箱内容区（其余页隐藏）。
+/** @brief 激活页占用的页高（layout/paint/mousePress 三处共用口径）。
+ *  @details 复扫 #55 钉死：页几何此前恒占满内容区（h-n*22），裸控件
+ *  页（如 QLabel，自身 Left|AlignVCenter）会把内容推进内容区垂直
+ *  中点——实测「工具箱页一」y≈323 ≈ 22 + (430-44-16)/2 + 行高，与
+ *  xtb2_layout 的输出逐像素吻合（xtb2_layout 确被调用，几何链无恙；
+ *  「内容仍居中」的真实来源是页矩形被拉满后裸控件按自身对齐取中）。
+ *  对标 Qt 观感：qtoolbox.cpp:323-336 页装在 sv(QScrollArea)、VBox 中
+ *  button/page 交替，页内内容由页自身布局首行顶置；本库条目常为裸
+ *  控件（无页内布局、sizeHint 非虚槽不可查），改为页高按其自身现高
+ *  顶置（构造/调用方给定；超过内容区或为 0 时才占满），等价 Qt
+ *  「页容器 VBox 首行置顶」的视觉结果，后续页头继续顺次下移。 */
+static int xtb2_pageHeight(const XToolBox* self, int count)
+{
+    XWidget* current;
+    int headerTotal;
+    int h;
+    int contentH;
+    int ph;
+    if (!self) return 0;
+    h = XWidget_height((XWidget*)self);
+    headerTotal = (count > 0 ? count : 0) * XTOOLBOX_HEADER_H;
+    contentH = h > headerTotal ? h - headerTotal : 0;
+    if (contentH <= 0) return 0;
+    current = XToolBox_currentWidget(self);
+    if (!current) return contentH;
+    ph = XWidget_height(current);
+    /* 页自身现高不可用（0：尚未 setGeometry，或几何曾被瞬态挤压写成
+     * 0）时按 sizeHint 推导（对标 QToolBox 页高经 QVBoxLayout 中
+     * QScrollArea::sizeHint 委托页自身 sizeHint 的口径）。 */
+    if (ph <= 0) {
+        XSize hint = XWidget_sizeHint(current);
+        ph = hint.height;
+    }
+    if (ph <= 0 || ph > contentH) return contentH;
+    return ph;
+}
+
+/** @brief 布局：当前页控件置于激活页头之下（页高按 sizeHint 顶置，
+ *           见 xtb2_pageHeight；其余页隐藏）。
  *  @details 对齐 QToolBox::setCurrentIndex 的显隐语义：非当前页一律
  *           setVisible(false)，防止外部 show() 绕过工具箱的页面管理
  *           （Qt 中页面装在隐藏的 ScrollArea 容器内无此问题）。 */
@@ -85,7 +123,6 @@ static void xtb2_layout(XToolBox* self)
     XWidget* current;
     XRect r;
     int w = XWidget_width((XWidget*)self);
-    int h = XWidget_height((XWidget*)self);
     int64_t i;
     int64_t n;
     if (!self) return;
@@ -103,11 +140,22 @@ static void xtb2_layout(XToolBox* self)
             XWidget_setVisible(page, false);
     }
     if (!current) return;
-    /* 内容 y 偏移 = 全部条目头总高（每个 22px），与 paint 一致。 */
+    /* 内容紧跟激活页头正下方（对标 QToolBox 的 VBox 布局：button 与
+       page 交替入列，qtoolbox.cpp:335-336 layout->addWidget(button)/
+       addWidget(sv)）；页高按 sizeHint 顶置（见 xtb2_pageHeight）。 */
     {
-        int headerH = (int)n * XTOOLBOX_HEADER_H;
-        int contentH = h > headerH ? h - headerH : 0;
-        XRect_init(&r, 0, headerH, w, contentH);
+        int pageY = (self->m_currentIndex + 1) * XTOOLBOX_HEADER_H;
+        int pageH;
+        if (self->m_currentIndex < 0) pageY = 0;
+        pageH = xtb2_pageHeight(self, (int)n);
+        /* 容器瞬态挤压（contentH≤0，如页签容器拉伸中态）时不写页几何：
+         * 把 0 高写进页矩形后，后续布局会把该 0 当「页自身现高」再走
+         * 占满回退，页内容从此悬空居中（night #55 初始态内容距页头
+         * 127px 的根因链：boxH=6 瞬态 → 页高被写 0 → boxH=310/430
+         * 布局回退 contentH）。保留页现几何即可让随后的正常布局按
+         * 页真实高度（如子控件默认 100x30）顶置。 */
+        if (pageH <= 0) return;
+        XRect_init(&r, 0, pageY, w, pageH);
     }
     XWidget_setGeometryRect(current, &r);
 }
@@ -142,7 +190,13 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
     int64_t n;
     int y = 0;
     int w = XWidget_width(self);
+    int pageH;
     if (!box || !event) return;
+    n = box->m_items
+            ? XVector_size_base((const XContainer*)box->m_items) : 0;
+    /* 页高与 xtb2_layout 同口径（xtb2_pageHeight）：激活页占其页头
+     * 之下的整块页高，后续页头依次排在页之后（对标 QToolBox VBox）。 */
+    pageH = xtb2_pageHeight(box, (int)n);
     image = XWidget_paintImage(self);
     if (!image) return;
     XPainter_init(&painter, NULL);
@@ -173,7 +227,6 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
     mid = 0xFF808080u;
 #endif /* XPALETTE_ON */
     if (box->m_items) {
-        n = XVector_size_base((const XContainer*)box->m_items);
         for (i = 0; i < n; ++i) {
             XToolBoxItem** item =
                 (XToolBoxItem**)XVector_at_base(box->m_items, i);
@@ -200,6 +253,10 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
                 y += XTOOLBOX_HEADER_H;
                 XRect_init(&line, 0, y - 1, w, 1);
                 XPainter_fillRect(&painter, &line, windowText);
+                /* 激活页之后预留整块页高，后续页头排在页下方（与
+                 * xtb2_layout 的页面定位同口径，对标 QToolBox VBox）。 */
+                if ((int)i == box->m_currentIndex)
+                    y += pageH;
                 continue;
             }
 #endif /* XSTYLE_ON */
@@ -214,6 +271,8 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
             y += XTOOLBOX_HEADER_H;
             XRect_init(&line, 0, y - 1, w, 1);
             XPainter_fillRect(&painter, &line, windowText);
+            if ((int)i == box->m_currentIndex)
+                y += pageH;
         }
     }
     XPainter_deinit(&painter);
@@ -222,21 +281,40 @@ static void VX_toolBox_paintEvent(XWidget* self, XEvent* event)
 static void VX_toolBox_resizeEvent(XWidget* self, XEvent* event);
 
 /** @brief 页头点击：y 坐标 → 条目索引并切换（对标 QToolBoxButton
- *         clicked → _q_buttonClicked → setCurrentIndex 链路）。 */
+ *         clicked → _q_buttonClicked → setCurrentIndex 链路）。y 映射
+ *         与 paint/layout 同口径：激活页之前的页头每 22px 一个，激活
+ *         页之下预留整块页高，其后页头继续每 22px 一个。 */
 static void VX_toolBox_mousePressEvent(XWidget* self, XEvent* event)
 {
     XToolBox* box = (XToolBox*)self;
     XMouseEvent* me;
     XPoint pos;
     int index;
+    int pageH;
+    int count;
     if (!box || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS)
         return;
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
-    index = (int)(pos.y / XTOOLBOX_HEADER_H);
-    if (index < 0 || index >= (int)XVector_size_base(
-                          (const XContainer*)box->m_items)) {
+    count = box->m_items
+                ? (int)XVector_size_base((const XContainer*)box->m_items) : 0;
+    if (count <= 0) {
+        XEvent_ignore(event);
+        return;
+    }
+    /* 页高与 xtb2_layout/paint 同口径（xtb2_pageHeight）。 */
+    pageH = xtb2_pageHeight(box, count);
+    if (box->m_currentIndex >= 0 && pageH > 0 &&
+        pos.y >= (box->m_currentIndex + 1) * XTOOLBOX_HEADER_H + pageH) {
+        /* 激活页之后的页头区。 */
+        int below = pos.y - ((box->m_currentIndex + 1)
+                             * XTOOLBOX_HEADER_H + pageH);
+        index = box->m_currentIndex + 1 + below / XTOOLBOX_HEADER_H;
+    } else {
+        index = (int)(pos.y / XTOOLBOX_HEADER_H);
+    }
+    if (index < 0 || index >= count) {
         XEvent_ignore(event);
         return;
     }
@@ -595,6 +673,10 @@ void XToolBox_setCurrentIndex(XToolBox* self, int index)
             XWidget_setVisible(cur, true);
     }
     xtb2_layout(self);
+    /* 页头带由本控件自绘且纵向位置随 currentIndex 平移：切换后整箱
+     * 标脏重绘，抹掉旧位置页头残影（rescan_r2 #55：切换后旧「页二」
+     * 头像素带残留——页几何联动只标脏页矩形，覆盖不到自绘页头带）。 */
+    XWidget_update((XWidget*)self);
     xtb2_emitChanged(self, index);
 }
 

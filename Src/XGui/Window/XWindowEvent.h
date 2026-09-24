@@ -747,22 +747,44 @@ XPoint XMoveEvent_oldPosition(const XMoveEvent* event);
 /* ========================================================================== */
 /*        XTouchEvent 触摸事件（对标 QTouchEvent 最小负载）                    */
 /* ========================================================================== */
-/** @brief 声明 XTouchEvent 虚函数枚举：继承 XEvent（无新增槽）。 */
+/** @brief 声明 XTouchEvent 虚函数枚举：继承 XEvent（新增 Clone/Deinit，
+ *         管理多点触点列表的深拷贝与释放——方案 B 多点扩展，§8.0g26）。 */
 XCLASS_DEFINE_BEGING(XTouchEvent)
 XCLASS_DEFINE_EXTEND_END(XTouchEvent, XEvent)
 
 /** @brief 初始化 XTouchEvent 类虚函数表。 @return 共享虚函数表指针。 */
 XVtable* XTouchEvent_class_init(void);
 
-/** @brief 触摸事件对象（最小负载；完整触点列表为后续扩展）。
- * @note 本实现承载首个触点坐标与计数，对标 QTouchEvent::points 的常用
- *       单点场景；多点触控完整列表登记为已知偏差（Task 2.20）。 */
+/** @brief 单个触点（对标 Qt6 QEventPoint 的常用子集；方案 B 多点）。
+ * @note m_state 数值按 Qt6 QEventPoint::State 逐字对齐
+ *       （Pressed=0/Updated=1/Stationary=2/Released=3）。 */
+typedef struct XTouchPoint
+{
+    int32_t m_id;              /**< 触点标识（XI2 detail 透传）。 */
+    int      m_state;          /**< QEventPoint::State 四态。 */
+    XPoint   m_position;       /**< 局部坐标（接收者坐标系）。 */
+    XPoint   m_globalPosition; /**< 屏幕坐标。 */
+    float    m_pressure;       /**< 压力 0~1（无 valuator 时 1.0）。 */
+} XTouchPoint;
+
+/** 触点状态常量（数值与 Qt6 QEventPoint::State 一致）。 */
+#define XTOUCHPOINT_STATE_PRESSED    0
+#define XTOUCHPOINT_STATE_UPDATED    1
+#define XTOUCHPOINT_STATE_STATIONARY 2
+#define XTOUCHPOINT_STATE_RELEASED   3
+
+/** @brief 触摸事件对象（方案 B 多点：尾部追加触点列表）。
+ * @note m_position/m_globalPosition 保留为主点（points[0]）兼容视图；
+ *       旧读代码继续读主点字段。m_points 由事件拥有（deinit 释放，
+ *       clone 深拷贝）；旧 init/create 造 1 点列表，多点经
+ *       XTouchEvent_setPoints 注入。 */
 typedef struct XTouchEvent
 {
     XEvent m_class;          /**< 继承 XEvent；必须为第一个成员。 */
-    XPoint m_position;       /**< 首个触点局部坐标。 */
-    XPoint m_globalPosition; /**< 首个触点屏幕坐标。 */
-    int    m_pointCount;     /**< 触点数量（>=1）。 */
+    XPoint m_position;       /**< 主点局部坐标（=points[0]）。 */
+    XPoint m_globalPosition; /**< 主点屏幕坐标（=points[0]）。 */
+    int    m_pointCount;     /**< 触点数量（列表长度，>=1）。 */
+    XTouchPoint* m_points;   /**< 触点列表（事件拥有；NULL=未分配）。 */
 } XTouchEvent;
 
 /** @brief 创建触摸事件。
@@ -788,6 +810,17 @@ XPoint XTouchEvent_position(const XTouchEvent* event);
 XPoint XTouchEvent_globalPosition(const XTouchEvent* event);
 /** @brief 获取触点数量。 */
 int XTouchEvent_pointCount(const XTouchEvent* event);
+/** @brief 读取触点列表（只读借用；事件拥有，长度=m_pointCount）。
+ * @param event 目标事件。
+ * @return 触点数组指针；未分配返回 NULL（单点场景读主点字段即可）。 */
+const XTouchPoint* XTouchEvent_points(const XTouchEvent* event);
+/** @brief 注入多点触点列表（方案 B；深拷贝，事件接管副本）。
+ * @param event 目标事件；不可为 NULL。
+ * @param points 触点数组（借用）；不可为 NULL。
+ * @param count 触点数量（>=1）。
+ * @note 覆盖既有列表（先释放）；主点字段同步为 points[0]。 */
+void XTouchEvent_setPoints(XTouchEvent* event,
+                           const XTouchPoint* points, int count);
 #define XTouchEvent_delete_base XEvent_delete_base
 #define XTouchEvent_deinit_base XEvent_deinit_base
 

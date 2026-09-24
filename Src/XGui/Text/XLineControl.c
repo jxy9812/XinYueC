@@ -3092,6 +3092,20 @@ void XLineControl_processInputMethodEvent(XLineControl* self,
 
     if (selectionChange)
         xlc_emitVoid(self, (size_t)XLineControl_selectionChanged_signal(self));
+
+#if defined(XLC_COMPLETER_ON) && XLC_COMPLETER_ON
+    /* 对标 Qt QLineEdit::inputMethodEvent 尾段（qlineedit.cpp:1812-1815）：
+     * `if (!e->commitString().isEmpty()) d->control->complete(Qt::Key_unknown);`
+     * ——IME 提交落定后驱动一次补全。修复 night #30：真实 X11 键入在西文
+     * 路径（@im=none 直映/fcitx 透传）经 Xutf8LookupString 以输入法提交
+     * 形态进入本函数，不再走 processKeyEvent 的按键插入分支，complete()
+     * 永不触发、默认弹层永不出现（apitest 以直发按键注入故测试通过——
+     * 与真实页面路径的口径差异即此）。键值用 XKey_None 哨兵（Qt 用
+     * Key_unknown）：complete() 仅在 Inline 模式区分 Up/Down/Backspace，
+     * 哨兵不与其重合。 */
+    if (commitLen > 0)
+        XLineControl_complete(self, XKey_None);
+#endif /* XLC_COMPLETER_ON */
 }
 
 /* ==================== 剪贴板公共 API（对标 copy/paste） ==================== */
@@ -3303,12 +3317,30 @@ static bool xlc_matchCtrlLetter(const XKeyEvent* ke, char letter,
 /**
  * @brief 由键值推导输入文本（平台契约：可打印字符即 ASCII 码位）。
  * @return 有可打印文本返回其字节长（1），否则 0；out 写入单字节。
+ * @details 拉丁字母大小写按 Shift 修饰位派生（问题 #32 收官，对标 Qt：
+ *          键事件文本随 Shift 并行于键值——qxcbkeyboard.cpp
+ *          handleKeyEvent:865-866 sym 与 lookupString 同源产出、字母
+ *          键值恒 Key_T 大写口径（:872 keysymToQtKey），大小写由
+ *          text() 表达；消费侧 qwidgetlinecontrol.cpp:1921
+ *          insert(event->text())）。平台层字母键值经大写归一恒
+ *          [0x41,0x5A]（XPlatformNativeWindow_posix.c 大写归一），此处
+ *          兼容小写键值（其他交付方直灌）。CapsLock 无修饰位承载
+ *          （XKeyboardModifiers 契约冻结，XEvent.h:129-137），锁存态
+ *          字母由平台层 LockMask 守卫留在 IME 提交通道，不入本函数。
  */
 static int xlc_keyToText(const XKeyEvent* ke, char* out)
 {
     int key;
     if (!ke || !out) return 0;
     key = ke->m_key;
+    if (key >= 'a' && key <= 'z') key -= 'a' - 'A';
+    if (key >= 'A' && key <= 'Z') {
+        out[0] = (ke->m_modifiers & XKeyboardModifier_ShiftModifier)
+                     ? (char)key
+                     : (char)(key + ('a' - 'A'));
+        out[1] = '\0';
+        return 1;
+    }
     if (key >= 0x20 && key <= 0x7E) {
         out[0] = (char)key;
         out[1] = '\0';
@@ -3377,6 +3409,20 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                 XCompleter_hidePopup(self->m_completer);
                 XEvent_ignore((XEvent*)event);
                 return;
+            }
+            /* 对标 QCompleter popup 键盘激活（Qt 由弹层事件过滤承接
+             * Return 并以 activated(QString)→QLineEdit::setText 回填）：
+             * 弹层可见时 Return/Enter 采纳当前候选并收层，随后落入
+             * 下方公共 Return 路径发射 accepted/editingFinished。 */
+            if (key == XKey_Return || key == XKey_Enter) {
+                XString* activated =
+                    XCompleter_currentCompletion(self->m_completer);
+                if (activated) {
+                    XLineControl_setText(self,
+                                         XString_toUtf8(activated));
+                    XString_delete_base((XClass*)activated);
+                }
+                XCompleter_hidePopup(self->m_completer);
             }
             /* 对标 QCompleter popup 键盘导航：弹层可见时 Up/Down 环绕
                移动当前候选，并把当前候选文本回填编辑框（Qt 语义：

@@ -31,19 +31,21 @@ static void VX_errMsg_paintEvent(XWidget* self, XEvent* event)
     r.x = 0; r.y = 0;
     r.width = XWidget_width(self);
     r.height = XWidget_height(self);
-    /* 白色背景。 */
-    XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
-    /* 消息文本。 */
-#if XPALETTE_ON
+    /* 对标 Qt 错误级视觉惯例（Qt 无独立 ErrorMessage 样式，取
+     * qmessagebox.cpp Critical 分级红 + QWidget 样式表错误横幅
+     * 惯例；按台账 #56 自定义轻量警示皮肤）：浅红警示底色带 +
+     * 左侧深红强调条 + 深红文字。文本仍画于 (12, h/2)，布局与
+     * 可读性不变；XErrorMessage 派生自 XDialog（非 XLabel），
+     * 不走 #9 的 autoFillBackground 背景角色回填口径，警示底色
+     * 由本绘制槽直接承担。 */
+    XPainter_fillRect(&painter, &r, 0xFFFFEBEEu);
     {
-        XPalette palette = XWidget_palette(self);
-        XColor c = XPalette_color(&palette, XPaletteColorGroup_Current,
-                                  XPaletteColorRole_WindowText);
-        text = XColor_rgba(&c);
+        XRect bar;
+        XRect_init(&bar, 0, 0, 4, r.height);
+        XPainter_fillRect(&painter, &bar, 0xFFD32F2Fu);
     }
-#else
-    text = 0xFF000000u;
-#endif
+    /* 深红警示文字（浅红底上对比度可辨）。 */
+    text = 0xFFB71C1Cu;
     if (em->m_message && XString_toUtf8(em->m_message) &&
         XString_toUtf8(em->m_message)[0])
         XPainter_drawText(&painter, 12, r.height / 2,

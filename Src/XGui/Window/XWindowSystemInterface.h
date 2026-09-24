@@ -381,6 +381,25 @@ bool XWindowSystemInterface_handleTouchEvent_ex(XWindow* window, XEventType type
                                                 uint32_t timestamp);
 
 /**
+ * @brief      注入多点触摸事件（方案 B 多点；对标 QWindowSystemInterface::
+ *             handleTouchEvent 的 QEventPoint 列表形态）。
+ * @details    与 handleTouchEvent_ex 同层：同步自发投递，timestamp 经静态
+ *             通道透传给 touch→mouse 合成器。触点列表深拷贝进事件；主点
+ *             字段自动同步为 points[0]。
+ * @param      window 目标窗口；不可为 NULL。
+ * @param      type 触摸事件类型（BEGIN/UPDATE/END/CANCEL）。
+ * @param      points 触点数组（借用；不可为 NULL）。
+ * @param      count 触点数量（>=1）。
+ * @param      timestamp 平台触摸时间戳（毫秒）。
+ * @return     true 已投递；false 参数非法或分配失败。
+ */
+bool XWindowSystemInterface_handleTouchPoints_ex(XWindow* window,
+                                                 XEventType type,
+                                                 const XTouchPoint* points,
+                                                 int count,
+                                                 uint32_t timestamp);
+
+/**
  * @brief      返回当前同步派发中的触摸事件时间戳（毫秒）。
  * @details    供 XWidget.c 的 touch→mouse 合成器在触摸事件同步投递期间
  *             读取并透传到合成鼠标事件；仅在 handleTouchEvent(_ex) 同步

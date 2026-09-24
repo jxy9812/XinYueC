@@ -42,6 +42,7 @@
 #include "XEvent.h"
 #include "XWindow.h"
 #include "XCoreApplication.h"
+#include "XGuiApplication.h"
 #include "XColor.h"
 #include <stdio.h>
 
@@ -350,8 +351,13 @@ static void VXComboBox_timerEvent(XObject* object, XTimerEvent* event)
         /* 弹窗可能在定时器触发前已被收起：仅在仍弹出时启用平台抓取。 */
         if (self->m_popupVisible && self->m_popupView) {
             handle = XWidget_windowHandle((XWidget*)self->m_popupView);
-            if (handle)
+            if (handle) {
                 XWindow_setMouseGrabEnabled(handle, true);
+                /* 对标 Qt 弹层双抓取（grabForPopup：鼠标+键盘成对）：
+                   平台 XGrabKeyboard 需窗口完成映射，与 XGrabPointer
+                   同在此延迟点执行；Esc/方向键由此直达弹层。 */
+                XWindow_setKeyboardGrabEnabled(handle, true);
+            }
         }
         XEvent_accept((XEvent*)event);
         return;
@@ -1238,9 +1244,14 @@ static void xcombo_releaseGrab(XComboBox* self)
     }
     if (self->m_popupView) {
         XWidget_releaseMouse((XWidget*)self->m_popupView);
+        /* 对标 Qt closePopup：鼠标/键盘成对解抓（grabForPopup 的逆操作），
+           漏解键盘抓取会使弹层收起后全局按键仍被劫持。 */
+        XWidget_releaseKeyboard((XWidget*)self->m_popupView);
         handle = XWidget_windowHandle((XWidget*)self->m_popupView);
-        if (handle)
+        if (handle) {
             XWindow_setMouseGrabEnabled(handle, false);
+            XWindow_setKeyboardGrabEnabled(handle, false);
+        }
     }
 }
 
@@ -1739,13 +1750,26 @@ static void xcombo_popupShow(XComboBox* self, int rows)
     self->m_popupVisible = true;
     xcombo_emitInt(self, (size_t)XComboBox_popupShown_signal(self), 0);
     XWidget_show((XWidget*)view);
+    /* 对标 Qt QWidgetPrivate::show_helper 的 Popup 分支（qwidget.cpp:
+       8038-8043「new popups and tools need to be raised」）：弹层每次
+       show 都必须置顶。XWidget_raise→XWindow_raise 当前为平台无关
+       no-op（XWindow.c:2019 无平台 Z 序接口），而 X11 规范 MapWindow
+       并不改堆叠序（x11protocol.txt MapWindow 节），弹层 X11 窗口若
+       早于主窗口建立即永居其下——表现为「弹层已映射、缓冲有内容、
+       屏幕不可见」。平台唯一置顶通道是 requestActivate→XRaiseWindow
+       （XPlatformNativeWindow_posix.c:5144）；未映射窗口的激活在平台
+       层挂起（m_deferredActivation，MapNotify 后补做），无 BadMatch。 */
+    XWidget_activateWindow((XWidget*)view);
     XWidget_raise((XWidget*)view);
     /* 独立顶层窗口无宿主帧泵：主动完成首帧绘制上屏（参照 XMenu）。 */
     XWidget_flushBackingStore((XWidget*)view, NULL);
     /* 模态鼠标抓取（参照 XMenu）：公共层立即设置直投目标，使点击弹窗
        外部的事件也路由到弹窗（由 XComboPopupView 判定越界并收起）；
-       平台 XGrabPointer 需要窗口完成映射，延迟到 1ms 精确定时器执行。 */
+       平台 XGrabPointer 需要窗口完成映射，延迟到 1ms 精确定时器执行。
+       键盘抓取同步建立（对标 Qt openPopup→grabForPopup 鼠标+键盘成对
+       抓取，qapplication.cpp:3327-3339）——Esc/方向键直达弹层。 */
     XWidget_grabMouse((XWidget*)view);
+    XWidget_grabKeyboard((XWidget*)view);
     if (self->m_grabTimer == XTIMER_INVALID_ID) {
         self->m_grabTimer = XObject_startTimer_ms(
             (XObject*)self, 1u, XTimerType_PreciseTimer);
@@ -1871,7 +1895,7 @@ void XComboBox_hidePopup_base(XComboBox* self)
 {
     if (!self || !self->m_popupVisible) return;
     self->m_popupVisible = false;
-    /* 退出补全过滤态并清除行过滤：下次全量弹出不残留隐藏行。 */
+    /* 退出补全过滤态并清除行隐藏：下次全量弹出不残留隐藏行。 */
     self->m_completionActive = false;
     self->m_completionRow = -1;
     xcombo_clearRowHidden(self);
@@ -1880,6 +1904,18 @@ void XComboBox_hidePopup_base(XComboBox* self)
     xcombo_releaseGrab(self);
     if (self->m_popupView)
         XWidget_hide((XWidget*)self->m_popupView);
+    /* 焦点回交（对标 Qt closePopup 的焦点还原，qapplication.cpp:
+       3368-3377「active_window->focusWidget() 重新聚焦」）：弹出时
+       activateWindow 曾把应用焦点窗口指向弹层窗口；收起后若焦点仍
+       滞留弹层，按键会投递给已隐藏窗口，组合框所在顶层窗口重新
+       激活以恢复按键链。 */
+    {
+        XWidget* host = XWidget_topLevelWidget((XWidget*)self);
+        if (host && host->m_isWindow &&
+            XGuiApplication_focusWindow() ==
+                (XWindow*)XWidget_windowHandle((XWidget*)self->m_popupView))
+            XWidget_activateWindow(host);
+    }
     xcombo_emitInt(self, (size_t)XComboBox_popupHidden_signal(self), 0);
     XWidget_update((XWidget*)self);
 }

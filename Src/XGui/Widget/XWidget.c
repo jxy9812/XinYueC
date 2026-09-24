@@ -56,6 +56,8 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XTimer.h"
+#include "XToolTip.h"
 #include "XShortcut.h"
 #include "XVarList.h"
 #if XByteArray_ON
@@ -78,6 +80,33 @@
 
 /* TEMP：paintTree 派发 paintEvent 时的上屏目标图像（表面裁剪限定用）。 */
 static XImage* g_paintTargetImage;
+/* 批次表面裁剪暂存：repaintRegion 设置裁剪时同步登记，供效果管线离屏
+ * 段（快照渲染+效果处理，见 xwidget_drawWithGraphicsEffect）摘除裁剪后
+ * 按原样恢复——XPainter 表面裁剪无读取接口，且离屏画布坐标系独立于
+ * 设备表面，设备坐标裁剪对离屏绘制是错误约束（效果交互重绘输出被
+ * 裁成空、回贴擦除控件内容的根因之一，对标 Qt：效果 source→pixmap
+ * 离屏处理不受 systemClip 约束，仅结果回贴受裁剪限定）。 */
+static XRect xg_flushSurfaceClipRect;
+static XImage* xg_flushSurfaceClipImage;
+static bool xg_flushSurfaceClipActive = false;
+/* 离屏段嵌套深度：嵌套效果（快照渲染内再入效果控件）内层退出时保持
+ * 无裁剪态，由最外层统一按暂存恢复。 */
+static int xg_offscreenClipDepth = 0;
+
+/** @brief 进入离屏绘制段：摘除表面裁剪（可嵌套，LIFO 恢复）。 */
+static void xwidget_surfaceClipOffEnter(void)
+{
+    ++xg_offscreenClipDepth;
+    XPainter_clearSurfaceClipRect();
+}
+
+/** @brief 退出离屏绘制段：最外层按批次暂存恢复表面裁剪。 */
+static void xwidget_surfaceClipOffExit(void)
+{
+    if (--xg_offscreenClipDepth == 0 && xg_flushSurfaceClipActive)
+        XPainter_setSurfaceClipRect(&xg_flushSurfaceClipRect,
+                                    xg_flushSurfaceClipImage);
+}
 /* 静态内容保留层前向声明：失效联动（update/几何/可见性路径调用）、
  * 生命周期挂钩与 paintTree 绘制钩子，实现体在效果钩子之后的保留层小节。 */
 static void xwidget_retainedDropCache(XWidget* self);
@@ -152,12 +181,96 @@ typedef struct XWidgetWindow
 /** @brief 模块静态焦点控件；控件域内全局唯一（对标 QApplication::focusWidget）。 */
 static XWidget* g_focusWidget = NULL;
 
+/** @brief 模块静态最后悬停控件（对标 QApplicationPrivate::lastMouseReceiver）。
+ *  @note 鼠标移动合成 ENTER/LEAVE 时与命中控件比对的"上一次悬停者"；
+ *        控件隐藏/窗口级离开时置空，防止悬挂指针。 */
+static XWidget* g_lastMouseWidget = NULL;
+
 /** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
 static XWidget* g_mouseGrabWidget = NULL;
-/** @brief 模块静态触摸抓取控件（对标 Qt 触点隐式 grab：TouchBegin 被接受后
- *         同一触点的 UPDATE/END 直达该控件，TOUCH_END/CANCEL 清除；当前
- *         XTouchEvent 只承载主点，故为单触点简化模型）。 */
-static XWidget* g_touchGrabWidget = NULL;
+/** @brief 按压隐式抓取控件（对标 Qt qt_button_down）：按住期间 move/release
+ * 直投按压控件，光标漂出控件边界也不丢拖拽尾流（橡皮筋/SizeGrip 类拖拽依赖）。 */
+static XWidget* g_buttonDownWidget = NULL;
+/** @brief per-id 触点抓取表条目（方案 B 多点；对标 Qt per-point grab）。
+ * @note m_id 为 XI2 detail 透传（WSI 注入方负责唯一性）；m_mouseSynth
+ *       标记该 id 走了 touch→mouse 仿真（END 时合成 release）。 */
+typedef struct XTouchGrabEntry
+{
+    int32_t  m_id;        /**< 触点 id；-1=空槽。 */
+    XWidget* m_grabber;   /**< 抓取控件（借用）。 */
+    bool     m_mouseSynth; /**< 该序列走了 touch→mouse 仿真。 */
+} XTouchGrabEntry;
+
+/** @brief per-id 触点抓取表（容量 8：常规多指足够；满则新触点走仿真）。 */
+#define XTOUCH_GRAB_CAPACITY 8
+static XTouchGrabEntry g_touchGrabTable[XTOUCH_GRAB_CAPACITY];
+static bool g_touchGrabTableInited = false;
+
+/** @brief 抓取表惰性初始化（全槽置空）。 */
+static void xwidget_touchGrabTableInit(void)
+{
+    int i;
+    if (g_touchGrabTableInited) return;
+    for (i = 0; i < XTOUCH_GRAB_CAPACITY; ++i)
+        g_touchGrabTable[i].m_id = -1;
+    g_touchGrabTableInited = true;
+}
+
+/** @brief 按 id 查抓取槽位；不存在返回 NULL。 */
+static XTouchGrabEntry* xwidget_touchGrabFind(int32_t id)
+{
+    int i;
+    xwidget_touchGrabTableInit();
+    for (i = 0; i < XTOUCH_GRAB_CAPACITY; ++i)
+        if (g_touchGrabTable[i].m_id == id)
+            return &g_touchGrabTable[i];
+    return NULL;
+}
+
+/** @brief 按 id 取槽位（存在返回；不存在取首个空槽；满返回 NULL）。 */
+static XTouchGrabEntry* xwidget_touchGrabAcquire(int32_t id)
+{
+    int i;
+    XTouchGrabEntry* freeSlot = NULL;
+    xwidget_touchGrabTableInit();
+    for (i = 0; i < XTOUCH_GRAB_CAPACITY; ++i)
+    {
+        if (g_touchGrabTable[i].m_id == id) return &g_touchGrabTable[i];
+        if (!freeSlot && g_touchGrabTable[i].m_id == -1)
+            freeSlot = &g_touchGrabTable[i];
+    }
+    return freeSlot;
+}
+
+/** @brief 按 id 释放槽位。 */
+static void xwidget_touchGrabRelease(int32_t id)
+{
+    XTouchGrabEntry* entry = xwidget_touchGrabFind(id);
+    if (entry) entry->m_id = -1;
+}
+
+/** @brief 兼容视图：单点模型的全局抓取控件（首条活跃槽；供销毁清理）。 */
+static XWidget* xwidget_touchGrabAny(void)
+{
+    int i;
+    xwidget_touchGrabTableInit();
+    for (i = 0; i < XTOUCH_GRAB_CAPACITY; ++i)
+        if (g_touchGrabTable[i].m_id != -1)
+            return g_touchGrabTable[i].m_grabber;
+    return NULL;
+}
+
+/** @brief 控件销毁时清除其全部触点抓取（对标 Qt grabber 释放）。 */
+static void xwidget_touchGrabReleaseByWidget(XWidget* widget)
+{
+    int i;
+    if (!widget) return;
+    xwidget_touchGrabTableInit();
+    for (i = 0; i < XTOUCH_GRAB_CAPACITY; ++i)
+        if (g_touchGrabTable[i].m_id != -1 &&
+            g_touchGrabTable[i].m_grabber == widget)
+            g_touchGrabTable[i].m_id = -1;
+}
 /** @brief touch→mouse 仿真开关（对标 Qt AA_SynthesizeMouseForUnhandledTouch-
  *         Events；Qt 6 对未处理触摸序列的鼠标仿真默认开启，应用可显式关闭）。 */
 static bool g_touchMouseSynthEnabled = true;
@@ -202,6 +315,10 @@ static int xwidget_paintDeviceMetric(void* userData, int metric);
 #endif /* XPAINTDEVICE_ON */
 
 static void VXWidget_deinit(XWidget* self);
+/** @brief 前置声明：控件隐藏/析构时作废 ToolTip 悬停登记（悬挂防护，
+ *         供 VXWidget_setVisible/XWidget_sendShowHide/VXWidget_deinit
+ *         调用，实现在 ToolTip 悬停唤起区块）。 */
+static void xwidget_toolTipTargetGone(XWidget* widget);
 static void VXWidget_copy(XWidget* self, const XWidget* other);
 static void VXWidget_move(XWidget* self, XWidget* other);
 static bool VXWidget_event(XWidget* self, XEvent* event);
@@ -234,6 +351,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
 static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
                                            const XRegion* paintRegion);
+static bool xwidget_focusNextPrevChild(XWidget* self, bool next);
 static void XRegion_translateInline(XRegion* region, int dx, int dy);
 
 /* ==================== 通用辅助函数 ==================== */
@@ -391,8 +509,13 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
                 XWidget_clearFocusBase(self, XFocusReason_Other);
             if (g_mouseGrabWidget == self)
                 g_mouseGrabWidget = NULL;
-            if (g_touchGrabWidget == self)
-                g_touchGrabWidget = NULL;
+            /* 隐藏的控件若正被悬停登记，登记同步作废（悬挂防护）。 */
+            if (g_lastMouseWidget == self)
+                g_lastMouseWidget = NULL;
+            /* 隐藏的控件若是 ToolTip 悬停目标，登记同步作废（night #35
+               悬挂防护：防唤醒定时器稍后解引用已隐藏/将析构控件）。 */
+            xwidget_toolTipTargetGone(self);
+            xwidget_touchGrabReleaseByWidget(self);
             if (g_keyboardGrabWidget == self)
                 g_keyboardGrabWidget = NULL;
             XWidget_sendShowHide(self, false);
@@ -459,6 +582,11 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
         } else {
             if (g_focusWidget == widget)
                 XWidget_clearFocusBase(widget, XFocusReason_Other);
+            /* 子树隐藏的控件若正被悬停登记，登记同步作废（悬挂防护）。 */
+            if (g_lastMouseWidget == widget)
+                g_lastMouseWidget = NULL;
+            /* 同上：ToolTip 悬停目标随子树隐藏一并作废（night #35）。 */
+            xwidget_toolTipTargetGone(widget);
             XWidget_sendShowHide(widget, false);
         }
         XWidget_propagateVisibility(widget, oldVisible);
@@ -1097,6 +1225,264 @@ static void XWidget_eventSetPosition(XEvent* event, const XPoint* pos)
     }
 }
 
+/** @brief 悬停者切换：向新控件合成 ENTER、旧控件合成 LEAVE（对标 Qt
+ *         QApplicationPrivate::dispatchEnterLeave，qapplication.cpp:2034）。
+ * @details Qt 在每次鼠标移动时按"当前命中控件 vs lastMouseReceiver"合成
+ *          Enter/Leave；窗口级跨越事件（X11 EnterNotify）只覆盖顶层进出，
+ *          窗口内控件间移动全靠本合成链，否则子控件 WA_UnderMouse 永不
+ *          置位、:hover 悬停样式失效（问题 #4）。Enter 携带目标局部坐标
+ *          （QEnterEvent 语义）；Leave 为无坐标事件（QEvent::Leave）。
+ *          两控件各自经事件入口翻转 UnderMouse 属性并重绘。 */
+static void xwidget_dispatchEnterLeave(XWidget* top, XWidget* enter,
+                                       const XPoint* pos)
+{
+    XPoint global;
+    if (enter == g_lastMouseWidget) return;
+    if (g_lastMouseWidget) {
+        XEvent leave;
+        /* 悬停者若已随页面切换/隐藏失效（不在本窗口树内）只清登记，
+           不再向其投递事件，避免向不可见控件合成 LEAVE。 */
+        if (XWidget_topLevel(g_lastMouseWidget) == top) {
+            XEvent_init(&leave, XEVENT_TYPE_LEAVE);
+            XWidget_sendEvent(g_lastMouseWidget, &leave);
+        }
+        g_lastMouseWidget = NULL;
+    }
+    if (enter) {
+        XEnterEvent* ev;
+        XPoint local;
+        XPoint off = XWidget_accumulateOffset(enter);
+        local.x = pos->x - off.x;
+        local.y = pos->y - off.y;
+        /* 全局坐标按顶层本地光标位置换算（pos 即顶层坐标系）。 */
+        global = XWidget_mapToGlobal(top, pos);
+        ev = XEnterEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                   XEVENT_TYPE_ENTER, &local, &global);
+        if (ev) {
+            XWidget_sendEvent(enter, (XEvent*)ev);
+            XEvent_delete_base((XEvent*)ev);
+        }
+        g_lastMouseWidget = enter;
+    }
+}
+
+/** @brief 应用模态同窗口门禁（对标 QGuiApplicationPrivate::isWindowBlocked，
+ *         qguiapplication.cpp:923）。
+ * @details Qt 的 ApplicationModal 语义：模态窗口自身及其后代不被阻塞
+ *          （isAncestorOf 分支放行），其余窗口的全部输入一律阻塞。本仓库
+ *          模态控件与其余控件常同居同一顶层桥接窗口（demo 层叠对话框即
+ *          此形态），VXWidgetWindow_event 既有门禁只拦 modalTop!=top 的
+ *          跨顶层输入；同窗口内命中测试解析出的目标还须按「沿父链上行
+ *          是否落进模态控件」判定——落进=放行，未落进（含顶层自身）=阻塞。
+ * @return 目标被活动应用模态阻塞返回 true。 */
+static bool xwidget_targetBlockedByModal(XWidget* top, XWidget* target)
+{
+    XWidget* w;
+    if (!g_applicationModalWidget) return false;
+    if (XWidget_topLevel(g_applicationModalWidget) != top) return false;
+    w = target;
+    while (w) {
+        if (w == g_applicationModalWidget) return false;
+        if (w == top) break;
+        w = XWidget_parentWidget(w);
+    }
+    return true;
+}
+
+/* ==================== ToolTip 悬停唤起链（night #35） ==================== */
+/* 对标 Qt QApplicationPrivate 的 tooltip 唤醒链（qapplication.cpp）：
+ * 悬停停驻唤醒（toolTipWakeUp）、收起后短时再悬停快速唤醒
+ * （toolTipFallAsleep）、离场宽限收起（QTipLabel::hideTimer）。此前
+ * 全库无 hover→XToolTip_showText 接线，setToolTip 文本无处展示。 */
+
+/** @brief 悬停唤醒延迟（对标 SH_ToolTip_WakeUpDelay 默认 700ms，
+ *         qcommonstyle.cpp:5391-5393）。 */
+#define XWIDGET_TOOLTIP_WAKEUP_MS 700
+/** @brief fallAsleep 活跃期内的快速唤醒延迟（对标 qapplication.cpp:2752
+ *         「toolTipFallAsleep.isActive() ? 20 : wakeDelay」）。 */
+#define XWIDGET_TOOLTIP_REWAKE_MS 20
+/** @brief fallAsleep 活跃期（对标 SH_ToolTip_FallAsleepDelay 默认 2000ms，
+ *         qcommonstyle.cpp:5394-5396）。 */
+#define XWIDGET_TOOLTIP_FALLASLEEP_MS 2000
+/** @brief 指针离场后提示宽限收起延迟（对标 QTipLabel::hideTip 的 300ms
+ *         hideTimer，qtooltip.cpp:251-255）。 */
+#define XWIDGET_TOOLTIP_HIDE_MS 300
+
+/** @brief 当前悬停 ToolTip 目标（对标 QApplicationPrivate::toolTipWidget）。 */
+static XWidget* g_toolTipWidget = NULL;
+/** @brief fallAsleep 活跃标志（对标 toolTipFallAsleep.isActive()）。 */
+static bool g_toolTipFallAsleepActive = false;
+/** @brief 唤醒/休眠/宽限三单发定时器（惰性创建；独立 XTimer 自带
+ *         XObject 身份，定时器事件回到本模块回调，不经控件虚表）。 */
+static XTimer* g_toolTipWakeTimer = NULL;
+static XTimer* g_toolTipFallAsleepTimer = NULL;
+static XTimer* g_toolTipHideTimer = NULL;
+/** @brief 悬停点全局坐标（唤醒到点时作为提示锚点，
+ *         qapplication.cpp:1722 QHelpEvent globalPos 口径）。 */
+static XPoint g_toolTipGlobalPos = { 0, 0 };
+
+static void xwidget_toolTipWakeCb(void* userData, XTimerData* timer);
+
+/** @brief 惰性创建单发定时器并绑定回调。 */
+static XTimer* xwidget_toolTipTimerEnsure(XTimer** slot, XTimerCallback cb)
+{
+    if (!*slot) {
+        *slot = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!*slot) return NULL;
+        XTimer_setSingleShot(*slot, true);
+        XTimer_setAutoDelete(*slot, false);
+        XTimer_setTimerCallback(*slot, cb);
+    }
+    return *slot;
+}
+
+/** @brief 启动单发定时器（无调度器环境注册失败即不触发，安全退化）。 */
+static void xwidget_toolTipTimerStart(XTimer* timer, int msec)
+{
+    if (!timer) return;
+    XTimer_setTimeout(timer, (size_t)(msec > 0 ? msec : 0));
+    XTimer_start_base(timer);
+}
+
+/** @brief fallAsleep 到期：退出快速唤醒活跃期（qapplication.cpp:1731-1735）。 */
+static void xwidget_toolTipFallAsleepCb(void* userData, XTimerData* timer)
+{
+    (void)userData; (void)timer;
+    g_toolTipFallAsleepActive = false;
+}
+
+/** @brief 宽限期到仍未回到有提示控件：收起提示（对标 QTipLabel hideTimer
+ *         触发→hideTipImmediately，qtooltip.cpp:275-280/257）。 */
+static void xwidget_toolTipHideCb(void* userData, XTimerData* timer)
+{
+    (void)userData; (void)timer;
+    XToolTip_hideText();
+}
+
+/** @brief 唤醒到点：查询悬停目标提示文本并显示（对标
+ *         QApplicationPrivate::timerEvent 的 toolTipWakeUp 分支，
+ *         qapplication.cpp:1708-1730：停表→读 toolTip→showText→成功后
+ *         启动 fallAsleep）。 */
+static void xwidget_toolTipWakeCb(void* userData, XTimerData* timer)
+{
+    XWidget* w = g_toolTipWidget;
+    const XString* tip;
+    int duration;
+    (void)userData; (void)timer;
+    if (!w) return;
+    tip = XWidget_toolTip(w);
+    if (!tip || XContainer_size_base((const XContainer*)tip) == 0) return;
+    /* 对标 QTipLabel::placeTip 的指针偏移（qtooltip.cpp:375-381）：光标
+     * 右下 (2, 光标高 16)，提示不压住指针本身。 */
+    duration = XWidget_toolTipDuration(w);
+    XToolTip_showText(g_toolTipGlobalPos.x + 2, g_toolTipGlobalPos.y + 16,
+                      tip, w, NULL, duration > 0 ? duration : -1);
+    /* fallAsleep 活跃期开表（qapplication.cpp:1726-1728）：2s 内移入
+     * 下一个有提示控件仅 20ms 即唤起。 */
+    g_toolTipFallAsleepActive = true;
+    xwidget_toolTipTimerStart(
+        xwidget_toolTipTimerEnsure(&g_toolTipFallAsleepTimer,
+                                   xwidget_toolTipFallAsleepCb),
+        XWIDGET_TOOLTIP_FALLASLEEP_MS);
+}
+
+/** @brief 停唤醒侧计时（wake + fallAsleep；对标 qapplication.cpp:2653-2657
+ *         输入事件对 toolTipWakeUp/toolTipFallAsleep 的 stop）。 */
+static void xwidget_toolTipWakeCancel(void)
+{
+    g_toolTipFallAsleepActive = false;
+    if (g_toolTipFallAsleepTimer) XTimer_stop_base(g_toolTipFallAsleepTimer);
+    if (g_toolTipWakeTimer) XTimer_stop_base(g_toolTipWakeTimer);
+}
+
+/** @brief 指针离场/移入无提示控件：宽限收起（对标 QTipLabel eventFilter
+ *         的 Leave→hideTip 300ms 宽限，qtooltip.cpp:303-305/251-255）。 */
+static void xwidget_toolTipLeave(void)
+{
+    if (!g_toolTipWidget) return;
+    g_toolTipWidget = NULL;
+    xwidget_toolTipWakeCancel();
+    if (XToolTip_isVisible())
+        xwidget_toolTipTimerStart(
+            xwidget_toolTipTimerEnsure(&g_toolTipHideTimer,
+                                       xwidget_toolTipHideCb),
+            XWIDGET_TOOLTIP_HIDE_MS);
+}
+
+/** @brief 按压/滚轮打断：立即收起并停全部计时（对标 QTipLabel
+ *         eventFilter 的 MouseButtonPress/Release/DblClick/Wheel→
+ *         hideTipImmediately，qtooltip.cpp:313-316；wake/fallAsleep 的
+ *         stop 见 qapplication.cpp:2653-2656）。 */
+static void xwidget_toolTipInterrupt(void)
+{
+    xwidget_toolTipWakeCancel();
+    g_toolTipWidget = NULL;
+    if (g_toolTipHideTimer) XTimer_stop_base(g_toolTipHideTimer);
+    if (XToolTip_isVisible()) XToolTip_hideText();
+}
+
+/** @brief 悬停目标失效（隐藏/析构）：作废登记并停唤醒表（悬挂防护，
+ *         与 g_lastMouseWidget 隐藏清除同一口径；已可见提示走 300ms
+ *         宽限收起）。 */
+static void xwidget_toolTipTargetGone(XWidget* widget)
+{
+    if (g_toolTipWidget != widget) return;
+    xwidget_toolTipLeave();
+}
+
+/** @brief 无按键移动的 ToolTip 悬停判定（对标 qapplication.cpp:2746-2753：
+ *         buttons==0 的 MouseMove 命中有提示控件时 toolTipWidget=w 并
+ *         （重）启动 wakeUp；移入无提示控件视同离场）。
+ * @note  Qt 对每条满足条件的移动都重启 wakeUp（QBasicTimer::start 语义，
+ *         指针持续游移则提示不弹）；XGui 的 ENTER 合成仅发生在悬停者
+ *         切换时，故本函数挂在每条无按键 move 分派上逐条重启保持同
+ *         语义（任务书口径：ENTER 处挂查询+单 shot 定时）。 */
+static void xwidget_toolTipHover(XWidget* top, XWidget* target,
+                                 const XPoint* pos)
+{
+    const XString* tip;
+    XWidget* tipWidget;
+    if (!target) {
+        xwidget_toolTipLeave();
+        return;
+    }
+    /* 对标 Qt ToolTip 帮助事件沿父链传播：QApplication::notify 的
+     * QEvent::ToolTip 分支把被 ignore 的帮助事件逐级转交父控件
+     * （qapplication.cpp:2963-2985，res && eventAccepted 才停，
+     * isWindow 止）；接收条件是「自身 toolTip 非空则 showText 并
+     * 接受，空则 ignore」（qwidget.cpp:9324-9329）。
+     * 修复 night #35①（复扫 gdb 钉死）：悬停命中 XTextEdit 视口类
+     * 内部子控件而提示设在外层编辑器时，此前只查命中控件自身
+     * tooltip→空→走离场分支，700ms 唤起定时器从不启动；此处沿父链
+     * 找最近带提示的祖先并以其为登记目标（提示文本/时长取同一
+     * 祖先，见 xwidget_toolTipWakeCb）。 */
+    tipWidget = target;
+    while (tipWidget) {
+        tip = XWidget_toolTip(tipWidget);
+        if (tip && XContainer_size_base((const XContainer*)tip) > 0)
+            break;
+        if (tipWidget == top) { /* 顶层亦无提示：整条链无提示。 */
+            tipWidget = NULL;
+            break;
+        }
+        tipWidget = XWidget_parentWidget(tipWidget);
+    }
+    if (!tipWidget) {
+        xwidget_toolTipLeave();
+        return;
+    }
+    g_toolTipWidget = tipWidget;
+    g_toolTipGlobalPos = XWidget_mapToGlobal(top, pos);
+    /* 复入有提示控件取消未到点的宽限收起（宽限语义只覆盖「离开后未
+     * 进入新提示区」的窗口期）。 */
+    if (g_toolTipHideTimer) XTimer_stop_base(g_toolTipHideTimer);
+    xwidget_toolTipTimerStart(
+        xwidget_toolTipTimerEnsure(&g_toolTipWakeTimer,
+                                   xwidget_toolTipWakeCb),
+        g_toolTipFallAsleepActive ? XWIDGET_TOOLTIP_REWAKE_MS
+                                  : XWIDGET_TOOLTIP_WAKEUP_MS);
+}
+
 /** @brief 从目标控件开始沿父链向顶层投递指针事件（位置逐级换算）。 */
 static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
 {
@@ -1107,9 +1493,19 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
         return false;
     pos = XWidget_eventPosition(event);
+    /* 新按压开始：清掉上一轮隐式抓取（对标 Qt 每次按压重置 qt_button_down）。 */
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS)
+        g_buttonDownWidget = NULL;
+    /* 按压/滚轮打断 ToolTip：立即收起（night #35，对标 QTipLabel
+     * eventFilter 的 press/release/dblclick/wheel→hideTipImmediately）。 */
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS ||
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE ||
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK ||
+        XEvent_type(event) == XEVENT_TYPE_WHEEL)
+        xwidget_toolTipInterrupt();
     if (g_mouseGrabWidget) {
         XWidget* grabTop = XWidget_topLevel(g_mouseGrabWidget);
-        if (grabTop && grabTop != top) {
+            if (grabTop && grabTop != top) {
             /* 跨顶层窗口的全局鼠标抓取（如弹出菜单的模态关闭）：把事件
              * 坐标换算到抓取窗口的坐标系后转投，使点击其它窗口也能送达
              * 抓取控件（对标 QWidget::grabMouse 的全局语义；平台
@@ -1134,6 +1530,36 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
                 target = top;
         }
     }
+    /* 对标 Qt 按压隐式抓取（qt_button_down，qwidgetwindow.cpp:634）：按住
+     * 期间的 move/release 直投按压控件，不按 childAt 现场命中分派——
+     * 光标拖出控件边界（橡皮筋越界拖拽）也不丢尾流；显式 grab 优先。 */
+    if (!g_mouseGrabWidget && g_buttonDownWidget &&
+        XWidget_topLevel(g_buttonDownWidget) == top &&
+        (XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE ||
+         XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE)) {
+        target = g_buttonDownWidget;
+    }
+    /* 应用模态同窗口门禁（问题 #22）：命中目标不在模态子树内时接受并
+       吞掉事件（对标 isWindowBlocked 对全部输入阻塞；鼠标抓取的弹层
+       路径已在上方定向/转投，门禁只约束命中分派）。置于 ENTER/LEAVE
+       合成之前：被阻塞区域不参与悬停者切换，模态外的 :hover 永不误亮。 */
+    if (xwidget_targetBlockedByModal(top, target)) {
+        XEvent_accept(event);
+        return true;
+    }
+    /* 对标 Qt processMouseEvent 的 dispatchEnterLeave（qapplication.cpp:
+     * 2337）：无按键按住的鼠标移动改换命中控件时，先合成 ENTER/LEAVE 再
+     * 投递移动事件本体；按键按住期间不切换悬停者（Qt 的 *buttonDown
+     * 分支）。 */
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE &&
+        !g_mouseGrabWidget &&
+        (((const XMouseEvent*)event)->m_buttons ==
+         (XMouseButton)0)) {
+        xwidget_dispatchEnterLeave(top, target, &pos);
+        /* ToolTip 悬停唤起（night #35，对标 qapplication.cpp:2746-2753
+         * 的 MouseMove 分支：命中控件带提示文本则唤醒，否则宽限收起）。 */
+        xwidget_toolTipHover(top, target, &pos);
+    }
     w = target;
     while (w) {
         XPoint off = XWidget_accumulateOffset(w);
@@ -1143,7 +1569,13 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
         XWidget_eventSetPosition(event, &local);
         if (!XWidget_attrTest(&w->m_attributes, XWidgetAttribute_TransparentForMouseEvents)) {
             XWidget_sendEvent(w, event);
-            if (XEvent_isAccepted(event)) return true;
+            if (XEvent_isAccepted(event)) {
+                if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS)
+                    g_buttonDownWidget = w; /* 隐式抓取：拖拽尾流直投本控件 */
+                else if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE)
+                    g_buttonDownWidget = NULL;
+                return true;
+            }
             if (XWidget_attrTest(&w->m_attributes, XWidgetAttribute_NoMousePropagation)) break;
         }
         if (w == top) break;
@@ -1203,6 +1635,11 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
     bool bubble;
     if (!top || !event) return false;
     type = XEvent_type(event);
+    /* 按键打断 ToolTip 唤醒计时（night #35，对标 qapplication.cpp:2650-2652
+     * KeyPress/KeyRelease→fallAsleep.stop + wakeUp.stop；Qt 此处不立即
+     * 收起已可见提示，同口径）。 */
+    if (type == XEVENT_TYPE_KEY_PRESS || type == XEVENT_TYPE_KEY_RELEASE)
+        xwidget_toolTipWakeCancel();
     /* 快捷键优先（对标 QShortcutMap：按键先过快捷键表，命中即消费）。 */
     if (type == XEVENT_TYPE_KEY_PRESS) {
         XShortcut* sc = XShortcut_match(
@@ -1263,6 +1700,13 @@ static XWidget* XWidget_dispatchInputAt(XWidget* top, XEvent* event)
         if (topMask->count > 0 && !XRegion_contains(topMask, pos.x, pos.y))
             return NULL;
         target = top;
+    }
+    /* 触摸/数位板同口径（问题 #22）：模态子树外的命中接受并吞掉——
+       isWindowBlocked 对全部输入生效，触摸不因 touch→mouse 仿真路径
+       绕过模态门禁（仿真鼠标事件经 dispatchPointerEvent 同样被拦）。 */
+    if (xwidget_targetBlockedByModal(top, target)) {
+        XEvent_accept(event);
+        return NULL;
     }
     w = target;
     while (w) {
@@ -1332,6 +1776,7 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
     XEventType type;
     XWidget* receiver;
     XPoint topLocal;
+    int32_t touchId = 0;
     if (!top || !event) return false;
     if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
         return false;
@@ -1342,61 +1787,105 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
     /* 新序列开始：防御性清理上一序列可能残留的仿真状态（平台漏发 END）。 */
     if (type == XEVENT_TYPE_TOUCH_BEGIN)
         g_touchMouseSynthActive = false;
-    if (g_touchGrabWidget) {
-        XWidget* grabTop = XWidget_topLevel(g_touchGrabWidget);
-        if (grabTop && grabTop != top) {
-            /* 跨顶层全局触点抓取：坐标换算到抓取窗口坐标系后转投
-               （对标鼠标抓取的同型兜底路由；触摸抓取生命周期同触点）。 */
+    /* 主点 id：多点事件取 points[0].m_id；无列表（旧构造）用 0。
+       方案 B per-id 路由的分组键。 */
+    {
+        const XTouchPoint* pts = XTouchEvent_points(
+            (const XTouchEvent*)event);
+        touchId = (pts && ((const XTouchEvent*)event)->m_pointCount > 0)
+                      ? pts[0].m_id
+                      : 0;
+    }
+    {
+        XTouchGrabEntry* grab = xwidget_touchGrabFind(touchId);
+        if (grab && grab->m_grabber) {
+            XWidget* grabTop = XWidget_topLevel(grab->m_grabber);
+            if (grabTop && grabTop != top) {
+                /* 跨顶层全局触点抓取：坐标换算到抓取窗口坐标系后转投
+                   （对标鼠标抓取的同型兜底路由；抓取生命周期同触点）。 */
+                XPoint pos = XWidget_eventPosition(event);
+                XPoint global = XWidget_mapToGlobal(top, &pos);
+                XPoint local = XWidget_mapFromGlobal(grabTop, &global);
+                XWidget_eventSetPosition(event, &local);
+                return XWidget_dispatchTouchEvent(grabTop, event);
+            }
+        }
+    }
+    {
+        XTouchGrabEntry* grab = xwidget_touchGrabFind(touchId);
+        if (grab && grab->m_grabber &&
+            XWidget_topLevel(grab->m_grabber) == top) {
+            /* 触点抓取期间直达抓取控件，不再按命中测试分派。 */
             XPoint pos = XWidget_eventPosition(event);
-            XPoint global = XWidget_mapToGlobal(top, &pos);
-            XPoint local = XWidget_mapFromGlobal(grabTop, &global);
+            XPoint off = XWidget_accumulateOffset(grab->m_grabber);
+            XPoint local;
+            local.x = pos.x - off.x;
+            local.y = pos.y - off.y;
             XWidget_eventSetPosition(event, &local);
-            return XWidget_dispatchTouchEvent(grabTop, event);
+            XWidget_sendEvent(grab->m_grabber, event);
+            receiver = XEvent_isAccepted(event) ? grab->m_grabber : NULL;
+        } else {
+            receiver = XWidget_dispatchInputAt(top, event);
+            /* 对标 Qt：TouchBegin **被接受** → 隐式抓取接收控件；未被
+               接受（控件无视触摸）则不抓取，落入下方 touch→mouse 仿
+               真——此前无条件抓取使仿真门控永远不可达（回归锁实证）。 */
+            if (type == XEVENT_TYPE_TOUCH_BEGIN && receiver) {
+                XTouchGrabEntry* slot =
+                    xwidget_touchGrabAcquire(touchId);
+                if (slot && XEvent_isAccepted(event))
+                {
+                    slot->m_id = touchId;
+                    slot->m_grabber = receiver;
+                    slot->m_mouseSynth = false;
+                }
+                else if (slot)
+                {
+                    /* 未被接受：占槽标记仿真（首触点合成鼠标）。 */
+                    slot->m_id = touchId;
+                    slot->m_grabber = NULL;
+                    slot->m_mouseSynth = true;
+                }
+            }
         }
     }
-    if (g_touchGrabWidget && XWidget_topLevel(g_touchGrabWidget) == top) {
-        /* 触点抓取期间直达抓取控件，不再按命中测试分派。 */
-        XPoint pos = XWidget_eventPosition(event);
-        XPoint off = XWidget_accumulateOffset(g_touchGrabWidget);
-        XPoint local;
-        local.x = pos.x - off.x;
-        local.y = pos.y - off.y;
-        XWidget_eventSetPosition(event, &local);
-        XWidget_sendEvent(g_touchGrabWidget, event);
-        receiver = XEvent_isAccepted(event) ? g_touchGrabWidget : NULL;
-    } else {
-        receiver = XWidget_dispatchInputAt(top, event);
-        /* 对标 Qt：TouchBegin **被接受** → 隐式抓取接收控件；未被接受
-           （控件无视触摸）则不抓取，落入下方 touch→mouse 仿真——
-           此前无条件抓取使仿真门控永远不可达（回归锁
-           「touch→mouse 仿真 itemClicked」实证）。 */
-        if (type == XEVENT_TYPE_TOUCH_BEGIN && receiver)
-            g_touchGrabWidget = XEvent_isAccepted(event) ? receiver
-                                                         : NULL;
-    }
-    /* touch→mouse 仿真：仅在 BEGIN 未被接受（无触点抓取）时进入，之后
-       整条序列持续合成，END 合成释放后复位（对标 Qt per-point 状态机）。 */
-    if (g_touchMouseSynthEnabled && !g_touchGrabWidget) {
-        if (type == XEVENT_TYPE_TOUCH_BEGIN && !receiver) {
-            g_touchMouseSynthActive = true;
-            /* 对标 Qt：合成 press 携带 LeftButton（button 与 buttons 一致）。 */
-            XWidget_synthesizeMouseFromTouch(top,
-                XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton,
-                XMouseButton_LeftButton, &topLocal);
-        } else if (type == XEVENT_TYPE_TOUCH_UPDATE && g_touchMouseSynthActive) {
-            /* move：button 为 NoButton，buttons 保持按压态。 */
-            XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_MOVE,
-                XMouseButton_NoButton, XMouseButton_LeftButton, &topLocal);
-        } else if (type == XEVENT_TYPE_TOUCH_END && g_touchMouseSynthActive) {
-            /* release：button 为 LeftButton，buttons 为剩余按压（空）。 */
-            XWidget_synthesizeMouseFromTouch(top,
-                XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
-                XMouseButton_NoButton, &topLocal);
+    /* touch→mouse 仿真：按 per-id 状态——本触点未被接受（无抓取控件）
+       且该 id 尚未合成过（一个序列只合成一组鼠标）。多指下第二指若
+       被接受走抓取，不再追加合成（防止干扰已合成的鼠标按压态）。 */
+    {
+        XTouchGrabEntry* grab = xwidget_touchGrabFind(touchId);
+        bool synthActive = grab && grab->m_mouseSynth;
+        bool grabbed = grab && grab->m_grabber;
+        if (g_touchMouseSynthEnabled && !grabbed &&
+            (synthActive || !grab)) {
+            if (type == XEVENT_TYPE_TOUCH_BEGIN && !receiver) {
+                if (grab) grab->m_mouseSynth = true;
+                g_touchMouseSynthActive = true;
+                XWidget_synthesizeMouseFromTouch(top,
+                    XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton,
+                    XMouseButton_LeftButton, &topLocal);
+            } else if (type == XEVENT_TYPE_TOUCH_UPDATE &&
+                       (synthActive || g_touchMouseSynthActive)) {
+                XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_MOVE,
+                    XMouseButton_NoButton, XMouseButton_LeftButton,
+                    &topLocal);
+            } else if (type == XEVENT_TYPE_TOUCH_END &&
+                       (synthActive || g_touchMouseSynthActive)) {
+                XWidget_synthesizeMouseFromTouch(top,
+                    XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+                    XMouseButton_NoButton, &topLocal);
+            }
         }
     }
-    /* Qt 语义：触点序列结束（END/CANCEL）后清理抓取与仿真状态。 */
-    if (type == XEVENT_TYPE_TOUCH_END || type == XEVENT_TYPE_TOUCH_CANCEL) {
-        g_touchGrabWidget = NULL;
+    /* Qt 语义：触点序列结束（END/CANCEL）后释放该 id 槽位；CANCEL 额
+       外清全部（平台断触兜底）。 */
+    if (type == XEVENT_TYPE_TOUCH_END) {
+        xwidget_touchGrabRelease(touchId);
+        g_touchMouseSynthActive = false;
+    } else if (type == XEVENT_TYPE_TOUCH_CANCEL) {
+        int ci;
+        xwidget_touchGrabTableInit();
+        for (ci = 0; ci < XTOUCH_GRAB_CAPACITY; ++ci)
+            g_touchGrabTable[ci].m_id = -1;
         g_touchMouseSynthActive = false;
     }
     return XEvent_isAccepted(event);
@@ -1490,6 +1979,18 @@ static void XWidget_noopEvent_default(XWidget* self, XEvent* event)
 {
     (void)self;
     (void)event;
+}
+
+/** @brief 焦点变化默认槽：聚焦/失焦即重绘（对标 QWidget::focusInEvent /
+ *         focusOutEvent 默认 update()，qwidget.cpp:9714/:9740）。
+ * @details 样式层 HasFocus 焦点框（dotted frame）只在重绘时呈现——
+ *          此前默认槽为空操作，Tab 移动焦点后新旧焦点控件都不重绘，
+ *          焦点框要等无关重绘才出现甚至永不出现（问题 #13 键盘焦点
+ *          完全不可见的另一半根因）。 */
+static void XWidget_focusEvent_default(XWidget* self, XEvent* event)
+{
+    (void)event;
+    if (self) XWidget_update(self);
 }
 
 /* ==================== XWidgetWindow 桥接窗口类 ==================== */
@@ -1611,6 +2112,13 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
         return XWidget_dispatchTabletEvent(top, event);
     case XEVENT_TYPE_LEAVE:
         XWidget_clearUnderMouseRecursive(top);
+        /* 指针已离开顶层：悬停者登记同步作废（对标 lastMouseReceiver
+           在窗口失活/离开后的复位），防止后续悬停比对命中悬挂指针。 */
+        g_lastMouseWidget = NULL;
+        /* 指针离开顶层：ToolTip 唤醒作废+提示宽限收起（night #35，
+           对标 qapplication.cpp:2657 Leave→toolTipWakeUp.stop 与
+           QTipLabel eventFilter Leave→hideTip）。 */
+        xwidget_toolTipLeave();
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
     case XEVENT_TYPE_KEY_PRESS:
@@ -1702,8 +2210,8 @@ XVtable* XWidget_class_init(void)
         XWidget_noopEvent_default,         /* ResizeEvent */
         XWidget_noopEvent_default,         /* MoveEvent */
         XWidget_closeEvent_default,        /* CloseEvent */
-        XWidget_noopEvent_default,         /* FocusInEvent */
-        XWidget_noopEvent_default,         /* FocusOutEvent */
+        XWidget_focusEvent_default,        /* FocusInEvent（对标 QWidget::focusInEvent 默认 update()） */
+        XWidget_focusEvent_default,        /* FocusOutEvent（对标 QWidget::focusOutEvent 默认 update()） */
         XWidget_ignoreEvent_default,       /* EnterEvent */
         XWidget_ignoreEvent_default,       /* LeaveEvent */
         XWidget_ignoreEvent_default,       /* KeyPressEvent */
@@ -1996,8 +2504,10 @@ static void VXWidget_deinit(XWidget* self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
     if (g_mouseGrabWidget == self)
         g_mouseGrabWidget = NULL;
-    if (g_touchGrabWidget == self)
-        g_touchGrabWidget = NULL;
+    /* 析构控件若是 ToolTip 悬停目标，登记同步作废（night #35 悬挂防护：
+       防唤醒/宽限定时器稍后解引用已析构控件）。 */
+    xwidget_toolTipTargetGone(self);
+    xwidget_touchGrabReleaseByWidget(self);
     if (g_keyboardGrabWidget == self)
         g_keyboardGrabWidget = NULL;
     XWidget_freeString(&self->m_toolTip);
@@ -2364,20 +2874,24 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
     case XEVENT_TYPE_KEY_PRESS:
         XWidget_keyPressEvent_base(self, event);
         /* 对标 QWidget::event 的 Tab 焦点遍历：控件未处理的 Tab/
-         * Shift+Tab（Backtab）按 focusPolicy 移动焦点并消费。此前
-         * focusNextChild 全仓无调用点，Tab 键无效。 */
+         * Shift+Tab（Backtab）交窗口级 focusNextPrevChild 移动焦点并
+         * 消费。不以接收控件自身 focusPolicy 为门槛——Qt 中 Tab 遍历
+         * 由所在顶层窗口决定去向（qwidget.cpp:6816 focusNextPrevChild
+         * 沿父链上交），候选资格只看候选控件自身的 TabFocus 位；初始
+         * 无任何焦点控件时由窗口级回退起点启动遍历（问题 #3）。
+         * 派发顺序保持「keyPressEvent 优先、未接受才遍历」：编辑器
+         * （XItemDelegate）与富文本链接导航在 keyPressEvent 消费 Tab
+         * 提交/锚点移动，等价 Qt 的 focusNextPrevChild 重载/事件过滤器
+         * 拦截位，先遍历会抢走其按键。 */
         if (!XEvent_isAccepted(event)) {
             XKeyEvent* ke = (XKeyEvent*)event;
             int key = (int)ke->m_key;
             int mods = (int)ke->m_modifiers;
             if ((key == (int)XKey_Tab || key == (int)XKey_Backtab) &&
-                (mods & ~(int)XKeyboardModifier_ShiftModifier) == 0 &&
-                (XWidget_focusPolicy(self) & XWidgetFocusPolicy_TabFocus)) {
+                (mods & ~(int)XKeyboardModifier_ShiftModifier) == 0) {
                 bool next = (key == (int)XKey_Tab) ==
                             ((mods & (int)XKeyboardModifier_ShiftModifier) == 0);
-                bool moved = next ? XWidget_focusNextChild(self)
-                                  : XWidget_focusPreviousChild(self);
-                if (moved) {
+                if (xwidget_focusNextPrevChild(self, next)) {
                     XEvent_accept(event);
                     return true;
                 }
@@ -3353,10 +3867,10 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
 #endif
     XObject_setParent((XObject*)self, parent ? (XObject*)parent : NULL);
     if (parentChanged && parent) {
-        /* QWidget::setParent(QWidget*) 将子控件移到新父控件的 (0,0)，
-         * 宽高保持不变；setGeometry 同时发出 MOVE 事件并刷新内容矩形。 */
-        XWidget_setGeometry(self, 0, 0, self->m_windowRect.width,
-                            self->m_windowRect.height);
+        /* 对标 Qt QWidgetPrivate::setParent_sys（qwidget.cpp:10925-11035，
+         * 全程不写 data.crect）：换父后位置与尺寸完整保留。原「移到
+         * (0,0)」系误标（Qt 源码/文档均无此行为），曾把 wrapTabPage
+         * 重挂的滚动条几何打回原点（第一轮 #47 根因）。 */
     }
     /* 父链变化后重算生效可见状态。 */
     {
@@ -3410,8 +3924,15 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
         /* 对标 Qt 6.8 QWidgetPrivate::childAtRecursiveHelper：只跳过
          * isHidden()（显式隐藏位 WA_WState_Hidden）与窗口型子控件，
          * 不要求生效可见（isVisible 含父链）——父窗口未 show 时命中
-         * 测试仍按几何进行，事件投递路径（可见窗口内）等价。 */
+         * 测试仍按几何进行，事件投递路径（可见窗口内）等价。
+         * WA_TransparentForMouseEvents 子控件同样跳过（对标 Qt 鼠标
+         * 语义：事件穿透到下层兄弟控件）——否则悬浮层按几何命中后
+         * 沿父链上抛，压在其下层的可交互控件（如 SizeGrip）永收不到
+         * 按压（复扫-3 #37 实锚）。 */
         if (XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
+            continue;
+        if (XWidget_testAttribute(widget,
+                                  XWidgetAttribute_TransparentForMouseEvents))
             continue;
         if (!XRect_contains(&widget->m_windowRect, point->x, point->y)) continue;
         local.x = point->x - widget->m_windowRect.x;
@@ -4390,9 +4911,13 @@ void XWidget_setTabOrder(XWidget* first, XWidget* second)
 /** @brief 判断控件是否可作为 Tab 链中的显式/文档序焦点候选（与收集规则一致）。 */
 static bool XWidget_focusChainCandidate(const XWidget* self)
 {
+    /* 对标 Qt 焦点遍历按生效可见性过滤（qwidget.cpp focusNextPrevChild
+     * 的候选走 isVisible()）：StackOne 隐藏页的子控件虽 explicitShow 但
+     * 生效不可见，不得成为候选——否则 Tab 落到不可见控件上（复扫-3
+     * #40 根因：页3 Tab 落到隐藏「按钮演示」页的 m_button）。 */
     return self && self->m_enabled &&
            (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
-           self->m_explicitShow && !self->m_isWindow;
+           self->m_visible && !self->m_isWindow;
 }
 
 /** @brief 深度优先收集可 Tab 聚焦子控件（不含顶层自身；顺序即绘制顺序）。 */
@@ -4451,13 +4976,41 @@ static XWidget* XWidget_focusChainTarget(XWidget* self, bool forward)
             break;
         }
     }
+    if (cur == n) {
+        /* 对标 Qt 焦点锚定：接收 Tab 的控件自身不是候选（如行编辑的
+         * 内嵌编辑器）时，以最近的可聚焦祖先为锚续链——此前直接从头
+         * 取候选，Tab 从文本控件出发会落回文档序首控件（复扫-3 #40），
+         * 焦点链在文本控件处断岛。 */
+        XWidget* anc = XWidget_parentWidget(self);
+        while (anc && cur == n) {
+            for (i = 0; i < n; ++i) {
+                if (XVector_At_Base(list, (int64_t)i, XWidget*) == anc) {
+                    cur = i;
+                    break;
+                }
+            }
+            if (cur == n)
+                anc = XWidget_parentWidget(anc);
+        }
+    }
     target = NULL;
     for (i = 0; i < n; ++i) {
-        size_t idx = forward ? (cur + 1 + i) % n : (cur + n - 1 - i) % n;
-        XWidget* candidate = XVector_At_Base(list, (int64_t)idx, XWidget*);
-        if (candidate == self) continue;
-        target = candidate;
-        break;
+        size_t idx;
+        /* 当前接收控件不在候选集（如 NoFocus 顶层接收首个 Tab）时的
+         * 退化起点：forward 从 0、backward 从 n-1（对标 Qt
+         * focusNextPrevChild_helper 的 f=toplevel 回退：从起点控件沿链
+         * 推进，首个候选即目标）。此前 (cur+1+i)%n 在 cur=n 时从 1
+         * 起跳，文档序首个可聚焦控件被跳过。 */
+        if (cur == n)
+            idx = forward ? i : (n - 1 - i);
+        else
+            idx = forward ? (cur + 1 + i) % n : (cur + n - 1 - i) % n;
+        {
+            XWidget* candidate = XVector_At_Base(list, (int64_t)idx, XWidget*);
+            if (candidate == self) continue;
+            target = candidate;
+            break;
+        }
     }
     XVector_delete_base((XClass*)list);
     return target;
@@ -4470,6 +5023,32 @@ static bool XWidget_focusStep(XWidget* self, bool forward)
     if (target)
         XWidget_setFocus(target);
     return target != NULL;
+}
+
+/** @brief 窗口级 Tab 焦点遍历入口（对标 QWidget::focusNextPrevChild，
+ *         qwidget.cpp:6816）。
+ * @details Qt 语义：子控件把遍历决定权沿父链上交所在顶层窗口——"only
+ *          the window that contains the child widgets decides where to
+ *          redirect focus"；窗口级以当前焦点控件为起点、无焦点控件时
+ *          回退以顶层自身为起点（focusNextPrevChild_helper：
+ *          f = toplevel->focusWidget() 不到时 f = toplevel），因此初始
+ *          无任何子控件持有焦点时首个 Tab 也能落入文档序首个候选。
+ *          此前 Tab 遍历以「接收键事件的控件自身 focusPolicy & TabFocus」
+ *          为门槛（问题 #3：初始无焦点且顶层为 NoFocus，遍历永不启动）。
+ *          文件内静态实现：公共头无此入口，XWidget.h 不在本批改动面。 */
+static bool xwidget_focusNextPrevChild(XWidget* self, bool next)
+{
+    XWidget* top;
+    if (!self) return false;
+    if (!self->m_isWindow) {
+        top = XWidget_topLevel(self);
+        if (top && top != self)
+            return xwidget_focusNextPrevChild(top, next);
+    }
+    /* 优先从当前焦点控件推进；g_focusWidget 不在本窗口时以顶层为起点。 */
+    if (g_focusWidget && XWidget_topLevel(g_focusWidget) == self)
+        return XWidget_focusStep(g_focusWidget, next);
+    return XWidget_focusStep(self, next);
 }
 
 XWidget* XWidget_nextInFocusChain(const XWidget* self)
@@ -5754,17 +6333,31 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         {
             XRect sc = { 0, 0, 0, 0 };
             int r;
+            int maxRx1 = 0;
+            int maxRy1 = 0;
+            /* 脏区外接框必须独立追踪右/下最远边：早先实现以"远边是否越过
+               当前 x+width"增长宽高，后续矩形把 sc.x/sc.y 左/上拉走后
+               x+width 随之左移，右/下边界被静默收窄（多矩形脏区下表面
+               裁剪框小于真实外接框，批内较远矩形的重绘被整段裁掉——
+               效果控件交互重绘"控件+下方按钮消失"根因之一）。 */
             for (r = 0; r < whole.count; ++r) {
                 const XRect* rc = &whole.rects[r];
                 int rx1 = rc->x + rc->width;
                 int ry1 = rc->y + rc->height;
-                if (r == 0) { sc = *rc; continue; }
+                if (r == 0) { sc = *rc; maxRx1 = rx1; maxRy1 = ry1; continue; }
                 if (rc->x < sc.x) sc.x = rc->x;
                 if (rc->y < sc.y) sc.y = rc->y;
-                if (rx1 > sc.x + sc.width) sc.width = rx1 - sc.x;
-                if (ry1 > sc.y + sc.height) sc.height = ry1 - sc.y;
+                if (rx1 > maxRx1) maxRx1 = rx1;
+                if (ry1 > maxRy1) maxRy1 = ry1;
             }
+            sc.width = maxRx1 - sc.x;
+            sc.height = maxRy1 - sc.y;
             XPainter_setSurfaceClipRect(&sc, XBackingStore_paintImage(store));
+            /* 登记批次裁剪：效果管线离屏段摘除后按原样恢复（含目标图像
+               指针，begin_image 继承判定按指针比对）。 */
+            xg_flushSurfaceClipRect = sc;
+            xg_flushSurfaceClipImage = XBackingStore_paintImage(store);
+            xg_flushSurfaceClipActive = true;
         }
         XBackingStore_beginPaint(store, &whole);
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
@@ -5825,6 +6418,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         g_paintTargetImage = NULL;
     XRegion_deinit(&whole);
     XPainter_clearSurfaceClipRect();
+    xg_flushSurfaceClipActive = false; /* 批次结束，离屏段恢复基准随之失效 */
     /* 保留绘制期间或本次快照未覆盖的脏区，并确保它最终会再次派发。 */
     if (top->m_dirty.count > 0)
     {
@@ -6041,16 +6635,25 @@ static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
     snapshot = xwidget_createSnapshotImage(XWidget_width(widget),
                                            XWidget_height(widget));
     if (!snapshot) return false;
+    /* 离屏段摘除表面裁剪：快照画布与效果输出画布均为控件局部坐标系
+       的独立离屏画布，设备坐标的批次表面裁剪对它们是错误约束（多矩形
+       脏区交互重绘时外接框不含画布原点，drawImage 被裁成空/残块——
+       效果输出为空→回贴擦除控件内容根因）。对标 Qt：效果 source→
+       pixmap 离屏处理不受 systemClip 约束；回贴步以输出矩形自限并在
+       本函数出口恢复批次裁剪（嵌套由深度计数保证最外层恢复）。 */
+    xwidget_surfaceClipOffEnter();
     /* 临时摘除效果：source 快照绘制不得再次进入效果分支（防递归）。 */
     widget->m_graphicsEffect = NULL;
     rendered = xwidget_renderSubtree(widget, snapshot, 0, 0);
     widget->m_graphicsEffect = effect;
     if (!rendered) {
         XImage_delete_base(snapshot);
+        xwidget_surfaceClipOffExit();
         return false;
     }
     drawn = XGraphicsEffect_drawWidget(effect, widget, snapshot, paintRegion);
     XImage_delete_base(snapshot);
+    xwidget_surfaceClipOffExit();
     return drawn;
 }
 

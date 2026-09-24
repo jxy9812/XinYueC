@@ -460,6 +460,14 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     XClassSetVtable(self, XMainWindow);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
+    /* 对标 Qt qwidget.cpp:2288 QWidgetPrivate::paintBackground：根窗口
+     * （DrawAsRoot 分支）无论 autoFillBackground 与否都先用 palette
+     * Window 刷填充整片背景；XGui 默认绘制槽（XWidget.c
+     * XWidget_paintEvent_default）只在 autoFillBackground 置位时回填，
+     * 且平台原生窗口 background_pixel=0（黑），主窗口作为顶层不置位
+     * 时菜单栏/停靠标题条之外全部露出黑底，中央标签与停靠内容文字
+     * 黑字画黑底不可见（问题 #33；XDialog_init 同款置位先例）。 */
+    XWidget_setAutoFillBackground((XWidget*)self, true);
     self->m_toolBars = XVector_Create(XToolBar*);
     self->m_toolBarAreas = XVector_Create(int);
     self->m_docks = XVector_Create(XDockWidget*);

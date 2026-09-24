@@ -227,7 +227,13 @@ static void xcs_drawPanelButtonCommand(XStyle* self,
     dark = xcs_color(option, XPaletteColorRole_Dark);
     if (light == 0) light = 0xFFE0E0E0u;
     if (dark == 0) dark = 0xFF808080u;
-    XPainter_fillRect(painter, &r, base);
+    /* 对标 QFusionStyle::drawPrimitive PE_PanelButtonCommand（isDown 分支
+     * "p->setBrush(isDown ? QBrush(buttonColor.darker(110)) : gradient)"，
+     * qfusionstyle.cpp:805）：按下态整体填充加深 10%，而非仅反转 1px
+     * 内斜面——浅色主题下 Button/Light/Midlight 近同色时，仅调换斜面
+     * 亮暗线的按压态亮度均值差仅 ≈1%（问题 #5 量化证据），Qt 的可见
+     * 按压感正来自整面 darker(110)。 */
+    XPainter_fillRect(painter, &r, sunken ? xcs_darker(base, 110) : base);
     if (sunken) {
         /* 凹陷：内缩 1px 的高光上边 + 暗下边。 */
         XPainter_fillRect(painter,

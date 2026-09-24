@@ -10,6 +10,7 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEvent.h"
+#include "XEventType.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -84,9 +85,121 @@ static void xhv_emitVoid(XHeaderView* self, size_t signal)
     }
 }
 
+/* ==================== 鼠标点击链（sectionPressed/sectionClicked） ==================== */
+
+/* 头文件无按压段字段的替代承载：表头 → 按压段逻辑号 的单链旁表
+ * （对照 XAbstractItemView 悬停差分旁表范式）。节点随首次按压创建、
+ * 随表头析构移除（VXHeaderView_deinit 为全路径唯一析构入口），无
+ * 泄漏与悬垂键。 */
+typedef struct XhvPressEntry
+{
+    struct XhvPressEntry* m_next; /**< 链表后继。 */
+    const XHeaderView* m_view;    /**< 键（表头借用指针）。 */
+    int m_pressed;                /**< 按压段逻辑号；-1=无按压。 */
+} XhvPressEntry;
+
+static XhvPressEntry* xhv_pressEntries = NULL;
+
+/** @brief 读表头的按压段；无记录返回 -1。 */
+static int xhv_pressGet(const XHeaderView* view)
+{
+    const XhvPressEntry* e;
+    for (e = xhv_pressEntries; e; e = e->m_next)
+        if (e->m_view == view) return e->m_pressed;
+    return -1;
+}
+
+/** @brief 写表头的按压段（无记录则头插建节点；分配失败忽略——
+ *         释放路径按 -1 基准收敛，最多不发射 sectionClicked）。 */
+static void xhv_pressSet(const XHeaderView* view, int section)
+{
+    XhvPressEntry* e;
+    for (e = xhv_pressEntries; e; e = e->m_next) {
+        if (e->m_view == view) {
+            e->m_pressed = section;
+            return;
+        }
+    }
+    e = (XhvPressEntry*)XMalloc_System(sizeof(*e));
+    if (!e) return;
+    e->m_next = xhv_pressEntries;
+    e->m_view = view;
+    e->m_pressed = section;
+    xhv_pressEntries = e;
+}
+
+/** @brief 移除表头的按压记录（析构路径）。 */
+static void xhv_pressRelease(const XHeaderView* view)
+{
+    XhvPressEntry** p = &xhv_pressEntries;
+    while (*p) {
+        if ((*p)->m_view == view) {
+            XhvPressEntry* dead = *p;
+            *p = dead->m_next;
+            XFree_System(dead);
+            return;
+        }
+        p = &(*p)->m_next;
+    }
+}
+
+static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event);
+static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event);
+
+/* 对标 Qt QHeaderView::mousePressEvent（qheaderview.cpp:2505）：左键
+ * 按压于段上（非段间手柄，本库暂无调宽状态机）时记录按压段，
+ * clickableSections 时发射 sectionPressed。 */
+static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XHeaderView* header = (XHeaderView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int position;
+    int section;
+    if (!header || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
+    me = (XMouseEvent*)event;
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
+    pos = XMouseEvent_position(me);
+    position = (header->m_orientation == 0) ? pos.x : pos.y;
+    section = XHeaderView_logicalIndexAt(header, position);
+    xhv_pressSet(header, section);
+    if (section >= 0 && header->m_sectionsClickable)
+        XHeaderView_sectionPressed_signal(header, section);
+    XEvent_accept(event);
+}
+
+/* 对标 Qt QHeaderView::mouseReleaseEvent（qheaderview.cpp:2668 尾段）：
+ * clickable 且释放位于按压段内时发射 sectionClicked（Qt 另按段矩形
+ * contains 判定并翻转排序指示器；本库无段拖拽/指示器状态机，简化
+ * 为释放段==按压段同段判定）。 */
+static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XHeaderView* header = (XHeaderView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int position;
+    int section;
+    int pressed;
+    if (!header || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
+    me = (XMouseEvent*)event;
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
+    pos = XMouseEvent_position(me);
+    position = (header->m_orientation == 0) ? pos.x : pos.y;
+    section = XHeaderView_logicalIndexAt(header, position);
+    pressed = xhv_pressGet(header);
+    xhv_pressSet(header, -1);
+    if (header->m_sectionsClickable && section >= 0 && section == pressed)
+        XHeaderView_sectionClicked_signal(header, section);
+    XEvent_accept(event);
+}
+
 static void VXHeaderView_deinit(XHeaderView* self)
 {
     if (!self) return;
+    /* 按压段旁表节点随表头析构移除（防悬垂键；旁表头为静态承载）。 */
+    xhv_pressRelease(self);
     if (self->m_sections) {
         XVector_delete_base(self->m_sections);
         self->m_sections = NULL;
@@ -213,6 +326,12 @@ XVtable* XHeaderView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHeaderView_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHeaderView_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHeaderView_move);
+    /* 对标 Qt QHeaderView 的鼠标事件承接（qheaderview.cpp:2505/:2668）：
+     * 段按压/释放驱动 sectionPressed/sectionClicked 发射。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VXHeaderView_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXHeaderView_mouseReleaseEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -1292,17 +1411,18 @@ XWidget* XHeaderView_viewport(XHeaderView* self)
 
 void* XHeaderView_sectionClicked_signal(XHeaderView* self, int section)
 {
-    (void)section;
-    /* Qt 发射点在鼠标释放事件（clickable 且释放于按压段），不在
-     * setSortIndicator 内；本实现无鼠标事件路径，句柄预留（见头文件
-     * @note）。 */
+    /* 真实发射点：VXHeaderView_mouseReleaseEvent（clickable 且释放于
+     * 按压段，对标 Qt mouseReleaseEvent 尾段；连接方亦可调用本句柄
+     * 手动发射）。 */
+    xhv_emitInt(self, (size_t)XHeaderView_sectionClicked_signal, section);
     return (void*)(size_t)XHeaderView_sectionClicked_signal;
 }
 
 void* XHeaderView_sectionPressed_signal(XHeaderView* self, int section)
 {
-    (void)section;
-    /* 表头鼠标事件路径未接入：句柄预留，暂无发射点。 */
+    /* 真实发射点：VXHeaderView_mousePressEvent（clickable 且按压于
+     * 段上，对标 Qt mousePressEvent 的 sectionPressed 分支）。 */
+    xhv_emitInt(self, (size_t)XHeaderView_sectionPressed_signal, section);
     return (void*)(size_t)XHeaderView_sectionPressed_signal;
 }
 

@@ -2044,6 +2044,23 @@ static void VXLabel_paintEvent(XWidget* self, XEvent* event)
     clip = XPaintEvent_rect(pe);
     XPainter_setClipRect(&painter, &clip, XPainterClipOperation_ReplaceClip);
 #endif
+    /* 对标 Qt QWidgetPrivate::paintBackground（qwidget.cpp 绘制管线在
+     * 内容绘制前回填背景角色色）：autoFillBackground 置位时先以背景
+     * 角色（缺省 Window）色填充控件矩形，再绘内容——修复 night #9：
+     * 效果页基线标签设钢蓝 Window 底色 + autoFillBackground(true) 后
+     * 仍恒白底，此前该标志仅被 XWidget 默认绘制槽消费，XLabel 自绘
+     * 路径从未回填。 */
+    if (XWidget_autoFillBackground(self)) {
+        XPalette pal = XWidget_palette(self);
+        XPaletteColorRole role = XWidget_backgroundRole(self);
+        XColor c;
+        XRect r;
+        if (role == XPaletteColorRole_NoRole)
+            role = XPaletteColorRole_Window;
+        c = XPalette_color(&pal, XPaletteColorGroup_Active, role);
+        XRect_init(&r, 0, 0, XWidget_width(self), XWidget_height(self));
+        XPainter_fillRect(&painter, &r, XColor_rgba(&c));
+    }
     XLabel_drawContents((XLabel*)self, &painter);
     XPainter_end(&painter);
     XPainter_deinit(&painter);

@@ -462,7 +462,18 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
         XColorDialog_delete_base(dlg);
         return initial;
     }
-    XLayout_setContentsMargins((XLayout*)root, 12, 12, 12, 12);
+    /* 标题条带让位（对标 Qt qcolordialog.cpp 布局：色板区在标题栏
+     * 以下分带排布；XGui 子控件形态对话框无平台标题栏，标题由
+     * XDialog 面板顶部带内绘制（XDialog.c 绘制带 y=4..22），色板区
+     * 须下移让出该条带）。对齐 #20 XMessageBox.c xmsg_contentTop
+     * 先例口径：有标题时内容顶起 28，无标题保持 12 不占位。夜间台
+     * 账 #28 伴随：标题「选择颜色」上半被 48 色板首行遮半。 */
+    {
+        const XString* t = XWidget_windowTitle((const XWidget*)dlg);
+        const char* u = t ? XString_toUtf8(t) : NULL;
+        XLayout_setContentsMargins((XLayout*)root, 12,
+                                   (u && u[0]) ? 28 : 12, 12, 12);
+    }
     XLayout_setSpacing((XLayout*)root, 8);
     {
         /* 标准色网格（8×6，可点击选色，对标 QColorDialog 标准色区）。 */
@@ -538,6 +549,14 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                                       (size_t)XAbstractButton_clicked_signal,
                                       (XObject*)dlg, xcd_rejectSlot,
                                       XConnectionType_Direct);
+                }
+                /* 对标 Qt 模态对话框内 Tab 焦点链不越出对话框的窗口
+                   级语义（详见 XDialogButtonBox.c xdb_relayout 同款注
+                   记）：显式 Tab 环链把确定/取消围成子树内闭环（夜
+                   间台账 #23/#24 同根防范）。 */
+                if (ok && cancel) {
+                    XWidget_setTabOrder((XWidget*)ok, (XWidget*)cancel);
+                    XWidget_setTabOrder((XWidget*)cancel, (XWidget*)ok);
                 }
                 XBoxLayout_addLayout(root, (XLayout*)bar);
             }

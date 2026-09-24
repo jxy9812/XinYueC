@@ -36,12 +36,16 @@ static void xks_modPrefix(XKeyboardModifiers mods, char* out, size_t cap)
         XStrncat(out, "Meta+", cap - XStrlen(out) - 1);
 }
 
-/** @brief 将键码转为可读名称（对标 QKeySequence 的键名映射）。 */
+/** @brief 将键码转为可读名称（对标 QKeySequence 的键名映射；可打印键
+ *         统一大写，对标 qkeysequence.cpp:1276 keyName 的
+ *         QChar::fromUcs2(key).toUpper()）。 */
 static const char* xks_keyName(int key)
 {
     static char buf[8];
     if (key >= 0x20 && key <= 0x7E) {
-        buf[0] = (char)key;
+        char c = (char)key;
+        if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        buf[0] = c;
         buf[1] = 0;
         return buf;
     }
@@ -106,6 +110,25 @@ static void xkse_emitFinished(XKeySequenceEdit* self)
 
 /* ==================== 事件处理 ==================== */
 
+/** @brief 左键按下：点击聚焦后进入按键捕获（对标 QKeySequenceEdit 的
+ *         Qt::StrongFocus 点击聚焦语义——Qt 中点击控件即获焦点并开始
+ *         捕获；XGui 的点击聚焦由控件 mousePress 自请焦点（XLineEdit
+ *         同款模式），此前未重载 MousePressEvent 且默认 NoFocus，点击
+ *         不聚焦、Ctrl+O 等组合永不被捕获（night #31）。 */
+static void VX_kse_mousePressEvent(XWidget* self, XEvent* event)
+{
+    if (!self || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
+    if (XMouseEvent_button((XMouseEvent*)event) ==
+        XMouseButton_LeftButton) {
+        XWidget_setFocusReason(self, XFocusReason_Mouse);
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
+    XEvent_ignore(event);
+}
+
 static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
@@ -121,11 +144,16 @@ static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
             XKeyboardModifier_ShiftModifier |
             XKeyboardModifier_AltModifier |
             XKeyboardModifier_MetaModifier);
-    /* 纯修饰键按下不记录（等非修饰键完成组合）。 */
-    if (key == (int)XKeyboardModifier_ControlModifier ||
-        key == (int)XKeyboardModifier_ShiftModifier ||
-        key == (int)XKeyboardModifier_AltModifier ||
-        key == (int)XKeyboardModifier_MetaModifier) {
+    /* 对标 Qt qkeysequenceedit.cpp:328 keyPressEvent：纯修饰键按下只
+     * 累积状态、不产生分组——按 XKey_* 键码（0x01000020..23）识别。
+     * night #31 根修：旧码误比 XKeyboardModifier_* 位掩码（0x01..0x08，
+     * 是 modifiers 属性的取值），键码永远不等于它，修饰键按下遂落入
+     * 下方记录分支被记成 keyName()==\"?\" 的多余分组（「?, Ctrl+o」）。 */
+    if (key == (int)XKey_Control ||
+        key == (int)XKey_Shift ||
+        key == (int)XKey_Meta ||
+        key == (int)XKey_Alt ||
+        key == (int)XKey_None /* 与 Qt::Key_unknown 口径同：未知键不记录。 */) {
         XEvent_accept(event);
         return;
     }
@@ -247,6 +275,7 @@ XVtable* XKeySequenceEdit_class_init(void)
     XVTABLE_INIT_DEFAULT(XKeySequenceEdit)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VX_kse_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_kse_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_kse_paintEvent);
     return XVTABLE_DEFAULT;
 }
@@ -270,6 +299,10 @@ void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
     self->m_finishing[0].key = (int)XKey_Tab;
     self->m_finishing[1].modifiers = XKeyboardModifier_NoModifier;
     self->m_finishing[1].key = (int)XKey_Backtab;
+    /* 对标 QKeySequenceEditPrivate::init 的 setFocusPolicy(Qt::StrongFocus)：
+     * 可经 Tab 与点击取得焦点（night #31：默认 NoFocus 使点击/Tab 均
+     * 无法聚焦，捕获功能整体不可用）。 */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
     XWidget_resize(self, 120, 26);
     hint.width = 120;
     hint.height = 26;

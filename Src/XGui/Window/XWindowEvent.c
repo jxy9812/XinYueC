@@ -944,10 +944,47 @@ XPoint XMoveEvent_oldPosition(const XMoveEvent* event)
 
 /* ==================== XTouchEvent（Task 2.13） ==================== */
 
+static void VXTouchEvent_deinit(XTouchEvent* self)
+{
+    if (!self) return;
+    if (self->m_points)
+    {
+        XFree_System(self->m_points);
+        self->m_points = NULL;
+    }
+    self->m_pointCount = 0;
+    XClass_Deinit_Parent(XEvent, (XEvent*)self);
+}
+
+static XEvent* VXTouchEvent_clone(const XTouchEvent* event)
+{
+    XTouchEvent* copy = XClass_Malloc(XTouchEvent);
+    if (!copy) return NULL;
+    XClassSetVtable(copy, XTouchEvent);
+    xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    copy->m_points = NULL;
+    copy->m_pointCount = 0;
+    if (event->m_points && event->m_pointCount > 0)
+    {
+        size_t bytes = (size_t)event->m_pointCount * sizeof(XTouchPoint);
+        copy->m_points = (XTouchPoint*)XMalloc_System(bytes);
+        if (copy->m_points)
+        {
+            XMemcpy(copy->m_points, event->m_points, bytes);
+            copy->m_pointCount = event->m_pointCount;
+        }
+    }
+    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(copy, true);
+    return (XEvent*)copy;
+}
+
 XVtable* XTouchEvent_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTouchEvent)
     XVTABLE_INHERIT_XCLASS(XEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTouchEvent_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXTouchEvent_clone);
     return XVTABLE_DEFAULT;
 }
 
@@ -976,6 +1013,9 @@ void XTouchEvent_init(XTouchEvent* event, XEventType type,
     if (position) event->m_position = *position;
     if (globalPosition) event->m_globalPosition = *globalPosition;
     event->m_pointCount = pointCount > 0 ? pointCount : 1;
+    /* 方案 B：默认不分配列表（主点字段承载单点语义）；多点经
+       XTouchEvent_setPoints 注入。 */
+    event->m_points = NULL;
 }
 
 XPoint XTouchEvent_position(const XTouchEvent* event)
@@ -991,6 +1031,30 @@ XPoint XTouchEvent_globalPosition(const XTouchEvent* event)
 int XTouchEvent_pointCount(const XTouchEvent* event)
 {
     return event ? event->m_pointCount : 0;
+}
+
+const XTouchPoint* XTouchEvent_points(const XTouchEvent* event)
+{
+    return event ? event->m_points : NULL;
+}
+
+void XTouchEvent_setPoints(XTouchEvent* event,
+                           const XTouchPoint* points, int count)
+{
+    if (!event || !points || count <= 0) return;
+    if (event->m_points)
+    {
+        XFree_System(event->m_points);
+        event->m_points = NULL;
+    }
+    event->m_points =
+        (XTouchPoint*)XMalloc_System((size_t)count * sizeof(XTouchPoint));
+    if (!event->m_points) return;
+    XMemcpy(event->m_points, points, (size_t)count * sizeof(XTouchPoint));
+    event->m_pointCount = count;
+    /* 主点字段同步为 points[0]（兼容视图，对标 Qt6 单点事件语义）。 */
+    event->m_position = points[0].m_position;
+    event->m_globalPosition = points[0].m_globalPosition;
 }
 
 /* ==================== XTabletEvent（Task 2.13） ==================== */

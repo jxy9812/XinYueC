@@ -18,6 +18,9 @@
 #define XTW_HEADER_H 20
 #define XTW_ROW_H 24
 #define XTW_INDIC_HIT 10  /**< 顶层展开指示器命中带宽（绘制位于 x∈[2,6]）。 */
+/* 滚动条带宽：与 XAbstractScrollArea VX_asa_resizeEvent 的 sbw=16 同源
+ * （该常量未导出，本类补布局滚动条几何时按同值对齐）。 */
+#define XTW_SBW 16
 
 static void VXTreeWidget_deinit(XTreeWidget* self);
 static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event);
@@ -46,6 +49,7 @@ static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_keyPressEvent(XWidget* self, XEvent* event);
+static void VXTreeWidget_wheelEvent(XWidget* self, XEvent* event);
 
 static void xtwitem_freeSubtree(XTreeWidgetItem* item);
 
@@ -55,6 +59,21 @@ static void xtw_emitRow(XTreeWidget* self, size_t signal, int row)
     XVarList* arguments;
     if (!self || row < 0 || !((XObject*)self)->m_signalSlot) return;
     arguments = XVarList_Create(XVar(int, row));
+    if (!arguments) return;
+    XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
+                       XEVENT_PRIORITY_NORMAL);
+}
+
+/** @brief 发射 行号+条目 双载荷信号（itemPressed/itemClicked 族）。
+ *         行号恒为首参：旧 XVarList_args_1(args, int) 槽读到顶层行号
+ *         不变（向后兼容）；条目为借用指针，直连槽内即时消费有效。 */
+static void xtw_emitRowItem(XTreeWidget* self, size_t signal, int row,
+                            const XTreeWidgetItem* item)
+{
+    XVarList* arguments;
+    if (!self || row < 0 || !((XObject*)self)->m_signalSlot) return;
+    arguments = XVarList_Create(XVar(int, row),
+                                XVar(const XTreeWidgetItem*, item));
     if (!arguments) return;
     XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
                        XEVENT_PRIORITY_NORMAL);
@@ -609,6 +628,100 @@ static int xtw_rowAtY(const XTreeWidget* self, int y, int* outRowY)
     return -1;
 }
 
+/** @brief 条目子树前序第 k 个条目（k 经指针跨递归共享消耗；越界
+ *         返回 NULL）。
+ *  @note  顺序 = 绘制顺序（自身 → 子条目递归），与 findItems 返回
+ *         的全树前序序号同一约定；子条目点击据此定位真实命中条目。 */
+static XTreeWidgetItem* xtw_preOrderItemAt(XTreeWidgetItem* item, int* k)
+{
+    int i;
+    if (!item) return NULL;
+    if (*k == 0) return item;
+    --*k;
+    for (i = 0; i < item->childCount; ++i) {
+        XTreeWidgetItem* hit = xtw_preOrderItemAt(item->children[i], k);
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
+/** @brief 视口 y → 顶层行带内的命中条目本体（itemAt 的子条目级
+ *         精化）：行带按行高细分为前序条目，与 xtw_rowAtY/绘制
+ *         同一展开态几何；顶层行未展开或越界回退顶层条目本体。
+ * @param outK 可选输出：命中条目在顶层行带内的前序序号（顶层本体
+ *         0、子条目 ≥1、未命中 -1）；与 xtw_drawItem 的行偏移序号
+ *         k 同一口径，子条目命中态（第二轮 #14）据此承载。 */
+static XTreeWidgetItem* xtw_hitItemAt(XTreeWidget* self, int topRow, int y,
+                                      int* outK)
+{
+    XTreeWidgetItem* top;
+    XTreeWidgetItem* hit;
+    int rowY = -1;
+    int off;
+    int hitK;
+    int probe;
+    if (outK) *outK = -1;
+    if (!self || topRow < 0 || topRow >= self->m_topCount) return NULL;
+    top = self->m_topItems[topRow];
+    if (!top) return NULL;
+    if (outK) *outK = 0; /* 顶层本体命中（未展开/无子条目/带外回退）。 */
+    if (!xtw_isExpanded(self, topRow) || top->childCount <= 0) return top;
+    xtw_rowAtY(self, y, &rowY);
+    if (rowY < 0) return top;
+    off = y + xtw_scrollOffsetY(self) - xtw_headerOffset(self) - rowY;
+    if (off < 0) off = 0;
+    hitK = off / xtw_effectiveRowHeight(self);
+    /* xtw_preOrderItemAt 会消耗序号入参：探针副本递归，原值留给
+     * outK 输出（命中子条目时输出其前序序号）。 */
+    probe = hitK;
+    hit = xtw_preOrderItemAt(top, &probe);
+    if (hit && outK) *outK = hitK;
+    return hit ? hit : top;
+}
+
+/* ==================== 子条目粒度当前命中态（第二轮 #14） ==================== */
+
+/** @brief 子条目命中态承载（保守方案）：选择模型粒度保持顶层行
+ *         （itemClicked 首参 row / selectedItems 等 apitest 契约不
+ *         变），当前命中的子条目以文件级 static 三元组
+ *         {owner, 顶层行号, 行带内前序序号} 承载——契约头
+ *         （XTreeWidget.h）本批不可扩字段的边界下按任务书保守口径
+ *         落地。不存条目指针：行号/序号越界即自动失效，无悬垂风险；
+ *         多实例并存时仅最后点击的树呈现子条目命中行（文档化取舍，
+ *         demo/autotest 场景均为单树串行交互）。 */
+static XTreeWidget* xtw_g_curChildOwner = NULL;
+static int xtw_g_curChildRow = -1;
+static int xtw_g_curChildK = -1;
+
+/** @brief 写入子条目命中态（row<0 / k<=0 = 清除，顶层行交给选择
+ *         模型呈现——对标 Qt 当前索引唯一，点击索引即当前索引）。 */
+static void xtw_setCurChild(XTreeWidget* self, int row, int k)
+{
+    xtw_g_curChildOwner = self;
+    xtw_g_curChildRow = row;
+    xtw_g_curChildK = k;
+}
+
+/** @brief (顶层行, 前序序号) 是否为当前命中的子条目（k>0 排除顶层
+ *         本体；行号越界自动失效）。 */
+static bool xtw_curChildHit(const XTreeWidget* self, int topRow, int k)
+{
+    if (!self || xtw_g_curChildOwner != self) return false;
+    return xtw_g_curChildRow == topRow && xtw_g_curChildK == k && k > 0 &&
+           topRow >= 0 && topRow < self->m_topCount;
+}
+
+/** @brief 顶层行带内是否存在子条目命中态（绘制路径抑制该顶层行本体
+ *         Highlight，保持一行一选中）。 */
+static bool xtw_bandHasChildCur(const XTreeWidget* self, int topRow)
+{
+    if (!self || xtw_g_curChildOwner != self) return false;
+    if (xtw_g_curChildRow != topRow || xtw_g_curChildK <= 0) return false;
+    if (topRow < 0 || topRow >= self->m_topCount) return false;
+    return xtw_g_curChildK <
+           xtw_subtreeRows(self->m_topItems[topRow]);
+}
+
 /** @brief 统一当前行写入：当前项变化发射 currentItemChanged，选择
  *         集合变化发射 itemSelectionChanged（SelectCurrent 语义）。 */
 static void xtw_setCurrentRow(XTreeWidget* self, int row)
@@ -620,6 +733,12 @@ static void xtw_setCurrentRow(XTreeWidget* self, int row)
     if (!self || row < 0 || row >= self->m_topCount) return;
     selection = self->m_base.m_base.m_selectionModel;
     previous = self->m_base.m_base.m_currentRow;
+    /* 当前顶层行变更（键盘/编程导航，区别于子条目点击的 row==previous
+     * 路径）：子条目命中态失效——对标 Qt 当前索引唯一，移动后旧子
+     * 条目不再呈现选中（qtreeview.cpp drawRow 只高亮 isSelected 的
+     * 当前索引行）。 */
+    if (row != previous && xtw_g_curChildOwner == self)
+        xtw_setCurChild(self, -1, -1);
     if (selection)
         wasSelected = XItemSelectionModel_isSelected(selection, row, 0);
     /* setCurrentIndex 内部已按 SelectCurrent 先行写入选择模型，
@@ -675,6 +794,7 @@ XVtable* XTreeWidget_class_init(void)
                              VXTreeWidget_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VXTreeWidget_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VXTreeWidget_wheelEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -722,6 +842,10 @@ static void VXTreeWidget_deinit(XTreeWidget* self)
 {
     int i;
     if (!self) return;
+    /* 子条目命中态析构清防（承载见 xtw_setCurChild）：static 三元组
+     * 持本控件指针，析构后若同地址新树复用会继承陈旧命中行——析构
+     * 即清，杜绝跨实例残留。 */
+    if (xtw_g_curChildOwner == self) xtw_setCurChild(NULL, -1, -1);
     for (i = 0; i < self->m_topCount; ++i) {
         if (self->m_topItems && self->m_topItems[i])
             XTreeWidgetItem_delete(self->m_topItems[i]);
@@ -874,6 +998,9 @@ void XTreeWidget_clear(XTreeWidget* self)
     }
     self->m_topCount = 0;
     xtw_syncRoot(self); /* 顶层存储数量变化：同步不可见根。 */
+    /* 条目全清：子条目命中态一并失效（行号/序号承载无悬垂，但重填
+     * 后同位行会误继承陈旧高亮——clear 即清，同 deinit 防护口径）。 */
+    if (xtw_g_curChildOwner == self) xtw_setCurChild(self, -1, -1);
     /* 当前项失效 + 选择清空的真实发射点（同 XListWidget clear 口径）。 */
     previous = XAbstractItemView_currentRow(&self->m_base.m_base);
     XAbstractItemView_setCurrentIndex(&self->m_base.m_base, -1, -1);
@@ -1310,7 +1437,11 @@ void XTreeWidget_setColumnCount(XTreeWidget* self, int count)
 
 void* XTreeWidget_itemClicked_signal(XTreeWidget* self, int row)
 {
-    xtw_emitRow(self, (size_t)XTreeWidget_itemClicked_signal, row);
+    /* 载荷 (row, item)：真实发射点在 VXTreeWidget_mousePressEvent
+     * （携带命中条目本体）；本句柄手动发射路径条目未知，以 NULL 占
+     * 位保持双参载荷恒定。 */
+    xtw_emitRowItem(self, (size_t)XTreeWidget_itemClicked_signal, row,
+                    NULL);
     return (void*)(size_t)XTreeWidget_itemClicked_signal;
 }
 
@@ -1322,7 +1453,10 @@ void* XTreeWidget_itemDoubleClicked_signal(XTreeWidget* self, int row)
 
 void* XTreeWidget_itemPressed_signal(XTreeWidget* self, int row)
 {
-    xtw_emitRow(self, (size_t)XTreeWidget_itemPressed_signal, row);
+    /* 载荷 (row, item)：与 itemClicked 同为双参（见本函数真实发射
+     * 点 VXTreeWidget_mousePressEvent；手动路径条目 NULL 占位）。 */
+    xtw_emitRowItem(self, (size_t)XTreeWidget_itemPressed_signal, row,
+                    NULL);
     return (void*)(size_t)XTreeWidget_itemPressed_signal;
 }
 
@@ -1461,9 +1595,12 @@ static void xtw_drawCheckIndicator(XTreeWidgetItem* item,
     }
 }
 
+/** @brief 绘制单个条目行（前序递归；k = 本条目在顶层行带内的前序
+ *         序号：顶层本体 0、首个子条目 1…与 xtw_hitItemAt 输出同一
+ *         口径，即行带内行偏移）。 */
 static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
                          XPainter* painter, int depth, int* y, int maxY,
-                         int topRow)
+                         int topRow, int k)
 {
     XTreeView* tv = &self->m_base;
     int rh = tv->m_rowHeight > 0 ? tv->m_rowHeight : XTW_ROW_H;
@@ -1472,33 +1609,65 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
     const char* text;
     uint32_t base;
     uint32_t windowText;
+    uint32_t highlight;
+    uint32_t highlightedText;
+    bool selected;
     int y0 = *y;
     if (y0 >= maxY) return;
     base = xtw_color(self, XPaletteColorRole_Base);
     windowText = xtw_color(self, XPaletteColorRole_WindowText);
+    highlight = xtw_color(self, XPaletteColorRole_Highlight);
+    highlightedText = xtw_color(self, XPaletteColorRole_HighlightedText);
+    /* 选中行整行 Highlight 填充、文字反转 HighlightedText（对标
+     * QTreeView::drawRow qtreeview.cpp:1781 的 isSelected(modelIndex)
+     * → State_Selected，经 PE_PanelItemViewRow 以 Highlight 刷填充
+     * 整行背景，qcommonstyle.cpp:706）。
+     * 粒度口径（第二轮 #14）：选择模型仍为顶层行（itemClicked 首参
+     * row / selectedItems 等 apitest 契约不变）；子条目命中行按 Qt
+     * 「点击索引即当前索引、isSelected 对子条目索引同样成立」的语义
+     * 呈现 Highlight（qt QTreeView 点子节点只亮该子行、父行不亮），
+     * 此时其顶层行本体不再重复刷 Highlight（一行一选中）。承载见
+     * xtw_setCurChild（文件级 static，不占契约头字段）。 */
+    selected =
+        self->m_base.m_base.m_selectionMode !=
+            XAbstractItemViewSelectionMode_NoSelection &&
+        ((item->parent == NULL)
+             ? (!xtw_bandHasChildCur(self, topRow) &&
+                XItemSelectionModel_isSelected(
+                    self->m_base.m_base.m_selectionModel, topRow, 0))
+             : xtw_curChildHit(self, topRow, k));
     cell.x = 0;
     cell.y = y0;
     cell.width = XWidget_width((XWidget*)self);
     cell.height = rh;
     if (item->parent == NULL) {
         XPainter_fillRect(painter, &cell, base);
+        if (selected) XPainter_fillRect(painter, &cell, highlight);
+    } else if (selected) {
+        /* 子条目命中行：与顶层行同口径整行 Highlight（原实现子条目
+         * 从不填充，点子行高亮滞留顶层行——复扫 #14 partial 根因）。 */
+        XPainter_fillRect(painter, &cell, highlight);
     }
     text = XTreeWidgetItem_text_2(item);
     if (item->checkState != XItemCheckState_Unchecked) {
         int ix = indent * depth + 12;
         xtw_drawCheckIndicator(item, painter, ix, y0, rh, windowText);
         if (text && text[0]) {
-            XPainter_setPen(painter, windowText);
-            XPainter_drawText(painter, ix + 16, y0 + rh - 6,
-                              text, windowText);
+            XPainter_setPen(painter,
+                            selected ? highlightedText : windowText);
+            XPainter_drawText(painter, ix + 16, y0 + rh - 6, text,
+                              selected ? highlightedText : windowText);
         }
     } else if (text && text[0]) {
-        XPainter_setPen(painter, windowText);
+        XPainter_setPen(painter,
+                        selected ? highlightedText : windowText);
         /* drawText 第 4 参是墨水色：传 0=透明，条目文本任何路径都不
          * 出字；传 palette WindowText（对标 XTableWidget，此处实现
-         * 与注释曾自相矛盾——注释自称传 windowText 实为硬编码黑）。 */
+         * 与注释曾自相矛盾——注释自称传 windowText 实为硬编码黑）。
+         * 选中行传 HighlightedText（对标 Qt 选中行文字反色）。 */
         XPainter_drawText(painter, indent * depth + 12, y0 + rh - 6,
-                          text, windowText);
+                          text,
+                          selected ? highlightedText : windowText);
     }
     /* 列 1+ 文本消费（四期④）：各列画在 xtw_columnSpan 的列带内
      * （save/clip/restore 防长文本串列；列 0 主文本含展开缩进/指示
@@ -1521,9 +1690,12 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
             XPainter_save(painter);
             XPainter_setClipRect(painter, &colRect,
                                  XPainterClipOperation_IntersectClip);
-            XPainter_setPen(painter, windowText);
+            /* 列 1+ 文字与行选中态联动反色（同 Qt drawRow：一行内
+             * 各列经同一 option 状态绘制）。 */
+            XPainter_setPen(painter,
+                            selected ? highlightedText : windowText);
             XPainter_drawText(painter, colX + 4, y0 + rh - 6, colText,
-                              windowText);
+                              selected ? highlightedText : windowText);
             XPainter_restore(painter);
         }
     }
@@ -1547,10 +1719,15 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
     if (item->parent == NULL && !xtw_isExpanded(self, topRow)) return;
     {
         int i;
+        int childK = k + 1; /* 首个子条目前序序号 = 本条目 + 1。 */
         for (i = 0; i < item->childCount; ++i) {
-            if (item->children[i])
+            if (item->children[i]) {
+                /* 后继兄弟序号 = 当前子条目序号 + 其子树行数
+                 * （前序遍历中每条目恰占行带内一行）。 */
                 xtw_drawItem(self, item->children[i], painter, depth + 1,
-                             y, maxY, topRow);
+                             y, maxY, topRow, childK);
+                childK += xtw_subtreeRows(item->children[i]);
+            }
         }
     }
 }
@@ -1659,14 +1836,50 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
                         ? xtw_subtreeRows(tw->m_topItems[i2])
                         : 1;
         {
+            /* 对标 Qt QAbstractScrollArea 滚动条按需呈现：内容尺寸经
+             * setContentSize 上报后由 xasa_updateScrollBars 统一驱动
+             * AsNeeded 可见性与范围（此前仅 setRange——范围有计算而
+             * 滚动条从不显示；内容溢出被控件边缘硬裁）。showV 翻转
+             * 发生在 resize 之后时布局器不再重跑，这里补一次滚动条
+             * 几何（同 VX_asa_resizeEvent 的右缘 16px 带口径；
+             * setGeometry 同值早退，稳态重绘零开销）。 */
+            XAbstractScrollArea* area =
+                (XAbstractScrollArea*)&tw->m_base.m_base;
             int contentH = headerOffset + rows * xtw_effectiveRowHeight(tw);
-            int vMax = contentH > h ? contentH - h : 0;
-            if (vbar && XScrollBar_maximum(vbar) != vMax)
-                XScrollBar_setRange(vbar, 0, vMax);
+            XAbstractScrollArea_setContentSize(area, r.width, contentH);
+            if (vbar && XWidget_isVisible((XWidget*)vbar)) {
+                bool showH = area->m_hPolicy !=
+                                 XScrollBarPolicy_AlwaysOff &&
+                             (area->m_hPolicy ==
+                                  XScrollBarPolicy_AlwaysOn ||
+                              area->m_contentWidth > r.width);
+                XRect barRect;
+                XRect_init(&barRect, r.width - XTW_SBW, 0, XTW_SBW,
+                           showH ? h - XTW_SBW : h);
+                XWidget_setGeometryRect((XWidget*)vbar, &barRect);
+            }
         }
         /* 表头带绘制于视口顶部（不随内容滚动；headerHidden 时不占位）。 */
         if (headerOffset > 0) xtw_drawHeader(tw, &painter, r.width);
         offY = xtw_scrollOffsetY(tw);
+        /* 内容区钉顶裁剪（对标 QTreeView 表头常驻 + viewport 内容裁
+         * 剪：qtreeview.cpp:2911-2913 updateGeometries 将表头作为子
+         * 部件 setGeometry 钉在视口顶缘、setViewportMargins(0,height,
+         * 0,0) 预留顶带，内容只在 viewport 带内滚动。本控件单画布自
+         * 绘，等价实现 = 行带绘制前对「表头之下」区域取交集裁剪——
+         * 否则上滚的行带（内容坐标 < offY 的行）直接画进表头带，视
+         * 觉即"表头随内容上滚被裁"（复扫新问题②；此前仅靠表头先行
+         * 绘制的 z 序，行带后绘反而覆写表头）。
+         * 裁剪在平移前置（屏幕坐标 [headerOffset, h)），下缘与行绘制
+         * 下限 h+offY-headerOffset 的映射一致。 */
+        XPainter_save(&painter);
+        {
+            XRect clip;
+            XRect_init(&clip, 0, headerOffset, r.width,
+                       h - headerOffset);
+            XPainter_setClipRect(&painter, &clip,
+                                 XPainterClipOperation_IntersectClip);
+        }
         if (offY != 0)
             XPainter_translate(&painter, 0.0f, -(float)offY);
         if (headerOffset != 0)
@@ -1675,11 +1888,13 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
         for (i = 0; i < tw->m_topCount; ++i) {
             if (tw->m_topItems[i]) {
                 /* 行绘制下限同步下移（跳过视口上方内容；行带下移表头
-                 * 高度，内容坐标下限相应收窄）。 */
+                 * 高度，内容坐标下限相应收窄）。顶层调用前序序号 k=0
+                 * （子条目由递归按子树行数推进）。 */
                 xtw_drawItem(tw, tw->m_topItems[i], &painter, 0, &y,
-                             h + offY - headerOffset, i);
+                             h + offY - headerOffset, i, 0);
             }
         }
+        XPainter_restore(&painter);
         y = 0; /* 复位供后续逻辑（如有） */
     }
     XPainter_end(&painter);
@@ -1816,6 +2031,11 @@ static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
         return;
     }
     /* 命中：按展开态几何反查平铺顶层行（子树行随顶层行显隐）。 */
+    /* 左键按压交付键盘焦点（对标 Qt QApplicationPrivate::
+     * giveFocusAccordingToFocusPolicy 点击聚焦：视图族 StrongFocus
+     * 策略下方向键导航可达；同 XAbstractItemView 按下路径一致，
+     * 窗口型视图不抢焦点——弹层焦点归组合框自身机制）。 */
+    if (!self->m_isWindow) XWidget_setFocus(self);
     row = xtw_rowAtY(tw, pos.y, NULL);
     if (row >= 0) {
         XTreeWidgetItem* item = tw->m_topItems[row];
@@ -1835,10 +2055,31 @@ static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
             xtw_setCurrentRow(tw, row);
         } else {
             /* itemPressed/itemClicked 真实发射点（先按压后点击，
-             * 同 XTableWidget 约定；选中经 xtw_setCurrentRow 联动）。 */
+             * 同 XTableWidget 约定；选中经 xtw_setCurrentRow 联动）。
+             * 载荷携带真实命中条目（对标 Qt QTreeWidget::itemClicked
+             * 传真实 item；XTableWidget itemClicked 同为 item 指针
+             * 载荷）——此前仅发顶层行号，点子条目（网卡）状态行报
+             * 父级（设备）。
+             * 子条目命中态（第二轮 #14）：命中子条目 → 记 (顶层行,
+             * 行带内前序序号)，xtw_drawItem 子条目分支对该行呈现
+             * Highlight（点击子行→该子行亮，Qt 点击索引即当前索
+             * 引语义）；命中顶层本体 → 显式清除，顶层行呈现交还
+             * 选择模型（保持第一轮已绿的顶级行高亮）。首参 row 恒
+             * 为顶层行号：apitest 树点击 row==0 注入断言不受影响。 */
+            XTreeWidgetItem* hit;
+            int hitK = -1;
+            hit = xtw_hitItemAt(tw, row, pos.y, &hitK);
             xtw_setCurrentRow(tw, row);
-            XTreeWidget_itemPressed_signal(tw, row);
-            XTreeWidget_itemClicked_signal(tw, row);
+            if (hit && hit != tw->m_topItems[row] && hitK > 0)
+                xtw_setCurChild(tw, row, hitK);
+            else
+                xtw_setCurChild(tw, row, -1);
+            xtw_emitRowItem(tw,
+                            (size_t)XTreeWidget_itemPressed_signal,
+                            row, hit);
+            xtw_emitRowItem(tw,
+                            (size_t)XTreeWidget_itemClicked_signal,
+                            row, hit);
         }
     }
     XEvent_accept(event);
@@ -1897,6 +2138,65 @@ static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
         /* itemActivated 真实发射点（对标平台双击激活语义）。 */
         XTreeWidget_itemActivated_signal(tw, row);
     }
+    XEvent_accept(event);
+}
+
+/** @brief 滚轮 → 滚动条步进（复扫新问题①根修）。
+ *  @note  对标 QAbstractScrollArea::wheelEvent（qabstractscrollarea.cpp:
+ *         1170 主导轴选条：|x|>|y| 走水平条、否则垂直条）与
+ *         QScrollBar::wheelEvent（qscrollbar.cpp:475 经
+ *         scrollByDelta 消费 angleDelta：offset=delta/120，
+ *         setValue(value-steps)，正角度=滚向内容开头）。步距取行粒
+ *         度：Qt 条目视图滚动条为 ScrollPerItem 行单位、singleStep=1
+ *         行（qtreeview.cpp:3846 setSingleStep(1)、qabstractitemview.cpp:
+ *         1306），库内 XScrollBar 为像素单位、singleStep 缺省 1px
+ *         （XAbstractSlider.c:397）——基类 VX_asa_wheelEvent 的
+ *         stepBy(steps*3) 在像素条上每格仅滚 3px（不足 1/8 行），
+ *         肉眼即"滚轮无响应、滚动条只能拖"。本类覆写按 120 角度=3
+ *         倍单步的库口径（XAbstractScrollArea.c:23-25）×行高直接
+ *         setValue（内部钳位到 [minimum,maximum]，XAbstractSlider.c:
+ *         599-602；valueChanged → scrollContentsBy → 重绘）。
+ *         水平条按 Qt 横向 delta 取反口径（qabstractslider.cpp
+ *         scrollByDelta: orientation==Horizontal 时 delta=-delta）。 */
+static void VXTreeWidget_wheelEvent(XWidget* self, XEvent* event)
+{
+    XTreeWidget* tw = (XTreeWidget*)self;
+    XAbstractScrollArea* area;
+    XScrollBar* bar;
+    XPoint delta;
+    int steps;
+    int value;
+    if (!tw || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+#if XWINDOWEVENT_ON
+    delta = XWheelEvent_angleDelta((XWheelEvent*)event);
+#else
+    delta.x = 0;
+    delta.y = 0;
+#endif
+    {
+        /* 主导轴分派（同基类口径：dy 优先，dy==0 回落 dx）。 */
+        int ay = delta.y >= 0 ? delta.y : -delta.y;
+        int ax = delta.x >= 0 ? delta.x : -delta.x;
+        area = (XAbstractScrollArea*)&tw->m_base.m_base;
+        if (ax > ay) {
+            steps = -(delta.x / 120); /* 横向取反（Qt scrollByDelta）。 */
+            bar = XAbstractScrollArea_horizontalScrollBar(area);
+        } else {
+            steps = delta.y / 120;
+            bar = XAbstractScrollArea_verticalScrollBar(area);
+        }
+    }
+    if (steps == 0) {
+        XEvent_accept(event); /* 不足一格：消费不滚动（同基类口径）。 */
+        return;
+    }
+    if (!bar) {
+        XEvent_accept(event);
+        return;
+    }
+    value = XScrollBar_value(bar) -
+            steps * 3 * xtw_effectiveRowHeight(tw);
+    XScrollBar_setValue(bar, value);
     XEvent_accept(event);
 }
 

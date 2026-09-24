@@ -265,6 +265,11 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_roleTable = NULL;
     self->m_roleRows = 0;
     self->m_roleCols = 0;
+    /* 对标 Qt QAbstractScrollArea 构造函数 qabstractscrollarea.cpp:273
+     * 的 setFocusPolicy(Qt::StrongFocus)：条目视图可经 Tab 与鼠标点击
+     * 获得键盘焦点，方向键导航（keyPressEvent）才可达（修复点击选中
+     * 后 Down/Up 方向键不动当前项——焦点滞留原处、键事件不达视图）。 */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
 }
 
 XAbstractItemView* XAbstractItemView_create_ex(XMemoryType memory,
@@ -316,13 +321,21 @@ void XAbstractItemView_setCurrentIndex(XAbstractItemView* self, int row,
     self->m_currentRow = row;
     self->m_currentColumn = column;
     /* SelectCurrent 语义：同步选择模型当前索引；非 NoSelection 且索引
-     * 有效时同时选中该单元格（同 Qt current 变更携带 Select 命令）。 */
+     * 有效时按 ClearAndSelect 选中该单元格（对标 Qt
+     * QAbstractItemView::setCurrentIndex 的缺省 command=ClearAndSelect，
+     * qabstractitemview.cpp selectionCommand 对无修饰普通点击/键盘
+     * 导航亦回落 ClearAndSelect：先清空旧选区再选中当前项——修复
+     * 列表/视图点击换行后旧行高亮残留的双选缺陷）。索引无效（-1）
+     * 仅清当前项、不动选择集合：XListWidget/XTreeWidget 的 clear 路径
+     * 在本调用之后显式 XItemSelectionModel_clear 并依赖其返回值发射
+     * itemSelectionChanged，此处不得抢清。 */
     selection = self->m_selectionModel;
     if (!selection) return;
     XItemSelectionModel_setCurrentIndex(selection, row, column);
     if (row >= 0 && column >= 0 &&
         self->m_selectionMode !=
             XAbstractItemViewSelectionMode_NoSelection) {
+        XItemSelectionModel_clear(selection);
         XItemSelectionModel_select(selection, row, column, true);
     }
 }
@@ -1655,6 +1668,15 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
+    /* 点击交付键盘焦点（对标 Qt QApplicationPrivate::
+     * giveFocusAccordingToFocusPolicy，qapplication.cpp:3662：视图
+     * StrongFocus 策略含 ClickFocus 位，左键按压即聚焦本视图，方向键
+     * 导航随之可达；同 XLineEdit 点击聚焦的库内既有范式）。窗口型
+     * 视图（XComboBox 补全/下拉弹层，本库未见 hide 后还焦机制）不
+     * 在此抢焦点：弹层焦点归属组合框自身机制（对标 Qt 弹层由
+     * QComboBox 私有机制管理焦点，不经通用点击聚焦路径），避免隐藏
+     * 后焦点滞留悬空。 */
+    if (!self->m_isWindow) XWidget_setFocus(self);
     if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
         XAbstractItemViewSelectionMode mode = view->m_selectionMode;
         /* 点击他格先按提交分支关闭编辑器（对标 Qt 点击编辑格以外的

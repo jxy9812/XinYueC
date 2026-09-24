@@ -352,6 +352,7 @@ add_executable(XGuiRegression_Test
     "./Test/XGuiTest/XScrollBarTest.c"
     "./Test/XGuiTest/XStackedWidgetTest.c"
     "./Test/XGuiTest/XButtonGroupTest.c"
+    "./Test/XGuiTest/XTouchMultiPointTest.c"
 )
 if(UNIX)
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)

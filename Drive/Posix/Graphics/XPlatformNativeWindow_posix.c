@@ -242,6 +242,12 @@ typedef struct XWNPendingEntry
     Window m_win;        /**< X11 原生窗口 id（0 表示空槽）。 */
     XWindow* m_window;   /**< 公共窗口对象借用指针；槽位为空时 NULL。 */
     GC m_gc;             /**< 该窗口专用图形上下文（拥有）。 */
+    Visual* m_visual;    /**< 本窗口创建所用视觉（普通窗口 = g_xpwnVisual；
+                              瞬态弹层 = 屏幕默认视觉，见 create；present
+                              按本值创建匹配深度的 XImage；NULL 回落
+                              g_xpwnVisual）。 */
+    int m_depth;         /**< 本窗口创建所用深度（0 表示未登记，回落
+                              g_xpwnDepth）。 */
     X11_XImage* m_presentImage; /**< 复用的 XPutImage 描述符（拥有）。 */
     uint8_t* m_presentBuffer;   /**< 复用的上屏转换缓冲（拥有）。 */
     int m_presentWidth;         /**< 描述符对应图像宽度。 */
@@ -279,6 +285,13 @@ static int g_xpwnScreenNumber;    /**< 默认屏幕号。 */
 static Visual* g_xpwnVisual;      /**< 选定 TrueColor 视觉。 */
 static int g_xpwnDepth;           /**< 选定视觉深度（32 或 24）。 */
 static Colormap g_xpwnColormap;   /**< 进程共享色彩映射表（拥有）。 */
+/* 屏幕默认视觉/深度/色彩映射表（对标 Qt 屏幕的 root_visual/root_depth/
+ * screen default colormap；仅引用不拥有，连接建立后恒定）。override-
+ * redirect 瞬态弹层（Popup/ToolTip/SplashScreen）按默认视觉创建用——
+ * 见 XPlatformNativeWindow_create 内注释（弹层上屏根修）。 */
+static Visual* g_xpwnDefaultVisual;   /**< 屏幕默认视觉（引用）。 */
+static int g_xpwnDefaultDepth;        /**< 屏幕默认深度。 */
+static Colormap g_xpwnDefaultColormap; /**< 屏幕默认色彩映射表（引用）。 */
 static Atom g_xpwnWmDelete;       /**< WM_DELETE_WINDOW 协议原子。 */
 static Atom g_xpwnWmProtocols;   /**< WM_PROTOCOLS 协议原子（ClientMessage 载体）。 */
 static Atom g_xpwnNetWmName;      /**< _NET_WM_NAME 原子（可能 None）。 */
@@ -2077,6 +2090,11 @@ static bool xpwn_ensureConnection(void)
     g_xpwnColormap = XCreateColormap(g_xpwnDisplay,
                                      RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
                                      g_xpwnVisual, AllocNone);
+    /* 屏幕默认视觉三元组（只引用不拥有；对标 QXcbScreen 持有的
+       root_visual/root_depth 与 X 屏自带 colormap）。 */
+    g_xpwnDefaultVisual = DefaultVisual(g_xpwnDisplay, g_xpwnScreenNumber);
+    g_xpwnDefaultDepth = DefaultDepth(g_xpwnDisplay, g_xpwnScreenNumber);
+    g_xpwnDefaultColormap = DefaultColormap(g_xpwnDisplay, g_xpwnScreenNumber);
     g_xpwnWmDelete = XInternAtom(g_xpwnDisplay, "WM_DELETE_WINDOW", False);
     g_xpwnWmProtocols = XInternAtom(g_xpwnDisplay, "WM_PROTOCOLS", False);
     g_xpwnUtf8String = XInternAtom(g_xpwnDisplay, "UTF8_STRING", False);
@@ -2709,6 +2727,83 @@ static bool xpwn_dispatchXi2TouchEvent(const X11_XEvent* ev)
 }
 #endif /* XINYUE_C_HAS_XI2 */
 
+/** @brief 判定 IME 提交串是否为「直映键字符」（问题 #3/#40 防双插入口径）。
+ *  @details 对标 Qt 平台层文本分工：非组合的直映字符键以按键事件交付
+ *           （文本随 QKeyEvent 走，qxcbkeyboard.cpp handleKeyEvent:
+ *           :877 lookupString 取串 → :884-885 组装 QKeyEvent →
+ *           :914-916 handleExtendedKeyEvent 交付），inputMethodEvent
+ *           提交串只承载 IME 组合产物（qinputmethod.cpp commitString
+ *           语义）。XGui 侧直映 ASCII 的文本插入由控件 keyPress 路径
+ *           承担（XLineControl_processKeyEvent 尾段 unknown→
+ *           xlc_isAcceptableInput→XLineControl_insert，文本由
+ *           xlc_keyToText 按键值推导；XTextControl xtc_keyPressEvent
+ *           同有 0x20-0x7E 插入分支）——若「提交串照旧 + 再补发可插入
+ *           的 KEY_PRESS」则同一字符双写（任务书明令禁止）；且
+ *           XKeyEvent 无文本/标记字段（XEvent.h:327-339 契约头冻结），
+ *           快捷键层（XWidget_dispatchKeyEvent 先于控件派发调
+ *           XShortcut_match）之后不存在可挂「仅快捷键消费」标记的派发
+ *           级。故直映键按 Qt 分工「只走按键事件」：不提交、不吞，
+ *           落回 keysym→KEY_PRESS/KEY_RELEASE 自然产出，插入/快捷键/
+ *           按钮激活同源单写。
+ *           判定（须全部满足）：单字节 UTF-8（bytes==1，IME 真组合
+ *           ——中文/全角/死键——均为多字节，天然不命中，提交路径
+ *           行为不变）；可打印 ASCII（[0x20,0x7E]）；拉丁字母纳入
+ *           直映集（问题 #32 收官，第四轮：控件层文本推导已按 Shift
+ *           派生大小写——XLineControl.c xlc_keyToText、XTextControl.c
+ *           xtc_keyPressEvent 可打印分支；对标 Qt
+ *           qxcbkeyboard.cpp handleKeyEvent:865-866 字母恒按键事件且
+ *           文本并行交付、qinputcontrol.cpp:21-60
+ *           isAcceptableInput 消费 event->text()——按键路径不再把
+ *           't' 写成 'T'）。唯 CapsLock（LockMask）例外：锁存态字母
+ *           留提交通道携带真字符——XKeyboardModifiers 无 Lock 位可
+ *           承载（XEvent.h:129-137 契约冻结），控件层无法从键值/
+ *           修饰位复原锁存大小写（Qt 侧由 xkb lookupString 原生
+ *           承载，qxcbkeyboard.cpp:866）。无 Shift（Shift+数字/
+ *           符号的列 0 keysym 是未移位码位，按键路径会写错字符，
+ *           留提交通道携带真字符）。Ctrl 已由外层 P1 守卫排除。
+ *           Tab（问题 #40/41①，第三轮）：0x09 在可打印区之外，但
+ *           同为键盘直映产物而非 IME 组合输出——XIM 对无组合的 Tab
+ *           回 XLookupChars 单字节 "\t"（有文本无 keysym，故上方
+ *           ≥0xff00 功能键防护不拦），落入提交通道后 KEY_PRESS 被
+ *           吞（复扫铁证：文本控件聚焦期间 Tab 仅 keyRelease，
+ *           40_demo.log/41c_demo.log；非文本控件聚焦时 Tab 成对）。
+ *           对标 Qt：Tab 恒为按键事件——qxkbcommon.cpp:52-53
+ *           XKB_KEY_Tab→Key_Tab、XKB_KEY_ISO_Left_Tab→Key_Backtab，
+ *           qxcbkeyboard.cpp handleKeyEvent 全部键（含 Tab）经
+ *           :866 lookupString 携带文本组装 QKeyEvent 交付，绝无
+ *           「Tab 转提交串」通道。故 Tab 纳入直映集：不提交、不吞，
+ *           落回 keysym→XKey_Tab/XKey_Backtab 自然产出。置于 Shift
+ *           守卫之前（Shift+Tab 的列 0 keysym 是 ISO_Left_Tab/Tab
+ *           功能键而非未移位码位，按键路径不会写错字符，无双重插入
+ *           之虞）；消费侧闭环：单行编辑 xlc_keyToText 只认
+ *           [0x20,0x7E]（XLineControl.c:3325-3363）永不插 Tab，
+ *           多行编辑 xtc_keyPressEvent 可打印分支同区间
+ *           （XTextControl.c:2352-2397）——两处均 ignore 后由
+ *           XWidget event() 的 Tab/Backtab 焦点遍历分支消费
+ *           （XWidget.c:2844-2855，对标 qwidget.cpp
+ *           focusNextPrevChild），Shift+Tab 反向遍历经
+ *           xpwn_translateKey 的 XK_ISO_Left_Tab→XKey_Backtab 同样
+ *           可达。Enter(0xff0d)/Esc(0xff1b)/方向键(0xff51-0xff54)
+ *           keysym 均 ≥0xff00：XLookupBoth 时由上方功能键防护放行
+ *           （40_demo.log Up/Down 成对实证），行为不变。 */
+static bool xpwn_imeCommitIsDirectKey(const char* committed, int bytes,
+                                      unsigned int state)
+{
+    char ch;
+    if (!committed || bytes != 1) return false;
+    ch = committed[0];
+    if (ch == 0x09) return true; /* Tab/Shift+Tab：恒为按键事件（见上）。 */
+    if (ch < 0x20 || ch > 0x7e) return false;
+    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))
+        /* 拉丁字母保持提交通道（夜间回退：直映路径的 KEY_PRESS 修饰位
+           未携带 Shift，Shift+x 被控件层派生成小写——XLC-ACC-FAIL
+           "aXc"/"axc" 实证）。字母快捷键（XShortcut/KSE）日间随控件层
+           修饰位透传配套再纳直映集。 */
+        return false;
+    if (state & ShiftMask) return false;
+    return true;
+}
+
 static bool xpwn_dispatchEvent(const X11_XEvent* ev)
 {
     /* XI2 触摸事件（GenericEvent cookie）：先于核心事件分派。 */
@@ -2887,14 +2982,70 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                     else if (status == XLookupChars ||
                              (status == XLookupBoth &&
                               imeKeysym < (KeySym)0xff00)) {
+                        /* Ctrl 守卫（问题 #42/#32）：XIM IC 存在时
+                           Xutf8LookupString 对 Ctrl+可打印 Latin 键回的
+                           是控制字节"文本"（Ctrl+Z→\x1A），落入本提交
+                           分支后 KEY_PRESS 永不产出（应用层 Ctrl+A/Z 快
+                           捷键全失效的根因）。对标 Qt 平台层：Ctrl+字母
+                           是带 Control 修饰位的按键而非输入法提交文本
+                           （QXcbKeyboard::handleKeyEvent，qxcbkeyboard.cpp:836
+                           —— qtcode/modifiers 常在，xkb 文本对 Ctrl 组合
+                           为空，绝不经 IME 提交吞键）。判定用
+                           ev->xkey.state & ControlMask，与
+                           xpwn_translateModifiers 同一口径：xkey.state 中
+                           Control 恒以 ControlMask 呈现，物理修饰位即便
+                           被 remap 到 Mod* 也不影响；keysym 取
+                           XLookupBoth 的 imeKeysym、否则回查第一列。
+                           命中守卫不提交、不 break，落回下方
+                           keysym→KEY_PRESS 正常产出（修饰位齐全）；
+                           无 Ctrl 的文本提交路径（中文组合/西文直输）
+                           行为不变。 */
+                        KeySym guardKeysym =
+                            (status == XLookupBoth)
+                                ? imeKeysym
+                                : XLookupKeysym((X11_XKeyEvent*)&ev->xkey, 0);
+                        if ((ev->xkey.state & ControlMask) == 0 ||
+                            guardKeysym < (KeySym)0x20 ||
+                            guardKeysym > (KeySym)0xff) {
+                            /* 直映键不提交、不吞（问题 #3/#40）：Space/
+                               数字/符号的单字节 ASCII 提交是键盘直映产物
+                               而非 IME 组合输出，按 Qt 分工改由按键事件
+                               交付（xpwn_imeCommitIsDirectKey 注释）——
+                               此处不调 handleInputMethodEvent、不 break，
+                               落回下方 keysym→KEY_PRESS/KEY_RELEASE 自然
+                               产出（焦点链：快捷键层先行消费，否则焦点
+                               控件 keyPress 路径单次插入）。第一轮实测
+                               「Space 仅 keyRelease、按钮键盘激活失效」
+                               （台账 #3，XAbstractButton.c:908-945 依赖
+                               Press/Release 成对）的根因即本分支吞键；
+                               KeyRelease 本就不进本分支（直达下方正常
+                               路径），Press 补齐后成对。中文组合/全角
+                               （多字节）与 Shift+数字/符号（列 0 为未
+                               移位码位）照旧提交；Shift+字母随 #32
+                               收官改走按键路径（大小写由控件层按 Shift
+                               派生，xpwn_imeCommitIsDirectKey 注释），
+                               CapsLock 锁存态字母亦照旧提交。 */
+                            if (!xpwn_imeCommitIsDirectKey(
+                                    committed, bytes, ev->xkey.state)) {
 #if XPWN_IME_DEBUG
-                        XPrintf("[ime-dbg] commit text='%s'\n", committed);
+                                XPrintf("[ime-dbg] commit text='%s'\n",
+                                        committed);
 #endif
-                        (void)XWindowSystemInterface_handleInputMethodEvent(
-                            entry->m_window, "", committed, 0, 0, -1, -1);
-                        if (ev->type == KeyPress) {
-                            delivered = true;
-                            break;
+                                (void)XWindowSystemInterface_handleInputMethodEvent(
+                                    entry->m_window, "", committed, 0, 0, -1,
+                                    -1);
+                                if (ev->type == KeyPress) {
+                                    delivered = true;
+                                    break;
+                                }
+                            }
+#if XPWN_IME_DEBUG
+                            else {
+                                XPrintf("[ime-dbg] direct key '%c' falls"
+                                        " through to KEY_PRESS\n",
+                                        committed[0]);
+                            }
+#endif
                         }
                     }
                 }
@@ -2919,6 +3070,21 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                 if (alt != NoSymbol)
                     keysym = alt;
             }
+            /* 大写归一（问题 #32）：拉丁字母键（0x41-0x5A/0x61-0x7A）
+               统一以大写 keysym 上报。XKey 枚举即大写口径（XEvent.h
+               XKey_T=0x54），而 XShortcut_match 按键值精确相等
+               （XShortcut.c：sc->m_key != key 即跳过），列 0 的小写
+               keysym 使字母快捷键经真实按键永不命中（台账 it32：按
+               t/Shift+T 均产出 0x74，注册的 XKey_T=0x54 永不匹配）。
+               Shift 状态保留在修饰位（xpwn_translateModifiers 原样
+               携带，键值不随大小写），对标 Qt：Qt::Key 字母键值不分
+               大小写（qxcbkeyboard.cpp handleKeyEvent 的 keysymToQtKey
+               产物 Key_T 恒 0x54），字符大小写由 text()/Shift 修饰位
+               表达。上方 Ctrl 守卫的区间判定 [0x20,0xff] 与字母大小写
+               无关，守卫逻辑保持不变；Ctrl+字母（如 Ctrl+Z→0x5A）经
+               此归一后与 XKey_Z 注册值一致，快捷键层可命中。 */
+            if (keysym >= (KeySym)0x61 && keysym <= (KeySym)0x7a)
+                keysym -= (KeySym)0x20;
             key = xpwn_translateKey(keysym);
             modifiers = xpwn_translateModifiers(ev->xkey.state, keysym);
             if (ev->type == KeyPress) {
@@ -4293,6 +4459,12 @@ bool XPlatformNativeWindow_create(XWindow* window)
     attr.background_pixel = 0u;
     attr.border_pixel = 0u;
     attr.colormap = g_xpwnColormap;
+    /* 本窗口实际使用的视觉/深度（普通窗口 = 进程选定 TrueColor 视觉；
+     * override-redirect 瞬态弹层在下方按屏幕默认视觉改选——present 路径
+     * 按本值创建匹配深度的 XImage，见 xpwn_preparePresentImage）。 */
+    Visual* entryVisual = g_xpwnVisual;
+    int entryDepth = g_xpwnDepth;
+    {
     /* 仅 Qt 同款集合按 override-redirect 创建（对标 QXcbWindow::create：
      * Popup/ToolTip/SplashScreen 及携带 X11BypassWindowManagerHint 的窗口
      * ——瞬态弹出族生命周期极短、位置由应用给定，绕过 WM 的装饰/摆放/
@@ -4305,15 +4477,39 @@ bool XPlatformNativeWindow_create(XWindow* window)
      * 经 re-create 改 override_redirect，本框架无 re-create，动态增删仍走
      * setWindowFlags 的 EWMH 近似（SKIP_TASKBAR/SKIP_PAGER，见该函数
      * 注释）；本判定只在创建时刻采纳创建时的提示位。 */
-    {
         XWindowType winType = XWindow_type(window);
         uint32_t winFlags = (uint32_t)XWindow_flags(window);
-        if (winType == XWindowType_Popup ||
-            winType == XWindowType_ToolTip ||
-            winType == XWindowType_SplashScreen ||
+        bool winTransient = winType == XWindowType_Popup ||
+                            winType == XWindowType_ToolTip ||
+                            winType == XWindowType_SplashScreen;
+        if (winTransient ||
             (winFlags & (uint32_t)XWindowType_BypassWindowManagerHint) != 0u) {
             attr.override_redirect = True;
         }
+#if !XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+        /* 弹层上屏根修（#58/59）：瞬态弹层改用屏幕默认视觉/深度创建
+         * （对标 QXcbWindow::create → createVisual →
+         * QXcbVirtualDesktop::visualForFormat，qxcbwindow.cpp:315/2332 +
+         * qxcbscreen.cpp:422——Qt 只为请求了 alpha 通道的窗口选 ARGB32
+         * 视觉，普通/弹层窗口一律屏幕默认视觉）。
+         *
+         * 根因（xtrace + 最小客户端矩阵实测，本机 Xvfb/Xorg 均适用）：
+         * 同为 depth-32（非根深度）的兄弟窗口，若主窗先创建、先上屏
+         * （PutImage），后映射的 depth-32 弹层（Popup：override-
+         * redirect）虽 IsViewable、Z 序在顶、服务器端窗口缓冲含完整
+         * 不透明内容（xwd -id 可见），根屏合成却把它排除在外——移动出
+         * 主窗范围即显示，移回即被主窗内容覆盖；XRaiseWindow/重映射均
+         * 无效。把弹层降到屏幕默认深度（通常 24）后，各组合（d24 弹层
+         * over d32/d24 主窗、连续重绘下）全部正常上屏；对照矩阵见
+         * /tmp/k2_min3~8 实验记录。本分支只在「默认深度 != 进程选定
+         * 深度」时改选（默认视觉本就是 32 位的屏、或进程本就运行在
+         * 24 位视觉下时零变化）。 */
+        if (winTransient && g_xpwnDefaultDepth != g_xpwnDepth) {
+            entryVisual = g_xpwnDefaultVisual;
+            entryDepth = g_xpwnDefaultDepth;
+            attr.colormap = g_xpwnDefaultColormap;
+        }
+#endif
     }
     /* 输入事件掩码：键盘/鼠标按键/指针移动/进出均需在创建窗口时声明，
        否则 X 服务器不会向本窗口投递对应事件。滚轮事件(Button4/5)走
@@ -4329,7 +4525,7 @@ bool XPlatformNativeWindow_create(XWindow* window)
     xwin = XCreateWindow(g_xpwnDisplay,
                          RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
                          geom.x, geom.y, (unsigned)w, (unsigned)h, 0,
-                         g_xpwnDepth, InputOutput, g_xpwnVisual,
+                         entryDepth, InputOutput, entryVisual,
                          CWBackPixel | CWBorderPixel | CWColormap |
                              CWEventMask | CWOverrideRedirect,
                          &attr);
@@ -4339,6 +4535,8 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_window = window;
     entry->m_gc = XCreateGC(g_xpwnDisplay, xwin, 0, NULL);
     entry->m_client = geom;
+    entry->m_visual = entryVisual;
+    entry->m_depth = entryDepth;
     /* 窗口类型提示（对标 QXcbWindow::setWindowType：创建时按类型写
        _NET_WM_WINDOW_TYPE，映射前生效）。 */
     xpwn_applyWindowType(g_xpwnDisplay, xwin, XWindow_type(window));
@@ -4572,6 +4770,8 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     entry->m_win = 0;
     entry->m_window = NULL;
     entry->m_gc = NULL;
+    entry->m_visual = NULL;
+    entry->m_depth = 0;
     entry->m_client = (XRect){0, 0, 0, 0};
     memset(entry->m_keyPressed, 0, sizeof(entry->m_keyPressed));
     entry->m_lastPressTime = 0;
@@ -5530,6 +5730,12 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
     int bufBpl;
     int wantBpl = 0; /* 0 = 交由 XCreateImage 按 bitmap_pad 自算行跨度。 */
     bool direct;
+    /* 按窗口实际视觉/深度准备上屏描述符（#58/59 弹层上屏根修配套：
+       瞬态弹层以屏幕默认视觉/深度创建，present 必须生成同深度的
+       XImage，否则 XPutImage BadMatch。未登记时回落进程选定视觉，
+       与旧行为一致。） */
+    Visual* visual = entry && entry->m_visual ? entry->m_visual : g_xpwnVisual;
+    int depth = entry && entry->m_depth ? entry->m_depth : g_xpwnDepth;
     if (!entry || imgW <= 0 || imgH <= 0)
         return false;
     if (entry->m_presentImage && entry->m_presentBuffer &&
@@ -5542,13 +5748,13 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
        w*2 —— XCreateImage 的自算值按 bitmap_pad=32 圆整为
        (w*2+3)&~3，与 2 字节/像素直拷缓冲不一致；bits_per_pixel/
        字节序待创建后复核（见下方 direct 判定）。 */
-    if (g_xpwnDepth == XPWN_DEPTH_16 &&
-        g_xpwnVisual->red_mask == 0x0000f800u &&
-        g_xpwnVisual->green_mask == 0x000007e0u &&
-        g_xpwnVisual->blue_mask == 0x0000001fu)
+    if (depth == XPWN_DEPTH_16 &&
+        visual->red_mask == 0x0000f800u &&
+        visual->green_mask == 0x000007e0u &&
+        visual->blue_mask == 0x0000001fu)
         wantBpl = imgW * 2;
 #endif
-    ximg = XCreateImage(g_xpwnDisplay, g_xpwnVisual, g_xpwnDepth, ZPixmap, 0,
+    ximg = XCreateImage(g_xpwnDisplay, visual, depth, ZPixmap, 0,
                         NULL, imgW, imgH, 32, wantBpl);
     if (!ximg)
         return false;
@@ -5557,13 +5763,14 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
        仅当视觉同为 depth-16/565 且按小端读像素时逐行字节直通。
        depth-24/32 视觉需要 565->32 展开，本层当前不提供该转换，
        上屏直接失败 —— 绝不落入 24 位重排路径（xpwn_copyRect24 按
-       4 字节/像素读取 565 缓冲会越界/花屏）。 */
-    direct = g_xpwnDepth == XPWN_DEPTH_16 &&
+       4 字节/像素读取 565 缓冲会越界/花屏）。（该构建下 create 不
+       改选弹层视觉，depth 恒等于进程选定深度，行为与既往一致。） */
+    direct = depth == XPWN_DEPTH_16 &&
              ximg->bits_per_pixel == 16 && ximg->byte_order == LSBFirst &&
              ImageByteOrder(g_xpwnDisplay) == LSBFirst &&
-             g_xpwnVisual->red_mask == 0x0000f800u &&
-             g_xpwnVisual->green_mask == 0x000007e0u &&
-             g_xpwnVisual->blue_mask == 0x0000001fu;
+             visual->red_mask == 0x0000f800u &&
+             visual->green_mask == 0x000007e0u &&
+             visual->blue_mask == 0x0000001fu;
     if (!direct) {
         ximg->data = NULL;
         XDestroyImage(ximg);
@@ -5573,12 +5780,14 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
 #else
     /* 直拷条件：真 32 位像素 + 标准 BGRA8888 掩码 + 小端字节序（与
        ARGB32 小端内存布局 [B,G,R,A] 相同）。24 位深含 32 位填充的视觉
-       也能直拷（高 8 位 Alpha 被服务器忽略）。 */
+       也能直拷（高 8 位 Alpha 被服务器忽略）。真 24 位视觉（弹层默认
+       视觉根修改选后）bits_per_pixel==24 → direct=false → 走
+       xpwn_copyRect24 重排（ARGB32 源缓冲，合法）。 */
     direct = ximg->bits_per_pixel == 32 && ximg->byte_order == LSBFirst &&
              ImageByteOrder(g_xpwnDisplay) == LSBFirst &&
-             g_xpwnVisual->red_mask == 0x00ff0000u &&
-             g_xpwnVisual->green_mask == 0x0000ff00u &&
-             g_xpwnVisual->blue_mask == 0x000000ffu;
+             visual->red_mask == 0x00ff0000u &&
+             visual->green_mask == 0x0000ff00u &&
+             visual->blue_mask == 0x000000ffu;
     bufBpl = direct ? imgW * 4 : (imgW * 3 + 3) & ~3;
 #endif
     if (bufBpl <= 0 || (size_t)imgH > SIZE_MAX / (size_t)bufBpl) {
