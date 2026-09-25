@@ -9,6 +9,7 @@
 #include "XMessageBox.h"
 #include "XMemory.h"
 #include "XEvent.h"
+#include "XWindowEvent.h"
 #include "XCoreApplication.h"
 #include "XGuiConfig.h"
 
@@ -228,7 +229,18 @@ static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
  *         标准图标全部不渲染——夜间台账 #19）。图标来源优先级与
  *         Qt 一致：setIconPixmap 自定义位图优先，其次按 m_icon 分
  *         级取样式标准图标（XMessageBox_standardIcon → 样式
- *         SP_MessageBox* 图标，调用方持有，画后即删）。 */
+ *         SP_MessageBox* 图标，调用方持有，画后即删）。
+ *  @details 历史（复扫-5 #31附1）：此前 XPainter drawImage 逐像素
+ *           兜底路径丢源补偿量 sx0/sy0，图标目标被脏区/表面裁剪钳
+ *           位后内容平移钳位偏移量（真机实测伪影 (391,341)=真身
+ *           (259,262)+(132,79)，5 轮复现），当时以"脏区完全包含图
+ *           标矩形才盖章"绕行。现根修已落在 XPainter.c
+ *           painterRaster_drawImage：兜底循环按 dst(bx+i,by+j) ←
+ *           src(sx0+i,sy0+j) 映射、双级裁剪源偏移累积，与
+ *           blitImageRegion 行内核一致（对标 Qt drawImage 源/目标矩
+ *           形映射 + systemClip 只限写入域不平移内容），绕行门撤
+ *           除、直画恢复；裁剪语义交给 painter 统一处理，部分相交
+ *           批内图标按裁剪截断、不越域不平移。 */
 static void xmsg_drawIcon(XMessageBox* box, XEvent* event)
 {
     XImage* image;
@@ -236,8 +248,27 @@ static void xmsg_drawIcon(XMessageBox* box, XEvent* event)
     XPoint offset;
     XIcon* icon = NULL;
     int top;
+    XRect dirty;
+    XRect iconRect;
+    int w;
+    int h;
     if (!box || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
     if (!xmsg_hasIconArea(box)) return;
+    top = xmsg_contentTop(box);
+    /* 事件脏区钳到控件自身矩形（paintTree 已按子树裁剪，此处防御
+     * 性再裁一次；对标 qwidget.cpp paintEvent 内 dirty 区域语义）。 */
+    dirty = XPaintEvent_rect((XPaintEvent*)event);
+    w = XWidget_width((XWidget*)box);
+    h = XWidget_height((XWidget*)box);
+    if (dirty.x < 0) { dirty.width += dirty.x; dirty.x = 0; }
+    if (dirty.y < 0) { dirty.height += dirty.y; dirty.y = 0; }
+    if (dirty.x + dirty.width > w) dirty.width = w - dirty.x;
+    if (dirty.y + dirty.height > h) dirty.height = h - dirty.y;
+    if (dirty.width <= 0 || dirty.height <= 0) return;
+    XRect_init(&iconRect, 16, top, 32, 32);
+    /* 脏区包含判定绕行门已撤（XPainter drawImage 源补偿根修，见上
+     * @details）：恢复直画，由 painter 裁剪统一保证不越脏区、不平
+     * 移内容。 */
     image = XWidget_paintImage((XWidget*)box);
     if (!image) return;
     if (box->m_iconPixmap) {
@@ -257,8 +288,8 @@ static void xmsg_drawIcon(XMessageBox* box, XEvent* event)
         offset = XWidget_paintOffset((XWidget*)box);
         if (offset.x != 0 || offset.y != 0)
             XPainter_translate(&painter, (float)offset.x, (float)offset.y);
-        top = xmsg_contentTop(box);
-        XIcon_paint(icon, &painter, 16, top, 32, 32,
+        XIcon_paint(icon, &painter, iconRect.x, iconRect.y,
+                    iconRect.width, iconRect.height,
                     (uint32_t)(XAlignment_Left | XAlignment_Top),
                     XIconMode_Normal, XIconState_Off);
         XPainter_end(&painter);
@@ -368,9 +399,15 @@ void XMessageBox_setTitle(XMessageBox* self, const char* utf8)
     if (!self->m_title) self->m_title = XString_create();
     if (self->m_title)
         XString_assign_utf8(self->m_title, utf8 ? utf8 : "");
-    /* 对标 Qt：标题同步到窗口（此前仅存内部字符串，原生标题不变）。 */
-    XWidget_setWindowTitle((XWidget*)self,
-                           XString_create_utf8(utf8 ? utf8 : ""));
+    /* 对标 Qt：标题同步到窗口（此前仅存内部字符串，原生标题不变）。
+       setWindowTitle 只借 const 指针、内部自行 copy，不接管所有权——
+       内联创建的 XString 须自行释放，否则每次调用即泄漏（ASan 实证：
+       autotest 中 96B 直接泄漏）。 */
+    {
+        XString* windowTitle = XString_create_utf8(utf8 ? utf8 : "");
+        XWidget_setWindowTitle((XWidget*)self, windowTitle);
+        if (windowTitle) XString_delete_base((XClass*)windowTitle);
+    }
     /* 标题条出现/消失改变内容区起点（对标 Qt 标题栏下的内容布局）。 */
     xmsg_setupText(self);
     xmsg_setupCheckBox(self);

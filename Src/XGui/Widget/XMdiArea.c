@@ -132,8 +132,11 @@ static void VX_mdiSubWindow_mousePressEvent(XWidget* self, XEvent* event)
     if (XMouseEvent_button(me) != XMouseButton_LeftButton ||
         XMouseEvent_position(me).y >= XMDI_SUBWINDOW_TITLEBAR_HEIGHT) {
         /* 非左键或非头带（头带以下为内容件命中域）：交基类默认链
-         * （对标 qmdisubwindow.cpp:3153 非左键 ignore 沿父链传播）。 */
-        XWidget_mousePressEvent_base(self, event);
+         * （对标 qmdisubwindow.cpp:3153 非左键 ignore 沿父链传播）。
+         * 注意须用 XClass_Parent 直呼父类实现——XWidget_mousePressEvent_base
+         * 是 vtable 派发助手，会重入本重载造成无限递归（复扫-5 实证）。 */
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*))((XWidget*)self, event);
         return;
     }
     /* 记录拖拽基线（对标 qmdisubwindow.cpp:3160-3162：按下记全局
@@ -167,8 +170,11 @@ static void VX_mdiSubWindow_mouseMoveEvent(XWidget* self, XEvent* event)
     if (!g_mdiDragActive || g_mdiDragWindow != sw ||
         XMouseEvent_buttons(me) != XMouseButton_LeftButton) {
         /* 无按压基线/左键已释放/会话不归本窗：不动作（防御会话状态
-         * 残留时误改几何，口径同 XSizeGrip.c:152-156）。 */
-        XWidget_mouseMoveEvent_base(self, event);
+         * 残留时误改几何，口径同 XSizeGrip.c:152-156）。基类链同 Press：
+         * XClass_Parent 直呼（_base 助手会重入本重载，复扫-5 悬停栈
+         * 溢出实证）。 */
+        XClass_Parent(XWidget, EXWidget_MouseMoveEvent,
+                      void (*)(XWidget*, XEvent*))((XWidget*)self, event);
         return;
     }
     parent = XWidget_parentWidget(self);
@@ -205,8 +211,10 @@ static void VX_mdiSubWindow_mouseReleaseEvent(XWidget* self, XEvent* event)
     if (!sw || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
-        /* 对标 qmdisubwindow.cpp:3241 非左键交基类默认链。 */
-        XWidget_mouseReleaseEvent_base(self, event);
+        /* 对标 qmdisubwindow.cpp:3241 非左键交基类默认链（XClass_Parent
+         * 直呼，同 Press/Move 防重入口径）。 */
+        XClass_Parent(XWidget, EXWidget_MouseReleaseEvent,
+                      void (*)(XWidget*, XEvent*))((XWidget*)self, event);
         return;
     }
     /* 结束拖拽会话并解除抓取（对标 mouseReleaseEvent:3247 收尾 +

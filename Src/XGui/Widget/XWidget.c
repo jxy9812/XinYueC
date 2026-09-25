@@ -60,6 +60,16 @@
 #include "XToolTip.h"
 #include "XShortcut.h"
 #include "XVarList.h"
+/* ShortcutOverride 询问接收侧（对标 QLineEdit/QPlainTextEdit::event 的
+ * ShortcutOverride 分支）：行编辑/多行编辑壳头文件仅供下方取编辑控制器与
+ * 转交判定用，不扩任何契约头（XEVENT_TYPE_SHORTCUT_OVERRIDE 见
+ * XEventType.h:49，早已定义）。 */
+#if XLINEEDIT_ON && XLINECONTROL_ON
+#include "XLineEdit.h"
+#endif /* XLINEEDIT_ON && XLINECONTROL_ON */
+#if XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON
+#include "XPlainTextEdit.h"
+#endif /* XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON */
 #if XByteArray_ON
 #include "XByteArray.h"
 #endif /* XByteArray_ON */
@@ -1532,13 +1542,30 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     }
     /* 对标 Qt 按压隐式抓取（qt_button_down，qwidgetwindow.cpp:634）：按住
      * 期间的 move/release 直投按压控件，不按 childAt 现场命中分派——
-     * 光标拖出控件边界（橡皮筋越界拖拽）也不丢尾流；显式 grab 优先。 */
+     * 光标拖出控件边界（橡皮筋越界拖拽）也不丢尾流；显式 grab 优先。
+     * 复扫-6 N6-2 收窄：无按键 move（buttons==0）不再沿隐式抓取重定向
+     * （Qt 隐式抓取只在按键按住期间存活，qguiapplication 的 pointer
+     * grabber 语义；无按键 move 按现场命中分派，与下方 ENTER/LEAVE
+     * 的 buttons==0 判定同口径）——即使抓取因 release 被 ignore 滞留
+     * （见下方无条件清除），悬停/ToolTip 链也不再被钉死在按压控件。 */
     if (!g_mouseGrabWidget && g_buttonDownWidget &&
         XWidget_topLevel(g_buttonDownWidget) == top &&
-        (XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE ||
+        ((XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE &&
+          ((const XMouseEvent*)event)->m_buttons != (XMouseButton)0) ||
          XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE)) {
         target = g_buttonDownWidget;
     }
+    /* 对标 qwidgetwindow.cpp:624-627（handleMouseEvent 的 releaseAfter
+     * 分支 qt_button_down = nullptr）：release 的派发目标已按按压控件
+     * 选定（上块），送达前后无条件清除隐式抓取——不依赖控件是否
+     * accept 释放。XLineEdit 无 EXWidget_MouseReleaseEvent 覆写
+     * （vtable 仅 KeyReleaseEvent，XLineEdit.c:1444），release 被
+     * ignore 时旧实现只在「被接受」分支清除（下方
+     * XEVENT_TYPE_MOUSE_BUTTON_RELEASE 接受分支），抓取永久
+     * 滞留＝复扫-6 N6-2「ToolTip 位置照常跟随、内容冻结为补全框
+     * 文本」根因（活体复现：点补全框一次即冻结，压任意处即愈）。 */
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE)
+        g_buttonDownWidget = NULL;
     /* 应用模态同窗口门禁（问题 #22）：命中目标不在模态子树内时接受并
        吞掉事件（对标 isWindowBlocked 对全部输入阻塞；鼠标抓取的弹层
        路径已在上方定向/转投，门禁只约束命中分派）。置于 ENTER/LEAVE
@@ -1627,6 +1654,101 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     return XEvent_isAccepted(event);
 }
 
+/* ==================== ShortcutOverride 询问（对标 QEvent::ShortcutOverride） ==================== */
+
+/** @brief 虚表槽位指针比较用的通用函数指针型（仅作恒等比较，不调用）。 */
+typedef void (*XWidgetVtableSlot)(void);
+
+#if XLINEEDIT_ON && XLINECONTROL_ON
+/**
+ * @brief      行编辑族判定并取编辑控制器（ShortcutOverride 接收侧，内部）。
+ * @details    判据=虚表 Copy 槽与 XLineEdit_class_init() 共享表同函数指针：
+ *             XVTABLE_INHERIT_XCLASS(XLineEdit) 把基类槽位复制进子类表，
+ *             而 XComboEdit（XComboBox.c 内嵌可编辑下拉框行编辑）与
+ *             XItemLineEditor（XItemDelegate.c 视图单元格编辑器）均只覆写
+ *             按键/失焦槽，结构上等价 is-a-XLineEdit，并自动覆盖未来未
+ *             覆写 Copy 槽的子类；两个子类结构体均以 XLineEdit m_base 为
+ *             首成员（XComboEdit 见 XComboBox.c xcomboEdit_create），故
+ *             (XLineEdit*) 向下转换地址不变。壳→控制器转交对标
+ *             QLineEdit::event 的 ShortcutOverride 分支
+ *             （qlineedit.cpp:1451 → control->processShortcutOverrideEvent）。
+ * @param      self 待判定控件；可为 NULL。
+ * @return     行编辑族的编辑控制器；非行编辑族返回 NULL。
+ */
+static XLineControl* xwidget_shortcutOverrideLineControl(XWidget* self)
+{
+    XVtable* vt;
+    XVtable* le;
+    if (!self) return NULL;
+    vt = XClassGetVtable(self);
+    le = XLineEdit_class_init();
+    if (!vt || !le) return NULL;
+    if (XVtableGetFunc(vt, EXClass_Copy, XWidgetVtableSlot) ==
+        XVtableGetFunc(le, EXClass_Copy, XWidgetVtableSlot))
+        return ((XLineEdit*)self)->m_control;
+    return NULL;
+}
+#endif /* XLINEEDIT_ON && XLINECONTROL_ON */
+
+#if XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON
+/**
+ * @brief      多行编辑族 ShortcutOverride 转交（接收侧，内部）。
+ * @details    判据=虚表 Deinit 槽与 XPlainTextEdit_class_init() 同函数指针
+ *             （XPlainTextEdit 仅覆写 Deinit 槽；XTextEdit 的键入经聚焦的
+ *             内嵌 XPlainTextEdit 承载，同落本判据）。命中后转交
+ *             XTextControl_processEvent——其 XEVENT_TYPE_SHORTCUT_OVERRIDE
+ *             分支按既有口径决定 accept/ignore；非本族控件不转交，事件
+ *             保持忽略（快捷键照常激活）。
+ * @param      self 接收到询问事件的控件；可为 NULL。
+ * @param      ke   ShortcutOverride 询问事件。
+ */
+static void xwidget_shortcutOverrideDelegate(XWidget* self, XKeyEvent* ke)
+{
+    XVtable* vt;
+    XVtable* pte;
+    if (!self || !ke) return;
+    vt = XClassGetVtable(self);
+    pte = XPlainTextEdit_class_init();
+    if (!vt || !pte) return;
+    if (XVtableGetFunc(vt, EXClass_Deinit, XWidgetVtableSlot) ==
+        XVtableGetFunc(pte, EXClass_Deinit, XWidgetVtableSlot)) {
+        XPlainTextEdit* edit = (XPlainTextEdit*)self;
+        if (edit->m_control)
+            XTextControl_processEvent(edit->m_control, (XEvent*)ke);
+    }
+}
+#endif /* XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON */
+
+/**
+ * @brief      快捷键激活前的 ShortcutOverride 询问（内部）。
+ * @details    对标 qt_sendShortcutOverrideEvent
+ *             （qwindowsysteminterface.cpp:1175-1199）与
+ *             qapplication.cpp:2665-2675：命中快捷键后、激活前，向焦点
+ *             对象发送 QEvent::ShortcutOverride；控件 accept（文本编辑
+ *             要吃这颗键，如行编辑的裸字母/Shift+字母）则调用方跳过
+ *             快捷键激活，按键随后按正常路径送达焦点控件；ignore 才
+ *             真正激活快捷键。询问范围与下方按键投递同口径：仅同顶层
+ *             的当前焦点控件；禁用控件不询问（对标 QWidget::event 丢弃
+ *             禁用控件的键盘输入）。
+ * @param      top  正在派发按键的顶层控件。
+ * @param      key  原始 KEY_PRESS 事件。
+ * @return     true=焦点控件接受覆盖（跳过 XShortcut_activate）。
+ */
+static bool xwidget_shortcutOverrideAsk(const XWidget* top, const XKeyEvent* key)
+{
+    XWidget* focus = g_focusWidget;
+    XKeyEvent ask;
+    if (!focus || !key) return false;
+    if (XWidget_topLevel(focus) != top) return false;
+    if (!XWidget_isEnabled(focus)) return false;
+    XKeyEvent_init(&ask, XEVENT_TYPE_SHORTCUT_OVERRIDE,
+                   key->m_key, key->m_modifiers);
+    XEvent_ignore((XEvent*)&ask); /* 默认忽略：接收侧显式 accept 才覆盖 */
+    XWidget_sendEvent(focus, (XEvent*)&ask);
+    XClass_deinit_base((XClass*)&ask); /* 栈上询问事件：无堆资源，走基类清理 */
+    return XEvent_isAccepted((XEvent*)&ask);
+}
+
 /** @brief 键盘事件投递：优先焦点控件，其次顶层控件；未接受沿父链上抛。 */
 static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
 {
@@ -1640,14 +1762,21 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
      * 收起已可见提示，同口径）。 */
     if (type == XEVENT_TYPE_KEY_PRESS || type == XEVENT_TYPE_KEY_RELEASE)
         xwidget_toolTipWakeCancel();
-    /* 快捷键优先（对标 QShortcutMap：按键先过快捷键表，命中即消费）。 */
+    /* 快捷键优先（对标 QShortcutMap：按键先过快捷键表，命中即消费）。
+     * 命中后、激活前先向焦点控件发 ShortcutOverride 询问（对标
+     * qt_sendShortcutOverrideEvent，qwindowsysteminterface.cpp:1175）：
+     * 焦点是文本编辑控件且这颗键要进编辑框（如裸字母 t 对 #32b）时
+     * accept → 跳过快捷键，按键继续走下方焦点控件正常投递；否则照旧
+     * 激活快捷键。 */
     if (type == XEVENT_TYPE_KEY_PRESS) {
         XShortcut* sc = XShortcut_match(
             (int)((XKeyEvent*)event)->m_key, (XShortcutContext)0,
             g_focusWidget);
         if (sc) {
-            XShortcut_activate(sc);
-            return true;
+            if (!xwidget_shortcutOverrideAsk(top, (const XKeyEvent*)event)) {
+                XShortcut_activate(sc);
+                return true;
+            }
         }
     }
     target = g_keyboardGrabWidget;
@@ -2970,6 +3099,28 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
     case XEVENT_TYPE_CONTENTS_RECT_CHANGE:
         XWidget_changeEvent_base(self, event);
         return true;
+    case XEVENT_TYPE_SHORTCUT_OVERRIDE:
+        /* 对标 QLineEdit::event 的 ShortcutOverride 分支
+         * （qlineedit.cpp:1451）：询问事件由认识它的文本编辑控件定夺——
+         * 行编辑族转交控制器 processShortcutOverrideEvent（XLineControl.c，
+         * Qt 条件全集：复制/撤销族、可打印及编辑键），多行编辑族转交
+         * XTextControl_processEvent（其 ShortcutOverride 分支）；其余
+         * 控件不识别该事件 → 保持忽略，快捷键照常激活。 */
+#if XLINEEDIT_ON && XLINECONTROL_ON
+        {
+            XLineControl* overrideControl =
+                xwidget_shortcutOverrideLineControl(self);
+            if (overrideControl) {
+                XLineControl_processShortcutOverrideEvent(
+                    overrideControl, (XKeyEvent*)event);
+                return XEvent_isAccepted(event);
+            }
+        }
+#endif /* XLINEEDIT_ON && XLINECONTROL_ON */
+#if XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON
+        xwidget_shortcutOverrideDelegate(self, (XKeyEvent*)event);
+#endif /* XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON */
+        return XEvent_isAccepted(event);
     default:
         /* 未识别事件回退 XObject 默认 Event 实现（对标 QWidget::event 尾部）。 */
         return XClass_Parent(XObject, EXObject_Event,
@@ -4911,13 +5062,34 @@ void XWidget_setTabOrder(XWidget* first, XWidget* second)
 /** @brief 判断控件是否可作为 Tab 链中的显式/文档序焦点候选（与收集规则一致）。 */
 static bool XWidget_focusChainCandidate(const XWidget* self)
 {
+    const XObject* parent;
     /* 对标 Qt 焦点遍历按生效可见性过滤（qwidget.cpp focusNextPrevChild
      * 的候选走 isVisible()）：StackOne 隐藏页的子控件虽 explicitShow 但
      * 生效不可见，不得成为候选——否则 Tab 落到不可见控件上（复扫-3
      * #40 根因：页3 Tab 落到隐藏「按钮演示」页的 m_button）。 */
-    return self && self->m_enabled &&
-           (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
-           self->m_visible && !self->m_isWindow;
+    if (!(self && self->m_enabled &&
+          (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
+          self->m_visible && !self->m_isWindow))
+        return false;
+    /* 复合控件候选资格二选一，停靠点归容器（对标 Qt 单控件语义：
+     * QAbstractSpinBoxPrivate::init 的 d->edit->setFocusProxy(q)
+     * （qabstractspinbox.cpp:691）令内嵌行编辑与容器合成单停靠点，
+     * qapplication.cpp:1996-1998 的 composites 过滤保证 Tab 不在父子
+     * 间打转）。XGui 复合容器（XAbstractSpinBox 等）尚未调用
+     * XWidget_setFocusProxy，此处在收集端等效收口：直接父控件自身为
+     * Tab 候选时子控件不重复入链——XLineEdit_init 补 StrongFocus（复
+     * 扫-5 #40）后，页3 SpinBox 的内嵌编辑框不再与容器双停靠，链序
+     * [LE,SpinBox,Slider,nav0..nav8] 维持（复扫-5 路0 项4）；NoFocus
+     * 容器（页面/groupBox/XChartView）下的独立控件不受影响。 */
+    parent = XObject_parent((XObject*)self);
+    if (parent && parent->is_widget) {
+        const XWidget* pw = (const XWidget*)parent;
+        if (pw->m_enabled &&
+            (pw->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
+            pw->m_visible && !pw->m_isWindow)
+            return false;
+    }
+    return true;
 }
 
 /** @brief 深度优先收集可 Tab 聚焦子控件（不含顶层自身；顺序即绘制顺序）。 */

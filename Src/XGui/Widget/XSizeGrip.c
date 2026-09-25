@@ -108,8 +108,11 @@ static void VX_sizeGrip_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
         /* 对标 Qt qsizegrip.cpp:257 mousePressEvent：非左键交父类默认
-         * 处理（默认忽略→沿父链传播）。 */
-        XWidget_mousePressEvent_base(self, event);
+         * 处理（默认忽略→沿父链传播）。须用 XClass_Parent 直呼父类
+         * 实现——XWidget_mousePressEvent_base 是 vtable 派发助手，会
+         * 重入本重载无限递归（同 XMdiArea.c 复扫-5 实证）。 */
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*))((XWidget*)self, event);
         return;
     }
     top = XWidget_topLevelWidget(self);
@@ -194,8 +197,10 @@ static void VX_sizeGrip_mouseReleaseEvent(XWidget* self, XEvent* event)
     if (!grip || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
-        /* 对标 Qt qsizegrip.cpp:413 mouseReleaseEvent：非左键交父类。 */
-        XWidget_mouseReleaseEvent_base(self, event);
+        /* 对标 Qt qsizegrip.cpp:413 mouseReleaseEvent：非左键交父类
+         * （XClass_Parent 直呼，同 Press 防重入口径）。 */
+        XClass_Parent(XWidget, EXWidget_MouseReleaseEvent,
+                      void (*)(XWidget*, XEvent*))((XWidget*)self, event);
         return;
     }
     /* 结束拖拽会话并解除抓取（对标 d->gotMousePress = false;

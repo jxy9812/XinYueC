@@ -934,10 +934,48 @@ static DBusHandlerResult xpwn_imeFilter(DBusConnection* connection,
 }
 
 /**
+ * @brief      判定 fcitx5 DBus 输入法前端是否应挂接（进程一次）。
+ * @details    遵守 X11 输入法选择约定（问题 #32 第五轮收官根修）：
+ *             - 环境变量 XPWN_IME 显式开关优先：none/off/0 强制停用，
+ *               其余非空值强制挂接（夜间 Xvfb 分道/CI 用）。
+ *             - 否则按 XMODIFIERS：显式 @im=none = 用户声明「不要输入
+ *               法」→ 停用（此前被无视：DBus 前端照常 CreateInputContext，
+ *               fcitx5 中文态对每个 KeyPress 的 ProcessKeyEvent 回
+ *               consumed=true——裸拉丁字母恰是拼音组合起始键，全部被
+ *               吞（keyPress 不产出、日志仅 keyRelease），XShortcut 字
+ *               母键/编辑框字母插入全灭；组合完成后又以 CommitString 回
+ *               投 CJK（复扫-5 lane4「nihao→你好」、lane3「'3'→'去'」
+ *               实证闭环）。对标 Qt：QXcbIntegration 仅在输入法插件被
+ *               环境选中时才装 inputContext，@im=none 下按键绝无过滤层，
+ *               qxcbkeyboard.cpp handleKeyEvent 直接产出 KEY_PRESS）。
+ *             - XMODIFIERS 未设或选中 fcitx：维持挂接（桌面中文主路径，
+ *               目标④零回退）。
+ * @return     true=挂接 DBus 前端；false=全程跳过（g_xpwnImeBus 保持
+ *             NULL，ProcessKeyEvent/Pump/Focus 各调用点已有空守卫自然
+ *             旁路，西文按键直达 keysym→KEY_PRESS）。
+ */
+static bool xpwn_imeWanted(void)
+{
+    const char* overrideEnv = getenv("XPWN_IME");
+    const char* modifiers = getenv("XMODIFIERS");
+    if (overrideEnv && overrideEnv[0]) {
+        if (strcmp(overrideEnv, "none") == 0 ||
+            strcmp(overrideEnv, "off") == 0 ||
+            strcmp(overrideEnv, "0") == 0)
+            return false;
+        return true;
+    }
+    if (modifiers && strcmp(modifiers, "@im=none") == 0) return false;
+    return true;
+}
+
+/**
  * @brief      初始化 fcitx5 DBus 输入法（进程一次）。
  * @details    连接 session 总线 -> CreateInputContext(程序名,桌面) ->
  *             保存 IC 路径与密钥 -> 订阅该 IC 的信号。失败静默降级
- *             （无中文输入，西文不受影响）。
+ *             （无中文输入，西文不受影响）。是否挂接由 xpwn_imeWanted()
+ *             按环境约定判定（XMODIFIERS=@im=none / XPWN_IME=none 时
+ *             全程跳过）。
  * @return     无返回值。
  */
 static void xpwn_imeInit(void)
@@ -949,6 +987,13 @@ static void xpwn_imeInit(void)
     DBusMessageIter sub;
     dbus_bool_t ok = FALSE;
     if (g_xpwnImeBus) return;
+    if (!xpwn_imeWanted()) {
+#if XPWN_IME_DEBUG
+        XPrintf("[ime-dbus] 输入法前端停用（XMODIFIERS=@im=none 或"
+                " XPWN_IME=none）——按键不过滤直达应用\n");
+#endif
+        return;
+    }
     dbus_error_init(&err);
     g_xpwnImeBus = dbus_bus_get(DBUS_BUS_SESSION, &err);
     if (!g_xpwnImeBus) {
@@ -2173,15 +2218,20 @@ static bool xpwn_ensureConnection(void)
 #endif
     /* 依次尝试常见输入法桥（fcitx/ibus/XIM 默认），环境变量
        XMODIFIERS 优先；XOpenIM 全部失败时中文输入不可用（西文不受
-       影响），启动日志给出提示。 */
+       影响），启动日志给出提示。XMODIFIERS=@im=none 是显式声明
+       「不要输入法」：XIM 不再回退试探 fcitx/默认修饰（对标 xterm
+       等经典 X 客户端——XMODIFIERS 即输入法选择器），DBus 前端同由
+       xpwn_imeWanted() 停用（问题 #32 第五轮收官，详见该函数注释）。 */
     {
         const char* envMods = getenv("XMODIFIERS");
         const char* candidates[3];
+        const bool imNone =
+            envMods && strcmp(envMods, "@im=none") == 0;
         int ci;
         candidates[0] = (envMods && envMods[0]) ? envMods : "@im=ibus";
         candidates[1] = "@im=fcitx";
         candidates[2] = "";
-        for (ci = 0; ci < 3 && !g_xpwnInputMethod; ++ci) {
+        for (ci = 0; !imNone && ci < 3 && !g_xpwnInputMethod; ++ci) {
             (void)XSetLocaleModifiers(candidates[ci]);
             g_xpwnInputMethod = XOpenIM(g_xpwnDisplay, NULL, NULL, NULL);
 #if XPWN_IME_DEBUG
@@ -2190,7 +2240,11 @@ static bool xpwn_ensureConnection(void)
                     g_xpwnInputMethod ? "OK" : "failed");
 #endif
         }
-        if (!g_xpwnInputMethod)
+        if (imNone)
+            XPrintf("XPlatformNativeWindow: XMODIFIERS=@im=none——XIM 与"
+                    " DBus 输入法前端均不挂接（西文按键/字母快捷键直达"
+                    "应用；XPWN_IME=fcitx 可显式强开输入法前端）\n");
+        else if (!g_xpwnInputMethod)
             XPrintf("XPlatformNativeWindow: XOpenIM 失败——XIM 不可用"
                     "（西文不受影响；中文走 DBus 输入法前端）\n");
     }
@@ -2795,11 +2849,17 @@ static bool xpwn_imeCommitIsDirectKey(const char* committed, int bytes,
     if (ch == 0x09) return true; /* Tab/Shift+Tab：恒为按键事件（见上）。 */
     if (ch < 0x20 || ch > 0x7e) return false;
     if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))
-        /* 拉丁字母保持提交通道（夜间回退：直映路径的 KEY_PRESS 修饰位
-           未携带 Shift，Shift+x 被控件层派生成小写——XLC-ACC-FAIL
-           "aXc"/"axc" 实证）。字母快捷键（XShortcut/KSE）日间随控件层
-           修饰位透传配套再纳直映集。 */
-        return false;
+        /* 拉丁字母纳入直映集（问题 #32 收官）：恒为按键事件，大小写由
+           控件层按 Shift 派生（keyToText Shift 位推导），快捷键层按归一
+           大写键值精确匹配；CapsLock 锁存态（LockMask）例外留提交通道
+           携带真字符。验收夹具已跟新契约（ac_type 大写字母携带 Shift）。
+           注：本分支只决定「有 XIM 提交串时的分流」；真机字母被吞的
+           上游根因在 fcitx5 DBus 前端无视 XMODIFIERS=@im=none 照常
+           ProcessKeyEvent 消费——已由 xpwn_imeWanted() 根修（第五轮
+           复扫 lane3 R4「Shift+X 得 x」实为 fcitx 中文态回投小写，非
+           本直映路径缺陷；xpwn_translateModifiers 对 ShiftMask 本就
+           原样携带修饰位）。 */
+        return (state & LockMask) == 0;
     if (state & ShiftMask) return false;
     return true;
 }

@@ -3703,21 +3703,24 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
             if (state->m_clipRegion.count > 1)
                 fastBlit = 0;
 #endif /* XPAINTER_CLIP_REGION_ON */
-            if (bx < cx0) { sx0 = cx0 - bx; cw -= sx0; bx = cx0; }
-            if (by < cy0) { sy0 = cy0 - by; ch -= sy0; by = cy0; }
+            if (bx < cx0) { int dx = cx0 - bx; sx0 += dx; cw -= dx; bx = cx0; }
+            if (by < cy0) { int dy = cy0 - by; sy0 += dy; ch -= dy; by = cy0; }
             if (bx + cw > cx1) cw = cx1 - bx;
             if (by + ch > cy1) ch = cy1 - by;
         }
         /* 表面裁剪兜底：paintEvent 内 setClipRect(Replace) 逃逸时仍限制
-           在表面裁剪内（与 Qt systemClip 不可绕过一致）。 */
+           在表面裁剪内（与 Qt systemClip 不可绕过一致）。源偏移累积
+           （sx0 += …）：状态裁剪与表面裁剪同时左/上裁时两级偏移都要
+           计入——此前覆盖式 sx0 = cx0 - bx 以推进后的 bx 为基线，丢掉
+           状态裁剪分量，快速 blit 路径同样取错源起点（同根）。 */
         if (g_surfaceClipActive)
         {
             int cx0 = g_surfaceClipRect.x;
             int cy0 = g_surfaceClipRect.y;
             int cx1 = cx0 + g_surfaceClipRect.width;
             int cy1 = cy0 + g_surfaceClipRect.height;
-            if (bx < cx0) { sx0 = cx0 - bx; cw -= sx0; bx = cx0; }
-            if (by < cy0) { sy0 = cy0 - by; ch -= sy0; by = cy0; }
+            if (bx < cx0) { int dx = cx0 - bx; sx0 += dx; cw -= dx; bx = cx0; }
+            if (by < cy0) { int dy = cy0 - by; sy0 += dy; ch -= dy; by = cy0; }
             if (bx + cw > cx1) cw = cx1 - bx;
             if (by + ch > cy1) ch = cy1 - by;
         }
@@ -3732,16 +3735,26 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                                           cw, ch, opacity,
                                           state->m_compositionMode))
             return true;
-        /* 逐像素兜底：不透明度 <255、非 Source 系合成或多矩形裁剪等。 */
+        /* 逐像素兜底：不透明度 <255、非 Source 系合成或多矩形裁剪等。
+           目标遍历限定在裁剪求交后的 (cw,ch)，源取样坐标补偿 (sx0,sy0)
+           ——上方裁剪块把目标原点推进到 (bx,by)=(原点+裁剪偏移) 并把
+           源偏移记入 (sx0,sy0)，此处必须按 dst(bx+i,by+j) ←
+           src(sx0+i,sy0+j) 映射（与 blitImageRegion :3361 行内核一致）。
+           此前遍历全 (width,height) 且源从 (0,0) 取样，把源内容平移
+           (clip.x-draw.x, clip.y-draw.y) 盖进裁剪矩形（复扫-5 #31 消息
+           框图标伪影根因）；越界侧溢由 putPixel 逐像素裁剪静默吞掉，
+           仅剩平移伪影，故长期未暴露。XPAINTER_CLIP_ON=0 时 sx0=sy0=0
+           且 cw/ch 为全尺寸，本循环与修复前逐位一致。 */
         {
             int sy;
-            for (sy = 0; sy < height; ++sy)
+            for (sy = 0; sy < ch; ++sy)
             {
                 int sx;
-                for (sx = 0; sx < width; ++sx)
+                for (sx = 0; sx < cw; ++sx)
                     painterRaster_putPixel(self, bx + sx, by + sy,
-                        painterApplyOpacityByte(XImage_pixel(image, sx, sy),
-                                                opacity));
+                        painterApplyOpacityByte(
+                            XImage_pixel(image, sx0 + sx, sy0 + sy),
+                            opacity));
             }
         }
         return true;

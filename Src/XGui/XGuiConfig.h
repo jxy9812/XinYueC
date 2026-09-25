@@ -102,7 +102,10 @@
  * 软件、=opengl 强制 GPU（运行期设置优先于本默认值）。 */
 #ifndef XGPU_RUNTIME_DEFAULT_ON
 #if XGPU_ON && XPLATFORMINTEGRATION_ON && XPLATFORM_DESKTOP
-#define XGPU_RUNTIME_DEFAULT_ON 1
+/* 暂时回退软件默认（2026-09-24 用户指令）：GPU 子矩形批量化 WIP
+ * （87213b92）存在闪烁 + 帧率回退（数百帧），修复并发专项完成前
+ * 桌面默认保持软件光栅；WIP 修完后恢复 1。 */
+#define XGPU_RUNTIME_DEFAULT_ON 0
 #else
 #define XGPU_RUNTIME_DEFAULT_ON 0
 #endif

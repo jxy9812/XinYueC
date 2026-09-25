@@ -753,8 +753,10 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
            行为零回归。 */
         if (XMouseEvent_button(me) == XMouseButton_MiddleButton &&
             xlineedit_pasteSelectionAt(edit, me)) {
-            XWidget_setFocusPolicy((XWidget*)edit,
-                                   XWidgetFocusPolicy_ClickFocus);
+            /* 对标 Qt：点击聚焦由投递层按策略位结算，控件不得在点击路径
+               改写自身策略（改写会把 init 的 StrongFocus 降级回
+               ClickFocus，首次点击后 LE 再度脱离 Tab 候选集，#40 修复
+               随之失效）。XWidget_setFocus 不查策略位，直接聚焦。 */
             XWidget_setFocus((XWidget*)edit);
             g_focusedLineEdit = edit;
             XWidget_update((XWidget*)edit);
@@ -764,7 +766,11 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
         }
         return;
     }
-    XWidget_setFocusPolicy((XWidget*)edit, XWidgetFocusPolicy_ClickFocus);
+    /* 点击聚焦：setFocus 不查策略位（XWidget.c XWidget_setFocusReason
+       只门禁 enabled），此处不再改写策略——init 的 StrongFocus（含
+       ClickFocus 位）保持终身有效，点击后 LE 仍是 Tab 候选（#40）。
+       对标 Qt：QLineEdit 点击路径从不 setFocusPolicy（qlineedit.cpp
+       mousePressEvent 仅 d->control->moveCursor 等编辑结算）。 */
     XWidget_setFocus((XWidget*)edit);
     g_focusedLineEdit = edit;
     pos = XMouseEvent_position(me);
@@ -1483,7 +1489,13 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
         xlineedit_connectControlSignals(self, self);
         xlineedit_syncControlFont(self);
     }
-    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_ClickFocus);
+    /* 对标 qlineedit_p.cpp:231（QLineEditPrivate::init 的
+       q->setFocusPolicy(Qt::StrongFocus)）：行编辑可经 Tab 与点击双路
+       聚焦（StrongFocus=TabFocus|ClickFocus|0x8，点击位仍在，点击聚焦
+       语义不变）。此前 ClickFocus 无 TabFocus 位，XWidget_focusChainCandidate
+       永不收录 LE——页3 冷启动 Tab 链=[SpinBox,Slider,nav0..nav8]，LE
+       仅能点击进入、可 Tab 出链（复扫-5 路0 N3，final_report #40 残）。 */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
     xlineedit_updateSizeHints(self);
 }
 

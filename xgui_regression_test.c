@@ -29862,6 +29862,7 @@ static void test_phase32_p2_contract(void)
     {
         XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
         XString* title;
+        char* plainText;
         XPlainTextEdit_setPlainText(pe, "a\nb\nc");
         p32_expect(XPlainTextEdit_blockCount(pe) == 3, "pe: blockCount 按行计");
         p32_expect(XPlainTextEdit_canPaste(pe), "pe: 可编辑 canPaste");
@@ -29879,8 +29880,10 @@ static void test_phase32_p2_contract(void)
         XPlainTextEdit_moveCursor(pe, 11, 0); /* 11 = XTextControlMove_End（Qt End） */
         p32_expect(XPlainTextEdit_cursorLine(pe) == 2, "pe: moveCursor End 到末行");
         XPlainTextEdit_appendHtml(pe, "<b>bold</b>");
-        p32_expect(XStrstr(XPlainTextEdit_toPlainText(pe), "bold") != NULL,
+        plainText = XPlainTextEdit_toPlainText(pe);
+        p32_expect(plainText && XStrstr(plainText, "bold") != NULL,
                    "pe: appendHtml 剥标签追加");
+        if (plainText) XFree_System(plainText);
         XPlainTextEdit_delete_base(pe);
     }
 

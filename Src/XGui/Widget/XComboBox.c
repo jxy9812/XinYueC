@@ -1069,7 +1069,10 @@ bool XComboBox_isCompleterMode(const XComboBox* self)
  * 校验）会给出伪行号或不发射，无法在组合框侧以信号区分"外部点击"。
  * 故参照 XMenu 的"mousePress 判断 pos 超界"方案，在本地子类覆写
  * 按下/释放：位置超出视图几何即收起弹窗并吞掉事件；窗内事件原样
- * 交给 XListView 处理（行选择、activated 联动不变）。
+ * 交给 XListView 处理（行选择、activated 联动不变）。另覆写按键：
+ * Esc 消费收层、导航键转发基类后补弹层重绘上屏（基类无 Esc 分支且
+ * setCurrentIndex 不触发重绘，弹层为顶层窗无兜底——详见
+ * VXComboPopupView_keyPressEvent 注）。
  */
 XCLASS_DEFINE_BEGING(XComboPopupView)
 XCLASS_DEFINE_EXTEND_END(XComboPopupView, XListView)
@@ -1083,6 +1086,7 @@ typedef struct XComboPopupView
 
 static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event);
+static void VXComboPopupView_keyPressEvent(XWidget* self, XEvent* event);
 
 /** @brief 判断弹出层本地坐标是否落在视图矩形内。
  * @note  入参为事件相对弹层窗口的本地坐标，直接与弹层尺寸比较；
@@ -1189,7 +1193,71 @@ static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 弹出列表子类虚表：仅覆写按下/释放，其余继承 XListView。 */
+/** @brief 键盘：Esc 收层（复扫-5 N1 残1）；导航/激活键转发基类后补
+ *  弹层表面重绘上屏（复扫-5 N2 残2）。
+ * @note  弹层存活期间键盘抓取以本视图为派发起点（xcombo_popupShow 的
+ *  XWidget_grabKeyboard），且本视图是独立顶层窗（父链终点）：基类
+ *  XAbstractItemView_keyPressEvent 无 Escape 分支（Up/Down/Return
+ *  之外的事件既不处理也不 ignore，XAbstractItemView.c:1843 起），
+ *  事件沿父链无处上抛即被丢弃——Esc 因此不收层（对照 XMenu 于自身
+ *  keyPress 消费 Esc：XMenu.c:1154-1157）。
+ *  对标 Qt：弹层存活 Esc 恒收层——QAbstractItemView::keyPressEvent
+ *  对 Escape 走 event->ignore()（qabstractitemview.cpp:2502），未接受
+ *  键由弹层容器/弹窗层兜底关闭（qcombobox.cpp QComboBoxPrivateContainer
+ *  eventFilter 的 Cancel 分支同语义）。本子类即弹层容器，故在此消费。
+ *  高亮滞留根因：基类键盘导航（无修饰分支 XAbstractItemView.c:1954-
+ *  1958）经 XAbstractItemView_setCurrentIndex 移动当前行，而该函数
+ *  只改内部索引不同步重绘（XAbstractItemView.c:316-341；对比
+ *  xaiv_setCurrentPreservingSelection 有 update）——"当前行已移动、
+ *  高亮滞留旧行"。对标 Qt QAbstractItemView::currentChanged 的
+ *  update(previous)（qabstractitemview.cpp:3808）：行移动必重绘；
+ *  本文件不可改基类，故在转发基类完成移动后补 update + 主动 flush
+ *  （弹层为独立顶层窗口无宿主帧泵，异步 PAINT 不足以上屏——本文件
+ *  xcombo_popupReposition/xcombo_popupShow 已有主动补帧先例）。 */
+static void VXComboPopupView_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XComboPopupView* view = (XComboPopupView*)self;
+    int key;
+    if (!view || !event ||
+        XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) {
+        XClass_Parent(XListView, EXWidget_KeyPressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    key = ((XKeyEvent*)event)->m_key;
+    if (key == (int)XKey_Escape) {
+        /* Esc 恒收层（hidePopup_base 幂等：非弹出态早退）。 */
+        if (view->m_owner)
+            XComboBox_hidePopup_base(view->m_owner);
+        XEvent_accept(event);
+        return;
+    }
+    /* 导航（Up/Down/PageUp/PageDown/Home/End）与激活（Return/Enter）
+     * 仍由基类实现：行移动钳制/选择同步/activated 发射（activated →
+     * xcombo_viewActivatedSlot 回填收层）语义不变，此处不做第二实现。 */
+    XClass_Parent(XListView, EXWidget_KeyPressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    /* 基类未接受（空模型/越界钳制为 ignore）不补绘；Return/Enter 已由
+       activated 联动收层（弹层已隐藏）亦无需补绘。 */
+    if (!XEvent_isAccepted(event)) return;
+    if (view->m_owner && view->m_owner->m_popupVisible) {
+        switch (key) {
+        case (int)XKey_Up:
+        case (int)XKey_Down:
+        case (int)XKey_PageUp:
+        case (int)XKey_PageDown:
+        case (int)XKey_Home:
+        case (int)XKey_End:
+            XWidget_update((XWidget*)view);
+            XWidget_flushBackingStore((XWidget*)view, NULL);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+/** @brief 弹出列表子类虚表：仅覆写按下/释放/按下键，其余继承 XListView。 */
 static XVtable* XComboPopupView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XComboPopupView)
@@ -1198,6 +1266,8 @@ static XVtable* XComboPopupView_class_init(void)
                              VXComboPopupView_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
                              VXComboPopupView_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
+                             VXComboPopupView_keyPressEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -1871,6 +1941,9 @@ static void xcombo_completionNavigate(XComboBox* self, int step)
     XAbstractItemView_setCurrentIndex((XAbstractItemView*)view, row,
                                       self->m_modelColumn);
     XWidget_update((XWidget*)view);
+    /* 补主动上屏：弹层为独立顶层窗口无宿主帧泵，异步 PAINT 不保证
+       上屏（复扫-5 N2 残2 同家族；先例 xcombo_popupReposition）。 */
+    XWidget_flushBackingStore((XWidget*)view, NULL);
 }
 
 void XComboBox_showPopup_base(XComboBox* self)

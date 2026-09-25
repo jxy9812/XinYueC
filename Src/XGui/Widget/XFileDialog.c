@@ -231,19 +231,58 @@ XFileDialogViewMode XFileDialog_viewMode(const XFileDialog* self)
 
 void XFileDialog_setNameFilter(XFileDialog* self, const XString* filter)
 {
+    const char* utf8;
     if (!self) return;
     xfiledialog_freeString(&self->m_selectedNameFilter);
-    self->m_selectedNameFilter = xfiledialog_dupString(filter);
-    /* 单一过滤器即一个元素的过滤器列表（Qt setNameFilter 语义）。 */
     if (self->m_nameFilters) {
         XStringList_clear_base((XContainer*)self->m_nameFilters);
     } else {
         self->m_nameFilters =
             XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     }
-    if (self->m_nameFilters && filter)
-        XStringList_push_back_base(self->m_nameFilters,
-                                   (void*)self->m_selectedNameFilter);
+    /* 对标 Qt 6.8 qfiledialog.cpp setNameFilter = setNameFilters(
+     * qt_make_filter_list(filter))：入串按 ";;" 拆分为多条过滤器，
+     * 串内无 ";;" 而含 '\n' 时按 '\n' 拆分（qt_make_filter_list 同款
+     * 回退），空段跳过；首条成为当前选中（Qt useNameFilter(0) 语义）。
+     * 此前整串原样登记为单条，"A;;B" 在过滤器下拉原样显示一条
+     * （复扫-5 #31附3），文件通配解析也误混两段的括号模式。 */
+    utf8 = filter ? XString_toUtf8(filter) : NULL;
+    if (utf8 && utf8[0] && self->m_nameFilters) {
+        const char* sep = strstr(utf8, ";;") ? ";;" : "\n";
+        size_t sepLen = (sep[1] == '\0') ? 1u : 2u;
+        const char* p = utf8;
+        for (;;) {
+            const char* hit = strstr(p, sep);
+            size_t len = hit ? (size_t)(hit - p) : strlen(p);
+            if (len > 0) {
+                char* part =
+                    (char*)XMemory_malloc(len + 1u,
+                                          XCLASS_DEFAULT_MEMORY_TYPE);
+                if (part) {
+                    XString* item;
+                    XMemcpy(part, p, len);
+                    part[len] = '\0';
+                    item = XString_create_utf8(part);
+                    XFree_System(part);
+                    if (item) {
+                        XStringList_push_back_move_base(self->m_nameFilters,
+                                                        item);
+                        XString_delete_base((XClass*)item);
+                    }
+                }
+            }
+            if (!hit) break;
+            p = hit + sepLen;
+        }
+    }
+    /* 首条过滤器即当前选中（Qt useNameFilter(0)；无有效段保持空）。 */
+    if (self->m_nameFilters &&
+        XStringList_size_base((const XContainer*)self->m_nameFilters) > 0) {
+        const XString* first = (const XString*)(const void*)
+            XStringList_at_base((const XVector*)self->m_nameFilters, 0);
+        if (first)
+            self->m_selectedNameFilter = xfiledialog_dupString(first);
+    }
 }
 
 void XFileDialog_setNameFilters(XFileDialog* self, const XStringList* filters)
