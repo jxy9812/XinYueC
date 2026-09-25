@@ -300,8 +300,12 @@ XVtable* XPaintEvent_class_init(void);
 typedef struct XPaintEvent
 {
     XEvent  m_class;  /**< 继承 XEvent；必须为第一个成员。 */
-    XRegion m_region; /**< 需要重绘的绘制区域（内部深拷贝，事件拥有）。 */
+    XRegion m_region; /**< 需要重绘的绘制区域（init 深拷贝拥有；
+                           initBorrow 时借用外部存储，见 m_regionBorrowed）。 */
     XRect   m_rect;   /**< 绘制区域的外接矩形；init 时由区域边界计算。 */
+    bool    m_regionBorrowed; /**< true=区域为借用，deinit 不释放。 */
+    bool    m_pooled;         /**< true=来自复用单槽，deinit 归还槽位
+                                   （delete_base 因 is_heap=false 不释放）。 */
 } XPaintEvent;
 
 /**
@@ -321,6 +325,29 @@ XPaintEvent* XPaintEvent_create_ex(XMemoryType memory, XEventType type,
  * @param      region 绘制区域；可为 NULL。内部深拷贝。
  */
 void XPaintEvent_init(XPaintEvent* event, XEventType type, const XRegion* region);
+/**
+ * @brief      初始化绘制事件并**借用**区域（不深拷贝）。
+ * @param      event  待初始化存储；不可为 NULL。
+ * @param      type   事件类型；通常为 XEVENT_TYPE_PAINT。
+ * @param      region 借用的区域存储；调用方保证其生命周期覆盖事件的整个
+ *                    同步使用期（事件在栈上、paintEvent 同步返回）。事件
+ *                    深拷贝（clone）后副本为拥有语义，不受借用影响。
+ * @note       供 paintTree 逐控件派发使用：每控件深拷贝一次区域是软件
+ *             增量帧的固定分配开销（每帧 N 个控件 = N 次 malloc/free）。
+ */
+void XPaintEvent_initBorrow(XPaintEvent* event, XEventType type,
+                            const XRegion* region);
+/**
+ * @brief      创建（优先复用单槽的）绘制事件，语义同 create_ex。
+ * @details    PAINT 事件由 m_paintEventPosted 占位保证同窗口至多 1 个在飞，
+ *             本函数用原子单槽把「事件本体 + 区域数组」的每帧 malloc/free
+ *             归零（区域缓冲随对象保留，XRegion_copy 容量足够时零分配）。
+ *             槽空时退化为一次堆分配，由 deinit 归还。
+ * @note       返回对象 is_heap=false：XEvent_delete_base 只触发 deinit，
+ *             对象由 deinit 归还单槽（或被新归还者顶替释放）。
+ */
+XPaintEvent* XPaintEvent_createRecycled(XMemoryType memory, XEventType type,
+                                        const XRegion* region);
 /**
  * @brief      获取绘制区域（对标 QPaintEvent::region）。
  * @param      event 目标事件。

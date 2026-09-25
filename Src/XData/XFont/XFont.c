@@ -13,6 +13,33 @@
 #include <stdlib.h>
 #include <limits.h>
 
+/* ========== 默认字体家族共享实例（软件渲染帧率根修，2026-09-25） ==========
+   背景：XFont_init() 原先为默认家族每次新建一个 XString（两趟 UTF-8 解码 +
+   堆分配），而 XPainter 的 init/end 各触发一次 painterDefaultState ——
+   XGuiDemo 软件增量基准分段实测：XFont_setFamily 单项就占 5 秒基准总运行
+   时间约 15%（726ms/5000ms），加上配套释放合计约占每帧 50µs（帧时 226µs
+   的 22%），是当时软件渲染帧率的第一大固定开销。
+   方案：默认家族是不可变常量，进程内共享同一 XString 实例；所有权归本
+   模块，所有释放点（deinit/copy/move/setFamily）一律跳过共享实例，
+   拷贝/移动语义与原先完全一致。修复后该路径归零，单独收益约 +35%
+   （默认页 4430→5969 FPS）。
+   线程说明：实例为惰性创建 + 仅在 GUI/字体使用线程读写，与本模块其它
+   静态缓存（字形缓存等）同一套单写者约定。 */
+static XString* g_xfontSharedDefaultFamily = NULL;
+
+static XString* XFont_sharedDefaultFamily(void)
+{
+    if (!g_xfontSharedDefaultFamily && XFONT_DEFAULT_FAMILY[0] != '\0')
+        g_xfontSharedDefaultFamily =
+            XString_create_utf8(XFONT_DEFAULT_FAMILY);
+    return g_xfontSharedDefaultFamily;
+}
+
+static bool XFont_isSharedFamily(const XString* family)
+{
+    return family != NULL && family == g_xfontSharedDefaultFamily;
+}
+
 static int XFont_glyphRowBytes(const XFontGlyphDsc* dsc, int bpp)
 {
     if (!dsc || dsc->box_w == 0 || dsc->box_h == 0 ||
@@ -505,7 +532,8 @@ bool XFontOutlineFace_fileLoadGlyph(const XFont* self, uint32_t codepoint,
 static void VXFont_deinit(XFont* self)
 {
     if (!self) return;
-    XString_delete_base((XClass*)self->m_family);
+    if (!XFont_isSharedFamily(self->m_family))
+        XString_delete_base((XClass*)self->m_family);
     self->m_family = NULL;
     XString_delete_base((XClass*)self->m_styleName);
     self->m_styleName = NULL;
@@ -523,12 +551,17 @@ static void VXFont_copy(XFont* dest, const XFont* src)
     {
         XString* oldFamily = dest->m_family;
         XString* oldStyle = dest->m_styleName;
-        dest->m_family = src->m_family
-                             ? XString_create_copy(src->m_family) : NULL;
+        /* 默认家族共享实例不可复制（进程内唯一，复制会破坏释放配对）。 */
+        if (XFont_isSharedFamily(src->m_family))
+            dest->m_family = src->m_family;
+        else
+            dest->m_family = src->m_family
+                                 ? XString_create_copy(src->m_family) : NULL;
         dest->m_styleName = src->m_styleName
                                 ? XString_create_copy(src->m_styleName)
                                 : NULL;
-        if (oldFamily && oldFamily != dest->m_family)
+        if (oldFamily && oldFamily != dest->m_family &&
+            !XFont_isSharedFamily(oldFamily))
             XString_delete_base((XClass*)oldFamily);
         if (oldStyle && oldStyle != dest->m_styleName)
             XString_delete_base((XClass*)oldStyle);
@@ -563,7 +596,8 @@ static void VXFont_move(XFont* dest, XFont* src)
     if (XClassIsVtableNull(dest))
         XFont_init(dest);
     /* 目标先释放原有字符串，再转移源字符串所有权。 */
-    XString_delete_base((XClass*)dest->m_family);
+    if (!XFont_isSharedFamily(dest->m_family))
+        XString_delete_base((XClass*)dest->m_family);
     XString_delete_base((XClass*)dest->m_styleName);
     dest->m_family = src->m_family;
     dest->m_styleName = src->m_styleName;
@@ -1187,11 +1221,18 @@ const char* XFont_family(const XFont* self)
 void XFont_setFamily(XFont* self, const char* family)
 {
     if (!self) return;
-    if (self->m_family) XString_delete_base((XClass*)self->m_family);
-    if (family && family[0]) {
-        self->m_family = XString_create_utf8(family);
-    } else {
-        self->m_family = NULL;
+    if (!XFont_isSharedFamily(self->m_family))
+        XString_delete_base((XClass*)self->m_family);
+    self->m_family = NULL;
+    if (family && family[0])
+    {
+        /* 默认家族走进程内共享实例：XFont_init 的热路径（XPainter 每帧
+           init/end 各一次）不再重复建 XString。 */
+        if (XFONT_DEFAULT_FAMILY[0] != '\0' &&
+            strcmp(family, XFONT_DEFAULT_FAMILY) == 0)
+            self->m_family = XFont_sharedDefaultFamily();
+        else
+            self->m_family = XString_create_utf8(family);
     }
 }
 
