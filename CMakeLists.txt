@@ -264,15 +264,33 @@ target_link_libraries(${EXPORT_NAME} PRIVATE fatfs)
 #   （XPlatformBackingStore_win32.c / XPlatformNativeWindow_win32.c）。
 # 静态库将依赖公开给最终可执行文件，动态库在自身链接阶段解析。
 if(WIN32)
-    # Vulkan 仅由 XPlatformGraphics_win32.c 的可选后端使用；
-    # 本机未安装 Vulkan SDK 时不定义 XINYUE_C_HAS_VULKAN，
-    # 不包含 vulkan.h 也不链接 Vulkan::Vulkan，避免无 Vulkan 环境编译失败。
+    # Vulkan：优先 SDK（find_package）；无 SDK 时回退仓库内 vendored
+    # Vulkan-Headers + 由系统 vulkan-1.dll 导出生成的导入库
+    # （Tools/make_vulkan_lib.bat 从 C:\Windows\System32\vulkan-1.dll
+    # 的 dumpbin /exports 生成 vulkan-1.def → lib /def）。两形态都只
+    # 影响 XINYUE_C_HAS_VULKAN 的定义与否——未启用时不包含 vulkan.h，
+    # Drive/Posix 的 Vulkan 驱动文件整体守卫为空，行为同旧版。
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)
         add_compile_definitions(XINYUE_C_HAS_VULKAN=1)
         include_directories(${Vulkan_INCLUDE_DIRS})
         set(XINYUE_WIN32_VULKAN_VAR Vulkan::Vulkan)
-        message(STATUS "Vulkan found: ${Vulkan_INCLUDE_DIRS}")
+        message(STATUS "Vulkan found (SDK): ${Vulkan_INCLUDE_DIRS}")
+    else()
+        set(XINYUE_VULKAN_VENDORED_HEADER
+            "${CMAKE_CURRENT_SOURCE_DIR}/Tools/vulkan-headers-tmp/Vulkan-Headers-1.3.290/include/vulkan/vulkan.h")
+        set(XINYUE_VULKAN_VENDORED_LIB
+            "${CMAKE_CURRENT_SOURCE_DIR}/Tools/vulkan-importlib/vulkan-1.lib")
+        if(EXISTS "${XINYUE_VULKAN_VENDORED_HEADER}" AND
+           EXISTS "${XINYUE_VULKAN_VENDORED_LIB}")
+            add_compile_definitions(XINYUE_C_HAS_VULKAN=1)
+            include_directories("${CMAKE_CURRENT_SOURCE_DIR}/Tools/vulkan-headers-tmp/Vulkan-Headers-1.3.290/include")
+            set(XINYUE_WIN32_VULKAN_VAR "${XINYUE_VULKAN_VENDORED_LIB}")
+            message(STATUS "Vulkan found (vendored headers + loader import lib)")
+        else()
+            message(STATUS "Vulkan NOT enabled: no SDK and no vendored "
+                           "headers/importlib (see Tools/make_vulkan_lib.bat)")
+        endif()
     endif()
     set(XINYUE_WIN32_LIBS advapi32 user32 gdi32 opengl32 imm32 shell32 ole32 uiautomationcore setupapi winusb cfgmgr32 hid)
     if(XINYUE_WIN32_VULKAN_VAR)

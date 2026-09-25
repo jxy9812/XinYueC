@@ -203,6 +203,10 @@ typedef struct XImageData
     void (*m_cleanupFunc)(void*);        /**< 清理回调函数 */
     void*            m_cleanupInfo;      /**< 清理回调参数 */
     int64_t          m_cacheKey;         /**< 缓存键值 */
+    uint32_t         m_contentVersion;   /**< 内容版本号（P-A，2026-09-25：
+                                           GPU 纹理身份缓存键；随写点经
+                                           markDirty 派生新值，初值取全局
+                                           序号保证跨数据生命周期不复用）。 */
     int              m_serialNumber;     /**< 序列号（用于生成缓存键） */
     XStringList      m_textKeys;         /**< 文本元数据键列表 */
     XStringList      m_textValues;       /**< 文本元数据值列表 */
@@ -264,7 +268,15 @@ static int64_t XImageData_nextCacheKey(void)
 static void XImageData_markDirty(XImageData* d)
 {
     if (d)
+    {
         d->m_cacheKey = XImageData_nextCacheKey();
+        /* P-A：内容版本号与 cacheKey 同源派生（全局单调序号高 32 位）。
+           每次写点必经本函数（直接 markDirty 或 XImage_detach 尾部），
+           故任何像素写入都会更换版本；取全新序号而非 ++，保证跨数据
+           生命周期（同一 XImage 对象换数据/clone/detach 复制）版本值
+           不复用，GL 侧 {对象指针, 版本} 键不会串到旧纹理。 */
+        d->m_contentVersion = (uint32_t)((uint64_t)d->m_cacheKey >> 32);
+    }
 }
 
 static void XImageData_clearText(XImageData* d)
@@ -590,6 +602,10 @@ static XImageData* XImageData_create(int width, int height, XImageFormat format,
     // 生成缓存键
     d->m_serialNumber = (int)(XImageData_nextCacheKey() >> 32);
     d->m_cacheKey = XImageData_nextCacheKey();
+    /* P-A：初版版本号取独立全局序号——新数据对象（load/clone/detach/
+       reinit 换数据）即使宿主 XImage 指针不变，版本也必然不同于旧数据，
+       GL 身份缓存按 {指针, 版本} 命中不会吃到换数据前的旧纹理。 */
+    d->m_contentVersion = (uint32_t)(XImageData_nextCacheKey() >> 32);
 
     return d;
 }
@@ -5407,6 +5423,13 @@ void XImage_setOffset(XImage* self, const XPoint* pos)
 int64_t XImage_cacheKey(const XImage* self)
 {
     return (self && self->m_data) ? self->m_data->m_cacheKey : 0;
+}
+
+uint32_t XImage_contentVersion(const XImage* self)
+{
+    /* P-A：GPU 纹理身份缓存键（语义见 XImage.h 声明）。空图像返回 0，
+       驱动侧对空图像本就不建缓存条目。 */
+    return (self && self->m_data) ? self->m_data->m_contentVersion : 0u;
 }
 
 void XImage_detach(XImage* self)

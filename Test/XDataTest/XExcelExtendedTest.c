@@ -43,6 +43,46 @@
 #include <string.h>
 #include <math.h>
 
+// ==================== 基类上转垫片（编译期回退开关） ====================
+// 本测试按库内约定以派生指针直调 *_base 泛型接口：这些名字是宏，最终映射到
+// 形参为 XClass* 的基类函数——delete 链 XClass_delete_base（XClass.h:196，
+// 经 XString.h:185/XByteArray.h:429/XStringList.h:231/XFont.h:237/
+// XXmlStreamReader.h:573/XXmlStreamWriter.h:109 各自映射）与 deinit 链
+// XClass_deinit_base（XClass.h:195，经 XString.h:184 映射）；另有
+// XVector_size_base → XContainer_size_base(const XContainer*)（XVector.h:677、
+// XContainer.h:302）。派生结构体首成员即基类（XCLASS_DEFINE_BEGING），上转
+// 安全。C 语言没有继承，MSVC /W3 对每处直调报 C4133（本文件 136 处）。
+// 垫片仅在编译期补上显式上转并直达最终基类函数，被调函数、实参与求值顺序
+// 和原写法逐位一致，无任何运行时差异。
+// 回退开关：XEXCEL_TEST_BASE_CAST_FIX（默认 1）。用 /DXEXCEL_TEST_BASE_CAST_FIX=0
+// 重新编译即整体恢复原写法（C4133 随之重现，目标码与修复前一致）。
+// 说明：该修复是纯编译期改动，没有可被 getenv 分叉的运行时行为，故开关采用
+// 编译期宏而非环境变量。
+#ifndef XEXCEL_TEST_BASE_CAST_FIX
+#define XEXCEL_TEST_BASE_CAST_FIX 1
+#endif
+
+#if XEXCEL_TEST_BASE_CAST_FIX
+
+#undef XString_deinit_base
+#define XString_deinit_base(self) XClass_deinit_base((XClass*)(self))
+#undef XString_delete_base
+#define XString_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XByteArray_delete_base
+#define XByteArray_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XStringList_delete_base
+#define XStringList_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XFont_delete_base
+#define XFont_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XXmlStreamReader_delete_base
+#define XXmlStreamReader_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XXmlStreamWriter_delete_base
+#define XXmlStreamWriter_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XVector_size_base
+#define XVector_size_base(self) XContainer_size_base((const XContainer*)(self))
+
+#endif
+
 static const char* xexcel_asset_path(const char* name)
 {
     static char path[512];

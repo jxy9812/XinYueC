@@ -15,10 +15,12 @@
 #include "XPainter.h"
 #include "XWidget_Protected.h"
 #include "XWindowEvent.h"
-#if XCHARTVIEW_PROFILE
-/* Phase A 五段计时依赖：环境门控（XCHARTVIEW_PROFILE 变量，语义同
- * getenv，对标 XGPU_PROFILE）与单调微秒时钟（XDateTime 纳秒换算）。 */
+/* 环境门控读取（XCHARTVIEW_PROFILE 计时、XGUI_CHART_DIRTY_CULL 回退与
+ * XGUI_CHART_STATIC_CACHE 图例保留瓦片开关共用；各开关一次探测缓存，
+ * 关闭路径近零开销）。 */
 #include "XSystem.h"
+#if XCHARTVIEW_PROFILE
+/* Phase A 五段计时依赖：单调微秒时钟（XDateTime 纳秒换算）。 */
 #include "XDateTime.h"
 #endif /* XCHARTVIEW_PROFILE */
 #include <math.h>
@@ -121,6 +123,41 @@ static void xcv_profileFrame(int64_t fpUs, int64_t blitUs, int64_t rebuildUs,
 #define XCV_PROF_BEGIN() do { } while (0)
 #define XCV_PROF_END(field) do { (void)0; } while (0)
 #endif /* XCHARTVIEW_PROFILE */
+
+/** @brief series 段脏区剔除运行期开关（P0-5）：默认开；
+ *         XGUI_CHART_DIRTY_CULL=0 回退为剔除前行为。
+ * @note   一次探测缓存（-1 未探测）；GUI 主线程单写，同
+ *         xcv_profileEnabled 纪律。 */
+static int g_xcvDirtyCullGate = -1;
+
+static bool xcv_dirtyCullEnabled(void)
+{
+    if (g_xcvDirtyCullGate < 0) {
+        const char* env = XSystem_environment("XGUI_CHART_DIRTY_CULL");
+        g_xcvDirtyCullGate =
+            (env && env[0] == '0' && env[1] == '\0') ? 0 : 1;
+    }
+    return g_xcvDirtyCullGate > 0;
+}
+
+/** @brief 图例保留瓦片运行期开关（保留缓存一期，整帧 ≥250 线的结构性
+ *         出路）：默认关；XGUI_CHART_STATIC_CACHE=1 才启用（新架构特性
+ *         沿 XGPU_QUAD_BATCH 先例：环境开关、=1 才启用、一次探测缓存、
+ *         GUI 主线程单写，同 xcv_dirtyCullEnabled 纪律）。
+ * @note   开关只增能：命中贴瓦片、任何一步不满足回退既有逐项现绘
+ *         （回退路径逐位=今天）；=0（默认）渲染路径与现状逐位一致，
+ *         失效挂钩（updateChart/setChart）整段不编译。 */
+static int g_xcvStaticCacheGate = -1;
+
+static bool xcv_staticCacheEnabled(void)
+{
+    if (g_xcvStaticCacheGate < 0) {
+        const char* env = XSystem_environment("XGUI_CHART_STATIC_CACHE");
+        g_xcvStaticCacheGate =
+            (env && env[0] == '1' && env[1] == '\0') ? 1 : 0;
+    }
+    return g_xcvStaticCacheGate > 0;
+}
 
 static uint32_t xcv_color(const XChartView* self, XPaletteColorRole role)
 {
@@ -848,6 +885,59 @@ static bool xcv_staticLayerRebuild(XChartView* cv, const XRect* bounds,
     /* 层画布不继承 paintOffset 平移与脏区裁剪：层像素坐标即控件本地
      * 坐标；blit 时经目标绘制器既有平移/裁剪落位。 */
     xcv_paintStaticContent(cv, &painter, bounds, titleR, plotR, NULL);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+    return true;
+}
+#endif /* XCHARTVIEW_STATIC_LAYER_ON */
+
+#if XCHARTVIEW_STATIC_LAYER_ON
+/** @brief 绘制图例（定义见下；瓦片重建先于其定义处引用，前向声明）。 */
+static void xcv_paintLegend(XChartView* self, XPainter* painter,
+                            const XRect* legendR, const XRect* dirty);
+
+/** @brief 图例瓦片纵向余量（像素）：行循环保证落笔行起点在图例区内，
+ *         但行内 drawText 的字形盒（约 y+8..y+28，同 xcv_textVisible
+ *         的 20px 可见带）可延伸过图例区底界；瓦片按区高+余量分配，
+ *         直画可触达的像素瓦片同样可触达（长序列名横向同理，瓦片横向
+ *         取图例区起点到控件右缘），保证贴回与直画逐位一致。 */
+#define XCV_LEGEND_TILE_SLACK 48
+
+/**
+ * @brief 把图例渲进保留瓦片（保留缓存一期；XGUI_CHART_STATIC_CACHE=1）。
+ * @details 复用 xcv_paintLegend（同代码保证与直画逐位一致）：瓦片画布
+ *          坐标系平移 -图例区原点后按既有绝对坐标绘制。每次重建先清为
+ *          全透明（同 xcv_staticLayerRebuild 画布语义）：图例 over 0，
+ *          贴回 = 图例 over 目标既有内容（z 序=直画图例：序列/饼图之上、
+ *          橡皮筋之下），source-over 结合律保证逐位一致。
+ * @param tileW/tileH 调用方按图例区与控件边界算好的瓦片尺寸（横=区起点
+ *        到控件右缘，纵=区高+XCV_LEGEND_TILE_SLACK）。
+ * @return 重建成功返回 true；尺寸非法或画布分配失败返回 false（调用方
+ *         回退直画）。
+ */
+static bool xcv_legendLayerRebuild(XChartView* cv, const XRect* legendR,
+                                   int tileW, int tileH, XImageFormat format)
+{
+    XPainter painter;
+    if (!cv || !legendR || tileW <= 0 || tileH <= 0)
+        return false;
+    if (XImage_isNull(&cv->m_legendLayer) ||
+        XImage_width(&cv->m_legendLayer) != tileW ||
+        XImage_height(&cv->m_legendLayer) != tileH ||
+        XImage_format(&cv->m_legendLayer) != format) {
+        if (!XImage_reinit_ex(&cv->m_legendLayer, tileW, tileH, format))
+            return false;
+    }
+    XImage_fillRect(&cv->m_legendLayer, NULL, 0u);
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, &cv->m_legendLayer)) {
+        XPainter_deinit(&painter);
+        return false;
+    }
+    /* 瓦片画布不继承 paintOffset 平移与脏区裁剪：瓦片像素坐标=控件本地
+     * 坐标减图例区原点；贴回时经目标绘制器既有平移/裁剪落位。 */
+    XPainter_translate(&painter, -(float)legendR->x, -(float)legendR->y);
+    xcv_paintLegend(cv, &painter, legendR, NULL);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
     return true;
@@ -1631,10 +1721,17 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
  *          悬浮层重叠）只重绘脏区内容，不再全图重画。
  *          §10.2 第一期：STATIC_LAYER_ON 时入口先算指纹，命中静态层
  *          直接 blit（受 dirty/clip 约束），未命中重建层再 blit；序列
- *          （lines/spline/area/bars/scatter/pie）照旧现绘，plot 裁剪
+ *          （lines/spline/area/bars/scatter/pie）照旧现绘（XY/柱五类
+ *          在 dirty∩plotR 为空时整段早退，XGUI_CHART_DIRTY_CULL=0 回
+ *          退；pie 在图例段不受此限），plot 裁剪
  *          语义不变；renderToImage(dirty=NULL) 公共 API 逐位语义不变
  *          （层=五件套 over 全透明，回贴=over 目标既有内容，与直画
- *          同为 source-over 结合律同轮次同舍入）。 */
+ *          同为 source-over 结合律同轮次同舍入）。
+ *          保留缓存一期（XGUI_CHART_STATIC_CACHE=1，默认关）：图例另
+ *          缓进控件私有瓦片，图例段以一次 drawImage 贴回替代逐项现绘
+ *          （z 序不变；脏区与瓦片区不相交整段跳过）；失效从粗——尺寸/
+ *          格式失配、指纹变化、resize/updateChart/setChart 整体失效
+ *          重绘。开关关/旁路/瓦片不可用逐位回退既有直画路径。 */
 static bool xcv_renderToImage(XChartView* cv, XImage* image,
                               const XRect* dirty)
 {
@@ -1735,14 +1832,36 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image,
 #if XPAINTER_CLIP_ON
     XPainter_setClipRect(&painter, &plotR, XPainterClipOperation_IntersectClip);
 #endif /* XPAINTER_CLIP_ON */
-    /* 序列段：绘图区五类序列照旧现绘（plot 裁剪语义不变）。 */
-    XCV_PROF_BEGIN();
-    xcv_paintLines(cv, &painter, &plotR);
-    xcv_paintSpline(cv, &painter, &plotR);
-    xcv_paintArea(cv, &painter, &plotR);
-    xcv_paintBars(cv, &painter, &plotR);
-    xcv_paintScatter(cv, &painter, &plotR);
-    XCV_PROF_END(profSeriesUs);
+    /* 序列段：绘图区五类序列（线/样条/面积/柱/散点）照旧现绘（plot 裁剪
+     * 语义不变）。
+     * P0-5（2026-09-25）series 段脏区早退：本段五种序列的落笔已被上方
+     * 裁剪链约束在 dirty∩plotR（入场 ReplaceClip=dirty，此处
+     * IntersectClip=plotR），故 dirty 与 plotR 不相交时整段跳过输出逐位
+     * 不变——稳态小脏区刷新（脏区落在标题/图例/悬浮层，绘图区外）不再
+     * 为脏区外序列做点映射与栅格化。边界：dirty=NULL（renderToImage 全
+     * 图离屏）与全画布脏区（整帧/首显/resize，必与 plotR 相交）均不早退。
+     * 坐标空间：dirty 为 paintEvent 控件本地坐标，plotR 由 xcv_layout
+     * 按控件宽高生成，同空间求交（与 xcv_paintStaticContent 内对
+     * bounds/plotR 的既有求交同口径）。饼图在图例段现绘（绘图域外自由
+     * 度），不隶属本段，不受影响。开关 XGUI_CHART_DIRTY_CULL=0 回退；
+     * XPAINTER_CLIP_ON=0 构建无裁剪链佐证，剔除不编译、行为不变。 */
+    {
+        bool seriesCulled = false;
+#if XPAINTER_CLIP_ON
+        if (dirty && xcv_dirtyCullEnabled() &&
+            !XRect_intersects(&plotR, dirty))
+            seriesCulled = true;
+#endif /* XPAINTER_CLIP_ON */
+        XCV_PROF_BEGIN();
+        if (!seriesCulled) {
+            xcv_paintLines(cv, &painter, &plotR);
+            xcv_paintSpline(cv, &painter, &plotR);
+            xcv_paintArea(cv, &painter, &plotR);
+            xcv_paintBars(cv, &painter, &plotR);
+            xcv_paintScatter(cv, &painter, &plotR);
+        }
+        XCV_PROF_END(profSeriesUs);
+    }
     /* 图例+其余段：clip 恢复/饼图/图例/橡皮筋（饼图是数据动态部分且
      * 需绘图域外自由度，归入本段计时）。 */
     XCV_PROF_BEGIN();
@@ -1757,8 +1876,60 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image,
 #endif /* XPAINTER_CLIP_ON */
     if (cv->m_chart->m_pieSeries)
         xcv_paintPie(cv, &painter, &plotR);
+#if XCHARTVIEW_STATIC_LAYER_ON
+    /* 图例段（保留缓存一期，XGUI_CHART_STATIC_CACHE=1，默认关）：瓦片
+     * 命中/惰性重建后一次 drawImage 贴回。z 序=直画图例（序列/饼图之
+     * 上、橡皮筋之下），over 结合律保证贴回=直画；瓦片区横=图例区起点
+     * 到控件右缘、纵=区高+SLACK（字形盒可越过区底界，见瓦片重建注），
+     * 脏区与瓦片区不相交整段跳过（稳态小脏区帧零图例成本，与 series
+     * 段早退同纪律；命中贴回/重建都受此门控，重建惰性发生=下次可见帧）。
+     * 失效从粗：指纹（图例可见性+序列名/色+主题+调色板+字体）或
+     * m_legendValid（resize/updateChart/setChart 整体失效）任一不满足
+     * 即重建。缓存关/A-B 旁路/瓦片不可用回退既有逐项现绘（逐位=今天）。
+     * 计时：瓦片重建与贴回计入 legend 段（profLegendUs），不新增探针、
+     * 不嵌套，XCV_PROF 五段口径与输出格式不变。 */
+    if (cv->m_chart->m_legendVisible) {
+        bool legendPainted = false;
+        if (xcv_staticCacheEnabled() && !g_xcvLayerBypass &&
+            legendR.x >= 0) {
+            int tileW = bounds.width - legendR.x;
+            int tileH = legendR.height + XCV_LEGEND_TILE_SLACK;
+            XRect zone;
+            XRect_init(&zone, legendR.x, legendR.y, tileW, tileH);
+            if (!dirty || XRect_intersects(dirty, &zone)) {
+                bool tileHit =
+                    cv->m_legendValid && cv->m_legendFp == staticFp &&
+                    !XImage_isNull(&cv->m_legendLayer) &&
+                    XImage_width(&cv->m_legendLayer) == tileW &&
+                    XImage_height(&cv->m_legendLayer) == tileH &&
+                    XImage_format(&cv->m_legendLayer) ==
+                        XImage_format(image);
+                if (!tileHit) {
+                    tileHit = xcv_legendLayerRebuild(cv, &legendR, tileW,
+                                                     tileH,
+                                                     XImage_format(image));
+                    if (tileHit) {
+                        cv->m_legendFp = staticFp;
+                        cv->m_legendValid = true;
+                    }
+                }
+                if (tileHit) {
+                    /* 瓦片在绘制器坐标 (legendR.x, legendR.y) 整幅落位：
+                     * 绘制器已 translate 控件 paintOffset，裁剪处于脏区
+                     * （同静态层 blit 的落位/约束纪律）。 */
+                    XPainter_drawImage(&painter, &cv->m_legendLayer,
+                                       legendR.x, legendR.y);
+                    legendPainted = true;
+                }
+            }
+        }
+        if (!legendPainted)
+            xcv_paintLegend(cv, &painter, &legendR, dirty);
+    }
+#else /* XCHARTVIEW_STATIC_LAYER_ON */
     if (cv->m_chart->m_legendVisible)
         xcv_paintLegend(cv, &painter, &legendR, dirty);
+#endif /* XCHARTVIEW_STATIC_LAYER_ON */
     /* 框选橡皮筋：拖拽中叠加半透明矩形 + 实线边框（对标 Qt 橡皮筋观感）。 */
     if (cv->m_dragging) {
         XRect* r = &cv->m_dragRect;
@@ -1820,12 +1991,17 @@ static void VX_chartView_deinit(XChartView* self);
 #endif /* XCHARTVIEW_STATIC_LAYER_ON */
 
 /** @brief 尺寸变化：静态层失效（§10.2 失效挂钩；层画布在新尺寸首帧
- *         重建，尺寸/格式比对在 renderToImage 入口兜底）。 */
+ *         重建，尺寸/格式比对在 renderToImage 入口兜底）。图例瓦片随
+ *         瓦片区（随尺寸联动）一并整体失效（保留缓存一期粗失效口径；
+ *         开关关时瓦片闲置，仅布尔清零、零行为变化）。 */
 static void VX_chartView_resizeEvent(XWidget* self, XEvent* event)
 {
 #if XCHARTVIEW_STATIC_LAYER_ON
     XChartView* cv = (XChartView*)self;
-    if (cv) cv->m_staticValid = false;
+    if (cv) {
+        cv->m_staticValid = false;
+        cv->m_legendValid = false;
+    }
 #else
     (void)self;
 #endif /* XCHARTVIEW_STATIC_LAYER_ON */
@@ -1833,11 +2009,12 @@ static void VX_chartView_resizeEvent(XWidget* self, XEvent* event)
 }
 
 #if XCHARTVIEW_STATIC_LAYER_ON
-/** @brief 析构：释放静态层画布（§8.0g 逐套 deinit 纪律）。 */
+/** @brief 析构：释放静态层/图例瓦片画布（§8.0g 逐套 deinit 纪律）。 */
 static void VX_chartView_deinit(XChartView* self)
 {
     if (!self) return;
     XImage_deinit_base(&self->m_staticLayer);
+    XImage_deinit_base(&self->m_legendLayer);
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 #endif /* XCHARTVIEW_STATIC_LAYER_ON */
@@ -2408,6 +2585,9 @@ void XChartView_init(XChartView* self, XWidget* parent, XWidgetFlags flags)
 #if XCHARTVIEW_STATIC_LAYER_ON
     /* 静态层画布绑定 XImage 类元数据（空图像；首帧渲染按需分配）。 */
     XImage_init(&self->m_staticLayer);
+    /* 图例保留瓦片画布（XGUI_CHART_STATIC_CACHE=1 才启用；空图像，
+     * 首个可见帧按需分配）。 */
+    XImage_init(&self->m_legendLayer);
 #endif /* XCHARTVIEW_STATIC_LAYER_ON */
     XWidget_resize((XWidget*)self, 320, 240);
 }
@@ -2438,6 +2618,15 @@ void XChartView_setChart(XChartView* self, XChart* chart)
     self->m_hoverIndex = -1;
     self->m_hovering = false;
     self->m_chart = chart;
+#if XCHARTVIEW_STATIC_LAYER_ON
+    /* 保留缓存一期粗失效（XGUI_CHART_STATIC_CACHE=1，默认关）：set
+     * model 整体失效两画布，下帧惰性重建；开关关本段不编译、语义零
+     * 变化（既有路径靠指纹比对失效，不受影响）。 */
+    if (xcv_staticCacheEnabled()) {
+        self->m_staticValid = false;
+        self->m_legendValid = false;
+    }
+#endif /* XCHARTVIEW_STATIC_LAYER_ON */
     XWidget_update((XWidget*)self);
 }
 
@@ -2455,6 +2644,19 @@ XChartView_RubberBands XChartView_rubberBand(const XChartView* self)
 }
 
 void XChartView_updateChart(XChartView* self)
-{ if (self) XWidget_update((XWidget*)self); }
+{
+#if XCHARTVIEW_STATIC_LAYER_ON
+    /* 保留缓存一期粗失效（XGUI_CHART_STATIC_CACHE=1，默认关）：数据/
+     * 模型变化整体失效两画布，下帧惰性重绘（指纹契约刻意不含数据点与
+     * 饼图切片标签，图例入瓦片后其变化靠本粗失效兜底）。开关关本段不
+     * 编译，既有路径零开销零语义变化；交互帧（框选拖拽等）走
+     * XWidget_update 不经此处，缓存不受影响。 */
+    if (self && xcv_staticCacheEnabled()) {
+        self->m_staticValid = false;
+        self->m_legendValid = false;
+    }
+#endif /* XCHARTVIEW_STATIC_LAYER_ON */
+    if (self) XWidget_update((XWidget*)self);
+}
 
 #endif /* XCHARTS_ON */

@@ -20,6 +20,104 @@
 #include <stdio.h>
 #include <string.h>
 
+// ==================== 基类上转垫片（编译期回退开关） ====================
+// 本测试按库内约定以派生指针直调 *_base 泛型接口：这些名字是宏，最终映射到
+// 形参为 XClass*（XClass.h:196 XClass_delete_base）、const XContainer*
+// （XContainer.h:302/310）、XVector*/const XVector*（XVector.h:109/154/180/
+// 192/297/314/456）的基类函数；派生结构体首成员即基类（XCLASS_DEFINE_BEGING），
+// 上转安全。C 语言没有继承，MSVC /W3 对每处直调报 C4133（本文件 122 处），
+// 对把 void(void) 测试函数注册为 XTestMenuActionFunc 报 C4113（本文件 5 处）。
+// 垫片仅在编译期补上显式上转并直达最终基类函数，被调函数、实参与求值顺序
+// 和原写法逐位一致，无任何运行时差异。
+// 回退开关：XBSON_TEST_BASE_CAST_FIX（默认 1）。用 /DXBSON_TEST_BASE_CAST_FIX=0
+// 重新编译即整体恢复原写法（C4133/C4113 随之重现，目标码与修复前一致）。
+// 说明：该修复是纯编译期改动，没有可被 getenv 分叉的运行时行为，故开关采用
+// 编译期宏而非环境变量。
+#ifndef XBSON_TEST_BASE_CAST_FIX
+#define XBSON_TEST_BASE_CAST_FIX 1
+#endif
+
+#if XBSON_TEST_BASE_CAST_FIX
+
+// ---- 释放：各 *_delete_base 宏链最终都落在 XClass_delete_base(XClass*) ----
+#undef XBsonDocument_delete_base
+#define XBsonDocument_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XBsonArray_delete_base
+#define XBsonArray_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XByteArray_delete_base
+#define XByteArray_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XString_delete_base
+#define XString_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XJsonArray_delete_base
+#define XJsonArray_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XJsonObject_delete_base
+#define XJsonObject_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XVariant_delete_base
+#define XVariant_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XVariantList_delete_base
+#define XVariantList_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XMap_delete_base
+#define XMap_delete_base(self) XClass_delete_base((XClass*)(self))
+#undef XVector_delete_base
+#define XVector_delete_base(self) XClass_delete_base((XClass*)(self))
+
+// ---- 尺寸/判空：各 *_size_base、*_isEmpty_base 宏链最终落在 XContainer 基类形参 ----
+#undef XBsonDocument_size_base
+#define XBsonDocument_size_base(self) XContainer_size_base((const XContainer*)(self))
+#undef XBsonDocument_isEmpty_base
+#define XBsonDocument_isEmpty_base(self) XContainer_isEmpty_base((const XContainer*)(self))
+#undef XBsonArray_size_base
+#define XBsonArray_size_base(self) XContainer_size_base((const XContainer*)(self))
+#undef XBsonArray_isEmpty_base
+#define XBsonArray_isEmpty_base(self) XContainer_isEmpty_base((const XContainer*)(self))
+#undef XByteArray_size_base
+#define XByteArray_size_base(self) XContainer_size_base((const XContainer*)(self))
+#undef XJsonArray_size_base
+#define XJsonArray_size_base(self) XContainer_size_base((const XContainer*)(self))
+#undef XJsonObject_size_base
+#define XJsonObject_size_base(self) XContainer_size_base((const XContainer*)(self))
+#undef XVariantList_size_base
+#define XVariantList_size_base(self) XContainer_size_base((const XContainer*)(self))
+#undef XMap_size_base
+#define XMap_size_base(self) XContainer_size_base((const XContainer*)(self))
+#undef XVector_size_base
+#define XVector_size_base(self) XContainer_size_base((const XContainer*)(self))
+
+// ---- 元素操作：XBsonArray/XJsonArray 的增删改查宏链最终落在 XVector 形参 ----
+#undef XBsonArray_at_base
+#define XBsonArray_at_base(self, index) XVector_at_base((const XVector*)(self), (index))
+#undef XBsonArray_append_base
+#define XBsonArray_append_base(self, value) \
+	XVector_push_back_1_base((XVector*)(self), (value))
+#undef XBsonArray_append_move_base
+#define XBsonArray_append_move_base(self, value) \
+	XVector_push_back_move_1_base((XVector*)(self), (value))
+#undef XBsonArray_prepend_base
+#define XBsonArray_prepend_base(self, value) \
+	XVector_push_front_1_base((XVector*)(self), (value))
+#undef XBsonArray_insert
+#define XBsonArray_insert(self, index, value) \
+	XVector_insert_1_base((XVector*)(self), (index), (value), 1)
+#undef XBsonArray_replace
+#define XBsonArray_replace(self, index, value) \
+	XVector_replace_1((XVector*)(self), (index), (value))
+#undef XBsonArray_removeAt_base
+#define XBsonArray_removeAt_base(self, index) \
+	XVector_remove_base((XVector*)(self), (index), 1)
+#undef XJsonArray_append_move_base
+#define XJsonArray_append_move_base(self, value) \
+	XVector_push_back_move_1_base((XVector*)(self), (value))
+
+// ---- 菜单动作注册：void(void) 测试函数按 queueTest/XStackTest 等既有约定 ----
+// ---- 以 (XTestMenuActionFunc) 显式转换注册，运行时忽略多余的 data 实参。 ----
+#define XBSONTEST_MENU_ACTION(fn) ((XTestMenuActionFunc)(fn))
+
+#else
+
+#define XBSONTEST_MENU_ACTION(fn) (fn)
+
+#endif
+
 typedef struct XBsonTestState
 {
 	int passed;
@@ -124,13 +222,14 @@ static XBsonDocument* XBsonTest_createAllTypes(void)
 		0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
 		0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
 	};
-	static const char binaryData[] = { 0x00, 0x7f, (char)0xff };
+	static const uint8_t binaryData[] = { 0x00, 0x7f, 0xff };
 
 	XBsonDocument* doc = XBsonDocument_create();
 	XBsonDocument* nested = XBsonDocument_create();
 	XBsonDocument* scope = XBsonDocument_create();
 	XBsonArray* array = XBsonArray_create();
-	XByteArray* binary = XByteArray_create_with_data(binaryData, sizeof(binaryData));
+	XByteArray* binary = XByteArray_create_with_data((const char*)binaryData,
+		sizeof(binaryData));
 	XString* text = XString_create_utf8("中文字符串");
 	XString* pattern = XString_create_utf8("^a.*z$");
 	XString* options = XString_create_utf8("im");
@@ -740,15 +839,15 @@ void XTestMenu_XBsonTest(XTestMenu* root)
 	XTestMenu* menu = XTestMenu_create("XBson(Bson)");
 	XTestMenu_addMenu(root, menu);
 	XAction* all = XTestMenu_addAction(menu, "运行全部 XBson 测试");
-	XTestMenu_setActionFunction(all, XBsonTest_runAll);
+	XTestMenu_setActionFunction(all, XBSONTEST_MENU_ACTION(XBsonTest_runAll));
 	XAction* standard = XTestMenu_addAction(menu, "BSON 标准字节与全部类型");
-	XTestMenu_setActionFunction(standard, XBsonTest_runStandard);
+	XTestMenu_setActionFunction(standard, XBSONTEST_MENU_ACTION(XBsonTest_runStandard));
 	XAction* api = XTestMenu_addAction(menu, "文档、数组和值 API");
-	XTestMenu_setActionFunction(api, XBsonTest_runApi);
+	XTestMenu_setActionFunction(api, XBSONTEST_MENU_ACTION(XBsonTest_runApi));
 	XAction* json = XTestMenu_addAction(menu, "XBson 与 XJson 双向转换");
-	XTestMenu_setActionFunction(json, XBsonTest_runJson);
+	XTestMenu_setActionFunction(json, XBSONTEST_MENU_ACTION(XBsonTest_runJson));
 	XAction* invalid = XTestMenu_addAction(menu, "非法 BSON 输入");
-	XTestMenu_setActionFunction(invalid, XBsonTest_runInvalid);
+	XTestMenu_setActionFunction(invalid, XBSONTEST_MENU_ACTION(XBsonTest_runInvalid));
 }
 
 #endif

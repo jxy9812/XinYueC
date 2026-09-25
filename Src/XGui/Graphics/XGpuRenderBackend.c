@@ -39,6 +39,25 @@ static bool xgpu_prof_requested(void)
     return requested != 0;
 }
 
+/**
+ * @brief XGUI_GPU_SYNC 环境开关（与 XPainter 侧同口径："0"=关）。
+ * @note  此前后端三处钩子只查非空，"0" 被判为开——与 painter 侧
+ *        painterGpuSyncRequested 的 "0"=关 语义相反（2026-09-24 复核
+ *        确认高危：设 0 反而每原语整帧上传+读回）。统一为 "0"=关。
+ */
+static bool xgpu_sync_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGUI_GPU_SYNC");
+        requested = value && *value &&
+                            !(value[0] == '0' && value[1] == 0)
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
 /** @brief 逐段计数器（µs 累计 + 次数）。 */
 static struct XGpuProf
 {
@@ -208,13 +227,7 @@ const XGpuRenderDriverProcs* XGpuRenderDriver_procs(XGpuRenderDriverType type)
  */
 static void xgpu_sync_upload_if_requested(XGpuRenderBackend* self)
 {
-    static int requested = -1;
-    if (requested < 0)
-    {
-        const char* value = XSystem_environment("XGUI_GPU_SYNC");
-        requested = value && *value ? 1 : 0;
-    }
-    if (self && requested && self->m_syncTarget &&
+    if (self && xgpu_sync_requested() && self->m_syncTarget &&
         self->m_driver->uploadTargetImage)
         self->m_driver->uploadTargetImage(self->m_session,
                                           self->m_syncTarget);
@@ -229,13 +242,7 @@ static void xgpu_sync_upload_if_requested(XGpuRenderBackend* self)
  */
 static void xgpu_sync_readback_if_requested(XGpuRenderBackend* self)
 {
-    static int requested = -1;
-    if (requested < 0)
-    {
-        const char* value = XSystem_environment("XGUI_GPU_SYNC");
-        requested = value && *value ? 1 : 0;
-    }
-    if (self && requested && self->m_syncTarget)
+    if (self && xgpu_sync_requested() && self->m_syncTarget)
         self->m_driver->readback(self->m_session, self->m_syncTarget);
 }
 
@@ -252,13 +259,7 @@ void XGpuRenderBackend_setSyncTarget(XGpuRenderBackend* self, XImage* target)
 
 bool XGpuRenderBackend_uploadFrame(XGpuRenderBackend* self, XImage* target)
 {
-    static int requested = -1;
-    if (requested < 0)
-    {
-        const char* value = XSystem_environment("XGUI_GPU_SYNC");
-        requested = value && *value ? 1 : 0;
-    }
-    if (!XGpuRenderBackend_isValid(self) || !requested || !target)
+    if (!XGpuRenderBackend_isValid(self) || !xgpu_sync_requested() || !target)
         return true; /* 无同步需求：视为成功（调用方无需回退）。 */
     if (!self->m_driver->uploadTargetImage)
         return true; /* 驱动未实现上传：同步模式降级（帧中直写不可见）。 */
@@ -306,24 +307,13 @@ bool XGpuRenderBackend_requested(void)
     }
     value = XSystem_environment("XGUI_RENDER_BACKEND");
     if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
-    if (value && *value)
-    {
-        /* 显式设置：识别的 GPU 族名走 GPU；其余（含 software/sw/cpu/
-         * 0/off/false）一律软件——外部覆盖永远优先于配置默认。 */
-        g_xgpuRequested =
-            xgpu_text_equals(value, "gpu") ||
-            xgpu_text_equals(value, "opengl") ||
-            xgpu_text_equals(value, "vulkan") ||
-            xgpu_text_equals(value, "1") ||
-            xgpu_text_equals(value, "true") ||
-            xgpu_text_equals(value, "on") ? 1 : 0;
-    }
-    else
-    {
-        /* 无外部设置：按编译期默认（桌面系统默认 GPU 直通，探测
-         * 失败回退软件；裸机/裁剪构建保持软件）。 */
-        g_xgpuRequested = XGPU_RUNTIME_DEFAULT_ON ? 1 : 0;
-    }
+    g_xgpuRequested =
+        xgpu_text_equals(value, "gpu") ||
+        xgpu_text_equals(value, "opengl") ||
+        xgpu_text_equals(value, "vulkan") ||
+        xgpu_text_equals(value, "1") ||
+        xgpu_text_equals(value, "true") ||
+        xgpu_text_equals(value, "on") ? 1 : 0;
     return g_xgpuRequested != 0;
 }
 
@@ -352,6 +342,21 @@ void XGpuRenderBackend_setFramePresented(bool presented)
 bool XGpuRenderBackend_framePresented(void)
 {
     return g_xgpuLastFramePresented;
+}
+
+/* 最近一次会话创建的驱动类型记录：current() 只对窗口会话非 NULL，
+   离屏会话下 driverType(query) 恒回 openGL 默认值——诊断输出会误导
+   （"离屏也显示 opengl"假象，2026-09-24 排查 GL/Vulkan 会话归属时
+   踩坑）。本记录在任何会话创建成功后更新，供诊断取真实值。 */
+static XGpuRenderDriverType g_xgpuLastDriverType = XGpuRenderDriver_OpenGL;
+static bool g_xgpuLastDriverTypeValid = false;
+
+/** @brief 最近创建会话的实际驱动类型（含离屏会话；无会话时返回
+ *         OpenGL 默认并置 *outValid=false）。 */
+XGpuRenderDriverType XGpuRenderBackend_lastDriverType(bool* outValid)
+{
+    if (outValid) *outValid = g_xgpuLastDriverTypeValid;
+    return g_xgpuLastDriverType;
 }
 
 static void xgpu_window_session_destroy_at_exit(void)
@@ -530,6 +535,23 @@ unsigned XGpuRenderBackend_glyphAtlasHitCount(const XGpuRenderBackend* self)
     return self ? self->m_glyphHits : 0u;
 }
 
+/** @brief XGPU_ATLAS_RESET_SAFE 环境开关（"0"=关，默认开）。
+ *  @note  与驱动侧同名的安全变体配对：开启时命中重传失败不再沿用旧
+ *         图集内容绘制（该槽位可能已被帧中重置重打包复用），回退
+ *         drawAlphaBitmap 逐字形路径，保证"重置后旧 glyph 引用不悬空"。 */
+static bool xgpu_atlas_reset_safe_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_ATLAS_RESET_SAFE");
+        requested = value && *value &&
+                            !(value[0] == '0' && value[1] == 0)
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
 /* ==================== 生命周期 ==================== */
 
 /**
@@ -590,6 +612,8 @@ static XGpuRenderBackend* xgpu_create_ex(XWindow* window, int width,
         return NULL;
     }
     self->m_valid = true;
+    g_xgpuLastDriverType = self->m_driverType;
+    g_xgpuLastDriverTypeValid = true;
     return self;
 }
 
@@ -757,6 +781,32 @@ bool XGpuRenderBackend_drawImageUv(XGpuRenderBackend* self,
     }
 }
 
+bool XGpuRenderBackend_drawImageRegion(XGpuRenderBackend* self,
+                                       const XImage* image, int srcX,
+                                       int srcY, int srcW, int srcH,
+                                       int dstX, int dstY, float opacity,
+                                       bool sourceOver)
+{
+    if (!XGpuRenderBackend_isValid(self) || !image || srcW <= 0 ||
+        srcH <= 0)
+        return false;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    if (srcX < 0 || srcY < 0 || srcX + srcW > XImage_width(image) ||
+        srcY + srcH > XImage_height(image))
+        return false;
+    if (!self->m_driver->drawImageRegion)
+        return false; /* 驱动未实现：调用方回退整幅路径。 */
+    xgpu_sync_upload_if_requested(self);
+    {
+        bool primitiveOk = self->m_driver->drawImageRegion(
+            self->m_session, image, srcX, srcY, srcW, srcH, dstX, dstY,
+            opacity, sourceOver);
+        xgpu_sync_readback_if_requested(self);
+        return primitiveOk;
+    }
+}
+
 bool XGpuRenderBackend_drawGradientAlpha(XGpuRenderBackend* self,
                                          const unsigned char* coverage,
                                          int width, int height, int x, int y,
@@ -827,9 +877,18 @@ bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
        antialiasing restores hard edge" 失败）。 */
     if (entry && alpha)
     {
-        self->m_driver->glyphAtlasUpload(self->m_session, alpha,
-                                          width, height, entry->m_x,
-                                          entry->m_y);
+        if (!self->m_driver->glyphAtlasUpload(self->m_session, alpha,
+                                              width, height, entry->m_x,
+                                              entry->m_y))
+        {
+            /* 命中重传失败：安全变体下不画旧图集内容（槽位可能已被
+               重置重打包复用），回退逐字形上传路径；命中计数保持。 */
+            ++self->m_glyphHits;
+            if (xgpu_atlas_reset_safe_requested())
+                return XGpuRenderBackend_drawAlphaBitmap(
+                    self, alpha, width, height, stride, x, y, color,
+                    opacity, sourceOver);
+        }
     }
     if (!entry)
     {
@@ -926,52 +985,6 @@ bool XGpuRenderBackend_readback(XGpuRenderBackend* self, XImage* target)
         }
         return ok;
     }
-}
-
-bool XGpuRenderBackend_readbackRect(XGpuRenderBackend* self, int x, int y,
-                                    int width, int height, XImage* target,
-                                    int dx, int dy)
-{
-    uint64_t profT0;
-    bool ok;
-    if (!XGpuRenderBackend_isValid(self) || !target || width <= 0 ||
-        height <= 0)
-        return false;
-    if (!self->m_driver->readbackRect)
-        return false; /* 驱动未实现：调用方回退全帧 readback。 */
-    profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
-    ok = self->m_driver->readbackRect(self->m_session, x, y, width, height,
-                                      target, dx, dy);
-    if (xgpu_prof_requested())
-    {
-        /* 计入 readback 口径：批量后逐批快照仍属回读流量。 */
-        g_xgpuProf.m_readbackUs += xgpu_prof_now_us() - profT0;
-        ++g_xgpuProf.m_readbackCount;
-    }
-    return ok;
-}
-
-bool XGpuRenderBackend_drawImageRect(XGpuRenderBackend* self,
-                                     const XImage* image, int x, int y,
-                                     int width, int height, bool sourceOver)
-{
-    uint64_t profT0;
-    bool ok;
-    if (!XGpuRenderBackend_isValid(self) || !image || width <= 0 ||
-        height <= 0)
-        return false;
-    if (!self->m_driver->drawImageRect)
-        return false; /* 驱动未实现：调用方回退全帧 drawImage。 */
-    xgpu_sync_upload_if_requested(self);
-    profT0 = xgpu_prof_requested() ? xgpu_prof_now_us() : 0;
-    ok = self->m_driver->drawImageRect(self->m_session, image, x, y, width,
-                                       height, sourceOver);
-    if (xgpu_prof_requested())
-    {
-        g_xgpuProf.m_drawImageUs += xgpu_prof_now_us() - profT0;
-        ++g_xgpuProf.m_drawImageCount;
-    }
-    return ok;
 }
 
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self)

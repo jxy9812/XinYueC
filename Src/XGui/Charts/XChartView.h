@@ -57,6 +57,18 @@ typedef struct XChartView
     XImage m_staticLayer;     /**< 静态层离屏画布；格式=目标表面格式，尺寸=控件尺寸。 */
     uint64_t m_staticFp;      /**< 静态层内容指纹（FNV-1a 64 位静态实现）。 */
     bool m_staticValid;       /**< 静态层是否与当前指纹一致（false 强制重建）。 */
+    /* 图例保留瓦片（保留缓存一期；运行期环境开关 XGUI_CHART_STATIC_
+     * CACHE，默认关，=1 才启用，沿 XGPU_QUAD_BATCH 先例）：把图例
+     * （色块+序列名）渲进小离屏画布，后续帧一次 drawImage 贴回，替代
+     * 逐项字形光栅化。z 序与直画图例相同（序列/饼图之上、橡皮筋之下），
+     * source-over 结合律保证与直画逐位一致（同 m_staticLayer 论证）。
+     * 失效策略从粗（一期刻意收窄）：尺寸/格式失配、指纹变化、resize/
+     * updateChart/setChart 整体失效重绘，不做细粒度失效；指纹含图例
+     * 可见性与序列名/色，饼图切片标签不入指纹，靠 updateChart 粗失效
+     * 兜底。开关关或旁路时两字段闲置，行为与既有路径逐位一致。 */
+    XImage m_legendLayer;     /**< 图例瓦片离屏画布；格式=目标表面格式，尺寸=图例瓦片区。 */
+    uint64_t m_legendFp;      /**< 图例瓦片内容指纹（与 m_staticFp 同算法同契约）。 */
+    bool m_legendValid;       /**< 图例瓦片是否与当前指纹一致（false 强制重建）。 */
 #endif
 } XChartView;
 

@@ -1217,6 +1217,367 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   图例+标题渲染正确、与 legacy SYNC 截图逐位同判；顺手清理
   XGpuRenderBackend 五处 merge 粘连（sync_upload 双写）。
 
+### 8.0g25 GPU 夜战（2026-09-24 免费时段）：Windows GL 直通 120× + Vulkan 移植激活 ✓
+
+> 背景与本机口径：Windows/AMD Radeon（RDP 远程会话，OrayIdd 虚拟显
+> 示），Debug 口径，800×600 图表页（--page 4 --tab 20）。勘察工作流
+> （5 路并发+独立复核 39 条全确认）产报告
+> `docs/xgui/2026-09-24-gpu-night-recon.md`。
+
+- **【P0·demo 启动确定性 AV 已根修】**`XAbstractItemModel_setDimension`
+  行数组按**当前列数** calloc、`xaim_growCols` 却假设所有行有 capCols
+  容量——先窄列建行再扩列（cols≤capCols 不触发扩）→ 高列号写越界堆
+  → `XString_delete_base(垃圾指针)`。demo 条目视图页模型桥建树首屏即
+  崩（cdb 栈证实），且是 demo 全功能（基准/截图/autotest）的总闸。
+  修：先统一提升列容量，行数组一律按 capCols 整块分配。
+- **【GL 直通重构二步：脏区批量提交】**批量暂存画布从「批首全帧
+  readback 快照 + 失效点全帧覆盖提交」改为「透明画布、零快照，批内
+  只收 SourceOver 安全命令（目标依赖命令冲批走 legacy），失效点一次
+  `drawImageRegion` 脏区 SourceOver 混合提交」——语义依据 Over 结合
+  律。新增驱动原语 `drawImageRegion`（TexSubImage2D 增量上传+UV 子
+  区绘制；驱动未实现回退整幅 SourceOver 提交）。效果（图表页 full
+  重绘）：readback 986→21 次/5s、drawImage 全帧提交归零、
+  **1.8 FPS→223 FPS（约 120×）**；同口径软件 255 FPS。
+- **【GL 直通配套】**①窗口会话 endFrame 不再 doneCurrent（~45 对
+  WGL 上下文切换/帧归零，present/destroy 各出口保持显式解绑）；
+  ②wglSwapIntervalEXT(0) 显式关 vsync（默认随刷新率会把直通钳 60Hz）；
+  ③顶点属性启用/指针初始化一次性设定（逐 quad 省 6 次调用）；
+  ④blend/program/纯色 uniform 状态缓存。**教训**：glBufferSubData
+  原位更新在 GPU 读中逐 quad 隐式同步停顿，实测 216→106 FPS，保持
+  glBufferData 每次孤儿化。
+- **【Vulkan Windows 激活】**无 SDK 环境三件套：vendored
+  Vulkan-Headers（Tools/vulkan-headers-tmp/）+ 由
+  System32\vulkan-1.dll dumpbin 导出生成的导入库
+  （Tools/make_vulkan_lib.bat → vulkan-importlib/vulkan-1.lib，246
+  符号）+ CMakeLists 无 SDK 回退分支（SDK 优先，二者都无则不启用，
+  宏/头/库三件齐才定义 XINYUE_C_HAS_VULKAN）。Drive/Posix 的
+  Vulkan 驱动（跨平台核心，平台面走 Drive 契约）随即编入 Windows
+  构建；本机 AMD ICD 实测会话创建成功、无回退。
+- **【Vulkan 渲染修复（主线首批+工作流二批，共 7 项）】**①glyph_
+  atlas_upload/readback 帧中 reset m_cmd 丢弃全部已录绘制（fill/
+  drawImage 全消失根因）→ 改走 transferCmd；②m_atlasSet 从未写入
+  即绑定采样（lavapipe SIGSEGV 最强候选，复核确认）→ 建图后补描述
+  符写入；③draw_image 内联打断序列（submit/reset/begin 不查返回值
+  +布局簿记失效）→ suspend→transfer→resume 三段式；④上传 CPU 侧
+  残留 GL 式 R/B 交换（BGRA 内存序应直拷）→ 贴图红蓝互换修复；
+  ⑤record_quad 顶点 UV 硬编码全幅→字形图集整幅拉进 8×8 quad 采
+  样（字形不上屏根因）→ 增加 UV 参数，glyphAtlasDraw 传子矩形；
+  ⑥fillRect 半透明色未预乘 RGB 进预乘管线（透明度放大 1/a 倍）→
+  预乘后与 GL 逐位一致（ff1c2a38）；⑦驱动实现 drawImageUv（LUT
+  通道，源/目标尺寸解耦）接入 procs 表。**终态：XGuiGpu_Test 双后
+  端（GL/Vulkan）同套断言全绿**。
+- **【GL 冒烟回归三连修（quad 批合并引入→全部根修）】**①
+  xgld_flush_quads 的 bufferData 尺寸按 24 float/quad 而实际存储
+  36 float/quad（含退化连接顶点）→ GL 静默报错纯色 quad 全灭；
+  ②xgpu_upload_alpha 重配 m_sourceTexture 存储不更新尺寸跟踪 →
+  drawImageRegion 按陈旧尺寸 TexSubImage 写入过小存储（线帧蓝色
+  污迹根因）；③会话 calloc 清零使 m_attribLayout=0（=纹理布局已
+  配置假象）而初始化期一次性属性设定已移除 → 纹理绘制全哑。教训：
+  **跨会话共享的 GL 状态缓存字段初值必须显式 -1，禁信 calloc 零值**。
+- **【SYNC 语义根修】**XGUI_GPU_SYNC "0" 在后端三钩子被判为开
+  （painter 侧判关）——语义反转致"设 0 反而每原语整帧上传+读回"。
+  统一为 "0"=关（复核确认高危）。
+- **【批量层缺陷根修（重构自省）】**painterGpuSubmitSoftwareCommandRect
+  在 cmdRect=NULL 且无裁剪时脏区不累计→冲批整幅提交被跳过→批内
+  容静默丢失（渐变回退链踩中）→ 无界时取整幅画布为脏区上界。
+- **【quad 批合并：机制入库、默认关】**顶点色批程序（pos2+color4，
+  退化三角带连接）+按混合态冲批+十处冲批点（clip/clear/endFrame/
+  present/readback/uploadTarget/纹理原语前）。A/B 实测图表页文本/
+  填充交错使批按字形碎片化冲刷，128 vs 180 FPS 反噬→默认关
+  （XGPU_QUAD_BATCH=1 启用），机制保留待「批跨字形存续」改造重评。
+- **【drawImage 裁剪门修复（复核 #32）】**任何非空 clipRegion 即拒
+  收 GPU 贴图，而表面裁剪恒以单矩形 region 播种→控件缓存贴图系统性
+  落入软件局部提交。改与 fillRect 同口径（count>1 才拒收，单矩形走
+  scissor）。
+- **【终验（Windows 本机 Debug 口径，Xvfb 类目验以 PPM 帧抓取替代）】**
+  构建 0 错；GL/Vulkan 双后端冒烟全绿；回归套件除 grabWindow（RDP
+  抓屏环境限制，与本夜基线一致）零失败；验收 68/68；demo autotest
+  exit=0 零 FAIL。基准（800×600 图表页 --benchmark-full，5s 采样，
+  RDP 噪声带宽 ±25%）：**GPU(GL) 189 FPS / 软件 266 FPS**（GPU 起点为
+  1.8 FPS，累计 **~105×**）。远端 RX 6800 XT 实机位与 Linux 口径待复
+  验；present 非对称（GL SwapBuffers 走 RDP 位传 vs GDI BitBlt 命令
+  远化）是本机 GPU 口径的系统性 handicap，已在册。
+- **【遗留登记】**①quad 批碎片化（批跨字形存续改造）；②Vulkan
+  drawImageRegion/drawGradientAlpha 后续原语补齐（GL 已实现）；
+  ③vulkan resize=NULL 每次窗口 resize 全量重建 instance/device；
+  ④present 谎报成功（vkQueuePresentKHR 结果不查）；⑤离屏会话
+  driverType 打印假象（XGpuRenderBackend_current() 仅窗口会话非
+  NULL）；⑥每控件 begin/end GPU 帧的 painter 共享改造（对标 Qt 每
+  控件 painter 语义在 GPU 路径的放大效应）。
+- **【复验章（2026-09-24 08:27 抽查）】**构建 0 错误（ninja no work
+  to do）；回归除 grabWindow（RDP 环境项，与夜前基线一致）零失败；
+  验收 68/68；GL/Vulkan 双后端冒烟全绿；基准复测 GPU 190.3 / 软件
+  253.9 FPS（图表页 full，与收尾态一致零漂移）。夜战收官，无待办。
+
+### 8.0g26 GPU 第二日攻坚（2026-09-24 日间，"GPU 必须跑赢软件"续战）✓
+
+> 背景：用户裁定"GPU 帧数跑不过软件是失败的"。Release 对决揭示本质：
+> 软件 -O2 后 883 FPS（自研代码直接受益）vs GPU 155-265（成本在 GL
+> 驱动调用层，不受我方编译选项影响）——**immediate-mode GL 逐原语
+> 提交在 800×600/帧 400 原语的内容上结构性跑不赢优化软件光栅**。
+
+- **【统一顶点批（跨字形存续）✓】**批管线重建为单程序
+  （frag=texture2D(u_texture,v_texcoord)*v_color，布局
+  pos2+uv2+color4=32B/顶点，退化三角带连接 48 float/quad）：
+  纯色 quad 走 1×1 白纹理+uv 中心（白×色=色逐位精确）、字形图集
+  走子矩形 UV+v_color=modulate（与旧 uniform 路径同数学）——冲批
+  触发收窄到「采样纹理切换/混合切换/scissor/帧界」，同图集字形长跑
+  批得以存续（此前每个字形 draw 都冲批=碎片化根因）。drawImage 系
+  （上传即变形 m_sourceTexture）保持即时并先冲批（不可跨后续上传
+  延迟采样）。纹理绑定不缓存（上传/渐变路径直改绑定，缓存易失真，
+  宁多 2 调用不错采）。教训入册：白纹理必须 NEAREST/CLAMP
+  （默认 mipmap 过滤对非 mip 纹理采样不完整）。
+- **【嵌套 GPU 帧 ✓】**同会话同目标图像的 painter 复用已开启帧
+  （g_gpuFrameActive* 跟踪 + 深度计数）：软件路径每控件 painter
+  begin/end 零成本的设计在 GPU 直通下放大为每帧 ~45 对 FBO 绑定+
+  状态复位+离屏 initialImage 重复上传。嵌套内层结束只递减深度
+  （readback/endFrame 由外层收口统一做；InUse 占用标志保持；
+  frameDegraded 路径清空跟踪）。P0 按钮页 445→490 FPS（+10%）。
+- **【小离屏阈值：已试已回滚】**64K 像素以下离屏会话转软件
+  （徽章 180×54 每帧上传+读回往返 ~0.3-0.5ms）——P0 +7% 但把
+  XGuiGpu_Test 的 64×40 会话打回软件（GPU 测试覆盖丢失），收益不
+  抵覆盖损失，回滚。登记：后续以「测试会话显式绕过阈值」形态重试。
+- **【Release 对决（决定性数据）】**-O2 后软件图表页 883 FPS
+  （1.13ms）vs GPU 155-265（6.4ms，RDP 噪声 ±40%）——immediate-
+  mode GL 逐原语提交（~400 quad/帧 × 每次经 AMD ICD+RDP 栈 3-5µs）
+  在 800×600 中等像素量内容上结构性跑不赢优化软件光栅。1366×745
+  差距收窄至 0.89×（软件光栅随像素线性涨、GPU 原语数恒定——缩放
+  趋势符合结构预期）。XGPU_PROF 实测 present 仅 0.078ms（RDP 下
+  SwapBuffers 并非瓶颈）、readback 21 次/5s（脏区批量已消灭全帧
+  读回）。
+- **【验证】**构建 0 错；GL/Vulkan 双后端冒烟全绿；回归（除
+  grabWindow 环境项）/验收 68/68/autotest 0 FAIL 全过；
+  **XGPU_BACKEND=vulkan 全量 demo autotest 0 FAIL**（Vulkan 首次
+  跑通全套交互断言）。
+- **【GL 实现指纹诊断（回答"GPU 启用了吗"）✓】**新增 `[gl-info]`
+  一次性打印（XGPU_PROF=1，glGetString(RENDERER/VENDOR/VERSION)）：
+  本机实测 `vendor=ATI Technologies / renderer=AMD Radeon (TM)
+  Graphics / version=4.6.0 Compatibility Profile`——**真 AMD 硬件
+  驱动，非 llvmpipe 软件模拟**。同时修掉一处诊断假象：
+  XGpuRenderBackend_current() 只对窗口会话非 NULL，离屏会话下
+  driverType 查询恒回 OpenGL 默认值（Vulkan 离屏也显示 "opengl"）；
+  新增 XGpuRenderBackend_lastDriverType(&valid) 记录任意会话创建的
+  真实驱动类型，XGuiGpu_Test 与诊断输出改用它——Vulkan 模式现在
+  正确报告 `driverType=vulkan`（修复后实测确认）。
+- **【三方对照实测（800×600 图表页，Debug，RDP 会话）】**默认
+  （无 --gpu）=软件光栅 239.8 FPS；--gpu=硬件 GL 直通 180.7~189.2
+  FPS；剖析显示帧内 ~385 原语（fillRect 198k+solidQuad 184k / 5s）、
+  present 0.085ms、readback 21 次/5s。**代价结构**：硬件 GPU 每原语
+  ~5-10µs（GL 函数指针→AMD ICD→RDP 显示栈），385 原语/帧 ≈2-4ms
+  固定开销 > 800×600 中等像素量的软件光栅填充成本——这是"启用了
+  硬件 GPU 仍跑不赢软件"的完整解释，也是 §8.0g26 今晚"GPU 侧场景
+  保留"（原语数 ~400→脏区增量）攻坚的唯一动因。
+- **【工具链变更适配】**本机 MSVC 14.37→14.44（旧工具集卸载致
+  x64-Debug 缓存失效、CMake 自动改用 VS 生成器）——清缓存后
+  night_build_x64.bat 显式加 `-G Ninja` 固定生成器，全量重建 0 错
+  17/17 链接；本轮验证：回归 **0 FAIL**（含 grabWindow，显示会话
+  状态变化后该项亦过）/验收 68/68/autotest 0 FAIL。
+- **【今晚（09-24 23:00 免费窗）攻坚计划——GPU 数量级反超的唯一
+  路径=GPU 侧场景保留】**①保留层 GPU 化：控件子树以原生原语缓存
+  进 GPU 纹理（对齐 Qt Quick retained/元素概念），damage-only 重
+  合成——帧原语数从 ~400 掉到脏区增量，immediate-mode 才有出路；
+  ②present 脏区 blit（非全屏）；③AA coverage 生成 GPU 化
+  （4×4 子采样进 shader，面积序列/AA 填充彻底去 CPU 化——当前
+  GPU 模式 coverage 仍 CPU 光栅，与软件同担 CPU 成本）；
+  ④持久映射环形 VBO 消 glBufferData 孤儿开销；⑤基准口径补全：
+  增补 1080p/图表重内容页专测（GPU 结构优势随像素量与矢量复杂度
+  放大，800×600 轻内容是软件最舒适域）。
+
+### 8.0g27 GPU 第二夜攻坚（2026-09-24 深夜免费窗）：GL 直通九项修复 + SW 图表增量 3.2× + 图集预存缺陷收口
+
+> 口径：Windows 10 / 纯 AMD APU（Radeon (TM) Graphics，GL 4.6）/ Debug /
+> 800×600。环境两态必须分列：**会话连接态（健康期）**与**会话断连态
+> （后半段，RDP 断开 + OrayIdd 虚拟显示）**——断连后出现 47–71 FPS
+> 显示栈劣化带（kill-switch 位等价对照证明非代码回归；同期 GL page-2
+> 仍 102–104 FPS，天花板绑定图表页 present 通道而非全局限速）。
+> 方法：免费窗五路 Flash 工作流并发（诊断波→主修复波→C 波实施波），
+> 全程未 git commit（用户约束）。入库文档：docs/xgui/gpu-night2-report.md、
+> g27-final-draft.md、bench-night2-table.md、gpu-retained-scene-design.md；
+> 基准协议 Tools/bench_protocol.bat。
+
+**修复清单（九项，全部落地并验证；行号为 2026-09-25 实读）**
+
+- **【修复1·脏列清】** 批后清画布按脏矩形宽
+  （`XPainter.c:138-179 xgpu_batch_canvas_clear_rows`，原每脏行整宽
+  memset 白扫带宽）：167.4→**183.6 FPS**。开关 `XGPU_CLEAR_ROWS_FULL=1`
+  回退。
+- **【修复2·scissor 缓存】** 同矩形缓存·安全变体
+  （`XGpuRenderDriver_gl.c:1552-1611`）：**198.7–206.0 FPS**（健康期
+  best）。两道安全门缺一不可：①批空门 `m_quadBatchCount==0` 才早返回
+  ——有待定 quad 时先在旧 scissor 下冲批（无此门实测整页渲染损坏：
+  推迟冲批×脏区提交通道组合，probe_bisect 二分实证）；②会话创建/
+  begin_frame/present 三处旁路 `glDisable(SCISSOR)` 后置
+  `m_scissorValid=false` 防缓存失同步。开关 `XGPU_SCISSOR_CACHE`。
+- **【修复3·BGRA 直传】** drawImageRegion 子区域 + legacy 整幅双路免
+  CPU R/B 交换（`gl.c:1735-1756` / `:412-427`，`GL_BGRA+
+  UNSIGNED_INT_8_8_8_8_REV+UNPACK_ROW_LENGTH` 与 ARGB32 小端逐字节
+  一致）：**181–193** vs 直传前 112–146 FPS，颜色逐位正确。开关
+  `XGPU_REGION_SWAP=1` 回退。
+- **【修复4·flush 脏区回退】** region==NULL 回退链改用脏区包围盒
+  （`XWidget.c:5707-5743`，原整窗退化在持久 FBO 上表现为全页帧对闪）：
+  autotest 143 PASS。**教训在案**：必须单包围盒——多矩形区域使
+  paintTree 每控件裁剪 O(控件×矩形)，实测掉至 58 FPS。开关
+  `XGUI_FLUSH_FULLFALLBACK=1`。
+- **【修复5·上屏双通道】** GPU 直通上屏默认**回读+BitBlt**，
+  `XGPU_PRESENT` 切换 swap——RDP 栈 SwapBuffers 帧不可达（§8.0g25
+  在册）且 swap 通道崩溃 0xC000041D（本夜补齐证据链）；白屏/闪烁根修，
+  修复后交互帧捕获全内容 403 FPS。
+- **【修复6·图表脏区早退，本夜增量之王】** series 段入口
+  脏区∩plotArea 为空则整段早退，线/样条/面积/柱/散点五类全覆盖
+  （`XChartView.c:126-140` 运行期门控 + `:1738-1767` 早退；pie 在图例
+  段现绘不受限）：SW 图表增量 2544（g26 基线）→**8024–8124 FPS**
+  （0.123ms/帧，3.2×，超设计预期 5.5–6.2K）。正确性依据：该段五种序列
+  落笔已被裁剪链约束在 dirty∩plotR（入场 ReplaceClip=dirty +
+  IntersectClip=plotR），空交集跳过输出逐位不变；dirty=NULL（离屏全图）
+  短路不剔除。开关 `XGUI_CHART_DIRTY_CULL=0`。
+- **【修复7·VK drawImageRegion】** Vulkan 子矩形上传补齐
+  （`XGpuRenderDriver_vulkan.c:1846-2043` + 操作表 `:2290`——**操作表
+  缺入口即 882 次/5s 整幅回退根因**；staging 直通布局行距=整幅宽、
+  `bufferRowLength` 以纹素表达、transferCmd 三段式、上传后重写描述符，
+  对标 GL ROW_LENGTH 语义）：VK 冒烟双后端绿；交互帧率收益待 present
+  模型改造兑现（现瓶颈=会话 FIFO present+每会话全队列同步 34ms，
+  readback 35.1ms 次之——staging 复用经查已存在无需改）。开关
+  `XGPU_VK_REGION_DIRECT=0`。
+- **【修复8·图集冲批缺口】** atlas stress corrupted frame（预存在，
+  GPU 路确定性 4/4 exit 1）双点根修：①图集 TexSubImage 变形前强制
+  `xgld_flush_quads`（`gl.c:1995-2019`——重置重打包后待定批 quad 仍
+  引用旧槽位坐标，冲批时采样污染；冲批契约「上传即变形源纹理的原语
+  之前」的唯一漏网者）；②`glyphAtlasUpload` 返回值不再忽略，失败回退
+  drawAlphaBitmap 逐字形（`XGpuRenderBackend.c:878-892`）。修复后 GL
+  冒烟 exit 0 零失败。开关 `XGPU_ATLAS_RESET_SAFE=0`。
+- **【修复9·环境卫生】** 周期性还原源文件的后台链清除（PID 15552，
+  此前「修复反复丢失」元凶）+ 三源文件六类探针标记零残留 +
+  `capture_frames.ps1` HDC 顺序修复（Clear 必须先于 GetHdc，原脚本
+  存无效黑帧）。
+
+**开关语义家族约定（重要，与直觉相反）**：以上开关均为
+「`VAR=1`（任意非 "0" 非空）→ 旧路径诊断回退；`=0` 或未设 → 新行为
+（默认开启）」。入册统一表述为「VAR=1 诊断回退」，勿按「=0 恢复」
+直觉设错。
+
+**性能对照（5s×2 取第二遍；20s 栅样转引自工作流定案）**
+
+| 口径 | 基线(g26) | 本夜终值 | 备注 |
+|---|---|---|---|
+| SW 图表页增量 | 2544 | **8024–8124** | 修复6；中间态 3236.9（主波四项后） |
+| SW 图表页整帧 | ~252 | 310.5 | 修复4 贡献 |
+| SW page-2 整帧/增量 | — | 1430.5 / 13146.8–13185.7 | |
+| GPU(GL) 增量·健康期 | 167.4 | **198.7–206.0** | 修复1→2 叠加；修复3 A/B 181–193 vs 112–146 |
+| GPU(GL) 整帧 ≥250 | — | **未达成**（best 206.0） | 结构性缺口=原语提交链（~454 原语/帧×~15µs），出路=场景保留（§8.0g26 P0-4 在册） |
+| GPU(GL) 断连劣化带 | — | 图表 47.1–74.2 / page-2 102.1–104.3 | 非代码；复测见遗留③ |
+| Vulkan | 2 FPS | 冒烟绿 | 帧率待 present 模型改造（P1 在册） |
+
+**验证记录**：回归仅 grabWindow（RDP 断连态环境项，02:49 后开始，
+SW 路同败=与 GPU 零交集）；验收 68/68；autotest 143 PASS exit 0；
+XGuiGpu_Test GL+VK 双绿（pixel=ffc04020 / tile=ff20a040 /
+translucent=ff1c2a38 逐位正确）；GL 图表页 20 帧帧对差分 changed=0
+（静止稳定无闪烁；断连态 PrintWindow 客户区 GPU/SW 同黑=显示栈伪影
+非回归，内容目检留待连接态复测）。全树构建当前被用户在途 WIP 阻断
+（XBsonTest.c / XTouchMultiPointTest.c / XExcelExtendedTest.c，本夜
+未触碰）；GPU 验证按目标构建四验证 exe 绕开，全树绿以其修复位准。
+
+**遗留与建议**
+
+1. 整帧 ≥250 线未达成（健康期 best 206.0）：逐命令微优化已近收益
+   边界，结构性出路=GPU 侧场景保留（原语 454→<30 验收锚）。
+2. Vulkan present 模型改造（会话持久化+fence 批回收替代每会话
+   QueueWaitIdle+readback 异步化）：2→20–50 FPS 唯一路径，4–6h 专项，
+   设计稿 docs/xgui/p0-2-vulkan-present-patch.md。
+3. 断连态显示栈劣化带（47–71）：白天会话连接态以
+   Tools/bench_protocol.bat 复测取真实终值；基准元数据须记录
+   quser 会话态 + GPU 负载/时钟。
+4. `XGPU_PRESENT=swap` 通道 RDP 栈崩溃 0xC000041D（非 RDP 环境待验）；
+   per-series bbox 细粒度剔除（现段级粒度已 8K+，暂无需求）。
+
+**凌晨续战（D 波 06:00–06:45）——三项收口，构建×4+全套件+VK 双态冒烟全绿**
+
+- **【续1·GL 重复上传收口，D 波审计实锤】** `xgld_draw_image_region`
+  （`gl.c:1697`，vtable `:2155`）内 P0-3 直传块（`:1734-1804`）之后整段
+  遗留改造前旧函数体，对同一子矩形**无条件第二次等值上传**（2×
+  TexSubImage2D 带宽；快路径下还做整段 CPU R/B 交换——恰是修复3 要
+  消除的开销；且回退态存在首次绘制 `m_pixels` NULL 写/容量越界写隐患）
+  ——默认跳过冗余体，开关 `XGPU_GL_DUP_UPLOAD=1` 保真回退（隐患随回退
+  保留，`:1806-1812` 注释在案）。顺带审计：「离屏 driverType 打印假象」
+  确认已在册修复；**「present 谎报」仍在**——`XWidget.c:5843-5857`
+  swap/readback 两通道均忽略后端返回值、无条件
+  `setFramePresented(true)`（后端本身诚实返回，消费点
+  xgui_window_demo.c:1180 依赖 framePresented() 选截图源会误信未上屏
+  帧），列遗留待修。
+- **【续2·VK present V2（fence 化提交）】** 会话结构新增
+  fence 武装态（`vulkan.c:66-73`）；end_frame 提交即返回、present 同队
+  列入队，CPU 不再阻塞等本帧 GPU（`:1449-1460` headline）；suspend 用
+  半帧 fence 取代全队列 QueueWaitIdle（`:1493-1509`）；七个 submit 点
+  按 needWait 分类（CPU 读回的图集读回/离屏 readback 保留等待）；
+  V1 分支逐字保留，`XGPU_VK_PRESENT_V2=0` 回退；VK 冒烟默认态+回退态
+  双绿（像素逐位一致为构造性论证）。**实测诚实记录**：交互 demo 图表
+  页 2.0（V2）vs 1.9（V1）FPS——同步消除未动终点，507ms/帧的瓶颈=
+  每会话 readback 35ms 串行链（≈十余会话×读回），二期出路=会话合并/
+  读回异步化（retained-scene 范畴；「会话按帧重建」经查不存在，会话本
+  就按会话持久）。
+- **【续3·图例瓦片保留一期】** 图例并入缓存静态内容（复用
+  xcv_paintLegend 同码渲瓦片保证与直画逐位一致，z 序不变；
+  `XChartView.c:882-933/:1860-1913`），失效=setChart/updateChart/resize
+  粗粒度；脏区与瓦片区不相交整段跳过。开关 `XGUI_CHART_STATIC_CACHE`
+  **默认关**（=1 启用，沿 XGPU_QUAD_BATCH 新特性先例）。
+  **A/B：开 76.5 vs 关 74.0（劣化带内持平）**——瓦片收益被整幅静态层
+  ~1.83MB/帧重传淹没，根治=驱动纹理身份缓存+drawImageCached
+  （P-A/P-B 在册，下波首选）。
+
+**收口波（E 波 06:50–07:10）——两项落地，构建×4+全套件+双后端冒烟绿**
+
+- **【收1·纹理身份缓存（P-A）】** XImage 内容版本号
+  （`XImage.c:206-209/:268-280`，m_contentVersion 派生自 cacheKey 全局
+  单调序号，单点 XImageData_markDirty 覆盖全部 16 处显式调用+COW
+  detach 尾部，逐写点清单在案；`init_ex_2` 外部内存绕 API 直写为已登记
+  缺口）+ GL 会话 6 项 LRU 身份缓存
+  （`XGpuRenderDriver_gl.c:96-127/:893-1010`，{指针,版本,格式,尺寸}全键
+  匹配命中零 GL 调用；populate 复用纹理前先冲批——m_quadBatch 教训；
+  session destroy 配对清理 `:1457-1460`）；drawImage/drawImageUv 命中跳
+  过整幅上传，drawImageRegion 命中连区域增量上传一并跳过（只消费不
+  填充，防脏区流每帧换版本退化成整幅重传）。开关
+  `XGPU_TEX_IDENTITY_CACHE=1` 启用（**默认关**）。**A/B（断连态，诚实
+  记录）：仅纹理缓存 74.9 vs 全关 74-76 持平；纹理缓存+静态层组合
+  58.7 反而劣化**（疑似命中后换统一批分支的程序/状态切换开销，需连接
+  态复测+归因；两特性默认均关，现网行为不变）——「上传节省是否兑现」
+  必须连接态定论后方可考虑默认开。
+- **【收2·present 诚实上报】** swap/readback 两通道按后端真实返回值置
+  `setFramePresented`（`XWidget.c:5860-5892`）；swap 失败回退
+  readback+BitBlt 保底可见性（窗口直通模式帧末不回读，回退路径先补
+  回读再 flush——`XPainter.c:340-341` 证据）；`XGUI_PRESENT_HONEST=0`
+  编译回退旧谎报行为。附带修复：XWidget.c 补 `XSystem.h` 原型（此前
+  隐式 int 声明，Win64 指针截断 C4047）。已登记边界：BitBlt flush 链为
+  void 不可观测真实结果（以后备存储在位作代理判定），GDI 层 BitBlt
+  本身失败仍会置 true——彻底收口需给 XBackingStore 两层加 bool 返回。
+
+**归因波（F 波 07:32–08:05）——组合态根因实锤 + 逐位实证抓到真缺陷**
+
+- **【归·组合态劣化根因（实测实锤）】** 身份缓存 6 槽 LRU 被「逐帧
+  换版过路图」反复搅动，稳定条目（静态层大图 ~1.83MB/图例瓦片）被逐出
+  后逐帧重 populate 整幅重传，经逐帧同步 readback 放大落入劣化带。
+  证据：四态 29 次基准——全关 11 次全健康 73.2-78.7，组合态 14 次
+  中 4 次落带 56.2-71.9 且同窗对照全关 73.5-77.1；剖面
+  （XCHARTVIEW_PROFILE）劣化窗 blit 段 257-390→880-915µs（≈2.8×，
+  恰为静态层 drawImage 路径）而 rebuild=0、纯 CPU 的 fp 段平稳 6-11µs
+  （排除降频）；「程序/批碎片化」假设证伪（图表侧 CPU 合计与全关
+  持平）。**修复**：churn 跟随表（4 槽记录连续换版数，同图连续两次
+  换版即拒收 populate，回退 m_sourceTexture 旧路径像素逐位一致，版本
+  回稳自动重新收编；`XGpuRenderDriver_gl.c:136-143/:915-984`），开关
+  `XGPU_TEX_IDENTITY_CHURN_SKIP=1`（默认关）。**已构建+本会话复测：
+  组合态 58.7 → 72.1-75.3 回归健康带**。遗留：换版过路图的具体身份
+  未直证（驱动侧无计数器），若复现需 `CHURN_PROF` 探针逐帧计数。
+- **【证·三新特性逐位一致性 A/B（--screenshot + autotest 落盘图
+  SHA256 逐字节 diff；同配置连跑两次哈希相同证明机制确定有效）】**
+  ①`XGPU_TEX_IDENTITY_CACHE`：图表页/默认页/组合 autotest **全部逐位
+  一致**（单变量归因 P1-P4 四组对照）——缓存正确性实证成立；
+  ②**`XGUI_CHART_STATIC_CACHE=1 有真缺陷：图例字形丢失**——软件通道
+  丢 57px（首条图例文字行 bbox 646,149-673,151），GPU 通道丢 201px
+  （额外 y=212-223 每行 12px 竖条），B 侧纯白覆盖 A 侧反锯齿灰阶=
+  字形蚀而非位移；两通道同现→病灶在图表层保留瓦片失效逻辑
+  （`XChartView.c` 图例瓦片 :2569、粗失效 :2603/:2630），**该特性必须
+  保持默认关，修复列下夜首要**；③`XGUI_PRESENT_HONEST=0` 为编译期
+  态需重建 A/B，未测（构造上仅 present/readback 失败路径表现不同）。
+  产物与掩码图在 Tools/abtex/。
+
 ### 8.1 架构裁剪/平台边界（声明式偏差，非漏实现）
 
 - XPaintEngine 绘制命令接口由 XPainter 承担；XImage/XPixmap/XBitmap/

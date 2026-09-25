@@ -81,15 +81,10 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self);
 /* ==================== 全局会话管理（阶段 2 直通接线） ==================== */
 
 /**
- * @brief      是否请求 GPU 渲染后端（优先级：addRequestedOverride 运行期
- *             覆盖 > XGUI_RENDER_BACKEND / XGPU_BACKEND 环境变量 > 编译期
- *             默认 XGPU_RUNTIME_DEFAULT_ON；首次调用后缓存）。
- * @details    编译期默认：桌面系统（Windows/Linux 等 XPLATFORM_DESKTOP）
- *             默认请求 GPU 直通，平台探测失败自动回退软件光栅（零回归
- *             契约）；裸机/RTOS/裁剪构建（XGPU_ON=0）默认软件。外部可
- *             覆盖：编译期 #define XGPU_RUNTIME_DEFAULT_ON 0/1，运行期
- *             设 XGUI_RENDER_BACKEND=software 强制软件。
- * @return     true 请求 GPU；false 软件。
+ * @brief      是否请求 GPU 渲染后端（读 XGUI_RENDER_BACKEND / XGPU_BACKEND
+ *             环境变量，首次调用后缓存；addRequestedOverride 的运行期覆盖
+ *             优先于环境变量）。
+ * @return     true 请求 GPU；false 默认软件。
  */
 bool XGpuRenderBackend_requested(void);
 
@@ -141,6 +136,12 @@ void XGpuRenderBackend_setFramePresented(bool presented);
 
 /** @brief 最近一帧是否 GPU present 上屏（供截图/调试选择内容来源）。 */
 bool XGpuRenderBackend_framePresented(void);
+
+/** @brief 最近创建会话的实际驱动类型（含离屏会话）。
+ *  @param outValid 可空；输出该记录是否有效（尚无会话创建时为 false，
+ *         此时返回 OpenGL 默认值）。current() 只对窗口会话非 NULL，
+ *         离屏诊断必须经本入口取真实驱动（2026-09-24 假象修复）。 */
+XGpuRenderDriverType XGpuRenderBackend_lastDriverType(bool* outValid);
 
 /** @brief 结束当前窗口直通帧（present 后复位活动状态）。 */
 void XGpuRenderBackend_endWindowFrame(void);
@@ -199,6 +200,17 @@ bool XGpuRenderBackend_drawImageUv(XGpuRenderBackend* self,
                                    int width, int height, float u0, float v0,
                                    float u1, float v1, float opacity,
                                    bool sourceOver);
+
+/** @brief 子矩形区域绘制：仅上传源图像 (srcX,srcY,srcW,srcH) 区域
+ *         （TexSubImage 增量上传）并 1:1 绘制到目标 (dstX,dstY)——
+ *         批量提交的脏区通道（透明暂存画布只上传脏区）。
+ * @return true 已提交；false 参数非法、会话无效或驱动未实现
+ *         （调用方回退整幅路径）。 */
+bool XGpuRenderBackend_drawImageRegion(XGpuRenderBackend* self,
+                                       const XImage* image, int srcX,
+                                       int srcY, int srcW, int srcH,
+                                       int dstX, int dstY, float opacity,
+                                       bool sourceOver);
 
 /** @brief 渐变×覆盖双纹理绘制（方向 B fillPath 原生化通道）。
  *  @param coverage 路径覆盖图（每像素 1 字节；借用，调用期间有效）。
@@ -307,27 +319,6 @@ void XGpuRenderBackend_setClipRect(XGpuRenderBackend* self,
  * @return     true 成功；false 会话无效或目标非法。
  */
 bool XGpuRenderBackend_readback(XGpuRenderBackend* self, XImage* target);
-
-/**
- * @brief      渲染目标子矩形回读到目标 ARGB32 图像的指定偏移。
- * @details    局部提交批量快照原语：只搬运待绘制区域，避免全帧
- *             GPU→CPU 往返。坐标自动钳位到渲染目标；仅支持
- *             ARGB32/ARGB32_Premultiplied 目标。驱动未实现时返回
- *             false，调用方回退全帧 readback。
- */
-bool XGpuRenderBackend_readbackRect(XGpuRenderBackend* self, int x, int y,
-                                    int width, int height, XImage* target,
-                                    int dx, int dy);
-
-/**
- * @brief      图像子矩形上传并绘制到渲染目标同位置矩形。
- * @details    局部提交批量提交原语：与 readbackRect 配对，快照区
- *             之外的目标像素不受影响。sourceOver=false 矩形直接
- *             覆盖。驱动未实现时返回 false。
- */
-bool XGpuRenderBackend_drawImageRect(XGpuRenderBackend* self,
-                                     const XImage* image, int x, int y,
-                                     int width, int height, bool sourceOver);
 
 /** @brief 结束一帧：解除 FBO 绑定并 doneCurrent。 */
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self);

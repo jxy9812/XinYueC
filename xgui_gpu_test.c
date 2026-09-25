@@ -69,10 +69,13 @@ int main(void)
        实际驱动必须仍是 Vulkan（有序回退到 GL/软件即判失败）。 */
     {
         XGpuRenderBackend* session = XGpuRenderBackend_current();
+        bool typeValid = false;
         XGpuRenderDriverType driverType =
-            XGpuRenderBackend_driverType(session);
+            XGpuRenderBackend_lastDriverType(&typeValid);
         const char* requested = getenv("XGUI_RENDER_BACKEND");
         if (!requested || !*requested) requested = getenv("XGPU_BACKEND");
+        if (!typeValid)
+            driverType = XGpuRenderBackend_driverType(session);
         fprintf(stderr, "gpu-test: driverType=%s\n",
                 driverType == XGpuRenderDriver_Vulkan ? "vulkan" : "opengl");
         if (wasGpu && session && requested &&

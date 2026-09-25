@@ -995,6 +995,21 @@ void XImage_setOffset(XImage* self, const XPoint* pos);
 int64_t XImage_cacheKey(const XImage* self);
 
 /**
+ * @brief      获取图像内容版本号（P-A，2026-09-25；GPU 纹理身份缓存键）。
+ * @param self 目标 XImage 对象指针；空图像返回 0。
+ * @return 内容版本号（uint32）。
+ * @note 版本号随内容写点单调更换：所有像素写 API（fillRect/fill/
+ *       setPixel/setPixelColor/setColor 系/invertPixels/setAlphaChannel/
+ *       convertToColorSpace 系）经 XImage_detach 门与 XImageData_markDirty
+ *       统一派生新版本；XImage_bits/scanLine 可写指针取用即换版本（先取
+ *       后写的保守失效）。同一数据对象内容不变则版本不变——GL 驱动以
+ *       {对象指针, 版本} 命中纹理身份缓存即免重传。例外：以原始字节
+ *       指针绕过本 API 的外部写入（init_ex_2 包装外部内存）不可跟踪，
+ *       调用方须自行重包装或经 bits() 触碰一次以换版本。
+ */
+uint32_t XImage_contentVersion(const XImage* self);
+
+/**
  * @brief      分离数据（写时复制）
  * @param self 目标 XImage 对象指针
  */

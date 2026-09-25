@@ -8,7 +8,12 @@
  *             按调用顺序录制进单个 primary 命令缓冲，顶点数据写入
  *             HOST_VISIBLE|COHERENT 顶点缓冲游标（vkCmdDraw 以
  *             firstVertex 偏移绘制），endFrame 提交并等待 fence 后执行
- *             挂起的 readback 拷贝。Vulkan 图像行序为上到下，与 XImage
+ *             挂起的 readback 拷贝。XGPU_VK_PRESENT_V2（默认开，置 0
+ *             回退）：endFrame 提交即返回（fence 移交下一帧 beginFrame
+ *             批量回收），transfer/半帧打断以独立 fence 取代
+ *             vkQueueWaitIdle 全队列同步；GPU 侧依赖由同队列提交序
+ *             保证，staging/命令缓冲复用前经 retire 查询回收。
+ *             Vulkan 图像行序为上到下，与 XImage
  *             一致，readback 无需行翻转。本文件仅含跨平台 Vulkan 核心
  *             头（vulkan_core.h）；窗口平台 surface（X11 Xlib / Win32）
  *             的系统 API 实现位于 Drive（XPlatformGraphicsDriver_*）。
@@ -24,6 +29,7 @@
 
 #include "XImage.h"
 #include "XMemory.h"
+#include "XSystem.h"
 #include "XPlatformGraphics.h"
 #include "XWindow.h"
 #include <limits.h>
@@ -56,6 +62,15 @@ struct XGpuRenderDriverSession
     VkCommandBuffer m_cmd;       /**< 帧命令缓冲（每帧重置重录）。 */
     VkCommandBuffer m_transferCmd; /**< 同步上传/读回专用命令缓冲。 */
     VkFence m_frameFence;        /**< 帧提交完成 fence。 */
+
+    /* XGPU_VK_PRESENT_V2（present 模型二期，fence 批量回收，默认开；
+       =0 回退旧同步路径）：endFrame 异步提交，fence 回收点移至下一帧
+       beginFrame；transfer/suspend 提交以独立 fence 取代全队列等待。 */
+    bool m_presentV2;            /**< V2 异步提交模型开关（创建时读环境变量）。 */
+    bool m_frameFenceArmed;      /**< 上一帧 endFrame 提交成功、fence 待回收。 */
+    VkFence m_transferFence;     /**< transfer 提交 fence（V2，取代 QueueWaitIdle）。 */
+    bool m_transferInFlight;     /**< transferFence 是否有待回收提交。 */
+    VkFence m_suspendFence;      /**< 半帧打断提交 fence（V2，离屏 upload/readback）。 */
 
     VkRenderPass m_renderPass;   /**< 单子通道渲染通道（loadOp=LOAD）。 */
     VkPipelineLayout m_solidLayout;   /**< 纯色管线布局（push constant）。 */
@@ -793,6 +808,8 @@ static VkFormat xvkl_surface_format(XGpuRenderDriverSession* self)
     return formats[0].format;
 }
 
+static bool xvkl_present_v2(void); /* 定义于帧控制节（transfer 提交附近）。 */
+
 static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
                                                     int width, int height)
 {
@@ -810,6 +827,7 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     VkSemaphoreCreateInfo sci;
     const char* const* surfaceExtensions = NULL;
     uint32_t extensionCount = 0;
+    const char* failStage = "unknown";
     if (!self) return NULL;
     self->m_window = window != NULL;
     self->m_width = width;
@@ -834,9 +852,15 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         ici.ppEnabledExtensionNames = surfaceExtensions;
     }
     if (vkCreateInstance(&ici, NULL, &self->m_instance) != VK_SUCCESS)
+    {
+        failStage = "vkCreateInstance";
         goto fail;
+    }
     if (self->m_window && !xvkl_create_surface(self, window))
+    {
+        failStage = "createSurface";
         goto fail;
+    }
     {
         uint32_t count = 0;
         VkPhysicalDevice devices[8];
@@ -845,10 +869,17 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
             count == 0 || count > 8 ||
             vkEnumeratePhysicalDevices(self->m_instance, &count, devices) !=
                 VK_SUCCESS)
+        {
+            failStage = "enumeratePhysicalDevices";
             goto fail;
+        }
         self->m_physical = devices[0];
     }
-    if (!xvkl_find_queue_family(self, &self->m_queueFamily)) goto fail;
+    if (!xvkl_find_queue_family(self, &self->m_queueFamily))
+    {
+        failStage = "findQueueFamily";
+        goto fail;
+    }
     XMemset(&qci, 0, sizeof(qci));
     qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     qci.queueFamilyIndex = self->m_queueFamily;
@@ -866,16 +897,26 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     }
     if (vkCreateDevice(self->m_physical, &dci, NULL, &self->m_device) !=
         VK_SUCCESS)
+    {
+        failStage = "vkCreateDevice";
         goto fail;
+    }
     vkGetDeviceQueue(self->m_device, self->m_queueFamily, 0, &self->m_queue);
-    if (!self->m_queue) goto fail;
+    if (!self->m_queue)
+    {
+        failStage = "getDeviceQueue";
+        goto fail;
+    }
     XMemset(&poolCi, 0, sizeof(poolCi));
     poolCi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolCi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolCi.queueFamilyIndex = self->m_queueFamily;
     if (vkCreateCommandPool(self->m_device, &poolCi, NULL,
                             &self->m_cmdPool) != VK_SUCCESS)
+    {
+        failStage = "vkCreateCommandPool";
         goto fail;
+    }
     XMemset(&cbAi, 0, sizeof(cbAi));
     cbAi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbAi.commandPool = self->m_cmdPool;
@@ -885,7 +926,10 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         VkCommandBuffer buffers[2];
         if (vkAllocateCommandBuffers(self->m_device, &cbAi, buffers) !=
             VK_SUCCESS)
+        {
+            failStage = "vkAllocateCommandBuffers";
             goto fail;
+        }
         self->m_cmd = buffers[0];
         self->m_transferCmd = buffers[1];
     }
@@ -894,25 +938,57 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     if (vkCreateFence(self->m_device, &fci, NULL, &self->m_frameFence) !=
         VK_SUCCESS)
+    {
+        failStage = "vkCreateFence";
         goto fail;
+    }
+    self->m_presentV2 = xvkl_present_v2();
+    if (self->m_presentV2)
+    {
+        /* V2 辅助 fence：初始 UNSIGNALED（未提交的工作无需等待）。 */
+        VkFenceCreateInfo ufci;
+        XMemset(&ufci, 0, sizeof(ufci));
+        ufci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (vkCreateFence(self->m_device, &ufci, NULL,
+                          &self->m_transferFence) != VK_SUCCESS ||
+            vkCreateFence(self->m_device, &ufci, NULL,
+                          &self->m_suspendFence) != VK_SUCCESS)
+        {
+            failStage = "vkCreateFence(v2)";
+            goto fail;
+        }
+    }
     XMemset(&sci, 0, sizeof(sci));
     sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     if (self->m_window)
     {
         if (vkCreateSemaphore(self->m_device, &sci, NULL,
                               &self->m_imageReady) != VK_SUCCESS)
+        {
+            failStage = "vkCreateSemaphore(imageReady)";
             goto fail;
+        }
         if (vkCreateSemaphore(self->m_device, &sci, NULL,
                               &self->m_renderDone) != VK_SUCCESS)
+        {
+            failStage = "vkCreateSemaphore(renderDone)";
             goto fail;
+        }
     }
     if (!xvkl_create_device_objects(
             self, self->m_window ? xvkl_surface_format(self)
                                  : VK_FORMAT_B8G8R8A8_UNORM))
+    {
+        failStage = "createDeviceObjects";
         goto fail;
+    }
     if (self->m_window)
     {
-        if (!xvkl_create_swapchain(self)) goto fail;
+        if (!xvkl_create_swapchain(self))
+        {
+            failStage = "createSwapchain";
+            goto fail;
+        }
     }
     else if (!xvkl_create_offscreen_target(self))
     {
@@ -931,6 +1007,7 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     return self;
 
 fail:
+    fprintf(stderr, "vulkan: session create failed at '%s'\n", failStage);
     XGpuRenderDriver_vulkan_procs()->sessionDestroy(self);
     return NULL;
 }
@@ -997,6 +1074,10 @@ static void xvkl_session_destroy(XGpuRenderDriverSession* self)
         vkDestroySemaphore(self->m_device, self->m_renderDone, NULL);
     if (self->m_frameFence)
         vkDestroyFence(self->m_device, self->m_frameFence, NULL);
+    if (self->m_transferFence)
+        vkDestroyFence(self->m_device, self->m_transferFence, NULL);
+    if (self->m_suspendFence)
+        vkDestroyFence(self->m_device, self->m_suspendFence, NULL);
     if (self->m_cmdPool)
         vkDestroyCommandPool(self->m_device, self->m_cmdPool, NULL);
     if (self->m_device) vkDestroyDevice(self->m_device, NULL);
@@ -1071,7 +1152,42 @@ static void xvkl_set_frame_layout(XGpuRenderDriverSession* self,
         self->m_colorLayout = layout;
 }
 
-static bool xvkl_submit_transfer(XGpuRenderDriverSession* self)
+/**
+ * @brief      读取 present 模型二期开关 XGPU_VK_PRESENT_V2。
+ * @details    默认开（V2 异步提交模型）；置 "0" 回退旧同步路径（每笔
+ *             transfer 与每帧 endFrame 的全队列等待）。进程内读一次缓存。
+ */
+static bool xvkl_present_v2(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_PRESENT_V2");
+        cached = v && v[0] == '0' && v[1] == 0 ? 0 : 1;
+    }
+    return cached != 0;
+}
+
+/**
+ * @brief      回收在途 transfer 提交（V2：fence 等待+复位；V1：恒真）。
+ * @details    V2 下所有 transferCmd reset、staging 重写/销毁与 staging
+ *             CPU 读回前必须经过本入口：保证上一笔 transfer 执行完毕
+ *             且 fence 复位，才允许复用其资源。fence 已信号时
+ *             vkWaitForFences 立即返回（查询语义，零阻塞）。
+ */
+static bool xvkl_transfer_retire(XGpuRenderDriverSession* self)
+{
+    if (!self || !self->m_presentV2 || !self->m_transferInFlight) return true;
+    if (vkWaitForFences(self->m_device, 1, &self->m_transferFence, VK_TRUE,
+                        UINT64_MAX) != VK_SUCCESS)
+        return false;
+    if (vkResetFences(self->m_device, 1, &self->m_transferFence) != VK_SUCCESS)
+        return false;
+    self->m_transferInFlight = false;
+    return true;
+}
+
+static bool xvkl_submit_transfer(XGpuRenderDriverSession* self, bool needWait)
 {
     VkSubmitInfo submit;
     if (!self || !self->m_transferCmd) return false;
@@ -1080,15 +1196,30 @@ static bool xvkl_submit_transfer(XGpuRenderDriverSession* self)
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &self->m_transferCmd;
-    if (vkQueueSubmit(self->m_queue, 1, &submit, 0) != VK_SUCCESS)
+    if (!self->m_presentV2)
+    {
+        if (vkQueueSubmit(self->m_queue, 1, &submit, 0) != VK_SUCCESS)
+            return false;
+        return vkQueueWaitIdle(self->m_queue) == VK_SUCCESS;
+    }
+    /* V2：fence 异步提交。同队列后续提交按序执行，GPU 侧依赖（屏障、
+       采样就绪）由队列序保证；CPU 侧仅在回收（retire）或本笔结果需
+       立即读回（needWait）时等待，取代旧路径逐笔 vkQueueWaitIdle
+       全队列同步（34ms/会话主因，2026-09-25 在册）。 */
+    if (vkQueueSubmit(self->m_queue, 1, &submit, self->m_transferFence) !=
+        VK_SUCCESS)
         return false;
-    return vkQueueWaitIdle(self->m_queue) == VK_SUCCESS;
+    self->m_transferInFlight = true;
+    if (needWait && !xvkl_transfer_retire(self)) return false;
+    return true;
 }
 
 static bool xvkl_begin_transfer(XGpuRenderDriverSession* self)
 {
     VkCommandBufferBeginInfo begin;
     if (!self || !self->m_transferCmd) return false;
+    /* V2：复位前回收在途 transfer（fence 批量查询，已信号即零开销）。 */
+    if (!xvkl_transfer_retire(self)) return false;
     if (vkResetCommandBuffer(self->m_transferCmd, 0) != VK_SUCCESS)
         return false;
     XMemset(&begin, 0, sizeof(begin));
@@ -1151,7 +1282,7 @@ static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-    if (!xvkl_submit_transfer(self)) return false;
+    if (!xvkl_submit_transfer(self, false)) return false;
     xvkl_set_frame_layout(self, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     return true;
 }
@@ -1169,7 +1300,7 @@ static bool xvkl_prepare_frame_target(XGpuRenderDriverSession* self)
                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
     }
-    if (!xvkl_submit_transfer(self)) return false;
+    if (!xvkl_submit_transfer(self, false)) return false;
     xvkl_set_frame_layout(self, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     return true;
 }
@@ -1246,9 +1377,25 @@ static bool xvkl_begin_frame(XGpuRenderDriverSession* self,
         vkEndCommandBuffer(self->m_cmd);
         self->m_recording = false;
     }
-    vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
-                    UINT64_MAX);
-    vkResetFences(self->m_device, 1, &self->m_frameFence);
+    if (!self->m_presentV2)
+    {
+        vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
+                        UINT64_MAX);
+        vkResetFences(self->m_device, 1, &self->m_frameFence);
+    }
+    else
+    {
+        /* V2（fence 批量回收点）：上一帧 endFrame 异步提交，本帧重录
+           m_cmd/复用顶点与源纹理资源前回收其 fence——回收点从 endFrame
+           移到下一帧 beginFrame，CPU 记录/应用逻辑与 GPU 执行重叠，
+           资源退役纪律与旧路径完全一致（录制开始时上帧必已完结）。
+           未武装（上帧提交失败/首帧）直接跳过等待防死等。 */
+        if (self->m_frameFenceArmed)
+            vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
+                            UINT64_MAX);
+        vkResetFences(self->m_device, 1, &self->m_frameFence);
+        self->m_frameFenceArmed = false;
+    }
     self->m_vertexCursor = 0;
     self->m_pendingReadback = NULL;
     self->m_imageWaitConsumed = false;
@@ -1301,8 +1448,18 @@ static void xvkl_end_frame(XGpuRenderDriverSession* self)
     }
     if (vkQueueSubmit(self->m_queue, 1, &si, self->m_frameFence) != VK_SUCCESS)
         return;
-    vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
-                    UINT64_MAX);
+    if (!self->m_presentV2)
+    {
+        vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
+                        UINT64_MAX);
+    }
+    else
+    {
+        /* V2：提交即返回（武装 fence 待下一帧 beginFrame 回收），
+           present 紧随提交入队（同队列有序，等待 renderDone 信号量），
+           CPU 侧不再阻塞等待本帧 GPU 执行完毕——2 FPS 主因之一。 */
+        self->m_frameFenceArmed = true;
+    }
     xvkl_set_frame_layout(self, self->m_window
         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     if (self->m_window)
@@ -1335,9 +1492,23 @@ static bool xvkl_suspend_for_transfer(XGpuRenderDriverSession* self)
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &self->m_cmd;
-    if (vkQueueSubmit(self->m_queue, 1, &submit, 0) != VK_SUCCESS)
+    if (!self->m_presentV2)
+    {
+        if (vkQueueSubmit(self->m_queue, 1, &submit, 0) != VK_SUCCESS)
+            return false;
+        return vkQueueWaitIdle(self->m_queue) == VK_SUCCESS;
+    }
+    /* V2：仅等待本次半帧提交（suspend fence）——后续 transfer 与
+       resume 的复位各自经 retire/fence 有序回收；m_cmd 在本 fence
+       信号后复位/重开，无执行竞争。复位先行：fence 需未信号才能
+       被本次提交置位。 */
+    if (vkResetFences(self->m_device, 1, &self->m_suspendFence) != VK_SUCCESS)
         return false;
-    return vkQueueWaitIdle(self->m_queue) == VK_SUCCESS;
+    if (vkQueueSubmit(self->m_queue, 1, &submit, self->m_suspendFence) !=
+        VK_SUCCESS)
+        return false;
+    return vkWaitForFences(self->m_device, 1, &self->m_suspendFence, VK_TRUE,
+                           UINT64_MAX) == VK_SUCCESS;
 }
 
 static bool xvkl_resume_after_transfer(XGpuRenderDriverSession* self)
@@ -1387,7 +1558,9 @@ static bool xvkl_copy_frame_to_image(XGpuRenderDriverSession* self,
                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
                        VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-    if (!xvkl_submit_transfer(self)) return false;
+    /* V2：本笔结果 CPU 立即读回（needWait）——仅等本笔 transfer 的
+       fence，不再全队列等待；像素通路与 V1 逐位一致。 */
+    if (!xvkl_submit_transfer(self, true)) return false;
     self->m_colorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     if (XImage_format(target) == XImageFormat_ARGB32 ||
         XImage_format(target) == XImageFormat_ARGB32_Premultiplied)
@@ -1443,11 +1616,18 @@ static bool xvkl_readback(XGpuRenderDriverSession* self, XImage* target)
 /**
  * @brief      写 4 顶点（NDC：Vulkan y 轴向下，ny = y*2/h - 1）并录制
  *             指定管线的 draw 调用。
+ * @param      u0/v0/u1/v1 纹理子矩形（归一化）：(u0,v0) 对应四边形左上
+ *             顶点、(u1,v1) 对应右下。字形图集子矩形采样必须用它——
+ *             固定 0..1 会把整幅 512x512 图集（绝大部分为空）拉进字形
+ *             小四边形，采样 alpha≈0 导致字形不上屏（2026-09-24 实测
+ *             "atlas pixels wrong" 根因，对标 GL 驱动 glyphAtlasDraw 的
+ *             atlasX/512 子矩形约定）。
  */
 static bool xvkl_record_quad(XGpuRenderDriverSession* self, float x1, float y1,
                              float x2, float y2, float x3, float y3,
                              float x4, float y4, uint32_t premulColor,
-                             bool sourceOver, bool textured, VkImageView view)
+                             bool sourceOver, bool textured, VkImageView view,
+                             float u0, float v0, float u1, float v1)
 {
     float* v;
     uint32_t first;
@@ -1469,8 +1649,8 @@ static bool xvkl_record_quad(XGpuRenderDriverSession* self, float x1, float y1,
             float* d = v + (size_t)i * 8u;
             d[0] = xs[i] * 2.0f / (float)self->m_width - 1.0f;
             d[1] = ys[i] * 2.0f / (float)self->m_height - 1.0f;
-            d[2] = textured ? (i == 1 || i == 3 ? 1.0f : 0.0f) : 0.0f;
-            d[3] = textured ? (i >= 2 ? 1.0f : 0.0f) : 0.0f;
+            d[2] = textured ? (i == 1 || i == 3 ? u1 : u0) : 0.0f;
+            d[3] = textured ? (i >= 2 ? v1 : v0) : 0.0f;
             d[4] = (float)((premulColor >> 16) & 0xffu) / 255.0f;
             d[5] = (float)((premulColor >> 8) & 0xffu) / 255.0f;
             d[6] = (float)(premulColor & 0xffu) / 255.0f;
@@ -1549,19 +1729,32 @@ static bool xvkl_fill_rect(XGpuRenderDriverSession* self, const XRect* rect,
                            uint32_t premulColor, float opacity,
                            bool sourceOver)
 {
-    unsigned a = (unsigned)((premulColor >> 24) & 0xffu);
+    unsigned a;
+    unsigned r;
+    unsigned g;
+    unsigned b;
     if (!self || !self->m_recording || !rect || rect->width <= 0 ||
         rect->height <= 0)
         return false;
-    (void)opacity; /* 透明度已折入 premulColor（通用层保证）。 */
+    /* fillRect 入口的 color 是非预乘 ARGB（通用层原样透传，含 opacity）：
+       透明度折入 alpha 后 RGB 必须按同一 alpha 预乘——管线是预乘
+       SourceOver（src=ONE），非预乘源会把颜色放大 1/a 倍（实测半透明
+       fillRect 输出 ff4c7298，GL 正确值 ff1c2a38；对标 GL 驱动
+       xgld_fill_rect 的 xgpu_mul255 预乘）。 */
+    (void)opacity; /* 透明度已折入 premulColor（下方计算）。 */
+    a = (unsigned)((premulColor >> 24) & 0xffu);
     a = (unsigned)(a * (unsigned)(opacity * 255.0f + 0.5f) + 127u) / 255u;
-    premulColor = ((uint32_t)a << 24) | (premulColor & 0x00ffffffu);
+    r = (((premulColor >> 16) & 0xffu) * a + 127u) / 255u;
+    g = (((premulColor >> 8) & 0xffu) * a + 127u) / 255u;
+    b = ((premulColor & 0xffu) * a + 127u) / 255u;
+    premulColor = ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+                  ((uint32_t)g << 8) | (uint32_t)b;
     return xvkl_record_quad(
         self, (float)rect->x, (float)rect->y,
         (float)(rect->x + rect->width), (float)rect->y,
         (float)rect->x, (float)(rect->y + rect->height),
         (float)(rect->x + rect->width), (float)(rect->y + rect->height),
-        premulColor, sourceOver, false, NULL);
+        premulColor, sourceOver, false, NULL, 0.0f, 0.0f, 1.0f, 1.0f);
 }
 
 static bool xvkl_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
@@ -1570,7 +1763,7 @@ static bool xvkl_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
                                  uint32_t premulColor, bool sourceOver)
 {
     return xvkl_record_quad(self, x1, y1, x2, y2, x3, y3, x4, y4, premulColor,
-                            sourceOver, false, NULL);
+                            sourceOver, false, NULL, 0.0f, 0.0f, 1.0f, 1.0f);
 }
 
 /**
@@ -1579,6 +1772,10 @@ static bool xvkl_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
  */
 static bool xvkl_stage_pixels(XGpuRenderDriverSession* self, size_t bytes)
 {
+    /* V2：staging 写入/销毁前回收在途 transfer——fence 已信号时本调用
+       为零开销查询；在途时等待，避免 CPU 重写映射区与 GPU 读旧内容
+       竞争（旧路径由逐笔 vkQueueWaitIdle 隐式保证）。 */
+    if (!xvkl_transfer_retire(self)) return false;
     if (self->m_stagingBuffer && self->m_stagingCapacity >= bytes) return true;
     if (self->m_stagingBuffer)
         vkDestroyBuffer(self->m_device, self->m_stagingBuffer, NULL);
@@ -1625,51 +1822,54 @@ static bool xvkl_ensure_source_image(XGpuRenderDriverSession* self, int width,
     return true;
 }
 
-static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
-                            int x, int y, int width, int height,
-                            float opacity, bool sourceOver)
+static bool xvkl_draw_image_uv(XGpuRenderDriverSession* self,
+                               const XImage* image,
+                               int x, int y, int width, int height,
+                               float u0, float v0, float u1, float v1,
+                               float opacity, bool sourceOver)
 {
     VkBufferImageCopy region;
-    VkImageMemoryBarrier barrier;
-    VkCommandBufferBeginInfo bi;
     unsigned alpha;
     uint32_t premul;
-    if (!self || !self->m_recording || !image || width <= 0 || height <= 0 ||
-        XImage_width(image) != width || XImage_height(image) != height)
+    int srcW;
+    int srcH;
+    if (!self || !self->m_recording || !image || width <= 0 || height <= 0)
         return false;
+    /* UV 变体：源与目标尺寸解耦（渐变 LUT 256x1 → 任意目标矩形，
+       对标 GL 驱动 xgld_draw_image_uv；整幅变体经 0..1 UV 退化为
+       恒等映射，仍要求尺寸一致由包装器保证）。 */
+    srcW = XImage_width(image);
+    srcH = XImage_height(image);
+    if (srcW <= 0 || srcH <= 0) return false;
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
     alpha = (unsigned)(opacity * 255.0f + 0.5f);
     /* drawImage 语义：opacity 同时缩放预乘 RGB 与 alpha。源图像已是预乘
        布局，CPU 侧按 alpha 缩放后经 staging 上传。 */
     {
-        size_t bytes = (size_t)width * (size_t)height * 4u;
+        size_t bytes = (size_t)srcW * (size_t)srcH * 4u;
         uint8_t* mapped;
         const uint8_t* src = XImage_constBits(image);
         int bpl = XImage_bytesPerLine(image);
         int row;
         if (!xvkl_stage_pixels(self, bytes)) return false;
         mapped = (uint8_t*)self->m_stagingMapped;
-        for (row = 0; row < height; ++row)
+        /* XImage 小端 ARGB32 内存字节序 = B,G,R,A，与 VK_FORMAT_
+           B8G8R8A8_UNORM 的内存布局一致：逐字节直拷，不做 GL 那样的
+           R/B 交换（移植期误留交换导致贴图红蓝互换，2026-09-24 修）。 */
+        for (row = 0; row < srcH; ++row)
         {
             const uint8_t* srow = src + (size_t)row * (size_t)bpl;
-            uint8_t* drow = mapped + (size_t)row * (size_t)width * 4u;
-            int col;
-            for (col = 0; col < width; ++col)
-            {
-                drow[col * 4 + 0] = srow[col * 4 + 2]; /* R <- B */
-                drow[col * 4 + 1] = srow[col * 4 + 1]; /* G */
-                drow[col * 4 + 2] = srow[col * 4 + 0]; /* B <- R */
-                drow[col * 4 + 3] = srow[col * 4 + 3]; /* A */
-            }
+            uint8_t* drow = mapped + (size_t)row * (size_t)srcW * 4u;
+            XMemcpy(drow, srow, (size_t)srcW * 4u);
         }
         if (alpha != 255u)
         {
-            for (row = 0; row < height; ++row)
+            for (row = 0; row < srcH; ++row)
             {
-                uint8_t* drow = mapped + (size_t)row * (size_t)width * 4u;
+                uint8_t* drow = mapped + (size_t)row * (size_t)srcW * 4u;
                 int col;
-                for (col = 0; col < width; ++col)
+                for (col = 0; col < srcW; ++col)
                 {
                     drow[col * 4 + 0] =
                         (uint8_t)((drow[col * 4 + 0] * alpha + 127) / 255);
@@ -1683,31 +1883,15 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
             }
         }
     }
-    if (!xvkl_ensure_source_image(self, width, height)) return false;
-    XMemset(&bi, 0, sizeof(bi));
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    /* 上传需要在当前渲染通道外执行：打断当前录制，先做 transfer，再
-       重新开始渲染通道并重放已录制的绘制——实现复杂度高。简化：本帧
-       的绘制尚未提交（命令缓冲仍在录制），直接在渲染通道内执行
-       transfer 非法。因此 drawImage 的上传改到帧首无法预知——最终
-       方案：本帧内临时结束渲染通道，上传后重新开始渲染通道。 */
-    vkCmdEndRenderPass(self->m_cmd);
-    vkEndCommandBuffer(self->m_cmd);
-    {
-        VkSubmitInfo si;
-        XMemset(&si, 0, sizeof(si));
-        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        si.commandBufferCount = 1;
-        si.pCommandBuffers = &self->m_cmd;
-        vkQueueSubmit(self->m_queue, 1, &si, 0);
-        vkQueueWaitIdle(self->m_queue);
-    }
-    vkResetCommandBuffer(self->m_cmd, 0);
-    vkBeginCommandBuffer(self->m_cmd, &bi);
-    xvkl_transition_color_for_draw(self->m_cmd,
-                                   self->m_window
-                                       ? self->m_swapImages[self->m_imageIndex]
-                                       : self->m_colorImage);
+    if (!xvkl_ensure_source_image(self, srcW, srcH)) return false;
+    /* 上传必须在渲染通道外执行。三段式（全部用带错误检查的现成助手）：
+       ① suspend——提交并等待 m_cmd 中已录绘制（它们采样旧源内容，
+       先执行才不被新上传覆盖）；② transferCmd 上传新源内容（帧命令
+       缓冲不手工 reset，布局簿记由助手维护）；③ resume——重开渲染
+       通道继续录制。原内联实现 submit/reset/begin 全不查返回值且
+       布局簿记失效，实测帧内后续绘制全部失效（2026-09-24）。 */
+    if (!xvkl_suspend_for_transfer(self)) return false;
+    if (!xvkl_begin_transfer(self)) return false;
     {
         VkImageMemoryBarrier barrier;
         XMemset(&barrier, 0, sizeof(barrier));
@@ -1722,17 +1906,18 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
         barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        vkCmdPipelineBarrier(self->m_transferCmd,
+                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
                              NULL, 1, &barrier);
     }
     XMemset(&region, 0, sizeof(region));
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
-    region.imageExtent.width = (uint32_t)width;
-    region.imageExtent.height = (uint32_t)height;
+    region.imageExtent.width = (uint32_t)srcW;
+    region.imageExtent.height = (uint32_t)srcH;
     region.imageExtent.depth = 1;
-    vkCmdCopyBufferToImage(self->m_cmd, self->m_stagingBuffer,
+    vkCmdCopyBufferToImage(self->m_transferCmd, self->m_stagingBuffer,
                            self->m_sourceImage,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
     {
@@ -1749,38 +1934,13 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
         barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        vkCmdPipelineBarrier(self->m_transferCmd,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
                              NULL, 0, NULL, 1, &barrier);
     }
-    {
-        VkRenderPassBeginInfo rp;
-        XMemset(&rp, 0, sizeof(rp));
-        rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rp.renderPass = self->m_renderPass;
-        rp.framebuffer = self->m_window
-                             ? self->m_swapFbs[self->m_imageIndex]
-                             : self->m_swapFbs[0];
-        rp.renderArea.extent.width = (uint32_t)self->m_width;
-        rp.renderArea.extent.height = (uint32_t)self->m_height;
-        rp.clearValueCount = 0;
-        vkCmdBeginRenderPass(self->m_cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
-    }
-    {
-        VkViewport viewport;
-        VkRect2D scissor;
-        viewport.x = 0.0f; viewport.y = 0.0f;
-        viewport.width = (float)self->m_width;
-        viewport.height = (float)self->m_height;
-        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
-        scissor.offset.x = 0; scissor.offset.y = 0;
-        scissor.extent.width = (uint32_t)self->m_width;
-        scissor.extent.height = (uint32_t)self->m_height;
-        vkCmdSetViewport(self->m_cmd, 0, 1, &viewport);
-        vkCmdSetScissor(self->m_cmd, 0, 1, &scissor);
-    }
-    vkCmdBindVertexBuffers(self->m_cmd, 0, 1, &self->m_vertexBuffer,
-                           (VkDeviceSize[1]){ 0 });
+    if (!xvkl_submit_transfer(self, false)) return false;
+    if (!xvkl_resume_after_transfer(self)) return false;
     {
         /* 重新绑定源纹理描述符（图像视图内容已更新）。 */
         VkDescriptorImageInfo imageInfo;
@@ -1797,13 +1957,240 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
         write.pImageInfo = &imageInfo;
         vkUpdateDescriptorSets(self->m_device, 1, &write, 0, NULL);
     }
-    (void)barrier;
     premul = 0xffffffffu; /* 源已含透明度（上面按 opacity 缩放过）。 */
     return xvkl_record_quad(self, (float)x, (float)y,
                             (float)(x + width), (float)y,
                             (float)x, (float)(y + height),
                             (float)(x + width), (float)(y + height),
-                            premul, sourceOver, true, self->m_sourceView);
+                            premul, sourceOver, true, self->m_sourceView,
+                            u0, v0, u1, v1);
+}
+
+static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
+                            int x, int y, int width, int height,
+                            float opacity, bool sourceOver)
+{
+    /* 整幅变体：UV 全幅 0..1（与原实现一致）。 */
+    return xvkl_draw_image_uv(self, image, x, y, width, height,
+                              0.0f, 0.0f, 1.0f, 1.0f, opacity, sourceOver);
+}
+
+/**
+ * @brief      子矩形区域绘制（对标 GL xgld_draw_image_region 的
+ *             TexSubImage 增量语义）：仅把源图像 (srcX,srcY,srcW,srcH)
+ *             上传到源纹理并 1:1 绘制到 (dstX,dstY)，替代整幅重传。
+ *             批量脏区通道热路径——操作表此前缺本入口，882 次/5s 全部
+ *             走整幅回退（XPainter painterGpuBatchFlush 的
+ *             drawImageRegion→false→drawImage 整幅链路）。
+ * @details    staging 行距=整幅宽×4（源内存序镜像，免紧凑重排）：
+ *             行 row 写入 baseOffset+row×整幅宽×4，baseOffset=
+ *             srcY×整幅宽×4+srcX×4（每行只 memcpy 子矩形 srcW×4 字节）；
+ *             vkCmdCopyBufferToImage 用 bufferOffset=baseOffset、
+ *             bufferRowLength=整幅宽（buffer 行距以纹素表达）、
+ *             imageOffset/extent=子矩形。baseOffset 恒为 4 的倍数
+ *             （整幅宽×4 与 srcX×4 均 4 对齐），满足 Vulkan 对
+ *             texel block size 的对齐要求；异常布局（bits 为空或
+ *             行宽<整幅宽×4）按行重排进紧凑 staging（bufferOffset=0、
+ *             紧凑行距），对标 GL 逐像素回退。BGRA 内存序直拷不变
+ *             （P0-3 语义）。上传走 transferCmd 三段式（同
+ *             drawImageUv：suspend→transfer→resume）；屏障用
+ *             UNDEFINED→TRANSFER_DST 丢弃语义——增量上传只承诺本次
+ *             子矩形，且绘制仅采样本次上传区域（imageOffset 对齐
+ *             1:1），跨区域无采样依赖，全幅 drawImageUv 亦总是整幅
+ *             重传，故不依赖既有区域内容。XGPU_VK_REGION_DIRECT=0
+ *             回退整幅路径（返回 false，调用方回退 drawImage）。
+ */
+static bool xvkl_draw_image_region(XGpuRenderDriverSession* self,
+                                   const XImage* image, int srcX, int srcY,
+                                   int srcW, int srcH, int dstX, int dstY,
+                                   float opacity, bool sourceOver)
+{
+    static int regionDirect = -1;
+    VkBufferImageCopy region;
+    VkDescriptorImageInfo imageInfo;
+    VkWriteDescriptorSet write;
+    unsigned alpha;
+    int iw;
+    int ih;
+    int bpl;
+    int row;
+    const uint8_t* src;
+    uint8_t* mapped;
+    size_t baseOffset;
+    size_t dstPitch;
+    size_t stageBytes;
+    bool compact;
+    if (regionDirect < 0)
+    {
+        const char* rd = XSystem_environment("XGPU_VK_REGION_DIRECT");
+        regionDirect = rd && *rd && rd[0] == '0' && rd[1] == 0 ? 0 : 1;
+    }
+    if (!regionDirect) return false;
+    if (!self || !self->m_recording || !image || srcW <= 0 || srcH <= 0)
+        return false;
+    iw = XImage_width(image);
+    ih = XImage_height(image);
+    if (iw <= 0 || ih <= 0 || srcX < 0 || srcY < 0 ||
+        srcX + srcW > iw || srcY + srcH > ih)
+        return false;
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    alpha = (unsigned)(opacity * 255.0f + 0.5f);
+    src = XImage_constBits(image);
+    bpl = XImage_bytesPerLine(image);
+    compact = !src || bpl < iw * 4;
+    if (compact)
+    {
+        baseOffset = 0;
+        dstPitch = (size_t)srcW * 4u;
+        stageBytes = dstPitch * (size_t)srcH;
+    }
+    else
+    {
+        baseOffset = (size_t)srcY * (size_t)iw * 4u + (size_t)srcX * 4u;
+        dstPitch = (size_t)iw * 4u;
+        stageBytes = baseOffset + dstPitch * (size_t)(srcH - 1) +
+                     (size_t)srcW * 4u;
+    }
+    if (!xvkl_stage_pixels(self, stageBytes)) return false;
+    mapped = (uint8_t*)self->m_stagingMapped;
+    for (row = 0; row < srcH; ++row)
+    {
+        uint8_t* drow = mapped + baseOffset + (size_t)row * dstPitch;
+        int col;
+        if (compact)
+        {
+            /* 异常布局：逐像素重排（ARGB32 值分解为 B,G,R,A 内存序）。 */
+            for (col = 0; col < srcW; ++col)
+            {
+                uint32_t argb = XImage_pixel(image, srcX + col, srcY + row);
+                drow[col * 4 + 0] = (uint8_t)(argb & 0xffu);
+                drow[col * 4 + 1] = (uint8_t)((argb >> 8) & 0xffu);
+                drow[col * 4 + 2] = (uint8_t)((argb >> 16) & 0xffu);
+                drow[col * 4 + 3] = (uint8_t)((argb >> 24) & 0xffu);
+            }
+        }
+        else
+        {
+            /* XImage 小端 ARGB32 内存字节序 B,G,R,A 与 B8G8R8A8_UNORM
+               一致：逐行直拷（源 stride=整幅宽），不做 R/B 交换。 */
+            XMemcpy(drow,
+                    src + (size_t)(srcY + row) * (size_t)bpl +
+                        (size_t)srcX * 4u,
+                    (size_t)srcW * 4u);
+        }
+        /* drawImage 语义：opacity CPU 侧缩放预乘 RGB 与 alpha（管线无
+           modulate，同 drawImageUv）。 */
+        if (alpha != 255u)
+        {
+            for (col = 0; col < srcW; ++col)
+            {
+                drow[col * 4 + 0] =
+                    (uint8_t)((drow[col * 4 + 0] * alpha + 127) / 255);
+                drow[col * 4 + 1] =
+                    (uint8_t)((drow[col * 4 + 1] * alpha + 127) / 255);
+                drow[col * 4 + 2] =
+                    (uint8_t)((drow[col * 4 + 2] * alpha + 127) / 255);
+                drow[col * 4 + 3] =
+                    (uint8_t)((drow[col * 4 + 3] * alpha + 127) / 255);
+            }
+        }
+    }
+    if (!xvkl_ensure_source_image(self, iw, ih)) return false;
+    /* transferCmd 三段式（同 drawImageUv）：suspend 提交已录绘制，
+       transferCmd 上传子矩形，resume 重开渲染通道继续录制。 */
+    if (!xvkl_suspend_for_transfer(self)) return false;
+    if (!xvkl_begin_transfer(self)) return false;
+    {
+        VkImageMemoryBarrier barrier;
+        XMemset(&barrier, 0, sizeof(barrier));
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = self->m_sourceImage;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(self->m_transferCmd,
+                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &barrier);
+    }
+    XMemset(&region, 0, sizeof(region));
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    if (compact)
+    {
+        region.imageOffset.x = srcX;
+        region.imageOffset.y = srcY;
+    }
+    else
+    {
+        /* 非紧凑：staging 镜像源布局（行距=整幅宽×4），子矩形起点由
+           bufferOffset 寻址（恒 4 对齐），bufferRowLength 以纹素表达
+           buffer 行距。 */
+        region.bufferOffset = (VkDeviceSize)baseOffset;
+        region.bufferRowLength = (uint32_t)iw;
+        region.imageOffset.x = srcX;
+        region.imageOffset.y = srcY;
+    }
+    region.imageExtent.width = (uint32_t)srcW;
+    region.imageExtent.height = (uint32_t)srcH;
+    region.imageExtent.depth = 1;
+    vkCmdCopyBufferToImage(self->m_transferCmd, self->m_stagingBuffer,
+                           self->m_sourceImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    {
+        VkImageMemoryBarrier barrier;
+        XMemset(&barrier, 0, sizeof(barrier));
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = self->m_sourceImage;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(self->m_transferCmd,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                             NULL, 0, NULL, 1, &barrier);
+    }
+    if (!xvkl_submit_transfer(self, false)) return false;
+    if (!xvkl_resume_after_transfer(self)) return false;
+    {
+        /* 重新绑定源纹理描述符（同 drawImageUv，视图内容已更新）。 */
+        XMemset(&imageInfo, 0, sizeof(imageInfo));
+        imageInfo.sampler = 0;
+        imageInfo.imageView = self->m_sourceView;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        XMemset(&write, 0, sizeof(write));
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = self->m_sourceSet;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = 1;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(self->m_device, 1, &write, 0, NULL);
+    }
+    /* UV：子矩形按图像坐标归一化（顶行在 v=0，无翻转），1:1 绘制到
+       (dstX,dstY)——drawImageRegion 的宽高=srcW/srcH。源已含透明度。 */
+    return xvkl_record_quad(self, (float)dstX, (float)dstY,
+                            (float)(dstX + srcW), (float)dstY,
+                            (float)dstX, (float)(dstY + srcH),
+                            (float)(dstX + srcW), (float)(dstY + srcH),
+                            0xffffffffu, sourceOver, true,
+                            self->m_sourceView,
+                            (float)srcX / (float)iw,
+                            (float)srcY / (float)ih,
+                            (float)(srcX + srcW) / (float)iw,
+                            (float)(srcY + srcH) / (float)ih);
 }
 
 static bool xvkl_draw_alpha_bitmap(XGpuRenderDriverSession* self,
@@ -1816,7 +2203,6 @@ static bool xvkl_draw_alpha_bitmap(XGpuRenderDriverSession* self,
        drawImage 的上传绘制（premulColor 折入顶点色）。 */
     size_t bytes = (size_t)width * (size_t)height * 4u;
     uint8_t* gray;
-    uint8_t* mapped;
     XImage proxy;
     int row;
     bool ok;
@@ -1858,8 +2244,6 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
     uint8_t* mapped;
     VkBufferImageCopy region;
     VkImageMemoryBarrier barrier;
-    VkCommandBufferBeginInfo bi;
-    VkSubmitInfo si;
     int row;
     if (!self || !coverage || width <= 0 || height <= 0 || atlasX < 0 ||
         atlasY < 0 || atlasX + width > XGPU_RENDER_GLYPH_ATLAS_SIZE ||
@@ -1890,11 +2274,18 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
                                  &self->m_atlasImage, &self->m_atlasMemory,
                                  &self->m_atlasView))
         return false;
-    XMemset(&bi, 0, sizeof(bi));
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    /* 图集上传在帧外即时执行（独立提交，阻塞等待——字形上传频率低）。 */
-    vkResetCommandBuffer(self->m_cmd, 0);
-    vkBeginCommandBuffer(self->m_cmd, &bi);
+    /* 图集描述符集必须随图像建立即写入——m_atlasSet 在分配后从未更新
+       就被 record_quad 绑定采样，内容未定义（lavapipe SIGSEGV 最强
+       候选，2026-09-24 复核确认高危；此后视图不变，无需重复更新）。 */
+    xvkl_update_texture_descriptor(self, self->m_atlasSet, self->m_atlasView);
+    /* 图集上传走专用 transfer 命令缓冲（独立提交；旧路径阻塞等待，
+       V2 异步提交——字形上传频率低，回收点在后续 retire）。不得触碰
+       m_cmd：帧中（m_recording=true，drawGlyphAlpha
+       首字形触发）m_cmd 正在录制、已录命令缓冲 reset 即丢弃本帧全部
+       已录绘制并进入非录制态 UB（2026-09-24 实测 fill/drawImage 全部
+       消失的根因；复核确认高危）。录制中提交 transferCmd 合法——m_cmd
+       尚未提交，无执行竞争；后续字形绘制经描述符采样已就绪的图集。 */
+    if (!xvkl_begin_transfer(self)) return false;
     XMemset(&barrier, 0, sizeof(barrier));
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.srcAccessMask = 0;
@@ -1907,7 +2298,8 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+    vkCmdPipelineBarrier(self->m_transferCmd,
+                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
                          1, &barrier);
     XMemset(&region, 0, sizeof(region));
@@ -1918,7 +2310,7 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
     region.imageExtent.width = (uint32_t)width;
     region.imageExtent.height = (uint32_t)height;
     region.imageExtent.depth = 1;
-    vkCmdCopyBufferToImage(self->m_cmd, self->m_stagingBuffer,
+    vkCmdCopyBufferToImage(self->m_transferCmd, self->m_stagingBuffer,
                            self->m_atlasImage,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
     {
@@ -1927,17 +2319,12 @@ static bool xvkl_glyph_atlas_upload(XGpuRenderDriverSession* self,
         toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        vkCmdPipelineBarrier(self->m_transferCmd,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
                              NULL, 0, NULL, 1, &toRead);
     }
-    vkEndCommandBuffer(self->m_cmd);
-    XMemset(&si, 0, sizeof(si));
-    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &self->m_cmd;
-    vkQueueSubmit(self->m_queue, 1, &si, 0);
-    vkQueueWaitIdle(self->m_queue);
+    if (!xvkl_submit_transfer(self, false)) return false;
     return true;
 }
 
@@ -1947,11 +2334,21 @@ static bool xvkl_glyph_atlas_draw(XGpuRenderDriverSession* self, int atlasX,
 {
     if (!self || width <= 0 || height <= 0 || atlasX < 0 || atlasY < 0)
         return false;
+    /* 图集子矩形采样（atlasX/512..(atlasX+width)/512，对标 GL 驱动
+       glyphAtlasDraw 的 UV 约定）：record_quad 此前恒用 0..1 全幅 UV，
+       把整幅图集拉进字形小四边形，采样到的 alpha 近乎处处为 0，字形
+       不上屏（"atlas pixels wrong" 根因）。 */
     return xvkl_record_quad(self, (float)x, (float)y,
                             (float)(x + width), (float)y,
                             (float)x, (float)(y + height),
                             (float)(x + width), (float)(y + height),
-                            premulColor, sourceOver, true, self->m_atlasView);
+                            premulColor, sourceOver, true, self->m_atlasView,
+                            (float)atlasX / (float)XGPU_RENDER_GLYPH_ATLAS_SIZE,
+                            (float)atlasY / (float)XGPU_RENDER_GLYPH_ATLAS_SIZE,
+                            (float)(atlasX + width) /
+                                (float)XGPU_RENDER_GLYPH_ATLAS_SIZE,
+                            (float)(atlasY + height) /
+                                (float)XGPU_RENDER_GLYPH_ATLAS_SIZE);
 }
 
 static bool xvkl_glyph_atlas_readback(XGpuRenderDriverSession* self,
@@ -1959,18 +2356,14 @@ static bool xvkl_glyph_atlas_readback(XGpuRenderDriverSession* self,
                                       int atlasHeight, uint8_t* outCoverage)
 {
     size_t bytes = (size_t)atlasWidth * (size_t)atlasHeight * 4u;
-    VkCommandBufferBeginInfo bi;
     VkBufferImageCopy region;
-    VkSubmitInfo si;
     int y;
     if (!self || atlasX < 0 || atlasY < 0 || atlasWidth <= 0 ||
         atlasHeight <= 0 || !outCoverage || !self->m_atlasImage)
         return false;
     if (!xvkl_stage_pixels(self, bytes)) return false;
-    XMemset(&bi, 0, sizeof(bi));
-    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    vkResetCommandBuffer(self->m_cmd, 0);
-    vkBeginCommandBuffer(self->m_cmd, &bi);
+    /* 同 glyph_atlas_upload：走 transferCmd，不触碰录制中的 m_cmd。 */
+    if (!xvkl_begin_transfer(self)) return false;
     XMemset(&region, 0, sizeof(region));
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
@@ -1979,16 +2372,11 @@ static bool xvkl_glyph_atlas_readback(XGpuRenderDriverSession* self,
     region.imageExtent.width = (uint32_t)atlasWidth;
     region.imageExtent.height = (uint32_t)atlasHeight;
     region.imageExtent.depth = 1;
-    vkCmdCopyImageToBuffer(self->m_cmd, self->m_atlasImage,
+    vkCmdCopyImageToBuffer(self->m_transferCmd, self->m_atlasImage,
                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                            self->m_stagingBuffer, 1, &region);
-    vkEndCommandBuffer(self->m_cmd);
-    XMemset(&si, 0, sizeof(si));
-    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &self->m_cmd;
-    vkQueueSubmit(self->m_queue, 1, &si, 0);
-    vkQueueWaitIdle(self->m_queue);
+    /* V2：读回需等待本笔 transfer 完成（needWait）——范围仅本笔。 */
+    if (!xvkl_submit_transfer(self, true)) return false;
     for (y = 0; y < atlasHeight; ++y)
     {
         const uint8_t* src = (const uint8_t*)self->m_stagingMapped +
@@ -2032,6 +2420,8 @@ static const XGpuRenderDriverProcs g_xvklProcs =
     .setClipRect = xvkl_set_clip_rect,
     .fillRect = xvkl_fill_rect,
     .drawImage = xvkl_draw_image,
+    .drawImageUv = xvkl_draw_image_uv,
+    .drawImageRegion = xvkl_draw_image_region,
     .drawAlphaBitmap = xvkl_draw_alpha_bitmap,
     .glyphAtlasUpload = xvkl_glyph_atlas_upload,
     .glyphAtlasDraw = xvkl_glyph_atlas_draw,

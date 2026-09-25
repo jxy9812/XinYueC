@@ -404,3 +404,17 @@ Tests/
 
 # 动态工作流运行产物
 *.mjs
+
+# ===== GPU 夜战工具目录（2026-09-25）：本地产物不入库，工作区保留 =====
+# vendored Vulkan 头与导入库（构建依赖，第三方第三方产物，不入库）
+Tools/vulkan-headers-tmp/
+Tools/vulkan-importlib/
+# 本地备份与诊断证据
+Tools/night-backup/
+Tools/abtex/
+Tools/bench-night2-logs/
+Tools/bench-night2-results.txt
+Tools/ppm2png.ps1
+Tools/*.log
+Tools/*.ppm
+commitmsg-*.txt
