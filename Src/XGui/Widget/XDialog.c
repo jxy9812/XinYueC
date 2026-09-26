@@ -27,6 +27,8 @@
 #include "XPlainTextEdit.h"
 #include "XTextControl.h"
 #include "XPainter.h"
+#include "XIcon.h"
+#include "XAlignment.h"
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -55,15 +57,109 @@ static void xdlg_emitFinished(XDialog* self, int result)
     }
 }
 
-/** @brief 对话框面板背景绘制（对标 QDialog 由平台回填 palette Window 底）。
- *  @details 框架层根因说明（XWidget.c 不在本次修复所有权内，故在对话框
- *           层自绘面板）：XWidget_paintEvent_default（autofill 路径）把
- *           事件脏区先加 paintOffset 折算到顶层后备存储坐标，再用控件
- *           自身"局部尺寸"去裁剪——任何不在窗口原点的子控件，其填充矩形
- *           都会被错误裁剪（demo 对话框位于 (232,238)、尺寸 320x140，
- *           裁出负高直接整块跳过填充），面板因此永不上屏，文字/按钮
- *           悬浮在未渲染底色上，表现为"对话框弹不出"。本重载按正确
- *           顺序绘制：先在控件局部坐标用局部尺寸裁剪，再平移折算。 */
+/* ==================== 标题栏与边框（对标 Win10 对话框窗口观感） ==================== */
+
+/** @defgroup xdlg_tb 对话框标题栏组内部口径
+ *  行高 28 与派生面板「标题让位 contentTop=28」契约严格相等
+ *  （XMessageBox.c xmsg_contentTop / XColorDialog.c 同口径：有标题时
+ *  内容自 y=28 起），标题带恰好占满让位条、不侵占内容区；无标题的
+ *  子控件对话框不画带也不画 [×]（与 contentTop 回落 12 的原布局互
+ *  锁，布局不被遮挡）。视觉参数对标 Win10：标题栏底 #F9F9F9、左
+ *  图标位 16px、标题左对齐黑字、右端 [×] 24x24（悬停 #E81123 白字
+ *  形、按住加深 #C50E1F）、面板 1px 活动边框 #B0B0B0。 */
+#define XDLG_TB_HEIGHT       28    /**< 标题栏行高 = contentTop 让位口径 */
+#define XDLG_TB_ICON_EXTENT  16    /**< 左侧窗口图标位边长（可选） */
+#define XDLG_TB_CLOSE_EXTENT 24    /**< [×] 关闭钮边长（Win10 caption 钮） */
+#define XDLG_TB_BAND_COLOR   0xFFF9F9F9u /**< 标题栏底色（Win10 极浅灰白） */
+#define XDLG_TB_RULE_COLOR   0xFFE5E5E5u /**< 标题栏底部分隔发丝线 */
+#define XDLG_FRAME_COLOR     0xFFB0B0B0u /**< 面板 1px 边框（Win10 活动边框） */
+#define XDLG_TB_GLYPH_COLOR  0xFF1F1F1Fu /**< [×] 常态字形（近黑） */
+#define XDLG_CLOSE_HOVER     0xFFE81123u /**< [×] 悬停底色（Win10 关闭红） */
+#define XDLG_CLOSE_PRESSED   0xFFC50E1Fu /**< [×] 按住底色（加深一档） */
+#define XDLG_CLOSE_GLYPH_HOT 0xFFFFFFFFu /**< 悬停/按住时的白色字形 */
+
+/* [×] 悬停/按压跟踪（单指针语义：同一时刻至多一个光标落点）。对话
+ * 框契约头不可扩字段，状态落在文件域；owner 切换时同步刷新前后两
+ * 个对话框的脏区，悬停残影最迟在指针下次移动时消除（与框架
+ * WA_UnderMouse 的清理时机同档）。 */
+static const XDialog* xdlg_tb_owner = NULL;
+static bool xdlg_tb_hover = false;
+static bool xdlg_tb_pressed = false;
+
+/* 「画过标题带」登记：仅本对话框 paintEvent 实际绘制过标题栏后才参
+ * 与 [×] 命中——XWizard/XErrorMessage 等覆写 paintEvent 且不回链
+ * XDialog 面板绘制的派生类虽然继承本类鼠标重载，但右上角不会出现
+ * 隐形关闭热区。槽位只在 done() 摘除，比较不 leading 解引用。 */
+#define XDLG_TB_TRACK_MAX 4
+static const XDialog* xdlg_tb_painted[XDLG_TB_TRACK_MAX];
+
+static bool xdlg_tb_paintedContains(const XDialog* self)
+{
+    int i;
+    for (i = 0; i < XDLG_TB_TRACK_MAX; ++i)
+        if (xdlg_tb_painted[i] == self) return true;
+    return false;
+}
+
+static void xdlg_tb_markPainted(const XDialog* self)
+{
+    int i;
+    if (xdlg_tb_paintedContains(self)) return;
+    for (i = 0; i < XDLG_TB_TRACK_MAX; ++i) {
+        if (!xdlg_tb_painted[i]) {
+            xdlg_tb_painted[i] = self;
+            return;
+        }
+    }
+    /* 槽满：整体左移腾出末位（需 >4 个带标题对话框同屏才触发）。 */
+    for (i = 1; i < XDLG_TB_TRACK_MAX; ++i)
+        xdlg_tb_painted[i - 1] = xdlg_tb_painted[i];
+    xdlg_tb_painted[XDLG_TB_TRACK_MAX - 1] = self;
+}
+
+static void xdlg_tb_unmark(const XDialog* self)
+{
+    int i;
+    for (i = 0; i < XDLG_TB_TRACK_MAX; ++i)
+        if (xdlg_tb_painted[i] == self) xdlg_tb_painted[i] = NULL;
+}
+
+/** @brief  标题栏绘制/交互同键判定：子控件形态 + 已设非空窗口标题。
+ *  @details 与派生面板 contentTop=28 让位口径同键（无标题保持原布局
+ *           不占位）；顶层窗口形态有平台标题栏承载，不画带（与既有
+ *           标题文本绘制的 m_isWindow 排除口径一致）。 */
+static bool xdlg_titlebarGate(const XDialog* self)
+{
+    const XString* title;
+    const char* utf8;
+    if (!self || ((const XWidget*)self)->m_isWindow) return false;
+    title = XWidget_windowTitle((const XWidget*)self);
+    utf8 = title ? XString_toUtf8(title) : NULL;
+    return utf8 && utf8[0];
+}
+
+/** @brief  窗口标题 UTF-8 文本（借用指针；无标题返回 NULL）。 */
+static const char* xdlg_titleUtf8(const XDialog* self)
+{
+    const XString* title;
+    if (!self) return NULL;
+    title = XWidget_windowTitle((const XWidget*)self);
+    return title ? XString_toUtf8(title) : NULL;
+}
+
+/** @brief  [×] 关闭钮命中（对话框局部坐标；与绘制几何严格同源：
+ *          右缘留 1px 边框列，上缘 2px 呼吸位，24x24）。 */
+static bool xdlg_closeButtonHit(const XDialog* self, int x, int y)
+{
+    int bx;
+    if (!self) return false;
+    if (XWidget_width((const XWidget*)self) < XDLG_TB_CLOSE_EXTENT + 8)
+        return false; /* 过窄面板不画钮（与绘制同键），无从命中。 */
+    bx = XWidget_width((const XWidget*)self) - 1 - XDLG_TB_CLOSE_EXTENT;
+    return x >= bx && x < bx + XDLG_TB_CLOSE_EXTENT &&
+           y >= 2 && y < 2 + XDLG_TB_CLOSE_EXTENT;
+}
+
 /** @brief      对话框首显居中到父窗口中央。
  *  @details    对标 QDialogPrivate::adjustPosition（qdialog.cpp:871，
  *              QDialog 首次显示按父窗口居中）：Qt 以父窗口中心
@@ -114,6 +210,27 @@ static void xdlg_centerToParentWindow(XDialog* self)
                  (th > dh ? (th - dh) / 2 : 0) - py);
 }
 
+/** @brief 对话框面板绘制：底色 + 1px 浅灰边框 + Win10 观感标题栏。
+ *  @details 框架层根因说明（XWidget.c 不在本次修复所有权内，故在对话框
+ *           层自绘面板）：XWidget_paintEvent_default（autofill 路径）把
+ *           事件脏区先加 paintOffset 折算到顶层后备存储坐标，再用控件
+ *           自身"局部尺寸"去裁剪——任何不在窗口原点的子控件，其填充矩形
+ *           都会被错误裁剪（demo 对话框位于 (232,238)、尺寸 320x140，
+ *           裁出负高直接整块跳过填充），面板因此永不上屏，文字/按钮
+ *           悬浮在未渲染底色上，表现为"对话框弹不出"。本重载按正确
+ *           顺序绘制：先在控件局部坐标用局部尺寸裁剪，再平移折算。
+ *
+ *           用户实证：对话框浮出后"无标题栏无边框，只有内容浮在主窗
+ *           上"。本轮升级：①面板 1px 边框由深灰 #7A7A7A 提为对标
+ *           Win10 活动边框的浅灰 #B0B0B0，并改走 XPainter 描边（与
+ *           标题栏同一 painter 会话，端点内含，像素级等价原 setPixel
+ *           四边）；②子控件形态 + 有标题的面板顶部绘制完整标题栏行
+ *           （底色 + 左图标位 + 左对齐标题 + 右端 [×] 关闭钮），[×]
+ *           点击走 XDialog_reject（Esc 同语义），悬停浅红白字形；带
+ *           高 28 与派生面板 contentTop 让位口径严格相等，消息框/文
+ *           件/颜色/输入便捷路径（均设 caption）自动继承。绘制顺序：
+ *           标题带 → 分隔线 → 图标/字形 → 标题 → 边框最后压轴，保证
+ *           边框四周完整不被标题带覆盖。 */
 static void VXDialog_paintEvent(XWidget* self, XEvent* event)
 {
     XPaintEvent* pe;
@@ -145,68 +262,125 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
     rect.x += offset.x;
     rect.y += offset.y;
     XImage_fillRect(image, &rect, XColor_rgba(&color));
-    /* 子控件形态对话框画 1px 面板描边：面板色（palette Window）与
-     * 页面背景相同时（如 Fusion #F4F6F8 页面）无边框的对话框视觉
-     * 不可见——用户实测「弹窗透明啥都没有」实为同色面板+未布局子
-     * 控件。对标 QFrame 对话框面板的窗口边框语义。 */
+    /* 3) 面板描边 + 标题栏（Win10 对话框窗口观感）：一个 painter 会
+     *    话完成全部前景绘制，坐标沿用本函数既有的"paintOffset 手工
+     *    折算"口径（脏区裁剪语义交给既有 fillRect 路径，前景元素量
+     *    小且幂等，不额外依赖 XPAINTER_CLIP_ON）。标题带只在「子控
+     *    件形态 + 已设窗口标题」时绘制（xdlg_titlebarGate 口径）：
+     *    与派生面板 contentTop=28 让位同键，无标题保持原布局不占位。 */
     {
-        /* 1px 面板描边用 setPixel 逐点画（XImage 无 drawLine；四边
-           各一条水平/垂直线，量小代价可忽略）。 */
-        int dw = XWidget_width(self);
-        int dh = XWidget_height(self);
-        uint32_t frame = 0xFF7A7A7Au;
-        XPoint o2 = XWidget_paintOffset(self);
-        int px;
-        for (px = 0; px < dw; ++px) {
-            XImage_setPixel(image, o2.x + px, o2.y, frame);
-            XImage_setPixel(image, o2.x + px, o2.y + dh - 1, frame);
-        }
-        for (px = 0; px < dh; ++px) {
-            XImage_setPixel(image, o2.x, o2.y + px, frame);
-            XImage_setPixel(image, o2.x + dw - 1, o2.y + px, frame);
-        }
-    }
-    /* 对标 QDialog 作为窗口时平台标题栏显示 windowTitle()：XGui 便
-       捷路径对话框为子控件形态（单原生窗口模型，XGui.md §8.0g 声
-       明边界），无标题栏可承载窗口标题——最小等价落地：面板顶部带
-       内居中绘制 windowTitle 文本（无标题不占位，子控件布局不变）。
-       夜间台账 #20：setTitle 后标题不可见。 */
-    {
-        const XString* title = XWidget_windowTitle(self);
-        const char* utf8 = title ? XString_toUtf8(title) : NULL;
-        /* 顶层窗口形态有平台标题栏承载标题，不再带内重画（避免双重
-           标题）；仅子控件形态补画。 */
-        if (utf8 && utf8[0] && !self->m_isWindow) {
-            XPainter painter;
-            XRect tr;
-            XFont font = XWidget_font(self);
-            XColor textColor = XPalette_color(&palette,
-                                              XPaletteColorGroup_Active,
-                                              XPaletteColorRole_WindowText);
-            XPoint to = XWidget_paintOffset(self);
-            tr.x = to.x + 8;
-            tr.y = to.y + 4;
-            tr.width = w - 16 > 0 ? w - 16 : 0;
-            tr.height = 18;
-            XPainter_init(&painter, NULL);
-            if (XPainter_begin_image(&painter, image)) {
-                XPainter_setFont(&painter, &font);
-#if XPAINTER_TEXTLAYOUT_ON
-                XPainter_drawTextRect(&painter, &tr,
-                                      XPAINTER_TEXT_ALIGN_HCENTER |
-                                      XPAINTER_TEXT_ALIGN_VCENTER |
-                                      XPAINTER_TEXT_SINGLE_LINE,
-                                      utf8, XColor_rgba(&textColor));
-#else
-                XPainter_drawText(&painter, tr.x + 2,
-                                  tr.y + tr.height - 6, utf8,
-                                  XColor_rgba(&textColor));
-#endif
-                XPainter_end(&painter);
-            }
-            XFont_deinit_base(&font);
+        XPainter painter;
+        XPoint o = XWidget_paintOffset(self);
+        /* 面板高度不足一带（h<28）的退化对话框不画标题栏：避免带/
+         * 分隔线/关闭钮矩形外溢邻区；未画带即不登记 [×] 命中。 */
+        bool titlebar = xdlg_titlebarGate((const XDialog*)self) &&
+                        h >= XDLG_TB_HEIGHT;
+        XPainter_init(&painter, NULL);
+        if (!XPainter_begin_image(&painter, image)) {
             XPainter_deinit(&painter);
+            return;
         }
+        if (titlebar) {
+            XRect band;
+            XRect rule;
+            band.x = o.x;
+            band.y = o.y;
+            band.width = w;
+            band.height = XDLG_TB_HEIGHT;
+            rule.x = o.x;
+            rule.y = o.y + XDLG_TB_HEIGHT - 1;
+            rule.width = w;
+            rule.height = 1;
+            /* 标题栏底色（Win10 极浅灰白）+ 底部 1px 分隔发丝线。 */
+            XPainter_fillRect(&painter, &band, XDLG_TB_BAND_COLOR);
+            XPainter_fillRect(&painter, &rule, XDLG_TB_RULE_COLOR);
+            xdlg_tb_markPainted((const XDialog*)self);
+            {
+                /* 左侧窗口图标位（可选 16px，Win10 小图标）：无图标
+                 * 时标题左移补位。XWidget_windowIcon 返回共享副本，
+                 * 用毕 XIcon_deinit_base（契约同 XWidget_font）。 */
+                XIcon icon = XWidget_windowIcon(self);
+                int textX = o.x + 8;
+                if (!XIcon_isNull(&icon)) {
+                    XIcon_paint(&icon, &painter, o.x + 8, o.y + 6,
+                                XDLG_TB_ICON_EXTENT, XDLG_TB_ICON_EXTENT,
+                                (uint32_t)(XAlignment_Left | XAlignment_Top),
+                                XIconMode_Normal, XIconState_Off);
+                    textX = o.x + 8 + XDLG_TB_ICON_EXTENT + 8;
+                }
+                XIcon_deinit_base(&icon);
+                if (w >= XDLG_TB_CLOSE_EXTENT + 8) {
+                    /* 右端 [×] 关闭钮 24x24：右缘让出 1px 边框列、上
+                     * 缘 2px 呼吸位（与 xdlg_closeButtonHit 同一几何）。
+                     * 悬停浅红 #E81123 白字形、按住加深 #C50E1F，常态
+                     * 透明底近黑 10x10 字形（Win10 caption 关闭钮）。
+                     * 面板过窄（w<32）不画钮，避免命中/绘制几何出界。 */
+                    XRect btn;
+                    bool hover;
+                    bool pressed;
+                    int gx;
+                    int gy;
+                    btn.x = o.x + w - 1 - XDLG_TB_CLOSE_EXTENT;
+                    btn.y = o.y + 2;
+                    btn.width = XDLG_TB_CLOSE_EXTENT;
+                    btn.height = XDLG_TB_CLOSE_EXTENT;
+                    hover = (xdlg_tb_owner == (const XDialog*)self) &&
+                            xdlg_tb_hover;
+                    pressed = hover && xdlg_tb_pressed;
+                    if (hover)
+                        XPainter_fillRect(&painter, &btn,
+                                          pressed ? XDLG_CLOSE_PRESSED
+                                                  : XDLG_CLOSE_HOVER);
+                    XPainter_setPen(&painter,
+                                    hover ? XDLG_CLOSE_GLYPH_HOT
+                                          : XDLG_TB_GLYPH_COLOR);
+                    gx = btn.x + (XDLG_TB_CLOSE_EXTENT - 10) / 2;
+                    gy = btn.y + (XDLG_TB_CLOSE_EXTENT - 10) / 2;
+                    XPainter_drawLine(&painter, gx, gy, gx + 9, gy + 9);
+                    XPainter_drawLine(&painter, gx + 9, gy, gx, gy + 9);
+                }
+                {
+                    /* 标题左对齐黑字（palette WindowText，对标 Win10
+                     * 标题字色），右界让到 [×] 前 4px，垂直居中单行。
+                     * 进入本分支前 xdlg_titlebarGate 已保证标题非空。 */
+                    XFont font = XWidget_font(self);
+                    XRect tr;
+                    XColor textColor = XPalette_color(
+                        &palette, XPaletteColorGroup_Active,
+                        XPaletteColorRole_WindowText);
+                    tr.x = textX;
+                    tr.y = o.y;
+                    tr.width = (o.x + w - 1 - XDLG_TB_CLOSE_EXTENT - 4) - textX;
+                    tr.height = XDLG_TB_HEIGHT;
+                    XPainter_setFont(&painter, &font);
+                    if (tr.width > 0) {
+#if XPAINTER_TEXTLAYOUT_ON
+                        XPainter_drawTextRect(&painter, &tr,
+                                              XPAINTER_TEXT_ALIGN_LEFT |
+                                              XPAINTER_TEXT_ALIGN_VCENTER |
+                                              XPAINTER_TEXT_SINGLE_LINE,
+                                              xdlg_titleUtf8((const XDialog*)self),
+                                              XColor_rgba(&textColor));
+#else
+                        XPainter_drawText(&painter, tr.x, o.y + 17,
+                                          xdlg_titleUtf8((const XDialog*)self),
+                                          XColor_rgba(&textColor));
+#endif
+                    }
+                    XFont_deinit_base(&font);
+                }
+            }
+        }
+        /* 4) 面板 1px 边框 #B0B0B0 最后描：压住标题带/分隔线与边框相
+         *    接的行/列，保证 Win10 活动边框四周完整（端点内含，严格
+         *    落在控件矩形内，不外溢邻区）。 */
+        XPainter_setPen(&painter, XDLG_FRAME_COLOR);
+        XPainter_drawLine(&painter, o.x, o.y, o.x + w - 1, o.y);
+        XPainter_drawLine(&painter, o.x, o.y + h - 1, o.x + w - 1, o.y + h - 1);
+        XPainter_drawLine(&painter, o.x, o.y, o.x, o.y + h - 1);
+        XPainter_drawLine(&painter, o.x + w - 1, o.y, o.x + w - 1, o.y + h - 1);
+        XPainter_end(&painter);
+        XPainter_deinit(&painter);
     }
 }
 
@@ -458,12 +632,110 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
+/* ==================== 标题栏 [×] 鼠标交互（Win10 caption 关闭钮） ==================== */
+
+/** @brief  按下：命中 [×] 即武装按压态（悬停红底加深），接受事件。
+ *  @details 仅在「标题栏 gate + 本对话框画过标题带」时响应——后者使
+ *           覆写 paintEvent 且不回链 XDialog 面板绘制的派生类（如
+ *           XWizard）不会出现隐形关闭热区。未命中走基类默认（忽略，
+ *           保持既有父链传播语义）。 */
+static void VXDialog_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dialog = (XDialog*)self;
+    if (dialog && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
+        xdlg_titlebarGate(dialog) && xdlg_tb_paintedContains(dialog) &&
+        xdlg_closeButtonHit(dialog,
+                            ((const XMouseEvent*)event)->m_position.x,
+                            ((const XMouseEvent*)event)->m_position.y)) {
+        xdlg_tb_owner = dialog;
+        xdlg_tb_hover = true;
+        xdlg_tb_pressed = true;
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief  释放：按住后仍在 [×] 内松开 → reject（Esc 同语义，复用
+ *          QDialog reject 路径 done(0) + rejected 信号）。
+ *  @details Win10 caption 关闭钮的「按下武装、释放命中触发」按钮语
+ *           义；done() 内会解除跟踪态，reject 前先刷新一次脏区避免
+ *           隐藏帧残留按压红底。 */
+static void VXDialog_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dialog = (XDialog*)self;
+    if (dialog && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE &&
+        xdlg_tb_owner == dialog && xdlg_tb_pressed) {
+        bool inside =
+            xdlg_closeButtonHit(dialog,
+                                ((const XMouseEvent*)event)->m_position.x,
+                                ((const XMouseEvent*)event)->m_position.y);
+        xdlg_tb_pressed = false;
+        XEvent_accept(event);
+        if (inside) {
+            XWidget_update(self);
+            XDialog_reject(dialog);
+            return;
+        }
+        if (xdlg_tb_hover) {
+            xdlg_tb_hover = false;
+            XWidget_update(self);
+        }
+        return;
+    }
+    XClass_Parent(XWidget, EXWidget_MouseReleaseEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief  移动：跟踪指针是否落在 [×] 上（悬停浅红），不消费事件。
+ *  @details 子控件形态对话框的标题栏/边距区无子控件，命中测试即本
+ *           对话框；自子控件忽略上抛的移动事件同样按本对话框局部坐
+ *           标命中，悬停跟踪因此覆盖整个对话框子树。owner 切换时同
+ *           步刷新前后两个对话框（前一对话框悬停残影即时消除）。 */
+static void VXDialog_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dialog = (XDialog*)self;
+    if (dialog && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE &&
+        xdlg_titlebarGate(dialog) && xdlg_tb_paintedContains(dialog)) {
+        bool hover =
+            xdlg_closeButtonHit(dialog,
+                                ((const XMouseEvent*)event)->m_position.x,
+                                ((const XMouseEvent*)event)->m_position.y);
+        if (xdlg_tb_owner != dialog) {
+            const XDialog* prev = xdlg_tb_owner;
+            xdlg_tb_owner = dialog;
+            xdlg_tb_hover = hover;
+            xdlg_tb_pressed = false;
+            if (prev) XWidget_update((XWidget*)prev);
+            XWidget_update(self);
+        } else if (hover != xdlg_tb_hover) {
+            xdlg_tb_hover = hover;
+            xdlg_tb_pressed = xdlg_tb_pressed && hover;
+            XWidget_update(self);
+        }
+        /* 不 accept：悬停跟踪不改变既有鼠标传播语义。 */
+    }
+    XClass_Parent(XWidget, EXWidget_MouseMoveEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
 XVtable* XDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDialog)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXDialog_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXDialog_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VXDialog_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXDialog_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VXDialog_mouseMoveEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -544,6 +816,14 @@ void XDialog_done(XDialog* self, int result)
     if (XWidget_applicationModalWidget() == (XWidget*)self)
         XWidget_setApplicationModalWidget(NULL);
     XWidget_setVisible((XWidget*)self, false);
+    /* 隐藏即解除本对话框的 [×] 悬停/按压跟踪与「画过标题带」登记
+     * （复显后由 paintEvent 重新登记，不留残态/悬停红底）。 */
+    if (xdlg_tb_owner == (const XDialog*)self) {
+        xdlg_tb_owner = NULL;
+        xdlg_tb_hover = false;
+        xdlg_tb_pressed = false;
+    }
+    xdlg_tb_unmark(self);
     /* 隐藏后标脏原矩形：子控件形态对话框走非窗口隐藏分支，无重绘
        调度，屏幕残留对话框最后一帧鬼影；把矩形折算进顶层脏区后，
        合成器按可见内容重画该区域（对话框已隐藏即父级/邻居内容）。 */

@@ -70,6 +70,9 @@
 #if XWIDGET_ON
 #include "XWidget.h"
 #include "XWidget_Protected.h"   /* XWidget_appFocusWidget：notify 键重定向需查应用焦点控件 */
+#if XWIDGET_ON && XDIALOG_ON
+#include "XDialog.h"             /* XDialog_done：最后窗口关闭时收口模态 exec 阻塞循环 */
+#endif
 #endif /* XWIDGET_ON */
 
 #if XPALETTE_ON && XAPPLICATION_ON
@@ -235,8 +238,20 @@ static bool VXGuiApplication_notify(XObject* receiver, XEvent* event)
             if (focusWidget) {
                 XWidget* top = focusWidget->m_isWindow
                     ? focusWidget : XWidget_topLevelWidget(focusWidget);
+                /* Popup 豁免（页6 文件对话框组合框弹层键盘根修，
+                   2026-09-25）：弹层（XComboPopupView 等）是独立顶层
+                   Popup 原生窗，平台按键按 X 焦点/键盘抓取本就投递到
+                   弹层桥（receiver）；弹层控件从不成为应用焦点控件
+                   （弹层不 setFocus），若仍按单原生窗口模型把键重定向
+                   到焦点控件顶层，模态对话框内弹层的 Esc/方向键/Return
+                   将永远到不了弹层（实测 :120：X 焦点已在弹层 0x200004，
+                   Esc 仍重定向进对话框焦点链把对话框 reject）。对标 Qt：
+                   popup 打开期间键事件交付 popup（QApplicationPrivate
+                   popup 分支），收层后焦点回交宿主链不受影响。 */
                 if (top && top->m_windowHandle &&
-                    (XObject*)top != receiver)
+                    (XObject*)top != receiver &&
+                    XWindow_type((XWindow*)receiver) !=
+                        XWindowType_Popup)
                     receiver = (XObject*)top->m_windowHandle;
             }
         }
@@ -761,8 +776,26 @@ void XGuiApplication_removeWindow(XWindow* win)
         }
         if (!anyVisibleTopLevel) {
             XGuiApplication_lastWindowClosed_signal(app);
-            if (app->m_quitOnLastWindowClosed)
+            if (app->m_quitOnLastWindowClosed) {
+#if XWIDGET_ON && XDIALOG_ON
+                /* 子控件对话框 exec 兜底：XDialog_exec 的阻塞是裸
+                   while+processEvents（非 XEventLoop），quit 标记的循环
+                   退出它感知不到。最后窗口关闭（窗面已随之销毁）时若仍
+                   有应用模态对话框在 exec，先 done() 结束其阻塞循环，控
+                   制权回到主循环后即可感知退出——否则主窗毁后进程滞留在
+                   死对话框的模态循环（实测：对话框页打开输入对话框后关
+                   主窗，窗面 0 children 而进程 S 态滞留）。对标 Qt：
+                   QDialog::exec 是真 QEventLoop，QCoreApplication::exit
+                   会退出全部嵌套循环（qcoreapplication.cpp，exit 遍历
+                   d->eventLoops）；子控件对话框因无独立循环，只能经
+                   done() 收敛到同一效果（对话框按 reject 关闭，应用退
+                   出）——与 Qt「模态框随宿主窗体终结」的可见行为一致。 */
+                XWidget* xdlgModal = XWidget_applicationModalWidget();
+                if (xdlgModal)
+                    XDialog_done((XDialog*)xdlgModal, 0);
+#endif
                 XCoreApplication_quit();
+            }
         }
     }
 }

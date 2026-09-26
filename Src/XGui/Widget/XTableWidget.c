@@ -1599,6 +1599,13 @@ static void VX_tableWidget_mousePressEvent(XWidget* self, XEvent* event)
     if (!tw || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
+    /* 左键按压交付键盘焦点（对标 Qt giveFocusAccordingToFocusPolicy；
+     * 同 XAbstractItemView.c:1679 / XTreeWidget.c:2038 的视图族点击
+     * 聚焦范式，窗口型视图不抢——弹层焦点归组合框自身机制）。此前
+     * 本重载未调基类按下路径且不聚焦，点击换格后焦点滞留原处，方向
+     * 键导航（VX_tableWidget_keyPressEvent）永不可达——第六轮活体
+     * "XTableWidget Down 不动"的本车道根因之一。 */
+    if (!self->m_isWindow) XWidget_setFocus(self);
     xtw_cellAt(tw, XMouseEvent_position(me).x, XMouseEvent_position(me).y,
                &row, &col);
     if (row >= 0 && col >= 0) {
@@ -1668,7 +1675,13 @@ static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event)
     key = XKeyEvent_key(ke);
     row = tw->m_base.m_base.m_currentRow;
     col = tw->m_base.m_base.m_currentColumn;
-    if (row < 0 || col < 0) return;
+    /* 无当前格起步原点（同基类键盘导航 1923-1924 行的 -1→0 钳位口径；
+     * 对标 QTableView 无当前索引时方向键移至首格）：此前 -1 直接返回，
+     * 纯键盘到达（Tab 聚焦/程序聚焦）首按方向键无响应。 */
+    if (row < 0) row = 0;
+    if (col < 0) col = 0;
+    if (row >= tw->m_rows) row = tw->m_rows - 1;
+    if (col >= tw->m_columns) col = tw->m_columns - 1;
     switch (key) {
     case XKey_Up:    row = row > 0 ? row - 1 : 0; break;
     case XKey_Down:  row = row < tw->m_rows - 1 ? row + 1 : row; break;

@@ -812,6 +812,24 @@ static void VXAbstractButton_mousePressCommon(XWidget* self, XEvent* event)
 
     position = XMouseEvent_position(mouseEvent);
     if (XAbstractButton_hitButton_base(button, &position)) {
+        /*
+         * 点击移焦（隔夜台账猎获④：此前点击按钮焦点原位、按 t 仍进
+         * 原编辑框，仅 Shift+Tab 能移焦）。对标 Qt 6.8.3：自发鼠标
+         * 按压在事件分发前经 QApplicationPrivate::
+         * giveFocusAccordingToFocusPolicy 以 Qt::MouseFocusReason 移焦
+         * （qapplication.cpp:2734-2737 调用点 → 3661 实现，Press/
+         * DblClick 分支），focusInEvent 先于 mousePressEvent；
+         * QPushButton 默认策略 = SH_Button_FocusPolicy =
+         * Qt::StrongFocus（0xB，含 ClickFocus 位；
+         * qabstractbutton.cpp:329 + qcommonstyle.cpp:5224-5226），本类
+         * init 已对齐。判定按任务口径"NoFocus 跳过"（Qt 的
+         * ClickFocus 位判定对 StrongFocus 结果等价）；
+         * XWidget_setFocusReason 对禁用态有门禁，与 Qt 禁用控件不收
+         * 鼠标输入一致。点中按钮之外的区域不聚焦（hitButton 未命中
+         * 不进入本分支），保留"点空白不移焦"的 Qt 语义。
+         */
+        if (XWidget_focusPolicy(self) != XWidgetFocusPolicy_NoFocus)
+            XWidget_setFocusReason(self, XFocusReason_Mouse);
         button->m_pressed = true;
         abstractbutton_setDownFromInput(button, true);
         XEvent_accept(event);

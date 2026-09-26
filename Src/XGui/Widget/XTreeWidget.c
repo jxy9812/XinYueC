@@ -11,6 +11,7 @@
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XVarList.h"
+#include "XCursor.h"
 #include "XWidget_Protected.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
@@ -47,11 +48,32 @@ static int xtw_headerOffset(const XTreeWidget* self)
 }
 static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_mouseMoveEvent(XWidget* self, XEvent* event);
+static void VXTreeWidget_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_keyPressEvent(XWidget* self, XEvent* event);
 static void VXTreeWidget_wheelEvent(XWidget* self, XEvent* event);
 
 static void xtwitem_freeSubtree(XTreeWidgetItem* item);
+
+/* ==================== 表头分隔线拖拽调宽手势（第八轮②） ==================== */
+
+/** @brief 分隔线手柄命中热区半径（任务口径 ±3px；对标 Qt
+ *         PM_HeaderGripMargin 样式近似，qheaderview.cpp:3316）。 */
+#define XTW_HANDLE_HIT 3
+/** @brief 拖拽最小列宽钳位（对标 QHeaderView::minimumSectionSize 缺省
+ *         20 = XHEADERVIEW_DEFAULT_MINIMUM_SECTION_SIZE 同值）。 */
+#define XTW_MIN_COL_W 20
+
+/* 手势态承载：契约头不扩字段边界下按本文件既有文件级 static 三元组
+ * 同款范式（xtw_g_curChild* 先例；多实例并存时同一时刻至多一路拖拽，
+ * 串行交互场景无歧义）。字段对标 Qt QHeaderViewPrivate 的
+ * state=ResizeSection + d->section + d->firstPos + d->originalSize。
+ * 定义置于文件前部：VXTreeWidget_deinit 的析构清防在其之前。 */
+static XTreeWidget* xtw_g_resizeOwner = NULL;
+static int xtw_g_resizeSection = -1; /**< 拖拽列号；-1=无手势。 */
+static int xtw_g_resizePressX = -1;  /**< 按下点 x（d->firstPos）。 */
+static int xtw_g_resizeOrigW = 0;    /**< 按下时生效列宽（d->originalSize）。 */
+static bool xtw_g_resizeCursor = false; /**< SplitH 光标已挂（WA_SetCursor 差分）。 */
 
 /** @brief 发射单 int 载荷信号（行号族；无监听不分配载荷）。 */
 static void xtw_emitRow(XTreeWidget* self, size_t signal, int row)
@@ -790,6 +812,8 @@ XVtable* XTreeWidget_class_init(void)
                              VXTreeWidget_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
                              VXTreeWidget_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXTreeWidget_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VXTreeWidget_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
@@ -846,6 +870,15 @@ static void VXTreeWidget_deinit(XTreeWidget* self)
      * 持本控件指针，析构后若同地址新树复用会继承陈旧命中行——析构
      * 即清，杜绝跨实例残留。 */
     if (xtw_g_curChildOwner == self) xtw_setCurChild(NULL, -1, -1);
+    /* 拖拽调宽手势态同款析构清防（静态持本控件指针；拖拽中销毁树
+     * 的悬垂路径）。 */
+    if (xtw_g_resizeOwner == self) {
+        xtw_g_resizeOwner = NULL;
+        xtw_g_resizeSection = -1;
+        xtw_g_resizePressX = -1;
+        xtw_g_resizeOrigW = 0;
+        xtw_g_resizeCursor = false;
+    }
     for (i = 0; i < self->m_topCount; ++i) {
         if (self->m_topItems && self->m_topItems[i])
             XTreeWidgetItem_delete(self->m_topItems[i]);
@@ -1595,6 +1628,110 @@ static void xtw_drawCheckIndicator(XTreeWidgetItem* item,
     }
 }
 
+/** @brief UTF-8 序列字节长（首字节判定；续字节/非法首字节按单字节
+ *         兜底，省略切割只在字符边界落刀）。 */
+static int xtw_utf8SeqLen(const char* s)
+{
+    unsigned char c = (unsigned char)s[0];
+    if (c < 0x80) return 1;
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+/** @brief 右省略（W10 第三轮①：对标 Qt::ElideRight，Qt 以
+ *         qstyleditemdelegate viewItemDrawText → fontMetrics::elidedText
+ *         对超宽条目文本画「前缀…」；本库近似承载见 xcs_elideText
+ *         mode 1 同款算法，此处按 UTF-8 字符边界切割——中文长名不得
+ *         在序列中腰斩出替换乱字）。省略号视觉以 ASCII "..." 三点
+ *         承载：Qt 原字为 U+2026 HORIZONTAL ELLIPSIS，但本库内置
+ *         字体族均无该字形（XFont16x16 点阵 cmap 仅覆盖 32..126 与
+ *         19968.. 两段；XFontOutlineCommon Latin/CJK 码点表亦无
+ *         0x2026，缺字退化为单点残形——活体实测见 W10 复验），故以
+ *         全字体覆盖的 "..." 同义呈现（视觉同 Qt 的三点省略号）。
+ *         宽内原样返回入参；超宽返回栈缓冲内「前缀+...」（宽内放
+ *         不下三点时退化为纯前缀硬截，同样不越界）。 */
+static const char* xtw_elideText(char* buf, int bufCap, const char* text,
+                                 const XFont* font, int maxW)
+{
+    static const char ell[] = "..."; /* 省略号（U+2026 缺字形，见上）。 */
+    int fullW;
+    int ellW;
+    int w;
+    int cut;
+    int i;
+    if (!text || !text[0] || maxW <= 0 || !font) return text;
+    fullW = XPainter_textWidth(font, text);
+    if (fullW <= maxW) return text;
+    ellW = XPainter_textWidth(font, ell);
+    w = (ellW <= maxW) ? ellW : 0; /* 连省略号都放不下：纯前缀。 */
+    cut = 0;
+    for (i = 0; text[i] != '\0';) {
+        int len = xtw_utf8SeqLen(text + i);
+        int cw;
+        int j;
+        for (j = 1; j < len; ++j)
+            if (text[i + j] == '\0') { len = j; break; } /* 残序列收窄防越界读。 */
+        cw = XPainter_textWidthRange(font, text, i, i + len);
+        if (w + cw > maxW) break;
+        w += cw;
+        cut = i + len;
+        i += len;
+    }
+    if (cut > bufCap - 5) cut = bufCap - 5; /* 预留 ...+NUL，防缓冲溢出。 */
+    if (cut < 0) cut = 0;
+    XMemcpy(buf, text, (size_t)cut);
+    buf[cut] = '\0';
+    if (ellW <= maxW) XStrncat(buf, ell, (size_t)bufCap - 1);
+    return buf;
+}
+
+/** @brief 列 0 主文本绘制（N5-1/W10 根修；第八轮①再修）：多列树下
+ *         列 0 超宽文本由硬 clip 升级为右省略——先按列 0 带内预算
+ *         （带右缘 − 文本起点）测算 elide 文本「前缀…」再画（对标
+ *         Qt::ElideRight，qstyleditemdelegate viewItemDrawText 的
+ *         elidedText 路径），省略号自身在带内、不再出现第七轮右边界
+ *         硬截断无点画面；残余超界仍由 save/clip/restore 兜底（与列
+ *         1+ 同口径防长文本横穿「大小/类型」等列）。仅裁剪文本本身：
+ *         勾选框（调用方先画）与展开缩进 +/- 指示器（调用方后画）
+ *         不入本裁剪，树形结构视觉不受影响。单列树（columnCount==1，
+ *         无列界可串）与列带退化（w<=0，如固定列宽挤出到视口外）回退
+ *         既有无裁剪画法。 */
+static void xtw_drawColumn0Text(const XTreeWidget* self, XPainter* painter,
+                                int y0, int rh, int textX, const char* text,
+                                uint32_t ink)
+{
+    int viewW = XWidget_width((XWidget*)self);
+    int colX = 0;
+    int colW = 0;
+    XRect colRect;
+    const char* shown = text;
+    char elided[512];
+    if (XTreeWidget_columnCount(self) <= 1 || viewW <= 0) {
+        XPainter_drawText(painter, textX, y0 + rh - 6, text, ink);
+        return;
+    }
+    xtw_columnSpan(self, 0, viewW, &colX, &colW);
+    if (colW <= 0) {
+        XPainter_drawText(painter, textX, y0 + rh - 6, text, ink);
+        return;
+    }
+    if (colX + colW > textX) {
+        shown = xtw_elideText(elided, (int)sizeof(elided), text,
+                              XPainter_font(painter), colX + colW - textX);
+    }
+    colRect.x = colX;
+    colRect.y = y0;
+    colRect.width = colW;
+    colRect.height = rh;
+    XPainter_save(painter);
+    XPainter_setClipRect(painter, &colRect,
+                         XPainterClipOperation_IntersectClip);
+    XPainter_drawText(painter, textX, y0 + rh - 6, shown, ink);
+    XPainter_restore(painter);
+}
+
 /** @brief 绘制单个条目行（前序递归；k = 本条目在顶层行带内的前序
  *         序号：顶层本体 0、首个子条目 1…与 xtw_hitItemAt 输出同一
  *         口径，即行带内行偏移）。 */
@@ -1655,8 +1792,8 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
         if (text && text[0]) {
             XPainter_setPen(painter,
                             selected ? highlightedText : windowText);
-            XPainter_drawText(painter, ix + 16, y0 + rh - 6, text,
-                              selected ? highlightedText : windowText);
+            xtw_drawColumn0Text(self, painter, y0, rh, ix + 16, text,
+                                selected ? highlightedText : windowText);
         }
     } else if (text && text[0]) {
         XPainter_setPen(painter,
@@ -1664,14 +1801,17 @@ static void xtw_drawItem(XTreeWidget* self, XTreeWidgetItem* item,
         /* drawText 第 4 参是墨水色：传 0=透明，条目文本任何路径都不
          * 出字；传 palette WindowText（对标 XTableWidget，此处实现
          * 与注释曾自相矛盾——注释自称传 windowText 实为硬编码黑）。
-         * 选中行传 HighlightedText（对标 Qt 选中行文字反色）。 */
-        XPainter_drawText(painter, indent * depth + 12, y0 + rh - 6,
-                          text,
-                          selected ? highlightedText : windowText);
+         * 选中行传 HighlightedText（对标 Qt 选中行文字反色）。
+         * 绘制经 xtw_drawColumn0Text：多列树下列 0 带内裁剪
+         * （N5-1/W10），单列树保持既有无裁剪画法。 */
+        xtw_drawColumn0Text(self, painter, y0, rh, indent * depth + 12,
+                            text,
+                            selected ? highlightedText : windowText);
     }
     /* 列 1+ 文本消费（四期④）：各列画在 xtw_columnSpan 的列带内
-     * （save/clip/restore 防长文本串列；列 0 主文本含展开缩进/指示
-     * 器，维持既有画法不裁剪）。 */
+     * （save/clip/restore 防长文本串列；列 0 主文本已由
+     * xtw_drawColumn0Text 在列 0 带内同口径裁剪，展开缩进/指示器
+     * 仍在文本裁剪之外独立绘制）。 */
     if (XTreeWidget_columnCount(self) > 1) {
         int viewW = XWidget_width((XWidget*)self);
         int col;
@@ -1781,8 +1921,18 @@ static void xtw_drawHeader(const XTreeWidget* tw, XPainter* painter,
             text = buf;
         }
         XPainter_setPen(painter, 0xFF444444u);
-        XPainter_drawText(painter, x + 4, XTW_HEADER_H - 6, text,
-                          0xFF444444u);
+        {
+            /* 表头标签右省略（第八轮②配套；对标 QHeaderView 样式层对
+             * 段标签 elidedText——qstyleditemdelegate 同源路径）：拖窄
+             * 后标签不得压过分隔线串到邻段（与列 0 行文本同 xtw_elideText
+             * 承载，预算 = 段宽 − 左右各 4px 边距）。 */
+            const XFont* hfont = XPainter_font(painter);
+            char label[512];
+            const char* shown =
+                xtw_elideText(label, (int)sizeof(label), text, hfont, w - 8);
+            XPainter_drawText(painter, x + 4, XTW_HEADER_H - 6, shown,
+                              0xFF444444u);
+        }
         XPainter_setPen(painter, 0xFFCCCCCCu);
         XPainter_drawLine(painter, x + w - 1, 1, x + w - 1,
                           XTW_HEADER_H - 1);
@@ -2016,6 +2166,65 @@ static void VXTreeWidget_keyPressEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
+/* ==================== 表头分隔线拖拽调宽手势（第八轮②） ==================== */
+
+/** @brief 表头带内分隔线命中反查（对标 QHeaderViewPrivate::
+ *         sectionHandleAt，qheaderview.cpp:3307）：列尾分隔线与
+ *         xtw_drawHeader 画线同一几何（x+w-1），±3px 热区内返回该列
+ *         号（拖拽改该列宽），未命中 -1。 */
+static int xtw_headerHandleAt(const XTreeWidget* self, int x)
+{
+    int viewW;
+    int cols;
+    int c;
+    if (!self || x < 0) return -1;
+    viewW = XWidget_width((XWidget*)self);
+    cols = XTreeWidget_columnCount(self);
+    if (cols <= 0 || viewW <= 0) return -1;
+    for (c = 0; c < cols; ++c) {
+        int colX = 0;
+        int colW = 0;
+        int sep;
+        xtw_columnSpan(self, c, viewW, &colX, &colW);
+        if (colW <= 0) continue; /* 零宽列无线可拖（与绘制同口径）。 */
+        sep = colX + colW - 1;
+        if (x >= sep - XTW_HANDLE_HIT && x <= sep + XTW_HANDLE_HIT)
+            return c;
+    }
+    return -1;
+}
+
+/** @brief 挂 SplitH 光标（对标 qheaderview.cpp:2640 水平头
+ *         SplitHCursor；XLabel/XTextEdit 悬停光标同款挂法）。 */
+static void xtw_resizeCursorSet(XTreeWidget* self)
+{
+    XCursor cursor;
+    XCursor_init(&cursor);
+    XCursor_setShape(&cursor, XCursor_SplitH);
+    XWidget_setCursor((XWidget*)self, &cursor);
+    xtw_g_resizeCursor = true;
+}
+
+/** @brief 摘本手势挂的光标（对标 qheaderview.cpp:2644 unsetCursor）。 */
+static void xtw_resizeCursorClear(void)
+{
+    if (!xtw_g_resizeCursor) return;
+    XWidget_unsetCursor((XWidget*)xtw_g_resizeOwner);
+    xtw_g_resizeCursor = false;
+}
+
+/** @brief 结束拖拽手势（清静态态 + 释放鼠标抓取；XScrollBar 拖拽
+ *         同款收尾）。 */
+static void xtw_resizeGestureEnd(XTreeWidget* self)
+{
+    xtw_resizeCursorClear();
+    xtw_g_resizeOwner = NULL;
+    xtw_g_resizeSection = -1;
+    xtw_g_resizePressX = -1;
+    xtw_g_resizeOrigW = 0;
+    XWidget_releaseMouse((XWidget*)self);
+}
+
 static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
 {
     XTreeWidget* tw = (XTreeWidget*)self;
@@ -2030,12 +2239,32 @@ static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
-    /* 命中：按展开态几何反查平铺顶层行（子树行随顶层行显隐）。 */
     /* 左键按压交付键盘焦点（对标 Qt QApplicationPrivate::
      * giveFocusAccordingToFocusPolicy 点击聚焦：视图族 StrongFocus
      * 策略下方向键导航可达；同 XAbstractItemView 按下路径一致，
      * 窗口型视图不抢焦点——弹层焦点归组合框自身机制）。 */
     if (!self->m_isWindow) XWidget_setFocus(self);
+    /* 表头带内：分隔线 ±3px 热区进入拖拽调宽手势（记列/按下点/原宽
+     * 并抓取鼠标，对标 qheaderview.cpp:2523-2528 的 ResizeSection 进
+     * 手势分支）；段内点击不走行命中/排序语义（与分隔线命中互斥，
+     * qheaderview.cpp:2511 先查手柄再发 sectionPressed 同序）。 */
+    if (pos.y < xtw_headerOffset(tw)) {
+        int handle = xtw_headerHandleAt(tw, pos.x);
+        if (handle >= 0) {
+            int colX = 0;
+            int colW = 0;
+            xtw_columnSpan(tw, handle, XWidget_width(self), &colX, &colW);
+            xtw_g_resizeOwner = tw;
+            xtw_g_resizeSection = handle;
+            xtw_g_resizePressX = pos.x;
+            xtw_g_resizeOrigW = colW;
+            XWidget_grabMouse(self);
+            xtw_resizeCursorSet(tw);
+        }
+        XEvent_accept(event);
+        return;
+    }
+    /* 命中：按展开态几何反查平铺顶层行（子树行随顶层行显隐）。 */
     row = xtw_rowAtY(tw, pos.y, NULL);
     if (row >= 0) {
         XTreeWidgetItem* item = tw->m_topItems[row];
@@ -2085,9 +2314,13 @@ static void VXTreeWidget_mousePressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 移动：进入新顶层行发射 itemEntered（m_enteredRow 差分判
- *         重；命中走 xtw_rowAtY——无模型便利类的展开态几何，与点击
- *         命中同口径，基类 indexAt 的模型行数校验不适用）。 */
+/** @brief 移动：拖拽手势中按 delta=pos-firstPos 实时改列宽（对标
+ *         qheaderview.cpp:2566-2577 ResizeSection 分支——qBound 钳位
+ *         后 resizeSection；本库列宽走 XTreeView_setColumnWidth，其内
+ *         部 XWidget_update 驱动表头/行带即时重列重绘）；无手势时表
+ *         头带内作分隔线光标提示（命中→SplitH、离开→unset，
+ *         qheaderview.cpp:2636-2644 NoState 分支同款）；行带内维持既
+ *         有 itemEntered 进入新行发射。 */
 static void VXTreeWidget_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XTreeWidget* tw = (XTreeWidget*)self;
@@ -2095,12 +2328,37 @@ static void VXTreeWidget_mouseMoveEvent(XWidget* self, XEvent* event)
     XPoint pos;
     int row;
     if (!tw) return;
+    pos.x = 0;
+    pos.y = 0;
+    if (event && XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE) {
+        me = (XMouseEvent*)event;
+        pos = XMouseEvent_position(me);
+        /* 拖拽中：实时调宽并吞事件（不做悬停发射）。 */
+        if (xtw_g_resizeOwner == tw && xtw_g_resizeSection >= 0) {
+            int newW = xtw_g_resizeOrigW + (pos.x - xtw_g_resizePressX);
+            if (newW < XTW_MIN_COL_W) newW = XTW_MIN_COL_W; /* 最小列宽钳位。 */
+            XTreeView_setColumnWidth(&tw->m_base, xtw_g_resizeSection, newW);
+            XEvent_accept(event);
+            return;
+        }
+        /* 表头带内：分隔线光标提示（与 qheaderview NoState 分支一致，
+         * 经 WA_SetCursor 差分避免重复挂/摘）。 */
+        if (pos.y < xtw_headerOffset(tw)) {
+            if (xtw_headerHandleAt(tw, pos.x) >= 0) {
+                if (!XWidget_testAttribute(self,
+                                           XWidgetAttribute_SetCursor))
+                    xtw_resizeCursorSet(tw);
+            } else if (xtw_g_resizeCursor) {
+                xtw_resizeCursorClear();
+            }
+            return; /* 表头带内不做行悬停发射。 */
+        }
+        if (xtw_g_resizeCursor) xtw_resizeCursorClear();
+    }
     /* 基类移动路径：发射 XAbstractItemView entered 抽象信号。 */
     XClass_Parent(XTreeView, EXWidget_MouseMoveEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
     if (!event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
-    me = (XMouseEvent*)event;
-    pos = XMouseEvent_position(me);
     row = xtw_rowAtY(tw, pos.y, NULL);
     if (row < 0 || row >= tw->m_topCount) return;
     /* itemEntered 真实发射点：进入新行才发射（同 XListWidget
@@ -2109,6 +2367,26 @@ static void VXTreeWidget_mouseMoveEvent(XWidget* self, XEvent* event)
         tw->m_enteredRow = row;
         XTreeWidget_itemEntered_signal(tw, row);
     }
+}
+
+/** @brief 释放：拖拽手势落定（清态 + 释放抓取 + 光标恢复；对标
+ *         qheaderview.cpp:2726-2731 state 复位且不发 sectionClicked
+ *         ——分隔线拖拽与段点击排序语义互斥）；其余释放回落基类链
+ *         （XAbstractItemView 选择释放语义保持零回退）。 */
+static void VXTreeWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XTreeWidget* tw = (XTreeWidget*)self;
+    if (!tw) return;
+    if (xtw_g_resizeOwner == tw && xtw_g_resizeSection >= 0) {
+        xtw_resizeGestureEnd(tw);
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
+    /* 静态取父类槽位回落（同本文件 keyPressEvent 的 XClass_Parent
+     * 口径：经对象虚表再分派会回到本重载形成自递归）。 */
+    XClass_Parent(XTreeView, EXWidget_MouseReleaseEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
 }
 
 static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)

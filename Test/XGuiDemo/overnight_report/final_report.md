@@ -278,3 +278,29 @@ partial/broken（日间清单）：#40 焦点链落隐藏页钮（根因=XWidget
 - lane3 (:102)：页面5 条目视图 + 页面8 图形效果
 - lane4 (:103)：页面6 对话框 + 页面7 高级控件
 - 维度：逐控件「看得见+点得动」+ 联动读出 + 键盘 Tab/Enter/Esc
+
+---
+
+# 终版战报（2026-09-26 凌晨：第七~第十轮 + PAINT 泄漏补刀）
+
+**全夜门禁终态：三套件真零（回归 exit=0 且 0 FAIL 行、LineControl 68 checks、autotest 135P/0F）+ Release 门 PASSED（-O2 全量 1549 目标、套件×3 轮全绿、图表基准 fps 5453/5830/5791/终样 5941 @ repaint 2558x1245）+ ASan 零新生产泄漏（修复后差分画像闭合）+ 活体 17 PASS/0 FAIL + 对抗 15 条全部标注。**
+
+## 四轮主战果
+
+- **第七轮（焦点三连摘回）**：d0c79214 合并重做误删第五夜焦点三件套——窗口级 Tab 引擎（冷启动落首候选）、ShortcutOverride 询问链（复活 XLineControl_processShortcutOverrideEvent 零调用点）、FocusIn/Out update() 重绘。git log -S 实证 9292cb70 4 处→0 处。主构建活体：冷启动 Tab 焦点环+Space+Shift+Tab 反向、补全框 t 不被快捷键吞。**方法论入库：合并/stash-pop 后必须 git log -S 核验关键符号（库内容第三次被合并静默丢块）；路内验证结论必须注明构建 mtime。**
+- **第八轮（悬停收口+记账门）**：悬停合成 ENTER 回报钩子（解无锚残界，冷启动纯悬停蓝底 #3d8bfd 像素级精确亮/离/无粘滞）；回归记账门门序修复（终门移到 test_xgui_widgets 后——此前 FAILS=0 对控件族不可信）；点击移焦（XAbstractButton 左键 setFocus+XTabBar+条目视图焦点指示段 87 行）。另定案：真机空载 FPS 3491~3869 与合并前 ~4000 同带，**帧率回退不成立**（低读数系验收并行负载污染）。
+- **第九轮（五路修复+触摸 per-id）**：触摸单指针 g_touchGrabWidget→per-id 抓取表七点处方落地（tpFails=4→0，对标 Qt6.8 qapplication.cpp:3791-3842 per-point 契约）；补全弹层孤儿收层（守护巡检定时器）；列0 elide+XHeaderView 列宽 resize 手势；MDI 子窗 chrome 重写+拖动脏区全覆盖；关闭路径双断修复（✕ 三态接线+WM_DELETE/DestroyNotify→lastWindowClosed→quit）。
+- **第十轮（收尾+两门）**：清空收层全键覆盖（Delete/Ctrl+Delete/Ctrl+Backspace/剪切路径补调 complete）；弹层当前行视觉高亮；W10 表头段点击排序接线（翻转+指示器+目录优先）；Release 门与 ASan 门补齐。
+
+## ASan 专项结论
+
+- 崩溃猎捕：补全弹层生命周期 1800 轮≈24 分钟轰炸零 ASan 错误零 core 零进程消失（RSS 平台化）——第九轮"概率性进程消失"可基本排除确定性堆错误（保留注记：ASan 减速改变时序窗）。
+- 泄漏门猎获并修复：bf5757fb PAINT 单槽「被顶者当场释放」与「池对象保缓冲」两规则矛盾→逐轮泄漏 +735B/轮（签名 XRegion_reserve←copy←init←createRecycled:448）。修复=XWindowEvent.c:99 释放被顶者前 XRegion_deinit 其保留缓冲（守 m_regionBorrowed）。**验证：修复后 N=0 vs N=200 差分画像逐字节相等（18288B/123 块），旧签名归零。**
+
+## 等裁定（不阻塞提交）
+
+#38 字形方案（全字库 provider/系统字形后端）；GL present 重构；N5-3 fusion-css 样式表覆写致 LineEdit 失边框；RGB16 端到端；文件名框输目录路径+Return 语义（回传 vs 进入目录，Qt 原生=后者）；CANCEL 触摸注入用例缺口（测试侧）；SizeGrip 命中区小且仅页7 装配。
+
+## 证据档案
+
+台账（逐轮明细）：同目录 issues_ledger.md；轮换状态：state.md；本轮证据 /tmp/r7v/ /tmp/r8v/(165 文件) /tmp/r9v/ /tmp/r10v/ /tmp/asan_attack/（含 stress_completer.sh、profile_run.sh 差分脚本）。

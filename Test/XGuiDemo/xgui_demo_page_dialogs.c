@@ -417,6 +417,30 @@ static void dlgpg_fileTrigger(XObject* sender, XVarList* args)
 }
 #endif /* DLGPG_FILE_ON */
 
+/* ==================== 触发按钮槽：目录对话框（模态便捷函数） ==================== */
+
+#if DLGPG_FILE_ON
+static void dlgpg_dirTrigger(XObject* sender, XVarList* args)
+{
+    XString* dir;
+    const char* shown;
+    char buf[128];
+    (void)sender;
+    (void)args;
+    /* 便捷函数内部 exec 阻塞（应用模态），真人可交互；autotest 不覆盖。
+       目录模式（ShowDirsOnly）：列表仅文件夹，确认钮「选择文件夹」。 */
+    dir = XFileDialog_getExistingDirectory_2(
+        s_dlgpg.m_root,
+        "选择文件夹",
+        ".");
+    shown = (dir && XString_toUtf8(dir)) ? XString_toUtf8(dir) : "";
+    snprintf(buf, sizeof(buf), "目录对话框：选中=\"%s\"", shown);
+    dlgpg_status(buf);
+    if (dir)
+        XString_delete_base((XClass*)dir);
+}
+#endif /* DLGPG_FILE_ON */
+
 /* ==================== 触发按钮槽：颜色对话框（模态便捷函数） ==================== */
 
 #if DLGPG_COLOR_ON
@@ -719,6 +743,11 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
     dlgpg_addRow(8, "自定义对话框",
                  "XDialog+XLabel+XDialogButtonBox：非阻塞打开",
                  dlgpg_customTrigger);
+#endif
+#if DLGPG_FILE_ON
+    dlgpg_addRow(9, "目录对话框",
+                 "（模态，autotest 不覆盖）便捷函数 exec 阻塞交互",
+                 dlgpg_dirTrigger);
 #endif
 #endif /* DLGPG_BUTTONS_ON */
 

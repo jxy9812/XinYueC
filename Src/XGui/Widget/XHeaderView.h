@@ -548,6 +548,36 @@ int XHeaderView_logicalIndex(const XHeaderView* self, int visualIndex);
  */
 int XHeaderView_logicalIndexAt(const XHeaderView* self, int position);
 /**
+ * @brief 分隔线手柄命中反查（第八轮②新增；对标 QHeaderViewPrivate::
+ *        sectionHandleAt，qheaderview.cpp:3307——段尾分隔线 ±热区内
+ *        返回该段逻辑号，拖拽该分隔线即调整该段宽度）。
+ *
+ *        @note 热区取任务口径 ±3px（对标 Qt PM_HeaderGripMargin=4 的
+ *        样式近似）；命中分隔线为「段 i 尾线」，与逻辑反查同一坐标系
+ *        （逐段累加 sectionSize，与 sectionPosition 口径一致）。
+ *
+ * @param self 目标表头；可为 NULL。
+ * @param position 相对表头起点的像素位置。
+ * @return 命中的区间号（其尾分隔线落热区）；未命中或 self 为 NULL
+ *         返回 -1。
+ */
+int XHeaderView_resizeHandleSectionAt(const XHeaderView* self, int position);
+/**
+ * @brief 查询表头是否处于分隔线拖拽调宽手势中（第八轮②新增；活体
+ *        自证/回归断言用，对标 Qt d->state == ResizeSection）。
+ *
+ * @param self 目标表头；可为 NULL。
+ * @return 手势进行中返回 true（按下记段、拖拽实时改宽、释放落定）。
+ */
+bool XHeaderView_resizeGestureActive(const XHeaderView* self);
+/**
+ * @brief 查询拖拽手势命中的区间号（第八轮②新增；无手势返回 -1）。
+ *
+ * @param self 目标表头；可为 NULL。
+ * @return 手势中的逻辑区间号；无手势、self 为 NULL 返回 -1。
+ */
+int XHeaderView_resizeGestureSection(const XHeaderView* self);
+/**
  * @brief 查询区间尺寸提示（对标 QHeaderView::sectionSizeHint）。
  *
  *        @note 无内容感知：恒返回 defaultSectionSize，不依据区间

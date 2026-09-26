@@ -29,11 +29,27 @@ static void le_key(XLineEdit* edit, int key)
     XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, key, 0);
     XObject_event_base((XObject*)edit, (XEvent*)&ke);
 }
-/** @brief 模拟输入一段 ASCII 文本（逐字符按键）。 */
+/** @brief 模拟输入一段 ASCII 文本（逐字符按键）。
+ *  @details 大写字母按真实键盘语义补 ShiftModifier（对标 Qt：键值大小写
+ *           双写归一为同一 Key_A，插入文本由 Shift 修饰位派生——
+ *           qxcbkeyboard.cpp:866 text=lookupString 随 shift、:872
+ *           keysymToQtKey 大小写同键；qwidgetlinecontrol.cpp:1921
+ *           insert(event->text())）。本框架同契约（xlc_keyToText）：
+ *           裸键值 'A'+NoModifier 产出 'a'，此前直接灌大写键值导致
+ *           「Home 后插入到开头/Delete 删首字符」两断言因大小写失配
+ *           而误报（引擎行为正确）。 */
 static void le_type(XLineEdit* edit, const char* ascii)
 {
     const char* p;
-    for (p = ascii; *p; ++p) le_key(edit, (int)(unsigned char)*p);
+    for (p = ascii; *p; ++p) {
+        int ch = (int)(unsigned char)*p;
+        XKeyboardModifiers mods = (ch >= 'A' && ch <= 'Z')
+                                      ? XKeyboardModifier_ShiftModifier
+                                      : (XKeyboardModifiers)0;
+        XKeyEvent ke;
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, ch, mods);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+    }
 }
 
 bool XLineEditTest_runAll(void)

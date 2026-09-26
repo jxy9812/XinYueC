@@ -58,6 +58,16 @@
 #include "XWidget_Protected.h"
 #include "XShortcut.h"
 #include "XVarList.h"
+/* ShortcutOverride 询问接收侧（对标 QLineEdit/QPlainTextEdit::event 的
+ * ShortcutOverride 分支）：行编辑/多行编辑壳头文件仅供下方取编辑控制器与
+ * 转交判定用，不扩任何契约头（XEVENT_TYPE_SHORTCUT_OVERRIDE 见
+ * XEventType.h:49，早已定义）。 */
+#if XLINEEDIT_ON && XLINECONTROL_ON
+#include "XLineEdit.h"
+#endif /* XLINEEDIT_ON && XLINECONTROL_ON */
+#if XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON
+#include "XPlainTextEdit.h"
+#endif /* XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON */
 #if XByteArray_ON
 #include "XByteArray.h"
 #endif /* XByteArray_ON */
@@ -159,10 +169,30 @@ static XWidget* g_focusWidget = NULL;
 
 /** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
 static XWidget* g_mouseGrabWidget = NULL;
-/** @brief 模块静态触摸抓取控件（对标 Qt 触点隐式 grab：TouchBegin 被接受后
- *         同一触点的 UPDATE/END 直达该控件，TOUCH_END/CANCEL 清除；当前
- *         XTouchEvent 只承载主点，故为单触点简化模型）。 */
-static XWidget* g_touchGrabWidget = NULL;
+/** @brief 模块静态触摸隐式抓取表（对标 Qt 6.8 per-point 隐式抓取契约：
+ *         qapplication.cpp:3791 activateImplicitTouchGrab 把 target 记于
+ *         触点、:3824 非 Pressed 逐点取各自 target——同一序列各触点可各
+ *         自抓取不同控件；取代旧单指针 g_touchGrabWidget「id=1 接受后
+ *         id=2 全序列误投」的模型）。 */
+#define XWIDGET_TOUCH_GRAB_CAPACITY 8 /**< per-id 抓取表容量（上限 8，超出
+                                           防御性弃新不动旧表项）。 */
+/** @brief 无触点列表的旧单点负载（XTouchEvent_init 形态）的主点哨兵 id：
+ *         该形态全序列共用一个键位，行为等价旧单指针模型（保留 touch→
+ *         mouse 仿真与既有清理语义）。 */
+#define XWIDGET_TOUCH_PRIMARY_ID ((int32_t)0)
+
+/** @brief 触点隐式抓取条目（对标 QMutableEventPoint::target 的 per-point
+ *         记录；生命周期同触点序列，控件销毁/隐藏时全表摘除）。 */
+typedef struct XTouchGrabEntry
+{
+    int32_t  m_id;      /**< 触点 id（平台 XI2 detail 透传）。 */
+    XWidget* m_widget;  /**< 被隐式抓取的控件（借用指针）。 */
+} XTouchGrabEntry;
+
+/** @brief per-id 抓取表（槽位数组 + 计数；紧凑存储，删除尾部补位）。 */
+static XTouchGrabEntry g_touchGrabTable[XWIDGET_TOUCH_GRAB_CAPACITY];
+/** @brief 抓取表当前条目数（0=非抓取期）。 */
+static int g_touchGrabCount = 0;
 /** @brief touch→mouse 仿真开关（对标 Qt AA_SynthesizeMouseForUnhandledTouch-
  *         Events；Qt 6 对未处理触摸序列的鼠标仿真默认开启，应用可显式关闭）。 */
 static bool g_touchMouseSynthEnabled = true;
@@ -239,7 +269,162 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
 static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
                                            const XRegion* paintRegion);
+static bool xwidget_focusNextPrevChild(XWidget* self, bool next);
 static void XRegion_translateInline(XRegion* region, int dx, int dy);
+/* ---- per-id 触点隐式抓取表（触摸派发域；定义紧随本节之后） ---- */
+static XWidget* xwidget_touchGrabFind(int32_t id);
+static void xwidget_touchGrabSet(int32_t id, XWidget* widget);
+static void xwidget_touchGrabRemoveId(int32_t id);
+static void xwidget_touchGrabClear(void);
+static void xwidget_touchGrabRemoveWidget(XWidget* widget);
+static int32_t xwidget_touchPrimaryId(const XTouchEvent* event);
+static XPoint XWidget_accumulateOffset(const XWidget* self);
+static void XWidget_eventSetPosition(XEvent* event, const XPoint* pos);
+static XWidget* XWidget_dispatchInputAt(XWidget* top, XEvent* event);
+static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
+                                       XEventType type,
+                                       const XTouchPoint* group, int count,
+                                       XWidget* target, bool direct);
+
+/** ==================== per-id 触点隐式抓取表（触摸派发域） ==================== */
+
+/** @brief 按触点 id 查隐式抓取控件（对标 Qt 非 Pressed 点逐点取 target）。
+ * @return 抓取控件；该 id 无表项返回 NULL。 */
+static XWidget* xwidget_touchGrabFind(int32_t id)
+{
+    int i;
+    for (i = 0; i < g_touchGrabCount; ++i) {
+        if (g_touchGrabTable[i].m_id == id)
+            return g_touchGrabTable[i].m_widget;
+    }
+    return NULL;
+}
+
+/** @brief 登记触点 id 的隐式抓取控件（对标 activateImplicitTouchGrab 记于
+ *         触点；已有同 id 表项则改写，表满时防御性弃新）。 */
+static void xwidget_touchGrabSet(int32_t id, XWidget* widget)
+{
+    int i;
+    if (!widget) return;
+    for (i = 0; i < g_touchGrabCount; ++i) {
+        if (g_touchGrabTable[i].m_id == id) {
+            g_touchGrabTable[i].m_widget = widget;
+            return;
+        }
+    }
+    if (g_touchGrabCount >= XWIDGET_TOUCH_GRAB_CAPACITY) return;
+    g_touchGrabTable[g_touchGrabCount].m_id = id;
+    g_touchGrabTable[g_touchGrabCount].m_widget = widget;
+    ++g_touchGrabCount;
+}
+
+/** @brief 摘除指定触点 id 的抓取表项（TOUCH_END 按事件携带 id 逐 id 摘表）。 */
+static void xwidget_touchGrabRemoveId(int32_t id)
+{
+    int i;
+    for (i = 0; i < g_touchGrabCount; ++i) {
+        if (g_touchGrabTable[i].m_id == id) {
+            g_touchGrabTable[i] = g_touchGrabTable[g_touchGrabCount - 1];
+            --g_touchGrabCount;
+            return;
+        }
+    }
+}
+
+/** @brief 清空抓取表（TOUCH_CANCEL 全清；对标触点序列异常终止回收）。 */
+static void xwidget_touchGrabClear(void)
+{
+    g_touchGrabCount = 0;
+}
+
+/** @brief 摘除某控件的全部抓取表项（控件销毁/隐藏路径；对标 Qt 隐式
+ *         grab 随 target 失效。旧单指针模型只比较单槽，会漏多触点抓取
+ *         同一控件的其余表项）。 */
+static void xwidget_touchGrabRemoveWidget(XWidget* widget)
+{
+    int i;
+    if (!widget) return;
+    for (i = 0; i < g_touchGrabCount;) {
+        if (g_touchGrabTable[i].m_widget == widget) {
+            g_touchGrabTable[i] = g_touchGrabTable[g_touchGrabCount - 1];
+            --g_touchGrabCount;
+        } else {
+            ++i;
+        }
+    }
+}
+
+/** @brief 触摸事件主点归一 id：有触点列表取 points[0].m_id；无列表的旧
+ *         单点负载取主点哨兵（行为等价旧单指针模型）。 */
+static int32_t xwidget_touchPrimaryId(const XTouchEvent* event)
+{
+    if (event && event->m_points && event->m_pointCount > 0)
+        return event->m_points[0].m_id;
+    return XWIDGET_TOUCH_PRIMARY_ID;
+}
+
+/** @brief 派发一个按靶分组的触点子事件（对标 qapplication.cpp:3840-3842
+ *         widgetsNeedingEvents 按靶发送）。
+ * @details direct=false 走命中路径（childAt + 父链传播；TouchBegin 被接受
+ *          后逐点登记隐式抓取，对标 activateImplicitTouchGrab）；direct=
+ *          true 抓取直达，跨顶层按该靶各自 topLevel 经全局坐标换算转投
+ *          （对标鼠标抓取的同型兜底路由）。子事件只携带该靶触点，
+ *          spontaneous 镜像源事件。
+ * @return 子事件被接受返回 true；构造失败/无人接受返回 false。 */
+static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
+                                       XEventType type,
+                                       const XTouchPoint* group, int count,
+                                       XWidget* target, bool direct)
+{
+    XTouchEvent* sub;
+    bool accepted = false;
+    if (!top || !source || !group || count <= 0 || !target) return false;
+    sub = XTouchEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, NULL, NULL,
+                                count);
+    if (!sub) return false;
+    XTouchEvent_setPoints(sub, group, count);
+    if (!sub->m_points) {
+        /* 触点列表分配失败：该组本批不派发（防御，等价丢点）。 */
+        XEvent_delete_base((XEvent*)sub);
+        return false;
+    }
+    XEvent_setAccepted_base((XEvent*)sub, false);
+    sub->m_class.spontaneous = source->spontaneous;
+    if (!direct) {
+        /* 命中路径：按组首点位置 childAt + 父链传播；TouchBegin 被接受
+           → 逐点 setGrab(id, receiver)（对标 qapplication.cpp:3791；
+           activateImplicitTouchGrab 对非 Begin 早退——UPDATE/END 即使
+           被接受也不新设抓取）。 */
+        XWidget* recv = XWidget_dispatchInputAt(top, (XEvent*)sub);
+        if (type == XEVENT_TYPE_TOUCH_BEGIN &&
+            recv && XEvent_isAccepted((XEvent*)sub)) {
+            const XTouchPoint* pts = XTouchEvent_points(sub);
+            int k;
+            for (k = 0; pts && k < count; ++k)
+                xwidget_touchGrabSet(pts[k].m_id, recv);
+        }
+    } else {
+        /* 抓取直达：组内各点按其 grab 靶的顶层换算坐标后直投，不再按
+           命中测试分派（对标旧直达分支；多点时仅主点字段换算为靶局部
+           坐标，触点列表保持顶层局部/全局原值——与旧单点模型同一坐标
+           契约）。 */
+        XWidget* grabTop = XWidget_topLevel(target);
+        XPoint off = XWidget_accumulateOffset(target);
+        XPoint pos = XTouchEvent_position(sub);
+        XPoint local;
+        if (grabTop && grabTop != top) {
+            XPoint global = XWidget_mapToGlobal(top, &pos);
+            pos = XWidget_mapFromGlobal(grabTop, &global);
+        }
+        local.x = pos.x - off.x;
+        local.y = pos.y - off.y;
+        XWidget_eventSetPosition((XEvent*)sub, &local);
+        XWidget_sendEvent(target, (XEvent*)sub);
+    }
+    accepted = XEvent_isAccepted((XEvent*)sub);
+    XEvent_delete_base((XEvent*)sub);
+    return accepted;
+}
 
 /* ==================== 通用辅助函数 ==================== */
 
@@ -397,8 +582,8 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
                 XWidget_clearFocusBase(self, XFocusReason_Other);
             if (g_mouseGrabWidget == self)
                 g_mouseGrabWidget = NULL;
-            if (g_touchGrabWidget == self)
-                g_touchGrabWidget = NULL;
+            /* 隐藏路径全表遍历摘除该控件全部触点抓取表项（per-id 表）。 */
+            xwidget_touchGrabRemoveWidget(self);
             if (g_keyboardGrabWidget == self)
                 g_keyboardGrabWidget = NULL;
             XWidget_sendShowHide(self, false);
@@ -1149,6 +1334,18 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
         XWidget_eventSetPosition(event, &local);
         if (!XWidget_attrTest(&w->m_attributes, XWidgetAttribute_TransparentForMouseEvents)) {
             XWidget_sendEvent(w, event);
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+            /* 悬停合成器回报钩子（第八轮 R1 悬停收口，见
+               XWindowSystemInterface.c xwsi_hoverTopForWindow 回退④注）：
+               原生窗边界 ENTER 经本桥命中实投时，把首个非透明接收者
+               （w==target，与 xwsi_hoverPickTarget 同口径）回报给合成器
+               登记——纯悬停冷会话三锚全空时，合成器据此以登记靶为回退锚
+               解析窗→顶层并换靶。合成器自派的链上 ENTER 走
+               XCoreApplication_sendEvent 直投控件事件槽、不经本桥，无重
+               入；传播链后续接收者不回报（悬停靶=命中靶，非上抛靶）。 */
+            if (XEvent_type(event) == XEVENT_TYPE_ENTER && w == target)
+                XWindowSystemInterface_setHoverTarget(w);
+#endif
             if (XEvent_isAccepted(event)) return true;
             if (XWidget_attrTest(&w->m_attributes, XWidgetAttribute_NoMousePropagation)) break;
         }
@@ -1201,6 +1398,101 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     return XEvent_isAccepted(event);
 }
 
+/* ==================== ShortcutOverride 询问（对标 QEvent::ShortcutOverride） ==================== */
+
+/** @brief 虚表槽位指针比较用的通用函数指针型（仅作恒等比较，不调用）。 */
+typedef void (*XWidgetVtableSlot)(void);
+
+#if XLINEEDIT_ON && XLINECONTROL_ON
+/**
+ * @brief      行编辑族判定并取编辑控制器（ShortcutOverride 接收侧，内部）。
+ * @details    判据=虚表 Copy 槽与 XLineEdit_class_init() 共享表同函数指针：
+ *             XVTABLE_INHERIT_XCLASS(XLineEdit) 把基类槽位复制进子类表，
+ *             而 XComboEdit（XComboBox.c 内嵌可编辑下拉框行编辑）与
+ *             XItemLineEditor（XItemDelegate.c 视图单元格编辑器）均只覆写
+ *             按键/失焦槽，结构上等价 is-a-XLineEdit，并自动覆盖未来未
+ *             覆写 Copy 槽的子类；两个子类结构体均以 XLineEdit m_base 为
+ *             首成员（XComboEdit 见 XComboBox.c xcomboEdit_create），故
+ *             (XLineEdit*) 向下转换地址不变。壳→控制器转交对标
+ *             QLineEdit::event 的 ShortcutOverride 分支
+ *             （qlineedit.cpp:1451 → control->processShortcutOverrideEvent）。
+ * @param      self 待判定控件；可为 NULL。
+ * @return     行编辑族的编辑控制器；非行编辑族返回 NULL。
+ */
+static XLineControl* xwidget_shortcutOverrideLineControl(XWidget* self)
+{
+    XVtable* vt;
+    XVtable* le;
+    if (!self) return NULL;
+    vt = XClassGetVtable(self);
+    le = XLineEdit_class_init();
+    if (!vt || !le) return NULL;
+    if (XVtableGetFunc(vt, EXClass_Copy, XWidgetVtableSlot) ==
+        XVtableGetFunc(le, EXClass_Copy, XWidgetVtableSlot))
+        return ((XLineEdit*)self)->m_control;
+    return NULL;
+}
+#endif /* XLINEEDIT_ON && XLINECONTROL_ON */
+
+#if XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON
+/**
+ * @brief      多行编辑族 ShortcutOverride 转交（接收侧，内部）。
+ * @details    判据=虚表 Deinit 槽与 XPlainTextEdit_class_init() 同函数指针
+ *             （XPlainTextEdit 仅覆写 Deinit 槽；XTextEdit 的键入经聚焦的
+ *             内嵌 XPlainTextEdit 承载，同落本判据）。命中后转交
+ *             XTextControl_processEvent——其 XEVENT_TYPE_SHORTCUT_OVERRIDE
+ *             分支按既有口径决定 accept/ignore；非本族控件不转交，事件
+ *             保持忽略（快捷键照常激活）。
+ * @param      self 接收到询问事件的控件；可为 NULL。
+ * @param      ke   ShortcutOverride 询问事件。
+ */
+static void xwidget_shortcutOverrideDelegate(XWidget* self, XKeyEvent* ke)
+{
+    XVtable* vt;
+    XVtable* pte;
+    if (!self || !ke) return;
+    vt = XClassGetVtable(self);
+    pte = XPlainTextEdit_class_init();
+    if (!vt || !pte) return;
+    if (XVtableGetFunc(vt, EXClass_Deinit, XWidgetVtableSlot) ==
+        XVtableGetFunc(pte, EXClass_Deinit, XWidgetVtableSlot)) {
+        XPlainTextEdit* edit = (XPlainTextEdit*)self;
+        if (edit->m_control)
+            XTextControl_processEvent(edit->m_control, (XEvent*)ke);
+    }
+}
+#endif /* XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON */
+
+/**
+ * @brief      快捷键激活前的 ShortcutOverride 询问（内部）。
+ * @details    对标 qt_sendShortcutOverrideEvent
+ *             （qwindowsysteminterface.cpp:1175-1199）与
+ *             qapplication.cpp:2665-2675：命中快捷键后、激活前，向焦点
+ *             对象发送 QEvent::ShortcutOverride；控件 accept（文本编辑
+ *             要吃这颗键，如行编辑的裸字母/Shift+字母）则调用方跳过
+ *             快捷键激活，按键随后按正常路径送达焦点控件；ignore 才
+ *             真正激活快捷键。询问范围与下方按键投递同口径：仅同顶层
+ *             的当前焦点控件；禁用控件不询问（对标 QWidget::event 丢弃
+ *             禁用控件的键盘输入）。
+ * @param      top  正在派发按键的顶层控件。
+ * @param      key  原始 KEY_PRESS 事件。
+ * @return     true=焦点控件接受覆盖（跳过 XShortcut_activate）。
+ */
+static bool xwidget_shortcutOverrideAsk(const XWidget* top, const XKeyEvent* key)
+{
+    XWidget* focus = g_focusWidget;
+    XKeyEvent ask;
+    if (!focus || !key) return false;
+    if (XWidget_topLevel(focus) != top) return false;
+    if (!XWidget_isEnabled(focus)) return false;
+    XKeyEvent_init(&ask, XEVENT_TYPE_SHORTCUT_OVERRIDE,
+                   key->m_key, key->m_modifiers);
+    XEvent_ignore((XEvent*)&ask); /* 默认忽略：接收侧显式 accept 才覆盖 */
+    XWidget_sendEvent(focus, (XEvent*)&ask);
+    XClass_deinit_base((XClass*)&ask); /* 栈上询问事件：无堆资源，走基类清理 */
+    return XEvent_isAccepted((XEvent*)&ask);
+}
+
 /** @brief 键盘事件投递：优先焦点控件，其次顶层控件；未接受沿父链上抛。 */
 static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
 {
@@ -1209,14 +1501,21 @@ static bool XWidget_dispatchKeyEvent(const XWidget* top, XEvent* event)
     bool bubble;
     if (!top || !event) return false;
     type = XEvent_type(event);
-    /* 快捷键优先（对标 QShortcutMap：按键先过快捷键表，命中即消费）。 */
+    /* 快捷键优先（对标 QShortcutMap：按键先过快捷键表，命中即消费）。
+     * 命中后、激活前先向焦点控件发 ShortcutOverride 询问（对标
+     * qt_sendShortcutOverrideEvent，qwindowsysteminterface.cpp:1175）：
+     * 焦点是文本编辑控件且这颗键要进编辑框（如裸字母 t 对 #32b）时
+     * accept → 跳过快捷键，按键继续走下方焦点控件正常投递；否则照旧
+     * 激活快捷键。 */
     if (type == XEVENT_TYPE_KEY_PRESS) {
         XShortcut* sc = XShortcut_match(
             (int)((XKeyEvent*)event)->m_key, (XShortcutContext)0,
             g_focusWidget);
         if (sc) {
-            XShortcut_activate(sc);
-            return true;
+            if (!xwidget_shortcutOverrideAsk(top, (const XKeyEvent*)event)) {
+                XShortcut_activate(sc);
+                return true;
+            }
         }
     }
     target = g_keyboardGrabWidget;
@@ -1320,70 +1619,128 @@ static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
     return accepted;
 }
 
-/** @brief 触摸事件命中派发：主点命中 + 触点隐式抓取 + touch→mouse 仿真
- *         （对标 QWidgetWindow::handleTouchEvent / QGuiApplicationPrivate::
- *         processTouchEvent）。
- * @details Qt 语义：TouchBegin 按主点 childAt 命中；被接受后该触点被接收
- *          控件隐式抓取，后续 UPDATE/END 直达抓取控件（含跨顶层坐标转投）；
- *          TOUCH_END/TOUCH_CANCEL 投递完成后清理抓取。TouchBegin 未被任何
- *          控件接受时进入鼠标仿真（对标 AA_SynthesizeMouseForUnhandled-
- *          TouchEvents，默认开启）：合成 MOUSE_BUTTON_PRESS（坐标同触摸点）、
- *          UPDATE→MOUSE_MOVE、END→MOUSE_BUTTON_RELEASE，复用鼠标命中/派发
- *          管线（QMouseEvent 语义，合成事件带 m_synthesized 来源标志）；
- *          同一 BEGIN 只走 touch 或
- *          仿真鼠标一条路，END/CANCEL 清理仿真状态。多点按 XTouchEvent
- *          最小负载只取主点，完整触点列表为已知偏差。 */
+/** @brief 触摸事件命中派发：per-id 触点隐式抓取 + 按靶分组派发 +
+ *         touch→mouse 仿真（对标 QWidgetWindow::handleTouchEvent /
+ *         QApplicationPrivate::translateRawTouchEvent，Qt 6.8
+ *         qapplication.cpp:3791-3842 per-point 契约）。
+ * @details Qt 语义：BEGIN（Pressed）逐点 childAt 命中；被接受的触点按 id
+ *          记入隐式抓取表（activateImplicitTouchGrab 记于触点）；非
+ *          Pressed 逐点取各自 target，抓取期查无该 id 的点丢弃
+ *          （:3824-3826 if(!target) continue）；连续同靶点合并为一次
+ *          投递（:3840-3842 按靶分组）。跨顶层按各点各自 grab 的
+ *          topLevel 换算转投。END 按事件携带 id 逐 id 摘表，CANCEL 全清。
+ *          TouchBegin 未被任何控件接受的序列进入鼠标仿真（对标
+ *          AA_SynthesizeMouseForUnhandledTouchEvents，默认开启）：合成
+ *          MOUSE_BUTTON_PRESS（坐标同触摸点）、UPDATE→MOUSE_MOVE、
+ *          END→MOUSE_BUTTON_RELEASE，复用鼠标命中/派发管线；同一 BEGIN
+ *          只走 touch 或仿真鼠标一条路。多点模型下仿真门控仅由主点 id
+ *          驱动（主点被抓取即整批不合成；非主点不单独合成）。无触点
+ *          列表的旧单点负载以主点字段合成单点、id 取主点哨兵，行为
+ *          等价旧单指针模型。 */
 static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
 {
+    XTouchEvent* te = (XTouchEvent*)event;
     XEventType type;
-    XWidget* receiver;
     XPoint topLocal;
+    int32_t primaryId;
+    bool anyAccepted = false;
+    bool primaryAccepted = false;
+    XTouchPoint group[XWIDGET_TOUCH_GRAB_CAPACITY];
+    XTouchPoint pt;
+    XWidget* groupTarget = NULL;
+    bool groupDirect = false;
+    bool groupHasPrimary = false;
+    int groupCount = 0;
+    int total;
+    int i;
     if (!top || !event) return false;
     if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
         return false;
     type = XEvent_type(event);
     /* 顶层局部坐标快照：后续命中派发会把事件位置改写为接收者局部坐标，
-       仿真鼠标必须以同一触摸点坐标进入鼠标管线。 */
+       仿真鼠标必须以同一触摸主点坐标进入鼠标管线。 */
     topLocal = XWidget_eventPosition(event);
     /* 新序列开始：防御性清理上一序列可能残留的仿真状态（平台漏发 END）。 */
     if (type == XEVENT_TYPE_TOUCH_BEGIN)
         g_touchMouseSynthActive = false;
-    if (g_touchGrabWidget) {
-        XWidget* grabTop = XWidget_topLevel(g_touchGrabWidget);
-        if (grabTop && grabTop != top) {
-            /* 跨顶层全局触点抓取：坐标换算到抓取窗口坐标系后转投
-               （对标鼠标抓取的同型兜底路由；触摸抓取生命周期同触点）。 */
-            XPoint pos = XWidget_eventPosition(event);
-            XPoint global = XWidget_mapToGlobal(top, &pos);
-            XPoint local = XWidget_mapFromGlobal(grabTop, &global);
-            XWidget_eventSetPosition(event, &local);
-            return XWidget_dispatchTouchEvent(grabTop, event);
+    /* 逐点路由（对标 translateRawTouchEvent 逐点循环）：BEGIN 逐点
+       childAt 命中；非 BEGIN 逐点取各自抓取靶，抓取期查无该 id 丢点。
+       抓取表为空（非抓取期）时保持既有主点命中形态——touch→mouse
+       仿真序列从不抓取，语义与旧单指针模型逐位一致。 */
+    total = te->m_points ? te->m_pointCount : 1;
+    primaryId = xwidget_touchPrimaryId(te);
+    for (i = 0; i < total; ++i) {
+        XWidget* target;
+        bool direct;
+        if (te->m_points) {
+            pt = te->m_points[i];
+        } else {
+            /* 旧单点负载（无触点列表）：主点字段合成单触点，id 取主点
+               哨兵。 */
+            pt.m_id = primaryId;
+            pt.m_state = (type == XEVENT_TYPE_TOUCH_BEGIN)
+                             ? XTOUCHPOINT_STATE_PRESSED
+                             : ((type == XEVENT_TYPE_TOUCH_END)
+                                    ? XTOUCHPOINT_STATE_RELEASED
+                                    : XTOUCHPOINT_STATE_UPDATED);
+            pt.m_position = te->m_position;
+            pt.m_globalPosition = te->m_globalPosition;
+            pt.m_pressure = 1.0f;
+        }
+        if (type == XEVENT_TYPE_TOUCH_BEGIN || g_touchGrabCount == 0) {
+            /* Pressed 点（及非抓取期）：逐点 childAt 命中，含顶层遮罩
+               回退（与 dispatchInputAt 同口径）。 */
+            target = XWidget_childAt(top, &pt.m_position);
+            if (!target) {
+                const XRegion* topMask = &top->m_mask;
+                if (topMask->count > 0 &&
+                    !XRegion_contains(topMask, pt.m_position.x, pt.m_position.y))
+                    target = NULL; /* 遮罩外：该点不派发。 */
+                else
+                    target = top;
+            }
+            direct = false;
+        } else {
+            /* 非 Pressed：逐点取各自抓取靶；抓取期查无该 id 的点丢弃
+               （对标 qapplication.cpp:3824-3826 if(!target) continue）。 */
+            target = xwidget_touchGrabFind(pt.m_id);
+            if (!target) continue;
+            direct = true;
+        }
+        if (groupCount > 0 &&
+            (target != groupTarget || direct != groupDirect ||
+             groupCount >= XWIDGET_TOUCH_GRAB_CAPACITY)) {
+            /* 靶/路径切换或组满：先派发已积组。 */
+            if (XWidget_dispatchTouchGroup(top, event, type, group, groupCount,
+                                           groupTarget, groupDirect)) {
+                anyAccepted = true;
+                if (groupHasPrimary) primaryAccepted = true;
+            }
+            groupCount = 0;
+            groupHasPrimary = false;
+        }
+        if (!target) continue; /* 遮罩外点：不派发、不分组。 */
+        if (groupCount == 0) {
+            groupTarget = target;
+            groupDirect = direct;
+        }
+        group[groupCount++] = pt;
+        if (i == 0) groupHasPrimary = true;
+    }
+    if (groupCount > 0) {
+        if (XWidget_dispatchTouchGroup(top, event, type, group, groupCount,
+                                       groupTarget, groupDirect)) {
+            anyAccepted = true;
+            if (groupHasPrimary) primaryAccepted = true;
         }
     }
-    if (g_touchGrabWidget && XWidget_topLevel(g_touchGrabWidget) == top) {
-        /* 触点抓取期间直达抓取控件，不再按命中测试分派。 */
-        XPoint pos = XWidget_eventPosition(event);
-        XPoint off = XWidget_accumulateOffset(g_touchGrabWidget);
-        XPoint local;
-        local.x = pos.x - off.x;
-        local.y = pos.y - off.y;
-        XWidget_eventSetPosition(event, &local);
-        XWidget_sendEvent(g_touchGrabWidget, event);
-        receiver = XEvent_isAccepted(event) ? g_touchGrabWidget : NULL;
-    } else {
-        receiver = XWidget_dispatchInputAt(top, event);
-        /* 对标 Qt：TouchBegin **被接受** → 隐式抓取接收控件；未被接受
-           （控件无视触摸）则不抓取，落入下方 touch→mouse 仿真——
-           此前无条件抓取使仿真门控永远不可达（回归锁
-           「touch→mouse 仿真 itemClicked」实证）。 */
-        if (type == XEVENT_TYPE_TOUCH_BEGIN && receiver)
-            g_touchGrabWidget = XEvent_isAccepted(event) ? receiver
-                                                         : NULL;
-    }
-    /* touch→mouse 仿真：仅在 BEGIN 未被接受（无触点抓取）时进入，之后
-       整条序列持续合成，END 合成释放后复位（对标 Qt per-point 状态机）。 */
-    if (g_touchMouseSynthEnabled && !g_touchGrabWidget) {
-        if (type == XEVENT_TYPE_TOUCH_BEGIN && !receiver) {
+    /* touch→mouse 仿真：仅主点 id 驱动——主点已被触点隐式抓取时整批
+       不合成；BEGIN 未被接受（主点无抓取且命中组未被接受）时开启，
+       之后整条序列持续合成，END 合成释放后复位（对标 Qt per-point
+       状态机的单点收敛；回归锁「touch→mouse 仿真 itemClicked」实证
+       TouchBegin 被接受才抓取、不合成）。 */
+    if (g_touchMouseSynthEnabled && !xwidget_touchGrabFind(primaryId)) {
+        if (type == XEVENT_TYPE_TOUCH_BEGIN && !primaryAccepted) {
             g_touchMouseSynthActive = true;
             /* 对标 Qt：合成 press 携带 LeftButton（button 与 buttons 一致）。 */
             XWidget_synthesizeMouseFromTouch(top,
@@ -1400,12 +1757,22 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
                 XMouseButton_NoButton, &topLocal);
         }
     }
-    /* Qt 语义：触点序列结束（END/CANCEL）后清理抓取与仿真状态。 */
-    if (type == XEVENT_TYPE_TOUCH_END || type == XEVENT_TYPE_TOUCH_CANCEL) {
-        g_touchGrabWidget = NULL;
+    /* Qt 语义：序列结束（END）按事件携带 id 逐 id 摘表；CANCEL 全清；
+       两态均复位仿真状态。 */
+    if (type == XEVENT_TYPE_TOUCH_END) {
+        if (te->m_points) {
+            int k;
+            for (k = 0; k < te->m_pointCount; ++k)
+                xwidget_touchGrabRemoveId(te->m_points[k].m_id);
+        } else {
+            xwidget_touchGrabRemoveId(primaryId);
+        }
+        g_touchMouseSynthActive = false;
+    } else if (type == XEVENT_TYPE_TOUCH_CANCEL) {
+        xwidget_touchGrabClear();
         g_touchMouseSynthActive = false;
     }
-    return XEvent_isAccepted(event);
+    return anyAccepted;
 }
 
 /** @brief 数位板事件命中派发：与鼠标一致的按压命中路径（对标 QWidgetWindow::
@@ -1498,6 +1865,18 @@ static void XWidget_noopEvent_default(XWidget* self, XEvent* event)
     (void)event;
 }
 
+/** @brief 焦点变化默认槽：聚焦/失焦即重绘（对标 QWidget::focusInEvent /
+ *         focusOutEvent 默认 update()，qwidget.cpp:9714/:9740）。
+ * @details 样式层 HasFocus 焦点框（dotted frame）只在重绘时呈现——
+ *          此前默认槽为空操作，Tab 移动焦点后新旧焦点控件都不重绘，
+ *          焦点框要等无关重绘才出现甚至永不出现（问题 #13 键盘焦点
+ *          完全不可见的另一半根因）。 */
+static void XWidget_focusEvent_default(XWidget* self, XEvent* event)
+{
+    (void)event;
+    if (self) XWidget_update(self);
+}
+
 /* ==================== XWidgetWindow 桥接窗口类 ==================== */
 
 XVtable* XWidgetWindow_class_init(void)
@@ -1506,6 +1885,15 @@ XVtable* XWidgetWindow_class_init(void)
     XVTABLE_INHERIT_XCLASS(XWindow);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXWidgetWindow_event);
     return XVTABLE_DEFAULT;
+}
+
+/** @brief 顶层控件是否为 Popup 型原生窗（模态门豁免判定，见
+ *  VXWidgetWindow_event 应用模态拦截注释）。无桥接窗按非 Popup 处理。 */
+static bool XWidget_topIsPopup(const XWidget* top)
+{
+    return top && top->m_windowHandle &&
+           XWindow_type((XWindow*)top->m_windowHandle) ==
+               XWindowType_Popup;
 }
 
 /** @brief 顶层桥接窗口事件总入口：把窗口事件转译为控件事件。 */
@@ -1522,7 +1910,18 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     type = XEvent_type(event);
     /* 应用模态输入拦截（对标 QApplication 模态语义）：存在活动模态
        控件时，非模态顶层窗口的输入事件一律吞掉（对标 Qt
-       QGuiApplicationPrivate::isWindowBlocked）。 */
+       QGuiApplicationPrivate::isWindowBlocked）。
+       Popup 豁免（页6 文件对话框组合框弹层不可选根修，2026-09-25）：
+       Qt::Popup 是模态面板的瞬态输入延伸——Qt 模态对话框内的
+       QComboBox 下拉/QMenu 弹层可正常交互，isWindowBlocked 不阻塞
+       Popup。本框架子控件形态对话框（XFileDialog/XInputDialog/
+       QColorDialog，flags 无 Window 位）的 modalTop=主窗顶层，而组合
+       框弹层（XComboPopupView）是独立顶层 Popup 窗：不加豁免时，平台
+       XGrabPointer/XGrabKeyboard 把用户输入全部重定向进弹层原生窗，
+       却在本门被 modalTop!=top 吞掉——弹层行点击/Return/Esc 全部失效
+       且点击外部无法收层（弹层僵尸化，实测 :120 页6 复现）。弹层关闭
+       经 hidePopup 焦点回交宿主（XComboBox_hidePopup_base），模态语义
+       不受损。 */
     if (g_applicationModalWidget) {
         static const XEventType inputTypes[] = {
             XEVENT_TYPE_MOUSE_BUTTON_PRESS, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
@@ -1541,7 +1940,7 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
             if (type == inputTypes[ti]) {
                 XWidget* modalTop =
                     XWidget_topLevel(g_applicationModalWidget);
-                if (modalTop != top) {
+                if (modalTop != top && !XWidget_topIsPopup(top)) {
                     XEvent_accept(event);
                     return true;
                 }
@@ -1712,8 +2111,8 @@ XVtable* XWidget_class_init(void)
         XWidget_noopEvent_default,         /* ResizeEvent */
         XWidget_noopEvent_default,         /* MoveEvent */
         XWidget_closeEvent_default,        /* CloseEvent */
-        XWidget_noopEvent_default,         /* FocusInEvent */
-        XWidget_noopEvent_default,         /* FocusOutEvent */
+        XWidget_focusEvent_default,        /* FocusInEvent（对标 QWidget::focusInEvent 默认 update()） */
+        XWidget_focusEvent_default,        /* FocusOutEvent（对标 QWidget::focusOutEvent 默认 update()） */
         XWidget_ignoreEvent_default,       /* EnterEvent */
         XWidget_ignoreEvent_default,       /* LeaveEvent */
         XWidget_ignoreEvent_default,       /* KeyPressEvent */
@@ -2006,10 +2405,18 @@ static void VXWidget_deinit(XWidget* self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
     if (g_mouseGrabWidget == self)
         g_mouseGrabWidget = NULL;
-    if (g_touchGrabWidget == self)
-        g_touchGrabWidget = NULL;
+    /* 销毁路径全表遍历摘除该控件全部触点抓取表项（per-id 表；多触点
+       抓取同一控件时旧单指针比较会漏摘其余表项）。 */
+    xwidget_touchGrabRemoveWidget(self);
     if (g_keyboardGrabWidget == self)
         g_keyboardGrabWidget = NULL;
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+    /* 悬停合成器登记靶析构自清位（第八轮 R1 悬停收口；与上方焦点/抓取
+       清位同纪律）：本控件若是合成器登记靶，失放前同步置空，保证
+       WSI 侧「登记非空即活对象」不变量（XWindowSystemInterface.c
+       xwsi_hoverTargetAlive 冷会话回退据此信任登记）。 */
+    XWindowSystemInterface_clearHoverTarget(self);
+#endif
     XWidget_freeString(&self->m_toolTip);
     XWidget_freeString(&self->m_windowTitle);
     XWidget_freeString(&self->m_windowIconText);
@@ -2374,20 +2781,24 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
     case XEVENT_TYPE_KEY_PRESS:
         XWidget_keyPressEvent_base(self, event);
         /* 对标 QWidget::event 的 Tab 焦点遍历：控件未处理的 Tab/
-         * Shift+Tab（Backtab）按 focusPolicy 移动焦点并消费。此前
-         * focusNextChild 全仓无调用点，Tab 键无效。 */
+         * Shift+Tab（Backtab）交窗口级 focusNextPrevChild 移动焦点并
+         * 消费。不以接收控件自身 focusPolicy 为门槛——Qt 中 Tab 遍历
+         * 由所在顶层窗口决定去向（qwidget.cpp:6816 focusNextPrevChild
+         * 沿父链上交），候选资格只看候选控件自身的 TabFocus 位；初始
+         * 无任何焦点控件时由窗口级回退起点启动遍历（问题 #3）。
+         * 派发顺序保持「keyPressEvent 优先、未接受才遍历」：编辑器
+         * （XItemDelegate）与富文本链接导航在 keyPressEvent 消费 Tab
+         * 提交/锚点移动，等价 Qt 的 focusNextPrevChild 重载/事件过滤器
+         * 拦截位，先遍历会抢走其按键。 */
         if (!XEvent_isAccepted(event)) {
             XKeyEvent* ke = (XKeyEvent*)event;
             int key = (int)ke->m_key;
             int mods = (int)ke->m_modifiers;
             if ((key == (int)XKey_Tab || key == (int)XKey_Backtab) &&
-                (mods & ~(int)XKeyboardModifier_ShiftModifier) == 0 &&
-                (XWidget_focusPolicy(self) & XWidgetFocusPolicy_TabFocus)) {
+                (mods & ~(int)XKeyboardModifier_ShiftModifier) == 0) {
                 bool next = (key == (int)XKey_Tab) ==
                             ((mods & (int)XKeyboardModifier_ShiftModifier) == 0);
-                bool moved = next ? XWidget_focusNextChild(self)
-                                  : XWidget_focusPreviousChild(self);
-                if (moved) {
+                if (xwidget_focusNextPrevChild(self, next)) {
                     XEvent_accept(event);
                     return true;
                 }
@@ -2466,6 +2877,28 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
     case XEVENT_TYPE_CONTENTS_RECT_CHANGE:
         XWidget_changeEvent_base(self, event);
         return true;
+    case XEVENT_TYPE_SHORTCUT_OVERRIDE:
+        /* 对标 QLineEdit::event 的 ShortcutOverride 分支
+         * （qlineedit.cpp:1451）：询问事件由认识它的文本编辑控件定夺——
+         * 行编辑族转交控制器 processShortcutOverrideEvent（XLineControl.c，
+         * Qt 条件全集：复制/撤销族、可打印及编辑键），多行编辑族转交
+         * XTextControl_processEvent（其 ShortcutOverride 分支）；其余
+         * 控件不识别该事件 → 保持忽略，快捷键照常激活。 */
+#if XLINEEDIT_ON && XLINECONTROL_ON
+        {
+            XLineControl* overrideControl =
+                xwidget_shortcutOverrideLineControl(self);
+            if (overrideControl) {
+                XLineControl_processShortcutOverrideEvent(
+                    overrideControl, (XKeyEvent*)event);
+                return XEvent_isAccepted(event);
+            }
+        }
+#endif /* XLINEEDIT_ON && XLINECONTROL_ON */
+#if XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON
+        xwidget_shortcutOverrideDelegate(self, (XKeyEvent*)event);
+#endif /* XTEXTCONTROL_ON && XPLAINTEXTEDIT_ON */
+        return XEvent_isAccepted(event);
     default:
         /* 未识别事件回退 XObject 默认 Event 实现（对标 QWidget::event 尾部）。 */
         return XClass_Parent(XObject, EXObject_Event,
@@ -3363,10 +3796,11 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
 #endif
     XObject_setParent((XObject*)self, parent ? (XObject*)parent : NULL);
     if (parentChanged && parent) {
-        /* QWidget::setParent(QWidget*) 将子控件移到新父控件的 (0,0)，
-         * 宽高保持不变；setGeometry 同时发出 MOVE 事件并刷新内容矩形。 */
-        XWidget_setGeometry(self, 0, 0, self->m_windowRect.width,
-                            self->m_windowRect.height);
+        /* 对标 Qt QWidgetPrivate::setParent_sys（qwidget.cpp:10925-11035，
+         * 全程不写 data.crect）：换父后位置与尺寸完整保留。原「移到
+         * (0,0)」系误标（Qt 源码/文档均无此行为），曾把 wrapTabPage
+         * 重挂的滚动条几何打回原点（第一轮 #47 根因）。本修复曾在
+         * stash pop 合并中被远端批次覆盖丢失，此次重新摘除。 */
     }
     /* 父链变化后重算生效可见状态。 */
     {
@@ -4400,9 +4834,34 @@ void XWidget_setTabOrder(XWidget* first, XWidget* second)
 /** @brief 判断控件是否可作为 Tab 链中的显式/文档序焦点候选（与收集规则一致）。 */
 static bool XWidget_focusChainCandidate(const XWidget* self)
 {
-    return self && self->m_enabled &&
-           (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
-           self->m_explicitShow && !self->m_isWindow;
+    const XObject* parent;
+    /* 对标 Qt 焦点遍历按生效可见性过滤（qwidget.cpp focusNextPrevChild
+     * 的候选走 isVisible()）：StackOne 隐藏页的子控件虽 explicitShow 但
+     * 生效不可见，不得成为候选——否则 Tab 落到不可见控件上（复扫-3
+     * #40 根因：页3 Tab 落到隐藏「按钮演示」页的 m_button）。 */
+    if (!(self && self->m_enabled &&
+          (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
+          self->m_visible && !self->m_isWindow))
+        return false;
+    /* 复合控件候选资格二选一，停靠点归容器（对标 Qt 单控件语义：
+     * QAbstractSpinBoxPrivate::init 的 d->edit->setFocusProxy(q)
+     * （qabstractspinbox.cpp:691）令内嵌行编辑与容器合成单停靠点，
+     * qapplication.cpp:1996-1998 的 composites 过滤保证 Tab 不在父子
+     * 间打转）。XGui 复合容器（XAbstractSpinBox 等）尚未调用
+     * XWidget_setFocusProxy，此处在收集端等效收口：直接父控件自身为
+     * Tab 候选时子控件不重复入链——XLineEdit_init 补 StrongFocus（复
+     * 扫-5 #40）后，页3 SpinBox 的内嵌编辑框不再与容器双停靠，链序
+     * [LE,SpinBox,Slider,nav0..nav8] 维持（复扫-5 路0 项4）；NoFocus
+     * 容器（页面/groupBox/XChartView）下的独立控件不受影响。 */
+    parent = XObject_parent((XObject*)self);
+    if (parent && parent->is_widget) {
+        const XWidget* pw = (const XWidget*)parent;
+        if (pw->m_enabled &&
+            (pw->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
+            pw->m_visible && !pw->m_isWindow)
+            return false;
+    }
+    return true;
 }
 
 /** @brief 深度优先收集可 Tab 聚焦子控件（不含顶层自身；顺序即绘制顺序）。 */
@@ -4461,13 +4920,41 @@ static XWidget* XWidget_focusChainTarget(XWidget* self, bool forward)
             break;
         }
     }
+    if (cur == n) {
+        /* 对标 Qt 焦点锚定：接收 Tab 的控件自身不是候选（如行编辑的
+         * 内嵌编辑器）时，以最近的可聚焦祖先为锚续链——此前直接从头
+         * 取候选，Tab 从文本控件出发会落回文档序首控件（复扫-3 #40），
+         * 焦点链在文本控件处断岛。 */
+        XWidget* anc = XWidget_parentWidget(self);
+        while (anc && cur == n) {
+            for (i = 0; i < n; ++i) {
+                if (XVector_At_Base(list, (int64_t)i, XWidget*) == anc) {
+                    cur = i;
+                    break;
+                }
+            }
+            if (cur == n)
+                anc = XWidget_parentWidget(anc);
+        }
+    }
     target = NULL;
     for (i = 0; i < n; ++i) {
-        size_t idx = forward ? (cur + 1 + i) % n : (cur + n - 1 - i) % n;
-        XWidget* candidate = XVector_At_Base(list, (int64_t)idx, XWidget*);
-        if (candidate == self) continue;
-        target = candidate;
-        break;
+        size_t idx;
+        /* 当前接收控件不在候选集（如 NoFocus 顶层接收首个 Tab）时的
+         * 退化起点：forward 从 0、backward 从 n-1（对标 Qt
+         * focusNextPrevChild_helper 的 f=toplevel 回退：从起点控件沿链
+         * 推进，首个候选即目标）。此前 (cur+1+i)%n 在 cur=n 时从 1
+         * 起跳，文档序首个可聚焦控件被跳过。 */
+        if (cur == n)
+            idx = forward ? i : (n - 1 - i);
+        else
+            idx = forward ? (cur + 1 + i) % n : (cur + n - 1 - i) % n;
+        {
+            XWidget* candidate = XVector_At_Base(list, (int64_t)idx, XWidget*);
+            if (candidate == self) continue;
+            target = candidate;
+            break;
+        }
     }
     XVector_delete_base((XClass*)list);
     return target;
@@ -4480,6 +4967,32 @@ static bool XWidget_focusStep(XWidget* self, bool forward)
     if (target)
         XWidget_setFocus(target);
     return target != NULL;
+}
+
+/** @brief 窗口级 Tab 焦点遍历入口（对标 QWidget::focusNextPrevChild，
+ *         qwidget.cpp:6816）。
+ * @details Qt 语义：子控件把遍历决定权沿父链上交所在顶层窗口——"only
+ *          the window that contains the child widgets decides where to
+ *          redirect focus"；窗口级以当前焦点控件为起点、无焦点控件时
+ *          回退以顶层自身为起点（focusNextPrevChild_helper：
+ *          f = toplevel->focusWidget() 不到时 f = toplevel），因此初始
+ *          无任何子控件持有焦点时首个 Tab 也能落入文档序首个候选。
+ *          此前 Tab 遍历以「接收键事件的控件自身 focusPolicy & TabFocus」
+ *          为门槛（问题 #3：初始无焦点且顶层为 NoFocus，遍历永不启动）。
+ *          文件内静态实现：公共头无此入口，XWidget.h 不在本批改动面。 */
+static bool xwidget_focusNextPrevChild(XWidget* self, bool next)
+{
+    XWidget* top;
+    if (!self) return false;
+    if (!self->m_isWindow) {
+        top = XWidget_topLevel(self);
+        if (top && top != self)
+            return xwidget_focusNextPrevChild(top, next);
+    }
+    /* 优先从当前焦点控件推进；g_focusWidget 不在本窗口时以顶层为起点。 */
+    if (g_focusWidget && XWidget_topLevel(g_focusWidget) == self)
+        return XWidget_focusStep(g_focusWidget, next);
+    return XWidget_focusStep(self, next);
 }
 
 XWidget* XWidget_nextInFocusChain(const XWidget* self)

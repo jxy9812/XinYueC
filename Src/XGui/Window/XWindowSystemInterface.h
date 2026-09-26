@@ -452,6 +452,38 @@ void XWindowSystemInterface_handleEnterEvent(XWindow* window,
  */
 void XWindowSystemInterface_handleLeaveEvent(XWindow* window);
 
+#if XWIDGET_ON
+/* 前置声明：回报钩子负载类型（调用方通常已含 XWidget.h；此处不反向
+ * 依赖控件域头文件，仅按不透明指针传递）。 */
+#ifndef XWIDGET_H
+typedef struct XWidget XWidget;
+#endif
+
+/**
+ * @brief      登记悬停合成器当前靶控件（控件域回报钩子；悬停残界收口）。
+ * @details    控件级悬停合成（xwsi_hoverSynthesizeMouseMove）解析
+ *             「原生窗 → 顶层控件」的三锚（应用焦点/模态/抓取）在纯悬停
+ *             冷会话（应用启动后未发生任何焦点/模态/抓取交互）全空，合成
+ *             器无锚不换靶。本钩子供 XWidget 桥接实投路径在把
+ *             XEVENT_TYPE_ENTER 真正投给命中靶控件的落点处回报该靶：
+ *             合成器以登记靶为回退锚解析窗→顶层，不再依赖三锚（对标
+ *             Qt QWidgetWindow::handleMouseEvent 的 enter/leave 现场维护，
+ *             qwidgetwindow.cpp dispatchEnterLeave 挂点）。
+ *             传 NULL 等价无条件清位。幂等：同靶重复登记为 no-op。
+ * @param      widget 桥实投 ENTER 的命中靶控件；借用，可为 NULL（清位）。
+ */
+void XWindowSystemInterface_setHoverTarget(XWidget* widget);
+
+/**
+ * @brief      悬停登记靶析构自清位（仅当登记靶==widget 时清）。
+ * @details    供 VXWidget_deinit 析构链挂接（与三锚自清理同纪律）：登记
+ *             靶失放前同步置空，保证合成器侧「登记非空即活对象」不变量，
+ *             靶控件 UAF 防护由清位纪律承担（全程不解引用失放对象）。
+ * @param      widget 正在析构的控件；可为 NULL（no-op）。
+ */
+void XWindowSystemInterface_clearHoverTarget(const XWidget* widget);
+#endif /* XWIDGET_ON */
+
 /**
  * @brief      冲刷窗口系统事件队列（对标 QWindowSystemInterface::flushWindowSystemEvents）。
  * @details    处理此前经 XGuiApplication_postEvent 排队的事件；同步注入

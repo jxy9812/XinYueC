@@ -610,7 +610,7 @@ static AdvPage* AdvPage_create(XWidget* parent)
 
 /* ==================== 页面装配（契约接口） ======================== */
 
-/** @brief 构建高级控件页（布局手工 setGeometry，内容区约 760x480）。 */
+/** @brief 构建高级控件页（布局手工 setGeometry，内容区 776x494）。 */
 XWidget* demo_page_advanced_build(XWidget* parent,
                                   DemoPageStatusFn status, void* user)
 {
@@ -890,10 +890,14 @@ XWidget* demo_page_advanced_build(XWidget* parent,
 
 #if ADV_SIZEGRIP_ON
     /* ---- XSizeGrip：页面右下角（真实拖拽由真人验证）。 ---- */
+    /* 装配锚定实际内容区（demo_layout_content：窗口 800x600 时内容区
+     * 776x494）右下角 (760,478)——旧值 (736,456) 按 760x480 设计稿摆位，
+     * 落后真实区 24/16px，恰沉入根控件 FPS 浮层矩形（564,524,210x50）
+     * 之下被完全盖压（2026-09-25 页7 SizeGrip 攻坚）。 */
     s_adv.sizeGrip = XSizeGrip_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                          (XWidget*)page);
     if (s_adv.sizeGrip) {
-        XWidget_setGeometry((XWidget*)s_adv.sizeGrip, 736, 456, 16, 16);
+        XWidget_setGeometry((XWidget*)s_adv.sizeGrip, 760, 478, 16, 16);
 #if ADV_TOOLTIP_ON
         adv_setToolTip((XWidget*)s_adv.sizeGrip,
                        "XSizeGrip：拖动调整顶层窗口尺寸");

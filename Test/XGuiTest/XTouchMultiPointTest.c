@@ -137,7 +137,14 @@ int XTouchMultiPointTest_run(void)
                 (int)XWidget_isVisible(&sinkB.m_base));
     }
 
-    /* 1. 双触点交错序列：id=1 落 A（被接受→抓取），id=2 落 B。 */
+    /* 1. 双触点交错序列：id=1 落 A（被接受→抓取），id=2 落 B。
+     *    [R2 排查结论，2026-09-26] 本节 4 断言失败非第七轮派发层连带
+     *    （XWidget_dispatchTouchEvent 工作树与 HEAD 逐行一致），根因是
+     *    XWidget.c 单一全局 g_touchGrabWidget 抓取（id=1 抓取后 id=2 全
+     *    序列误投 A），偏离 Qt 6.8 per-point 隐式抓取语义（qapplication.cpp
+     *    translateRawTouchEvent:3802 逐点 childAt/target、activateImplicit
+     *    TouchGrab:3791 抓取记于触点）。真修=per-id 抓取表，坐落 XWidget.c
+     *    （他路独占），处方已出：R2 deferred。 */
     pts[0] = tp_point(1, 100, 150, XTOUCHPOINT_STATE_PRESSED);
     pts[1] = tp_point(2, 300, 150, XTOUCHPOINT_STATE_PRESSED);
     /* id=1 BEGIN（主点在 A 区）。 */

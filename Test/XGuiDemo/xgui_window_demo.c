@@ -323,6 +323,8 @@ typedef struct DemoWin
     XTimerId        m_lcdTimer;     /**< LCD 数码管自动更新定时器。 */
     int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
+    bool            m_closeHot;    /**< 标题栏 ✕ 悬停（Win10 caption 红底）。 */
+    bool            m_closeArmed;  /**< 标题栏 ✕ 按下武装（按住加深一档）。 */
     const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
     int             m_screenshotFrames; /**< 截图模式已渲染帧数。 */
     bool            m_autoTest;         /**< 自动交互测试模式（第 4 页注入事件断言联动）。 */
@@ -622,6 +624,51 @@ static bool demo_performance_contains(DemoWin* self, XPoint position)
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
+/* ==================== 自绘标题栏 ✕ 关闭钮（对标 XDialog [×]） ==================== */
+
+#define DEMO_CLOSE_BTN_SIZE 28  /**< ✕ 命中/绘制区边长（Win10 caption 钮尺度）。 */
+#define DEMO_CLOSE_BTN_MARGIN 16 /**< ✕ 右缘距窗右缘内缩。 */
+#define DEMO_CLOSE_HOVER 0xFFE81123u /**< ✕ 悬停底色（Win10 关闭红）。 */
+#define DEMO_CLOSE_PRESSED 0xFFC50E1Fu /**< ✕ 按住底色（加深一档）。 */
+
+/** @brief 标题栏 ✕ 关闭钮几何（窗口本地坐标；与绘制严格同源）。
+ *  验收锚点：root(798,61)=窗内(758,21)（窗 800x600@+40+40）落在区内。 */
+static void demo_closeButton_rect(const DemoWin* self, XRect* out)
+{
+    int w = XWidget_width(&self->m_base);
+    XRect_init(out, w - DEMO_CLOSE_BTN_MARGIN - DEMO_CLOSE_BTN_SIZE,
+               6, DEMO_CLOSE_BTN_SIZE, DEMO_CLOSE_BTN_SIZE);
+}
+
+/** @brief 标题栏 ✕ 关闭钮命中（窗口本地坐标）。 */
+static bool demo_closeButton_contains(const DemoWin* self, const XPoint* pos)
+{
+    XRect r;
+    if (!self || !pos) return false;
+    demo_closeButton_rect(self, &r);
+    return pos->x >= r.x && pos->x < r.x + r.width &&
+           pos->y >= r.y && pos->y < r.y + r.height;
+}
+
+/** @brief 绘制标题栏 ✕ 关闭钮（三态：常态透明底白字形 / 悬停红底 / 按住深红）。 */
+static void demo_drawTitlebarClose(DemoWin* self, XPainter* painter)
+{
+    XRect r;
+    uint32_t bg;
+    int i;
+    if (!self || !painter) return;
+    demo_closeButton_rect(self, &r);
+    bg = 0xff1f4e79u; /* 标题栏基底色：常态透明（同底即隐形底座）。 */
+    if (self->m_closeArmed) bg = DEMO_CLOSE_PRESSED;
+    else if (self->m_closeHot) bg = DEMO_CLOSE_HOVER;
+    demo_fill_rect(painter, r.x, r.y, r.width, r.height, bg);
+    /* 白色 ✕ 字形：12x12 域内两条 2px 对角线。 */
+    for (i = 0; i < 10; ++i) {
+        demo_fill_rect(painter, r.x + 8 + i, r.y + 8 + i, 2, 2, 0xffffffffu);
+        demo_fill_rect(painter, r.x + 8 + 9 - i, r.y + 8 + i, 2, 2, 0xffffffffu);
+    }
+}
+
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
 /** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
  * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色，
@@ -640,12 +687,14 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
     demo_fill_rect(painter, 0, 0, w, 40, 0xff1f4e79u);      /* 标题栏基底 */
     /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
      * 不能画在根背景里）。 */
-    /* 棋盘格装饰：移入标题栏右端（占位 (w-60,8) 24x24，y∈[8,32] 落在
-     * 标题栏 [4,36] 内、右缘内缩 36px）。原位置 (w-116,84) 落在内容区，
-     * 会压住页 3 分组框上边框、页 4 "按钮盒"页签、页 5 "XHeaderView
-     * 几何"标签；新位置在标题文本右侧、导航行(y=44)之上，也远离右下角
-     * FPS 悬浮层，仍用于验证脏区提交。 */
-    demo_draw_checker(painter, w - 60, 8, 2, 2, 12);
+    /* 棋盘格装饰：占位 (w-104,8) 24x24（原 (w-60,8) 与新增的标题栏 ✕
+     * 关闭钮命中区 [w-44,w-16]x[6,34] 重叠，让位左移 44px；仍在标题栏
+     * [4,36] 内、✕ 左侧、导航行(y=44)之上，也远离右下角 FPS 悬浮层，
+     * 脏区提交验证功能不变）。 */
+    demo_draw_checker(painter, w - 104, 8, 2, 2, 12);
+    /* 标题栏右端 ✕ 关闭钮（悬停红底/按住深红三态，见
+     * demo_drawTitlebarClose；松开触发窗口关闭语义）。 */
+    demo_drawTitlebarClose(self, painter);
     /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
 }
 
@@ -1937,7 +1986,8 @@ static void VDemoWin_keyReleaseEvent(XWidget* self, XEvent* event)
            XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key));
 }
 
-/** @brief MousePressEvent：背景区域处理性能悬浮层；子控件由自身接收事件。 */
+/** @brief MousePressEvent：标题栏 ✕ 武装按压；背景区域处理性能悬浮层；
+ *         子控件由自身接收事件。 */
 static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
 {
     DemoWin* demo = (DemoWin*)self;
@@ -1946,6 +1996,20 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
     printf("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
            (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
            (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
+    /* 标题栏 ✕ 关闭钮：按下武装（按压态加深），松开在钮内才真正关窗
+     * （Win10 caption 语义；对标 XDialog [×] 按下武装/松开 reject）。 */
+    if (XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
+        XPoint pos = XMouseEvent_position(mouse);
+        if (demo_closeButton_contains(demo, &pos)) {
+            if (!demo->m_closeArmed) {
+                demo->m_closeArmed = true;
+                demo->m_staticSceneDirty = true; /* 按压态换底色需重建静态场景 */
+                demo_repaint(demo);
+            }
+            XEvent_accept(event);
+            return;
+        }
+    }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     {
         XPoint position = XMouseEvent_position(mouse);
@@ -1968,12 +2032,28 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
 #endif
 }
 
-/** @brief MouseReleaseEvent：结束性能悬浮层拖动。 */
+/** @brief MouseReleaseEvent：✕ 松开触发窗口关闭；结束性能悬浮层拖动。 */
 static void VDemoWin_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
+    /* 标题栏 ✕ 关闭钮：按住后在钮内松开 → 关闭窗口（走 XWidget_close：
+     * 发 CLOSE 事件给顶层控件，被接受则隐藏——本 demo 的 closeEvent
+     * 接受关闭并退出应用事件循环）；移出钮外松开仅解除武装（Win10
+     * caption 语义）。 */
+    if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
+        demo->m_closeArmed) {
+        XPoint pos = XMouseEvent_position(mouse);
+        bool overClose = demo_closeButton_contains(demo, &pos);
+        demo->m_closeArmed = false;
+        demo->m_staticSceneDirty = true;
+        demo_repaint(demo);
+        XEvent_accept(event);
+        if (overClose)
+            XWidget_close((XWidget*)self);
+        return;
+    }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
         XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
@@ -1995,12 +2075,31 @@ static void VDemoWin_mouseDoubleClickEvent(XWidget* self, XEvent* event)
            (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
 }
 
-/** @brief MouseMoveEvent：拖动性能悬浮层时更新其位置。 */
+/** @brief MouseMoveEvent：跟踪标题栏 ✕ 悬停态；拖动性能悬浮层时更新其位置。 */
 static void VDemoWin_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
+    /* 标题栏 ✕ 悬停热跟踪（Win10 caption 悬停红底；状态翻转重建静态
+     * 场景换底色；按住后移出钮外解除武装——松开不再关窗）。 */
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    if (!XPerformanceOverlay_isDragging(&demo->m_performanceOverlay))
+#endif
+    {
+        XPoint pos = XMouseEvent_position(mouse);
+        bool hot = demo_closeButton_contains(demo, &pos);
+        if (hot != demo->m_closeHot) {
+            demo->m_closeHot = hot;
+            demo->m_staticSceneDirty = true;
+            demo_repaint(demo);
+        }
+        if (demo->m_closeArmed && !hot) {
+            demo->m_closeArmed = false;
+            demo->m_staticSceneDirty = true;
+            demo_repaint(demo);
+        }
+    }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
         XMouseButton buttons = XMouseEvent_buttons(mouse);

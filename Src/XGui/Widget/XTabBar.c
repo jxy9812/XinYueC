@@ -633,6 +633,18 @@ static void VXTabBar_mousePressEvent(XWidget* self, XEvent* event)
     }
     xtabbar_emitInt(bar, (size_t)XTabBar_tabBarClicked_signal(bar, idx), idx);
     if (!bar->m_enabled[idx]) { XEvent_ignore(event); return; }
+    /*
+     * 点击移焦（隔夜台账猎获④：此前点击页签焦点原位）。对标 Qt
+     * 通用点击移焦：QApplicationPrivate::giveFocusAccordingToFocusPolicy
+     * （qapplication.cpp:2734-2737 → 3661）在鼠标按压分发前以
+     * Qt::MouseFocusReason 移焦，判据按任务口径"NoFocus 跳过"
+     * （本类策略已对齐 QTabBar 默认 TabFocus，qtabbar.cpp:385）。
+     * 滚动按钮/关闭钮/空白区/禁用页签不移焦：Qt 中前三者分别是
+     * NoFocus 子控件（qtabbar.cpp:380-382 CloseButton 同款）与
+     * 非命中区，禁用控件不收鼠标事件。
+     */
+    if (XWidget_focusPolicy(self) != XWidgetFocusPolicy_NoFocus)
+        XWidget_setFocusReason(self, XFocusReason_Mouse);
     if (bar->m_movable) {
         /* 拖拽换位起手：记录起始页签与按下位置（move 阶段跨页签即换位）。 */
         bar->m_dragActive = true;
@@ -911,6 +923,13 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_repeatSkip = 0;
     self->m_documentMode = false;
     self->m_drawBase = true;
+    /*
+     * 对标 QTabBarPrivate::init（qtabbar.cpp:379-385）非键盘导航分支
+     * 的 setFocusPolicy(Qt::TabFocus)：页签条可经 Tab 进入焦点链
+     * （方向键切页签的 Qt 前提）。此前缺省 NoFocus（XWidget_init）
+     * 使页签条既不进 Tab 链、点击亦不移焦（隔夜台账猎获④）。
+     */
+    XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_TabFocus);
 }
 
 XTabBar* XTabBar_create_ex(XMemoryType memory, XWidget* parent,

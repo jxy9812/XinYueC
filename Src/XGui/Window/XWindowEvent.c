@@ -95,8 +95,16 @@ static void VXPaintEvent_deinit(XPaintEvent* self)
         XClass_Deinit_Parent(XEvent, (XEvent*)self);
         old = XAtomic_exchange_uintptr_t(&g_paintEventSlot, (uintptr_t)self,
                                          XAtomic_MemoryOrder_AcqRel);
-        if (old)
+        if (old) {
+            /* 被顶者整体消亡：其按池语义保留的区域缓冲必须一并释放，
+               否则缓冲随结构体释放脱管（高频顶替路径逐轮泄漏，
+               ASan 差分实测 ~735B/轮，签名 XRegion_reserve←copy←init
+               ←createRecycled 槽空回退分支）。 */
+            XPaintEvent* stale = (XPaintEvent*)old;
+            if (!stale->m_regionBorrowed)
+                XRegion_deinit(&stale->m_region);
             XMemory_free((void*)old, XCLASS_DEFAULT_MEMORY_TYPE);
+        }
         return;
     }
     if (!self->m_regionBorrowed)

@@ -533,6 +533,8 @@ static int xpw_clipIncrChunkLimit(void);
 static bool xpw_clipIncrStart(Window requestor, Atom property, Atom selection,
                               Atom type, const unsigned char* data, int len);
 static bool xpw_clipHandleIncrDelete(const XPropertyEvent* pev);
+static void xpwn_releaseNativeEntry(XWNPendingEntry* entry,
+                                    bool sendDestroyWindow);
 /* EWMH 窗口状态回读（定义在 EWMH 窗口状态小节；PropertyNotify 分支
  * 用作 WM 状态回写 -> XWindow_reportWindowStateChanged 的换算入口）。 */
 static XWindowState xpwn_queryWmWindowState(Display* display, Window win);
@@ -2880,6 +2882,29 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
     if (!ev) return false;
     if (xpwn_handleDragSelectionRequest(ev)) return true;
     switch (ev->type) {
+    case DestroyNotify:
+        /* 外部销毁收尾（对标 Qt QWindow::event(QEvent::Close) 的
+           accept→destroy→maybeLastWindowClosed 链，qwindow.cpp:2652；
+           Qt xcb 对顶层 DestroyNotify 本身只有空默认处理——
+           qxcbconnection.cpp:598 / qxcbconnection.h:62，此处为框架增强）：
+           xdotool windowclose 直接 XDestroyWindow、WM 强杀亦然；窗口在
+           X 服务器侧已消失，若不收尾则应用侧 m_created 仍为真、窗口仍在
+           应用注册表，帧泵继续对死窗 XPutImage 刷 BadMatch，进程滞留
+           （第八轮总验收 FAIL② 实证）。收尾三步：平台登记释放（不发
+           XDestroyWindow，防 BadWindow）→ 公共层状态同步（m_created=false）
+           → 应用注销。窗口已被外部摧毁，CloseEvent 无从拒绝，不发关闭
+           事件（与 Qt 一致：destroy() 不发 QCloseEvent）；顶层窗数清零
+           时由 XGuiApplication_removeWindow 按 quitOnLastWindowClosed
+           请求退出（qguiapplication.cpp:3874 maybeLastWindowClosed）。 */
+        entry = xpwn_findByNativeWindow(ev->xdestroywindow.window);
+        if (entry && entry->m_window) {
+            XWindow* destroyedWindow = entry->m_window;
+            xpwn_releaseNativeEntry(entry, false);
+            XWindow_destroy(destroyedWindow);
+            XGuiApplication_removeWindow(destroyedWindow);
+            delivered = true;
+        }
+        break;
     case MapNotify:
         /* 对齐 QXcbWindow：窗口映射完成后补做挂起的激活请求。 */
         entry = xpwn_findByNativeWindow(ev->xmap.window);
@@ -3402,13 +3427,26 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
            避免误把任意 ClientMessage 当关闭请求。 */
             entry = xpwn_findByNativeWindow((Window)ev->xclient.window);
             if (entry && entry->m_window) {
+                XWindow* closingWindow = entry->m_window;
                 accepted = XWindowSystemInterface_handleCloseEvent(
-                    entry->m_window);
+                    closingWindow);
                 if (accepted) {
                     /* Qt：WM_DELETE 被接受后即视为窗口关闭，隐藏并销毁
-                       原生资源（XWindow_destroy 幂等）。 */
-                    XWindow_setVisible(entry->m_window, false);
-                    XWindow_destroy(entry->m_window);
+                       原生资源（XWindow_destroy 幂等）。注意：destroy 会
+                       把平台登记项的 m_window 置 NULL，后续注销必须用
+                       预先留存的窗口指针。 */
+                    XWindow_setVisible(closingWindow, false);
+                    XWindow_destroy(closingWindow);
+                    /* 对标 Qt QWindow::event(QEvent::Close) 的
+                       accept→destroy→maybeLastWindowClosed 链
+                       （qwindow.cpp:2652；qguiapplication.cpp:3874）：
+                       关闭被接受后立即从应用注册表注销——最后一个可见
+                       顶层关闭时发射 lastWindowClosed 并按
+                       quitOnLastWindowClosed 请求退出。此前只毁窗不注销，
+                       closeEvent 不自行 quit 的应用（Qt 语义下属常态）
+                       在最后一个窗口关闭后进程滞留。XWindow 对象析构时
+                       的 removeWindow 幂等，此处提前调用不产生重复。 */
+                    XGuiApplication_removeWindow(closingWindow);
                 }
                 delivered = true;
             }
@@ -4800,12 +4838,18 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
     return true;
 }
 
-void XPlatformNativeWindow_destroy(XWindow* window)
+/** @brief 释放平台登记项持有的 X11 资源并摘除登记。
+ * @details 自发销毁（XWindow_destroy 路径）需要本进程发送 XDestroyWindow
+ *          （sendDestroyWindow=true）；外部销毁（DestroyNotify：xdotool
+ *          windowclose 的 XDestroyWindow、WM 强杀）窗口已被 X 服务器移除，
+ *          再发 XDestroyWindow 只会刷 BadWindow——sendDestroyWindow=false
+ *          只做资源回收与登记摘除（XFreeGC/XDestroyIC 等对已死窗口/上下文
+ *          仍安全：GC 与 IC 不依赖窗口存活）。 */
+static void xpwn_releaseNativeEntry(XWNPendingEntry* entry,
+                                    bool sendDestroyWindow)
 {
-    XWNPendingEntry* entry;
-    if (!window) return;
-    entry = xpwn_findByXWindow(window);
-    if (!entry || !entry->m_win) return;
+    XWindow* window = entry->m_window;
+    if (!entry->m_win) return;
     if (entry->m_inputContext) {
         XDestroyIC(entry->m_inputContext);
         entry->m_inputContext = NULL;
@@ -4818,14 +4862,16 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     xpwn_releasePresentImage(entry);
     if (entry->m_gc) XFreeGC(g_xpwnDisplay, entry->m_gc);
     /* 窗口销毁时取消已定义的窗口光标（XUndefineCursor；形状字体光标
-       资源本身由进程期缓存持有，随 XCloseDisplay 统一释放）。 */
-    if (entry->m_win)
+       资源本身由进程期缓存持有，随 XCloseDisplay 统一释放）。外部销毁
+       路径窗口属性已随窗口消失，再对死窗发请求只会刷 BadWindow。 */
+    if (sendDestroyWindow)
         XUndefineCursor(g_xpwnDisplay, entry->m_win);
     /* 该窗口若是跨进程剪贴板读取的请求者或 INCR serve 的对端，清理其
        在途会话（防御；常规请求窗口为专用窗口不随业务窗口销毁）。 */
     xpw_clipIncrAbortForWindow(entry->m_win);
     /* 外部窗口只解除登记，不取得其 X11 资源的销毁所有权。 */
-    if (XWindow_type(window) != XWindowType_ForeignWindow)
+    if (sendDestroyWindow && window &&
+        XWindow_type(window) != XWindowType_ForeignWindow)
         XDestroyWindow(g_xpwnDisplay, entry->m_win);
     entry->m_win = 0;
     entry->m_window = NULL;
@@ -4839,6 +4885,15 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     entry->m_lastPressPos = (XPoint){0, 0};
     entry->m_preedit[0] = '\0';
     XFlush(g_xpwnDisplay);
+}
+
+void XPlatformNativeWindow_destroy(XWindow* window)
+{
+    XWNPendingEntry* entry;
+    if (!window) return;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_win) return;
+    xpwn_releaseNativeEntry(entry, true);
 }
 
 /* ==================== 属性同步（平台后端提供） ==================== */

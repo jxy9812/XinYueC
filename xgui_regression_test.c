@@ -34031,12 +34031,16 @@ int main(void)
     test_util_task219a_contract();
     test_dialog_task219b_contract();
 #endif /* XWIDGET_ON */
+    /* 终门必须在 test_xgui_widgets() 之后：控件族（XLineEditTest/
+       XTouchMultiPointTest 等）经 expect_true 也计入 s_failures——
+       门序颠倒时该族失败从不进退出码（此前 FAILS=0 读数对控件族
+       不可信）。 */
+    test_xgui_widgets();
     if (s_failures != 0) {
         XERROR_PRINTF("%d XGui regression test(s) failed\n", s_failures);
         return 1;
     }
     puts("XGui regression tests passed");
-    test_xgui_widgets();
 
     /* 退出持有（~196KB 夹具控件树）为已知基线：全量拆除需先解决
        栈对象无法安全远距删除的问题（ASan 实证：泄漏的栈控件登记后

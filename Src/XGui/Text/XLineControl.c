@@ -3268,7 +3268,15 @@ void XLineControl_complete(XLineControl* self, int key)
             if (!xlc_advanceToEnabledItem(self, n)) return;
         }
     } else {
-        if (text[0] == '\0') return; /* 无弹窗承载：空文本直接返回。 */
+        if (text[0] == '\0') {
+            /* 对标 Qt QWidgetLineControl::complete 空文本分支
+             * （qwidgetlinecontrol.cpp:1463-1469：`if (text.isEmpty())
+             * { if (popup) popup->hide(); return; }`）：文本清空时若
+             * 弹层开着同步收层，不留孤儿浮层（第九轮活体 ① 修复面④：
+             * 此前直接 return，清空后弹层残留）。 */
+            XCompleter_hidePopup(self->m_completer);
+            return;
+        }
         XCompleter_setCompletionPrefix_2(self->m_completer, text);
     }
     XCompleter_complete(self->m_completer);
@@ -3531,6 +3539,11 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
         if (!XLineControl_isReadOnly(self) && XLineControl_hasSelectedText(self)) {
             XLineControl_copy(self, (int)XClipboardMode_Clipboard);
             XLineControl_del(self);
+#if defined(XLC_COMPLETER_ON) && XLC_COMPLETER_ON
+            /* 剪切清空路径同款收层（全选剪切→complete() 空文本分支
+               隐藏弹层；非清空剪切按新前缀重算，与 Backspace 一致）。 */
+            XLineControl_complete(self, key);
+#endif
         }
     }
     else if (xlc_matchCtrlLetter(event, 'K', XLC_MODS(XKeyboardModifier_ControlModifier))) {
@@ -3541,6 +3554,10 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                                           - XLineControl_cursor(self));
             XLineControl_copy(self, (int)XClipboardMode_Clipboard);
             XLineControl_del(self);
+#if defined(XLC_COMPLETER_ON) && XLC_COMPLETER_ON
+            /* 删至行尾同属清空路径族：光标在行首时整串清空→收层。 */
+            XLineControl_complete(self, key);
+#endif
         }
     }
     else if (xlc_matchKey(event, XKey_Home, XKeyboardModifier_NoModifier)) {
@@ -3608,7 +3625,18 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
             XLineControl_home(self, true);
     }
     else if (xlc_matchKey(event, XKey_Delete, XKeyboardModifier_NoModifier)) {
-        if (!XLineControl_isReadOnly(self)) XLineControl_del(self);
+        if (!XLineControl_isReadOnly(self)) {
+            XLineControl_del(self);
+#if defined(XLC_COMPLETER_ON) && XLC_COMPLETER_ON
+            /* 对标 Backspace 同款"变更后 complete"语义（Backspace 分支
+               backspace(); complete(Key_Backspace)）：Delete 与剪切等
+               清空路径此前不调 complete，Ctrl+A+Delete 清空后补全弹层
+               残留（complete() 空文本分支即 Qt qwidgetlinecontrol.cpp
+               :1464-1469 的 popup->hide()，第九轮 W2 修复分支仅在
+               complete() 内可达——Delete 路径补调后收层语义到达）。 */
+            XLineControl_complete(self, XKey_Delete);
+#endif
+        }
     }
     else if (xlc_matchKey(event, XKey_Delete, XLC_MODS(XKeyboardModifier_ControlModifier))) {
         /* DeleteEndOfWord。 */
@@ -3617,6 +3645,10 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                 XLineControl_cursorWordForward(self, true);
             if (XLineControl_hasSelectedText(self))
                 XLineControl_del(self);
+#if defined(XLC_COMPLETER_ON) && XLC_COMPLETER_ON
+            /* 同 Delete：词删除清空路径统一收层（清空→弹层不残留）。 */
+            XLineControl_complete(self, XKey_Delete);
+#endif
         }
     }
     else if (xlc_matchKey(event, XKey_Backspace, XLC_MODS(XKeyboardModifier_ControlModifier))) {
@@ -3626,6 +3658,11 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                 XLineControl_cursorWordBackward(self, true);
             if (XLineControl_hasSelectedText(self))
                 XLineControl_del(self);
+#if defined(XLC_COMPLETER_ON) && XLC_COMPLETER_ON
+            /* 同 Backspace：词删除清空路径统一收层；Inline 模式下
+               complete(Key_Backspace) 首分支直接返回（对标 Qt）。 */
+            XLineControl_complete(self, XKey_Backspace);
+#endif
         }
     }
     else if (xlc_matchKey(event, XKey_Home, XLC_MODS(XKeyboardModifier_ControlModifier))) {

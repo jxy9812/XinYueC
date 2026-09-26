@@ -14,6 +14,7 @@
 #include "XGuiConfig.h"
 
 #include "XAlgorithm.h"
+#include "XStringUtils.h"
 #include "XWidget_Protected.h"
 #if XABSTRACTSCROLLAREA_ON
 #include "XAbstractScrollArea.h"
@@ -23,6 +24,25 @@
 
 /* ==================== XMdiSubWindow ==================== */
 
+/** @brief 子窗 chrome 绘制（对标 QMdiSubWindow::paintEvent，
+ *         qmdisubwindow.cpp:3086-3138 的标准条构造）。
+ * @details 第八轮总验收 FAIL② 根修：此前仅涂「裸蓝标题条 + 白体」，
+ *          无窗框无图标无按钮位（r3e_mdi_zoom.png）。补齐：
+ *          - 窗框 1px（Mid；对标 PE_FrameWindow，宽度按本项目设计
+ *            语言取 1px 而非 Fusion 的 PM_MdiSubWindowFrameWidth=4）；
+ *          - 标题带：激活=Highlight 底（qmdisubwindow.cpp:1637-1644
+ *            State_Active 分支；激活判定=mdiArea()->activeSubWindow
+ *            ==self），非激活=Window 底；
+ *          - 带左系统菜单图标位（迷你窗占位图形，对标 CC_TitleBar 的
+ *            SC_TitleBarSysMenu）、右最小化/关闭按钮位（SC_TitleBar
+ *            MinButton/CloseButton；按任务裁定为绘制占位，不接交互，
+ *            命中域仍归头带拖拽）；
+ *          - 标题文本自 m_title；空则回落内容件 windowTitle（Qt
+ *            addSubWindow/setWidget 标题随内容件，qmdisubwindow.cpp:
+ *            994 标题同步链的静态版）。
+ *          脏区口径不变：只绘事件脏区∩各铬件（night #50 修复保持）。
+ *          内容件挂载已内收 1px（XMdiSubWindow_setWidget/resizeEvent），
+ *          侧框线不再被子控件覆盖。 */
 static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
 {
     XMdiSubWindow* sw = (XMdiSubWindow*)self;
@@ -32,9 +52,14 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
     XRect head;
     XRect body;
     XRect exposed;
-    uint32_t highlight;
-    uint32_t windowText;
+    XRect piece;
+    XRect clipHead;
+    const char* titleText;
+    uint32_t bandColor;
+    uint32_t textColor;
+    uint32_t frameColor;
     uint32_t base;
+    bool active;
     int w;
     int h;
     if (!sw || !event) return;
@@ -54,20 +79,48 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
     {
         XPalette palette = XWidget_palette(self);
         XColor c = XPalette_color(&palette, XPaletteColorGroup_Current,
-                                  XPaletteColorRole_Highlight);
-        highlight = XColor_rgba(&c);
+                                  XPaletteColorRole_Base);
+        base = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Mid);
+        frameColor = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Window);
+        /* 非激活标题带底色默认（对标 titleBarOptions 的 Inactive 色组，
+         * qmdisubwindow.cpp:1640-1643）。 */
+        bandColor = XColor_rgba(&c);
         c = XPalette_color(&palette, XPaletteColorGroup_Current,
                            XPaletteColorRole_WindowText);
-        windowText = XColor_rgba(&c);
-        c = XPalette_color(&palette, XPaletteColorGroup_Current,
-                           XPaletteColorRole_Base);
-        base = XColor_rgba(&c);
+        textColor = XColor_rgba(&c);
     }
 #else
-    highlight = 0xFF3080C0u;
-    windowText = 0xFF000000u;
+    bandColor = 0xFFD8D8D8u;
+    textColor = 0xFF000000u;
     base = 0xFFFFFFFFu;
+    frameColor = 0xFF808080u;
 #endif /* XPALETTE_ON */
+    /* 激活判定：所属 MDI 区当前活动子窗（脱离区域的独立子窗按非激
+       活呈现，同 Qt 无 parent 时无活动态）；激活带=Highlight 底 +
+       HighlightedText 前景（qmdisubwindow.cpp:1637-1639）。 */
+    {
+        XMdiArea* area = XMdiSubWindow_mdiArea(sw);
+        active = area && XMdiArea_activeSubWindow(area) ==
+                            (XMdiSubWindow*)sw;
+    }
+    if (active) {
+#if XPALETTE_ON
+        XPalette palette = XWidget_palette(self);
+        XColor c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                                  XPaletteColorRole_Highlight);
+        bandColor = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_HighlightedText);
+        textColor = XColor_rgba(&c);
+#else
+        bandColor = 0xFF3080C0u;
+        textColor = 0xFFFFFFFFu;
+#endif /* XPALETTE_ON */
+    }
     /* 只绘事件脏区（本地坐标，收进控件矩形）：此前恒整幅涂写标题条
      * +白底，多矩形脏区逐矩形派发时本窗的整幅白底会抹掉先派矩形刚
      * 恢复的内容标签像素，且抹写不受 present 区域保护（night #50
@@ -77,23 +130,64 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
     if (exposed.y < 0) { exposed.height += exposed.y; exposed.y = 0; }
     if (exposed.x + exposed.width > w) exposed.width = w - exposed.x;
     if (exposed.y + exposed.height > h) exposed.height = h - exposed.y;
-    XRect_init(&head, 0, 0, w, 20);
+    /* 体不透明填充（行 20 起、内收侧/底框线）：此前仅涂标题条，标题条
+     * 以下透明透出视口背景。 */
+    if (h > 21 && w > 2) {
+        XRect_init(&body, 1, 20, w - 2, h - 21);
+        body = XRect_intersected(&body, &exposed);
+        if (body.width > 0 && body.height > 0)
+            XPainter_fillRect(&painter, &body, base);
+    }
+    /* 标题带（框线内 1..19 行；第 19 行兼作带下分隔）。 */
+    XRect_init(&head, 1, 1, w > 2 ? w - 2 : 0, 19);
+    clipHead = head;
     head = XRect_intersected(&head, &exposed);
-    /* 子窗体体不透明填充（对标 QMdiSubWindow::paintEvent 的整框不透明
-     * 绘制）：此前仅涂标题条，标题条以下透明透出视口背景，视觉上只剩
-     * 「一条蓝色细线」，子窗体存在感全无。 */
-    XRect_init(&body, 0, 20, w, h > 20 ? h - 20 : 0);
-    body = XRect_intersected(&body, &exposed);
     if (head.width > 0 && head.height > 0)
-        XPainter_fillRect(&painter, &head, highlight);
-    if (body.width > 0 && body.height > 0)
-        XPainter_fillRect(&painter, &body, base);
+        XPainter_fillRect(&painter, &head, bandColor);
+    /* 窗框 1px：顶/左/右/底（最后绘制，保证框线压住体填充）。 */
+    if (w > 0 && h > 0) {
+        if (0 >= exposed.y && 0 < exposed.y + exposed.height) {
+            XRect_init(&piece, exposed.x, 0, exposed.width, 1);
+            XPainter_fillRect(&painter, &piece, frameColor);
+        }
+        if (h - 1 >= exposed.y && h - 1 < exposed.y + exposed.height &&
+            exposed.width > 0) {
+            XRect_init(&piece, exposed.x, h - 1, exposed.width, 1);
+            XPainter_fillRect(&painter, &piece, frameColor);
+        }
+        if (0 >= exposed.x && 0 < exposed.x + exposed.width) {
+            XRect_init(&piece, 0, exposed.y, 1, exposed.height);
+            XPainter_fillRect(&painter, &piece, frameColor);
+        }
+        if (w - 1 >= exposed.x && w - 1 < exposed.x + exposed.width &&
+            exposed.height > 0) {
+            XRect_init(&piece, w - 1, exposed.y, 1, exposed.height);
+            XPainter_fillRect(&painter, &piece, frameColor);
+        }
+    }
     if (head.width > 0 && head.height > 0) {
-        XPainter_setClipRect(&painter, &head,
+        XPainter_setClipRect(&painter, &clipHead,
                              XPainterClipOperation_ReplaceClip);
-        XPainter_drawText(&painter, 6, 14,
-                          sw->m_title ? XString_toUtf8(sw->m_title) : "",
-                          windowText);
+        /* 左：系统菜单图标位（迷你窗占位：1px 外框 + 顶部标题条填充，
+         * 对标 CC_TitleBar 的 SC_TitleBarSysMenu 图标位）。 */
+        XPainter_setPen(&painter, textColor);
+        XPainter_drawRect_2(&painter, 4.0f, 4.0f, 10.0f, 10.0f);
+        XRect_init(&piece, 5, 5, 8, 3);
+        XPainter_fillRect(&painter, &piece, textColor);
+        /* 标题文本：x=18 让出图标位；基线 14 同 XDockWidget 标题条口径。 */
+        titleText = "";
+        if (sw->m_title &&
+            XString_size((const XContainer*)sw->m_title) > 0)
+            titleText = XString_toUtf8(sw->m_title);
+        if (titleText && *titleText)
+            XPainter_drawText(&painter, 18, 14, titleText, textColor);
+        /* 右：最小化（8x1 横线）+ 关闭（"×" 字形）按钮位（绘制占位，
+         * 不接交互；对标 SC_TitleBarMinButton/SC_TitleBarCloseButton）。 */
+        if (w > 40) {
+            XRect_init(&piece, w - 34, 10, 8, 1);
+            XPainter_fillRect(&painter, &piece, textColor);
+            XPainter_drawText(&painter, w - 18, 14, "\xc3\x97", textColor);
+        }
         XPainter_setClipping(&painter, false);
     }
     XPainter_deinit(&painter);
@@ -115,11 +209,86 @@ static XMdiSubWindow* g_mdiDragWindow = NULL; /**< 会话归属子窗（防串�
 static XPoint g_mdiDragPressGlobal;       /**< 按下时屏幕全局坐标。 */
 static XRect g_mdiDragStartGeometry;      /**< 按下时子窗几何（尺寸锚定）。 */
 
+/** @brief 内容件在子窗内的挂载矩形（标题带下方、框线内收 1px）。
+ * @details chrome 窗框（paintEvent）绘制占用的 1px 边缘不归内容件：
+ *          x=1 起、宽 w-2（避侧框线），y=20（标题带 0..19 行）起、
+ *          高 h-21（底框线 1 行）；尺寸不足时钳 0（折叠态 h=20 时
+ *          内容件 0 高不绘，同 Qt 折叠仅标题条）。setWidget 挂载与
+ *          resizeEvent 随框布局共用同一口径。 */
+static void xmdi_subWindowContentRect(const XMdiSubWindow* self, XRect* out)
+{
+    int w;
+    int h;
+    if (!out) return;
+    w = self ? XWidget_width((const XWidget*)self) : 0;
+    h = self ? XWidget_height((const XWidget*)self) : 0;
+    XRect_init(out, 1, XMDI_SUBWINDOW_TITLEBAR_HEIGHT,
+               w > 2 ? w - 2 : 0, h > 21 ? h - 21 : 0);
+}
+
 static int xmdi_dragClamp(int value, int low, int high)
 {
     if (value < low) return low;
     if (value > high) return high;
     return value;
+}
+
+/** @brief 拖动一步的脏区全覆盖（对标 QMdiAreaPrivate 移动 update 系统）。
+ * @details 第八轮总验收 FAIL① 根修：拖后标题栏左端「台阶状缺角」
+ *          （r3e_mdi_drag2_zoom.png）= 旧位部分行列从未进入任何已派发
+ *          脏区快照。XWidget_setGeometry 内联的 old∪new 包围盒失效
+ *          （XWidget.c recomputeGeometry）与显式 update 共用同一异步
+ *          管线（顶层脏区 → PAINT 快照 → 求差派发），单次快照竞态下
+ *          可能漏行。本助手在每步拖动后追加一次显式 update：
+ *          旧位 ∪ 新位 ∪ 平移扫掠 delta 带（横/纵四条带）逐矩形入队，
+ *          同区域多次入队幂等，任一次快照漏区都被其余入队补齐——
+ *          脏区覆盖从「单来源单快照」变为「双来源多快照」全闭合。
+ * @param      parent 子窗父容器（视口；矩形同子窗局部坐标系）。
+ * @param      oldRect 本步拖动前子窗矩形。
+ * @param      newRect 本步拖动后子窗矩形。
+ * @return     无返回值。
+ */
+static void xmdi_dragUpdateCoverage(XWidget* parent,
+                                    const XRect* oldRect,
+                                    const XRect* newRect)
+{
+    XRegion region;
+    XRect band;
+    int dx = newRect->x - oldRect->x;
+    int dy = newRect->y - oldRect->y;
+    int minY = oldRect->y < newRect->y ? oldRect->y : newRect->y;
+    int minX = oldRect->x < newRect->x ? oldRect->x : newRect->x;
+    int spanH = oldRect->height > newRect->height
+                    ? oldRect->height : newRect->height;
+    int spanW = oldRect->width > newRect->width
+                    ? oldRect->width : newRect->width;
+    if (!parent) return;
+    XRegion_init(&region);
+    XRegion_addRect(&region, oldRect);
+    XRegion_addRect(&region, newRect);
+    /* 横向扫掠带：水平位移在新旧位之间扫过的竖条（含对角移动的
+       斜向耦合段，覆盖域=平移 Minkowski 和，宽 |dx| 高 h+|dy|）。 */
+    if (dx > 0) {
+        XRect_init(&band, oldRect->x + oldRect->width, minY, dx,
+                   spanH + (dy < 0 ? -dy : dy));
+        XRegion_addRect(&region, &band);
+    } else if (dx < 0) {
+        XRect_init(&band, newRect->x + newRect->width, minY, -dx,
+                   spanH + (dy < 0 ? -dy : dy));
+        XRegion_addRect(&region, &band);
+    }
+    /* 纵向扫掠带：垂直位移扫过的横条（宽 w+|dx| 高 |dy|）。 */
+    if (dy > 0) {
+        XRect_init(&band, minX, oldRect->y + oldRect->height,
+                   spanW + (dx < 0 ? -dx : dx), dy);
+        XRegion_addRect(&region, &band);
+    } else if (dy < 0) {
+        XRect_init(&band, minX, newRect->y + newRect->height,
+                   spanW + (dx < 0 ? -dx : dx), -dy);
+        XRegion_addRect(&region, &band);
+    }
+    XWidget_updateRegion(parent, &region);
+    XRegion_deinit(&region);
 }
 
 static void VX_mdiSubWindow_mousePressEvent(XWidget* self, XEvent* event)
@@ -138,6 +307,14 @@ static void VX_mdiSubWindow_mousePressEvent(XWidget* self, XEvent* event)
         XClass_Parent(XWidget, EXWidget_MousePressEvent,
                       void (*)(XWidget*, XEvent*))((XWidget*)self, event);
         return;
+    }
+    /* 头带按下即激活本子窗（对标 qmdisubwindow.cpp:958 按压激活链，
+     * qmdiarea.cpp 视口事件过滤器的 setActiveSubWindow 同义）：激活态
+     * 驱动标题带 Highlight/Window 配色（paintEvent），拖动非活动窗时
+     * 配色即时翻转，不再出现「灰带被拖」。区域缺失（独立子窗）跳过。 */
+    {
+        XMdiArea* area = XMdiSubWindow_mdiArea(sw);
+        if (area) XMdiArea_setActiveSubWindow(area, sw);
     }
     /* 记录拖拽基线（对标 qmdisubwindow.cpp:3160-3162：按下记全局
      * 基准与 oldGeometry；移动事件以全局坐标差值算增量——局部坐标
@@ -197,10 +374,19 @@ static void VX_mdiSubWindow_mouseMoveEvent(XWidget* self, XEvent* event)
                               vh - XMDI_SUBWINDOW_TITLEBAR_HEIGHT);
     }
     /* 尺寸取按下时锚定值：拖动不缩放（对标 oldGeometry 锚定，仅
-     * Move 操作改 top-left）。 */
-    XWidget_setGeometry(self, newX, newY,
-                        g_mdiDragStartGeometry.width,
-                        g_mdiDragStartGeometry.height);
+     * Move 操作改 top-left）。步内旧位→新位+扫掠 delta 显式全覆盖
+     * 失效（xmdi_dragUpdateCoverage；setGeometry 内联的包围盒失效
+     * 之外的双保险，第八轮 FAIL① 台阶缺角根修）。 */
+    {
+        XRect oldRect = XWidget_geometry(self);
+        XRect newRect;
+        XWidget_setGeometry(self, newX, newY,
+                            g_mdiDragStartGeometry.width,
+                            g_mdiDragStartGeometry.height);
+        newRect = XWidget_geometry(self);
+        if (parent && (newRect.x != oldRect.x || newRect.y != oldRect.y))
+            xmdi_dragUpdateCoverage(parent, &oldRect, &newRect);
+    }
     XEvent_accept(event);
 }
 
@@ -224,6 +410,24 @@ static void VX_mdiSubWindow_mouseReleaseEvent(XWidget* self, XEvent* event)
     g_mdiDragActive = false;
     XWidget_releaseMouse(self);
     XEvent_accept(event);
+}
+
+/** @brief 尺寸变化时内容件随框布局（对标 QMdiSubWindow::resizeEvent，
+ *         qmdisubwindow.cpp:3026：缩放后内容几何与框保持一致）。
+ * @details 此前子窗 resize 后内容件保持 creation 尺寸——chrome 窗框
+ *          绘制后表现为框大内容小、框线内残白。拖动只改位置不发
+ *          RESIZE（recomputeGeometry 仅 sizeChanged 派发），跟手链
+ *          不受本槽影响。链式口径同 XSplitter resizeEvent（不链基
+ *          类，XWidget 默认 Resize 槽为空实现）。 */
+static void VX_mdiSubWindow_resizeEvent(XWidget* self, XEvent* event)
+{
+    XMdiSubWindow* sw = (XMdiSubWindow*)self;
+    XRect r;
+    if (!sw || !event || XEvent_type(event) != XEVENT_TYPE_RESIZE) return;
+    if (sw->m_widget) {
+        xmdi_subWindowContentRect(sw, &r);
+        XWidget_setGeometryRect(sw->m_widget, &r);
+    }
 }
 
 static void VX_mdiSubWindow_deinit(XMdiSubWindow* self)
@@ -250,6 +454,8 @@ XVtable* XMdiSubWindow_class_init(void)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
                              VX_mdiSubWindow_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VX_mdiSubWindow_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VX_mdiSubWindow_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
@@ -290,17 +496,26 @@ XMdiSubWindow* XMdiSubWindow_create_ex(XMemoryType memory, XWidget* parent,
 void XMdiSubWindow_setWidget(XMdiSubWindow* self, XWidget* widget)
 {
     XRect r;
-    int w;
-    int h;
     if (!self) return;
     if (self->m_widget) return;
     self->m_widget = widget;
     XWidget_setParent(widget, (XWidget*)self, 0);
-    w = XWidget_width((XWidget*)self);
-    h = XWidget_height((XWidget*)self) > 20
-        ? XWidget_height((XWidget*)self) - 20 : 0;
-    XRect_init(&r, 0, 20, w, h);
+    /* 内容件内收 1px 挂载（x=1 起，底留框线行）：chrome 窗框绘制后
+     * 侧框线不再被内容件覆盖；标题带区（0..19 行）仍为拖拽命中域。 */
+    xmdi_subWindowContentRect(self, &r);
     XWidget_setGeometryRect(widget, &r);
+    /* 对标 Qt 标题随内容件（qmdisubwindow.cpp:994 窗口标题同步链的
+     * 静态版）：子窗标题为空且内容件带 windowTitle 时采纳之，标题条
+     * 不至于空白。 */
+    if ((!self->m_title ||
+         XString_size((const XContainer*)self->m_title) == 0) &&
+        widget) {
+        const XString* wt = XWidget_windowTitle(widget);
+        if (wt && XString_size((const XContainer*)wt) > 0) {
+            const char* utf8 = XString_toUtf8(wt);
+            if (utf8 && *utf8) XMdiSubWindow_setWindowTitle_2(self, utf8);
+        }
+    }
 }
 
 XWidget* XMdiSubWindow_widget(const XMdiSubWindow* self)
@@ -639,11 +854,15 @@ void XMdiArea_setActiveSubWindow(XMdiArea* self, XMdiSubWindow* window)
     if (self->m_active) {
         xmdi_emitStateChanged(self->m_active, self->m_active->m_state, 0);
         self->m_active->m_state = 0;
+        /* 活动态驱动标题带配色（paintEvent 激活分支），失活窗立即
+           重绘，否则保留 Highlight 底的陈旧像素。 */
+        XWidget_update((XWidget*)self->m_active);
     }
     xmdi_emitAboutToActivate(window);
     self->m_active = window;
     xmdi_emitStateChanged(window, 0, window->m_state);
     xmdi_emitActivated(self, window);
+    XWidget_update((XWidget*)window);
 }
 
 void XMdiArea_closeAllSubWindows(XMdiArea* self)
@@ -860,9 +1079,26 @@ XMenu* XMdiSubWindow_systemMenu(const XMdiSubWindow* self)
 XMdiArea* XMdiSubWindow_mdiArea(const XMdiSubWindow* self)
 {
     XWidget* parent;
+    XWidget* node;
     if (!self) return NULL;
     parent = XWidget_parentWidget((XWidget*)self);
-    return (XMdiArea*)parent;
+    /* 对标 QMdiSubWindow::mdiArea（qmdisubwindow.cpp:2527-2538）：
+     * 沿父链上溯，命中 XMdiArea 祖先且「本子窗直父=该区视口」才认
+     * 归属。此前直呼 parent 强转 XMdiArea*——addSubWindow 实际把子
+     * 窗挂在视口（qmdiarea.cpp:791-797 appendChild 同构），反查恒返
+     * 视口指针，回归断言 "[MDI-FAIL] ext: mdiArea 反查" 即此根因。
+     * 类判定经虚表类名（qobject_cast 的本框架等价，同 XStyle.c:710
+     * 口径），非本框架裸指针强转。 */
+    for (node = parent; node; node = XWidget_parentWidget(node)) {
+        XVtable* vt = XClassGetVtable((XClass*)node);
+        if (vt && XVTABLE_GET_NAME(vt) &&
+            XStrcmp(XVTABLE_GET_NAME(vt), "XMdiArea") == 0) {
+            XWidget* viewport = XAbstractScrollArea_viewport(
+                (XAbstractScrollArea*)node);
+            if (viewport == parent) return (XMdiArea*)node;
+        }
+    }
+    return NULL;
 }
 
 XSize XMdiSubWindow_sizeHint(const XMdiSubWindow* self)

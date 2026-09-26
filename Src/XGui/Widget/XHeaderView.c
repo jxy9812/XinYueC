@@ -11,6 +11,7 @@
 #include "XVarList.h"
 #include "XEvent.h"
 #include "XEventType.h"
+#include "XCursor.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -22,6 +23,9 @@
 #define XHEADERVIEW_DEFAULT_SECTION_SIZE 30
 /** @brief ResizeToContents 测算精度缺省值（对标 Qt 缺省 1000）。 */
 #define XHEADERVIEW_DEFAULT_RESIZE_CONTENTS_PRECISION 1000
+/** @brief 分隔线手柄命中热区半径（第八轮②；任务口径 ±3px，对标 Qt
+ *         PM_HeaderGripMargin=4 的样式近似，qcommonstyle.cpp:4766）。 */
+#define XHEADERVIEW_HANDLE_HIT_MARGIN 3
 
 /** @brief 发射 int 信号（载荷单值）。 */
 static void xhv_emitInt(XHeaderView* self, size_t signal, int value)
@@ -143,12 +147,80 @@ static void xhv_pressRelease(const XHeaderView* view)
     }
 }
 
+/* ==================== 分隔线拖拽调宽手势（第八轮②） ==================== */
+
+/* 头文件无手势字段承载：与按压段旁表同款「表头 → 手势态」单链旁表
+ * （节点随手势创建、随表头析构移除，无泄漏与悬垂键）。对标 Qt
+ * QHeaderViewPrivate 的 state=ResizeSection + d->section + d->firstPos
+ * + d->originalSize 四元态（qheaderview_p.h）。 */
+typedef struct XhvResizeEntry
+{
+    struct XhvResizeEntry* m_next; /**< 链表后继。 */
+    const XHeaderView* m_view;     /**< 键（表头借用指针）。 */
+    bool m_active;                 /**< 手势进行中（state==ResizeSection）。 */
+    int m_section;                 /**< 拖拽命中的段逻辑号。 */
+    int m_pressPos;                /**< 按下点沿轴位置（d->firstPos）。 */
+    int m_originalSize;            /**< 按下时段宽（d->originalSize）。 */
+} XhvResizeEntry;
+
+static XhvResizeEntry* xhv_resizeEntries = NULL;
+
+/** @brief 读表头的手势态；无记录返回 NULL。 */
+static XhvResizeEntry* xhv_resizeGet(const XHeaderView* view)
+{
+    XhvResizeEntry* e;
+    for (e = xhv_resizeEntries; e; e = e->m_next)
+        if (e->m_view == view) return e;
+    return NULL;
+}
+
+/** @brief 写表头的手势态（无记录则头插建节点；分配失败忽略——
+ *         最坏退化为该表头本次不可拖拽调宽）。 */
+static void xhv_resizeSet(const XHeaderView* view, bool active, int section,
+                          int pressPos, int originalSize)
+{
+    XhvResizeEntry* e = xhv_resizeGet(view);
+    if (!e) {
+        e = (XhvResizeEntry*)XMalloc_System(sizeof(*e));
+        if (!e) return;
+        e->m_next = xhv_resizeEntries;
+        e->m_view = view;
+        e->m_active = false;
+        e->m_section = -1;
+        e->m_pressPos = 0;
+        e->m_originalSize = 0;
+        xhv_resizeEntries = e;
+    }
+    e->m_active = active;
+    e->m_section = section;
+    e->m_pressPos = pressPos;
+    e->m_originalSize = originalSize;
+}
+
+/** @brief 移除表头的手势记录（析构路径）。 */
+static void xhv_resizeRelease(const XHeaderView* view)
+{
+    XhvResizeEntry** p = &xhv_resizeEntries;
+    while (*p) {
+        if ((*p)->m_view == view) {
+            XhvResizeEntry* dead = *p;
+            *p = dead->m_next;
+            XFree_System(dead);
+            return;
+        }
+        p = &(*p)->m_next;
+    }
+}
+
 static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event);
+static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event);
 
-/* 对标 Qt QHeaderView::mousePressEvent（qheaderview.cpp:2505）：左键
- * 按压于段上（非段间手柄，本库暂无调宽状态机）时记录按压段，
- * clickableSections 时发射 sectionPressed。 */
+/* 对标 Qt QHeaderView::mousePressEvent（qheaderview.cpp:2505）：先查
+ * 分隔线手柄（sectionHandleAt，qheaderview.cpp:2511）——命中且该段
+ * Interactive 时进入 ResizeSection 手势（记段/按下点/原宽，抓取鼠标，
+ * 不发 sectionPressed，qheaderview.cpp:2523-2528）；未命中手柄才走
+ * 既有按压链（clickableSections 时发射 sectionPressed）。 */
 static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event)
 {
     XHeaderView* header = (XHeaderView*)self;
@@ -156,12 +228,30 @@ static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event)
     XPoint pos;
     int position;
     int section;
+    int handle;
     if (!header || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     me = (XMouseEvent*)event;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
     pos = XMouseEvent_position(me);
     position = (header->m_orientation == 0) ? pos.x : pos.y;
+    handle = XHeaderView_resizeHandleSectionAt(header, position);
+    if (handle >= 0 &&
+        XHeaderView_sectionResizeModeAt(header, handle) ==
+            (int)XHeaderViewResizeMode_Interactive) {
+        /* 对标 qheaderview.cpp:2524-2526：originalSize=sectionSize(handle)、
+         * state=ResizeSection；拖拽起点即当前点。 */
+        xhv_resizeSet(header, true, handle, position,
+                      XHeaderView_sectionSize(header, handle));
+        XWidget_grabMouse(self);
+        XEvent_accept(event);
+        return;
+    }
+    /* 手柄命中但模式非 Interactive：同 Qt 不进手势也不发点击。 */
+    if (handle >= 0) {
+        XEvent_accept(event);
+        return;
+    }
     section = XHeaderView_logicalIndexAt(header, position);
     xhv_pressSet(header, section);
     if (section >= 0 && header->m_sectionsClickable)
@@ -169,10 +259,69 @@ static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/* 对标 Qt QHeaderView::mouseReleaseEvent（qheaderview.cpp:2668 尾段）：
- * clickable 且释放位于按压段内时发射 sectionClicked（Qt 另按段矩形
- * contains 判定并翻转排序指示器；本库无段拖拽/指示器状态机，简化
- * 为释放段==按压段同段判定）。 */
+/* 对标 Qt QHeaderView::mouseMoveEvent（qheaderview.cpp:2544）：手势中
+ * 按 delta=pos-firstPos 实时 resizeSection（qBound 钳位，
+ * qheaderview.cpp:2566-2577——sectionResized/geometriesChanged 由
+ * resizeSection 统一发射，本库补 XWidget_update 即时重绘表头本体）；
+ * 无手势时作分隔线光标提示（命中→SplitH/SplitV，离开→unset，
+ * qheaderview.cpp:2636-2644 的 WA_SetCursor 差分同款）。 */
+static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XHeaderView* header = (XHeaderView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int position;
+    XhvResizeEntry* gesture;
+    if (!header || !event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE)
+        return;
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    position = (header->m_orientation == 0) ? pos.x : pos.y;
+    gesture = xhv_resizeGet(header);
+    if (gesture && gesture->m_active) {
+        int delta = position - gesture->m_pressPos;
+        int newSize = gesture->m_originalSize + delta;
+        /* 对标 qheaderview.cpp:2575：
+         * qBound(minimumSectionSize(), originalSize+delta, maximumSectionSize())。 */
+        if (newSize < header->m_minimumSectionSize)
+            newSize = header->m_minimumSectionSize;
+        if (newSize > header->m_maximumSectionSize)
+            newSize = header->m_maximumSectionSize;
+        XHeaderView_resizeSection(header, gesture->m_section, newSize);
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
+#if XCURSOR_ON
+    {
+        /* 光标提示（NoState 分支，qheaderview.cpp:2636-2644）。 */
+        int handle = XHeaderView_resizeHandleSectionAt(header, position);
+        bool hasCursor = XWidget_testAttribute(
+            self, XWidgetAttribute_SetCursor);
+        if (handle >= 0 &&
+            XHeaderView_sectionResizeModeAt(header, handle) ==
+                (int)XHeaderViewResizeMode_Interactive) {
+            if (!hasCursor) {
+                XCursor cursor;
+                XCursor_init(&cursor);
+                XCursor_setShape(&cursor, (header->m_orientation == 0)
+                                              ? XCursor_SplitH
+                                              : XCursor_SplitV);
+                XWidget_setCursor(self, &cursor);
+            }
+        } else if (hasCursor) {
+            XWidget_unsetCursor(self);
+        }
+    }
+#else
+    (void)position;
+#endif /* XCURSOR_ON */
+}
+
+/* 对标 Qt QHeaderView::mouseReleaseEvent（qheaderview.cpp:2668）：手势
+ * 中释放仅落定（state 复位、originalSize 清账，qheaderview.cpp:2726-
+ * 2731），不发射 sectionClicked——分隔线拖拽与段点击（排序）语义互斥
+ * 的边界；其余走既有点击链（clickable 且同段发射 sectionClicked）。 */
 static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XHeaderView* header = (XHeaderView*)self;
@@ -181,12 +330,21 @@ static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
     int position;
     int section;
     int pressed;
+    XhvResizeEntry* gesture;
     if (!header || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
     me = (XMouseEvent*)event;
     if (XMouseEvent_button(me) != XMouseButton_LeftButton) return;
     pos = XMouseEvent_position(me);
     position = (header->m_orientation == 0) ? pos.x : pos.y;
+    gesture = xhv_resizeGet(header);
+    if (gesture && gesture->m_active) {
+        xhv_resizeSet(header, false, -1, 0, 0);
+        XWidget_releaseMouse(self);
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
     section = XHeaderView_logicalIndexAt(header, position);
     pressed = xhv_pressGet(header);
     xhv_pressSet(header, -1);
@@ -198,8 +356,9 @@ static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
 static void VXHeaderView_deinit(XHeaderView* self)
 {
     if (!self) return;
-    /* 按压段旁表节点随表头析构移除（防悬垂键；旁表头为静态承载）。 */
+    /* 按压段/拖拽手势旁表节点随表头析构移除（防悬垂键；旁表头为静态承载）。 */
     xhv_pressRelease(self);
+    xhv_resizeRelease(self);
     if (self->m_sections) {
         XVector_delete_base(self->m_sections);
         self->m_sections = NULL;
@@ -326,10 +485,13 @@ XVtable* XHeaderView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHeaderView_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHeaderView_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHeaderView_move);
-    /* 对标 Qt QHeaderView 的鼠标事件承接（qheaderview.cpp:2505/:2668）：
-     * 段按压/释放驱动 sectionPressed/sectionClicked 发射。 */
+    /* 对标 Qt QHeaderView 的鼠标事件承接（qheaderview.cpp:2505/:2544/
+     * :2668）：分隔线拖拽调宽手势 + 段按压/释放驱动
+     * sectionPressed/sectionClicked 发射（两者命中互斥）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXHeaderView_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VXHeaderView_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
                              VXHeaderView_mouseReleaseEvent);
     return XVTABLE_DEFAULT;
@@ -1342,6 +1504,49 @@ int XHeaderView_logicalIndexAt(const XHeaderView* self, int position)
         position -= size;
     }
     return -1;
+}
+
+int XHeaderView_resizeHandleSectionAt(const XHeaderView* self, int position)
+{
+    int n;
+    int i;
+    int pos;
+    if (!self || position < 0) return -1;
+    n = self->m_sections
+            ? (int)XVector_size_base((const XContainer*)self->m_sections)
+            : 0;
+    /* 对标 QHeaderViewPrivate::sectionHandleAt（qheaderview.cpp:3307）：
+     * 命中线为「段 i 尾分隔线」（本库绘制口径 x+w-1，与段矩形同一
+     * 坐标系；隐藏段按 Qt 不作为手柄目标，但累加几何与
+     * sectionPosition 同口径——本实现隐藏段仍占位）。 */
+    pos = 0;
+    for (i = 0; i < n; ++i) {
+        int size = XVector_At_Base(self->m_sections, (int64_t)i, int);
+        int sep;
+        pos += size;
+        sep = pos - 1;
+        if (self->m_hidden && self->m_hidden[i]) continue;
+        if (position >= sep - XHEADERVIEW_HANDLE_HIT_MARGIN &&
+            position <= sep + XHEADERVIEW_HANDLE_HIT_MARGIN)
+            return i;
+    }
+    return -1;
+}
+
+bool XHeaderView_resizeGestureActive(const XHeaderView* self)
+{
+    XhvResizeEntry* gesture;
+    if (!self) return false;
+    gesture = xhv_resizeGet(self);
+    return gesture && gesture->m_active;
+}
+
+int XHeaderView_resizeGestureSection(const XHeaderView* self)
+{
+    XhvResizeEntry* gesture;
+    if (!self) return -1;
+    gesture = xhv_resizeGet(self);
+    return (gesture && gesture->m_active) ? gesture->m_section : -1;
 }
 
 int XHeaderView_sectionSizeHint(const XHeaderView* self, int logicalIndex)

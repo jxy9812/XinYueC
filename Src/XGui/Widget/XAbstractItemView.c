@@ -16,6 +16,7 @@
 static void VXAbstractItemView_deinit(XAbstractItemView* self);
 static bool VXAbstractItemView_visualRect(const XAbstractItemView* self,
                                           int row, int col, XRect* out);
+static void VXAbstractItemView_focusInEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
                                                  XEvent* event);
@@ -183,6 +184,8 @@ XVtable* XAbstractItemView_class_init(void)
     XVTABLE_INIT_DEFAULT(XAbstractItemView)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractItemView_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent,
+                             VXAbstractItemView_focusInEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXAbstractItemView_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
@@ -1652,6 +1655,72 @@ static void xaiv_emitVoid(XAbstractItemView* self, size_t signal)
     }
 }
 
+/* ==================== 焦点指示（聚焦播种 current 行指示） ==================== */
+
+/*
+ * 隔夜台账猎获③（页5 四隐形站）：Tab 走查到条目视图（列表/列表视
+ * 图/树/表格）时无任何可见焦点指示。对标 Qt 6.8.3
+ * QAbstractItemView::focusInEvent（qabstractitemview.cpp:2297-2322）：
+ * current 无效且非鼠标原因聚焦时，以 moveCursor(MoveNext) 取首可见
+ * 索引播种 current（setCurrentIndex(index, NoUpdate) 不动选择集合），
+ * 随后 viewport->update()。本实现播种坐标取 (0,0)（平铺模型的"首
+ * 可见索引"等价位；列表/树/表 current 列口径均为 0）。
+ *
+ * 指示形态说明：Qt 中聚焦视图的 current 行焦点框（PE_FrameFocusRect，
+ * qitemdelegate.cpp:703-722 drawFocus 的 State_HasFocus 门禁；
+ * qtreeview.cpp:1855-1876 drawRow 整行焦点框）由条目绘制层（委托/
+ * 派生视图）绘制。本库条目绘制分散在派生视图 TU（XListView/
+ * XTreeWidget/XTableWidget 自绘，本轮禁改），且软件渲染的 PAINT 事件
+ * 在顶层窗口被消化（XWidget.c flushBackingStore 直调最派生
+ * paintEvent_base），不经控件级事件分派——基类无"派生条目渲染完成后
+ * 叠画焦点框"的可达挂点。故四站可见指示收敛为"focusIn 播种 current
+ * 的行/格高亮"（各派生绘制均已消费：XListView cur/选中行高亮、
+ * XTableWidget current 格高亮、XTreeWidget 选中行高亮），与任务口径
+ * 中树站既有"Down 高亮"指示同形态。
+ */
+
+/** @brief 聚焦进入时播种 current（对标 focusInEvent 播种分支）。
+ *  @details 条件（对标 qabstractitemview.cpp:2305-2312）：模型非空、
+ *           current 无效、非鼠标原因（鼠标点击聚焦不播种，点击本身
+ *           会建立 current）。
+ *           播种语义：已有选择时走 NoUpdate 等价（仅移 current 不触
+ *           碰选择集合，对标 setCurrentIndex(index, NoUpdate)）；完全
+ *           无选择时走 setCurrentIndex 的 ClearAndSelect 语义——树站
+ *           绘制只高亮选中行，无选择播种若不动选择集合将依旧无指
+ *           示（本库指示形态收敛的必要偏离，见上）。 */
+static void xaiv_seedCurrentOnFocusIn(XAbstractItemView* view,
+                                      XFocusReason reason)
+{
+    XAbstractItemModel* model;
+    if (!view || reason == XFocusReason_Mouse) return;
+    model = view->m_model;
+    if (!model || model->m_rows <= 0 || model->m_cols <= 0) return;
+    if (view->m_currentRow >= 0 && view->m_currentColumn >= 0) return;
+    if (view->m_selectionModel &&
+        XItemSelectionModel_selectedCount(view->m_selectionModel) > 0) {
+        /* 已有选择但 current 无效（罕见）：仅移 current 不动选择。 */
+        xaiv_setCurrentPreservingSelection(view, 0, 0);
+        return;
+    }
+    XAbstractItemView_setCurrentIndex(view, 0, 0);
+}
+
+/** @brief 聚焦进入：播种 current（非鼠标原因）后走基类链（基类默认
+ *         focusIn 槽携带整控件 update，指示行高亮随重绘出现）。 */
+static void VXAbstractItemView_focusInEvent(XWidget* self, XEvent* event)
+{
+    XFocusReason reason = XFocusReason_Other;
+#if XWINDOWEVENT_ON
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_FOCUS_IN &&
+        XFocusEvent_gotFocus((const XFocusEvent*)event))
+        reason = XFocusEvent_reason((const XFocusEvent*)event);
+#endif /* XWINDOWEVENT_ON */
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_FOCUS_IN)
+        xaiv_seedCurrentOnFocusIn((XAbstractItemView*)self, reason);
+    XClass_Parent(XAbstractScrollArea, EXWidget_FocusInEvent,
+                  void (*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
 /* ==================== 鼠标事件（点击选择 + 信号） ==================== */
 
 static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
@@ -1671,12 +1740,16 @@ static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event)
     /* 点击交付键盘焦点（对标 Qt QApplicationPrivate::
      * giveFocusAccordingToFocusPolicy，qapplication.cpp:3662：视图
      * StrongFocus 策略含 ClickFocus 位，左键按压即聚焦本视图，方向键
-     * 导航随之可达；同 XLineEdit 点击聚焦的库内既有范式）。窗口型
+     * 导航随之可达；同 XLineEdit 点击聚焦的库内既有范式）。原因值
+     * 用 MouseFocusReason（Qt 同款）：focusInEvent 的 current 播种
+     * 门以"非鼠标原因"为条件（qabstractitemview.cpp:2312），鼠标
+     * 点击聚焦不得播种 current。窗口型
      * 视图（XComboBox 补全/下拉弹层，本库未见 hide 后还焦机制）不
      * 在此抢焦点：弹层焦点归属组合框自身机制（对标 Qt 弹层由
      * QComboBox 私有机制管理焦点，不经通用点击聚焦路径），避免隐藏
      * 后焦点滞留悬空。 */
-    if (!self->m_isWindow) XWidget_setFocus(self);
+    if (!self->m_isWindow)
+        XWidget_setFocusReason(self, XFocusReason_Mouse);
     if (XAbstractItemView_indexAt_base(view, pos.x, pos.y, &row, &col)) {
         XAbstractItemViewSelectionMode mode = view->m_selectionMode;
         /* 点击他格先按提交分支关闭编辑器（对标 Qt 点击编辑格以外的
@@ -1956,6 +2029,16 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
                 XAbstractItemView_setCurrentIndex(view, r, c);
                 view->m_selectionAnchorRow = r;
                 view->m_selectionAnchorCol = c;
+                /* ClearAndSelect 分支重绘补齐：setCurrentIndex 只写当前
+                 * 项/选择模型不触发 update（Ctrl 分支经
+                 * xaiv_setCurrentPreservingSelection、Shift 分支在上方
+                 * 各自补绘，唯本分支漏画）——活体实证（:140 私有重链，
+                 * gdb 断点证 Down 两次达 XListWidget keyPress 并 accept
+                 * 而 XAbstractItemView.c:316-341 全程无 XWidget_update）：
+                 * 高亮钉死原行，第六轮"Down 纹丝不动"的本车道根因。
+                 * 对标 Qt setCurrentIndex→d->viewport update 的重绘语义。
+                 * update 幂等（脏区合并），Shift 分支的双调用无害。 */
+                XWidget_update((XWidget*)view);
             } else {
                 xaiv_setCurrentPreservingSelection(view, r, c);
             }

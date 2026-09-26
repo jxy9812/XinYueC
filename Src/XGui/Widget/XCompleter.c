@@ -16,10 +16,20 @@
 #include "XVector.h"
 #include "XStringUtils.h"
 #include "XGuiConfig.h"
+#include "XWidget_Protected.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
 /* ==================== 内部工具 ==================== */
+
+/** @brief 弹层守护巡检周期（毫秒）。对标 Qt QCompleter 以编辑框事件
+ *         过滤器同步收层（qcompleter.cpp:1297-1313 FocusOut/Hide）；
+ *         XGui 补全器无事件过滤承载，以轻量轮询等价达成：仅弹层可见
+ *         期间运行（约 8 次/秒，CoarseTimer ±5%），收层即停。 */
+#define XC_POPUP_GUARD_INTERVAL_MS 120u
+
+static void xc_completerStopGuard(XCompleter* self);
+static void VX_completer_timerEvent(XObject* object, XTimerEvent* event);
 
 /** @brief 发射带 XString* 参数的信号（无连接时释放参数，防泄漏）。 */
 static void xcompleter_emitTextSignal(XCompleter* self, size_t signal,
@@ -280,6 +290,7 @@ static void xcompleter_rebuild(XCompleter* self)
 static void VX_completer_deinit(XCompleter* self)
 {
     if (!self) return;
+    xc_completerStopGuard(self);
     if (self->m_prefix) {
         XString_delete_base((XClass*)self->m_prefix);
         self->m_prefix = NULL;
@@ -300,6 +311,7 @@ XVtable* XCompleter_class_init(void)
     XVTABLE_INIT_DEFAULT(XCompleter)
     XVTABLE_INHERIT_XCLASS(XObject);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_completer_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_completer_timerEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -322,6 +334,7 @@ void XCompleter_init(XCompleter* self, XObject* parent)
     self->m_maxVisibleItems = 7;
     self->m_wrapAround = true; /* Qt 默认 true。 */
     self->m_popup = NULL;
+    self->m_popupGuardTimer = XTIMER_INVALID_ID;
     self->m_currentRow = -1;
     self->m_matches = XVector_Create(int);
 }
@@ -560,9 +573,177 @@ void XCompleter_hidePopup(XCompleter* self)
        对两种弹层形态一致）。 */
     if (self->m_popup && XWidget_isVisible(self->m_popup))
         XWidget_setVisible(self->m_popup, false);
-    if (!self->m_defaultPopup) return;
-    if (XWidget_isVisible((XWidget*)self->m_defaultPopup))
+    if (self->m_defaultPopup &&
+        XWidget_isVisible((XWidget*)self->m_defaultPopup))
         XWidget_setVisible((XWidget*)self->m_defaultPopup, false);
+    /* 收层联动：解除鼠标抓取并停守护巡检（两者均幂等；弹层 HIDE
+       事件链亦会执行一遍，双保险对齐"弹层不可见⇒无抓取无巡检"）。 */
+    if (self->m_popup)
+        XWidget_releaseMouse(self->m_popup);
+    if (self->m_defaultPopup)
+        XWidget_releaseMouse((XWidget*)self->m_defaultPopup);
+    xc_completerStopGuard(self);
+}
+
+/* ==================== 弹层守护巡检（对标 QCompleter 编辑框事件过滤） ==================== */
+
+/** @brief 停止弹层守护定时器（幂等）。 */
+static void xc_completerStopGuard(XCompleter* self)
+{
+    if (!self || self->m_popupGuardTimer == XTIMER_INVALID_ID) return;
+    XObject_killTimer((XObject*)self, self->m_popupGuardTimer);
+    self->m_popupGuardTimer = XTIMER_INVALID_ID;
+}
+
+/** @brief 启动弹层守护定时器（幂等；仅弹层可见期间运行）。 */
+static void xc_completerStartGuard(XCompleter* self)
+{
+    if (!self || self->m_popupGuardTimer != XTIMER_INVALID_ID) return;
+    self->m_popupGuardTimer = XObject_startTimer_ms(
+        (XObject*)self, XC_POPUP_GUARD_INTERVAL_MS, XTimerType_CoarseTimer);
+}
+
+/** @brief 判断 w 是否位于 root 子树内（含相等）。 */
+static bool xc_withinSubtree(const XWidget* root, const XWidget* w)
+{
+    const XWidget* it = w;
+    while (it) {
+        if (it == root) return true;
+        it = XWidget_parentWidget(it);
+    }
+    return false;
+}
+
+/**
+ * @brief 守护巡检：弹层可见期间编辑框离场即收层。
+ * @details 对标 Qt QCompleter::eventFilter 对编辑框的 FocusOut（弹层
+ *          可见时收层，qcompleter.cpp:1299-1304）与 Hide（编辑框隐藏
+ *          即 popup->hide()，qcompleter.cpp:1306-1309）两分支。巡检面：
+ *          ① 编辑框生效不可见（宿主页/祖先隐藏链，页切换场景）；
+ *          ② 应用焦点移出"编辑框∪弹层"子树（对话框抢焦/点击其他可
+ *          焦点控件）；点空白等无焦点迁移场景由弹层鼠标抓取的外点
+ *          收层承担（见 xc_PopupList）。命中即 hidePopup（内部幂等）。
+ */
+static void VX_completer_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XCompleter* self = (XCompleter*)object;
+    XWidget* popup;
+    XWidget* editor;
+    XWidget* focus;
+    if (!self || !event) return;
+    if ((XTimerId)XTimerEvent_timerId(event) != self->m_popupGuardTimer) {
+        /* 非守护定时器：交回基类（补全器当前无其他定时器，保守链回）。 */
+        XClass_Parent(XObject, EXObject_TimerEvent,
+                      void (*)(XObject*, XTimerEvent*))(object, event);
+        return;
+    }
+    popup = XCompleter_popup(self);
+    if (!popup || !XWidget_isVisible(popup)) {
+        XCompleter_hidePopup(self);
+        return;
+    }
+    editor = self->m_widget;
+    if (!editor || !XWidget_isVisible(editor)) {
+        /* 编辑框已隐藏（页切换/祖先隐藏链可达，孤儿浮层根修面②）。 */
+        XCompleter_hidePopup(self);
+        return;
+    }
+    focus = XWidget_appFocusWidget();
+    if (focus && focus != editor &&
+        !xc_withinSubtree(editor, focus) && !xc_withinSubtree(popup, focus)) {
+        /* 焦点离场（孤儿浮层根修面①；Qt FocusOut 分支语义）。 */
+        XCompleter_hidePopup(self);
+    }
+}
+
+/* ==================== 默认弹层子类（外点收层 + 抓取联动） ==================== */
+
+/**
+ * @brief 默认弹层列表：XListWidget 派生（补全弹层专用行为）。
+ * @details XGui 弹层是窗内子控件浮层（非独立 X 窗，xwininfo 实证），
+ *          显示期抓取鼠标（对标 Qt 弹出列表的指针抓取语义）：全窗
+ *          按压直投本层，落点在弹层矩形外即"点击弹层外"——收层并
+ *          吞掉该按压（Qt QCompleter popup 的 MouseButtonPress
+ *          !underMouse() 分支，qcompleter.cpp:1448/1467-1471）。修复
+ *          第九轮活体 ①：弹层开着点空白/切页均不关的孤儿浮层。
+ */
+/* 子类槽位表注册：纯扩展（不新增槽位，END_SIZE 对齐 XListWidget）。 */
+XCLASS_DEFINE_BEGING(xc_PopupList)
+XCLASS_DEFINE_EXTEND_END(xc_PopupList, XListWidget)
+typedef struct xc_PopupList
+{
+    XListWidget m_base;   /**< 基类成员；必须是第一个。 */
+    XCompleter* m_owner;  /**< 拥有本弹层的补全器（借用，可为 NULL）。 */
+} xc_PopupList;
+
+static void xc_popupList_mousePressEvent(XWidget* self, XEvent* event)
+{
+    xc_PopupList* popup = (xc_PopupList*)self;
+    XMouseEvent* mouse;
+    XPoint pos;
+    if (!self || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) {
+        if (self && event)
+            XClass_Parent(XListWidget, EXWidget_MousePressEvent,
+                          void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    mouse = (XMouseEvent*)event;
+    pos = XMouseEvent_position(mouse);
+    if (pos.x < 0 || pos.y < 0 ||
+        pos.x >= XWidget_width(self) || pos.y >= XWidget_height(self)) {
+        /* 抓取期直投的外点按压：收层并吞掉（Qt 对外点按压 return
+           true 不透传底下控件——首击仅收层，与 QMenu 外点关闭同型）。 */
+        if (popup->m_owner)
+            XCompleter_hidePopup(popup->m_owner);
+        else
+            XWidget_releaseMouse(self);
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XListWidget, EXWidget_MousePressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+static void xc_popupList_hideEvent(XWidget* self, XEvent* event)
+{
+    xc_PopupList* popup = (xc_PopupList*)self;
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_HIDE) return;
+    /* 收层联动：解除抓取 + 停守护（hidePopup 之外的隐藏路径兜底，
+       如父窗口隐藏链直接压熄弹层）。 */
+    XWidget_releaseMouse(self);
+    if (popup->m_owner)
+        xc_completerStopGuard(popup->m_owner);
+    XClass_Parent(XListWidget, EXWidget_HideEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+static XVtable* xc_PopupList_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(xc_PopupList)
+    XVTABLE_INHERIT_XCLASS(XListWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             xc_popupList_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, xc_popupList_hideEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 把补全器当前行同步为默认弹层 XListWidget 的视觉当前行。
+ *  @details 对标 Qt：QCompleter 弹层（QListView）的 currentIndex 由
+ *           QCompleterPrivate::setCurrentIndex 写入并绘制高亮条
+ *           （qcompleter.cpp:816-831），complete() 弹出后当前候选与
+ *           高亮随动。此前 xc_defaultPopupSync 只 addItem 不写视觉当
+ *           前行，弹层列表恒纯白（Down 推进仅改标签/内联回填，列表
+ *           无高亮反馈）。经 XListWidget_setCurrentRow 写当前行+选择
+ *           集合（行模型单选联动）→ XListView paint 的 sel/cur 分支
+ *           画 Highlight 高亮条，XWidget_update 随调随重绘。
+ *  @note    无外接弹层（m_defaultPopup 空）或候选空时无操作；外接弹
+ *           层的当前行由持有方自理（本通路不介入，同 m_popup 优先）。 */
+static void xc_defaultPopupSyncCurrentRow(XCompleter* self)
+{
+    if (!self || !self->m_defaultPopup) return;
+    if (XCompleter_completionCount(self) <= 0) return;
+    XListWidget_setCurrentRow(self->m_defaultPopup, self->m_currentRow);
 }
 
 static void xc_defaultPopupSync(XCompleter* self)
@@ -583,12 +764,20 @@ static void xc_defaultPopupSync(XCompleter* self)
     }
     if (!self->m_defaultPopup) {
         XWidget* top = XWidget_topLevelWidget(editor);
+        xc_PopupList* list;
         if (!top) return;
-        self->m_defaultPopup =
-            XListWidget_create((XWidget*)top, 0);
-        if (!self->m_defaultPopup) return;
-        /* 弹层挂顶层窗口（随顶层析构，本类不重复拥有）；点击经槽
-           回写编辑框并隐藏。 */
+        /* 以补全专用子类实例化（XListWidget 布局前缀兼容；事件槽经
+           虚表多态分派）。弹层挂顶层窗口（随顶层析构，本类不重复
+           拥有）；点击经槽回写编辑框并隐藏。 */
+        list = (xc_PopupList*)XMemory_malloc(sizeof(*list),
+                                             XCLASS_DEFAULT_MEMORY_TYPE);
+        if (!list) return;
+        XListWidget_init(&list->m_base, top, 0);
+        XClassSetVtable(list, xc_PopupList);
+        Set_Class_Memory(list, XCLASS_DEFAULT_MEMORY_TYPE);
+        Set_Class_IsHeap(list, true);
+        list->m_owner = self;
+        self->m_defaultPopup = &list->m_base;
         XObject_connect_1((XObject*)self->m_defaultPopup,
                           (size_t)XListWidget_itemClicked_signal(NULL, 0),
                           (XObject*)self, xc_popupClickedSlot,
@@ -607,6 +796,9 @@ static void xc_defaultPopupSync(XCompleter* self)
                  XString_toUtf8(cell) ? XString_toUtf8(cell) : "");
         XListWidget_addItem_2(self->m_defaultPopup, buf);
     }
+    /* 重建后同步视觉当前行（重建把 m_currentRow 复位/推进到首命中，
+       弹层高亮条随动——初始弹出即首项高亮，对标 Qt 弹层）。 */
+    xc_defaultPopupSyncCurrentRow(self);
     rows = count > 6 ? 6 : count;
     xc_editorTopOffset(self, &ex, &ey);
     XWidget_setGeometry((XWidget*)self->m_defaultPopup,
@@ -614,6 +806,10 @@ static void xc_defaultPopupSync(XCompleter* self)
                         XWidget_width(editor) > 160 ? XWidget_width(editor) : 160,
                         rows * 24 + 4);
     XWidget_setVisible((XWidget*)self->m_defaultPopup, true);
+    /* 显示期抓取鼠标（点空白/点其他控件的外点按压直投弹层→收层）
+       并启动守护巡检（编辑框隐藏/焦点离场→收层）。 */
+    XWidget_grabMouse((XWidget*)self->m_defaultPopup);
+    xc_completerStartGuard(self);
 }
 
 void XCompleter_complete(XCompleter* self)
@@ -667,6 +863,9 @@ bool XCompleter_setCurrentRow(XCompleter* self, int row)
         if (row < 0) row += count;
     }
     xcompleter_applyCurrentRow(self, row);
+    /* 当前候选行变化即时同步弹层视觉高亮（弹层可见时高亮条随
+       Down/Up 推进逐行移动，对标 Qt 弹层 currentIndex 联动）。 */
+    xc_defaultPopupSyncCurrentRow(self);
     return true;
 }
 
