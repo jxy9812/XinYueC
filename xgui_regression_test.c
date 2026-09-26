@@ -16,6 +16,8 @@
 #include "XIconThemeEngine.h"
 #include "XIconThemeInternal.h"
 #include "XDir.h"
+#include "XSaveFile.h"
+#include "XStringUtils.h"
 #include "XBitmap.h"
 #include "XGeometry.h"
 #include "XAlignment.h"
@@ -27962,10 +27964,15 @@ static void test_toolbox_contract(void)
     XToolBox_removeItem(box, 2);
     tbx_expect(XToolBox_count(box) == 2, "移除后剩 2 页");
     tbx_expect(XToolBox_indexOf(box, (XWidget*)p2) == -1, "移除后 indexOf -1");
+    /* removeItem 已摘除父链、控件归还调用方（XToolBox_removeItem 的
+       Qt 契约「widget 本身不删除」）：p2 此后由测试自删，否则整棵
+       label 子树（含 XTextDocument）滞留到进程退出成 ASan 残留。 */
+    XLabel_delete_base(p2);
+    p2 = NULL;
 
     XToolBox_delete_base(box);
-    /* p0/p1/p2 均为 box 子控件（removeItem 保持父子关系，对标 Qt），
-       随 box 析构一并销毁，测试不再重复删除。 */
+    /* p0/p1 仍为 box 子控件（随 addItem 挂父），随 box 析构一并销毁；
+       p2 已在 removeItem 后归还并由上方补删。 */
 }
 /* ==================== XScrollArea 契约测试（对标 QScrollArea） ==================== */
 
@@ -30047,6 +30054,7 @@ static void test_phase32_p2_contract(void)
         XTreeWidget* tw = XTreeWidget_create(NULL, 0);
         XTreeWidgetItem* root;
         XTreeWidgetItem* item;
+        XTreeWidgetItem* taken;
         XTreeWidgetItem* header;
         p32_expect(tw != NULL, "tw4: 创建");
         root = XTreeWidget_invisibleRootItem(tw);
@@ -30074,8 +30082,13 @@ static void test_phase32_p2_contract(void)
                    XTreeWidget_itemFromIndex(tw, 1) != NULL &&
                    XTreeWidget_itemFromIndex(tw, 2) == NULL,
                    "tw4: itemFromIndex 往返");
-        /* takeTopLevelItem 后根视图同步。 */
-        XTreeWidget_takeTopLevelItem(tw, 1);
+        /* takeTopLevelItem 后根视图同步。take 为所有权转移 API（返回
+           项归还调用方，XTreeWidget.c takeTopLevelItem 注释口径）：
+           必须接住并自删，弃之即泄漏整条目（"via-widget" 子树）。 */
+        taken = XTreeWidget_takeTopLevelItem(tw, 1);
+        p32_expect(taken != NULL, "tw4: take 返回被摘条目");
+        XTreeWidgetItem_delete(taken);
+        taken = NULL;
         p32_expect(XTreeWidgetItem_childCount(root) == 1,
                    "tw4: take 后根计数同步");
         /* headerItem：setHeaderLabels 镜像进表头条目子节点文本。 */
@@ -31300,6 +31313,179 @@ static void test_dialogbuttonbox_contract(void)
 }
 
 
+/**
+ * @brief XDir_removePath_static 契约（C 标准 remove 的库内等价物）。
+ * @details 适配嵌入式：Src 禁用 C remove（外部依赖约束），删除路径
+ *          统一走本 API——文件永久删除、空目录删除、非空目录失败、
+ *          不存在路径失败，与 C remove 语义对齐。
+ */
+static void test_xdir_remove_path_contract(void)
+{
+    const char* tmpRoot = "xgui_xdir_rp_tmp";
+    XString* rootString = XString_create_utf8(tmpRoot);
+    XDir* rootDir = rootString ? XDir_create_2(rootString) : NULL;
+    XString* subName = XString_create_utf8("sub");
+    XString* subPath = rootDir ? XDir_filePath(rootDir, subName) : NULL;
+    XString* filePath = subPath ? XString_create_utf8(XString_toUtf8(subPath)) : NULL;
+    XString* fullDirPath = rootDir ? XDir_filePath(rootDir, subName) : NULL;
+    XFile file;
+    bool ok = false;
+
+    if (filePath) XString_append_utf8(filePath, "/file.txt");
+    if (fullDirPath) XString_append_utf8(fullDirPath, "/full");
+    {
+        XString* fullInner = fullDirPath ? XString_create_utf8(XString_toUtf8(fullDirPath)) : NULL;
+        if (fullInner) XString_append_utf8(fullInner, "/keep.txt");
+
+        if (rootDir) XDir_removeRecursively(rootDir); /* 干净沙箱 */
+        expect_true(rootDir != NULL, "removePath 契约：沙箱根创建");
+        expect_true(rootDir && XDir_mkpath(rootDir, subName),
+                    "removePath 契约：子目录准备");
+
+
+        /* 文件分支：sub/file.txt → 删除成功；同路径再删 → 失败（不存在）。 */
+        XFile_init_2(&file, filePath);
+        ok = XFile_open_2(&file, XIODevice_WriteOnly, 0);
+        expect_true(ok, "removePath 契约：分支用例文件创建");
+        XIODevice_close_base((XIODevice*)&file);
+        XClass_deinit_base((XClass*)&file);
+        expect_true(XDir_removePath_static(filePath),
+                    "removePath 契约：文件删除成功");
+        expect_true(!XDir_removePath_static(filePath),
+                    "removePath 契约：不存在路径删除失败");
+
+        /* 空目录分支：sub 此时为空目录 → 删除成功。 */
+        expect_true(XDir_removePath_static(subPath),
+                    "removePath 契约：空目录删除成功");
+
+        /* 非空目录分支：含文件的目录 → 删除失败且内容不被误删。
+           mkpath 收相对名（内部拼根），删除/探测用全路径。 */
+        {
+            XString* fullName = XString_create_utf8("sub/full");
+            expect_true(rootDir && XDir_mkpath(rootDir, fullName),
+                        "removePath 契约：非空目录准备");
+            if (fullName) XString_delete_base((XClass*)fullName);
+        }
+        XFile_init_2(&file, fullInner);
+        ok = XFile_open_2(&file, XIODevice_WriteOnly, 0);
+        expect_true(ok, "removePath 契约：非空目录内文件创建");
+        XIODevice_close_base((XIODevice*)&file);
+        XClass_deinit_base((XClass*)&file);
+        expect_true(!XDir_removePath_static(fullDirPath),
+                    "removePath 契约：非空目录删除失败");
+        expect_true(XFile_exists_static(fullInner),
+                    "removePath 契约：非空目录内容不被误删");
+        expect_true(!XDir_removePath_static(NULL),
+                    "removePath 契约：NULL 路径安全失败");
+
+        if (rootDir) XDir_removeRecursively(rootDir);
+        if (fullInner) XString_delete_base((XClass*)fullInner);
+    }
+
+    if (filePath) XString_delete_base((XClass*)filePath);
+    if (subPath) XString_delete_base((XClass*)subPath);
+    if (fullDirPath) XString_delete_base((XClass*)fullDirPath);
+    if (subName) XString_delete_base((XClass*)subName);
+    if (rootDir) XDir_delete_base((XClass*)rootDir);
+    if (rootString) XString_delete_base((XClass*)rootString);
+}
+
+
+/**
+ * @brief XSaveFile 匿名临时文件契约（C 标准 tmpfile/tmpnam 的库内等价物）。
+ * @details 适配嵌入式：Src 禁用 C tmpfile/tmpnam（外部依赖约束）。
+ *          覆盖：临时目录设置/回退、唯一名不存在且两次不同、
+ *          openUniqueTemp 写入后 deinit 自动删除（用后即焚）。
+ */
+static void test_xsavefile_temp_contract(void)
+{
+    const char* tmpRoot = "xgui_xsf_tmp";
+    XString* rootString = XString_create_utf8(tmpRoot);
+    XDir* rootDir = rootString ? XDir_create_2(rootString) : NULL;
+    XSaveFile scratch;
+    XString* path1 = NULL;
+    XString* path2 = NULL;
+    XString* workPath = NULL;
+
+    if (rootDir) XDir_removeRecursively(rootDir); /* 干净沙箱 */
+    {
+        /* 沙箱根本体需要真实创建（XDir_create_2 只建对象不 mkdir）。 */
+        XString* dot = XString_create_utf8(".");
+        expect_true(rootDir && XDir_mkpath(rootDir, dot),
+                    "tmpfile 契约：沙箱根创建");
+        if (dot) XString_delete_base((XClass*)dot);
+    }
+    XSaveFile_setTempDir_static(rootString);
+    expect_true(rootDir != NULL, "tmpfile 契约：沙箱根就绪");
+
+    /* tmpnam 等价：唯一名不存在、两次生成互不相同。 */
+    path1 = XSaveFile_uniqueTempPath_static(NULL);
+    path2 = XSaveFile_uniqueTempPath_static(NULL);
+    expect_true(path1 != NULL, "tmpfile 契约：唯一名生成");
+    expect_true(path2 != NULL && path1 && path2 &&
+                strcmp(XString_toUtf8(path1), XString_toUtf8(path2)) != 0,
+                "tmpfile 契约：两次唯一名互不相同");
+    expect_true(path1 && !XFile_exists_static(path1),
+                "tmpfile 契约：唯一名不与既有文件冲突");
+
+    /* tmpfile 等价：openUniqueTemp 写入 → deinit 自动删除。 */
+    memset(&scratch, 0, sizeof(scratch));
+    XSaveFile_init_1(&scratch); /* 栈上对象：先清零再 init（虚表就位） */
+    expect_true(XSaveFile_openUniqueTemp(&scratch, rootString),
+                "tmpfile 契约：匿名临时文件打开");
+    {
+        XString* name = (XString*)XSaveFile_fileName_base((XFileDevice*)&scratch);
+        workPath = name ? XString_create_utf8(XString_toUtf8(name)) : NULL;
+    }
+    expect_true(workPath != NULL &&
+                XIODevice_write_1((XIODevice*)&scratch, "xy", 2) == 2,
+                "tmpfile 契约：写入两字节");
+    XSaveFile_deinit_base(&scratch);
+    expect_true(workPath && !XFile_exists_static(workPath),
+                "tmpfile 契约：deinit 用后即焚");
+    expect_true(path1 && workPath &&
+                strcmp(XString_toUtf8(path1), XString_toUtf8(workPath)) != 0,
+                "tmpfile 契约：工作文件名带独占后缀");
+
+    XSaveFile_setTempDir_static(NULL); /* 恢复默认，防跨用例污染 */
+    if (rootDir) XDir_removeRecursively(rootDir);
+    if (path1) XString_delete_base((XClass*)path1);
+    if (path2) XString_delete_base((XClass*)path2);
+    if (workPath) XString_delete_base((XClass*)workPath);
+    if (rootDir) XDir_delete_base((XClass*)rootDir);
+    if (rootString) XString_delete_base((XClass*)rootString);
+}
+
+
+/**
+ * @brief XStrtokReentrant 契约（C 标准 strtok 的库内等价物，可重入）。
+ * @details 适配嵌入式：Src 禁用 C strtok（静态状态线程不安全）。
+ *          覆盖：多分隔符集合、前导分隔符跳过、不产生空 token、
+ *          NULL 推进、耗尽返回 NULL。
+ */
+static void test_xstrtok_reentrant_contract(void)
+{
+    char buffer[] = ";;a,,bc;:d";
+    char* savePtr = NULL;
+    char* t1 = XStrtokReentrant(buffer, ";,:", &savePtr);
+    char* t2 = XStrtokReentrant(NULL, ";,:", &savePtr);
+    char* t3 = XStrtokReentrant(NULL, ";,:", &savePtr);
+    char* t4 = XStrtokReentrant(NULL, ";,:", &savePtr);
+
+    expect_true(t1 && strcmp(t1, "a") == 0, "strtokReentrant 契约：前导分隔符跳过");
+    expect_true(t2 && strcmp(t2, "bc") == 0, "strtokReentrant 契约：连续分隔符不产生空 token");
+    expect_true(t3 && strcmp(t3, "d") == 0, "strtokReentrant 契约：末段 token");
+    expect_true(t4 == NULL, "strtokReentrant 契约：耗尽返回 NULL");
+
+    /* 首段即分隔符的极端情况 + 无分隔符整串单 token。 */
+    char plain[] = "solo";
+    char* s1 = XStrtokReentrant(plain, ";,:", &savePtr);
+    char* s2 = XStrtokReentrant(NULL, ";,:", &savePtr);
+    expect_true(s1 && strcmp(s1, "solo") == 0 && s2 == NULL,
+                "strtokReentrant 契约：无分隔符整串单 token");
+}
+
+
 /* ==================== XGui 控件功能测试（XGuiDemo 统一入口） ==================== */
 
 /** @brief 运行六个新控件的全部功能断言（LineEdit/Slider/SpinBox/
@@ -31335,6 +31521,9 @@ static void test_xgui_widgets(void)
     test_small_widgets_contract();
     test_datetimeedit_contract();
     test_datetimeedit_format_ext();
+    test_xdir_remove_path_contract();
+    test_xsavefile_temp_contract();
+    test_xstrtok_reentrant_contract();
     test_combobox_completer_policy();
     test_xwidget_icon_geometry();
     test_phase31_p1_contract();

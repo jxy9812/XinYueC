@@ -1,6 +1,8 @@
 ﻿#include "XSaveFile.h"
 #include "XIODevice_Protected.h"
 #include "XDeviceFile.h"
+#include "XSystem.h"           /* XSystem_environment：TMPDIR 回退 */
+#include "XDateTime.h"         /* 唯一名时间戳（单调毫秒） */
 #include <stdlib.h>
 #include <string.h>
 #if XFILE_ON
@@ -22,11 +24,90 @@ static XFd xsavefile_open_file(const XString* path, int mode, int* error)
 bool XSaveFile_generateTempFileName(const XString* targetPath, XString* tempPath)
 {
     if (!targetPath || !tempPath) return false;
-    
+
     XString_assign(tempPath, targetPath);
     XString_append_utf8(tempPath, ".XXXXXX");
-    
+
     return true;
+}
+
+/* ============================================================================
+ * 匿名临时文件（C 标准 tmpfile/tmpnam 的库内等价物，嵌入式适配）
+ * ============================================================================ */
+
+static XString* xsavefile_tempDir = NULL;   /* 模块默认临时目录；NULL=未设置 */
+static uint32_t xsavefile_tempCounter = 0;  /* 唯一名辅助序号 */
+
+void XSaveFile_setTempDir_static(const XString* dir)
+{
+    if (xsavefile_tempDir) {
+        XString_delete_base((XClass*)xsavefile_tempDir);
+        xsavefile_tempDir = NULL;
+    }
+    if (dir) xsavefile_tempDir = XString_create_utf8(XString_toUtf8(dir));
+}
+
+XString* XSaveFile_tempDir_static(void)
+{
+    if (xsavefile_tempDir)
+        return XString_create_utf8(XString_toUtf8(xsavefile_tempDir));
+    /* 未设置时回退 TMPDIR 环境变量，再退当前目录（嵌入式建议显式
+       setTempDir 指向可写 scratch 挂载点）。 */
+    const char* env = XSystem_environment("TMPDIR");
+    return XString_create_utf8((env && env[0]) ? env : ".");
+}
+
+XString* XSaveFile_uniqueTempPath_static(const XString* prefix)
+{
+    enum { XSAVEFILE_UNIQUE_ATTEMPTS = 8 };
+    XString* dir = XSaveFile_tempDir_static();
+    XString* path = NULL;
+    bool found = false;
+    int attempt;
+
+    if (!dir) return NULL;
+    for (attempt = 0; attempt < XSAVEFILE_UNIQUE_ATTEMPTS && !found; ++attempt) {
+        unsigned long stamp =
+            (unsigned long)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFFul) ^
+            (unsigned long)(++xsavefile_tempCounter << 20);
+        path = XString_create_utf8(XString_toUtf8(dir));
+        if (!path) break;
+        XString_append_utf8(path, "/");
+        if (prefix && !XString_isEmpty_base((const XContainer*)prefix))
+            XString_append_utf8(path, XString_toUtf8(prefix));
+        XString_append_utf8(path, ".tmp.");
+        {
+            XString tail;
+            XString_init(&tail);
+            XString_setNum_uLong(&tail, stamp, 16);
+            XString_append(path, &tail);
+            XString_deinit_base((XClass*)&tail);
+        }
+        if (!XDeviceFile_exists(path)) {
+            found = true;
+        } else {
+            XString_delete_base((XClass*)path);
+            path = NULL;
+        }
+    }
+    XString_delete_base((XClass*)dir);
+    return found ? path : NULL;
+}
+
+bool XSaveFile_openUniqueTemp(XSaveFile* file, const XString* prefix)
+{
+    XString* path = XSaveFile_uniqueTempPath_static(prefix);
+    bool result = false;
+    if (!file || !path) {
+        if (path) XString_delete_base((XClass*)path);
+        return false;
+    }
+    /* 唯一名设为目标名 → 既有 open 流程在其旁生成 ".XXXXXX" 工作临时
+       文件；从不 commit → deinit 自动删除（tmpfile 的用后即焚语义）。 */
+    XSaveFile_setFileName(file, path);
+    result = XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly);
+    XString_delete_base((XClass*)path);
+    return result;
 }
 
 /* ============================================================================

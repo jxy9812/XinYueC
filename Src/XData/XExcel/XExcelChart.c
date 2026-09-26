@@ -7,7 +7,6 @@
 #include "XXmlStreamWriter.h"
 #include "XXmlStreamReader.h"
 #include "XClass.h"
-#include <stdlib.h>
 
 #include <string.h>
 #include <stdio.h>
@@ -514,11 +513,11 @@ bool XExcelChart_loadFromXmlData(XExcelChart* self, const uint8_t* bytes, size_t
                 pending.m_range = XCellRange_create();
                 const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
                 const XString* flag = chart_attribute(attributes, "headerH");
-                pending.m_headerH = flag && atoi(XString_toUtf8(flag)) != 0;
+                pending.m_headerH = flag && XString_toInt(flag, NULL, 10) != 0;
                 flag = chart_attribute(attributes, "headerV");
-                pending.m_headerV = flag && atoi(XString_toUtf8(flag)) != 0;
+                pending.m_headerV = flag && XString_toInt(flag, NULL, 10) != 0;
                 flag = chart_attribute(attributes, "swapHeaders");
-                pending.m_swapHeaders = flag && atoi(XString_toUtf8(flag)) != 0;
+                pending.m_swapHeaders = flag && XString_toInt(flag, NULL, 10) != 0;
                 inSeries = true;
             } else if (name && XString_equals_utf8(name, "f", XChar_CaseSensitive) && inSeries) {
                 const XString* formula = XXmlStreamReader_readElementText(reader,
@@ -530,7 +529,7 @@ bool XExcelChart_loadFromXmlData(XExcelChart* self, const uint8_t* bytes, size_t
                 pending.m_range = XCellRange_create_str_utf8(normalized);
             } else if (name && XString_equals_utf8(name, "style", XChar_CaseSensitive)) {
                 const XString* style = chart_attribute(XXmlStreamReader_attributes(reader), "val");
-                if (style) self->m_chartStyle = atoi(XString_toUtf8(style));
+                if (style) self->m_chartStyle = XString_toInt(style, NULL, 10);
             } else if (name && XString_equals_utf8(name, "legendPos", XChar_CaseSensitive)) {
                 const XString* valueString = chart_attribute(XXmlStreamReader_attributes(reader), "val");
                 self->m_legendPos = XString_equals_utf8(valueString, "l", XChar_CaseSensitive) ?
@@ -541,10 +540,10 @@ bool XExcelChart_loadFromXmlData(XExcelChart* self, const uint8_t* bytes, size_t
                     XExcelChart_AxisPosBottom : XExcelChart_AxisPosRight;
             } else if (name && XString_equals_utf8(name, "overlay", XChar_CaseSensitive)) {
                 const XString* overlay = chart_attribute(XXmlStreamReader_attributes(reader), "val");
-                self->m_legendOverlay = overlay && atoi(XString_toUtf8(overlay)) != 0;
+                self->m_legendOverlay = overlay && XString_toInt(overlay, NULL, 10) != 0;
             } else if (name && XString_equals_utf8(name, "settings", XChar_CaseSensitive)) {
                 const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
-#define READ_INT_ATTRIBUTE(field, key) do { const XString* a = chart_attribute(attributes, (key)); if (a) (field) = atoi(XString_toUtf8(a)); } while (0)
+#define READ_INT_ATTRIBUTE(field, key) do { const XString* a = chart_attribute(attributes, (key)); if (a) (field) = XString_toInt(a, NULL, 10); } while (0)
                 READ_INT_ATTRIBUTE(self->m_row, "row");
                 READ_INT_ATTRIBUTE(self->m_col, "col");
                 READ_INT_ATTRIBUTE(self->m_rowOffset, "rowOffset");

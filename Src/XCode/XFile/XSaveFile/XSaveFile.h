@@ -197,6 +197,43 @@ void XSaveFile_setDirectWriteFallback(XSaveFile* file, bool enabled);
 bool XSaveFile_directWriteFallback(const XSaveFile* file);
 
 /* ============================================================================
+ * 匿名临时文件（C 标准 tmpfile/tmpnam 的库内等价物，嵌入式适配）
+ * ============================================================================ */
+
+/**
+ * @brief 设置模块默认临时目录（tmpnam 作用域）
+ * @param dir 临时目录（XString对象）；传 NULL 恢复默认
+ * @note 嵌入式请显式指向可写 scratch 挂载点；未设置时回退 TMPDIR
+ *       环境变量，再退当前目录
+ */
+void XSaveFile_setTempDir_static(const XString* dir);
+
+/**
+ * @brief 取当前模块临时目录（调用方负责 XString_delete_base 释放）
+ * @return 临时目录路径（堆上 XString 对象），失败返回 NULL
+ */
+XString* XSaveFile_tempDir_static(void);
+
+/**
+ * @brief 生成唯一的临时文件路径（C 标准 tmpnam 的库内等价物）
+ * @param prefix 文件名前缀（XString对象），可为 NULL
+ * @return 唯一临时路径（堆上 XString 对象，探测不存在），失败返回 NULL
+ * @note 路径 = 临时目录 + "/" + prefix + ".tmp." + 唯一后缀；创建动作
+ *       仍由调用方负责（要原子独占请直接用 XSaveFile_openUniqueTemp）
+ */
+XString* XSaveFile_uniqueTempPath_static(const XString* prefix);
+
+/**
+ * @brief 打开匿名临时文件（C 标准 tmpfile 的库内等价物）
+ * @param file XSaveFile 对象指针
+ * @param prefix 文件名前缀（XString对象），可为 NULL
+ * @return 成功返回 true（文件已按 WriteOnly 独占创建打开）
+ * @note 用后即焚：对象 deinit 时自动删除临时文件（复用既有
+ *       "未 commit 即删"语义）；本用途下禁止调用 commit
+ */
+bool XSaveFile_openUniqueTemp(XSaveFile* file, const XString* prefix);
+
+/* ============================================================================
  * 内部函数
  * ============================================================================ */
 

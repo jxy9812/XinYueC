@@ -17,7 +17,6 @@
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
 #include "XWidget_Protected.h"
-#include <stdio.h>
 
 #if XWIDGET_ON && XFRAME_ON && XLCDNUMBER_ON
 

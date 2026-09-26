@@ -655,7 +655,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
                  XString_equals_utf8(value, "true", XChar_CaseInsensitive));
         } else if (XString_equals_utf8(element, "workbookView", XChar_CaseSensitive)) {
             const XString* value = workbookAttribute(attributes, "activeTab");
-            if (value) self->m_activeSheetIndex = atoi(XString_toUtf8(value));
+            if (value) self->m_activeSheetIndex = XString_toInt(value, NULL, 10);
         } else if (XString_equals_utf8(element, "sheet", XChar_CaseSensitive)) {
             const XString* name = workbookAttribute(attributes, "name");
             const XString* id = workbookAttribute(attributes, "sheetId");
@@ -668,7 +668,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
                 ? XAbstractSheet_ST_ChartSheet : XAbstractSheet_ST_WorkSheet;
             XAbstractSheet* sheet = XWorkbook_addSheet(self, name, sheetType);
             if (!sheet) continue;
-            if (id) sheet->m_sheetId = atoi(XString_toUtf8(id));
+            if (id) sheet->m_sheetId = XString_toInt(id, NULL, 10);
             sheet->m_rid = workbookRidFromString(rid);
             if (state && XString_equals_utf8(state, "veryHidden", XChar_CaseInsensitive))
                 sheet->m_sheetState = XAbstractSheet_SS_VeryHidden;
@@ -685,7 +685,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
             XString* comment = commentAttr ? XString_create_copy(commentAttr) : NULL;
             XString* scope = NULL;
             if (localSheetId) {
-                XAbstractSheet* scopeSheet = XWorkbook_sheet(self, atoi(XString_toUtf8(localSheetId)));
+                XAbstractSheet* scopeSheet = XWorkbook_sheet(self, XString_toInt(localSheetId, NULL, 10));
                 if (scopeSheet && scopeSheet->m_sheetName) scope = XString_create_copy(scopeSheet->m_sheetName);
             }
             const XString* formula = XXmlStreamReader_readElementText(reader,

@@ -32,7 +32,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <stdio.h>
 #include <limits.h>
 
 #define XSPINBOX_BUTTON_W 16

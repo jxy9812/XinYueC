@@ -2191,7 +2191,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 self->m_windowProtection = worksheetBoolAttribute(attributes, "sheet", true);
             } else if (XString_equals_utf8(element, "pageSetup", XChar_CaseSensitive)) {
                 const XString* firstPage = worksheetAttribute(attributes, "firstPageNumber");
-                if (firstPage) self->m_startPage = atoi(XString_toUtf8(firstPage));
+                if (firstPage) self->m_startPage = XString_toInt(firstPage, NULL, 10);
             } else if (XString_equals_utf8(element, "dataValidation", XChar_CaseSensitive)) {
                 if (pendingValidation) XDataValidation_delete(pendingValidation);
                 pendingValidation = XDataValidation_create();
@@ -2252,10 +2252,10 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                         worksheetBoolAttribute(attributes, "bottom", false),
                         worksheetBoolAttribute(attributes, "aboveAverage", true),
                         worksheetBoolAttribute(attributes, "equalAverage", false),
-                        stdDev ? atoi(XString_toUtf8(stdDev)) : 0);
-                    pendingRule.m_stdDev = stdDev ? atoi(XString_toUtf8(stdDev)) : 0;
+                        stdDev ? XString_toInt(stdDev, NULL, 10) : 0);
+                    pendingRule.m_stdDev = stdDev ? XString_toInt(stdDev, NULL, 10) : 0;
                     const XString* rank = worksheetAttribute(attributes, "rank");
-                    pendingRule.m_rank = rank ? atoi(XString_toUtf8(rank)) : 0;
+                    pendingRule.m_rank = rank ? XString_toInt(rank, NULL, 10) : 0;
                     const XString* text = worksheetAttribute(attributes, "text");
                     const XString* timePeriod = worksheetAttribute(attributes, "timePeriod");
                     pendingRule.m_text = text ? XString_create_copy(text) : NULL;
@@ -2264,7 +2264,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 pendingRule.m_stopIfTrue = worksheetBoolAttribute(attributes, "stopIfTrue", false);
                 const XString* dxf = worksheetAttribute(attributes, "dxfId");
                 if (dxf && self->m_base.m_workbook) {
-                    int dxfId = atoi(XString_toUtf8(dxf));
+                    int dxfId = XString_toInt(dxf, NULL, 10);
                     XFormat* source = XStyles_dxfFormat(self->m_base.m_workbook->m_styles, dxfId);
                     if (source) {
                         pendingRule.m_format = XFormat_create();
@@ -2343,19 +2343,19 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 WS_ATTR(outline, "outlineLevel");
                 WS_ATTR(collapsed, "collapsed");
                 WS_ATTR(columnStyle, "style");
-                int first = minimum ? atoi(XString_toUtf8(minimum)) : 0;
-                int last = maximum ? atoi(XString_toUtf8(maximum)) : first;
+                int first = minimum ? XString_toInt(minimum, NULL, 10) : 0;
+                int last = maximum ? XString_toInt(maximum, NULL, 10) : first;
                 if (first >= 1 && last >= first && last <= XLSX_COLUMN_MAX) {
                     for (int column = first; column <= last; ++column) {
                         XWorksheet_ColumnInfo* info = getOrCreateColInfo(self, column);
                         if (!info) continue;
                         if (width) info->m_width = strtod(XString_toUtf8(width), NULL);
                         info->m_hidden = hidden && (XString_equals_utf8(hidden, "1", XChar_CaseSensitive) || XString_equals_utf8(hidden, "true", XChar_CaseInsensitive));
-                        if (outline) info->m_outlineLevel = atoi(XString_toUtf8(outline));
+                        if (outline) info->m_outlineLevel = XString_toInt(outline, NULL, 10);
                         info->m_collapsed = collapsed && (XString_equals_utf8(collapsed, "1", XChar_CaseSensitive) || XString_equals_utf8(collapsed, "true", XChar_CaseInsensitive));
                         if (columnStyle && self->m_base.m_workbook)
                             info->m_format = XStyles_xfFormat(self->m_base.m_workbook->m_styles,
-                                atoi(XString_toUtf8(columnStyle)));
+                                XString_toInt(columnStyle, NULL, 10));
                     }
                 }
             } else if (XString_equals_utf8(element, "row", XChar_CaseSensitive)) {
@@ -2365,17 +2365,17 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 WS_ATTR(outline, "outlineLevel");
                 WS_ATTR(collapsed, "collapsed");
                 WS_ATTR(rowStyle, "s");
-                int row = rowNumber ? atoi(XString_toUtf8(rowNumber)) : 0;
+                int row = rowNumber ? XString_toInt(rowNumber, NULL, 10) : 0;
                 if (row >= 1 && row <= XLSX_ROW_MAX) {
                     XWorksheet_RowInfo* info = getOrCreateRowInfo(self, row);
                     if (info) {
                         if (height) info->m_height = strtod(XString_toUtf8(height), NULL);
                         info->m_hidden = hidden && (XString_equals_utf8(hidden, "1", XChar_CaseSensitive) || XString_equals_utf8(hidden, "true", XChar_CaseInsensitive));
-                        if (outline) info->m_outlineLevel = atoi(XString_toUtf8(outline));
+                        if (outline) info->m_outlineLevel = XString_toInt(outline, NULL, 10);
                         info->m_collapsed = collapsed && (XString_equals_utf8(collapsed, "1", XChar_CaseSensitive) || XString_equals_utf8(collapsed, "true", XChar_CaseInsensitive));
                         if (rowStyle && self->m_base.m_workbook)
                             info->m_format = XStyles_xfFormat(self->m_base.m_workbook->m_styles,
-                                atoi(XString_toUtf8(rowStyle)));
+                                XString_toInt(rowStyle, NULL, 10));
                     }
                 }
             } else if (XString_equals_utf8(element, "c", XChar_CaseSensitive)) {
@@ -2383,7 +2383,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 WS_ATTR(type, "t");
                 WS_ATTR(style, "s");
                 cellRow = cellColumn = 0;
-                cellStyle = style ? atoi(XString_toUtf8(style)) : -1;
+                cellStyle = style ? XString_toInt(style, NULL, 10) : -1;
                 if (cellType) { XString_delete_base(cellType); cellType = NULL; }
                 if (type) cellType = XString_create_copy(type);
                 if (reference) XReadSax_parseCellRef(reference, &cellRow, &cellColumn);

@@ -13,7 +13,6 @@
 #include "XImageCodec_config.h"
 #include "XMemory.h"
 #include <limits.h>
-#include <stdio.h>
 
 #if XIMAGECODEC_ON && XIMAGECODEC_XBM_ON
 

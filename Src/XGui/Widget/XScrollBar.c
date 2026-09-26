@@ -21,7 +21,6 @@
 #include "XMenu.h"
 #endif /* XMENU_ON */
 #include "XWidget_Protected.h"
-#include <stdio.h>
 
 #if XWIDGET_ON && XABSTRACTSLIDER_ON && XSCROLLBAR_ON
 

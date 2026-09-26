@@ -1,4 +1,5 @@
 ﻿#include "XSwitchDeviceBase.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XMemory.h"
 #include <string.h>
 #include <assert.h>
@@ -72,7 +73,7 @@ void VXIODevice_poll(XSwitchDeviceBase* sw)
 				ISNULL(0,"发生错误"); break;
 				break;
 		}
-		//printf("m_state:%s\n", m_state ? "true" : "false");
+		//XPrintf("m_state:%s\n", m_state ? "true" : "false");
 		if (state != sw->m_buffer)
 		{
 			sw->m_buffer = state;

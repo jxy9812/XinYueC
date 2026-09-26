@@ -1,11 +1,11 @@
 ﻿#include "XDateTime.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XVariantTypeOps.h"
 #include "XVariant.h"
-#include <ctype.h>
+#include "XChar.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 
 void XDateTime_clear(XDateTime* datetime)
 {
@@ -353,9 +353,9 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
             XString_append_char(result, ch);
         }
      /*   XPrintf_2(temp_num_str);
-        printf("\n");
+        XPrintf("\n");
         XPrintf_2(result);
-          printf("\n");*/
+          XPrintf("\n");*/
     }
 
     // --- 优化：在函数末尾统一销毁临时对象 ---
@@ -393,7 +393,7 @@ XDateTime XDateTime_fromString_iso(const char* str) {
     fraction = strchr(separator, '.');
     if (fraction) {
         ++fraction;
-        while (isdigit((unsigned char)fraction[digits]) && digits < 6) {
+        while (XChar_isDigit_2((uint32_t)(unsigned char)fraction[digits]) && digits < 6) {
             fractionValue = fractionValue * 10 + fraction[digits] - '0';
             ++digits;
         }

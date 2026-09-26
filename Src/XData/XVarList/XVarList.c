@@ -1,4 +1,5 @@
 ﻿#include"XVarList.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XMultiPool.h"
 #include"XVtable.h"
 #include<stdarg.h>
@@ -28,7 +29,7 @@ XVarList* XVarList_create(uint8_t count, ...)
             sumTypeSize += va_arg(ap, int);
         else 
             va_arg(ap, void*);
-        //printf("%d\t", va_arg(ap, int));  // 获取 int 类型参数，累加
+        //XPrintf("%d\t", va_arg(ap, int));  // 获取 int 类型参数，累加
     }
     va_end(ap);  // 结束访问
     XVarList* list = NULL;

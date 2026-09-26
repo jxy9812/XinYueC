@@ -7,7 +7,6 @@
 #include "XGuiConfig.h"
 
 #include "XAlgorithm.h"
-#include <stdio.h>
 #include <stdarg.h>
 
 #if XTEXTDOCUMENT_ON

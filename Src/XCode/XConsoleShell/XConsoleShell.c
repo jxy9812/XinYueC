@@ -939,7 +939,7 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
         if (dirAsWritten[0] == '/' || (dirAsWritten[0] && dirAsWritten[1] == ':')) {
             if (!XString_assign_utf8(dirPath, dirText)) goto cleanup;
         } else {
-            size_t currentLen = strlen(XString_toUtf8(dirPath));
+            size_t currentLen = XString_toUtf8_length(dirPath); /* 替代 strlen(XString_toUtf8())：同缓存同长度 */
             if (currentLen && XString_toUtf8(dirPath)[currentLen - 1u] != '/' &&
                 !XString_append_utf8(dirPath, "/")) goto cleanup;
             if (!XString_append_utf8(dirPath, dirText)) goto cleanup;

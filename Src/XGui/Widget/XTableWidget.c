@@ -10,7 +10,6 @@
 #include "XEvent.h"
 #include "XPainter.h"
 #include "XWindowEvent.h"
-#include <stdio.h>
 
 
 #if XTABLEWIDGET_ON
@@ -1545,7 +1544,7 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
             const char* vlabel = XTableWidget_verticalHeaderItem(tw, row);
             char rowno[16];
             if (!vlabel || vlabel[0] == '\0') {
-                snprintf(rowno, sizeof(rowno), "%d", row + 1);
+                XSnprintf(rowno, sizeof(rowno), "%d", row + 1);
                 vlabel = rowno;
             }
             XPainter_drawText(&painter, 4, cy + tw->m_base.m_rowHeight - 8,

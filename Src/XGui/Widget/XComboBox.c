@@ -44,7 +44,6 @@
 #include "XCoreApplication.h"
 #include "XGuiApplication.h"
 #include "XColor.h"
-#include <stdio.h>
 
 /* 弹出列表几何常量 */
 #define XCOMBOBOX_BUTTON_W  16

@@ -670,10 +670,10 @@ bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len)
             } else if (current && (section == SectionFonts ||
                        (section == SectionDxfs && dxfComponent == DxfComponentFont))) {
                 const XString* val = attribute(reader, "val");
-                if (XString_equals_utf8(element, "b", XChar_CaseSensitive)) XFormat_setFontBold(current, !val || atoi(XString_toUtf8(val)) != 0);
-                else if (XString_equals_utf8(element, "i", XChar_CaseSensitive)) XFormat_setFontItalic(current, !val || atoi(XString_toUtf8(val)) != 0);
-                else if (XString_equals_utf8(element, "strike", XChar_CaseSensitive)) XFormat_setFontStrikeOut(current, !val || atoi(XString_toUtf8(val)) != 0);
-                else if (XString_equals_utf8(element, "sz", XChar_CaseSensitive) && val) XFormat_setFontSize(current, atoi(XString_toUtf8(val)));
+                if (XString_equals_utf8(element, "b", XChar_CaseSensitive)) XFormat_setFontBold(current, !val || XString_toInt(val, NULL, 10) != 0);
+                else if (XString_equals_utf8(element, "i", XChar_CaseSensitive)) XFormat_setFontItalic(current, !val || XString_toInt(val, NULL, 10) != 0);
+                else if (XString_equals_utf8(element, "strike", XChar_CaseSensitive)) XFormat_setFontStrikeOut(current, !val || XString_toInt(val, NULL, 10) != 0);
+                else if (XString_equals_utf8(element, "sz", XChar_CaseSensitive) && val) XFormat_setFontSize(current, XString_toInt(val, NULL, 10));
                 else if (XString_equals_utf8(element, "name", XChar_CaseSensitive) && val) XFormat_setFontName_utf8(current, XString_toUtf8(val));
                 else if (XString_equals_utf8(element, "u", XChar_CaseSensitive)) XFormat_setFontUnderline(current, underline_from_string(val));
                 else if (XString_equals_utf8(element, "vertAlign", XChar_CaseSensitive) && val)

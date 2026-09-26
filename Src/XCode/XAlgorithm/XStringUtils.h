@@ -257,6 +257,18 @@ char* XStrcpy(char* dest, const char* src);
 char* XStrncpy(char* dest, const char* src, size_t n);
 
 /**
+ * @brief 可重入分词器（C 标准 strtok 的库内等价物，无静态状态，线程安全）。
+ * @param str 首次调用传入待分词缓冲区；后续调用传 NULL 沿用上次位置。
+ * @param delim 分隔符字符集合（其中任一字符均视为分隔符）。
+ * @param savePtr 分词状态，由调用方持有；首次调用前初始化为 NULL。
+ * @return 下一个 token；无更多 token 返回 NULL。
+ * @note 语义与 strtok 对齐：跳过前导分隔符、不产生空 token、会向缓冲区
+ *       写入 '\0'（请传入可写的副本缓冲）。相比 strtok 无静态状态，
+ *       可安全用于多线程上下文。Src 禁用 C 标准 strtok（外部依赖约束）。
+ */
+char* XStrtokReentrant(char* str, const char* delim, char** savePtr);
+
+/**
  * @brief 字符串追加（语义同 strcat；调用方保证目标容量）。
  * @param dest 目标字符串，须以 '\0' 结尾。
  * @param src 追加内容。

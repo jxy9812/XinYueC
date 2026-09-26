@@ -5,7 +5,6 @@
 #include "XNetworkProxy.h"
 #include "XMemory.h"
 #include "XString.h"
-#include <stdlib.h>
 #include <string.h>
 #if XNETWORK_ON
 #if XNETWORK_PROXY_ON

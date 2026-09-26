@@ -1,4 +1,5 @@
 ﻿#include "XJsonDocument.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XJsonObject.h"
 #include "XJsonArray.h"
 #include "XBsonDocument.h"
@@ -10,6 +11,7 @@
 #include "XMemory.h"
 #include "XVariantTypeOps.h"
 #include "XStringUtils.h"
+#include "XChar.h"
 #include <ctype.h>
 #include <inttypes.h>
 #include <math.h>
@@ -1121,33 +1123,33 @@ static bool Json_parse_number(JsonParser* parser, XJsonValue** result)
     errno = 0;
     start = parser->ptr;
     if (parser->ptr < parser->end && *parser->ptr == '-') ++parser->ptr;
-    if (parser->ptr >= parser->end || !isdigit((unsigned char)*parser->ptr)) {
+    if (parser->ptr >= parser->end || !XChar_isDigit_2((uint32_t)(unsigned char)*parser->ptr)) {
         Json_set_error(parser, XJsonParseError_IllegalNumber);
         return false;
     }
     if (*parser->ptr == '0') {
         ++parser->ptr;
-        if (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) {
+        if (parser->ptr < parser->end && XChar_isDigit_2((uint32_t)(unsigned char)*parser->ptr)) {
             Json_set_error(parser, XJsonParseError_IllegalNumber);
             return false;
         }
     } else {
-        while (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) ++parser->ptr;
+        while (parser->ptr < parser->end && XChar_isDigit_2((uint32_t)(unsigned char)*parser->ptr)) ++parser->ptr;
     }
     if (parser->ptr < parser->end && *parser->ptr == '.') {
         integer = false;
         ++parser->ptr;
-        while (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) ++parser->ptr;
+        while (parser->ptr < parser->end && XChar_isDigit_2((uint32_t)(unsigned char)*parser->ptr)) ++parser->ptr;
     }
     if (parser->ptr < parser->end && (*parser->ptr == 'e' || *parser->ptr == 'E')) {
         integer = false;
         ++parser->ptr;
         if (parser->ptr < parser->end && (*parser->ptr == '+' || *parser->ptr == '-')) ++parser->ptr;
-        if (parser->ptr >= parser->end || !isdigit((unsigned char)*parser->ptr)) {
+        if (parser->ptr >= parser->end || !XChar_isDigit_2((uint32_t)(unsigned char)*parser->ptr)) {
             Json_set_error(parser, XJsonParseError_IllegalNumber);
             return false;
         }
-        while (parser->ptr < parser->end && isdigit((unsigned char)*parser->ptr)) ++parser->ptr;
+        while (parser->ptr < parser->end && XChar_isDigit_2((uint32_t)(unsigned char)*parser->ptr)) ++parser->ptr;
     }
     length = (size_t)(parser->ptr - start);
     if (!length || length >= sizeof(buffer)) {
@@ -1218,7 +1220,7 @@ static XJsonValue* Json_parse_value(JsonParser* parser)
         }
         break;
     default:
-        if (*parser->ptr == '-' || isdigit((unsigned char)*parser->ptr)) {
+        if (*parser->ptr == '-' || XChar_isDigit_2((uint32_t)(unsigned char)*parser->ptr)) {
             if (Json_parse_number(parser, &value)) return value;
             return NULL;
         }
@@ -1497,10 +1499,10 @@ bool Json_parse_number(const char** ptr, const char* end, double* out_num, int64
     }
 
     // 整数部分
-    if (*ptr >= end || !isdigit(**ptr)) {
+    if (*ptr >= end || !XChar_isDigit_2((uint32_t)(unsigned char)**ptr)) {
         return false; // 必须有数字
     }
-    while (*ptr < end && isdigit(**ptr)) {
+    while (*ptr < end && XChar_isDigit_2((uint32_t)(unsigned char)**ptr)) {
         (*ptr)++;
     }
 
@@ -1508,10 +1510,10 @@ bool Json_parse_number(const char** ptr, const char* end, double* out_num, int64
     if (*ptr < end && **ptr == '.') {
         *is_int = false;  // 有小数点，不是整数
         (*ptr)++;
-        if (*ptr >= end || !isdigit(**ptr)) {
+        if (*ptr >= end || !XChar_isDigit_2((uint32_t)(unsigned char)**ptr)) {
             return false; // 小数点后必须有数字
         }
-        while (*ptr < end && isdigit(**ptr)) {
+        while (*ptr < end && XChar_isDigit_2((uint32_t)(unsigned char)**ptr)) {
             (*ptr)++;
         }
     }
@@ -1523,10 +1525,10 @@ bool Json_parse_number(const char** ptr, const char* end, double* out_num, int64
         if (*ptr < end && (**ptr == '+' || **ptr == '-')) {
             (*ptr)++;
         }
-        if (*ptr >= end || !isdigit(**ptr)) {
+        if (*ptr >= end || !XChar_isDigit_2((uint32_t)(unsigned char)**ptr)) {
             return false; // 指数后必须有数字
         }
-        while (*ptr < end && isdigit(**ptr)) {
+        while (*ptr < end && XChar_isDigit_2((uint32_t)(unsigned char)**ptr)) {
             (*ptr)++;
         }
     }
@@ -1600,7 +1602,7 @@ XJsonValue* Json_parse_value(const char** ptr, const char* end, XStack* stack)
         return NULL;
     }*/
     default:
-        if (isdigit(**ptr) || **ptr == '+' || **ptr == '-') {
+        if (XChar_isDigit_2((uint32_t)(unsigned char)**ptr) || **ptr == '+' || **ptr == '-') {
             double num;
             int64_t int_val;
             bool is_int;
@@ -1651,7 +1653,7 @@ XJsonValue* Json_parse_object(const char** ptr, const char* end, XStack* stack)
             // 解析键（必须是字符串）
             XString* key = Json_parse_string(ptr, end);
    /*         XPrintf_2(key);
-            printf("\n");*/
+            XPrintf("\n");*/
             if (!key) goto error;
 
             *ptr = Json_skip_whitespace(*ptr, end);

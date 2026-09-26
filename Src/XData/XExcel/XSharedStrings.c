@@ -532,7 +532,7 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
                     XFormat_setFontUnderline(format, underline);
                 } else if (XString_equals_utf8(name, "sz", XChar_CaseSensitive)) {
                     READER_ATTRIBUTE(val);
-                    if (valValue) XFormat_setFontSize(format, atoi(XString_toUtf8(valValue)));
+                    if (valValue) XFormat_setFontSize(format, XString_toInt(valValue, NULL, 10));
                 } else if (XString_equals_utf8(name, "rFont", XChar_CaseSensitive)) {
                     READER_ATTRIBUTE(val);
                     if (valValue) XFormat_setFontName(format, valValue);
@@ -541,7 +541,7 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
                            XString_equals_utf8(name, "condense", XChar_CaseSensitive) ||
                            XString_equals_utf8(name, "extend", XChar_CaseSensitive)) {
                     READER_ATTRIBUTE(val);
-                    int value = valValue ? atoi(XString_toUtf8(valValue)) : 1;
+                    int value = valValue ? XString_toInt(valValue, NULL, 10) : 1;
                     int property = XString_equals_utf8(name, "charset", XChar_CaseSensitive)
                         ? XFormat_P_Font_Charset
                         : XString_equals_utf8(name, "family", XChar_CaseSensitive)

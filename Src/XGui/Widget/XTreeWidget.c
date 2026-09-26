@@ -922,6 +922,16 @@ static void VXTreeWidget_deinit(XTreeWidget* self)
     self->m_headerLabels = NULL;
     self->m_headerCount = 0;
     self->m_headerCapacity = 0;
+    /* 桥模型为控件自建自持（init 处 create 并 setModel）：基类视图按
+       Qt 语义对 setModel 传入的模型只借用、不拥有，故自建桥必须在
+       此显式析构（口径同 XListWidget deinit 的 m_model 自删）。否则
+       每树泄漏模型本体 + 单元格/表头数组 + setData 文本 + setModel
+       信号连接（ASan 实测：已 delete_base 的树仍留成组间接残留，
+       xtw_bridgeSync→XAbstractItemModel_setDimension 链）。 */
+    if (self->m_bridgeModel) {
+        XAbstractItemModel_delete_base((XClass*)(self->m_bridgeModel));
+        self->m_bridgeModel = NULL;
+    }
     XClass_Deinit_Parent(XTreeView, (XTreeView*)self);
 }
 

@@ -36,7 +36,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <stdio.h>
 
 /* 标题区上下间距（像素） */
 #define XGROUPBOX_TITLE_PAD 2

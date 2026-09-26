@@ -24,7 +24,6 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <stdio.h>
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTEDIT_ON
 
@@ -611,8 +610,8 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
                     if (lvl < 1) lvl = 1;
                     if (lvl > 8) lvl = 8;
                     if (blk->isOrdered) {
-                        snprintf(numBuf, sizeof(numBuf), "%d.",
-                                 listCount[lvl - 1]);
+                        XSnprintf(numBuf, sizeof(numBuf), "%d.",
+                                  listCount[lvl - 1]);
                         mk = numBuf;
                     }
                     font = xte_makeFragFont(self, blockPx);

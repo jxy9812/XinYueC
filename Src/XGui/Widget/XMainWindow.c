@@ -5,8 +5,6 @@
 #include "XDockWidget_Protected.h"
 #include "XStringUtils.h"
 
-#include <string.h>
-
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #if XMENUBAR_ON
@@ -1559,7 +1557,7 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
     if (!self) return false;
     p = XString_toUtf8(state);
     if (!p) return false;
-    if (strncmp(p, XMW_STATE_MAGIC, sizeof(XMW_STATE_MAGIC) - 1) != 0)
+    if (XStrncmp(p, XMW_STATE_MAGIC, sizeof(XMW_STATE_MAGIC) - 1) != 0)
         return false; /* 对齐 Qt：快照不识别返回 false */
     p += sizeof(XMW_STATE_MAGIC) - 1;
     if (!xmw_scanInt(&p, &version) || !xmw_scanChar(&p, ';'))

@@ -1,4 +1,5 @@
 ﻿// XHostAddress.c
+#include "XStringUtils.h"  /* strtok 直出改经可重入分词器（外部依赖约束） */
 #include "XHostAddress.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -55,7 +56,8 @@ static bool parseIPv6(const char* src, uint8_t dst[16]) {
     int count = 0;
     char temp[64];
     strcpy(temp, s);
-    char* token = strtok(temp, ":");
+    char* savePtr = NULL;
+    char* token = XStrtokReentrant(temp, ":", &savePtr);
     while (token && count < 8) {
         if (strlen(token) == 0) {
             break; // "::" encountered
@@ -64,7 +66,7 @@ static bool parseIPv6(const char* src, uint8_t dst[16]) {
         unsigned long val = strtoul(token, &endptr, 16);
         if (*endptr != '\0' || val > 0xFFFF) return false;
         parts[count++] = (int)val;
-        token = strtok(NULL, ":");
+        token = XStrtokReentrant(NULL, ":", &savePtr);
     }
 
     if (count == 8) {

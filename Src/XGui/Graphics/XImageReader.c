@@ -21,7 +21,6 @@
 /* C 字符串兼容重载没有调用方缓冲区；上限覆盖 Qt 插件常见格式键，
  * 同时避免原先 16 字节缓存对合法长键的静默截断。 */
 #define XIMAGE_READER_FORMAT_BUFFER_SIZE 256
-#include <stdio.h>
 #include <limits.h>
 
 static int g_imageReaderAllocationLimitMb = 256;

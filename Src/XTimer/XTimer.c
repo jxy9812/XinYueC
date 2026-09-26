@@ -1,4 +1,5 @@
 ﻿#include"XTimer.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XCoreApplication.h"
 #include"XMemory.h"
 #include"XAbstractEventDispatcher.h"
@@ -250,7 +251,7 @@ void VXTimer_start(XTimer* timer)
 }
 void VXTimer_stop(XTimer* timer)
 {
-	//printf("停止定时器\n");
+	//XPrintf("停止定时器\n");
 	if (timer->m_timerData.timerId!= XTIMER_INVALID_ID && XTimer_isRunning(timer))
 	{
 		// 关闭定时器

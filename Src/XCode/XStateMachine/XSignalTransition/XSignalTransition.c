@@ -3,7 +3,6 @@
 #include "XMemory.h"
 #include "XStateMachine_p.h"
 
-#include <stdlib.h>
 
 static bool VXSignalTransition_eventTest(XSignalTransition* transition, XEvent* event)
 {

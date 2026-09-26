@@ -1,4 +1,5 @@
 ﻿#include"XStringList.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XVariant.h"
 #include"XVariantTypeOps.h"
 #if XStringList_ON
@@ -131,7 +132,7 @@ XVtable* XStringList_class_init()
 //
 //	//重写的函数
 //#if XCLASS_VTABLE_SHOW_SIZE
-//	printf("XStringList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+//	XPrintf("XStringList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 //#endif // XCLASS_VTABLE_SHOW_SIZE
 //	return XVTABLE_DEFAULT;
 }

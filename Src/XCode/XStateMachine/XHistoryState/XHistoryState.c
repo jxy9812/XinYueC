@@ -4,7 +4,6 @@
 #include "XMemory.h"
 #include "XStateMachine_p.h"
 
-#include <stdlib.h>
 
 static void VXHistoryState_deinit(XHistoryState* state)
 {

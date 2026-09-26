@@ -5,7 +5,6 @@
 #include "XByteArray.h"
 #include "XXmlStreamReader.h"
 #include "XXmlStreamWriter.h"
-#include <stdlib.h>
 #include <stdio.h>
 
 #include <string.h>
@@ -328,7 +327,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
                 const XString* value = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (pendingHeading && value) {
-                    XDocPropsApp_addHeadingPair(self, pendingHeading, atoi(XString_toUtf8(value)));
+                    XDocPropsApp_addHeadingPair(self, pendingHeading, XString_toInt(value, NULL, 10));
                     XString_delete_base(pendingHeading);
                     pendingHeading = NULL;
                 }

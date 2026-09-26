@@ -21,7 +21,6 @@
 #include "XVariant.h"
 #include "XString.h"
 #include "XWidget_Protected.h"
-#include <stdio.h>
 
 #if XWIDGET_ON && XFRAME_ON && XSPLITTER_ON
 

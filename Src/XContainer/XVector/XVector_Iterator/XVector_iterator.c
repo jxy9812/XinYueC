@@ -1,5 +1,6 @@
 ﻿#include "XVector_iterator.h"
 #if XVector_ON
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XVector.h"
 #include<stdio.h>
 XVector_iterator XVector_begin(XVector* this_vector)
@@ -9,7 +10,7 @@ XVector_iterator XVector_begin(XVector* this_vector)
 	XVector_iterator it = { 0 };
 	if (ISNULL(this_vector, ""))
 		return it;
-	//printf("开始\n");
+	//XPrintf("开始\n");
 	it.data= XVector_front_base(this_vector);
 	return it;
 }

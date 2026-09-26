@@ -1,5 +1,6 @@
 ﻿#include "XLockFreeQueue.h"
 #if XCircularQueue_ON
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XAlgorithm.h"
 #include"XMemory.h"
 #include<string.h>
@@ -124,11 +125,11 @@ static void XLockFreeQueue_init_with_memory(XLockFreeQueue* this_queue,
     XContainerSize(this_queue)=0;
     XClassGetVtable(this_queue) = XLockFreeQueue_class_init();
     // --- 调试: 验证 XVector 是否按预期工作 ---
-    //printf("Requested count: %zu\n", count);
-    //printf("Actual buffer size (slots): %zu\n", actual_buffer_size);
-    //printf("XContainerCapacity reports: %zu\n", XContainerCapacity(this_queue)); // 应该等于 actual_buffer_size
-    //printf("XContainerSize reports: %zu\n", XContainerSize(this_queue)); // 初始化后应该为 0
-    //printf("Data ptr: %p\n", XContainerDataPtr(this_queue));
+    //XPrintf("Requested count: %zu\n", count);
+    //XPrintf("Actual buffer size (slots): %zu\n", actual_buffer_size);
+    //XPrintf("XContainerCapacity reports: %zu\n", XContainerCapacity(this_queue)); // 应该等于 actual_buffer_size
+    //XPrintf("XContainerSize reports: %zu\n", XContainerSize(this_queue)); // 初始化后应该为 0
+    //XPrintf("Data ptr: %p\n", XContainerDataPtr(this_queue));
 }
 bool VXLockFreeQueue_isEmpty(const XLockFreeQueue* this_queue)
 {

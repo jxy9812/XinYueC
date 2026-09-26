@@ -1,5 +1,6 @@
 ﻿#include"XListSLinked.h"
 #if XListSLinked_ON
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XStack.h"
 #include"XAlgorithm.h"
 #include<stdlib.h>
@@ -660,7 +661,7 @@ void VXList_sort(XListSLinked* this_list, XSortOrder order)
         return;
     if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
         return;
-    //printf("进入排序\n");
+    //XPrintf("进入排序\n");
     XListSNode* head = *XListSLinked_head_ptr(this_list);
     XListSNode* tail = findTail(head);
 

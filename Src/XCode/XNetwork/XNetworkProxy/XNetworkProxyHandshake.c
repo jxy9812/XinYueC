@@ -3,6 +3,7 @@
  * @brief 代理握手协议实现（对齐Qt 6.8）
  */
 
+#include "XStringUtils.h"  /* strtok 直出改经可重入分词器（外部依赖约束） */
 #include "XNetworkProxyHandshake.h"
 #include "XCryptographic.h"
 #include "XByteArray.h"
@@ -12,6 +13,7 @@
 #include "XMemory.h"
 #include "XDeviceNetwork.h"
 #include "XRandomGenerator.h"
+#include "XSystem.h"                 /* XSystem_environment：替代 getenv（docs/dependency-mapping.md 第八章） */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1946,7 +1948,7 @@ const XSocks5UdpAssociateResult* XNetworkProxyHandshake_udpResult(const XProxyHa
 static bool getProxyFromEnv(const char* envVar, XNetworkProxy* outProxy);
 
 static bool getProxyFromEnv(const char* envVar, XNetworkProxy* outProxy) {
-    const char* proxyEnv = getenv(envVar);
+    const char* proxyEnv = XSystem_environment(envVar);
     if (!proxyEnv || !*proxyEnv) {
         return false;
     }
@@ -2067,12 +2069,12 @@ bool XNetworkProxy_getSystemProxy(
     }
     
     // 平台函数失败或不可用，回退到环境变量
-    const char* httpProxy = getenv("http_proxy");
-    const char* httpsProxy = getenv("https_proxy");
-    const char* allProxy = getenv("all_proxy");
+    const char* httpProxy = XSystem_environment("http_proxy");
+    const char* httpsProxy = XSystem_environment("https_proxy");
+    const char* allProxy = XSystem_environment("all_proxy");
     
     // 检查no_proxy
-    const char* noProxy = getenv("no_proxy");
+    const char* noProxy = XSystem_environment("no_proxy");
     if (query && query->peerHostName && noProxy) {
         const char* peerName = XString_toUtf8(query->peerHostName);
         if (peerName && XNetworkProxy_isBypassed(peerName, noProxy)) {
@@ -2129,7 +2131,8 @@ bool XNetworkProxy_isBypassed(
     memcpy(listCopy, bypassList, listLen + 1);
     
     bool result = false;
-    char* token = strtok(listCopy, ",;");
+    char* savePtr = NULL;
+    char* token = XStrtokReentrant(listCopy, ",;", &savePtr);
     
     while (token) {
         // 跳过空白
@@ -2179,7 +2182,7 @@ bool XNetworkProxy_isBypassed(
             }
         }
         
-        token = strtok(NULL, ",;");
+        token = XStrtokReentrant(NULL, ",;", &savePtr);
     }
     
     XFree_System(listCopy);

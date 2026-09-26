@@ -24,7 +24,6 @@
 #include "XDateTime.h"
 #endif /* XCHARTVIEW_PROFILE */
 #include <math.h>
-#include <stdio.h>
 
 #if XCHARTS_ON
 

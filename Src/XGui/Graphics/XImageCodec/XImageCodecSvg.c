@@ -26,7 +26,6 @@
 #include "zlib.h"
 #include <limits.h>
 #include <math.h>
-#include <stdio.h>
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_SVG_ON

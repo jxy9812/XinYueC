@@ -38,7 +38,6 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
-#include <stdio.h>
 
 /* 内部格式串缓冲上限（含 NUL） */
 #define XPROGRESSBAR_FORMAT_MAX 32

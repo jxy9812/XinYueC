@@ -3,7 +3,6 @@
 #include "XMemory.h"
 #include "XStateMachine_p.h"
 
-#include <stdlib.h>
 
 static void VXAbstractState_onEntry(XAbstractState* state, XEvent* event)
 {

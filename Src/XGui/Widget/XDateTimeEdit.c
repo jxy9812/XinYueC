@@ -17,7 +17,6 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <stdio.h>
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
 
@@ -860,8 +859,11 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_dateTime = XDateTime_create();
-    XDateTime_setMSecsSinceEpoch(&self->m_dateTime,
-        XDateTime_currentMSecsSinceEpoch());
+    /* 默认值=当前日期时间：必须用墙钟（currentDateTime）。
+     * XDateTime_currentMSecsSinceEpoch 已切换为单调时钟（开机时长），
+     * 供计时/超时测量使用，不代表纪元时刻——用它会让编辑框显示
+     * 1970-01-01 加开机时长。 */
+    self->m_dateTime = XDateTime_currentDateTime();
     now = self->m_dateTime;
     self->m_minimum = XDateTime_create();
     XDate_setDate(&self->m_minimum.m_date, 1900, 1, 1);

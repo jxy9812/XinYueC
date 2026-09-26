@@ -17,7 +17,6 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <stdio.h>
 
 #if XWIDGET_ON && XMENU_ON && XMENUBAR_ON
 #include "XAbstractButton.h"

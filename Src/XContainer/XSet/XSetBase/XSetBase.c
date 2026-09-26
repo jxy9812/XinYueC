@@ -1,4 +1,5 @@
 ﻿#include "XSetBase.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XVector.h"
 #if XSet_ON
 XVtable* XSetBase_class_init()
@@ -12,12 +13,12 @@ void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compar
         return;
     if (keyTypeSize == 0)
     {
-       // printf("类型参数不能为0");
+       // XPrintf("类型参数不能为0");
         return;
     }
     if (compare == NULL)
     {
-        //printf("compare比较函数NULL");
+        //XPrintf("compare比较函数NULL");
         return;
     }
     XContainer_init(&this_set->m_class, keyTypeSize, useCow);   // 传递 useCow

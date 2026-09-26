@@ -28,7 +28,7 @@
 //	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXIODevice_close);
 //	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
 //#if XCLASS_VTABLE_SHOW_SIZE
-//	printf("XSwitchDeviceModbus size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+//	XPrintf("XSwitchDeviceModbus size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 //#endif
 //	return XVTABLE_DEFAULT;
 //}

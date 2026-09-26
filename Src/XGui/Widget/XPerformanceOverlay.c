@@ -11,7 +11,6 @@
 #include "XFont.h"
 #include "XImage.h"
 #include "XMemory.h"
-#include <stdio.h>
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 

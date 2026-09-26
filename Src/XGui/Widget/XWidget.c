@@ -88,7 +88,7 @@
 /* XSystem_environment 原型（本文件 GPU present 模式与脏区回退两处调用）；
    缺原型时 MSVC 隐式声明 int 返回，Win64 下指针截断（C4047）。 */
 #include "XSystem.h"
-#include <time.h>
+#include "XDateTime.h"        /* present 限频计时：单调毫秒（约束文档时间源规则） */
 #include <stdlib.h>
 
 /* TEMP：paintTree 派发 paintEvent 时的上屏目标图像（表面裁剪限定用）。 */
@@ -4885,10 +4885,48 @@ static void XWidget_collectTabFocusable(const XWidget* self, XVector* out)
     }
 }
 
+/** @brief w 是否位于 root 子树内（沿父链上溯判定）。 */
+static bool XWidget_focusInSubtree(const XWidget* root, const XWidget* w)
+{
+    const XObject* cur;
+    if (!root || !w) return false;
+    for (cur = (const XObject*)w; cur;
+         cur = XObject_parent((XObject*)cur)) {
+        if (cur == (const XObject*)root)
+            return true;
+    }
+    return false;
+}
+
+/** @brief 焦点链候选收集根：模态围栏（对标 Qt 模态期间的候选裁剪）。
+ * @details Qt 中模态对话框是独立原生顶层（QApplication::activeModalWidget
+ *          / QGuiApplicationPrivate::isWindowBlocked），focusNextPrevChild
+ *          以所在顶层为收集界，候选天然不越出对话框。本框架子控件形态
+ *          对话框（XFileDialog/XInputDialog/QColorDialog，flags 无 Window
+ *          位）与背景页同住主窗顶层——窗口级遍历从主窗顶层收集候选，
+ *          Tab 链把背景页签一并收进来：模态 exec 期间 Tab×N 焦点逃逸出
+ *          对话框落到背景页签上（stab2_tab10），Esc/Return 随焦点丢失而
+ *          失效（键盘关闭通道丢失）。围栏：应用模态控件在册且其顶层就是
+ *          本次遍历的顶层时，候选集收缩到模态控件子树内；模态宿主窗以
+ *          外的顶层（如组合框 Popup 弹层，模态门既有豁免口径）不裁剪，
+ *          弹层自身 Tab 行为不变；无模态时返回 top，与既有行为逐项一致。 */
+static XWidget* XWidget_focusChainRoot(XWidget* top)
+{
+    XWidget* modal = XWidget_applicationModalWidget();
+    XWidget* modalTop;
+    if (!modal || !top)
+        return top;
+    modalTop = modal->m_isWindow ? modal : XWidget_topLevel(modal);
+    if (modalTop != top)
+        return top;
+    return modal;
+}
+
 /** @brief 计算焦点链下一个/上一个目标（不改焦点；优先显式 Tab 链，其次文档序）。 */
 static XWidget* XWidget_focusChainTarget(XWidget* self, bool forward)
 {
     XWidget* top;
+    XWidget* root;
     XWidget* linked;
     XVector* list;
     size_t n;
@@ -4898,16 +4936,22 @@ static XWidget* XWidget_focusChainTarget(XWidget* self, bool forward)
     if (!self) return NULL;
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (!top) return NULL;
-    /* 1. 显式 setTabOrder 链：同窗且仍是可聚焦候选时优先使用。 */
+    /* 模态围栏：候选收集与显式链资格都以 root 为界（top=无模态时的退化）。 */
+    root = XWidget_focusChainRoot(top);
+    /* 1. 显式 setTabOrder 链：同窗、仍在围栏子树内且可聚焦候选时优先。 */
     linked = forward ? self->m_focusNext : self->m_focusPrev;
     if (linked && linked != self &&
         XWidget_topLevel(linked) == top &&
+        (root == top || XWidget_focusInSubtree(root, linked)) &&
         XWidget_focusChainCandidate(linked))
         return linked;
-    /* 2. 未设置显式链（或显式链失效）时退回文档顺序。 */
+    /* 2. 未设置显式链（或显式链失效）时退回文档顺序。起点控件在围栏外
+     *    （背景页残留焦点收到 Tab）时不入候选集，走下方退化起点直接落进
+     *    围栏子树首个候选——焦点被拉回对话框，等价 Qt 模态期间遍历不出
+     *    activeModalWidget 的语义。 */
     list = XVector_create(sizeof(XWidget*));
     if (!list) return NULL;
-    XWidget_collectTabFocusable((const XWidget*)top, list);
+    XWidget_collectTabFocusable((const XWidget*)root, list);
     n = XVector_size_base((const XContainer*)list);
     if (n == 0) {
         XVector_delete_base((XClass*)list);
@@ -6424,10 +6468,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 }
                 if (throttleMinMs > 0.0)
                 {
-                    static clock_t s_lastPresent = (clock_t)0;
-                    clock_t nowC = clock();
-                    double elapseMs = (double)(nowC - s_lastPresent) *
-                                      1000.0 / (double)CLOCKS_PER_SEC;
+                    static int64_t s_lastPresent = 0;
+                    int64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+                    double elapseMs = (double)(nowMs - s_lastPresent);
                     /* 全窗帧（首绘/resize/全窗失效）永不跳过；局部帧在
                      * 限频窗口内跳过时，把区域并回脏区——绘制结果已在
                      * FBO/后备存储中持久，下一呈现周期整帧补上。 */
@@ -6456,7 +6499,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                                       sc.width >= top->m_windowRect.width &&
                                       sc.height >= top->m_windowRect.height);
                     }
-                    if (s_lastPresent != (clock_t)0 &&
+                    if (s_lastPresent != 0 &&
                         elapseMs < throttleMinMs && !coversFull)
                     {
                         int r;
@@ -6465,7 +6508,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                             XRegion_addRect(&top->m_dirty, &whole.rects[r]);
                     }
                     else
-                        s_lastPresent = nowC;
+                        s_lastPresent = nowMs;
                 }
             }
             if (presentThisFrame)

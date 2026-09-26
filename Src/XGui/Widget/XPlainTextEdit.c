@@ -44,7 +44,6 @@
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XWindowEvent.h"
-#include <stdio.h>
 #include <stdint.h>
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON

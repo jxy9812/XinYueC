@@ -2,6 +2,7 @@
 #if XPROTOCOL_ON
 #if XMODBUS_ON
 #if XMODBUS_TCP_ON
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XModbusTcpClient.h"
 #include "XModbusTcpClient_Protected.h"
 #include "XModbusClient_Protected.h"
@@ -542,7 +543,7 @@ static void processReceivedFrame(XModbusTcpClient* client)
         XHashMap_remove_base(client->m_pendingRequests, &transactionId);
         XByteArray_remove_base(buffer, 0, expectedLen);
         bufLen = XByteArray_size_base(buffer);
-        //printf("触发结束信号\n");
+        //XPrintf("触发结束信号\n");
         XModbusReply_setState(reply, XModbusReply_State_Finished);
     }
 }

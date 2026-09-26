@@ -3,7 +3,6 @@
 #include "XMemory.h"
 #include "XStateMachine_p.h"
 
-#include <stdlib.h>
 
 static bool VXKeyEventTransition_eventTest(XKeyEventTransition* transition, XEvent* event)
 {

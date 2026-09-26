@@ -15,7 +15,6 @@
 #include "XHashMap.h"
 #include "XDateTime.h"
 #include <string.h>
-#include <stdlib.h>
 #if XNETWORK_ON
 #if XNETWORK_HOSTINFO_ON
 

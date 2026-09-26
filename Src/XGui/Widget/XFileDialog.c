@@ -11,6 +11,7 @@
  * @author     XinYueC 团队
  */
 
+#include "XStringUtils.h"  /* strtok 直出改经可重入分词器（外部依赖约束） */
 #include "XGuiConfig.h"
 #include "XString.h"
 #include "XStringList.h"
@@ -19,10 +20,10 @@
 #include "XVarList.h"
 #include "XEvent.h"
 /* 真实弹窗依赖（对标 Qt QFileDialog 静态便捷函数的对话框组装路径）： */
-#include <stdio.h>             /* snprintf：路径拼接 */
-#include <stdlib.h>            /* getenv：家目录回退/导航窗格 */
+#include <stdio.h>             /* snprintf：路径拼接（残余位点见 deferred） */
 #include <string.h>            /* strrchr：父目录推导 */
-#include <time.h>              /* clock_gettime：激活手势去伪时间戳 */
+#include "XSystem.h"           /* XSystem_environment：家目录回退/导航窗格 */
+#include "XDateTime.h"         /* xff_nowMs：单调毫秒（时间源统一经 XDateTime） */
 #include "XCoreApplication.h"  /* qApp 等价物：有应用实例才允许模态循环 */
 #include "XGuiApplication.h"   /* 主屏查询（弹窗居中） */
 #include "XScreen.h"           /* 屏幕几何 */
@@ -487,7 +488,7 @@ XString* XFileDialog_labelText(const XFileDialog* self,
  * 阻塞式模态循环（应用模态、Escape→reject）；无 GUI 环境（无
  * XCoreApplication 实例，如无头测试）保持桩约定：返回默认值、
  * *selectedFilterIndex=0。目录列举依赖 XFILE_ON && XDIR_ON（XDir
- * 模块）；目录不可枚举时回退用户家目录（getenv("HOME")）。 */
+ * 模块）；目录不可枚举时回退用户家目录（xff_homeDir：HOME→USERPROFILE 链）。 */
 
 /** @brief GUI 环境探测：存在 XCoreApplication 实例才执行真实模态循环。 */
 static bool xff_guiReady(void)
@@ -760,12 +761,32 @@ static XStringList* xff_backStackRef(void)
  * 按压间隔（人类 ~200ms 起）远大于窗口，真双击不受误伤。 */
 #define XFF_ACTIVATE_PAIR_MS 50 /**< 同栈配对窗口（毫秒）。 */
 
-/** @brief 单调毫秒时钟（去伪配对用；不可得时回退 0，仅退化为不过滤）。 */
+/* ---------- 双击链守卫（交互猎获②：一次点击跨布局二次处理） ----------
+ * 平台层（XPlatformNativeWindow_posix.c:3237-3256）的双击识别把"双击
+ * 窗口（400ms，XPWN_DOUBLE_CLICK_INTERVAL_MS）内、4px（同源
+ * XPWN_DOUBLE_CLICK_DISTANCE）邻域内"的每一记按压都替换为双击事件，
+ * 且每次按压都刷新锚点——对标 Qt 只对成对的第二击发 doubleClicked、
+ * 第三击回落普通按压（QGuiApplication 双击后先派 press）。后果：
+ * 快速连点流被逐击翻译成"双击激活"，而文件对话框的双击激活会换
+ * 目录（进子目录/回上级）——布局一换，同一点位命中的是【新布局
+ * 的另一行】，下一记连点又在新布局上激活……一次点击流被多个布局
+ * 各处理一次（实测 12 连点从仓库根一路下钻 Library/sqlite 三级；
+ * Test 视图同 y 行=双击上级目录回落根视图后，新布局同 y 恰是 Test
+ * 行被再次选中回显，即猎获②截图链）。
+ * 守卫：导航提交目录记落点（xff_layoutMs，xff_cdEx 咽点）；激活槽
+ * 发现本次激活落在上一导航的双击链窗口内，判为连点机器针残留——
+ * 吞掉并滑动窗口（整段连点流至多放行流首的一次真双击）。人类
+ * 双击间隔（≥150ms 成对）不受误伤：双击后的第三击在 Qt 语义本就
+ * 不激活，此处行为对齐。 */
+#define XFF_DBL_CHAIN_MS 400 /**< 平台双击链窗口（毫秒，与平台层同源）。 */
+
+/** @brief 单调毫秒时钟（去伪配对用）。经 XDateTime 统一时间源：
+ *  XDateTime_currentMSecsSinceEpoch 已切换为 CLOCK_MONOTONIC 单调
+ *  实现（约束文档「外部依赖约束」时间源规则：Src 禁直呼
+ *  clock/clock_gettime），语义与本助手原实现一致。 */
 static int64_t xff_nowMs(void)
 {
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
-    return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+    return XDateTime_currentMSecsSinceEpoch();
 }
 
 /** @brief 最近一次单击回填落点（按压伪激活配对锚点；-1=尚无）。 */
@@ -773,6 +794,25 @@ static int64_t xff_lastClickMs = -1;
 
 /** @brief 最近一次已处理激活落点（双击补发去重锚点；-1=尚无）。 */
 static int64_t xff_lastActivateMs = -1;
+
+/** @brief 最近一次导航换布局落点（双击链守卫锚点；-1=尚无）。
+ *  见 XFF_DBL_CHAIN_MS 处注记：双击链窗口内的后续激活是快速连点
+ *  流在新布局上的机器针残留，一律吞掉。 */
+static int64_t xff_layoutMs = -1;
+
+/* ---------- 模态重入护栏（交互猎获①：单击偶发"空选中"关闭） ----------
+ * 子控件形态对话框与宿主页面同住一个原生顶层窗，模态门
+ * （XWidget.c:1939 isWindowBlocked）对同顶层输入不设防——exec 阻塞
+ * 期间宿主页面的「文件对话框」等触发按钮仍可点击，点击槽重入再次
+ * 调用便捷函数即嵌套 exec：同位叠开第二个一模一样的对话框（实测
+ * 风暴 40 击开出 5 层）。此后每次 取消/Esc/确定 只关掉最上层一个，
+ * 状态栏被最后一层的结果覆盖；多层叠开后再点行/取消，最上层立即
+ * 收场而屏幕上"对话框还在"，与测试员对哪一层在交互完全无关——
+ * 外观即"单击行 → 对话框以选中=\"\" 立即关闭"（等效误确认；另
+ * 实例无叠层故同操作正常=非必现）。护栏：模态在册期间拒绝再次
+ * 进入便捷弹窗（对齐 Qt 真模态下按钮不可达的有效行为），嵌套调用
+ * 按取消语义立即返回空，不再产生叠层。 */
+static bool xff_execActive = false;
 
 /** @brief 清空浏览会话状态（对话框构建前/回收后调用防跨实例残留）。 */
 static void xff_browsingStateReset(void)
@@ -784,6 +824,8 @@ static void xff_browsingStateReset(void)
     xff_sortOrder = 0;
     xff_lastClickMs = -1;
     xff_lastActivateMs = -1;
+    xff_layoutMs = -1;
+    xff_execActive = false;
 }
 /** @brief 后退可用（栈非空）。 */
 static bool xff_backCanGo(void)
@@ -928,6 +970,7 @@ static XStringList* xff_filterPatterns(const XString* filter)
     const char* rparen;
     char* dup;
     char* token;
+    char* savePtr = NULL;
     if (!out || !filter) return out;
     s = XString_toUtf8(filter);
     if (!s) return out;
@@ -941,11 +984,12 @@ static XStringList* xff_filterPatterns(const XString* filter)
         dup = XMemory_strdup(s);
     }
     if (!dup) return out;
-    token = strtok(dup, " ;,");
+    savePtr = NULL;
+    token = XStrtokReentrant(dup, " ;,", &savePtr);
     while (token) {
         if (strchr(token, '*') || strchr(token, '?'))
             XStringList_push_back_utf8(out, token);
-        token = strtok(NULL, " ;,");
+        token = XStrtokReentrant(NULL, " ;,", &savePtr);
     }
     XFree_System(dup);
     return out;
@@ -964,20 +1008,25 @@ static bool xff_dirUsable(const XString* dirStr)
     return ok;
 }
 
-/** @brief 用户家目录回退路径（getenv("HOME")，XDir 探测存在才返回；
- *  无可用回退返回 NULL。返回值调用方拥有）。 */
+/** @brief 用户家目录回退路径（HOME → USERPROFILE 链式解析，XDir 探测
+ *  存在才返回；无可用回退返回 NULL。返回值调用方拥有）。
+ *  @note Windows 上 HOME 通常未设置，USERPROFILE（C:\Users\<用户>）是
+ *  惯例来源；两者都缺失时导航窗格仅剩「此电脑」。 */
 static XString* xff_homeDir(void)
 {
-    const char* home = getenv("HOME");
-    XString* hs;
-    if (!home || !home[0]) return NULL;
-    hs = XString_create_utf8(home);
-    if (!hs) return NULL;
-    if (!xff_dirUsable(hs)) {
+    const char* candidates[2];
+    int i;
+    candidates[0] = XSystem_environment("HOME");        /* POSIX 惯例 */
+    candidates[1] = XSystem_environment("USERPROFILE"); /* Windows 惯例 */
+    for (i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); ++i) {
+        XString* hs;
+        if (!candidates[i] || !candidates[i][0]) continue;
+        hs = XString_create_utf8(candidates[i]);
+        if (!hs) continue;
+        if (xff_dirUsable(hs)) return hs;
         XString_delete_base((XClass*)hs);
-        return NULL;
     }
-    return hs;
+    return NULL;
 }
 
 /** @brief 文件大小人性化文本（B/KB/MB/GB，对标 Win10 大小列）。 */
@@ -999,7 +1048,6 @@ static void xff_formatSize(char* buf, size_t cap, int64_t bytes)
  *  无扩展名「文件」（对标 Win10 类型列）。返回堆串（调用方拥有）。 */
 static XString* xff_typeTextOf(XFileInfo* info)
 {
-    char buf[128];
     char upper[96];
     XString* suffix;
     const char* s;
@@ -1016,9 +1064,8 @@ static XString* xff_typeTextOf(XFileInfo* info)
         upper[i] = (s[i] >= 'a' && s[i] <= 'z')
             ? (char)(s[i] - 'a' + 'A') : s[i];
     upper[i] = '\0';
-    snprintf(buf, sizeof(buf), "%s 文件", upper);
     XString_delete_base((XClass*)suffix);
-    return XString_create_utf8(buf);
+    return XString_create_fmt_utf8("%s 文件", upper);
 }
 
 /** @brief 从 XFileInfo 提取一行三列文本追加进平行表（names/sizes/
@@ -1037,7 +1084,11 @@ static void xff_appendInfoRow(XStringList* names, XStringList* sizes,
     }
     if (sizes) {
         if (XFileInfo_isDir(info))
-            XStringList_push_back_utf8(sizes, "文件夹");
+            /* 目录行大小列留空（对标 Qt/Win10：大小列仅对文件有义，
+             * 目录一律空、类型列「文件夹」；行 0 ".." 既有口径一致，
+             * 消除「..」空 vs 普通目录「文件夹」的两制并存——交互
+             * 猎获⑤）。 */
+            XStringList_push_back_utf8(sizes, "");
         else {
             xff_formatSize(sbuf, sizeof(sbuf), XFileInfo_size(info));
             XStringList_push_back_utf8(sizes, sbuf);
@@ -1055,7 +1106,8 @@ static void xff_appendInfoRow(XStringList* names, XStringList* sizes,
 /** @brief 列出目录内容（名称过滤只作用于文件，目录恒列出，对标
  *  QFileDialog 过滤语义）。行序约定：目录表在前、文件表在后。
  *  sizes/types 为平行输出表（与 dirs+files 拼接序一致：前 dirs 段
- *  后 files 段；目录行大小列「文件夹」；可为 NULL 不取）——名称与
+ *  后 files 段；目录行大小列留空（Qt/Win10 口径，见 xff_appendInfoRow）；
+ *  可为 NULL 不取）——名称与
  *  大小/类型同源于一次 entryInfoList 枚举，行映射不脱节。
  *  outOrderDirs/outOrderFiles 输出当前表头排序态的显示序映射
  *  （order[k]=各自表内源下标；NULL=恒等序，调用方 XFree_System 回收）：
@@ -1114,7 +1166,8 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
      * XDir_Size 键缺 stat（恒 0）、XDir_Type 比较器实测乱序（活体
      * 探针核实），除名称外的源旗标不可依赖；基序取名称序还使等键
      * 条目按名称保位，与 Qt 稳定序等键保位一致。目录表恒按名称
-     * （目录行大小/类型键恒「文件夹」，名称序即确定序）；目录恒在
+     * （目录行大小/类型排序键恒等——大小列空串、类型列「文件夹」，
+     * 名称序即确定序）；目录恒在
      * 文件前由目录/文件两表分段装载结构性保证，XDir_DirsFirst 分组
      * 比较器双保险。 */
     di = XDir_entryInfoList_2(
@@ -1193,46 +1246,88 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
  *  分隔符，防产 "//sub" 双斜杠路径（目录模式确认/双击进子目录共用）。 */
 static XString* xff_joinPath(const XString* dir, const char* name)
 {
-    char buf[1024];
     const char* d = (dir && XString_toUtf8(dir)) ? XString_toUtf8(dir) : ".";
     size_t n = strlen(d);
     if (n > 0 && d[n - 1] == '/')
-        snprintf(buf, sizeof(buf), "%s%s", d, name ? name : "");
-    else
-        snprintf(buf, sizeof(buf), "%s/%s", d, name ? name : "");
-    return XString_create_utf8(buf);
+        return XString_create_fmt_utf8("%s%s", d, name ? name : "");
+    return XString_create_fmt_utf8("%s/%s", d, name ? name : "");
 }
 
-/** @brief 推导父目录（对标 QFileDialog 双击 ".." 回上级）。
- *  @details 相对路径（demo 便捷路径传起始目录 "."）旧实现 strrchr
- *  落空回落 "."（自映射）：「上级」钮/双击 ".." 行在 CWD 相对目录下
- *  原地踏步（:121 活体 g2 组复现，g1 组绝对路径下则正常）。按
- *  xff_listDir 相对枚举同口径，把无斜杠目录解析为进程 CWD 下的条目：
- *  parent(".")=parent(CWD)、parent("foo")=CWD。 */
-static XString* xff_parentOf(const XString* dir)
+/** @brief 路径分隔符判定：POSIX '/' 与 Windows '\' 同等对待。 */
+static bool xff_isSep(char c)
+{
+    return c == '/' || c == '\\';
+}
+
+/** @brief 推导父目录（平台中立版，对标 QFileDialog 双击 ".." 回上级）。
+ *  @details 相对路径（demo 便捷路径传起始目录 "."）解析为进程 CWD 下的
+ *  条目：parent(".")=parent(CWD)、parent("foo")=CWD。
+ *  平台差异根修（Windows「上级」点击即崩的根因）：旧实现只认 '/'，
+ *  Windows CWD 形如 "C:\Users\x"（无正斜杠）→ 无分隔符分支 →
+ *  递归取 CWD 永不终止 → 栈溢出崩溃。现版：
+ *  ① '/' 与 '\' 同等对待；② 识别 Windows 盘符根（C:、C:\、C:/，
+ *  自身即顶）；③ 递归深度守卫（≤1 层 CWD 解析，杜绝无限递归）；
+ *  ④ UNC 路径按最后一段常规回落。 */
+static XString* xff_parentOfDepth(const XString* dir, int depth)
 {
     const char* s;
-    const char* slash;
+    size_t len, end, cut;
     if (!dir || !(s = XString_toUtf8(dir)) || !s[0])
         return XString_create_utf8("/");
-    if (!strchr(s, '/')) {
-        XString* cwd = XDir_currentPath();
-        XString* parent;
-        if (cwd) {
-            parent = xff_parentOf(cwd); /* CWD 为绝对路径，递归一层止。 */
+    len = strlen(s);
+
+    /* Windows 盘符根："C:"、"C:\"、"C:/" —— 自身即顶，无法再上。 */
+    if (len >= 2 && s[1] == ':') {
+        if (len == 2)
+            return XString_create_fmt_utf8("%c:\\", s[0]);
+        if (len == 3 && xff_isSep(s[2]))
+            return XString_create_fmt_utf8("%.*s", (int)len, s);
+    }
+
+    /* 剥离末尾分隔符；全串皆分隔符按 POSIX 根处理。 */
+    end = len;
+    while (end > 0 && xff_isSep(s[end - 1])) end--;
+    if (end == 0)
+        return XString_create_utf8("/");
+
+    /* 找末段之前的最后一个分隔符。 */
+    cut = end;
+    while (cut > 0 && !xff_isSep(s[cut - 1])) cut--;
+
+    if (cut == 0) {
+        /* 无分隔符：盘符名 → 盘根；相对名 → CWD 语义（深度限一层）。 */
+        if (len == 2 && s[1] == ':')
+            return XString_create_fmt_utf8("%c:\\", s[0]);
+        if (depth < 1) {
+            XString* cwd = XDir_currentPath();
+            XString* joined;
+            XString* parent;
+            if (!cwd) return XString_create_utf8("/");
+            joined = XString_create_fmt_utf8("%s/%.*s",
+                                             XString_toUtf8(cwd),
+                                             (int)end, s);
+            parent = xff_parentOfDepth(joined, depth + 1);
+            XString_delete_base((XClass*)joined);
             XString_delete_base((XClass*)cwd);
             return parent;
         }
-        return XString_create_utf8("/"); /* CWD 不可得兜底：根。 */
+        return XString_create_utf8("/");
     }
-    slash = strrchr(s, '/');
-    if (!slash) return XString_create_utf8(".");
-    if (slash == s) return XString_create_utf8("/");
-    {
-        char buf[1024];
-        snprintf(buf, sizeof(buf), "%.*s", (int)(slash - s), s);
-        return XString_create_utf8(buf);
-    }
+
+    /* 父 = [0..cut)：cut-1 为分隔符下标，父段不含分隔符本身；
+       父本身为根形态时返回根。 */
+    if (cut == 1)
+        return XString_create_utf8("/");                        /* "/x" → "/" */
+    if (cut == 3 && s[1] == ':' && xff_isSep(s[2]))
+        return XString_create_fmt_utf8("%.*s", (int)cut, s);    /* "C:\x" → "C:\" */
+    if (cut == 2 && s[1] == ':')
+        return XString_create_fmt_utf8("%c:\\", s[0]);          /* "C:x" → "C:\" */
+    return XString_create_fmt_utf8("%.*s", (int)(cut - 1), s);
+}
+
+static XString* xff_parentOf(const XString* dir)
+{
+    return xff_parentOfDepth(dir, 0);
 }
 
 /** @brief 导航窗格条目（对标 Qt QFileDialog 侧栏 QUrlModel：用户可读
@@ -1249,6 +1344,7 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
         "Desktop", "Documents", "Downloads", "Pictures", "Music"
     };
     const char* home;
+    XString* homeStr;
     int i;
     *outNames = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     *outPaths = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
@@ -1259,23 +1355,101 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
         *outPaths = NULL;
         return;
     }
-    /* 「此电脑」= 根目录（恒显示；对标 Win10 侧栏此电脑入口）。 */
-    XStringList_push_back_utf8(*outNames, "此电脑");
-    XStringList_push_back_utf8(*outPaths, "/");
-    home = getenv("HOME");
-    if (!home || !home[0]) return;
+    /* 「此电脑」= 当前所在盘根（POSIX "/"、Windows 取 CWD 盘根如
+       "C:\"；恒显示，对标 Win10 侧栏此电脑入口）。 */
+    {
+        XString* cwd = XDir_currentPath();
+        XString* pcRoot = NULL;
+        if (cwd) {
+            const char* cs = XString_toUtf8(cwd);
+            if (cs && cs[0] && cs[1] == ':')
+                pcRoot = XString_create_fmt_utf8("%c:\\", cs[0]);
+        }
+        XStringList_push_back_utf8(*outNames, "此电脑");
+        XStringList_push_back_utf8(*outPaths, pcRoot ? XString_toUtf8(pcRoot) : "/");
+        if (pcRoot) XString_delete_base((XClass*)pcRoot);
+        if (cwd) XString_delete_base((XClass*)cwd);
+    }
+    homeStr = xff_homeDir();
+    home = homeStr ? XString_toUtf8(homeStr) : NULL;
+    if (!home) return;
     for (i = 0; i < (int)(sizeof(kNames) / sizeof(kNames[0])); ++i) {
-        char buf[1024];
-        XString* cand;
-        snprintf(buf, sizeof(buf), "%s/%s", home, kSubs[i]);
-        cand = XString_create_utf8(buf);
+        XString* cand = XString_create_fmt_utf8("%s/%s", home, kSubs[i]);
         if (!cand) continue;
         if (xff_dirUsable(cand)) {
             XStringList_push_back_utf8(*outNames, kNames[i]);
-            XStringList_push_back_utf8(*outPaths, buf);
+            XStringList_push_back_utf8(*outPaths, XString_toUtf8(cand));
         }
         XString_delete_base((XClass*)cand);
     }
+    XString_delete_base((XClass*)homeStr);
+}
+
+/* ---------- 导航窗格高亮同步（交互猎获③） ----------
+ * 点击窗格条目→xff_cdEx 换目录，但窗格选中行从不随动：高亮滞留
+ * 旧条目 10s+，后续其它导航时才滞后迁移。凡换目录都经 xff_cdEx
+ * 中央咽点——在此按新目录反查窗格路径表并同步选中行（含尾分隔符
+ * 归一："C:\" 对 "C:"、"/" 对根；无匹配目录（如深浏览态）清高亮，
+ * 对标 Qt QFileDialog 侧栏 QUrlModel 随 currentChanged 联动）。 */
+
+/** @brief 路径尾分隔符归一比较（ASCII 精确；两侧先剥尽尾部 '/'
+ *  与 '\' 再比较——根 "/" 归一为空串与窗格「此电脑」路径 "/" 同串，
+ *  Windows 盘根 "C:\" 与 "C:" 同串）。 */
+static bool xff_pathSameTailTrim(const char* a, const char* b)
+{
+    size_t la, lb;
+    if (!a || !b) return false;
+    la = strlen(a);
+    lb = strlen(b);
+    while (la > 0 && (a[la - 1] == '/' || a[la - 1] == '\\')) --la;
+    while (lb > 0 && (b[lb - 1] == '/' || b[lb - 1] == '\\')) --lb;
+    if (la != lb) return false;
+    return la == 0 || XMemcmp(a, b, la) == 0;
+}
+
+/** @brief 按当前目录同步导航窗格选中行（xff_cdEx 换目录后调用；
+ *  行序=xff_navEntries 确定性生成，与组装时一致；越界/无匹配清
+ *  高亮。setCurrentIndex(ClearAndSelect) 承载高亮迁移，-1 只清
+ *  当前项、选择集另经 clearSelection 兜底（基类口径：无效索引
+ *  不动选择集合）。 */
+static void xff_syncNavSelection(XFileDialog* dlg)
+{
+    XListView* nav;
+    XStringList* names = NULL;
+    XStringList* paths = NULL;
+    const char* dirUtf8;
+    int64_t i, n;
+    int match = -1;
+    if (!dlg || !dlg->m_directory) return;
+    nav = (XListView*)xff_childByName(&dlg->m_base, XFF_NAME_NAV);
+    if (!nav) return;
+    dirUtf8 = XString_toUtf8(dlg->m_directory);
+    if (!dirUtf8) return;
+    xff_navEntries(&names, &paths);
+    if (!names || !paths) {
+        if (names) XStringList_delete_base((XClass*)names);
+        if (paths) XStringList_delete_base((XClass*)paths);
+        return;
+    }
+    n = XStringList_size_base((const XContainer*)paths);
+    for (i = 0; i < n; ++i) {
+        const XString* item = (const XString*)(const void*)
+            XStringList_at_base((const XVector*)paths, i);
+        if (item && xff_pathSameTailTrim(XString_toUtf8(item), dirUtf8)) {
+            match = (int)i;
+            break;
+        }
+    }
+    XStringList_delete_base((XClass*)names);
+    XStringList_delete_base((XClass*)paths);
+    if (match >= 0) {
+        XAbstractItemView_setCurrentIndex((XAbstractItemView*)nav,
+                                          match, 0);
+    } else {
+        XAbstractItemView_setCurrentIndex((XAbstractItemView*)nav, -1, -1);
+        XAbstractItemView_clearSelection((XAbstractItemView*)nav);
+    }
+    XWidget_update((XWidget*)nav);
 }
 
 /* ---------- 槽与视图刷新 ---------- */
@@ -1495,6 +1669,13 @@ static void xff_cdEx(XFileDialog* dlg, const XString* path, bool pushHist)
         }
         XComboBox_setCurrentIndex(combo, idx);
     }
+    /* 双击链守卫锚点：凡提交目录即视为一次换布局（见 XFF_DBL_CHAIN_MS）。
+     * 双击激活（进子目录/回上级）也经此处——锚点落在激活处理栈内，
+     * 同一连点流的后续残留在激活槽被吞。 */
+    xff_layoutMs = xff_nowMs();
+    /* 导航窗格高亮随动（交互猎获③：地址/列表已随动而窗格高亮滞留）。
+     * 置于列表刷新前：刷新耗时与窗格重绘无依赖，顺序无感。 */
+    xff_syncNavSelection(dlg);
     /* 成功换目录（绝对化口径下与原目录不同串）才压栈；后退导航不压
      * （防回退乒乓）。 */
     if (pushHist && prev &&
@@ -1636,6 +1817,14 @@ static void xff_viewRowActivated(XFileDialog* dlg, int row)
         if (xff_lastActivateMs >= 0 &&
             now - xff_lastActivateMs < XFF_ACTIVATE_PAIR_MS)
             return;
+        /* 双击链守卫（交互猎获②）：上一导航的双击链窗口内的激活是
+         * 同一连点流在新布局上的残留（平台层把 400ms 内每记按压都
+         * 替换为双击），吞掉并滑动窗口——整段连点流至多放行流首的
+         * 一次真双击；窗口静默后的双击语义照常放行。 */
+        if (xff_layoutMs >= 0 && now - xff_layoutMs < XFF_DBL_CHAIN_MS) {
+            xff_layoutMs = now;
+            return;
+        }
         xff_lastActivateMs = now;
     }
     view = (XTreeWidget*)xff_childByName(&dlg->m_base, XFF_NAME_VIEW);
@@ -1737,24 +1926,15 @@ static void xff_viewActivated(XObject* receiver, XVarList* args)
     if (r >= 0) xff_viewRowActivated(dlg, r);
 }
 
-/** @brief 文件列表单击槽：命中文件/目录行时把该条目全路径置入底部
- *  编辑/只读框（目录模式 Win10 FOS_PICKFOLDERS 口径回显所选文件夹
- *  全路径、文件模式回显所选文件全路径，accept 侧按绝对路径直接
- *  结算；行 0 为 ".. (上级目录)" 行不回填）。名称读树行条目列 0
- *  文本——搜索过滤下与显示行严格一致。落点时间供 xff_viewRowActivated
- *  做按压伪激活配对（同一次按压栈内基类 clicked 之后紧跟 activated）。
- * @note  对标 QFileDialog 单击只选中不激活：导航/确认仅由双击与
- *  Return 触发（按压伪激活在激活槽内按时间窗过滤）。 */
-static void xff_viewClicked(XObject* receiver, XVarList* args)
+/** @brief 树行名称回填底部编辑/只读框（单击选中与键盘 current 行
+ *  变化共用；行 0 ".. (上级目录)" 与越界不回填，同单击口径）。
+ *  名称读树行条目列 0 文本——搜索过滤下与显示行严格一致。 */
+static void xff_echoTreeRow(XFileDialog* dlg, int row)
 {
-    XFileDialog* dlg = (XFileDialog*)receiver;
     XTreeWidget* view;
     XTreeWidgetItem* item;
     const char* name;
-    if (!dlg || !args) return;
-    xff_lastClickMs = xff_nowMs(); /* 按压伪激活配对锚点（任意行）。 */
-    XVarList_args_1(args, int, row); /* itemClicked 载荷首参恒行号。 */
-    if (row <= 0) return; /* 行 0 为 ".. (上级目录)" 行，非文件。 */
+    if (!dlg || row <= 0) return; /* 行 0 为 ".. (上级目录)" 行，非文件。 */
     view = (XTreeWidget*)xff_childByName(&dlg->m_base, XFF_NAME_VIEW);
     if (!view) return;
     item = XTreeWidget_topLevelItem(view, row);
@@ -1770,6 +1950,38 @@ static void xff_viewClicked(XObject* receiver, XVarList* args)
             }
         }
     }
+}
+
+/** @brief 文件列表 current 行变化槽（交互猎获④：键盘 Down/Up 推进
+ *  高亮时文件名框不随动）。树键盘路径经 xtw_setCurrentRow 联动
+ *  （XTreeWidget.c:2157），currentItemChanged (current,previous)
+ *  随发——在此回填一行；清树（xff_refresh 的 clear 发 (-1,prev)）
+ *  与行 0 同口径跳过，换目录后的底部框内容交由
+ *  xff_syncDirBox/单击回填承担，不在此覆盖。 */
+static void xff_viewCurrentChanged(XObject* receiver, XVarList* args)
+{
+    XFileDialog* dlg = (XFileDialog*)receiver;
+    if (!dlg || !args) return;
+    XVarList_args_2(args, int, cur, int, prev);
+    (void)prev;
+    xff_echoTreeRow(dlg, cur);
+}
+
+/** @brief 文件列表单击槽：命中文件/目录行时把该条目全路径置入底部
+ *  编辑/只读框（目录模式 Win10 FOS_PICKFOLDERS 口径回显所选文件夹
+ *  全路径、文件模式回显所选文件全路径，accept 侧按绝对路径直接
+ *  结算；行 0 为 ".. (上级目录)" 行不回填）。名称读树行条目列 0
+ *  文本——搜索过滤下与显示行严格一致。落点时间供 xff_viewRowActivated
+ *  做按压伪激活配对（同一次按压栈内基类 clicked 之后紧跟 activated）。
+ * @note  对标 QFileDialog 单击只选中不激活：导航/确认仅由双击与
+ *  Return 触发（按压伪激活在激活槽内按时间窗过滤）。 */
+static void xff_viewClicked(XObject* receiver, XVarList* args)
+{
+    XFileDialog* dlg = (XFileDialog*)receiver;
+    if (!dlg || !args) return;
+    xff_lastClickMs = xff_nowMs(); /* 按压伪激活配对锚点（任意行）。 */
+    XVarList_args_1(args, int, row); /* itemClicked 载荷首参恒行号。 */
+    xff_echoTreeRow(dlg, row);
 }
 
 /** @brief 目录下拉激活槽：选中历史目录即进入（对标 QFileDialog 下拉
@@ -1889,18 +2101,21 @@ static void xff_applySortIndicator(XTreeWidget* view)
 {
     static const char* const kBase[3] = { "名称", "大小", "类型" };
     const char* labels[3];
-    char bufs[3][32];
+    XString* bufs[3];
     int c;
     if (!view) return;
     for (c = 0; c < 3; ++c) {
         if (c == xff_sortColumn)
-            snprintf(bufs[c], sizeof(bufs[c]), "%s %s", kBase[c],
-                     xff_sortOrder == 1 ? "v" : "^");
+            bufs[c] = XString_create_fmt_utf8("%s %s", kBase[c],
+                                              xff_sortOrder == 1 ? "v" : "^");
         else
-            snprintf(bufs[c], sizeof(bufs[c]), "%s", kBase[c]);
-        labels[c] = bufs[c];
+            bufs[c] = XString_create_fmt_utf8("%s", kBase[c]);
+        labels[c] = bufs[c] ? XString_toUtf8(bufs[c]) : kBase[c];
     }
     XTreeWidget_setHeaderLabels(view, labels, 3);
+    for (c = 0; c < 3; ++c) {
+        if (bufs[c]) XString_delete_base((XClass*)bufs[c]);
+    }
 }
 
 /** @brief 表头段点击槽（经 VXFileDialog_eventFilter 拦截承载）：同段
@@ -2005,10 +2220,13 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
             /* 保存模式默认后缀：名称无 '.' 时补 defaultSuffix（对标
              * QFileDialog defaultSuffix 语义；仅相对名补，绝对路径
              * 不改写）。 */
-            char buf[1024];
-            snprintf(buf, sizeof(buf), "%s.%s", name,
-                     XString_toUtf8(dlg->m_defaultSuffix));
-            path = xff_joinPath(dlg->m_directory, buf);
+            XString* withSuffix =
+                XString_create_fmt_utf8("%s.%s", name,
+                                        XString_toUtf8(dlg->m_defaultSuffix));
+            path = xff_joinPath(dlg->m_directory,
+                                withSuffix ? XString_toUtf8(withSuffix)
+                                           : name);
+            if (withSuffix) XString_delete_base((XClass*)withSuffix);
         } else {
             path = xff_joinPath(dlg->m_directory, name);
         }
@@ -2195,7 +2413,8 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         }
     }
     /* 行 2：主体行（左导航窗格 + 文件列表树；Win10 详情视图三列
-     * 名称/大小/类型 + 表头，对标 detailMode。目录行大小列「文件夹」。
+     * 名称/大小/类型 + 表头，对标 detailMode。目录行大小列留空、
+     * 类型列「文件夹」，Qt/Win10 口径）。
      * 导航窗格固定宽 ~120px，条目为用户可读名，数据侧路径由
      * xff_navEntries 映射，单击即跳转——CWD 无子目录/无匹配文件
      * 时用户仍可经此去桌面/文档/下载等常驻目录）。 */
@@ -2431,6 +2650,13 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                           (size_t)XAbstractItemView_clicked_signal,
                           (XObject*)dlg, xff_viewBaseClicked,
                           XConnectionType_Direct);
+        /* 键盘 Down/Up 等推进 current 行时回填文件名框（交互猎获④；
+         * 树键盘路径 xtw_setCurrentRow 内发射，单击选中路径经同一
+         * 信号重复回填同值，无副作用）。 */
+        XObject_connect_1((XObject*)view,
+                          (size_t)XTreeWidget_currentItemChanged_signal(NULL, 0, 0),
+                          (XObject*)dlg, xff_viewCurrentChanged,
+                          XConnectionType_Direct);
         /* 键盘激活（Return/Enter）：基类 keyPress 在当前行上发射
          * activated(row,col) 并 accept（XAbstractItemView.c:1854-1873）
          * ——事件被消费、不再沿父链到对话框默认按钮路径，故必须在此
@@ -2586,7 +2812,10 @@ static XString* xff_firstSelected(const XFileDialog* dlg)
     return item ? XString_create_copy(item) : XString_create();
 }
 
-/** @brief 真实弹窗路径公共主体：组装 → exec → 回收。 */
+/** @brief 真实弹窗路径公共主体：组装 → exec → 回收。
+ *  @note 模态重入护栏（xff_execActive 注记）：exec 在册期间再入的
+ *  便捷调用按取消语义立即返回空（*outDlg=NULL，调用方 teardown(NULL)
+ *  与空结果回读均为既有安全路径），不再叠开第二层对话框。 */
 static bool xff_runDialog(XWidget* parent, const XString* caption,
                           const XString* dir, const XString* filter,
                           XFileDialogOptions options,
@@ -2596,13 +2825,18 @@ static bool xff_runDialog(XWidget* parent, const XString* caption,
                           XFFLayouts* outLs)
 {
     XFileDialog* dlg;
+    bool accepted;
     if (!outDlg || !outLs) return false;
     *outDlg = NULL;
+    if (xff_execActive) return false;
     dlg = xff_buildDialog(parent, caption, dir, filter, options, fileMode,
                           acceptMode, prefillName, outLs);
     if (!dlg) return false;
     *outDlg = dlg;
-    return xff_exec(dlg);
+    xff_execActive = true;
+    accepted = xff_exec(dlg);
+    xff_execActive = false;
+    return accepted;
 }
 
 #endif /* XFILE_ON && XDIR_ON */
@@ -2723,7 +2957,6 @@ XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
         XFFLayouts ls;
         XString* startDir = NULL;
         XString* prefill = NULL;
-        char buf[1024];
         const char* dutf;
         const char* slash;
         bool accepted;
@@ -2739,9 +2972,9 @@ XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
                  * getSaveFileName 传入完整文件路径的行为）。 */
                 slash = strrchr(dutf, '/');
                 if (slash && slash != dutf) {
-                    snprintf(buf, sizeof(buf), "%.*s",
-                             (int)(slash - dutf), dutf);
-                    startDir = XString_create_utf8(buf);
+                    startDir = XString_create_fmt_utf8("%.*s",
+                                                       (int)(slash - dutf),
+                                                       dutf);
                     prefill = XString_create_utf8(slash + 1);
                 }
             }

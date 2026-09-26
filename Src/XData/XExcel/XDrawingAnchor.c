@@ -14,7 +14,6 @@
 #include "XFile.h"
 #include "XIODevice.h"
 #include "XClass.h"
-#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -168,7 +167,7 @@ static int attribute_int(const XXmlStreamAttributes* attributes, const char* nam
     if (!attributes || !name) return fallback;
     XString_Init_Utf8(key, name);
     const XString* value = XXmlStreamAttributes_value_ex(attributes, NULL, key);
-    int result = value ? atoi(XString_toUtf8(value)) : fallback;
+    int result = value ? XString_toInt(value, NULL, 10) : fallback;
     XString_deinit_base(key);
     return result;
 }
@@ -182,16 +181,16 @@ static bool read_marker(XXmlStreamReader* reader, XlsxMarker* out) {
             if (!name) continue;
             if (xml_name_is(name, "col")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
-                if (t) out->m_col = atoi(XString_toUtf8(t));
+                if (t) out->m_col = XString_toInt(t, NULL, 10);
             } else if (xml_name_is(name, "colOff")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
-                if (t) out->m_colOffset = atoi(XString_toUtf8(t));
+                if (t) out->m_colOffset = XString_toInt(t, NULL, 10);
             } else if (xml_name_is(name, "row")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
-                if (t) out->m_row = atoi(XString_toUtf8(t));
+                if (t) out->m_row = XString_toInt(t, NULL, 10);
             } else if (xml_name_is(name, "rowOff")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
-                if (t) out->m_rowOffset = atoi(XString_toUtf8(t));
+                if (t) out->m_rowOffset = XString_toInt(t, NULL, 10);
             }
         } else if (tt == XXmlStream_EndElement) {
             const XString* name = XXmlStreamReader_name(reader);

@@ -1,7 +1,7 @@
 ﻿#include "XTime.h"
 #include "XVariantTypeOps.h"
 #include "XVariant.h"
-#include <ctype.h>
+#include "XChar.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -200,7 +200,7 @@ XTime XTime_fromString_format(const char* str, const char* format) {
     fraction = strchr(str, '.');
     if (fraction) {
         ++fraction;
-        while (isdigit((unsigned char)fraction[digits]) && digits < 6) {
+        while (XChar_isDigit_2((uint32_t)(unsigned char)fraction[digits]) && digits < 6) {
             fractionValue = fractionValue * 10 + fraction[digits] - '0';
             ++digits;
         }

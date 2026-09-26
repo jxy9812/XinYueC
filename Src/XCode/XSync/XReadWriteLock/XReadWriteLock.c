@@ -5,7 +5,6 @@
 #include "XMutex.h"
 #include "XWaitCondition.h"
 #include"XDateTime.h"
-#include <stdlib.h>
 #if XSYNC_ON
 #if XREADWRITELOCK_ON
 // --- 锁状态定义 (使用 size_t) ---

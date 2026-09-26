@@ -1073,6 +1073,18 @@ bool XDir_removeRecursively(XDir* dir)
     return XDeviceFile_rmdir(dir->m_path, true);
 }
 
+bool XDir_removePath_static(const XString* path)
+{
+    XFileStat st;
+    if (!path) return false;
+    if (!XDeviceFile_stat(path, &st) || !st.exists) return false;
+    /* 类型分流对标 C remove：文件→永久删除；目录→仅空目录可删
+       （非递归 rmdir 遇非空目录失败，与 C remove 语义一致）。
+       嵌入式适配：Src 禁用 C 标准库 remove，统一走本 API。 */
+    return st.isDir ? XDeviceFile_rmdir(path, false)
+                    : XDeviceFile_removePermanent(path);
+}
+
 bool XDir_remove(XDir* dir, const XString* fileName)
 {
     if (!dir || !fileName) return false;

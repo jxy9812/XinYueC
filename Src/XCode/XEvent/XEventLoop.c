@@ -10,7 +10,6 @@
 #include "XLockFreeQueue.h"
 #include "XTimeWheelGroup.h"
 #include "XAtomic.h"
-#include <stdlib.h>
 
 static void VXEventLoop_deinit(XEventLoop* loop);
 static bool VXEventLoop_event(XEventLoop* loop, XEvent* event);

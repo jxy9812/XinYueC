@@ -17,8 +17,7 @@
 #include "XVarList.h"
 #include "XEvent.h"
 /* 真实弹窗依赖（对标 Qt 静态便捷函数的对话框组装路径）： */
-#include <stdio.h>             /* snprintf：浮点初值文本化 */
-#include <stdlib.h>            /* strtod：浮点输入解析 */
+#include <stdlib.h>            /* strtod：浮点输入解析（前缀解析语义，XString_toDouble 为全串校验不等价，暂留） */
 #include "XCoreApplication.h"  /* qApp 等价物：有应用实例才允许模态循环 */
 #include "XGuiApplication.h"   /* 主屏查询（弹窗居中） */
 #include "XScreen.h"           /* 屏幕几何 */
@@ -895,10 +894,11 @@ double XInputDialog_getDouble(XWidget* parent, const XString* title,
          * 小数）；初值按 decimals 位小数文本化，accept 时解析钳位。 */
         XLineEdit* edit = XLineEdit_create((XWidget*)dlg, 0);
         if (edit) {
-            char buf[64];
+            XString* txt;
             int dec = decimals < 0 ? 6 : (decimals > 10 ? 10 : decimals);
-            snprintf(buf, sizeof(buf), "%.*f", dec, value);
-            XLineEdit_setText(edit, buf);
+            txt = XString_create_fmt_utf8("%.*f", dec, value);
+            XLineEdit_setText(edit, txt ? XString_toUtf8(txt) : "");
+            if (txt) XString_delete_base((XClass*)txt);
             XWidget_setMinimumSize((XWidget*)edit, 220, 24);
             /* 对标 Qt 私有子对象命名：accept 结算经 findChild 解析行
                编辑当前文本（同 getText 的 #25 根因，此前确认后恒回

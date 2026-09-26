@@ -539,8 +539,18 @@ void XIcon_init(XIcon* self)
 
 void XIcon_init_pixmap(XIcon* self, const XPixmap* pixmap)
 {
-    XIcon_init(self);
-    XIconPrivate_addEntry(self->m_data, pixmap, XIconMode_Normal, XIconState_Off);
+    /* 重入防护：create() 产物再走 init_pixmap（xcs_standardIcon→
+       xcsi_build、XMessageBox 内快照图标均此序）时不得二次 XIcon_init
+       ——XIcon_init 会 XMemset 整个结构体，抹掉 Class 记账
+       （m_is_heap/m_memory）并孤儿化首个 private。后果：delete_base
+       因 is_heap=0 跳过 free（32B 对象滞留）+ 首个 private 成无主块
+       （136B），ASan 实测双泄漏；对照组裸 XIcon_create+delete 无此象。
+       已初始化（vtable 就位）则只追加条目；零清栈对象仍走完整 init。 */
+    if (!self) return;
+    if (XClassIsVtableNull(self)) XIcon_init(self);
+    if (self->m_data)
+        XIconPrivate_addEntry(self->m_data, pixmap, XIconMode_Normal,
+                              XIconState_Off);
 }
 
 void XIcon_init_file_2(XIcon* self, const char* fileName)

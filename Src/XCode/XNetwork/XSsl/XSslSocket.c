@@ -36,7 +36,6 @@
 #include "XVariant.h"
 #include "XFile.h"
 #include "XTypes.h"
-#include <stdlib.h>
 #if XNETWORK_ON
 #if XNETWORK_SSL_ON
 

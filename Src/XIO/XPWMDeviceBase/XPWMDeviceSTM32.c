@@ -1,4 +1,5 @@
 ﻿#ifdef USE_STDPERIPH_DRIVER
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XPWMDeviceSTM32.h"
 #include"XInterrupt.h"
 #include"XMemory.h"
@@ -399,7 +400,7 @@ void VXIODevice_close(XPWMDeviceSTM32 *pwm)
 // void TIM1_UP_TIM10_IRQHandler(void) {
 //     if (TIM_GetITStatus(TIM1, TIM_IT_Update) != RESET) {
 //         TIM_ClearITPendingBit(TIM1, TIM_IT_Update);
-//         //printf("定时器中断\n");
+//         //XPrintf("定时器中断\n");
 //         XStepMotor_timerCallback( AutoCuttingMachine_global()->m_cuttingMotor);
 //     }
 // }

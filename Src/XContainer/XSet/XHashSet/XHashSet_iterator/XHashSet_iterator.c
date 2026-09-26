@@ -1,5 +1,6 @@
 ﻿#include "XHashSet_iterator.h"
 #if XHashSet_ON
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XHashSet.h"
 #include"XRedBlackTree.h"
 #define XHashSet_Buckets(set) \
@@ -100,7 +101,7 @@ void XHashSet_iterator_for_each(XHashSet* this_set, XFor_each ForFunction, void*
 {
     for_each_iterator(this_set, XHashSet, it)
     {
-		//printf("index:%d\n",it.index);
+		//XPrintf("index:%d\n",it.index);
         ForFunction(XHashSet_iterator_data(&it), args);
     }
 }

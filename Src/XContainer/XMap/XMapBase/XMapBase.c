@@ -1,5 +1,6 @@
 ﻿#include"XMapBase.h"
 #if XMap_ON
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XVector.h"
 #include"XVariant.h"
 #include"XString.h"
@@ -14,7 +15,7 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 		return NULL;
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
-		//printf("类型参数不能为0");
+		//XPrintf("类型参数不能为0");
 		return NULL;
 	}
 	if (ISNULL(this_map, ""))

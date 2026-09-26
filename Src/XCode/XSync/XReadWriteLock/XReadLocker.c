@@ -1,6 +1,5 @@
 ﻿#include "XReadLocker.h"
 #include "XMemory.h"
-#include <stdlib.h>
 #if XSYNC_ON
 #if XREADWRITELOCK_ON
 

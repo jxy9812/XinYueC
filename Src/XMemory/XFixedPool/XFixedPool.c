@@ -1,4 +1,5 @@
 ﻿#include "XFixedPool.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XMemory.h"
 #include <stdlib.h>
 #include <string.h>
@@ -185,7 +186,7 @@ void* XFixedPool_malloc(XFixedPool* pool) {
     // --- 原子减少空闲块计数 ---
     XAtomic_fetch_sub_size_t(&pool->free_count, 1, XAtomic_MemoryOrder_Release);
     
-    //printf("user_block:%d\n", pool->user_block_size);
+    //XPrintf("user_block:%d\n", pool->user_block_size);
     return get_user_data_ptr(old_head_block);
 }
 

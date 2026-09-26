@@ -2,7 +2,6 @@
 #include "XDebug.h"
 #include <stdio.h>
 #include <string.h>
-#include <fcntl.h>
 
 //#if DEBUG_ON || defined(_DEBUG)
 
@@ -138,14 +137,14 @@ XDebug* XDebug_vprintf_(XDebug* debug, const char* format, va_list args) {
 
     if (XChar_utf8ToGbkStream(temp, 0, gbk_buf, gbk_len + 1) > 0)
     {
-        //result = printf("%s", gbk_buf);  // 输出GBK
+        //result = XPrintf("%s", gbk_buf);  // 输出GBK
     }
     XFree_System(temp);
     temp = gbk_buf;
     len = gbk_len;
 #else
     // Linux：直接输出UTF-8（本地编码兼容）
-   /* result = printf("%s", utf8_buf);*/
+   /* result = XPrintf("%s", utf8_buf);*/
 #endif
 
     // 写入XDebug缓冲区

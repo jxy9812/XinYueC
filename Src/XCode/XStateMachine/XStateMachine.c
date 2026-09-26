@@ -4,7 +4,6 @@
 #include "XMemory.h"
 #include "XStateMachine_p.h"
 
-#include <stdlib.h>
 
 typedef struct XStateMachine_SignalConnection {
     XObject m_class;

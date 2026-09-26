@@ -30,7 +30,6 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
-#include <stdio.h>
 #include <limits.h>
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"

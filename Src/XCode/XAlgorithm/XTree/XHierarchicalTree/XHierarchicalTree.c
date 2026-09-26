@@ -138,7 +138,7 @@ void XHTree_print(XHTreeNode* this_root, int depth)
 	for (int i = 0; i < depth; i++) {
 		XPrintf("  ");
 	}
-	//printf("%s\n", node->data);
+	//XPrintf("%s\n", node->data);
 
 	// 递归遍历子节点
 	XHTreeNode* child = XHTreeNode_GetFirstChild(this_root);

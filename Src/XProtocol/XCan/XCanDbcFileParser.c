@@ -7,8 +7,9 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XStringList.h"
+#include "XFile.h"             /* 整文件读取走 XFile（外部依赖约束：Src 禁 stdio 文件流） */
 #include <string.h>
-#include <stdio.h>
+#include <stdio.h>             /* snprintf：警告格式化（残余位点见能力清单） */
 #include <ctype.h>
 
 // =============== 跨平台字符串分割函数 ===============
@@ -244,14 +245,14 @@ static bool parseFileInternal(XCanDbcFileParser* parser, const char* fileName)
 {
     if (!parser || !fileName) return false;
 
-    FILE* fp = fopen(fileName, "r");
-    if (!fp) {
-        parser->m_error = XCanDbcFileParser_Error_FileReading;
-        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
-        parser->m_errorString = XString_create_fmt_utf8(
-            "Cannot open file: '%s'", fileName);
-        return false;
-    }
+    /* 整文件读取走 XFile（XIODevice 缓冲/事务语义）——外部依赖约束：
+       Src 禁用 stdio 文件流（fopen/fseek/ftell/fread），嵌入式适配。
+       注意按整文件粒度切换，不做 CRT/XIODevice 单函数混搭。 */
+    XString* nameString = XString_create_utf8(fileName);
+    XFile file;
+    int64_t fileSize = 0;
+    char* buffer = NULL;
+    bool result = false;
 
     /* 保存文件名 */
     if (parser->m_fileName) {
@@ -259,34 +260,57 @@ static bool parseFileInternal(XCanDbcFileParser* parser, const char* fileName)
     }
     parser->m_fileName = XMemory_strdup(fileName);
 
-    /* 读取整个文件到内存 */
-    fseek(fp, 0, SEEK_END);
-    long fileSize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    if (fileSize <= 0) {
-        fclose(fp);
-        parser->m_error = XCanDbcFileParser_Error_FileReading;
-        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
-        parser->m_errorString = XString_create_fmt_utf8(
-            "Empty file: '%s'", fileName);
-        return false;
-    }
-
-    char* buffer = (char*)XMalloc_System((size_t)fileSize + 1);
-    if (!buffer) {
-        fclose(fp);
+    if (!nameString) {
         parser->m_error = XCanDbcFileParser_Error_FileReading;
         if (parser->m_errorString) XString_delete_base(parser->m_errorString);
         parser->m_errorString = XString_create_utf8("Memory allocation failed");
         return false;
     }
 
-    size_t readSize = fread(buffer, 1, (size_t)fileSize, fp);
-    fclose(fp);
-    buffer[readSize] = '\0';
+    XFile_init_2(&file, nameString);
+    if (!XFile_open_2(&file, XIODevice_ReadOnly, 0)) {
+        parser->m_error = XCanDbcFileParser_Error_FileReading;
+        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        parser->m_errorString = XString_create_fmt_utf8(
+            "Cannot open file: '%s'", fileName);
+        XClass_deinit_base((XClass*)&file);
+        XString_delete_base((XClass*)nameString);
+        return false;
+    }
 
-    bool result = parseDataInternal(parser, buffer);
+    fileSize = XFile_size_base(&file);
+    if (fileSize <= 0) {
+        parser->m_error = XCanDbcFileParser_Error_FileReading;
+        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        parser->m_errorString = XString_create_fmt_utf8(
+            "Empty file: '%s'", fileName);
+        XFile_close_base(&file);
+        XClass_deinit_base((XClass*)&file);
+        XString_delete_base((XClass*)nameString);
+        return false;
+    }
+
+    buffer = (char*)XMalloc_System((size_t)fileSize + 1);
+    if (!buffer) {
+        parser->m_error = XCanDbcFileParser_Error_FileReading;
+        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        parser->m_errorString = XString_create_utf8("Memory allocation failed");
+        XFile_close_base(&file);
+        XClass_deinit_base((XClass*)&file);
+        XString_delete_base((XClass*)nameString);
+        return false;
+    }
+
+    {
+        int64_t readSize = XIODevice_read_1((XIODevice*)&file, buffer, fileSize);
+        buffer[readSize > 0 ? readSize : 0] = '\0';
+    }
+
+    XFile_close_base(&file);
+    XClass_deinit_base((XClass*)&file);
+    XString_delete_base((XClass*)nameString);
+
+    result = parseDataInternal(parser, buffer);
     XFree_System(buffer);
     return result;
 }

@@ -1468,11 +1468,11 @@ static bool loadWorksheetImagesFromReader(const XZipReader* zip, XWorksheet* wor
         } else if (XString_equals_utf8(name, "col", XChar_CaseSensitive)) {
             const XString* value = XXmlStreamReader_readElementText(reader,
                 XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
-            if (value) column = atoi(XString_toUtf8(value)) + 1;
+            if (value) column = XString_toInt(value, NULL, 10) + 1;
         } else if (XString_equals_utf8(name, "row", XChar_CaseSensitive)) {
             const XString* value = XXmlStreamReader_readElementText(reader,
                 XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
-            if (value) row = atoi(XString_toUtf8(value)) + 1;
+            if (value) row = XString_toInt(value, NULL, 10) + 1;
         } else if (XString_equals_utf8(name, "blip", XChar_CaseSensitive)) {
             XString_Init_Utf8(embedName, "r:embed");
             const XString* rid = XXmlStreamAttributes_value(

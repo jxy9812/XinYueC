@@ -3,7 +3,6 @@
 #include "XMemory.h"
 #include "XStateMachine_p.h"
 
-#include <stdlib.h>
 
 static bool XMouseEventTransition_pathContains(const XVector* path, XPoint point)
 {

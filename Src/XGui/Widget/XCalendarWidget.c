@@ -18,7 +18,6 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
-#include <stdio.h>
 
 #if XWIDGET_ON && XCALENDARWIDGET_ON
 

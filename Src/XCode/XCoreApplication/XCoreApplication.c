@@ -18,7 +18,6 @@
 #include "XAbstractNativeEventFilter.h"
 #include "XSystem.h"
 #include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 
 static XCoreApplication* g_app = NULL;

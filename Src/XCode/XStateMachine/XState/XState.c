@@ -4,7 +4,6 @@
 #include "XSignalTransition.h"
 #include "XStateMachine_p.h"
 
-#include <stdlib.h>
 
 static void VXState_deinit(XState* state)
 {

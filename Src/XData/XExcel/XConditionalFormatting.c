@@ -5,7 +5,6 @@
  ******************************************************************************/
 #include "XConditionalFormatting.h"
 #include "XMemory.h"
-#include <stdlib.h>
 
 #include <string.h>
 
@@ -164,7 +163,7 @@ bool XConditionalFormatting_addHighlightCellsRule2(XConditionalFormatting* self,
     if (formula1 && type == XCF_Highlight_TimePeriod)
         rule.m_timePeriod = XString_create_copy(formula1);
     if (formula1 && type >= XCF_Highlight_Top && type <= XCF_Highlight_BottomPercent)
-        rule.m_rank = atoi(XString_toUtf8(formula1));
+        rule.m_rank = XString_toInt(formula1, NULL, 10);
     if ((formula1 && !rule.m_formula1) ||
         (formula1 && type >= XCF_Highlight_ContainsText && type <= XCF_Highlight_EndsWith &&
          !rule.m_text) || (formula1 && type == XCF_Highlight_TimePeriod && !rule.m_timePeriod)) {

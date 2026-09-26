@@ -6,7 +6,6 @@
 #include "XSemaphore.h"
 #include "XCoreApplication.h"
 #include "XMemory.h"
-#include <stdlib.h>
 #include <string.h>
 #if XSYNC_ON
 #if XTHREADDATA_ON

@@ -82,8 +82,13 @@ XDateTime XDateTime_currentDateTime(void) {
 }
 
 int64_t XDateTime_currentMSecsSinceEpoch(void) {
+    /* 单调时钟（CLOCK_MONOTONIC，不受对时/跳变影响）：本函数是全库
+     * 统一的"当前毫秒"计时源，消费方全部是时长/超时/限流测量
+     * （定时器轮/IO 超时/双击去伪/present 限频），墙钟跳变会破坏
+     * 这些测量。需要墙钟日期时间的调用方走 XDateTime_currentDateTime
+     * /currentSecsSinceEpoch（见约束文档「外部依赖约束」时间源规则）。 */
     struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
         return 0;
     }
     return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;

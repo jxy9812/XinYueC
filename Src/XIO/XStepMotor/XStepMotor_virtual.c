@@ -1,4 +1,5 @@
 ﻿#include "XStepMotor.h"
+#include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XMemory.h"
 #include <string.h>
 #include <stdio.h>
@@ -236,7 +237,7 @@ void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions)
 		}
 		XStepMotor_resetRevolutions(motor);
 		motor->m_currentPulses = 0;//清空脉冲计数
-		//printf("脉冲数:%d\n",(int)motor->m_setPulses);
+		//XPrintf("脉冲数:%d\n",(int)motor->m_setPulses);
 	}
 	else if (motor->m_ControlMode == XSM_POSITION_CONTROL)
 	{

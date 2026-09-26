@@ -86,8 +86,11 @@ int64_t XDateTime_currentNSecsSinceEpoch(void)
 }
 
 int64_t XDateTime_currentMSecsSinceEpoch(void) {
-    uint64_t since_unix_100ns = getUnixTimeIn100Ns();
-    return (int64_t)(since_unix_100ns / 10000); // 10,000 * 100ns = 1ms
+    /* 单调时钟（GetTickCount64，不受对时/跳变影响）：与 posix 后端
+     * CLOCK_MONOTONIC 对齐——本函数是全库统一"当前毫秒"计时源，
+     * 消费方全部是时长/超时/限流测量，墙钟跳变会破坏这些测量。
+     * 需要墙钟日期时间的调用方走 XDateTime_currentDateTime。 */
+    return (int64_t)GetTickCount64();
 }
 
 int64_t XDateTime_currentSecsSinceEpoch(void) {

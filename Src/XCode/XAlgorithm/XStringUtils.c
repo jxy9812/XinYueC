@@ -1375,3 +1375,29 @@ int XSscanf(const char* str, const char* format, ...)
 	va_end(args);
 	return n;
 }
+
+char* XStrtokReentrant(char* str, const char* delim, char** savePtr)
+{
+	char* p;
+	if (!delim || !savePtr) return NULL;
+	if (str) *savePtr = str;
+	if (!*savePtr || !**savePtr) return NULL;
+	/* 跳过前导分隔符 */
+	p = *savePtr;
+	while (*p && XStrchr(delim, *p)) p++;
+	if (!*p) {
+		*savePtr = p;
+		return NULL;
+	}
+	/* token 起点确定，找到结束位置写入 '\0' */
+	{
+		char* token = p;
+		while (*p && !XStrchr(delim, *p)) p++;
+		if (*p) {
+			*p = '\0';
+			p++;
+		}
+		*savePtr = p;
+		return token;
+	}
+}

@@ -372,6 +372,17 @@ bool XDir_removeRecursively(XDir* dir);
 bool XDir_remove(XDir* dir, const XString* fileName);
 
 /**
+ * @brief 按路径删除——C 标准 remove 的库内等价物（嵌入式适配）
+ * @param path 目标路径（XString对象）：文件或目录
+ * @return 成功返回 true；路径不存在、非空目录或删除失败返回 false
+ * @note 类型自动分流：文件→永久删除；目录→仅空目录可删（非递归，
+ *       非空目录删除失败），与 C remove 语义对齐。Src 禁用 C remove
+ *       （外部依赖约束：嵌入式无 C 标准库可依赖），删除路径统一走本
+ *       API；需要递归删目录用 XDir_removeRecursively。
+ */
+bool XDir_removePath_static(const XString* path);
+
+/**
  * @brief 重命名文件或目录
  * @param dir XDir 对象指针
  * @param oldName 原名称（XString对象）
