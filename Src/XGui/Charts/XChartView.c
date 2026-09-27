@@ -902,6 +902,17 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
  *         取图例区起点到控件右缘），保证贴回与直画逐位一致。 */
 #define XCV_LEGEND_TILE_SLACK 48
 
+/** @brief 图例瓦片顶部余量（像素；t218c/夜一证据图修复）：drawText 以
+ *         基线为锚（XPainter_drawText 第 3 参 baselineY，字形顶部=
+ *         baselineY−box_h−ofs_y，见 XPainter.c painter8x16GlyphOriginY），
+ *         首行基线=legendR.y+10，而字形升部（box_h+ofs_y）>10——首行
+ *         字形墨迹可上探 legendR.y 之上 2~4px（夜一 demo 实测 3 行、
+ *         57px：直画有墨、瓦片贴回纯白=B 侧字形顶带丢失）。瓦片画布
+ *         顶边原与 legendR.y 齐平，把这段墨迹裁在画布外；顶部余量让
+ *         瓦片同样可触达（覆盖像素字号 ≤26 的升部余量，与底部 SLACK
+ *         同一"直画可达=瓦片可达"纪律），贴回原点同步上移。 */
+#define XCV_LEGEND_TILE_TOP_SLACK 16
+
 /**
  * @brief 把图例渲进保留瓦片（保留缓存一期；XGUI_CHART_STATIC_CACHE=1）。
  * @details 复用 xcv_paintLegend（同代码保证与直画逐位一致）：瓦片画布
@@ -910,7 +921,8 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
  *          贴回 = 图例 over 目标既有内容（z 序=直画图例：序列/饼图之上、
  *          橡皮筋之下），source-over 结合律保证逐位一致。
  * @param tileW/tileH 调用方按图例区与控件边界算好的瓦片尺寸（横=区起点
- *        到控件右缘，纵=区高+XCV_LEGEND_TILE_SLACK）。
+ *        到控件右缘，纵=区高+XCV_LEGEND_TILE_TOP_SLACK+
+ *        XCV_LEGEND_TILE_SLACK）。
  * @return 重建成功返回 true；尺寸非法或画布分配失败返回 false（调用方
  *         回退直画）。
  */
@@ -934,11 +946,85 @@ static bool xcv_legendLayerRebuild(XChartView* cv, const XRect* legendR,
         return false;
     }
     /* 瓦片画布不继承 paintOffset 平移与脏区裁剪：瓦片像素坐标=控件本地
-     * 坐标减图例区原点；贴回时经目标绘制器既有平移/裁剪落位。 */
-    XPainter_translate(&painter, -(float)legendR->x, -(float)legendR->y);
+     * 坐标减瓦片原点（图例区原点上移 TOP_SLACK，见
+     * XCV_LEGEND_TILE_TOP_SLACK 注）；贴回时经目标绘制器既有平移/裁剪
+     * 落位，贴回原点与此处同式（xcv_renderToImage 图例段）。 */
+    XPainter_translate(&painter, -(float)legendR->x,
+                       -(float)(legendR->y - XCV_LEGEND_TILE_TOP_SLACK));
     xcv_paintLegend(cv, &painter, legendR, NULL);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
+    return true;
+}
+#endif /* XCHARTVIEW_STATIC_LAYER_ON */
+
+#if XCHARTVIEW_STATIC_LAYER_ON
+/** @brief 图例瓦片内容不透明性 gate（t218c 半透明双合成修复）。
+ * @details 瓦片路径的逐位一致依赖 source-over 结合律下的无损中间存储：
+ *          直画=色块/字形一步 over 背景；瓦片=先渲进全透明画布（预乘
+ *          8bit 存储量化一次）再 drawImage over 背景（第二次舍入）。
+ *          内容全不透明（alpha=255）时预乘恒等、两步=一步逐位一致；
+ *          任一图例色带 alpha<255（如面积序列 0x5516AFA9 半透明色板）
+ *          时两次舍入可差 ±1/通道（t218c SW 实测 12px 翻转；GPU 预乘
+ *          管线放大为整块 12x12 色板 144px）。本 gate 按 xcv_paintLegend
+ *          同源取色链（序列色→柱组画刷→主题渐变/主题色；文本=调色板
+ *          WindowText）逐项核验 alpha，不满足即回退直画——回退路径
+ *          逐位=无瓦片现状，正确性优先于缓存收益。 */
+static bool xcv_legendTileContentOpaque(const XChartView* cv)
+{
+    const XChart* chart;
+    uint32_t text;
+    int i;
+    int k;
+    if (!cv || !cv->m_chart) return false;
+    chart = cv->m_chart;
+    text = xcv_color(cv, XPaletteColorRole_WindowText);
+    if ((text >> 24) != 0xFFu) return false;
+    for (i = 0; i < chart->m_lineCount; ++i) {
+        const XLineSeries* s = chart->m_lineSeries[i];
+        uint32_t color = s->m_base.m_color != 0
+            ? s->m_base.m_color : xcv_seriesColor(cv, s, i);
+        if ((color >> 24) != 0xFFu) return false;
+    }
+    for (k = 0; k < chart->m_barCount; ++k) {
+        const XBarSeries* b = chart->m_barSeries[k];
+        const XBarSet* set0 = b ? XAbstractBarSeries_barSetAt(&b->m_base, 0)
+                                : NULL;
+        uint32_t setBrush = set0 ? XBarSet_brush(set0) : 0;
+        uint32_t color = (b && b->m_color != 0)
+            ? b->m_color
+            : (setBrush != 0
+                   ? setBrush
+                   : XChart_themeGradientColor(cv->m_chart, k, 0.5));
+        if ((color >> 24) != 0xFFu) return false;
+    }
+    for (k = 0; k < chart->m_scatterCount; ++k) {
+        const XScatterSeries* sc = chart->m_scatterSeries[k];
+        uint32_t color = sc->m_base.m_color != 0
+            ? sc->m_base.m_color : xcv_seriesColor(cv, sc, k);
+        if ((color >> 24) != 0xFFu) return false;
+    }
+    for (k = 0; k < chart->m_areaCount; ++k) {
+        const XAreaSeries* ar = chart->m_areaSeries[k];
+        uint32_t color = ar->m_color != 0
+            ? ar->m_color : xcv_seriesColor(cv, ar, k);
+        if ((color >> 24) != 0xFFu) return false;
+    }
+    for (k = 0; k < chart->m_splineCount; ++k) {
+        const XSplineSeries* sp = chart->m_splineSeries[k];
+        uint32_t color = sp->m_base.m_color != 0
+            ? sp->m_base.m_color : xcv_seriesColor(cv, sp, k);
+        if ((color >> 24) != 0xFFu) return false;
+    }
+    if (chart->m_pieSeries) {
+        const XPieSeries* pie = chart->m_pieSeries;
+        for (k = 0; k < pie->m_count; ++k) {
+            const XPieSlice* slice = pie->m_slices[k];
+            uint32_t color = (slice && XPieSlice_color(slice) != 0)
+                ? XPieSlice_color(slice) : XChart_themeColor(cv->m_chart, k);
+            if ((color >> 24) != 0xFFu) return false;
+        }
+    }
     return true;
 }
 #endif /* XCHARTVIEW_STATIC_LAYER_ON */
@@ -1879,22 +1965,32 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image,
     /* 图例段（保留缓存一期，XGUI_CHART_STATIC_CACHE=1，默认关）：瓦片
      * 命中/惰性重建后一次 drawImage 贴回。z 序=直画图例（序列/饼图之
      * 上、橡皮筋之下），over 结合律保证贴回=直画；瓦片区横=图例区起点
-     * 到控件右缘、纵=区高+SLACK（字形盒可越过区底界，见瓦片重建注），
+     * 到控件右缘、纵=区高+TOP_SLACK+SLACK（字形盒可越过区底界/首行
+     * 基线锚使顶带上探区顶之上，见 XCV_LEGEND_TILE_TOP_SLACK 注），
      * 脏区与瓦片区不相交整段跳过（稳态小脏区帧零图例成本，与 series
      * 段早退同纪律；命中贴回/重建都受此门控，重建惰性发生=下次可见帧）。
+     * 逐位一致 gate：图例内容含半透明色（alpha<255）时预乘中间存储的
+     * 两次舍入可差 ±1/通道（t218c 12px），xcv_legendTileContentOpaque
+     * 不满足即回退直画（逐位=无瓦片现状）。
      * 失效从粗：指纹（图例可见性+序列名/色+主题+调色板+字体）或
      * m_legendValid（resize/updateChart/setChart 整体失效）任一不满足
-     * 即重建。缓存关/A-B 旁路/瓦片不可用回退既有逐项现绘（逐位=今天）。
+     * 即重建。缓存关/A-B 旁路/半透明内容/瓦片不可用回退既有逐项现绘
+     * （逐位=今天）。
      * 计时：瓦片重建与贴回计入 legend 段（profLegendUs），不新增探针、
      * 不嵌套，XCV_PROF 五段口径与输出格式不变。 */
     if (cv->m_chart->m_legendVisible) {
         bool legendPainted = false;
         if (xcv_staticCacheEnabled() && !g_xcvLayerBypass &&
-            legendR.x >= 0) {
+            legendR.x >= 0 && xcv_legendTileContentOpaque(cv)) {
             int tileW = bounds.width - legendR.x;
-            int tileH = legendR.height + XCV_LEGEND_TILE_SLACK;
+            int tileH = legendR.height + XCV_LEGEND_TILE_TOP_SLACK +
+                        XCV_LEGEND_TILE_SLACK;
             XRect zone;
-            XRect_init(&zone, legendR.x, legendR.y, tileW, tileH);
+            /* 瓦片区顶边随 TOP_SLACK 上移（首行字形墨迹可达区之上，
+             * 见 XCV_LEGEND_TILE_TOP_SLACK 注）；脏区与瓦片区不相交
+             * 整段跳过的门控口径随之对齐（含字形顶带的小脏区不再漏判）。 */
+            XRect_init(&zone, legendR.x, legendR.y - XCV_LEGEND_TILE_TOP_SLACK,
+                       tileW, tileH);
             if (!dirty || XRect_intersects(dirty, &zone)) {
                 bool tileHit =
                     cv->m_legendValid && cv->m_legendFp == staticFp &&
@@ -1913,11 +2009,14 @@ static bool xcv_renderToImage(XChartView* cv, XImage* image,
                     }
                 }
                 if (tileHit) {
-                    /* 瓦片在绘制器坐标 (legendR.x, legendR.y) 整幅落位：
-                     * 绘制器已 translate 控件 paintOffset，裁剪处于脏区
-                     * （同静态层 blit 的落位/约束纪律）。 */
+                    /* 瓦片在绘制器坐标 (legendR.x, legendR.y-TOP_SLACK)
+                     * 整幅落位（与重建 translate 同一原点，首行字形顶带
+                     * 随 TOP_SLACK 入瓦）：绘制器已 translate 控件
+                     * paintOffset，裁剪处于脏区（同静态层 blit 的落位/
+                     * 约束纪律）。 */
                     XPainter_drawImage(&painter, &cv->m_legendLayer,
-                                       legendR.x, legendR.y);
+                                       legendR.x,
+                                       legendR.y - XCV_LEGEND_TILE_TOP_SLACK);
                     legendPainted = true;
                 }
             }

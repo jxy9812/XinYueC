@@ -6255,6 +6255,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     XBackingStore* store;
     XRegion whole;
     XRect contents;
+    XRect wholeBbox;
     XSize size;
     if (!self) return;
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
@@ -6314,6 +6315,38 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         XRegion_addRect(&whole, &contents);
     }
  #endif
+    /* 本帧呈现区域包围盒（whole 定稿后一次收拢，三处共用）：两遍求
+       bbox——单遍增量版在后续矩形把 sc.x/sc.y 左/上拉走时 x+width
+       随之左移，右/下边界被静默收窄（多矩形脏区表面裁剪错误根因，
+       远端第五轮修复，2026-09-25 合并重放）。消费点：表面裁剪、呈现
+       限频整窗判定、脏区读回矩形（readbackRect）；逻辑与原先三处
+       逐矩形展开逐位一致，仅消去重复。 */
+    {
+        int r;
+        int maxRx1 = 0;
+        int maxRy1 = 0;
+        wholeBbox.x = 0;
+        wholeBbox.y = 0;
+        wholeBbox.width = 0;
+        wholeBbox.height = 0;
+        for (r = 0; r < whole.count; ++r) {
+            const XRect* rc = &whole.rects[r];
+            int rx1 = rc->x + rc->width;
+            int ry1 = rc->y + rc->height;
+            if (r == 0) {
+                wholeBbox = *rc;
+                maxRx1 = rx1;
+                maxRy1 = ry1;
+                continue;
+            }
+            if (rc->x < wholeBbox.x) wholeBbox.x = rc->x;
+            if (rc->y < wholeBbox.y) wholeBbox.y = rc->y;
+            if (rx1 > maxRx1) maxRx1 = rx1;
+            if (ry1 > maxRy1) maxRy1 = ry1;
+        }
+        wholeBbox.width = maxRx1 - wholeBbox.x;
+        wholeBbox.height = maxRy1 - wholeBbox.y;
+    }
     /*
      * paint 事件携带的是入队时的脏区快照。先从当前脏区移除本次将要
      * 绘制的部分，避免把事件入队后新增的区域一并清掉。repaint() 直接
@@ -6365,36 +6398,10 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         g_paintTargetImage = XBackingStore_paintImage(store);
         /* 表面裁剪：按刷区域外接矩形设置（对标 Qt drawWidget →
            setSystemClip(toBePainted)，设备坐标）。paintTree 递归期间
-           所有像素写入限幅在脏区内，控件 setClipRect 不可绕过。 */
-        {
-            /* 表面裁剪：按刷区域外接矩形设置（对标 Qt drawWidget →
-               setSystemClip(toBePainted)，设备坐标）。两遍求 bbox——
-               单遍增量版在后续矩形把 sc.x/sc.y 左/上拉走时 x+width
-               随之左移，右/下边界被静默收窄（多矩形脏区表面裁剪
-               错误根因，远端第五轮修复，2026-09-25 合并重放）。 */
-            XRect sc = { 0, 0, 0, 0 };
-            int r;
-            int maxRx1 = 0;
-            int maxRy1 = 0;
-            for (r = 0; r < whole.count; ++r) {
-                const XRect* rc = &whole.rects[r];
-                int rx1 = rc->x + rc->width;
-                int ry1 = rc->y + rc->height;
-                if (r == 0) {
-                    sc = *rc;
-                    maxRx1 = rx1;
-                    maxRy1 = ry1;
-                    continue;
-                }
-                if (rc->x < sc.x) sc.x = rc->x;
-                if (rc->y < sc.y) sc.y = rc->y;
-                if (rx1 > maxRx1) maxRx1 = rx1;
-                if (ry1 > maxRy1) maxRy1 = ry1;
-            }
-            sc.width = maxRx1 - sc.x;
-            sc.height = maxRy1 - sc.y;
-            XPainter_setSurfaceClipRect(&sc, XBackingStore_paintImage(store));
-        }
+           所有像素写入限幅在脏区内，控件 setClipRect 不可绕过。
+           矩形用上方收拢的 wholeBbox（两遍求法注释见收拢处）。 */
+        XPainter_setSurfaceClipRect(&wholeBbox,
+                                    XBackingStore_paintImage(store));
         XBackingStore_beginPaint(store, &whole);
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         {
@@ -6474,31 +6481,12 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                     /* 全窗帧（首绘/resize/全窗失效）永不跳过；局部帧在
                      * 限频窗口内跳过时，把区域并回脏区——绘制结果已在
                      * FBO/后备存储中持久，下一呈现周期整帧补上。 */
-                    int coversFull = 0;
-                    {
-                        XRect sc = { 0, 0, 0, 0 };
-                        int r;
-                        int maxRx1 = 0;
-                        int maxRy1 = 0;
-                        for (r = 0; r < whole.count; ++r) {
-                            const XRect* rc = &whole.rects[r];
-                            int rx1 = rc->x + rc->width;
-                            int ry1 = rc->y + rc->height;
-                            if (r == 0) {
-                                sc = *rc;
-                                maxRx1 = rx1;
-                                maxRy1 = ry1;
-                                continue;
-                            }
-                            if (rc->x < sc.x) sc.x = rc->x;
-                            if (rc->y < sc.y) sc.y = rc->y;
-                            if (rx1 > maxRx1) maxRx1 = rx1;
-                            if (ry1 > maxRy1) maxRy1 = ry1;
-                        }
-                        coversFull = (sc.x <= 0 && sc.y <= 0 &&
-                                      sc.width >= top->m_windowRect.width &&
-                                      sc.height >= top->m_windowRect.height);
-                    }
+                    /* 整窗判定用收拢的 wholeBbox（两遍求法注释见收拢处，
+                       与原逐矩形展开逐位一致；合并裁决=远端时间源骨架
+                       +本地收拢版判定）。 */
+                    int coversFull = (wholeBbox.x <= 0 && wholeBbox.y <= 0 &&
+                                      wholeBbox.width >= top->m_windowRect.width &&
+                                      wholeBbox.height >= top->m_windowRect.height);
                     if (s_lastPresent != 0 &&
                         elapseMs < throttleMinMs && !coversFull)
                     {
@@ -6543,12 +6531,39 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             else if (presentThisFrame)
             {
 #if XGUI_PRESENT_HONEST
+                /* 脏区读回（P-dirty-readback 2026-09-25）：默认通道只把
+                   本帧呈现区域（whole 的单包围盒——多矩形区域沿项目
+                   「单包围盒」纪律取 bbox，见上方 wholeBbox 收拢处）从
+                   FBO 读回到后备图像，替代每帧全窗读回（800x600≈1.9MB/
+                   帧是 GPU 提交链最大单项开销）；全窗帧（首绘/resize/
+                   全窗失效）bbox 即整窗，自然退化为原全帧读回，行为
+                   等价。flush 仍按 whole 逐矩形 BitBlt，读回 bbox ⊇
+                   whole，提交内容与整帧读回逐位一致；后备图像其余区域
+                   保持上一帧内容不参与本次 flush。
+                   XGPU_DIRTY_READBACK=1 回退全帧读回（排障开关，沿
+                   XGUI_FLUSH_FULLFALLBACK 先例：默认新行为，置 1 回退）；
+                   readbackRect 失败（非 GL 驱动等）自动回退整帧读回。 */
+                static int dirtyReadbackFallback = -1;
+                if (dirtyReadbackFallback < 0)
+                {
+                    const char* dr =
+                        XSystem_environment("XGPU_DIRTY_READBACK");
+                    dirtyReadbackFallback =
+                        dr && *dr && !(dr[0] == '0' && dr[1] == 0) ? 1 : 0;
+                }
                 /* readback 失败即 FBO→image 未发生，flush 只能提交陈旧
                    帧，按实置 false；flush 照常执行，保底可见性不回退。
                    限频跳帧时整分支跳过：FBO 内容持久，屏幕保留上一
                    呈现帧，下一周期整帧补上。 */
-                presented = XGpuRenderBackend_readback(
-                    gpuWindow, XBackingStore_paintImage(store));
+                presented = false;
+                if (!dirtyReadbackFallback)
+                    presented = XGpuRenderBackend_readbackRect(
+                        gpuWindow, XBackingStore_paintImage(store),
+                        wholeBbox.x, wholeBbox.y,
+                        wholeBbox.width, wholeBbox.height);
+                if (!presented)
+                    presented = XGpuRenderBackend_readback(
+                        gpuWindow, XBackingStore_paintImage(store));
                 if (presented && !XBackingStore_handle(store))
                     presented = false;
                 XBackingStore_flush(store, &whole,

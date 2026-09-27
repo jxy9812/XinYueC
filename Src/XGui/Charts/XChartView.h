@@ -61,7 +61,10 @@ typedef struct XChartView
      * CACHE，默认关，=1 才启用，沿 XGPU_QUAD_BATCH 先例）：把图例
      * （色块+序列名）渲进小离屏画布，后续帧一次 drawImage 贴回，替代
      * 逐项字形光栅化。z 序与直画图例相同（序列/饼图之上、橡皮筋之下），
-     * source-over 结合律保证与直画逐位一致（同 m_staticLayer 论证）。
+     * source-over 结合律保证与直画逐位一致（同 m_staticLayer 论证）；
+     * 逐位前提有两道 gate（t218c/夜一证据图修复）：瓦片顶边带 TOP_SLACK
+     * 余量（drawText 基线锚使首行字形顶带上探图例区顶之上）、内容含
+     * 半透明色即回退直画（预乘中间存储两次舍入可差 ±1/通道）。
      * 失效策略从粗（一期刻意收窄）：尺寸/格式失配、指纹变化、resize/
      * updateChart/setChart 整体失效重绘，不做细粒度失效；指纹含图例
      * 可见性与序列名/色，饼图切片标签不入指纹，靠 updateChart 粗失效

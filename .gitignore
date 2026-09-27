@@ -418,3 +418,40 @@ Tools/ppm2png.ps1
 Tools/*.log
 Tools/*.ppm
 commitmsg-*.txt
+
+# Third-night benchmark measurement artifacts (kept on disk, not checked in)
+Tools/caps-night3/
+Tools/caps_base/
+Tools/caps_comp/
+Tools/caps_static/
+Tools/refs/
+Tools/bench-night3-logs/
+Tools/bench-night3-results*.txt
+
+# Third-night measurement artifacts (kept on disk)
+Tools/bench-night3-*
+Tools/caps-night3-rehearsal/
+Tools/diag_*/
+%T%
+Tools/patch_vs18.ps1
+
+# ===== GPU third-night measurement artifacts (kept on disk only) =====
+Tools/caps*/
+Tools/bisect*/
+Tools/dragm*/
+Tools/sweep*/
+Tools/matrix/
+Tools/refs/
+Tools/tear-night*/
+Tools/bench-night*/
+Tools/bench-pbo*/
+Tools/tear_*.png
+Tools/zoom_*.png
+Tools/ghost_metric.ps1
+Tools/tear_diff_map.ps1
+Tools/drag_matrix.ps1
+Tools/ppm2png.ps1
+Tools/grade_blank.ps1
+Tools/bisect_drag.ps1
+Tools/_*.txt
+%T%

@@ -16,20 +16,23 @@
  *               仅承载段几何（正式渲染由 XTableView 统一完成，XGui.md
  *               §8.1 声明边界），本页以公开几何 API 自绘段带作可视化。
  *
- *             【绘制偏移补偿（页面侧规避，框架缺陷另立批次修复）】
+ *             【绘制偏移补偿（夜三起默认直绘，旧快照路径降为回退开关）】
  *             本库 paintEvent 契约：paintImage 为顶层后备存储（或离屏
  *             重定向目标），绘制前必须按 XWidget_paintOffset 平移到控
  *             件局部原点（XLabel/XFrame/XTableWidget/XWidget 缺省背景
- *             绘制均如此）。XListView（VXListView_paintEvent）与
- *             XTreeWidget（VXTreeWidget_paintEvent）未做该平移——控件
- *             位于窗口原点 (0,0) 时恰好正确，非零偏移时内容直绘到窗
- *             口原点（探针 /tmp 复现：错位白块 + 几何处空白）。XHeader
- *             View 无任何绘制代码（§8.1 几何承载，独立摆放恒不可见）。
- *             本页不改 Src/，以四个 C 虚表子类覆写 PaintEvent 规避：
- *             paintOffset 为零（离屏重定向/恰在原点）时直调基类绘制；
- *             非零时经 XWidget_render 离屏快照（快照闭环内偏移恒零、
- *             基类绘制正确）再按 paintOffset 回贴——对标 Qt 中"控件
- *             绘制恒在自身局部坐标系"的语义，不改变交互与几何。
+ *             绘制均如此）。历史上 XListView/XTreeWidget 未做该平移，
+ *             本页曾以 C 虚表子类覆写 PaintEvent、非零偏移时经
+ *             XWidget_render 离屏快照规避。该框架缺陷已在 Src/ 修复
+ *             （XListView.c:339 / XTreeView.c:1065 / XTreeWidget.c:1818
+ *             / XTableView.c:1083 均按 paintOffset 平移后绘制），子类
+ *             现默认直接分派基类（基类自平移，GPU/SW 与其他页同路径，
+ *             page5 GPU 增量 168.9fps→直绘基线的放大器根除）；旧快照
+ *             路径仅当 XGUI_DEMO_VIEWS_SNAPSHOT=1 才启用（逐位回退，
+ *             供 A/B 对照——GPU 直通下它会经 painterGpuSessionAcquire
+ *             触发每控件 FBO 现绘+readback+重上传，见
+ *             views_paintOffsetSafe 注）。XHeaderView 无任何绘制代码
+ *             （§8.1 几何承载）；本页以子类按公开几何 API 自绘段带
+ *             （自带平移，不受本开关影响）。
  *             autotest 经 XObject_event_base 直发鼠标事件（与真实输入
  *             同路径），断言控件状态 getter，输出
  *             "XGuiAutoTest: [PASS]/[FAIL] 中文描述"，返回失败断言数。
@@ -43,6 +46,7 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XEvent.h"
+#include "XSystem.h"
 #include "xgui_demo_pages.h"
 
 #if XWIDGET_ON && XLABEL_ON
@@ -136,17 +140,50 @@ static void DemoViewsGridModel_init(DemoViewsGridModel* self)
 
 /* ==================== 绘制偏移补偿子类（框架缺陷的页面侧规避） ====================
  *
- * 基类 paintEvent 缺 XWidget_paintOffset 平移（见文件头说明），本节
- * 以 C 虚表子类覆写 PaintEvent 规避。判据与路径：
+ * 历史上基类 paintEvent 缺 XWidget_paintOffset 平移（文件头"绘制偏移
+ * 补偿"节），本节曾以离屏快照规避；现基类四视图 paintEvent 均已自行
+ * 平移，默认恒直接分派基类（含 paintOffset 非零场景）。旧快照路径仅
+ * 供 XGUI_DEMO_VIEWS_SNAPSHOT=1 回退对照，逻辑原样保留：
  *   - paintOffset == (0,0)（XWidget_render/grab/保留层等离屏重定向
  *     闭环，或控件恰在绘制目标原点）：基类以局部坐标直绘即为正确，
  *     直接分派基类（内层快照自递归亦经此短路）；
- *   - paintOffset 非零（窗口后备存储直绘）：经 XWidget_render 把本控
+ *   - paintOffset 非零且开关开（旧口径）：经 XWidget_render 把本控
  *     件子树离屏快照（闭环内 paintOffset 恒零，基类绘制正确），再按
  *     paintOffset 回贴——等价于"先按局部坐标自绘再平移合成"。
  */
 
-/** @brief paintOffset 安全绘制：basePaint 为最近基类的 PaintEvent 槽。 */
+/** @brief 旧离屏快照规避路径回退开关（夜三）：默认关；
+ *         XGUI_DEMO_VIEWS_SNAPSHOT=1 才启用（一次探测缓存、GUI 主线程
+ *         单写，同 Src/XGui/Charts/XChartView.c xcv_dirtyCullEnabled
+ *         纪律）。=1 逐位还原旧行为（含 GPU 离屏会话放大器），供
+ *         A/B 对照；=0 走基类自平移直绘（本帧起 GPU/SW 同路径）。 */
+static int g_viewsSnapshotGate = -1;
+
+static bool views_snapshotFallbackEnabled(void)
+{
+    if (g_viewsSnapshotGate < 0) {
+        const char* env = XSystem_environment("XGUI_DEMO_VIEWS_SNAPSHOT");
+        g_viewsSnapshotGate =
+            (env && env[0] == '1' && env[1] == '\0') ? 1 : 0;
+    }
+    return g_viewsSnapshotGate > 0;
+}
+
+/** @brief paintOffset 安全绘制：basePaint 为最近基类的 PaintEvent 槽。
+ *
+ * @note  夜三归因更新：文件头所述"基类 paintEvent 缺 XWidget_paintOffset
+ *        平移"的框架缺陷已在 Src/ 修复（XListView.c/XTreeView.c/
+ *        XTreeWidget.c/XTableView.c 的 paintEvent 均先取 paintOffset
+ *        平移再绘制，XListView.c:339 同型），本函数默认直接分派基类
+ *        （基类自平移，语义=Qt"控件绘制恒在自身局部坐标系"）。旧离屏
+ *        快照路径降级为回退开关 XGUI_DEMO_VIEWS_SNAPSHOT=1 才启用：
+ *        该路径在 GPU 直通下是数量级放大器——每帧每控件 XWidget_render
+ *        在控件尺寸离屏图上 begin_image，尺寸≠窗口会话缓冲即触发
+ *        XPainter.c painterGpuSessionAcquire 离屏 GPU 会话（FBO 现绘
+ *        +readback+drawImage 整幅重上传）×3~4 控件，实测 page5 增量
+ *        168.9fps（5.92ms/帧）vs 直绘基类 8108fps（SW 0.123ms/帧），
+ *        剪掉离屏会话后与其他页同路径（GPU 直通嵌套帧，零 readback）。
+ *        开关仅作 A/B 回退（=1 逐位还原旧行为），默认关零开销。 */
 static void views_paintOffsetSafe(XWidget* self, XEvent* event,
                                   void (*basePaint)(XWidget*, XEvent*))
 {
@@ -157,6 +194,11 @@ static void views_paintOffsetSafe(XWidget* self, XEvent* event,
     if (!self || !basePaint) return;
     offset = XWidget_paintOffset(self);
     if (offset.x == 0 && offset.y == 0) {
+        basePaint(self, event);
+        return;
+    }
+    /* 基类平移已修复：非零偏移也直绘（基类 paintEvent 自行平移）。 */
+    if (!views_snapshotFallbackEnabled()) {
         basePaint(self, event);
         return;
     }

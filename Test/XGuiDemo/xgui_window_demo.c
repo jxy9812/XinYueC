@@ -244,6 +244,16 @@
 #define XGUI_DEMO_STATIC_SCENE_CACHE_ON 1
 #endif
 
+/* 交互空闲治理（2026-09-25）：空闲闸门开启时帧泵不再逐轮强制重绘
+   （对标 Qt「无脏区不重绘」），性能悬浮层指标自刷新降频为独立定时器
+   驱动。降频周期取 250ms（4Hz，落在 2~4Hz 治理区间），与
+   XGUI_PERFORMANCE_OVERLAY_UPDATE_MS 的文本统计窗口（250ms）对齐，
+   指标更新节奏与重绘节奏一致；XGUI_DEMO_IDLE_GATE=0 一并回退两种
+   行为（回退旧「帧泵每轮 processEvents 全速重绘」口径）。 */
+#ifndef XGUI_DEMO_IDLE_OVERLAY_MS
+#define XGUI_DEMO_IDLE_OVERLAY_MS 250
+#endif
+
 /* ==================== 状态栏标签子类 ==================== */
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -321,6 +331,7 @@ typedef struct DemoWin
     XHandle         m_framePump; /**< 事件循环轮询回调句柄（刷新不受定时器限制）。 */
     XTimerId        m_autoQuitTimer; /**< 自动退出定时器。 */
     XTimerId        m_lcdTimer;     /**< LCD 数码管自动更新定时器。 */
+    XTimerId        m_overlayTimer; /**< 空闲闸门下悬浮层降频自刷新定时器（XGUI_DEMO_IDLE_OVERLAY_MS，4Hz）。 */
     int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
     bool            m_closeHot;    /**< 标题栏 ✕ 悬停（Win10 caption 红底）。 */
@@ -813,6 +824,16 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
         /* GPU 直通：绘制目标是窗口 GL 帧缓冲而非 XImage，CPU memcpy
            的静态场景拷贝不生效；直接用 GPU 原语重画静态场景。 */
         demo_drawStaticScene(self, &painter, width, height);
+        /* 整帧重绘完成后清静态脏标记（对标软件路径 demo_updateStaticScene
+           的清位语义）：GPU 分支没有 CPU 缓存图像可更新，若不清位，
+           m_staticSceneDirty 在 GPU 模式永远为真，空闲帧泵的每次
+           demo_repaint 都退化为整窗重绘（提交链/读回/BitBlt 全开）。
+           仅当本次脏区已覆盖整窗时才清——FBO 基底随本次整帧刷新完毕；
+           部分脏区不改变基底判定，保留标记让后续补整帧。 */
+        if (dirty.x <= 0 && dirty.y <= 0 &&
+            dirty.x + dirty.width >= width &&
+            dirty.y + dirty.height >= height)
+            self->m_staticSceneDirty = false;
     }
     else if (!demo_updateStaticScene(self, width, height) ||
              !demo_copyStaticTile(&self->m_staticScene, device, &tile,
@@ -832,6 +853,13 @@ static void demo_paintScene(DemoWin* self, XEvent* event)
  *  「静态场景缓存 + 仅重绘性能浮层小块」路径，反映小区域增量刷新；
  *  强制整帧才能得到每页的真实全屏绘制成本。 */
 static bool g_benchmarkFullRedraw;
+/** @brief 交互空闲闸门（环境变量 XGUI_DEMO_IDLE_GATE，默认开）。开启时
+ *  帧泵空闲不再逐轮强制重绘（无脏区不重绘，对标 Qt），悬浮层指标改为
+ *  独立降频定时器（XGUI_DEMO_IDLE_OVERLAY_MS，4Hz）自刷新；设 0 回退
+ *  旧「帧泵每轮 processEvents 强制重绘」口径。--benchmark/--benchmark-full
+ *  走 demo_runFrameBenchmark 独立循环不注册帧泵，基准口径不受本开关
+ *  影响；--autotest/--screenshot 按帧数推进，在闸门内显式旁路。 */
+static bool g_idleGate = true;
 /** @brief 按 Qt QWidget::update() 语义合并待绘区域，不同步强制整树重绘。 */
 static void demo_input_autotest(DemoWin* self);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -841,6 +869,29 @@ static void demo_layout_chrome(DemoWin* self);
 static void demo_layout_content(DemoWin* self);
 static void demo_switchPage(DemoWin* self, int index);
 #endif
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+/** @brief 静态场景缓存是否可直接复用（决定 demo_repaint 的重绘范围）。
+ * @details 软件模式以 CPU 缓存图像的尺寸与显式脏标记共同判定；GPU 直通
+ *          没有 CPU 缓存图像（demo_paintScene 走 GPU 原语重画基底），
+ *          若沿用尺寸比较，空缓存图像恒不匹配窗口尺寸，会把每次重绘
+ *          放大成整窗——这是 GPU 空闲高频全窗重绘的根因之一。GPU 口径
+ *          只认显式脏标记 m_staticSceneDirty（demo_paintScene 在整帧
+ *          绘制后清位，部分脏区不动基底判定）。 */
+static bool demo_staticSceneCacheUsable(const DemoWin* self)
+{
+    if (!self || self->m_staticSceneDirty) return false;
+    if (XImage_width(&self->m_staticScene) == XWidget_width(&self->m_base) &&
+        XImage_height(&self->m_staticScene) == XWidget_height(&self->m_base))
+        return true;
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
+    /* GPU 请求口径：FBO 基底持久，无需 CPU 缓存图像（会话创建失败回退
+       软件时，软件分支会重建缓存图像，尺寸比较自然恢复主导判定）。 */
+    if (XGpuRenderBackend_requested())
+        return true;
+#endif
+    return false;
+}
+#endif /* XGUI_DEMO_STATIC_SCENE_CACHE_ON */
 static void demo_repaint(DemoWin* self)
 {
     XRect dirty;
@@ -851,9 +902,7 @@ static void demo_repaint(DemoWin* self)
         return;
     }
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
-    if (self->m_staticSceneDirty ||
-        XImage_width(&self->m_staticScene) != XWidget_width(&self->m_base) ||
-        XImage_height(&self->m_staticScene) != XWidget_height(&self->m_base)) {
+    if (!demo_staticSceneCacheUsable(self)) {
         dirty = XWidget_rect(&self->m_base);
     }
     else
@@ -1173,6 +1222,18 @@ static bool demo_framePumpBody(void* userData)
     DemoWin* demo = (DemoWin*)userData;
     if (!demo || demo->m_closed)
         return false;
+    /* 交互空闲闸门（XGUI_DEMO_IDLE_GATE，默认开）：常态下帧泵不再逐轮
+       强制重绘——对标 Qt「无脏区不重绘」。事件驱动的局部更新本就经
+       XWidget_addDirtyRegion -> XWidget_postPaintEvent 异步闭环自足，
+       无需帧泵推动；悬浮层指标改由降频定时器（XGUI_DEMO_IDLE_OVERLAY_MS，
+       见 VDemoWin_timerEvent / main）驱动，每次只投递悬浮层小区域。
+       GPU 模式每次重绘都是完整提交链（FBO 绘制+读回+BitBlt），空闲
+       全速重绘成本远高于软件模式，此闸门是 GPU 空闲治理的主开关。
+       截图/自动测试按帧数推进逻辑，仍需逐帧泵动（显式旁路）；
+       --benchmark 系列走 demo_runFrameBenchmark 不注册帧泵，不受影响。
+       设 0 回退旧「每轮 processEvents 强制重绘」口径。 */
+    if (g_idleGate && !demo->m_autoTest && !demo->m_screenshotPath)
+        return true;
     demo_repaint(demo);
     /* 截图模式：渲染几帧待控件树绘制完成，保存一帧后退出。
        GPU 直通模式窗口内容在 GL 帧缓冲（GDI 抓窗读不到），直接读回
@@ -1294,6 +1355,10 @@ static void demo_stopTimers(DemoWin* self)
         XObject_killTimer((XObject*)self, self->m_lcdTimer);
         self->m_lcdTimer = XTIMER_INVALID_ID;
     }
+    if (self->m_overlayTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_overlayTimer);
+        self->m_overlayTimer = XTIMER_INVALID_ID;
+    }
 }
 
 /** @brief 标准事件循环中的自动退出定时器处理。 */
@@ -1310,6 +1375,16 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
         XEvent_accept((XEvent*)event);
         return;
     }
+    if (timerId == self->m_overlayTimer) {
+        /* 空闲闸门下的悬浮层自刷新（XGUI_DEMO_IDLE_OVERLAY_MS=250ms，
+           4Hz，对标 Qt 指标浮层低频心跳）：demo_repaint 在静态场景
+           干净时只投递悬浮层自身 210x50 小区域；文本统计窗口同为
+           250ms（XGUI_PERFORMANCE_OVERLAY_UPDATE_MS），指标更新与
+           重绘节奏一致。XGUI_DEMO_IDLE_GATE=0 时本定时器不启动。 */
+        demo_repaint(self);
+        XEvent_accept((XEvent*)event);
+        return;
+    }
     if (timerId == self->m_lcdTimer) {
         /* 循环展示段码表全部 30 行字符（0-9/A-F/a-f 大小写同形/-/.
          * /O/g/h/L/o/P/r/u/U/Y/:，对标 QLCDNumber::display 支持集）。
@@ -1320,6 +1395,14 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
             "a", "b", "c", "d", "e", "f",
             "-", ".", ":", "O", "g", "h", "L", " "
         };
+        /* 数码管停摆门（XGUI_DEMO_IDLE_GATE，默认开）：页签不可见时
+           不推字符序列也不触发重绘——定时器驱动的动画在无可见变化时
+           停摆（对标 Qt 隐藏控件零绘制）；切回「数码管」页签后下个
+           1s 周期自动续播。设 0 回退无条件推进的旧行为。 */
+        if (g_idleGate && !XWidget_isVisible((XWidget*)&self->m_lcd)) {
+            XEvent_accept((XEvent*)event);
+            return;
+        }
         self->m_lcdValue = (self->m_lcdValue + 1) % 30;
         XLcdNumber_display(&self->m_lcd, lcdSeq[self->m_lcdValue]);
         XEvent_accept((XEvent*)event);
@@ -2189,6 +2272,8 @@ static DemoWin* DemoWin_create(void)
     self->m_staticSceneDirty = true;
     self->m_framePump = NULL;
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
+    self->m_lcdTimer = XTIMER_INVALID_ID;
+    self->m_overlayTimer = XTIMER_INVALID_ID;
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_init(self);
 #endif
@@ -3117,6 +3202,14 @@ int main(int argc, char* argv[])
     if (autoSeconds < 0) autoSeconds = 0;
     if (benchmarkSeconds < 0) benchmarkSeconds = 0;
 
+    /* 交互空闲闸门环境变量回退开关：XGUI_DEMO_IDLE_GATE=0 回退旧「帧泵
+       每轮 processEvents 强制重绘 + 悬浮层随帧刷新」口径（默认开）。
+       与 XGPU_PRESENT_MAX_FPS 同族：一次性读取、进程内生效。 */
+    {
+        const char* idleGate = getenv("XGUI_DEMO_IDLE_GATE");
+        g_idleGate = !(idleGate && idleGate[0] == '0');
+    }
+
 #if XSTYLE_ON
     /* 样式矩阵开关：fusion-css=Fusion+样式表（缺省，历史口径）/ fusion=仅
      * Fusion / common=框架默认样式。须在参数解析后执行（读 styleOpt）。 */
@@ -3191,13 +3284,26 @@ int main(int argc, char* argv[])
            (double)XWidget_width(&win->m_base),
            (double)XWidget_height(&win->m_base));
 
+    if (g_idleGate) {
+        /* 空闲闸门下帧泵不再兜底逐轮重绘：显示后主动完成一次整帧请求，
+           确保静态场景脏标记（初值 true）随首帧整窗绘制收敛清位——
+           否则首帧 Expose 若只覆盖部分矩形，悬浮层降频定时器会一直按
+           整帧口径补画（GPU 模式即整窗提交链）。闸门关闭时帧泵本就
+           逐轮强制重绘，不加这步保持旧口径逐位一致。 */
+        demo_repaint(win);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+
     eventLoopResult = 0;
     if (benchmarkSeconds > 0) {
         demo_runFrameBenchmark(win, benchmarkSeconds, benchmarkResize);
     } else {
         /* 把刷新注册到事件分发器轮询链：每次 processEvents 回调一次，
            不再受 1ms 精确定时器粒度限制；事件循环因此也始终有事件可
-           处理，不会进入无事件休眠。 */
+           处理，不会进入无事件休眠。空闲闸门（XGUI_DEMO_IDLE_GATE，
+           默认开）开启时本回调空闲直接返回（无脏区不重绘），仅
+           --autotest/--screenshot 旁路逐帧推进；回退开关置 0 恢复
+           旧「每轮强制重绘」口径。 */
         win->m_framePump = XAbstractEventDispatcher_addPollCallback(
             demo_framePump, win);
         if (!win->m_framePump) {
@@ -3219,6 +3325,20 @@ int main(int argc, char* argv[])
         if (win->m_lcdTimer == XTIMER_INVALID_ID) {
             XPrintf("XGuiWindowDemo: LCD 定时器创建失败\n");
         }
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+        /* 空闲闸门开启时：悬浮层指标自刷新降频为独立 4Hz 定时器（帧泵
+           已被闸门停用，见 demo_framePumpBody）。demo_repaint 在静态
+           场景干净时只投递悬浮层 210x50 小区域，文本经 XLabel 自身
+           update 闭环。XGUI_DEMO_IDLE_GATE=0 时不启动（旧口径随帧
+           刷新，行为与回退前逐位一致）。 */
+        if (g_idleGate) {
+            win->m_overlayTimer = XObject_startTimer_ms(
+                (XObject*)win, (uint64_t)XGUI_DEMO_IDLE_OVERLAY_MS,
+                XTimerType_CoarseTimer);
+            if (win->m_overlayTimer == XTIMER_INVALID_ID)
+                XPrintf("XGuiWindowDemo: 悬浮层降频定时器创建失败\n");
+        }
+#endif
         if (eventLoopResult == 0)
             eventLoopResult = XGuiApplication_exec();
     }

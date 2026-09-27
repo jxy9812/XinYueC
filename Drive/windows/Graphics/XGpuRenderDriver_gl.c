@@ -89,9 +89,28 @@ typedef char XglChar;
 #define XGL_FRAGMENT_SHADER          0x8B30u
 #define XGL_COMPILE_STATUS           0x8B81u
 #define XGL_LINK_STATUS              0x8B82u
+/* P-PBO（2026-09-26）异步读回：像素打包缓冲 + 缓冲映射 + fence 同步。 */
+#define XGL_PIXEL_PACK_BUFFER       0x88EBu
+#define XGL_STREAM_READ             0x88E9u
+#define XGL_READ_ONLY               0x88B8u
+#define XGL_PACK_ROW_LENGTH         0x0D06u
+#define XGL_SYNC_GPU_COMMANDS_COMPLETE 0x9117u
+#define XGL_SYNC_FLUSH_COMMANDS_BIT    0x00000001u
+#define XGL_ALREADY_SIGNALED        0x911Au
+#define XGL_CONDITION_SATISFIED     0x911Cu
 
 typedef void (XGLAPI *XglGenObjectsProc)(XglSizei, XglUInt*);
 typedef void (XGLAPI *XglDeleteObjectsProc)(XglSizei, const XglUInt*);
+
+/* P-PBO：GLsync 为不透明句柄；glClientWaitSync 超时单位为 64 位纳秒。 */
+typedef void* XglSync;
+typedef uint64_t XglUint64;
+typedef void* (XGLAPI *XglMapBufferProc)(XglEnum, XglEnum);
+typedef XglBoolean (XGLAPI *XglUnmapBufferProc)(XglEnum);
+typedef XglSync (XGLAPI *XglFenceSyncProc)(XglEnum, XglBitfield);
+typedef XglEnum (XGLAPI *XglClientWaitSyncProc)(XglSync, XglBitfield,
+                                                XglUint64);
+typedef void (XGLAPI *XglDeleteSyncProc)(XglSync);
 
 /* ==================== GL 驱动会话 ==================== */
 
@@ -188,7 +207,14 @@ struct XGpuRenderDriverSession
        +uv=中心，白×色=色，逐位精确）与图集字形（同图集纹理跨字形存续）
        跑批；drawImage 系（上传即变形 m_sourceTexture）保持即时并先冲
        批。冲批触发=纹理/混合切换、scissor 变更、帧界/回读/上屏。
-       XGPU_QUAD_BATCH=0 退回逐 quad 即时（排障开关）。 */
+       XGPU_QUAD_BATCH=0 退回逐 quad 即时（排障开关）。
+       夜四 FULLBATCH（2026-09-26）：入批面已覆盖纯色 fillRect/
+       drawSolidQuad/字形图集 quad（emit_solid_quad4 与 draw_quad_uv
+       缓存纹理支路即批入口），逐原语残量=追加期固定 GL 调用（每 quad
+       glActiveTexture+glBindTexture+glBindBuffer）。XGPU_FULLBATCH=0
+       回退逐 quad 绑定现状；默认开=追加期零 GL 调用，绑定/布局统一
+       推迟到冲批一次性完成（正确性依赖既有冲批纪律：全部旁路出口
+       先冲批，批存续期间 unit0 绑定与 ARRAY_BUFFER 绑定无旁路改动）。 */
     XglUInt m_batchProgram;                  /**< 批 program（frag=texture2D*v_color）。 */
     XglInt m_batchSamplerLocation;           /**< 批程序 u_texture。 */
     XglUInt m_whiteTexture;                  /**< 1×1 白纹理（纯色 quad 采样恒 1）。 */
@@ -197,6 +223,20 @@ struct XGpuRenderDriverSession
     int m_quadBatchCount;                    /**< 待冲批 quad 数。 */
     int m_quadBatchCapacity;                 /**< 批容量（quad 数）。 */
     int m_quadBatchBlend;                    /**< 批内混合态（-1 空 / 0 Source / 1 SourceOver）。 */
+    /* 夜五 P-FLUSHGATE：批 scissor 快照——首个 quad 入批时冻结的 scissor
+       缓存态（见 xgld_append_quad）。批内全部 quad 均在该 scissor 下记录
+       （冲批纪律：批存续期间改 scissor 的出口一律先冲批），目标 scissor
+       与快照相同即免冲批直接续批（xgld_set_clip_rect 门）。 */
+    bool m_quadBatchScissorValid;            /**< 批 scissor 快照可信（首 quad 入批时按缓存置位）。 */
+    bool m_quadBatchScissorOn;               /**< 批 scissor 快照：启用态。 */
+    int m_quadBatchScissorX;                 /**< 批 scissor 快照 x（与 m_scissorX 同坐标系）。 */
+    int m_quadBatchScissorY;                 /**< 批 scissor 快照 y。 */
+    int m_quadBatchScissorW;                 /**< 批 scissor 快照宽。 */
+    int m_quadBatchScissorH;                 /**< 批 scissor 快照高。 */
+    /* prof（XGPU_PROFILE）：实际冲批（真实 drawArrays 落盘）次数与累计
+       耗时；present 打点对齐 [profile] 既有列后清零（口径=每 300 派发）。 */
+    uint32_t m_flushQuadCount;               /**< 实际冲批次数。 */
+    uint64_t m_flushQuadUs;                  /**< 实际冲批累计耗时（µs）。 */
     int m_attribLayout;                      /**< 0=即时纹理布局(pos2+uv2,16B) 1=批布局(pos2+uv2+color4,32B) -1 未知。 */
 
     /* P0-2（2026-09-25）scissor 同矩形缓存：painter 每命令 setClipRect
@@ -211,6 +251,48 @@ struct XGpuRenderDriverSession
     int m_scissorW;                          /**< 缓存 scissor 宽。 */
     int m_scissorH;                          /**< 缓存 scissor 高。 */
 
+    /* L-固定成本（2026-09-26 夜三）逐派发固定成本削减：跨帧状态镜像。
+     * GL 的 FBO 绑定（READ/DRAW）、viewport、PACK_ALIGNMENT、scissor
+     * 均为按上下文留存的状态——doneCurrent/makeCurrent 往返不清零；
+     * 本文件是全部 GL 调用的唯一入口（系统头隔离纪律），无外部旁路
+     * 改状态，会话级镜像即真值。派发序列（begin/end/present）此前每
+     * 次无条件重设这批状态并多付一次冗余 makeCurrent，构成 ~0.59ms/
+     * 派发的会话级固定成本主体。逐项开关（默认开，=0 回退旧行为）：
+     * XGPU_FBO_PERSIST end_frame 不解绑 FBO；XGPU_STATE_CACHE
+     * begin_frame 冗余状态跳过+冗余二次 makeCurrent 消除；
+     * XGPU_PRESENT_LEAN present blit 旁路混合往返（blit 不受混合态
+     * 作用）；makeCurrent 消除另由 XGPU_MAKECURRENT_ONCE 独立门控
+     * （与 begin/present 相关，见各入口注释）。均按会话持有（上下文
+     * 切换经会话隔离无串扰），calloc 清零=「未知，首次必真调」。 */
+    bool m_fboBindingKnown;                  /**< READ/DRAW FBO 绑定镜像是否可信。 */
+    XglUInt m_boundFboRead;                  /**< 镜像：READ_FRAMEBUFFER 绑定。 */
+    XglUInt m_boundFboDraw;                  /**< 镜像：DRAW_FRAMEBUFFER 绑定。 */
+    bool m_viewportKnown;                    /**< viewport 镜像是否可信。 */
+    int m_viewportW;                         /**< 镜像 viewport 宽。 */
+    int m_viewportH;                         /**< 镜像 viewport 高。 */
+    int m_packAlignment;                     /**< 镜像 PACK_ALIGNMENT（0=未知，
+                                                  GL 合法值为 1/2/4/8）。 */
+
+    /* E-F 路（2026-09-27 夜七）flush 段每冲批重复状态削减：UNPACK_*
+     * 像素解包状态同为按上下文留存，本文件是唯一设值入口（区域直传
+     * set(iw)/归 0 与各上传点前置归 0 全部经镜像助手），镜像即真值。
+     * calloc 清零：m_unpackAlignment=0 ≠ GL 默认 4（0 作「未知」哨兵，
+     * 首次必真调，保守正确）；m_unpackRowLength=0 恰为 GL 默认（同值
+     * 跳过不早于真实状态）。XGPU_FLUSH_LEAN=0 时助手恒真调（逐位旧
+     * 行为），镜像照常维护。 */
+    int m_unpackAlignment;                   /**< 镜像 UNPACK_ALIGNMENT（0=未知）。 */
+    int m_unpackRowLength;                   /**< 镜像 UNPACK_ROW_LENGTH（GL 默认 0）。 */
+
+    /* TEMP-PROBE(XGPU_BATCH_LEAN，2026-09-27)：unit0 纹理绑定镜像。
+     * batchDraw 剖析实测（XGPU_BATCH_PROF）冲批点纹理重绑属高频冗余
+     * 状态调用：本文件是 glActiveTexture/glBindTexture 唯一入口（同
+     * L-固定成本/E-F 路的会话镜像纪律，doneCurrent 往返不清零，上下文
+     * 切换经会话隔离无串扰），全部直改点经 xgld_note_tex0_bind 同步
+     * 镜像——冲批点同值即免 glActiveTexture+glBindTexture 两次真调。
+     * XGPU_BATCH_LEAN=0 恒真调（逐位旧行为），镜像照常维护。 */
+    XglUInt m_boundTex0;                     /**< 镜像：unit0 TEXTURE_2D 绑定名。 */
+    bool m_boundTex0Valid;                   /**< 镜像可信（纹理删除等旁路失效）。 */
+
     /* P-A（2026-09-25）drawImage 纹理身份缓存：静态层大图免每帧整幅
        重传。GL 纹理按上下文命名空间隔离，本表按会话持有（与 FBO/源
        纹理同纪），session destroy 冲批后配对释放。XGPU_TEX_IDENTITY_
@@ -219,6 +301,22 @@ struct XGpuRenderDriverSession
     uint64_t m_identityStamp;                /**< LRU 单调时钟。 */
     XgpuTexChurnEntry m_identityChurn[XGPU_TEX_IDENTITY_CHURN_SIZE];
                                              /**< P-A2 换版跟随表（无 GL 资源）。 */
+
+    /* P-PBO（2026-09-26）双 PBO 异步读回：消除同步 glReadPixels 的
+       CPU 停顿（GPU 增量每帧 ~1.36ms 的头号归因候选）。双缓冲 1 帧
+       滞后——本帧读回异步写入 PBO[cur]（CPU 不等待），随即 map 上一
+       帧的 PBO[prev] 拷出，呈现内容滞后一帧（60Hz 呈现下不可感知）。
+       PBO 恒为全帧 RGBA 布局（PACK_ROW_LENGTH=m_width + (glY,x) 基址
+       偏移），脏区逐帧漂移时拷出侧按本帧 bbox 对位取上一帧全帧图；
+       m_pboBbox 记录各槽写入时的 bbox，本帧 bbox 超出其范围（首帧/
+       漂移出界）即回退同步直读本帧（正确性优先）。XGPU_PBO_READBACK=0
+       整链回退同步路径；创建于会话建立、销毁于会话销毁（配对纪律）。 */
+    XglUInt m_readbackPbo[2];                /**< 读回 PBO 对（0=未建）。 */
+    int m_readbackPboCur;                    /**< 本帧写入槽（0/1 轮转）。 */
+    int m_readbackPboValid[2];               /**< 槽内已有一次完整读回写入。 */
+    int m_pboBbox[2][4];                     /**< 槽写入时 bbox（x,y,w,h）。 */
+    XglSync m_pboFence[2];                   /**< 槽读回 fence（NULL=无）。 */
+    bool m_pboReady;                         /**< PBO 资源就绪（map 可用）。 */
 
     void (XGLAPI *glBlitFramebuffer)(XglInt, XglInt, XglInt, XglInt, XglInt, XglInt,
                               XglInt, XglInt, XglBitfield, XglEnum);
@@ -237,6 +335,15 @@ struct XGpuRenderDriverSession
     void (XGLAPI *glPixelStorei)(XglEnum, XglInt);
     void (XGLAPI *glReadPixels)(XglInt, XglInt, XglSizei, XglSizei,
                          XglEnum, XglEnum, void*);
+
+    /* P-PBO（2026-09-26）异步读回函数：map/unmap 缺失时整链禁用
+       （m_pboReady=false 走同步读回）；fence 三件套可选（GL<3.2 时
+       为 NULL，跳过探测直接 map，最多阻塞一帧 DMA，正确性不变）。 */
+    XglMapBufferProc glMapBuffer;
+    XglUnmapBufferProc glUnmapBuffer;
+    XglFenceSyncProc glFenceSync;
+    XglClientWaitSyncProc glClientWaitSync;
+    XglDeleteSyncProc glDeleteSync;
 
     XglGenObjectsProc glGenFramebuffers;
     XglDeleteObjectsProc glDeleteFramebuffers;
@@ -354,6 +461,307 @@ static void xgld_clear_current_tracker(void)
     g_xgldCurrentSession = NULL;
 }
 
+/* ==================== L-固定成本（2026-09-26 夜三）状态镜像辅助 ==================== */
+
+/* 逐项排障开关（沿排障开关先例：默认开=新路径，"0"=逐位回退旧行为，
+ * 其余非空值视为开）。固定成本归因（docs/xgui/night3-attribution.md
+ * §5）：~0.59ms/派发 × 每迭代 2.18-3.62 次派发的会话级开销，头号
+ * 假设=会话开关驱动成本（makeCurrent/绑定往返），本组开关即其逐项
+ * 兑现与 A/B 计量手段。 */
+static bool xgld_fbo_persist_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FBO_PERSIST");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+static bool xgld_state_cache_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_STATE_CACHE");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+static bool xgld_makecurrent_once_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_MAKECURRENT_ONCE");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+static bool xgld_present_lean_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PRESENT_LEAN");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/* E-F 路（2026-09-27 夜七）flush 段削减开关（缺省=开；"0"=逐位回退）：
+ * 域=drawImageRegion 脏区直传每冲批重复的像素解包状态机调用
+ * （UNPACK_ALIGNMENT 恒 1 重设 + UNPACK_ROW_LENGTH set(iw)/归 0 往返）。
+ * 与 XGPU_STATE_CACHE 同口径，但独立成族——冲批是每帧高频路径，
+ * 回退/对照需与 begin/present 的固定成本开关解耦。 */
+static bool xgld_flush_lean_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FLUSH_LEAN");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/* FBO 绑定镜像：绑定按上下文留存且本文件是唯一改绑入口，镜像即真值
+ * （例外：session destroy 删除在绑 FBO 会隐式解绑，但随后即毁上下文，
+ * 无后续 GL）。冗余绑定跳过在四种开关组合下都只省「目标相同的真
+ * no-op 调用」，GL 状态流逐位不变——持久化本身只由 XGPU_FBO_PERSIST
+ * 门控（end_frame 是否解绑），镜像维护不依赖开关。 */
+/* ==================== TEMP-PROBE(XGPU_BATCH_PROF)：batchDraw 段驱动侧子计数 ====================
+ * 任务：拆解 batchDraw 段（XPainter.c 九段计时最大项：0.1335ms/次、
+ * 每帧 1 次、62% 墙钟）的内部构成。口径说明：batchDraw 本体=批内命令
+ * 软件光栅重入（XPainter.c painterGpuSubmitSoftwareCommandRect 临时
+ * 关断 m_gpuActive 后重入 drawCommand，画到 ARGB32 暂存画布）——重入
+ * 期间零驱动调用，故本探针对【驱动侧同帧 CPU 路径】四维量化，用于
+ * 证明/证伪「batchDraw 残差在驱动」：
+ *   cmds       = 驱动原语入口被调次数（fillRect/drawImage 系/solidQuad/
+ *                glyphAtlas/clip/clear——「命令解码」层）；
+ *   quads      = xgld_append_quad 追加 quad 数与顶点字节数（192B/quad）；
+ *   vboWrite   = 冲批 glBufferData（顶点缓冲写入，孤儿化重分配）耗时/次数；
+ *   drawArrays = 冲批 glDrawArrays 落盘耗时/次数；imm=即时路径 16 float
+ *                glBufferData 次数（固定 64B，不计时）；
+ *   state      = 真发 GL 调用的状态切换次数（blend/program/texBind/
+ *                layout/scissor 五类；同值跳过的冗余切换不计）。
+ * XGPU_BATCH_PROF=1 开（建议与 XGPU_PROF=1/XGPU_PAINTER_PROF=1 同开），
+ * 5s 窗口 stderr 一条汇总（tick 挂 present，口径对齐 [xpainter-prof]）。
+ * 探针只读不改行为；退役时删除本块与各打点行（均带 TEMP-PROBE 标）。 */
+static bool xgld_batch_prof_enabled(void)
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        const char* env = XSystem_environment("XGPU_BATCH_PROF");
+        on = env && *env && !(env[0] == '0' && env[1] == 0) ? 1 : 0;
+    }
+    return on != 0;
+}
+
+static struct XgldBatchProf
+{
+    uint64_t m_windowStartNs; /**< 5s 窗口起点。 */
+    bool m_headerPrinted;     /**< 标题已打印。 */
+    uint32_t m_cmdDecode;     /**< 命令解码次数（驱动原语入口被调）。 */
+    uint32_t m_quadAppend;    /**< quad 追加次数。 */
+    uint64_t m_quadBytes;     /**< quad 追加字节数（192B/quad）。 */
+    uint32_t m_vboWrite;      /**< 冲批 glBufferData 次数。 */
+    uint64_t m_vboWriteNs;    /**< 冲批 glBufferData 累计（ns）。 */
+    uint32_t m_drawArrays;    /**< 冲批 glDrawArrays 次数。 */
+    uint64_t m_drawArraysNs;  /**< 冲批 glDrawArrays 累计（ns）。 */
+    uint32_t m_immWrite;      /**< 即时路径 xgpu_vertex_data 次数。 */
+    uint32_t m_stBlend;       /**< 混合态真切换次数。 */
+    uint32_t m_stProgram;     /**< program 真切换次数。 */
+    uint32_t m_stTexBind;     /**< unit0 纹理真绑定次数。 */
+    uint32_t m_stLayout;      /**< 顶点布局真切换次数。 */
+    uint32_t m_stScissor;     /**< scissor 真改写次数。 */
+    uint32_t m_texBindSkip;   /**< LEAN 同值跳过的纹理绑定次数（收益）。 */
+} g_xgldBatchProf;
+
+/* TEMP-PROBE：命令解码打点（原语入口一行式）。 */
+#define XGLD_BATCH_PROF_CMD() \
+    do { if (xgld_batch_prof_enabled()) \
+             ++g_xgldBatchProf.m_cmdDecode; } while (0)
+
+/** @brief TEMP-PROBE 5s 窗口汇总（present 打点，逐窗口清零）。 */
+static void xgld_batch_prof_tick(void)
+{
+    uint64_t now;
+    if (!xgld_batch_prof_enabled()) return;
+    now = XDateTime_currentNSecsSinceEpoch();
+    if (!g_xgldBatchProf.m_headerPrinted)
+    {
+        fprintf(stderr, "[TEMP-PROBE batch-prof] segments=cmds/quads(bytes)/"
+                "vboWrite/drawArrays/imm/state(blend,prog,texBind,layout,"
+                "scissor,texSkip) (ms 总量 & ms/次)\n");
+        g_xgldBatchProf.m_headerPrinted = true;
+        g_xgldBatchProf.m_windowStartNs = now;
+        return;
+    }
+    if (now - g_xgldBatchProf.m_windowStartNs < 5000000000u) return;
+    {
+        double secs = (double)(now - g_xgldBatchProf.m_windowStartNs) / 1e9;
+        fprintf(stderr,
+                "[TEMP-PROBE batch-prof] %.1fs cmds=%u quads=%u (%.1fKB) "
+                "vboWrite=%u (%.3fms %.4f/次) drawArrays=%u (%.3fms %.4f/次) "
+                "imm=%u st: blend=%u prog=%u texBind=%u(省%u) layout=%u "
+                "scissor=%u\n",
+                secs,
+                g_xgldBatchProf.m_cmdDecode,
+                g_xgldBatchProf.m_quadAppend,
+                (double)g_xgldBatchProf.m_quadBytes / 1024.0,
+                g_xgldBatchProf.m_vboWrite,
+                (double)g_xgldBatchProf.m_vboWriteNs / 1e6,
+                g_xgldBatchProf.m_vboWrite
+                    ? (double)g_xgldBatchProf.m_vboWriteNs /
+                          (double)g_xgldBatchProf.m_vboWrite / 1e6
+                    : 0.0,
+                g_xgldBatchProf.m_drawArrays,
+                (double)g_xgldBatchProf.m_drawArraysNs / 1e6,
+                g_xgldBatchProf.m_drawArrays
+                    ? (double)g_xgldBatchProf.m_drawArraysNs /
+                          (double)g_xgldBatchProf.m_drawArrays / 1e6
+                    : 0.0,
+                g_xgldBatchProf.m_immWrite,
+                g_xgldBatchProf.m_stBlend,
+                g_xgldBatchProf.m_stProgram,
+                g_xgldBatchProf.m_stTexBind,
+                g_xgldBatchProf.m_texBindSkip,
+                g_xgldBatchProf.m_stLayout,
+                g_xgldBatchProf.m_stScissor);
+        g_xgldBatchProf.m_cmdDecode = 0;
+        g_xgldBatchProf.m_quadAppend = 0;
+        g_xgldBatchProf.m_quadBytes = 0;
+        g_xgldBatchProf.m_vboWrite = 0;
+        g_xgldBatchProf.m_vboWriteNs = 0;
+        g_xgldBatchProf.m_drawArrays = 0;
+        g_xgldBatchProf.m_drawArraysNs = 0;
+        g_xgldBatchProf.m_immWrite = 0;
+        g_xgldBatchProf.m_stBlend = 0;
+        g_xgldBatchProf.m_stProgram = 0;
+        g_xgldBatchProf.m_stTexBind = 0;
+        g_xgldBatchProf.m_stLayout = 0;
+        g_xgldBatchProf.m_stScissor = 0;
+        g_xgldBatchProf.m_texBindSkip = 0;
+        g_xgldBatchProf.m_windowStartNs = now;
+    }
+}
+
+/* TEMP-PROBE(XGPU_BATCH_LEAN)：unit0 绑定镜像同步——旁路直改点统一走
+ * 这里（冲批点经 xgld_bind_texture0 的镜像命中免真调）。调用方契约：
+ * 执行时 active unit 必为 TEXTURE0（全文件不变式，gradient unit1 段落
+ * 是直线代码、内无旁路观察者，出段即复位 TEXTURE0）。 */
+static void xgld_note_tex0_bind(XGpuRenderDriverSession* self, XglUInt texture)
+{
+    self->m_boundTex0 = texture;
+    self->m_boundTex0Valid = true;
+}
+
+static void xgld_bind_fbo_read(XGpuRenderDriverSession* self, XglUInt fbo)
+{
+    if (self->m_fboBindingKnown && self->m_boundFboRead == fbo) return;
+    self->glBindFramebuffer(XGL_READ_FRAMEBUFFER, fbo);
+    self->m_boundFboRead = fbo;
+    self->m_fboBindingKnown = true;
+}
+
+static void xgld_bind_fbo_draw(XGpuRenderDriverSession* self, XglUInt fbo)
+{
+    if (self->m_fboBindingKnown && self->m_boundFboDraw == fbo) return;
+    self->glBindFramebuffer(XGL_DRAW_FRAMEBUFFER, fbo);
+    self->m_boundFboDraw = fbo;
+    self->m_fboBindingKnown = true;
+}
+
+/* target=XGL_FRAMEBUFFER：一次调用同时设定 READ/DRAW（GL 语义），
+ * 镜像两者。 */
+static void xgld_bind_fbo(XGpuRenderDriverSession* self, XglUInt fbo)
+{
+    if (self->m_fboBindingKnown &&
+        self->m_boundFboRead == fbo && self->m_boundFboDraw == fbo)
+        return;
+    self->glBindFramebuffer(XGL_FRAMEBUFFER, fbo);
+    self->m_boundFboRead = fbo;
+    self->m_boundFboDraw = fbo;
+    self->m_fboBindingKnown = true;
+}
+
+/* viewport 镜像：本驱动全部视口同值 (0,0,m_width,m_height)（尺寸固定
+ * 于会话创建，无中途 resize 路径），跳过只发生在同值重设上。
+ * XGPU_STATE_CACHE=0 时恒真调（旧行为），镜像照常维护。 */
+static void xgld_set_viewport(XGpuRenderDriverSession* self, int width,
+                              int height)
+{
+    if (xgld_state_cache_enabled() && self->m_viewportKnown &&
+        self->m_viewportW == width && self->m_viewportH == height)
+        return;
+    self->glViewport(0, 0, width, height);
+    self->m_viewportKnown = true;
+    self->m_viewportW = width;
+    self->m_viewportH = height;
+}
+
+/* PACK_ALIGNMENT 镜像：begin_frame 设 1、读回两路设 4，逐派发来回
+ * 翻转；同值跳过（XGPU_STATE_CACHE 门控，=0 恒真调）。 */
+static void xgld_set_pack_alignment(XGpuRenderDriverSession* self, int align)
+{
+    if (xgld_state_cache_enabled() && self->m_packAlignment == align) return;
+    self->glPixelStorei(XGL_PACK_ALIGNMENT, align);
+    self->m_packAlignment = align;
+}
+
+/* E-F 路（2026-09-27 夜七）UNPACK_ALIGNMENT 镜像：本驱动 12 处上传点
+ * 全部恒设 1（无一例外），逐次上传重设属白付状态机往返——上传是
+ * 每冲批必经路径（flush 段主体），镜像同值跳过后每冲批省 1 次真调。
+ * XGPU_FLUSH_LEAN=0 恒真调（旧行为），镜像照常维护；calloc 清零=0
+ * 非 GL 任何合法值，作「未知」哨兵（首次必真调，保守正确）。 */
+static void xgld_set_unpack_alignment(XGpuRenderDriverSession* self, int align)
+{
+    if (xgld_flush_lean_enabled() && self->m_unpackAlignment == align) return;
+    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, align);
+    self->m_unpackAlignment = align;
+}
+
+/* E-F 路（2026-09-27 夜七）UNPACK_ROW_LENGTH 镜像：设值点唯一
+ * （drawImageRegion 区域直传设行距 iw）；行距语义约束「源缓冲行宽
+ * ≠ 上传宽度」的读入——行距==上传宽度（整幅上传）时设 0/设宽等价，
+ * 故 LEAN 下区域直传不再每次归 0，改为各上传消费点前置显式归 0
+ * （同值跳过：非区域流零新增调用，区域流后首个非同宽上传 1 次归 0）。
+ * XGPU_FLUSH_LEAN=0 恒真调（含区域路径显式归 0=逐位旧行为）。 */
+static void xgld_set_unpack_row_length(XGpuRenderDriverSession* self,
+                                       int length)
+{
+    if (xgld_flush_lean_enabled() && self->m_unpackRowLength == length) return;
+    self->glPixelStorei(XGL_UNPACK_ROW_LENGTH, length);
+    self->m_unpackRowLength = length;
+}
+
+/* scissor 关闭走 P0-2 缓存：与 set_clip_rect 共用同一真值源（启用态
+ * +矩形）。begin/present 的旁路禁用不再粗暴失效整个缓存——上帧末
+ * scissor 已关时本帧连 glDisable 都省，setClipRect 同矩形早返回得以
+ * 跨帧生效（待定批跨帧存续的前提之一）。XGPU_STATE_CACHE=0 时恒真
+ * 调 glDisable 并按旧行为置缓存无效。 */
+static void xgld_ensure_scissor_off(XGpuRenderDriverSession* self)
+{
+    if (xgld_state_cache_enabled() && self->m_scissorValid &&
+        !self->m_scissorOn)
+        return;
+    self->glDisable(XGL_SCISSOR_TEST);
+    self->m_scissorOn = false;
+    self->m_scissorValid = xgld_state_cache_enabled();
+    if (xgld_batch_prof_enabled())
+        ++g_xgldBatchProf.m_stScissor; /* TEMP-PROBE：真改写计数。 */
+    /* P-FLUSHGATE：旁路关剪裁使批 scissor 快照失真（快照可能为启用态）。
+       常规路径本函数只在空批（冲批后）的 begin/present 触达，置位无副作用；
+       非空批罕见边界（如跨帧残留）下快照失效即下个 setClipRect 按目标
+       ≠快照兜底冲批，门不放过失真批次。 */
+    self->m_quadBatchScissorValid = false;
+}
+
 static void xgld_context_destroy(XGpuRenderDriverSession* self)
 {
     if (!self) return;
@@ -405,6 +813,8 @@ static bool xgpu_draw_quad_uv(XGpuRenderDriverSession* self, XglUInt program,
                               XglUInt texture, float x, float y, float width,
                               float height, float u0, float v0, float u1,
                               float v1, const float* color, bool textured);
+static bool xgld_pbo_readback_enabled(void);
+static bool xgld_full_batch_enabled(void);
 
 static bool xgpu_reserve_pixels(XGpuRenderDriverSession* self, size_t bytes)
 {
@@ -481,7 +891,12 @@ static bool xgpu_upload_image_flip(XGpuRenderDriverSession* self,
         if (src && bpl >= width * 4)
         {
             self->glBindTexture(XGL_TEXTURE_2D, texture);
-            self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+            xgld_note_tex0_bind(self, texture); /* TEMP-PROBE 镜像。 */
+            xgld_set_unpack_alignment(self, 1);
+            /* E-F 路：LEAN 下区域直传可能残留行距 iw——行距≠宽度的整幅
+               读入依赖归 0，非同宽上传点前置显式归 0（镜像同值跳过，
+               非区域流零新增 GL 调用）。 */
+            xgld_set_unpack_row_length(self, 0);
             self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA,
                                width, height, 0, XGL_BGRA,
                                XGL_UNSIGNED_INT_8_8_8_8_REV, src);
@@ -517,7 +932,9 @@ static bool xgpu_upload_image_flip(XGpuRenderDriverSession* self,
                 }
             }
             self->glBindTexture(XGL_TEXTURE_2D, texture);
-            self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+            xgld_note_tex0_bind(self, texture); /* TEMP-PROBE 镜像。 */
+            xgld_set_unpack_alignment(self, 1);
+            xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底。 */
             self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA,
                                width, height, 0, XGL_RGBA, XGL_UNSIGNED_BYTE,
                                self->m_pixels);
@@ -545,7 +962,11 @@ static bool xgpu_upload_image_flip(XGpuRenderDriverSession* self,
         }
     }
     self->glBindTexture(XGL_TEXTURE_2D, texture);
-    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    xgld_note_tex0_bind(self, texture); /* TEMP-PROBE 镜像。 */
+    xgld_set_unpack_alignment(self, 1);
+    /* E-F 路：LEAN 下区域直传可能残留行距 iw——暂存缓冲行宽=width，
+       行距≠宽度的读入依赖归 0（镜像同值跳过，零新增调用）。 */
+    xgld_set_unpack_row_length(self, 0);
     /* The source texture can be smaller than the render target.  Re-specify
        its storage so UV [0,1] covers exactly the uploaded image rather than
        only a small corner of the session-sized texture. */
@@ -595,7 +1016,9 @@ static bool xgpu_upload_alpha(XGpuRenderDriverSession* self,
         }
     }
     self->glBindTexture(XGL_TEXTURE_2D, self->m_sourceTexture);
-    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    xgld_note_tex0_bind(self, self->m_sourceTexture); /* TEMP-PROBE 镜像。 */
+    xgld_set_unpack_alignment(self, 1);
+    xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底。 */
     self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA, width, height, 0,
                        XGL_RGBA, XGL_UNSIGNED_BYTE, self->m_pixels);
     /* 存储尺寸跟踪必须同步：否则 drawImageRegion 的 TexSubImage 增量
@@ -686,10 +1109,13 @@ static void xgld_prepare_texture(XGpuRenderDriverSession* self, XglUInt texture,
                                  int width, int height)
 {
     self->glBindTexture(XGL_TEXTURE_2D, texture);
+    xgld_note_tex0_bind(self, texture); /* TEMP-PROBE 镜像。 */
     self->glTexParameteri(XGL_TEXTURE_2D, XGL_TEXTURE_MIN_FILTER, XGL_NEAREST);
     self->glTexParameteri(XGL_TEXTURE_2D, XGL_TEXTURE_MAG_FILTER, XGL_NEAREST);
     self->glTexParameteri(XGL_TEXTURE_2D, XGL_TEXTURE_WRAP_S, XGL_CLAMP_TO_EDGE);
     self->glTexParameteri(XGL_TEXTURE_2D, XGL_TEXTURE_WRAP_T, XGL_CLAMP_TO_EDGE);
+    xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底（NULL 数据
+                                            不读源，统一量测口径）。 */
     self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA, width, height, 0,
                        XGL_RGBA, XGL_UNSIGNED_BYTE, NULL);
 }
@@ -709,6 +1135,8 @@ static void xgpu_set_blend(XGpuRenderDriverSession* self, bool sourceOver)
         self->glBlendFunc(XGL_ONE, XGL_ONE_MINUS_SRC_ALPHA);
     }
     self->m_blendState = want;
+    if (xgld_batch_prof_enabled())
+        ++g_xgldBatchProf.m_stBlend; /* TEMP-PROBE：真切换计数。 */
 }
 
 /** @brief program 切换缓存（连续同类 quad 免重复 glUseProgram）。 */
@@ -717,6 +1145,8 @@ static void xgpu_use_program(XGpuRenderDriverSession* self, XglUInt program)
     if (self->m_activeProgram == program) return;
     self->glUseProgram(program);
     self->m_activeProgram = program;
+    if (xgld_batch_prof_enabled())
+        ++g_xgldBatchProf.m_stProgram; /* TEMP-PROBE：真切换计数。 */
 }
 
 /** @brief 纹理 modulate uniform 缓存。 */
@@ -760,6 +1190,8 @@ static void xgpu_rect_vertices_uv(XGpuRenderDriverSession* self, float x,
 static void xgpu_vertex_data(XGpuRenderDriverSession* self,
                              const float* vertices)
 {
+    if (xgld_batch_prof_enabled())
+        ++g_xgldBatchProf.m_immWrite; /* TEMP-PROBE：即时路径写入。 */
     self->glBufferData(XGL_ARRAY_BUFFER,
                        (XglSizeiptr)(sizeof(float) * 16u), vertices,
                        XGL_DYNAMIC_DRAW);
@@ -802,14 +1234,62 @@ static void xgld_set_attrib_layout(XGpuRenderDriverSession* self, int layout)
                                     (const void*)(sizeof(float) * 4u));
     }
     self->m_attribLayout = layout;
+    if (xgld_batch_prof_enabled())
+        ++g_xgldBatchProf.m_stLayout; /* TEMP-PROBE：真切换计数。 */
 }
 
-/** @brief unit0 纹理绑定（无条件——上传/渐变等路径会直改绑定，缓存
- *         易失真；字形跑批期间同纹理重复绑定的代价可接受）。 */
+/** @brief XGPU_BATCH_LEAN 环境开关（缺省=开；"0"=逐位回退）。
+ *  @details TEMP-PROBE 拆解转微优化：冲批/字形流路径 unit0 纹理同值
+ *           重绑（glActiveTexture+glBindTexture）经会话镜像命中跳过。
+ *           仅省冗余 GL 真调，绑定序列的可见结果逐位不变；镜像维护
+ *           与开关解耦（关时恒真调，镜像照常更新）。 */
+static bool xgld_batch_lean_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_BATCH_LEAN");
+        enabled = !(value && *value &&
+                    !(value[0] == '0' && value[1] == 0));
+    }
+    return enabled != 0;
+}
+
+/** @brief unit0 纹理绑定。
+ *  TEMP-PROBE→XGPU_BATCH_LEAN（缺省开，"0"=逐位回退）：镜像命中（同
+ *  纹理已绑 unit0）免 glActiveTexture+glBindTexture 两次真调——冲批
+ *  点（xgld_flush_quads）恒绑本批纹理，纯色 quad 流（白纹理）与连续
+ *  字形流（同图集）跨冲批同值，逐次重设属冗余状态机往返（batch-prof
+ *  实测维度）。镜像由 xgld_note_tex0_bind 在全部旁路直改点同步维护，
+ *  纹理删除点失效；仅省冗余真调，不改绑定序列的可见结果。 */
 static void xgld_bind_texture0(XGpuRenderDriverSession* self, XglUInt texture)
 {
+    if (xgld_batch_lean_enabled() && self->m_boundTex0Valid &&
+        self->m_boundTex0 == texture)
+    {
+        if (xgld_batch_prof_enabled())
+            ++g_xgldBatchProf.m_texBindSkip; /* TEMP-PROBE：省掉的重绑。 */
+        return;
+    }
     self->glActiveTexture(XGL_TEXTURE0);
     self->glBindTexture(XGL_TEXTURE_2D, texture);
+    xgld_note_tex0_bind(self, texture);
+    if (xgld_batch_prof_enabled())
+        ++g_xgldBatchProf.m_stTexBind; /* TEMP-PROBE：真绑定计数。 */
+}
+
+/** @brief XGPU_PROFILE 环境开关（同 present 打点口径：非空即开）。
+ *  @note  开启时冲批点累计次数+耗时入会话 prof 域，present 每 300 派发
+ *         打印 flush=次数（每次均值）列后清零；关闭零额外开销。 */
+static bool xgld_profile_enabled(void)
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        const char* env = XSystem_environment("XGPU_PROFILE");
+        on = env && *env ? 1 : 0;
+    }
+    return on != 0;
 }
 
 /** @brief 冲批：累积 quad 一次 drawArrays 提交（退化三角带连接）。
@@ -819,25 +1299,56 @@ static void xgld_bind_texture0(XGpuRenderDriverSession* self, XglUInt texture)
 static void xgld_flush_quads(XGpuRenderDriverSession* self)
 {
     int totalVerts;
+    int64_t profT0;
+    uint64_t profVbo0 = 0;
+    uint64_t profDraw0 = 0;
+    bool profBatch = false;
     if (!self || self->m_quadBatchCount == 0) return;
+    profT0 = xgld_profile_enabled()
+                 ? XDateTime_currentNSecsSinceEpoch() / 1000 : 0;
     totalVerts = self->m_quadBatchCount * 6;
     xgpu_set_blend(self, self->m_quadBatchBlend != 0);
     xgpu_use_program(self, self->m_batchProgram);
     self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
     xgld_set_attrib_layout(self, 1);
     xgld_bind_texture0(self, self->m_quadBatchTex);
+    profBatch = xgld_batch_prof_enabled();
+    if (profBatch)
+        profVbo0 = XDateTime_currentNSecsSinceEpoch(); /* TEMP-PROBE。 */
     self->glBufferData(XGL_ARRAY_BUFFER,
                        (XglSizeiptr)(sizeof(float) * 48u *
                                      (size_t)self->m_quadBatchCount),
                        self->m_quadBatch, XGL_DYNAMIC_DRAW);
+    if (profBatch)
+    {
+        ++g_xgldBatchProf.m_vboWrite; /* TEMP-PROBE：顶点缓冲写入。 */
+        g_xgldBatchProf.m_vboWriteNs +=
+            XDateTime_currentNSecsSinceEpoch() - profVbo0;
+        profDraw0 = XDateTime_currentNSecsSinceEpoch();
+    }
     self->glDrawArrays(XGL_TRIANGLE_STRIP, 0, (XglSizei)totalVerts);
+    if (profBatch)
+    {
+        ++g_xgldBatchProf.m_drawArrays; /* TEMP-PROBE：落盘提交。 */
+        g_xgldBatchProf.m_drawArraysNs +=
+            XDateTime_currentNSecsSinceEpoch() - profDraw0;
+    }
     self->m_quadBatchCount = 0;
     self->m_quadBatchBlend = -1;
     self->m_quadBatchTex = 0;
+    if (profT0)
+    {
+        ++self->m_flushQuadCount;
+        self->m_flushQuadUs +=
+            (uint64_t)(XDateTime_currentNSecsSinceEpoch() / 1000 - profT0);
+    }
 }
 
 /** @brief 批状态就绪：纹理/混合与批内不同则先冲批（跨字形存续的
- *         关键——同纹理同混合的连续 quad 不再被纹理型原语打散）。 */
+ *         关键——同纹理同混合的连续 quad 不再被纹理型原语打散）。
+ *         FULLBATCH（默认开）：绑定推迟到冲批（批内存续期间 unit0
+ *         绑定无旁路改动，见 xgld_full_batch_enabled 注），后续同批
+ *         quad 免逐次 glActiveTexture+glBindTexture。 */
 static void xgld_batch_set_state(XGpuRenderDriverSession* self,
                                  XglUInt texture, bool sourceOver)
 {
@@ -851,7 +1362,22 @@ static void xgld_batch_set_state(XGpuRenderDriverSession* self,
         self->m_quadBatchTex = texture;
         self->m_quadBatchBlend = wantBlend;
     }
+    if (xgld_full_batch_enabled()) return;
     xgld_bind_texture0(self, texture);
+}
+
+/** @brief 排障开关：XGPU_QUAD_DEGEN_LEGACY=1 回退桥接顶点旧偏移
+ *         （24，实读 TR），复现楔形撕裂对照用；默认关=修后行为。 */
+static bool xgld_quad_degen_legacy(void)
+{
+    static int legacy = -1;
+    if (legacy < 0)
+    {
+        const char* value = XSystem_environment("XGPU_QUAD_DEGEN_LEGACY");
+        legacy = value && *value &&
+                         !(value[0] == '0' && value[1] == 0) ? 1 : 0;
+    }
+    return legacy != 0;
 }
 
 /** @brief 追加一个 quad 到批（4 顶点 + 2 退化连接顶点=48 float/quad）。
@@ -870,20 +1396,58 @@ static bool xgld_append_quad(XGpuRenderDriverSession* self, const float* v32)
         self->m_quadBatch = grown;
         self->m_quadBatchCapacity = newCap;
     }
-    self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
-    xgld_set_attrib_layout(self, 1);
-    dst = self->m_quadBatch + (size_t)self->m_quadBatchCount * 48u;
+    /* FULLBATCH（默认开）：追加只写 CPU 侧批数组——VBO 绑定与批布局
+       指针由冲批点（xgld_flush_quads：先 glBindBuffer 再
+       set_attrib_layout(1)，指针捕获在绑 VBO）一次性设定，追加期
+       逐 quad 两调全免。布局此后可能被即时型原语改回 0（drawImage
+       系），冲批点按缓存差值重设，语义不变。 */
+    if (!xgld_full_batch_enabled())
     {
-        /* 退化连接：重复上一 quad 末顶点（BR，偏移 24..31）与本 quad
-           首顶点（TL）；首 quad 无上邻，用自身 TL 充当（零面积退化）。 */
+        self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
+        xgld_set_attrib_layout(self, 1);
+    }
+    dst = self->m_quadBatch + (size_t)self->m_quadBatchCount * 48u;
+    if (self->m_quadBatchCount == 0)
+    {
+        /* P-FLUSHGATE：批建立快照——本 quad 记录时的 scissor 缓存态即
+           批 scissor（空批 → 已有 quad 均已按其落盘）。冲批纪律保证批
+           存续期间 GL scissor 不偏离快照（改 scissor 出口先冲批或经
+           setClipRect 门），目标==快照即可续批免冲（见
+           xgld_set_clip_rect）。 */
+        self->m_quadBatchScissorValid = self->m_scissorValid;
+        self->m_quadBatchScissorOn = self->m_scissorOn;
+        self->m_quadBatchScissorX = self->m_scissorX;
+        self->m_quadBatchScissorY = self->m_scissorY;
+        self->m_quadBatchScissorW = self->m_scissorW;
+        self->m_quadBatchScissorH = self->m_scissorH;
+    }
+    {
+        /* 退化连接：重复上一 quad 末顶点（块内第 6 顶点，偏移 40..47）
+           与本 quad 首顶点（TL）；首 quad 无上邻，用自身 TL 充当（零面积
+           退化）。P0 撕裂根修（2026-09-26）：旧代码读偏移 24..31——那是
+           本块 [P,V0,V0,V1,V2,V3] 发射布局的第 4 顶点（V1=TR），并非末
+           顶点；TRIANGLE_STRIP 下批内每对相邻 quad 因此多渲染一个真实
+           三角形（上一 quad 右下→右上→下一 quad 左上），把上一 quad 的
+           顶点色拖进下一 quad 左上邻域——p4/t20 内层页签条蓝/灰楔形
+           残影与图表连片实锤；REGION_DISABLE/CLEAR_ROWS_FULL/
+           FRAME_KEEPOPEN/FASTPATH_EXT 四开关均不能排除，唯
+           XGPU_QUAD_BATCH=0 根治（白纹理批内颜色是逐顶点属性，跨色
+           楔形才可见，故平日批内同色 quad 不显）。 */
         const float* prevBR = self->m_quadBatchCount > 0
-                                  ? dst - 48u + 24u
+                                  ? dst - 48u + (xgld_quad_degen_legacy()
+                                                     ? 24u : 40u)
                                   : v32;
         XMemcpy(dst, prevBR, sizeof(float) * 8u);
         XMemcpy(dst + 8, v32, sizeof(float) * 8u);
         XMemcpy(dst + 16, v32, sizeof(float) * 32u);
     }
     self->m_quadBatchCount++;
+    if (xgld_batch_prof_enabled())
+    {
+        /* TEMP-PROBE：四边形追加字节数（48 float/quad=192B）。 */
+        ++g_xgldBatchProf.m_quadAppend;
+        g_xgldBatchProf.m_quadBytes += 48u * sizeof(float);
+    }
     return true;
 }
 
@@ -894,6 +1458,28 @@ static bool xgld_quad_batch_enabled(void)
     if (enabled < 0)
     {
         const char* value = XSystem_environment("XGPU_QUAD_BATCH");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/** @brief 全批化开关：XGPU_FULLBATCH=0 回退追加期逐 quad GL 绑定
+ *         （glActiveTexture/glBindTexture/glBindBuffer）现状（排障
+ *         对照）；默认开=追加期零 GL 调用，纹理/VBO/属性布局统一
+ *         推迟到冲批一次性完成。
+ *  @note  正确性依据既有冲批纪律：纹理变形（uploadTargetImage/
+ *         glyphAtlasUpload/identityPopulate/gradient）、读回、clear、
+ *         setClipRect、帧界/上屏等全部旁路出口先冲批——批存续期间
+ *         unit0 与 ARRAY_BUFFER 绑定不可能被旁路改动；冲批点
+ *         （xgld_flush_quads）自带同纹理绑定与批布局指针设定，故
+ *         追加期免设。即时型原语（drawImage 系）冲批后自绑源纹理，
+ *         本批后续追加在新 run 起点经冲批恢复绑定，语义不变。 */
+static bool xgld_full_batch_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FULLBATCH");
         enabled = !(value && *value && value[0] == '0' && value[1] == 0);
     }
     return enabled != 0;
@@ -1068,7 +1654,12 @@ static XglUInt xgld_identity_cache_populate(XGpuRenderDriverSession* self,
     if (!xgpu_upload_image(self, image, texture, width, height))
     {
         if (!entry->m_texture)
+        {
             self->glDeleteTextures(1, &texture); /* 新纹理配对释放。 */
+            /* TEMP-PROBE 镜像：被删纹理是 unit0 当前绑定，GL 语义将其
+               复位为 0——镜像失效，防 LEAN 误判同值跳过。 */
+            self->m_boundTex0Valid = false;
+        }
         return 0;
     }
     entry->m_image = image;
@@ -1363,7 +1954,10 @@ static bool xgld_initialize(XGpuRenderDriverSession* self, int width, int height
        CLAMP_TO_EDGE（默认 mipmap 过滤对非 mip 纹理采样不完整）。 */
     xgld_prepare_texture(self, self->m_whiteTexture, 1, 1);
     self->glBindTexture(XGL_TEXTURE_2D, self->m_whiteTexture);
-    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    xgld_note_tex0_bind(self, self->m_whiteTexture); /* TEMP-PROBE 镜像。 */
+    xgld_set_unpack_alignment(self, 1);
+    xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底（1×1 读入
+                                            对行距敏感，防越界读暂存）。 */
     {
         const unsigned char white[4] = { 255, 255, 255, 255 };
         self->glTexSubImage2D(XGL_TEXTURE_2D, 0, 0, 0, 1, 1, XGL_RGBA,
@@ -1388,7 +1982,7 @@ static bool xgld_initialize(XGpuRenderDriverSession* self, int width, int height
     xgld_prepare_texture(self, self->m_glyphAtlasTexture,
                          XGPU_RENDER_GLYPH_ATLAS_SIZE,
                          XGPU_RENDER_GLYPH_ATLAS_SIZE);
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
+    xgld_bind_fbo(self, self->m_framebuffer);
     self->glFramebufferTexture2D(XGL_FRAMEBUFFER, XGL_COLOR_ATTACHMENT0,
                                   XGL_TEXTURE_2D, self->m_colorTexture, 0);
     if (self->glCheckFramebufferStatus(XGL_FRAMEBUFFER) != XGL_FRAMEBUFFER_COMPLETE)
@@ -1458,7 +2052,48 @@ static bool xgld_initialize(XGpuRenderDriverSession* self, int width, int height
         self->glUniform1i(self->m_gradientLutLocation, 1);
         self->glUseProgram(0);
     }
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, 0);
+    /* P-PBO：双 PBO 读回环建立（全帧 RGBA 一次性分配，STREAM_READ 提示
+       驱动放「GPU 写/CPU 读」优化路径）。函数加载与资源创建失败一律只
+       降级（m_pboReady=false 恒走同步读回），不使会话建立失败——本通道
+       是性能优化，不能反向收窄可用性。 */
+    if (xgld_pbo_readback_enabled())
+    {
+        xgld_load_proc(self, "glMapBuffer",
+                       &self->glMapBuffer, sizeof(self->glMapBuffer));
+        xgld_load_proc(self, "glUnmapBuffer",
+                       &self->glUnmapBuffer, sizeof(self->glUnmapBuffer));
+        xgld_load_proc(self, "glFenceSync",
+                       &self->glFenceSync, sizeof(self->glFenceSync));
+        xgld_load_proc(self, "glClientWaitSync",
+                       &self->glClientWaitSync, sizeof(self->glClientWaitSync));
+        xgld_load_proc(self, "glDeleteSync",
+                       &self->glDeleteSync, sizeof(self->glDeleteSync));
+        self->glGenBuffers(2, self->m_readbackPbo);
+        if (self->glMapBuffer && self->glUnmapBuffer &&
+            self->m_readbackPbo[0] && self->m_readbackPbo[1])
+        {
+            int i;
+            for (i = 0; i < 2; ++i)
+            {
+                self->glBindBuffer(XGL_PIXEL_PACK_BUFFER,
+                                   self->m_readbackPbo[i]);
+                self->glBufferData(XGL_PIXEL_PACK_BUFFER,
+                                   (XglSizeiptr)((size_t)width *
+                                                 (size_t)height * 4u),
+                                   NULL, XGL_STREAM_READ);
+            }
+            self->glBindBuffer(XGL_PIXEL_PACK_BUFFER, 0);
+            self->m_pboReady = true;
+        }
+        else if (self->m_readbackPbo[0] && self->m_readbackPbo[1])
+        {
+            /* 半就绪（map 缺失等）：立即配对回收，不留孤儿缓冲。 */
+            self->glDeleteBuffers(2, self->m_readbackPbo);
+            self->m_readbackPbo[0] = 0;
+            self->m_readbackPbo[1] = 0;
+        }
+    }
+    xgld_bind_fbo(self, 0); /* 播种绑定镜像（旧路径终态同为解绑 0）。 */
     return true;
 
 failed:
@@ -1551,6 +2186,26 @@ static void xgld_session_destroy(XGpuRenderDriverSession* self)
         /* P-A：身份缓存纹理配对释放——必须在冲批之后（待定 quad 先按
            缓存纹理内容落盘），与 m_sourceTexture 同口径。 */
         xgld_identity_cache_clear(self);
+        /* P-PBO 配对释放：fence 为引用计数句柄可随时删；PBO 与其它
+           缓冲同纪删除。均在 makeCurrent 块内=上下文当前。 */
+        if (self->m_pboFence[0] || self->m_pboFence[1])
+        {
+            int i;
+            for (i = 0; i < 2; ++i)
+            {
+                if (self->m_pboFence[i] && self->glDeleteSync)
+                    self->glDeleteSync(self->m_pboFence[i]);
+                self->m_pboFence[i] = NULL;
+            }
+        }
+        if ((self->m_readbackPbo[0] || self->m_readbackPbo[1]) &&
+            self->glDeleteBuffers)
+        {
+            self->glDeleteBuffers(2, self->m_readbackPbo);
+            self->m_readbackPbo[0] = 0;
+            self->m_readbackPbo[1] = 0;
+        }
+        self->m_pboReady = false;
         if (self->glDeleteProgram && self->m_solidProgram)
             self->glDeleteProgram(self->m_solidProgram);
         if (self->glDeleteProgram && self->m_textureProgram)
@@ -1576,14 +2231,18 @@ static void xgld_session_destroy(XGpuRenderDriverSession* self)
 static bool xgld_begin_frame(XGpuRenderDriverSession* self,
                              const XImage* initialImage)
 {
-    if (!xgld_ensure_current(self)) return false;
-    if (!self || !xgld_make_current(self))
+    if (!self || !xgld_ensure_current(self)) return false;
+    /* L-固定成本：ensure_current 返回真即已保证本会话上下文当前
+       （追踪器与平台层 doneCurrent 全配对），旧代码此处再无条件
+       make_current 一次=每派发多付一整次 wglMakeCurrent（会话开关
+       类驱动调用中档位最高者，0.59ms/派发归因的头号分量）。
+       XGPU_MAKECURRENT_ONCE=0 回退旧双调（诊断对照）。 */
+    if (!xgld_makecurrent_once_enabled() && !xgld_make_current(self))
         return false;
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
-    self->glViewport(0, 0, self->m_width, self->m_height);
-    self->glPixelStorei(XGL_PACK_ALIGNMENT, 1);
-    self->glDisable(XGL_SCISSOR_TEST);
-    self->m_scissorValid = false; /* P0-2：旁路禁用 scissor，缓存失效（否则同矩形早返回会跳过重启用）。 */
+    xgld_bind_fbo(self, self->m_framebuffer);
+    xgld_set_viewport(self, self->m_width, self->m_height);
+    xgld_set_pack_alignment(self, 1);
+    xgld_ensure_scissor_off(self);
     xgpu_set_blend(self, true);
     if (self->m_windowSession)
     {
@@ -1628,7 +2287,16 @@ static void xgld_end_frame(XGpuRenderDriverSession* self)
     xgld_ensure_current(self);
     if (!self) return;
     xgld_flush_quads(self);
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, 0);
+    /* L-固定成本（FBO 持久化）：不再解绑 FBO——FBO 绑定按上下文留存，
+       下帧同 FBO 经 xgld_bind_fbo 镜像直续，省每派发一对 bind/unbind
+       （归因文档 §5 头号假设：会话开关驱动成本）。正确性：冲批纪律
+       只要求提交时目标 FBO 在绑（本函数冲批先于一切状态变动）；帧间
+       改绑的各出口（present blit/全屏 quad、读回、图集临时 FBO、渐变）
+       全部经镜像助手维护，present 自带所需绑定。会话销毁删在绑 FBO
+       由 GL 隐式解绑，无后续 GL，安全。XGPU_FBO_PERSIST=0 回退旧
+       逐帧解绑（诊断对照）。上下文保持当前语义不变（见下）。 */
+    if (!xgld_fbo_persist_enabled())
+        xgld_bind_fbo(self, 0);
     /* 上下文保持当前（不再 doneCurrent）：同一 UI 线程的下一位图器
        begin 经 xgld_ensure_current O(1) 直返——此前每控件帧各一对
        makeCurrent/doneCurrent，800x600 图表页 ~45 对/帧实测成为
@@ -1645,6 +2313,7 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
     static double profQuadUs, profSwapUs;
     int64_t profT0 = 0, profT1 = 0, profT2 = 0;
     static int profOn = -1;
+    bool lean;
     if (profOn < 0)
     {
         const char* env = XSystem_environment("XGPU_PROFILE");
@@ -1652,25 +2321,41 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
     }
     if (!self || !self->m_windowSession || !self->m_windowContext)
         return false;
-    if (!xgld_make_current(self))
+    xgld_batch_prof_tick(); /* TEMP-PROBE(XGPU_BATCH_PROF)：5s 窗口汇总。 */
+    /* L-固定成本：同 begin_frame——ensure_current 已保证上下文当前，
+       冗余二次 makeCurrent 由 XGPU_MAKECURRENT_ONCE 门控消除。 */
+    if (!xgld_makecurrent_once_enabled() && !xgld_make_current(self))
         return false;
+    lean = xgld_present_lean_enabled();
     xgld_flush_quads(self);
     if (profOn) profT0 = XDateTime_currentNSecsSinceEpoch() / 1000;
-    xgpu_set_blend(self, false);
-    self->glDisable(XGL_SCISSOR_TEST);
-    self->m_scissorValid = false; /* P0-2：旁路禁用 scissor，缓存失效（同上）。 */
+    if (lean)
+    {
+        /* LEAN（默认）：glBlitFramebuffer 是定值拷贝，GL 规范明确
+           混合/逻辑操作不作用于 blit——绘制残留的混合态无需关断再
+           恢复（每派发 3 次冗余调用）；scissor 确实约束 blit，必须
+           关，但走 P0-2 缓存免同值重复调用且不再失效缓存。 */
+        xgld_ensure_scissor_off(self);
+    }
+    else
+    {
+        xgpu_set_blend(self, false);
+        self->glDisable(XGL_SCISSOR_TEST);
+        self->m_scissorValid = false; /* P0-2：旁路禁用 scissor，缓存失效（同上）。 */
+    }
     if (self->m_hasBlit)
     {
         /* 2b 快路径：READ=FBO（持久画面），DRAW=默认帧缓冲；blit 后
-           恢复原绑定。 */
-        self->glBindFramebuffer(XGL_READ_FRAMEBUFFER, self->m_framebuffer);
-        self->glBindFramebuffer(XGL_DRAW_FRAMEBUFFER, 0);
-        self->glViewport(0, 0, self->m_width, self->m_height);
+           恢复原绑定（经镜像助手：FBO 持久化下 READ 已在绑，仅
+           DRAW→0 与恢复两次真调）。 */
+        xgld_bind_fbo_read(self, self->m_framebuffer);
+        xgld_bind_fbo_draw(self, 0);
+        xgld_set_viewport(self, self->m_width, self->m_height);
         self->glBlitFramebuffer(0, 0, self->m_width, self->m_height,
                                 0, 0, self->m_width, self->m_height,
                                 XGL_COLOR_BUFFER_BIT, XGL_NEAREST);
-        self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
-        xgpu_set_blend(self, true);
+        xgld_bind_fbo(self, self->m_framebuffer);
+        if (!lean) xgpu_set_blend(self, true);
         if (!XPlatformOpenGLContext_swapBuffers(self->m_windowContext))
         {
             XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
@@ -1682,25 +2367,28 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
         return true;
     }
     /* 全屏 quad 采样合成（NDC 直接映射：FBO 与窗口默认帧缓冲同为
-       GL 左下原点，uv 不翻转）。 */
+       GL 左下原点，uv 不翻转）。采样绘制真实作用于混合态：无论开关
+       组合，此处强制关断（LEAN 只免 blit 路径的混合往返）。 */
+    xgpu_set_blend(self, false);
     vertices[0]  = -1.0f; vertices[1]  =  1.0f; vertices[2]  = 0.0f; vertices[3]  = 1.0f;
     vertices[4]  =  1.0f; vertices[5]  =  1.0f; vertices[6]  = 1.0f; vertices[7]  = 1.0f;
     vertices[8]  = -1.0f; vertices[9]  = -1.0f; vertices[10] = 0.0f; vertices[11] = 0.0f;
     vertices[12] =  1.0f; vertices[13] = -1.0f; vertices[14] = 1.0f; vertices[15] = 0.0f;
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, 0);
-    self->glViewport(0, 0, self->m_width, self->m_height);
+    xgld_bind_fbo(self, 0);
+    xgld_set_viewport(self, self->m_width, self->m_height);
     xgpu_use_program(self, self->m_textureProgram);
     self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
     xgpu_vertex_data(self, vertices);
     xgld_set_attrib_layout(self, 0);
     self->glActiveTexture(XGL_TEXTURE0);
     self->glBindTexture(XGL_TEXTURE_2D, self->m_colorTexture);
+    xgld_note_tex0_bind(self, self->m_colorTexture); /* TEMP-PROBE 镜像。 */
     self->glUniform1i(self->m_textureSamplerLocation, 0);
     self->glUniform4f(self->m_textureModulateLocation,
                       modulate[0], modulate[1], modulate[2], modulate[3]);
     self->glDrawArrays(XGL_TRIANGLE_STRIP, 0, 4);
     if (profOn) profT1 = XDateTime_currentNSecsSinceEpoch() / 1000;
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
+    xgld_bind_fbo(self, self->m_framebuffer);
     xgpu_set_blend(self, true);
     if (!XPlatformOpenGLContext_swapBuffers(self->m_windowContext))
     {
@@ -1715,11 +2403,22 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
         profSwapUs += (double)(profT2 - profT1);
         if (++profCount == 300)
         {
+            /* flush 列（夜五）：300 派发窗口内实际冲批次数与每次均值，
+               列风格对齐 [xgpu-prof] 的 fillRect/solidQuad 口径。冲批计数
+               域按会话持有（与 scissor 快照同纪），随打印清零。 */
             fprintf(stderr, "[profile] present avg quad=%.3fms swap=%.3fms "
-                            "(n=%u)\n",
+                            "flush=%u (%.4fms/次) (n=%u)\n",
                     profQuadUs / profCount / 1000.0,
-                    profSwapUs / profCount / 1000.0, profCount);
+                    profSwapUs / profCount / 1000.0,
+                    self->m_flushQuadCount,
+                    self->m_flushQuadCount
+                        ? (double)self->m_flushQuadUs /
+                              (double)self->m_flushQuadCount / 1000.0
+                        : 0.0,
+                    profCount);
             profCount = 0; profQuadUs = 0; profSwapUs = 0;
+            self->m_flushQuadCount = 0;
+            self->m_flushQuadUs = 0;
         }
     }
     XPlatformOpenGLContext_doneCurrent(self->m_windowContext);
@@ -1727,71 +2426,341 @@ static bool xgld_present_to_window(XGpuRenderDriverSession* self)
     return true;
 }
 
-static bool xgld_readback(XGpuRenderDriverSession* self, XImage* target)
+/* ==================== P-PBO（2026-09-26）双 PBO 异步读回 ==================== */
+
+/* 疑题：GPU 增量每帧 ~1.36ms（SW 0.09ms），增量基准经静态层缓存后脏区
+ * 仅悬浮层 210x50，毫秒级开销头号候选=同步 glReadPixels 的 CPU 停顿
+ * （管线冲刷 + PCIe 往返全程占住 CPU）。方案：双 PBO 轮转 1 帧滞后——
+ * 本帧把读回【异步】写入 PBO[cur]（CPU 立即返回不等结果），随即 map
+ * 上一帧的 PBO[prev] 拷出上一帧内容，呈现滞后一帧（60Hz 呈现 16.7ms
+ * 下不可感知）。
+ * 语义陷阱（脏区漂移）：上一帧 PBO 里只有其【写入时 bbox】区域是上一
+ * 帧新内容，bbox 外是更早帧的陈旧字节。处理：PBO 恒为全帧 RGBA 布局
+ * （glReadPixels 读 bbox 写入 PBO 的 (glY,x) 偏移处，PACK_ROW_LENGTH=
+ * m_width），拷出按本帧 bbox 从上一帧全帧图对位取；并回语义（限频跳
+ * 帧把区域并回 m_dirty，XWidget 呈现链）下 bbox 只增不减，本帧 bbox
+ * 落在上一帧 bbox 内（含缩小）时每个像素都是上一帧内容，滞后语义成
+ * 立；漂移出界/首帧（无可信槽）回退同步直读本帧——正确性优先。
+ * XGPU_PBO_READBACK=0 整链回退同步路径（逐位旧行为）；
+ * XGPU_PBO_STATS=1 每 300 次读回打印命中/回退分类统计。
+ * XGPU_PBO_LAG_FIX 默认开（三夜九波修复，2026-09-27）：呈现链滞后通
+ * 道整体休眠（拷出+异步写入一并跳过），置 0 恢复滞后行为。
+ * 适用边界（二波 GL 冒烟回归，2026-09-26 收尾修复）：滞后语义只对
+ * 呈现链 readbackRect 成立；全帧 readback 的调用方（painter 帧末
+ * readback、回归像素断言、SYNC 逐命令读回、XWidget 降级帧补读回）
+ * 契约是【本帧内容】——离屏 painter 会话同尺寸跨帧复用时，线块全帧
+ * 读回曾命中上一帧（poly 块绿三角）的 PBO，黑线/渐变被陈旧像素顶替。
+ * 故全帧 readback 默认同步直读；XGPU_PBO_READBACK_FULL=1 扩展滞后
+ * 到全帧（复现回归口径的诊断开关）。 */
+
+static bool xgld_pbo_readback_enabled(void)
 {
-    if (!xgld_ensure_current(self)) return false;
-    size_t bytes;
-    int y;
-    if (!self || !target ||
-        XImage_width(target) != self->m_width ||
-        XImage_height(target) != self->m_height)
-        return false;
-    xgld_flush_quads(self);
-    bytes = (size_t)self->m_width * (size_t)self->m_height * 4u;
-    if (!xgpu_reserve_pixels(self, bytes)) return false;
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
-    self->glPixelStorei(XGL_PACK_ALIGNMENT, 1);
-    self->glReadPixels(0, 0, self->m_width, self->m_height, XGL_RGBA,
-                       XGL_UNSIGNED_BYTE, self->m_pixels);
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PBO_READBACK");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/** @brief XGPU_PBO_READBACK_FULL 环境开关（"1"=开，默认关）。
+ *  @note  默认关=全帧 readback 同步直读本帧（正确性优先，G 路增量
+ *         收益不受影响——增量基准的读回走呈现链 readbackRect）；
+ *         置 1 恢复二波初期全帧也吃 PBO 滞后的行为（复现冒烟回归
+ *         用，离屏像素断言会拿到上一帧内容）。 */
+static bool xgld_pbo_full_readback_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PBO_READBACK_FULL");
+        requested = value && *value &&
+                            !(value[0] == '0' && value[1] == 0)
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/** @brief XGPU_PBO_LAG_FIX 环境开关（默认开=修复生效；"0"=回退滞后通道）。
+ *  @note  为什么默认关掉滞后通道：三夜九波定向二分（docs/xgui/
+ *         night3-bisect.md，2026-09-27）在确定性拖动轨迹下，唯一让拖动
+ *         全程 clean 的配置是 XGPU_PBO_READBACK=0（同步直读）；滞后命中
+ *         条件（bbox 包含 + fence 探测）在交互态失效，拷出呈现陈旧/半成
+ *         品帧——整窗白/碎片且松开不自愈。同步直读同 FBO 同渲染全程干
+ *         净，反证 FBO 内容本身无腐坏，病灶只在滞后拷出这一层。修复=
+ *         呈现链默认不再进入滞后通道（拷出与异步写入一并休眠，行为逐
+ *         位等同 XGPU_PBO_READBACK=0 的呈现链）；置 0 恢复旧行为，
+ *         XGPU_PBO_READBACK_FULL 诊断复现须先置本开关 0。 */
+static bool xgld_pbo_lag_fix_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PBO_LAG_FIX");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/* fence 0 超时探测：上一帧写入该槽的读回 DMA 是否已完成。未完成时
+   map 会把本帧 CPU 停在 GPU 链上（正是本通道要消除的停顿形态），按
+   停顿最小化回退同步直读。无 fence 能力（GL<3.2，函数指针 NULL）时
+   直接 map：最多阻塞一帧 DMA，仍远轻于同步路径的全管线冲刷，正确性
+   不受影响。探测带 SYNC_FLUSH_COMMANDS 位：未冲刷的 fence 允许提升，
+   否则空闲 GPU 上也可能永远探不到信号。 */
+static bool xgld_pbo_slot_ready(XGpuRenderDriverSession* self, int slot)
+{
+    XglEnum wait;
+    if (!self->m_pboFence[slot] || !self->glClientWaitSync) return true;
+    wait = self->glClientWaitSync(self->m_pboFence[slot],
+                                  XGL_SYNC_FLUSH_COMMANDS_BIT,
+                                  (XglUint64)0u);
+    return wait == XGL_ALREADY_SIGNALED || wait == XGL_CONDITION_SATISFIED;
+}
+
+/* 拷出内核：把一段 GL 行序 RGBA 缓冲按 Y 翻转 + R/B 交换写入目标图像
+ * 矩形。rowSrc0=图像行 y 的源地址，rowStride=图像行步进（两路调用方
+ * 均为负——GL 行序与图像行序相反）。内层循环与原 readback/readbackRect
+ * 逐位一致（仅行源地址参数化）：同步路径传紧排读回缓冲末行、步进
+ * -width*4；PBO 路径传全帧布局内 (glY=m_height-y-1 行, x 列)、步进
+ * -m_width*4。快速路径条件 bpl >= (x+width)*4 与两处原判定在 x=0 时
+ * 同一（整帧读回 bpl >= m_width*4）。 */
+static void xgld_copyout_rect_to_image(XImage* target, const uint8_t* rowSrc0,
+                                       ptrdiff_t rowStride, int x, int y,
+                                       int width, int height)
+{
+    int row;
     /* 快速路径：ARGB32 与 ARGB32_Premultiplied 在 XImage 中是同一预乘
-       布局（XImageFormat_ARGB32 直接映射到 Premultiplied）。FBO 经预乘
-       混合后的帧逐行直接写入目标像素缓冲（GL 原点左下 → XImage 左上
-       翻转 + RGBA→ARGB32 小端的 R/B 交换），避免逐像素 XImage_setPixel
-       的函数调用开销（520x360 每帧约 19 万像素）。 */
+       布局。预乘帧逐行直接写入（RGBA→ARGB32 小端 R/B 交换）。 */
     if (XImage_format(target) == XImageFormat_ARGB32 ||
         XImage_format(target) == XImageFormat_ARGB32_Premultiplied)
     {
         uint8_t* dst = XImage_bits(target);
         int bpl = XImage_bytesPerLine(target);
-        if (dst && bpl >= self->m_width * 4)
+        if (dst && bpl >= (x + width) * 4)
         {
-            for (y = 0; y < self->m_height; ++y)
+            for (row = 0; row < height; ++row)
             {
-                const uint8_t* row = self->m_pixels +
-                    (size_t)(self->m_height - 1 - y) *
-                    (size_t)self->m_width * 4u;
-                uint8_t* line = dst + (size_t)y * (size_t)bpl;
-                int x;
-                for (x = 0; x < self->m_width; ++x)
+                const uint8_t* src = rowSrc0 + (ptrdiff_t)row * rowStride;
+                uint8_t* line = dst + (size_t)(y + row) * (size_t)bpl +
+                    (size_t)x * 4u;
+                int col;
+                for (col = 0; col < width; ++col)
                 {
-                    const uint8_t* p = row + (size_t)x * 4u;
-                    line[x * 4 + 0] = p[2]; /* B */
-                    line[x * 4 + 1] = p[1]; /* G */
-                    line[x * 4 + 2] = p[0]; /* R */
-                    line[x * 4 + 3] = p[3]; /* A（预乘帧直接入预乘图像） */
+                    const uint8_t* p = src + (size_t)col * 4u;
+                    line[col * 4 + 0] = p[2]; /* B */
+                    line[col * 4 + 1] = p[1]; /* G */
+                    line[col * 4 + 2] = p[0]; /* R */
+                    line[col * 4 + 3] = p[3]; /* A（预乘帧直接入预乘图像） */
                 }
             }
-            return true;
+            return;
         }
     }
-    /* 慢路径：其它格式逐像素经 XImage_setPixel 转换。 */
-    for (y = 0; y < self->m_height; ++y)
+    /* 慢路径：其它格式逐像素经 XImage_setPixel 转换（坐标平移回目标
+       图像坐标系，与整帧读回逐位一致）。 */
+    for (row = 0; row < height; ++row)
     {
-        int x;
-        const uint8_t* row = self->m_pixels +
-            (size_t)(self->m_height - 1 - y) * (size_t)self->m_width * 4u;
-        for (x = 0; x < self->m_width; ++x)
+        int col;
+        const uint8_t* src = rowSrc0 + (ptrdiff_t)row * rowStride;
+        for (col = 0; col < width; ++col)
         {
-            const uint8_t* pixel = row + (size_t)x * 4u;
+            const uint8_t* pixel = src + (size_t)col * 4u;
             uint8_t a = pixel[3];
             uint32_t argb = ((uint32_t)a << 24) |
                 ((uint32_t)xgpu_unpremultiply(pixel[0], a) << 16) |
                 ((uint32_t)xgpu_unpremultiply(pixel[1], a) << 8) |
                 (uint32_t)xgpu_unpremultiply(pixel[2], a);
-            XImage_setPixel(target, x, y, argb);
+            XImage_setPixel(target, x + col, y + row, argb);
         }
     }
+}
+
+/* 本帧异步读回写入 PBO[cur]：全帧布局下把 bbox 落到自己的 (glY,x)
+ * 偏移（row r 落到全帧行 glY+r 的 [x,x+w) 列段）。写前 glBufferData
+ * 孤儿化重分配：该槽上次写入在两帧前，孤儿化让驱动免于把新写入串行
+ * 化在旧存储回收之后（PBO 常规纪律）。随后立 fence 供下一帧 0 超时
+ * 探测。PACK_ROW_LENGTH 用后即清零——同步路径按紧排读回，共享上下文
+ * 的像素打包状态不外溢。 */
+static void xgld_pbo_issue_async_read(XGpuRenderDriverSession* self,
+                                      int x, int y, int width, int height)
+{
+    int slot = self->m_readbackPboCur;
+    int glY = self->m_height - y - height;
+    uintptr_t offset =
+        ((uintptr_t)glY * (uintptr_t)self->m_width + (uintptr_t)x) * 4u;
+    xgld_bind_fbo(self, self->m_framebuffer);
+    self->glBindBuffer(XGL_PIXEL_PACK_BUFFER, self->m_readbackPbo[slot]);
+    self->glBufferData(XGL_PIXEL_PACK_BUFFER,
+                       (XglSizeiptr)((size_t)self->m_width *
+                                     (size_t)self->m_height * 4u),
+                       NULL, XGL_STREAM_READ);
+    xgld_set_pack_alignment(self, 4);
+    self->glPixelStorei(XGL_PACK_ROW_LENGTH, self->m_width);
+    /* PBO 绑定下 glReadPixels 的指针参数=缓冲内字节偏移（非客户指针）。 */
+    self->glReadPixels(x, glY, width, height, XGL_RGBA, XGL_UNSIGNED_BYTE,
+                       (void*)offset);
+    self->glPixelStorei(XGL_PACK_ROW_LENGTH, 0);
+    self->glBindBuffer(XGL_PIXEL_PACK_BUFFER, 0);
+    if (self->glFenceSync)
+    {
+        if (self->m_pboFence[slot] && self->glDeleteSync)
+            self->glDeleteSync(self->m_pboFence[slot]);
+        self->m_pboFence[slot] = self->glFenceSync(
+            XGL_SYNC_GPU_COMMANDS_COMPLETE, 0u);
+    }
+    self->m_readbackPboValid[slot] = 1;
+    self->m_pboBbox[slot][0] = x;
+    self->m_pboBbox[slot][1] = y;
+    self->m_pboBbox[slot][2] = width;
+    self->m_pboBbox[slot][3] = height;
+    self->m_readbackPboCur = slot ^ 1;
+}
+
+/* 读回统一内核：readback（全帧）与 readbackRect（脏区 bbox）共用。
+ * allowPboLag=允许吃 1 帧滞后：仅呈现链 readbackRect 传 true（屏幕
+ * 16.7ms 内刷新，滞后不可感知）；全帧 readback 传 false（离屏像素
+ * 契约=本帧内容），除非 XGPU_PBO_READBACK_FULL=1（诊断开关）。
+ * 命中 PBO 拷出需同时满足（任一不满足回退同步直读本帧，正确性优先）：
+ * 1) 允许滞后（见上）且 XGPU_PBO_READBACK 未置 0 且 PBO 资源就绪；
+ * 2) PBO[prev] 已有可信写入（会话首帧/半就绪回退无）；
+ * 3) 本帧 bbox ⊆ PBO[prev] 写入时 bbox（并回语义下含缩小，见节注释）；
+ * 4) fence 0 超时探测通过（GPU 未拖帧）。
+ * 回退帧仍照常发异步读保温链路：漂移一帧后 bbox 稳定，下一帧即可命中
+ * （否则同步帧不写 PBO，链路永远建立不起来）。
+ * 三夜九波起（2026-09-27）滞后通道默认休眠：XGPU_PBO_LAG_FIX 默认把
+ * pboLag 压为假，拷出与异步写入一并跳过（呈现链逐位等同同步直读）——
+ * 交互拖动二分实证上述命中条件在交互态失效、拷出产出陈旧/半成品帧
+ * （docs/xgui/night3-bisect.md）；置 0 恢复下列命中条件与保温链路。 */
+static bool xgld_readback_region(XGpuRenderDriverSession* self,
+                                 XImage* target, int x, int y,
+                                 int width, int height, bool allowPboLag)
+{
+    /* 滞后通道默认休眠（XGPU_PBO_LAG_FIX，见函数头注释）：交互拖动二分
+       实证滞后拷出呈现陈旧/半成品帧，回退同步直读；置 0 恢复旧行为。 */
+    bool pboLag = (allowPboLag || xgld_pbo_full_readback_requested()) &&
+                  !xgld_pbo_lag_fix_enabled();
+    static unsigned stCalls, stPbo, stSeed, stStall, stMapFail;
+    static int statsOn = -1;
+    bool usedPbo = false;
+    int prevSlot;
+    if (statsOn < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PBO_STATS");
+        statsOn = value && *value && !(value[0] == '0' && value[1] == 0)
+            ? 1 : 0;
+    }
+    /* 越界钳位（与通用层包装双重防护）：负/超界部分裁剪到渲染目标内；
+       钳位后为空 = 无事可做，按成功返回（调用方无需整帧回退）。 */
+    if (x < 0) { width += x; x = 0; }
+    if (y < 0) { height += y; y = 0; }
+    if (width > self->m_width - x) width = self->m_width - x;
+    if (height > self->m_height - y) height = self->m_height - y;
+    if (width <= 0 || height <= 0) return true;
+    if (XImage_width(target) != self->m_width ||
+        XImage_height(target) != self->m_height)
+        return false;
+    ++stCalls;
+    /* 待定批 quad 可能仍会写入本矩形：先冲批再读（与整帧读回同纪律）。 */
+    xgld_flush_quads(self);
+    xgld_bind_fbo(self, self->m_framebuffer);
+    prevSlot = self->m_readbackPboCur ^ 1;
+    if (pboLag && xgld_pbo_readback_enabled() && self->m_pboReady)
+    {
+        bool contained = self->m_readbackPboValid[prevSlot] &&
+            x >= self->m_pboBbox[prevSlot][0] &&
+            y >= self->m_pboBbox[prevSlot][1] &&
+            x + width <= self->m_pboBbox[prevSlot][0] +
+                         self->m_pboBbox[prevSlot][2] &&
+            y + height <= self->m_pboBbox[prevSlot][1] +
+                          self->m_pboBbox[prevSlot][3];
+        if (contained && xgld_pbo_slot_ready(self, prevSlot))
+        {
+            void* mapped;
+            self->glBindBuffer(XGL_PIXEL_PACK_BUFFER,
+                               self->m_readbackPbo[prevSlot]);
+            mapped = self->glMapBuffer(XGL_PIXEL_PACK_BUFFER, XGL_READ_ONLY);
+            if (mapped)
+            {
+                xgld_copyout_rect_to_image(
+                    target,
+                    (const uint8_t*)mapped +
+                        ((size_t)(self->m_height - y - 1) *
+                         (size_t)self->m_width + (size_t)x) * 4u,
+                    -(ptrdiff_t)((size_t)self->m_width * 4u),
+                    x, y, width, height);
+                self->glUnmapBuffer(XGL_PIXEL_PACK_BUFFER);
+                usedPbo = true;
+                ++stPbo;
+            }
+            else
+            {
+                /* 映射失败（驱动内存压力等罕见路径）：解映射态后按
+                   回退计，落同步直读。 */
+                self->glUnmapBuffer(XGL_PIXEL_PACK_BUFFER);
+                ++stMapFail;
+            }
+            self->glBindBuffer(XGL_PIXEL_PACK_BUFFER, 0);
+        }
+        else if (contained) ++stStall; /* fence 未就绪：GPU 拖帧。 */
+        else ++stSeed;                 /* 首帧或 bbox 漂移出界。 */
+    }
+    if (!usedPbo)
+    {
+        size_t bytes = (size_t)width * (size_t)height * 4u;
+        if (!xgpu_reserve_pixels(self, bytes)) return false;
+        /* 同步直读（PBO 关闭/首帧/漂移/拖帧时的路径，逐位保持原
+           readback/readbackRect 行为）：紧排行距 width*4，恒 4 字节
+           对齐，PACK_ALIGNMENT=4 即满足。 */
+        xgld_set_pack_alignment(self, 4);
+        self->glReadPixels(x, self->m_height - y - height, width, height,
+                           XGL_RGBA, XGL_UNSIGNED_BYTE, self->m_pixels);
+        xgld_copyout_rect_to_image(
+            target,
+            self->m_pixels + (size_t)(height - 1) * (size_t)width * 4u,
+            -(ptrdiff_t)((size_t)width * 4u),
+            x, y, width, height);
+    }
+    if (pboLag && xgld_pbo_readback_enabled() && self->m_pboReady)
+        xgld_pbo_issue_async_read(self, x, y, width, height);
+    if (statsOn && (stCalls % 300u) == 0u)
+        fprintf(stderr,
+                "[gl-pbo] calls=%u pbo=%u seed=%u stall=%u mapfail=%u\n",
+                stCalls, stPbo, stSeed, stStall, stMapFail);
     return true;
+}
+
+static bool xgld_readback(XGpuRenderDriverSession* self, XImage* target)
+{
+    if (!xgld_ensure_current(self)) return false;
+    if (!self || !target) return false;
+    /* 全帧读回不吃 PBO 滞后（默认）：调用方是离屏像素契约（painter
+       帧末/回归断言/SYNC 逐命令/XWidget 降级帧补读回），必须返回
+       本帧内容；呈现链增量通道见 readbackRect 入口（allowPboLag=true）。 */
+    return xgld_readback_region(self, target, 0, 0,
+                                self->m_width, self->m_height, false);
+}
+
+/* ==================== 子矩形读回（P-dirty-readback 2026-09-25） ==================== */
+
+/* 跨编译单元直连入口（非 XGpuRenderDriverProcs 成员）：操作表结构体
+ * 定义于共享接口头 XGpuRenderDriver.h（不在本车道可改文件清单内），
+ * 脏区呈现链需要的子矩形读回暂以外部链接函数暴露；通用层包装
+ * （XGpuRenderBackend_readbackRect）仅在活动驱动为本 GL 操作表（指针
+ * 身份比对）时直调，其余驱动返回 false 由调用方回退整帧 readback。
+ * 操作表可扩展时应把本函数收编为 procs.readbackRect 并删除直连。
+ * P-PBO（2026-09-26）起实现收编到上方 xgld_readback_region 统一内核
+ * （PBO 命中走 1 帧滞后拷出，回退逐位保持本函数原同步行为）。滞后
+ * 语义仅本入口成立（呈现链脏区读回，60Hz 下不可感知）；二波收尾
+ * 起全帧 readback 默认同步直读（离屏像素契约，见 xgld_readback）。 */
+bool XGpuRenderDriver_gl_readbackRect(XGpuRenderDriverSession* self,
+                                      XImage* target, int x, int y,
+                                      int width, int height)
+{
+    if (!xgld_ensure_current(self)) return false;
+    if (!self || !target) return false;
+    return xgld_readback_region(self, target, x, y, width, height, true);
 }
 
 static void xgld_clear(XGpuRenderDriverSession* self, uint32_t argb)
@@ -1799,6 +2768,7 @@ static void xgld_clear(XGpuRenderDriverSession* self, uint32_t argb)
     xgld_ensure_current(self);
     unsigned a;
     if (!self) return;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     xgld_flush_quads(self);
     a = (argb >> 24) & 0xffu;
     self->glClearColor((XglFloat)xgpu_mul255((argb >> 16) & 0xffu,
@@ -1811,6 +2781,21 @@ static void xgld_clear(XGpuRenderDriverSession* self, uint32_t argb)
     self->glClear(XGL_COLOR_BUFFER_BIT);
 }
 
+/** @brief XGPU_FLUSH_GATED 环境开关（=0 回退「批非空必冲批」现状）。
+ *  @note  默认开：setClipRect 目标 scissor 与批建立快照相同则免冲批
+ *         （见 xgld_set_clip_rect 门），outline 文本逐字形 ApplyStateClip
+ *         不再切断批次。 */
+static bool xgld_flush_gated_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FLUSH_GATED");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
 static void xgld_set_clip_rect(XGpuRenderDriverSession* self, const XRect* rect)
 {
     xgld_ensure_current(self);
@@ -1818,6 +2803,7 @@ static void xgld_set_clip_rect(XGpuRenderDriverSession* self, const XRect* rect)
     bool on;
     static int cacheEnabled = -1; /* -1 未读环境；0=旧行为（诊断回退）。 */
     if (!self) return;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     if (cacheEnabled < 0)
     {
         const char* ce = XSystem_environment("XGPU_SCISSOR_CACHE");
@@ -1849,6 +2835,28 @@ static void xgld_set_clip_rect(XGpuRenderDriverSession* self, const XRect* rect)
         self->m_scissorX == x0 && self->m_scissorY == y0 &&
         self->m_scissorW == x1 - x0 && self->m_scissorH == y1 - y0)
         return;
+    /* P-FLUSHGATE（2026-09-26 夜五）：批非空门——目标 scissor 与批建立
+       快照相同则免冲批直接续批。语义论证：批由【一次】glDrawArrays 在
+       冲批时生效的 scissor 下提交，逐 quad 语义正确的充要条件是批内所有
+       quad 记录时的 scissor == 提交时的 scissor（scissor 是光栅阶段剪裁，
+       与批内已统一的纹理/混合/程序零交互；quad 提交顺序不变，blend 顺序
+       语义不受影响）。冲批纪律保证批存续期间 GL scissor 恒等于快照：
+       改 scissor 的全部出口（本门目标≠快照支路、clear/readback/upload/
+       帧界/图集上传）一律先冲批；旁路关断（ensure_scissor_off）置快照
+       失效。故快照各域与目标态全等时，待定批本就在目标 scissor 下语义
+       正确——GL scissor 与缓存也同值（同上不变式），早返回无需任何 GL
+       调用。收益：outline 文本逐字形 ApplyStateClip（XPainter.c
+       painterGpuDrawOutlineGlyph）自「每字形一冲批（批均 ~1 quad）」
+       恢复为整串/整帧一批。XGPU_FLUSH_GATED=0 回退现状；本门另受
+       XGPU_SCISSOR_CACHE 门控（缓存诊断回退时一并回退）。 */
+    if (cacheEnabled && xgld_flush_gated_enabled() &&
+        self->m_quadBatchCount > 0 &&
+        self->m_quadBatchScissorValid && self->m_scissorValid &&
+        self->m_quadBatchScissorOn == on &&
+        self->m_quadBatchScissorX == x0 && self->m_quadBatchScissorY == y0 &&
+        self->m_quadBatchScissorW == x1 - x0 &&
+        self->m_quadBatchScissorH == y1 - y0)
+        return;
     xgld_flush_quads(self); /* 待定批在旧 scissor 下落盘，再改剪裁。 */
     if (!on)
     {
@@ -1870,6 +2878,8 @@ static void xgld_set_clip_rect(XGpuRenderDriverSession* self, const XRect* rect)
     self->m_scissorY = y0;
     self->m_scissorW = x1 - x0;
     self->m_scissorH = y1 - y0;
+    if (xgld_batch_prof_enabled())
+        ++g_xgldBatchProf.m_stScissor; /* TEMP-PROBE：真改写计数。 */
 }
 
 static bool xgld_fill_rect(XGpuRenderDriverSession* self, const XRect* rect,
@@ -1880,6 +2890,7 @@ static bool xgld_fill_rect(XGpuRenderDriverSession* self, const XRect* rect,
     unsigned a;
     if (!self || !rect || rect->width <= 0 || rect->height <= 0)
         return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
     a = (unsigned)((color >> 24) & 0xffu);
@@ -1903,6 +2914,7 @@ static bool xgld_draw_image(XGpuRenderDriverSession* self, const XImage* image,
     XglUInt texture = 0;
     if (!self || !image || width <= 0 || height <= 0)
         return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
     if (XImage_width(image) != width || XImage_height(image) != height)
@@ -1948,6 +2960,7 @@ static bool xgld_draw_image_uv(XGpuRenderDriverSession* self,
     XglUInt texture = 0;
     if (!self || !image || width <= 0 || height <= 0)
         return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     iw = XImage_width(image);
     ih = XImage_height(image);
     if (iw <= 0 || ih <= 0) return false;
@@ -2002,6 +3015,7 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
     if (!xgld_ensure_current(self)) return false;
     if (!self || !image || srcW <= 0 || srcH <= 0)
         return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     iw = XImage_width(image);
     ih = XImage_height(image);
     if (iw <= 0 || ih <= 0 || srcX < 0 || srcY < 0 ||
@@ -2038,7 +3052,8 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
     {
         /* 存储尺寸不符：重分配存储（NULL 数据，免整幅上传）。 */
         self->glBindTexture(XGL_TEXTURE_2D, self->m_sourceTexture);
-        self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+        xgld_note_tex0_bind(self, self->m_sourceTexture); /* TEMP-PROBE 镜像。 */
+        xgld_set_unpack_alignment(self, 1);
         self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA, iw, ih, 0,
                            XGL_RGBA, XGL_UNSIGNED_BYTE, NULL);
         self->m_sourceTexWidth = iw;
@@ -2061,13 +3076,21 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
         if (!cpuSwap && src && bpl >= iw * 4)
         {
             self->glBindTexture(XGL_TEXTURE_2D, self->m_sourceTexture);
-            self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
-            self->glPixelStorei(XGL_UNPACK_ROW_LENGTH, iw);
+            xgld_note_tex0_bind(self, self->m_sourceTexture); /* TEMP-PROBE 镜像。 */
+            xgld_set_unpack_alignment(self, 1);
+            /* E-F 路：行距设值/归 0 经镜像助手——flush 段主体是同画布
+               连续冲批，LEAN 下「set(iw)（同值跳过）+ texsub + 归 0 整省」
+               每冲批少 2 次真调；非同宽上传点已前置归 0 兜底（行距
+               语义只约束源行宽≠上传宽的读入，行距=iw 残留对其余
+               TexImage/TexSub 读入是错位源，各上传点助手前置保证真值）。
+               XGPU_FLUSH_LEAN=0：两调恒真发（set+归 0，逐位旧行为）。 */
+            xgld_set_unpack_row_length(self, iw);
             self->glTexSubImage2D(XGL_TEXTURE_2D, 0, srcX, srcY, srcW, srcH,
                                   XGL_BGRA, XGL_UNSIGNED_INT_8_8_8_8_REV,
                                   src + (size_t)srcY * (size_t)bpl +
                                       (size_t)srcX * 4u);
-            self->glPixelStorei(XGL_UNPACK_ROW_LENGTH, 0);
+            if (!xgld_flush_lean_enabled())
+                xgld_set_unpack_row_length(self, 0);
         }
         else
         {
@@ -2112,8 +3135,12 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
                 }
             }
             self->glBindTexture(XGL_TEXTURE_2D, self->m_sourceTexture);
-            self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
-            self->glTexSubImage2D(XGL_TEXTURE_2D, 0, srcX, srcY, srcW, srcH,
+            xgld_note_tex0_bind(self, self->m_sourceTexture); /* TEMP-PROBE 镜像。 */
+        xgld_set_unpack_alignment(self, 1);
+        xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底（暂存
+                                                行宽=srcW≠iw 时归 0 必须
+                                                真发，镜像自会判）。 */
+        self->glTexSubImage2D(XGL_TEXTURE_2D, 0, srcX, srcY, srcW, srcH,
                                   XGL_RGBA, XGL_UNSIGNED_BYTE, self->m_pixels);
         }
     }
@@ -2173,7 +3200,9 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
                 }
             }
             self->glBindTexture(XGL_TEXTURE_2D, self->m_sourceTexture);
-            self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+            xgld_note_tex0_bind(self, self->m_sourceTexture); /* TEMP-PROBE 镜像。 */
+            xgld_set_unpack_alignment(self, 1);
+            xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底。 */
             self->glTexSubImage2D(XGL_TEXTURE_2D, 0, srcX, srcY, srcW,
                                   srcH, XGL_RGBA, XGL_UNSIGNED_BYTE,
                                   self->m_pixels);
@@ -2204,6 +3233,7 @@ static bool xgld_draw_alpha_bitmap(XGpuRenderDriverSession* self,
 {
     if (!xgld_ensure_current(self)) return false;
     float modulate[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     if (!self || !xgpu_upload_alpha(self, alpha, width, height, stride,
                                     color, opacity))
         return false;
@@ -2230,6 +3260,7 @@ static bool xgld_draw_gradient_alpha(XGpuRenderDriverSession* self,
     int px, py;
     if (!self || !coverage || !lutRgba || width <= 0 || height <= 0)
         return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     if (!xgld_ensure_current(self)) return false;
     xgld_flush_quads(self);
     bytes = (size_t)width * (size_t)height * 4u;
@@ -2251,20 +3282,24 @@ static bool xgld_draw_gradient_alpha(XGpuRenderDriverSession* self,
     }
     /* 掩码纹理：路径 bbox 尺寸独立分配（texImage2D 重定尺寸）。 */
     self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientMaskTexture);
-    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    xgld_note_tex0_bind(self, self->m_gradientMaskTexture); /* TEMP-PROBE 镜像。 */
+    xgld_set_unpack_alignment(self, 1);
+    xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底（掩码+
+                                            LUT 两次上传行宽均≠iw）。 */
     self->glTexImage2D(XGL_TEXTURE_2D, 0, (XglInt)XGL_RGBA, width, height,
                        0, XGL_RGBA, XGL_UNSIGNED_BYTE, self->m_pixels);
     /* LUT：256×1 预乘 ARGB 每次同步（渐变停止点可变）。 */
     self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientLutTexture);
-    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    xgld_note_tex0_bind(self, self->m_gradientLutTexture); /* TEMP-PROBE 镜像。 */
+    xgld_set_unpack_alignment(self, 1);
     self->glTexSubImage2D(XGL_TEXTURE_2D, 0, 0, 0, 256, 1, XGL_RGBA,
                           XGL_UNSIGNED_BYTE, lutRgba);
     modulate[0] = opacity;
     modulate[1] = opacity;
     modulate[2] = opacity;
     modulate[3] = opacity;
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
-    self->glViewport(0, 0, self->m_width, self->m_height);
+    xgld_bind_fbo(self, self->m_framebuffer);
+    xgld_set_viewport(self, self->m_width, self->m_height);
     xgpu_set_blend(self, sourceOver);
     xgpu_use_program(self, self->m_gradientProgram);
     self->glBindBuffer(XGL_ARRAY_BUFFER, self->m_vertexBuffer);
@@ -2276,6 +3311,7 @@ static bool xgld_draw_gradient_alpha(XGpuRenderDriverSession* self,
     /* unit0=掩码（UV 全幅），unit1=LUT（片元内 vec2(x,0.5) 采样）。 */
     self->glActiveTexture(XGL_TEXTURE0);
     self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientMaskTexture);
+    xgld_note_tex0_bind(self, self->m_gradientMaskTexture); /* TEMP-PROBE 镜像。 */
     self->glActiveTexture(XGL_TEXTURE1);
     self->glBindTexture(XGL_TEXTURE_2D, self->m_gradientLutTexture);
     self->glUniform1i(self->m_gradientMaskLocation, 0);
@@ -2296,6 +3332,7 @@ static bool xgld_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
     if (!xgld_ensure_current(self)) return false;
     float rgba[4];
     if (!self) return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     rgba[0] = (float)((premulColor >> 16) & 0xffu) / 255.0f;
     rgba[1] = (float)((premulColor >> 8) & 0xffu) / 255.0f;
     rgba[2] = (float)(premulColor & 0xffu) / 255.0f;
@@ -2310,6 +3347,7 @@ static bool xgld_upload_target_image(XGpuRenderDriverSession* self,
 {
     if (!xgld_ensure_current(self)) return false;
     xgld_flush_quads(self);
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     if (!self || !image || XImage_width(image) != self->m_width ||
         XImage_height(image) != self->m_height)
         return false;
@@ -2352,6 +3390,7 @@ static bool xgld_glyph_atlas_upload(XGpuRenderDriverSession* self,
         return false;
     if (xgld_atlas_reset_safe())
         xgld_flush_quads(self); /* 安全变体：待定批按旧图集内容先落盘。 */
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     bytes = (size_t)width * (size_t)height * 4u;
     if (!xgpu_reserve_pixels(self, bytes)) return false;
     for (y = 0; y < height; ++y)
@@ -2369,7 +3408,10 @@ static bool xgld_glyph_atlas_upload(XGpuRenderDriverSession* self,
         }
     }
     self->glBindTexture(XGL_TEXTURE_2D, self->m_glyphAtlasTexture);
-    self->glPixelStorei(XGL_UNPACK_ALIGNMENT, 1);
+    xgld_note_tex0_bind(self, self->m_glyphAtlasTexture); /* TEMP-PROBE 镜像。 */
+    xgld_set_unpack_alignment(self, 1);
+    xgld_set_unpack_row_length(self, 0); /* E-F 路：残留行距兜底（图集暂存
+                                            行宽=width≠iw，字形错位防线）。 */
     self->glTexSubImage2D(XGL_TEXTURE_2D, 0, atlasX, atlasY, width, height,
                           XGL_RGBA, XGL_UNSIGNED_BYTE, self->m_pixels);
     return true;
@@ -2386,6 +3428,7 @@ static bool xgld_glyph_atlas_draw(XGpuRenderDriverSession* self, int atlasX,
         atlasX + width > XGPU_RENDER_GLYPH_ATLAS_SIZE ||
         atlasY + height > XGPU_RENDER_GLYPH_ATLAS_SIZE)
         return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     modulate[0] = (float)((premulColor >> 16) & 0xffu) / 255.0f;
     modulate[1] = (float)((premulColor >> 8) & 0xffu) / 255.0f;
     modulate[2] = (float)(premulColor & 0xffu) / 255.0f;
@@ -2415,6 +3458,7 @@ static bool xgld_glyph_atlas_readback(XGpuRenderDriverSession* self,
         atlasX + atlasWidth > XGPU_RENDER_GLYPH_ATLAS_SIZE ||
         atlasY + atlasHeight > XGPU_RENDER_GLYPH_ATLAS_SIZE)
         return false;
+    XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
     if (!self->glGenFramebuffers || !self->glBindFramebuffer ||
         !self->glFramebufferTexture2D || !self->glCheckFramebufferStatus)
         return false;
@@ -2422,13 +3466,13 @@ static bool xgld_glyph_atlas_readback(XGpuRenderDriverSession* self,
     if (!xgpu_reserve_pixels(self, bytes)) return false;
     if (!xgld_make_current(self)) return false;
     self->glGenFramebuffers(1, &tempFbo);
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, tempFbo);
+    xgld_bind_fbo(self, tempFbo);
     self->glFramebufferTexture2D(XGL_FRAMEBUFFER, XGL_COLOR_ATTACHMENT0,
                                  XGL_TEXTURE_2D, self->m_glyphAtlasTexture, 0);
     if (self->glCheckFramebufferStatus(XGL_FRAMEBUFFER) ==
         XGL_FRAMEBUFFER_COMPLETE)
     {
-        self->glPixelStorei(XGL_PACK_ALIGNMENT, 1);
+        xgld_set_pack_alignment(self, 1); /* 读回改走镜像（防镜像失真）。 */
         self->glReadPixels(atlasX, atlasY, atlasWidth, atlasHeight, XGL_RGBA,
                            XGL_UNSIGNED_BYTE, self->m_pixels);
         /* GL 原点在下方：读回的行序翻转后取覆盖度通道（四通道同值）。 */
@@ -2443,7 +3487,7 @@ static bool xgld_glyph_atlas_readback(XGpuRenderDriverSession* self,
         }
         ok = true;
     }
-    self->glBindFramebuffer(XGL_FRAMEBUFFER, self->m_framebuffer);
+    xgld_bind_fbo(self, self->m_framebuffer); /* 从临时 FBO 恢复（镜像同步）。 */
     if (tempFbo) self->glDeleteFramebuffers(1, &tempFbo);
     xgld_done_current(self);
     return ok;

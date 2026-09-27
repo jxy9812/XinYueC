@@ -12,8 +12,11 @@
  *               XWindow* 双向查找，用于 winId()/windowForWinId() 与
  *               WndProc 事件路由；
  *             - 窗口生命周期：CreateWindowExW(WS_OVERLAPPEDWINDOW) 创建
- *               但保持隐藏，wm map 由 setVisible(true) 的 ShowWindow(SW_SHOW)
- *               完成；CreateWindowExW 的 lpCreateParams 携带 XWindow*，
+ *               但保持隐藏，扩展样式按 xpwn_windowExStyle 默认附加
+ *               WS_EX_COMPOSITED（DWM 双缓冲合成根治交互闪烁，
+ *               XGPU_WS_COMPOSITED=0 回退），wm map 由 setVisible(true) 的
+ *               ShowWindow(SW_SHOW) 完成；CreateWindowExW 的
+ *               lpCreateParams 携带 XWindow*，
  *               WM_NCCREATE 存入 GWLP_USERDATA，后续消息经
  *               GetWindowLongPtrW 恢复窗口对象；
  *             - 事件翻译（对标 X11 后端对应消息）：WM_PAINT -> 以
@@ -74,6 +77,7 @@
 #include "XWindowSystemInterface.h"
 #include "XWindowEvent.h"
 #include "XGuiApplication.h"
+#include "XSystem.h"
 #include "XClipboard.h"
 #include "XImage.h"
 #include "XPixmap.h"
@@ -360,6 +364,29 @@ static void xpwn_applyTitle(HWND hwnd, const XString* title)
     if (!hwnd) return;
     utf16 = title ? XString_toUtf16(title) : NULL;
     SetWindowTextW(hwnd, (LPCWSTR)(utf16 ? utf16 : L""));
+}
+
+/* GPU 直通模式下每帧脏区 BitBlt/SetDIBitsToDevice 直投窗口 DC（本文件
+   xpwn_presentRect 与 XPlatformBackingStore_win32 的零拷贝路径）。未开
+   DWM 双缓冲合成时，远程显示栈（RDP/OrayIdd）可在一次脏区提交中途取样
+   窗口重定向表面，交互/切换页期间表现为整窗黑帧/旧帧闪烁。WS_EX_COMPOSITED
+   让 DWM 经双重缓冲重定向表面合成自绘窗口，多次脏区提交对外呈原子整帧，
+   是经典 BitBlt 闪烁根治手段。
+   【默认关闭（2026-09-26 四波 S 路实锤回归）】本机 OrayIdd 虚拟显示 +
+   AMD 22.20 驱动栈上 WS_EX_COMPOSITED 令窗口重定向表面不被合成——客户
+   区整体透底（桌面像素外露，GPU/软件双模式同病，屏幕零渲染），换驱动或
+   物理显示栈验证前不得默认启用；XGPU_WS_COMPOSITED=1 显式启用（物理机
+   验证抗闪收益用）。与 XGPU_PRESENT_MAX_FPS 同族（呈现链路开关，静态
+   缓存一次读取）。 */
+static DWORD xpwn_windowExStyle(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_WS_COMPOSITED");
+        cached = (v && v[0] == '1' && v[1] == '\0') ? 1 : 0;
+    }
+    return cached ? WS_EX_COMPOSITED : 0;
 }
 
 /* ==================== 键鼠翻译工具（Win32 -> 无关键码） ==================== */
@@ -1639,7 +1666,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
     w = geom.width < 1 ? 1 : geom.width;
     h = geom.height < 1 ? 1 : geom.height;
     xpwn_adjustWindowRect(window, &geom, &rc);
-    hwnd = CreateWindowExW(0, XPWN_CLASS_NAME, L"",
+    /* WS_EX_COMPOSITED：DWM 双缓冲合成自绘窗口（见 xpwn_windowExStyle 注释），
+       脏区批量提交对合成器原子化，根治交互/切换闪烁。 */
+    hwnd = CreateWindowExW(xpwn_windowExStyle(), XPWN_CLASS_NAME, L"",
                            xpwn_windowStyle(window),
                            rc.left, rc.top,
                            rc.right - rc.left, rc.bottom - rc.top,

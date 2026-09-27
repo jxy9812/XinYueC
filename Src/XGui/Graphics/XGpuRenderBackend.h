@@ -104,6 +104,10 @@ void XGpuRenderBackend_addRequestedOverride(bool on);
  *             加载——成功说明本机存在可用 OpenGL（独立/集成显卡均可），
  *             失败（无显卡/驱动缺失）说明应保持软件。结果进程内缓存；
  *             首次调用有一次性窗口创建成本（微秒级，无像素渲染）。
+ *             XGPU_SESSION_RETRY 重试口径（默认开）下，失败不再一次性
+ *             永久写死：累计失败达上限前，后续调用会重新探测（强杀残留
+ *             类瞬时失败自愈）；XGPU_SESSION_RETRY=0 回退旧的一次性
+ *             永久缓存口径。
  * @return     true 本机存在可用 OpenGL 上下文能力；false 不可用。
  */
 bool XGpuRenderBackend_probeAvailable(void);
@@ -319,6 +323,23 @@ void XGpuRenderBackend_setClipRect(XGpuRenderBackend* self,
  * @return     true 成功；false 会话无效或目标非法。
  */
 bool XGpuRenderBackend_readback(XGpuRenderBackend* self, XImage* target);
+
+/**
+ * @brief      把 FBO 帧的子矩形区域读回到目标 XImage 同坐标区域（脏区读回）。
+ * @details    readback 的区域版（P-dirty-readback 2026-09-25）：只把
+ *             (x,y,width,height)（设备坐标）从 FBO 读回并写入 target 的
+ *             同坐标区域，其余像素保持不动——供脏区呈现链把「每帧全窗
+ *             读回」收敛为「本帧呈现区域读回」。语义对齐 readback：目标
+ *             XImage 尺寸须与会话一致、GL→XImage 行序翻转与 RGBA→ARGB32
+ *             转换一致；越界部分钳位到会话范围内，钳位后为空视为成功
+ *             （无事可做，不回退）。活动驱动非 GL（操作表指针身份不符）
+ *             时返回 false，调用方回退整帧 readback（行为等价旧路径）。
+ *             调用方在 endFrame 前调用。
+ * @return     true 成功（含空区域无事可做）；false 会话无效、目标非法
+ *             或驱动不支持。
+ */
+bool XGpuRenderBackend_readbackRect(XGpuRenderBackend* self, XImage* target,
+                                    int x, int y, int width, int height);
 
 /** @brief 结束一帧：解除 FBO 绑定并 doneCurrent。 */
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self);

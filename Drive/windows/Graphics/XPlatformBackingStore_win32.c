@@ -41,6 +41,7 @@
 
 #include "XImage.h"
 #include "XMemory.h"
+#include "XSystem.h"
 #if XPLATFORMNATIVEWINDOW_ON
 #include "XPlatformNativeWindow.h"
 #include "XWindow.h"
@@ -107,6 +108,21 @@ static HDC xpbs_win32_windowDC(struct XWin32BackingStoreNative* state,
     state->m_winDC = GetDC(hwnd);
     state->m_winDcHwnd = state->m_winDC ? hwnd : NULL;
     return state->m_winDC;
+}
+
+/** @brief present 段微优化开关（XGPU_PRESENT_MICRO，缺省=开；"0"=逐位
+ *         回退）：FULL 模式 presentRegion 与非 native 兼容路径的每帧
+ *         GetDC/ReleaseDC 改走按 HWND 缓存 DC（契约同零拷贝路径：随
+ *         Driver_destroy 释放，失效 DC 上 GDI 失败不崩溃）。 */
+static bool xpbs_present_micro_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PRESENT_MICRO");
+        requested = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return requested != 0;
 }
 
 /** @brief 释放内存 DC 与 DIB section（失败路径也保持安全，可重复调用）。 */
@@ -237,7 +253,8 @@ static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
     (void)full;
     if (!state || !state->m_memDC || !region || region->count <= 0) return;
     if (!hwnd || !IsWindow(hwnd)) return;
-    winDC = GetDC(hwnd);
+    winDC = xpbs_present_micro_requested()
+                ? xpbs_win32_windowDC(state, hwnd) : GetDC(hwnd);
     if (!winDC) return;
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
     /* PARTIAL/DIRECT 都按脏矩形提交：同步进 DIB 的只有变化区域，
@@ -289,7 +306,7 @@ static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
         }
     }
 #endif
-    ReleaseDC(hwnd, winDC);
+    if (!xpbs_present_micro_requested()) ReleaseDC(hwnd, winDC);
 }
 
 /* ==================== 平台提交驱动（对标 XPlatformGraphicsDriver_*） ==================== */
@@ -412,7 +429,8 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
        （biWidth=rect.width，XSrc=YSrc=0），与既有 xpwn_presentRect
        同构。 */
     {
-        HDC winDC = GetDC(hwnd);
+        HDC winDC = xpbs_present_micro_requested()
+                        ? xpbs_win32_windowDC(state, hwnd) : GetDC(hwnd);
         int imgW;
         int imgH;
         int j;
@@ -486,7 +504,7 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
                               buf, (BITMAPINFO*)&bmi, DIB_RGB_COLORS);
         }
         if (buf) XFree_Hybrid(buf);
-        ReleaseDC(hwnd, winDC);
+        if (!xpbs_present_micro_requested()) ReleaseDC(hwnd, winDC);
         return;
     }
 #endif

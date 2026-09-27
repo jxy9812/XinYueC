@@ -111,6 +111,177 @@ static inline void painterGpuBatchFlush(void) { }
 #endif
 
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
+
+/* ==================== painter CPU 侧分段计时（XGPU_PAINTER_PROF=1） ==================== */
+/* 终波量化工具：GPU 增量 p0 1.111ms/帧中 ~1.08ms（97%）残差归因——
+   SW 同内容 paintTree 本体 0.107ms，差异全在 painter 的 GPU 分支。
+   分段口径（与 XGpuRenderBackend.c 的 XGPU_PROF 逐原语口径互补）：
+     begin/end   = 每控件 painter 构造（begin_image GPU 分支：会话获取/
+                   帧复用判定/暂存画布整幅清零）与析构（endFrame 收口）；
+     clip        = ApplyStateClip（状态裁剪→scissor 同步，含驱动调用）；
+     route       = 软件局部提交入口（painterGpuSubmitSoftwareCommandRect）
+                   的命令路由判定 + 批 setup + 脏区累计（不含 drawCommand
+                   本体，画布软件光栅单列 batchDraw）；
+     batchDraw   = 批内命令的软件光栅重入（暂存画布直写）；
+     flush       = painterGpuBatchFlush 失效点提交（drawImageRegion 上传 +
+                   脏行清零）——对应「每帧 flush_quads 次数」头号嫌疑；
+     text        = XPainter_drawText GPU 分支全程（总口径，内含 clip/
+                   flush/atlas 子段，求和不互斥）；
+     glyphLoad   = 点阵字形每字符加载（XFontFace_loadBitmapGlyph_base +
+                   XFontFace_info_base，图集命中时位图拷贝为纯浪费）；
+     atlas       = 每字形图集查找 glyphAtlasContains 调用点（backend 侧
+                   线性扫 O(条目数)，上限 8192 条）。
+   对齐 xgpu_prof_requested 先例：进程内缓存环境开关；5s 窗口 stderr
+   一条汇总（tick 挂 painterGpuEndFrame，每 GPU painter 收口检查一次）。 */
+
+/** @brief XGPU_PAINTER_PROF 环境开关（进程内缓存，"0"=关）。 */
+static bool xpainter_prof_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_PAINTER_PROF");
+        requested = value && *value &&
+                            !(value[0] == '0' && value[1] == 0)
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/** @brief 当前 ns 时钟（XGPU_PAINTER_PROF 分段分辨率需求）。 */
+static uint64_t xpainter_prof_now_ns(void)
+{
+    return XDateTime_currentNSecsSinceEpoch();
+}
+
+/** @brief 逐段计数器（ns 累计 + 次数）。 */
+static struct XPainterProf
+{
+    uint64_t m_beginNs;        /**< begin_image GPU 分支累计。 */
+    uint32_t m_beginCount;     /**< begin 次数（≈每控件 painter 数）。 */
+    uint64_t m_endNs;          /**< painterGpuEndFrame 累计。 */
+    uint32_t m_endCount;       /**< end 次数。 */
+    uint64_t m_clipNs;         /**< ApplyStateClip 累计（成功路径）。 */
+    uint32_t m_clipCount;      /**< ApplyStateClip 成功次数。 */
+    uint64_t m_routeNs;        /**< 软件命令路由判定+批 setup+脏区累计。 */
+    uint32_t m_routeCount;     /**< 软件局部提交批路径次数。 */
+    uint64_t m_batchDrawNs;    /**< 批内软件光栅重入累计。 */
+    uint32_t m_batchDrawCount; /**< 批内命令数。 */
+    uint64_t m_flushNs;        /**< 冲批（上传+清行）累计。 */
+    uint32_t m_flushCount;     /**< 冲批次数（≈每帧 flush_quads 数）。 */
+    uint64_t m_textNs;         /**< drawText GPU 分支全程（总口径）。 */
+    uint32_t m_textCount;      /**< drawText GPU 分支次数。 */
+    uint64_t m_glyphLoadNs;    /**< 点阵字形每字符加载累计。 */
+    uint32_t m_glyphLoadCount; /**< 字形加载次数（字符数）。 */
+    uint64_t m_atlasNs;        /**< 图集查找调用点累计。 */
+    uint32_t m_atlasCount;     /**< 图集查找次数（未命中备忘的字符数）。 */
+    uint32_t m_atlasMemoHits;  /**< 备忘索引命中次数（省掉的线性扫）。 */
+    uint64_t m_windowStartNs;  /**< 窗口起点（5s 聚合）。 */
+    bool m_headerPrinted;      /**< 首行标题已打印。 */
+} g_xpainterProf;
+
+/** @brief 每 GPU painter 收口的 5s 窗口聚合输出（对齐
+           xgpu_prof_frame_tick 先例）。 */
+static void xpainter_prof_tick(void)
+{
+    uint64_t now;
+    if (!xpainter_prof_requested()) return;
+    if (!g_xpainterProf.m_headerPrinted)
+    {
+        fprintf(stderr, "[xpainter-prof] segments=begin/end/clip/route/"
+                "batchDraw/flush/text/glyphLoad/atlas (ms 总量 & ms/次；"
+                "text 内含 clip/flush/atlas 子段，求和不互斥)\n");
+        g_xpainterProf.m_headerPrinted = true;
+        g_xpainterProf.m_windowStartNs = xpainter_prof_now_ns();
+        return;
+    }
+    now = xpainter_prof_now_ns();
+    if (now - g_xpainterProf.m_windowStartNs >= 5000000000u)
+    {
+        double secs = (double)(now - g_xpainterProf.m_windowStartNs) / 1e9;
+#define XPAINTER_PROF_MS(ns, count) \
+        ((count) ? (double)(ns) / 1e6 : 0.0)
+#define XPAINTER_PROF_MS_PER(ns, count) \
+        ((count) ? (double)(ns) / (double)(count) / 1e6 : 0.0)
+        fprintf(stderr,
+                "[xpainter-prof] %.1fs begin=%u (%.3fms %.4f/次) "
+                "end=%u (%.3fms %.4f/次) clip=%u (%.3fms %.4f/次) "
+                "route=%u (%.3fms %.4f/次) batchDraw=%u (%.3fms %.4f/次) "
+                "flush=%u (%.3fms %.4f/次) text=%u (%.3fms %.4f/次) "
+                "glyphLoad=%u (%.3fms %.4f/次) atlas=%u (%.3fms %.4f/次) "
+                "memoHit=%u\n",
+                secs,
+                g_xpainterProf.m_beginCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_beginNs,
+                                 g_xpainterProf.m_beginCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_beginNs,
+                                     g_xpainterProf.m_beginCount),
+                g_xpainterProf.m_endCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_endNs,
+                                 g_xpainterProf.m_endCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_endNs,
+                                     g_xpainterProf.m_endCount),
+                g_xpainterProf.m_clipCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_clipNs,
+                                 g_xpainterProf.m_clipCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_clipNs,
+                                     g_xpainterProf.m_clipCount),
+                g_xpainterProf.m_routeCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_routeNs,
+                                 g_xpainterProf.m_routeCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_routeNs,
+                                     g_xpainterProf.m_routeCount),
+                g_xpainterProf.m_batchDrawCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_batchDrawNs,
+                                 g_xpainterProf.m_batchDrawCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_batchDrawNs,
+                                     g_xpainterProf.m_batchDrawCount),
+                g_xpainterProf.m_flushCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_flushNs,
+                                 g_xpainterProf.m_flushCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_flushNs,
+                                     g_xpainterProf.m_flushCount),
+                g_xpainterProf.m_textCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_textNs,
+                                 g_xpainterProf.m_textCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_textNs,
+                                     g_xpainterProf.m_textCount),
+                g_xpainterProf.m_glyphLoadCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_glyphLoadNs,
+                                 g_xpainterProf.m_glyphLoadCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_glyphLoadNs,
+                                     g_xpainterProf.m_glyphLoadCount),
+                g_xpainterProf.m_atlasCount,
+                XPAINTER_PROF_MS(g_xpainterProf.m_atlasNs,
+                                 g_xpainterProf.m_atlasCount),
+                XPAINTER_PROF_MS_PER(g_xpainterProf.m_atlasNs,
+                                     g_xpainterProf.m_atlasCount),
+                g_xpainterProf.m_atlasMemoHits);
+#undef XPAINTER_PROF_MS
+#undef XPAINTER_PROF_MS_PER
+        g_xpainterProf.m_beginNs = 0;
+        g_xpainterProf.m_beginCount = 0;
+        g_xpainterProf.m_endNs = 0;
+        g_xpainterProf.m_endCount = 0;
+        g_xpainterProf.m_clipNs = 0;
+        g_xpainterProf.m_clipCount = 0;
+        g_xpainterProf.m_routeNs = 0;
+        g_xpainterProf.m_routeCount = 0;
+        g_xpainterProf.m_batchDrawNs = 0;
+        g_xpainterProf.m_batchDrawCount = 0;
+        g_xpainterProf.m_flushNs = 0;
+        g_xpainterProf.m_flushCount = 0;
+        g_xpainterProf.m_textNs = 0;
+        g_xpainterProf.m_textCount = 0;
+        g_xpainterProf.m_glyphLoadNs = 0;
+        g_xpainterProf.m_glyphLoadCount = 0;
+        g_xpainterProf.m_atlasNs = 0;
+        g_xpainterProf.m_atlasCount = 0;
+        g_xpainterProf.m_atlasMemoHits = 0;
+        g_xpainterProf.m_windowStartNs = now;
+    }
+}
+
 /** @brief 进程级共享 GPU 光栅会话（尺寸不符时重建；创建失败后不再尝试）。 */
 static XGpuRenderBackend* g_xgpuRenderSession = NULL;
 static bool g_xgpuRenderProbeFailed = false;
@@ -134,22 +305,119 @@ static bool g_gpuBatchCanvasInited = false;  /**< 暂存画布已 init。 */
 static bool g_gpuBatchActive = false;        /**< 存在待提交批。 */
 static XRect g_gpuBatchDirty;                /**< 批内写入外接矩形（画布坐标）。 */
 static bool g_gpuBatchHasDirty = false;      /**< 本批是否已有写入。 */
+/* 画布尺寸镜像：暂存画布建时就等于后端尺寸（init/rebuild 单点写入），
+   route 每命令的脏区钳位不再逐次跨编译单元调 XGpuRenderBackend_width/
+   height（4 次函数调用/命令；XGPU_BATCH_DIMS_CACHE=0 回退实时读取）。 */
+static int g_gpuBatchCanvasW = 0;            /**< 暂存画布宽（=后端宽）。 */
+static int g_gpuBatchCanvasH = 0;            /**< 暂存画布高（=后端高）。 */
+static uint8_t* g_gpuBatchClearBits = NULL;  /**< 行清缓存基址（随 init/deinit 同步）。 */
+static int g_gpuBatchClearBpl = 0;           /**< 行清缓存行距（同上）。 */
 
-/** @brief 批后清画布脏区行：下批从透明起步（画布其余部分保持透明）。 */
+/** @brief XGPU_BATCH_DIMS_CACHE 环境开关（默认开；"0"=回退每命令实时
+ *         读后端尺寸 getter 的旧行为）。 */
+static bool xgpu_batch_dims_cache_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_BATCH_DIMS_CACHE");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/** @brief 批内记账取画布宽/高：默认走镜像（route 每命令脏区钳位原为
+ *         4 次跨编译单元 getter 调用），镜像未建或开关关闭回退实时读
+ *         ——取值与旧路径恒等（画布即按后端尺寸创建）。 */
+static int xgpu_batch_canvas_width(XGpuRenderBackend* backend)
+{
+    if (xgpu_batch_dims_cache_enabled() && g_gpuBatchCanvasW > 0)
+        return g_gpuBatchCanvasW;
+    return XGpuRenderBackend_width(backend);
+}
+
+static int xgpu_batch_canvas_height(XGpuRenderBackend* backend)
+{
+    if (xgpu_batch_dims_cache_enabled() && g_gpuBatchCanvasH > 0)
+        return g_gpuBatchCanvasH;
+    return XGpuRenderBackend_height(backend);
+}
+
+/** @brief 批后清画布脏区行：下批从透明起步（画布其余部分保持透明）。
+ *  @note  夜六起清步行/列各外扩 XGPU_CANVAS_CLEAR_PAD=8px：脏区记账
+ *         对「抗锯齿渗出」类亚像素写入天然少记（字形边缘/AA 灰阶），
+ *         外扩带把渗出清进本批提交周期，替代旧「begin 段整幅 memset」
+ *         安全网（1.92MB×每 painter begin，prof begin=0.43ms/次实证
+ *         占增量帧 80%——移到 flush 的 bbox 级成本后该开销归零）。
+ *
+ *  P0 拖动残影修复（2026-09-27 夜八）：列窗清（[x0-8,x1+8)）对「行带
+ *  内、列窗外」的逃逸写入不设防——keep-open 下 begin 无清零，此类
+ *  墨迹跨批存活，后被覆盖同行的后续批 commit 进 FBO，即 y≈330 横向
+ *  残影带与 FPS 面板错位文本实锤（A/B 实证：XGPU_CANVAS_BEGIN_CLEAR=1
+ *  与 XGPU_CLEAR_ROWS_FULL=1 各自单独消除残影）。修复：外扩行带保持
+ *  不变（行集与旧行为逐位一致，成本仍 O(行数×宽)），行带内恢复整宽
+ *  memset——把「本批行带上的一切墨迹」在本提交周期内清干净，等价于
+ *  旧行为（XGPU_CLEAR_ROWS_FULL 诊断口径）转正为默认。XGPU_CANVAS_
+ *  TRACE_CLEAR=0 回退列窗清旧行为（逐位）。 */
+/* flush 段削减开关（XGPU_FLUSH_LEAN，缺省=开；"0"=逐位回退）。
+ * @details 夜七 E-F 路：域=painterGpuBatchFlush 每冲批的「外扩清钳位
+ *           重算 + 逐行越界判定」（见 xgpu_batch_canvas_clear_rows）与
+ *           驱动侧 UNPACK 像素解包状态机重复调用（XGpuRenderDriver_gl.c
+ *           xgld_set_unpack_* 助手）。冲批是每帧高频路径，回退/对照需
+ *           与 end 段开关解耦，独立成族。定义先于调用点（C 隐式声明
+ *           会与 bool 返回型冲突成 C2371）。 */
+static bool xgpu_flush_lean_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FLUSH_LEAN");
+        requested = !(value && *value &&
+                      !(value[0] == '0' && value[1] == 0));
+    }
+    return requested != 0;
+}
+
 static void xgpu_batch_canvas_clear_rows(void)
 {
     uint8_t* bits;
     int bpl;
     int y;
+    int y0;
+    int y1;
     static int fullRowMode = -1; /* -1 未读环境；1=旧行为（整宽清）诊断开关。 */
+    static int traceClear = -1;  /* -1 未读环境；0=列窗清旧行为（回退开关）。 */
     int x0;
     int x1;
     int cw;
+    int ch;
+    bool leanBounds;
     if (!g_gpuBatchCanvasInited || !g_gpuBatchHasDirty) return;
-    bits = XImage_bits(&g_gpuBatchCanvas);
-    bpl = XImage_bytesPerLine(&g_gpuBatchCanvas);
-    cw = XImage_width(&g_gpuBatchCanvas);
+    leanBounds = xgpu_flush_lean_requested();
+    if (leanBounds && g_gpuBatchClearBits)
+    {
+        /* XGPU_FLUSH_LEAN：行清四参走 init 点缓存（同点更新同点失效），
+           每冲批省 4 次跨编译单元 getter；空/关回退 else 实时读（同值）。 */
+        bits = g_gpuBatchClearBits;
+        bpl = g_gpuBatchClearBpl;
+        cw = g_gpuBatchCanvasW;
+        ch = g_gpuBatchCanvasH;
+    }
+    else
+    {
+        bits = XImage_bits(&g_gpuBatchCanvas);
+        bpl = XImage_bytesPerLine(&g_gpuBatchCanvas);
+        cw = XImage_width(&g_gpuBatchCanvas);
+        ch = leanBounds ? XImage_height(&g_gpuBatchCanvas) : 0;
+    }
     if (!bits || bpl < cw * 4) return;
+    if (traceClear < 0)
+    {
+        /* XGPU_CANVAS_TRACE_CLEAR=0 回退列窗清旧行为（缺省=行带整宽清，
+           P0 拖动残影修复，见函数头注）。 */
+        const char* tc = XSystem_environment("XGPU_CANVAS_TRACE_CLEAR");
+        traceClear = tc && *tc && tc[0] == '0' && tc[1] == 0 ? 0 : 1;
+    }
     if (fullRowMode < 0)
     {
         /* XGPU_CLEAR_ROWS_FULL=1 回退旧行为（每脏行整宽 memset，诊断用）。 */
@@ -159,23 +427,135 @@ static void xgpu_batch_canvas_clear_rows(void)
     x0 = g_gpuBatchDirty.x < 0 ? 0 : g_gpuBatchDirty.x;
     x1 = g_gpuBatchDirty.x + g_gpuBatchDirty.width;
     if (x1 > cw) x1 = cw;
-    for (y = g_gpuBatchDirty.y;
-         y < g_gpuBatchDirty.y + g_gpuBatchDirty.height; ++y)
+    /* 夜六：AA 渗出带外扩（±8px，钳位到画布）。 */
+    x0 -= 8;
+    x1 += 8;
+    if (x0 < 0) x0 = 0;
+    if (x1 > cw) x1 = cw;
+    /* 夜七 E-F 路（XGPU_FLUSH_LEAN）：外扩带钳位预计算——脏区由 route
+       记账合并时已钳位于画布内（命令边界合并段 0≤x,y 且 x+w≤cw），
+       行范围 ±8px 外扩后一次钳到 [0,ch)，行循环零 getter 零越界
+       continue。旧路径每行一次 XImage_height extern 调用 + 越界行
+       continue（≤16 行白付迭代 + 与行数等量的跨编译单元调用），属
+       「每冲批重算钳位」；XGPU_FLUSH_LEAN=0 回退逐行守卫旧行为
+       （ch 不读，清的行集合逐位相同）。 */
+    y0 = g_gpuBatchDirty.y - 8;
+    y1 = g_gpuBatchDirty.y + g_gpuBatchDirty.height + 8;
+    if (leanBounds)
     {
-        if (y < 0 || y >= XImage_height(&g_gpuBatchCanvas)) continue;
-        if (fullRowMode)
+        if (y0 < 0) y0 = 0;
+        if (y1 > ch) y1 = ch;
+    }
+    for (y = y0;
+         y < y1; ++y)
+    {
+        if (!leanBounds &&
+            (y < 0 || y >= XImage_height(&g_gpuBatchCanvas)))
+            continue;
+        if (fullRowMode || traceClear)
         {
-            /* 旧行为（诊断回退用）：整宽清。 */
+            /* 整宽清：traceClear=缺省修复（行带内一切墨迹本提交周期
+               清净，列向逃逸写入不再跨批存活，见函数头注）；
+               fullRowMode=旧诊断开关（与修复同宽，保留对照口径）。 */
             XMemset(bits + (size_t)y * (size_t)bpl, 0, (size_t)cw * 4u);
             continue;
         }
         if (x1 <= x0) break;
         /* P0-1（2026-09-25）：只清本批脏列 [x0,x1)——画布其余像素
            本来就应保持透明，整宽 memset 属白扫带宽（软件光栅写入
-           恒被限在脏区内，见 painterGpuDrawCommand 的脏区累计）。 */
+           恒被限在脏区内，见 painterGpuDrawCommand 的脏区累计）。
+           XGPU_CANVAS_TRACE_CLEAR=0 回退到此列窗行为。 */
         XMemset(bits + (size_t)y * (size_t)bpl + (size_t)x0 * 4u, 0,
                 (size_t)(x1 - x0) * 4u);
     }
+}
+
+/** @brief 批量暂存画布整幅清零并复位脏区（确定性安全网）。
+ *  @note  旧行为里这个 memset 挂在 begin_image 的「深度 0→1」分支
+ *         （每开一帧一次）；keep-open 下窗口帧不再关闭，若不补挂，
+ *         「逃过脏区记录的写入」（字形边缘/内部直写等）会跨批残留
+ *         ——QSS 盒模型中心像素污染实锤（2026-09-24）的成因类。故在
+ *         begin_image 的嵌套复用分支同样整幅清零：旧行为每 painter
+ *         begin 都开新帧都清，keep-open 后每 painter begin（复用）
+ *         也清——清零节拍与旧行为逐点对齐，防线不弱化。画布未 init
+ *         （纯快速路径页）时零开销直返。 */
+static void xgpu_batch_canvas_clear_all(void)
+{
+    if (!g_gpuBatchCanvasInited) return;
+    XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+    g_gpuBatchHasDirty = false;
+    g_gpuBatchDirty.x = 0;
+    g_gpuBatchDirty.y = 0;
+    g_gpuBatchDirty.width = 0;
+    g_gpuBatchDirty.height = 0;
+}
+
+/** @brief XGPU_CANVAS_BEGIN_CLEAR 环境开关（严格 "1"=恢复 begin 段
+ *         整幅清零安全网；默认关——清洁职责在冲刷点 ±8px 外扩清）。 */
+static bool xgpu_canvas_begin_clear_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_CANVAS_BEGIN_CLEAR");
+        requested = value && value[0] == '1' && value[1] == '\0'
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/** @brief end 段削减开关（XGPU_END_LEAN，缺省=开；"0"=逐位回退）。
+ *  @details 夜七 E 路：域=painterGpuEndFrame 窗口直通收口分支——读回门
+ *           与 keep-open 门各调一次 XGpuRenderBackend_isWindowMode（跨
+ *           编译单元 extern 调用，同参必然同值），提升为单次局部缓存。
+ *           与 L 路固定成本开关（FBO_PERSIST/STATE_CACHE/MAKECURRENT_
+ *           ONCE/FRAME_KEEPOPEN/SESSION_RELEASE）正交：不改任何 GL
+ *           调用序列与帧保持语义，仅省重复查询。 */
+static bool xgpu_end_lean_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_END_LEAN");
+        requested = !(value && *value &&
+                      !(value[0] == '0' && value[1] == 0));
+    }
+    return requested != 0;
+}
+
+/** @brief XGPU_ENV_CACHE 环境开关（默认开；"0"=回退逐次实时读取）。
+ *  @details 帧率主攻（夜六）：XGUI_GPU_SYNC 门此前在 painterGpuSync-
+ *           Requested 里每命令经 XSystem_environment→GetEnvironment-
+ *           VariableA 实时读一次（route 每命令 1 次 + 各快速路径判定
+ *           再 1 次；Win32 平台实现为真内核调用，见 XSystem_win32.c），
+ *           环境变量在验收/回归流程均为进程启动前固定，文件内其余开关
+ *           （XGPU_PAINTER_PROF/XGPU_GLYPH_HASH/XGPU_FASTPATH_EXT 等）
+ *           也皆此口径——逐次读属白付的每命令重算。设 0 回退旧行为。 */
+static bool xgpu_env_cache_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_ENV_CACHE");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/** @brief 读取脏区通道禁用开关（XGPU_REGION_DISABLE；"0"=不禁用）。
+ *  @details 原先内联在 painterGpuBatchFlush 每次冲批实时读环境——冲批
+ *           是每帧高频路径（失效点/快速路径前置都会冲），与 SYNC 门同
+ *           属「每命令/每冲批重算环境」的残差；经 XGPU_ENV_CACHE 统一
+ *           缓存，设 0 回退逐次实时读取。 */
+static bool xgpu_region_disable_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0 || !xgpu_env_cache_enabled())
+    {
+        const char* rd = XSystem_environment("XGPU_REGION_DISABLE");
+        requested = rd && *rd && !(rd[0] == '0' && rd[1] == 0) ? 1 : 0;
+    }
+    return requested != 0;
 }
 
 /** @brief 提交待定批：清 scissor 后按脏区 SourceOver 混合提交回 FBO。
@@ -185,7 +565,9 @@ static void xgpu_batch_canvas_clear_rows(void)
 static void painterGpuBatchFlush(void)
 {
     XRect dirty;
+    uint64_t profT0;
     if (!g_gpuBatchActive) return;
+    profT0 = xpainter_prof_requested() ? xpainter_prof_now_ns() : 0;
     g_gpuBatchActive = false;
     g_gpuBatchPainter = NULL;
     dirty = g_gpuBatchDirty;
@@ -201,12 +583,9 @@ static void painterGpuBatchFlush(void)
     {
         /* 脏区通道（drawImageRegion 增量上传）优先；驱动未实现（如
            Vulkan 移植初期）回退整幅 SourceOver 提交。XGPU_REGION_
-           DISABLE=1 可强制整幅通道（诊断用）。 */
-        bool regionDisabled = false;
-        {
-            const char* rd = XSystem_environment("XGPU_REGION_DISABLE");
-            regionDisabled = rd && *rd && !(rd[0] == '0' && rd[1] == 0);
-        }
+           DISABLE=1 可强制整幅通道（诊断用）。读取经 XGPU_ENV_CACHE
+           缓存（原每次冲批实时 GetEnvironmentVariableA，白付内核调用）。 */
+        bool regionDisabled = xgpu_region_disable_requested();
         if (regionDisabled ||
             !XGpuRenderBackend_drawImageRegion(
                 g_gpuBatchBackend, &g_gpuBatchCanvas, dirty.x, dirty.y,
@@ -221,6 +600,11 @@ static void painterGpuBatchFlush(void)
     xgpu_batch_canvas_clear_rows();
     g_gpuBatchHasDirty = false;
     g_gpuBatchBackend = NULL;
+    if (xpainter_prof_requested())
+    {
+        g_xpainterProf.m_flushNs += xpainter_prof_now_ns() - profT0;
+        ++g_xpainterProf.m_flushCount;
+    }
 }
 
 static bool painterGpuTextEquals(const char* value, const char* expected)
@@ -242,18 +626,56 @@ static bool painterGpuTextEquals(const char* value, const char* expected)
 }
 
 /**
+ * @brief 读取「GPU 命令级同步读回」契约开关（XGUI_GPU_SYNC，"0"=关）。
+ * @details 开启时 GPU 快速路径全部让位 legacy 局部提交并逐命令读回，
+ *          服务既有"绘制后立即断言像素"的回归用例；像素契约口径不变，
+ *          仅读取时机改为首读缓存（XGPU_ENV_CACHE=0 回退逐次实时读）。
+ */
+static bool painterGpuSyncRequested(void)
+{
+    /* 帧率主攻（夜六）：本门在 route（每命令 1 次）与各快速路径判定
+       （drawLine/fillRect 半透明/渐变）逐命令调用，原先每次都实时
+       GetEnvironmentVariableA——真内核调用挂在每命令重算里。解析式
+       逐字符不变（"0"=关），仅首次读后缓存；XGPU_ENV_CACHE=0 回退
+       逐次实时读取（旧行为），XGUI_GPU_SYNC=1 调试契约不受影响。 */
+    static int requested = -1;
+    if (requested < 0 || !xgpu_env_cache_enabled())
+    {
+        const char* value = XSystem_environment("XGUI_GPU_SYNC");
+        requested = value && *value &&
+                            !(value[0] == '0' && value[1] == 0)
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/**
+ * @brief 读取斜线 quad 快速路径扩展开关（XGPU_FASTPATH_EXT，默认开）。
+ * @details 与 painterGpuSyncRequested 同口径："0"=关。扩展路由把非轴
+ *          对齐 SolidLine 硬边线段（椭圆描边 32 段折线、箭头、对角
+ *          连线等命令族）从批量画布回退改经 drawSolidQuad 提交；
+ *          设 0 回退既有画布路径（行为回退开关）。
+ */
+static bool painterGpuFastPathExtRequested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FASTPATH_EXT");
+        requested = value && *value &&
+                            !(value[0] == '0' && value[1] == 0)
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/**
  * @brief 读取 GPU 运行时选择。
  * @details 软件后端是默认值；设置 XGUI_RENDER_BACKEND=gpu（或
  *          XGPU_BACKEND=opengl/1）才启用阶段 1 GPU。这样嵌入式产品只需
  *          保持环境变量未设置即可继续使用软件光栅，同时保留运行时切换
  *          和显式禁用路径，不增加第二个编译开关。
  */
-static bool painterGpuSyncRequested(void)
-{
-    const char* value = XSystem_environment("XGUI_GPU_SYNC");
-    return value && *value && !(value[0] == '0' && value[1] == 0);
-}
-
 static bool painterGpuRequested(void)
 {
     const char* value;
@@ -286,6 +708,58 @@ static void painterGpuSessionDestroyAtExit(void)
 static XGpuRenderBackend* g_gpuFrameActiveBackend = NULL;
 static XImage* g_gpuFrameActiveImage = NULL;
 static int g_gpuFrameDepth = 0;
+
+/**
+ * @brief      读取「窗口直通帧保持开启」开关（XGPU_FRAME_KEEPOPEN，
+ *             默认开；"0"=回退逐 painter 开/关帧旧行为）。
+ * @details    夜三 5a（压派发数，归因文档 §5-1 最大杠杆）为什么需要它：
+ *             上方深度计数只对「栈式嵌套」（外层 end 前有内层 begin）
+ *             生效；paintTree 的每控件 painter 是「顺序 begin/end」，
+ *             结束时深度恒为 1 → painterGpuEndFrame 走关闭分支
+ *             （endFrame+解绑），下一个同目标 painter 被迫重新
+ *             beginFrame。实测 p0（XGPU_P4LOG 探针）：每 flush 仅
+ *             ~2.0 个 painter（210x50 脏区 1520 行/756 迭代），却付
+ *             2.19 次 beginFrame/迭代（XGPU_PROF frames 8303 / 基准
+ *             frames 3796）——每迭代多付 ~1.2 次 ~0.59ms 的会话级
+ *             派发固定成本（GPU 增量 91-94% 池子，归因文档 §3）。
+ *             开启后：窗口模式帧末不再 endFrame（FBO 内容本就持久，
+ *             呈现链 readbackRect/present 前驱动侧已冲 quad 批，
+ *             XGpuRenderDriver_gl.c 读回统一内核；下一次同会话同目标
+ *             begin_image 经既有嵌套分支零成本复用）；离屏会话逐
+ *             painter readback+endFrame 的像素契约不变。
+ */
+static bool xgpu_frame_keepopen_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FRAME_KEEPOPEN");
+        /* 缺省=关（2026-09-27 交互实锤翻转）：keep-open 跨 painter 保帧
+           期间，交互重绘产生批量画布跨批墨迹残留（拖动残影带，四态
+           A/B 实锤：关=全程干净）+呈现链损坏放大。其原始收益（摊销
+           begin/end）已被画布清零 scoping 大幅削弱，修复键补全前默认
+           关；=1 显式启用供专项归因。 */
+        requested = value && *value &&
+                            !(value[0] == '0' && value[1] == 0)
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/* XGPU_SESSION_RELEASE 开关（缺省=开；"0"=恢复夜五重构后的占用标志
+   滞留行为，仅诊断对照）：离屏帧收口时把进程级共享会话归还
+   painterGpuSessionAcquire，后续离屏 painter 才能再次借到 GPU 会话。 */
+static bool xgpu_session_release_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_SESSION_RELEASE");
+        requested = !(value && *value &&
+                      !(value[0] == '0' && value[1] == 0));
+    }
+    return requested != 0;
+}
 
 static XGpuRenderBackend* painterGpuSessionAcquire(int width, int height)
 {
@@ -321,8 +795,13 @@ static XGpuRenderBackend* painterGpuSessionAcquire(int width, int height)
  *         上屏，无需读回）。嵌套 painter（同会话同目标）只递减深度。 */
 static void painterGpuEndFrame(XPainter* self)
 {
+    uint64_t profT0;
     if (!self || !self->m_gpuActive) return;
-    painterGpuBatchFlush(); /* 批量：先提交待定批，帧末读回/上屏才完整。 */
+    profT0 = xpainter_prof_requested() ? xpainter_prof_now_ns() : 0;
+    /* XGPU_END_LEAN：批不活跃免空转调用冲刷——flush 首行同一判定直返
+       无副作用；开关=0 保持无条件调用旧口径。 */
+    if (g_gpuBatchActive || !xgpu_end_lean_requested())
+        painterGpuBatchFlush(); /* 批量：先提交待定批，帧末读回/上屏才完整。 */
     if (self->m_gpuBackend)
     {
         if (g_gpuFrameDepth > 1 &&
@@ -337,16 +816,62 @@ static void painterGpuEndFrame(XPainter* self)
         }
         else
         {
-            if (!XGpuRenderBackend_isWindowMode(self->m_gpuBackend))
+            /* 夜七 E 路（XGPU_END_LEAN）：窗口模式判定提升为单次局部
+               缓存——下方读回门与 keep-open 门同参各调一次
+               XGpuRenderBackend_isWindowMode（backend 包装 + 跨编译单元
+               extern 调用），m_gpuBackend 在本函数体内无人改写，同参必
+               同值；窗口直通页每帧 2 次 end 各省 1 次 extern 调用。
+               开关=0 时 keep-open 门保持独立第二次查询（逐位旧调用序
+               列，A/B 对照口径），读回门取局部值与旧第一次调用同值。 */
+            bool windowMode =
+                XGpuRenderBackend_isWindowMode(self->m_gpuBackend);
+            if (!windowMode)
                 XGpuRenderBackend_readback(self->m_gpuBackend, self->m_image);
-            XGpuRenderBackend_endFrame(self->m_gpuBackend);
-            g_gpuFrameActiveBackend = NULL;
-            g_gpuFrameActiveImage = NULL;
-            g_gpuFrameDepth = 0;
+            /* keep-open（夜三 5a）：窗口直通帧保持开启——深度规整回 1
+               并保留 activeBackend/activeImage，下一次同会话同目标
+               begin_image 走嵌套复用分支（零 beginFrame）。正确性依据：
+               窗口模式帧末本就不 readback（FBO 持久=可见性真相源），
+               端点（呈现链 readbackRect/整帧 readback/present）在使用
+               FBO 前均先冲 quad 批，帧开着读不到悬空内容；深度规整
+               而非保留原值——顺序复用下深度在 1↔2 间振荡，外层收口
+               （深度==1）正是保帧点。身份不符（跨会话恢复等异常路径）
+               仍关闭，与旧行为同价（下一 painter 重开）。 */
+            if (xgpu_frame_keepopen_requested() &&
+                (xgpu_end_lean_requested()
+                     ? windowMode
+                     : XGpuRenderBackend_isWindowMode(self->m_gpuBackend)) &&
+                g_gpuFrameActiveBackend == self->m_gpuBackend &&
+                g_gpuFrameActiveImage == self->m_image)
+            {
+                g_gpuFrameDepth = 1;
+            }
+            else
+            {
+                XGpuRenderBackend_endFrame(self->m_gpuBackend);
+                g_gpuFrameActiveBackend = NULL;
+                g_gpuFrameActiveImage = NULL;
+                g_gpuFrameDepth = 0;
+            }
+            /* 收口归还：painter end 后进程级共享离屏会话不再占用。
+               夜五 keep-open 重构把五波前 end 路径的无条件清零
+               （night-backup/XPainter.c painterGpuEndFrame 尾部）一并
+               删去，滞留的占用标志令 painterGpuSessionAcquire 对后续
+               一切离屏 painter 拒绝出借会话——gpu-test 冒烟 poly/line
+               两会话 not gpu 加四条 degraded 整段回退软件（2026-09-26
+               实锤）。窗口模式 begin 时该标志本即为 false（取
+               !isWindowMode），此处赋值对直通链路零副作用；嵌套分支
+               （depth>1，外层仍持有会话）不经此处，保持置位语义。 */
+            if (xgpu_session_release_requested())
+                g_xgpuRenderSessionInUse = false;
         }
     }
     self->m_gpuActive = false;
-    g_xgpuRenderSessionInUse = false;
+    if (xpainter_prof_requested())
+    {
+        g_xpainterProf.m_endNs += xpainter_prof_now_ns() - profT0;
+        ++g_xpainterProf.m_endCount;
+        xpainter_prof_tick(); /* 仅 prof 开时有事可做（首行判定直返），收进本块。 */
+    }
 }
 
 /** @brief GPU 会话遇到非快速路径命令：把已画 FBO 合并到目标 XImage 并
@@ -607,9 +1132,11 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
     XGpuRenderBackend* backend;
     XImage* savedImage;
     bool savedGpu;
+    uint64_t profRouteT0;
     if (!self || !self->m_gpuActive || !self->m_gpuBackend || !drawCommand)
         return false;
     backend = self->m_gpuBackend;
+    profRouteT0 = xpainter_prof_requested() ? xpainter_prof_now_ns() : 0;
     if (!painterGpuSyncRequested())
     {
         /* 目标依赖命令（RasterOp/非 SourceOver 合成）：透明暂存语义
@@ -635,6 +1162,8 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
             {
                 XImage_deinit_base(&g_gpuBatchCanvas);
                 g_gpuBatchCanvasInited = false;
+                g_gpuBatchClearBits = NULL; /* 画布已释放，行清缓存同步失效。 */
+                g_gpuBatchClearBpl = 0;
             }
             if (!g_gpuBatchCanvasInited)
             {
@@ -648,6 +1177,14 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
                 {
                     /* 透明底（预乘 ARGB32 全零=全透明）。 */
                     XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+                    /* 尺寸镜像随建随更（route 逐命令钳位读这里）。 */
+                    g_gpuBatchCanvasW = XImage_width(&g_gpuBatchCanvas);
+                    g_gpuBatchCanvasH = XImage_height(&g_gpuBatchCanvas);
+                    /* 行清缓存随建随更：画布仅此一处 init，deinit 一处
+                       同步失效，无悬空窗口。 */
+                    g_gpuBatchClearBits = XImage_bits(&g_gpuBatchCanvas);
+                    g_gpuBatchClearBpl =
+                        XImage_bytesPerLine(&g_gpuBatchCanvas);
                 }
             }
             if (g_gpuBatchCanvasInited)
@@ -702,14 +1239,14 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
                    内容静默丢失（2026-09-24 渐变回退链丢内容根因）。 */
                 bound.x = 0;
                 bound.y = 0;
-                bound.width = XGpuRenderBackend_width(backend);
-                bound.height = XGpuRenderBackend_height(backend);
+                bound.width = xgpu_batch_canvas_width(backend);
+                bound.height = xgpu_batch_canvas_height(backend);
                 hasBound = bound.width > 0 && bound.height > 0;
             }
             if (hasBound && bound.width > 0 && bound.height > 0)
             {
-                int cw = XGpuRenderBackend_width(backend);
-                int ch = XGpuRenderBackend_height(backend);
+                int cw = xgpu_batch_canvas_width(backend);
+                int ch = xgpu_batch_canvas_height(backend);
                 if (bound.x < 0) { bound.width += bound.x; bound.x = 0; }
                 if (bound.y < 0) { bound.height += bound.y; bound.y = 0; }
                 if (bound.x + bound.width > cw) bound.width = cw - bound.x;
@@ -744,7 +1281,21 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
             savedGpu = self->m_gpuActive;
             self->m_image = &g_gpuBatchCanvas;
             self->m_gpuActive = false;
+            if (xpainter_prof_requested())
+            {
+                g_xpainterProf.m_routeNs +=
+                    xpainter_prof_now_ns() - profRouteT0;
+                ++g_xpainterProf.m_routeCount;
+            }
+            profRouteT0 = xpainter_prof_requested()
+                              ? xpainter_prof_now_ns() : 0;
             drawCommand(self, userData);
+            if (xpainter_prof_requested())
+            {
+                g_xpainterProf.m_batchDrawNs +=
+                    xpainter_prof_now_ns() - profRouteT0;
+                ++g_xpainterProf.m_batchDrawCount;
+            }
             self->m_image = savedImage;
             self->m_gpuActive = savedGpu;
             /* 提交延迟至失效点：本函数不再每命令做快照/上传。 */
@@ -910,7 +1461,9 @@ static bool painterGpuApplyStateClip(XPainter* self)
 {
     bool hasClip;
     XRect clipDevice;
+    uint64_t profT0;
     if (!self || !self->m_gpuBackend) return false;
+    profT0 = xpainter_prof_requested() ? xpainter_prof_now_ns() : 0;
     hasClip = self->m_state.m_hasClip;
 #if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
     /* 精确路径裁剪：scissor 只能表达矩形，路径掩码由软件光栅完成，
@@ -933,14 +1486,28 @@ static bool painterGpuApplyStateClip(XPainter* self)
 #endif /* XPAINTER_CLIP_REGION_ON */
     XGpuRenderBackend_setClipRect(self->m_gpuBackend,
                                   hasClip ? &clipDevice : NULL);
+    if (xpainter_prof_requested())
+    {
+        /* 计成功路径（含驱动 setClipRect 调用）；上方不支持形态的
+           早退分支无驱动调用，成本≈环境判定，不单独计时。 */
+        g_xpainterProf.m_clipNs += xpainter_prof_now_ns() - profT0;
+        ++g_xpainterProf.m_clipCount;
+    }
     return true;
 }
 #else /* !XPAINTER_CLIP_ON */
 /** @brief 无裁剪能力构建：GPU 原语始终清除 scissor。 */
 static bool painterGpuApplyStateClip(XPainter* self)
 {
+    uint64_t profT0;
     if (!self || !self->m_gpuBackend) return false;
+    profT0 = xpainter_prof_requested() ? xpainter_prof_now_ns() : 0;
     XGpuRenderBackend_setClipRect(self->m_gpuBackend, NULL);
+    if (xpainter_prof_requested())
+    {
+        g_xpainterProf.m_clipNs += xpainter_prof_now_ns() - profT0;
+        ++g_xpainterProf.m_clipCount;
+    }
     return true;
 }
 #endif /* XPAINTER_CLIP_ON */
@@ -2825,8 +3392,69 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                 self->m_state.m_compositionMode ==
                     XPainterCompositionMode_SourceOver);
         }
-        /* 斜线/虚线/圆头/零尺寸点：软件光栅局部提交（不整帧降级）。
-           端点已是设备坐标，重入 painterRaster_drawLineDevice 不再映射。 */
+        /* 斜线 quad 快速路径（XGPU_FASTPATH_EXT 扩展路由，默认开）：
+           非轴对齐 SolidLine 硬边线段此前逐段落入下方批量画布回退
+           （椭圆描边=32 段折线、箭头/对角连线皆此族），且与相邻原语
+           交错时每命令触发一次暂存画布冲批上传——REGION_DISABLE 口径
+           实测 page0 ~85 次/帧、page5 ~59 次/帧提交（2026-09-25）。
+           以线段法向偏移四边形（与 AA 光栅 painterRaster_drawLine-
+           Antialiased 同构：法向各偏移半线宽；端帽对标 Qt SquareCap
+           默认沿方向延伸半线宽补端点像素，FlatCap 不延伸）经
+           drawSolidQuad 提交，XGPU_PROF 统计口径与轴向快速路径一致
+           （solidQuad 计数）。GL 四边形光栅与 Bresenham 覆盖非逐位
+           一致（视觉等价，同半透明 fillRect 快速路径口径），故
+           XGUI_GPU_SYNC=1 像素契约保持画布路径；XGPU_FASTPATH_EXT=0
+           整体回退。多矩形 region 裁剪不校验（沿用轴向快速路径语义）。 */
+        else if (solidLine && !roundCap && width >= 1 &&
+                 dx != 0 && dy != 0 &&
+                 painterGpuFastPathExtRequested() &&
+                 !painterGpuSyncRequested()
+#if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
+                 && !painterClipPathActive(self)
+#endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
+                 )
+        {
+            uint32_t premul;
+            unsigned a = (color >> 24) & 0xffu;
+            float q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y;
+            float ax = (float)ix1;
+            float ay = (float)iy1;
+            float bx = (float)ix2;
+            float by = (float)iy2;
+            float len = (float)sqrt((double)dx * (double)dx +
+                                    (double)dy * (double)dy);
+            float hw = (float)width * 0.5f;
+            float nx = (float)-dy / len; /* 单位法向：垂直于线段方向。 */
+            float ny = (float)dx / len;
+            float extend = hw;
+            float ex;
+            float ey;
+#if XPAINTER_PENSTYLE_ON
+            if (self->m_state.m_penCap == XPainterPenCapStyle_FlatCap)
+                extend = 0.0f;
+#endif /* XPAINTER_PENSTYLE_ON */
+            ex = (float)dx / len * extend;
+            ey = (float)dy / len * extend;
+            premul = ((uint32_t)a << 24) |
+                     ((uint32_t)(((((color >> 16) & 0xffu) * a) + 127) / 255) << 16) |
+                     ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
+                     (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
+            painterGpuBatchFlush(); /* 批量：待定批先回 FBO，原语画其上。 */
+            /* 角序与轴向分支一致（a 端法向负侧/b 端法向负侧/a 端正侧/
+               b 端正侧，即「上边一对+下边一对」三角剖分约定）。 */
+            q1x = ax - nx * hw - ex;  q1y = ay - ny * hw - ey;
+            q2x = bx - nx * hw + ex;  q2y = by - ny * hw + ey;
+            q3x = ax + nx * hw - ex;  q3y = ay + ny * hw - ey;
+            q4x = bx + nx * hw + ex;  q4y = by + ny * hw + ey;
+            return XGpuRenderBackend_drawSolidQuad(
+                self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
+                premul,
+                self->m_state.m_compositionMode ==
+                    XPainterCompositionMode_SourceOver);
+        }
+        /* 虚线非轴向段/圆头/零尺寸点/SYNC 契约/扩展开关关闭：软件光栅
+           局部提交（不整帧降级）。端点已是设备坐标，重入
+           painterRaster_drawLineDevice 不再映射。 */
         {
             PainterGpuLineArgs args = { ix1, iy1, ix2, iy2 };
             XRect lineRect;
@@ -6885,6 +7513,12 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
         !XGpuRenderBackend_frameDegraded() &&
         XImage_width(image) > 0 && XImage_height(image) > 0)
     {
+        /* begin 段：会话获取/帧复用判定/beginFrame/暂存画布整幅清零
+           （含 keep-open 复用分支的 xgpu_batch_canvas_clear_all——
+           批画布已 init 的页每控件 painter 各付一次整幅 memset，
+           「每 painter 重复做可缓存工作」的头号结构性候选）。 */
+        uint64_t profT0 = xpainter_prof_requested()
+                              ? xpainter_prof_now_ns() : 0;
         XGpuRenderBackend* gpu = XGpuRenderBackend_current();
         if (gpu &&
             (XGpuRenderBackend_width(gpu) != XImage_width(image) ||
@@ -6914,6 +7548,23 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
             g_xgpuRenderSessionInUse =
                 !XGpuRenderBackend_isWindowMode(gpu);
             ++g_gpuFrameDepth;
+            /* keep-open：画布清洁职责已移至冲刷点（clear_rows 外扩
+               ±8px 逸出带，夜六）——begin 段不再整幅 memset。原每
+               painter begin 一次 1.92MB fillRect 是 begin 段 0.43ms
+               的主体（XGPU_PAINTER_PROF 实测占增量帧 ~80%）；逸出
+               脏区±8px 的写入残留属脏区记账缺陷类，XGPU_CANVAS_
+               BEGIN_CLEAR=1 诊断开关恢复 begin 段整幅清零安全网。 */
+            if (xgpu_frame_keepopen_requested() &&
+                xgpu_canvas_begin_clear_requested() &&
+                g_gpuBatchCanvasInited)
+            {
+                XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+                g_gpuBatchHasDirty = false;
+                g_gpuBatchDirty.x = 0;
+                g_gpuBatchDirty.y = 0;
+                g_gpuBatchDirty.width = 0;
+                g_gpuBatchDirty.height = 0;
+            }
         }
         else if (gpu && XGpuRenderBackend_beginFrameImage(gpu, image))
         {
@@ -6940,6 +7591,11 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 g_gpuBatchDirty.width = 0;
                 g_gpuBatchDirty.height = 0;
             }
+        }
+        if (xpainter_prof_requested())
+        {
+            g_xpainterProf.m_beginNs += xpainter_prof_now_ns() - profT0;
+            ++g_xpainterProf.m_beginCount;
         }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -10289,13 +10945,24 @@ static bool painterGpuTextDevicePoint(const XPainter* self, int x, int y,
 
 /**
  * @brief      计算字形覆盖图的 GPU 图集键。
- * @details    由字体 face 指针、码点与缩放键混合出 64 位键；face 指针在
- *             进程内唯一，同一 (face, codepoint, scale) 的覆盖图内容唯一，
- *             图集条目再比对宽高，键冲突概率可忽略。键生命周期限于单个
- *             GPU 会话（图集随会话销毁），跨会话不比较。
+ * @details    由字体 face 指针、码点、缩放键与覆盖内容 flags 混合出
+ *             64 位键；face 指针按 (family, styleStrategy) 从注册表
+ *             解析（XFontFace_find，进程内稳定单例），因此键还必须
+ *             覆盖「同 face 下改变覆盖内容」的其余维度——flags：
+ *             bit0=AA 灰度覆盖（AA 与非 AA 边缘半覆盖不同，历史上
+ *             曾因共用键致非 AA 命中 AA 残留），bit1=合成斜体
+ *             （outline 路径把 XPAINTER_SYNTHETIC_ITALIC_SHEAR 烘进
+ *             轮廓，与 painterOutlineCacheKey 的 italic 位同一口径；
+ *             位图路径并列为兜底，provider 样式差异不再共享条目）。
+ *             像素尺寸经 scale（1/65536 量化）进入键，weight/拉伸仅
+ *             影响度量或换 face（providers 无合成加粗，实测 grep
+ *             XFontOutline* 无 weight 引用），不单独入键。键冲突概率
+ *             可忽略；键生命周期限于单个 GPU 会话（图集随会话销毁），
+ *             跨会话不比较。
+ * @param      flags painterGpuGlyphFlags 装配的内容维度位。
  */
 static uint64_t painterGpuGlyphKey(const void* face, uint32_t codepoint,
-                                   float scale)
+                                   float scale, uint32_t flags)
 {
     uint64_t hash = (uint64_t)(uintptr_t)face;
     uint32_t scaleKey;
@@ -10313,8 +10980,172 @@ static uint64_t painterGpuGlyphKey(const void* face, uint32_t codepoint,
     hash ^= hash >> 33;
     hash ^= (uint64_t)codepoint << 1;
     hash ^= (uint64_t)scaleKey * 0x9E3779B97F4A7C15ULL;
+    /* flags 只占低 2 位，须经独立奇常量乘法扩散再收尾雪崩，否则与
+       codepoint<<1 的低位混叠（旧 AA 用 XOR 翻转整键，两套键空间
+       碰撞结构相同，flags 通道不能沿用该做法）。 */
+    hash ^= (uint64_t)(flags + 1u) * 0xC2B2AE3D27D4EB4FULL;
     hash ^= hash >> 29;
+    hash *= 0x9E3779B97F4A7C15ULL;
+    hash ^= hash >> 32;
     return hash;
+}
+
+/** @brief 键 flags 装配：bit0=AA 灰度覆盖，bit1=合成斜体（见键注）。 */
+static uint32_t painterGpuGlyphFlags(bool antialias, bool italic)
+{
+    return (antialias ? 1u : 0u) | (italic ? 2u : 0u);
+}
+
+/* ========== 图集查找备忘索引（XGPU_GLYPH_HASH；默认开，"0"=关回退线性） ==========
+ * Q 路点名：glyphAtlasContains 每字形线性扫 O(条目数)（backend 侧
+   xgpu_glyph_atlas_find，上限 XGPU_GLYPH_ATLAS_MAX_ENTRIES=8192；常规
+   文本页数百条目 × 每字符 3 次扫——contains 1 次 + drawGlyphAlpha 内部
+   2 次）。painter 侧正结果备忘：键 (backend, 图集代次, glyphKey, w, h)
+   → 已在图集，跳过 contains 线性扫（drawGlyphAlpha 内部扫描不在本文件
+   域）。
+   【六波默认关→八波修复默认开的因果】六波键 (backend, glyphKey, w, h)
+   不完备：交互拖动下备忘陈旧命中（图集中途重置后条目已失）触发
+   drawGlyphAlpha 契约失败 → 整串回退软件，与已提交的 GPU 字形叠加出
+   整窗横向碎片（capture 实证）。修复两条腿：
+   1) 键补全内容维度——glyphKey 并入 flags（AA+斜体，见
+      painterGpuGlyphKey 注），消除「同键不同内容」的污染源；
+   2) 图集代次批量失效——后端 xgpu_glyph_atlas_alloc 溢出/纵向重打包
+      时整体清条目但无对外回调口径，本文件域内以 painter 侧代次惰性
+      等价实现：备忘槽登记代次，探测比对不符即按死槽弃用；任一
+      「alpha==NULL 且 drawGlyphAlpha 契约失败」（= 条目缺失的实证）
+      推进代次一次作废全表。每次图集重置整进程最多付一次失败往返，
+      而非六波的逐字形失败风暴。
+   安全性论证：
+   - 备忘只缓存正结果；「负结果不缓存，失败重查与现状同价」；
+   - 自愈保留：drawGlyphAlpha 失败时仍删本槽（死槽复用语义下等价于
+     代次作废，双保险）；陈旧命中先于删除被代次比对拦下；
+   - 后端指针参与键：会话重建换实例 → 旧键自然不命中；同址复用的
+     空图集由首个契约失败推进代次兜底；
+   - g_glyphMemoEpoch 32 位回绕需 2^32 次图集重置，进程生命周期内
+     不可达。绘制固定单线程（文件既有口径），无锁。 */
+
+/** @brief XGPU_GLYPH_HASH 环境开关（进程内缓存；严格 "0"=关回退线性
+ *         扫，其余值/未设=启用备忘。默认开原因与键完备性见上块注）。 */
+static bool xpainter_glyph_hash_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_GLYPH_HASH");
+        requested = !(value && value[0] == '0' && value[1] == '\0');
+    }
+    return requested != 0;
+}
+
+/** @brief 备忘槽数（2 的幂，开放寻址掩码；4096 槽 ×24B≈96KB 静态）。 */
+#define XPAINTER_GLYPH_MEMO_SLOTS 4096u
+
+typedef struct PainterGlyphMemoSlot
+{
+    const void* m_backend;  /**< 后端实例（NULL=空槽）。 */
+    uint64_t m_key;         /**< 图集键（painterGpuGlyphKey 产物，含 flags）。 */
+    uint32_t m_widthHeight; /**< (width<<16)|height 联合比对。 */
+    uint32_t m_epoch;       /**< 登记时的图集代次（与当前不符=死槽）。 */
+} PainterGlyphMemoSlot;
+
+static PainterGlyphMemoSlot g_glyphMemo[XPAINTER_GLYPH_MEMO_SLOTS];
+
+/** @brief 图集代次（painter 侧观测计数）：后端图集重置/重打包无回调
+           口径，代次只在拿到「条目缺失实证」时惰性推进（见
+           xpainter_glyph_memo_invalidate_all），全部旧登记一并作废。 */
+static uint32_t g_glyphMemoEpoch;
+
+/** @brief 探测备忘槽：命中返回槽指针；未中返回 NULL 并经 outFree 给出
+           首个可复用槽（真空槽或代次过期的死槽，插入点）。死槽不作
+           探测终止——其后方同簇可能仍有本代次存活键；真空槽才终止
+           （与既有删除留空洞口径一致，链断只损性能不损正确性）。
+           探测簇上限 64 步，超限视为未中且不插入（病态聚集时退化为
+           直查，正确性不变）。 */
+static PainterGlyphMemoSlot* xpainterGlyphMemoFind(
+    const void* backend, uint64_t key, int width, int height,
+    PainterGlyphMemoSlot** outFree)
+{
+    uint64_t h = key ^ (uint64_t)(uintptr_t)backend;
+    uint32_t mask = XPAINTER_GLYPH_MEMO_SLOTS - 1u;
+    uint32_t widthHeight = ((uint32_t)width << 16) | (uint32_t)height;
+    uint32_t i;
+    uint32_t n;
+    if (outFree) *outFree = NULL;
+    i = (uint32_t)((h ^ (h >> 32))) & mask;
+    for (n = 0; n < 64; ++n)
+    {
+        PainterGlyphMemoSlot* slot = &g_glyphMemo[i];
+        if (!slot->m_backend)
+        {
+            if (outFree && !*outFree) *outFree = slot;
+            return NULL;
+        }
+        if (slot->m_epoch != g_glyphMemoEpoch)
+        {
+            /* 死槽：登记早于当前代次，内容不可信；记为插入点后继续
+               探测（存活键可能落在其后）。 */
+            if (outFree && !*outFree) *outFree = slot;
+        }
+        else if (slot->m_key == key && slot->m_widthHeight == widthHeight &&
+                 slot->m_backend == backend)
+            return slot;
+        i = (i + 1u) & mask;
+    }
+    return NULL;
+}
+
+/** @brief 备忘查询：真=键已确认在图集（调用方可跳过 contains 线性扫）。 */
+static bool xpainter_glyph_memo_get(const void* backend, uint64_t key,
+                                    int width, int height)
+{
+    if (!backend) return false;
+    if (xpainterGlyphMemoFind(backend, key, width, height, NULL))
+    {
+        ++g_xpainterProf.m_atlasMemoHits;
+        return true;
+    }
+    return false;
+}
+
+/** @brief 备忘登记（仅在 contains 确认命中后调用：只缓存正结果）。
+ *         目标槽可为代次过期的死槽——原地覆写保持探测链连续。 */
+static void xpainter_glyph_memo_put(const void* backend, uint64_t key,
+                                    int width, int height)
+{
+    PainterGlyphMemoSlot* slot;
+    PainterGlyphMemoSlot* hit =
+        xpainterGlyphMemoFind(backend, key, width, height, &slot);
+    if (hit || !slot) return;
+    slot->m_backend = backend;
+    slot->m_key = key;
+    slot->m_widthHeight = ((uint32_t)width << 16) | (uint32_t)height;
+    slot->m_epoch = g_glyphMemoEpoch;
+}
+
+/** @brief 备忘自愈删除（drawGlyphAlpha 对 alpha==NULL 返回 false 时）。 */
+static void xpainter_glyph_memo_drop(const void* backend, uint64_t key,
+                                     int width, int height)
+{
+    PainterGlyphMemoSlot* hit =
+        xpainterGlyphMemoFind(backend, key, width, height, NULL);
+    if (hit)
+    {
+        hit->m_backend = NULL;
+        hit->m_key = 0;
+    }
+}
+
+/** @brief 图集代次推进（批量失效）：任一「备忘确认在图集、提交时
+           条目却缺失」（alpha==NULL 且 drawGlyphAlpha 契约失败）即
+           实证图集发生过整体重置（8192 条目溢出/纵向重打包/
+           resetGlyphAtlas/会话重建同址复用）——此时全表登记都不可信，
+           推进代次一次作废，避免逐字形各付一次失败往返（六波交互
+           碎片的失败风暴即此形态）。槽内容不清（惰性）：代次比对
+           不符即按死槽弃用，无 memset 开销。误推进（失败实因驱动
+           瞬断等）只损失备忘加速，不损像素正确性。 */
+static void xpainter_glyph_memo_invalidate_all(void)
+{
+    ++g_glyphMemoEpoch;
 }
 
 /** @brief 把一个 CPU 点阵字形转换成 alpha 纹理并提交给 GPU。 */
@@ -10337,6 +11168,7 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, uint32_t codepoint,
     uint64_t glyphKey;
     int row;
     bool antialias;
+    bool atlasCached;
     if (!self || !self->m_gpuActive || !self->m_gpuBackend || !table ||
         !dsc || !glyph || !(scale > 0.0f) || !isfinite(scale))
         return false;
@@ -10350,29 +11182,50 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, uint32_t codepoint,
     height = painter8x16CeilInt(originY + glyphHeight) - top;
     if (width <= 0 || height <= 0) return true;
     if ((size_t)width > SIZE_MAX / (size_t)height) return false;
-    /* 图集命中：覆盖图已在 GPU，跳过 CPU 采样（alpha 传 NULL）。 */
-    glyphKey = painterGpuGlyphKey(XFont_face(&self->m_state.m_font),
-                                  codepoint, scale);
-    /* AA 与非 AA 覆盖图不同：用不同 key 存储，避免图集缓存污染
-       （AA 存的边缘半覆盖 0x1b 被非 AA 命中复用，导致
-       "disabling text antialiasing restores hard edge" 失败）。 */
+    /* 覆盖内容维度先于键判定：AA 与非 AA 覆盖图不同（AA 存的边缘半
+       覆盖 0x1b 被非 AA 命中复用会导致 "disabling text antialiasing
+       restores hard edge" 失败），斜体经 flags 并列兜底（见键注）。
+       antialias 供下方光栅复用，口径与旧实现逐位一致。 */
 #if XPAINTER_RENDERHINT_ON
-    if ((table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
-        painter8x16CanAntialias(self))
-        glyphKey ^= 0x5A5A5A5A5A5A5A5AULL;
-#endif
+    antialias = (table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
+                painter8x16CanAntialias(self);
+#else
+    antialias = false;
+#endif /* XPAINTER_RENDERHINT_ON */
+    glyphKey = painterGpuGlyphKey(XFont_face(&self->m_state.m_font),
+                                  codepoint, scale,
+                                  painterGpuGlyphFlags(
+                                      antialias,
+                                      XFont_italic(&self->m_state.m_font)));
+    /* 图集命中：覆盖图已在 GPU，跳过 CPU 采样（alpha 传 NULL）。 */
     alpha = NULL;
-    if (!XGpuRenderBackend_glyphAtlasContains(self->m_gpuBackend, glyphKey,
-                                              width, height))
+    if (xpainter_glyph_hash_requested() &&
+        xpainter_glyph_memo_get(self->m_gpuBackend, glyphKey,
+                                width, height))
+    {
+        /* 备忘命中：跳过 contains 线性扫（atlas 段不计）。 */
+        atlasCached = true;
+    }
+    else
+    {
+        uint64_t profAtlasT0 = xpainter_prof_requested()
+                                   ? xpainter_prof_now_ns() : 0;
+        atlasCached = XGpuRenderBackend_glyphAtlasContains(
+            self->m_gpuBackend, glyphKey, width, height);
+        if (xpainter_prof_requested())
+        {
+            g_xpainterProf.m_atlasNs += xpainter_prof_now_ns() - profAtlasT0;
+            ++g_xpainterProf.m_atlasCount;
+        }
+        if (atlasCached && xpainter_glyph_hash_requested())
+            xpainter_glyph_memo_put(self->m_gpuBackend, glyphKey,
+                                    width, height);
+    }
+    if (!atlasCached)
     {
         alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
         if (!alpha) return false;
-#if XPAINTER_RENDERHINT_ON
-        antialias = (table->m_bpp > 1 || fabsf(scale - 1.0f) > 0.0001f) &&
-                    painter8x16CanAntialias(self);
-#else
-        antialias = false;
-#endif /* XPAINTER_RENDERHINT_ON */
+        /* antialias 已在键计算前判定（上方），口径不变。 */
         for (row = 0; row < height; ++row)
         {
             int column;
@@ -10406,6 +11259,14 @@ static bool painterGpuDrawBitmapGlyph(XPainter* self, uint32_t codepoint,
             color, self->m_state.m_opacity,
             self->m_state.m_compositionMode == XPainterCompositionMode_SourceOver))
     {
+        /* 备忘自愈 + 图集代次批量失效：alpha==NULL 时本调用按契约失败
+           = 条目缺失（图集已被重置/重打包/会话重建）——推进 painter 侧
+           图集代次作废全部备忘正结果（否则六波形态的逐字形失败风暴
+           会在一次图集重置后拖垮整帧文本），再删本槽兜底。 */
+        if (!alpha)
+            xpainter_glyph_memo_invalidate_all();
+        xpainter_glyph_memo_drop(self->m_gpuBackend, glyphKey,
+                                 width, height);
         if (alpha) XFree_System(alpha);
         return false;
     }
@@ -10474,6 +11335,8 @@ static bool painterGpuDrawText(XPainter* self, int x, int baselineY,
                                 XFONT_BITMAP_MAX_ROW_BYTES];
         PainterBitmapFontTable glyphTable = table;
         XFontGlyphDsc dsc;
+        uint64_t glyphLoadT0;
+        bool glyphLoaded;
         if (*p == '\n') break;
         cp = painter8x16DecodeNext(&p);
         if (cp < 0x20u)
@@ -10481,8 +11344,20 @@ static bool painterGpuDrawText(XPainter* self, int x, int baselineY,
             x += painter8x16Metric(table.m_width, scale);
             continue;
         }
-        if (!painterLoadGlyph(&self->m_state.m_font, cp, &glyphTable, &dsc,
-                              glyphData, sizeof(glyphData)))
+        glyphLoadT0 = xpainter_prof_requested()
+                          ? xpainter_prof_now_ns() : 0;
+        glyphLoaded = painterLoadGlyph(&self->m_state.m_font, cp,
+                                       &glyphTable, &dsc, glyphData,
+                                       sizeof(glyphData));
+        if (xpainter_prof_requested())
+        {
+            /* glyphLoad 段：图集命中时位图拷贝+faceInfo 查询为纯浪费
+               （dsc 元数据 advance/ofs 仍必需）。 */
+            g_xpainterProf.m_glyphLoadNs +=
+                xpainter_prof_now_ns() - glyphLoadT0;
+            ++g_xpainterProf.m_glyphLoadCount;
+        }
+        if (!glyphLoaded)
             continue;
 #if XPAINTER_BACKGROUND_ON && XPAINTER_BRUSH_ON
         if (self->m_state.m_backgroundMode == XPainterBackgroundMode_Opaque &&
@@ -10516,6 +11391,10 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
     if (self && self->m_gpuActive)
     {
+        /* text 段（总口径）：GPU 文本分支全程，内含 clip/flush/glyphLoad/
+           atlas 子段，求和不互斥。 */
+        uint64_t profT0 = xpainter_prof_requested()
+                              ? xpainter_prof_now_ns() : 0;
         /* 下划线/删除线/上划线：GPU 文本快速路径（painterGpuDrawText）
            只画字形、不渲染装饰线（对称于 QFont 语义）；带装饰的文本
            一律走软件光栅局部提交，保证三后端一致（Phase 3.2 GPU 回归
@@ -10525,17 +11404,31 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
                              XFont_overline(&self->m_state.m_font);
         if (!hasDecoration &&
             painterGpuDrawText(self, x, baselineY, utf8, color))
+        {
+            if (xpainter_prof_requested())
+            {
+                g_xpainterProf.m_textNs += xpainter_prof_now_ns() - profT0;
+                ++g_xpainterProf.m_textCount;
+            }
             return true;
+        }
         /* GPU 文本快速路径不支持的形态（复杂变换/多矩形裁剪/
            字体装饰）：软件光栅局部提交。 */
         {
             PainterGpuTextArgs args;
+            bool textOk;
             args.m_x = x;
             args.m_baselineY = baselineY;
             args.m_utf8 = utf8;
             args.m_color = color;
-            return painterGpuSubmitSoftwareCommand(
+            textOk = painterGpuSubmitSoftwareCommand(
                 self, painterGpuDrawTextCommand, &args);
+            if (xpainter_prof_requested())
+            {
+                g_xpainterProf.m_textNs += xpainter_prof_now_ns() - profT0;
+                ++g_xpainterProf.m_textCount;
+            }
+            return textOk;
         }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -11811,12 +12704,15 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
     uint64_t glyphKey;
     bool atlasCached;
     bool glyphAntialias;
+    bool italicShear;
     bool ok;
     if (!self || !self->m_gpuActive || !self->m_gpuBackend ||
         !(scale > 0.0f) || !isfinite(scale))
         return false;
     /* 字形抗锯齿由 TextAntialiasing 渲染提示驱动（与点阵路径一致）。 */
     glyphAntialias = painter8x16CanAntialias(self);
+    /* 合成斜体烘进轮廓（改变覆盖内容）：键 flags 与构建路径共用判定。 */
+    italicShear = XFont_italic(&self->m_state.m_font);
     if (self->m_state.m_compositionMode != XPainterCompositionMode_Source &&
         self->m_state.m_compositionMode != XPainterCompositionMode_SourceOver)
         return false;
@@ -11841,7 +12737,7 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
     {
         if (!painterOutlineBuildPath(face, &self->m_state.m_font, cp, scale,
                                      0.0f, 0.0f, &localPath, &metrics,
-                                     XFont_italic(&self->m_state.m_font)
+                                     italicShear
                                          ? XPAINTER_SYNTHETIC_ITALIC_SHEAR
                                          : 0.0f))
             return false;
@@ -11900,13 +12796,34 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
                                     &contourCapacity);
         return false;
     }
-    /* 图集命中：覆盖图已在 GPU，跳过 CPU 光栅化（alpha 传 NULL）。 */
-    glyphKey = painterGpuGlyphKey(face, cp, scale);
-    /* AA 与二值覆盖内容不同：键混入 AA 标志位隔离两套缓存。 */
-    if (glyphAntialias) glyphKey ^= 0x5A5A5A5A5A5A5A5AULL;
-    atlasCached = XGpuRenderBackend_glyphAtlasContains(self->m_gpuBackend,
-                                                       glyphKey, width,
-                                                       height);
+    /* 图集命中：覆盖图已在 GPU，跳过 CPU 光栅化（alpha 传 NULL）。
+       AA 与斜体都在 flags 通道（斜切改变覆盖内容，与
+       painterOutlineCacheKey 的 italic 位同口径）。 */
+    glyphKey = painterGpuGlyphKey(face, cp, scale,
+                                  painterGpuGlyphFlags(glyphAntialias,
+                                                       italicShear));
+    if (xpainter_glyph_hash_requested() &&
+        xpainter_glyph_memo_get(self->m_gpuBackend, glyphKey,
+                                width, height))
+    {
+        /* 备忘命中：跳过 contains 线性扫（atlas 段不计）。 */
+        atlasCached = true;
+    }
+    else
+    {
+        uint64_t profAtlasT0 = xpainter_prof_requested()
+                                   ? xpainter_prof_now_ns() : 0;
+        atlasCached = XGpuRenderBackend_glyphAtlasContains(
+            self->m_gpuBackend, glyphKey, width, height);
+        if (xpainter_prof_requested())
+        {
+            g_xpainterProf.m_atlasNs += xpainter_prof_now_ns() - profAtlasT0;
+            ++g_xpainterProf.m_atlasCount;
+        }
+        if (atlasCached && xpainter_glyph_hash_requested())
+            xpainter_glyph_memo_put(self->m_gpuBackend, glyphKey,
+                                    width, height);
+    }
     alpha = NULL;
     if (!atlasCached)
     {
@@ -11939,6 +12856,15 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
         x + left, baselineY + top, color, self->m_state.m_opacity,
         self->m_state.m_compositionMode ==
             XPainterCompositionMode_SourceOver);
+    if (!ok)
+    {
+        /* 备忘自愈（同点阵路径）：失败时删槽；alpha==NULL 即条目缺失
+           实证，同时推进图集代次批量作废全表（见点阵路径注）。 */
+        if (!alpha)
+            xpainter_glyph_memo_invalidate_all();
+        xpainter_glyph_memo_drop(self->m_gpuBackend, glyphKey,
+                                 width, height);
+    }
     if (alpha) XFree_System(alpha);
     return ok;
 }
