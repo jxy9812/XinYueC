@@ -23,6 +23,20 @@
 
 #ifndef FUNCTIONFS_DESCRIPTORS_MAGIC_V2
 #define FUNCTIONFS_DESCRIPTORS_MAGIC_V2 3u
+/* 老内核 UAPI 头（<3.14，如本 SDK sysroot 的 3.10.11）只有 v1 描述符：
+ * magic 宏与 v2 头结构同版本引入，缺宏即缺结构体。按内核
+ * include/uapi/linux/usb/functionfs.h 原样补齐布局（本文件仅访问
+ * magic/length/flags 与 sizeof(*head)，计数经 memcpy 追加，与内核
+ * ABI 一致）；新内核头已定义时本块整体跳过，不重复定义。 */
+#include <linux/types.h> /* __le32 */
+struct usb_functionfs_descs_head_v2 {
+	__le32 magic;
+	__le32 length;
+	__le32 flags;
+	__le32 fs_count;
+	__le32 hs_count;
+	__le32 ss_count;
+};
 #endif
 #ifndef FUNCTIONFS_STRINGS_MAGIC
 #define FUNCTIONFS_STRINGS_MAGIC 2u

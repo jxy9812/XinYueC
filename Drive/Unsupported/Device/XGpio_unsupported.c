@@ -12,7 +12,13 @@
 
 #include "XGpio.h"
 
-#if !defined(__linux__) && !(defined(XGPIO_TEST_BACKEND) && XGPIO_TEST_BACKEND)
+/* 门控与 Drive/Posix/Device/XGpio_posix.c 的真后端条件互为镜像：Linux 上
+ * 仅当 <linux/gpio.h> 存在时由真后端提供实现（该 UAPI 头内核 4.8 才有，
+ * 老内核头 sysroot 缺失）；头缺失时本存根接管，两文件任何配置下"有且仅
+ * 有其一"参与编译，保证 XGpio 符号链完整。 */
+#if !(defined(XGPIO_TEST_BACKEND) && XGPIO_TEST_BACKEND) \
+    && (!defined(__linux__) \
+        || (defined(__has_include) && !__has_include(<linux/gpio.h>)))
 
 #include "XMemory.h"
 

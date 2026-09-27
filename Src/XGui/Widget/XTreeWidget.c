@@ -2416,12 +2416,19 @@ static void VXTreeWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     row = xtw_rowAtY(tw, pos.y, NULL);
     if (row >= 0) {
         XTreeWidgetItem* item = tw->m_topItems[row];
+        /* 子项数据先取：itemDoubleClicked 的槽（如文件对话框换目录）
+         * 可能清空/重建整棵树，旧条目指针随即失效——发射后不得再解
+         * 引用 item，否则释放后读 childCount 直接崩溃（真机"返回上级
+         * 即崩"根因）。 */
+        int itemChildCount = item ? (int)item->childCount : -1;
+        bool expandZone = (itemChildCount > 0) && (pos.x < XTW_INDIC_HIT);
+        (void)itemChildCount;
         /* itemDoubleClicked 真实发射点。 */
         XTreeWidget_itemDoubleClicked_signal(tw, row);
         /* 对标 expandsOnDoubleClick：双击指示器之外区域切换展开
          * （指示器区域已由按下事件切换，避免二次翻转）。 */
-        if (tw->m_base.m_expandsOnDoubleClick &&
-            !(item && item->childCount > 0 && pos.x < XTW_INDIC_HIT))
+        if (tw->m_base.m_expandsOnDoubleClick && !expandZone &&
+            row < (int)tw->m_topCount)
             xtw_toggleExpanded(tw, row);
         /* itemActivated 真实发射点（对标平台双击激活语义）。 */
         XTreeWidget_itemActivated_signal(tw, row);

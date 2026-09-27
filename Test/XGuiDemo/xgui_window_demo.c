@@ -44,6 +44,14 @@
 #if XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
 #include "XPlatformNativeWindow.h"
 #endif
+#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
+/* 嵌入式 fbdev 板级引导头：显示驱动注册入口 + 触摸输入驱动注册入口
+ * （两文件经门控宏自行裁剪，XPLATFORM_FBINPUT_ON=0 时后者为空头）。 */
+#include "XPlatformFramebuffer_posix.h"
+#if XPLATFORM_FBINPUT_ON
+#include "XPlatformFbInput_posix.h"
+#endif
+#endif
 #include "XPixmap.h"
 #include "XImage.h"
 #include "XPainter.h"
@@ -3239,6 +3247,43 @@ int main(int argc, char* argv[])
         return rc;
     }
 
+#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
+    /* 面板几何变量（注册后 probe 赋值）；0=非 fbdev/不可用，窗口走
+     * 桌面默认几何。供下方窗口全屏化使用（嵌入式单屏无合成器）。
+     * 注意：必须等下方 useFramebufferDriver 注册完成后再 probe——
+     * active() 在注册前返回 NULL。 */
+    int fbPanelW = 0;
+    int fbPanelH = 0;
+    /* 1.6) 嵌入式 fbdev 板级引导（仅交叉构建注入 XPLATFORM_FBDEV_ON 时
+       编译；桌面 Linux 构建开关缺省为 0，此块预处理裁剪，零影响）：
+       - 显示驱动：GUI 单例就绪后、首窗显示前注册 /dev/fb0 直写驱动
+         （XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16=1 时后备表面与 16 位
+         面板格式一致，present 走 memcpy 直写+pan）；
+       - 触摸输入：evdev 读泵挂入事件分发器轮询链（依赖分发器就绪，
+         故在应用创建之后；设备节点经环境变量 XPLATFORM_FBINPUT_DEVICE
+         定制）。无 /dev/fb0 或 /dev/input/event0 的环境注册失败为
+         预期路径，应用继续以无输入/无上屏方式运行。 */
+    if (XPlatformNativeWindow_useFramebufferDriver(NULL))
+        XPrintf("XGuiWindowDemo: fbdev 显示驱动已注册\n");
+    else
+        XPrintf("XGuiWindowDemo: fbdev 显示驱动不可用（无帧缓冲设备）\n");
+    {
+        const XPlatformDisplayDriverOps* fbOps = XPlatformDisplayDriver_active();
+        XPlatformDisplayInfo fbInfo;
+        if (fbOps && fbOps->probe && fbOps->probe(&fbInfo))
+        {
+            fbPanelW = fbInfo.m_width;
+            fbPanelH = fbInfo.m_height;
+        }
+    }
+#if XPLATFORM_FBINPUT_ON
+    if (XPlatformFbInput_register())
+        XPrintf("XGuiWindowDemo: evdev 触摸输入已注册\n");
+    else
+        XPrintf("XGuiWindowDemo: 触摸输入不可用（无 evdev 设备）\n");
+#endif
+#endif
+
     /* 2) 创建演示窗口并设置标题/几何。show() 会在框架内部惰性创建平台窗口。 */
     win = DemoWin_create();
     if (!win) {
@@ -3264,6 +3309,15 @@ int main(int argc, char* argv[])
         XWidget_setWindowTitle(&win->m_base, title);
         XString_delete_base((XClass*)title);
     }
+#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
+    if (fbPanelW > 0 && fbPanelH > 0)
+    {
+        /* 嵌入式单屏全屏化：帧缓冲无合成器，窗口外区域永远停留在
+         * 上一任应用的残留帧上，窗口必须盖满面板。 */
+        XWidget_setGeometry(&win->m_base, 0, 0, fbPanelW, fbPanelH);
+    }
+    else
+#endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     if (win->m_extPages[0] || win->m_extPages[1] ||
         win->m_extPages[2] || win->m_extPages[3])
@@ -3280,6 +3334,24 @@ int main(int argc, char* argv[])
         XWidget_showMaximized(&win->m_base);
     else
         XWidget_showNormal(&win->m_base);
+#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
+    if (fbPanelW > 0 && fbPanelH > 0)
+    {
+        /* fbdev 全屏化在 show 之后补一次排版：pre-show 的 setGeometry
+         * 只更新几何存值不触发 resizeEvent（平台窗口 show 时才惰性创
+         * 建），show 后的同尺寸 resize 也会因"尺寸未变"被忽略——内容
+         * 区会停留在初始化时的默认宽（真机表现：标题栏全宽、中央内
+         * 容区停在 800 导致右侧黑带）。故这里显式重排 chrome 与内容
+         * 区并重绘一帧，不依赖 resize 事件链。 */
+        XWidget_resize(&win->m_base, fbPanelW, fbPanelH);
+        demo_layout_chrome(win);
+        demo_layout_content(win);
+        /* 绕过了 resizeEvent，必须手动标脏静态场景缓存：否则重绘仍贴
+         * 初始化默认尺寸（800 宽）时缓存的旧场景，内容区右侧是黑带。 */
+        win->m_staticSceneDirty = true;
+        demo_repaint(win);
+    }
+#endif
     XPrintf("XGuiWindowDemo: 屏幕尺寸=%.0fx%.0f\n",
            (double)XWidget_width(&win->m_base),
            (double)XWidget_height(&win->m_base));

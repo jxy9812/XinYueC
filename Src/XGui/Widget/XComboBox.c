@@ -1839,6 +1839,7 @@ static void xcombo_popupShow(XComboBox* self, int rows)
        抓取，qapplication.cpp:3327-3339）——Esc/方向键直达弹层。 */
     XWidget_grabMouse((XWidget*)view);
     XWidget_grabKeyboard((XWidget*)view);
+    }
     if (self->m_grabTimer == XTIMER_INVALID_ID) {
         self->m_grabTimer = XObject_startTimer_ms(
             (XObject*)self, 1u, XTimerType_PreciseTimer);

@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPlatformFramebuffer_posix.c
  * @brief      Linux fbdev 显示驱动模板实现（/dev/fb0 + mmap 直写 +
  *             FBIOPAN_DISPLAY 翻页 + FBIO_WAITFORVSYNC 垂直同步）。
@@ -187,8 +187,10 @@ static bool xpdfb_probeDevice(void)
     g_xpdfbInfo.m_stride = (size_t)fix.line_length;
     g_xpdfbInfo.m_frameBuffer = map;
     g_xpdfbInfo.m_frameBufferSize = mapLen;
-    /* yres_virtual >= 2*yres 才有可翻页的后台缓冲。 */
+    /* yres_virtual >= 2*yres 才有可翻页的后台缓冲；是否启用轮换翻页
+     * 见 XPLATFORM_FBDEV_DOUBLEBUFFERED_ON（默认单缓冲直写）。 */
     g_xpdfbInfo.m_doubleBuffered =
+        XPLATFORM_FBDEV_DOUBLEBUFFERED_ON &&
         var.yres_virtual >= (uint32_t)var.yres * 2u;
     g_xpdfbDeviceReady = true;
     return true;
@@ -302,9 +304,22 @@ static bool xpdfb_cacheSync(XPlatformDisplayCacheMode mode, void* address,
      * invalidate 回调注入模式：默认空钩子由用户注入，不假成功）。
      * 判定板级是否需要覆盖：真机若出现"CPU 明明画了、屏上缺/旧"的
      * 现象，即为非一致性 cached 映射。 */
-    (void)msync(base, len, MS_SYNC); /* 尽力写回页缓存；不据其判定
-                                        CPU cache 状态（见上）。 */
-    return false; /* 占位：未做 CPU cache 同步，不谎报成功。 */
+    /* ARM Linux（非一致性 SoC，如本机全志 A33）：CPU write-back cache
+     * 里的像素对 LCD DMA 不可见，必须显式清 DCache 才能上屏。主线内核
+     * 为用户态映射提供私有 cacheflush 系统调用（__ARM_NR_cacheflush，
+     * 0x0f0002，要求区间属本进程映射——fb mmap 满足）。真机验证：
+     * 调用后"逐步显影/整窗中间态"消失（昆仑通态 A33 2026-09-27）。 */
+#if defined(__arm__)
+    {
+        long rc = syscall(0x0f0002, (unsigned long)base,
+                          (unsigned long)((char*)base + len), 0);
+        if (rc == 0) return true;
+    }
+#endif
+    (void)msync(base, len, MS_SYNC); /* 非 ARM 或系统调用失败：尽力
+                                        写回页缓存；不据其判定 CPU
+                                        cache 状态（见上）。 */
+    return false; /* 未做 CPU cache 同步，不谎报成功。 */
 }
 
 static bool xpdfb_waitVsync(int timeoutMilliseconds)

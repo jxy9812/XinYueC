@@ -6,7 +6,8 @@ project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
 # ---- 裁剪开关转发：命令行 -DX?_ON=0/1 转为全局编译定义 ----
 # （否则 -D 仅入缓存为 UNINITIALIZED，不产生编译定义，"裁剪构建"实际全量编译。）
 option(XGUI_ON "XGui 模块总开关（默认开；-DXGUI_ON=0 关闭）" ON)
-foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON XPLATFORM_FBDEV_ON)
+foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON
+             XPLATFORM_FBDEV_ON XPLATFORM_FBINPUT_ON XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16)
     if(DEFINED ${_xsw})
         set(_xval "${${_xsw}}")
         if(_xval STREQUAL "ON" OR _xval STREQUAL "TRUE")
@@ -170,8 +171,11 @@ if(UNIX AND NOT APPLE)
 
     # Linux AT-SPI 辅助功能后端使用 dbus-1；缺失开发包时自动回退 Drive
     # 存根，嵌入式配置不会引入 D-Bus 依赖。
+    # fbdev 嵌入式构建（XPLATFORM_FBDEV_ON）排除：pkg-config 会在交叉
+    # 环境误抓宿主 x86_64 库传给 ARM 链接器（libdbus-1.so 格式不识别），
+    # 且无窗口系统的 fbdev 上 AT-SPI/fontconfig 均无意义。
     find_package(PkgConfig QUIET)
-    if(PKG_CONFIG_FOUND)
+    if(PKG_CONFIG_FOUND AND NOT XPLATFORM_FBDEV_ON)
         pkg_check_modules(XINYUE_DBUS QUIET dbus-1)
         if(XINYUE_DBUS_FOUND)
             add_compile_definitions(XINYUE_C_HAS_DBUS=1)
@@ -214,6 +218,32 @@ if(UNIX)
             target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_LIBUSB_LIBRARY})
         endif()
     endif()
+endif()
+
+# ==================== pcap 链接项探测（UNIX 分支历史口径无脑链接） ====================
+# UNIX 可执行目标历史上无条件链接 pcap（物理网卡 lwIP 模式 LWIP_USE_PHYSICAL
+# 的依赖，源码默认注释关闭，符号零引用）。桌面通常装有 libpcap；交叉 sysroot
+# （如 MCGS 官方 SDK）多无 pcap。探测缺失时告警并跳过该链接项——不动源码
+# 逻辑（pcap.h 仅在 LWIP_USE_PHYSICAL 手动开启时才被包含，跳过链接不影响
+# 任何现有功能）。FIND_ROOT_PATH_MODE_LIBRARY=ONLY 限定探测只搜 sysroot，
+# 不会误抓宿主 x86 的 libpcap。
+set(XINYUE_UNIX_EXTRA_LIBS "")
+if(UNIX)
+    find_library(XINYUE_PCAP_LIBRARY NAMES pcap)
+    if(XINYUE_PCAP_LIBRARY)
+        list(APPEND XINYUE_UNIX_EXTRA_LIBS pcap)
+    else()
+        message(STATUS "libpcap 未检出（交叉 sysroot 常见）：UNIX 目标跳过 pcap 链接项")
+    endif()
+endif()
+
+# ---- librt（仅 Linux）：glibc < 2.34 时代 shm_open/clock_gettime 等驻留
+#      librt；老 binutils 的 "DSO missing from command line" 严格语义要求
+#      显式列入链接行，否则引用方（如 XDeviceFile_posix_api 的 shm_open）
+#      链接失败。桌面/交叉（如 MCGS SDK glibc 2.26）均适用；macOS/BSD
+#      无 librt，经系统名判断隔离。 ====
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND XINYUE_UNIX_EXTRA_LIBS rt)
 endif()
 
 # ==================== zlib（压缩库）====================
@@ -320,7 +350,7 @@ set_target_properties(${EXPORT_NAME}_Static PROPERTIES
 # Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
 #                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
 else()
     target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
 endif()
@@ -335,7 +365,7 @@ set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Dynamic"
 )
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} m pthread pcap mbedtls lwip zlib fatfs pcre2 sqlite)
+    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite)
 else()
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite)
 endif()
@@ -347,7 +377,7 @@ add_executable(FtpE2E_Test
     "./ftp_e2e_test.c"
 )
 if(UNIX)
-    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
@@ -373,7 +403,7 @@ add_executable(XGuiRegression_Test
     "./Test/XGuiTest/XTouchMultiPointTest.c"
 )
 if(UNIX)
-    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
@@ -386,7 +416,7 @@ add_executable(XLineControl_Acceptance_Test
     "./Test/XGuiTest/XLineControlAcceptance.c"
 )
 if(UNIX)
-    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
@@ -417,7 +447,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND X11_FOUND)
     add_executable(XGuiXdnd_Test
         "./xgui_xdnd_test.c"
     )
-    target_link_libraries(XGuiXdnd_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${X11_LIBRARIES} ${EXPORT_NAME}S)
+    target_link_libraries(XGuiXdnd_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${X11_LIBRARIES} ${EXPORT_NAME}S)
 endif()
 
 # ==================== XGui 统一可视化控件测试程序 ====================
@@ -442,7 +472,7 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_apitest_core.c"
 )
 if(UNIX)
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
@@ -453,7 +483,7 @@ add_executable(XGuiGpu_Test
     "./xgui_gpu_test.c"
 )
 if(UNIX)
-    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()

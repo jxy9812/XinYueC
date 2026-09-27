@@ -148,21 +148,25 @@
 #define XGUI_BACKINGSTORE_RENDER_MODE_DIRECT  1
 #define XGUI_BACKINGSTORE_RENDER_MODE_FULL    2
 #ifndef XGUI_BACKINGSTORE_RENDER_MODE
-#if defined(_WIN32) || (defined(__linux__) && XPLATFORMNATIVEWINDOW_ON)
+#if defined(_WIN32) || (defined(__linux__) && XPLATFORMNATIVEWINDOW_ON && \
+                        !XPLATFORM_FBDEV_ON)
 /* 桌面原生窗口需要持久整帧缓冲：先在完整帧上合成脏区，再一次提交，
  * 与 Qt QBackingStore 的可见帧边界一致。PARTIAL tile 会逐块 present，
- * 在 X11 的高频小区域更新中可见为闪烁；嵌入式目标仍可显式覆写为 PARTIAL。 */
+ * 在 X11 的高频小区域更新中可见为闪烁。 */
 #define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_DIRECT
 #else
-#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
-#endif
+/* 嵌入式 fbdev 直写（XPLATFORM_FBDEV_ON）：FULL = 单持久缓冲 + 每次
+ * 提交整窗。真机校准记录（昆仑通态 A33，2026-09-26/27）：
+ * - DIRECT+2（双缓冲轮换）：增量写导致两缓冲内容不一致，交替闪烁；
+ * - DIRECT+1（单缓冲直写）：影子持久、增量提交，但 paintTree 子控件
+ *   遍历与 flush 时序存在覆盖竞争，导航行/页面内容间歇缺失；
+ * - FULL+1（现行）：整窗合成一次提交，内容恒完整，实测最优。 */
+#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_FULL
 #endif
 
-/* DIRECT/FULL 模式使用的整屏缓冲数量；至少 1，DIRECT 推荐 2。 */
+/* DIRECT/FULL 模式使用的整屏缓冲数量；至少 1，DIRECT 推荐 2。
+ * fbdev 影子缓冲架构下用 1 块：FULL 每次提交整窗，单缓冲足够。 */
 #ifndef XGUI_BACKINGSTORE_BUFFER_COUNT
-#if defined(_WIN32) || (defined(__linux__) && XPLATFORMNATIVEWINDOW_ON)
-#define XGUI_BACKINGSTORE_BUFFER_COUNT 2
-#else
 #define XGUI_BACKINGSTORE_BUFFER_COUNT 1
 #endif
 #endif
@@ -228,8 +232,10 @@
 #undef XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT
 #define XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT 1
 #endif
+/* fbdev 影子缓冲豁免：fb 直写无翻页轮换，双缓冲只会多分配一块
+ * 1.2MB 影子并触发无意义的交替+整搬（昆仑通态 A7 实测）。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_DIRECT && \
-    XGUI_BACKINGSTORE_BUFFER_COUNT < 2
+    !XPLATFORM_FBDEV_ON && XGUI_BACKINGSTORE_BUFFER_COUNT < 2
 #undef XGUI_BACKINGSTORE_BUFFER_COUNT
 #define XGUI_BACKINGSTORE_BUFFER_COUNT 2
 #endif

@@ -17,7 +17,11 @@
 
 #include "XGpio.h"
 
-#if defined(__linux__) && !(defined(XGPIO_TEST_BACKEND) && XGPIO_TEST_BACKEND)
+#if defined(__linux__) && !(defined(XGPIO_TEST_BACKEND) && XGPIO_TEST_BACKEND) \
+    && (!defined(__has_include) || __has_include(<linux/gpio.h>))
+/* <linux/gpio.h>（GPIO chardev UAPI）内核 4.8 才有；老内核头 sysroot
+ * （如 3.10）缺失时本后端整体裁空，由 XGpio_unsupported.c 的镜像门控
+ * 接管（见彼处注释），保证 XGpio 符号链完整。 */
 
 #include "XMemory.h"
 

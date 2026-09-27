@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPlatformFramebuffer_posix.h
  * @brief      Linux fbdev 显示驱动模板（远端规划 §23.4 方向 2）：
  *             /dev/fb0 + mmap 直写 + FBIOPAN_DISPLAY 翻页。
@@ -32,6 +32,17 @@ extern "C" {
 /** @brief fbdev 设备节点默认值（板级可在编译选项覆盖为 /dev/fb1 等）。 */
 #ifndef XPLATFORM_FBDEV_DEVICE
 #define XPLATFORM_FBDEV_DEVICE "/dev/fb0"
+#endif
+
+/** @brief 双缓冲翻页开关（默认 0=单缓冲脏区直写）。面板 yres_virtual
+ *         足够时硬件可翻页，但轮换写要求每次提交前把可见缓冲整帧同步
+ *         进后台缓冲（1024x600x16bpp ≈ 1.2MB/帧），否则两缓冲除脏区外
+ *         内容不同步、翻页后画面在新旧间交替（闪烁）。弱核 SoC 实测
+ *         （单核 Cortex-A7@约600MHz）整帧同步把帧率从 58.6 拖到
+ *         11.7fps，故默认单缓冲直写（仅拷脏区，与 Qt/Embedded fbcon、
+ *         MCGS QWS 同口径）；算力充裕的板子置 1 启用防撕裂翻页。 */
+#ifndef XPLATFORM_FBDEV_DOUBLEBUFFERED_ON
+#define XPLATFORM_FBDEV_DOUBLEBUFFERED_ON 0
 #endif
 
 /**

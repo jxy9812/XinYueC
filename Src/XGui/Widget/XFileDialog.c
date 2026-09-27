@@ -1398,14 +1398,24 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
  *  Windows 盘根 "C:\" 与 "C:" 同串）。 */
 static bool xff_pathSameTailTrim(const char* a, const char* b)
 {
-    size_t la, lb;
+    size_t la, lb, i;
     if (!a || !b) return false;
     la = strlen(a);
     lb = strlen(b);
     while (la > 0 && (a[la - 1] == '/' || a[la - 1] == '\\')) --la;
     while (lb > 0 && (b[lb - 1] == '/' || b[lb - 1] == '\\')) --lb;
     if (la != lb) return false;
-    return la == 0 || XMemcmp(a, b, la) == 0;
+    /* 分隔符/大小写归一逐字符比较：导航条目路径与当前目录可能混用
+     * 正反斜杠（home 拼接 vs XDir 绝对化），Windows 盘符大小写亦异——
+     * 逐字节 XMemcmp 会因分隔符风格误判不同路径（导航高亮不随动）。 */
+    for (i = 0; i < la; ++i) {
+        char ca = (a[i] == '/') ? '\\' : a[i];
+        char cb = (b[i] == '/') ? '\\' : b[i];
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) return false;
+    }
+    return true;
 }
 
 /** @brief 按当前目录同步导航窗格选中行（xff_cdEx 换目录后调用；

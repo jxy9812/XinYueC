@@ -163,5 +163,16 @@ void* XPlatformNativeWindow_nativeConnection(
     return NULL;
 }
 
+/* ==================== 剪贴板后端安装（无平台后端：no-op） ====================
+ * 无窗口系统即无跨进程 Selection/Clipboard 互通：安装退化为空操作，
+ * XClipboard 保持纯进程内行为。契约声明见 XPlatformNativeWindow.h，
+ * 调用点 XGuiApplication_clipboard 仅受 XCLIPBOARD_ON 守卫，平台无关；
+ * X11/Win32 真实实现分别在 Drive/Posix 与 Drive/windows 的
+ * XPlatformNativeWindow_*.c，本桩与彼二者哨兵互斥，保证无后端平台
+ * （如 Linux 未检出 X11 的 fbdev 嵌入式构建）链接完整。 */
+void XPlatformNativeWindow_installClipboardBackend(void)
+{
+}
+
 #endif /* 未提供真实平台实现的哨兵守卫 */
 #endif /* XPLATFORMNATIVEWINDOW_ON */
