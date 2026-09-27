@@ -18,6 +18,7 @@
 #include "XDir.h"
 #include "XSaveFile.h"
 #include "XStringUtils.h"
+#include "XMemory.h"
 #include "XBitmap.h"
 #include "XGeometry.h"
 #include "XAlignment.h"
@@ -24453,6 +24454,70 @@ static void test_label_contract(void)
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
+/** @brief XMemory 全局内存统计契约：分配计数、池口径与开关行为。 */
+static void test_xmemory_statistics_contract(void)
+{
+    XMemoryStatistics before;
+    XMemoryStatistics counted;
+    XMemoryStatistics pooled;
+    XMemoryStatistics freed;
+    XMemoryStatistics systemOnly;
+    XMemoryStatistics poolOnly;
+    XMemoryStatistics hybrid;
+    XMemoryStatistics invalidType;
+    void* systemProbe;
+    void* poolProbe;
+
+#if XMEMORY_STATISTICS_ON
+    XMemory_setStatisticsEnabled(true);
+    expect_true(XMemory_statisticsEnabled(), "内存统计可开启");
+    before = XMemory_statistics();
+    systemProbe = XMalloc_System(4096);
+    expect_true(systemProbe != NULL, "内存统计系统分配探测成功");
+    counted = XMemory_statistics();
+    expect_true(counted.systemBytes >= before.systemBytes + 4096u,
+                "系统分配器包装将分配计入在用字节");
+    poolProbe = XMalloc_MultiPool(64);
+    expect_true(poolProbe != NULL, "内存统计内存池探测成功");
+    pooled = XMemory_statistics();
+    expect_true(pooled.poolTotalBytes > 0u &&
+                    pooled.poolUsedBytes >= 64u &&
+                    pooled.poolUsedBytes <= pooled.poolTotalBytes,
+                "内存池统计报告容量与在用量");
+    systemOnly = XMemory_statistics_2(XMEMORY_TYPE_SYSTEM);
+    expect_true(systemOnly.systemBytes >= before.systemBytes + 4096u &&
+                    systemOnly.poolUsedBytes == 0u &&
+                    systemOnly.poolTotalBytes == 0u,
+                "统计按类型查询：SYSTEM 只含堆口径");
+    poolOnly = XMemory_statistics_2(XMEMORY_TYPE_MULTIPOOL);
+    expect_true(poolOnly.systemBytes == 0u &&
+                    poolOnly.systemPeakBytes == 0u &&
+                    poolOnly.poolUsedBytes == pooled.poolUsedBytes &&
+                    poolOnly.poolTotalBytes == pooled.poolTotalBytes,
+                "统计按类型查询：MULTIPOOL 只含池口径");
+    hybrid = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
+    expect_true(hybrid.systemBytes >= systemOnly.systemBytes &&
+                    hybrid.systemPeakBytes >= systemOnly.systemPeakBytes &&
+                    hybrid.poolUsedBytes == pooled.poolUsedBytes,
+                "统计按类型查询：HYBRID 为两路合计且与聚合快照一致");
+    invalidType = XMemory_statistics_2((XMemoryType)99);
+    expect_true(invalidType.systemBytes == 0u &&
+                    invalidType.poolTotalBytes == 0u,
+                "统计按类型查询：越界类型返回零值快照");
+    XMemory_setStatisticsEnabled(true);
+    XFree_System(systemProbe);
+    XFree_MultiPool(poolProbe);
+    freed = XMemory_statistics();
+    expect_true(freed.systemBytes < counted.systemBytes,
+                "释放后系统在用字节回落");
+    expect_true(freed.poolUsedBytes < pooled.poolUsedBytes,
+                "释放后内存池在用字节回落");
+#else
+    expect_true(!XMemory_statisticsEnabled(),
+                "统计宏裁剪时开关恒关闭且快照恒零");
+#endif
+}
+
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 /** @brief XPerformanceOverlay 位置、统计文本和拖拽固定契约测试。 */
 static void test_performance_overlay_contract(void)
@@ -24584,6 +24649,79 @@ static void test_performance_overlay_contract(void)
                 "性能悬浮层 API 可只显示 FPS");
     XPerformanceOverlay_setFrameTimeVisible(&overlay, true);
     XPerformanceOverlay_setNetworkVisible(&overlay, true);
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    {
+        const char* memUtf8;
+        XPerformanceOverlay_setMemorySource(
+            &overlay, XPerformanceOverlayMemorySource_Auto);
+        expect_true(XPerformanceOverlay_memorySource(&overlay) ==
+                        XPerformanceOverlayMemorySource_Auto,
+                    "性能悬浮层内存来源默认自动（平台优先，库内兜底）");
+        expect_true(XPerformanceOverlay_memoryDisplay(&overlay) ==
+                        XPerformanceOverlayMemoryDisplay_Both,
+                    "性能悬浮层内存显示种类默认两者同显");
+        expect_true(XPerformanceOverlay_isMemoryVisible(&overlay),
+                    "性能悬浮层内存行默认显示");
+        XPerformanceOverlay_setMemoryVisible(&overlay, false);
+        text = XLabel_text(&overlay.m_base);
+        expect_true(!XPerformanceOverlay_isMemoryVisible(&overlay) &&
+                        text != NULL &&
+                        strstr(XString_toUtf8(text), "内存") == NULL,
+                    "性能悬浮层 API 可隐藏内存行");
+        XPerformanceOverlay_setMemoryVisible(&overlay, true);
+        text = XLabel_text(&overlay.m_base);
+        memUtf8 = text ? XString_toUtf8(text) : NULL;
+        expect_true(memUtf8 != NULL && strstr(memUtf8, "内存 ") != NULL,
+                    "性能悬浮层内存行打开即采样显示");
+        /* 只显示百分比：整文本只剩内存行，不含字节量单位。 */
+        XPerformanceOverlay_setNetworkVisible(&overlay, false);
+        XPerformanceOverlay_setFpsVisible(&overlay, false);
+        XPerformanceOverlay_setFrameTimeVisible(&overlay, false);
+        XPerformanceOverlay_setSysStatVisible(&overlay, false);
+        XPerformanceOverlay_setMemoryDisplay(
+            &overlay, XPerformanceOverlayMemoryDisplay_PercentOnly);
+        expect_true(XPerformanceOverlay_memoryDisplay(&overlay) ==
+                        XPerformanceOverlayMemoryDisplay_PercentOnly,
+                    "性能悬浮层可指定内存只显示百分比");
+        text = XLabel_text(&overlay.m_base);
+        memUtf8 = text ? XString_toUtf8(text) : NULL;
+        expect_true(memUtf8 != NULL &&
+                        (strstr(memUtf8, "%") != NULL ||
+                         strstr(memUtf8, "内存 无") != NULL) &&
+                        strstr(memUtf8, " KB") == NULL &&
+                        strstr(memUtf8, " MB") == NULL &&
+                        strstr(memUtf8, " GB") == NULL,
+                    "性能悬浮层内存只显示百分比时不含字节量");
+        /* 只显示准确数：含字节量单位且不含百分号。 */
+        XPerformanceOverlay_setMemoryDisplay(
+            &overlay, XPerformanceOverlayMemoryDisplay_AmountOnly);
+        text = XLabel_text(&overlay.m_base);
+        memUtf8 = text ? XString_toUtf8(text) : NULL;
+        expect_true(memUtf8 != NULL &&
+                        (strstr(memUtf8, "内存 无") != NULL ||
+                         ((strstr(memUtf8, " B") != NULL ||
+                           strstr(memUtf8, " KB") != NULL ||
+                           strstr(memUtf8, " MB") != NULL ||
+                           strstr(memUtf8, " GB") != NULL) &&
+                          strstr(memUtf8, "%") == NULL)),
+                    "性能悬浮层内存只显示准确数时含字节量不含百分比");
+        /* 两者同显 + 格式模板占位符适配。 */
+        XPerformanceOverlay_setMemoryDisplay(
+            &overlay, XPerformanceOverlayMemoryDisplay_Both);
+        XPerformanceOverlay_setFormat(&overlay,
+                                      "{mem}|{memamount}|{mempercent}");
+        text = XLabel_text(&overlay.m_base);
+        memUtf8 = text ? XString_toUtf8(text) : NULL;
+        expect_true(memUtf8 != NULL && strstr(memUtf8, "|") != NULL &&
+                        strstr(memUtf8, "内存") != NULL,
+                    "性能悬浮层格式模板支持内存占位符");
+        XPerformanceOverlay_setFormat(&overlay, NULL);
+        XPerformanceOverlay_setFpsVisible(&overlay, true);
+        XPerformanceOverlay_setFrameTimeVisible(&overlay, true);
+        XPerformanceOverlay_setNetworkVisible(&overlay, true);
+        XPerformanceOverlay_setSysStatVisible(&overlay, true);
+    }
 #endif
 
     expect_true(XPerformanceOverlay_beginDrag(&overlay, 22, 28) &&
@@ -33970,6 +34108,7 @@ int main(void)
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     test_performance_overlay_contract();
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+    test_xmemory_statistics_contract();
 #if XWIDGET_ON && XPUSHBUTTON_ON
     test_pushbutton_contract();
     test_pushbutton_auto_exclusive_group();

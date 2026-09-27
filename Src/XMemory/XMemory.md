@@ -20,6 +20,7 @@ XinYueC内存管理模块提供了灵活的内存管理机制，支持系统内�
 
 - **多种内存类型**：支持系统内存、内存池、混合模式
 - **自定义内存管理器**：可自定义malloc/free/realloc/calloc
+- **全局内存统计**：系统分配器与内存池在用量、峰值和池容量占用率
 - **固定大小内存池**：O(1)时间复杂度的分配和释放
 - **多级内存池**：支持多种块大小的内存管理
 - **线程安全**：内存池操作是线程安全的
@@ -237,6 +238,55 @@ XMemory_setMethod(&myMemory, XMEMORY_TYPE_SYSTEM);
 MyStruct* obj = XNew(MyStruct);
 // ... 使用对象 ...
 XDelete(obj);
+```
+
+---
+
+### 全局内存统计
+
+XMemory 提供跨分配器的全局在用量统计（`XMEMORY_STATISTICS_ON` 控制，默认
+开；置 0 时统计 API 退化为常量零值，系统分配器直通底层原语）。典型用途是
+性能悬浮窗的内存行与嵌入式堆水位监控：
+
+```c
+XMemoryStatistics stats = XMemory_statistics();
+// systemBytes      ：系统分配器（堆）在用字节数
+// systemPeakBytes  ：systemBytes 历史峰值
+// poolUsedBytes    ：全局多级内存池已分配给用户的字节
+// poolTotalBytes   ：内存池总容量（0=池未启用）
+
+XMemoryStatistics poolOnly = XMemory_statistics_2(XMEMORY_TYPE_MULTIPOOL);
+// 传入 XMemoryType 只取对应口径：SYSTEM=堆、MULTIPOOL=池、HYBRID=两路合计
+```
+
+口径说明：
+
+- **系统分配器**：记账在 `XMemory_malloc/free/realloc/calloc` 分发层完成，
+  使用库内跨平台原子变量（`XAtomic`）累计，按分配器的**可用字节数**记账
+  （含对齐开销，略大于请求值）；free/realloc 用同一原语回查块大小，计数
+  自洽，混合模式的系统侧分配自动并入。平台无可用字节原语（Windows
+  `_msize`、glibc/musl/Bionic `malloc_usable_size`、macOS `malloc_size`、
+  FreeBSD 除外）时 `systemBytes` 恒为 0，池口径不受影响。FreeRTOS 的
+  `pvPortMalloc` 路径不计入。
+- **内存池**：聚合全局 `XMultiPool` 的用户容量口径（`totalSize-freeSize`），
+  读取统计不会触发池的惰性创建；池的后备缓冲经系统堆分配，计入 SYSTEM
+  类型的 `systemBytes`，不随 MULTIPOOL 类型返回。
+- **开关与自定义分配器**：统计计数从启用时刻起累计；SYSTEM 类型的堆记
+  账对经 `XMemory_setMethod` 系列换装的自定义分配器同样生效（嵌入式自
+  实现的系统分配可统计），块大小按平台可用字节原语回查，要求自定义分
+  配器的块与平台默认堆兼容（如 malloc 的包装器）。
+- **全部记账代码受 `XMEMORY_STATISTICS_ON` 宏约束**，置 0 时统计 API
+  退化为常量零值，分发层直通底层分配原语。
+
+使用示例：
+
+```c
+XMemory_setStatisticsEnabled(true);   /* 建议在首次分配前开启 */
+XMemoryStatistics stats = XMemory_statistics();
+size_t libraryUsed = stats.systemBytes + stats.poolUsedBytes;
+double poolPercent = stats.poolTotalBytes > 0
+    ? 100.0 * (double)stats.poolUsedBytes / (double)stats.poolTotalBytes
+    : -1.0;   /* 百分比基准只取有固定容量的内存池 */
 ```
 
 ---

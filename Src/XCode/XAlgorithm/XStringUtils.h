@@ -257,6 +257,16 @@ char* XStrcpy(char* dest, const char* src);
 char* XStrncpy(char* dest, const char* src, size_t n);
 
 /**
+ * @brief 复制以 NUL 结尾的字符串到新建堆缓冲（语义同 strdup）。
+ * @param str 源字符串；NULL 时返回 NULL。
+ * @return 使用 XMemory 系统分配器新建的副本；长度越界或分配失败返回
+ *         NULL。
+ * @note 返回值必须使用 XFree_System 释放；本接口是 strdup 语义的库内
+ *       唯一入口（外部依赖约束：禁用 C 标准 strdup）。
+ */
+char* XStrdup(const char* str);
+
+/**
  * @brief 可重入分词器（C 标准 strtok 的库内等价物，无静态状态，线程安全）。
  * @param str 首次调用传入待分词缓冲区；后续调用传 NULL 沿用上次位置。
  * @param delim 分隔符字符集合（其中任一字符均视为分隔符）。

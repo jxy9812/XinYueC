@@ -16,6 +16,7 @@
 #include "XDeviceFile.h"
 #include "XFileDescriptor.h"
 #include "XMemory.h"
+#include "XStringUtils.h"
 #include "XRingBuffer.h"
 #include "XVariant.h"
 #include <errno.h>
@@ -94,14 +95,14 @@ static char** xpp_build_argv(const XProcess* self)
     size_t i;
     char** argv = (char**)XCalloc_System(count + 2, sizeof(char*));
     if (!argv) return NULL;
-    argv[0] = XMemory_strdup(self && self->m_program ? XString_toUtf8(self->m_program) : "");
+    argv[0] = XStrdup(self && self->m_program ? XString_toUtf8(self->m_program) : "");
     if (!argv[0]) {
         xpp_free_string_array(argv);
         return NULL;
     }
     for (i = 0; i < count; ++i) {
         const XString* arg = XStringList_at_base(self->m_arguments, i);
-        argv[i + 1] = XMemory_strdup(arg ? XString_toUtf8(arg) : "");
+        argv[i + 1] = XStrdup(arg ? XString_toUtf8(arg) : "");
         if (!argv[i + 1]) {
             xpp_free_string_array(argv);
             return NULL;
@@ -132,7 +133,7 @@ static char** xpp_build_envp(const XProcess* self)
     }
     for (i = 0; i < count; ++i) {
         const XString* item = XStringList_at_base(list, i);
-        result[i] = XMemory_strdup(item ? XString_toUtf8(item) : "");
+        result[i] = XStrdup(item ? XString_toUtf8(item) : "");
         if (!result[i]) {
             xpp_free_string_array(result);
             XStringList_delete_base(list);

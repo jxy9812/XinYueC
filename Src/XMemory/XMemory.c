@@ -1,5 +1,6 @@
 ﻿#include"XMemory.h"
 #include"XMultiPool.h"
+#include"XAtomic.h"
 #include<string.h>
 // ============ 新增：组合内存池的内部函数 ============
 #define HYBRID_THRESHOLD (256) // 小于等于此阈值使用 XMultiPool，大于则使用系统 malloc
@@ -7,32 +8,215 @@ static void* hybrid_calloc(size_t count, size_t size);
 static void* hybrid_realloc(void* ptr, size_t size);
 static void hybrid_free(void* ptr);
 static void* hybrid_malloc(size_t size);
+
+/* ============================================================================
+ * 全局内存统计（分发层按类型记账 + 池聚合）
+ * ============================================================================ */
+#if XMEMORY_STATISTICS_ON
+
+/* 系统分配器可用字节原语：free/realloc 无法回查请求大小，统一按分配器
+   可用字节数记账（同一块在分配/释放两侧一致），统计值略大于请求字节数。
+   无可用原语的平台不编译系统口径记账，systemBytes 恒为 0（池口径不受
+   影响）。 */
+#if defined(_WIN32)
+#include <malloc.h>
+#define XMEMORY_SYSTEM_USABLE(ptr) ((size_t)_msize(ptr))
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
+#define XMEMORY_SYSTEM_USABLE(ptr) ((size_t)malloc_size(ptr))
+#elif defined(__linux__) || defined(__GLIBC__) || defined(__BIONIC__)
+#include <malloc.h>
+#define XMEMORY_SYSTEM_USABLE(ptr) ((size_t)malloc_usable_size(ptr))
+#elif defined(__FreeBSD__)
+#include <malloc_np.h>
+#define XMEMORY_SYSTEM_USABLE(ptr) ((size_t)malloc_usable_size(ptr))
+#endif
+
+/* 系统口径记账条件：统计宏开启 + 有可用字节原语；记账在
+   XMemory_malloc/free/realloc/calloc 分发层完成，使用库内跨平台原子
+   变量（XAtomic），全部受本宏约束。 */
+#if XMEMORY_STATISTICS_ON && defined(XMEMORY_SYSTEM_USABLE) && \
+    (defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__BSD__))
+#define XMEMORY_STAT_TRACK_SYSTEM 1
+static bool xmemory_stat_enabled = true;
+/* 静态零初始化等价 XAtomic_init(var, 0)，免去运行期初始化时序问题 */
+static XAtomic_size_t xmemory_stat_systemBytes = { 0 };
+static XAtomic_size_t xmemory_stat_systemPeak = { 0 };
+
+static void xmemory_stat_updatePeak(void)
+{
+	size_t current = XAtomic_load_size_t(&xmemory_stat_systemBytes, XAtomic_MemoryOrder_Relaxed);
+	size_t peak = XAtomic_load_size_t(&xmemory_stat_systemPeak, XAtomic_MemoryOrder_Relaxed);
+	while (current > peak &&
+	       !XAtomic_compare_exchange_strong_size_t(&xmemory_stat_systemPeak, &peak,
+	                                               current, XAtomic_MemoryOrder_Release,
+	                                               XAtomic_MemoryOrder_Relaxed)) {
+		/* expected 已被刷新为最新峰值，循环直至峰值不小于当前值 */
+	}
+}
+#endif
+
+#ifndef XMEMORY_STAT_TRACK_SYSTEM
+#define XMEMORY_STAT_TRACK_SYSTEM 0
+#endif
+
+void XMemory_setStatisticsEnabled(bool enabled)
+{
+#if XMEMORY_STAT_TRACK_SYSTEM
+	xmemory_stat_enabled = enabled;
+#else
+	(void)enabled;
+#endif
+}
+
+bool XMemory_statisticsEnabled(void)
+{
+#if XMEMORY_STAT_TRACK_SYSTEM
+	return xmemory_stat_enabled;
+#else
+	return false;
+#endif
+}
+
+XMemoryStatistics XMemory_statistics(void)
+{
+	return XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
+}
+
+XMemoryStatistics XMemory_statistics_2(XMemoryType type)
+{
+	XMemoryStatistics stats;
+	XMemset(&stats, 0, sizeof(stats));
+	if (type < XMEMORY_TYPE_SYSTEM || type > XMEMORY_TYPE_HYBRID)
+		return stats;
+#if XMEMORY_STAT_TRACK_SYSTEM
+	if (type != XMEMORY_TYPE_MULTIPOOL) {
+		stats.systemBytes = XAtomic_load_size_t(&xmemory_stat_systemBytes, XAtomic_MemoryOrder_Relaxed);
+		stats.systemPeakBytes = XAtomic_load_size_t(&xmemory_stat_systemPeak, XAtomic_MemoryOrder_Relaxed);
+	}
+#endif
+	/* 池未惰性创建时不触发创建，避免统计读取自身改变内存布局 */
+	if (type != XMEMORY_TYPE_SYSTEM && XMultiPool_global_isInited()) {
+		XMultiPool* pool = XMultiPool_global();
+		stats.poolTotalBytes = XMultiPool_totalSize(pool);
+		stats.poolUsedBytes = stats.poolTotalBytes - XMultiPool_freeSize(pool);
+	}
+	return stats;
+}
+
+#else /* XMEMORY_STATISTICS_ON == 0 */
+
+void XMemory_setStatisticsEnabled(bool enabled)
+{
+	(void)enabled;
+}
+
+bool XMemory_statisticsEnabled(void)
+{
+	return false;
+}
+
+XMemoryStatistics XMemory_statistics(void)
+{
+	XMemoryStatistics stats;
+	XMemset(&stats, 0, sizeof(stats));
+	return stats;
+}
+
+XMemoryStatistics XMemory_statistics_2(XMemoryType type)
+{
+	XMemoryStatistics stats;
+	XMemset(&stats, 0, sizeof(stats));
+	(void)type;
+	return stats;
+}
+
+#endif /* XMEMORY_STATISTICS_ON */
+
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include<stdlib.h>
 static XMemory global_Memory[] = { {malloc,free,realloc,calloc},{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
-#elif defined(__FreeRTOS__) 
+#elif defined(__FreeRTOS__)
 #include"FreeRTOS.h"
 static XMemory global_Memory = { { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
 #else//裸机环境
 static XMemory global_Memory = { { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
 #endif
 
+#if XMEMORY_STAT_TRACK_SYSTEM
+
+static size_t xmemory_system_usable(void* ptr)
+{
+	return ptr ? XMEMORY_SYSTEM_USABLE(ptr) : 0;
+}
+
+static void xmemory_stat_alloc(size_t block)
+{
+	XAtomic_fetch_add_size_t(&xmemory_stat_systemBytes, block, XAtomic_MemoryOrder_Release);
+	xmemory_stat_updatePeak();
+}
+
+static void xmemory_stat_release(size_t block)
+{
+	if (block)
+		XAtomic_fetch_sub_size_t(&xmemory_stat_systemBytes, block, XAtomic_MemoryOrder_Release);
+}
+
+static void xmemory_stat_realloc(size_t oldBlock, size_t newBlock)
+{
+	if (newBlock >= oldBlock)
+		XAtomic_fetch_add_size_t(&xmemory_stat_systemBytes, newBlock - oldBlock, XAtomic_MemoryOrder_Release);
+	else
+		XAtomic_fetch_sub_size_t(&xmemory_stat_systemBytes, oldBlock - newBlock, XAtomic_MemoryOrder_Release);
+	xmemory_stat_updatePeak();
+}
+
+#endif /* XMEMORY_STAT_TRACK_SYSTEM */
+
 void* XMemory_malloc(size_t size, XMemoryType type)
 {
-	return global_Memory[type].malloc(size);
+	void* ptr = global_Memory[type].malloc(size);
+#if XMEMORY_STAT_TRACK_SYSTEM
+	if (type == XMEMORY_TYPE_SYSTEM && ptr && xmemory_stat_enabled)
+		xmemory_stat_alloc(xmemory_system_usable(ptr));
+#endif
+	return ptr;
 }
 void* XMemory_realloc(void* ptr, size_t size, XMemoryType type)
 {
-	return global_Memory[type].realloc(ptr, size);
+	void* newPtr;
+#if XMEMORY_STAT_TRACK_SYSTEM
+	size_t oldBlock = 0;
+	if (type == XMEMORY_TYPE_SYSTEM && xmemory_stat_enabled && ptr)
+		oldBlock = xmemory_system_usable(ptr);
+	newPtr = global_Memory[type].realloc(ptr, size);
+	/* 失败（newPtr 为 NULL 且 size 非零）时原块保持有效，不调整计数；
+	   realloc(ptr, 0) 释放原块并返回 NULL，按释放调整。 */
+	if (type == XMEMORY_TYPE_SYSTEM && xmemory_stat_enabled &&
+	    (newPtr || size == 0))
+		xmemory_stat_realloc(oldBlock, xmemory_system_usable(newPtr));
+#else
+	newPtr = global_Memory[type].realloc(ptr, size);
+#endif
+	return newPtr;
 }
 
 void* XMemory_calloc(size_t count, size_t size, XMemoryType type)
 {
-	return global_Memory[type].calloc(count, size);
+	void* ptr = global_Memory[type].calloc(count, size);
+#if XMEMORY_STAT_TRACK_SYSTEM
+	if (type == XMEMORY_TYPE_SYSTEM && ptr && xmemory_stat_enabled)
+		xmemory_stat_alloc(xmemory_system_usable(ptr));
+#endif
+	return ptr;
 }
 
 void XMemory_free(void* ptr, XMemoryType type)
 {
+#if XMEMORY_STAT_TRACK_SYSTEM
+	if (type == XMEMORY_TYPE_SYSTEM && ptr && xmemory_stat_enabled)
+		xmemory_stat_release(xmemory_system_usable(ptr));
+#endif
 	global_Memory[type].free(ptr);
 }
 void* XMalloc_System(size_t size)
@@ -46,18 +230,6 @@ void* XMalloc_MultiPool(size_t size)
 void* XMalloc_Hybrid(size_t size)
 {
 	return XMemory_malloc(size, XMEMORY_TYPE_HYBRID);
-}
-char* XMemory_strdup(const char* text)
-{
-	size_t length;
-	char* copy;
-	if (!text) return NULL;
-	length = strlen(text);
-	if (length == SIZE_MAX) return NULL;
-	copy = (char*)XMalloc_System(length + 1);
-	if (!copy) return NULL;
-	memcpy(copy, text, length + 1);
-	return copy;
 }
 void* XAlignedMalloc_System(size_t size, size_t alignment)
 {

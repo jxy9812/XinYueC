@@ -93,6 +93,15 @@ double XSystem_platformCpuUsagePercent(void);
  */
 double XSystem_platformGpuUsagePercent(void);
 
+/**
+ * @brief 调用当前平台的系统内存信息读取实现。
+ * @param info 输出结构体；保证非 NULL，成功时写入总量/已用/可用字节数。
+ * @return 读取成功返回 true；平台无查询接口或读取失败返回 false。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用；调用方
+ *       （分发层）保证 XSYSTEM_MEMORY_USAGE_ON 为 1 时才引用。
+ */
+bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info);
+
 #ifdef __cplusplus
 }
 #endif

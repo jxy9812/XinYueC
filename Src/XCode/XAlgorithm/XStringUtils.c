@@ -1,4 +1,5 @@
 ﻿#include "XStringUtils.h"
+#include "XMemory.h"
 #include <string.h>
 #include <math.h>
 static float pow10_float(int n);
@@ -1169,6 +1170,19 @@ char* XStrncpy(char* dest, const char* src, size_t n)
 	}
 	for (; i < n; ++i) dest[i] = '\0';
 	return dest;
+}
+
+char* XStrdup(const char* str)
+{
+	size_t length;
+	char* copy;
+	if (!str) return NULL;
+	length = XStrlen(str);
+	if (length == SIZE_MAX) return NULL;
+	copy = (char*)XMalloc_System(length + 1);
+	if (!copy) return NULL;
+	XMemcpy(copy, str, length + 1);
+	return copy;
 }
 
 char* XStrcat(char* dest, const char* src)

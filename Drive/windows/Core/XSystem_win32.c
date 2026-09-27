@@ -271,4 +271,22 @@ double XSystem_platformGpuUsagePercent(void)
 
 #endif /* XSYSTEM_GPU_USAGE_ON */
 
+#if XSYSTEM_MEMORY_USAGE_ON
+
+bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
+{
+    MEMORYSTATUSEX status;
+    if (!info) return false;
+    status.dwLength = (DWORD)sizeof(status);
+    if (!GlobalMemoryStatusEx(&status)) return false;
+    info->totalBytes = (uint64_t)status.ullTotalPhys;
+    info->availableBytes = (uint64_t)status.ullAvailPhys;
+    info->usedBytes = info->totalBytes > info->availableBytes
+                          ? info->totalBytes - info->availableBytes
+                          : 0u;
+    return info->totalBytes > 0u;
+}
+
+#endif /* XSYSTEM_MEMORY_USAGE_ON */
+
 #endif /* defined(_WIN32) */

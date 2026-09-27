@@ -53,7 +53,7 @@ static size_t performanceOverlay_netText(const XPerformanceOverlay* self,
     return (size_t)n < cap ? (size_t)n : cap - 1u;
 }
 
-#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON || XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
 /** @brief 使用率格式化：负值（无基线/不支持）输出 "-"。 */
 static void performanceOverlay_percentText(double value, char* buf,
                                            size_t cap)
@@ -64,6 +64,115 @@ static void performanceOverlay_percentText(double value, char* buf,
         XSnprintf(buf, cap, "%.1f%%", value);
 }
 #endif
+
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+/** @brief 字节数格式化：自动选 B/KB/MB/GB 单位（1024 进制，同网络速率口径）。 */
+static void performanceOverlay_amountText(uint64_t bytes, char* buf,
+                                          size_t cap)
+{
+    double value = (double)bytes;
+    if (bytes < 1024u)
+        XSnprintf(buf, cap, "%u B", (unsigned)bytes);
+    else if (bytes < (1024u * 1024u))
+        XSnprintf(buf, cap, "%.1f KB", value / 1024.0);
+    else if (bytes < (1024ull * 1024ull * 1024ull))
+        XSnprintf(buf, cap, "%.1f MB", value / (1024.0 * 1024.0));
+    else
+        XSnprintf(buf, cap, "%.1f GB", value / (1024.0 * 1024.0 * 1024.0));
+}
+
+/** @brief 准确数文本：已用[/总量]；总量的单位独立换算。 */
+static void performanceOverlay_usedTotalText(const XPerformanceOverlay* self,
+                                             char* buf, size_t cap)
+{
+    char usedBuf[32];
+    performanceOverlay_amountText(self->m_memoryUsedBytes, usedBuf,
+                                  sizeof(usedBuf));
+    if (self->m_memoryTotalBytes > 0u) {
+        char totalBuf[32];
+        performanceOverlay_amountText(self->m_memoryTotalBytes, totalBuf,
+                                      sizeof(totalBuf));
+        XSnprintf(buf, cap, "%s/%s", usedBuf, totalBuf);
+    } else {
+        XSnprintf(buf, cap, "%s", usedBuf);
+    }
+}
+
+/** @brief 内存行文本（默认逐行拼装与格式模板共用）。 */
+static size_t performanceOverlay_memoryText(const XPerformanceOverlay* self,
+                                            char* buf, size_t cap)
+{
+    int n;
+    if (!buf || cap == 0u) return 0u;
+    if (!self->m_memoryValid) {
+        n = XSnprintf(buf, cap, "内存 无");
+    } else if (self->m_memoryDisplay ==
+               XPerformanceOverlayMemoryDisplay_PercentOnly) {
+        char percentText[16];
+        performanceOverlay_percentText(self->m_memoryPercent, percentText,
+                                       sizeof(percentText));
+        n = XSnprintf(buf, cap, "内存 %s", percentText);
+    } else if (self->m_memoryDisplay ==
+               XPerformanceOverlayMemoryDisplay_AmountOnly) {
+        char amountText[80];
+        performanceOverlay_usedTotalText(self, amountText, sizeof(amountText));
+        n = XSnprintf(buf, cap, "内存 %s", amountText);
+    } else {
+        char amountText[80];
+        char percentText[16];
+        performanceOverlay_usedTotalText(self, amountText, sizeof(amountText));
+        performanceOverlay_percentText(self->m_memoryPercent, percentText,
+                                       sizeof(percentText));
+        n = XSnprintf(buf, cap, "内存 %s %s", amountText, percentText);
+    }
+    if (n <= 0) {
+        buf[0] = '\0';
+        return 0u;
+    }
+    return (size_t)n < cap ? (size_t)n : cap - 1u;
+}
+
+/** @brief 按当前来源采样一次内存数据（OS 平台优先，库内统计兜底）。 */
+static void performanceOverlay_sampleMemory(XPerformanceOverlay* self)
+{
+    XSystemMemoryInfo info;
+    bool sampled = false;
+    if (self->m_memorySource != XPerformanceOverlayMemorySource_Library &&
+        XSystem_memoryInfo(&info)) {
+        self->m_memoryUsedBytes = info.usedBytes;
+        self->m_memoryTotalBytes = info.totalBytes;
+        self->m_memoryPercent =
+            info.totalBytes > 0u
+                ? 100.0 * (double)info.usedBytes / (double)info.totalBytes
+                : -1.0;
+        self->m_memoryValid = true;
+        sampled = true;
+    } else if (self->m_memorySource != XPerformanceOverlayMemorySource_System) {
+        /* 库内口径：准确数=系统分配器+内存池在用；百分比只取有固定容量
+           的内存池（系统堆无上限，不参与百分比基准）。 */
+        XMemoryStatistics stats = XMemory_statistics();
+        uint64_t percentTotal = (uint64_t)stats.poolTotalBytes;
+        self->m_memoryUsedBytes = (uint64_t)stats.systemBytes +
+                                  (uint64_t)stats.poolUsedBytes;
+        self->m_memoryTotalBytes = 0u;
+        self->m_memoryPercent =
+            percentTotal > 0u
+                ? 100.0 * (double)(uint64_t)stats.poolUsedBytes /
+                      (double)percentTotal
+                : -1.0;
+        self->m_memoryValid = self->m_memoryUsedBytes > 0u ||
+                              percentTotal > 0u;
+        sampled = true;
+    }
+    if (!sampled) {
+        /* 显式 System 来源且平台不支持：保持最近数据无效显示。 */
+        self->m_memoryValid = false;
+        self->m_memoryUsedBytes = 0u;
+        self->m_memoryTotalBytes = 0u;
+        self->m_memoryPercent = -1.0;
+    }
+}
+#endif /* XGUI_PERFORMANCE_OVERLAY_MEMORY_ON */
 
 /** @brief 模板占位符取值；返回 NULL 表示未知占位符（原样保留）。
  *  @details 指标不可见或被宏裁剪时返回空串（模板作者应配合开关写作）。 */
@@ -115,6 +224,30 @@ static const char* performanceOverlay_placeholder(
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
         if (self->m_networkVisible) {
             performanceOverlay_netText(self, scratch, scratchCap);
+            return scratch;
+        }
+#endif
+        return "";
+    }
+    if (KEY_IS("mem") || KEY_IS("memamount") || KEY_IS("mempercent")) {
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+        if (self->m_memoryVisible) {
+            if (KEY_IS("mem")) {
+                performanceOverlay_memoryText(self, scratch, scratchCap);
+                return scratch;
+            }
+            if (self->m_memoryValid) {
+                if (KEY_IS("memamount")) {
+                    performanceOverlay_usedTotalText(self, scratch,
+                                                     scratchCap);
+                    return scratch;
+                }
+                performanceOverlay_percentText(self->m_memoryPercent, scratch,
+                                               scratchCap);
+                return scratch;
+            }
+            /* 指标无效：细分占位符与整体 {mem} 的"无"口径保持一致。 */
+            XSnprintf(scratch, scratchCap, KEY_IS("mempercent") ? "-" : "无");
             return scratch;
         }
 #endif
@@ -209,6 +342,18 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
                         ? (size_t)n : sizeof(text) - used - 1;
     }
 #endif
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    if (self->m_memoryVisible) {
+        char memText[96];
+        size_t memLen;
+        if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
+        memLen = performanceOverlay_memoryText(self, memText, sizeof(memText));
+        if (memLen > 0 && used + memLen < sizeof(text)) {
+            memcpy(text + used, memText, memLen);
+            used += memLen;
+        }
+    }
+#endif
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
     if (self->m_networkVisible) {
         char netText[96];
@@ -286,6 +431,10 @@ static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
     self->m_networkTxKbps = other->m_networkTxKbps;
     self->m_cpuPercent = other->m_cpuPercent;
     self->m_gpuPercent = other->m_gpuPercent;
+    self->m_memoryUsedBytes = other->m_memoryUsedBytes;
+    self->m_memoryTotalBytes = other->m_memoryTotalBytes;
+    self->m_memoryPercent = other->m_memoryPercent;
+    self->m_memoryValid = other->m_memoryValid;
     if (self->m_format) {
         XString_delete_base((XClass*)self->m_format);
         self->m_format = NULL;
@@ -298,6 +447,9 @@ static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
     self->m_frameTimeVisible = other->m_frameTimeVisible;
     self->m_networkVisible = other->m_networkVisible;
     self->m_sysStatVisible = other->m_sysStatVisible;
+    self->m_memoryVisible = other->m_memoryVisible;
+    self->m_memoryDisplay = other->m_memoryDisplay;
+    self->m_memorySource = other->m_memorySource;
     self->m_autoFitSize = other->m_autoFitSize;
     self->m_movable = other->m_movable;
     self->m_fixed = other->m_fixed;
@@ -329,6 +481,10 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     self->m_networkTxKbps = other->m_networkTxKbps;
     self->m_cpuPercent = other->m_cpuPercent;
     self->m_gpuPercent = other->m_gpuPercent;
+    self->m_memoryUsedBytes = other->m_memoryUsedBytes;
+    self->m_memoryTotalBytes = other->m_memoryTotalBytes;
+    self->m_memoryPercent = other->m_memoryPercent;
+    self->m_memoryValid = other->m_memoryValid;
     if (self->m_format) XString_delete_base((XClass*)self->m_format);
     self->m_format = other->m_format;
     other->m_format = NULL;
@@ -337,6 +493,9 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     self->m_frameTimeVisible = other->m_frameTimeVisible;
     self->m_networkVisible = other->m_networkVisible;
     self->m_sysStatVisible = other->m_sysStatVisible;
+    self->m_memoryVisible = other->m_memoryVisible;
+    self->m_memoryDisplay = other->m_memoryDisplay;
+    self->m_memorySource = other->m_memorySource;
     self->m_autoFitSize = other->m_autoFitSize;
     self->m_movable = other->m_movable;
     self->m_fixed = other->m_fixed;
@@ -358,10 +517,17 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     other->m_networkTxKbps = 0.0;
     other->m_cpuPercent = -1.0;
     other->m_gpuPercent = -1.0;
+    other->m_memoryUsedBytes = 0;
+    other->m_memoryTotalBytes = 0;
+    other->m_memoryPercent = -1.0;
+    other->m_memoryValid = false;
     other->m_fpsVisible = true;
     other->m_frameTimeVisible = true;
     other->m_networkVisible = true;
     other->m_sysStatVisible = true;
+    other->m_memoryVisible = true;
+    other->m_memoryDisplay = XPerformanceOverlayMemoryDisplay_Both;
+    other->m_memorySource = XPerformanceOverlayMemorySource_Auto;
     other->m_autoFitSize = false;
     other->m_movable = true;
     other->m_fixed = false;
@@ -408,8 +574,13 @@ void XPerformanceOverlay_init(XPerformanceOverlay* self, XWidget* parent,
     self->m_frameTimeVisible = true;
     self->m_networkVisible = true;
     self->m_sysStatVisible = true;
+    self->m_memoryVisible = true;
+    self->m_memoryDisplay = XPerformanceOverlayMemoryDisplay_Both;
+    self->m_memorySource = XPerformanceOverlayMemorySource_Auto;
     self->m_cpuPercent = -1.0;
     self->m_gpuPercent = -1.0;
+    self->m_memoryPercent = -1.0;
+    self->m_memoryValid = false;
     self->m_movable = true;
     XLabel_setMargin(&self->m_base, 4);
     XLabel_setAlignment(&self->m_base, XAlignment_Left | XAlignment_Top);
@@ -561,6 +732,93 @@ bool XPerformanceOverlay_isSysStatVisible(const XPerformanceOverlay* self)
 #else
     (void)self;
     return false;
+#endif
+}
+
+void XPerformanceOverlay_setMemoryVisible(XPerformanceOverlay* self,
+                                          bool visible)
+{
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    if (!self || self->m_memoryVisible == visible) return;
+    self->m_memoryVisible = visible;
+    if (visible) {
+        /* 打开时立即采样一次，本统计窗口即出真值。 */
+        performanceOverlay_sampleMemory(self);
+    }
+    performanceOverlay_updateText(self);
+#else
+    (void)self;
+    (void)visible;
+#endif
+}
+
+bool XPerformanceOverlay_isMemoryVisible(const XPerformanceOverlay* self)
+{
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    return self ? self->m_memoryVisible : false;
+#else
+    (void)self;
+    return false;
+#endif
+}
+
+void XPerformanceOverlay_setMemoryDisplay(
+    XPerformanceOverlay* self, XPerformanceOverlayMemoryDisplay display)
+{
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    if (!self) return;
+    if (display != XPerformanceOverlayMemoryDisplay_AmountOnly &&
+        display != XPerformanceOverlayMemoryDisplay_PercentOnly)
+        display = XPerformanceOverlayMemoryDisplay_Both;
+    if (self->m_memoryDisplay == display) return;
+    self->m_memoryDisplay = display;
+    performanceOverlay_updateText(self);
+#else
+    (void)self;
+    (void)display;
+#endif
+}
+
+XPerformanceOverlayMemoryDisplay XPerformanceOverlay_memoryDisplay(
+    const XPerformanceOverlay* self)
+{
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    return self ? self->m_memoryDisplay
+                : XPerformanceOverlayMemoryDisplay_Both;
+#else
+    (void)self;
+    return XPerformanceOverlayMemoryDisplay_Both;
+#endif
+}
+
+void XPerformanceOverlay_setMemorySource(
+    XPerformanceOverlay* self, XPerformanceOverlayMemorySource source)
+{
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    if (!self) return;
+    if (source != XPerformanceOverlayMemorySource_System &&
+        source != XPerformanceOverlayMemorySource_Library)
+        source = XPerformanceOverlayMemorySource_Auto;
+    if (self->m_memorySource == source) return;
+    self->m_memorySource = source;
+    /* 来源切换改变数据口径：立即按新来源重采样。 */
+    performanceOverlay_sampleMemory(self);
+    performanceOverlay_updateText(self);
+#else
+    (void)self;
+    (void)source;
+#endif
+}
+
+XPerformanceOverlayMemorySource XPerformanceOverlay_memorySource(
+    const XPerformanceOverlay* self)
+{
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    return self ? self->m_memorySource
+                : XPerformanceOverlayMemorySource_Auto;
+#else
+    (void)self;
+    return XPerformanceOverlayMemorySource_Auto;
 #endif
 }
 
@@ -737,6 +995,16 @@ void XPerformanceOverlay_reset(XPerformanceOverlay* self)
     self->m_maxFrameMs = 0.0;
     self->m_cpuPercent = -1.0;
     self->m_gpuPercent = -1.0;
+    self->m_memoryUsedBytes = 0;
+    self->m_memoryTotalBytes = 0;
+    self->m_memoryPercent = -1.0;
+    self->m_memoryValid = false;
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+    /* 内存为快照型指标（非差值），reset 即采样一次，构造/复位后首帧
+       就显示真值；CPU/GPU 等需两次采样的指标仍按统计窗口出值。 */
+    if (self->m_memoryVisible)
+        performanceOverlay_sampleMemory(self);
+#endif
     self->m_networkAvailable = false;
     self->m_networkSampleUsecs = 0;
     self->m_networkRxBytes = 0;
@@ -796,6 +1064,11 @@ void XPerformanceOverlay_updateFrame(XPerformanceOverlay* self,
             self->m_cpuPercent = XSystem_cpuUsagePercent();
             self->m_gpuPercent = XSystem_gpuUsagePercent();
         }
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_MEMORY_ON
+        /* 内存为快照型指标（非差值），同样按统计窗口节奏采样。 */
+        if (self->m_memoryVisible)
+            performanceOverlay_sampleMemory(self);
 #endif
         performanceOverlay_updateText(self);
         self->m_sampleStartUsecs = nowUsecs;

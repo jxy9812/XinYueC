@@ -228,7 +228,8 @@ Continuation update (2026-07-27):
 
 Memory/API continuation update (2026-07-27):
 
-- Added `XMemory_strdup()` to `Src/XMemory/XMemory.h/.c`; it allocates with
+- Added `XStrdup()` (2026-09-28 迁至 `Src/XCode/XAlgorithm/XStringUtils.h/.c`，
+  原名 `XMemory_strdup` 已删除); it allocates with
   `XMalloc_System()` and must be paired with `XFree_System()`.
 - Replaced `strdup`/`XStrdup` use in URL, CAN parser/bus, XDir, and the Windows
   file driver. The obsolete `XStrdup` declaration and implementation were

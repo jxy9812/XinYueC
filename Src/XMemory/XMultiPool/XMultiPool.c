@@ -319,6 +319,10 @@ XMultiPool* XMultiPool_global(void) {
     return global_pool;
 }
 
+bool XMultiPool_global_isInited(void) {
+    return global_pool_inited;
+}
+
 void* XMultiPool_global_malloc(size_t size) {
     if (!global_pool_inited) XMultiPool_initGlobal();
     return XMultiPool_malloc(global_pool, size);

@@ -128,7 +128,8 @@
 | 控制台打印 | `printf` 直出 | `XPrintf`（带输出重定向栈 `XPrintf_outputPush`；底层写出经 stdout 原语） |
 | 时间日期 | `time.h` | `XDateTime`（`Src/XData/XDateTime/`） |
 | 字符分类/转换 | `ctype.h` | `XChar`（`Src/XData/XChar/`） |
-| 动态内存 | `malloc`/`calloc`/`realloc`/`free`/`strdup` | `XMemory`（`Src/XMemory/XMemory.h`）/`XClass_Malloc`（见「内存管理注意事项」） |
+| 动态内存 | `malloc`/`calloc`/`realloc`/`free` | `XMemory`（`Src/XMemory/XMemory.h`）/`XClass_Malloc`（见「内存管理注意事项」） |
+| `strdup` | `XStrdup`（`Src/XCode/XAlgorithm/XStringUtils.h`，经 XMemory 分配器） |
 | 字符串 | `string.h` 字符串函数 | `XString`/`XChar`；`strtok` 用 `XStrtokReentrant`（可重入无静态状态，线程安全，`XStringUtils.h`） |
 | 容器 | 手工裸数组/链表、外部容器库 | `XVarList`/`XVariant` 等库内容器（见「容器与数据结构规范」） |
 
@@ -263,7 +264,7 @@ static void VXExample_copy(XExample* dest, const XExample* src)
     }
     dest->m_value = src->m_value;            // 复制基本类型成员
     if (src->m_data) {                       // 深拷贝动态分配的成员
-        dest->m_data = XMemory_strdup(src->m_data);
+        dest->m_data = XStrdup(src->m_data);
     }
     // 成员也是类对象时，直接调用成员的拷贝函数即可，无需先释放；
     // 成员未初始化时可直接调用成员的拷贝构造。
@@ -801,7 +802,7 @@ XFree_Hybrid(ptr);
 
 // 类型安全分配宏 / strdup 替代
 XExample* obj = (XExample*)XNew(XExample);
-char* text = XMemory_strdup(source);
+char* text = XStrdup(source);
 XFree_System(text);
 ```
 

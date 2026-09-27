@@ -161,14 +161,6 @@ void* XMalloc_MultiPool(size_t size);
 void* XMalloc_Hybrid(size_t size);
 
 /**
- * @brief 复制以 NUL 结尾的 UTF-8 字符串
- * @param text 源字符串，为 NULL 时返回 NULL
- * @return 使用 XMemory 系统分配器创建的副本，失败返回 NULL
- * @note 返回值必须使用 XFree_System 释放
- */
-char* XMemory_strdup(const char* text);
-
-/**
 * @brief 使用系统内存方法申请满足指定对齐要求的内存
 * @param size 申请大小（字节）
 * @param alignment 对齐值，必须为2的幂
@@ -204,6 +196,79 @@ void* XRealloc_Hybrid(void* ptr, size_t size);
 void* XCalloc_System(size_t count, size_t size);
 void* XCalloc_MultiPool(size_t count, size_t size);
 void* XCalloc_Hybrid(size_t count, size_t size);
+
+/* ========================================================================
+ * 全局内存统计
+ * ======================================================================== */
+
+/**
+* @brief 是否编译全局内存统计（系统分配器统计包装与统计聚合同受此宏约束）。
+* @details 置 0 时统计 API 各字段恒为 0、开关为 no-op，系统分配器直通底层
+*          分配原语，嵌入式可完全免包装开销。默认开。
+* @note 可在包含本头文件前或 CXinYueConfig.h 中预定义覆盖。
+*/
+#ifndef XMEMORY_STATISTICS_ON
+#define XMEMORY_STATISTICS_ON 1
+#endif
+
+/**
+* @brief XMemory 全局内存统计快照。
+* @details systemBytes 为系统分配器（堆）口径，poolUsedBytes/poolTotalBytes
+*          为内存池口径；两者相加即库内在用总量。百分比基准只取有固定容量
+*          的内存池（poolUsedBytes/poolTotalBytes），系统堆无固定上限，不参
+*          与百分比基准。
+*/
+typedef struct XMemoryStatistics {
+	size_t systemBytes;     /**< 系统分配器当前在用字节数；按分配器可用字节
+                             数计（含对齐开销，略大于请求值），平台无可用字节原语
+                             或统计关闭时为 0。 */
+	size_t systemPeakBytes; /**< systemBytes 的历史峰值；统计启用期间有效。 */
+	size_t poolUsedBytes;   /**< 内存池已分配给用户的字节数（全局多级内存池口径）。 */
+	size_t poolTotalBytes;  /**< 内存池总容量字节数；0 表示池未启用或容量未知。 */
+} XMemoryStatistics;
+
+/**
+* @brief 设置全局内存统计开关。
+* @param enabled true 开启统计，false 暂停统计。
+* @return 无。
+* @note 统计计数从启用时刻起累计，无法追溯启用前的历史分配；建议在首次
+*       分配前配置。暂停期间的分配/释放在恢复后不补记。SYSTEM 类型的堆
+*       记账对经 XMemory_setMethod 系列换装的自定义分配器同样生效，块大
+*       小按平台可用字节原语回查，要求自定义分配器的块与平台默认堆兼容
+*       （如 malloc 的包装器）；内存池口径不受影响。运行期并发切换开关
+*       与分配操作竞争时按尽力而为处理。
+*/
+void XMemory_setStatisticsEnabled(bool enabled);
+
+/**
+* @brief 查询全局内存统计是否开启。
+* @return 统计开启返回 true；运行时关闭返回 false。
+* @note 宏裁剪（XMEMORY_STATISTICS_ON=0）时恒返回 false。
+*/
+bool XMemory_statisticsEnabled(void);
+
+/**
+* @brief 读取全局内存统计快照。
+* @return 当前统计快照（系统分配器与内存池两路口径齐全）；宏裁剪时各字段
+*         恒为 0。
+* @note 等价于 XMemory_statistics_2(XMEMORY_TYPE_HYBRID)。systemBytes 与
+*       poolUsedBytes 口径不同（堆可用字节 vs 池用户容量），全局多级内存
+*       池的后备缓冲计入 systemBytes，读取本接口不会触发内存池的惰性创建。
+*/
+XMemoryStatistics XMemory_statistics(void);
+
+/**
+* @brief 读取指定内存类型的统计快照。
+* @param type 内存类型；XMEMORY_TYPE_SYSTEM 只含系统分配器（堆）口径，
+*             XMEMORY_TYPE_MULTIPOOL 只含内存池口径，
+*             XMEMORY_TYPE_HYBRID 为两路合计（混合模式的系统侧分配与
+*             SYSTEM 类型共享同一计数，无法按来源拆分）。
+* @return 对应类型的统计快照；未涉及的口径字段为 0，type 越界或宏裁剪时
+*         各字段恒为 0。
+* @note 池的后备缓冲经系统堆分配，计入 SYSTEM 类型的 systemBytes，不随
+*       MULTIPOOL 类型返回；百分比基准同样只取 poolTotalBytes>0 的类型。
+*/
+XMemoryStatistics XMemory_statistics_2(XMemoryType type);
 
 /**
 * @brief 将指定字节序的数据流读取到内存缓冲区，并根据字节序转换

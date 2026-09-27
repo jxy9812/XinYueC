@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSystem.h
  * @brief      系统复位、关机和有序重启的平台抽象接口。
  * @details    本接口没有直接对应的 Qt 类型，只定义跨平台的复位、关机、重启契约，
@@ -228,6 +228,41 @@ double XSystem_cpuUsagePercent(void);
  *       同族，实现位于 Drive（Windows PDH 计数器 / POSIX 存根）。
  */
 double XSystem_gpuUsagePercent(void);
+
+/**
+ * @brief 是否编译系统内存信息采集（分发与 Drive 后端同受此宏约束）。
+ * @details 置 0 时 XSystem_memoryInfo 恒返回 false，平台后端不编译，
+ *          嵌入式免采集开销。默认开。
+ */
+#ifndef XSYSTEM_MEMORY_USAGE_ON
+#define XSYSTEM_MEMORY_USAGE_ON 1
+#endif
+
+/**
+ * @brief 系统内存信息快照。
+ * @details 字段单位均为字节；usedBytes/availableBytes 以 totalBytes 为基准
+ *          （usedBytes + availableBytes = totalBytes）。百分比基准使用
+ *          totalBytes。
+ */
+typedef struct XSystemMemoryInfo {
+    uint64_t totalBytes;     /**< 物理内存总量（字节）。 */
+    uint64_t usedBytes;      /**< 物理内存已用字节数（总量-可用）。 */
+    uint64_t availableBytes; /**< 物理内存可用字节数（含可回收缓存，进程
+                                  实际可申领的量通常大于该值）。 */
+} XSystemMemoryInfo;
+
+/**
+ * @brief 读取系统物理内存信息快照。
+ * @param info 输出结构体；调用方提供存储空间，成功时写入各字段。
+ * @return 读取成功返回 true；info 为空、宏裁剪或平台无查询接口且库内统计
+ *         不可用时返回 false（此时 info 内容未定义，调用方不得读取）。
+ * @note 本接口是上层获取系统内存总量的唯一入口，避免上层直接调用
+ *       GlobalMemoryStatusEx//proc/meminfo 等平台接口；实现位于 Drive
+ *       （Windows GlobalMemoryStatusEx / Linux /proc/meminfo / 存根）。
+ *       无 OS 平台按裁定回落库内 XMemory_statistics：以内存池容量为内存域
+ *       报告池占用；桌面平台的系统物理内存口径与库内分配统计无关。
+ */
+bool XSystem_memoryInfo(XSystemMemoryInfo* info);
 
 #ifdef __cplusplus
 }

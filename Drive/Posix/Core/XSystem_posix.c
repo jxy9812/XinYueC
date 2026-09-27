@@ -132,4 +132,48 @@ double XSystem_platformCpuUsagePercent(void)
 
 #endif /* XSYSTEM_CPU_USAGE_ON */
 
+#if XSYSTEM_MEMORY_USAGE_ON
+
+#include <stdio.h>
+#include <string.h>
+
+bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
+{
+    FILE* f;
+    char line[256];
+    uint64_t totalKib = 0u;
+    uint64_t availableKib = 0u;
+    bool hasTotal = false;
+    bool hasAvailable = false;
+    if (!info) return false;
+    f = fopen("/proc/meminfo", "r");
+    if (!f) return false;
+    /* 行格式："MemTotal:       16384256 kB"；逐行找所需键即可。 */
+    while (!hasTotal || !hasAvailable) {
+        uint64_t value = 0u;
+        char key[32];
+        if (!fgets(line, sizeof(line), f)) break;
+        if (sscanf(line, "%31s %llu", key, (unsigned long long*)&value) != 2)
+            continue;
+        if (!hasTotal && strcmp(key, "MemTotal:") == 0) {
+            totalKib = value;
+            hasTotal = true;
+        } else if (!hasAvailable && strcmp(key, "MemAvailable:") == 0) {
+            availableKib = value;
+            hasAvailable = true;
+        }
+    }
+    fclose(f);
+    if (!hasTotal || totalKib == 0u) return false;
+    /* 老内核缺 MemAvailable 时退化为 MemFree（不含可回收缓存，偏保守）。 */
+    info->totalBytes = totalKib * 1024u;
+    info->availableBytes = (hasAvailable ? availableKib : 0u) * 1024u;
+    info->usedBytes = info->totalBytes > info->availableBytes
+                          ? info->totalBytes - info->availableBytes
+                          : 0u;
+    return true;
+}
+
+#endif /* XSYSTEM_MEMORY_USAGE_ON */
+
 #endif /* defined(__linux__) */

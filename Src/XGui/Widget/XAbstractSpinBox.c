@@ -117,7 +117,7 @@ static void spinbox_forwardEditingFinished(XObject* sender, XVarList* args)
 /** @brief 复制字符串到自管缓冲（NULL 输入按空串）。 */
 static char* spinbox_strdup(const char* text)
 {
-    return XMemory_strdup(text ? text : "");
+    return XStrdup(text ? text : "");
 }
 
 /** @brief 释放自管字符串并置 NULL。 */

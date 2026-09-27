@@ -331,6 +331,14 @@ void* XMultiPool_global_realloc(void* ptr, size_t size);
  */
 void XMultiPool_global_free(void* ptr);
 
+/**
+ * @brief      查询全局内存池是否已完成惰性初始化。
+ * @return     已初始化返回 true；尚未使用过全局池返回 false。
+ * @note       供统计聚合等只读场景使用：false 时读取全局池统计无需也不应
+ *             触发 XMultiPool_global 的惰性创建。
+ */
+bool XMultiPool_global_isInited(void);
+
 #ifdef __cplusplus
 }
 #endif

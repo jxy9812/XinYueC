@@ -128,7 +128,7 @@ typedef enum XLineControlValidatorState
 /**
  * @brief      校验回调（对标 QValidator::validate 的 C 适配钩子）。
  * @param      validator setValidator 传入的不透明校验器对象（借用）。
- * @param      text 输入/输出：指向 UTF-8 堆缓冲（NUL 结尾，XMemory_strdup
+ * @param      text 输入/输出：指向 UTF-8 堆缓冲（NUL 结尾，XStrdup
  *             族分配）的指针；回调可就地修改，或释放旧缓冲并以新堆缓冲
  *             替换（XFree_System 释放旧值）；函数返回后缓冲所有权归控制器。
  * @param      cursor 输入/输出：光标 UTF-8 字节偏移；回调可修正。

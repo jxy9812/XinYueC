@@ -9,6 +9,7 @@
 #include "XDeviceDir.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
+#include "XStringUtils.h"
 #include "XString.h"
 #include "XFileDescriptor.h"  /* XFd_alloc, XFd_free, XFd_handle, XFd_type */
 #include "XAbstractNetIoRing.h"
@@ -939,7 +940,7 @@ bool XDeviceFile_mkdir(const XString* path, bool recursive)
     }
     
     /* 递归创建目录 */
-    char* pathCopy = XMemory_strdup(utf8Path);
+    char* pathCopy = XStrdup(utf8Path);
     if (!pathCopy) return false;
     
     for (char* p = pathCopy; *p; p++) {

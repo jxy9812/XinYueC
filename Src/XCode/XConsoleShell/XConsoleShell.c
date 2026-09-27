@@ -15,6 +15,7 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON
 
 #include "XMemory.h"
+#include "XStringUtils.h"
 #include "XPrintf.h"
 #if XCONSOLE_SHELL_ASYNC_ON
 #include "XCoreApplication.h"
@@ -1439,10 +1440,10 @@ static XConsoleShellDynamicCommand* xcs_dynamic_clone(const XConsoleCommand* sou
     entry = (XConsoleShellDynamicCommand*)XCalloc_System(1, sizeof(*entry));
     if (!entry) return NULL;
     entry->command = *source;
-    entry->command.name = XMemory_strdup(source->name);
-    entry->command.aliases = source->aliases ? XMemory_strdup(source->aliases) : NULL;
-    entry->command.description = source->description ? XMemory_strdup(source->description) : NULL;
-    entry->command.usage = source->usage ? XMemory_strdup(source->usage) : NULL;
+    entry->command.name = XStrdup(source->name);
+    entry->command.aliases = source->aliases ? XStrdup(source->aliases) : NULL;
+    entry->command.description = source->description ? XStrdup(source->description) : NULL;
+    entry->command.usage = source->usage ? XStrdup(source->usage) : NULL;
     if (!entry->command.name || (source->aliases && !entry->command.aliases) ||
         (source->description && !entry->command.description) ||
         (source->usage && !entry->command.usage)) {

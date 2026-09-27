@@ -4,6 +4,7 @@
 #if XCAN_BUS_ON
 #include "XCanBus.h"
 #include "XMemory.h"
+#include "XStringUtils.h"
 #include "XString.h"
 #include <string.h>
 
@@ -130,7 +131,7 @@ bool XCanBus_registerPlugin(XCanBus* canBus, const char* plugin, XCanBusFactory*
 XVector* XCanBus_availableDevices(const XCanBus* canBus, const char* plugin, char** errorMessage)
 {
     if (!canBus || !canBus->m_plugins || !plugin) {
-        if (errorMessage) *errorMessage = XMemory_strdup("Invalid arguments");
+        if (errorMessage) *errorMessage = XStrdup("Invalid arguments");
         return NULL;
     }
 
@@ -144,7 +145,7 @@ XVector* XCanBus_availableDevices(const XCanBus* canBus, const char* plugin, cha
     if (!entry || !entry->m_factory) {
         if (errorMessage) {
             XString* err = XString_create_fmt_utf8("No such plugin: '%s'", plugin);
-            *errorMessage = XMemory_strdup(XString_toUtf8(err));
+            *errorMessage = XStrdup(XString_toUtf8(err));
             XString_delete_base(err);
         }
         return NULL;
@@ -156,7 +157,7 @@ XVector* XCanBus_availableDevices(const XCanBus* canBus, const char* plugin, cha
 XVector* XCanBus_availableDevices_all(const XCanBus* canBus, char** errorMessage)
 {
     if (!canBus || !canBus->m_plugins) {
-        if (errorMessage) *errorMessage = XMemory_strdup("No plugins registered");
+        if (errorMessage) *errorMessage = XStrdup("No plugins registered");
         return NULL;
     }
 
@@ -194,7 +195,7 @@ XCanBusDevice* XCanBus_createDevice(const XCanBus* canBus,
     const char* plugin, const char* interfaceName, char** errorMessage)
 {
     if (!canBus || !canBus->m_plugins || !plugin || !interfaceName) {
-        if (errorMessage) *errorMessage = XMemory_strdup("Invalid arguments");
+        if (errorMessage) *errorMessage = XStrdup("Invalid arguments");
         return NULL;
     }
 
@@ -208,7 +209,7 @@ XCanBusDevice* XCanBus_createDevice(const XCanBus* canBus,
     if (!entry || !entry->m_factory) {
         if (errorMessage) {
             XString* err = XString_create_fmt_utf8("No such plugin: '%s'", plugin);
-            *errorMessage = XMemory_strdup(XString_toUtf8(err));
+            *errorMessage = XStrdup(XString_toUtf8(err));
             XString_delete_base(err);
         }
         return NULL;

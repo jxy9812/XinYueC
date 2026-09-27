@@ -109,7 +109,7 @@ static int spinbox_clamp(const XSpinBox* self, int value)
 
 static char* spinbox_strdup(const char* text)
 {
-    return XMemory_strdup(text ? text : "");
+    return XStrdup(text ? text : "");
 }
 
 static void spinbox_strfree(char** ptext)
@@ -1099,13 +1099,13 @@ char* XSpinBox_cleanText(const XSpinBox* self)
 {
     char stripped[1024];
     const char* text;
-    if (!self) return XMemory_strdup("");
+    if (!self) return XStrdup("");
     text = self->m_base.m_lineEdit
         ? XLineEdit_text(self->m_base.m_lineEdit) : "";
     /* 宽松剥离：前缀/后缀按匹配与否部分剥离；千分位与首尾空白去除。 */
     if (!spinbox_stripText(self, text, stripped, sizeof(stripped), false))
-        return XMemory_strdup(text);
-    return XMemory_strdup(stripped);
+        return XStrdup(text);
+    return XStrdup(stripped);
 }
 
 int XSpinBox_stepType(const XSpinBox* self)

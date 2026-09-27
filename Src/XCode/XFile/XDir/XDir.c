@@ -2,6 +2,7 @@
 #include "XDeviceFile.h"
 #include "XDeviceDir.h"
 #include "XSort.h"
+#include "XStringUtils.h"
 #include "XCompare.h"
 #include "XMemory.h"
 #include <stdlib.h>
@@ -467,7 +468,7 @@ XStringList* XDir_nameFiltersFromString(const XString* nameFilter)
     
     XStringList* result = XStringList_create();
     
-    char* dup = XMemory_strdup(filterUtf8);
+    char* dup = XStrdup(filterUtf8);
     if (!dup) return result;
     
     char* token = strtok(dup, " ;");

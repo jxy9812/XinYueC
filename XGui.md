@@ -48,6 +48,7 @@ XGui 是对标 Qt Widgets 的纯 C GUI 模块，分层如下（平台调用只�
 | 平台 | ✅ | 双源主循环/EWMH flags+MOTIF/屏幕 DPI+热插拔/fbdev 模板（默认关）/位图光标/WarpPointer |
 | 触摸平板 | ✅ 入口 | WSI 入口+控件派发+隐式抓取+touch→mouse 仿真；XI2 合成待嵌入式接入 |
 | 效果 | ✅ 子集 | 不透明度/盒式模糊/投影 + 控件渲染钩子 |
+| 性能悬浮窗 | ✅ | XPerformanceOverlay：FPS/帧耗时/网速/CPU/GPU/内存使用量行（准确数+百分比，显示种类与来源可配：OS 平台经 XSystem_memoryInfo、库内经 XMemory_statistics），格式模板占位符 `{mem}`/`{memamount}`/`{mempercent}`，拖拽/锁定/自动收框 |
 | 待立项 | ❌ | 见 §8 遗留清单（结构改造大件） |
 
 ## 3. 渲染管线

@@ -978,11 +978,11 @@ static XStringList* xff_filterPatterns(const XString* filter)
     lparen = strchr(s, '(');
     rparen = lparen ? strchr(lparen, ')') : NULL;
     if (lparen && rparen && rparen > lparen) {
-        dup = XMemory_strdup(lparen + 1);
+        dup = XStrdup(lparen + 1);
         if (dup && rparen > lparen + 1)
             dup[rparen - lparen - 1] = '\0';
     } else {
-        dup = XMemory_strdup(s);
+        dup = XStrdup(s);
     }
     if (!dup) return out;
     savePtr = NULL;

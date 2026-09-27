@@ -74,4 +74,27 @@ double XSystem_platformGpuUsagePercent(void)
 
 #endif /* XSYSTEM_GPU_USAGE_ON */
 
+#if XSYSTEM_MEMORY_USAGE_ON
+
+#include "XMemory.h"
+
+bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
+{
+    XMemoryStatistics stats;
+    if (!info) return false;
+    /* 无 OS 平台没有系统物理内存查询接口：按裁定回落库内 XMemory 统计，
+       以全局多级内存池的容量为内存域（usedBytes + availableBytes =
+       totalBytes 的契约保持成立）；池未启用时报告不可用。 */
+    stats = XMemory_statistics();
+    if (stats.poolTotalBytes == 0u) return false;
+    info->totalBytes = (uint64_t)stats.poolTotalBytes;
+    info->usedBytes = (uint64_t)stats.poolUsedBytes;
+    info->availableBytes = info->totalBytes > info->usedBytes
+                               ? info->totalBytes - info->usedBytes
+                               : 0u;
+    return true;
+}
+
+#endif /* XSYSTEM_MEMORY_USAGE_ON */
+
 #endif /* !defined(__linux__) && !defined(_WIN32) */

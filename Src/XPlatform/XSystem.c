@@ -154,3 +154,18 @@ double XSystem_gpuUsagePercent(void)
     return -1.0;
 #endif
 }
+
+/**
+ * @brief 读取系统物理内存信息（公共分发）。
+ * @param info 输出结构体；成功时写入各字段。
+ * @return 成功返回 true；info 为空、宏裁剪或平台无查询接口时返回 false。
+ */
+bool XSystem_memoryInfo(XSystemMemoryInfo* info)
+{
+    if (!info) return false;
+#if XSYSTEM_MEMORY_USAGE_ON && XPLATFORM_HAS_OS
+    return XSystem_platformMemoryInfo(info);
+#else
+    return false;
+#endif
+}

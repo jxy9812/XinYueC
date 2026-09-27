@@ -5,6 +5,7 @@
  ******************************************************************************/
 #include "XUrl.h"
 #include "XMemory.h"
+#include "XStringUtils.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -722,7 +723,7 @@ XString* XUrl_toDisplayString(const XUrl* self, int options)
     if (!self) return NULL;
     XString* result = XUrl_toString(self);
     if (!result) return NULL;
-    char* temp = XMemory_strdup(XString_toUtf8(result));
+    char* temp = XStrdup(XString_toUtf8(result));
     if (!temp) { XString_delete_base(result); return NULL; }
     if (options & XUrl_RemoveScheme) {
         const XString* scheme = XUrl_scheme_const(self);
@@ -796,7 +797,7 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     }
     XString* base = XUrl_toString(self);
     if (!base) return;
-    char* baseUtf8 = XMemory_strdup(XString_toUtf8(base));
+    char* baseUtf8 = XStrdup(XString_toUtf8(base));
     XString_delete_base(base);
     if (!baseUtf8) return;
     char* lastSlash = strrchr(baseUtf8, '/');
