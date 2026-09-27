@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XSystem.h
  * @brief      系统复位、关机和有序重启的平台抽象接口。
  * @details    本接口没有直接对应的 Qt 类型，只定义跨平台的复位、关机、重启契约，
@@ -176,6 +176,58 @@ bool XSystem_hasEnvironment(const char* name);
  *       （Posix/Windows/unsupported）。
  */
 int64_t XSystem_pid(void);
+
+/** @brief XSystem_executableFilePath 输出缓冲区的建议容量（含结尾 NUL）。 */
+#define XSYSTEM_EXECUTABLE_PATH_MAX 4096
+
+/**
+ * @brief 读取当前进程可执行文件的完整路径。
+ * @param path 输出缓冲区；成功时写入以 NUL 结尾的路径字符串。
+ * @param cap 缓冲区容量（字节）；0 返回 false。
+ * @return 成功返回 true；path/cap 无效、路径超出容量或当前平台无查询接口
+ *         时返回 false（此时 path 内容未定义，调用方不得读取）。
+ * @note 本接口是上层模块查询自身可执行文件路径的唯一入口，避免上层直接
+ *       调用 GetModuleFileName/readlink 等平台 API；实现位于 Drive
+ *       （Posix/Windows/unsupported）。
+ */
+bool XSystem_executableFilePath(char* path, size_t cap);
+
+/**
+ * @brief 是否编译系统 CPU 使用率采集（分发与 Drive 后端同受此宏约束）。
+ * @details 置 0 时 XSystem_cpuUsagePercent 恒返回 -1，平台后端不编译，
+ *          嵌入式免采集开销。默认开。
+ */
+#ifndef XSYSTEM_CPU_USAGE_ON
+#define XSYSTEM_CPU_USAGE_ON 1
+#endif
+
+/**
+ * @brief 是否编译系统 GPU 使用率采集（分发与 Drive 后端同受此宏约束）。
+ * @details 置 0 时 XSystem_gpuUsagePercent 恒返回 -1，Windows 后端不
+ *          引入 PDH 计数器依赖。默认开。
+ */
+#ifndef XSYSTEM_GPU_USAGE_ON
+#define XSYSTEM_GPU_USAGE_ON 1
+#endif
+
+/**
+ * @brief 读取系统 CPU 使用率（自上次调用以来的增量百分比）。
+ * @return [0,100] 的使用率；首次调用（尚无基线）、宏裁剪或平台无后端
+ *         时返回 -1。
+ * @note 采样式 API：内部保存上次快照，统计窗口=两次调用间隔（性能悬浮
+ *       层 250ms 调一次即得平滑值）。本接口是上层获取系统 CPU 负载的
+ *       唯一入口，避免上层直接调用 GetSystemTimes//proc/stat 等平台接口。
+ */
+double XSystem_cpuUsagePercent(void);
+
+/**
+ * @brief 读取系统 GPU 使用率（自上次调用以来的增量百分比）。
+ * @return [0,100] 的使用率；首次调用（计数器需两次采样）、宏裁剪、平台
+ *         无后端或 GPU 计数器缺失（虚拟机/远程会话）时返回 -1。
+ * @note 采样式 API，统计窗口=两次调用间隔；与 XSystem_cpuUsagePercent
+ *       同族，实现位于 Drive（Windows PDH 计数器 / POSIX 存根）。
+ */
+double XSystem_gpuUsagePercent(void);
 
 #ifdef __cplusplus
 }

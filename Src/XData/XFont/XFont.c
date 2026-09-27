@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XFont.c
  * @brief      XFont 字体类实现（对标 Qt 6.8 QFont）
  * @author     XinYueC 团队
@@ -7,6 +7,8 @@
 #if XFONT_FILE_ON && (XFONT_LVGL8_FILE_ON || XFONT_OUTLINE_FILE_ON)
 #include "XFile.h"
 #include "XByteArray.h"
+#include "XMemory.h"
+#include "XCoreApplication.h"
 #endif /* XFONT_FILE_ON && (XFONT_LVGL8_FILE_ON || XFONT_OUTLINE_FILE_ON) */
 #include <string.h>
 #include <stdio.h>
@@ -382,61 +384,172 @@ static bool XFont_hasXfoSuffix(const char* name)
            (name[length - 1u] == 'o' || name[length - 1u] == 'O');
 }
 
-static bool XFont_outlinePath(const char* family, char* path, size_t pathSize)
+/* .inc 后缀：XFO1 数据的十六进制 C 数组文本形态，与 .xfo 同源等价。 */
+static bool XFont_hasIncSuffix(const char* name)
 {
-    const char* dir = XFONT_EXTERNAL_OUTLINE_FONT_DIR;
     size_t length;
-    int written;
-    const char* p;
-    bool direct = false;
-    if (!family || !family[0] || !path || pathSize == 0u || !dir)
+    if (!name) return false;
+    length = strlen(name);
+    return length >= 4u && name[length - 4u] == '.' &&
+           (name[length - 3u] == 'i' || name[length - 3u] == 'I') &&
+           (name[length - 2u] == 'n' || name[length - 2u] == 'N') &&
+           (name[length - 1u] == 'c' || name[length - 1u] == 'C');
+}
+
+/* 盘符或根路径视为绝对路径（exe 目录兜底只对相对路径追加前缀）。 */
+static bool XFont_isAbsPath(const char* path)
+{
+    if (!path || !path[0])
         return false;
-    for (p = family; *p; ++p)
-        if (*p == '/' || *p == '\\' || *p == ':') { direct = true; break; }
-    if (direct || XFont_hasXfoSuffix(family))
-        written = snprintf(path, pathSize, "%s%s", family,
-                           XFont_hasXfoSuffix(family) ? "" : ".xfo");
-    else
-    {
-        length = strlen(dir);
-        written = snprintf(path, pathSize, "%s%s%s.xfo", dir,
-                           length > 0u && (dir[length - 1u] == '/' ||
-                                           dir[length - 1u] == '\\') ? "" :
-                                                                          "/",
-                           family);
-    }
-    if (written < 0 || (size_t)written >= pathSize)
-    {
-        path[0] = '\0';
+    if (path[0] == '/' || path[0] == '\\')
+        return true;
+    return ((path[0] >= 'A' && path[0] <= 'Z') ||
+            (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':';
+}
+
+static bool XFont_strCopy(char* buf, size_t cap, const char* s)
+{
+    size_t length = strlen(s);
+    if (length + 1u > cap)
         return false;
-    }
+    memcpy(buf, s, length + 1u);
     return true;
 }
 
-static bool XFont_loadXfo1Glyph(const char* filePath, uint32_t codepoint,
-                                XFontOutlineInfo* info,
+/* buf = a/b（a 尾部已有分隔符则不重复）；截断返回 false。 */
+static bool XFont_pathJoin(char* buf, size_t cap, const char* a, const char* b)
+{
+    size_t la = strlen(a);
+    size_t lb = strlen(b);
+    bool sep = la > 0u && a[la - 1u] != '/' && a[la - 1u] != '\\';
+    if (la + (sep ? 1u : 0u) + lb + 1u > cap)
+        return false;
+    memcpy(buf, a, la);
+    if (sep)
+        buf[la] = '/';
+    memcpy(buf + la + (sep ? 1u : 0u), b, lb + 1u);
+    return true;
+}
+
+static bool XFont_pathAppend(char* buf, size_t cap, const char* ext)
+{
+    size_t len = strlen(buf);
+    size_t add = strlen(ext);
+    if (len + add + 1u > cap)
+        return false;
+    memcpy(buf + len, ext, add + 1u);
+    return true;
+}
+
+/* ---- 外挂轮廓字库候选路径枚举 ----
+   直接家族名（含分隔符/冒号，或 .xfo/.inc 后缀）：
+     0 原样（无后缀补 .xfo）→ 1 无后缀补 .inc → 2/3 相对路径再加 exe 目录前缀
+   普通家族名：
+     0/1 配置目录+.xfo/.inc → 2/3 exe 目录+配置目录（配置目录相对时）
+         → 4/5 exe 目录旁+.xfo/.inc
+   截断或不适用的候选跳过；全部失败由调用方按缺文件处理。 */
+typedef struct XFontOutlinePathIter
+{
+    int m_index;
+    bool m_direct;
+    bool m_suffix;
+    bool m_dirRelative;
+    const char* m_family;
+    const char* m_exeDir;
+} XFontOutlinePathIter;
+
+static void XFont_outlinePathIterInit(XFontOutlinePathIter* it,
+                                      const char* family, const char* exeDir)
+{
+    const char* p;
+    const char* dir = XFONT_EXTERNAL_OUTLINE_FONT_DIR;
+    it->m_index = 0;
+    it->m_family = family;
+    it->m_exeDir = exeDir;
+    it->m_direct = false;
+    for (p = family; *p; ++p)
+        if (*p == '/' || *p == '\\' || *p == ':')
+        {
+            it->m_direct = true;
+            break;
+        }
+    it->m_suffix = XFont_hasXfoSuffix(family) || XFont_hasIncSuffix(family);
+    if (it->m_suffix)
+        it->m_direct = true;
+    it->m_dirRelative = dir && dir[0] && !XFont_isAbsPath(dir);
+}
+
+static bool XFont_outlinePathBuild(const XFontOutlinePathIter* it, int idx,
+                                   char* buf, size_t cap)
+{
+    const char* dir = XFONT_EXTERNAL_OUTLINE_FONT_DIR;
+    const char* fam = it->m_family;
+    buf[0] = '\0';
+    if (it->m_direct)
+    {
+        if (idx == 0)
+            return XFont_strCopy(buf, cap, fam) &&
+                   XFont_pathAppend(buf, cap, it->m_suffix ? "" : ".xfo");
+        if (idx == 1)
+            return !it->m_suffix && XFont_strCopy(buf, cap, fam) &&
+                   XFont_pathAppend(buf, cap, ".inc");
+        if (idx == 2)
+            return it->m_exeDir && !XFont_isAbsPath(fam) &&
+                   XFont_pathJoin(buf, cap, it->m_exeDir, fam) &&
+                   XFont_pathAppend(buf, cap, it->m_suffix ? "" : ".xfo");
+        if (idx == 3)
+            return !it->m_suffix && it->m_exeDir && !XFont_isAbsPath(fam) &&
+                   XFont_pathJoin(buf, cap, it->m_exeDir, fam) &&
+                   XFont_pathAppend(buf, cap, ".inc");
+        return false;
+    }
+    if (idx == 0 || idx == 1)
+        return dir && XFont_pathJoin(buf, cap, dir, fam) &&
+               XFont_pathAppend(buf, cap, idx == 0 ? ".xfo" : ".inc");
+    if (idx == 2 || idx == 3)
+    {
+        char rel[XFONT_EXTERNAL_FONT_PATH_MAX];
+        return it->m_exeDir && it->m_dirRelative && dir &&
+               XFont_pathJoin(rel, sizeof(rel), dir, fam) &&
+               XFont_pathJoin(buf, cap, it->m_exeDir, rel) &&
+               XFont_pathAppend(buf, cap, idx == 2 ? ".xfo" : ".inc");
+    }
+    if (idx == 4 || idx == 5)
+        return it->m_exeDir && XFont_pathJoin(buf, cap, it->m_exeDir, fam) &&
+               XFont_pathAppend(buf, cap, idx == 4 ? ".xfo" : ".inc");
+    return false;
+}
+
+static bool XFont_outlinePathNext(XFontOutlinePathIter* it, char* buf,
+                                  size_t cap)
+{
+    while (it->m_index < 6)
+    {
+        int idx = it->m_index++;
+        if (XFont_outlinePathBuild(it, idx, buf, cap) && buf[0])
+            return true;
+    }
+    return false;
+}
+
+static bool XFont_loadXfo1Glyph(const unsigned char* data, size_t size,
+                                uint32_t codepoint, XFontOutlineInfo* info,
                                 XFontOutlineGlyphMetrics* metrics,
                                 const XFontOutlineSink* sink)
 {
-    XByteArray* bytes = NULL;
-    const unsigned char* data;
-    size_t size, cmapOffset, glyphOffset, commandOffset, commandSize;
-    uint16_t cmapCount, glyphCount, glyphId;
+    size_t cmapOffset, glyphOffset, commandOffset, commandSize;
+    uint16_t cmapCount, glyphCount, glyphId, commandCount;
     const unsigned char* entry;
     uint32_t relative;
-    uint16_t commandCount;
-    bool ok;
-    if (!XFont_readFileBytes(filePath, &bytes)) return false;
-    size = XByteArray_size_base((XContainer*)bytes);
-    data = XByteArray_data(bytes);
-    ok = XFont_xfoHeader(data, size, info, &cmapCount, &glyphCount, &cmapOffset,
-                         &glyphOffset, &commandOffset, &commandSize) &&
-         XFont_xfoFindGlyph(data, cmapOffset, cmapCount, glyphCount, codepoint,
-                            &glyphId);
-    if (!ok) goto failed;
+    if (!data || !XFont_xfoHeader(data, size, info, &cmapCount, &glyphCount,
+                                  &cmapOffset, &glyphOffset, &commandOffset,
+                                  &commandSize) ||
+        !XFont_xfoFindGlyph(data, cmapOffset, cmapCount, glyphCount, codepoint,
+                            &glyphId))
+        return false;
     entry = data + glyphOffset + (size_t)glyphId * XFONT_XFO1_GLYPH_ENTRY_SIZE;
     if (XFont_xfoLe32(entry) > (uint32_t)INT_MAX)
-        goto failed;
+        return false;
     if (metrics)
     {
         metrics->advance = (int)XFont_xfoLe32(entry);
@@ -448,30 +561,200 @@ static bool XFont_loadXfo1Glyph(const char* filePath, uint32_t codepoint,
     relative = XFont_xfoLe32(entry + 12);
     commandCount = XFont_xfoLe16(entry + 16);
     if (relative > commandSize || commandCount > XFONT_OUTLINE_MAX_COMMANDS)
-        goto failed;
-    if (!XFont_xfoEmitCommands(data, commandOffset + relative,
-                               commandOffset + commandSize,
-                               commandCount, sink))
-        goto failed;
-    XClass_delete_base((XClass*)bytes);
-    return true;
-failed:
-    XClass_delete_base((XClass*)bytes);
+        return false;
+    return XFont_xfoEmitCommands(data, commandOffset + relative,
+                                 commandOffset + commandSize, commandCount,
+                                 sink);
+}
+
+/* ---- .inc 十六进制文本 → XFO1 二进制 ----
+   语法与生成器（Tools/xfont_compile.py 等）输出严格一致：空白/逗号分隔
+   的 0xHH 字节序列，不含其它记号；解析结果由调用方经 XFont_xfoHeader
+   校验后入缓存。 */
+static bool XFont_hexNibble(char c, unsigned* value)
+{
+    if (c >= '0' && c <= '9') { *value = (unsigned)(c - '0'); return true; }
+    if (c >= 'a' && c <= 'f') { *value = (unsigned)(c - 'a' + 10); return true; }
+    if (c >= 'A' && c <= 'F') { *value = (unsigned)(c - 'A' + 10); return true; }
     return false;
 }
 
-static bool XFont_loadXfo1Info(const char* filePath, XFontOutlineInfo* info)
+static bool XFont_parseIncText(const unsigned char* text, size_t len,
+                               unsigned char** outData, size_t* outSize)
 {
-    XByteArray* bytes = NULL;
-    const unsigned char* data;
-    size_t size;
+    unsigned char* buf;
+    size_t n = 0u;
+    size_t i = 0u;
+    if (!text || len < 8u || !outData || !outSize)
+        return false;
+    /* 最小记号 "0x0," 占 4 字符，len/4 为字节数上界。 */
+    buf = (unsigned char*)XMalloc_System(len / 4u + 16u);
+    if (!buf)
+        return false;
+    while (i < len)
+    {
+        unsigned char c = text[i];
+        unsigned hi, lo;
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ',')
+        {
+            ++i;
+            continue;
+        }
+        if (c != '0' || i + 3u >= len ||
+            (text[i + 1u] != 'x' && text[i + 1u] != 'X') ||
+            !XFont_hexNibble((char)text[i + 2u], &hi) ||
+            !XFont_hexNibble((char)text[i + 3u], &lo))
+            goto failed;
+        buf[n++] = (unsigned char)((hi << 4) | lo);
+        i += 4u;
+    }
+    if (n < 4u)
+        goto failed;
+    *outData = buf;
+    *outSize = n;
+    return true;
+failed:
+    XFree_System(buf);
+    return false;
+}
+
+static bool XFont_exeDir(char* buf, size_t cap)
+{
+    const XString* dir = XCoreApplication_applicationDirPath();
+    const char* utf8;
     bool ok;
-    if (!info || !XFont_readFileBytes(filePath, &bytes)) return false;
-    size = XByteArray_size_base((XContainer*)bytes);
-    data = XByteArray_data(bytes);
-    ok = XFont_xfoHeader(data, size, info, NULL, NULL, NULL, NULL, NULL, NULL);
-    XClass_delete_base((XClass*)bytes);
+    if (!dir)
+        return false;
+    utf8 = XString_toUtf8(dir);
+    ok = utf8 && utf8[0] && strlen(utf8) < cap;
+    if (ok)
+        memcpy(buf, utf8, strlen(utf8) + 1u);
+    XString_delete_base((XClass*)dir);
     return ok;
+}
+
+/* 按候选路径枚举读取家族字库：.inc 先解析成二进制，.xfo 直用；
+   每个候选整读一次（一次性成本，结果进常驻缓存）。 */
+static bool XFont_outlineFamilyLoad(const char* family, unsigned char** outData,
+                                    size_t* outSize)
+{
+    XFontOutlinePathIter it;
+    char exeDir[XFONT_EXTERNAL_FONT_PATH_MAX];
+    char path[XFONT_EXTERNAL_FONT_PATH_MAX];
+    bool hasExeDir = XFont_exeDir(exeDir, sizeof(exeDir));
+    XFont_outlinePathIterInit(&it, family, hasExeDir ? exeDir : NULL);
+    while (XFont_outlinePathNext(&it, path, sizeof(path)))
+    {
+        XByteArray* bytes = NULL;
+        unsigned char* blob = NULL;
+        size_t blobSize = 0u;
+        if (!XFont_readFileBytes(path, &bytes))
+            continue;
+        if (XFont_hasIncSuffix(path))
+        {
+            if (!XFont_parseIncText(XByteArray_data(bytes),
+                                    XByteArray_size_base((XContainer*)bytes),
+                                    &blob, &blobSize))
+                blob = NULL;
+        }
+        else
+        {
+            size_t raw = XByteArray_size_base((XContainer*)bytes);
+            blob = raw ? (unsigned char*)XMalloc_System(raw) : NULL;
+            if (blob)
+            {
+                memcpy(blob, XByteArray_data(bytes), raw);
+                blobSize = raw;
+            }
+        }
+        XClass_delete_base((XClass*)bytes);
+        if (!blob)
+            continue;
+        if (!XFont_xfoHeader(blob, blobSize, NULL, NULL, NULL, NULL, NULL,
+                             NULL, NULL))
+        {
+            XFree_System(blob);
+            continue;
+        }
+        *outData = blob;
+        *outSize = blobSize;
+        return true;
+    }
+    return false;
+}
+
+/* ---- 常驻缓存：家族名 → 已解析 XFO1 字节（负结果同样入缓） ----
+   单写者约定与本模块其它静态缓存一致；文件在进程期内视为不可变。 */
+typedef struct XFontOutlineBlobEntry
+{
+    char m_family[XFONT_EXTERNAL_FONT_PATH_MAX];
+    unsigned char* m_data;
+    size_t m_size;
+    bool m_present;
+    uint32_t m_stamp;
+} XFontOutlineBlobEntry;
+
+static XFontOutlineBlobEntry g_outlineBlob[XFONT_OUTLINE_FILE_CACHE_MAX];
+static uint32_t g_outlineBlobStamp;
+
+static bool XFont_outlineFileBlob(const char* family,
+                                  const unsigned char** outData,
+                                  size_t* outSize)
+{
+    XFontOutlineBlobEntry* slot = NULL;
+    int i;
+    if (!family || !family[0])
+        family = XFONT_DEFAULT_FAMILY;
+    if (strlen(family) >= sizeof(g_outlineBlob[0].m_family))
+        return false;
+    for (i = 0; i < XFONT_OUTLINE_FILE_CACHE_MAX; ++i)
+    {
+        XFontOutlineBlobEntry* e = &g_outlineBlob[i];
+        if (e->m_family[0] && strcmp(e->m_family, family) == 0)
+        {
+            e->m_stamp = ++g_outlineBlobStamp;
+            if (!e->m_present)
+                return false;
+            if (outData) *outData = e->m_data;
+            if (outSize) *outSize = e->m_size;
+            return true;
+        }
+        if (!slot && !e->m_family[0])
+            slot = e;
+    }
+    if (!slot)
+    {
+        uint32_t oldest = 0xFFFFFFFFu;
+        for (i = 0; i < XFONT_OUTLINE_FILE_CACHE_MAX; ++i)
+            if (g_outlineBlob[i].m_stamp < oldest)
+            {
+                oldest = g_outlineBlob[i].m_stamp;
+                slot = &g_outlineBlob[i];
+            }
+        if (slot->m_data)
+            XFree_System(slot->m_data);
+    }
+    slot->m_family[0] = '\0';
+    slot->m_data = NULL;
+    slot->m_size = 0u;
+    slot->m_present = XFont_outlineFamilyLoad(family, &slot->m_data,
+                                              &slot->m_size);
+    if (!slot->m_present)
+    {
+        /* 负结果不入缓：探测可能早于 exe 目录可用或晚于文件落盘（时序
+           敏感），固定负缓存会把瞬时失败放大成永久缺字；正常部署下首
+           探即正缓存，负路径仅缺文件时重复探测（数次 open，可自愈）。 */
+        if (slot->m_data)
+            XFree_System(slot->m_data);
+        slot->m_data = NULL;
+        slot->m_size = 0u;
+        return false;
+    }
+    memcpy(slot->m_family, family, strlen(family) + 1u);
+    slot->m_stamp = ++g_outlineBlobStamp;
+    if (outData) *outData = slot->m_data;
+    if (outSize) *outSize = slot->m_size;
+    return true;
 }
 #endif /* XFONT_OUTLINE_FILE_ON && XFONT_FILE_ON */
 
@@ -482,10 +765,11 @@ bool XFontOutlineFace_fileInfo(const XFont* self, XFontOutlineInfo* info)
     if (!family || !family[0]) family = XFONT_DEFAULT_FAMILY;
 #if XFONT_OUTLINE_FILE_ON && XFONT_FILE_ON
     {
-        char path[XFONT_EXTERNAL_FONT_PATH_MAX];
-        if (XFont_outlinePath(family, path, sizeof(path)) &&
-            XFont_loadXfo1Info(path, info))
-            return true;
+        const unsigned char* data = NULL;
+        size_t size = 0u;
+        if (XFont_outlineFileBlob(family, &data, &size))
+            return XFont_xfoHeader(data, size, info, NULL, NULL, NULL, NULL,
+                                   NULL, NULL);
     }
 #endif
     return false;
@@ -500,13 +784,11 @@ bool XFontOutlineFace_fileLoadGlyph(const XFont* self, uint32_t codepoint,
     if (!family || !family[0]) family = XFONT_DEFAULT_FAMILY;
 #if XFONT_OUTLINE_FILE_ON && XFONT_FILE_ON
     {
-        char path[XFONT_EXTERNAL_FONT_PATH_MAX];
-        if (XFont_outlinePath(family, path, sizeof(path)))
-        {
-            XFontOutlineInfo info;
-            if (XFont_loadXfo1Glyph(path, codepoint, &info, metrics, sink))
-                return true;
-        }
+        const unsigned char* data = NULL;
+        size_t size = 0u;
+        if (XFont_outlineFileBlob(family, &data, &size))
+            return XFont_loadXfo1Glyph(data, size, codepoint, NULL, metrics,
+                                       sink);
     }
 #endif
     return false;
@@ -1161,22 +1443,80 @@ failed:
 }
 #endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
 
+#if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
+/* .bin 存在性探测缓存（按家族名，负结果同样入缓）：XFont_face 对未注册
+   家族每次都探测位图外挂文件，轮廓字库改走外挂加载后默认家族不再注册，
+   无缓存则每帧数千次失败 open。进程期内文件视为不可变。 */
+typedef struct XFontBinProbeEntry
+{
+    char m_family[XFONT_EXTERNAL_FONT_PATH_MAX];
+    XFontBitmapInfo m_info;
+    bool m_present;
+    uint32_t m_stamp;
+} XFontBinProbeEntry;
+static XFontBinProbeEntry g_binProbe[4];
+static uint32_t g_binProbeStamp;
+#endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
+
 bool XFontBitmapFace_fileInfo(const XFont* self, XFontBitmapInfo* info)
 {
     const char* family = self ? XFont_family(self) : XFONT_DEFAULT_FAMILY;
 #if XFONT_FILE_ON && XFONT_LVGL8_FILE_ON
     char filePath[XFONT_EXTERNAL_FONT_PATH_MAX];
     XFontBitmapInfo fileInfo;
+    XFontBinProbeEntry* slot = NULL;
+    int i;
     if (!info)
         return false;
     if (!family || !family[0])
         family = XFONT_DEFAULT_FAMILY;
+    if (strlen(family) < sizeof(g_binProbe[0].m_family))
+    {
+        for (i = 0; i < 4; ++i)
+        {
+            XFontBinProbeEntry* e = &g_binProbe[i];
+            if (e->m_family[0] && strcmp(e->m_family, family) == 0)
+            {
+                e->m_stamp = ++g_binProbeStamp;
+                if (e->m_present)
+                    *info = e->m_info;
+                return e->m_present;
+            }
+            if (!slot && !e->m_family[0])
+                slot = e;
+        }
+        if (!slot)
+        {
+            uint32_t oldest = 0xFFFFFFFFu;
+            for (i = 0; i < 4; ++i)
+                if (g_binProbe[i].m_stamp < oldest)
+                {
+                    oldest = g_binProbe[i].m_stamp;
+                    slot = &g_binProbe[i];
+                }
+        }
+    }
     memset(&fileInfo, 0, sizeof(fileInfo));
-    if (!XFont_externalBinPath(family, filePath, sizeof(filePath)) ||
-        !XFont_load_lvgl_bin_glyph(filePath, 0u, &fileInfo, NULL, NULL, 0u))
-        return false;
-    *info = fileInfo;
-    return true;
+    if (XFont_externalBinPath(family, filePath, sizeof(filePath)) &&
+        XFont_load_lvgl_bin_glyph(filePath, 0u, &fileInfo, NULL, NULL, 0u))
+    {
+        *info = fileInfo;
+        if (slot)
+        {
+            memcpy(slot->m_family, family, strlen(family) + 1u);
+            slot->m_info = fileInfo;
+            slot->m_present = true;
+            slot->m_stamp = ++g_binProbeStamp;
+        }
+        return true;
+    }
+    if (slot)
+    {
+        memcpy(slot->m_family, family, strlen(family) + 1u);
+        slot->m_present = false;
+        slot->m_stamp = ++g_binProbeStamp;
+    }
+    return false;
 #else
     (void)family;
     (void)info;

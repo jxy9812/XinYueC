@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XSystem_posix.c
  * @brief Linux 系统复位、关机和有序重启后端。
  * @details
@@ -69,5 +69,67 @@ int64_t XSystem_platformPid(void)
 {
     return (int64_t)getpid();
 }
+
+bool XSystem_platformExecutableFilePath(char* path, size_t cap)
+{
+    ssize_t n;
+    if (!path || cap < 2u) return false;
+    n = readlink("/proc/self/exe", path, cap - 1u);
+    if (n <= 0 || (size_t)n >= cap) return false;
+    path[n] = '\0';
+    return true;
+}
+
+#if XSYSTEM_CPU_USAGE_ON
+
+#include <stdio.h>
+
+double XSystem_platformCpuUsagePercent(void)
+{
+    static bool s_init = false;
+    static uint64_t s_prev[8];
+    FILE* f;
+    char line[256];
+    uint64_t v[8];
+    uint64_t dTotal;
+    uint64_t dIdleAll;
+    uint64_t dBusy;
+    double percent;
+    int fields;
+    int i;
+    f = fopen("/proc/stat", "r");
+    if (!f) return -1.0;
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        return -1.0;
+    }
+    fclose(f);
+    /* 行格式："cpu  user nice system idle iowait irq softirq steal" */
+    fields = sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+                    (unsigned long long*)&v[0], (unsigned long long*)&v[1],
+                    (unsigned long long*)&v[2], (unsigned long long*)&v[3],
+                    (unsigned long long*)&v[4], (unsigned long long*)&v[5],
+                    (unsigned long long*)&v[6], (unsigned long long*)&v[7]);
+    if (fields < 4) return -1.0;
+    for (i = fields; i < 8; ++i) v[i] = 0u;
+    if (!s_init) {
+        for (i = 0; i < 8; ++i) s_prev[i] = v[i];
+        s_init = true;
+        return -1.0; /* 首次调用只建基线 */
+    }
+    /* 先按旧基线做差，再推进基线。 */
+    dTotal = 0u;
+    for (i = 0; i < 8; ++i) dTotal += v[i] - s_prev[i];
+    dIdleAll = (v[3] - s_prev[3]) + (v[4] - s_prev[4]);
+    for (i = 0; i < 8; ++i) s_prev[i] = v[i];
+    if (dTotal == 0u) return -1.0;
+    dBusy = dTotal > dIdleAll ? dTotal - dIdleAll : 0u;
+    percent = 100.0 * (double)dBusy / (double)dTotal;
+    if (percent < 0.0) percent = 0.0;
+    if (percent > 100.0) percent = 100.0;
+    return percent;
+}
+
+#endif /* XSYSTEM_CPU_USAGE_ON */
 
 #endif /* defined(__linux__) */

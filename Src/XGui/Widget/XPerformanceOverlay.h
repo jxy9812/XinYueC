@@ -1,9 +1,11 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XPerformanceOverlay.h
  * @brief      XGui 性能悬浮层控件。
- * @details    XPerformanceOverlay 继承 XLabel，提供可裁剪的 FPS、帧耗时和
- *             网络下载/上传速率显示。控件本身不创建独立窗口，draw() 将其绘制
- *             到调用方提供的 XPainter 后备缓冲中，适合桌面和嵌入式使用。
+ * @details    XPerformanceOverlay 继承 XLabel，提供可裁剪的 FPS、帧耗时、
+ *             网络下载/上传速率与 CPU/GPU 系统负载显示；支持 Qt 日期时间
+ *             自定义格式思想的输出模板（setFormat：占位符 + \n 转义）。
+ *             控件本身不创建独立窗口，draw() 将其绘制到调用方提供的
+ *             XPainter 后备缓冲中，适合桌面和嵌入式使用。
  *             位置保存在控件几何中，可由调用方指定，也可通过拖拽会话更新。
  ******************************************************************************/
 #ifndef XPERFORMANCEOVERLAY_H
@@ -58,10 +60,15 @@ typedef struct XPerformanceOverlay
     uint64_t m_networkTxBytes;         /**< 网络计数上一次发送总字节数。 */
     double  m_networkRxKbps;           /**< 最近采样周期的下载速率（KiB/s）。 */
     double  m_networkTxKbps;           /**< 最近采样周期的上传速率（KiB/s）。 */
+    double  m_cpuPercent;              /**< 最近采样的系统 CPU 使用率（[0,100]，-1=无基线/不支持）。 */
+    double  m_gpuPercent;              /**< 最近采样的系统 GPU 使用率（[0,100]，-1=无基线/不支持）。 */
+    XString* m_format;                 /**< 自定义输出格式模板；NULL=默认逐行拼装；对象拥有。 */
     uint32_t m_backgroundColor;        /**< 背景 ARGB 颜色。 */
     bool    m_fpsVisible;              /**< 是否显示 FPS。 */
     bool    m_frameTimeVisible;        /**< 是否显示帧耗时。 */
     bool    m_networkVisible;          /**< 是否显示下载/上传速率。 */
+    bool    m_sysStatVisible;          /**< 是否显示 CPU/GPU 系统负载。 */
+    bool    m_autoFitSize;             /**< 是否按文本自然尺寸收框（宽取最宽行、高贴底）。 */
     bool    m_movable;                 /**< 是否允许开始拖拽。 */
     bool    m_fixed;                   /**< 是否锁定当前位置。 */
     bool    m_dragging;                /**< 是否处于拖拽会话。 */
@@ -96,8 +103,9 @@ XPerformanceOverlay* XPerformanceOverlay_create_ex(XMemoryType memory,
 void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
                                        const char* family);
 
-/** @brief 设置悬浮层文字像素高度。 */
-#define XPerformanceOverlay_setTextPixelSize(self, pixelHeight)  XLabel_setTextPixelSize((XLabel*)(self), (pixelHeight))
+/** @brief 设置悬浮层文字像素高度；变更后自动重算贴底高度并刷新文本。 */
+void XPerformanceOverlay_setTextPixelSize(XPerformanceOverlay* self,
+                                          int pixelHeight);
 
 /** @brief 设置是否显示 FPS；编译时裁剪 FPS 时该调用为 no-op。 */
 void XPerformanceOverlay_setFpsVisible(XPerformanceOverlay* self,
@@ -120,6 +128,46 @@ void XPerformanceOverlay_setNetworkVisible(XPerformanceOverlay* self,
 
 /** @brief 查询下载/上传速率是否处于显示状态。 */
 bool XPerformanceOverlay_isNetworkVisible(const XPerformanceOverlay* self);
+
+/** @brief 设置是否显示 CPU/GPU 系统负载行；宏裁剪该能力时为 no-op。 */
+void XPerformanceOverlay_setSysStatVisible(XPerformanceOverlay* self,
+                                           bool visible);
+
+/** @brief 查询 CPU/GPU 系统负载是否处于显示状态；宏裁剪时恒 false。 */
+bool XPerformanceOverlay_isSysStatVisible(const XPerformanceOverlay* self);
+
+/**
+ * @brief 开关按文本自然尺寸自动收框（宽=最宽行文本宽+左右边距，
+ *        高=文字底边贴住下边框线）。
+ * @details 默认关闭（调用方显式 setSize 的尺寸不被改写）；开启后每次
+ *          文本刷新重算宽高，位置跟随由调用方负责（尺寸变化后需自行
+ *          重新锚定）。
+ */
+void XPerformanceOverlay_setAutoFitSize(XPerformanceOverlay* self,
+                                        bool enabled);
+
+/** @brief 查询是否开启文本尺寸自适应收框。 */
+bool XPerformanceOverlay_isAutoFitSize(const XPerformanceOverlay* self);
+
+/**
+ * @brief 设置自定义输出格式模板（对标 QDateTime::toString 的自定义格式思想）。
+ * @details 模板串复制保存；传 NULL 恢复默认逐行拼装（受各 isVisible 开关
+ *          控制）。占位符：{fps}、{framems}、{maxframems}、{cpu}、{gpu}、
+ *          {net}；字面 \n 转义为换行（模板串内真实换行字符亦可）；未知
+ *          占位符原样保留；对应指标不可见或被宏裁剪时占位符替换为空串。
+ *          例："FPS {fps}\nCPU {cpu} GPU {gpu}\n{net}"。
+ * @param self 悬浮层；NULL 时函数不执行任何操作。
+ * @param format 格式模板；NULL 恢复默认逐行拼装。
+ */
+void XPerformanceOverlay_setFormat(XPerformanceOverlay* self,
+                                   const char* format);
+
+/**
+ * @brief 返回当前格式模板的借用指针。
+ * @return 模板 UTF-8 借用指针（生存期至 setFormat/deinit）；未设置
+ *         （默认逐行拼装）返回 NULL。
+ */
+const char* XPerformanceOverlay_format(const XPerformanceOverlay* self);
 
 /**
  * @brief 按九宫格常用位置设置悬浮层。

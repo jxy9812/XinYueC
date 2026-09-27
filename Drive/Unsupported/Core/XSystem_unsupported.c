@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XSystem_unsupported.c
  * @brief 未提供系统复位、关机后端的平台存根。
  * @details
@@ -48,5 +48,30 @@ int64_t XSystem_platformPid(void)
 {
     return 0;
 }
+
+bool XSystem_platformExecutableFilePath(char* path, size_t cap)
+{
+    (void)path;
+    (void)cap;
+    return false;
+}
+
+#if XSYSTEM_CPU_USAGE_ON
+
+double XSystem_platformCpuUsagePercent(void)
+{
+    return -1.0; /* 无 OS 平台无系统负载计数 */
+}
+
+#endif /* XSYSTEM_CPU_USAGE_ON */
+
+#if XSYSTEM_GPU_USAGE_ON
+
+double XSystem_platformGpuUsagePercent(void)
+{
+    return -1.0; /* 无 GPU 概念 */
+}
+
+#endif /* XSYSTEM_GPU_USAGE_ON */
 
 #endif /* !defined(__linux__) && !defined(_WIN32) */

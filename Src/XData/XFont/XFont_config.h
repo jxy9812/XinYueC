@@ -92,17 +92,15 @@
 #endif
 
 /**
- * @brief 是否把内置 XFontOutlineCommon 轮廓字库编译进目标。
- * @details 该开关同时控制 ASCII/标点和 GB2312 一级常用汉字两个数据块；
- *          字库数据约 1.6 MiB，默认关闭以保持基础库体积，桌面端可通过
- *          -DXFONT_BUILTIN_OUTLINE_ON=1 开启，嵌入式按需裁剪。
+ * @brief 是否把 XFontOutlineCommon 轮廓字库数据编译进目标。
+ * @details 该开关同时控制 ASCII/标点和 GB2312 汉字全集（6763 字）两个
+ *          数据块；数据约 3.0 MiB。默认关闭：字库经
+ *          XFONT_EXTERNAL_OUTLINE_FONT_DIR 下的 .inc/.xfo 外挂文件加载
+ *          （见 XFontOutlineFace_fileInfo），免文件系统部署或希望字库
+ *          随固件走时以 -DXFONT_BUILTIN_OUTLINE_ON=1 编入。
  */
 #ifndef XFONT_BUILTIN_OUTLINE_ON
-#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
-#define XFONT_BUILTIN_OUTLINE_ON 1
-#else
 #define XFONT_BUILTIN_OUTLINE_ON 0
-#endif
 #endif
 
 #if !XFONT_OUTLINE_ON
@@ -194,12 +192,21 @@
 #endif
 
 /**
+ * @brief 外挂轮廓字库常驻缓存条目数（按家族名缓存已读入并解析为
+ *        XFO1 二进制的整文件字节）。负结果（缺文件）同样入缓，
+ *        避免 XFont_face 对未注册家族每帧重复 open 探测。
+ */
+#ifndef XFONT_OUTLINE_FILE_CACHE_MAX
+#define XFONT_OUTLINE_FILE_CACHE_MAX 4
+#endif
+
+/**
  * @brief 新建 XFont 未指定家族时使用的默认字体家族名称。
  * @details 默认使用轮廓字库 XFontOutlineCommon（含 ASCII/标点与 GB2312
- *          一级常用汉字，文本渲染默认支持中文）；XFont8x16 点阵仅在轮廓
- *          字库被裁剪时作为回退。可以配置为其它已注册 provider 名称，
- *          例如外挂字库使用不含 ".bin" 后缀的文件名，并由
- *          XFONT_EXTERNAL_FONT_DIR 指定搜索目录。
+ *          汉字全集，文本渲染默认支持中文）；XFont8x16 点阵仅在轮廓
+ *          字库不可用时作为回退。该名称未注册为 provider 时经外挂文件
+ *          解析（XFONT_EXTERNAL_OUTLINE_FONT_DIR 下同名 .xfo/.inc，
+ *          再兑底 exe 目录），也可配置为其它已注册 provider 名称。
  */
 #ifndef XFONT_DEFAULT_FAMILY
 #if XFONT_OUTLINE_ON

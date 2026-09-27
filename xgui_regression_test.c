@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file        xgui_regression_test.c
  * @brief       XGui Qt 对齐统一自动回归测试（无平台 API、无菜单依赖）
  * @details     本文件是普通 XGui 功能的唯一自动化回归入口，集中覆盖图像、编解码、
@@ -519,6 +519,40 @@ static void test_painter_outline_font(void)
                     "XFO1 file glyph parses");
         XFont_deinit_base(&fileFont);
         remove(fileName);
+
+        /* .inc 文本变体：同一 XFO1 固件以生成器的十六进制 C 数组文本
+           形态落盘，走外挂 .inc 解析链加载，结果须与 .xfo 完全一致。 */
+        {
+            const char* incName = "xgui_outline_test.inc";
+            char incText[6 * sizeof(xfo) + 8];
+            size_t incLen = 0;
+            size_t k;
+            XFont incFont;
+            for (k = 0; k < sizeof(xfo); ++k)
+            {
+                int w = snprintf(incText + incLen, sizeof(incText) - incLen,
+                                 "0x%02X, ", xfo[k]);
+                expect_true(w > 0 && (size_t)w < sizeof(incText) - incLen,
+                            "XFO1 .inc 文本生成");
+                incLen += (size_t)w;
+            }
+            expect_true(test_write_binary_file(incName,
+                                               (const uint8_t*)incText,
+                                               incLen, true),
+                        "XFO1 .inc fixture writes");
+            XFont_init(&incFont);
+            XFont_setFamily(&incFont, incName);
+            expect_true(test_font_outline_info(&incFont, &fileInfo) &&
+                            fileInfo.unitsPerEm == 1000,
+                        "XFO1 .inc header parses");
+            expect_true(test_font_outline_load(&incFont, (uint32_t)'A',
+                                               &fileMetrics, NULL) &&
+                            fileMetrics.advance == 1000 &&
+                            fileMetrics.yMax == 800,
+                        "XFO1 .inc glyph parses");
+            XFont_deinit_base(&incFont);
+            remove(incName);
+        }
     }
 #endif /* XFONT_OUTLINE_FILE_ON && XIMAGECODEC_ON */
 

@@ -1,4 +1,4 @@
-﻿/****************************************************************************
+/****************************************************************************
  * @file       XGuiConfig.h
  * @brief      XGui 模块总开关与子功能配置。
  * @details    CXinYueConfig.h 只保留 XGUI_ON 总开关入口；所有 GUI 子开关
@@ -566,6 +566,11 @@
 #ifndef XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
 #define XGUI_PERFORMANCE_OVERLAY_NETWORK_ON 1
 #endif
+/* CPU/GPU 系统负载行（XSystem_cpuUsagePercent/gpuUsagePercent 采样；
+ * 底层采集另受 XSYSTEM_CPU_USAGE_ON/XSYSTEM_GPU_USAGE_ON 约束）。 */
+#ifndef XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+#define XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON 1
+#endif
 #ifndef XGUI_PERFORMANCE_OVERLAY_UPDATE_MS
 #define XGUI_PERFORMANCE_OVERLAY_UPDATE_MS 250
 #endif
@@ -1003,6 +1008,8 @@
 #define XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON 0
 #undef XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
 #define XGUI_PERFORMANCE_OVERLAY_NETWORK_ON 0
+#undef XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+#define XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON 0
 #undef XPLATFORMNATIVEWINDOW_ON
 #define XPLATFORMNATIVEWINDOW_ON 0
 #undef XPLATFORMNATIVEWINDOW_X11_ON

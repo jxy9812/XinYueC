@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       xgui_window_demo.c
  * @brief      XGui GUI 控件统一可视化测试程序（Linux X11 / Windows Win32）。
  * @details    本程序是 GUI 控件的人工可视化验收入口，演示 XGui 完整窗口链路：
@@ -350,6 +350,8 @@ typedef struct DemoWin
     int             m_autoTestFrames;   /**< 自动测试已渲染帧数。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XPerformanceOverlay m_performanceOverlay; /**< 性能悬浮层控件。 */
+    int             m_overlayAnchorW; /**< 上次锚定时的悬浮层宽度（尺寸自适应变化后触发重新锚定贴右边）。 */
+    int             m_overlayAnchorH; /**< 上次锚定时的悬浮层高度（尺寸自适应变化后触发重新锚定贴状态栏）。 */
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
     int64_t m_lastNetworkPollUsecs; /**< 最近一次主机网络计数采样时刻。 */
 #endif
@@ -602,6 +604,28 @@ static void demo_draw_label(XPainter* painter, int x, int y, int width,
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
+/** @brief 性能悬浮层右下锚定：右缘贴齐窗口（右边不留空），底部避让
+ *         状态栏 26px（状态栏固定占窗口底部 26px，悬浮层压上去会被
+ *         状态文本遮挡/互相重绘）。setPresetPosition 的 margin 是 x/y
+ *         单值，无法表达“右贴齐、底留距”，故这里直接算坐标。 */
+static void demo_performance_anchorBottomRight(DemoWin* self)
+{
+    XWidget* base;
+    XRect geo;
+    int x;
+    int y;
+    if (!self) return;
+    base = (XWidget*)&self->m_base;
+    geo = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
+    x = XWidget_width(base) - geo.width;
+    y = XWidget_height(base) - geo.height - 26;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    XPerformanceOverlay_setPosition(&self->m_performanceOverlay, x, y);
+    self->m_overlayAnchorW = geo.width;  /* 记录锚定时尺寸，供每帧检测 */
+    self->m_overlayAnchorH = geo.height;
+}
+
 /** @brief 初始化性能悬浮层；作为顶层子控件参与控件树绘制。 */
 static void demo_performance_init(DemoWin* self)
 {
@@ -611,17 +635,15 @@ static void demo_performance_init(DemoWin* self)
        （见 VDemoWin_mousePressEvent），避免子控件抢先消费事件。 */
     XWidget_setAttribute((XWidget*)&self->m_performanceOverlay,
                          XWidgetAttribute_TransparentForMouseEvents, true);
-    /* 状态栏固定占用窗口底部 26px。把浮层缩至三行文字所需高度，
-       并在状态栏上方保留同样的 26px 间距，避免每帧脏区同时重绘/遮挡
-       状态标签。 */
-    XPerformanceOverlay_setSize(&self->m_performanceOverlay, 210, 50);
+    /* 状态栏固定占用窗口底部 26px。把浮层缩至四行文字所需高度
+       （FPS/帧耗时/CPU·GPU/网络），并在状态栏上方保留同样的 26px
+       间距，避免每帧脏区同时重绘/遮挡状态标签。 */
+    XPerformanceOverlay_setSize(&self->m_performanceOverlay, 210, 70);
+    XPerformanceOverlay_setAutoFitSize(&self->m_performanceOverlay, true);
     XPerformanceOverlay_setFontFamily(&self->m_performanceOverlay,
                                       XGUI_DEMO_DEFAULT_FONT_FAMILY);
     XPerformanceOverlay_setTextPixelSize(&self->m_performanceOverlay, 12);
-    XPerformanceOverlay_setPresetPosition(
-        &self->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-        520, 360, 26); /* 右下角（用户指定）；SizeGrip 按压穿透已由
-                          childAt 跳过 TransparentForMouseEvents 修复 */
+    demo_performance_anchorBottomRight(self); /* 右下角：右贴齐、底避状态栏 */
     XPerformanceOverlay_setFixed(&self->m_performanceOverlay, true);
 }
 
@@ -1386,7 +1408,7 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
     if (timerId == self->m_overlayTimer) {
         /* 空闲闸门下的悬浮层自刷新（XGUI_DEMO_IDLE_OVERLAY_MS=250ms，
            4Hz，对标 Qt 指标浮层低频心跳）：demo_repaint 在静态场景
-           干净时只投递悬浮层自身 210x50 小区域；文本统计窗口同为
+           干净时只投递悬浮层自身 210x70 小区域；文本统计窗口同为
            250ms（XGUI_PERFORMANCE_OVERLAY_UPDATE_MS），指标更新与
            重绘节奏一致。XGUI_DEMO_IDLE_GATE=0 时本定时器不启动。 */
         demo_repaint(self);
@@ -2017,10 +2039,8 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
 #endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
-        XPerformanceOverlay_setPresetPosition(
-            &demo->m_performanceOverlay, XPerformanceOverlayPosition_BottomRight,
-            XWidget_width(self), XWidget_height(self), 26); /* 与 init 同角
-                （BottomRight，用户指定）；按压穿透见 childAt 修复 */
+        demo_performance_anchorBottomRight(demo); /* 与 init 同口径：
+            右贴齐窗口、底部避让状态栏 26px；按压穿透见 childAt 修复 */
     }
 #endif
     demo_repaint(demo);
@@ -2035,6 +2055,15 @@ static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
 #endif
     demo_paintScene((DemoWin*)self, event);
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
+    /* 悬浮层尺寸自适应（文字贴边收框）后，位置需同步右移/下移保持
+       右贴窗口边、底贴状态栏——尺寸与上次锚定值不同才重锚。 */
+    if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
+        XRect ovlGeo = XPerformanceOverlay_geometry(
+            &demo->m_performanceOverlay);
+        if (ovlGeo.width != demo->m_overlayAnchorW ||
+            ovlGeo.height != demo->m_overlayAnchorH)
+            demo_performance_anchorBottomRight(demo);
+    }
     {
         int64_t frameEndUsecs = demo_monotonicUsecs();
         XPerformanceOverlay_updateFrame(&demo->m_performanceOverlay,
@@ -3400,7 +3429,7 @@ int main(int argc, char* argv[])
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
         /* 空闲闸门开启时：悬浮层指标自刷新降频为独立 4Hz 定时器（帧泵
            已被闸门停用，见 demo_framePumpBody）。demo_repaint 在静态
-           场景干净时只投递悬浮层 210x50 小区域，文本经 XLabel 自身
+           场景干净时只投递悬浮层 210x70 小区域，文本经 XLabel 自身
            update 闭环。XGUI_DEMO_IDLE_GATE=0 时不启动（旧口径随帧
            刷新，行为与回退前逐位一致）。 */
         if (g_idleGate) {

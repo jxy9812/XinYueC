@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XSystem_Protected.h
  * @brief      XSystem 内部平台后端契约。
  * @details    本文件没有直接对应的 Qt 类型，仅供 XSystem 公共分发实现和
@@ -66,6 +66,32 @@ bool XSystem_platformHasEnvironment(const char* name);
  * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用。
  */
 int64_t XSystem_platformPid(void);
+
+/**
+ * @brief 调用当前平台的可执行文件路径读取实现。
+ * @param path 输出缓冲区；保证非 NULL 且容量大于 0。
+ * @param cap 缓冲区容量（字节）。
+ * @return 成功写入以 NUL 结尾的完整路径返回 true；平台无此概念、查询失败
+ *         或路径超出容量返回 false。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用。
+ */
+bool XSystem_platformExecutableFilePath(char* path, size_t cap);
+
+/**
+ * @brief 调用当前平台的系统 CPU 使用率采样实现。
+ * @return [0,100] 的增量使用率；首次调用无基线、平台无法采样返回 -1。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用；调用方
+ *       （分发层）保证 XSYSTEM_CPU_USAGE_ON 为 1 时才引用。
+ */
+double XSystem_platformCpuUsagePercent(void);
+
+/**
+ * @brief 调用当前平台的系统 GPU 使用率采样实现。
+ * @return [0,100] 的增量使用率；首次调用、计数器缺失或平台无后端返回 -1。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用；调用方
+ *       （分发层）保证 XSYSTEM_GPU_USAGE_ON 为 1 时才引用。
+ */
+double XSystem_platformGpuUsagePercent(void);
 
 #ifdef __cplusplus
 }

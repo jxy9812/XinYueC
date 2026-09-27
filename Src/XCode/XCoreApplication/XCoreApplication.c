@@ -1,4 +1,4 @@
-﻿#include "XPrintf.h"
+#include "XPrintf.h"
 #include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XHashMap.h"
@@ -21,6 +21,11 @@
 #include <stdio.h>
 
 static XCoreApplication* g_app = NULL;
+/* argv[0] 进程级留存（create 时复制，delete 不清）：Qt 语义下单例随 main
+   全程存活，但本框架允许测试销毁重建实例（delete 后 instance()==NULL），
+   applicationDirPath 需跨实例窗口期解析程序目录。调用方 argv 可能是栈上
+   桩（回归测试如此），故复制而非存指针；替换旧值，进程退出由 OS 回收。 */
+static char* g_argv0Copy = NULL;
 static XThread* g_mainThread = NULL;
 static bool is_app_running = false;
 static bool is_app_closing = false;
@@ -109,6 +114,15 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
 
     app->m_argc = argc;
     app->m_argv = argv;
+    if (argc > 0 && argv && argv[0] && argv[0][0]) {
+        size_t n = strlen(argv[0]);
+        char* keep = (char*)XMalloc_System(n + 1);
+        if (keep) {
+            memcpy(keep, argv[0], n + 1);
+            if (g_argv0Copy) XFree_System(g_argv0Copy);
+            g_argv0Copy = keep;
+        }
+    }
 #if XTHREAD_ON
     g_mainThread = XThread_createMainThread(app);
     /* XThread_createMainThread 内部已通过 ensureEventDispatcher 创建事件分发器 */
@@ -242,23 +256,44 @@ XStringList* XCoreApplication_arguments(void)
 
 const XString* XCoreApplication_applicationDirPath(void)
 {
-    XCoreApplication* app = XCoreApplication_instance();
-    if (!app || !app->m_argv || !app->m_argv[0]) return NULL;
+    const char* path = g_argv0Copy; /* 进程级留存，不依赖实例存活 */
+    const char* lastSlash;
+    const char* lastBack;
 
-    const char* path = app->m_argv[0];
-    const char* lastSlash = strrchr(path, '/');
-    if (!lastSlash) {
-        return XString_create_utf8(".");
+    if (path) {
+        lastSlash = strrchr(path, '/');
+        lastBack = strrchr(path, '\\');
+        if (lastBack && (!lastSlash || lastBack > lastSlash)) {
+            lastSlash = lastBack;
+        }
+        if (lastSlash && lastSlash != path) {
+            size_t len = (size_t)(lastSlash - path);
+            char* dir = (char*)XMalloc_System(len + 1);
+            if (!dir) return NULL;
+            memcpy(dir, path, len);
+            dir[len] = '\0';
+            XString* result = XString_create_utf8(dir);
+            XFree_System(dir);
+            return result;
+        }
+        /* argv[0] 无目录部分（如 PATH 搜索裸名）：落到平台查询。 */
     }
 
-    size_t len = lastSlash - path;
-    char* dir = (char*)XMalloc_System(len + 1);
-    if (!dir) return NULL;
-    memcpy(dir, path, len);
-    dir[len] = '\0';
-    XString* result = XString_create_utf8(dir);
-    XFree_System(dir);
-    return result;
+    /* argv[0] 不可用或无目录时经 XSystem 平台抽象查询（本文件不触平台 API）。 */
+    {
+        char exePath[XSYSTEM_EXECUTABLE_PATH_MAX];
+        if (XSystem_executableFilePath(exePath, sizeof(exePath))) {
+            char* slash = strrchr(exePath, '/');
+            char* back = strrchr(exePath, '\\');
+            char* last = (back && (!slash || back > slash)) ? back : slash;
+            if (last && last != exePath) {
+                *last = '\0';
+                return XString_create_utf8(exePath);
+            }
+        }
+    }
+    if (!path) return NULL; /* 从未创建过应用且平台查询失败：NULL 语义。 */
+    return XString_create_utf8(".");
 }
 
 const XString* XCoreApplication_applicationFilePath(void)

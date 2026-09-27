@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XFontFace.c
  * @brief      XFont 字库后端抽象类、注册表和解析器实现。
  * @author     XinYueC 团队
@@ -165,10 +165,15 @@ static bool XFontFace_hasXfoSuffix(const char* family)
     if (!family)
         return false;
     length = strlen(family);
-    return length >= 4u && family[length - 4u] == '.' &&
-           (family[length - 3u] == 'x' || family[length - 3u] == 'X') &&
-           (family[length - 2u] == 'f' || family[length - 2u] == 'F') &&
-           (family[length - 1u] == 'o' || family[length - 1u] == 'O');
+    if (length < 4u || family[length - 4u] != '.')
+        return false;
+    /* .xfo（二进制）与 .inc（十六进制 C 数组文本）同为 XFO1 载体。 */
+    return ((family[length - 3u] == 'x' || family[length - 3u] == 'X') &&
+                (family[length - 2u] == 'f' || family[length - 2u] == 'F') &&
+                (family[length - 1u] == 'o' || family[length - 1u] == 'O')) ||
+           ((family[length - 3u] == 'i' || family[length - 3u] == 'I') &&
+                (family[length - 2u] == 'n' || family[length - 2u] == 'N') &&
+                (family[length - 1u] == 'c' || family[length - 1u] == 'C'));
 }
 
 const XFontFace* XFont_face(const XFont* font)

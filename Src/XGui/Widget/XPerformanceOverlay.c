@@ -11,6 +11,9 @@
 #include "XFont.h"
 #include "XImage.h"
 #include "XMemory.h"
+#include "XString.h"
+#include "XSystem.h"
+#include <string.h>
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
@@ -19,12 +22,158 @@ static bool performanceOverlay_drawContent(XWidget* widget,
                                            void* userData);
 static void VXPerformanceOverlay_paintEvent(XWidget* self, XEvent* event);
 
+/** @brief 网络行文本（默认逐行拼装与格式模板共用）。 */
+static size_t performanceOverlay_netText(const XPerformanceOverlay* self,
+                                         char* buf, size_t cap)
+{
+    int n;
+    if (!buf || cap == 0u) return 0u;
+    if (self->m_networkAvailable) {
+        double down = self->m_networkRxKbps;
+        double up = self->m_networkTxKbps;
+        const char* downUnit = "KB/s";
+        const char* upUnit = "KB/s";
+        if (down >= 1024.0) {
+            down /= 1024.0;
+            downUnit = "MB/s";
+        }
+        if (up >= 1024.0) {
+            up /= 1024.0;
+            upUnit = "MB/s";
+        }
+        n = XSnprintf(buf, cap, "下载 %.1f %s 上传 %.1f %s",
+                      down, downUnit, up, upUnit);
+    } else {
+        n = XSnprintf(buf, cap, "下载 无 上传 无");
+    }
+    if (n <= 0) {
+        buf[0] = '\0';
+        return 0u;
+    }
+    return (size_t)n < cap ? (size_t)n : cap - 1u;
+}
+
+#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+/** @brief 使用率格式化：负值（无基线/不支持）输出 "-"。 */
+static void performanceOverlay_percentText(double value, char* buf,
+                                           size_t cap)
+{
+    if (value < 0.0)
+        XSnprintf(buf, cap, "-");
+    else
+        XSnprintf(buf, cap, "%.1f%%", value);
+}
+#endif
+
+/** @brief 模板占位符取值；返回 NULL 表示未知占位符（原样保留）。
+ *  @details 指标不可见或被宏裁剪时返回空串（模板作者应配合开关写作）。 */
+static const char* performanceOverlay_placeholder(
+    const XPerformanceOverlay* self, const char* key, size_t keyLen,
+    char* scratch, size_t scratchCap)
+{
+#define KEY_IS(literal) \
+    (keyLen == sizeof(literal) - 1u && memcmp(key, literal, keyLen) == 0)
+    if (KEY_IS("fps")) {
+#if XGUI_PERFORMANCE_OVERLAY_FPS_ON
+        if (self->m_fpsVisible) {
+            XSnprintf(scratch, scratchCap, "%.1f", self->m_fps);
+            return scratch;
+        }
+#endif
+        return "";
+    }
+    if (KEY_IS("framems")) {
+#if XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON
+        if (self->m_frameTimeVisible) {
+            XSnprintf(scratch, scratchCap, "%.2f", self->m_frameMs);
+            return scratch;
+        }
+#endif
+        return "";
+    }
+    if (KEY_IS("maxframems")) {
+#if XGUI_PERFORMANCE_OVERLAY_FRAME_TIME_ON
+        if (self->m_frameTimeVisible) {
+            XSnprintf(scratch, scratchCap, "%.2f", self->m_maxFrameMs);
+            return scratch;
+        }
+#endif
+        return "";
+    }
+    if (KEY_IS("cpu") || KEY_IS("gpu")) {
+#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+        if (self->m_sysStatVisible) {
+            performanceOverlay_percentText(
+                KEY_IS("cpu") ? self->m_cpuPercent : self->m_gpuPercent,
+                scratch, scratchCap);
+            return scratch;
+        }
+#endif
+        return "";
+    }
+    if (KEY_IS("net")) {
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+        if (self->m_networkVisible) {
+            performanceOverlay_netText(self, scratch, scratchCap);
+            return scratch;
+        }
+#endif
+        return "";
+    }
+    return NULL;
+#undef KEY_IS
+}
+
+/** @brief 按自定义模板渲染文本：占位符替换 + 字面 \n 转义为换行。 */
+static void performanceOverlay_renderFormat(const XPerformanceOverlay* self,
+                                            char* text, size_t cap)
+{
+    const char* p;
+    size_t used = 0u;
+    if (!text || cap == 0u) return;
+    text[0] = '\0';
+    if (!self->m_format) return;
+    p = XString_toUtf8(self->m_format);
+    if (!p) return;
+    while (*p != '\0' && used + 1u < cap) {
+        if (p[0] == '\\' && p[1] == 'n') {
+            text[used++] = '\n';
+            p += 2;
+            continue;
+        }
+        if (p[0] == '{') {
+            const char* end = strchr(p + 1, '}');
+            if (end) {
+                char scratch[96];
+                const char* value = performanceOverlay_placeholder(
+                    self, p + 1, (size_t)(end - (p + 1)), scratch,
+                    sizeof(scratch));
+                if (value) {
+                    size_t valueLen = strlen(value);
+                    if (used + valueLen >= cap)
+                        valueLen = cap - 1u - used;
+                    memcpy(text + used, value, valueLen);
+                    used += valueLen;
+                    p = end + 1;
+                    continue;
+                }
+            }
+        }
+        text[used++] = *p++;
+    }
+    text[used] = '\0';
+}
+
 static void performanceOverlay_updateText(XPerformanceOverlay* self)
 {
-    char text[160];
+    char text[256];
     size_t used = 0;
     int n;
     if (!self) return;
+    if (self->m_format) {
+        performanceOverlay_renderFormat(self, text, sizeof(text));
+        goto committed; /* 模板与默认拼装共用收尾（setText+尺寸自适应） */
+    }
     text[0] = '\0';
 #if XGUI_PERFORMANCE_OVERLAY_FPS_ON
     if (self->m_fpsVisible) {
@@ -44,39 +193,73 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
                         ? (size_t)n : sizeof(text) - used - 1;
     }
 #endif
-#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
-    if (self->m_networkVisible) {
+#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+    if (self->m_sysStatVisible) {
+        char cpuText[16];
+        char gpuText[16];
         if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
-        if (self->m_networkAvailable) {
-            double downloadRate = self->m_networkRxKbps;
-            double uploadRate = self->m_networkTxKbps;
-            const char* downloadUnit = "KB/s";
-            const char* uploadUnit = "KB/s";
-            if (downloadRate >= 1024.0) {
-                downloadRate /= 1024.0;
-                downloadUnit = "MB/s";
-            }
-            if (uploadRate >= 1024.0) {
-                uploadRate /= 1024.0;
-                uploadUnit = "MB/s";
-            }
-            n = XSnprintf(text + used, sizeof(text) - used,
-                         "下载 %.1f %s 上传 %.1f %s",
-                         downloadRate, downloadUnit, uploadRate, uploadUnit);
-        } else {
-            n = XSnprintf(text + used, sizeof(text) - used,
-                         "下载 无 上传 无");
-        }
+        performanceOverlay_percentText(self->m_cpuPercent, cpuText,
+                                       sizeof(cpuText));
+        performanceOverlay_percentText(self->m_gpuPercent, gpuText,
+                                       sizeof(gpuText));
+        n = XSnprintf(text + used, sizeof(text) - used, "CPU %s GPU %s",
+                      cpuText, gpuText);
         if (n > 0)
             used += (size_t)n < sizeof(text) - used
                         ? (size_t)n : sizeof(text) - used - 1;
+    }
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
+    if (self->m_networkVisible) {
+        char netText[96];
+        size_t netLen;
+        if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
+        netLen = performanceOverlay_netText(self, netText, sizeof(netText));
+        if (netLen > 0 && used + netLen < sizeof(text)) {
+            memcpy(text + used, netText, netLen);
+            used += netLen;
+        }
     }
 #endif
     if (used == 0)
         (void)XSnprintf(text, sizeof(text), "Perf disabled");
     else
         text[used] = '\0';
+committed:
     XLabel_setText_2(&self->m_base, text);
+    /* 尺寸自适应（setAutoFitSize 开启时）：宽=最宽行文本宽+左右边距，
+       高=文字底边贴住下边框线（下边距归零，保留上 margin 起排）。
+       尺寸未变时不 resize，不构成回环；默认关闭，调用方显式 setSize
+       不被改写；位置跟随由调用方（重锚）负责。 */
+    if (self->m_autoFitSize) {
+        XWidget* base = (XWidget*)&self->m_base;
+        XMargins cm = XWidget_contentsMargins(base);
+        int margin = XLabel_margin(&self->m_base);
+        XFont fontCopy = XWidget_font(base);
+        int maxLineW = 0;
+        const char* line = text;
+        int wantW;
+        int wantH;
+        int curW;
+        int curH;
+        while (*line != '\0') {
+            /* textWidth 遇 '\n' 即停：逐行求最宽行。 */
+            int lineW = XPainter_textWidth(&fontCopy, line);
+            if (lineW > maxLineW) maxLineW = lineW;
+            line = strchr(line, '\n');
+            if (!line) break;
+            ++line;
+        }
+        XFont_deinit_base(&fontCopy);
+        curW = XWidget_width(base);
+        curH = XWidget_height(base);
+        wantW = maxLineW > 0 ? maxLineW + margin * 2 + cm.left + cm.right
+                             : curW;
+        wantH = XLabel_heightForWidth(&self->m_base, wantW) - margin
+                - cm.bottom;
+        if (wantW > 0 && wantH > 0 && (wantW != curW || wantH != curH))
+            XWidget_resize(base, wantW, wantH);
+    }
 }
 
 static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
@@ -101,10 +284,21 @@ static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
     self->m_networkTxBytes = other->m_networkTxBytes;
     self->m_networkRxKbps = other->m_networkRxKbps;
     self->m_networkTxKbps = other->m_networkTxKbps;
+    self->m_cpuPercent = other->m_cpuPercent;
+    self->m_gpuPercent = other->m_gpuPercent;
+    if (self->m_format) {
+        XString_delete_base((XClass*)self->m_format);
+        self->m_format = NULL;
+    }
+    self->m_format = other->m_format
+                         ? XString_create_copy(other->m_format)
+                         : NULL;
     self->m_backgroundColor = other->m_backgroundColor;
     self->m_fpsVisible = other->m_fpsVisible;
     self->m_frameTimeVisible = other->m_frameTimeVisible;
     self->m_networkVisible = other->m_networkVisible;
+    self->m_sysStatVisible = other->m_sysStatVisible;
+    self->m_autoFitSize = other->m_autoFitSize;
     self->m_movable = other->m_movable;
     self->m_fixed = other->m_fixed;
     self->m_dragging = false;
@@ -133,10 +327,17 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     self->m_networkTxBytes = other->m_networkTxBytes;
     self->m_networkRxKbps = other->m_networkRxKbps;
     self->m_networkTxKbps = other->m_networkTxKbps;
+    self->m_cpuPercent = other->m_cpuPercent;
+    self->m_gpuPercent = other->m_gpuPercent;
+    if (self->m_format) XString_delete_base((XClass*)self->m_format);
+    self->m_format = other->m_format;
+    other->m_format = NULL;
     self->m_backgroundColor = other->m_backgroundColor;
     self->m_fpsVisible = other->m_fpsVisible;
     self->m_frameTimeVisible = other->m_frameTimeVisible;
     self->m_networkVisible = other->m_networkVisible;
+    self->m_sysStatVisible = other->m_sysStatVisible;
+    self->m_autoFitSize = other->m_autoFitSize;
     self->m_movable = other->m_movable;
     self->m_fixed = other->m_fixed;
     self->m_dragging = other->m_dragging;
@@ -155,9 +356,13 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     other->m_networkTxBytes = 0;
     other->m_networkRxKbps = 0.0;
     other->m_networkTxKbps = 0.0;
+    other->m_cpuPercent = -1.0;
+    other->m_gpuPercent = -1.0;
     other->m_fpsVisible = true;
     other->m_frameTimeVisible = true;
     other->m_networkVisible = true;
+    other->m_sysStatVisible = true;
+    other->m_autoFitSize = false;
     other->m_movable = true;
     other->m_fixed = false;
     other->m_dragging = false;
@@ -168,6 +373,10 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
 static void VXPerformanceOverlay_deinit(XPerformanceOverlay* self)
 {
     if (!self) return;
+    if (self->m_format) {
+        XString_delete_base((XClass*)self->m_format);
+        self->m_format = NULL;
+    }
     XClass_Deinit_Parent(XLabel, &self->m_base);
 }
 
@@ -198,6 +407,9 @@ void XPerformanceOverlay_init(XPerformanceOverlay* self, XWidget* parent,
     self->m_fpsVisible = true;
     self->m_frameTimeVisible = true;
     self->m_networkVisible = true;
+    self->m_sysStatVisible = true;
+    self->m_cpuPercent = -1.0;
+    self->m_gpuPercent = -1.0;
     self->m_movable = true;
     XLabel_setMargin(&self->m_base, 4);
     XLabel_setAlignment(&self->m_base, XAlignment_Left | XAlignment_Top);
@@ -243,6 +455,15 @@ void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
     XFont_setFamily(&font, family);
     XWidget_setFont((XWidget*)&self->m_base, &font);
     XFont_deinit_base(&font);
+    performanceOverlay_updateText(self); /* 字号/行高可能变：重算贴底高度 */
+}
+
+void XPerformanceOverlay_setTextPixelSize(XPerformanceOverlay* self,
+                                          int pixelHeight)
+{
+    if (!self) return;
+    XLabel_setTextPixelSize(&self->m_base, pixelHeight);
+    performanceOverlay_updateText(self); /* 同上：字号变化重算贴底高度 */
 }
 
 void XPerformanceOverlay_setFpsVisible(XPerformanceOverlay* self,
@@ -313,6 +534,66 @@ bool XPerformanceOverlay_isNetworkVisible(const XPerformanceOverlay* self)
     (void)self;
     return false;
 #endif
+}
+
+void XPerformanceOverlay_setSysStatVisible(XPerformanceOverlay* self,
+                                           bool visible)
+{
+#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+    if (!self || self->m_sysStatVisible == visible) return;
+    self->m_sysStatVisible = visible;
+    if (visible) {
+        /* 打开时立即建一次采样基线，下个统计窗口即出真值。 */
+        self->m_cpuPercent = XSystem_cpuUsagePercent();
+        self->m_gpuPercent = XSystem_gpuUsagePercent();
+    }
+    performanceOverlay_updateText(self);
+#else
+    (void)self;
+    (void)visible;
+#endif
+}
+
+bool XPerformanceOverlay_isSysStatVisible(const XPerformanceOverlay* self)
+{
+#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+    return self ? self->m_sysStatVisible : false;
+#else
+    (void)self;
+    return false;
+#endif
+}
+
+void XPerformanceOverlay_setAutoFitSize(XPerformanceOverlay* self,
+                                          bool enabled)
+{
+    if (!self || self->m_autoFitSize == enabled) return;
+    self->m_autoFitSize = enabled;
+    performanceOverlay_updateText(self); /* 开启即按当前文本收框一次 */
+}
+
+bool XPerformanceOverlay_isAutoFitSize(const XPerformanceOverlay* self)
+{
+    return self ? self->m_autoFitSize : false;
+}
+
+void XPerformanceOverlay_setFormat(XPerformanceOverlay* self,
+                                   const char* format)
+{
+    if (!self) return;
+    if (self->m_format) {
+        XString_delete_base((XClass*)self->m_format);
+        self->m_format = NULL;
+    }
+    if (format && format[0])
+        self->m_format = XString_create_utf8(format);
+    performanceOverlay_updateText(self);
+}
+
+const char* XPerformanceOverlay_format(const XPerformanceOverlay* self)
+{
+    if (!self || !self->m_format) return NULL;
+    return XString_toUtf8(self->m_format);
 }
 
 void XPerformanceOverlay_setPresetPosition(XPerformanceOverlay* self,
@@ -454,6 +735,8 @@ void XPerformanceOverlay_reset(XPerformanceOverlay* self)
     self->m_fps = 0.0;
     self->m_frameMs = 0.0;
     self->m_maxFrameMs = 0.0;
+    self->m_cpuPercent = -1.0;
+    self->m_gpuPercent = -1.0;
     self->m_networkAvailable = false;
     self->m_networkSampleUsecs = 0;
     self->m_networkRxBytes = 0;
@@ -505,6 +788,15 @@ void XPerformanceOverlay_updateFrame(XPerformanceOverlay* self,
         self->m_frameMs = (double)self->m_sampleUsecs /
                           (double)self->m_sampleFrames / 1000.0;
         self->m_maxFrameMs = (double)self->m_maxUsecs / 1000.0;
+#if XGUI_PERFORMANCE_OVERLAY_SYSSTAT_ON
+        /* CPU/GPU 与 FPS 同节奏采样（250ms 统计窗口一次）。updateText
+           还会被每帧的网络采样触发，放那里会把间隔缩到帧级——短间隔
+           差值噪声大且常为 0，显示被覆盖成恒 0。 */
+        if (self->m_sysStatVisible) {
+            self->m_cpuPercent = XSystem_cpuUsagePercent();
+            self->m_gpuPercent = XSystem_gpuUsagePercent();
+        }
+#endif
         performanceOverlay_updateText(self);
         self->m_sampleStartUsecs = nowUsecs;
         self->m_sampleUsecs = 0;

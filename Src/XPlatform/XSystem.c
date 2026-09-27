@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XSystem.c
  * @brief 系统复位、关机和有序重启回调的默认分发实现。
  * @details
@@ -109,5 +109,48 @@ int64_t XSystem_pid(void)
     return XSystem_platformPid();
 #else
     return 0;
+#endif
+}
+
+/**
+ * @brief 读取当前进程可执行文件完整路径（公共分发）。
+ * @param path 输出缓冲区；成功时写入以 NUL 结尾的路径字符串。
+ * @param cap 缓冲区容量（字节）；0 返回 false。
+ * @return 成功返回 true；参数无效、路径超出容量或无 OS 目标时返回 false。
+ */
+bool XSystem_executableFilePath(char* path, size_t cap)
+{
+    if (!path || cap == 0u) return false;
+#if XPLATFORM_HAS_OS
+    return XSystem_platformExecutableFilePath(path, cap);
+#else
+    return false;
+#endif
+}
+
+/**
+ * @brief 读取系统 CPU 使用率（公共分发）。
+ * @return [0,100] 的增量使用率；宏裁剪、无 OS 或首次调用返回 -1。
+ */
+double XSystem_cpuUsagePercent(void)
+{
+#if XSYSTEM_CPU_USAGE_ON && XPLATFORM_HAS_OS
+    return XSystem_platformCpuUsagePercent();
+#else
+    return -1.0;
+#endif
+}
+
+/**
+ * @brief 读取系统 GPU 使用率（公共分发）。
+ * @return [0,100] 的增量使用率；宏裁剪、无 OS、计数器缺失或首次调用
+ *         返回 -1。
+ */
+double XSystem_gpuUsagePercent(void)
+{
+#if XSYSTEM_GPU_USAGE_ON && XPLATFORM_HAS_OS
+    return XSystem_platformGpuUsagePercent();
+#else
+    return -1.0;
 #endif
 }
