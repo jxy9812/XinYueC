@@ -406,12 +406,15 @@ Tests/
 *.mjs
 
 # ===== GPU 夜战工具目录（2026-09-25）：本地产物不入库，工作区保留 =====
-# vendored Vulkan 头与导入库（构建依赖，第三方第三方产物，不入库）
-Tools/vulkan-headers-tmp/
-Tools/vulkan-importlib/
+# vendored Vulkan 头不入库；导入库改为预编译入库（2026-09-27 双架构）：
+# windows/vulkan/importlib/x64-msvc、x86-msvc 的最终 vulkan-1.lib 随仓库
+# 分发（同平台设备免生成），其余生成中间产物仍忽略
+Tools/windows/vulkan/headers/
+Tools/windows/vulkan/importlib/*
+!Tools/windows/vulkan/importlib/x64-msvc/
+!Tools/windows/vulkan/importlib/x86-msvc/
 # 本地备份与诊断证据
 Tools/night-backup/
-Tools/abtex/
 Tools/bench-night2-logs/
 Tools/bench-night2-results.txt
 Tools/ppm2png.ps1

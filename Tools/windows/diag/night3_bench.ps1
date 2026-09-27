@@ -109,7 +109,7 @@ param(
                                       # TEMP 副本名基（判崩协议：跨 lane 并跑时各传
                                       # 唯一名如 xgui_bench3_r4，防 taskkill 互杀；
                                       # 默认名不变=历史口径不变）
-    [string]$ToolsDir = "D:\code\CMake\Container\Tools",
+    [string]$ToolsDir = "D:\code\CMake\Container\Tools\windows\diag",
     [string]$LogDir = "D:\code\CMake\Container\Tools\bench-night3-logs",
     [string]$CapsDir = "D:\code\CMake\Container\Tools\caps-night3",
     [string]$SummaryPath = "D:\code\CMake\Container\Tools\bench-night3-results.txt",

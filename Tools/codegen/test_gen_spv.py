@@ -5,8 +5,8 @@ import subprocess
 import sys
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-GENERATOR = ROOT / "Tools" / "gen_spv.py"
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+GENERATOR = ROOT / "Tools" / "codegen" / "gen_spv.py"
 HEADER = ROOT / "Src" / "XGui" / "Graphics" / "XGpuRenderDriver_vulkan_shaders.h"
 
 

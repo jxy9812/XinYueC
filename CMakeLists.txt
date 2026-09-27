@@ -296,8 +296,8 @@ target_link_libraries(${EXPORT_NAME} PRIVATE fatfs)
 if(WIN32)
     # Vulkan：优先 SDK（find_package）；无 SDK 时回退仓库内 vendored
     # Vulkan-Headers + 由系统 vulkan-1.dll 导出生成的导入库
-    # （Tools/make_vulkan_lib.bat 从 C:\Windows\System32\vulkan-1.dll
-    # 的 dumpbin /exports 生成 vulkan-1.def → lib /def）。两形态都只
+    # （Tools/make_vulkan_lib.bat 从 System32 与 SysWOW64 的 vulkan-1.dll
+    # 的 dumpbin /exports 分别生成 x64/x86 的 vulkan-1.def → lib /def）。两形态都只
     # 影响 XINYUE_C_HAS_VULKAN 的定义与否——未启用时不包含 vulkan.h，
     # Drive/Posix 的 Vulkan 驱动文件整体守卫为空，行为同旧版。
     find_package(Vulkan QUIET)
@@ -308,18 +308,28 @@ if(WIN32)
         message(STATUS "Vulkan found (SDK): ${Vulkan_INCLUDE_DIRS}")
     else()
         set(XINYUE_VULKAN_VENDORED_HEADER
-            "${CMAKE_CURRENT_SOURCE_DIR}/Tools/vulkan-headers-tmp/Vulkan-Headers-1.3.290/include/vulkan/vulkan.h")
+            "${CMAKE_CURRENT_SOURCE_DIR}/Tools/windows/vulkan/headers/Vulkan-Headers-1.3.290/include/vulkan/vulkan.h")
+        # 导入库按目标架构选择：导入库的机器类型必须与目标一致，
+        # 否则链接报 LNK4272 且全部 vk* 符号无法解析。
+        # x64 <- System32 的 64 位 vulkan-1.dll；x86 <- SysWOW64 的 32 位
+        # （x86 额外带 stdcall 跳板层，见 Tools/windows/vulkan/make_vulkan_lib.bat）。
+        # 两份预编译库随仓库分发，同平台设备无需本地重新生成。
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(XINYUE_VULKAN_PREBUILT_SUBDIR x64-msvc)
+        else()
+            set(XINYUE_VULKAN_PREBUILT_SUBDIR x86-msvc)
+        endif()
         set(XINYUE_VULKAN_VENDORED_LIB
-            "${CMAKE_CURRENT_SOURCE_DIR}/Tools/vulkan-importlib/vulkan-1.lib")
+            "${CMAKE_CURRENT_SOURCE_DIR}/Tools/windows/vulkan/importlib/${XINYUE_VULKAN_PREBUILT_SUBDIR}/vulkan-1.lib")
         if(EXISTS "${XINYUE_VULKAN_VENDORED_HEADER}" AND
            EXISTS "${XINYUE_VULKAN_VENDORED_LIB}")
             add_compile_definitions(XINYUE_C_HAS_VULKAN=1)
-            include_directories("${CMAKE_CURRENT_SOURCE_DIR}/Tools/vulkan-headers-tmp/Vulkan-Headers-1.3.290/include")
+            include_directories("${CMAKE_CURRENT_SOURCE_DIR}/Tools/windows/vulkan/headers/Vulkan-Headers-1.3.290/include")
             set(XINYUE_WIN32_VULKAN_VAR "${XINYUE_VULKAN_VENDORED_LIB}")
             message(STATUS "Vulkan found (vendored headers + loader import lib)")
         else()
             message(STATUS "Vulkan NOT enabled: no SDK and no vendored "
-                           "headers/importlib (see Tools/make_vulkan_lib.bat)")
+                           "headers/importlib (see Tools/windows/vulkan/make_vulkan_lib.bat)")
         endif()
     endif()
     set(XINYUE_WIN32_LIBS advapi32 user32 gdi32 opengl32 imm32 shell32 ole32 uiautomationcore setupapi winusb cfgmgr32 hid)
