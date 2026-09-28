@@ -158,6 +158,33 @@ static bool xcv_staticCacheEnabled(void)
     return g_xcvStaticCacheGate > 0;
 }
 
+/* [F-wave root fix] Dependency-complete fingerprint gate (default ON;
+ * XGUI_CHART_TILE_FP_COMPLETE=0 restores the legacy fingerprint byte
+ * stream, i.e. the pre-fix invalidation behavior). Same one-probe latch
+ * discipline as xcv_dirtyCullEnabled/xcv_staticCacheEnabled above.
+ *
+ * Rationale: the retained legend tile is only bitwise-safe while its hit
+ * test keys on EVERY input xcv_paintLegend reads. The legacy fingerprint
+ * hashed the requested font fields but not the RESOLVED face identity,
+ * so XFontFace_register same-name replacement (an explicitly supported
+ * operation, see XFontFace.h:208) swapped the raster source without
+ * changing any hashed field and left stale glyphs in the tile. Mirror of
+ * the third-night XGPU_GLYPH_HASH key completion (content dimensions +
+ * generation identity): the painter's own glyphKey already includes the
+ * face pointer (XPainter.c painterGpuDrawBitmapGlyph); the tile cache
+ * now carries the same dependency via the shared fingerprint. */
+static int g_xcvTileFpCompleteGate = -1;
+
+static bool xcv_tileFpCompleteEnabled(void)
+{
+    if (g_xcvTileFpCompleteGate < 0) {
+        const char* env = XSystem_environment("XGUI_CHART_TILE_FP_COMPLETE");
+        g_xcvTileFpCompleteGate =
+            (env && env[0] == '0' && env[1] == '\0') ? 0 : 1;
+    }
+    return g_xcvTileFpCompleteGate > 0;
+}
+
 static uint32_t xcv_color(const XChartView* self, XPaletteColorRole role)
 {
 #if XPALETTE_ON
@@ -786,6 +813,15 @@ static uint64_t xcv_staticFingerprint(const XChartView* cv)
         const XBarSeries* s = chart->m_barSeries[i];
         h = xcv_fnv1aU32(h, s->m_color);
         h = xcv_fnv1aStr(h, XAbstractSeries_name_2(&s->m_base.m_base));
+        /* [F-wave root fix] Legend swatch color chain (xcv_paintLegend bar
+         * branch) resolves to the first bar set's brush when the series
+         * color is 0; hash it so a brush-only change invalidates the tile
+         * (and keeps the xcv_legendTileContentOpaque alpha verdict in sync
+         * with what the cached tile actually holds). */
+        if (xcv_tileFpCompleteEnabled()) {
+            const XBarSet* set0 = XAbstractBarSeries_barSetAt(&s->m_base, 0);
+            h = xcv_fnv1aU32(h, set0 ? XBarSet_brush(set0) : 0);
+        }
     }
     /* 控件字体（标题/轴标签字形与步进随字体变化）。 */
     font = XWidget_font((const XWidget*)cv);
@@ -798,6 +834,22 @@ static uint64_t xcv_staticFingerprint(const XChartView* cv)
     h = xcv_fnv1aBool(h, XFont_underline(&font));
     h = xcv_fnv1aBool(h, XFont_strikeOut(&font));
     h = xcv_fnv1aBool(h, XFont_overline(&font));
+    /* [F-wave root fix] Resolved face identity: glyph pixels depend on the
+     * face the font system RESOLVES, not only on the requested fields
+     * hashed above. XFontFace_register supports same-name replacement
+     * (XFontFace.h), which swaps the raster source while every hashed
+     * field stays equal -- the painter's glyphKey already guards against
+     * this via XFont_face(&font); the shared fingerprint now does too, so
+     * both the legend tile and the static layer (title/axis label glyphs)
+     * invalidate on the same event. Pointer mixed as two fixed-endian
+     * halves; NULL face hashes the all-zero sentinel. */
+    if (xcv_tileFpCompleteEnabled()) {
+        const XFontFace* face = XFont_face(&font);
+        uintptr_t faceAddr = (uintptr_t)face;
+        h = xcv_fnv1aU32(h, (uint32_t)(faceAddr & 0xFFFFFFFFu));
+        h = xcv_fnv1aU32(h, (uint32_t)(faceAddr >> 32));
+        h = xcv_fnv1aInt(h, face ? (int)XFontFace_kind(face) : 0);
+    }
     /* XFont_deinit_base 是 XClass_deinit_base 的裸别名宏（无 XClass
      * 转换）；此处显式转换既释放深拷贝字体又免新增指针类型诊断。 */
     XClass_deinit_base((XClass*)&font);

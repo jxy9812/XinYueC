@@ -176,6 +176,14 @@ static struct XPainterProf
     uint64_t m_atlasNs;        /**< 图集查找调用点累计。 */
     uint32_t m_atlasCount;     /**< 图集查找次数（未命中备忘的字符数）。 */
     uint32_t m_atlasMemoHits;  /**< 备忘索引命中次数（省掉的线性扫）。 */
+    /* batchDraw escape mix (counts only, 2026-09-28): which primitive
+       families fall into the software local submit, so the next
+       collection can attribute the batchDraw segment. */
+    uint32_t m_bdFillRect;     /**< fillRect escapes (post fast paths). */
+    uint32_t m_bdImage;        /**< drawImage / drawImageRect escapes. */
+    uint32_t m_bdPoly;         /**< filled polygon escapes. */
+    uint32_t m_bdLine;         /**< device line escapes (AA etc.). */
+    uint32_t m_bdPath;         /**< drawPath escapes. */
     uint64_t m_windowStartNs;  /**< 窗口起点（5s 聚合）。 */
     bool m_headerPrinted;      /**< 首行标题已打印。 */
 } g_xpainterProf;
@@ -209,7 +217,8 @@ static void xpainter_prof_tick(void)
                 "route=%u (%.3fms %.4f/次) batchDraw=%u (%.3fms %.4f/次) "
                 "flush=%u (%.3fms %.4f/次) text=%u (%.3fms %.4f/次) "
                 "glyphLoad=%u (%.3fms %.4f/次) atlas=%u (%.3fms %.4f/次) "
-                "memoHit=%u\n",
+                "memoHit=%u bdFR=%u bdImg=%u bdPoly=%u bdLine=%u "
+                "bdPath=%u\n",
                 secs,
                 g_xpainterProf.m_beginCount,
                 XPAINTER_PROF_MS(g_xpainterProf.m_beginNs,
@@ -256,7 +265,12 @@ static void xpainter_prof_tick(void)
                                  g_xpainterProf.m_atlasCount),
                 XPAINTER_PROF_MS_PER(g_xpainterProf.m_atlasNs,
                                      g_xpainterProf.m_atlasCount),
-                g_xpainterProf.m_atlasMemoHits);
+                g_xpainterProf.m_atlasMemoHits,
+                g_xpainterProf.m_bdFillRect,
+                g_xpainterProf.m_bdImage,
+                g_xpainterProf.m_bdPoly,
+                g_xpainterProf.m_bdLine,
+                g_xpainterProf.m_bdPath);
 #undef XPAINTER_PROF_MS
 #undef XPAINTER_PROF_MS_PER
         g_xpainterProf.m_beginNs = 0;
@@ -278,6 +292,11 @@ static void xpainter_prof_tick(void)
         g_xpainterProf.m_atlasNs = 0;
         g_xpainterProf.m_atlasCount = 0;
         g_xpainterProf.m_atlasMemoHits = 0;
+        g_xpainterProf.m_bdFillRect = 0;
+        g_xpainterProf.m_bdImage = 0;
+        g_xpainterProf.m_bdPoly = 0;
+        g_xpainterProf.m_bdLine = 0;
+        g_xpainterProf.m_bdPath = 0;
         g_xpainterProf.m_windowStartNs = now;
     }
 }
@@ -305,6 +324,15 @@ static bool g_gpuBatchCanvasInited = false;  /**< 暂存画布已 init。 */
 static bool g_gpuBatchActive = false;        /**< 存在待提交批。 */
 static XRect g_gpuBatchDirty;                /**< 批内写入外接矩形（画布坐标）。 */
 static bool g_gpuBatchHasDirty = false;      /**< 本批是否已有写入。 */
+/* Transparent-ledger: canvas is provably all-transparent while true.
+   Set true at init fillRect / clear_all / flush row-clears / explicit
+   full clears; set false when a batch activates (writes may follow).
+   Software raster writes stay inside the clip bounding box (+8px AA
+   pad cleared full-width at flush, promoted default since 09-27), so
+   every flush restores all-transparency and the per-frame full-canvas
+   memset in begin_image (1.92MB, prof begin=0.45ms ~= 70% wall on the
+   gpu tab benchmark) is redundant while this flag holds. */
+static bool g_gpuBatchCanvasTransparent = true;
 /* 画布尺寸镜像：暂存画布建时就等于后端尺寸（init/rebuild 单点写入），
    route 每命令的脏区钳位不再逐次跨编译单元调 XGpuRenderBackend_width/
    height（4 次函数调用/命令；XGPU_BATCH_DIMS_CACHE=0 回退实时读取）。 */
@@ -376,6 +404,41 @@ static bool xgpu_flush_lean_requested(void)
                       !(value[0] == '0' && value[1] == 0));
     }
     return requested != 0;
+}
+
+/** @brief XGPU_BEGIN_CLEAR_SAFE env switch (strict "1" = restore the old
+ *         per-frame full-canvas memset in begin_image's depth 0->1 branch).
+ *  @details Default off: the flush-point row clears (full-width rows +-
+ *         8px, promoted default) already restore all-transparency over
+ *         everything a batch wrote, so while the transparent ledger holds
+ *         the begin-time memset only re-clears already-clear pixels.
+ *         Set "1" for the bitwise legacy behavior (unconditional clear). */
+static bool xgpu_begin_clear_safe_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_BEGIN_CLEAR_SAFE");
+        requested = value && value[0] == '1' && value[1] == '\0'
+                        ? 1 : 0;
+    }
+    return requested != 0;
+}
+
+/** @brief XGPU_FILLRECT_MULTI env switch (default on; "0" = fall back).
+ *  @details Gates the pixel-exact opaque fillRect fast paths added at
+ *           painterRaster_fillRect's GPU branch (empty-clip no-op and
+ *           multi-rect region decomposition). "0" sends every rejected
+ *           clip case back to the software local submit (legacy). */
+static bool xgpu_fillrect_multi_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_FILLRECT_MULTI");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
 }
 
 static void xgpu_batch_canvas_clear_rows(void)
@@ -483,6 +546,7 @@ static void xgpu_batch_canvas_clear_all(void)
 {
     if (!g_gpuBatchCanvasInited) return;
     XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+    g_gpuBatchCanvasTransparent = true;
     g_gpuBatchHasDirty = false;
     g_gpuBatchDirty.x = 0;
     g_gpuBatchDirty.y = 0;
@@ -576,6 +640,7 @@ static void painterGpuBatchFlush(void)
         g_gpuBatchBackend = NULL;
         xgpu_batch_canvas_clear_rows();
         g_gpuBatchHasDirty = false;
+        g_gpuBatchCanvasTransparent = true;
         return;
     }
     XGpuRenderBackend_setClipRect(g_gpuBatchBackend, NULL);
@@ -600,6 +665,9 @@ static void painterGpuBatchFlush(void)
     xgpu_batch_canvas_clear_rows();
     g_gpuBatchHasDirty = false;
     g_gpuBatchBackend = NULL;
+    /* Row clears above restored all-transparency (or nothing was written
+       since activation): begin_image may skip its full-canvas memset. */
+    g_gpuBatchCanvasTransparent = true;
     if (xpainter_prof_requested())
     {
         g_xpainterProf.m_flushNs += xpainter_prof_now_ns() - profT0;
@@ -1177,6 +1245,7 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
                 {
                     /* 透明底（预乘 ARGB32 全零=全透明）。 */
                     XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+                    g_gpuBatchCanvasTransparent = true;
                     /* 尺寸镜像随建随更（route 逐命令钳位读这里）。 */
                     g_gpuBatchCanvasW = XImage_width(&g_gpuBatchCanvas);
                     g_gpuBatchCanvasH = XImage_height(&g_gpuBatchCanvas);
@@ -1193,6 +1262,9 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
                 g_gpuBatchPainter = self;
                 g_gpuBatchBackend = backend;
                 g_gpuBatchHasDirty = false;
+                /* Commands may write the canvas from here on: the ledger
+                   only re-arms at the flush/clear points above. */
+                g_gpuBatchCanvasTransparent = false;
                 g_gpuBatchDirty.x = 0;
                 g_gpuBatchDirty.y = 0;
                 g_gpuBatchDirty.width = 0;
@@ -3386,6 +3458,13 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                      ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
                      (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
             painterGpuBatchFlush(); /* 批量：待定批先回 FBO，原语画其上。 */
+            /* 状态裁剪同步：quad 快速路径此前不经过 setClipRect，残留
+               scissor 使跨剪裁边界的笔画溢出（实测面积多边形 y=510 底
+               行笔在 SW 帧被剪掉而 GPU 帧溢出）。与 SW putPixel 同裁
+               剪；不支持形态（路径掩码/多矩形 region）落到底部画布
+               重入。 */
+            if (!painterGpuApplyStateClip(self))
+                goto drawLineCanvas;
             return XGpuRenderBackend_drawSolidQuad(
                 self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
                 premul,
@@ -3440,6 +3519,11 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                      ((uint32_t)(((((color >> 8) & 0xffu) * a) + 127) / 255) << 8) |
                      (uint32_t)(((((color & 0xffu)) * a) + 127) / 255);
             painterGpuBatchFlush(); /* 批量：待定批先回 FBO，原语画其上。 */
+            /* 状态裁剪同步：同轴线分支（残留 scissor 使斜线笔溢出剪裁
+               边界，与 SW putPixel 裁剪不一致）。不支持形态落到底部画
+               布重入。 */
+            if (!painterGpuApplyStateClip(self))
+                goto drawLineCanvas;
             /* 角序与轴向分支一致（a 端法向负侧/b 端法向负侧/a 端正侧/
                b 端正侧，即「上边一对+下边一对」三角剖分约定）。 */
             q1x = ax - nx * hw - ex;  q1y = ay - ny * hw - ey;
@@ -3452,9 +3536,10 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                 self->m_state.m_compositionMode ==
                     XPainterCompositionMode_SourceOver);
         }
-        /* 虚线非轴向段/圆头/零尺寸点/SYNC 契约/扩展开关关闭：软件光栅
-           局部提交（不整帧降级）。端点已是设备坐标，重入
-           painterRaster_drawLineDevice 不再映射。 */
+        /* 虚线非轴向段/圆头/零尺寸点/SYNC 契约/扩展开关关闭/状态裁剪
+           不支持：软件光栅局部提交（不整帧降级）。端点已是设备坐标，
+           重入 painterRaster_drawLineDevice 不再映射。 */
+        drawLineCanvas:
         {
             PainterGpuLineArgs args = { ix1, iy1, ix2, iy2 };
             XRect lineRect;
@@ -3682,11 +3767,64 @@ static bool painterRaster_fillRect(XPainter* self, const XRect* rect,
                         XPainterCompositionMode_SourceOver);
                 return true;
             }
+#if XPAINTER_CLIP_ON
+            /* Pixel-exact fast paths for opaque solid fills rejected by
+               the single-scissor path on clip grounds only (residual
+               reduction 2026-09-28). SW reference here is the per-pixel
+               loop below (spanFill is disabled for multi-rect regions):
+               - empty clip (region.count<=0): SW paints nothing -> no-op,
+                 bit-exact.
+               - identity/integer-translation + region rects: SW writes the
+                 exact opaque color on deviceRect N each region rect
+                 (putPixel region membership over integer rects); N
+                 scissored opaque GPU fillRects cover the same integer
+                 pixel set with the same exact color. Pattern brush / clip
+                 path / RasterOp / semi-transparent / fractional
+                 translation all keep the software local submit.
+               XGPU_FILLRECT_MULTI=0 = behavior fallback switch. */
+            if (!clipOk && compOk &&
+                (color >> 24) == 0xffu && state->m_opacity == 1.0f &&
+                tx == (float)(int)tx && ty == (float)(int)ty &&
+                xgpu_fillrect_multi_enabled()
+#if XPAINTER_PATH_ON
+                && !state->m_hasClipPath
+#endif /* XPAINTER_PATH_ON */
+            )
+            {
+#if XPAINTER_CLIP_REGION_ON
+                if (state->m_clipRegion.count <= 0)
+                    return true; /* empty region clips everything away. */
+                painterGpuBatchFlush(); /* pending batch first, keep order. */
+                {
+                    int recti;
+                    for (recti = 0; recti < state->m_clipRegion.count;
+                         ++recti)
+                    {
+                        XGpuRenderBackend_setClipRect(
+                            self->m_gpuBackend,
+                            &state->m_clipRegion.rects[recti]);
+                        XGpuRenderBackend_fillRect(
+                            self->m_gpuBackend, &deviceRect, color,
+                            state->m_opacity,
+                            state->m_compositionMode ==
+                                XPainterCompositionMode_SourceOver);
+                    }
+                }
+                return true;
+#else
+                if (state->m_clipRect.width <= 0 ||
+                    state->m_clipRect.height <= 0)
+                    return true; /* zero clipRect clips everything away. */
+#endif /* XPAINTER_CLIP_REGION_ON */
+            }
+#endif /* XPAINTER_CLIP_ON */
         }
         /* 非快速路径（复杂变换/多矩形裁剪/RasterOp 合成等）：
            软件光栅局部提交，GPU 会话不降级。 */
         {
             PainterGpuFillRectArgs args;
+            if (xpainter_prof_requested())
+                ++g_xpainterProf.m_bdFillRect;
             args.m_rect = *rect;
             args.m_color = color;
             return painterGpuSubmitSoftwareCommand(
@@ -4226,6 +4364,8 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
         /* 不支持的形态（复杂变换/合成）：软件光栅局部提交。 */
         {
             PainterGpuImageArgs args;
+            if (xpainter_prof_requested())
+                ++g_xpainterProf.m_bdImage;
             args.m_image = image;
             args.m_x = x;
             args.m_y = y;
@@ -4536,6 +4676,8 @@ static bool painterRaster_drawImageRect(XPainter* self,
     if (self->m_gpuActive)
     {
         PainterGpuImageRectArgs args;
+        if (xpainter_prof_requested())
+            ++g_xpainterProf.m_bdImage;
         args.m_params = params;
         args.m_image = image;
         return painterGpuSubmitSoftwareCommand(
@@ -5711,6 +5853,25 @@ static bool painterScanFillUser(XPainter* self, int n,
     return true;
 }
 
+/** @brief XGPU_POLY_FILL_CANVAS 环境开关（缺省=开；"0"=回退直写）。
+ *  @details GPU 会话实心多边形/椭圆填充路由：开（默认）=批量画布重入
+ *           （painterGpuSubmitSoftwareCommandRect，与 SW 同一扫描线光栅
+ *           算法，逐位一致且经画布脏区提交上屏）；关=旧「ApplyStateClip
+ *           + 跨距直写 m_image」行为——注意 GPU 会话下帧内容在 FBO，
+ *           跨距直写（XImage_fillRect/fastBlend/putPixel）不经驱动入口
+ *           必然丢失（面积多边形填充消失、离散点空心圆环的根因），仅
+ *           留作 SW 侧诊断对照，不得在 GPU 会话使用。 */
+static bool xgpu_poly_fill_canvas_requested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* value = XSystem_environment("XGPU_POLY_FILL_CANVAS");
+        requested = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return requested != 0;
+}
+
 /**
  * @brief      设备空间扫描填充（软件光栅后端；逐像素支持渐变色）。
  * @param self 绘制器指针（必须绑定图像）。
@@ -5786,9 +5947,14 @@ static bool painterScanFillDevice(XPainter* self, int n,
         if (dty[i] > maxY) maxY = dty[i];
     }
 #if XPAINTER_PATH_ON
-    /* AA 提示开启（或 GPU 会话激活）时：设备坐标顶点已就绪，走灰度
-       覆盖图路径——GPU 经 drawAlphaBitmap 提交 FBO，软件经 putPixel
-       混合（含裁剪）。非 AA 的 GPU 帧保持既有整帧降级语义。 */
+    /* AA 提示开启时：设备坐标顶点已就绪，走灰度覆盖图路径——软件经
+       putPixel 混合（含裁剪）。GPU 会话实心多边形改走下方扫描线跨距
+       → fillRect（GL 原语）：覆盖光栅器子采样约定（yc=py、行范围
+       minY-0.5..maxY+0.5、HalfOpen 跨距）与 SW 扫描线（yc=py+0.5、
+       painterSpanPixelRange）差 ±0.5px，是撕裂协议斜边每行 ±1 整像
+       素差异的根因（night4 v3 协议口径实测 110 格全部集中在面积多边
+       形斜边与底行）；跨距→fillRect 与软件逐位同像素（撕裂协议调和
+       2026-09-28，裁决 A）。 */
     if (!gradient)
     {
         bool antialias = false;
@@ -5796,7 +5962,7 @@ static bool painterScanFillDevice(XPainter* self, int n,
         antialias = (self->m_state.m_renderHints &
                      XPainterRenderHint_Antialiasing) != 0u;
 #endif /* XPAINTER_RENDERHINT_ON */
-        if (antialias || self->m_gpuActive)
+        if (antialias)
         {
             /* 覆盖光栅器已支持 fillRule（此前恒 OddEven，Winding 交叉区
                出孔洞，GPU 非 AA Winding 不得不绕道 painterGpuPolyCommand
@@ -5809,7 +5975,7 @@ static bool painterScanFillDevice(XPainter* self, int n,
             contour.m_count = n;
             contour.m_closed = true;
             filled = painterFillContoursAntialiased(
-                self, &contour, 1, fillRule, color, antialias ? 4 : 1);
+                self, &contour, 1, fillRule, color, 4);
             XFree_Hybrid(heapStorage);
             return filled;
         }
@@ -5826,13 +5992,70 @@ static bool painterScanFillDevice(XPainter* self, int n,
         args.m_uxs = uxs;
         args.m_uys = uys;
         args.m_fillRule = fillRule;
+        if (xpainter_prof_requested())
+            ++g_xpainterProf.m_bdPoly;
         filled = painterGpuSubmitSoftwareCommand(self, painterGpuPolyCommand,
                                                  &args);
         XFree_Hybrid(heapStorage);
         return filled;
     }
 #endif /* XPAINTER_PATH_ON */
-    XPAINTER_GPU_FALLBACK(self);
+    if (self->m_gpuActive)
+    {
+        /* GPU 会话实心多边形：批量画布重入（默认）——重入关闭 m_gpuActive
+           后经同一扫描线算法直写透明暂存画布（与 SW 逐位一致），冲批经
+           drawImageRegion 脏区提交上屏；脏区=多边形设备 bbox。修复旧路
+           径「跨距直写 m_image」在 GPU 会话全部丢失（帧内容在 FBO，直
+           写不进 FBO）：面积多边形填充消失、离散点空心圆环的根因。
+           XGPU_POLY_FILL_CANVAS=0 回退直写旧行为（GPU 会话会丢填充，
+           仅 SW 侧诊断对照）。 */
+        if (xgpu_poly_fill_canvas_requested())
+        {
+            PainterGpuPolyArgs args;
+            XRect polyRect;
+            bool filled;
+            args.m_n = n;
+            args.m_uxs = uxs;
+            args.m_uys = uys;
+            args.m_fillRule = fillRule;
+            polyRect.x = (int)minX;
+            polyRect.y = (int)minY;
+            polyRect.width = (int)(maxX - minX) + 1;
+            polyRect.height = (int)(maxY - minY) + 1;
+            filled = painterGpuSubmitSoftwareCommandRect(
+                self, painterGpuPolyCommand, &args, &polyRect);
+            /* 提交节奏对齐修复前（drawAlphaBitmap 每填充即时上传）：画
+               布内容立即冲批，不跨原语存续——批画布激活态横跨后续原
+               语/控件/页面（autotest 的 processEvents 重入、页签切换、
+               离屏截图交互）会放大时序暴露面（--autotest 600s 看门狗
+               超时不退出的回归形态）。FBO 顺序语义不变（画布内容在其
+               后原语之前落盘），像素输出逐位一致，撕裂协议/九页差分
+               不受影响；代价是多边形密集页上传次数回升（量级同修复前
+               每填充一次 bbox 上传）。 */
+            if (filled)
+                painterGpuBatchFlush();
+            XFree_Hybrid(heapStorage);
+            return filled;
+        }
+        /* 回退路径（XGPU_POLY_FILL_CANVAS=0）：ApplyStateClip + 跨距直
+           写（GPU 会话丢填充，见上）。 */
+        if (!painterGpuApplyStateClip(self))
+        {
+            PainterGpuPolyArgs args;
+            bool filled;
+            args.m_n = n;
+            args.m_uxs = uxs;
+            args.m_uys = uys;
+            args.m_fillRule = fillRule;
+            filled = painterGpuSubmitSoftwareCommand(self,
+                                                     painterGpuPolyCommand,
+                                                     &args);
+            XFree_Hybrid(heapStorage);
+            return filled;
+        }
+    }
+    else
+        XPAINTER_GPU_FALLBACK(self);
     if (!painterSpanPixelRange(minX, maxX, &px0, &px1) ||
         !painterSpanPixelRange(minY, maxY, &py0, &py1))
         goto done;
@@ -6247,6 +6470,8 @@ static bool painterFillPolygonShape(XPainter* self, int n,
         args.m_uxs = uxs;
         args.m_uys = uys;
         args.m_fillRule = fillRule;
+        if (xpainter_prof_requested())
+            ++g_xpainterProf.m_bdPoly;
         return painterGpuSubmitSoftwareCommand(self, painterGpuPolyCommand,
                                                &args);
     }
@@ -6518,6 +6743,8 @@ static bool painterRaster_drawLineAntialiased(XPainter* self, int ix1,
         args.m_y1 = iy1;
         args.m_x2 = ix2;
         args.m_y2 = iy2;
+        if (xpainter_prof_requested())
+            ++g_xpainterProf.m_bdLine;
         return painterGpuSubmitSoftwareCommand(
             self, painterGpuDrawLineDeviceCommand, &args);
     }
@@ -6727,9 +6954,10 @@ static bool painterFillPathContours(XPainter* self,
             return true;
         /* 门控不满足：继续走下方覆盖图/扫描线路径。 */
     }
-    /* 抗锯齿（Antialiasing 提示）或 GPU 会话激活时的填充：光栅化到
-       灰度/二值覆盖图再混合/上屏——GPU 激活时直接 putPixel 会写进
-       m_image 而丢失（帧内容在 FBO）。gradient 笔刷逐像素取色，维持
+    /* 抗锯齿（Antialiasing 提示）时的填充：光栅化到灰度覆盖图再混合/
+       上屏。GPU 会话实心填充改走下方扫描线跨距 → fillRect（GL 原语，
+       与软件扫描填充同像素同裁剪；撕裂协议调和 2026-09-28，理由同
+       painterScanFillDevice 同款改动）。gradient 笔刷逐像素取色，维持
        既有直画路径（边界注明）。 */
     if (device && !gradient)
     {
@@ -6738,10 +6966,9 @@ static bool painterFillPathContours(XPainter* self,
         antialias = (self->m_state.m_renderHints &
                      XPainterRenderHint_Antialiasing) != 0u;
 #endif /* XPAINTER_RENDERHINT_ON */
-        if (antialias || self->m_gpuActive)
+        if (antialias)
             return painterFillContoursAntialiased(
-                self, workContours, contourCount, fillRule, brushColor,
-                antialias ? 4 : 1);
+                self, workContours, contourCount, fillRule, brushColor, 4);
     }
 #endif /* XPAINTER_PATH_ON */
 
@@ -7559,6 +7786,7 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 g_gpuBatchCanvasInited)
             {
                 XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+                g_gpuBatchCanvasTransparent = true;
                 g_gpuBatchHasDirty = false;
                 g_gpuBatchDirty.x = 0;
                 g_gpuBatchDirty.y = 0;
@@ -7584,7 +7812,20 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 XImage_width(&g_gpuBatchCanvas) == XImage_width(image) &&
                 XImage_height(&g_gpuBatchCanvas) == XImage_height(image))
             {
-                XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+                /* 透明记账跳过（残差削减夜九）：冲刷点行带整宽清（±8px
+                   逸出带，夜八转正默认）已恢复画布全透明——记账为真时
+                   begin 段整幅 memset 只在重清已透明像素（1.92MB/帧，
+                   prof begin=0.45ms 占墙钟 ~70%，XGPU_PAINTER_PROF
+                   2026-09-28 三遍中位实测）。像素恒等：清/不清对全透明
+                   画布逐位无差。XGPU_BEGIN_CLEAR_SAFE=1 逐位回退本跳过
+                   （每帧无条件整幅清零旧行为）；记账失真即残留类污染，
+                   与夜八行清同责，回退开关一并覆盖。 */
+                if (xgpu_begin_clear_safe_requested() ||
+                    !g_gpuBatchCanvasTransparent)
+                {
+                    XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
+                    g_gpuBatchCanvasTransparent = true;
+                }
                 g_gpuBatchHasDirty = false;
                 g_gpuBatchDirty.x = 0;
                 g_gpuBatchDirty.y = 0;
@@ -13492,6 +13733,8 @@ static bool painterPathDraw(XPainter* self, const XPainterPath* path,
         args.m_path = path;
         args.m_fill = fill;
         args.m_stroke = stroke;
+        if (xpainter_prof_requested())
+            ++g_xpainterProf.m_bdPath;
         return painterGpuSubmitSoftwareCommand(self, painterGpuPathCommand,
                                                &args);
     }

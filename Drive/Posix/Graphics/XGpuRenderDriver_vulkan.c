@@ -72,6 +72,25 @@ struct XGpuRenderDriverSession
     bool m_transferInFlight;     /**< transferFence 是否有待回收提交。 */
     VkFence m_suspendFence;      /**< 半帧打断提交 fence（V2，离屏 upload/readback）。 */
 
+    /* XGPU_VK_ASYNC_READBACK（读回异步化，默认开；置 "0" 回退旧串行
+       路径）：专用读回命令缓冲 + 双缓冲 HOST_VISIBLE 读回 staging +
+       每槽独立 fence。半帧提交（suspend）不再同步等待，与整幅读回拷贝
+       以同队列提交序衔接（沿用 V2 的同序约定），CPU 侧一次
+       vkWaitForFences 合并旧路径 suspend/拷贝的两次串行 GPU 往返；
+       读回 staging 独立于上传 staging，消除上传/读回互相 retire 的
+       串行点与扩容churn。CPU 拷出与旧路径共用同一例程，单帧静态画面
+       读回与旧路径逐位一致。 */
+    bool m_asyncReadback;        /**< 读回异步化开关（创建时读环境变量）。 */
+    VkCommandBuffer m_readbackCmd; /**< 读回专用命令缓冲（独立于 m_transferCmd）。 */
+    VkBuffer m_readbackBuffer[2];  /**< 双缓冲读回 staging（首用时惰性分配）。 */
+    VkDeviceMemory m_readbackMemory[2];
+    void* m_readbackMapped[2];     /**< 持久映射。 */
+    size_t m_readbackCapacity[2];  /**< 各槽字节容量。 */
+    VkFence m_readbackFence[2];    /**< 各槽读回提交 fence。 */
+    bool m_readbackInFlight[2];    /**< 各槽是否有待回收读回提交。 */
+    int m_readbackIndex;           /**< 下一笔读回使用的槽（乒乓）。 */
+    bool m_suspendInFlight;        /**< 半帧异步提交待回收（读回流程内部）。 */
+
     VkRenderPass m_renderPass;   /**< 单子通道渲染通道（loadOp=LOAD）。 */
     VkPipelineLayout m_solidLayout;   /**< 纯色管线布局（push constant）。 */
     VkPipeline m_solidPipeline;  /**< 纯色填充管线。 */
@@ -809,6 +828,7 @@ static VkFormat xvkl_surface_format(XGpuRenderDriverSession* self)
 }
 
 static bool xvkl_present_v2(void); /* 定义于帧控制节（transfer 提交附近）。 */
+static bool xvkl_async_readback(void); /* 定义于读回节（readback 附近）。 */
 
 static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
                                                     int width, int height)
@@ -907,6 +927,9 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         failStage = "getDeviceQueue";
         goto fail;
     }
+    /* 读回异步化开关在命令缓冲分配前读取：异步路径需要第三条
+       PRIMARY 命令缓冲（专用读回，与帧/上传命令缓冲互不复用）。 */
+    self->m_asyncReadback = xvkl_async_readback();
     XMemset(&poolCi, 0, sizeof(poolCi));
     poolCi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolCi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -921,9 +944,9 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     cbAi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbAi.commandPool = self->m_cmdPool;
     cbAi.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbAi.commandBufferCount = 2;
+    cbAi.commandBufferCount = self->m_asyncReadback ? 3 : 2;
     {
-        VkCommandBuffer buffers[2];
+        VkCommandBuffer buffers[3];
         if (vkAllocateCommandBuffers(self->m_device, &cbAi, buffers) !=
             VK_SUCCESS)
         {
@@ -932,6 +955,8 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         }
         self->m_cmd = buffers[0];
         self->m_transferCmd = buffers[1];
+        if (self->m_asyncReadback)
+            self->m_readbackCmd = buffers[2];
     }
     XMemset(&fci, 0, sizeof(fci));
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -955,6 +980,30 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
                           &self->m_suspendFence) != VK_SUCCESS)
         {
             failStage = "vkCreateFence(v2)";
+            goto fail;
+        }
+    }
+    if (self->m_asyncReadback)
+    {
+        /* 异步读回辅助 fence：初始 UNSIGNALED（无在途工作，无需等待）。
+           半帧异步提交复用 m_suspendFence——V2 块未创建时（PRESENT_V2=0
+           且 ASYNC_READBACK 开）在此补建，保证开关组合正交可用。 */
+        VkFenceCreateInfo ufci;
+        XMemset(&ufci, 0, sizeof(ufci));
+        ufci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        if (!self->m_suspendFence &&
+            vkCreateFence(self->m_device, &ufci, NULL,
+                          &self->m_suspendFence) != VK_SUCCESS)
+        {
+            failStage = "vkCreateFence(async-suspend)";
+            goto fail;
+        }
+        if (vkCreateFence(self->m_device, &ufci, NULL,
+                          &self->m_readbackFence[0]) != VK_SUCCESS ||
+            vkCreateFence(self->m_device, &ufci, NULL,
+                          &self->m_readbackFence[1]) != VK_SUCCESS)
+        {
+            failStage = "vkCreateFence(async-readback)";
             goto fail;
         }
     }
@@ -1078,6 +1127,23 @@ static void xvkl_session_destroy(XGpuRenderDriverSession* self)
         vkDestroyFence(self->m_device, self->m_transferFence, NULL);
     if (self->m_suspendFence)
         vkDestroyFence(self->m_device, self->m_suspendFence, NULL);
+    {
+        /* 异步读回资源：双槽 staging 与各槽 fence（readbackCmd 随
+           cmdPool 销毁；入口处 vkDeviceWaitIdle 已覆盖在途提交）。 */
+        uint32_t i;
+        for (i = 0; i < 2; ++i)
+        {
+            if (self->m_readbackFence[i])
+                vkDestroyFence(self->m_device, self->m_readbackFence[i],
+                               NULL);
+            if (self->m_readbackBuffer[i])
+                vkDestroyBuffer(self->m_device, self->m_readbackBuffer[i],
+                                NULL);
+            if (self->m_readbackMemory[i])
+                vkFreeMemory(self->m_device, self->m_readbackMemory[i],
+                             NULL);
+        }
+    }
     if (self->m_cmdPool)
         vkDestroyCommandPool(self->m_device, self->m_cmdPool, NULL);
     if (self->m_device) vkDestroyDevice(self->m_device, NULL);
@@ -1396,6 +1462,16 @@ static bool xvkl_begin_frame(XGpuRenderDriverSession* self,
         vkResetFences(self->m_device, 1, &self->m_frameFence);
         self->m_frameFenceArmed = false;
     }
+    /* 读回异步化的悬置半帧兜底：仅 fence API 失败时才可能到达此处
+       （正常流程在读回内部已合并回收）。等待并复位，保证随后 m_cmd
+       复位/重开时上一笔半帧提交确已完结（与旧路径"录制开始时在途
+       必已完结"的复用纪律一致）。 */
+    if (self->m_suspendInFlight)
+    {
+        vkWaitForFences(self->m_device, 1, &self->m_suspendFence, VK_TRUE,
+                        UINT64_MAX);
+        self->m_suspendInFlight = false;
+    }
     self->m_vertexCursor = 0;
     self->m_pendingReadback = NULL;
     self->m_imageWaitConsumed = false;
@@ -1521,13 +1597,59 @@ static bool xvkl_resume_after_transfer(XGpuRenderDriverSession* self)
     return true;
 }
 
+/**
+ * @brief      把 staging 中的整帧像素拷出到目标 XImage（读回 CPU 收尾）。
+ * @details    串行路径（源=m_stagingMapped）与异步读回路径（源=读回槽
+ *             映射）共用本例程：ARGB32/预乘目标逐行 memcpy，其余格式
+ *             逐像素去预乘。两路径像素来源与循环逐字节一致——读回异步化
+ *             只改变 CPU 等待结构，不改像素通路（位一致红线）。
+ */
+static bool xvkl_readback_copyout(XGpuRenderDriverSession* self,
+                                  XImage* target, const uint8_t* src)
+{
+    int x;
+    int y;
+    if (XImage_format(target) == XImageFormat_ARGB32 ||
+        XImage_format(target) == XImageFormat_ARGB32_Premultiplied)
+    {
+        uint8_t* dst = XImage_bits(target);
+        int bpl = XImage_bytesPerLine(target);
+        if (!dst || bpl < self->m_width * 4) return false;
+        for (y = 0; y < self->m_height; ++y)
+        {
+            uint8_t* line = dst + (size_t)y * (size_t)bpl;
+            const uint8_t* row = src + (size_t)y *
+                (size_t)self->m_width * 4u;
+            for (x = 0; x < self->m_width; ++x)
+            {
+                line[x * 4 + 0] = row[x * 4 + 0];
+                line[x * 4 + 1] = row[x * 4 + 1];
+                line[x * 4 + 2] = row[x * 4 + 2];
+                line[x * 4 + 3] = row[x * 4 + 3];
+            }
+        }
+        return true;
+    }
+    for (y = 0; y < self->m_height; ++y)
+        for (x = 0; x < self->m_width; ++x)
+        {
+            const uint8_t* pixel = src +
+                ((size_t)y * (size_t)self->m_width + (size_t)x) * 4u;
+            uint8_t a = pixel[3];
+            uint8_t r = a ? (uint8_t)(((unsigned)pixel[2] * 255u + a / 2u) / a) : 0;
+            uint8_t g = a ? (uint8_t)(((unsigned)pixel[1] * 255u + a / 2u) / a) : 0;
+            uint8_t b = a ? (uint8_t)(((unsigned)pixel[0] * 255u + a / 2u) / a) : 0;
+            XImage_setPixel(target, x, y, ((uint32_t)a << 24) |
+                            ((uint32_t)r << 16) | ((uint32_t)g << 8) | b);
+        }
+    return true;
+}
+
 static bool xvkl_copy_frame_to_image(XGpuRenderDriverSession* self,
                                      XImage* target)
 {
     size_t bytes;
     VkBufferImageCopy region;
-    int x;
-    int y;
     if (!self || !target || self->m_window ||
         XImage_width(target) != self->m_width ||
         XImage_height(target) != self->m_height)
@@ -1562,41 +1684,271 @@ static bool xvkl_copy_frame_to_image(XGpuRenderDriverSession* self,
        fence，不再全队列等待；像素通路与 V1 逐位一致。 */
     if (!xvkl_submit_transfer(self, true)) return false;
     self->m_colorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    if (XImage_format(target) == XImageFormat_ARGB32 ||
-        XImage_format(target) == XImageFormat_ARGB32_Premultiplied)
+    return xvkl_readback_copyout(self, target,
+                                 (const uint8_t*)self->m_stagingMapped);
+}
+
+/* ==================== 读回异步化（XGPU_VK_ASYNC_READBACK） ==================== */
+
+/*
+ * 旧串行链每笔读回两次完整 CPU<->GPU 往返：
+ *   ① suspend：提交半帧 + fence 同步等待（等已录绘制执行完毕）；
+ *   ② 拷贝：共享上传 staging/transferCmd（stage 前的 retire 可能先等
+ *      一笔仍在执行的上传提交）+ 提交后 fence 同步等待拷贝完成。
+ * 异步路径（默认开；XGPU_VK_ASYNC_READBACK=0 逐字回退旧串行路径）：
+ *   - 半帧异步提交（独立 suspend fence，不等待）；
+ *   - 整幅拷贝录制进专用读回命令缓冲，写入双缓冲读回槽（各槽独立
+ *     fence，与上传 staging/transfer 完全解耦，零互相 retire）；
+ *   - 一次 vkWaitForFences 合并等待两 fence：拷贝 fence 经同队列提交
+ *     序传递覆盖半帧（V2 同序约定）；同时等两 fence 对 m_cmd/staging
+ *     复用给出正式的 CPU 侧保证，resume 复位即安全；
+ *   - CPU 拷出走与串行路径同一例程（xvkl_readback_copyout），像素
+ *     通路、布局三段式与串行路径完全一致——单帧静态画面读回逐位
+ *     一致，仅 CPU 等待结构改变。
+ */
+
+/**
+ * @brief      读取读回异步化开关 XGPU_VK_ASYNC_READBACK。
+ * @details    默认开（fence + 双缓冲读回，单次合并等待）；置 "0" 回退
+ *             旧串行路径（suspend 同步等待 + 共享 staging 拷贝两次
+ *             等待）。进程内读一次缓存。
+ */
+static bool xvkl_async_readback(void)
+{
+    static int cached = -1;
+    if (cached < 0)
     {
-        uint8_t* dst = XImage_bits(target);
-        int bpl = XImage_bytesPerLine(target);
-        const uint8_t* src = (const uint8_t*)self->m_stagingMapped;
-        if (!dst || bpl < self->m_width * 4) return false;
-        for (y = 0; y < self->m_height; ++y)
-        {
-            uint8_t* line = dst + (size_t)y * (size_t)bpl;
-            const uint8_t* row = src + (size_t)y *
-                (size_t)self->m_width * 4u;
-            for (x = 0; x < self->m_width; ++x)
-            {
-                line[x * 4 + 0] = row[x * 4 + 0];
-                line[x * 4 + 1] = row[x * 4 + 1];
-                line[x * 4 + 2] = row[x * 4 + 2];
-                line[x * 4 + 3] = row[x * 4 + 3];
-            }
-        }
-        return true;
+        const char* v = XSystem_environment("XGPU_VK_ASYNC_READBACK");
+        cached = v && v[0] == '0' && v[1] == 0 ? 0 : 1;
     }
-    for (y = 0; y < self->m_height; ++y)
-        for (x = 0; x < self->m_width; ++x)
-        {
-            const uint8_t* pixel = (const uint8_t*)self->m_stagingMapped +
-                ((size_t)y * (size_t)self->m_width + (size_t)x) * 4u;
-            uint8_t a = pixel[3];
-            uint8_t r = a ? (uint8_t)(((unsigned)pixel[2] * 255u + a / 2u) / a) : 0;
-            uint8_t g = a ? (uint8_t)(((unsigned)pixel[1] * 255u + a / 2u) / a) : 0;
-            uint8_t b = a ? (uint8_t)(((unsigned)pixel[0] * 255u + a / 2u) / a) : 0;
-            XImage_setPixel(target, x, y, ((uint32_t)a << 24) |
-                            ((uint32_t)r << 16) | ((uint32_t)g << 8) | b);
-        }
+    return cached != 0;
+}
+
+/** @brief 等待并复位一个读回槽的在途提交（未在途时零开销恒真）。 */
+static bool xvkl_readback_slot_retire(XGpuRenderDriverSession* self,
+                                      int slot)
+{
+    if (!self->m_readbackInFlight[slot]) return true;
+    if (vkWaitForFences(self->m_device, 1, &self->m_readbackFence[slot],
+                        VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+        return false;
+    if (vkResetFences(self->m_device, 1, &self->m_readbackFence[slot]) !=
+        VK_SUCCESS)
+        return false;
+    self->m_readbackInFlight[slot] = false;
     return true;
+}
+
+/** @brief 确保读回槽容量（惰性分配，按需扩容；不复用上传 staging）。 */
+static bool xvkl_ensure_readback_slot(XGpuRenderDriverSession* self,
+                                      int slot, size_t bytes)
+{
+    if (self->m_readbackBuffer[slot] &&
+        self->m_readbackCapacity[slot] >= bytes)
+        return true;
+    /* 调用方已先 retire 本槽（fence 已信号），销毁重建无执行竞争。 */
+    if (self->m_readbackBuffer[slot])
+        vkDestroyBuffer(self->m_device, self->m_readbackBuffer[slot], NULL);
+    if (self->m_readbackMemory[slot])
+        vkFreeMemory(self->m_device, self->m_readbackMemory[slot], NULL);
+    self->m_readbackBuffer[slot] = 0;
+    self->m_readbackMemory[slot] = 0;
+    self->m_readbackMapped[slot] = NULL;
+    self->m_readbackCapacity[slot] = 0;
+    if (!xvkl_create_host_buffer(self->m_device, self->m_physical, bytes,
+                                 &self->m_readbackBuffer[slot],
+                                 &self->m_readbackMemory[slot],
+                                 &self->m_readbackMapped[slot]))
+        return false;
+    self->m_readbackCapacity[slot] = bytes;
+    return true;
+}
+
+/**
+ * @brief      xvkl_suspend_for_transfer 的异步变体：半帧提交不等待。
+ * @details    已录绘制必须先于读回拷贝执行（拷贝要读到它们的结果），
+ *             同队列提交序保证该依赖；CPU 侧等待合并进读回 fence 的
+ *             一次 vkWaitForFences。m_cmd 的复位资格由 suspend fence
+ *             的信号给出（合并等待完成后），与旧路径的等待时点不同、
+ *             复用纪律相同。
+ */
+static bool xvkl_suspend_for_transfer_async(XGpuRenderDriverSession* self)
+{
+    VkSubmitInfo submit;
+    if (!self || !self->m_recording || self->m_window) return false;
+    if (self->m_suspendInFlight) return false; /* 单悬置纪律：先回收再武装。 */
+    vkCmdEndRenderPass(self->m_cmd);
+    if (vkEndCommandBuffer(self->m_cmd) != VK_SUCCESS) return false;
+    self->m_recording = false;
+    XMemset(&submit, 0, sizeof(submit));
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &self->m_cmd;
+    /* 复位先行：fence 需未信号才能被本次提交置位（同旧路径注释）。 */
+    if (vkResetFences(self->m_device, 1, &self->m_suspendFence) != VK_SUCCESS)
+        return false;
+    if (vkQueueSubmit(self->m_queue, 1, &submit, self->m_suspendFence) !=
+        VK_SUCCESS)
+        return false;
+    self->m_suspendInFlight = true;
+    return true;
+}
+
+/**
+ * @brief      在专用读回命令缓冲中录制整幅 COLOR_ATTACHMENT→
+ *             TRANSFER_SRC→拷贝→COLOR_ATTACHMENT 三段式并异步提交。
+ * @details    屏障序列与串行路径逐位一致；目的缓冲为双缓冲读回槽，
+ *             fence 为本槽专用 fence。提交后布局簿记回到
+ *             COLOR_ATTACHMENT_OPTIMAL（与串行路径一致）。
+ */
+static bool xvkl_readback_submit_copy(XGpuRenderDriverSession* self,
+                                      int slot)
+{
+    VkCommandBufferBeginInfo begin;
+    VkSubmitInfo submit;
+    VkBufferImageCopy region;
+    XMemset(&begin, 0, sizeof(begin));
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(self->m_readbackCmd, &begin) != VK_SUCCESS)
+        return false;
+    xvkl_image_barrier(self->m_readbackCmd, self->m_colorImage,
+                       self->m_colorLayout,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                       VK_ACCESS_TRANSFER_READ_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT);
+    XMemset(&region, 0, sizeof(region));
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent.width = (uint32_t)self->m_width;
+    region.imageExtent.height = (uint32_t)self->m_height;
+    region.imageExtent.depth = 1;
+    vkCmdCopyImageToBuffer(self->m_readbackCmd, self->m_colorImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           self->m_readbackBuffer[slot], 1, &region);
+    xvkl_image_barrier(self->m_readbackCmd, self->m_colorImage,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                       VK_ACCESS_TRANSFER_READ_BIT,
+                       VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    if (vkEndCommandBuffer(self->m_readbackCmd) != VK_SUCCESS)
+        return false;
+    XMemset(&submit, 0, sizeof(submit));
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &self->m_readbackCmd;
+    if (vkResetFences(self->m_device, 1, &self->m_readbackFence[slot]) !=
+        VK_SUCCESS)
+        return false;
+    if (vkQueueSubmit(self->m_queue, 1, &submit,
+                      self->m_readbackFence[slot]) != VK_SUCCESS)
+        return false;
+    self->m_readbackInFlight[slot] = true;
+    self->m_colorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    return true;
+}
+
+/**
+ * @brief      读回后的渲染通道重开（精简 resume）。
+ * @details    suspend fence 已在合并等待中信号（m_cmd 复位安全）；
+ *             读回拷贝的尾段屏障已把布局簿记恢复为
+ *             COLOR_ATTACHMENT_OPTIMAL，无需布局 transfer 提交——复位
+ *             m_cmd 后直接重启渲染通道（loadOp=LOAD 保留已画内容），
+ *             省去旧路径 resume 里的空布局提交及其 retire。命令缓冲
+ *             的 vkBeginCommandBuffer 由 xvkl_begin_render_pass 独占
+ *             执行（本函数不得重复 begin——RECORDING 态二次 begin 失败
+ *             会把 m_cmd 置为 INVALID，后续 begin_frame 全部失效，
+ *             2026-09-28 冒烟 "line session not gpu" 根因）。
+ */
+static bool xvkl_resume_after_readback_async(XGpuRenderDriverSession* self)
+{
+    if (vkResetCommandBuffer(self->m_cmd, 0) != VK_SUCCESS) return false;
+    if (!xvkl_begin_render_pass(self)) return false;
+    self->m_recording = true;
+    return true;
+}
+
+/**
+ * @brief      读回异步化主流程（XGPU_VK_ASYNC_READBACK 开时接管
+ *             readback 操作表入口）。
+ * @param      active 进入时帧是否在录制中（决定 suspend/resume 腿）。
+ * @return     true 目标图像已含本帧整幅内容（与串行路径逐位一致）；
+ *             false 失败（会话状态恢复到与串行路径失败时同构）。
+ */
+static bool xvkl_readback_async(XGpuRenderDriverSession* self,
+                                XImage* target, bool active)
+{
+    VkFence waitFences[2];
+    uint32_t waitCount;
+    int slot;
+    size_t bytes;
+    bool suspended;
+    bool ok;
+    if (!self || !target || self->m_window ||
+        XImage_width(target) != self->m_width ||
+        XImage_height(target) != self->m_height)
+        return false;
+    /* 防御：上一笔读回异常遗留的悬置半帧先回收（fence 已信号时本
+       调用为查询语义），恢复 m_cmd 可复位资格再武装新半帧。 */
+    if (self->m_suspendInFlight)
+    {
+        if (vkWaitForFences(self->m_device, 1, &self->m_suspendFence,
+                            VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+            return false;
+        self->m_suspendInFlight = false;
+    }
+    slot = self->m_readbackIndex;
+    bytes = (size_t)self->m_width * (size_t)self->m_height * 4u;
+    if (!xvkl_readback_slot_retire(self, slot)) return false;
+    if (!xvkl_ensure_readback_slot(self, slot, bytes)) return false;
+    suspended = false;
+    if (active)
+    {
+        /* 半帧异步提交（失败时会话状态与串行路径 suspend 失败同构：
+           recording=false、无在途工作，直接报失败）。 */
+        if (!xvkl_suspend_for_transfer_async(self)) return false;
+        suspended = true;
+    }
+    if (!xvkl_readback_submit_copy(self, slot))
+    {
+        /* 拷贝提交失败：悬置半帧先回收（m_cmd 复位资格），再按串行
+           路径失败口径重开渲染通道（帧继续录制）。无论 resume 成败
+           一律报失败——旧串行路径在本情形的返回值恒为 false。 */
+        if (suspended)
+        {
+            if (vkWaitForFences(self->m_device, 1, &self->m_suspendFence,
+                                VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+                return false;
+            self->m_suspendInFlight = false;
+        }
+        if (active && !xvkl_resume_after_readback_async(self)) return false;
+        return false;
+    }
+    /* 单次合并等待：读回 fence + 半帧 suspend fence（若有）。 */
+    waitFences[0] = self->m_readbackFence[slot];
+    waitCount = 1;
+    if (suspended)
+    {
+        waitFences[1] = self->m_suspendFence;
+        waitCount = 2;
+    }
+    if (vkWaitForFences(self->m_device, waitCount, waitFences, VK_TRUE,
+                        UINT64_MAX) != VK_SUCCESS)
+        return false;
+    if (vkResetFences(self->m_device, waitCount, waitFences) != VK_SUCCESS)
+        return false;
+    self->m_readbackInFlight[slot] = false;
+    self->m_suspendInFlight = false;
+    /* CPU 拷出：与串行路径同一例程、同一布局（逐位一致）。 */
+    ok = xvkl_readback_copyout(self, target,
+                               (const uint8_t*)self->m_readbackMapped[slot]);
+    self->m_readbackIndex = slot ^ 1;
+    if (active && !xvkl_resume_after_readback_async(self)) return false;
+    return ok;
 }
 
 static bool xvkl_readback(XGpuRenderDriverSession* self, XImage* target)
@@ -1605,6 +1957,8 @@ static bool xvkl_readback(XGpuRenderDriverSession* self, XImage* target)
     bool ok;
     if (!self || !target || self->m_window) return false;
     active = self->m_recording;
+    if (self->m_asyncReadback)
+        return xvkl_readback_async(self, target, active);
     if (active && !xvkl_suspend_for_transfer(self)) return false;
     ok = xvkl_copy_frame_to_image(self, target);
     if (active && !xvkl_resume_after_transfer(self)) return false;

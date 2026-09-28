@@ -6287,6 +6287,15 @@ double g_xgui_flushMs = 0.0;
 double g_xgui_rootPaintMs = 0.0;
 long g_xgui_flushCount = 0;
 
+/* 降级帧后的整窗恢复重present（2026-09-28）：降级帧（painterGpu 本帧
+   GL 调用失败）按旧口径只提交脏区 whole，且降级帧的 FBO 内容不可信，
+   屏幕上可能停留部分陈旧/垃圾行；后续普通帧又只走脏区读回+脏区提交，
+   未被覆盖的区域永久停留旧内容——即「GPU 模式显示不全且不自愈」。
+   置位本标志后，下一次 flushBackingStore 把呈现区域强制抬升为整窗
+   （整窗重绘+整窗读回+整窗提交），恢复屏幕一致性。
+   XGPU_DEGRADED_FULL_REPRESENT=1 回退旧口径（排障开关）。 */
+static int g_xgui_degradedFramePending = 0;
+
 void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 {
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
@@ -6354,6 +6363,30 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         XRegion_addRect(&whole, &contents);
     }
  #endif
+    /* 降级帧恢复：上一帧提交了降级 GPU 帧时，本帧呈现区域强制抬升为
+       整窗（重绘+读回+提交都覆盖整窗），保证屏幕最终一致（详见
+       g_xgui_degradedFramePending 处注释）。整窗帧天然免于呈现限频
+       跳帧（coversFull 判定）。XGPU_DEGRADED_FULL_REPRESENT=1 回退。 */
+    if (g_xgui_degradedFramePending)
+    {
+        static int degradedRecoveryInit = -1;
+        static int degradedRecoveryOff = 0;
+        if (degradedRecoveryInit < 0)
+        {
+            const char* dr =
+                XSystem_environment("XGPU_DEGRADED_FULL_REPRESENT");
+            degradedRecoveryOff =
+                dr && *dr && !(dr[0] == '0' && dr[1] == 0) ? 1 : 0;
+            degradedRecoveryInit = 1;
+        }
+        if (!degradedRecoveryOff)
+        {
+            XRegion_clear(&whole);
+            contents = top->m_contentsRect;
+            XRegion_addRect(&whole, &contents);
+            g_xgui_degradedFramePending = 0;
+        }
+    }
     /* 本帧呈现区域包围盒（whole 定稿后一次收拢，三处共用）：两遍求
        bbox——单遍增量版在后续矩形把 sc.x/sc.y 左/上拉走时 x+width
        随之左移，右/下边界被静默收窄（多矩形脏区表面裁剪错误根因，
@@ -6642,6 +6675,10 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             XBackingStore_flush(store, &whole,
                                 (XWindow*)top->m_windowHandle, NULL);
             XGpuRenderBackend_setFramePresented(false);
+            /* 降级 GPU 帧已上屏（软件常驻模式 gpuWindow 恒 NULL，不计）：
+               置位下一帧的整窗恢复重present（见函数头注释）。 */
+            if (gpuWindow)
+                g_xgui_degradedFramePending = 1;
         }
             if (gpuWindow)
                 XGpuRenderBackend_endWindowFrame();

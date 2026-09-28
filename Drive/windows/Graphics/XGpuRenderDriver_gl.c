@@ -302,6 +302,14 @@ struct XGpuRenderDriverSession
     XgpuTexChurnEntry m_identityChurn[XGPU_TEX_IDENTITY_CHURN_SIZE];
                                              /**< P-A2 换版跟随表（无 GL 资源）。 */
 
+    /* P-IPU（XGPU_IMAGE_PREMUL_UPLOAD）：ARGB32 全不透明判定缓存
+       {指针,内容版本,判定}。全不透明图像预乘=恒等（a=255 通道不变），
+       判定命中即免逐像素转换走既有直传快路径（静态层逐帧上传零新增
+       成本）；版本变化/换图即重扫。calloc 清零即空表。 */
+    const XImage* m_opaqueScanImage[4];
+    uint32_t m_opaqueScanVersion[4];
+    uint8_t m_opaqueScanVerdict[4];          /**< 1=全不透明 0=含半透明。 */
+
     /* P-PBO（2026-09-26）双 PBO 异步读回：消除同步 glReadPixels 的
        CPU 停顿（GPU 增量每帧 ~1.36ms 的头号归因候选）。双缓冲 1 帧
        滞后——本帧读回异步写入 PBO[cur]（CPU 不等待），随即 map 上一
@@ -507,6 +515,20 @@ static bool xgld_present_lean_enabled(void)
     if (enabled < 0)
     {
         const char* value = XSystem_environment("XGPU_PRESENT_LEAN");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/* P-SPR（2026-09-28）纯色 quad 预乘不变量修复开关（沿排障开关先例：
+ * 默认开=修复生效，"0"=回退不修复）。域=drawSolidQuad 入口颜色。
+ * 回退：XGPU_SOLID_PREMUL_REPAIR=0。 */
+static bool xgld_premul_repair_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_SOLID_PREMUL_REPAIR");
         enabled = !(value && *value && value[0] == '0' && value[1] == 0);
     }
     return enabled != 0;
@@ -841,6 +863,101 @@ static uint8_t xgpu_unpremultiply(uint8_t value, uint8_t alpha)
     return (uint8_t)(result > 255u ? 255u : result);
 }
 
+/* ==================== P-IPU（XGPU_IMAGE_PREMUL_UPLOAD）直通格式预乘上传 ==================== */
+
+/** @brief XGPU_IMAGE_PREMUL_UPLOAD 环境开关（缺省开=修复生效，
+ *         "0"=回退「ARGB32 与预乘同布局直传」旧行为）。
+ *  @details XImage 契约：ARGB32=非预乘，ARGB32_Premultiplied=预乘。
+ *           GL 管线为预乘混合（ONE, ONE_MINUS_SRC_ALPHA），上传必须
+ *           预乘字节。既有实现把两格式当同一布局直传，对 ARGB32 直通
+ *           内容（GPU 批量画布 g_gpuBatchCanvas 的 putPixel 写入）等
+ *           于把直通 RGB 当预乘再超加一次——半透明内容 G/B 饱和溢出
+ *           （night4 面积图斜边笔 GPU (150,255,255) vs SW (125,210,
+ *           207) 实测，撕裂协议主差异簇之一）。 */
+static bool xgld_image_premul_upload_enabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+    {
+        const char* value = XSystem_environment("XGPU_IMAGE_PREMUL_UPLOAD");
+        enabled = !(value && *value && value[0] == '0' && value[1] == 0);
+    }
+    return enabled != 0;
+}
+
+/** @brief ARGB32 全不透明判定（带 {指针,内容版本} 4 槽缓存）。
+ *  @return 1=全不透明（预乘=恒等，可走既有直传快路径），0=含半透明
+ *          （需预乘转换）。判定为纯优化，任何返回值不改变正确性。 */
+static int xgld_argb32_opaque_verdict(XGpuRenderDriverSession* self,
+                                      const XImage* image)
+{
+    const uint8_t* src;
+    int w;
+    int h;
+    int bpl;
+    uint32_t version;
+    int i;
+    int slot;
+    int x;
+    int y;
+    if (!self || !image) return 0;
+    version = XImage_contentVersion(image);
+    slot = -1;
+    for (i = 0; i < 4; ++i)
+    {
+        if (self->m_opaqueScanImage[i] == image)
+        {
+            if (self->m_opaqueScanVersion[i] == version)
+                return self->m_opaqueScanVerdict[i];
+            slot = i; /* 同图换版：原槽重扫。 */
+            break;
+        }
+        if (self->m_opaqueScanImage[i] == NULL && slot < 0)
+            slot = i;
+    }
+    if (slot < 0) slot = 0; /* 表满：覆盖 0 号（判定为纯优化）。 */
+    src = XImage_constBits(image);
+    w = XImage_width(image);
+    h = XImage_height(image);
+    bpl = XImage_bytesPerLine(image);
+    if (!src || bpl < w * 4 || w <= 0 || h <= 0)
+    {
+        /* 无法安全扫描：按含半透明处理（走转换，正确性优先）。 */
+        self->m_opaqueScanImage[slot] = NULL;
+        return 0;
+    }
+    for (y = 0; y < h; ++y)
+    {
+        const uint8_t* srow = src + (size_t)y * (size_t)bpl;
+        for (x = 0; x < w; ++x)
+        {
+            if (srow[(size_t)x * 4u + 3u] != 255u)
+            {
+                self->m_opaqueScanImage[slot] = image;
+                self->m_opaqueScanVersion[slot] = version;
+                self->m_opaqueScanVerdict[slot] = 0;
+                return 0;
+            }
+        }
+    }
+    self->m_opaqueScanImage[slot] = image;
+    self->m_opaqueScanVersion[slot] = version;
+    self->m_opaqueScanVerdict[slot] = 1;
+    return 1;
+}
+
+/** @brief 该次上传是否需要把 ARGB32 直通字节预乘（P-IPU）。
+ *  @details 仅 ARGB32（非预乘格式）且开关开且图含半透明时为真；
+ *           ARGB32_Premultiplied 与全不透明 ARGB32 恒假（既有直传
+ *           路径逐字节不变）。 */
+static int xgld_upload_needs_premul(XGpuRenderDriverSession* self,
+                                    const XImage* image)
+{
+    if (!xgld_image_premul_upload_enabled()) return 0;
+    if (XImage_format(image) != XImageFormat_ARGB32) return 0;
+    return !xgld_argb32_opaque_verdict(self, image);
+}
+
 static bool xgpu_upload_image_flip(XGpuRenderDriverSession* self,
                                    const XImage* image,
                                    XglUInt texture, int width, int height,
@@ -870,16 +987,20 @@ static bool xgpu_upload_image_flip(XGpuRenderDriverSession* self,
 {
     size_t bytes;
     int y;
+    int uploadPremul;
     if (!self || !image || texture == 0 || width <= 0 || height <= 0 ||
         XImage_width(image) < width || XImage_height(image) < height)
         return false;
     bytes = (size_t)width * (size_t)height * 4u;
     if (!xgpu_reserve_pixels(self, bytes)) return false;
-    /* 快速路径：ARGB32 与 ARGB32_Premultiplied 是同一预乘布局。源已预乘，
-       逐行直拷并做 R/B 交换（ARGB32 小端 B,G,R,A → GL 上传字节序
-       R,G,B,A），避免逐像素 XImage_pixel/mul255 的函数调用开销
-       （520x360 静态场景每帧约 19 万像素）。 */
-    if (!flipY &&
+    /* P-IPU：ARGB32（非预乘格式）且含半透明 → 上传前预乘（全不透明
+       与预乘格式走既有直传，逐字节不变）。 */
+    uploadPremul = xgld_upload_needs_premul(self, image);
+    /* 快速路径：ARGB32_Premultiplied（及全不透明 ARGB32，预乘=恒等）
+       与预乘布局一致，逐行直拷并做 R/B 交换（ARGB32 小端 B,G,R,A →
+       GL 上传字节序 R,G,B,A），避免逐像素 XImage_pixel/mul255 的函数
+       调用开销（520x360 静态场景每帧约 19 万像素）。 */
+    if (!flipY && !uploadPremul &&
         (XImage_format(image) == XImageFormat_ARGB32 ||
          XImage_format(image) == XImageFormat_ARGB32_Premultiplied) &&
         XImage_width(image) == width && XImage_height(image) == height)
@@ -925,10 +1046,22 @@ static bool xgpu_upload_image_flip(XGpuRenderDriverSession* self,
                 int x;
                 for (x = 0; x < width; ++x)
                 {
-                    drow[x * 4 + 0] = srow[x * 4 + 2]; /* R <- B */
-                    drow[x * 4 + 1] = srow[x * 4 + 1]; /* G */
-                    drow[x * 4 + 2] = srow[x * 4 + 0]; /* B <- R */
-                    drow[x * 4 + 3] = srow[x * 4 + 3]; /* A */
+                    /* P-IPU：ARGB32 直通内容按 a 预乘（a=255 逐字节不
+                       变）；预乘格式直通。 */
+                    uint8_t a = srow[x * 4 + 3];
+                    if (uploadPremul)
+                    {
+                        drow[x * 4 + 0] = xgpu_mul255((unsigned)srow[x * 4 + 2], a);
+                        drow[x * 4 + 1] = xgpu_mul255((unsigned)srow[x * 4 + 1], a);
+                        drow[x * 4 + 2] = xgpu_mul255((unsigned)srow[x * 4 + 0], a);
+                    }
+                    else
+                    {
+                        drow[x * 4 + 0] = srow[x * 4 + 2]; /* R <- B */
+                        drow[x * 4 + 1] = srow[x * 4 + 1]; /* G */
+                        drow[x * 4 + 2] = srow[x * 4 + 0]; /* B <- R */
+                    }
+                    drow[x * 4 + 3] = a; /* A */
                 }
             }
             self->glBindTexture(XGL_TEXTURE_2D, texture);
@@ -3012,6 +3145,7 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
     int iw;
     int ih;
     int y;
+    int uploadPremul;
     if (!xgld_ensure_current(self)) return false;
     if (!self || !image || srcW <= 0 || srcH <= 0)
         return false;
@@ -3023,6 +3157,8 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
         return false;
     if (opacity < 0.0f) opacity = 0.0f;
     if (opacity > 1.0f) opacity = 1.0f;
+    /* P-IPU：ARGB32 直通内容区域上传同样按 a 预乘（批画布冲批主路）。 */
+    uploadPremul = xgld_upload_needs_premul(self, image);
     /* P-A 纹理身份缓存（只消费不填充）：整图内容已在缓存纹理时，
        区域上传整体跳过，直接按子矩形 UV 采样缓存纹理。不填充的
        理由：脏区流（每帧同图换版本）若填充即整幅重传，反而回退
@@ -3073,7 +3209,7 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
             const char* cs = XSystem_environment("XGPU_REGION_SWAP");
             cpuSwap = cs && *cs && !(cs[0] == '0' && cs[1] == 0) ? 1 : 0;
         }
-        if (!cpuSwap && src && bpl >= iw * 4)
+        if (!cpuSwap && !uploadPremul && src && bpl >= iw * 4)
         {
             self->glBindTexture(XGL_TEXTURE_2D, self->m_sourceTexture);
             xgld_note_tex0_bind(self, self->m_sourceTexture); /* TEMP-PROBE 镜像。 */
@@ -3108,9 +3244,21 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
                     {
                         uint32_t argb = XImage_pixel(image, srcX + x, srcY + y);
                         uint8_t a = (uint8_t)(argb >> 24);
-                        row[x * 4 + 0] = (uint8_t)((argb >> 16) & 0xffu);
-                        row[x * 4 + 1] = (uint8_t)((argb >> 8) & 0xffu);
-                        row[x * 4 + 2] = (uint8_t)(argb & 0xffu);
+                        if (uploadPremul)
+                        {
+                            row[x * 4 + 0] =
+                                xgpu_mul255((unsigned)((argb >> 16) & 0xffu), a);
+                            row[x * 4 + 1] =
+                                xgpu_mul255((unsigned)((argb >> 8) & 0xffu), a);
+                            row[x * 4 + 2] =
+                                xgpu_mul255((unsigned)(argb & 0xffu), a);
+                        }
+                        else
+                        {
+                            row[x * 4 + 0] = (uint8_t)((argb >> 16) & 0xffu);
+                            row[x * 4 + 1] = (uint8_t)((argb >> 8) & 0xffu);
+                            row[x * 4 + 2] = (uint8_t)(argb & 0xffu);
+                        }
                         row[x * 4 + 3] = a;
                     }
                 }
@@ -3127,10 +3275,25 @@ static bool xgld_draw_image_region(XGpuRenderDriverSession* self,
                     int x;
                     for (x = 0; x < srcW; ++x)
                     {
-                        drow[x * 4 + 0] = srow[x * 4 + 2]; /* R <- B */
-                        drow[x * 4 + 1] = srow[x * 4 + 1]; /* G */
-                        drow[x * 4 + 2] = srow[x * 4 + 0]; /* B <- R */
-                        drow[x * 4 + 3] = srow[x * 4 + 3]; /* A */
+                        /* P-IPU：ARGB32 直通内容按 a 预乘（a=255 逐字节
+                           不变）；预乘格式直通。 */
+                        uint8_t a = srow[x * 4 + 3];
+                        if (uploadPremul)
+                        {
+                            drow[x * 4 + 0] =
+                                xgpu_mul255((unsigned)srow[x * 4 + 2], a);
+                            drow[x * 4 + 1] =
+                                xgpu_mul255((unsigned)srow[x * 4 + 1], a);
+                            drow[x * 4 + 2] =
+                                xgpu_mul255((unsigned)srow[x * 4 + 0], a);
+                        }
+                        else
+                        {
+                            drow[x * 4 + 0] = srow[x * 4 + 2]; /* R <- B */
+                            drow[x * 4 + 1] = srow[x * 4 + 1]; /* G */
+                            drow[x * 4 + 2] = srow[x * 4 + 0]; /* B <- R */
+                        }
+                        drow[x * 4 + 3] = a; /* A */
                     }
                 }
             }
@@ -3324,6 +3487,35 @@ static bool xgld_draw_gradient_alpha(XGpuRenderDriverSession* self,
     return true;
 }
 
+/* ==================== P-SPR（XGPU_SOLID_PREMUL_REPAIR）纯色 quad 预乘不变量修复 ==================== */
+
+/** @brief 预乘不变量检测与修复。
+ *  @details 合法预乘色满足「每通道 rgb ≤ alpha」：premul 通道值
+ *           round(c*a/255) ≤ a 对一切 c∈[0,255] 成立（上取整界）。
+ *           夜四撕裂复核实测（Tools/night4 v3 协议口径）：面积图斜边
+ *           笔 quad 以直通 RGB（0x5516AFA9：G=175/B=169 > a=85，违反
+ *           不变量）到达本驱动，经 (ONE, ONE_MINUS_SRC_ALPHA) 预乘混
+ *           合 RGB 超加，G/B 饱和 255（GPU 实测 (139,255,255)/(150,
+ *           255,255)，SW 同位 (90,198,194)/(125,210,207)，cmp_frames
+ *           阈值 30 全部计差异）。本修复：违例色按「调用方传的是直
+ *           通 ARGB」语义就地转预乘（rgb' = round(rgb*a/255)）——合
+ *           成结果回到与软件直通混合等价的值；合法预乘色逐字节不变
+ *           （no-op），既有全部调用点零影响。 */
+static uint32_t xgpu_repair_premul_color(uint32_t color)
+{
+    unsigned a = (color >> 24) & 0xffu;
+    unsigned r = (color >> 16) & 0xffu;
+    unsigned g = (color >> 8) & 0xffu;
+    unsigned b = color & 0xffu;
+    if (a == 0u || a == 255u) return color; /* 全透明/不透明：直通=预乘。 */
+    if (r <= a && g <= a && b <= a) return color; /* 合法预乘：no-op。 */
+    r = (r * a + 127u) / 255u;
+    g = (g * a + 127u) / 255u;
+    b = (b * a + 127u) / 255u;
+    return ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+           ((uint32_t)g << 8) | (uint32_t)b;
+}
+
 static bool xgld_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
                                  float y1, float x2, float y2, float x3,
                                  float y3, float x4, float y4,
@@ -3333,6 +3525,9 @@ static bool xgld_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
     float rgba[4];
     if (!self) return false;
     XGLD_BATCH_PROF_CMD(); /* TEMP-PROBE：命令解码计数。 */
+    /* P-SPR：预乘不变量违例修复（合法色 no-op）。 */
+    if (xgld_premul_repair_enabled())
+        premulColor = xgpu_repair_premul_color(premulColor);
     rgba[0] = (float)((premulColor >> 16) & 0xffu) / 255.0f;
     rgba[1] = (float)((premulColor >> 8) & 0xffu) / 255.0f;
     rgba[2] = (float)(premulColor & 0xffu) / 255.0f;
