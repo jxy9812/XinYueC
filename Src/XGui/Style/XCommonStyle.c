@@ -2024,6 +2024,224 @@ static void xcs_drawToolButton(XStyle* self, const XStyleOption* option,
     }
 }
 
+/* ==================== CC_TitleBar（窗口标题栏） ====================
+ * 对标 Qt 6.8 样式族的 CC_TitleBar 家族：SC_TitleBar* 子控件位、
+ * SP_TitleBar* 标准图标与 PM_TitleBar* 度量在本仓库早已定义
+ * （XStyleOption.h），此前无实现消费。主要使用方是窗口装饰层
+ * （XWindowDecoration，无窗口管理器环境的框架自绘系统标题栏）；
+ * 绘制全部经调色板角色与标准图标（xcs_standardIcon → xcsi_p_title*
+ * 字形），应用换风格/换调色板时标题栏自动跟随——与桌面由 WM 绘制
+ * 的标题栏共用同一套风格开关。 */
+#define XCS_TITLEBAR_BTN_GAP 2 /**< 标题栏按钮水平间距。 */
+
+/** @brief 标题栏一次排版结果（绘制/子控件矩形/命中测试三方同源）。 */
+typedef struct XcsTitleBarLayout
+{
+    XRect m_sysMenu; /**< 系统菜单按钮（无该子控件时 width<=0）。 */
+    XRect m_min;     /**< 最小化按钮。 */
+    XRect m_max;     /**< 最大化/还原按钮（SC_TitleBarMaxButton 或
+                           SC_TitleBarNormalButton 共用，由位定）。 */
+    XRect m_close;   /**< 关闭按钮。 */
+    XRect m_label;   /**< 标题文本区。 */
+} XcsTitleBarLayout;
+
+/** @brief 按子控件位排版标题栏（option->m_rect 为整条矩形）。
+ *  布局对标桌面 WM：左端系统菜单钮，右端从右到左 ✕/□(还原)/—。 */
+static void xcs_titleBarLayoutBars(XStyle* self, const XStyleOption* option,
+                                   XcsTitleBarLayout* out)
+{
+    const XStyleOptionTitleBar* tb;
+    uint32_t sc;
+    XRect bar;
+    int btn;
+    int y;
+    int xRight;
+    int xLeft;
+    if (!out) return;
+    XMemset(out, 0, sizeof(*out));
+    if (!self || !option) return;
+    tb = (const XStyleOptionTitleBar*)option;
+    sc = tb->m_base.m_subControls;
+    bar = option->m_rect;
+    if (bar.width <= 0 || bar.height <= 0) return;
+    btn = XStyle_pixelMetric(self, XStylePM_TitleBarButtonSize, option);
+    if (btn > bar.height) btn = bar.height;
+    if (btn < 1) return;
+    y = bar.y + (bar.height - btn) / 2;
+    xRight = bar.x + bar.width;
+    if (sc & XStyleSC_TitleBarCloseButton) {
+        xRight -= btn;
+        XRect_init(&out->m_close, xRight, y, btn, btn);
+        xRight -= XCS_TITLEBAR_BTN_GAP;
+    }
+    if (sc & (XStyleSC_TitleBarMaxButton | XStyleSC_TitleBarNormalButton)) {
+        xRight -= btn;
+        XRect_init(&out->m_max, xRight, y, btn, btn);
+        xRight -= XCS_TITLEBAR_BTN_GAP;
+    }
+    if (sc & XStyleSC_TitleBarMinButton) {
+        xRight -= btn;
+        XRect_init(&out->m_min, xRight, y, btn, btn);
+        xRight -= XCS_TITLEBAR_BTN_GAP;
+    }
+    xLeft = bar.x;
+    if (sc & XStyleSC_TitleBarSysMenu) {
+        XRect_init(&out->m_sysMenu, xLeft, y, btn, btn);
+        xLeft += btn + XCS_TITLEBAR_BTN_GAP;
+    }
+    if (xRight < xLeft) xRight = xLeft; /* 极窄窗口防负宽。 */
+    XRect_init(&out->m_label, xLeft, bar.y, xRight - xLeft, bar.height);
+}
+
+/** @brief 取调色板组/角色色的 ARGB32 值（XPalette_color 的 uint32 便捷形）。 */
+static uint32_t xcs_paletteRoleColor(const XPalette* palette, int group,
+                                     XPaletteColorRole role)
+{
+    XColor c = XPalette_color(palette, (XPaletteColorGroup)group, role);
+    return XColor_rgba(&c);
+}
+
+/** @brief 绘制单个标题栏按钮（悬停/按住底色 + 图元直绘字形）。
+ *  @details 字形用画笔图元直绘（对标旧 demo 自绘系统标题栏的粗笔触
+ *  观感），不经 XIcon 标准图标管线——图标位图链路（48px 位图构建+
+ *  缩放混贴）在 fbdev RGB16 直写路径上存在首帧/改尺寸后不渲染的竞态
+ *  （昆仑通态真机两轮工作流量化复现），图元直绘零依赖恒稳定。
+ *  overrideIcon 仅系统菜单钮的窗口图标路径保留。 */
+static void xcs_titleBarDrawButton(
+    XStyle* self, const XStyleOption* option, XPainter* painter,
+    const XWidget* widget, const XPalette* palette, const XRect* rect,
+    int sc, int standardIcon, const XIcon* overrideIcon)
+{
+    uint32_t group = (option->m_state & XStyleState_Active)
+                         ? XPaletteColorGroup_Active
+                         : XPaletteColorGroup_Inactive;
+    const XStyleOptionComplex* cx = (const XStyleOptionComplex*)option;
+    uint32_t glyph;
+    int x = rect->x;
+    int y = rect->y;
+    bool hovered;
+    bool pressed;
+    (void)self; (void)widget;
+    hovered = (option->m_state & XStyleState_MouseOver) != 0 &&
+              (cx->m_activeSubControls & (uint32_t)sc) != 0;
+    pressed = (option->m_state & XStyleState_Sunken) != 0 &&
+              (cx->m_activeSubControls & (uint32_t)sc) != 0;
+    if (pressed)
+        XPainter_fillRect(painter, rect,
+                          xcs_paletteRoleColor(palette, (int)group,
+                                               XPaletteColorRole_Mid));
+    else if (hovered)
+        XPainter_fillRect(painter, rect,
+                          xcs_paletteRoleColor(palette, (int)group,
+                                               XPaletteColorRole_Midlight));
+    if (overrideIcon &&
+        (sc == (int)XStyleSC_TitleBarSysMenu || standardIcon < 0)) {
+        XIcon_paint(overrideIcon, painter, rect->x, rect->y, rect->width,
+                    rect->height, XAlignment_Center, XIconMode_Normal,
+                    XIconState_Off);
+        return;
+    }
+    glyph = xcs_paletteRoleColor(palette, (int)group,
+                                 XPaletteColorRole_WindowText);
+    /* 24px 钮内 12x12 字形域（钮心 ±6），线宽 2~3px 触屏可辨。 */
+    if (sc == (int)XStyleSC_TitleBarCloseButton) {
+        int k;
+        for (k = 0; k < 10; k += 2) { /* ✕：双向对角阶梯。 */
+            XPainter_fillRect(painter, &(XRect){x + 6 + k, y + 6 + k, 2, 2},
+                              glyph);
+            XPainter_fillRect(painter,
+                              &(XRect){x + 6 + (8 - k), y + 6 + k, 2, 2},
+                              glyph);
+        }
+    } else if (sc == (int)XStyleSC_TitleBarMaxButton) {
+        /* □：12x12 空心方框（2px 边）。 */
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 6, 12, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 16, 12, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 6, 2, 12}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 16, y + 6, 2, 12}, glyph);
+    } else if (sc == (int)XStyleSC_TitleBarNormalButton) {
+        /* 还原：前后两个错位 9x9 空心方框。 */
+        XPainter_fillRect(painter, &(XRect){x + 9, y + 6, 9, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 9, y + 6, 2, 9}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 9, y + 13, 9, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 16, y + 8, 2, 9}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 9, 9, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 9, 2, 9}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 16, 9, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 13, y + 16, 2, 2}, glyph);
+    } else if (sc == (int)XStyleSC_TitleBarMinButton) {
+        /* —：居中 12x3 横线。 */
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 10, 12, 3}, glyph);
+    } else if (sc == (int)XStyleSC_TitleBarSysMenu) {
+        /* ☰：三条 12x2 横线。 */
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 7, 12, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 11, 12, 2}, glyph);
+        XPainter_fillRect(painter, &(XRect){x + 6, y + 15, 12, 2}, glyph);
+    }
+}
+
+/** @brief CC_TitleBar 绘制：整条底色 + 1px 底规线 + 居中标题 + 按钮组。 */
+static void xcs_drawTitleBar(XStyle* self, const XStyleOption* option,
+                             XPainter* painter, const XWidget* widget)
+{
+    const XStyleOptionTitleBar* tb;
+    XPalette palette;
+    XPaletteColorGroup group;
+    XcsTitleBarLayout layout;
+    char buf[512];
+    if (!self || !option || !painter) return;
+    if (option->m_rect.width <= 0 || option->m_rect.height <= 0) return;
+    tb = (const XStyleOptionTitleBar*)option;
+    palette = option->m_palette;
+    group = (option->m_state & XStyleState_Active)
+                ? XPaletteColorGroup_Active
+                : XPaletteColorGroup_Inactive;
+    /* 底条 + 底部 1px 规线（对标桌面标题栏的窗口/分隔双角色）。 */
+    XPainter_fillRect(painter, &option->m_rect,
+                      xcs_paletteRoleColor(&palette, (int)group,
+                                           XPaletteColorRole_Window));
+    XPainter_fillRect(painter,
+                      &(XRect){option->m_rect.x,
+                               option->m_rect.y + option->m_rect.height - 1,
+                               option->m_rect.width, 1},
+                      xcs_paletteRoleColor(&palette, (int)group,
+                                           XPaletteColorRole_Dark));
+    xcs_titleBarLayoutBars(self, option, &layout);
+    /* 标题文本：按钮区之间居中，超宽右省略（同 WM 标题省略语义）。
+     * 经样式文本通道 drawItemText：与菜单/列表 CJK 文字同路径（fbdev
+     * XFO 后端已验证），避免顶层字体直书在部分后端的不渲染差异。 */
+    if ((tb->m_base.m_subControls & XStyleSC_TitleBarLabel) &&
+        tb->m_base.m_base.m_text && tb->m_base.m_base.m_text[0] &&
+        layout.m_label.width > 8) {
+        const char* text =
+            xcs_elideText(buf, (int)sizeof(buf), tb->m_base.m_base.m_text, 1,
+                          layout.m_label.width - 8, XPainter_font(painter));
+        XStyle_drawItemText(self, painter, &layout.m_label,
+                            XAlignment_Center, &palette, true, text,
+                            XPaletteColorRole_WindowText);
+    }
+    /* 按钮组：系统菜单钮优先绘制窗口图标（无图标回落标准菜单钮形）。 */
+    if (layout.m_sysMenu.width > 0)
+        xcs_titleBarDrawButton(self, option, painter, widget, &palette,
+                               &layout.m_sysMenu, XStyleSC_TitleBarSysMenu,
+                               -1, tb->m_base.m_base.m_icon);
+    if (layout.m_min.width > 0)
+        xcs_titleBarDrawButton(self, option, painter, widget, &palette,
+                               &layout.m_min, XStyleSC_TitleBarMinButton,
+                               -1, NULL);
+    if (layout.m_max.width > 0)
+        xcs_titleBarDrawButton(
+            self, option, painter, widget, &palette, &layout.m_max,
+            (tb->m_base.m_subControls & XStyleSC_TitleBarNormalButton)
+                ? XStyleSC_TitleBarNormalButton
+                : XStyleSC_TitleBarMaxButton,
+            -1, NULL);
+    if (layout.m_close.width > 0)
+        xcs_titleBarDrawButton(self, option, painter, widget, &palette,
+                               &layout.m_close, XStyleSC_TitleBarCloseButton,
+                               -1, NULL);
+}
+
 static void VXCommonStyle_drawComplexControl(XStyle* self, int cc,
                                              const XStyleOption* option,
                                              XPainter* painter,
@@ -2050,6 +2268,9 @@ static void VXCommonStyle_drawComplexControl(XStyle* self, int cc,
         break;
     case XStyleCC_ToolButton:
         xcs_drawToolButton(self, option, painter, widget);
+        break;
+    case XStyleCC_TitleBar:
+        xcs_drawTitleBar(self, option, painter, widget);
         break;
     default:
         break;
@@ -2821,11 +3042,13 @@ static int VXCommonStyle_pixelMetric(XStyle* self, int pm,
     case XStylePM_TreeViewIndentation:
         return 20;
     case XStylePM_TitleBarHeight:
-        return 18;
+        /* 触屏目标观感：对齐旧 demo 自绘系统标题栏（28px 条+大钮），
+           16-19px 级小钮在电阻屏上难以辨认（昆仑通态真机用户指正）。 */
+        return 28;
     case XStylePM_TitleBarButtonSize:
-        return 16;
+        return 24;
     case XStylePM_TitleBarButtonIconSize:
-        return 16;
+        return 22;
     case XStylePM_LayoutLeftMargin:
     case XStylePM_LayoutTopMargin:
     case XStylePM_LayoutRightMargin:
@@ -3391,6 +3614,21 @@ static XRect VXCommonStyle_subControlRect(XStyle* self, int cc,
     (void)widget;
     if (!opt) return ret;
     switch (cc) {
+    case XStyleCC_TitleBar: {
+        XcsTitleBarLayout layout;
+        xcs_titleBarLayoutBars(self, opt, &layout);
+        switch (sc) {
+        case XStyleSC_TitleBarSysMenu: ret = layout.m_sysMenu; break;
+        case XStyleSC_TitleBarMinButton: ret = layout.m_min; break;
+        case XStyleSC_TitleBarMaxButton:
+        case XStyleSC_TitleBarNormalButton: ret = layout.m_max; break;
+        case XStyleSC_TitleBarCloseButton: ret = layout.m_close; break;
+        case XStyleSC_TitleBarLabel: ret = layout.m_label; break;
+        default: break;
+        }
+        ret = XStyle_visualRect(opt->m_direction, &opt->m_rect, &ret);
+        break;
+    }
     case XStyleCC_Slider: {
         int len = XStyle_pixelMetric((XStyle*)self, XStylePM_SliderLength,
                                      opt);
@@ -3622,6 +3860,29 @@ static int VXCommonStyle_hitTestComplexControl(XStyle* self, int cc,
     int sc = XStyleSC_None;
     uint32_t ctrl;
     switch (cc) {
+    case XStyleCC_TitleBar: {
+        /* 标题栏命中：按一次排版逐钮测试（无匹配回落 SC_None，调用方
+           据此把条内空白判为拖拽移动区）。 */
+        XcsTitleBarLayout layout;
+        xcs_titleBarLayoutBars(self, opt, &layout);
+        if (layout.m_close.width > 0 && XRect_contains(&layout.m_close, x, y))
+            sc = XStyleSC_TitleBarCloseButton;
+        else if (layout.m_max.width > 0 && XRect_contains(&layout.m_max, x, y))
+            sc = ((const XStyleOptionTitleBar*)opt)->m_base.m_subControls &
+                         XStyleSC_TitleBarNormalButton
+                     ? XStyleSC_TitleBarNormalButton
+                     : XStyleSC_TitleBarMaxButton;
+        else if (layout.m_min.width > 0 &&
+                 XRect_contains(&layout.m_min, x, y))
+            sc = XStyleSC_TitleBarMinButton;
+        else if (layout.m_sysMenu.width > 0 &&
+                 XRect_contains(&layout.m_sysMenu, x, y))
+            sc = XStyleSC_TitleBarSysMenu;
+        else if (layout.m_label.width > 0 &&
+                 XRect_contains(&layout.m_label, x, y))
+            sc = XStyleSC_TitleBarLabel;
+        break;
+    }
     case XStyleCC_Slider:
     case XStyleCC_ScrollBar:
     case XStyleCC_SpinBox:
@@ -3812,31 +4073,31 @@ static void xcsi_p_file(XPainter* painter, int size)
 }
 
 static void xcsi_p_titleMin(XPainter* painter, int size)
-{ (void)size; xcsi_line(painter, 12, 34, 36, 34, 4, 0xFF404040u); }
+{ (void)size; xcsi_line(painter, 12, 36, 36, 36, 6, 0xFF404040u); }
 
 static void xcsi_p_titleMax(XPainter* painter, int size)
-{ (void)size; xcsi_frame(painter, 12, 12, 24, 24, 0xFF404040u); }
+{ (void)size; xcsi_frame(painter, 10, 10, 28, 28, 0xFF404040u); }
 
 static void xcsi_p_titleClose(XPainter* painter, int size)
 {
     (void)size;
-    xcsi_line(painter, 14, 14, 34, 34, 4, 0xFF404040u);
-    xcsi_line(painter, 34, 14, 14, 34, 4, 0xFF404040u);
+    xcsi_line(painter, 13, 13, 35, 35, 6, 0xFF404040u);
+    xcsi_line(painter, 35, 13, 13, 35, 6, 0xFF404040u);
 }
 
 static void xcsi_p_titleNormal(XPainter* painter, int size)
 {
     (void)size;
-    xcsi_frame(painter, 10, 16, 22, 18, 0xFF404040u);
-    xcsi_frame(painter, 16, 10, 22, 18, 0xFF404040u);
+    xcsi_frame(painter, 8, 18, 24, 20, 0xFF404040u);
+    xcsi_frame(painter, 16, 10, 24, 20, 0xFF404040u);
 }
 
 static void xcsi_p_titleMenu(XPainter* painter, int size)
 {
     (void)size;
-    xcsi_line(painter, 12, 16, 36, 16, 3, 0xFF404040u);
-    xcsi_line(painter, 12, 24, 36, 24, 3, 0xFF404040u);
-    xcsi_line(painter, 12, 32, 36, 32, 3, 0xFF404040u);
+    xcsi_line(painter, 12, 15, 36, 15, 5, 0xFF404040u);
+    xcsi_line(painter, 12, 24, 36, 24, 5, 0xFF404040u);
+    xcsi_line(painter, 12, 33, 36, 33, 5, 0xFF404040u);
 }
 
 static void xcsi_p_arrow(XPainter* painter, int size, int dir)

@@ -108,4 +108,16 @@ void XStyleOptionToolButton_init(XStyleOptionToolButton* option, int type)
     XSize_init(&option->m_iconSize, 0, 0);
 }
 
+void XStyleOptionTitleBar_init(XStyleOptionTitleBar* option, int type)
+{
+    if (!option) return;
+    /* XStyleOptionComplex_init 内部 XStyleOption_init 全量清零并填
+     * version/type；子控件位由组装方（窗口装饰层）按窗口 flags 收窄，
+     * 不沿用 SC_All 缺省。 */
+    XStyleOptionComplex_init(&option->m_base, type);
+    option->m_base.m_subControls = 0;
+    option->m_titleBarState = 0;
+    option->m_titleBarFlags = 0;
+}
+
 #endif /* XSTYLE_ON */

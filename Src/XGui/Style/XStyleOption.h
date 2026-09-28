@@ -747,6 +747,22 @@ typedef struct XStyleOptionToolButton
 } XStyleOptionToolButton;
 
 /**
+ * @brief 标题栏选项（对标 QStyleOptionTitleBar : QStyleOptionComplex）。
+ * @details 由窗口装饰层（XWindowDecoration）在无窗口管理器环境下组装，
+ *          经 CC_TitleBar 交样式绘制；标题文本/窗口图标复用基类的
+ *          m_text/m_icon 借用字段，活动子控件位表达按住中的按钮。
+ */
+typedef struct XStyleOptionTitleBar
+{
+    XStyleOptionComplex m_base;   /**< 基类选项；必须是第一个。 */
+    uint32_t m_titleBarState;     /**< 窗口状态位（XWindowState 位组合；
+                                       仅承载语义，样式按 m_state 绘制）。 */
+    uint32_t m_titleBarFlags;     /**< 窗口 flags（XWindowType 位组合；
+                                       仅承载语义，按钮集合由 m_subControls
+                                       表达）。 */
+} XStyleOptionTitleBar;
+
+/**
  * @brief 初始化样式选项（QStyleOption 等价默认）。
  *
  * @param option 目标选项指针，不能为空。
@@ -818,6 +834,15 @@ void XStyleOptionComboBox_init(XStyleOptionComboBox* option, int type);
  * @return 无返回值。
  */
 void XStyleOptionToolButton_init(XStyleOptionToolButton* option, int type);
+
+/**
+ * @brief 初始化标题栏选项。
+ *
+ * @param option 目标选项指针，不能为空。
+ * @param type 复杂控件枚举（通常 XStyleCC_TitleBar）。
+ * @return 无返回值。
+ */
+void XStyleOptionTitleBar_init(XStyleOptionTitleBar* option, int type);
 
 #endif /* XSTYLE_ON */
 #ifdef __cplusplus

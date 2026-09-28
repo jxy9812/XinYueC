@@ -52,6 +52,16 @@ static int g_xpbsFbWriteIndex;
 /** @brief fbdev 首帧标记：首帧 present 前整段帧缓冲映射清零一次，
  *  同屏前任应用的残留帧不外泄（见 xpbs_presentToDisplayDriver 同步段）。 */
 static bool g_xpbsFbFirstPresent = true;
+/** @brief 差带同步账本（CPU 根修 2026-09-28）：上一帧实际落笔的面板
+ *  坐标矩形集——即「当前写入缓冲相对可见缓冲仍缺失的内容」。轮换写
+ *  语义下，写入缓冲平日只收脏区新像素，其余区域停留在更早帧；翻页
+ *  前只需把这份差额从可见缓冲搬入写入缓冲（成本 ∝ 上一帧脏区，替代
+ *  原每帧整搬 1.2MB+cacheflush——小交互 CPU 与整页重绘同级的根因）。
+ *  记录取剔除前的脏矩形（含被弹层遮挡剔除的部分）：这些行带从可见
+ *  缓冲同步时会把弹层像素一并带入两缓冲，保持遮挡剔除批次的防闪烁
+ *  语义不变。pan 失败不回滚（下帧同缓冲重写，账本仍成立）。 */
+static XRegion g_xpbsFbBackDirty;
+static bool g_xpbsFbBackDirtyInit = false;
 
 /**
  * @brief      显示驱动 cache 同步 + 一次性失败诊断。
@@ -165,6 +175,47 @@ static void xpbs_presentRectRows(const XImage* image, const XPoint* off,
             *outSyncLo = (size_t)(dst - rowBytes);
         if (!*outSyncAny || (size_t)dstLast > *outSyncHi)
             *outSyncHi = (size_t)dstLast;
+        *outSyncAny = true;
+    }
+}
+
+/** @brief 差带同步：把可见缓冲中 rect 行带搬入写入缓冲（fb→fb 行拷贝，
+ *  供轮换写前补齐写入缓冲缺失内容；坐标为面板像素坐标，调用方保证
+ *  已入面板界）。同步范围计入行带 cacheflush 账本。 */
+static void xpbs_syncRectRows(const XPlatformDisplayInfo* info,
+                              int writeIndex, const XRect* rect,
+                              size_t pixelBytes,
+                              size_t* outSyncLo, size_t* outSyncHi,
+                              bool* outSyncAny)
+{
+    const uint8_t* src;
+    uint8_t* dst;
+    size_t rowBytes;
+    int y;
+    src = (const uint8_t*)info->m_frameBuffer +
+          (size_t)((writeIndex ^ 1) * info->m_height + rect->y) *
+              info->m_stride +
+          (size_t)rect->x * pixelBytes;
+    dst = (uint8_t*)info->m_frameBuffer +
+          (size_t)(writeIndex * info->m_height + rect->y) * info->m_stride +
+          (size_t)rect->x * pixelBytes;
+    rowBytes = (size_t)rect->width * pixelBytes;
+    for (y = 0; y < rect->height; ++y)
+    {
+        XMemcpy(dst, src, rowBytes);
+        src += info->m_stride;
+        dst += info->m_stride;
+    }
+    if (outSyncLo && outSyncHi && outSyncAny)
+    {
+        size_t lo = (size_t)((writeIndex * info->m_height + rect->y) *
+                             info->m_stride) +
+                    (size_t)rect->x * pixelBytes;
+        size_t hi = (size_t)((writeIndex * info->m_height + rect->y +
+                              rect->height - 1) * info->m_stride) +
+                    (size_t)(rect->x + rect->width) * pixelBytes;
+        if (!*outSyncAny || lo < *outSyncLo) *outSyncLo = lo;
+        if (!*outSyncAny || hi > *outSyncHi) *outSyncHi = hi;
         *outSyncAny = true;
     }
 }
@@ -295,20 +346,24 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
             }
         }
     }
-    /* 双缓冲内容同步（闪烁根修）：轮换写意味着写入缓冲平日只收脏区新
-     * 像素，其余区域停留在更早帧甚至初始垃圾——直接翻页，可见画面会在
-     * 「上一帧」与「新脏区+陈旧内容」间交替（真机表现为整窗闪烁）。
-     * 故翻页前先把当前可见缓冲整帧搬入写入缓冲，下方脏区循环随后原地
-     * 覆盖，保证两缓冲除脏区外逐位一致。脏区已覆盖整屏时整搬可跳过；
-     * 首帧先把整段映射清零，同屏前任应用的帧缓冲残留不会从任一缓冲
-     * 漏出。整搬成本一次约一帧面（1024x600x2 ≈ 1.2MB），只写脏区的
-     * 收益保留在绘制侧，提交侧换来任意时刻两缓冲皆完整可显。 */
+    /* 双缓冲差带同步（闪烁根修的 CPU 版，2026-09-28）：轮换写意味着
+     * 写入缓冲平日只收脏区新像素，其余区域停留在更早帧甚至初始垃圾
+     * ——直接翻页，可见画面会在「上一帧」与「新脏区+陈旧内容」间
+     * 交替（真机表现为整窗闪烁）。原修法每帧整搬一帧面（1024x600x2
+     * ≈1.2MB memcpy + 全带 cacheflush），小交互的提交成本与整页重绘
+     * 同级（昆仑通态 A33 实测交互期 CPU 42%，与 FULL 37% 无差）。
+     * 现改为差带账本：只把「写入缓冲仍缺失的内容」=上一帧实际落笔
+     * 矩形（g_xpbsFbBackDirty）从可见缓冲搬入，成本 ∝ 脏区面积；
+     * 账本记剔除前脏矩形，弹层行带随同步进入两缓冲，遮挡剔除批次的
+     * 防闪烁语义保持。脏区已盖整屏（FULL 整窗帧）时同步可跳过；首帧
+     * 先把整段映射清零，同屏前任应用的残留不外泄。 */
     if (info.m_doubleBuffered)
     {
         if (g_xpbsFbFirstPresent)
         {
             memset((uint8_t*)info.m_frameBuffer, 0, info.m_frameBufferSize);
             g_xpbsFbFirstPresent = false;
+            if (g_xpbsFbBackDirtyInit) XRegion_clear(&g_xpbsFbBackDirty);
             /* 清零也是写：行带同步范围扩到整段映射。 */
             syncLo = 0;
             syncHi = info.m_frameBufferSize;
@@ -332,25 +387,19 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                     break;
                 }
             }
-            /* 遮挡剔除打开时强制整搬：FULL 整窗脏区本可跳过整搬
-             * （coversPanel 优化），但剔除后弹层矩形不再被主窗内容
-             * 覆写，两缓冲的弹层矩形只能靠整搬保持一致——跳过会退化
-             * 成「两缓冲各留一份旧内容、随翻页交替」的弹层闪烁。 */
-            if (!coversPanel || occluderCount > 0)
+            /* 差带账本在位且本帧未盖整屏：把缺失矩形逐条搬入写入缓冲
+             * （两缓冲弹层矩形一致性由此保持——账本含被剔除矩形，弹层
+             * 行带每帧随同步传播，无「各留一份旧内容交替闪」退化）。 */
+            if (!coversPanel && g_xpbsFbBackDirtyInit)
             {
-                const uint8_t* srcRows = (const uint8_t*)info.m_frameBuffer +
-                    (size_t)(g_xpbsFbWriteIndex ^ 1) * info.m_height * info.m_stride;
-                uint8_t* dstRows = (uint8_t*)info.m_frameBuffer +
-                    (size_t)g_xpbsFbWriteIndex * info.m_height * info.m_stride;
-                int sy;
-                for (sy = 0; sy < info.m_height; ++sy)
-                    XMemcpy(dstRows + (size_t)sy * info.m_stride,
-                            srcRows + (size_t)sy * info.m_stride,
-                            info.m_stride);
-                /* 整搬写满写入缓冲：行带同步范围扩到整个写入缓冲。 */
-                syncLo = (size_t)g_xpbsFbWriteIndex * info.m_height * info.m_stride;
-                syncHi = syncLo + (size_t)info.m_height * info.m_stride;
-                syncAny = true;
+                for (i = 0; i < g_xpbsFbBackDirty.count; ++i)
+                {
+                    const XRect* rect = &g_xpbsFbBackDirty.rects[i];
+                    if (!rect || rect->width <= 0 || rect->height <= 0)
+                        continue;
+                    xpbs_syncRectRows(&info, writeIndex, rect, pixelBytes,
+                                      &syncLo, &syncHi, &syncAny);
+                }
             }
         }
     }
@@ -496,6 +545,50 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                              srcBase, pixelBytes, imgBpl,
                              wx0, wy0, wx1, wy1,
                              &syncLo, &syncHi, &syncAny);
+    }
+    /* 差带账本更新：本帧落笔的脏矩形（剔除前面板裁剪版）成为下一帧
+     * 写入缓冲的缺失内容。仅双缓冲轮换路径记账；本帧写入范围同时并入
+     * cacheflush 行带账（下方 range 同步一次覆盖同步+落笔两段）。 */
+    if (info.m_doubleBuffered)
+    {
+        if (!g_xpbsFbBackDirtyInit)
+        {
+            XRegion_init(&g_xpbsFbBackDirty);
+            g_xpbsFbBackDirtyInit = true;
+        }
+        XRegion_clear(&g_xpbsFbBackDirty);
+        for (i = 0; i < region->count; ++i)
+        {
+            const XRect* rect = &region->rects[i];
+            XRect fbRect;
+            int fx0, fy0, fx1, fy1;
+            int wx0, wy0, wx1, wy1;
+            if (!rect || rect->width <= 0 || rect->height <= 0) continue;
+            wx0 = rect->x;
+            wy0 = rect->y;
+            wx1 = rect->x + rect->width;
+            wy1 = rect->y + rect->height;
+            if (wx0 < off->x) wx0 = off->x;
+            if (wy0 < off->y) wy0 = off->y;
+            if (wx1 > off->x + XImage_width(image))
+                wx1 = off->x + XImage_width(image);
+            if (wy1 > off->y + XImage_height(image))
+                wy1 = off->y + XImage_height(image);
+            fx0 = wx0 + origin->x;
+            fy0 = wy0 + origin->y;
+            fx1 = wx1 + origin->x;
+            fy1 = wy1 + origin->y;
+            if (fx0 < 0) fx0 = 0;
+            if (fy0 < 0) fy0 = 0;
+            if (fx1 > info.m_width) fx1 = info.m_width;
+            if (fy1 > info.m_height) fy1 = info.m_height;
+            if (fx1 <= fx0 || fy1 <= fy0) continue;
+            fbRect.x = fx0;
+            fbRect.y = fy0;
+            fbRect.width = fx1 - fx0;
+            fbRect.height = fy1 - fy0;
+            XRegion_addRect(&g_xpbsFbBackDirty, &fbRect);
+        }
     }
     /* DMA scanout 前 cache clean——行带收窄版：只同步本次实际写入的
      * fb 字节范围（独立弹层窗 ~30Hz 自续重绘下，整幅 msync 每次 ~30ms

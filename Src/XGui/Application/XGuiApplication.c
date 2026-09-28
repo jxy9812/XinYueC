@@ -70,6 +70,7 @@
 #if XWIDGET_ON
 #include "XWidget.h"
 #include "XWidget_Protected.h"   /* XWidget_appFocusWidget：notify 键重定向需查应用焦点控件 */
+#include "XWindowDecoration.h"   /* 活动窗口切换/窗口注销的标题栏装饰联动 */
 #if XWIDGET_ON && XDIALOG_ON
 #include "XDialog.h"             /* XDialog_done：最后窗口关闭时收口模态 exec 阻塞循环 */
 #endif
@@ -732,6 +733,11 @@ void XGuiApplication_removeWindow(XWindow* win)
     bool removed = false;
     bool wasTopLevel;
     if (!app || !win || !app->m_windows) return;
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 窗口注销即丢弃窗口装饰状态（键匹配走窗口指针，须在顶层登记表
+       清理前完成）。 */
+    XWindowDecoration_notifyWindowDestroyed(win);
+#endif
     n = XVector_size_base((const XContainer*)app->m_windows);
     for (size_t i = 0; i < n; ++i) {
         if (XVector_At_Base(app->m_windows, (int64_t)i, XWindow*) == win) {
@@ -849,7 +855,14 @@ void XGuiApplication_setFocusWindow(XWindow* window, XObject* object)
     if (window && !object)
         object = (XObject*)window; /* Qt 语义：焦点对象缺省为窗口自身。 */
     if (app->m_focusWindow != window) {
+        XWindow* oldFocus = app->m_focusWindow;
         app->m_focusWindow = window;
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+        /* 活动窗口切换即刷新自绘标题栏配色（旧窗失活/新窗激活各刷一
+           次；桌面 WM 路径未装饰时零开销）。 */
+        XWindowDecoration_notifyActivation(oldFocus);
+        XWindowDecoration_notifyActivation(window);
+#endif
         XGuiApplication_focusWindowChanged_signal(app, window);
     }
     if (app->m_focusObject != object) {

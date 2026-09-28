@@ -1602,6 +1602,11 @@ void XPainter_setClipRect(XPainter* self, const XRect* rect,
  */
 void XPainter_setSurfaceClipRect(const XRect* rect, XImage* target);
 void XPainter_clearSurfaceClipRect(void);
+/* 当前表面裁剪查询（未启用返回 NULL/NULL）：供离屏渲染段保存/恢复
+ * 外层裁剪现场使用（效果快照等控件本地坐标渲染必须脱离设备坐标
+ * 裁剪，见 xwidget_drawWithGraphicsEffect）。 */
+const XRect* XPainter_surfaceClipRect(void);
+XImage* XPainter_surfaceClipTarget(void);
 /**
  * @brief      判断是否启用了裁剪。
  * @param self 绘制器指针。

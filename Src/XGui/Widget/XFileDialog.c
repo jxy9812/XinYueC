@@ -2825,6 +2825,15 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
  *  前缀/排序态）随收尾清空，防跨对话框残留。 */
 static void xff_teardown(XFileDialog* dlg, XFFLayouts* ls)
 {
+    /* 入口判空（gdb 实抓 SIGSEGV 三连复现：XClass_delete_base
+     * (object=0x1) ← xff_teardown(dlg=0x0) XFileDialog.c:2831 ←
+     * getExistingDirectory :3139）：嵌套模态早退（xff_runDialog 重入
+     * 护栏以 *outDlg=NULL 拒绝）时 ls 尚未装配、持未初始化栈垃圾，
+     * 解构即崩；且此处绝不可落到 xff_browsingStateReset——那会把
+     * 外层 exec 在册的护栏（xff_execActive）与浏览会话态一并清掉。
+     * dlg=NULL 的构建失败路径经查无泄漏：xff_buildDialog 入口先清零
+     * ls，两处失败返回均在任何布局创建之前，无可回收句柄。 */
+    if (!dlg || !ls) return;
 #if XFILE_ON && XDIR_ON
     xff_sortViewUninstall();
 #endif
@@ -2892,8 +2901,10 @@ static XString* xff_firstSelected(const XFileDialog* dlg)
 
 /** @brief 真实弹窗路径公共主体：组装 → exec → 回收。
  *  @note 模态重入护栏（xff_execActive 注记）：exec 在册期间再入的
- *  便捷调用按取消语义立即返回空（*outDlg=NULL，调用方 teardown(NULL)
- *  与空结果回读均为既有安全路径），不再叠开第二层对话框。 */
+ *  便捷调用按取消语义立即返回空（*outDlg=NULL 且 ls 全空——下方
+ *  memset；调用方 teardown 判空早退与空结果回读均为安全路径，
+ *  修复前 teardown 解构未装配的 ls 即崩，见 xff_teardown 入口注记），
+ *  不再叠开第二层对话框。 */
 static bool xff_runDialog(XWidget* parent, const XString* caption,
                           const XString* dir, const XString* filter,
                           XFileDialogOptions options,
@@ -2906,6 +2917,10 @@ static bool xff_runDialog(XWidget* parent, const XString* caption,
     bool accepted;
     if (!outDlg || !outLs) return false;
     *outDlg = NULL;
+    /* 早退/构建失败路径同样返回全空 ls（未装配即无句柄）：嵌套重入
+     * 在 buildDialog 之前即返回，不清零则调用方 teardown 拿到栈垃圾
+     * （修复前崩溃根源，见 xff_teardown 入口判空注记）。 */
+    memset(outLs, 0, sizeof(*outLs));
     if (xff_execActive) return false;
     dlg = xff_buildDialog(parent, caption, dir, filter, options, fileMode,
                           acceptMode, prefillName, outLs);

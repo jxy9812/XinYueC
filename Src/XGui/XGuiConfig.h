@@ -155,16 +155,21 @@
  * 在 X11 的高频小区域更新中可见为闪烁。 */
 #define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_DIRECT
 #else
-/* 嵌入式 fbdev 直写（XPLATFORM_FBDEV_ON）：FULL = 单持久缓冲 + 每次
- * 提交整窗。真机 A/B 记录（昆仑通态 A33）：
- * - 2026-09-26/27 定版 FULL（DIRECT+2 交替闪烁 / DIRECT+1 内容缺失）；
- * - 2026-09-28 携带差带同步/遮挡裁剪/X11 失败缓存修复后 A/B 复测：
- *   PARTIAL tile 缓冲与整页静态场景 blit 管线不兼容（大块黑屏）；
- *   DIRECT 内容间歇缺失复现（页面内容区/页签文字整片空白，交互后
- *   不恢复——paintTree/flush 时序竞争未除）→ 维持 FULL 定版。
- *   FULL 代价：小交互也付整页重绘+整窗提交（交互期间 CPU 冲高，
- *   空闲已由阻塞修复+HUD 1Hz 降至 ~7%）。 */
-#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_FULL
+/* 嵌入式 fbdev 直写（XPLATFORM_FBDEV_ON）：与桌面同为 DIRECT——
+ * 脏区绘制 + 硬件双缓冲轮换翻页（pan+FB_ACTIVATE_VBL 防撕裂）+
+ * present 差带同步账本（只搬上一帧落笔行带，防两缓冲失步闪烁，
+ * 成本 ∝ 脏区）+ 弹层遮挡剔除。真机定版记录（昆仑通态 A33）：
+ * - 2026-09-26/28 曾定版 FULL：当时 DIRECT 的「交替闪烁/内容缺失」
+ *   判据实为被污染的证据链——交互验证所用的触摸注入器 tap 缺失
+ *   释放沿（按钮臂化后永无 clicked，页面从不切换，旧内容滞留被
+ *   误读为渲染缺陷），叠加当时 present 每帧整搬的 CPU 成本；
+ * - 2026-09-28 注入器修复 + 差带同步落地后 DIRECT+2 真机复验：
+ *   九页切换/弹层/最大化/启动期交互全部内容完整，菜单打开态跨
+ *   tick 帧差分为 0（防闪烁语义保持），小交互 CPU 42%→9%、
+ *   菜单态 76%→1.8%、空闲 ~5%（原 FULL：37%/76%/7%）。
+ *   PARTIAL tile 缓冲与整页静态场景 blit 管线不兼容（大块黑屏），
+ *   维持否决。 */
+#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_DIRECT
 #endif
 
 /* DIRECT/FULL 模式使用的整屏缓冲数量；至少 1，DIRECT 推荐 2。

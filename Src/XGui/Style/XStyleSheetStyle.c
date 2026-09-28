@@ -966,17 +966,18 @@ static void VXStyleSheetStyle_drawComplexControl(XStyle* self, int cc,
 {
     XStyleSheetStyle* ss = (XStyleSheetStyle*)self;
     XStyle* src = xsss_source(ss);
-    XStyleOption opt;
-    if (option) {
-        opt = *option;
-        xsss_applyTextColor(ss, (const XObject*)widget, &opt);
-        xsss_applyFont(ss, (const XObject*)widget, &opt, painter);
-        xsss_applyTextDecoration(ss, (const XObject*)widget, &opt, painter);
-        xsss_applyBoxModel(ss, (const XObject*)widget, &opt);
-    }
+    /* 禁止基类切片拷贝：XStyleOption opt = *option 只复制基类字段，
+     * Complex 族扩展（subControls/activeSubControls 及派生选项）全部
+     * 丢失，下游按原尺寸读取=栈垃圾——CC_TitleBar 的 subControls 读到
+     * 堆指针值致标题栏按钮/标签全部不绘（昆仑通态真机 2026-09-28 探
+     * 针实证 sc=0xbe8565a0）。老复杂控件（滚动条/滑块）恰好只用基类
+     * 字段（m_scroll 系与 m_horizontal 等均在基类）故潜伏。字体是画笔级状态
+     * 仍照常生效；textColor/box 基字段改写对复杂控件跳过（QSS 对复
+     * 杂控件子件的着色本就应画在子基元上）。 */
+    if (option)
+        xsss_applyFont(ss, (const XObject*)widget, option, painter);
     if (src && src != self)
-        XStyle_drawComplexControl(src, cc, option ? &opt : option, painter,
-                                  widget);
+        XStyle_drawComplexControl(src, cc, option, painter, widget);
     if (option) {
         XRect box = xsss_boxRect(ss, (const XObject*)widget,
                                  option->m_state, &option->m_rect);

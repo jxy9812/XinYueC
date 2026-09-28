@@ -16,6 +16,7 @@
 
 #include "XCoreApplication.h"
 #include "XAlgorithm.h"
+#include "XThreadData.h"        /* xdlg_execShouldFinish：quitNow 标记感知 */
 #include "XWidget_Protected.h"
 #include "XWindowEvent.h"
 #include "XImage.h"
@@ -773,37 +774,95 @@ XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags fla
     return self;
 }
 
+/** @brief      exec 循环的「宿主终结」感知（夜间台账 F-② 根修）。
+ *  @details    返回 true 表示对话框必须立即收尾（返回值经 *quit 语义
+ *              区分来源，仅供注释说明，不改变收尾动作）：应用已请求
+ *              退出，或对话框的宿主顶层窗口已不可见。
+ *
+ *              机制（实测复现链）：XGui 对话框阻塞是裸 while+
+ *              processEvents（非 QEventLoop），quit 标记的循环退出它
+ *              天生感知不到；而 XDialog_done 的收尾兜底只挂在
+ *              XGuiApplication_removeWindow（WM ✕/WM_DELETE→destroy→
+ *              注销→lastWindowClosed）路径。自绘标题栏装饰的 [✕] 与
+ *              系统菜单「关闭」走 XWidget_close（XWidget.c:4489：
+ *              CloseEvent 接受后仅 setVisible(false)），不注销不退出，
+ *              兜底整条不经过——主窗隐藏后子控件对话框连同宿主一起
+ *              从屏幕消失，exec 循环仍阻塞在 WaitForMoreEvents 上，
+ *              进程滞留成无界面不可退出态（只能 SIGKILL）。
+ *
+ *              对标 Qt：QCoreApplication::exit 会退出全部嵌套事件循环
+ *              （qcoreapplication.cpp，exit 遍历 d->eventLoops），
+ *              QDialog::exec 的内层循环随 quit 一并返回。XGui 侧
+ *              XCoreApplication_exit 在主应用循环在跑时走 g_execLoop
+ *              早退分支（只标主循环、不置 m_quitNow、不遍历循环栈，
+ *              该文件不在本次修复所有权内），故本感知按两路互补：
+ *              - quitNow：exit() 在主循环未建立/已收尾路径置位的标记
+ *                （XThreadData.m_quitNow），覆盖无主循环 exec 与
+ *                主循环退出后再入的场合；
+ *              - 宿主可见性：对话框宿主顶层（子控件形态）或对话框
+ *                自身顶层（窗口形态）effectively 不可见即收尾——与
+ *                removeWindow 兜底已定案的「模态框随宿主窗体终结」
+ *                语义（done(0)）严格同键；XGui 单原生窗口模型下
+ *                隐藏宿主后对话框无任何可交互窗面，「对话框仍可用」
+ *                不可能成立，取 Qt「app 不滞留」一翼（对标口径已
+ *                报备出口准则「二选一并注明」）。
+ *              主循环在跑且仅 quit 不藏窗的场合（主循环被标退、
+ *              m_quitNow 未置、窗面仍可见）不属滞留态：对话框仍可
+ *              交互收尾，控制权回主循环后即感知退出，无悬挂风险。 */
+static bool xdlg_execShouldFinish(XDialog* self, XWidget* selfw)
+{
+    XThreadData* data;
+    XWidget* top;
+    if (!self || !selfw) return false;
+    data = XThreadData_current();
+    if (data && data->m_quitNow)
+        return true;
+    top = selfw->m_isWindow ? selfw : XWidget_topLevelWidget(selfw);
+    if (!top || !XWidget_isVisible(top))
+        return true;
+    return false;
+}
+
 int XDialog_exec(XDialog* self)
 {
+    XWidget* selfw = (XWidget*)self;
     if (!self) return 0;
     self->m_inExec = true;
     xdlg_centerToParentWindow(self);
-    XWidget_show((XWidget*)self);
+    XWidget_show(selfw);
     /* 显示即标脏本对话框矩形：子控件形态的对话框（flags 无 Window 位）
      * 走 XWidget_setVisible 的非窗口分支，该分支不调度重绘（只有顶层
      * 窗口分支才有 show→update），脏区合成器只重画脏矩形，导致对话框
      * 已 visible 却永远不上屏（复现：demo 对话框页九键中六个非阻塞/
      * 常驻对话框点击后屏幕无任何面板墨迹）。此处对窗口形态是冗余的
      * 一次重复标脏，无副作用。 */
-    XWidget_update((XWidget*)self);
+    XWidget_update(selfw);
     /* 对标 QDialog::exec（Qt 6.8.3 qdialog.cpp）：exec 期间无条件
        应用模态（setWindowModality(ApplicationModal)），不受 modal
        属性默认值影响——m_modal 默认改 false 后若仍以此门禁，存量
        未调 setModal(true) 的 exec 调用将静默失去模态。 */
-    XWidget_setApplicationModalWidget((XWidget*)self);
+    XWidget_setApplicationModalWidget(selfw);
     /* show 后强制激活布局：子控件形态下布局的挂起激活不保证随 show
      * 走到（XBoxLayout 子控件曾零几何不绘制）。幂等。 */
-    XWidget_updateGeometry((XWidget*)self);
-    /* 对标 QDialog::exec：阻塞于事件循环直到 done()。此前仅处理一批
-       事件即返回，模态语义不成立。 */
+    XWidget_updateGeometry(selfw);
+    /* 对标 QDialog::exec：阻塞于事件循环直到 done()。每批事件处理后
+       追加宿主终结感知（见 xdlg_execShouldFinish 注）：quit 标记或
+       宿主顶层不可见即按 done(0) 收尾（与 removeWindow 兜底同键），
+       控制权回到调用链/主循环后即可感知退出——主窗隐藏/应用退出不再
+       滞留成不可退出进程。 */
     dialog_grabInitialFocus(self);
     while (self->m_inExec) {
         XCoreApplication_processEvents(XEventLoop_AllEvents |
                                        XEventLoop_WaitForMoreEvents);
-        if (self->m_inExec)
-            XWidget_setApplicationModalWidget((XWidget*)self);
+        if (!self->m_inExec)
+            break; /* done() 已收尾：正常路径。 */
+        if (xdlg_execShouldFinish(self, selfw)) {
+            XDialog_done(self, 0);
+            break;
+        }
+        XWidget_setApplicationModalWidget(selfw);
     }
-    if (XWidget_applicationModalWidget() == (XWidget*)self)
+    if (XWidget_applicationModalWidget() == selfw)
         XWidget_setApplicationModalWidget(NULL);
     return self->m_result;
 }

@@ -831,11 +831,35 @@ XRect XWindow_geometry(const XWindow* self);
 
 /**
  * @brief      返回窗口边框边距（对标 QWindow::frameMargins）。
- * @details    无平台后端时返回零边距。
+ * @details    桌面（原生窗受 WM 管理）返回零边距；无窗口管理器环境
+ *             （fbdev/X11 后端不可用回落）由框架自绘系统标题栏时，
+ *             返回标题栏保留边距（计入顶部），供上层布局让位——取值
+ *             来自样式 PM_TitleBarHeight，随应用风格切换。
  * @param      self 目标窗口；可为 NULL。
  * @return     边距。
  */
 XMargins XWindow_frameMargins(const XWindow* self);
+
+/**
+ * @brief      设置客户端窗口装饰保留边距（框架内部接口）。
+ * @details    仅供窗口装饰模块（XWindowDecoration）落盘标题栏保留边
+ *             距；应用不应调用。只更新快照，不触发重绘（由装饰模块
+ *             自行安排脏区）。
+ * @param      self 目标窗口；NULL 不执行任何操作。
+ * @param      margins 保留边距；NULL 按全零处理。
+ * @return     无。
+ */
+void XWindow_setFrameMargins(XWindow* self, const XMargins* margins);
+
+/**
+ * @brief      判断窗口是否挂接真实原生窗口（对标 QWindow::handle 非空）。
+ * @details    X11/Win32 后端创建成功为 true；fbdev 直驱等无窗口系统
+ *             环境为 false（虚拟 winId）。窗口装饰模块据此判定标题栏
+ *             由 WM 绘制还是由框架自绘。
+ * @param      self 目标窗口；可为 NULL。
+ * @return     已挂接原生窗口返回 true。
+ */
+bool XWindow_isNativeWindowAttached(const XWindow* self);
 
 /**
  * @brief      返回窗口框架几何（对标 QWindow::frameGeometry）。

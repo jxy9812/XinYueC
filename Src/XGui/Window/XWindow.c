@@ -105,6 +105,14 @@ struct XWindowPrivate
     bool m_active;                      /**< 是否激活。 */
     bool m_closing;                     /**< close() 重入保护。 */
 
+    XMargins m_frameMargins;            /**< 客户端窗口装饰保留边距（标题
+                                             栏计入顶部）；仅窗口装饰模
+                                             块经 XWindow_setFrameMargins
+                                             落盘，桌面 WM 管理路径恒零。 */
+    XRect m_normalGeometry;             /**< 最大化/全屏前的正常几何（软
+                                             件窗口状态路径保存/恢复）。 */
+    bool m_normalGeometryValid;         /**< m_normalGeometry 是否有效。 */
+
     XSurfaceFormat m_format;/**< 请求的表面格式快照。 */
 
     float m_devicePixelRatio;           /**< 设备像素比；默认 1.0。 */
@@ -904,6 +912,15 @@ void XWindow_createHandle(XWindow* self)
             if (XWindow_effectiveState(data) != XWindowState_NoState)
                 (void)XPlatformNativeWindow_setWindowState(
                     self, (uint32_t)XWindow_effectiveState(data));
+        } else {
+            /* 嵌入式 fbdev 单屏互斥（显示驱动活跃时拒绝 X11 窗口）等
+               场景：创建被拒、回落虚拟 WId——必须如实摘除挂接标记。
+               该标记语义是「已持有真实原生窗口」；fbdev 下它残留为
+               true 会让窗口装饰层等以「是否挂接原生窗」判定窗口系统
+               环境的模块全部失准（昆仑通态屏 auto 模式标题栏不渲染
+               根因，2026-09-28 真机探针定位）。后续原生调用本就以
+               m_created 为门槛，摘除零副作用。 */
+            data->m_nativeWindowAttached = false;
         }
     }
 #endif /* XPLATFORMNATIVEWINDOW_ON */
@@ -1225,6 +1242,95 @@ XWindowStates XWindow_windowStates(const XWindow* self)
 void XWindow_setWindowState(XWindow* self, XWindowState state)
 { XWindow_setWindowStates(self, (XWindowStates)state); }
 
+#if XSCREEN_ON
+/** @brief 软件窗口状态的目标屏幕矩形（可用几何优先，几何兜底）。
+ *  @return 屏幕未接线或几何为空返回 false。 */
+static bool xwin_screenRect(XWindow* self, XRect* out)
+{
+    XRect g;
+    XScreen* screen = XWindow_screen(self);
+    if (screen) {
+        g = XScreen_availableGeometry(screen);
+        if (g.width > 0 && g.height > 0) {
+            *out = g;
+            return true;
+        }
+        g = XScreen_geometry(screen);
+        if (g.width > 0 && g.height > 0) {
+            *out = g;
+            return true;
+        }
+    }
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    /* 无窗口系统环境的几何事实源=fbdev 显示驱动（面板即屏幕）。
+     * XWindow_screen 当前为恒 NULL 桩，缺此回退时软件最大化/全屏
+     * 只翻状态位、几何永不落地（昆仑通态真机 2026-09-29 工作流实
+     * 证：□ 点击字形翻转而窗口不动）。与窗口装饰层的面板探测同源。 */
+    {
+        const XPlatformDisplayDriverOps* ops = XPlatformDisplayDriver_active();
+        XPlatformDisplayInfo info;
+        if (ops && ops->probe && ops->probe(&info) &&
+            info.m_width > 0 && info.m_height > 0) {
+            XRect_init(out, 0, 0, info.m_width, info.m_height);
+            return true;
+        }
+    }
+#endif
+    (void)g;
+    (void)self;
+    return false;
+}
+#else
+static bool xwin_screenRect(XWindow* self, XRect* out)
+{
+    (void)self;
+    (void)out;
+    return false;
+}
+#endif /* XSCREEN_ON */
+
+/** @brief 无窗口管理器环境的软件窗口状态（fbdev 直驱：原生
+ *  setWindowState 是 no-op，最大化/全屏在此落地几何）。
+ *  进最大化/全屏保存正常几何并铺满屏幕；退出恢复。最小化为纯状态位
+ *  （Qt 语义：可见性 Minimized、窗口保持"可见"；无 shell/任务栏的
+ *  单应用环境无几何效果——与桌面无 WM 时 WM 缺位的行为一致，恢复走
+ *  showNormal）。 */
+static void xwin_applySoftwareWindowState(XWindow* self,
+                                          XWindowPrivate* data,
+                                          XWindowState before,
+                                          XWindowState after)
+{
+    XRect target;
+    bool enterZoom = (after & (XWindowState_Maximized |
+                               XWindowState_FullScreen)) != 0;
+    bool wasZoom = (before & (XWindowState_Maximized |
+                              XWindowState_FullScreen)) != 0;
+    if (enterZoom && !wasZoom) {
+        if (!data->m_normalGeometryValid) {
+            data->m_normalGeometry = data->m_geometry;
+            data->m_normalGeometryValid = true;
+        }
+        if (xwin_screenRect(self, &target)) {
+            XWindow_setGeometry_rect(self, &target);
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+            /* 窗口级几何变化必须回推控件层：桌面 X11 由 ConfigureNotify
+             * 经 XWSI 走同一路径，无 WM 环境没人回显——不回推则封装
+             * 控件（XWidgetWindow）尺寸停留旧值，无 resizeEvent、无重
+             * 排、无重绘，「最大化后整屏黑仅悬浮层存活」（昆仑通态真
+             * 机 2026-09-28 工作流量化 99.7% 黑像素根因）。 */
+            XWindowSystemInterface_handleGeometryChange(self, &target);
+#endif
+        }
+    } else if (!enterZoom && wasZoom && data->m_normalGeometryValid) {
+        data->m_normalGeometryValid = false;
+        XWindow_setGeometry_rect(self, &data->m_normalGeometry);
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+        XWindowSystemInterface_handleGeometryChange(
+            self, &data->m_normalGeometry);
+#endif
+    }
+}
+
 void XWindow_setWindowStates(XWindow* self, XWindowStates states)
 {
     XWindowPrivate* data;
@@ -1240,6 +1346,10 @@ void XWindow_setWindowStates(XWindow* self, XWindowStates states)
     before = XWindow_effectiveState(data);
     data->m_windowStates = states;
     after = XWindow_effectiveState(data);
+    /* 无原生窗（无 WM）时软件落地最大化/全屏/最小化，再走通用状态
+       通知链；此时下方平台同步保持 no-op 语义。 */
+    if (after != before && !data->m_nativeWindowAttached)
+        xwin_applySoftwareWindowState(self, data, before, after);
     /* 状态同步到平台层（对标 QPlatformWindow::setWindowState）：
        此前只改内部状态位，原生窗口尺寸不随之变化，「最大化」实际
        不生效。平台层未创建原生窗口时该调用安全 no-op。 */
@@ -1437,8 +1547,23 @@ XRect XWindow_geometry(const XWindow* self)
 
 XMargins XWindow_frameMargins(const XWindow* self)
 {
-    (void)self;
+    if (self && self->m_data) return self->m_data->m_frameMargins;
     return (XMargins){0, 0, 0, 0};
+}
+
+void XWindow_setFrameMargins(XWindow* self, const XMargins* margins)
+{
+    if (!self || !self->m_data) return;
+    if (margins)
+        self->m_data->m_frameMargins = *margins;
+    else
+        self->m_data->m_frameMargins = (XMargins){0, 0, 0, 0};
+}
+
+bool XWindow_isNativeWindowAttached(const XWindow* self)
+{
+    return self && self->m_data ? self->m_data->m_nativeWindowAttached
+                                : false;
 }
 
 XRect XWindow_frameGeometry(const XWindow* self)

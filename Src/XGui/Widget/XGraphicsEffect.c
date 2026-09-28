@@ -409,13 +409,30 @@ bool XGraphicsEffect_drawWidget(XGraphicsEffect* self, XWidget* widget,
     ctx.m_sourceRect = srcRectX;
     ctx.m_dest = dest;
     ctx.m_destRect = destRect;
-    /* 对标 QGraphicsEffect::draw 虚调用：交由派生效果完成像素处理。 */
-    slot = NULL;
-    if (XClassGetVtable(self))
-        slot = XClassGetVirtualFunc(self, EXGraphicsEffect_Draw,
-                                    XGraphicsEffect_DrawSlot);
-    if (slot) slot(self, &ctx);
-    else VXGraphicsEffect_draw(self, &ctx);
+    /* 对标 QGraphicsEffect::draw 虚调用：交由派生效果完成像素处理。
+       效果处理段在效果自有画布（dest）上进行，必须脱离外层绘制的
+       设备坐标表面裁剪：DIRECT 模式脏区裁剪是设备坐标，与画布本地
+       坐标不相交时源绘制整帧被裁空、画布保持透明，回贴后控件呈背景
+       平灰（桌面+昆仑通态 DIRECT 实测：启用透明度/模糊/投影后样例
+       内容丢失；FULL 模式裁剪恒整窗故不触发）。处理完恢复外层裁剪，
+       回贴段写真实表面仍受其约束。 */
+    {
+        const XRect* savedClip = XPainter_surfaceClipRect();
+        XImage* savedTarget = XPainter_surfaceClipTarget();
+        XRect keep;
+        if (savedClip) keep = *savedClip;
+        XPainter_clearSurfaceClipRect();
+        slot = NULL;
+        if (XClassGetVtable(self))
+            slot = XClassGetVirtualFunc(self, EXGraphicsEffect_Draw,
+                                        XGraphicsEffect_DrawSlot);
+        if (slot) slot(self, &ctx);
+        else VXGraphicsEffect_draw(self, &ctx);
+        if (savedClip)
+            XPainter_setSurfaceClipRect(&keep, savedTarget);
+        else
+            XPainter_clearSurfaceClipRect();
+    }
     /* 回贴：画布按 destRect 平移到控件局部坐标，再叠加绘制偏移写入
        绘制目标。离屏段（xwidget_drawWithGraphicsEffect）已摘除设备
        坐标的表面裁剪，回贴以自身输出矩形自限：效果输出恰好覆盖

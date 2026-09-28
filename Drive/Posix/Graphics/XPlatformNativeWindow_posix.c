@@ -2977,6 +2977,10 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xconfigure.window);
         if (entry && entry->m_window) {
             XRect client;
+            int oldX = entry->m_client.x;
+            int oldY = entry->m_client.y;
+            bool sizeChanged;
+            bool posChanged;
             /* 先更新本后端记录，再注入几何变化：setGeometry 去重比对以
                此为准，从源头切断「setGeometry -> ConfigureNotify ->
                handleGeometryChange -> setGeometry」回环。 */
@@ -2984,8 +2988,66 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             client.y = ev->xconfigure.y;
             client.width = ev->xconfigure.width;
             client.height = ev->xconfigure.height;
+            sizeChanged = (client.width != entry->m_client.width ||
+                           client.height != entry->m_client.height);
+            posChanged = (client.x != entry->m_client.x ||
+                          client.y != entry->m_client.y);
             entry->m_client = client;
+            /* 尺寸状态机回写 + Resize 注入：handleGeometryChange 内部
+               先 XWindow_setGeometry_rect（resize 槽内可读新尺寸，Qt
+               语义）再同步派发 Resize——控件层 applyWindowGeometry→
+               resizeEvent→重排在本次派发内完成。 */
             XWindowSystemInterface_handleGeometryChange(entry->m_window, &client);
+            if (posChanged) {
+                /* 外部移动（无 WM 时 XMoveWindow 直达，WM 场景拖动标题
+                   栏同理）：窗口级 moveEvent 此前只有控件层经
+                   applyWindowGeometry 的间接联动，XWindow 子类的
+                   moveEvent 虚槽从不触发（对标 Qt：QXcbWindow 把
+                   ConfigureNotify 的位置增量经 handleGeometryChange 交
+                   QWindow::moveEvent——qxcbwindow.cpp
+                   handleConfigureNotifyEvent → QWindowSystemInterface::
+                   handleGeometryChange 链）。旧位置取回写前记录。 */
+                XPoint newPos;
+                XPoint oldPos;
+                XMoveEvent* moveEvent;
+                newPos.x = ev->xconfigure.x;
+                newPos.y = ev->xconfigure.y;
+                oldPos.x = oldX;
+                oldPos.y = oldY;
+                moveEvent = XMoveEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                                 XEVENT_TYPE_MOVE,
+                                                 &newPos, &oldPos);
+                if (moveEvent) {
+                    XGuiApplication_sendSpontaneousEvent(
+                        (XObject*)entry->m_window, (XEvent*)moveEvent);
+                    XEvent_delete_base((XClass*)moveEvent);
+                }
+            }
+            if (sizeChanged) {
+                /* 全量重绘一次（resize→backing store 重建链的收尾，
+                   对标 Qt QWidgetWindow::handleResizeEvent 收尾的整窗
+                   update）：本框架放大靠服务器补 Expose（背景像素 0 的
+                   扩区）、缩小完全无 Expose——重排链若不产生脏区（无
+                   HUD 心跳/子控件无几何变化的纯收缩），present 停在旧
+                   帧直到下一次无关重绘，无 WM 场景呈现永久陈旧。此处
+                   在 Resize 派发（重排已落位）后补一次全窗 PAINT：
+                   flushBackingStore 按新尺寸重建后备表面并整窗重绘+
+                   提交。用 PAINT 而非合成 Expose——handleExposeEvent
+                   会置 m_exposed（隐藏窗口的 ConfigureNotify 会误标
+                   「已暴露」），PAINT 无状态副作用。幂等性：同尺寸的
+                   重复 ConfigureNotify（去重见 sizeChanged）不重绘。 */
+                XRegion paintRegion;
+                XRect paintRect;
+                XRegion_init(&paintRegion);
+                paintRect.x = 0;
+                paintRect.y = 0;
+                paintRect.width = ev->xconfigure.width;
+                paintRect.height = ev->xconfigure.height;
+                XRegion_addRect(&paintRegion, &paintRect);
+                XWindowSystemInterface_handlePaintEvent(entry->m_window,
+                                                        &paintRegion);
+                XRegion_deinit(&paintRegion);
+            }
             delivered = true;
         }
         break;

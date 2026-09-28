@@ -85,6 +85,7 @@
 #include "XCoreApplication.h"
 #include "XBackingStore.h"
 #include "XPlatformBackingStore.h"
+#include "XWindowDecoration.h"
 /* XSystem_environment 原型（本文件 GPU present 模式与脏区回退两处调用）；
    缺原型时 MSVC 隐式声明 int 返回，Win64 下指针截断（C4047）。 */
 #include "XSystem.h"
@@ -832,6 +833,11 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     XApplication_registerTopLevelWidget(top);
 #endif /* XAPPLICATION_ON */
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 桥接窗口就绪后落盘窗口装饰保留边距（frameMargins 从占位零变为
+       真实标题栏高度；桌面 WM 路径保持零）。 */
+    XWindowDecoration_syncWindow(top);
+#endif
     return win;
 }
 
@@ -1311,6 +1317,16 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
             return XWidget_dispatchPointerEvent(grabTop, event);
         }
     }
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 框架窗口装饰输入拦截（无窗口管理器环境的自绘系统标题栏）：条带
+     * 内事件全部接管（按钮/拖拽移动/双击最大化/右键系统菜单/滚轮吞
+     *掉）；边缘改尺寸带仅在无子控件接住按下时接管（子控件优先，模块
+     * 内自行 childAt 判定）。置于局部抓取分支之前：装饰拖拽经
+     * grabMouse 收敛的 MOVE/RELEASE 仍须先到这里推进状态机。 */
+    if (XWindowDecoration_activeFor(top) &&
+        XWindowDecoration_handlePointer(top, event))
+        return true;
+#endif
     if (g_mouseGrabWidget &&
         XWidget_topLevel(g_mouseGrabWidget) == top) {
         /* 鼠标抓取：直接投递抓取控件，不再按命中测试分派（对标 QWidget grabMouse）。 */
@@ -2019,6 +2035,10 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
            的命中路径转发控件 tabletEvent 虚槽。 */
         return XWidget_dispatchTabletEvent(top, event);
     case XEVENT_TYPE_LEAVE:
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+        /* 指针离开顶层窗口：清标题栏悬停底色（防热态残留）。 */
+        XWindowDecoration_handleLeave(top);
+#endif
         XWidget_clearUnderMouseRecursive(top);
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
@@ -2971,6 +2991,17 @@ void XWidget_setWindowFlags(XWidget* self, XWidgetFlags flags)
                         (flags & (XWidgetFlags)XWindowType_Window) ||
                         (flags & (XWidgetFlags)XWindowType_Popup)) ? 1 : 0;
     if (wasWindow && !self->m_isWindow) XWidget_destroyWindow(self);
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 活窗动态改 flags：同步到桥接窗口（X11 侧更新 _MOTIF_WM_HINTS/
+     * _NET_WM_STATE）并重算窗口装饰保留边距——FramelessWindowHint 等
+     * 提示位即时生效（对标 Qt setWindowFlags 的窗口语义刷新）。 */
+    if (self->m_isWindow && self->m_windowHandle) {
+        XWindow_setFlags((XWindow*)self->m_windowHandle,
+                         (XWindowFlags)flags);
+        XWindowDecoration_syncWindow(self);
+        XWindowDecoration_notifyAppearanceChanged(self);
+    }
+#endif
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     if (!wasWindow && self->m_isWindow)
         XApplication_registerTopLevelWidget(self);
@@ -4496,6 +4527,10 @@ void XWidget_setWindowTitle(XWidget* self, const XString* title)
     if (!changed) return;
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setTitle((XWindow*)self->m_windowHandle, self->m_windowTitle);
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 标题变化即刷自绘标题栏条带（桌面由 WM 显示，装饰未激活时零开销）。 */
+    XWindowDecoration_notifyAppearanceChanged(self);
+#endif
     XWidget_windowTitleChanged_signal(self, self->m_windowTitle);
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_NameChanged, self);
@@ -4577,6 +4612,11 @@ void XWidget_setWindowIcon(XWidget* self, const XIcon* icon)
        携带 m_icon。子控件设置只存自身值，不改顶层平台图标（Qt 6 行为）。 */
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setIcon((XWindow*)self->m_windowHandle, &self->m_icon);
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 图标变化即刷自绘标题栏（系统菜单钮绘制窗口图标）。 */
+    if (newKey != oldKey)
+        XWindowDecoration_notifyAppearanceChanged(self);
+#endif
     /* 图标内容键变化才发射 windowIconChanged（Qt 仅在图标变化时通知）。 */
     if (newKey != oldKey)
         XWidget_windowIconChanged_signal(self, &self->m_icon);
@@ -6296,6 +6336,28 @@ long g_xgui_flushCount = 0;
    XGPU_DEGRADED_FULL_REPRESENT=1 回退旧口径（排障开关）。 */
 static int g_xgui_degradedFramePending = 0;
 
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+/** @brief 顶层子树绘制完成后追加框架窗口装饰（自绘系统标题栏）条带。
+ *  @details 无窗口管理器环境（fbdev/X11 回落）的 WM 等价物绘制点：
+ *  画笔 begin 到当前后备图像，沿用表面级裁剪（wholeBbox 已设）；装饰
+ *  模块内部再做条带×刷新区域相交短路。未装饰顶层首行判定即返回，
+ *  热点路径零开销。 */
+static void xwidget_drawWindowDecoration(XWidget* top, const XRegion* region)
+{
+    XPainter painter;
+    XImage* image;
+    if (!top || !top->m_isWindow) return;
+    if (!XWindowDecoration_activeFor(top)) return;
+    image = g_paintTargetImage;
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) return;
+    XWindowDecoration_draw(top, &painter, region);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+#endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */
+
 void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 {
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
@@ -6499,6 +6561,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 XRegion_clear(&tileRegion);
                 XRegion_addRect(&tileRegion, &tile);
                 XWidget_paintTree(top, &tileRegion);
+                xwidget_drawWindowDecoration(top, &tileRegion);
                 /* 请求攒批（对标 Qt 高频局部更新按帧合批）：本调用只把
                    tile 内容并入攒批缓冲，present 由攒批决策触发（相邻
                    合并/超 1/4 屏预算/16ms 帧界）；攒批关闭时退化为逐片
@@ -6515,6 +6578,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         }
 #else
         XWidget_paintTree(top, &whole);
+        xwidget_drawWindowDecoration(top, &whole);
         XBackingStore_endPaint(store);
 #if XPLATFORMINTEGRATION_ON && XGPU_ON && \
     XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
@@ -6909,13 +6973,44 @@ static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
     if (!snapshot) return false;
     /* 临时摘除效果：source 快照绘制不得再次进入效果分支（防递归）。 */
     widget->m_graphicsEffect = NULL;
-    rendered = xwidget_renderSubtree(widget, snapshot, 0, 0);
+    /* 快照渲染脱离外层设备坐标表面裁剪（保存/清除/恢复）：DIRECT 模式
+     * 的脏区裁剪是设备坐标，而快照是控件本地坐标图像——继承裁剪与
+     * 快照坐标不相交时整帧被裁空，效果输出透明、控件呈背景平灰
+     * （桌面+昆仑通态 DIRECT 实测：启用透明度/模糊/投影后样例内容
+     * 丢失；FULL 模式裁剪恒整窗、相交恒成立故不触发）。 */
+    {
+        const XRect* savedClip = XPainter_surfaceClipRect();
+        XImage* savedTarget = XPainter_surfaceClipTarget();
+        XRect keep;
+        if (savedClip) keep = *savedClip;
+        XPainter_clearSurfaceClipRect();
+        rendered = xwidget_renderSubtree(widget, snapshot, 0, 0);
+        if (savedClip)
+            XPainter_setSurfaceClipRect(&keep, savedTarget);
+        else
+            XPainter_clearSurfaceClipRect();
+    }
     widget->m_graphicsEffect = effect;
     if (!rendered) {
+        fprintf(stderr, "[fx-probe] rendered=0 (snapshot path failed)\n");
         XImage_delete_base(snapshot);
         return false;
     }
+    {
+        int opaque = 0;
+        int total = 0;
+        int sx;
+        int sy;
+        for (sy = 0; sy < XImage_height(snapshot); sy += 4)
+            for (sx = 0; sx < XImage_width(snapshot); sx += 4) {
+                unsigned p = XImage_pixel(snapshot, sx, sy);
+                ++total;
+                if ((p >> 24) != 0) ++opaque;
+            }
+        fprintf(stderr, "[fx-probe] snapshotOpaque=%d/%d\n", opaque, total);
+    }
     drawn = XGraphicsEffect_drawWidget(effect, widget, snapshot, paintRegion);
+    fprintf(stderr, "[fx-probe] drawn=%d\n", (int)drawn);
     XImage_delete_base(snapshot);
     return drawn;
 }

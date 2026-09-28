@@ -383,7 +383,7 @@ static int VXFusionStyle_pixelMetric(XStyle* self, int metric,
     case XStylePM_MessageBoxIconSize: return 48;
     case XStylePM_ListViewIconSize: return 24;
     case XStylePM_ScrollBarSliderMin: return 26;
-    case XStylePM_TitleBarHeight: return 24;
+    case XStylePM_TitleBarHeight: return 28; /* 对齐 CommonStyle 触屏观感。 */
     case XStylePM_ScrollBarExtent: return 14;
     case XStylePM_SliderThickness: return 15;
     case XStylePM_SliderLength: return 15;
@@ -403,7 +403,7 @@ static int VXFusionStyle_pixelMetric(XStyle* self, int metric,
     case XStylePM_SmallIconSize: return 16;
     case XStylePM_ButtonIconSize: return 16;
     case XStylePM_DockWidgetTitleBarButtonMargin: return 2;
-    case XStylePM_TitleBarButtonSize: return 19;
+    case XStylePM_TitleBarButtonSize: return 24;
     case XStylePM_MaximumDragDistance: return -1;
     case XStylePM_TabCloseIndicatorWidth: return 20;
     case XStylePM_TabCloseIndicatorHeight: return 20;

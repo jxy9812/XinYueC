@@ -52,6 +52,7 @@
 #include "XFileDialog.h"
 #include "XColorDialog.h"
 #include "XProgressDialog.h"
+#include "XScrollArea.h"
 #include "xgui_demo_pages.h"
 
 /* 整文件可能全空时保证非空翻译单元的哨兵。 */
@@ -93,6 +94,7 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
 typedef struct DlgPgUi
 {
     XWidget* m_root;               /* 页面根控件（堆对象，build 登记）。 */
+    XWidget* m_scroll;             /* 页面滚动区（栈布局持有，返回值）。 */
     DemoPageStatusFn m_status;     /* 状态栏回调（user 为主窗口指针）。 */
     void* m_statusUser;
 
@@ -700,12 +702,30 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
     s_dlgpg.m_status = status;
     s_dlgpg.m_statusUser = user;
 
-    /* 页面根控件：堆对象，父子链级联析构（契约所有权约定）。 */
-    s_dlgpg.m_root = XWidget_create(parent, 0);
-    if (!s_dlgpg.m_root)
-        return NULL;
-    XWidget_setGeometry(s_dlgpg.m_root, 0, 0,
-                        DLGPG_PAGE_WIDTH, DLGPG_PAGE_HEIGHT);
+    /* 页面根控件：滚动区（屏幕 600 高面板/窗口化视口都放不下 10 行
+       内容，空间不足时按需出滚动条，行可滚动触达——对标 QScrollArea
+       的 AsNeeded 滚动条语义）。内容容器保持设计定尺，m_root 指向
+       内容容器：全部子控件的手工几何（行距 50px）仍按内容坐标布置，
+       构建代码零改动；滚动区为返回的堆对象，父子链级联析构。 */
+    {
+        XScrollArea* scroll = XScrollArea_create(parent, 0);
+        XWidget* content;
+        if (!scroll)
+            return NULL;
+        content = XWidget_create((XWidget*)scroll, 0);
+        if (!content) {
+            XScrollArea_delete_base(scroll);
+            return NULL;
+        }
+        /* 内容定尺 = 行区自然高度（14 + 10 行*50 + 底部余量），比
+           旧 DLGPG_PAGE_HEIGHT=480 高 40——第 10 行「目录对话框」
+           （y=464..500）此前在页面定尺与视口两处都被裁掉。 */
+        XWidget_setGeometry(content, 0, 0,
+                            DLGPG_PAGE_WIDTH, DLGPG_PAGE_HEIGHT + 40);
+        XScrollArea_setWidget(scroll, content);
+        s_dlgpg.m_root = content;
+        s_dlgpg.m_scroll = scroll;
+    }
 
 #if DLGPG_BUTTONS_ON
     /* 一列触发按钮：每个对话框一行（口径见各行说明标签）。 */
@@ -751,7 +771,9 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
 #endif
 #endif /* DLGPG_BUTTONS_ON */
 
-    return s_dlgpg.m_root;
+    /* 返回滚动区（堆对象，栈布局接管）；m_root=内容容器仅作子控件
+       挂载点，父子链级联析构覆盖。 */
+    return (XWidget*)s_dlgpg.m_scroll;
 }
 
 /* ==================== 页面自测（契约接口，全程非阻塞） ==================== */
@@ -768,8 +790,8 @@ int demo_page_dialogs_autotest(XWidget* page)
 {
     int failures = 0;
 
-    /* 防错页调用：与 build 登记的根控件不符返回 -1。 */
-    if (!page || page != s_dlgpg.m_root)
+    /* 防错页调用：与 build 登记的滚动区/内容根不符返回 -1。 */
+    if (!page || (page != s_dlgpg.m_scroll && page != s_dlgpg.m_root))
         return -1;
     s_dlgpg.m_acceptedCount = 0;
     s_dlgpg.m_rejectedCount = 0;

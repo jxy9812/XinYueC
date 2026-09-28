@@ -1642,6 +1642,11 @@ const XRect* XPainter_surfaceClipRect(void)
     return g_surfaceClipActive ? &g_surfaceClipRect : NULL;
 }
 
+XImage* XPainter_surfaceClipTarget(void)
+{
+    return g_surfaceClipActive ? g_surfaceClipImage : NULL;
+}
+
 static void painterDefaultState(XPainterState* state)
 {
     XMemset(state, 0, sizeof(*state));
