@@ -1784,6 +1784,14 @@ static int ttxt_run_key_sequence_edit(void)
     seq = XKeySequenceEdit_keySequence(k);
     XAPI_EXPECT(seq && seq->count == 0,
                 "XKeySequenceEdit: Esc 清空序列（对标 Qt 行为）");
+    /* 捕获态机契约（对标 Qt 6.7+ capturing API；防捕获滞留陷阱）：
+     * Esc 清空的同时退出捕获态——此后按键不再被吞（Tab 走链、其余
+     * 上抛）；重新武装需再聚焦或 startCapturing（等价再次点击控件）。 */
+    XAPI_EXPECT(!XKeySequenceEdit_isCapturing(k),
+                "XKeySequenceEdit: Esc 退出捕获态（防捕获滞留陷阱）");
+    XKeySequenceEdit_startCapturing(k);
+    XAPI_EXPECT(XKeySequenceEdit_isCapturing(k),
+                "XKeySequenceEdit: startCapturing 重新进入捕获态");
     g_xkseFinished = 0;
     ttxt_key((XWidget*)k, XKey_Tab, XKeyboardModifier_NoModifier);
     XAPI_EXPECT(g_xkseFinished == 0,
@@ -1792,8 +1800,11 @@ static int ttxt_run_key_sequence_edit(void)
     XKeySequenceEdit_clear(k); /* 空序列重复 clear：无变化不发射 */
     XAPI_EXPECT(g_xkseChanged == 0 && !XKeySequenceEdit_keySequence(k)->count,
                 "XKeySequenceEdit: 空序列 clear 无变化不发射信号");
-    /* 纯修饰键按下不记录（等非修饰键完成组合）。 */
-    ttxt_key((XWidget*)k, (int)XKeyboardModifier_ControlModifier,
+    /* 纯修饰键按下不记录（等非修饰键完成组合）。night #31 后库按
+     * XKey_* 键码识别修饰键（XKey_Control=0x01000020），注入须用键码
+     * 而非修饰键位掩码（旧码 0x01 是位掩码值，落记录分支被记成
+     * keyName()=="?" 的分组——即 night #31 修掉的缺陷本身）。 */
+    ttxt_key((XWidget*)k, (int)XKey_Control,
              XKeyboardModifier_ControlModifier);
     XAPI_EXPECT(!XKeySequenceEdit_keySequence(k)->count,
                 "XKeySequenceEdit: 纯修饰键按下不计入序列");

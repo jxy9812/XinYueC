@@ -107,6 +107,62 @@ static void xkse_emitFinished(XKeySequenceEdit* self)
     }
 }
 
+/* ==================== 捕获态机（对标 Qt 6.8 录制语义） ==================== */
+
+/** @brief 捕获空闲超时（毫秒）：捕获期间持续无输入达此时长自动结束
+ *         捕获，防捕获态滞留形成永久键盘陷阱（本批猎获 ②）。 */
+#define XKEYSEQUENCEEDIT_CAPTURE_IDLE_MS 5000
+
+/** @brief 启动/重启捕获空闲定时器（每次输入活动后调用）。 */
+static void xkse_rearmIdleTimer(XKeySequenceEdit* edit)
+{
+    XObject* object = (XObject*)edit;
+    if (edit->m_idleTimer != XTIMER_INVALID_ID)
+        XObject_killTimer(object, edit->m_idleTimer);
+    edit->m_idleTimer = XObject_startTimer_ms(
+        object, XKEYSEQUENCEEDIT_CAPTURE_IDLE_MS, XTimerType_CoarseTimer);
+}
+
+/** @brief 停止捕获空闲定时器。 */
+static void xkse_disarmIdleTimer(XKeySequenceEdit* edit)
+{
+    if (edit->m_idleTimer == XTIMER_INVALID_ID) return;
+    XObject_killTimer((XObject*)edit, edit->m_idleTimer);
+    edit->m_idleTimer = XTIMER_INVALID_ID;
+}
+
+/** @brief 进入捕获态（对标 Qt：recording 在控件获得焦点时发起）。
+ *  @note  幂等：已在捕获中则仅刷新空闲计时。 */
+static void xkse_startCapture(XKeySequenceEdit* edit)
+{
+    edit->m_capturing = true;
+    xkse_rearmIdleTimer(edit);
+    XWidget_update((XWidget*)edit);
+}
+
+/** @brief 退出捕获态（Esc/失焦/空闲超时共用路径）。此后控件不再吞
+ *         键：Tab 交窗口级走链、其余键沿父链上抛（XWidget.c:2791）。 */
+static void xkse_stopCapture(XKeySequenceEdit* edit)
+{
+    if (!edit->m_capturing && edit->m_idleTimer == XTIMER_INVALID_ID)
+        return;
+    edit->m_capturing = false;
+    xkse_disarmIdleTimer(edit);
+    XWidget_update((XWidget*)edit);
+}
+
+/** @brief 结束编辑（对标 Qt finishEditing）：有序列时保留旧序列并发射
+ *         editingFinished；捕获态保持——对标 Qt 6.8，聚焦期间结束键
+ *         （Tab/Backtab）可反复 finish；真正退出捕获由 Esc/失焦/空闲
+ *         超时承担（本批猎获 ② 的结束条件）。 */
+static void xkse_finishEditing(XKeySequenceEdit* edit)
+{
+    if (edit->m_sequence.count > 0) {
+        edit->m_oldSequence = edit->m_sequence;
+        xkse_emitFinished(edit);
+    }
+}
+
 /* ==================== 事件处理 ==================== */
 
 /** @brief 左键按下：点击聚焦后进入按键捕获（对标 QKeySequenceEdit 的
@@ -128,6 +184,51 @@ static void VX_kse_mousePressEvent(XWidget* self, XEvent* event)
     XEvent_ignore(event);
 }
 
+/** @brief 获得焦点：发起捕获（对标 Qt 文档 "The recording is initiated
+ *         when the widget receives the focus"；night #31 的点击聚焦修复
+ *         使点击进入同时启动捕获，捕获指示随即可见）。 */
+static void VX_kse_focusInEvent(XWidget* self, XEvent* event)
+{
+    XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_FOCUS_IN) return;
+    xkse_startCapture(edit);
+    XClass_Parent(XWidget, EXWidget_FocusInEvent,
+                  void (*)(XWidget*, XEvent*)) (self, event);
+}
+
+/** @brief 失去焦点：结束捕获并收口编辑（对标 Qt 6.8 focusOutEvent→
+ *         finishEditing，弹窗焦点豁免——Qt PopupFocusReason 同口径）；
+ *         此后按键不再被吞，Tab 恢复走链。 */
+static void VX_kse_focusOutEvent(XWidget* self, XEvent* event)
+{
+    XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_FOCUS_OUT) return;
+    if (((XFocusEvent*)event)->m_reason != XFocusReason_Popup) {
+        xkse_finishEditing(edit);
+        xkse_stopCapture(edit);
+    }
+    XClass_Parent(XWidget, EXWidget_FocusOutEvent,
+                  void (*)(XWidget*, XEvent*)) (self, event);
+}
+
+/** @brief 捕获空闲超时：捕获期间持续无输入达
+ *         XKEYSEQUENCEEDIT_CAPTURE_IDLE_MS 自动结束捕获（防永久键盘
+ *         陷阱；对标 Qt 以释放键定时器收口录制的思路）。 */
+static void VX_kse_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XKeySequenceEdit* edit = (XKeySequenceEdit*)object;
+    if (!edit || !event) return;
+    if (event->timerId == edit->m_idleTimer) {
+        /* 先注销再清 id（对标 XStatusBar 范式：周期定时器不会到期自清，
+         * 顺序颠倒会使 killTimer 永不执行、定时器按周期持续投递）。 */
+        XObject_killTimer(object, edit->m_idleTimer);
+        edit->m_idleTimer = XTIMER_INVALID_ID;
+        xkse_stopCapture(edit);
+    }
+}
+
 static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
@@ -136,6 +237,14 @@ static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
     int key;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
+    /* 捕获态门控（本批猎获 ② 根修）：非捕获态不消费任何按键——Tab 交
+     * 窗口级 focusNextPrevChild 走链（XWidget.c:2791），其余键沿父链
+     * 上抛；对标 Qt 6.8「录制发起于获得焦点」，未聚焦/已退出捕获的
+     * 控件不再吞键，杜绝捕获态滞留陷阱。 */
+    if (!edit->m_capturing) {
+        XEvent_ignore(event);
+        return;
+    }
     ke = (XKeyEvent*)event;
     key = ke->m_key;
     mods = ke->m_modifiers &
@@ -147,43 +256,44 @@ static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
      * 累积状态、不产生分组——按 XKey_* 键码（0x01000020..23）识别。
      * night #31 根修：旧码误比 XKeyboardModifier_* 位掩码（0x01..0x08，
      * 是 modifiers 属性的取值），键码永远不等于它，修饰键按下遂落入
-     * 下方记录分支被记成 keyName()==\"?\" 的多余分组（「?, Ctrl+o」）。 */
+     * 下方记录分支被记成 keyName()=="?" 的多余分组（「?, Ctrl+o」）。 */
     if (key == (int)XKey_Control ||
         key == (int)XKey_Shift ||
         key == (int)XKey_Meta ||
         key == (int)XKey_Alt ||
         key == (int)XKey_None /* 与 Qt::Key_unknown 口径同：未知键不记录。 */) {
+        xkse_rearmIdleTimer(edit);
         XEvent_accept(event);
         return;
     }
     /* 对标 Qt 6.8：结束键组合（默认 Tab/Backtab）结束编辑并发射
-     * editingFinished()。 */
+     * editingFinished()；捕获态保持（聚焦期间可反复 finish，退出捕获
+     * 走 Esc/失焦/空闲超时——见 xkse_finishEditing）。 */
     {
         int fi;
         for (fi = 0; fi < edit->m_finishingCount; ++fi) {
             if (edit->m_finishing[fi].key == key &&
                 edit->m_finishing[fi].modifiers == mods) {
-                if (edit->m_sequence.count > 0) {
-                    edit->m_oldSequence = edit->m_sequence;
-                    xkse_emitFinished(edit);
-                }
+                xkse_finishEditing(edit);
+                xkse_rearmIdleTimer(edit);
                 XEvent_accept(event);
                 return;
             }
         }
     }
-    /* 对标 Qt：Return/Enter 确认序列。 */
+    /* 对标 Qt：Return/Enter 确认序列（发射 editingFinished，捕获态
+     * 保持，可继续补录）。 */
     if (key == (int)XKey_Return || key == (int)XKey_Enter) {
-        if (edit->m_sequence.count > 0) {
-            edit->m_oldSequence = edit->m_sequence;
-            xkse_emitFinished(edit);
-        }
+        xkse_finishEditing(edit);
+        xkse_rearmIdleTimer(edit);
         XEvent_accept(event);
         return;
     }
-    /* 对标 Qt：Esc 清空。 */
+    /* 对标 Qt：Esc 清空并结束捕获（不录 Esc）——任务要求的反陷阱
+     * 最低保障：Esc 后按键即刻恢复走链/上抛。 */
     if (key == (int)XKey_Escape && mods == XKeyboardModifier_NoModifier) {
         XKeySequenceEdit_clear(edit);
+        xkse_stopCapture(edit);
         XEvent_accept(event);
         return;
     }
@@ -194,6 +304,7 @@ static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
             xkse_emitChanged(edit);
             XWidget_update(self);
         }
+        xkse_rearmIdleTimer(edit);
         XEvent_accept(event);
         return;
     }
@@ -206,6 +317,7 @@ static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
         xkse_emitChanged(edit);
         XWidget_update(self);
     }
+    xkse_rearmIdleTimer(edit);
     XEvent_accept(event);
 }
 
@@ -218,6 +330,7 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
     XRect frame;
     char display[256];
     uint32_t textCol;
+    uint32_t focusCol;
     int w;
     int h;
     if (!edit || !event) return;
@@ -239,9 +352,13 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
         XColor c = XPalette_color(&palette, XPaletteColorGroup_Current,
                                   XPaletteColorRole_WindowText);
         textCol = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Highlight);
+        focusCol = XColor_rgba(&c);
     }
 #else
     textCol = 0xFF000000u;
+    focusCol = 0xFF3080D8u;
 #endif /* XPALETTE_ON */
     /* 边框（对标 QLineEdit 样式）。 */
     XRect_init(&frame, 0, 0, w, h);
@@ -258,6 +375,26 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
         XPainter_fillRect(&painter, &right, 0xFF808080u);
     }
     xks_toString(&edit->m_sequence, display, sizeof(display));
+    /* 焦点/捕获指示（对标 QKeySequenceEdit 聚焦态与 Qt 虚线焦点框，
+     * 本批猎获 ①）：聚焦即画虚线焦点框——捕获中用高亮色（点击进入
+     * 捕获指示即刻可见），非捕获聚焦态用灰色（空态聚焦不再零指示）；
+     * 捕获中且序列为空时另绘 "Press shortcut" 占位提示（对标 Qt
+     * QKeySequenceEdit 的 placeholderText 默认文案）。 */
+    if (XWidget_hasFocus(self)) {
+        XRect focusRect;
+        XRect_init(&focusRect, 2, 2, w - 4, h - 4);
+        XPainter_setPen(&painter,
+                        edit->m_capturing ? focusCol : 0xFF606060u);
+        XPainter_setPenStyle(&painter, XPainterPenStyle_DashLine);
+        XPainter_drawRect(&painter, &focusRect);
+    }
+    if (edit->m_capturing && display[0] == '\0') {
+        XFont hintFont = XWidget_font(self);
+        XPainter_setFont(&painter, &hintFont);
+        XPainter_drawText(&painter, 6, h / 2 + 5, "Press shortcut",
+                          0xFF909090u);
+        XFont_deinit_base(&hintFont);
+    }
     if (display[0] != '\0') {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
@@ -269,6 +406,14 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
 
 /* ==================== 生命周期与虚表 ==================== */
 
+/** @brief 析构：注销捕获空闲定时器，防止对象释放后定时器悬空派发。 */
+static void VX_kse_deinit(XKeySequenceEdit* self)
+{
+    if (!self) return;
+    xkse_disarmIdleTimer(self);
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 XVtable* XKeySequenceEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XKeySequenceEdit)
@@ -276,6 +421,10 @@ XVtable* XKeySequenceEdit_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VX_kse_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_kse_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_kse_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VX_kse_focusInEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VX_kse_focusOutEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_kse_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_kse_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -292,6 +441,7 @@ void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
     self->m_maxLength = XKEYSEQUENCEEDIT_MAX_LENGTH;
     self->m_clearButton = false;
     self->m_capturing = false;
+    self->m_idleTimer = XTIMER_INVALID_ID;
     /* 对标 Qt 6.8：默认结束键组合 {Qt::Key_Tab, Qt::Key_Backtab}。 */
     self->m_finishingCount = 2;
     self->m_finishing[0].modifiers = XKeyboardModifier_NoModifier;
@@ -364,6 +514,33 @@ void XKeySequenceEdit_setClearButtonEnabled(XKeySequenceEdit* self, bool enable)
     if (!self) return;
     self->m_clearButton = enable;
     XWidget_update((XWidget*)self);
+}
+
+/* ============ 捕获态控制（对标 Qt 6.7+ capturing API） ============ */
+
+void XKeySequenceEdit_startCapturing(XKeySequenceEdit* self)
+{
+    if (!self) return;
+    xkse_startCapture(self);
+}
+
+void XKeySequenceEdit_stopCapturing(XKeySequenceEdit* self)
+{
+    if (!self) return;
+    xkse_finishEditing(self);
+    xkse_stopCapture(self);
+}
+
+void XKeySequenceEdit_cancelCapturing(XKeySequenceEdit* self)
+{
+    if (!self) return;
+    XKeySequenceEdit_clear(self);
+    xkse_stopCapture(self);
+}
+
+bool XKeySequenceEdit_isCapturing(const XKeySequenceEdit* self)
+{
+    return self ? self->m_capturing : false;
 }
 
 /* ============ 结束键组合（对标 Qt 6.8 finishingKeyCombinations） ============ */

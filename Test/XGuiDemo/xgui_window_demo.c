@@ -51,6 +51,8 @@
 #if XPLATFORM_FBINPUT_ON
 #include "XPlatformFbInput_posix.h"
 #endif
+#include "XPlatformBackingStore.h" /* requestPanelClear：合成 □ 最大化切换清屏。 */
+#include "XPlatformDisplayDriver.h" /* 面板尺寸探测（□ 最大化目标几何）。 */
 #endif
 #include "XPixmap.h"
 #include "XImage.h"
@@ -247,9 +249,13 @@
 #define XGUI_DEMO_DEFAULT_FONT_FAMILY XFONT_DEFAULT_FAMILY
 #endif
 
-/* Desktop demo 默认缓存静态控件场景；资源受限目标可显式设为 0。 */
+/* Desktop demo 默认缓存静态控件场景；资源受限目标可显式设为 0。
+ * 【昆仑通态 A33 fbdev 定版 = 0（09-28）】：静态场景缓存依赖
+ * 「影子缓冲持久且增量正确」的前提；fbdev 双缓冲 pan + 差带同步下
+ * 缓存命中会把过期瓦片搬上屏，交互后大块白屏/内容缺失（真机实测）。
+ * 关闭后每次 PAINT 现绘整页，内容恒正确；成本由 HUD 1Hz 限频兜底。 */
 #ifndef XGUI_DEMO_STATIC_SCENE_CACHE_ON
-#define XGUI_DEMO_STATIC_SCENE_CACHE_ON 1
+#define XGUI_DEMO_STATIC_SCENE_CACHE_ON 0
 #endif
 
 /* 交互空闲治理（2026-09-25）：空闲闸门开启时帧泵不再逐轮强制重绘
@@ -259,7 +265,10 @@
    指标更新节奏与重绘节奏一致；XGUI_DEMO_IDLE_GATE=0 一并回退两种
    行为（回退旧「帧泵每轮 processEvents 全速重绘」口径）。 */
 #ifndef XGUI_DEMO_IDLE_OVERLAY_MS
-#define XGUI_DEMO_IDLE_OVERLAY_MS 250
+/* 1000ms（A33 真机 09-28）：悬浮层每次自刷新都会走一遍「全页 paintTree
+   + present（行带 cacheflush + 阻塞式 pan 等回扫）」链，实测单次 ~55ms、
+   占 CPU ~7%；250ms 时仅此一项即占 ~38%。状态读数 1Hz 完全够用。 */
+#define XGUI_DEMO_IDLE_OVERLAY_MS 1000
 #endif
 
 /* ==================== 状态栏标签子类 ==================== */
@@ -342,8 +351,15 @@ typedef struct DemoWin
     XTimerId        m_overlayTimer; /**< 空闲闸门下悬浮层降频自刷新定时器（XGUI_DEMO_IDLE_OVERLAY_MS，4Hz）。 */
     int             m_lcdValue;     /**< LCD 字符序列索引（循环段码表 30 字符）。 */
     bool            m_closed; /**< CloseEvent 被接受或自动退出后置真。 */
-    bool            m_closeHot;    /**< 标题栏 ✕ 悬停（Win10 caption 红底）。 */
-    bool            m_closeArmed;  /**< 标题栏 ✕ 按下武装（按住加深一档）。 */
+    bool            m_sysResizing; /**< 窗口边缘拖拽改尺寸进行中。 */
+    int             m_sysResizeZone; /**< 改尺寸方向位掩码（N/S/E/W）。 */
+    XRect           m_sysResizeAnchor; /**< 改尺寸起点几何。 */
+    int             m_sysHot;      /**< 合成系统标题栏按钮悬停索引（-1 无）。 */
+    int             m_sysArmed;    /**< 合成系统标题栏按钮按下武装索引（-1 无）。 */
+    bool            m_sysMaximized; /**< 合成 □ 当前处于最大化态（fbdev）。 */
+    XRect           m_sysNormalRect; /**< 合成 □ 的还原基准几何（fbdev）。 */
+    bool            m_sysDragging; /**< 合成标题栏空白区拖拽移动窗口进行中。 */
+    XPoint          m_sysDragLast; /**< 拖拽上一采样点（窗口本地坐标）。 */
     const char*     m_screenshotPath; /**< 非空时渲染数帧后保存一帧截图并退出（借用指针）。 */
     int             m_screenshotFrames; /**< 截图模式已渲染帧数。 */
     bool            m_autoTest;         /**< 自动交互测试模式（第 4 页注入事件断言联动）。 */
@@ -665,52 +681,306 @@ static bool demo_performance_contains(DemoWin* self, XPoint position)
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
-/* ==================== 自绘标题栏 ✕ 关闭钮（对标 XDialog [×]） ==================== */
+/* ==================== 合成系统标题栏（fbdev 无 WM 环境的 WM 等价物） ====================
+ * 桌面由窗口管理器绘制系统标题栏（窗口标题 + —/□/✕）；fbdev 无窗口
+ * 系统，该层缺失（用户 2026-09-28 指出与桌面行为不统一）。此处按桌面
+ * WM 条等比复刻：窗口顶部 28px 灰条 + 居中窗口标题 + 右侧三键。
+ * ✕ 走 XWidget_close 标准关闭链（与 WM_DELETE 同路径）；□ 切换
+ * 最大化/还原（配合 XPlatformBackingStore_requestPanelClear 清屏防
+ * 残影）；— 按下反馈 only（嵌入式单应用无 shell 可最小化，如实降级）。
+ * 桌面构建 DEMO_SYSBAR_H=0：不绘制不参与命中，几何零变化。 */
+#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
+#define DEMO_SYSBAR_H 28
+#else
+#define DEMO_SYSBAR_H 0
+#endif
 
-#define DEMO_CLOSE_BTN_SIZE 28  /**< ✕ 命中/绘制区边长（Win10 caption 钮尺度）。 */
-#define DEMO_CLOSE_BTN_MARGIN 16 /**< ✕ 右缘距窗右缘内缩。 */
-#define DEMO_CLOSE_HOVER 0xFFE81123u /**< ✕ 悬停底色（Win10 关闭红）。 */
-#define DEMO_CLOSE_PRESSED 0xFFC50E1Fu /**< ✕ 按住底色（加深一档）。 */
+#if DEMO_SYSBAR_H > 0
+#define DEMO_SYSBTN_W 36       /**< 系统标题栏按钮宽。 */
+#define DEMO_SYSBTN_H 24       /**< 系统标题栏按钮高。 */
+#define DEMO_SYSBTN_GAP 4      /**< 按钮间距。 */
+#define DEMO_SYSBTN_MARGIN 8   /**< ✕ 右缘距窗右缘内缩。 */
+/* 前置声明（本块位于文件既有前置声明段之前，切换函数需要）。 */
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+static void demo_layout_chrome(DemoWin* self);
+#endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+static void demo_layout_content(DemoWin* self);
+#endif
+static void demo_repaint(DemoWin* self);
+static int demo_sysExposeStrips(const XRect* oldG, const XRect* newG,
+                                XRect out[4]);
+static void demo_sysClearOutsideWindow(DemoWin* self);
+enum {                      /* 索引序 = 从右到左（✕ 最右，对标桌面）。 */
+    DEMO_SYSBTN_CLOSE = 0,
+    DEMO_SYSBTN_MAX,
+    DEMO_SYSBTN_MIN,
+    DEMO_SYSBTN_COUNT
+};
+#define DEMO_SYSBAR_BG 0xFFF0F0F0u       /**< 条底色（桌面浅灰）。 */
+#define DEMO_SYSBAR_BORDER 0xFFD8D8D8u   /**< 条底 1px 分隔线。 */
+#define DEMO_SYSBAR_TEXT 0xFF1F1F1Fu     /**< 标题文本色。 */
+#define DEMO_SYSBTN_GLYPH 0xFF3F3F3Fu    /**< 按钮字形色。 */
+#define DEMO_SYSBTN_HOVER 0xFFE0E0E0u    /**< 悬停底色。 */
+#define DEMO_SYSBTN_PRESSED 0xFFC8C8C8u  /**< 按住底色。 */
 
-/** @brief 标题栏 ✕ 关闭钮几何（窗口本地坐标；与绘制严格同源）。
- *  验收锚点：root(798,61)=窗内(758,21)（窗 800x600@+40+40）落在区内。 */
-static void demo_closeButton_rect(const DemoWin* self, XRect* out)
+/** @brief 系统标题栏按钮几何（窗口本地坐标；与绘制严格同源）。 */
+static void demo_sysButton_rect(const DemoWin* self, int which, XRect* out)
 {
     int w = XWidget_width(&self->m_base);
-    XRect_init(out, w - DEMO_CLOSE_BTN_MARGIN - DEMO_CLOSE_BTN_SIZE,
-               6, DEMO_CLOSE_BTN_SIZE, DEMO_CLOSE_BTN_SIZE);
+    XRect_init(out, w - DEMO_SYSBTN_MARGIN - DEMO_SYSBTN_W -
+                    which * (DEMO_SYSBTN_W + DEMO_SYSBTN_GAP),
+               (DEMO_SYSBAR_H - DEMO_SYSBTN_H) / 2,
+               DEMO_SYSBTN_W, DEMO_SYSBTN_H);
 }
 
-/** @brief 标题栏 ✕ 关闭钮命中（窗口本地坐标）。 */
-static bool demo_closeButton_contains(const DemoWin* self, const XPoint* pos)
+/** @brief 系统标题栏按钮命中（窗口本地坐标）。 */
+static bool demo_sysButton_contains(const DemoWin* self, const XPoint* pos,
+                                    int* outWhich)
 {
-    XRect r;
-    if (!self || !pos) return false;
-    demo_closeButton_rect(self, &r);
-    return pos->x >= r.x && pos->x < r.x + r.width &&
-           pos->y >= r.y && pos->y < r.y + r.height;
-}
-
-/** @brief 绘制标题栏 ✕ 关闭钮（三态：常态透明底白字形 / 悬停红底 / 按住深红）。 */
-static void demo_drawTitlebarClose(DemoWin* self, XPainter* painter)
-{
-    XRect r;
-    uint32_t bg;
     int i;
+    if (!self || !pos) return false;
+    if (pos->y < 0 || pos->y >= DEMO_SYSBAR_H) return false;
+    for (i = 0; i < DEMO_SYSBTN_COUNT; ++i) {
+        XRect r;
+        demo_sysButton_rect(self, i, &r);
+        if (pos->x >= r.x && pos->x < r.x + r.width) {
+            if (outWhich) *outWhich = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+/** @brief 合成 □ 最大化/还原切换（fbdev：窗口 800x600 ↔ 整面板）。 */
+static void demo_sysToggleMaximized(DemoWin* self)
+{
+    const XPlatformDisplayDriverOps* ops;
+    XPlatformDisplayInfo info;
+    XRect normal;
+    if (!self) return;
+    ops = XPlatformDisplayDriver_active();
+    if (!ops || !ops->probe || !ops->probe(&info) ||
+        info.m_width < 1 || info.m_height < 1)
+        return;
+    if (!self->m_sysMaximized) {
+        XRect oldG;
+        XRect newG;
+        XRect exposed[4];
+        int stripCount;
+        oldG = XWidget_geometry(&self->m_base);
+        self->m_sysNormalRect = oldG;
+        XWidget_setGeometry(&self->m_base, 0, 0, info.m_width, info.m_height);
+        self->m_sysMaximized = true;
+        newG = XWidget_geometry(&self->m_base);
+        stripCount = demo_sysExposeStrips(&oldG, &newG, exposed);
+        if (stripCount > 0)
+            XPlatformBackingStore_fillPanelRects(exposed, stripCount, 0u);
+    } else {
+        XRect oldG;
+        XRect newG;
+        XRect normal;
+        XRect exposed[4];
+        int stripCount;
+        oldG = XWidget_geometry(&self->m_base);
+        normal = self->m_sysNormalRect;
+        if (normal.width <= 0 || normal.height <= 0)
+            XRect_init(&normal, 40, 0, 800, 600);
+        XWidget_setGeometry(&self->m_base, normal.x, normal.y,
+                            normal.width, normal.height);
+        self->m_sysMaximized = false;
+        newG = XWidget_geometry(&self->m_base);
+        stripCount = demo_sysExposeStrips(&oldG, &newG, exposed);
+        if (stripCount > 0)
+            XPlatformBackingStore_fillPanelRects(exposed, stripCount, 0u);
+    }
+    /* setGeometry 已触发 resizeEvent 重排重绘；显式补一轮保底（与
+     * main 的全屏化路径同口径）。 */
+    self->m_staticSceneDirty = true;
+    demo_layout_chrome(self);
+    demo_layout_content(self);
+    demo_repaint(self);
+}
+
+/** @brief 计算几何从 oldG 变到 newG 后暴露出来的条带（旧矩形减新矩
+ *  形，最多 4 条：左右上下差带），返回条数。窗口坐标即面板坐标。 */
+static int demo_sysExposeStrips(const XRect* oldG, const XRect* newG,
+                                XRect out[4])
+{
+    int n = 0;
+    if (!oldG || !newG || !out) return 0;
+    /* 左差带：新矩形右移，旧矩形左缘露出。 */
+    if (newG->x > oldG->x)
+        XRect_init(&out[n++], oldG->x, oldG->y, newG->x - oldG->x,
+                   oldG->height);
+    /* 右差带：新矩形左移或变窄。 */
+    if (newG->x + newG->width < oldG->x + oldG->width)
+        XRect_init(&out[n++], newG->x + newG->width, oldG->y,
+                   oldG->x + oldG->width - (newG->x + newG->width),
+                   oldG->height);
+    /* 上差带：新矩形下移。 */
+    if (newG->y > oldG->y)
+        XRect_init(&out[n++], oldG->x, oldG->y, oldG->width,
+                   newG->y - oldG->y);
+    /* 下差带：新矩形上移或变矮。 */
+    if (newG->y + newG->height < oldG->y + oldG->height)
+        XRect_init(&out[n++], oldG->x, newG->y + newG->height, oldG->width,
+                   oldG->y + oldG->height - (newG->y + newG->height));
+    return n;
+}
+
+/** @brief 合成标题栏拖拽移动：按增量平移窗口并钳到面板内。 */
+static void demo_sysMoveWindow(DemoWin* self, int dx, int dy)
+{
+    const XPlatformDisplayDriverOps* ops;
+    XPlatformDisplayInfo info;
+    XRect g;
+    XRect exposed[4];
+    int nx;
+    int ny;
+    int stripCount;
+    if (!self || (dx == 0 && dy == 0)) return;
+    ops = XPlatformDisplayDriver_active();
+    if (!ops || !ops->probe || !ops->probe(&info) ||
+        info.m_width < 1 || info.m_height < 1)
+        return;
+    g = XWidget_geometry(&self->m_base);
+    nx = g.x + dx;
+    ny = g.y + dy;
+    if (nx < 0) nx = 0;
+    if (ny < 0) ny = 0;
+    if (nx + g.width > info.m_width) nx = info.m_width - g.width;
+    if (ny + g.height > info.m_height) ny = info.m_height - g.height;
+    if (nx == g.x && ny == g.y) return;
+    /* 先算暴露条带（旧几何 - 新几何），立即填黑两缓冲——替代整面板
+     * 清零（整屏 memset 含可见缓冲，逐帧调用=拖动整体频闪，真机
+     * 2026-09-28 实测）。 */
+    {
+        XRect newG;
+        XRect_init(&newG, nx, ny, g.width, g.height);
+        stripCount = demo_sysExposeStrips(&g, &newG, exposed);
+    }
+    if (stripCount > 0)
+        XPlatformBackingStore_fillPanelRects(exposed, stripCount, 0u);
+    XWidget_setGeometry(&self->m_base, nx, ny, g.width, g.height);
+    /* 位置变化不走 resizeEvent，显式重绘一帧。 */
+    demo_repaint(self);
+}
+
+/** @brief 绘制系统标题栏：底条 + 居中窗口标题 + 右侧 —/□/✕ 三键。 */
+static void demo_drawSystemTitlebar(DemoWin* self, XPainter* painter)
+{
+    int w;
+    int i;
+    XRect titleRect;
+    const XString* title;
     if (!self || !painter) return;
-    demo_closeButton_rect(self, &r);
-    bg = 0xff1f4e79u; /* 标题栏基底色：常态透明（同底即隐形底座）。 */
-    if (self->m_closeArmed) bg = DEMO_CLOSE_PRESSED;
-    else if (self->m_closeHot) bg = DEMO_CLOSE_HOVER;
-    demo_fill_rect(painter, r.x, r.y, r.width, r.height, bg);
-    /* 白色 ✕ 字形：12x12 域内两条 2px 对角线。 */
-    for (i = 0; i < 10; ++i) {
-        demo_fill_rect(painter, r.x + 8 + i, r.y + 8 + i, 2, 2, 0xffffffffu);
-        demo_fill_rect(painter, r.x + 8 + 9 - i, r.y + 8 + i, 2, 2, 0xffffffffu);
+    w = XWidget_width(&self->m_base);
+    demo_fill_rect(painter, 0, 0, w, DEMO_SYSBAR_H, DEMO_SYSBAR_BG);
+    demo_fill_rect(painter, 0, DEMO_SYSBAR_H - 1, w, 1, DEMO_SYSBAR_BORDER);
+    /* 窗口标题（XWidget_setWindowTitle 的值，与桌面 WM 显示同源），
+     * 居中；按钮区之外取整条宽。 */
+    title = XWidget_windowTitle(&self->m_base);
+    XRect_init(&titleRect, 8, 0,
+               w - 16 - DEMO_SYSBTN_COUNT * DEMO_SYSBTN_W -
+                   (DEMO_SYSBTN_COUNT - 1) * DEMO_SYSBTN_GAP -
+                   DEMO_SYSBTN_MARGIN,
+               DEMO_SYSBAR_H);
+    if (title && XString_size(title) > 0)
+        XPainter_drawTextRect(painter, &titleRect,
+                              XPAINTER_TEXT_ALIGN_CENTER,
+                              XString_toUtf8(title), DEMO_SYSBAR_TEXT);
+    for (i = 0; i < DEMO_SYSBTN_COUNT; ++i) {
+        XRect r;
+        uint32_t bg = DEMO_SYSBAR_BG; /* 常态透明（同条底即隐形底座）。 */
+        uint32_t glyph = DEMO_SYSBTN_GLYPH;
+        demo_sysButton_rect(self, i, &r);
+        if (self->m_sysArmed == i) bg = DEMO_SYSBTN_PRESSED;
+        else if (self->m_sysHot == i) bg = DEMO_SYSBTN_HOVER;
+        demo_fill_rect(painter, r.x, r.y, r.width, r.height, bg);
+        if (i == DEMO_SYSBTN_CLOSE) {
+            /* 深灰 ✕：12x12 域内两条 2px 对角线（同 app 栏 ✕ 字形）。 */
+            int k;
+            for (k = 0; k < 10; ++k) {
+                demo_fill_rect(painter, r.x + 13 + k, r.y + 7 + k, 2, 2, glyph);
+                demo_fill_rect(painter, r.x + 13 + 9 - k, r.y + 7 + k, 2, 2,
+                               glyph);
+            }
+        } else if (i == DEMO_SYSBTN_MAX) {
+            if (!self->m_sysMaximized) {
+                /* □：10x10 方框描边（2px 边，触摸可见）。 */
+                demo_fill_rect(painter, r.x + 13, r.y + 7, 10, 2, glyph);
+                demo_fill_rect(painter, r.x + 13, r.y + 15, 10, 2, glyph);
+                demo_fill_rect(painter, r.x + 13, r.y + 7, 2, 10, glyph);
+                demo_fill_rect(painter, r.x + 21, r.y + 7, 2, 10, glyph);
+            } else {
+                /* 还原：前后两个错位方框描边。 */
+                demo_fill_rect(painter, r.x + 16, r.y + 6, 8, 2, glyph);
+                demo_fill_rect(painter, r.x + 16, r.y + 6, 2, 8, glyph);
+                demo_fill_rect(painter, r.x + 22, r.y + 6, 2, 8, glyph);
+                demo_fill_rect(painter, r.x + 12, r.y + 10, 8, 2, glyph);
+                demo_fill_rect(painter, r.x + 12, r.y + 10, 2, 8, glyph);
+                demo_fill_rect(painter, r.x + 18, r.y + 10, 2, 8, glyph);
+                demo_fill_rect(painter, r.x + 18, r.y + 16, 2, 2, glyph);
+            }
+        } else {
+            /* —：居中 10x2 横线。 */
+            demo_fill_rect(painter, r.x + 13, r.y + 11, 10, 2, glyph);
+        }
     }
 }
+#endif /* DEMO_SYSBAR_H > 0 */
 
-#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
+/* ==================== 窗口边缘拖拽改尺寸（小窗模式，对标桌面 WM 边框） ====================
+ * 外缘 6px 命中带（四边+四角=8 向）；最大化态禁用。sysbar 顶部 6px 归
+ * N 向（其余 sysbar 区域仍为拖拽移动）。app 栏 ✕ 已删除：系统标题栏
+ * ✕ 承担关闭（用户 2026-09-28 指出双 ✕ 重复）。 */
+#if DEMO_SYSBAR_H > 0
+
+#define DEMO_RESIZE_ZONE 24    /**< 边缘命中带宽度（px）。电阻屏手指精度
+                                    ±10px 级，6px 带用户实测多次才触发
+                                    （2026-09-28）；放宽到 24px。与内容
+                                    控件重叠无冲突：命中子控件（按钮等）
+                                    的按下被子控件接受、不传播到顶层，
+                                    改尺寸只在空白区触发。 */
+#define DEMO_RESIZE_ZONE_N 8   /**< 顶边命中带（窄些：sysbar 大部分区域
+                                    是拖拽移动；按钮优先于 N 向改尺寸）。 */
+#define DEMO_MIN_W 800         /**< 最小窗宽（9 页导航设计底限）。 */
+#define DEMO_MIN_H 600         /**< 最小窗高（=面板高，纵向本就无伸缩余量）。 */
+enum {
+    DEMO_RZ_N = 1, DEMO_RZ_S = 2, DEMO_RZ_E = 4, DEMO_RZ_W = 8
+};
+
+/** @brief 命中窗口边缘改尺寸带（窗口本地坐标），返回方向位掩码（0=非边缘）。
+ *  W/E/S 用宽带（20px+，触屏手指容差）；N 用窄带且只认 sysbar 行——
+ *  sysbar 其余区域归拖拽移动，按钮命中优先于一切（调用方保证顺序）。 */
+static int demo_resizeZoneAt(const DemoWin* self, const XPoint* pos)
+{
+    int w;
+    int h;
+    int zone = 0;
+    if (!self || !pos) return 0;
+    if (self->m_sysMaximized) return 0;
+    w = XWidget_width(&self->m_base);
+    h = XWidget_height(&self->m_base);
+    if (pos->x < DEMO_RESIZE_ZONE) zone |= DEMO_RZ_W;
+    else if (pos->x >= w - DEMO_RESIZE_ZONE) zone |= DEMO_RZ_E;
+    if (pos->y >= DEMO_SYSBAR_H) {
+        if (pos->y >= h - DEMO_RESIZE_ZONE) zone |= DEMO_RZ_S;
+    } else {
+        if (pos->y < DEMO_RESIZE_ZONE_N) zone |= DEMO_RZ_N;
+    }
+    return zone;
+}
+#endif /* DEMO_SYSBAR_H > 0 */
+
+/* ==================== 自绘标题栏 ✕ 关闭钮（已移除） ====================
+ * 用户 2026-09-28 指出与系统标题栏 ✕ 重复（最大化态还上下叠排）：
+ * 关闭统一由合成系统标题栏 ✕ 承担（同 XWidget_close 标准链，桌面由
+ * WM ✕ 承担）。demo_drawTitlebarClose/命中/三态字段一并移除。 */
+
+/* demo_drawStaticScene 无条件编译：静态场景缓存关闭（昆仑通态 fbdev
+ * 定版=0）时，demo_paintScene 的 #else 分支仍需现绘整页静态基底。 */
 /** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
  * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色，
  *          标题栏右端保留一小块棋盘格用于验证脏区提交（棋盘格必须避开
@@ -725,20 +995,21 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
     XFont_deinit_base(&painterFont);
 
     demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);       /* 窗口背景 */
-    demo_fill_rect(painter, 0, 0, w, 40, 0xff1f4e79u);      /* 标题栏基底 */
+#if DEMO_SYSBAR_H > 0
+    /* 合成系统标题栏（fbdev WM 等价物）：最顶层，先于 app 栏。 */
+    demo_drawSystemTitlebar(self, painter);
+#endif
+    demo_fill_rect(painter, 0, DEMO_SYSBAR_H, w, 40, 0xff1f4e79u); /* 标题栏基底 */
     /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
      * 不能画在根背景里）。 */
-    /* 棋盘格装饰：占位 (w-104,8) 24x24（原 (w-60,8) 与新增的标题栏 ✕
-     * 关闭钮命中区 [w-44,w-16]x[6,34] 重叠，让位左移 44px；仍在标题栏
-     * [4,36] 内、✕ 左侧、导航行(y=44)之上，也远离右下角 FPS 悬浮层，
-     * 脏区提交验证功能不变）。 */
-    demo_draw_checker(painter, w - 104, 8, 2, 2, 12);
-    /* 标题栏右端 ✕ 关闭钮（悬停红底/按住深红三态，见
-     * demo_drawTitlebarClose；松开触发窗口关闭语义）。 */
-    demo_drawTitlebarClose(self, painter);
+    /* 棋盘格装饰：占位 (w-104,36) 24x24——app 栏（y 28..68）内、右侧
+     * 按钮区让位后左移的空档、导航行之上，远离右下角 FPS 悬浮层，
+     * 脏区提交验证功能不变。 */
+    demo_draw_checker(painter, w - 104, 36, 2, 2, 12);
     /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
 }
 
+#if XGUI_DEMO_STATIC_SCENE_CACHE_ON
 /** @brief 尺寸或控件状态变化后重建静态场景缓存。 */
 static bool demo_updateStaticScene(DemoWin* self, int w, int h)
 {
@@ -1492,7 +1763,7 @@ static void demo_layout_chrome(DemoWin* self)
     if (width < 0) width = 0;
     if (height < 0) height = 0;
     labelWidth = width > 16 ? width - 16 : 0;
-    XWidget_setGeometry((XWidget*)&self->m_titleLabel, 16, 0,
+    XWidget_setGeometry((XWidget*)&self->m_titleLabel, 16, DEMO_SYSBAR_H,
                         labelWidth, 40);
     /* 状态栏是自带底色的整条子控件，几何必须覆盖整个状态条区域。 */
     if (height >= 26)
@@ -1513,10 +1784,10 @@ static void demo_layout_content(DemoWin* self)
     width = XWidget_width(&self->m_base);
     height = XWidget_height(&self->m_base);
     contentWidth = width - 24;
-    contentHeight = height - 78 - 28;
+    contentHeight = height - 78 - DEMO_SYSBAR_H - 28;
     if (contentWidth < 0) contentWidth = 0;
     if (contentHeight < 0) contentHeight = 0;
-    XRect_init(&content, 12, 78, contentWidth, contentHeight);
+    XRect_init(&content, 12, 78 + DEMO_SYSBAR_H, contentWidth, contentHeight);
     XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
                                  &content);
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
@@ -2116,19 +2387,53 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
     printf("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
            (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
            (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
-    /* 标题栏 ✕ 关闭钮：按下武装（按压态加深），松开在钮内才真正关窗
-     * （Win10 caption 语义；对标 XDialog [×] 按下武装/松开 reject）。 */
+    /* 合成系统标题栏按钮优先于改尺寸带（N 向窄带与按钮 y 2..26 重叠，
+     * 按钮必须先命中）；其后依次为边缘改尺寸带、标题栏拖拽移动。 */
     if (XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
         XPoint pos = XMouseEvent_position(mouse);
-        if (demo_closeButton_contains(demo, &pos)) {
-            if (!demo->m_closeArmed) {
-                demo->m_closeArmed = true;
-                demo->m_staticSceneDirty = true; /* 按压态换底色需重建静态场景 */
-                demo_repaint(demo);
+#if DEMO_SYSBAR_H > 0
+        {
+            int which = -1;
+            if (demo_sysButton_contains(demo, &pos, &which)) {
+                if (demo->m_sysArmed != which) {
+                    demo->m_sysArmed = which;
+                    demo->m_staticSceneDirty = true;
+                    demo_repaint(demo);
+                }
+                XEvent_accept(event);
+                return;
             }
-            XEvent_accept(event);
-            return;
         }
+#endif
+#if DEMO_SYSBAR_H > 0
+        {
+            int zone = demo_resizeZoneAt(demo, &pos);
+            if (zone) {
+                demo->m_sysResizing = true;
+                demo->m_sysResizeZone = zone;
+                demo->m_sysResizeAnchor = XWidget_geometry(&demo->m_base);
+                demo->m_sysDragLast = pos;
+                XWidget_grabMouse((XWidget*)self);
+                XEvent_accept(event);
+                return;
+            }
+            /* 条内空白区：开始拖拽移动窗口（WM 标题栏拖拽语义）。
+             * 必须显式抓取鼠标：框架对 MOVE 逐事件重新命中，斜向拖拽
+             * 一旦滑出 28px 条区，事件会改投命中的子控件、窗口停止
+             * 跟手（真机 xinj2 斜拖实测）。抓取后 move/release 全程
+             * 直达本控件（与菜单弹层同机制）。最大化态禁拖拽（对标
+             * 桌面：最大化窗口不可拖动）。N 向窄带已在上面的改尺寸
+             * 分支消费，这里只剩 8..28 的移动区。 */
+            if (!demo->m_sysMaximized &&
+                pos.y >= 0 && pos.y < DEMO_SYSBAR_H) {
+                demo->m_sysDragging = true;
+                demo->m_sysDragLast = pos;
+                XWidget_grabMouse((XWidget*)self);
+                XEvent_accept(event);
+                return;
+            }
+        }
+#endif
     }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     {
@@ -2158,22 +2463,54 @@ static void VDemoWin_mouseReleaseEvent(XWidget* self, XEvent* event)
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
-    /* 标题栏 ✕ 关闭钮：按住后在钮内松开 → 关闭窗口（走 XWidget_close：
-     * 发 CLOSE 事件给顶层控件，被接受则隐藏——本 demo 的 closeEvent
-     * 接受关闭并退出应用事件循环）；移出钮外松开仅解除武装（Win10
-     * caption 语义）。 */
+    /* 标题栏拖拽结束（无论是否移动过）：释放鼠标抓取 + 清窗外残留。 */
+#if DEMO_SYSBAR_H > 0
     if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
-        demo->m_closeArmed) {
+        demo->m_sysDragging) {
+        demo->m_sysDragging = false;
+        XWidget_releaseMouse((XWidget*)self);
+        demo_sysClearOutsideWindow(demo);
+        XEvent_accept(event);
+        return;
+    }
+#endif
+#if DEMO_SYSBAR_H > 0
+    /* 窗口边缘改尺寸结束：释放抓取 + 清窗外全部残留（缩小后暴露区
+     * 逐帧条带可能盖不全历史位置，松手一次清干净）。 */
+    if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
+        demo->m_sysResizing) {
+        demo->m_sysResizing = false;
+        XWidget_releaseMouse((XWidget*)self);
+        demo_sysClearOutsideWindow(demo);
+        XEvent_accept(event);
+        return;
+    }
+#endif
+    /* 标题栏 ✕ 关闭钮已删除：关闭统一由合成系统标题栏 ✕ 承担。 */
+#if DEMO_SYSBAR_H > 0
+    /* 合成系统标题栏按钮：按住后在钮内松开触发——✕ 关闭（标准
+     * CloseEvent 链）/□ 最大化切换/— 仅反馈（嵌入式单应用无 shell
+     * 可最小化，如实降级为按压反馈）；移出钮外松开仅解除武装。 */
+    if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
+        demo->m_sysArmed >= 0) {
         XPoint pos = XMouseEvent_position(mouse);
-        bool overClose = demo_closeButton_contains(demo, &pos);
-        demo->m_closeArmed = false;
+        int which = -1;
+        bool over = demo_sysButton_contains(demo, &pos, &which);
+        int armed = demo->m_sysArmed;
+        demo->m_sysArmed = -1;
         demo->m_staticSceneDirty = true;
         demo_repaint(demo);
         XEvent_accept(event);
-        if (overClose)
-            XWidget_close((XWidget*)self);
+        if (over && which == armed) {
+            if (armed == DEMO_SYSBTN_CLOSE)
+                XWidget_close((XWidget*)self);
+            else if (armed == DEMO_SYSBTN_MAX)
+                demo_sysToggleMaximized(demo);
+            /* DEMO_SYSBTN_MIN：无动作（见函数头注释）。 */
+        }
         return;
     }
+#endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XMouseEvent_button(mouse) == XMouseButton_LeftButton &&
         XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
@@ -2188,37 +2525,172 @@ static void VDemoWin_mouseReleaseEvent(XWidget* self, XEvent* event)
 static void VDemoWin_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 {
     XMouseEvent* mouse = (XMouseEvent*)event;
-    (void)self;
+    DemoWin* demo = (DemoWin*)self;
     if (!mouse) return;
+#if DEMO_SYSBAR_H > 0
+    /* 双击系统标题栏空白区切换最大化/还原（WM 标题栏双击语义，
+     * 用户 2026-09-28 指出缺失）；双击按钮维持无动作。 */
+    if (demo && XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
+        XPoint pos = XMouseEvent_position(mouse);
+        int which = -1;
+        if (pos.y >= 0 && pos.y < DEMO_SYSBAR_H &&
+            !demo_sysButton_contains(demo, &pos, &which)) {
+            demo_sysToggleMaximized(demo);
+            XEvent_accept(event);
+            return;
+        }
+    }
+#endif
     printf("XGuiWindowDemo: mouseDoubleClick button=%d pos=(%d,%d)\n",
            (int)XMouseEvent_button(mouse),
            (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
 }
 
-/** @brief MouseMoveEvent：跟踪标题栏 ✕ 悬停态；拖动性能悬浮层时更新其位置。 */
+/** @brief 清扫窗口外全部面板区域（松手兜底：拖拽/改尺寸的逐帧条带
+ *  只覆盖增量，窗口外任何历史残留——缩小前旧位置、负坐标期切片——
+ *  在松手时一次性填黑，= 桌面 WM 每次几何变化的整屏重铺）。 */
+#if DEMO_SYSBAR_H > 0
+static void demo_sysClearOutsideWindow(DemoWin* self)
+{
+    const XPlatformDisplayDriverOps* ops;
+    XPlatformDisplayInfo info;
+    XRect g;
+    XRect bands[4];
+    if (!self) return;
+    ops = XPlatformDisplayDriver_active();
+    if (!ops || !ops->probe || !ops->probe(&info) ||
+        info.m_width < 1 || info.m_height < 1)
+        return;
+    g = XWidget_geometry(&self->m_base);
+    XRect_init(&bands[0], 0, 0, g.x, info.m_height);                    /* 左 */
+    XRect_init(&bands[1], g.x + g.width, 0,
+               info.m_width - g.x - g.width, info.m_height);            /* 右 */
+    XRect_init(&bands[2], g.x, 0, g.width, g.y);                        /* 上 */
+    XRect_init(&bands[3], g.x, g.y + g.height, g.width,
+               info.m_height - g.y - g.height);                         /* 下 */
+    XPlatformBackingStore_fillPanelRects(bands, 4, 0u);
+}
+#endif /* DEMO_SYSBAR_H > 0 */
+
+/** @brief 窗口边缘拖拽改尺寸：按方向位掩码应用增量（N/S 调高、E/W 调
+ *  宽及位移），钳最小尺寸与面板边界；暴露条带立即填黑。 */
+#if DEMO_SYSBAR_H > 0
+static void demo_sysResizeWindow(DemoWin* self, int dx, int dy)
+{
+    const XPlatformDisplayDriverOps* ops;
+    XPlatformDisplayInfo info;
+    XRect g;
+    XRect newG;
+    XRect exposed[4];
+    int stripCount;
+    int zone;
+    if (!self || (dx == 0 && dy == 0)) return;
+    zone = self->m_sysResizeZone;
+    if (!zone) return;
+    ops = XPlatformDisplayDriver_active();
+    if (!ops || !ops->probe || !ops->probe(&info) ||
+        info.m_width < 1 || info.m_height < 1)
+        return;
+    g = self->m_sysResizeAnchor;
+    newG = g;
+    if (zone & DEMO_RZ_E)
+        newG.width = g.width + dx;
+    if (zone & DEMO_RZ_S)
+        newG.height = g.height + dy;
+    if (zone & DEMO_RZ_W) {
+        newG.x = g.x + dx;
+        newG.width = g.width - dx;
+    }
+    if (zone & DEMO_RZ_N) {
+        newG.y = g.y + dy;
+        newG.height = g.height - dy;
+    }
+    /* 最小尺寸钳制（W/N 向同时收位移，防几何翻转）。 */
+    if (newG.width < DEMO_MIN_W) {
+        if (zone & DEMO_RZ_W) newG.x = g.x + g.width - DEMO_MIN_W;
+        newG.width = DEMO_MIN_W;
+    }
+    if (newG.height < DEMO_MIN_H) {
+        if (zone & DEMO_RZ_N) newG.y = g.y + g.height - DEMO_MIN_H;
+        newG.height = DEMO_MIN_H;
+    }
+    /* 面板边界钳制。 */
+    if (newG.x < 0) { newG.width += newG.x; newG.x = 0; }
+    if (newG.y < 0) { newG.height += newG.y; newG.y = 0; }
+    if (newG.x + newG.width > info.m_width)
+        newG.width = info.m_width - newG.x;
+    if (newG.y + newG.height > info.m_height)
+        newG.height = info.m_height - newG.y;
+    if (newG.width == g.width && newG.height == g.height &&
+        newG.x == g.x && newG.y == g.y)
+        return;
+    stripCount = demo_sysExposeStrips(&g, &newG, exposed);
+    if (stripCount > 0)
+        XPlatformBackingStore_fillPanelRects(exposed, stripCount, 0u);
+    XWidget_setGeometry(&self->m_base, newG.x, newG.y,
+                        newG.width, newG.height);
+    /* setGeometry 触发 resizeEvent 重排；W/N 向尺寸未变（纯位移钳制）
+       时无 resizeEvent，显式补绘。 */
+    demo_repaint(self);
+}
+#endif /* DEMO_SYSBAR_H > 0 */
+
+/** @brief MouseMoveEvent：边缘改尺寸/标题栏拖拽/悬停热跟踪/悬浮层拖动。 */
 static void VDemoWin_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
-    /* 标题栏 ✕ 悬停热跟踪（Win10 caption 悬停红底；状态翻转重建静态
-     * 场景换底色；按住后移出钮外解除武装——松开不再关窗）。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     if (!XPerformanceOverlay_isDragging(&demo->m_performanceOverlay))
 #endif
     {
         XPoint pos = XMouseEvent_position(mouse);
-        bool hot = demo_closeButton_contains(demo, &pos);
-        if (hot != demo->m_closeHot) {
-            demo->m_closeHot = hot;
-            demo->m_staticSceneDirty = true;
-            demo_repaint(demo);
+#if DEMO_SYSBAR_H > 0
+        /* 窗口边缘改尺寸进行中：dx/dy 必须是「距按下点的总位移」——
+         * demo_sysResizeWindow 以按下时锚点几何为基准求新尺寸。若此处
+         * 逐帧刷新 m_sysDragLast，增量会变小/回摆，边框只跟随一点点
+         * 就停住（用户真机实测：拖边缘只跟一小段不再跟手）。 */
+        if (demo->m_sysResizing) {
+            int dx = pos.x - demo->m_sysDragLast.x;
+            int dy = pos.y - demo->m_sysDragLast.y;
+            if (dx != 0 || dy != 0)
+                demo_sysResizeWindow(demo, dx, dy);
+            XEvent_accept(event);
+            return;
         }
-        if (demo->m_closeArmed && !hot) {
-            demo->m_closeArmed = false;
-            demo->m_staticSceneDirty = true;
-            demo_repaint(demo);
+        /* 标题栏拖拽移动进行中：按增量平移窗口（悬停热跟踪跳过）。 */
+        if (demo->m_sysDragging) {
+            int dx = pos.x - demo->m_sysDragLast.x;
+            int dy = pos.y - demo->m_sysDragLast.y;
+            if (dx != 0 || dy != 0) {
+                demo_sysMoveWindow(demo, dx, dy);
+                demo->m_sysDragLast = pos;
+            }
+            XEvent_accept(event);
+            return;
         }
+#endif
+#if DEMO_SYSBAR_H > 0
+        /* 合成系统标题栏按钮悬停热跟踪（状态翻转重建静态场景换底色；
+         * 按住后移出钮外解除武装——松开不再触发）。 */
+        {
+            int sysHot = -1;
+            (void)demo_sysButton_contains(demo, &pos, &sysHot);
+            if (sysHot != demo->m_sysHot) {
+                demo->m_sysHot = sysHot;
+                demo->m_staticSceneDirty = true;
+                demo_repaint(demo);
+            }
+            if (demo->m_sysArmed >= 0 && demo->m_sysArmed != sysHot) {
+                demo->m_sysArmed = -1;
+                demo->m_staticSceneDirty = true;
+                demo_repaint(demo);
+            }
+        }
+#else
+        (void)pos;
+#endif
     }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XPerformanceOverlay_isDragging(&demo->m_performanceOverlay)) {
@@ -2311,6 +2783,9 @@ static DemoWin* DemoWin_create(void)
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
     self->m_lcdTimer = XTIMER_INVALID_ID;
     self->m_overlayTimer = XTIMER_INVALID_ID;
+    self->m_sysHot = -1;
+    self->m_sysArmed = -1;
+    self->m_sysResizeZone = 0;
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_init(self);
 #endif
@@ -2389,7 +2864,8 @@ static DemoWin* DemoWin_create(void)
             demo_set_widget_default_font((XWidget*)button);
             XPushButton_setText_2(button, kNavTexts[nav]);
             /* 9 个按钮收窄到 84px/步距 86，单行排入 800 宽窗口。 */
-            XWidget_setGeometry((XWidget*)button, 12 + nav * 86, 44, 84, 26);
+            XWidget_setGeometry((XWidget*)button, 12 + nav * 86,
+                                44 + DEMO_SYSBAR_H, 84, 26);
             XObject_connect_1((XObject*)button,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)self, kNavSlots[nav],
@@ -3338,15 +3814,10 @@ int main(int argc, char* argv[])
         XWidget_setWindowTitle(&win->m_base, title);
         XString_delete_base((XClass*)title);
     }
-#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
-    if (fbPanelW > 0 && fbPanelH > 0)
-    {
-        /* 嵌入式单屏全屏化：帧缓冲无合成器，窗口外区域永远停留在
-         * 上一任应用的残留帧上，窗口必须盖满面板。 */
-        XWidget_setGeometry(&win->m_base, 0, 0, fbPanelW, fbPanelH);
-    }
-    else
-#endif
+/* fbdev 默认与桌面统一：窗口按设计尺寸浮动（不再默认全屏铺满——
+ * 用户 2026-09-28 指出与桌面行为不统一；窗口外区域由平台首帧整段
+ * 清零兜底，黑色桌面底两缓冲同清不残留）。--maximized 的全屏化在
+ * show 后的 fbdev 块执行（还原基准几何存档后再最大化）。 */
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     if (win->m_extPages[0] || win->m_extPages[1] ||
         win->m_extPages[2] || win->m_extPages[3])
@@ -3354,11 +3825,36 @@ int main(int argc, char* argv[])
     else
 #endif
     XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
+#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
+    if (fbPanelW > 0 && fbPanelH > 0 &&
+        (XWidget_x(&win->m_base) + XWidget_width(&win->m_base) > fbPanelW ||
+         XWidget_y(&win->m_base) + XWidget_height(&win->m_base) > fbPanelH))
+    {
+        /* 面板装不下桌面默认落点（1024x600 面板 vs 800x600+40,40）：
+         * 保持尺寸、位置钳回面板内（y 贴顶让自带标题栏可见）。 */
+        int wx = XWidget_x(&win->m_base);
+        int wy = XWidget_y(&win->m_base);
+        int ww = XWidget_width(&win->m_base);
+        int wh = XWidget_height(&win->m_base);
+        if (ww > fbPanelW) { ww = fbPanelW; wx = 0; }
+        if (wh > fbPanelH) { wh = fbPanelH; wy = 0; }
+        if (wx + ww > fbPanelW) wx = fbPanelW - ww;
+        if (wy + wh > fbPanelH) wy = fbPanelH - wh;
+        XWidget_setGeometry(&win->m_base, wx, wy, ww, wh);
+    }
+#endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_layout_chrome(win);
 #endif
 
     /* 3) 显示窗口：触发框架内部的惰性平台窗口创建并进入事件循环。 */
+#if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
+    if (fbPanelW > 0 && fbPanelH > 0) {
+        /* fbdev：最大化由合成系统标题栏 □ 承管（showMaximized 的
+         * WM 语义在无窗口系统环境不存在），恒常规显示。 */
+        XWidget_showNormal(&win->m_base);
+    } else
+#endif
     if (benchmarkMaximized)
         XWidget_showMaximized(&win->m_base);
     else
@@ -3366,19 +3862,24 @@ int main(int argc, char* argv[])
 #if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
     if (fbPanelW > 0 && fbPanelH > 0)
     {
-        /* fbdev 全屏化在 show 之后补一次排版：pre-show 的 setGeometry
-         * 只更新几何存值不触发 resizeEvent（平台窗口 show 时才惰性创
-         * 建），show 后的同尺寸 resize 也会因"尺寸未变"被忽略——内容
-         * 区会停留在初始化时的默认宽（真机表现：标题栏全宽、中央内
-         * 容区停在 800 导致右侧黑带）。故这里显式重排 chrome 与内容
-         * 区并重绘一帧，不依赖 resize 事件链。 */
-        XWidget_resize(&win->m_base, fbPanelW, fbPanelH);
-        demo_layout_chrome(win);
-        demo_layout_content(win);
-        /* 绕过了 resizeEvent，必须手动标脏静态场景缓存：否则重绘仍贴
-         * 初始化默认尺寸（800 宽）时缓存的旧场景，内容区右侧是黑带。 */
-        win->m_staticSceneDirty = true;
-        demo_repaint(win);
+        /* 合成 □ 的还原基准：show 后常规几何已定（pre-show 已按面板
+         * 钳位），存档。 */
+        win->m_sysNormalRect = XWidget_geometry(&win->m_base);
+        if (benchmarkMaximized)
+        {
+            /* --maximized：常规几何存档后最大化到整面板。pre-show 的
+             * setGeometry 只更新几何存值不触发 resizeEvent（平台窗口
+             * show 时才惰性创建），show 后的 resize 链与显式重排并行
+             * 兜底（同尺寸 resize 会被忽略，故显式重排 chrome 与内容
+             * 区并重绘一帧，不依赖 resize 事件链）。 */
+            win->m_sysMaximized = true;
+            XPlatformBackingStore_requestPanelClear();
+            XWidget_setGeometry(&win->m_base, 0, 0, fbPanelW, fbPanelH);
+            demo_layout_chrome(win);
+            demo_layout_content(win);
+            win->m_staticSceneDirty = true;
+            demo_repaint(win);
+        }
     }
 #endif
     XPrintf("XGuiWindowDemo: 屏幕尺寸=%.0fx%.0f\n",

@@ -958,7 +958,14 @@ XString* XProcess_backend_nullDevice(void)
 
 #if XPROCESS_ENVIRONMENT_ON
 
+/* glibc 的 unistd.h:566 已声明 environ，此处重复声明触发
+ * -Wredundant-decls；但部分嵌入式 libc 的 unistd.h 不暴露 environ，
+ * 保留声明作保底（POSIX 规定 environ 声明于 unistd.h，此处按
+ * "系统头已提供时不重复"的最小兼容写法：经 weak 探测不可行，直接
+ * 保留——冗余声明在两平台均无害，仅告警）。 */
+#ifndef XPLATFORM_LIBC_UNISTD_HAS_ENVIRON
 extern char** environ;
+#endif
 
 XProcessEnvironment* XProcessEnvironment_platform_systemEnvironment(void)
 {

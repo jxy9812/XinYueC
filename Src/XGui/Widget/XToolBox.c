@@ -282,7 +282,12 @@ static void VX_toolBox_resizeEvent(XWidget* self, XEvent* event);
 /** @brief 页头点击：y 坐标 → 条目索引并切换（对标 QToolBoxButton
  *         clicked → _q_buttonClicked → setCurrentIndex 链路）。y 映射
  *         与 paint/layout 同口径：激活页之前的页头每 22px 一个，激活
- *         页之下预留整块页高，其后页头继续每 22px 一个。 */
+ *         页之下预留整块页高，其后页头继续每 22px 一个。
+ *  @details 仅页头行才切页：激活页头正下方至页底是其内容区，命中即
+ *           忽略（不换算索引）——内容区点击归内容控件，被页控件忽略
+ *           后上抛到此的按下不得再被整除误判成页头（否则 y≈42 落在
+ *           激活页一内容区会按 42/22=1 直接跳页二；Qt 中页内容点击
+ *           绝不切页）。 */
 static void VX_toolBox_mousePressEvent(XWidget* self, XEvent* event)
 {
     XToolBox* box = (XToolBox*)self;
@@ -304,12 +309,23 @@ static void VX_toolBox_mousePressEvent(XWidget* self, XEvent* event)
     }
     /* 页高与 xtb2_layout/paint 同口径（xtb2_pageHeight）。 */
     pageH = xtb2_pageHeight(box, count);
-    if (box->m_currentIndex >= 0 && pageH > 0 &&
-        pos.y >= (box->m_currentIndex + 1) * XTOOLBOX_HEADER_H + pageH) {
-        /* 激活页之后的页头区。 */
-        int below = pos.y - ((box->m_currentIndex + 1)
-                             * XTOOLBOX_HEADER_H + pageH);
-        index = box->m_currentIndex + 1 + below / XTOOLBOX_HEADER_H;
+    if (box->m_currentIndex >= 0 && pageH > 0) {
+        int contentTop = (box->m_currentIndex + 1) * XTOOLBOX_HEADER_H;
+        if (pos.y >= contentTop && pos.y < contentTop + pageH) {
+            /* 激活页内容区（页头正下方至页底）：不切页，显式忽略——
+             * 事件保持未接受，沿父链按默认传播继续上抛（内容区点击
+             * 归内容控件；几何与 xtb2_layout 的页面定位同口径）。 */
+            XEvent_ignore(event);
+            return;
+        }
+        if (pos.y >= contentTop + pageH) {
+            /* 激活页之后的页头区。 */
+            int below = pos.y - (contentTop + pageH);
+            index = box->m_currentIndex + 1 + below / XTOOLBOX_HEADER_H;
+        } else {
+            /* 激活页及其之前的页头区（含激活页头本身）。 */
+            index = (int)(pos.y / XTOOLBOX_HEADER_H);
+        }
     } else {
         index = (int)(pos.y / XTOOLBOX_HEADER_H);
     }

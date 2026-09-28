@@ -86,6 +86,8 @@ static void  VXLineEdit_keyPressEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_inputMethodEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_keyReleaseEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_mousePressEvent(XWidget* self, XEvent* event);
+static void  VXLineEdit_mouseReleaseEvent(XWidget* self, XEvent* event);
+static void  VXLineEdit_mouseMoveEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_focusInEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_focusOutEvent(XWidget* self, XEvent* event);
@@ -518,7 +520,14 @@ static void xlineedit_updateViewOffset(XLineEdit* self)
     cursorX = XLineControl_cursorToXCurrent(self->m_control);
     lo = cursorX - visibleW + 1;
     if (lo < 0) lo = 0;
-    hi = textW - visibleW;
+    /* 滚动上限多留 1px 光标位（对标 Qt updateScroll 的 cursor−width+1
+     * 口径）：此前 hi = textW−visibleW 时滚到行尾文本右缘恰好贴齐
+     * 文本区 clip 右缘，光标竖线 rect.x == clip 右缘被
+     * XLineControl_draw 的严格小于相交测试整条剔除（txt_21c 系列行尾
+     * 无竖线）。多留 1px 后行尾光标落在 clip 内（textEnd−1），竖线
+     * 可见；文本右缘移到 textEnd−1，无字形像素损失（拖选跟随与
+     * xToPos 坐标口径同源于本函数，无需联动）。 */
+    hi = textW - visibleW + 1;
     self->m_viewOffset = cursorX;
     if (self->m_viewOffset < lo) self->m_viewOffset = lo;
     if (self->m_viewOffset > hi) self->m_viewOffset = hi;
@@ -809,6 +818,12 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
                                       (int)XLineControlCursorPosition_BetweenCharacters);
         XLineControl_moveCursor(edit->m_control, bytePos, shift);
     }
+    /* 对标 Qt 按压建立的隐式鼠标抓取（qwidgetwindow.cpp qt_button_down，
+     * 同 XScrollBar/XSizeGrip 的 grabMouse 拖拽口径）：按住左键拖拽期间
+     * 移动事件直投本控件（拖选在控件边界外仍延续），释放时经
+     * mouseReleaseEvent 的 releaseMouse 解除（仅当 self 为当前抓取者时
+     * 生效，不误清他人抓取）。命中 action/清除按钮的早退路径不抓取。 */
+    XWidget_grabMouse((XWidget*)edit);
     XEvent_accept(event);
 }
 
@@ -833,6 +848,65 @@ static void VXLineEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     bytePos = XLineControl_xToPos(edit->m_control, clickX,
                                   (int)XLineControlCursorPosition_BetweenCharacters);
     XLineControl_selectWordAtPos(edit->m_control, bytePos);
+    XWidget_update((XWidget*)edit);
+    XEvent_accept(event);
+}
+
+/** @brief 鼠标释放：解除本控件在按下时建立的鼠标抓取（releaseMouse
+ *         仅当 self 为当前抓取者时生效；非自身序列的释放零干预）。 */
+static void VXLineEdit_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XLineEdit* edit = (XLineEdit*)self;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
+    if (XWidget_mouseGrabber() != self) return;
+    XWidget_releaseMouse(self);
+    XEvent_accept(event);
+}
+
+/** @brief 鼠标移动：按住左键拖拽扩展选区（对标 Qt QLineEdit 拖选：
+ *         QWidgetLineControl::processMouseEvent MouseMove 左键分支
+ *         xToPos + moveCursor(pos, mark=true)——锚点保持在按下位置，
+ *         控制器 moveCursor mark 分支与 Qt 同源）并更新 X11 PRIMARY
+ *         （对标 Qt 拖选实时更新 Selection；键盘选区路径
+ *         XLineControl_processKeyEvent 尾部的 copy(Selection) 同款
+ *         编排，copy 内部空选区零写入）。 */
+static void VXLineEdit_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XLineEdit* edit = (XLineEdit*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int clickX;
+    int bytePos;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
+    if (!edit->m_control) return;
+    /* 仅承接自身按住左键的拖拽序列（抓取登记在 mousePress）：
+     * 他处按下拖经本控件、或无键悬停一律不扩展（对标 Qt 隐式抓取
+     * 下移动事件靶向语义）。 */
+    if (XWidget_mouseGrabber() != self) return;
+    me = (XMouseEvent*)event;
+    if (!(XMouseEvent_buttons(me) & XMouseButton_LeftButton)) return;
+    /* 坐标口径与 mousePress 一致：壳 contents 平移（边框/边距/action
+       区/滚动偏移），控制器像素→字节偏移命中。 */
+    pos = XMouseEvent_position(me);
+    clickX = pos.x - xlineedit_textStartX(edit) + edit->m_viewOffset;
+    xlineedit_syncControlFont(edit);
+    bytePos = XLineControl_xToPos(edit->m_control, clickX,
+                                  (int)XLineControlCursorPosition_BetweenCharacters);
+    /* mark=true：无选区时锚点=当前光标（=按下位置），有选区时锚点
+       固定远端，拖拽持续扩展（xToPos 钳位，拖出边界自然到端点）。 */
+    XLineControl_moveCursor(edit->m_control, bytePos, true);
+#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
+    {
+        /* 拖选实时更新 PRIMARY（X11）：supportsSelection 门禁 + copy
+           空选区零写入，与键盘选区路径行为一致。 */
+        XClipboard* clip = XGuiApplication_clipboard();
+        if (clip && XClipboard_supportsSelection(clip))
+            XLineControl_copy(edit->m_control,
+                              (int)XClipboardMode_Selection);
+    }
+#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     XWidget_update((XWidget*)edit);
     XEvent_accept(event);
 }
@@ -1445,6 +1519,10 @@ XVtable* XLineEdit_class_init(void)
                              VXLineEdit_keyReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXLineEdit_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXLineEdit_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VXLineEdit_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VXLineEdit_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VXLineEdit_focusInEvent);

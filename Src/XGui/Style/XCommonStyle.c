@@ -9,6 +9,7 @@
 #include "XImage.h"
 #include "XPixmap.h"
 #include "XIcon.h"
+#include "XWidget.h" /* XWidget_focusWidget/isAncestorOf（CC_SpinBox 焦点子树判据）。 */
 #include <limits.h> /* INT_MAX（刻度循环溢出护栏）。 */
 #include <math.h>
 
@@ -1181,6 +1182,38 @@ static void xcs_drawSpinBox(XStyle* self, const XStyleOption* option,
         frame.m_type = XStylePE_PanelLineEdit;
         frame.m_rect = r;
         xcs_drawFrame(self, &frame, painter);
+        /* 焦点指示（对标 Qt State_HasFocus：QAbstractSpinBox 聚焦时
+         * frame 有聚焦色边框）。此前 frame 走 xcs_drawFrame 仅 1px
+         * 明暗斜面、无 HasFocus 分支，XSpinBox 持焦时已置
+         * HasFocus（XSpinBox.c:515）也画不出来——「焦点凭空消失」
+         * 渲染域根因。观感取库既有按钮虚线焦点环同一语言
+         * （xcs_drawPushButton HasFocus 分支的 PE_FrameFocusRect）；
+         * 虚线画在 r 最外 1px 斜面上，EditField 自 fw=2 起步，与
+         * 文本间留 1px 间隙，不遮挡内容。
+         *
+         * 置位侧补判：XSpinBox 未注册 focusProxy（对标
+         * QAbstractSpinBox::setFocusProxy(d->edit)），点击步进框后
+         * 焦点落在内嵌 XLineEdit 上，XWidget_hasFocus(容器) 恒假，
+         * m_state 的 HasFocus 位永远到不了样式层。此处按渲染域
+         * 等价语义兜底：焦点 widget 落在本控件子树内（含自身）
+         * 即视为持焦——与 focusProxy 注册修复后的 hasFocus 判据
+         * 同一真值，二者不冲突。 */
+        {
+            bool spinFocused =
+                (option->m_state & XStyleState_HasFocus) != 0;
+            if (!spinFocused && widget) {
+                XWidget* fw = XWidget_focusWidget(widget);
+                if (fw && (fw == widget ||
+                           XWidget_isAncestorOf(widget, fw)))
+                    spinFocused = true;
+            }
+            if (spinFocused) {
+                XStyleOption focus = *option;
+                focus.m_type = XStylePE_FrameFocusRect;
+                focus.m_rect = r;
+                xcs_drawFocusRect(self, &focus, painter);
+            }
+        }
     }
     /* 按钮区背景（与原 XSpinBox 一致：按钮列填充 + 分隔线）。 */
     {

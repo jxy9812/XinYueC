@@ -1582,6 +1582,8 @@ static void xtc_editInsert(XTextControl* self, int pos, const char* utf8,
                           : (self->m_editBlockDepth > 0 ? self->m_groupCounter : 0);
     xtc_recordCommand(self, pos, NULL, utf8, useGroup);
     xtc_rawInsert(self, pos, utf8);
+    /* 编辑重置垂直列目标（对标 Qt：仅水平移动/点击/编辑重置）。 */
+    self->m_goalCol = -1;
     xtc_afterContentsChanged(self, oldLineCount, oldHeight);
 }
 
@@ -1606,6 +1608,8 @@ static void xtc_editRemove(XTextControl* self, int pos, int len, int group)
     xtc_recordCommand(self, pos, removed, NULL, useGroup);
     if (removed) XFree_System(removed);
     xtc_rawRemove(self, pos, len);
+    /* 编辑重置垂直列目标（对标 Qt：仅水平移动/点击/编辑重置）。 */
+    self->m_goalCol = -1;
     xtc_afterContentsChanged(self, oldLineCount, oldHeight);
 }
 
@@ -1779,7 +1783,8 @@ static void xtc_wordRangeUnder(const XTextControl* self, int pos, int* start,
 
 /**
  * @brief      设置光标位置（对标 Private::setCursorPosition(pos, mode)）；
- *             MoveAnchor 时失效双击/三击记忆与垂直列目标。
+ *             MoveAnchor 时失效双击/三击记忆与垂直列目标（Up/Down 于
+ *             xtc_movePosition 内随移动回写目标，连续垂直序列不丢列）。
  */
 static void xtc_setCursorPos(XTextControl* self, int pos, int mode)
 {
@@ -1998,7 +2003,12 @@ static bool xtc_movePosition(XTextControl* self, int op, int mode)
             xtc_setCursorPos(self, xtc_visualRowColToPos(self, row - 1,
                                                          goalCol),
                              mode);
-            if (keep) self->m_goalCol = goal;
+            /* 垂直序列保持最初像素 X 目标：MoveAnchor 亦回写（钳制到
+               短行行尾时保留目标不覆盖，对标 QTextCursor 垂直移动
+               语义——连续 Up/Down 穿越短行不丢列，仅水平移动/点击/
+               编辑重置）；与 KeepAnchor 扩选共用同一目标（同一起点
+               列）。 */
+            self->m_goalCol = goal;
             /* X 目标落在软行首（像素 0）：边沿归属上一行行首。 */
             self->m_cursorAtRowStart = goalCol == 0;
         } else if (keep && op == (int)XTextControlMove_Up) {
@@ -2033,7 +2043,8 @@ static bool xtc_movePosition(XTextControl* self, int op, int mode)
             xtc_setCursorPos(self, xtc_visualRowColToPos(self, row + 1,
                                                          goalCol),
                              mode);
-            if (keep) self->m_goalCol = goal;
+            /* 同 Up：MoveAnchor 亦回写，保持最初像素 X 目标。 */
+            self->m_goalCol = goal;
             /* X 目标落在软行首（像素 0）：边沿归属下一行行首。 */
             self->m_cursorAtRowStart = goalCol == 0;
         } else if (keep && op == (int)XTextControlMove_Down) {
@@ -2152,6 +2163,45 @@ static bool xtc_plainMods(int mods)
 static bool xtc_isShiftOnly(int mods)
 {
     return mods == (int)XKeyboardModifier_ShiftModifier;
+}
+
+/**
+ * @brief 美式布局 Shift 层字符表（键值=未移位基础字形 → Shift 字形）。
+ * @details 平台契约：Posix 列 0 keysym、Win32 VK 基础字形（不随 Shift
+ *          变化，按键身份与 Qt::Key 一致）恒交未移位码位，Shift 只走
+ *          修饰位。字母大小写此前已按 Shift 派生（问题 #32），数字行
+ *          与标点同族缺失——Shift+1 落 '1'、Shift+. 落 '.'，用户无法
+ *          键入 !@#$%^&*() 及 < > : " 等。对标 Qt：QKeyEvent::text()
+ *          由 keysym+modifier 经键盘布局表得出，此表即布局表的 Shift
+ *          层（与单行 XLineControl.c xlc_shiftedChar 同表，两控件
+ *          派发口径一致）。表外键值返回 '\0'，调用方原样交付码位。
+ */
+static char xtc_shiftedChar(int key)
+{
+    switch (key) {
+    case '1': return '!';
+    case '2': return '@';
+    case '3': return '#';
+    case '4': return '$';
+    case '5': return '%';
+    case '6': return '^';
+    case '7': return '&';
+    case '8': return '*';
+    case '9': return '(';
+    case '0': return ')';
+    case '`': return '~';
+    case '-': return '_';
+    case '=': return '+';
+    case '[': return '{';
+    case ']': return '}';
+    case '\\': return '|';
+    case ';': return ':';
+    case '\'': return '"';
+    case ',': return '<';
+    case '.': return '>';
+    case '/': return '?';
+    default: return '\0';
+    }
 }
 
 /**
@@ -2365,11 +2415,24 @@ static void xtc_keyPressEvent(XTextControl* self, XKeyEvent* e)
             char ch[2];
             int pos;
             int letter = key;
+            char shifted = xtc_shiftedChar(key);
             if (letter >= 'a' && letter <= 'z') letter -= 'a' - 'A';
             if (letter >= 'A' && letter <= 'Z') {
                 ch[0] = (char)((mods & (int)XKeyboardModifier_ShiftModifier)
                                    ? letter
                                    : letter + ('a' - 'A'));
+            } else if (shifted != '\0'
+                       && (mods & (int)XKeyboardModifier_ShiftModifier) != 0
+                       && (mods & ((int)XKeyboardModifier_ControlModifier
+                                   | (int)XKeyboardModifier_AltModifier
+                                   | (int)XKeyboardModifier_MetaModifier
+                                   | (int)XKeyboardModifier_KeypadModifier))
+                              == 0) {
+                /* Shift+数字/标点经布局表派生（数字行 !@#$%^&*()、
+                   Stop 位 '>' 与逗号 '<' 同族）；Ctrl/Alt/Meta 组合与
+                   小键盘键不走表，码位原样（外层分支已排除 Ctrl/Meta/
+                   Alt，此守卫为表派生的独立口径）。 */
+                ch[0] = shifted;
             } else {
                 ch[0] = (char)key;
             }
@@ -4267,6 +4330,9 @@ void XTextControl_undo(XTextControl* self)
             xtc_commandClear(&self->m_undoStack[i]);
     }
     self->m_undoCount = start;
+    /* 撤销属编辑操作：重置垂直列目标（raw 路径不经 editInsert/
+       editRemove，须单独重置）。 */
+    self->m_goalCol = -1;
     xtc_syncDocumentMirror(self);
     xtc_emitVoid(self, XTextControl_textChanged_signal);
     xtc_emitSize(self, XTextControl_documentSizeChanged_signal, NULL);
@@ -4308,6 +4374,8 @@ void XTextControl_redo(XTextControl* self)
             xtc_commandClear(&self->m_redoStack[i]);
     }
     self->m_redoCount = start;
+    /* 重做属编辑操作：重置垂直列目标（同 undo 的 raw 路径）。 */
+    self->m_goalCol = -1;
     xtc_syncDocumentMirror(self);
     xtc_emitVoid(self, XTextControl_textChanged_signal);
     xtc_emitSize(self, XTextControl_documentSizeChanged_signal, NULL);

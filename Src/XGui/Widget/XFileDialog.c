@@ -34,6 +34,7 @@
 #include "XComboBox.h"         /* 目录路径与过滤器下拉 */
 #include "XListView.h"         /* 导航窗格列表 */
 #include "XTreeWidget.h"       /* 文件列表（Win10 详情多列：名称/大小/类型） */
+#include "XAbstractScrollArea.h" /* 列表滚动状态同步（setContentSize/滚动条） */
 #include "XAbstractItemModel.h"/* 导航窗格数据模型 */
 #include "XPushButton.h"       /* 确定/取消/后退/上级 */
 #include "XBoxLayout.h"        /* 对话框布局 */
@@ -1377,6 +1378,23 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
     for (i = 0; i < (int)(sizeof(kNames) / sizeof(kNames[0])); ++i) {
         XString* cand = XString_create_fmt_utf8("%s/%s", home, kSubs[i]);
         if (!cand) continue;
+        /* 对标 Qt QFileDialog 侧栏 QUrlModel：标准位置条目恒显示
+         * （QStandardPaths 不做存在性过滤）。桌面 Windows/Linux 上这些
+         * 目录天然存在；嵌入式/新系统家目录下缺失时按需幂等创建——
+         * 否则侧栏只剩「此电脑」一条（真机 TPC1071Gi 实测），与桌面
+         * 体验不一致。创建失败（只读盘等）再退化为隐藏该条目。 */
+        if (!xff_dirUsable(cand)) {
+            XDir mk;
+            XString* candCopy = XString_create_copy(cand);
+            if (candCopy) {
+                XDir_init_2(&mk, candCopy);
+                if (XDir_mkpath(&mk, candCopy)) {
+                    /* 创建成功：保持显示。 */
+                }
+                XDir_deinit_base((XClass*)&mk);
+                XString_delete_base((XClass*)candCopy);
+            }
+        }
         if (xff_dirUsable(cand)) {
             XStringList_push_back_utf8(*outNames, kNames[i]);
             XStringList_push_back_utf8(*outPaths, XString_toUtf8(cand));
@@ -1528,6 +1546,52 @@ static XString* xff_nthAccepted(const XStringList* names, int64_t nth,
  *  类型列=XDir_Type 源旗标序恒等）——装载遍历按映射取源下标，大小/
  *  类型平行表同下标随动，行映射不脱节。目录恒在文件前（两表分段
  *  装载）。 */
+/* ---------- 列表滚动状态确定性同步（D 路：滚轮即响应+滚动条按需出现） ----------
+ * XTreeWidget 的滚动范围与 AsNeeded 可见性历来只在自身 paintEvent 内
+ * 经 XAbstractScrollArea_setContentSize 上报（XTreeWidget.c
+ * VXTreeWidget_paintEvent「滚动范围维护」段）：目录填充完成到下一帧
+ * 绘制之间滚动条 maximum 恒 0——这一窗口内滚轮步进被 setValue 钳位成
+ * 零位移，视觉即「任何点位任何次数零响应」；且首帧绘制若被延迟（无
+ * 窗口管理器的 Xvfb 裸会话、GPU 呈现背压、遮挡重建等），该窗口可拉
+ * 长到秒级，291 项长列表同帧不出现滚动条。对话框侧在每次填充完成后
+ * 立即用公共 API 上报内容尺寸，把「可滚/滚动条按需出现」从绘制时机
+ * 解耦成填充时机——对标 Qt QFileDialog：QTreeView::updateGeometries
+ * 在模型重置后即同步滚动条范围与可见性（qtreeview.cpp:2911 一族），
+ * 列表装配完成即可滚，不依赖下一帧 paint。
+ * 同时滚动值归零：Qt 模型 reset 后垂直滚动条回顶（layout/reset 口径
+ * setValue(0)）。此前换目录继承上一目录滚动偏移，长→短目录时首屏行
+ * 错位甚至整屏留白（活体实证：/tmp 滚到中段后进 /tmp/dwroot，首屏
+ * 从 f029 起，行 0 ".." 不可见）。 */
+
+/** @brief 填充后同步文件列表滚动状态：内容尺寸上报（驱动 xasa_
+ *  updateScrollBars 的 AsNeeded 可见性与范围）+ 滚动值归零（模型重置
+ *  回顶）。行高取 XTreeView_rowHeight 公共查询（构造缺省 24，与
+ *  xtw_effectiveRowHeight 同源）；表头带高沿用 XFF_TREE_HEADER_H（=
+ *  XTreeWidget 自绘表头带 XTW_HEADER_H，paintEvent 同一常量镜像）；
+ *  内容宽=控件宽（与 paintEvent 上报口径一致）。 */
+static void xff_syncViewScroll(XTreeWidget* view)
+{
+    XAbstractScrollArea* area;
+    XScrollBar* vbar;
+    int rows;
+    int rowH;
+    int contentH;
+    if (!view) return;
+    area = (XAbstractScrollArea*)&view->m_base.m_base;
+    rows = XTreeWidget_topLevelItemCount(view);
+    rowH = XTreeView_rowHeight(&view->m_base);
+    if (rowH <= 0) rowH = 24;
+    contentH = (rows > 0 ? XFF_TREE_HEADER_H : 0) + rows * rowH;
+    XAbstractScrollArea_setContentSize(area,
+                                       XWidget_width((XWidget*)view),
+                                       contentH);
+    vbar = XAbstractScrollArea_verticalScrollBar(area);
+    if (vbar && XScrollBar_value(vbar) != 0)
+        XScrollBar_setValue(vbar, 0);
+}
+
+/** @brief 按当前目录/过滤/搜索前缀重建文件列表（.." 行恒在；排序映射
+ *  装载；完成后立即同步滚动状态，见 xff_syncViewScroll）。 */
 static void xff_refresh(XFileDialog* dlg)
 {
     XTreeWidget* view;
@@ -1592,6 +1656,9 @@ static void xff_refresh(XFileDialog* dlg)
     XStringList_delete_base((XClass*)files);
     XStringList_delete_base((XClass*)sizes);
     XStringList_delete_base((XClass*)types);
+    /* 填充完成即同步滚动状态（D 路根修：可滚性与滚动条按需出现不再
+     * 依赖下一帧 paint；换目录滚动值回顶见 xff_syncViewScroll）。 */
+    xff_syncViewScroll(view);
 }
 
 /** @brief 目录显示名（basename；根目录等无 basename 时回退全路径）。

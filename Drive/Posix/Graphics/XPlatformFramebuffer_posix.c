@@ -187,8 +187,9 @@ static bool xpdfb_probeDevice(void)
     g_xpdfbInfo.m_stride = (size_t)fix.line_length;
     g_xpdfbInfo.m_frameBuffer = map;
     g_xpdfbInfo.m_frameBufferSize = mapLen;
-    /* yres_virtual >= 2*yres 才有可翻页的后台缓冲；是否启用轮换翻页
-     * 见 XPLATFORM_FBDEV_DOUBLEBUFFERED_ON（默认单缓冲直写）。 */
+    /* yres_virtual >= 2*yres 才有可翻页的后台缓冲；轮换翻页默认启用
+     * （XPLATFORM_FBDEV_DOUBLEBUFFERED_ON=1），提交侧按累积脏区差带
+     * 同步两缓冲，无整帧同步税。 */
     g_xpdfbInfo.m_doubleBuffered =
         XPLATFORM_FBDEV_DOUBLEBUFFERED_ON &&
         var.yres_virtual >= (uint32_t)var.yres * 2u;

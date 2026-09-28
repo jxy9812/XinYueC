@@ -30923,6 +30923,7 @@ static void test_textbrowser_contract(void)
 
 static int kse_changed = 0;
 static int kse_finished = 0;
+static int kse_failures = 0;
 
 static void kse_changedSlot(XObject* r, XVarList* a)
 { (void)r; (void)a; ++kse_changed; }
@@ -30933,6 +30934,9 @@ static void kse_expect(bool cond, const char* what)
 {
     if (!cond) {
         fprintf(stderr, "[KSE-FAIL] %s\n", what ? what : "");
+        ++kse_failures; /* 失败计数（对标 expect_true 的 s_failures 口径）：
+                         * 此前只打印 stderr 不计数，KSE-FAIL 被 "passed"
+                         * 总结掩盖（退出码恒 0）。 */
     }
 }
 
@@ -30948,11 +30952,38 @@ static void test_keysequenceedit_contract(void)
               "默认清除按钮关闭");
     seq = XKeySequenceEdit_keySequence(edit);
     kse_expect(seq != NULL && seq->count == 0, "初始序列空");
+    /* 新捕获态机（53c4c740）：捕获发起于获得焦点，创建态不吞键。 */
+    kse_expect(!XKeySequenceEdit_isCapturing(edit), "创建后未进入捕获态");
 
-    /* 模拟键盘捕获：Ctrl+S。 */
+    /* 信号连接（先行：捕获/结束键断言依赖槽计数）。 */
+    kse_changed = 0;
+    kse_finished = 0;
+    XObject_connect_2((XObject*)edit,
+        XSignal(XKeySequenceEdit_keySequenceChanged_signal), kse_changedSlot);
+    XObject_connect_2((XObject*)edit,
+        XSignal(XKeySequenceEdit_editingFinished_signal), kse_finishedSlot);
+
+    /* 键盘捕获 Ctrl+S：先聚焦进捕获态（focusIn→startCapture），再按
+       「修饰键按下→键码→释放」注入（对标 qkeysequenceedit 录制语义：
+       纯修饰键按下只累积不分组，键码落下才成组）。此前探针向未聚焦
+       控件直发键事件，新态机一律 ignore——5 条 KSE-FAIL 的根因。 */
+    XWidget_setFocus((XWidget*)edit);
+    kse_expect(XKeySequenceEdit_isCapturing(edit), "聚焦进入捕获态");
     {
         XKeyEvent ke;
+
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, (int)XKey_Control,
+                       XKeyboardModifier_ControlModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        kse_expect(XKeySequenceEdit_keySequence(edit)->count == 0,
+                  "纯修饰键按下不产生分组");
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'S',
+                       XKeyboardModifier_ControlModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_RELEASE, 'S',
+                       XKeyboardModifier_ControlModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_RELEASE, (int)XKey_Control,
                        XKeyboardModifier_ControlModifier);
         XObject_event_base((XObject*)edit, (XEvent*)&ke);
         seq = XKeySequenceEdit_keySequence(edit);
@@ -30960,6 +30991,13 @@ static void test_keysequenceedit_contract(void)
         kse_expect(seq->combos[0].modifiers ==
                    XKeyboardModifier_ControlModifier, "修饰键 Ctrl");
         kse_expect(seq->combos[0].key == 'S', "键码 S");
+
+        /* 捕获态吞 Tab（新机语义：Tab 为结束键组合——accepted 不走链，
+           且序列非空时发射 editingFinished；捕获态保持可继续补录）。 */
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, (int)XKey_Tab, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        kse_expect(XEvent_isAccepted((XEvent*)&ke), "捕获态 Tab 被吞");
+        kse_expect(kse_finished >= 1, "Tab 结束键发射 editingFinished");
     }
 
     /* setKeySequence 编程设置。 */
@@ -30981,13 +31019,10 @@ static void test_keysequenceedit_contract(void)
     seq = XKeySequenceEdit_keySequence(edit);
     kse_expect(seq->count == 0, "clear 后序列空");
 
-    /* 信号连接。 */
+    /* 信号：捕获 Ctrl+A 发射 keySequenceChanged，Return 确认发射
+       editingFinished（finishEditing 对空序列不发射，故先录后确认）。 */
     kse_changed = 0;
     kse_finished = 0;
-    XObject_connect_2((XObject*)edit,
-        XSignal(XKeySequenceEdit_keySequenceChanged_signal), kse_changedSlot);
-    XObject_connect_2((XObject*)edit,
-        XSignal(XKeySequenceEdit_editingFinished_signal), kse_finishedSlot);
     {
         XKeyEvent ke;
         XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'A',
@@ -30999,10 +31034,32 @@ static void test_keysequenceedit_contract(void)
         kse_expect(kse_finished >= 1, "Return 发射 editingFinished");
     }
 
+    /* Esc 退出捕获并清空（不录 Esc）；此后按键不再被吞——向已退出
+       捕获的控件直发键无效，正是此前 5 条 FAIL 的根因反证。 */
+    {
+        XKeyEvent ke;
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, (int)XKey_Escape, 0);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        kse_expect(!XKeySequenceEdit_isCapturing(edit), "Esc 退出捕获态");
+        seq = XKeySequenceEdit_keySequence(edit);
+        kse_expect(seq->count == 0, "Esc 清空序列");
+
+        XKeyEvent_init(&ke, XEVENT_TYPE_KEY_PRESS, 'S',
+                       XKeyboardModifier_ControlModifier);
+        XObject_event_base((XObject*)edit, (XEvent*)&ke);
+        kse_expect(!XEvent_isAccepted((XEvent*)&ke), "非捕获态不吞键");
+        kse_expect(XKeySequenceEdit_keySequence(edit)->count == 0,
+                  "非捕获态不录制组合");
+    }
+
     /* maxLength。 */
     XKeySequenceEdit_setMaximumSequenceLength(edit, 2);
     kse_expect(XKeySequenceEdit_maximumSequenceLength(edit) == 2,
               "setMaximumSequenceLength 2");
+
+    /* 失败计数汇入套件总门（对标 expect_true 的 s_failures 口径，
+       由 main 末尾 s_failures!=0 决定退出码）。 */
+    s_failures += kse_failures;
 
     XKeySequenceEdit_delete_base(edit);
 }/* ==================== XTextEdit 契约测试 ==================== */

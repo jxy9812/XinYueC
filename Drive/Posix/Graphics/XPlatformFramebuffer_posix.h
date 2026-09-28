@@ -34,15 +34,17 @@ extern "C" {
 #define XPLATFORM_FBDEV_DEVICE "/dev/fb0"
 #endif
 
-/** @brief 双缓冲翻页开关（默认 0=单缓冲脏区直写）。面板 yres_virtual
- *         足够时硬件可翻页，但轮换写要求每次提交前把可见缓冲整帧同步
- *         进后台缓冲（1024x600x16bpp ≈ 1.2MB/帧），否则两缓冲除脏区外
- *         内容不同步、翻页后画面在新旧间交替（闪烁）。弱核 SoC 实测
- *         （单核 Cortex-A7@约600MHz）整帧同步把帧率从 58.6 拖到
- *         11.7fps，故默认单缓冲直写（仅拷脏区，与 Qt/Embedded fbcon、
- *         MCGS QWS 同口径）；算力充裕的板子置 1 启用防撕裂翻页。 */
+/** @brief 双缓冲翻页开关（默认 1=防撕裂翻页，提交侧累积脏区差带同步）。
+ *         面板 yres_virtual 足够时硬件可翻页。轮换写要求翻页前把后台
+ *         缓冲缺失的内容从可见缓冲补齐，否则两缓冲内容不同步、翻页后
+ *         画面在新旧间交替（闪烁）。早期实现整帧同步（1024x600x16bpp
+ *         ≈ 1.2MB/帧）在单核 Cortex-A7@600MHz 上把帧率从 58.6 拖到
+ *         11.7fps，故曾默认单缓冲直写；现改为「累积脏区差带同步」——
+ *         仅搬「累积缺失矩形 ∪ 本帧脏区」外接的行（常态几行~几十行，
+ *         弱核上成本趋近于零；窗口级变化退化为整帧但仍正确），双缓冲
+ *         防撕裂不再有整帧同步税。板级可用编译选项覆盖为 0 关闭。 */
 #ifndef XPLATFORM_FBDEV_DOUBLEBUFFERED_ON
-#define XPLATFORM_FBDEV_DOUBLEBUFFERED_ON 0
+#define XPLATFORM_FBDEV_DOUBLEBUFFERED_ON 1
 #endif
 
 /**

@@ -156,11 +156,14 @@
 #define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_DIRECT
 #else
 /* 嵌入式 fbdev 直写（XPLATFORM_FBDEV_ON）：FULL = 单持久缓冲 + 每次
- * 提交整窗。真机校准记录（昆仑通态 A33，2026-09-26/27）：
- * - DIRECT+2（双缓冲轮换）：增量写导致两缓冲内容不一致，交替闪烁；
- * - DIRECT+1（单缓冲直写）：影子持久、增量提交，但 paintTree 子控件
- *   遍历与 flush 时序存在覆盖竞争，导航行/页面内容间歇缺失；
- * - FULL+1（现行）：整窗合成一次提交，内容恒完整，实测最优。 */
+ * 提交整窗。真机 A/B 记录（昆仑通态 A33）：
+ * - 2026-09-26/27 定版 FULL（DIRECT+2 交替闪烁 / DIRECT+1 内容缺失）；
+ * - 2026-09-28 携带差带同步/遮挡裁剪/X11 失败缓存修复后 A/B 复测：
+ *   PARTIAL tile 缓冲与整页静态场景 blit 管线不兼容（大块黑屏）；
+ *   DIRECT 内容间歇缺失复现（页面内容区/页签文字整片空白，交互后
+ *   不恢复——paintTree/flush 时序竞争未除）→ 维持 FULL 定版。
+ *   FULL 代价：小交互也付整页重绘+整窗提交（交互期间 CPU 冲高，
+ *   空闲已由阻塞修复+HUD 1Hz 降至 ~7%）。 */
 #define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_FULL
 #endif
 

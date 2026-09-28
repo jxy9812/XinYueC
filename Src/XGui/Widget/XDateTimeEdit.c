@@ -405,6 +405,309 @@ static void xdt_emitPartChanged(XDateTimeEdit* self, const XDateTime* old)
         xdt_emitTime(self);
 }
 
+/* ==================== 分段键入模型（F3：对标 QDateTimeEdit 分段编辑） ==================== */
+
+static void xdt_commitTyping(XDateTimeEdit* self, bool advance);
+
+/** @brief 复位数字键入累积态（换段提交后/提交完成后/清理路径共用）。 */
+static void xdt_resetTyping(XDateTimeEdit* self)
+{
+    if (!self) return;
+    self->m_typingSection = -1;
+    self->m_typingValue = 0;
+    self->m_typingDigits = 0;
+}
+
+/** @brief 分段数字键入的自然上限（重启判据，对标 Qt 段 parse 的
+ *         "候选超上限即以新数字重启"）。spec 与记号宽对齐：yyyy=9999、
+ *         MM=12、dd=31、HH=23、h=12、mm/ss=59、z 按位宽 10^w-1。
+ *         上下午/星期文案段不接受数字键入，返回 0。 */
+static int xdt_sectionDigitMax(char spec, int width)
+{
+    switch (spec) {
+    case 'y': return 9999;
+    case 'M': return 12;
+    case 'd': return 31;
+    case 'H': return 23;
+    case 'h': return 12;
+    case 'm': return 59;
+    case 's': return 59;
+    case 'z': {
+        int i;
+        int m = 1;
+        for (i = 0; i < width; ++i) m *= 10;
+        return m - 1;
+    }
+    default:
+        return 0;
+    }
+}
+
+/** @brief 取字符串第 charIndex 个字符的字节偏移（段显示替换的
+ *         字符→字节换算；UTF-8 前缀可能含多字节字面字符）。 */
+static int xdt_charToByteOffset(const char* s, int charIndex)
+{
+    int chars = 0;
+    int b = 0;
+    if (!s) return 0;
+    while (s[b] != '\0' && chars < charIndex) {
+        if (((unsigned char)s[b] & 0xC0) != 0x80) ++chars;
+        ++b;
+    }
+    return b;
+}
+
+/** @brief 把当前段显示整段替换为键入累积值的补零文本（显示层手术：
+ *         只改内嵌行编辑文本，不动 m_dateTime——未满位值为中间态，
+ *         提交点见 xdt_commitTyping。替换宽度=记号位宽，永不撑位，
+ *         对标 Qt 中间态补零显示）。 */
+static void xdt_showTypingBuffer(XDateTimeEdit* self)
+{
+    char buf[128];
+    char out[256];
+    char piece[16];
+    XdtSectionRange ranges[XDT_SECTION_MAX];
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    XLineEdit* edit;
+    int count = 0;
+    int n;
+    int index = -1;
+    int i;
+    int bStart;
+    int o;
+    if (!self) return;
+    xdt_render(self, buf, sizeof(buf), ranges, XDT_SECTION_MAX, &count);
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
+    for (i = 0; i < n; ++i) {
+        if (toks[i].code == self->m_currentSection) { index = i; break; }
+    }
+    edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
+    if (!edit) return;
+    if (index < 0 || index >= count || ranges[index].len <= 0) {
+        xdt_refreshText(self);
+        return;
+    }
+    XSnprintf(piece, sizeof(piece), "%0*d", toks[index].width,
+              self->m_typingValue);
+    bStart = xdt_charToByteOffset(buf, ranges[index].start);
+    /* 数字段渲染全为 ASCII：段字符数=段字节数（ranges[index].len）。 */
+    o = 0;
+    XStrncpy(out + o, buf, (size_t)bStart);
+    o += bStart;
+    {
+        size_t pl = XStrlen(piece);
+        size_t j;
+        for (j = 0; j < pl; ++j) out[o++] = piece[j];
+    }
+    XStrncpy(out + o, buf + bStart + ranges[index].len, sizeof(out) - o - 1);
+    out[sizeof(out) - 1] = '\0';
+    XLineEdit_setText(edit, out);
+    /* 保持整段反选（宽度不变，字符坐标稳定）。 */
+    XLineEdit_setSelection(edit, ranges[index].start, toks[index].width);
+}
+
+/** @brief 把键入累积值写回当前值的一个分段（提交落账）。日期段经
+ *         XDate_setDate 合法性校验，月切换致天数溢出时日逐位回退
+ *         （如 2-29 换非闰年→2-28）；时间段经 XTime_setHMS 校验；
+ *         'z' 段按位宽折算毫秒（z 键入 5 → 500ms）。 */
+static bool xdt_applySectionValue(XDateTimeEdit* self,
+                                  const XdtSectionTok* tok, int value)
+{
+    int y = XDate_year(&self->m_dateTime.m_date);
+    int m = XDate_month(&self->m_dateTime.m_date);
+    int d = XDate_day(&self->m_dateTime.m_date);
+    int h = XTime_hour(&self->m_dateTime.m_time);
+    int mi = XTime_minute(&self->m_dateTime.m_time);
+    int s = XTime_second(&self->m_dateTime.m_time);
+    int ms = XTime_msec(&self->m_dateTime.m_time);
+    switch (tok->spec) {
+    case 'y':
+        y = (value < 1) ? 1 : value;
+        break;
+    case 'M':
+        m = (value < 1) ? 1 : ((value > 12) ? 12 : value);
+        break;
+    case 'd':
+        d = (value < 1) ? 1 : value;
+        break;
+    case 'H':
+        h = value;
+        break;
+    case 'h':
+        h = value;
+        break;
+    case 'm':
+        mi = value;
+        break;
+    case 's':
+        s = value;
+        break;
+    case 'z': {
+        int i;
+        ms = value;
+        for (i = tok->width; i < 3; ++i) ms *= 10;
+        if (ms > 999) ms = 999;
+        break;
+    }
+    default:
+        return false;
+    }
+    if (tok->spec == 'y' || tok->spec == 'M' || tok->spec == 'd') {
+        XDate probe;
+        int tryDay = d;
+        while (tryDay >= 1 && !XDate_setDate(&probe, y, m, tryDay)) --tryDay;
+        if (tryDay < 1) return false;
+        self->m_dateTime.m_date = probe;
+    } else {
+        XTime tm;
+        if (!XTime_setHMS(&tm, h, mi, s, ms)) return false;
+        self->m_dateTime.m_time = tm;
+    }
+    return true;
+}
+
+/** @brief 落账键入累积态：未满位输入在换段/步进/提交/失焦前结算，
+ *         满位输入经此提交。写回成功后钳位+重渲染+按部分发射三信号；
+ *         advance 时跳下一段并整段选中（对标 Qt 满位自动跳段）。 */
+static void xdt_commitTyping(XDateTimeEdit* self, bool advance)
+{
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    int n;
+    int index;
+    XDateTime old;
+    bool changed;
+    if (!self) return;
+    if (self->m_typingDigits <= 0) {
+        xdt_resetTyping(self);
+        return;
+    }
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
+    index = self->m_typingSection;
+    if (index < 0 || index >= n ||
+        toks[index].code != self->m_currentSection) {
+        xdt_resetTyping(self);
+        return;
+    }
+    {
+        XdtSectionTok tok = toks[index];
+        int value = self->m_typingValue;
+        xdt_resetTyping(self);
+        old = self->m_dateTime;
+        if (!xdt_applySectionValue(self, &tok, value)) {
+            /* 非法组合：放弃中间态，重渲染回当前值。 */
+            xdt_refreshText(self);
+            xdt_selectCurrentSection(self);
+            return;
+        }
+    }
+    xdt_clamp(self);
+    changed = XDateTime_compare(&old, &self->m_dateTime) != 0;
+    xdt_refreshText(self);
+    if (changed) xdt_emitPartChanged(self, &old);
+    if (advance) {
+        int target = (index + 1 < n) ? index + 1 : n - 1;
+        self->m_currentSection = toks[target].code;
+        XWidget_update((XWidget*)self);
+    }
+    xdt_selectCurrentSection(self);
+}
+
+/** @brief 键入一位数字到当前段（F3-①：段内累积替换而非行编辑纯文本
+ *         插入）。候选超段自然上限时以本位数字重启（对标 Qt 高位重启，
+ *         如月份键入 1、3 → 13 不可达 → 重启为 3）；满记号位宽即提交
+ *         并自动跳下一段。星期/上下午文案段不接受数字（对标 Qt 展示档）。 */
+static void xdt_typeDigit(XDateTimeEdit* edit, int digit)
+{
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    int n;
+    int index;
+    int width;
+    int maxv;
+    int candidate;
+    int digits;
+    if (!edit) return;
+    n = xdt_tokenize(xdt_effectiveFormat(edit), toks, XDT_SECTION_MAX);
+    if (n <= 0) return;
+    index = XDateTimeEdit_currentSectionIndex(edit);
+    if (index < 0 || index >= n) return;
+    width = toks[index].width;
+    if ((toks[index].spec == 'd' && width >= 3) ||
+        toks[index].spec == 'A') {
+        return;
+    }
+    maxv = xdt_sectionDigitMax(toks[index].spec, width);
+    if (edit->m_typingSection != index) xdt_resetTyping(edit);
+    edit->m_typingSection = index;
+    candidate = edit->m_typingValue * 10 + digit;
+    digits = edit->m_typingDigits + 1;
+    if (candidate > maxv) {
+        candidate = digit;
+        digits = 1;
+    }
+    edit->m_typingValue = candidate;
+    edit->m_typingDigits = digits;
+    xdt_showTypingBuffer(edit);
+    XWidget_update((XWidget*)edit);
+    if (digits >= width) xdt_commitTyping(edit, true);
+}
+
+/** @brief 聚焦指定段序号：先落账旧段未满位输入（换段才提交，同段
+ *         续打保持累积），再落地段码+整段选中（点击/方向键/API 共用，
+ *         F3-②）。 */
+static void xdt_focusSectionIndex(XDateTimeEdit* self, int index)
+{
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    int n;
+    if (!self) return;
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
+    if (index < 0 || index >= n) return;
+    if (self->m_typingDigits > 0 && self->m_typingSection != index)
+        xdt_commitTyping(self, false);
+    self->m_currentSection = toks[index].code;
+    self->m_typingSection = index;
+    XWidget_update((XWidget*)self);
+    xdt_selectCurrentSection(self);
+}
+
+/** @brief 按分段枚举码聚焦段（API 路径用；码不在格式中时不动）。 */
+static void xdt_focusSectionCode(XDateTimeEdit* self, int code)
+{
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    int n;
+    int i;
+    if (!self) return;
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
+    for (i = 0; i < n; ++i) {
+        if (toks[i].code == code) {
+            xdt_focusSectionIndex(self, i);
+            return;
+        }
+    }
+}
+
+/** @brief 点击字符位置→段序号（F3-② 命中测试；段右边界归本段——
+ *         点击段末位右半仍落在该段，对标 Qt sectionAt(pos) 的
+ *         pos ∈ [start, end] 归属）。无分段返回 -1。 */
+static int xdt_sectionIndexAt(XDateTimeEdit* self, int charPos)
+{
+    char buf[128];
+    XdtSectionRange ranges[XDT_SECTION_MAX];
+    XdtSectionTok toks[XDT_SECTION_MAX];
+    int count = 0;
+    int n;
+    int i;
+    int hit = -1;
+    if (!self) return -1;
+    xdt_render(self, buf, sizeof(buf), ranges, XDT_SECTION_MAX, &count);
+    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
+    for (i = 0; i < n && i < count; ++i) {
+        if (ranges[i].len <= 0) continue;
+        if (charPos <= ranges[i].start + ranges[i].len) return i;
+        hit = i;
+    }
+    return hit;
+}
+
 /** @brief 发射用户改期信号 userDateChanged(XDate*)（步进路径专用）。 */
 static void xdt_emitUserDate(XDateTimeEdit* self)
 {
@@ -443,6 +746,8 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
     XDateTime old;
     int section;
     if (!edit || steps == 0) return;
+    /* F3-①：未满位键入先落账再步进（对标 Qt 步进前结算当前段键入）。 */
+    xdt_commitTyping(edit, false);
     old = edit->m_dateTime;
     section = edit->m_currentSection;
     if (section == (int)XDateTimeEditSection_YearSection) {
@@ -715,8 +1020,12 @@ static void XDateTimeEdit_interpret(XAbstractSpinBox* self)
     if (self->m_cleared) {
         /* 基类 clear() 后的待解释态：不回填值（对标 Qt 私有 cleared）。 */
         self->m_cleared = false;
+        xdt_resetTyping(edit);
         return;
     }
+    /* F3-①：失焦/隐藏/关闭/Enter 的解释路径先落账未满位键入，避免
+     * 中间态显示文本（如 "0020-…"）被按字面解析。 */
+    xdt_commitTyping(edit, false);
     line = XAbstractSpinBox_lineEdit(self);
     if (!line) return;
     text = XLineEdit_text(line);
@@ -738,20 +1047,37 @@ static void XDateTimeEdit_interpret(XAbstractSpinBox* self)
         xdt_emitPartChanged(edit, &old);
 }
 
-/** @brief 键盘按下：Left/Right 在分段间移动并整段选中当前段（对标
- *         QDateTimeEdit 方向键跨段导航，段间不循环）；Home/End 拦截为
- *         光标到当前节首/节尾、值不动（P1-6，对标 Qt 行编辑语义，覆写
- *         基类的 min/max 值跳转）；其余按键交基类（Up/Down/PageUp/
- *         PageDown 步进、Return 提交、其余转发内嵌编辑框）。 */
+/** @brief 键盘按下：数字键在当前段内累积替换（F3-①，满位自动跳段，
+ *         不再转发内嵌行编辑做纯文本插入）；Left/Right 在分段间移动并
+ *         整段选中当前段（对标 QDateTimeEdit 方向键跨段导航，段间不
+ *         循环）；Home/End 拦截为光标到当前节首/节尾、值不动（P1-6，
+ *         对标 Qt 行编辑语义，覆写基类的 min/max 值跳转）；其余按键交
+ *         基类（Up/Down/PageUp/PageDown 步进、Return 提交、其余转发
+ *         内嵌编辑框）。 */
 static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     XKeyEvent* ke;
     int key;
+    int mods;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) return;
     ke = (XKeyEvent*)event;
     key = XKeyEvent_key(ke);
+    mods = (int)XKeyEvent_modifiers(ke);
+    if (key >= XKey_0 && key <= XKey_9 &&
+        (mods & (XKeyboardModifier_ControlModifier |
+                 XKeyboardModifier_AltModifier)) == 0) {
+        /* F3-①：数字键入=当前段累积替换（段内满位自动跳下一段）。
+         * 事件在此终结，不再转发内嵌行编辑——此前 "2020" 键入被行编辑
+         * 当纯文本插进年段（撑成 8 位），根因即此转发。 */
+        xdt_typeDigit(edit, key - XKey_0);
+        XEvent_accept(event);
+        return;
+    }
+    /* 其余按键先落账未满位键入（换段/步进/提交前结算，满位已在键入
+     * 路径自动提交，这里兜底 1~位宽-1 位的中间态）。 */
+    xdt_commitTyping(edit, false);
     if (key == XKey_Left || key == XKey_Right) {
         XdtSectionTok toks[XDT_SECTION_MAX];
         int count = xdt_tokenize(xdt_effectiveFormat(edit), toks,
@@ -761,10 +1087,8 @@ static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
             int target = (key == XKey_Left)
                 ? (index > 0 ? index - 1 : 0)
                 : (index + 1 < count ? index + 1 : count - 1);
-            /* 段序号 → 段枚举码落地（与 setCurrentSectionIndex 同映射）。 */
-            edit->m_currentSection = toks[target].code;
-            XWidget_update((XWidget*)self);
-            xdt_selectCurrentSection(edit);
+            /* 段序号落地统一走 focus：段码+整段选中（与点击同口径）。 */
+            xdt_focusSectionIndex(edit, target);
             XEvent_accept(event);
             return;
         }
@@ -810,6 +1134,63 @@ static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
+/** @brief 鼠标按下（F3-②/③）：行编辑已设鼠标穿透，点击命中本控件。
+ *         编辑区内左键：像素→字符命中测试定位段 → 落账旧段输入 →
+ *         setCurrentSection+整段选中 → 焦点移回本控件（键盘主权回收，
+ *         后续按键直达分段导航/键入，不再落入行编辑文本光标模式）。
+ *         编辑区外（上下按钮条）与非左键不接管，保持既有行为。对标
+ *         QDateTimeEdit 点击定段的分段编辑模型。 */
+static void XDateTimeEdit_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)self;
+    XLineEdit* line;
+    XMouseEvent* me;
+    XRect leGeo;
+    XPoint local;
+    int charPos;
+    int index;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) {
+        if (self && event)
+            XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                          void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    line = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)edit);
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton || !line) {
+        /* 非左键不接管：父链传播/右键上下文菜单合成照旧。 */
+        XEvent_ignore(event);
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    leGeo = XWidget_geometry((XWidget*)line);
+    local.x = XMouseEvent_position(me).x - leGeo.x;
+    local.y = XMouseEvent_position(me).y - leGeo.y;
+    if (local.x < 0 || local.x >= leGeo.width ||
+        local.y < 0 || local.y >= leGeo.height) {
+        /* 编辑区外（步进按钮条）：不接管，保持既有无点击步进行为。 */
+        XEvent_ignore(event);
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    charPos = XLineEdit_cursorPositionAt(line, &local);
+    index = xdt_sectionIndexAt(edit, charPos);
+    if (index < 0) {
+        XEvent_ignore(event);
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    xdt_focusSectionIndex(edit, index);
+    /* 键盘主权回收：焦点从行编辑移回本控件，键事件改投本控件
+     * keyPressEvent（方向键=跨段导航而非行编辑光标移动）。 */
+    XWidget_setFocus(self);
+    XEvent_accept(event);
+}
+
 /* ==================== 生命周期与虚表 ==================== */
 
 static void VXDateTimeEdit_deinit(XDateTimeEdit* self)
@@ -844,6 +1225,10 @@ XVtable* XDateTimeEdit_class_init(void)
                              XDateTimeEdit_interpret);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              XDateTimeEdit_keyPressEvent);
+    /* F3-②：覆写鼠标按下——点击命中测试定段+整段选中+焦点主权回收
+     * （行编辑已设鼠标穿透，点击直达本控件）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             XDateTimeEdit_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDateTimeEdit_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -874,6 +1259,21 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     self->m_displayFormat = XString_create_utf8("yyyy-MM-dd HH:mm:ss");
     self->m_currentSection =
         (int)XDateTimeEditSection_YearSection;
+    /* F3 分段键入态（year 段从无键入起步）。 */
+    xdt_resetTyping(self);
+    /* F3-②/③：行编辑鼠标穿透（WA_TransparentForMouseEvents）——点击
+     * 经 childAt 落到行编辑后在派发层被属性跳过、改投本控件
+     * mousePressEvent（定段+整选+焦点回收），行编辑退化为显示件；
+     * 对标 QDateTimeEdit 行编辑仅作编辑缓存、分段交互由控件层接管。 */
+    {
+        XLineEdit* lineEdit = XAbstractSpinBox_lineEdit(
+            (XAbstractSpinBox*)self);
+        if (lineEdit) {
+            XWidget_setAttribute((XWidget*)lineEdit,
+                                 XWidgetAttribute_TransparentForMouseEvents,
+                                 true);
+        }
+    }
     /* 以当前时间刷新编辑框文本（无信号）。 */
     (void)now;
     xdt_refreshText(self);
@@ -1144,6 +1544,9 @@ void XDateTimeEdit_setDisplayFormat(XDateTimeEdit* self,
     if (!self->m_displayFormat) self->m_displayFormat = XString_create();
     if (self->m_displayFormat)
         XString_assign_utf8(self->m_displayFormat, utf8 ? utf8 : "");
+    /* 格式变化后键入累积段的序号/位宽失配：丢弃中间态（下次键入按
+     * 新格式重启）。 */
+    xdt_resetTyping(self);
     xdt_refreshText(self);
 }
 
@@ -1165,7 +1568,12 @@ int XDateTimeEdit_currentSection(const XDateTimeEdit* self)
 void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section)
 {
     if (!self) return;
+    /* F3-②：API 换段与点击/方向键同口径——先落账旧段输入，再落地+
+     * 整段选中。保持既有宽松语义（码不在格式中时仅记录）。 */
+    xdt_commitTyping(self, false);
     self->m_currentSection = section;
+    XWidget_update((XWidget*)self);
+    xdt_selectCurrentSection(self);
 }
 
 int XDateTimeEdit_sections(const XDateTimeEdit* self)
@@ -1312,15 +1720,12 @@ int XDateTimeEdit_timeSpec(const XDateTimeEdit* self)
 
 void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index)
 {
-    int code;
     if (!self || index < 0) return;
-    code = XDateTimeEdit_sectionAt(self, index);
-    if (code == (int)XDateTimeEditSection_NoSection) return;
     /* 分段序号与分段枚举码此前共用同一字段：传普通序号会落入非法
-     * 分段码，步进定位错段（14.124 扫描 中 项）。现按序号映射为
-     * 对应分段码后再落地。 */
-    self->m_currentSection = code;
-    XWidget_update((XWidget*)self);
+     * 分段码，步进定位错段（14.124 扫描 中 项）。现统一走 focus 落地：
+     * 序号映射为对应分段码+离段落账+整段选中（F3-②，与点击/方向键
+     * 同口径）。 */
+    xdt_focusSectionIndex(self, index);
 }
 
 /* ==================== 分段查询族 ==================== */
@@ -1391,18 +1796,9 @@ XString* XDateTimeEdit_sectionText(const XDateTimeEdit* self, int section)
 
 void XDateTimeEdit_setSelectedSection(XDateTimeEdit* self, int section)
 {
-    XdtSectionTok toks[XDT_SECTION_MAX];
-    int n;
-    int i;
-    if (!self) return;
-    n = xdt_tokenize(xdt_effectiveFormat(self), toks, XDT_SECTION_MAX);
-    for (i = 0; i < n; ++i) {
-        if (toks[i].code == section) {
-            self->m_currentSection = section;
-            XWidget_update((XWidget*)self);
-            return;
-        }
-    }
+    /* F3-②：仅当该分段确实出现在显示格式中才生效（对齐 Qt 有效性
+     * 检查），生效即整段选中；API 换段前先落账旧段键入。 */
+    xdt_focusSectionCode(self, section);
 }
 
 

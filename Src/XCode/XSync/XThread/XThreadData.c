@@ -3,6 +3,7 @@
 #include "XSort.h"
 #include "XMutex.h"
 #include "XAbstractEventDispatcher.h"
+#include "XDateTime.h" // 诊断计时（XDateTime_currentMSecsSinceEpoch，单调时钟）
 #include "XSemaphore.h"
 #include "XCoreApplication.h"
 #include "XMemory.h"

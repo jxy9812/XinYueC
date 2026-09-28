@@ -21,15 +21,23 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifndef FUNCTIONFS_DESCRIPTORS_MAGIC_V2
-#define FUNCTIONFS_DESCRIPTORS_MAGIC_V2 3u
+#ifndef USB_FFS_V2_DEFS_GUARD
+#define USB_FFS_V2_DEFS_GUARD
 /* 老内核 UAPI 头（<3.14，如本 SDK sysroot 的 3.10.11）只有 v1 描述符：
  * magic 宏与 v2 头结构同版本引入，缺宏即缺结构体。按内核
  * include/uapi/linux/usb/functionfs.h 原样补齐布局（本文件仅访问
  * magic/length/flags 与 sizeof(*head)，计数经 memcpy 追加，与内核
- * ABI 一致）；新内核头已定义时本块整体跳过，不重复定义。 */
+ * ABI 一致）。
+ * 守卫不用 FUNCTIONFS_DESCRIPTORS_MAGIC_V2：新内核头里它是 enum
+ * 成员而非宏，#ifndef 检测不到，会在宿主（linux-libc-dev 25.01，
+ * 结构体已定义）上重复定义编译失败；改用本文件私有宏守卫，结构体
+ * 与 magic 宏一并补齐且只补一次，两代头文件均兼容。 */
 #include <linux/types.h> /* __le32 */
-struct usb_functionfs_descs_head_v2 {
+/* 私有命名（xlinuxGadget 前缀）：宿主新内核头（linux-libc-dev>=25.01）
+ * 无条件定义了同名结构体（无 per-struct 守卫可探测），C 结构体不能用
+ * #ifndef 探测——同名即 redefinition 编译失败。改为私有副本，字段布局
+ * 与内核 ABI 逐字段一致，两代头文件均可用。 */
+struct xlinuxGadgetFuncfsDescsHeadV2 {
 	__le32 magic;
 	__le32 length;
 	__le32 flags;
@@ -37,7 +45,10 @@ struct usb_functionfs_descs_head_v2 {
 	__le32 hs_count;
 	__le32 ss_count;
 };
+#ifndef FUNCTIONFS_DESCRIPTORS_MAGIC_V2
+#define FUNCTIONFS_DESCRIPTORS_MAGIC_V2 3u
 #endif
+#endif /* USB_FFS_V2_DEFS_GUARD */
 #ifndef FUNCTIONFS_STRINGS_MAGIC
 #define FUNCTIONFS_STRINGS_MAGIC 2u
 #endif
@@ -280,7 +291,7 @@ static bool xlinuxGadgetBuildDescriptors(XLinuxGadgetController* controller,
     size_t headerLength;
     uint32_t count = 0;
     size_t offset;
-    struct usb_functionfs_descs_head_v2* head;
+    struct xlinuxGadgetFuncfsDescsHeadV2* head;
     uint8_t* result;
     uint8_t* cursor;
     uint32_t flags = FUNCTIONFS_HAS_FS_DESC;
@@ -300,7 +311,7 @@ static bool xlinuxGadgetBuildDescriptors(XLinuxGadgetController* controller,
     result = (uint8_t*)calloc(1, headerLength + bodyLength +
                               ((flags & FUNCTIONFS_HAS_HS_DESC) ? bodyLength : 0u));
     if (!result) return false;
-    head = (struct usb_functionfs_descs_head_v2*)result;
+    head = (struct xlinuxGadgetFuncfsDescsHeadV2*)result;
     head->magic = htole32(FUNCTIONFS_DESCRIPTORS_MAGIC_V2);
     head->length = htole32((uint32_t)(headerLength + bodyLength +
                                       ((flags & FUNCTIONFS_HAS_HS_DESC) ? bodyLength : 0u)));

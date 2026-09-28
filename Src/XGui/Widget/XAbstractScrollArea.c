@@ -105,6 +105,14 @@ static void xasa_updateScrollBars(XAbstractScrollArea* self)
     if (!self || !self->m_viewport) return;
     vw = XWidget_width(self->m_viewport);
     vh = XWidget_height(self->m_viewport);
+    /* 对标 Qt QAbstractScrollArea：翻页步进 = 视口尺寸（横向/纵向各自），
+     * 与 setRange 同步维护。此前从不 setPageStep——pageStep 恒默认 10，
+     * 轨道点击一次只跳 10px（翻页形同虚设），把手长按
+     * 槽×page/(range+page) 折算成 10/(range+10) 严重失真可滚比例
+     * （参照 XTextEdit.c:813 setPageStep(viewH) 正确示范）。隐藏分支
+     * 也同样设置：range=0 时把手折算占满全槽，无显示副作用。 */
+    XScrollBar_setPageStep(self->m_vScrollBar, vh > 0 ? vh : 1);
+    XScrollBar_setPageStep(self->m_hScrollBar, vw > 0 ? vw : 1);
     showV = self->m_vPolicy != XScrollBarPolicy_AlwaysOff;
     showH = self->m_hPolicy != XScrollBarPolicy_AlwaysOff;
     if (self->m_vPolicy == XScrollBarPolicy_AsNeeded)

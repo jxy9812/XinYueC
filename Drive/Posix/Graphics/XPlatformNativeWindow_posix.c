@@ -281,6 +281,12 @@ typedef struct XWNPendingEntry
 
 /** @brief 每进程 X11 连接状态。 */
 static Display* g_xpwnDisplay;    /**< X11 连接；NULL 表示未连接/连接失败。 */
+static bool g_xpwnConnectFailed;  /**< XOpenDisplay 已失败缓存：无 X 服务环境
+                                   * （fbdev 混跑/X 退出）下每轮重试 XOpenDisplay
+                                   * 会对 Unix/抽象/TCP 多路 socket 反复连接尝试，
+                                   * 38 轮/秒 × 每次数百微秒~数毫秒 = 持续 CPU 虚高
+                                   * （A33 真机实测约 10ms/轮）。X11 应用口径与
+                                   * Qt 一致：连接失败即致命，不自动重连。 */
 static int g_xpwnScreenNumber;    /**< 默认屏幕号。 */
 static Visual* g_xpwnVisual;      /**< 选定 TrueColor 视觉。 */
 static int g_xpwnDepth;           /**< 选定视觉深度（32 或 24）。 */
@@ -2014,7 +2020,8 @@ static void xpwn_cursorBackendInstall(void)
 }
 
 static bool xpwn_ensureConnection(void);
-static bool xpwn_screensApplyLogicalDpi(void);
+/* xpwn_screensApplyLogicalDpi 原型已在 :1568 定义处之前声明，此处
+ * 重复声明为冗余（-Wredundant-decls），删除。 */
 
 /**
  * @brief      X11 连接 fd 监视线程主体（主循环统一等待桥，见文件头部
@@ -2108,8 +2115,13 @@ static bool xpwn_ensureConnection(void)
     int fallbackDone = 0;
     if (g_xpwnDisplay) return true;
     if (g_xpwnDisplay == NULL && g_xpwnDepth != 0) return false; /* 已失败。 */
+    if (g_xpwnConnectFailed) return false; /* 失败缓存：不再逐轮重试。 */
     g_xpwnDisplay = XOpenDisplay(NULL);
-    if (!g_xpwnDisplay) return false;
+    if (!g_xpwnDisplay)
+    {
+        g_xpwnConnectFailed = true;
+        return false;
+    }
     /* 协议错误非致命化（见 xpwn_xlibErrorHandler 注释；须在首个请求前
        安装，Xlib 惯例在连接建立后立即设置）。 */
     XSetErrorHandler(xpwn_xlibErrorHandler);

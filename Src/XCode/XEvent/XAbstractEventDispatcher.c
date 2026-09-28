@@ -8,6 +8,8 @@
 #include "XThread.h"
 #include "XDateTime.h"
 #include "XFileDescriptor.h"
+#include "XSocketNotifier.h"   /* poll(notifier fds)：激活信号发射 */
+#include "XWindowEvent.h"      /* XPaintEvent（重型事件画像诊断） */
 #include "XAbstractNetIoRing.h"
 #include "XDeviceNetwork.h"
 #include "XDeviceConsole.h"
@@ -605,6 +607,8 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 // === 虚函数默认实现（纯虚函数应由子类重写，此处提供空/错误实现）===
 // ===================================================================
 
+/** @brief 无 ioRing 主线程 poll 等待的 fd 快照上限（超出者退化为
+ *  心跳轮询覆盖，见 processEvents 回退分支注释）。 */
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
     XAtomic_store_bool(&self->d_ptr->m_interrupt, false, XAtomic_MemoryOrder_Release);
@@ -698,14 +702,41 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         int timeoutMs = -1;
         if (deadlineNs != UINT64_MAX)
         {
-            int64_t ns = (int64_t)deadlineNs - XDateTime_currentNSecsSinceEpoch();
+            /* 双时钟轴归一（交互模式 exec 忙轮活锁的根修，L 路 2026-09-27）：
+             * nextPreciseDeadline 聚合的两个定时器后端各在一条时钟轴上——
+             *  - HrTimerGroup（Precise）：高精度时间源注入的是
+             *    XDateTime_currentNSecsSinceEpoch（CLOCK_REALTIME，墙钟 ns）；
+             *  - 全局时间轮（Coarse）：时间源注入的是
+             *    XDateTime_currentMSecsSinceEpoch（449bec6d 起改为
+             *    CLOCK_MONOTONIC 单调 ms），getNextExpireTime ×1e6 后
+             *    仍是单调 ns——比墙钟 now 小约三个数量级。
+             * 原实现一律拿墙钟 now 相减：只要时间轮里存在任意定时器
+             * （交互模式启动即有 250ms/1000ms 周期定时器在轮），差值恒为
+             * 巨负 → remainMs 恒 0 → ring 等待退化为 0 超时 poll → exec
+             * 循环 100% CPU 忙轮（症状：进程卡死 CPU 打满；负载回落/换
+             * Xvfb/LD_PRELOAD XInitThreads/taskset/setsid 均无效；
+             * --autotest 不受影响因其逐帧显式 processEvents 从不停等）。
+             * 按量纲选 now 轴再相减：1e18 ns 分界（墙钟轴 2001-09 之后
+             * 恒超 1e18；单调轴即使连续开机 31.7 年也到不了），两轴各自
+             * 与自身 now 相减恒确。 */
+            uint64_t nowNs;
+            if (deadlineNs >= 1000000000000000000ULL)
+                nowNs = (uint64_t)XDateTime_currentNSecsSinceEpoch();
+            else
+                nowNs = (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000000ULL;
+            int64_t ns = (int64_t)deadlineNs - (int64_t)nowNs;
             /* 1ms 粒度向上取整（§23.4 规划 5）：时间轮到期刻度按毫秒量化，
              * 向上取整保证唤醒时 tick 已推进到到期毫秒、定时器即刻兑现；
              * 若向下截断，残余亚毫秒会不断产生 0 超时的空转迭代（忙等）。 */
             int64_t remainMs = (ns <= 0) ? 0 : (ns + 999999) / 1000000;
             /* 远期定时器封顶，防止超出 int 及各等待后端的毫秒范围 */
             if (remainMs > 999999999) remainMs = 999999999;
-            timeoutMs = (int)remainMs;
+            /* 忙轮护栏：TO=0 表示按轴换算截止已到，但后端（全局时间轮的
+             * 刻度消费）兑现存在延迟窗口——此时若以 0 超时 poll 会退化成
+             * 每秒十万次的空转轮（实测占满半核）。钳到 1ms（= 时间轮自身
+             * 精度）既保证到期定时器仍是最先兑现项，又把空轮封顶在
+             * 千次/秒量级。 */
+            if (timeoutMs == 0) timeoutMs = 1;
         }
         /* 空转保护：无任何定时器（截止查询返回 UINT64_MAX）时维持既有
          * 20ms 心跳节拍，兜底驱动周期轮询回调（USB/串口/原生事件泵）；
@@ -765,6 +796,13 @@ static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispa
     {
         XVector_append_1_base(v, &notifier);
     }
+    /* notifier fd 注册进 ioRing 等待集（poll/io_uring 双模式在 Drive
+     * 平台层）：数据就绪直接唤醒阻塞中的主循环，零轮询延迟。 */
+    {
+        XAbstractNetIoRing* ring = self->d_ptr->m_ioRing;
+        if (ring)
+            XAbstractNetIoRing_registerEvent_base(ring, fd);
+    }
 }
 
 static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
@@ -785,6 +823,12 @@ static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDis
     {
         XHashMap_remove_base(self->d_ptr->notifiers, &fd);
         //XVector_delete_base(v);
+        /* fd 上已无任何 notifier：从 ioRing 等待集注销，停止唤醒。 */
+        {
+            XAbstractNetIoRing* ring = self->d_ptr->m_ioRing;
+            if (ring)
+                XAbstractNetIoRing_unregisterEvent_base(ring, fd);
+        }
     }
 }
 static void TimerCallback(void* userData, XTimerData* timer)
@@ -924,7 +968,9 @@ static void VXAbstractEventDispatcher_wakeUp(XAbstractEventDispatcher* self)
     if (!self || !self->d_ptr) return;
     if (XAbstractEventDispatcher_isMainThread(self))
     {
-        /* 主线程：通过 IOCP 唤醒（主线程在 GetQueuedCompletionStatus 上阻塞） */
+        /* 主线程：通过 IOCP 唤醒（主线程在 GetQueuedCompletionStatus 上阻塞）。
+         * 无 ioRing 平台的等待由 notifier fd 注册进 ioRing 等待集解决
+         * （XAbstractNetIoRing_registerEvent_base），不经信号量。 */
         if (self->d_ptr->m_ioRing)
             XAbstractNetIoRing_wakeUp_base(self->d_ptr->m_ioRing);
     }

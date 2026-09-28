@@ -5,13 +5,19 @@
  * @details    功能范围：
  *             - 键盘捕获：控件获得焦点后，用户按下的修饰键+非修饰键
  *               组合被记录为快捷键序列（最多 4 组，对标默认值）；
+ *             - 捕获态机（对标 Qt 6.8 录制语义）：捕获发起于获得焦点，
+ *               退出捕获 = Esc（清空且不录 Esc）/ 失去焦点（弹窗焦点
+ *               豁免）/ 空闲超时（5s 无输入，防捕获态滞留键盘陷阱）；
+ *               非捕获态不消费任何按键（Tab 走链、其余上抛）；
  *             - keySequence/setKeySequence/clear；
  *             - maximumSequenceLength/setMaximumSequenceLength；
- *             - finishingKey：Return/Enter 确认序列，Esc 清空，
- *               Backspace 删除最后一组（对标 Qt 行为）；
+ *             - finishingKey：Return/Enter 确认序列，Esc 清空并结束
+ *               捕获，Backspace 删除最后一组（对标 Qt 行为）；
  *             - 信号：keySequenceChanged(XKeySequence*)/
  *               editingFinished()；
- *             - 绘制：当前序列文本居中显示（如 "Ctrl+S"）；
+ *             - 绘制：当前序列文本居中显示（如 "Ctrl+S"）；聚焦态绘
+ *               虚线焦点框（捕获中高亮色/非捕获灰），捕获中且空序列
+ *               时绘 "Press shortcut" 占位（对标 Qt placeholderText）；
  *             - XKeySequence 结构：{modifiers, key} 数组 + 计数，
  *               对标 QKeySequence 的 MultiKey 语义。
  * @note       模块总开关 XKEYSEQUENCEEDIT_ON 定义于 XGuiConfig.h。
@@ -60,10 +66,13 @@ typedef struct XKeySequenceEdit
     XKeySequence m_oldSequence; /**< 确认前的旧序列。 */
     int m_maxLength;         /**< 序列最大长度（默认 4）。 */
     bool m_clearButton;      /**< 清除按钮开关（默认 false）。 */
-    bool m_capturing;        /**< 正在捕获（有部分输入）。 */
+    bool m_capturing;        /**< 捕获态机：true=捕获中（获得焦点发起，
+                                  Esc/失焦/空闲超时退出）。 */
     XKeyCombination m_finishing[XKEYSEQUENCEEDIT_MAX_FINISHING]; /**< 结束编辑的键组合
                                   （对标 finishingKeyCombinations；默认 Tab/Backtab）。 */
     int m_finishingCount;    /**< 结束键组合数量（默认 2）。 */
+    XTimerId m_idleTimer;    /**< 捕获空闲超时定时器（XTIMER_INVALID_ID=未启动；
+                                  捕获期间 X 毫秒无输入自动结束捕获，防键盘陷阱）。 */
 } XKeySequenceEdit;
 
 /** @brief XKeySequenceEditclassinit（对标 Qt 同名接口）。
@@ -112,6 +121,35 @@ bool XKeySequenceEdit_isClearButtonEnabled(const XKeySequenceEdit* self);
  * @brief      设置清除按钮开关。
  */
 void XKeySequenceEdit_setClearButtonEnabled(XKeySequenceEdit* self, bool enable);
+
+/* ==================== 捕获态控制（对标 Qt 6.7+ capturing API） ============ */
+
+/**
+ * @brief      程序化进入捕获态（对标 startCapturing）。
+ *
+ * @details    捕获通常由获得焦点自动发起（对标 Qt「recording is initiated
+ *             when the widget receives the focus」）；本接口供 Esc 退出/
+ *             空闲超时后重新武装捕获（等价用户再次点击控件）。
+ */
+void XKeySequenceEdit_startCapturing(XKeySequenceEdit* self);
+
+/**
+ * @brief      结束捕获并提交（对标 stopCapturing）：有序列时发射
+ *             editingFinished，随后退出捕获态。
+ */
+void XKeySequenceEdit_stopCapturing(XKeySequenceEdit* self);
+
+/**
+ * @brief      取消捕获并清空序列（对标 cancelCapturing；Esc 按键路径
+ *             同款语义：清空且不录 Esc）。
+ */
+void XKeySequenceEdit_cancelCapturing(XKeySequenceEdit* self);
+
+/**
+ * @brief      查询捕获态（对标 isRecording）。
+ * @return     true=捕获中；self 为 NULL 时返回 false。
+ */
+bool XKeySequenceEdit_isCapturing(const XKeySequenceEdit* self);
 
 /* ==================== 结束键组合（对标 Qt 6.8 finishingKeyCombinations） ==== */
 

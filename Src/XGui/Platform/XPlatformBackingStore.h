@@ -394,6 +394,31 @@ void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
                                                 int width, int height);
 
 /**
+ * @brief      请求下次 present 前整面板清零（fbdev 合成 WM 场景专用）。
+ * @details    fbdev 无窗口系统：顶层窗口几何变化（最大化切换/移动）后
+ *             旧几何区域没有任何窗口重绘覆盖，残留像素会长期留在屏上。
+ *             调用后下次提交先整段帧缓冲映射清零（双缓冲两块同清），
+ *             窗口内容随后正常绘制，等价 WM 的整屏重铺。桌面平台由
+ *             窗口系统负责重铺，本调用为 no-op。
+ */
+void XPlatformBackingStore_requestPanelClear(void);
+
+/**
+ * @brief      立即把面板坐标的若干矩形填成指定原生像素色（fbdev 高频
+ *             几何变化路径专用）。
+ * @details    与 requestPanelClear 的差异：本调用同步写入可见与后台
+ *             两缓冲（双缓冲不失步），不清其余显示内容、无黑屏中间
+ *             态——标题栏拖拽移动等逐帧路径用它只清"移开后暴露的条
+ *             带"。仅支持 RGB565 直写面板（与 present 直写同款格式
+ *             协商）；其余格式 no-op。桌面平台 no-op。
+ * @param      rects 面板坐标矩形数组（可 NULL/count<=0）。
+ * @param      count 矩形数。
+ * @param      nativePixel 面板原生像素值（RGB565：黑=0x0000）。
+ */
+void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
+                                          uint32_t nativePixel);
+
+/**
  * @brief      查询平台后端的可直接绘制缓冲（零拷贝 present）。
  * @details    Win32 后端返回 DIB section 的内存指针：backing store 的
  *             绘制 XImage 以该内存为存储（XImage_init_ex_2 外部缓冲

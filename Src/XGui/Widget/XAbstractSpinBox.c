@@ -30,6 +30,10 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
+#if XSTYLE_ON
+#include "XStyle.h"
+#include "XStyleOption.h"
+#endif /* XSTYLE_ON */
 #include <limits.h>
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
@@ -69,6 +73,7 @@ static void  VXAbstractSpinBox_timerEvent(XObject* self, XTimerEvent* event);
 /* ==================== 内部辅助 ==================== */
 
 static void spinbox_forwardEditingFinished(XObject* sender, XVarList* args);
+static void spinbox_syncEditFieldGeometry(XAbstractSpinBox* self);
 
 /** @brief 发射 void 信号（无连接时释放参数列表）。 */
 static void spinbox_emitVoidSignal(XAbstractSpinBox* self, size_t signal)
@@ -85,11 +90,66 @@ static void spinbox_emitVoidSignal(XAbstractSpinBox* self, size_t signal)
     }
 }
 
+/** @brief      按样式同步内嵌编辑框几何（SC_SpinBoxEditField 口径）。
+ * @details    修复「SpinBox 聚焦无可见指示」第二段：此前 resizeEvent/
+ *             setButtonSymbols 把编辑框写死 (0,0,w-16,h)，黄底样式表
+ *             （XLineEdit{background:#FFFFE0}）铺满容器自身矩形，把容器
+ *             frame/虚线聚焦环整圈盖住（实测 709/724 像素黄底）。现改经
+ *             样式 subControlRect(CC_SpinBox, SC_SpinBoxEditField) 取编辑
+ *             区矩形——样式侧按 PM_SpinBoxFrameWidth（XCommonStyle=2/
+ *             Fusion=3）四周留边距，给 frame 斜面与聚焦虚线留出可见带；
+ *             按钮列宽亦由样式按高度推导，与绘制侧同源。无样式时回退
+ *             既有口径（占满减固定 16px 按钮列、无边距——非样式回退
+ *             绘制路径本无 frame）。 */
+static void spinbox_syncEditFieldGeometry(XAbstractSpinBox* self)
+{
+    int w;
+    int h;
+    if (!self || !self->m_lineEdit) return;
+    w = XWidget_width((XWidget*)self);
+    h = XWidget_height((XWidget*)self);
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        XStyleOption opt;
+        XRect field;
+        XStyleOption_init(&opt, XStyleCC_SpinBox);
+        XRect_init(&opt.m_rect, 0, 0, w, h);
+        opt.m_state = XWidget_isEnabled((XWidget*)self)
+            ? (uint32_t)XStyleState_Enabled : 0;
+        /* frame/按钮符号对接基类属性（与绘制侧 XSpinBox paintEvent
+           同口径：m_spinFrame 裁边距、m_spinSymbols=NoButtons 时
+           EditField 全宽）。 */
+        opt.m_spinFrame = self->m_frame;
+        opt.m_spinSymbols = self->m_buttonSymbols;
+        field = XStyle_subControlRect(XStyle_defaultStyle(),
+                                      XStyleCC_SpinBox, &opt,
+                                      XStyleSC_SpinBoxEditField,
+                                      (XWidget*)self);
+        if (field.width > 0 && field.height > 0) {
+            XWidget_setGeometry((XWidget*)self->m_lineEdit,
+                                field.x, field.y, field.width, field.height);
+            return;
+        }
+    }
+#endif /* XSTYLE_ON */
+    {
+        int ew = w;
+        if (self->m_buttonSymbols !=
+            XAbstractSpinBoxButtonSymbols_NoButtons)
+            ew -= 16;
+        if (ew < 1) ew = 1;
+        XWidget_setGeometry((XWidget*)self->m_lineEdit, 0, 0, ew, h);
+    }
+}
+
 /** @brief 内部创建默认编辑框。 */
 static XLineEdit* spinbox_createDefaultLineEdit(XAbstractSpinBox* self)
 {
     XLineEdit* edit = XLineEdit_create((XWidget*)self, 0);
     if (!edit) return NULL;
+    /* 初创临时占满（此时 self->m_lineEdit 尚未挂上，样式同步须待
+       resizeEvent/setButtonSymbols 收口）；真实几何随首次 RESIZE
+       经 spinbox_syncEditFieldGeometry 收敛。 */
     XWidget_setGeometry((XWidget*)edit, 0, 0,
                         XWidget_width((XWidget*)self),
                         XWidget_height((XWidget*)self));
@@ -98,6 +158,18 @@ static XLineEdit* spinbox_createDefaultLineEdit(XAbstractSpinBox* self)
     XObject_connect_2((XObject*)edit,
                       (size_t)XLineEdit_editingFinished_signal(edit),
                       spinbox_forwardEditingFinished);
+    /* 对标 Qt QAbstractSpinBoxPrivate::init 的
+       d->edit->setFocusProxy(q)（qabstractspinbox.cpp:691）：容器注册
+       焦点代理指向内嵌编辑框。修复「SpinBox 聚焦无可见指示」第一段：
+       此前未注册，XWidget_hasFocus(容器) 只认 g_focusWidget==容器
+       本体——Tab/点击后焦点实际落内嵌编辑框，容器 hasFocus 恒假，
+       XSpinBox_paintEvent 的 HasFocus 位永远置不上。注册后
+       hasFocus(容器) 经 deepestFocusProxy 与编辑框持焦同一真值。
+       注意此处焦点代理方向与 Qt 相反（Qt 是编辑框代理到容器、焦点
+       停容器本体；XGui 取容器代理到编辑框、焦点落编辑框——编辑框
+       直持焦点使键入/选区/IME 走自身完整链路，容器经代理判据与
+       宿主 update（XWidget_setFocusReason 三段配套）画出聚焦环）。 */
+    XWidget_setFocusProxy((XWidget*)self, (XWidget*)edit);
     return edit;
 }
 
@@ -131,22 +203,16 @@ static void spinbox_strfree(char** ptext)
 
 /* ==================== 虚槽实现 ==================== */
 
-/** @brief 尺寸变化：同步内嵌编辑框几何（占满减按钮区）。RESIZE 事件
- *         走 ResizeEvent 虚槽（不走 changeEvent），在此同步编辑框。 */
+/** @brief 尺寸变化：同步内嵌编辑框几何（样式 SC_SpinBoxEditField 边距
+ *         口径，见 spinbox_syncEditFieldGeometry）。RESIZE 事件走
+ *         ResizeEvent 虚槽（不走 changeEvent），在此同步编辑框。 */
 static void VXAbstractSpinBox_resizeEvent(XWidget* self, XEvent* event)
 {
     XAbstractSpinBox* spin = (XAbstractSpinBox*)self;
     if (!spin || !event ||
         XEvent_type(event) != XEVENT_TYPE_RESIZE) return;
-    if (spin->m_lineEdit) {
-        int w = XWidget_width(self);
-        int h = XWidget_height(self);
-        if (spin->m_buttonSymbols !=
-            XAbstractSpinBoxButtonSymbols_NoButtons)
-            w -= 16;
-        if (w < 1) w = 1;
-        XWidget_setGeometry((XWidget*)spin->m_lineEdit, 0, 0, w, h);
-    }
+    if (spin->m_lineEdit)
+        spinbox_syncEditFieldGeometry(spin);
     XClass_Parent(XWidget, EXWidget_ResizeEvent,
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
@@ -615,6 +681,14 @@ void XAbstractSpinBox_setLineEdit(XAbstractSpinBox* self, XLineEdit* lineEdit)
     self->m_lineEdit = lineEdit;
     if (!self->m_lineEdit)
         self->m_lineEdit = spinbox_createDefaultLineEdit(self);
+    else {
+        /* 对标 Qt QAbstractSpinBox::setLineEdit 的
+           d->edit->setFocusProxy(q)：替换编辑框后焦点代理跟迁，
+           保持「容器 hasFocus ⇔ 编辑框持焦」判据（与
+           spinbox_createDefaultLineEdit 注册点同口径）。 */
+        spinbox_syncEditFieldGeometry(self);
+        XWidget_setFocusProxy((XWidget*)self, (XWidget*)self->m_lineEdit);
+    }
 }
 
 int XAbstractSpinBox_buttonSymbols(const XAbstractSpinBox* self)
@@ -632,13 +706,8 @@ void XAbstractSpinBox_setButtonSymbols(XAbstractSpinBox* self, int symbols)
         return;
     self->m_buttonSymbols = symbols;
     XWidget_update((XWidget*)self);
-    if (self->m_lineEdit) {
-        int w = XWidget_width((XWidget*)self) -
-                (symbols != XAbstractSpinBoxButtonSymbols_NoButtons ? 16 : 0);
-        if (w < 1) w = 1;
-        XWidget_setGeometry((XWidget*)self->m_lineEdit, 0, 0, w,
-                            XWidget_height((XWidget*)self));
-    }
+    /* 编辑框几何与绘制同源（样式 SC_SpinBoxEditField；NoButtons 全宽）。 */
+    spinbox_syncEditFieldGeometry(self);
 }
 
 void XAbstractSpinBox_setCorrectionMode(XAbstractSpinBox* self, int mode)

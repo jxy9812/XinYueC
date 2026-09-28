@@ -4763,8 +4763,22 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
     if (top->m_windowHandle && !XWindow_isActive((XWindow*)top->m_windowHandle))
         XWindow_requestActivate((XWindow*)top->m_windowHandle);
     if (g_focusWidget == focusTarget) return;
-    if (g_focusWidget)
-        XWidget_clearFocusBase(g_focusWidget, reason);
+    if (g_focusWidget) {
+        XWidget* oldFocus = g_focusWidget;
+        XWidget_clearFocusBase(oldFocus, reason);
+        /* 复合控件容器补 update（失焦侧）：焦点事件只投最深层焦点
+         * 代理（持焦子控件，如 XSpinBox 内嵌编辑框），自绘聚焦环的
+         * 宿主容器（XWidget_setFocusProxy 注册方）拿不到任何事件、
+         * 画布无重绘时机，失焦后旧聚焦环残留。沿焦点代理注册表找
+         * 出代理链终点==旧焦点靶的宿主补 update，把 HasFocus 位的
+         * 变化落到画布（XSpinBox 聚焦三段修复之 c）。 */
+        {
+            XFocusProxyEntry* entry;
+            for (entry = g_focusProxyEntries; entry; entry = entry->next)
+                if (XWidget_deepestFocusProxy(entry->owner) == oldFocus)
+                    XWidget_update(entry->owner);
+        }
+    }
     g_focusWidget = focusTarget;
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     XApplication_setFocusWidget(focusTarget);
@@ -4774,6 +4788,14 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
     XWidget_event_base(focusTarget, (XEvent*)&event);
     XFocusEvent_deinit_base(&event);
 #endif /* XWINDOWEVENT_ON */
+    /* 复合控件容器补 update（持焦侧）：同失焦侧口径——焦点靶是代理
+     * 子控件时宿主容器画布同步重绘，聚焦环得以画出。 */
+    {
+        XFocusProxyEntry* entry;
+        for (entry = g_focusProxyEntries; entry; entry = entry->next)
+            if (XWidget_deepestFocusProxy(entry->owner) == focusTarget)
+                XWidget_update(entry->owner);
+    }
 }
 
 void XWidget_clearFocus(XWidget* self)
@@ -6098,14 +6120,31 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
     if (paintRegion->count > 1) {
         XRegion single;
         int r;
+        XRect savedClip;
+        XImage* clipImg;
         /* 遮罩求交可能重新引入多矩形：此处再拆，保证进入本控件的
-           PAINT 恒携带单一矩形（递归重入遮罩裁剪为幂等交集）。 */
+           PAINT 恒携带单一矩形（递归重入遮罩裁剪为幂等交集）。
+           擦白家族根修（2026-09-28）：拆分期间每个矩形组都会重发一次
+           本控件的 paintEvent。paintEvent 的绘制契约是"只画事件区域"
+           （对标 Qt systemClip 语义），但控件若越界重绘（如以自身全幅
+           背景/整窗基底清屏，demo_paintScene 无缓存路径即如此），后一
+           矩形组的重绘会把前一矩形组刚画好的内容整片抹掉；该抹除落在
+           本帧持续的后备存储里，flush 又按全部矩形提交，最终表现为
+           「切页/滚动后内容区+状态栏整片擦白且空闲不自愈」。修法：拆
+           分期间把表面裁剪收窄到当前矩形，任何越界绘制都被钳制在本次
+           事件区域内；拆分完成后恢复区域并集，后续矩形组各自再收窄。 */
+        clipImg = g_paintTargetImage;
+        XRegion_boundingRect(paintRegion, &savedClip);
         XRegion_init(&single);
         for (r = 0; r < paintRegion->count; ++r) {
             XRegion_clear(&single);
             XRegion_addRect(&single, &paintRegion->rects[r]);
+            if (clipImg)
+                XPainter_setSurfaceClipRect(&paintRegion->rects[r], clipImg);
             XWidget_paintTree(widget, &single);
         }
+        if (clipImg)
+            XPainter_setSurfaceClipRect(&savedClip, clipImg);
         XRegion_deinit(&single);
         XRegion_deinit(&clipped);
         XRegion_deinit(&maskClipped);
@@ -6363,6 +6402,16 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         else
         {
             XRegion_subtracted(&top->m_dirty, &whole, &top->m_dirty);
+            /* FULL 模式 whole 仅覆盖当前 contentsRect；PAINT 事件携带的
+             * 入队时脏区快照可能含有几何收缩前（顶层默认 640x480 几何
+             * 期）的历史矩形——它永远画不到、也扣不掉，flush 尾部据
+             * m_dirty.count>0 永久重投，形成「弹层打开期间按重绘耗时
+             * 倒数自续」的重绘风暴（昆仑通态 A33 真机 2026-09-28：工
+             * 具按钮菜单打开即 ~30Hz/76% CPU，关闭即恢复）。按事件语义
+             * 消费这份快照：DIRECT/PARTIAL 下 region ⊆ whole，此扣减
+             * 为恒等空操作，桌面行为逐位不变。 */
+            if (top->m_dirty.count > 0 && region && region->count > 0)
+                XRegion_subtracted(&top->m_dirty, region, &top->m_dirty);
         }
     }
     if (whole.count > 0) {
@@ -6594,8 +6643,8 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                                 (XWindow*)top->m_windowHandle, NULL);
             XGpuRenderBackend_setFramePresented(false);
         }
-        if (gpuWindow)
-            XGpuRenderBackend_endWindowFrame();
+            if (gpuWindow)
+                XGpuRenderBackend_endWindowFrame();
 #else
         XBackingStore_flush(store, &whole, (XWindow*)top->m_windowHandle, NULL);
 #endif /* GPU && !PARTIAL */

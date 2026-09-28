@@ -48,6 +48,7 @@
 
 #include "XAbstractEventDispatcher.h"
 #include "XWindowSystemInterface.h"
+#include "XWidget.h" /* mouseGrabber/windowHandle：按住拖出窗口界的注入。 */
 #include "XSystem.h"
 
 /* ==================== 进程级驱动状态（静态，无堆分配） ==================== */
@@ -124,6 +125,18 @@ static int g_xpfiRawX = 0;             /**< 本帧原始 X（abs 值）。 */
 static int g_xpfiRawY = 0;             /**< 本帧原始 Y（abs 值）。 */
 static int g_xpfiLastX = -1;           /**< 上帧注入像素 X（移动去抖）。 */
 static int g_xpfiLastY = -1;           /**< 上帧注入像素 Y。 */
+
+/** @brief 双击合成状态（对齐 X11 平台层 XPWN_DOUBLE_CLICK_* 口径：
+ *  同为左键、时间窗 400ms、位置偏差 4px 内的两次按下沿，第二次注入
+ *  DBL_CLICK。X11/Win32 由平台合成双击，fbdev 无窗口系统必须自补——
+ *  文件对话框进目录/列表展开均依赖双击（真机 TSC2007 实测无合成时
+ *  双击无效）。 */
+#define XPFI_DOUBLE_CLICK_INTERVAL_MS 400
+#define XPFI_DOUBLE_CLICK_DISTANCE    4
+static uint32_t g_xpfiLastPressTimeMs;/**< 最近按下沿时间戳（单调 ms）。 */
+static int g_xpfiLastPressX;          /**< 最近按下沿像素 X。 */
+static int g_xpfiLastPressY;          /**< 最近按下沿像素 Y。 */
+static bool g_xpfiLastPressValid = false; /**< 按下沿状态有效。 */
 
 /* ==================== 工具函数 ==================== */
 
@@ -241,13 +254,48 @@ static void xpfi_commitFrame(uint32_t timestampMs)
             return; /* 触点坐标未上报：等下一帧。 */
         xpfi_normalizePoint(&x, &y);
         if (!xpfi_windowAt(x, y, &window, &local))
-            return; /* 顶层窗口未建/点不在任何窗口：保持未注入，下帧重试。 */
+        {
+            /* 按住期间手指滑出窗口边界（窗口边缘向外拖拽改尺寸的必经
+               路径）：无抓取时维持旧行为丢弃；有抓取（标题栏拖拽移动/
+               边缘改尺寸显式 grabMouse）时 MOVE 必须继续注入抓取窗口，
+               否则边框拖出窗界即断流，只跟一小段就不再跟手（用户真机
+               实测 2026-09-28）。局部坐标按窗口原点换算（越界为负值
+               合法，改尺寸处理器自行钳制）。 */
+            XWidget* grabber = XWidget_mouseGrabber();
+            XRect wg;
+            if (!grabber) return;
+            window = XWidget_windowHandle(grabber);
+            if (!window) return;
+            wg = XWindow_geometry(window);
+            local.x = x - wg.x;
+            local.y = y - wg.y;
+        }
         global.x = x;
         global.y = y;
         if (!g_xpfiLastInjected)
         {
+            /* 按下沿：先做双击识别（对齐 X11 平台层：同键+时间窗+距离窗
+             * → 第二次按下沿注入 DBL_CLICK 而非 PRESS；Qt 语义里双击
+             * 序列仍以随后的 RELEASE 收尾，抬起沿路径不变）。 */
+            bool isDoubleClick = false;
+            if (g_xpfiLastPressValid &&
+                timestampMs - g_xpfiLastPressTimeMs <
+                    XPFI_DOUBLE_CLICK_INTERVAL_MS &&
+                g_xpfiLastPressX >= x - XPFI_DOUBLE_CLICK_DISTANCE &&
+                g_xpfiLastPressX <= x + XPFI_DOUBLE_CLICK_DISTANCE &&
+                g_xpfiLastPressY >= y - XPFI_DOUBLE_CLICK_DISTANCE &&
+                g_xpfiLastPressY <= y + XPFI_DOUBLE_CLICK_DISTANCE)
+            {
+                isDoubleClick = true;
+            }
+            g_xpfiLastPressValid = true;
+            g_xpfiLastPressTimeMs = timestampMs;
+            g_xpfiLastPressX = x;
+            g_xpfiLastPressY = y;
             XWindowSystemInterface_handleMouseEvent_ex(
-                window, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                window,
+                isDoubleClick ? XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK
+                              : XEVENT_TYPE_MOUSE_BUTTON_PRESS,
                 XMouseButton_LeftButton, XMouseButton_LeftButton,
                 XKeyboardModifier_NoModifier, local, &global, timestampMs);
         }
@@ -273,15 +321,25 @@ static void xpfi_commitFrame(uint32_t timestampMs)
     g_xpfiLastInjected = false;
     if (g_xpfiLastX < 0)
         return; /* 从未成功注入过按下（窗口时序缺失）：无位可释放。 */
-    if (xpfi_windowAt(g_xpfiLastX, g_xpfiLastY, &window, &local))
+    if (!xpfi_windowAt(g_xpfiLastX, g_xpfiLastY, &window, &local))
     {
-        global.x = g_xpfiLastX;
-        global.y = g_xpfiLastY;
-        XWindowSystemInterface_handleMouseEvent_ex(
-            window, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
-            XMouseButton_LeftButton, XMouseButton_NoButton,
-            XKeyboardModifier_NoModifier, local, &global, timestampMs);
+        /* 抬起点在窗外（边缘向外拖拽改尺寸后抬手）：有抓取时仍向抓取
+           窗口注入 RELEASE，否则改尺寸状态机卡在按住态永不收尾。 */
+        XWidget* grabber = XWidget_mouseGrabber();
+        XRect wg;
+        if (!grabber) return;
+        window = XWidget_windowHandle(grabber);
+        if (!window) return;
+        wg = XWindow_geometry(window);
+        local.x = g_xpfiLastX - wg.x;
+        local.y = g_xpfiLastY - wg.y;
     }
+    global.x = g_xpfiLastX;
+    global.y = g_xpfiLastY;
+    XWindowSystemInterface_handleMouseEvent_ex(
+        window, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+        XMouseButton_LeftButton, XMouseButton_NoButton,
+        XKeyboardModifier_NoModifier, local, &global, timestampMs);
 }
 
 /**

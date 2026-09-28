@@ -341,8 +341,14 @@ static void VXSlider_paintEvent(XWidget* self, XEvent* event)
         opt.m_rect = r;
         opt.m_state = XWidget_isEnabled(self)
             ? XStyleState_Enabled | XStyleState_Raised : 0;
+        /* 对标 Qt：State_KeyboardFocusChange 由持焦控件随 State_HasFocus
+         * 一并携带；样式侧把手键盘焦点高亮 outline（XCommonStyle.c
+         * CC_Slider 把手段）要求 HasFocus&&KeyboardFocusChange 双位
+         * （对标 State_KeyboardFocusChange）——此前本位全库零置位，
+         * 聚焦永远走 else 灰描边，持焦无任何可见指示。 */
         if (XWidget_hasFocus(self))
-            opt.m_state |= XStyleState_HasFocus;
+            opt.m_state |= XStyleState_HasFocus |
+                           XStyleState_KeyboardFocusChange;
         if (XWidget_underMouse(self) && XWidget_isEnabled(self))
             opt.m_state |= XStyleState_MouseOver;
         opt.m_horizontal = base->m_orientation ==

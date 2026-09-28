@@ -3336,6 +3336,48 @@ static bool xlc_matchCtrlLetter(const XKeyEvent* ke, char letter,
  *          （XKeyboardModifiers 契约冻结，XEvent.h:129-137），锁存态
  *          字母由平台层 LockMask 守卫留在 IME 提交通道，不入本函数。
  */
+/**
+ * @brief 美式布局 Shift 层字符表（键值=未移位基础字形 → Shift 字形）。
+ * @details 平台契约：Posix 列 0 keysym（XPlatformNativeWindow_posix.c
+ *          大写归一注释）、Win32 VK 基础字形（XPlatformNativeWindow_win32.c
+ *          「返回基础字形（不随 Shift 变化；按键身份与 Qt::Key 一致）」）
+ *          恒交未移位码位，Shift 只走修饰位。字母大小写此前已按 Shift
+ *          派生（问题 #32），数字行与标点同族缺失——Shift+1 落 '1'、
+ *          Shift+. 落 '.'，用户无法键入 !@#$%^&*() 及 < > : " 等。
+ *          对标 Qt：QKeyEvent::text() 由 keysym+modifier 经键盘布局表
+ *          得出（qxcbkeyboard.cpp keysymToQtKey+lookupString 并行产出），
+ *          此表即布局表的 Shift 层。仅修饰位恰为 Shift（无 Keypad——
+ *          小键盘数字在 NumLock+Shift 下仍应交付数字，与 X11 后端
+ *          KeypadModifier 口径一致）时套用；无 Shift 或表外键值原样。
+ */
+static char xlc_shiftedChar(int key)
+{
+    switch (key) {
+    case '1': return '!';
+    case '2': return '@';
+    case '3': return '#';
+    case '4': return '$';
+    case '5': return '%';
+    case '6': return '^';
+    case '7': return '&';
+    case '8': return '*';
+    case '9': return '(';
+    case '0': return ')';
+    case '`': return '~';
+    case '-': return '_';
+    case '=': return '+';
+    case '[': return '{';
+    case ']': return '}';
+    case '\\': return '|';
+    case ';': return ':';
+    case '\'': return '"';
+    case ',': return '<';
+    case '.': return '>';
+    case '/': return '?';
+    default: return '\0';
+    }
+}
+
 static int xlc_keyToText(const XKeyEvent* ke, char* out)
 {
     int key;
@@ -3350,7 +3392,20 @@ static int xlc_keyToText(const XKeyEvent* ke, char* out)
         return 1;
     }
     if (key >= 0x20 && key <= 0x7E) {
-        out[0] = (char)key;
+        /* Shift+数字/标点经布局表派生（见 xlc_shiftedChar）；修饰位含
+           Ctrl/Alt/Meta 的组合（快捷键族已先行消费，落到此处必非文本
+           输入）与小键盘键不走表，码位原样。 */
+        char shifted = xlc_shiftedChar(key);
+        if (shifted != '\0'
+            && (ke->m_modifiers & XKeyboardModifier_ShiftModifier) != 0
+            && (ke->m_modifiers & (XKeyboardModifier_ControlModifier
+                                   | XKeyboardModifier_AltModifier
+                                   | XKeyboardModifier_MetaModifier
+                                   | XKeyboardModifier_KeypadModifier)) == 0) {
+            out[0] = shifted;
+        } else {
+            out[0] = (char)key;
+        }
         out[1] = '\0';
         return 1;
     }
@@ -3523,8 +3578,16 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
              || xlc_matchKey(event, XKey_Insert, XLC_MODS(XKeyboardModifier_ControlModifier))) {
         XLineControl_copy(self, (int)XClipboardMode_Clipboard);
     }
+    /* 粘贴入口（对标 Qt QKeySequence::Paste 的 X11 键位集 Ctrl+V/
+     * Shift+Ins/Ctrl+Shift+Ins，qwidgetlinecontrol.cpp processKeyEvent
+     * paste 分支）：此前入口只收「精确 Ctrl+V」或「精确 Shift+Insert」，
+     * 而下方 Selection（PRIMARY）条件要求「精确 Ctrl+Shift+Insert」——
+     * 键位进不了入口，Selection 分支自锁为死分支。现把
+     * Ctrl+Shift+Insert 并入入口，落进既有 mode=Selection 判定（X11
+     * 键盘方案下从 PRIMARY 粘贴），Ctrl+V/Shift+Insert 两分支零回归。 */
     else if (xlc_matchCtrlLetter(event, 'V', XLC_MODS(XKeyboardModifier_ControlModifier))
-             || xlc_matchKey(event, XKey_Insert, XLC_MODS(XKeyboardModifier_ShiftModifier))) {
+             || xlc_matchKey(event, XKey_Insert, XLC_MODS(XKeyboardModifier_ShiftModifier))
+             || xlc_matchKey(event, XKey_Insert, XLC_MODS(XKeyboardModifier_ControlModifier | XKeyboardModifier_ShiftModifier))) {
         if (!XLineControl_isReadOnly(self)) {
             int mode = (int)XClipboardMode_Clipboard;
             if (self->m_keyboardScheme == (int)XLineControlKeyboardScheme_X11
@@ -3817,6 +3880,10 @@ void XLineControl_processShortcutOverrideEvent(XLineControl* self, XKeyEvent* ke
         XEvent_accept((XEvent*)ke);
     } else if (xlc_matchKey(ke, 'V', XLC_MODS(XKeyboardModifier_ControlModifier))
                || xlc_matchKey(ke, XKey_Insert, XLC_MODS(XKeyboardModifier_ShiftModifier))
+               /* 与 processKeyEvent 粘贴入口同键位集：Ctrl+Shift+Insert
+                * （X11 PRIMARY 粘贴）须同样 accept，否则快捷键截获层
+                * 会把它挡在控制器之外（粘贴死分支修复的配套面）。 */
+               || xlc_matchKey(ke, XKey_Insert, XLC_MODS(XKeyboardModifier_ControlModifier | XKeyboardModifier_ShiftModifier))
                || xlc_matchKey(ke, 'X', XLC_MODS(XKeyboardModifier_ControlModifier))
                || xlc_matchKey(ke, XKey_Delete, XLC_MODS(XKeyboardModifier_ShiftModifier))
                || xlc_matchKey(ke, 'Z', XLC_MODS(XKeyboardModifier_ControlModifier))

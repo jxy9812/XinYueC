@@ -73,6 +73,12 @@ typedef struct XDateTimeEdit
     XDateTime m_maximum;       /**< 最大值。 */
     XString* m_displayFormat;  /**< 显示格式串（对象拥有）。 */
     int m_currentSection;      /**< 当前编辑分段。 */
+    int m_typingSection;       /**< 数字键入累积段序号（分段在格式中的
+                                    0 基位置；-1=无键入态）。 */
+    int m_typingValue;         /**< 当前段已键入的累积数值。 */
+    int m_typingDigits;        /**< 当前段已键入位数（满段位宽即提交并
+                                    跳下一段，对标 QDateTimeEdit 分段
+                                    键入模型）。 */
     bool m_calendarPopup;      /**< 日历弹出（默认 false，对标
                                     QDateTimeEdit::calendarPopup）。 */
     int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime）。 */

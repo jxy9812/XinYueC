@@ -62,6 +62,10 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
     bool active;
     int w;
     int h;
+    XWidget* parent;
+    XRect visible;
+    int pw;
+    int ph;
     if (!sw || !event) return;
     w = XWidget_width(self);
     h = XWidget_height(self);
@@ -130,6 +134,27 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
     if (exposed.y < 0) { exposed.height += exposed.y; exposed.y = 0; }
     if (exposed.x + exposed.width > w) exposed.width = w - exposed.x;
     if (exposed.y + exposed.height > h) exposed.height = h - exposed.y;
+    /* 父界裁剪（对标 Qt 通用语义：子控件绘制恒被 parentWidget() 矩形
+     * 裁剪）。本框架 paintTree 不按父矩形裁剪子件绘制，子窗被拖到视
+     * 口边缘后带/体像素会泼到视口外的页签标签、状态栏等区域（夜间 D
+     * 猎捕 d1_i4 实锚）。此处子窗一级自裁剪：绘制域收进「父件矩形平
+     * 移到本窗局部坐标」的交集，拖出视口的部分不再落笔，观感与 Qt
+     * 一致（体/带在视口边缘截断）。父区缺失（独立子窗）或退化时不裁
+     * 剪。无效暴露区（完全出界）直接跳过绘制。 */
+    parent = XWidget_parentWidget(self);
+    if (parent) {
+        pw = XWidget_width(parent);
+        ph = XWidget_height(parent);
+        if (pw > 0 && ph > 0) {
+            XRect geoSelf = XWidget_geometry(self);
+            XRect_init(&visible, -geoSelf.x, -geoSelf.y, pw, ph);
+            exposed = XRect_intersected(&exposed, &visible);
+        }
+    }
+    if (exposed.width <= 0 || exposed.height <= 0) {
+        XPainter_deinit(&painter);
+        return;
+    }
     /* 体不透明填充（行 20 起、内收侧/底框线）：此前仅涂标题条，标题条
      * 以下透明透出视口背景。 */
     if (h > 21 && w > 2) {
@@ -141,6 +166,10 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
     /* 标题带（框线内 1..19 行；第 19 行兼作带下分隔）。 */
     XRect_init(&head, 1, 1, w > 2 ? w - 2 : 0, 19);
     clipHead = head;
+    /* 图标/文本绘制用 clipHead 作画家裁剪，须同受父界约束（head 填充
+     * 已随 exposed 收进父界；此处保持两者口径一致）。 */
+    if (parent && pw > 0 && ph > 0)
+        clipHead = XRect_intersected(&clipHead, &visible);
     head = XRect_intersected(&head, &exposed);
     if (head.width > 0 && head.height > 0)
         XPainter_fillRect(&painter, &head, bandColor);
@@ -204,6 +233,9 @@ static void VX_mdiSubWindow_paintEvent(XWidget* self, XEvent* event)
  * paintEvent 头带（本文件 :80 XRect_init(&head,0,0,w,20)）及内容件
  * y=20 挂载（XMdiSubWindow_setWidget）共用同一常量口径。 */
 #define XMDI_SUBWINDOW_TITLEBAR_HEIGHT 20
+/* 拖拽视口钳位边距（对标 Qt 6.8.3 qmdisubwindow.cpp 文件级
+ * static const int BoundaryMargin = 5）。 */
+#define XMDI_SUBWINDOW_BOUNDARY_MARGIN 5
 static bool g_mdiDragActive = false;      /**< 按下头带后进入拖拽会话。 */
 static XMdiSubWindow* g_mdiDragWindow = NULL; /**< 会话归属子窗（防串扰）。 */
 static XPoint g_mdiDragPressGlobal;       /**< 按下时屏幕全局坐标。 */
@@ -360,16 +392,25 @@ static void VX_mdiSubWindow_mouseMoveEvent(XWidget* self, XEvent* event)
     dy = np.y - g_mdiDragPressGlobal.y;
     newX = g_mdiDragStartGeometry.x + dx;
     newY = g_mdiDragStartGeometry.y + dy;
-    /* 视口钳位（对标 qmdisubwindow.cpp:1163-1175 setNewGeometry 按
-     * parentWidget()->rect() 钳位、BoundaryMargin=5；适配为子窗左上
-     * 角域：竖向头带全程可及 [0, vh-20]，横向至少留 5px 头带可见
-     * [-(w-5), vw-5]，父区缺失时不钳位）。 */
+    /* 视口钳位（对标 qmdisubwindow.cpp:1163-1175 setNewGeometry 的
+     * Move 分支：AllowOutsideAreaHorizontally/Vertically 默认关时
+     * posX = qMin(qMax(BoundaryMargin, posX), parentWidth-BoundaryMargin)、
+     * posY ≤ parentHeight-BoundaryMargin，BoundaryMargin=5）。
+     * 本框架取两处有意偏差（均有实测依据，见夜间 D 猎捕 MDI 分片）：
+     *   横向下界取 Qt 精确语义 [5, vw-5]——子窗左缘恒留视口内 5px，
+     *   标题带左段（系统菜单图标/标题一侧）恒可见，抓取锚点稳定；
+     *   旧实现的 -(w-5) 下界允许左缘带整段越界、仅剩右端 5px 残带，
+     *   系对 Qt 该分支的误读，修正；
+     *   纵向上界取严为 vh-头带高——头带整段恒在视口内（Qt 的 vh-5
+     *   允许头带沉到只剩 5px 条；Qt 有 QMdiArea 滚动条回捞路径而本
+     *   框架视口无滚动回捞，取严保「随时可抓回」）。
+     * 父区缺失（独立子窗）时不钳位。 */
     if (parent) {
         vw = XWidget_width(parent);
         vh = XWidget_height(parent);
         newX = xmdi_dragClamp(newX,
-                              -(XWidget_width(self) - 5),
-                              vw - 5);
+                              XMDI_SUBWINDOW_BOUNDARY_MARGIN,
+                              vw - XMDI_SUBWINDOW_BOUNDARY_MARGIN);
         newY = xmdi_dragClamp(newY, 0,
                               vh - XMDI_SUBWINDOW_TITLEBAR_HEIGHT);
     }

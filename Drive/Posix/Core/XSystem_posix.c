@@ -176,4 +176,16 @@ bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
 
 #endif /* XSYSTEM_MEMORY_USAGE_ON */
 
+#if XSYSTEM_GPU_USAGE_ON
+
+double XSystem_platformGpuUsagePercent(void)
+{
+    /* Linux 无跨厂商的用户态 GPU 使用率通用接口（nvidia-smi/NVML、
+     * Intel/AMD fdinfo 各自成体系，且嵌入式 SoC 多数无暴露）；对齐
+     * unsupported 平台口径返回 -1（调用方按"计数器缺失"处理）。 */
+    return -1.0;
+}
+
+#endif /* XSYSTEM_GPU_USAGE_ON */
+
 #endif /* defined(__linux__) */

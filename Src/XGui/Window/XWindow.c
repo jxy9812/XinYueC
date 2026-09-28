@@ -56,6 +56,11 @@
 #if XCURSOR_ON
 #include "XCursor.h"
 #endif /* XCURSOR_ON */
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+#include "XPlatformDisplayDriver.h"
+#include "XWindowSystemInterface.h"
+#include "XGeometry.h"
+#endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
 
 #if XWINDOW_ON
 
@@ -1944,6 +1949,60 @@ void XWindow_setVisible(XWindow* self, bool visible)
     if (data->m_created && data->m_nativeWindowAttached)
         XPlatformNativeWindow_setVisible(self, visible);
 #endif /* XPLATFORMNATIVEWINDOW_ON */
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    /* fbdev 无窗口系统的弹层暴露恢复：X11 的 XUnmapWindow 由 WM/合成器
+     * 自动向被遮挡窗口发 expose，Win32 由系统重绘——本框架在 fbdev 单屏
+     * 模式下没有窗口系统，弹层（菜单/下拉等瞬态顶层）hide 后其矩形留有
+     * 上一内容，双缓冲差带同步无法凭空补绘 → 弹层区域两缓冲失步，翻页
+     * 交替（真机表现为弹层闪烁，Windows/Linux 正常即因此差异）。此处对
+     * 隐藏窗口矩形按登记逆序找首个可见的相交顶层窗口（语义=紧贴其下的
+     * 可见层），向它注入本地坐标的 expose 事件驱动重绘上屏。 */
+    if (!visible && XPlatformDisplayDriver_active())
+    {
+        XVector* tops = XGuiApplication_topLevelWindows();
+        if (tops)
+        {
+            XRect hiddenRect = XWindow_geometry(self);
+            size_t wi;
+            for (wi = XVector_size_base(tops); wi > 0; --wi)
+            {
+                XWindow* under =
+                    *(XWindow**)XVector_at_base(tops, (int64_t)(wi - 1));
+                if (!under || under == self || !XWindow_isVisible(under))
+                    continue;
+                {
+                    XRect underRect = XWindow_geometry(under);
+                    int ix0 = hiddenRect.x > underRect.x ? hiddenRect.x : underRect.x;
+                    int iy0 = hiddenRect.y > underRect.y ? hiddenRect.y : underRect.y;
+                    int ix1 = hiddenRect.x + hiddenRect.width <
+                              underRect.x + underRect.width
+                              ? hiddenRect.x + hiddenRect.width
+                              : underRect.x + underRect.width;
+                    int iy1 = hiddenRect.y + hiddenRect.height <
+                              underRect.y + underRect.height
+                              ? hiddenRect.y + hiddenRect.height
+                              : underRect.y + underRect.height;
+                    if (ix1 > ix0 && iy1 > iy0)
+                    {
+                        XRegion expose;
+                        XRect local;
+                        XRegion_init(&expose);
+                        local.x = ix0 - underRect.x;
+                        local.y = iy0 - underRect.y;
+                        local.width = ix1 - ix0;
+                        local.height = iy1 - iy0;
+                        XRegion_addRect(&expose, &local);
+                        XWindowSystemInterface_handleExposeEvent(under,
+                                                                 &expose);
+                        XRegion_deinit(&expose);
+                        break; /* 只有最上层相交层需要恢复。 */
+                    }
+                }
+            }
+            XVector_delete_base(tops);
+        }
+    }
+#endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
 #if XACCESSIBLE_ON
     if (old != visible)
         XPlatformAccessibility_notifyWindow(XAccessibleEvent_StateChanged,
