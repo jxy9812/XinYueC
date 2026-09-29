@@ -13,7 +13,6 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XSystem.h"
-#include <string.h>
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
@@ -181,7 +180,7 @@ static const char* performanceOverlay_placeholder(
     char* scratch, size_t scratchCap)
 {
 #define KEY_IS(literal) \
-    (keyLen == sizeof(literal) - 1u && memcmp(key, literal, keyLen) == 0)
+    (keyLen == sizeof(literal) - 1u && XMemcmp(key, literal, keyLen) == 0)
     if (KEY_IS("fps")) {
 #if XGUI_PERFORMANCE_OVERLAY_FPS_ON
         if (self->m_fpsVisible) {
@@ -275,17 +274,17 @@ static void performanceOverlay_renderFormat(const XPerformanceOverlay* self,
             continue;
         }
         if (p[0] == '{') {
-            const char* end = strchr(p + 1, '}');
+            const char* end = XStrchr(p + 1, '}');
             if (end) {
                 char scratch[96];
                 const char* value = performanceOverlay_placeholder(
                     self, p + 1, (size_t)(end - (p + 1)), scratch,
                     sizeof(scratch));
                 if (value) {
-                    size_t valueLen = strlen(value);
+                    size_t valueLen = XStrlen(value);
                     if (used + valueLen >= cap)
                         valueLen = cap - 1u - used;
-                    memcpy(text + used, value, valueLen);
+                    XMemcpy(text + used, value, valueLen);
                     used += valueLen;
                     p = end + 1;
                     continue;
@@ -349,7 +348,7 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
         if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
         memLen = performanceOverlay_memoryText(self, memText, sizeof(memText));
         if (memLen > 0 && used + memLen < sizeof(text)) {
-            memcpy(text + used, memText, memLen);
+            XMemcpy(text + used, memText, memLen);
             used += memLen;
         }
     }
@@ -361,7 +360,7 @@ static void performanceOverlay_updateText(XPerformanceOverlay* self)
         if (used > 0 && used + 1 < sizeof(text)) text[used++] = '\n';
         netLen = performanceOverlay_netText(self, netText, sizeof(netText));
         if (netLen > 0 && used + netLen < sizeof(text)) {
-            memcpy(text + used, netText, netLen);
+            XMemcpy(text + used, netText, netLen);
             used += netLen;
         }
     }
@@ -391,7 +390,7 @@ committed:
             /* textWidth 遇 '\n' 即停：逐行求最宽行。 */
             int lineW = XPainter_textWidth(&fontCopy, line);
             if (lineW > maxLineW) maxLineW = lineW;
-            line = strchr(line, '\n');
+            line = XStrchr(line, '\n');
             if (!line) break;
             ++line;
         }

@@ -29,7 +29,6 @@
 #include "XPlatformTheme.h"
 #include <limits.h>
 #include <math.h>
-#include <stdio.h>
 
 /* ========== 图标条目数据结构 ========== */
 

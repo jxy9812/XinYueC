@@ -392,9 +392,186 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
              * 行带每帧随同步传播，无「各留一份旧内容交替闪」退化）。 */
             if (!coversPanel && g_xpbsFbBackDirtyInit)
             {
-                for (i = 0; i < g_xpbsFbBackDirty.count; ++i)
+                /* 账本裁冗（2026-09-30 拖拽 60 档迭代，昆仑通态 A33）：
+                 * 账本=上一帧落笔行带，本帧写区即将整片覆盖两者交叠部
+                 * 分——先搬后盖是双倍 fb 写带宽（拖拽移动步：账本≈旧位
+                 * 整窗、写区≈新位整窗，实测差带补齐 ~0.96MB/步纯冗余，
+                 * 分相 post 相 31.6~34.6ms 的主项之一）。按弹层遮挡切
+                 * 分同款工作集做「账本 \ 本帧写区」矩形差分，只把真正
+                 * 缺失的余料搬入写入缓冲；工作集溢出降级为按账本原矩
+                 * 形整块搬（退回旧行为，绝不欠同步）。 */
+                XRect fbWrite[XPBS_OCCL_WORK_MAX];
+                XRect subWork[XPBS_OCCL_WORK_MAX];
+                XRect subNext[XPBS_OCCL_WORK_MAX];
+                XRect* subFrom = subWork;
+                XRect* subTo = subNext;
+                int fbWriteCount = 0;
+                int subCount = 0;
+                int wi;
+                int fi;
+                bool subTruncated = false;
+                /* 本帧写区 → fb 像素坐标（与下方账本更新同一裁剪链：
+                 * 图像范围 ∩ 面板范围），供差分求交。 */
+                for (i = 0; i < region->count &&
+                            fbWriteCount < XPBS_OCCL_WORK_MAX; ++i)
                 {
-                    const XRect* rect = &g_xpbsFbBackDirty.rects[i];
+                    const XRect* rect = &region->rects[i];
+                    int wx0, wy0, wx1, wy1;
+                    int fx0, fy0, fx1, fy1;
+                    if (!rect || rect->width <= 0 || rect->height <= 0)
+                        continue;
+                    wx0 = rect->x;
+                    wy0 = rect->y;
+                    wx1 = rect->x + rect->width;
+                    wy1 = rect->y + rect->height;
+                    if (wx0 < off->x) wx0 = off->x;
+                    if (wy0 < off->y) wy0 = off->y;
+                    if (wx1 > off->x + XImage_width(image))
+                        wx1 = off->x + XImage_width(image);
+                    if (wy1 > off->y + XImage_height(image))
+                        wy1 = off->y + XImage_height(image);
+                    fx0 = wx0 + origin->x;
+                    fy0 = wy0 + origin->y;
+                    fx1 = wx1 + origin->x;
+                    fy1 = wy1 + origin->y;
+                    if (fx0 < 0) fx0 = 0;
+                    if (fy0 < 0) fy0 = 0;
+                    if (fx1 > info.m_width) fx1 = info.m_width;
+                    if (fy1 > info.m_height) fy1 = info.m_height;
+                    if (fx1 <= fx0 || fy1 <= fy0) continue;
+                    fbWrite[fbWriteCount].x = fx0;
+                    fbWrite[fbWriteCount].y = fy0;
+                    fbWrite[fbWriteCount].width = fx1 - fx0;
+                    fbWrite[fbWriteCount].height = fy1 - fy0;
+                    ++fbWriteCount;
+                }
+                if (fbWriteCount >= XPBS_OCCL_WORK_MAX)
+                    subTruncated = true; /* 写区超表：降级整块搬。 */
+                if (!subTruncated)
+                {
+                    for (i = 0; i < g_xpbsFbBackDirty.count; ++i)
+                    {
+                        const XRect* rect = &g_xpbsFbBackDirty.rects[i];
+                        if (!rect || rect->width <= 0 || rect->height <= 0)
+                            continue;
+                        if (subCount >= XPBS_OCCL_WORK_MAX)
+                        {
+                            subTruncated = true;
+                            break;
+                        }
+                        subFrom[subCount++] = *rect;
+                    }
+                }
+                if (!subTruncated)
+                {
+                    for (fi = 0; fi < fbWriteCount; ++fi)
+                    {
+                        const XRect* c = &fbWrite[fi];
+                        int nn = 0;
+                        for (wi = 0; wi < subCount; ++wi)
+                        {
+                            const XRect* r = &subFrom[wi];
+                            int rx1 = r->x + r->width;
+                            int ry1 = r->y + r->height;
+                            int ix0 = r->x > c->x ? r->x : c->x;
+                            int iy0 = r->y > c->y ? r->y : c->y;
+                            int ix1 = rx1 < c->x + c->width
+                                          ? rx1 : c->x + c->width;
+                            int iy1 = ry1 < c->y + c->height
+                                          ? ry1 : c->y + c->height;
+                            if (ix1 <= ix0 || iy1 <= iy0)
+                            {
+                                /* 不相交：整段保留。 */
+                                if (nn < XPBS_OCCL_WORK_MAX)
+                                    subTo[nn++] = *r;
+                                else
+                                {
+                                    subTruncated = true;
+                                    break;
+                                }
+                                continue;
+                            }
+                            /* 相交：保留上下左右四条带（均不含本帧写
+                             * 区），与遮挡剔除切分同款。 */
+                            if (iy0 > r->y)
+                            {
+                                if (nn < XPBS_OCCL_WORK_MAX)
+                                {
+                                    subTo[nn].x = r->x;
+                                    subTo[nn].y = r->y;
+                                    subTo[nn].width = r->width;
+                                    subTo[nn].height = iy0 - r->y;
+                                    ++nn;
+                                }
+                                else
+                                {
+                                    subTruncated = true;
+                                    break;
+                                }
+                            }
+                            if (iy1 < ry1)
+                            {
+                                if (nn < XPBS_OCCL_WORK_MAX)
+                                {
+                                    subTo[nn].x = r->x;
+                                    subTo[nn].y = iy1;
+                                    subTo[nn].width = r->width;
+                                    subTo[nn].height = ry1 - iy1;
+                                    ++nn;
+                                }
+                                else
+                                {
+                                    subTruncated = true;
+                                    break;
+                                }
+                            }
+                            if (ix0 > r->x)
+                            {
+                                if (nn < XPBS_OCCL_WORK_MAX)
+                                {
+                                    subTo[nn].x = r->x;
+                                    subTo[nn].y = iy0;
+                                    subTo[nn].width = ix0 - r->x;
+                                    subTo[nn].height = iy1 - iy0;
+                                    ++nn;
+                                }
+                                else
+                                {
+                                    subTruncated = true;
+                                    break;
+                                }
+                            }
+                            if (ix1 < rx1)
+                            {
+                                if (nn < XPBS_OCCL_WORK_MAX)
+                                {
+                                    subTo[nn].x = ix1;
+                                    subTo[nn].y = iy0;
+                                    subTo[nn].width = rx1 - ix1;
+                                    subTo[nn].height = iy1 - iy0;
+                                    ++nn;
+                                }
+                                else
+                                {
+                                    subTruncated = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (subTruncated) break;
+                        {
+                            XRect* swap = subFrom;
+                            subFrom = subTo;
+                            subTo = swap;
+                            subCount = nn;
+                        }
+                    }
+                }
+                for (i = 0; i < (subTruncated ? g_xpbsFbBackDirty.count
+                                              : subCount); ++i)
+                {
+                    const XRect* rect = subTruncated
+                        ? &g_xpbsFbBackDirty.rects[i] : &subFrom[i];
                     if (!rect || rect->width <= 0 || rect->height <= 0)
                         continue;
                     xpbs_syncRectRows(&info, writeIndex, rect, pixelBytes,
@@ -594,9 +771,11 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
      * fb 字节范围（独立弹层窗 ~30Hz 自续重绘下，整幅 msync 每次 ~30ms
      * 是 CPU 飙升的主项；收窄后单次亚毫秒）。无写入则跳过。 */
     if (syncAny)
+    {
         xpbs_cacheSyncRangeWarnOnce(ops,
                                     (uint8_t*)info.m_frameBuffer + syncLo,
                                     syncHi - syncLo);
+    }
     /* 翻页提交：pan 到刚写入的缓冲（单缓冲 no-op）；成功后轮换写索引。
      * pan 失败不回滚（内容已在目标缓冲，下帧重试同号缓冲覆盖写）。 */
     if (ops->pan(writeIndex))

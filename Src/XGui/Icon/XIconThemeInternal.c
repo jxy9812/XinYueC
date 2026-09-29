@@ -26,7 +26,6 @@
 #include "XDir.h"
 #include <limits.h>
 #include <stdint.h>
-#include <stdio.h>
 
 #if XIMAGECODEC_ON && XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON
 #define XICON_THEME_SVG_AVAILABLE 1
@@ -226,10 +225,14 @@ static bool theme_cacheRead32(const uint8_t* data, size_t length,
 static const char* theme_cacheString(const uint8_t* data, size_t length,
                                      uint32_t offset)
 {
-    const uint8_t* end;
+    size_t i;
     if (!data || (uint64_t)offset >= (uint64_t)length) return NULL;
-    end = (const uint8_t*)memchr(data + offset, '\0', length - offset);
-    return end ? (const char*)(data + offset) : NULL;
+    /* 库内无 memchr 原语（XMemory 仅 memcpy/memset/memmove/memcmp 白名单），
+       本地扫描定位键终止符，避免 <string.h> 依赖（外部依赖约束）。 */
+    for (i = offset; i < length; ++i) {
+        if (data[i] == '\0') return (const char*)(data + offset);
+    }
+    return NULL;
 }
 
 static uint32_t theme_cacheHash(const char* name)

@@ -2,6 +2,7 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XGuiConfig.h"
+#include "XWindowDecoration.h" /* 框架条让位：布局按 frameMargins 整体下移 */
 #include "XDockWidget_Protected.h"
 #include "XStringUtils.h"
 
@@ -329,9 +330,22 @@ static void xmw_layout(XMainWindow* self)
     XRect r;
     int64_t i;
     int64_t n;
+    XMargins fm;
     if (!self) return;
+    /* CSD 框架条让位（桌面实测 2026-09-29 根因修复）：窗口装饰保留边
+     * 距是顶层内容区的硬边界——菜单栏/工具栏/停靠区/中央区全部按其整体
+     * 下移（左右/底边距同权处理），否则 CSD 模式下第一行内容被自绘标
+     * 题条覆盖（dock 区标题条与宿主装饰条同带重叠即此根因；系统条模式
+     * 边距恒零，布局零变化）。内容属主自行让位的框架约定对主窗口不一
+     * 适用——其子区几何全部由本函数集中分派。 */
+    fm = XWindowDecoration_marginsFor((XWidget*)self);
+    top += fm.top;
+    bottom += fm.bottom;
     if (self->m_menuBar && XWidget_isVisible(self->m_menuBar)) {
-        XRect_init(&r, 0, top, w, xmw_menuHeight());
+        XRect_init(&r, fm.left, top, w - fm.left - fm.right > 0
+                                      ? w - fm.left - fm.right
+                                      : 0,
+                   xmw_menuHeight());
         XWidget_setGeometryRect(self->m_menuBar, &r);
         top += xmw_menuHeight();
     }
@@ -341,14 +355,19 @@ static void xmw_layout(XMainWindow* self)
             XToolBar** tb;
             if (!xmw_isTopToolBar(self, i)) continue;
             tb = (XToolBar**)XVector_at_base(self->m_toolBars, i);
-            XRect_init(&r, 0, top, w, 30);
+            XRect_init(&r, fm.left, top,
+                       w - fm.left - fm.right > 0 ? w - fm.left - fm.right
+                                                  : 0,
+                       30);
             XWidget_setGeometryRect((XWidget*)*tb, &r);
             top += 30;
         }
     }
     if (self->m_statusBar && XWidget_isVisible(self->m_statusBar)) {
         int sh = XWidget_height(self->m_statusBar);
-        XRect_init(&r, 0, h - sh, w, sh);
+        XRect_init(&r, fm.left, h - sh,
+                   w - fm.left - fm.right > 0 ? w - fm.left - fm.right : 0,
+                   sh);
         XWidget_setGeometryRect(self->m_statusBar, &r);
         bottom = sh;
     }
@@ -363,24 +382,33 @@ static void xmw_layout(XMainWindow* self)
     if (bottomRowH > h - bottom - top - topRowH)
         bottomRowH = h - bottom - top - topRowH > 0
                          ? h - bottom - top - topRowH : 0;
-    xmw_layoutDockRow(self, (int)XDockWidgetArea_Top, top, topRowH, 0, w);
+    xmw_layoutDockRow(self, (int)XDockWidgetArea_Top, top, topRowH,
+                      fm.left, w - fm.left - fm.right > 0
+                                   ? w - fm.left - fm.right
+                                   : 0);
     top += topRowH;
     xmw_layoutDockRow(self, (int)XDockWidgetArea_Bottom,
-                      h - bottom - bottomRowH, bottomRowH, 0, w);
+                      h - bottom - bottomRowH, bottomRowH,
+                      fm.left,
+                      w - fm.left - fm.right > 0 ? w - fm.left - fm.right
+                                                 : 0);
     bottom += bottomRowH;
     /* 左/右停靠列：列宽可经 resizeDocks 覆盖，列内可见面板行堆叠。 */
     leftW = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Left)
                 ? self->m_leftDockWidth : 0;
     rightW = xmw_dockAreaUsed(self, (int)XDockWidgetArea_Right)
                  ? self->m_rightDockWidth : 0;
-    xmw_layoutDockColumn(self, (int)XDockWidgetArea_Left, 0, leftW, top,
-                         h - bottom);
+    xmw_layoutDockColumn(self, (int)XDockWidgetArea_Left, fm.left, leftW,
+                         top, h - bottom);
     xmw_layoutDockColumn(self, (int)XDockWidgetArea_Right,
-                         w - rightW > 0 ? w - rightW : 0, rightW, top,
-                         h - bottom);
+                         w - fm.right - rightW > 0 ? w - fm.right - rightW
+                                                   : 0,
+                         rightW, top, h - bottom);
     if (self->m_central) {
-        XRect_init(&r, leftW, top,
-                   w - leftW - rightW > 0 ? w - leftW - rightW : 0,
+        XRect_init(&r, fm.left + leftW, top,
+                   w - fm.left - leftW - rightW - fm.right > 0
+                       ? w - fm.left - leftW - rightW - fm.right
+                       : 0,
                    h - top - bottom > 0 ? h - top - bottom : 0);
         XWidget_setGeometryRect(self->m_central, &r);
     }

@@ -9,7 +9,6 @@
  */
 
 #include "XTextControl.h"
-#include <string.h>
 #include "XStringUtils.h"
 #include "XMemory.h"
 #include "XPainter.h"
@@ -5216,7 +5215,7 @@ void XTextControl_setFont(XTextControl* self, const XFont* font)
        （ASan 基线扫查发现）。 */
     familyChanged = (oldFamily != newFamily) &&
                     (oldFamily == NULL || newFamily == NULL ||
-                     strcmp(oldFamily, newFamily) != 0);
+                     XStrcmp(oldFamily, newFamily) != 0);
     XFont_deinit_base((XClass*)&self->m_font);
     /* 深拷贝（对标 XWidget_font 的 Phase 3.2 裁定）：XFont 值拷贝共享
        XString 指针，浅拷贝会在任一持有方 deinit 后留下悬空指针。 */

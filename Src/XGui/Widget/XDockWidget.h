@@ -10,7 +10,11 @@
  *               标题栏可拖动、可关闭；对标 QDockWidget 拖出主窗成
  *               独立顶层窗的行为）；
  *             - setAllowedAreas/allowedAreas（XDockWidgetArea 位掩码）；
- *             - setTitleBarWidget/titleBarWidget（自定义标题条）；
+ *             - setTitleBarWidget/titleBarWidget（自定义标题条；
+ *               XGUI_CUSTOM_TITLEBAR_ON=1 时承载于父类控件级通用槽
+ *               XWidget::m_titleBarWidget：设置=父类挂载语义+本类停靠
+ *               钉位薄包装、查询宏映射 XWidget_titleBarWidget 纯读槽；
+ *               =0 时保留本类自有成员与实现）；
  *             - toggleViewAction()（显示/隐藏切换动作，真实绑定
  *               visible 翻转并随显隐同步 checked）；
  *             - 信号：featuresChanged/topLevelChanged/
@@ -53,7 +57,13 @@ typedef struct XDockWidget
     int m_features;          /**< 特性位标志（默认全开）。 */
     int m_allowedAreas;      /**< 允许停靠区域。 */
     bool m_floating;         /**< 浮动状态。 */
+#if XGUI_CUSTOM_TITLEBAR_ON
+    /* 自定义标题条由父类槽位承载：XWidget::m_titleBarWidget（借用，
+     * 见 XWidget_setTitleBarWidget）；本类自有成员 m_titleBar 删除，
+     * 内部消费点统一经 XWidget_titleBarWidget 读槽。 */
+#else
     XWidget* m_titleBar;     /**< 自定义标题条（借用）。 */
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
     XString* m_title;       /**< 标题文本（对象拥有）。 */
     XWidget* m_host;         /**< 宿主主窗口（借用；addDockWidget 登记，
                               *   对标 QDockWidget 回链 QMainWindowLayout）。 */
@@ -138,17 +148,34 @@ int XDockWidget_allowedAreas(const XDockWidget* self);
  * @return area 在 allowedAreas 位掩码内返回 true。
  */
 bool XDockWidget_isAreaAllowed(const XDockWidget* self, int area);
-/** @brief X停靠控件set标题条控件（对标 Qt 同名接口）。
+#if XGUI_CUSTOM_TITLEBAR_ON
+/* 设置为本类薄包装（父类挂载 + 停靠侧挂载即钉位，见下方函数注）；
+ * 查询为纯读槽转发：继承父类已有 API 直接宏复用，不写 C 转发包装
+ * （风格指南）。借用契约（借用不拥有、释放责任归创建方、旧条解挂不
+ * 释放）由父类实现统一承载，消费分层见 XWidget_setTitleBarWidget：
+ * 本面板即「XDockWidget=停靠标题条」层。 */
+#define XDockWidget_titleBarWidget(self) XWidget_titleBarWidget((const XWidget*)(self))
+#else
+/* 宏关分支：本类自有成员 m_titleBar 与自有实现（行为与改造前逐行等价）。 */
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
+/** @brief X停靠控件set标题条控件（对标 Qt QDockWidget::setTitleBarWidget）。
+ * @details XGUI_CUSTOM_TITLEBAR_ON=1 时为本类薄包装：挂载/解挂/借用语义
+ *          统一交父类 XWidget_setTitleBarWidget（控件级通用槽），随后补
+ *          停靠侧摆位——挂载即把条钉满标题条区（父类只挂载不摆位，摆位
+ *          归消费方；不等待面板下一次 resizeEvent）；=0 时为自有实现。
+ *          传 NULL 摘除自定义条恢复内置标题条。
  * @param self 目标控件指针。
- * @param widget 子控件指针。
+ * @param widget 新标题条控件借用指针；不转移所有权，可为 NULL。
  * @return 无返回值。
  */
 void XDockWidget_setTitleBarWidget(XDockWidget* self, XWidget* widget);
+#if !XGUI_CUSTOM_TITLEBAR_ON
 /** @brief X停靠控件title条控件（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @return 返回对象指针；无效时返回 NULL。
  */
 XWidget* XDockWidget_titleBarWidget(const XDockWidget* self);
+#endif /* !XGUI_CUSTOM_TITLEBAR_ON */
 /** @brief X停靠控件toggleView动作（对标 QDockWidget::toggleViewAction）。
  * @details 返回惰性创建的显示/隐藏切换动作：可选中，checked 随面板显隐
  *          同步（对标 Qt 的 syncViewAction），triggered 时翻转面板可见性；

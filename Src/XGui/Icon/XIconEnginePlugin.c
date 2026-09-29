@@ -8,7 +8,7 @@
 #include "XMemory.h"
 #include "XContainer.h"
 #include "XStringList.h"
-#include <string.h>
+#include "XStringUtils.h"
 
 static XIconEngine* VXIconEnginePlugin_create(XIconEnginePlugin* self,
                                                const XString* fileName)
@@ -127,11 +127,11 @@ static bool iconSuffixMatch(const char* fileName, const char* key)
     size_t nameLen;
     size_t i;
     if (!fileName || !key || !key[0]) return false;
-    dot = strrchr(fileName, '.');
+    dot = XStrrchr(fileName, '.');
     if (!dot || !dot[1]) return false;
     ++dot;
-    keyLen = strlen(key);
-    nameLen = strlen(dot);
+    keyLen = XStrlen(key);
+    nameLen = XStrlen(dot);
     if (nameLen != keyLen) return false;
     for (i = 0; i < nameLen; ++i) {
         char a = dot[i];

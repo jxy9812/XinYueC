@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       xgui_window_demo.c
  * @brief      XGui GUI 控件统一可视化测试程序（Linux X11 / Windows Win32）。
  * @details    本程序是 GUI 控件的人工可视化验收入口，演示 XGui 完整窗口链路：
@@ -369,7 +369,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[9]; /**< 页面切换按钮：5 内置页 + 4 扩展页。 */
+    XPushButton     m_pageNav[9];  /**< 页面切换按钮：5 内置页 + 4 扩展页。 */
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（4 个演示页面）。 */
@@ -879,6 +879,7 @@ static void demo_layout_chrome(DemoWin* self);
 static void demo_layout_content(DemoWin* self);
 static void demo_switchPage(DemoWin* self, int index);
 #endif
+
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
 /** @brief 静态场景缓存是否可直接复用（决定 demo_repaint 的重绘范围）。
  * @details 软件模式以 CPU 缓存图像的尺寸与显式脏标记共同判定；GPU 直通
@@ -1145,9 +1146,11 @@ static void demo_input_autotest(DemoWin* self)
         XPoint tglobal;
         XTouchEvent te;
         /* 页签中心随框架系统标题栏下移（无 WM 环境=条高，桌面
-           =0 零变化）：导航行几何 setGeometry(12+nav*86, 44+SYSBAR, 84,26)
-           → 条目视图（nav5）中心 (484, 57+SYSBAR)。 */
-        XPoint_init(&tpos, 483, 57 + demo_sysbarH(self));
+           =0 零变化）：导航行几何 setGeometry(12+nav*78, 44+SYSBAR, 78,26)
+           → 条目视图（nav5）中心
+           (441, 57+SYSBAR)。（E2 合流修：本断言坐标原为 86px 步距旧几何
+           483，收窄后落在 nav6，页签切换回归锁恒红。） */
+        XPoint_init(&tpos, 441, 57 + demo_sysbarH(self));
         tglobal = tpos;
         /* 对照组：窗口级合成鼠标按下/抬起点页签。 */
         XWindowSystemInterface_handleMouseEvent_ex(
@@ -1731,6 +1734,7 @@ static void demo_nav7Slot(XObject* receiver, XVarList* args)
     (void)args;
     demo_switchPage((DemoWin*)receiver, 7);
 }
+
 /** @brief 页面 9（图形效果）导航按钮 clicked 槽。 */
 static void demo_nav8Slot(XObject* receiver, XVarList* args)
 {
@@ -2047,6 +2051,9 @@ static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
     DemoWin* demo = (DemoWin*)self;
     int64_t frameStartUsecs = demo_monotonicUsecs();
 #endif
+    /* 临时探针已拆除（绘制率/整窗-局部分类取证完毕，2026-09-29）：结论
+       =改尺寸拖拽期每落地步 ~2 个局部 paintEvent（差带条带+HUD 标签
+       微绘），presents=落地步数，无整窗帧无幻绘。 */
     demo_paintScene((DemoWin*)self, event);
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     /* 悬浮层尺寸自适应（文字贴边收框）后，位置需同步右移/下移保持
@@ -2060,21 +2067,35 @@ static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
     }
     {
         int64_t frameEndUsecs = demo_monotonicUsecs();
-        XPerformanceOverlay_updateFrame(&demo->m_performanceOverlay,
-                                        frameStartUsecs, frameEndUsecs);
+        /* FPS 口径=绘制活动率（每个 paintEvent 计 1 帧，含空闲 tick——
+           用户裁定 2026-09-29：悬浮窗自身也在刷新，静止不为 0）。
+           【HUD 手势期冻结（方案 C，2026-09-29）】装饰手势（拖拽移动/
+           改尺寸）进行中跳过 updateFrame/updateNetwork：省掉 250ms 统计
+           窗口落在手势步时的 HUD setText 全文重排+autoFit 度量+标签微
+           绘（独立 flush 周期，受击步 1-3ms 抖动尖峰）。读数语义随之
+           变化：手势帧不入样本，统计窗口跨度含冻结期——松手后首个
+           paintEvent 一次补齐，该窗口读数=「含手势冻结跨度的真实活动
+           率」（分母拉长、读数偏低一窗），不再是限帧闸下 ≈2x 落地步率
+           的虚高口径；限帧是否生效仍以 CPU 差分/CPU% 为准。手势中窗口
+           几何跟随不受影响（resizeEvent 已重锚
+           悬浮层，本处重锚只在悬浮层自身尺寸变化时触发）。 */
+        if (!XWindowDecoration_gestureActive()) {
+            XPerformanceOverlay_updateFrame(&demo->m_performanceOverlay,
+                                            frameStartUsecs, frameEndUsecs);
 #if XGUI_PERFORMANCE_OVERLAY_NETWORK_ON
-        if (demo->m_lastNetworkPollUsecs <= 0 ||
-            frameEndUsecs - demo->m_lastNetworkPollUsecs >=
-                (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL) {
-            uint64_t rxBytes = 0;
-            uint64_t txBytes = 0;
-            bool available = XDeviceNetwork_getNetworkCounters(&rxBytes, &txBytes);
-            XPerformanceOverlay_updateNetwork(&demo->m_performanceOverlay,
-                                              available, rxBytes, txBytes,
-                                              frameEndUsecs);
-            demo->m_lastNetworkPollUsecs = frameEndUsecs;
-        }
+            if (demo->m_lastNetworkPollUsecs <= 0 ||
+                frameEndUsecs - demo->m_lastNetworkPollUsecs >=
+                    (int64_t)XGUI_PERFORMANCE_OVERLAY_UPDATE_MS * 1000LL) {
+                uint64_t rxBytes = 0;
+                uint64_t txBytes = 0;
+                bool available = XDeviceNetwork_getNetworkCounters(&rxBytes, &txBytes);
+                XPerformanceOverlay_updateNetwork(&demo->m_performanceOverlay,
+                                                  available, rxBytes, txBytes,
+                                                  frameEndUsecs);
+                demo->m_lastNetworkPollUsecs = frameEndUsecs;
+            }
 #endif /* XGUI_PERFORMANCE_OVERLAY_NETWORK_ON */
+        }
     }
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON */
 }
@@ -2320,7 +2341,7 @@ static DemoWin* DemoWin_create(void)
             "\xE6\x9D\xA1\xE7\x9B\xAE\xE8\xA7\x86\xE5\x9B\xBE", /* 条目视图 */
             "\xE5\xAF\xB9\xE8\xAF\x9D\xE6\xA1\x86",             /* 对话框 */
             "\xE9\xAB\x98\xE7\xBA\xA7\xE6\x8E\xA7\xE4\xBB\xB6", /* 高级控件 */
-            "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C"  /* 图形效果 */
+            "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C", /* 图形效果 */
         };
         static void (*const kNavSlots[9])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
@@ -2333,9 +2354,10 @@ static DemoWin* DemoWin_create(void)
             XPushButton_init(button, &self->m_base, 0);
             demo_set_widget_default_font((XWidget*)button);
             XPushButton_setText_2(button, kNavTexts[nav]);
-            /* 9 个按钮收窄到 84px/步距 86，单行排入 800 宽窗口。 */
-            XWidget_setGeometry((XWidget*)button, 12 + nav * 86,
-                                44 + demo_sysbarH(self), 84, 26);
+            /* 9 个按钮 78px/步距 78，单行排入 800 宽窗口（步距保持
+             * 78：autotest 页签回归坐标 (441,57) 按此口径锁定）。 */
+            XWidget_setGeometry((XWidget*)button, 12 + nav * 78,
+                                44 + demo_sysbarH(self), 78, 26);
             XObject_connect_1((XObject*)button,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)self, kNavSlots[nav],
@@ -3287,6 +3309,7 @@ int main(int argc, char* argv[])
        （fbdev 上首帧标题缺失的嫌疑之一）；与子控件同族默认字体。 */
     demo_set_widget_default_font(&win->m_base);
 #endif
+
 
     if (!win) {
         XPrintf("XGuiWindowDemo: DemoWin_create 失败\n");

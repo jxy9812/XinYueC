@@ -68,6 +68,15 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XGuiConfig.h"
+
+/* 控件级自定义标题条开关：XGuiConfig.h 正式定义（XGUI_CUSTOM_TITLEBAR_ON
+ * 置于窗口/装饰相关宏区）缺失时的文件内 #ifndef 兜底，与配置默认值 1
+ * 幂等（谁先定义谁生效，命令行 -D 覆盖两者）。置 0 时成员与两条公开
+ * API 整体裁剪，XDockWidget 自有标题条 API 回归原实现。 */
+#ifndef XGUI_CUSTOM_TITLEBAR_ON
+#define XGUI_CUSTOM_TITLEBAR_ON 1
+#endif
+
 #if XPAINTDEVICE_ON
 #include "XPaintDevice.h"
 #endif
@@ -498,6 +507,9 @@ XCLASS_DEFINE_ENUM(XWidget, HideEvent),
  *             - m_palette：控件调色板（值类型；仅 m_paletteSet=1 时覆盖应用调色板）；
  *             - m_dirty：待重绘区域；m_staticContents：静态内容区域；
  *             - m_windowHandle：顶层控件内嵌 XWidgetWindow（拥有，内部类）；
+ *             - m_titleBarWidget：控件级自定义标题条槽（借用；仅
+ *               XGUI_CUSTOM_TITLEBAR_ON=1 时存在，见
+ *               XWidget_setTitleBarWidget）；
  *             - m_backingStore：顶层控件离屏后备存储（拥有）；
  *             - m_actions：动作列表容器（拥有容器、借用 XAction* 元素）；
  *             - m_style：控件级样式（借用；NULL=默认样式）；
@@ -576,6 +588,12 @@ typedef struct XWidget
     XRegion                 m_dirty;           /**< 待重绘区域（拥有）。 */
     XRegion                 m_staticContents;  /**< 静态内容区域（拥有）。 */
     XWidgetWindow*          m_windowHandle;    /**< 顶层桥接窗口（拥有；内部类）。 */
+#if XGUI_CUSTOM_TITLEBAR_ON
+    XWidget*                m_titleBarWidget;  /**< 控件级自定义标题条槽（借用；
+                                                    *   释放责任归创建方，本控件
+                                                    *   只摆位与清指针，见
+                                                    *   XWidget_setTitleBarWidget）。 */
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
 #if XWINDOW_ON && XACCESSIBLE_ON
     XAccessible*            m_accessible;      /**< 控件可访问节点（拥有）。 */
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
@@ -1246,6 +1264,52 @@ void XWidget_setWindowOpacity(XWidget* self, double opacity);
 bool XWidget_isWindowModified(const XWidget* self);
 /** @brief 设置窗口已修改标志（对标 QWidget::setWindowModified）。 */
 void XWidget_setWindowModified(XWidget* self, bool modified);
+
+/* ==================== 控件级自定义标题条（XGUI_CUSTOM_TITLEBAR_ON） ==================== */
+
+#if XGUI_CUSTOM_TITLEBAR_ON
+/**
+ * @brief      设置控件级自定义标题条（控件级通用槽，任意控件可设）。
+ * @details    消费者分层：同一槽位由控件角色决定消费行为——
+ *             - 顶层窗口：条由窗口装饰系统接管为窗口标题条（内部联动
+ *               XWindowDecoration_syncWindow 重钉几何；该调用对非顶层
+ *               自短路）；
+ *             - XDockWidget：条作为停靠标题条消费（XDockWidget 经宏
+ *               复用本 API，见 XDockWidget_setTitleBarWidget）；
+ *             - 无消费者的普通控件：仅存储，框架不做摆位与呈现。
+ *             借用语义：bar 所有权不转移，释放责任归创建方；框架只挂载
+ *             （挂为子控件并显式 show）与清指针。与 Qt
+ *             QDockWidget::setTitleBarWidget 的差异：Qt 语义限于停靠
+ *             面板标题条替换，本 API 提升为控件级通用槽并额外覆盖顶层
+ *             窗口标题条定制（Qt 改窗口标题栏须经 QProxyStyle/自定义
+ *             QStyle）；旧条处理与 Qt 一致——先隐藏，若曾挂到本控件则
+ *             摘除父链归还创建方，不释放；传 NULL 摘除自定义条恢复默认。
+ * @param      self 目标控件；可为 NULL（不执行任何操作）。
+ * @param      bar 新标题条控件借用指针；挂入时其父链改挂到 self、窗口
+ *             标志按子控件归一；与当前槽位相同指针时幂等短路；可为
+ *             NULL 表示摘除当前条恢复默认标题条。
+ * @return     无返回值。
+ * @warning    bar 生命周期由创建方负责：宿主控件析构时框架会在级联删子
+ *             前把条解挂归还（不随宿主删除），创建方此后自行释放；控件
+ *             树槽位不随值拷贝/移动，XCopy/XMove 后新对象槽位为空。
+ * @warning    顶层窗口消费场景（self 为顶层控件）要求 bar 派生自
+ *             XTitleBar：装饰路径的类型化操作（命中测试虚槽/活动子控件
+ *             注入/选项组装）按 XTitleBar 布局访问条控件，挂载非派生控
+ *             件时装饰系统降级为仅摆位与纯子控件放行（无装饰按钮命中、
+ *             无按住/悬停状态注入，动态校验见 XTitleBar_isBar）；
+ *             XDockWidget 等停靠消费与无消费者普通控件无此类型限制。
+ */
+void XWidget_setTitleBarWidget(XWidget* self, XWidget* bar);
+/**
+ * @brief      查询控件级自定义标题条（借用指针）。
+ * @param      self 目标控件；可为 NULL。
+ * @return     返回当前挂载的自定义标题条借用指针；未设置或空指针返回
+ *             NULL。返回指针归创建方所有，调用方不得释放。
+ * @warning    借用槽不追踪销毁：创建方释放条控件前必须先以 NULL 调用
+ *             XWidget_setTitleBarWidget 清槽，否则本查询返回悬挂指针。
+ */
+XWidget* XWidget_titleBarWidget(const XWidget* self);
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
 
 /* ==================== 可用性与焦点（对标 QWidget） ==================== */
 

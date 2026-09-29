@@ -1,4 +1,4 @@
-/****************************************************************************
+﻿/****************************************************************************
  * @file       XGuiConfig.h
  * @brief      XGui 模块总开关与子功能配置。
  * @details    CXinYueConfig.h 只保留 XGUI_ON 总开关入口；所有 GUI 子开关
@@ -192,6 +192,33 @@
 #define XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT 80
 #endif
 
+/* 交互限帧（低性能设备调优参数；时间源一律 XDateTime_currentMSecs
+ * SinceEpoch 单调毫秒，与 GPU 直通既有限频/PARTIAL 攒批帧界同源）。
+ * - XGUI_RESIZE_REPAINT_MAX_FPS：窗口手势（装饰拖拽移动+改尺寸）的落
+ *   地+重绘节奏上限（挂点 XWindowDecoration MOUSE_MOVE 两分支，整函数
+ *   闸——被跳过的中间位移由「按下锚+总位移」无状态重算天然合并，松手
+ *   补尾帧零丢失）。用户裁定 2026-09-29：拖拽移动与改尺寸同归本宏。
+ *   只约束装饰拖拽路径；桌面 WM 管理的移动/改尺寸不经过该路径。
+ * - XGUI_PRESENT_MAX_FPS：整体上屏节奏上限（挂点 XWidget_flushBacking
+ *   Store 决策段，GPU/软件全部提交腿同闸；首绘/EXPOSE 整窗帧与降级
+ *   恢复帧永不跳，skip 帧把提交矩形并回脏区账本、尾帧结构性必达）。
+ *   默认 0=不限；运行期环境变量 XGPU_PRESENT_MAX_FPS 仍可覆盖 present
+ *   限频值（未设用宏值，设了覆盖宏）。手势移动的直提上屏不经 flush，
+ *   只受 RESIZE 宏约束（本宏管不到）。
+ * 两宏取值 0=不限（RESIZE 侧使用面 #if 编译期裁掉限频代码；负值由下
+ * 方钳制收敛为 0）。分工不可互替：PRESENT 限不住改尺寸的全窗脏帧
+ * （coversFull 整窗帧永不跳），改尺寸/拖拽移动限帧必须用 RESIZE 宏。
+ * 调法：默认 RESIZE=60（用户裁定 2026-09-30：交付包取 60 档——拖拽
+ * 跟手不步进，CPU 由手势提交链收窄差带账本裁冗兜住；2026-09-29 深夜
+ * 曾定 15（A33 实测每落地步 ~28ms 是全布局+合成+差带的固有成本，30
+ * 档连续快拖仍 80%，15 档减半），60 档要求以账本差带裁冗为前提）。 */
+#ifndef XGUI_RESIZE_REPAINT_MAX_FPS
+#define XGUI_RESIZE_REPAINT_MAX_FPS 60
+#endif
+#ifndef XGUI_PRESENT_MAX_FPS
+#define XGUI_PRESENT_MAX_FPS 0
+#endif
+
 /* 窗口表面（后备存储）像素格式的编译期选择器（对标 Qt QBackingStore
  * 随目标窗口/屏幕格式协商缓冲格式的行为：Qt 由平台窗口报告格式后按
  * 其分配缓冲；嵌入式目标的面板像素接口在出厂时固定，没有运行期协商
@@ -243,6 +270,15 @@
 #if XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT < 1
 #undef XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT
 #define XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT 1
+#endif
+/* 限帧宏防呆：负值（含笔误）收敛为 0=不限；0 本身合法，无上限钳制。 */
+#if XGUI_RESIZE_REPAINT_MAX_FPS < 0
+#undef XGUI_RESIZE_REPAINT_MAX_FPS
+#define XGUI_RESIZE_REPAINT_MAX_FPS 0
+#endif
+#if XGUI_PRESENT_MAX_FPS < 0
+#undef XGUI_PRESENT_MAX_FPS
+#define XGUI_PRESENT_MAX_FPS 0
 #endif
 /* fbdev 影子缓冲豁免：fb 直写无翻页轮换，双缓冲只会多分配一块
  * 1.2MB 影子并触发无意义的交替+整搬（昆仑通态 A7 实测）。 */
@@ -604,6 +640,30 @@
 #define XGUI_RETAINED_LAYER_BUDGET_BYTES (2u * 1024u * 1024u)
 #endif
 
+/* 窗口装饰与自定义标题条策略（框架自绘 CSD 标题栏体系，见
+ * XWindowDecoration/XTitleBar/XPlatformThemeDecoration）。 */
+/* 控件级自定义标题条开关：置 1 时提供 XWidget_setTitleBarWidget/
+ * titleBarWidget 控件级通用槽（顶层窗口=装饰系统接管为窗口标题条，
+ * XDockWidget=停靠标题条经宏复用同一 API）以及装饰模块的自定义条
+ * 分支；置 0 时上述 API、struct 成员与宏映射整体裁剪，XDockWidget
+ * 回归自有实现。框架默认标题条控件 XTitleBar 不受本开关门控（无
+ * WM 设备的框架自绘条本身就用它）。 */
+#ifndef XGUI_CUSTOM_TITLEBAR_ON
+#define XGUI_CUSTOM_TITLEBAR_ON 1
+#endif
+/* 桌面 CSD 编译默认策略：桌面会话（有原生窗口管理器）下框架自绘
+ * 标题栏（client-side decorations）默认开启（用户裁定 2026-09-29）=
+ * 多平台标题栏统一——桌面与无 WM 设备（fbdev 直写面板）同走框架自
+ * 绘，平台层按抑制位关掉原生 WM 装饰（无双栏，posix 管线见
+ * XPlatformNativeWindow_posix.c）。运行期可用环境变量 XGUI_CSD 覆盖
+ * 本编译默认：XGUI_CSD=0 强制交 WM（回到系统条模式）、XGUI_CSD=1
+ * 强制框架自绘；一次性解析入口见 XPlatformThemeDecoration_
+ * effectiveMode（优先级：运行时 setMode > 环境变量 XGUI_CSD > 本编
+ * 译默认 > Auto 探测，完整链见该函数注）。 */
+#ifndef XGUI_CSD_DEFAULT
+#define XGUI_CSD_DEFAULT 1
+#endif
+
 /* 原生窗口与系统无障碍平台后端。 */
 #ifndef XPLATFORMNATIVEWINDOW_X11_ON
 #define XPLATFORMNATIVEWINDOW_X11_ON 1
@@ -829,6 +889,11 @@
 #define XGUI_BACKINGSTORE_BUFFER_SIZE 0
 #undef XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
 #define XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 0
+/* 限帧参数随总开关收敛为 0=不限（消费方本就随 XGui 裁剪，双保险）。 */
+#undef XGUI_RESIZE_REPAINT_MAX_FPS
+#define XGUI_RESIZE_REPAINT_MAX_FPS 0
+#undef XGUI_PRESENT_MAX_FPS
+#define XGUI_PRESENT_MAX_FPS 0
 #undef XGUI_RETAINED_LAYER_BUDGET_BYTES
 #define XGUI_RETAINED_LAYER_BUDGET_BYTES 0
 #undef XPIXMAP_ON

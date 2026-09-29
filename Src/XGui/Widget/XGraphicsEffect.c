@@ -178,19 +178,29 @@ void XGraphicsEffect_setEnabled(XGraphicsEffect* self, bool enable)
 
 void XGraphicsEffect_update(XGraphicsEffect* self)
 {
+    XWidget* parent;
     XRectF boundsF;
     XRect bounds;
     if (!self || !self->m_source) return;
-    /* 对标 QGraphicsEffect::update：把效果包围盒（含外扩）整体标脏。
-       boundingRect 以父级相对原点构造，先平移回源控件局部坐标系
-       （updateRect 语义为控件局部坐标）；超出控件矩形的部分由
-       XWidget_addDirtyRegion 按 contentsRect 裁剪（简化项：效果外扩
-       区随覆盖该带的父级重绘呈现，见 XWidget 脏区管线限制）。 */
+    /* 对标 QGraphicsEffect::update：把效果包围盒（含模糊/投影外扩环）
+       整体标脏。boundingRect 以源控件的父级相对原点构造，外扩环落在
+       源控件矩形之外——必须经父控件标脏：父的 contentsRect 覆盖外溢
+       带，而经源控件标脏会被 XWidget_addDirtyRegion 按源自身
+       contentsRect 裁剪（环出账本 → DIRECT 差带模式下环像素已写入
+       后备存储却不在本帧提交区、也永不入差带账本 → 残影；与弹层遮挡/
+       脏区残环/窗口化 WM 同族，昆仑通态投影禁用残留实修点）。 */
     boundsF = XGraphicsEffect_boundingRect(self);
-    boundsF.x -= (float)XWidget_x(self->m_source);
-    boundsF.y -= (float)XWidget_y(self->m_source);
     bounds = xgraphicseffect_toRect(&boundsF);
     if (bounds.width <= 0 || bounds.height <= 0) return;
+    parent = XWidget_parentWidget(self->m_source);
+    if (parent) {
+        XWidget_updateRect(parent, &bounds);
+        return;
+    }
+    /* 源为顶层（无父控件）：无父级承载外溢带，退化回源控件本地坐标
+       自标（顶层外溢出窗界的部分无面可愈）。 */
+    bounds.x -= XWidget_x(self->m_source);
+    bounds.y -= XWidget_y(self->m_source);
     XWidget_updateRect(self->m_source, &bounds);
 }
 

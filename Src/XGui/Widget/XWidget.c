@@ -86,12 +86,17 @@
 #include "XBackingStore.h"
 #include "XPlatformBackingStore.h"
 #include "XWindowDecoration.h"
+/* XWindow_setCsdFrameSuppressed 原型（createWindow/setWindowFlags 的 CSD
+   抑制位预置两处调用）：保护接口按约束必须显式 include，不得依赖传递。 */
+#include "XWindow_Protected.h"
+/* XWindowDecoration_notifyTopDestroyed 原型（VXWidget_deinit 装饰注册表
+   摘项）：同为保护接口，显式 include。 */
+#include "XWindowDecoration_Protected.h"
 /* XSystem_environment 原型（本文件 GPU present 模式与脏区回退两处调用）；
    缺原型时 MSVC 隐式声明 int 返回，Win64 下指针截断（C4047）。 */
 #include "XSystem.h"
 #include "XDateTime.h"        /* present 限频计时：单调毫秒（约束文档时间源规则） */
 #include "XPrintf.h"          /* [wprof] flush per-leg profiling summary line */
-#include <stdlib.h>
 
 /* TEMP：paintTree 派发 paintEvent 时的上屏目标图像（表面裁剪限定用）。 */
 static XImage* g_paintTargetImage;
@@ -826,6 +831,13 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
 
     window = (XWindow*)win;
     XWindow_setFlags(window, (XWindowFlags)top->m_windowFlags);
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* CSD 抑制位预置：原生平台窗在本函数内创建，早于本函数尾部的
+     * XWindowDecoration_syncWindow 兜底刷新；必须先落抑制位，平台后端
+     * 首次组装 _MOTIF_WM_HINTS 才能抑制原生 WM 装饰（与框架自绘条
+     * 不出现双栏）。 */
+    XWindow_setCsdFrameSuppressed(window, XWindowDecoration_activeFor(top));
+#endif
     if (top->m_windowTitle)
         XWindow_setTitle(window, top->m_windowTitle);
     XWindow_setIcon(window, &top->m_icon);
@@ -2445,6 +2457,13 @@ static void XFocusProxy_cleanupFor(XWidget* self)
 static void VXWidget_deinit(XWidget* self)
 {
     if (!self) return;
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 装饰注册表摘项（键=本控件指针，见 XWindowDecoration_Protected.h）：
+       控件可先于其桥接窗口消亡（直接 delete/deferred 删除序），不摘项
+       则注册表残留悬垂 m_top，后续任意窗口注销扫表即 UAF（ASan：回归
+       套件默认 CSD 下实测）。未登记控件线性扫无命中即返，零开销。 */
+    XWindowDecoration_notifyTopDestroyed(self);
+#endif
     XWidget_unlinkFocusChain(self);
     XFocusProxy_cleanupFor(self);
 #if XLAYOUT_ON
@@ -2517,6 +2536,17 @@ static void VXWidget_deinit(XWidget* self)
         XGraphicsEffect_delete_base(self->m_graphicsEffect);
         self->m_graphicsEffect = NULL;
     }
+#if XGUI_CUSTOM_TITLEBAR_ON
+    if (self->m_titleBarWidget) {
+        /* 控件级标题条为借用槽（头文件契约：释放责任归创建方）：析构
+         * 级联删子前先摘除父链归还创建方，再清槽位指针（与
+         * XDockWidget 析构解挂同口径；基类级联会删除全部子控件，
+         * XObject.c VXObject_deinit）。 */
+        if (XWidget_parentWidget(self->m_titleBarWidget) == self)
+            XWidget_setParent(self->m_titleBarWidget, NULL, 0);
+        self->m_titleBarWidget = NULL;
+    }
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
@@ -2647,6 +2677,10 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     /* 窗口句柄与后备存储一律置空（拷贝构造不清平台资源）。 */
     self->m_windowHandle = NULL;
     self->m_backingStore = NULL;
+#if XGUI_CUSTOM_TITLEBAR_ON
+    /* 控件树不可随值拷贝：标题条为借用槽位，置空不复制借用指针。 */
+    self->m_titleBarWidget = NULL;
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
     self->m_contentCache = NULL;
     self->m_contentCacheDirty = true;
 #if XWINDOW_ON && XACCESSIBLE_ON
@@ -2774,6 +2808,12 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     self->m_palette = other->m_palette;
 #endif
     /* 基类/父链沿用目标；源对象归零字段 */
+#if XGUI_CUSTOM_TITLEBAR_ON
+    /* 控件树不可随值拷贝：标题条为借用槽位，两侧置空、不转移借用指针
+     * （创建方保留条控件所有权；目标旧条已随上方 deinit 解挂归还）。 */
+    self->m_titleBarWidget = NULL;
+    other->m_titleBarWidget = NULL;
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
     XMemset((char*)other + sizeof(XObject), 0, sizeof(XWidget) - sizeof(XObject));
     /* 上面的整体清零不能破坏嵌入式 XClass 对象的析构前提。移动后的
        源控件不再拥有资源，但仍必须能被 XWidget_delete_base 安全销毁。 */
@@ -2818,6 +2858,17 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         return true;
     case XEVENT_TYPE_RESIZE:
         XWidget_resizeEvent_base(self, event);
+        /* 框架装饰顶层收口：任何来源的顶层几何变化（WM 拖边框/xdotool
+         * windowsize 的 ConfigureNotify→XWidget_applyWindowGeometry、
+         * 程序化 setGeometry→XWidget_recomputeGeometry、装饰自身拖拽
+         * 改尺寸）都经本 RESIZE 唯一漏斗，槽派发之后同帧重钉标题条到
+         * (0,0,新宽,条高) 并触发条重绘。m_isWindow 守卫：子控件 resize
+         * 热路径单位测试即短路；条为子控件（m_isWindow=0），钉条触发
+         * 的子级 RESIZE 再入本漏斗即被守卫短路，不递归；装饰层只许钉
+         * 条，严禁对顶层反向 setGeometry（syncWindowGeometry→平台
+         * ConfigureNotify 回环递归）。 */
+        if (self->m_isWindow)
+            XWindowDecoration_syncBarGeometry(self);
         return true;
     case XEVENT_TYPE_MOVE:
         XWidget_moveEvent_base(self, event);
@@ -3042,6 +3093,12 @@ void XWidget_setWindowFlags(XWidget* self, XWidgetFlags flags)
      * _NET_WM_STATE）并重算窗口装饰保留边距——FramelessWindowHint 等
      * 提示位即时生效（对标 Qt setWindowFlags 的窗口语义刷新）。 */
     if (self->m_isWindow && self->m_windowHandle) {
+        /* CSD 抑制位预置：必须先于下方 XWindow_setFlags 刷新平台 hints
+         * （X11 侧按该位把 FramelessWindowHint 折入 _MOTIF_WM_HINTS 组
+         * 装），动态改 flags 后抑制状态即时生效；本块尾部
+         * XWindowDecoration_syncWindow 随后兜底重算保留边距。 */
+        XWindow_setCsdFrameSuppressed((XWindow*)self->m_windowHandle,
+                                      XWindowDecoration_activeFor(self));
         XWindow_setFlags((XWindow*)self->m_windowHandle,
                          (XWindowFlags)flags);
         XWindowDecoration_syncWindow(self);
@@ -4714,6 +4771,55 @@ void XWidget_setWindowModified(XWidget* self, bool modified)
     if (!self) return;
     XWidget_setAttribute(self, XWidgetAttribute_WindowModified, modified);
 }
+
+/* ==================== 控件级自定义标题条（XGUI_CUSTOM_TITLEBAR_ON） ==================== */
+
+#if XGUI_CUSTOM_TITLEBAR_ON
+/**
+ * @brief      设置控件级自定义标题条（消费分层与借用契约见 XWidget.h）。
+ * @details    挂载/解挂语义逐行对齐 XDockWidget.c 原行内 setter：同指针
+ *             幂等短路；旧条先隐藏再摘父链归还创建方（不释放）；新条挂
+ *             为子控件并显式 show。摆位归消费方：顶层=窗口装饰系统（下
+ *             方 syncWindow 重钉）、XDockWidget=停靠布局（本类薄包装
+ *             setter 在挂载后补钉位，见 XDockWidget.c）、无消费者普通
+ *             控件=仅存储。
+ * @param      self 目标控件；可为 NULL。
+ * @param      bar 新标题条借用指针；可为 NULL 恢复默认标题条。
+ * @return     无返回值。
+ */
+void XWidget_setTitleBarWidget(XWidget* self, XWidget* bar)
+{
+    XWidget* old;
+    if (!self || self->m_titleBarWidget == bar) return;
+    old = self->m_titleBarWidget;
+    if (old) {
+        /* 借用承载（头文件契约：释放责任归创建方）：旧自定义标题条
+         * 不删除，若曾挂到本控件则摘父链归还创建方（同 setWidget 的
+         * 摘除语义；XDockWidget 原行内 setter 同口径）。 */
+        XWidget_setVisible(old, false);
+        if (XWidget_parentWidget(old) == self)
+            XWidget_setParent(old, NULL, 0);
+    }
+    self->m_titleBarWidget = bar;
+    if (bar) {
+        /* 挂为本控件子控件、显式 show（框架显式 show 语义；条区几何
+         * 由消费方钉位：装饰系统/停靠布局，普通控件不摆位）。 */
+        XWidget_setParent(bar, self, 0);
+        XWidget_show(bar);
+    }
+    XWidget_update(self);
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 顶层消费方即时重算窗口装饰（含自定义条接管与保留边距刷新）；
+     * 非顶层该调用自短路，无需在此判断。 */
+    XWindowDecoration_syncWindow(self);
+#endif
+}
+
+XWidget* XWidget_titleBarWidget(const XWidget* self)
+{
+    return self ? self->m_titleBarWidget : NULL;
+}
+#endif /* XGUI_CUSTOM_TITLEBAR_ON */
 
 /* ==================== 可用性与焦点（对标 QWidget） ==================== */
 
@@ -6570,6 +6676,61 @@ static void xwidget_drawWindowDecoration(XWidget* top, const XRegion* region)
 }
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */
 
+#if XPLATFORMINTEGRATION_ON && XGPU_ON && \
+    XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+/* 呈现限频全腿闸（XGUI_PRESENT_MAX_FPS，2026-09-29）：返回 1=本帧允许
+   提交上屏，0=限频窗口内跳帧（跳帧帧由本函数把提交矩形并回
+   top->m_dirty，flush 尾部据 m_dirty 重投 PAINT——尾帧结构性必达）。
+   原 GPU 直通腿私有闸（2026-09-25）上提为 GPU 直通/软件/读回兜底全部
+   提交腿共用，分叉前单点决策。解析单点：env XGPU_PRESENT_MAX_FPS 未设
+   用编译默认 XGUI_PRESENT_MAX_FPS（0=不限），设了覆盖宏（含 =0 显式关
+   闭）；默认语义变化=GPU 直通腿「env 未设缺省 60」→「宏默认 0=不限」
+   （用户裁定 2026-09-29）。两类帧【永不跳】：coversFull 整窗帧（首绘/
+   EXPOSE/resize 全窗脏/降级恢复抬升——最终一致性承载）；降级帧
+   （gpuWindow 且 frameDegraded，GPU 腿恢复链一环，跳帧会打乱
+   degradedFramePending 整窗恢复）。FBO/后备存储内容在绘制段已持久，
+   跳帧只是不上屏零丢失。默认 0 且无 env 时 throttleMinMs=0.0，本闸单
+   分支短路（零时钟读零区域操作）——不做编译剔除是因 env 运行期覆盖
+   必须保活。PARTIAL 攒批腿不在本闸内（自带 16ms 帧界
+   XPBS_TILE_BATCH_FRAME_MS，昆仑通态/桌面两定版平台不编译该路径）。 */
+static int xwidget_presentThrottleAllow(XWidget* top,
+                                        XGpuRenderBackend* gpuWindow,
+                                        const XRegion* whole,
+                                        const XRect* wholeBbox)
+{
+    static int throttleInit = -1;
+    static double throttleMinMs = 0.0;
+    if (throttleInit < 0)
+    {
+        const char* tv = XSystem_environment("XGPU_PRESENT_MAX_FPS");
+        int fps = XGUI_PRESENT_MAX_FPS;
+        if (tv && *tv) fps = (int)XStrtol(tv, NULL, 10);
+        throttleMinMs = fps > 0 ? 1000.0 / (double)fps : 0.0;
+        throttleInit = 1;
+    }
+    if (throttleMinMs > 0.0)
+    {
+        static int64_t s_lastPresent = 0;
+        int64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+        double elapseMs = (double)(nowMs - s_lastPresent);
+        /* 整窗判定用收拢的 wholeBbox（两遍求法注释见收拢处）。 */
+        int coversFull = (wholeBbox->x <= 0 && wholeBbox->y <= 0 &&
+                          wholeBbox->width >= top->m_windowRect.width &&
+                          wholeBbox->height >= top->m_windowRect.height);
+        if (s_lastPresent != 0 && elapseMs < throttleMinMs && !coversFull &&
+            !(gpuWindow && XGpuRenderBackend_frameDegraded()))
+        {
+            int r;
+            for (r = 0; r < whole->count; ++r)
+                XRegion_addRect(&top->m_dirty, &whole->rects[r]);
+            return 0;
+        }
+        s_lastPresent = nowMs;
+    }
+    return 1;
+}
+#endif /* GPU && !PARTIAL */
+
 void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
 {
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
@@ -6748,6 +6909,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
            软件/阶段 1。PARTIAL 模式保持离屏 readback（tile 缓冲语义）。 */
         XGpuRenderBackend* gpuWindow = NULL;
         int64_t wprofLeg0;
+        /* 呈现限频闸判定值（分叉前由 xwidget_presentThrottleAllow 统一
+           决策，见该函数注）；0=本帧跳过提交（GPU/软件腿同闸）。 */
+        int presentThisFrame = 1;
         if (XGpuRenderBackend_requested())
             gpuWindow = XGpuRenderBackend_acquireForWindow(
                 (XWindow*)top->m_windowHandle,
@@ -6812,6 +6976,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         xwidget_wprof_seg(XW_WPROF_SEG_PAINT, &wprofMark);
 #if XPLATFORMINTEGRATION_ON && XGPU_ON && \
     XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+        /* 呈现限频全腿闸：决策先于 GPU/软件分叉（跳帧帧不再区分腿）。 */
+        presentThisFrame = xwidget_presentThrottleAllow(top, gpuWindow,
+                                                        &whole, &wholeBbox);
         if (gpuWindow && !XGpuRenderBackend_frameDegraded())
         {
             /* GPU 上屏双通道。默认=回读+BitBlt：SwapBuffers 换链在
@@ -6824,57 +6991,19 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                按后端真实返回值置位，供截图选择内容来源（谎报会让截图
                读到错误通道）；置 0 回退旧「无条件置 true」谎报行为。 */
             const char* presentMode = NULL;
-            int presentThisFrame = 1;
 #if !defined(XGUI_PRESENT_HONEST)
 #define XGUI_PRESENT_HONEST 1
 #endif
 #if XGUI_PRESENT_HONEST
             bool presented;
 #endif
-            /* 呈现限频（2026-09-25）：重绘循环 ~250Hz 时每帧全窗读回
-               +BitBlt 上传（800x600≈1.9MB/帧）在远程/虚拟显示栈
-               （RDP/OrayIdd）上泛滥成持续闪烁；FBO 内容持久，跳帧
-               无损失（下一周期整帧补上），故缺省限 60Hz——与物理
-               显示刷新一致。XGPU_PRESENT_MAX_FPS=0 禁用限频，
-               =N 自定义；绘制帧率不受影响（仅限上屏）。 */
-            {
-                static int throttleInit = -1;
-                static double throttleMinMs = 16.6;
-                if (throttleInit < 0)
-                {
-                    const char* tv =
-                        XSystem_environment("XGPU_PRESENT_MAX_FPS");
-                    int fps = 60;
-                    if (tv && *tv) fps = atoi(tv);
-                    throttleMinMs = fps > 0 ? 1000.0 / (double)fps : 0.0;
-                    throttleInit = 1;
-                }
-                if (throttleMinMs > 0.0)
-                {
-                    static int64_t s_lastPresent = 0;
-                    int64_t nowMs = XDateTime_currentMSecsSinceEpoch();
-                    double elapseMs = (double)(nowMs - s_lastPresent);
-                    /* 全窗帧（首绘/resize/全窗失效）永不跳过；局部帧在
-                     * 限频窗口内跳过时，把区域并回脏区——绘制结果已在
-                     * FBO/后备存储中持久，下一呈现周期整帧补上。 */
-                    /* 整窗判定用收拢的 wholeBbox（两遍求法注释见收拢处，
-                       与原逐矩形展开逐位一致；合并裁决=远端时间源骨架
-                       +本地收拢版判定）。 */
-                    int coversFull = (wholeBbox.x <= 0 && wholeBbox.y <= 0 &&
-                                      wholeBbox.width >= top->m_windowRect.width &&
-                                      wholeBbox.height >= top->m_windowRect.height);
-                    if (s_lastPresent != 0 &&
-                        elapseMs < throttleMinMs && !coversFull)
-                    {
-                        int r;
-                        presentThisFrame = 0;
-                        for (r = 0; r < whole.count; ++r)
-                            XRegion_addRect(&top->m_dirty, &whole.rects[r]);
-                    }
-                    else
-                        s_lastPresent = nowMs;
-                }
-            }
+            /* 呈现限频（2026-09-25 引入，2026-09-29 上提）：原 GPU 腿私
+               有闸已上提为全提交腿共用（xwidget_presentThrottleAllow，
+               GPU/软件分叉前统一决策），本腿只消费 presentThisFrame。
+               历史动机：重绘循环 ~250Hz 时每帧全窗读回+BitBlt 上传
+               （800x600≈1.9MB/帧）在远程/虚拟显示栈（RDP/OrayIdd）上
+               泛滥成持续闪烁；FBO 内容持久，跳帧无损失（下一周期整帧
+               补上）；绘制帧率不受影响（仅限上屏）。 */
             if (presentThisFrame)
                 presentMode = XSystem_environment("XGPU_PRESENT");
             xwidget_wprof_seg(XW_WPROF_SEG_DECIDE, &wprofMark);
@@ -6967,27 +7096,35 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         }
         else
         {
-            wprofLeg0 = xwidget_wprof_now();
             /* 软件模式（gpuWindow=NULL）与降级帧的提交腿（2026-09-25
                修复：present 诚实化重构时 flush 被收进 gpuWindow 分支，
                软件模式从此零提交=整窗白屏，激活会话实测复现）。
                降级帧额外先补读回：窗口直通模式帧末无读回，backing
                image 停在陈旧内容，直接 flush 会把陈旧/空白帧糊上屏
                ——这正是 GPU 模式闪烁的来源（降级标志逐帧翻转时，
-               新鲜帧与陈旧帧交替上屏）。 */
-            if (gpuWindow)
-                XGpuRenderBackend_readback(
-                    gpuWindow, XBackingStore_paintImage(store));
-            wprofFls0 = xwidget_wprof_now();
-            XBackingStore_flush(store, &whole,
-                                (XWindow*)top->m_windowHandle, NULL);
-            xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
-            XGpuRenderBackend_setFramePresented(false);
-            /* 降级 GPU 帧已上屏（软件常驻模式 gpuWindow 恒 NULL，不计）：
-               置位下一帧的整窗恢复重present（见函数头注释）。 */
-            if (gpuWindow)
-                g_xgui_degradedFramePending = 1;
-            xwidget_wprof_add(XW_WPROF_LEG_SOFT, wprofLeg0);
+               新鲜帧与陈旧帧交替上屏）。
+               呈现限频（2026-09-29）：本腿纳入全腿闸——presentThisFrame=0
+               的跳帧帧整段跳过（提交矩形已由闸并回 top->m_dirty，flush
+               尾部重投 PAINT 保尾帧）；降级帧闸内永不跳（见
+               xwidget_presentThrottleAllow 注），恢复链语义不变。 */
+            if (presentThisFrame)
+            {
+                wprofLeg0 = xwidget_wprof_now();
+                if (gpuWindow)
+                    XGpuRenderBackend_readback(
+                        gpuWindow, XBackingStore_paintImage(store));
+                wprofFls0 = xwidget_wprof_now();
+                XBackingStore_flush(store, &whole,
+                                    (XWindow*)top->m_windowHandle, NULL);
+                xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
+                XGpuRenderBackend_setFramePresented(false);
+                /* 降级 GPU 帧已上屏（软件常驻模式 gpuWindow 恒 NULL，
+                   不计）：置位下一帧的整窗恢复重present（见函数头注
+                   释）。 */
+                if (gpuWindow)
+                    g_xgui_degradedFramePending = 1;
+                xwidget_wprof_add(XW_WPROF_LEG_SOFT, wprofLeg0);
+            }
         }
             if (gpuWindow)
             {
@@ -7190,6 +7327,12 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
     if (self->m_graphicsEffect == effect) return;
     /* Qt：已有效果先删除再安装新效果，控件取得新效果所有权。 */
     if (self->m_graphicsEffect) {
+        /* 卸载/切换前先经效果自身 update() 把旧效果包围盒（含模糊/
+           投影外扩环）并入脏区——必须在 setSource(NULL)/删除之前：
+           update 与 boundingRect 均依赖 m_source。此前删除分支零标脏，
+           DIRECT 差带模式下残留的投影外溢环永不被覆写（弹层遮挡/
+           脏区残环/窗口化 WM 同族第四例，昆仑通态实修点）。 */
+        XGraphicsEffect_update(self->m_graphicsEffect);
         XGraphicsEffect_setSource(self->m_graphicsEffect, NULL);
         XGraphicsEffect_delete_base(self->m_graphicsEffect);
         self->m_graphicsEffect = NULL;
@@ -7259,25 +7402,10 @@ static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
     }
     widget->m_graphicsEffect = effect;
     if (!rendered) {
-        fprintf(stderr, "[fx-probe] rendered=0 (snapshot path failed)\n");
         XImage_delete_base(snapshot);
         return false;
     }
-    {
-        int opaque = 0;
-        int total = 0;
-        int sx;
-        int sy;
-        for (sy = 0; sy < XImage_height(snapshot); sy += 4)
-            for (sx = 0; sx < XImage_width(snapshot); sx += 4) {
-                unsigned p = XImage_pixel(snapshot, sx, sy);
-                ++total;
-                if ((p >> 24) != 0) ++opaque;
-            }
-        fprintf(stderr, "[fx-probe] snapshotOpaque=%d/%d\n", opaque, total);
-    }
     drawn = XGraphicsEffect_drawWidget(effect, widget, snapshot, paintRegion);
-    fprintf(stderr, "[fx-probe] drawn=%d\n", (int)drawn);
     XImage_delete_base(snapshot);
     return drawn;
 }

@@ -792,7 +792,7 @@ static void xc_defaultPopupSync(XCompleter* self)
         cell = XAbstractItemModel_data(self->m_model, *modelRow,
                                        self->m_completionColumn);
         if (!cell) continue;
-        snprintf(buf, sizeof(buf), "%s",
+        XSnprintf(buf, sizeof(buf), "%s",
                  XString_toUtf8(cell) ? XString_toUtf8(cell) : "");
         XListWidget_addItem_2(self->m_defaultPopup, buf);
     }

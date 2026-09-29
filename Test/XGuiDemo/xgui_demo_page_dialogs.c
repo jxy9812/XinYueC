@@ -81,7 +81,12 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
 
 #define DLGPG_PAGE_WIDTH   760
 #define DLGPG_PAGE_HEIGHT  480
-#define DLGPG_ROW_COUNT    9    /* 触发按钮行数。 */
+/* 触发按钮行数。必须与下方 dlgpg_addRow 调用次数严格一致（当前 10：
+   消息框×4+输入/文件/颜色/进度/自定义/目录）——此值小一处，
+   m_btn[10]/m_note[10] 末位越界写将砸中紧随其后的 m_msgInfo 等对话框
+   槽位（实测：m_note[9] 越界把第 9 行说明标签指针写进消息框-信息槽，
+   open 打在标签上＝信息框永不可见+错位残影+Esc 占死模态位）。 */
+#define DLGPG_ROW_COUNT    10
 #define DLGPG_ROW_HEIGHT   50   /* 行距。 */
 #define DLGPG_BTN_X        16
 #define DLGPG_BTN_WIDTH    150

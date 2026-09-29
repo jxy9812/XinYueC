@@ -11,7 +11,6 @@
 #if XPIXMAPCACHE_ON
 #include "XPixmapCache.h"
 #endif /* XPIXMAPCACHE_ON */
-#include <stdio.h>
 
 #if XPIXMAPCACHE_ON
 static bool cacheKeyBuild(char* out, size_t outSize, const char* prefix,

@@ -37,6 +37,7 @@
 #if defined(__linux__) && defined(XINYUE_C_HAS_X11)
 
 #include "XWindow.h"
+#include "XWindow_Protected.h" /* CSD 抑制位读取（XWindow_isCsdFrameSuppressed，仅供平台层/内部实现）。 */
 #include "XWindowSystemInterface.h"
 #include "XWindowEvent.h"
 #include "XCursor.h"
@@ -4863,7 +4864,17 @@ bool XPlatformNativeWindow_create(XWindow* window)
     /* 初始装饰提示（对标 Qt xcb：创建时即按 flags 写 _MOTIF_WM_HINTS；
        默认窗口无提示位 → DECOR_ALL + FUNC_ALL，与 WM 默认装饰等价）。
        此后的提示位变化经 setWindowFlags 重写。 */
-    xpwn_applyMotifHints(g_xpwnDisplay, xwin, (uint32_t)XWindow_flags(window));
+    {
+        uint32_t motifFlags = (uint32_t)XWindow_flags(window);
+        /* CSD 激活（框架自绘标题栏接管，标记经 XWindow_setCsdFrame-
+           Suppressed 置位）时强制按 FramelessWindowHint 组装：走既有
+           decorations=0 管线抑制原生 WM 装饰、消除双重标题栏。语义
+           对标 Qt 无边框窗仍受 WM 管理——任务栏/Alt-Tab/失焦回落保留
+           （override_redirect 判定不受影响，见上方创建分支）。 */
+        if (XWindow_isCsdFrameSuppressed(window))
+            motifFlags |= (uint32_t)XWindowType_FramelessWindowHint;
+        xpwn_applyMotifHints(g_xpwnDisplay, xwin, motifFlags);
+    }
     /* 注册 WM_DELETE_WINDOW 协议，窗口装饰栏关闭按钮经 WM 送达本泵。 */
     XSetWMProtocols(g_xpwnDisplay, xwin, &g_xpwnWmDelete, 1);
     XFlush(g_xpwnDisplay);
@@ -5257,7 +5268,13 @@ typedef struct XpwnMotifWmHints
  *             - 无任何装饰提示位（未 Customize、无 Title/SystemMenu/
  *               Min/Max/Close 提示、未 Frameless/固定尺寸）：DECOR_ALL +
  *               FUNC_ALL —— 普通窗口保持 WM 默认装饰（存量窗口零回归）；
- *             - FramelessWindowHint：decorations=0（Qt 语义无边框）；
+ *             - FramelessWindowHint（含 CSD 抑制经创建期/动态调用点
+ *               预注入的 Frameless 位）：decorations=0（Qt 语义无边框）
+ *               且 functions 恒 FUNC_ALL——CSD 抑制只剥夺 decorations
+ *               不得剥夺 functions：mwm 白名单是 dde/kwin 受理该窗
+ *               _NET_WM_STATE/WM_CHANGE_STATE 状态请求的准入条件，
+ *               白名单缺 MINIMIZE/MAXIMIZE 位时状态请求被按策略静默
+ *               忽略（2026-09-29 真机 dde 因果实验 B 三轮实证）；
  *             - 显式提示模式（CustomizeWindowHint 或任一装饰提示位出现）：
  *               按提示位逐位组装——TitleHint→DECOR_TITLE、SystemMenuHint→
  *               DECOR_MENU、Minimize/MaximizeButtonHint→DECOR_MINIMIZE/
@@ -5284,14 +5301,29 @@ static void xpwn_applyMotifHints(Display* display, Window win,
     hints.flags = XXPWN_MWM_HINTS_FUNCTIONS | XXPWN_MWM_HINTS_DECORATIONS;
     hints.input_mode = 0;
     hints.status = 0;
-    if (!explicitHints) {
+    if (flags & (uint32_t)XWindowType_FramelessWindowHint) {
+        /* 无边框/框架抑制优先于未定制默认（对标 Qt xcb：Frameless 检查
+           先于 MWM 默认分支）。CSD 抑制由创建期/动态两个调用点预注入
+           Frameless 位，普通无提示位窗口（explicitHints=false）同样必须
+           命中本分支才能 decorations=0——原实现 !explicitHints 抢先返回
+           DECOR_ALL 把注入位短路（真机 dde 2026-09-29 实测双标题栏根
+           因）；纯 FramelessWindowHint 用户窗口被同样短路成全装饰，与
+           本函数注释声明相悖，属存量缺陷一并修正。
+           functions 必须保持 FUNC_ALL：mwm 语义下 functions 白名单是
+           WM 受理该窗状态请求的准入条件，dde/kwin 对白名单缺
+           MINIMIZE/MAXIMIZE 位（旧值 MOVE|CLOSE=0x24）的窗按策略静默
+           忽略其 _NET_WM_STATE/WM_CHANGE_STATE ClientMessage——CSD
+           抑制只应剥夺 decorations，不得剥夺 functions（真机 dde
+           2026-09-29 因果实验：functions=MOVE|CLOSE 时点击最大化/
+           最小化零响应且 _NET_WM_ALLOWED_ACTIONS 缺 MINIMIZE/
+           MAXIMIZE；改 FUNC_ALL 后最大化/最小化/还原三项验收全过、
+           三轮复现）。 */
+        hints.functions = XXPWN_MWM_FUNC_ALL;
+        hints.decorations = 0;
+    } else if (!explicitHints) {
         /* 默认：全装饰 + 全功能（对标 Qt 未定制窗口的 MWM 默认）。 */
         hints.functions = XXPWN_MWM_FUNC_ALL;
         hints.decorations = XXPWN_MWM_DECOR_ALL;
-    } else if (flags & (uint32_t)XWindowType_FramelessWindowHint) {
-        /* 无边框提示优先于其它装饰位（对标 Qt FramelessWindowHint）。 */
-        hints.functions = XXPWN_MWM_FUNC_MOVE | XXPWN_MWM_FUNC_CLOSE;
-        hints.decorations = 0;
     } else {
         bool fixedSize =
             (flags & (uint32_t)XWindowType_MSWindowsFixedSizeDialogHint) != 0u;
@@ -5458,7 +5490,19 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
      * CloseButtonHint/Frameless 等按提示位组装 _MOTIF_WM_HINTS 请求 WM
      * 调整标题栏按钮组合（对标 Qt xcb setMotifWindowFlags）；提示位变化
      * 时随本函数重写；无 WM 时属性仍落窗口、无副作用（静默）。 */
-    xpwn_applyMotifHints(g_xpwnDisplay, entry->m_win, flags);
+    {
+        uint32_t motifFlags = flags;
+        /* CSD 激活（框架自绘标题栏接管，标记经 XWindow_setCsdFrame-
+         * Suppressed 置位；动态 setWindowFlags 路径与创建期同规则）时
+         * 强制按 FramelessWindowHint 组装：走既有 decorations=0 管线
+         * 抑制原生 WM 装饰、消除双重标题栏。只影响本次 _MOTIF_WM_HINTS
+         * 组装，上方 _NET_WM_STATE/_NET_WM_WINDOW_TYPE/_WM_HINTS 管线
+         * 不变——语义对标 Qt 无边框窗仍受 WM 管理（任务栏/Alt-Tab/
+         * 失焦回落保留）。 */
+        if (XWindow_isCsdFrameSuppressed(window))
+            motifFlags |= (uint32_t)XWindowType_FramelessWindowHint;
+        xpwn_applyMotifHints(g_xpwnDisplay, entry->m_win, motifFlags);
+    }
     return true;
 }
 

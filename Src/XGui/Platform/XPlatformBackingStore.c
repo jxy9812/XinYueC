@@ -160,6 +160,55 @@ static bool xpbs_softwareSingleBuffer(void)
 }
 #endif
 
+/* ==================== D1 容量化重建（收益画像：拖拽改尺寸每落地步
+ * malloc/free ~1.2MB + 重叠回拷 + 清零三遍搬运，XGuiConfig.h:211-213
+ * 实测 ~28ms/步的主项之一） ==================== */
+
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+
+/**
+ * @brief      活动显示驱动的面板定版尺寸（容量化重建的目标容量）。
+ * @details    fbdev 单屏设备（昆仑通态 A33 1024×600）面板尺寸出厂固定，
+ *             顶层窗口几何被钳在面板内（XWindowDecoration 面板钳制）——
+ *             一次按面板尺寸分配存储后，后续任何 resize 只重描述逻辑
+ *             尺寸视图，不再搬运像素。无活动驱动（桌面）返回 false，
+ *             容量化不激活、行为与既有实现逐位一致（零回归）。
+ */
+static bool xpbs_panelCapacitySize(int* outW, int* outH)
+{
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    const XPlatformDisplayDriverOps* ops = XPlatformDisplayDriver_active();
+    XPlatformDisplayInfo info;
+    if (!ops || !ops->probe || !ops->probe(&info)) return false;
+    if (info.m_width < 1 || info.m_height < 1) return false;
+    *outW = info.m_width;
+    *outH = info.m_height;
+    return true;
+#else
+    (void)outW;
+    (void)outH;
+    return false;
+#endif
+}
+
+/**
+ * @brief      把 view 重建为 storage 左上区域的逻辑尺寸视图。
+ * @details    XImage_init_ex_2 外部位接口（native DIB 路径同款，见
+ *             resize 的 native 分支）：view 持有独立 XImageData 节点，
+ *             m_ownsData=false——deinit 只释放节点不释放位数据，存储
+ *             生命期归 capacity 缓冲所有。stride 传 storage 的实际行距
+ *             （≥ 逻辑宽×每像素字节，XImageData_create 校验通过）。
+ */
+static void xpbs_rebuildCapacityView(XImage* view, XImage* storage,
+                                     int w, int h)
+{
+    XImage_init_ex_2(view, w, h, XImage_format(storage),
+                     XImage_bytesPerLine(storage),
+                     XImage_bits(storage), NULL, NULL);
+}
+
+#endif /* 非 PARTIAL（tile 缓冲不参与容量化，helper 一并裁剪）。 */
+
 /** @brief 共享软件核心 + 平台提交状态。 */
 struct XPlatformBackingStore
 {
@@ -174,13 +223,25 @@ struct XPlatformBackingStore
     size_t m_bufferSize;                      /**< 外部每块缓冲容量。 */
     bool m_externalBuffers;                   /**< 是否使用外部缓冲。 */
     bool m_nativeBufferMode;                  /**< 绘制缓冲 = 平台共享内存（DIB），单缓冲。 */
+    bool m_nativeBufferNoBuf;                 /**< 驱动已证实无 native 缓冲（恒 NULL）：resize 不再做徒劳深拷贝快照。 */
     bool m_softwareSingleBuffer;              /**< 软件侧单缓冲降级：活动显示驱动自带
                                                 双缓冲（fbdev 直写层逐帧轮换硬件
                                                 缓冲并 pan），软件第二缓冲冗余——
                                                 跳过分配与脏区双帧同步，省一块全屏
                                                 缓冲（嵌入式 RAM 关键收益）。 */
     bool m_buffersInitialized;                /**< 外部绑定是否已完成一次。 */
-    XSize m_size;                             /**< 当前缓冲尺寸。 */
+    bool m_capacityMode;                      /**< D1 容量化重建激活：m_image/
+                                                    m_image2 为容量缓冲视图（非拥
+                                                    有），逻辑尺寸变化不再重分配存
+                                                    储（设备面板定版，见
+                                                    xpbs_panelCapacitySize）。 */
+    XImage m_capacityImage;                   /**< D1 容量存储第一缓冲（拥有；
+                                                    面板定版尺寸，视图宿主）。 */
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    XImage m_capacityImage2;                  /**< D1 容量存储第二缓冲（拥有）。 */
+#endif
+    XSize m_size;                             /**< 当前缓冲尺寸（逻辑尺寸；
+                                                    容量化下 ≤ 存储容量）。 */
     XRegion m_staticContents;                 /**< 静态内容区域集合。 */
     XRegion m_paintRegion;                    /**< beginPaint 登记的绘制区。 */
     XRegion m_flushRegion;                    /**< flush 使用的可复用提交区域。 */
@@ -274,12 +335,17 @@ static void xpbs_copyRectPixels(const XImage* src, int sx, int sy,
                 (size_t)w * pixelBytes);
 }
 
-/** @brief 把源图像深拷贝到目标图像（XCopy 为共享引用，不能用）。 */
+/** @brief 把源图像深拷贝到目标图像（XCopy 为共享引用，不能用）。
+ *  @note  D1 容量化后 src 可以是容量 stride 的逻辑尺寸视图：行距按源/
+ *         目标各自的 bytesPerLine 寻址，每行只拷 w×每像素字节的 有效
+ *         数据（原实现要求两者行距相等，视图 stride 更大时会误判失
+ *         败——toImage/scroll 快照在容量化后必经此路径）。 */
 static bool xpbs_deepCopy(const XImage* src, XImage* dst)
 {
     const uint8_t* sbuf;
     uint8_t* dbuf;
-    int w, h, bpl, row;
+    size_t rowBytes;
+    int w, h, srcBpl, dstBpl, row;
     if (!src || !dst || !src->m_data) return false;
     w = XImage_width(src);
     h = XImage_height(src);
@@ -290,10 +356,14 @@ static bool xpbs_deepCopy(const XImage* src, XImage* dst)
         return false;
     sbuf = XImage_constBits(src);
     dbuf = XImage_bits(dst);
-    bpl = XImage_bytesPerLine(src);
-    if (!sbuf || !dbuf || bpl <= 0 || XImage_bytesPerLine(dst) != bpl) return false;
+    srcBpl = XImage_bytesPerLine(src);
+    dstBpl = XImage_bytesPerLine(dst);
+    if (!sbuf || !dbuf || srcBpl <= 0 || dstBpl <= 0) return false;
+    rowBytes = (size_t)w * xpbs_pixelBytes(XImage_format(src));
+    if (rowBytes == 0) return false;
     for (row = 0; row < h; ++row)
-        XMemcpy(dbuf + (int64_t)row * bpl, sbuf + (int64_t)row * bpl, (size_t)bpl);
+        XMemcpy(dbuf + (int64_t)row * dstBpl, sbuf + (int64_t)row * srcBpl,
+                rowBytes);
     return true;
 }
 
@@ -583,6 +653,12 @@ XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
     }
     store->m_window = window;
     store->m_nativeState = nativeState;
+    store->m_capacityMode = false;
+    store->m_nativeBufferNoBuf = false;
+    XImage_init(&store->m_capacityImage);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    XImage_init(&store->m_capacityImage2);
+#endif
     XImage_init(&store->m_image);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     XImage_init(&store->m_image2);
@@ -624,6 +700,13 @@ void XPlatformBackingStore_delete(XPlatformBackingStore* self)
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     if (self->m_image2.m_data)
         XImage_deinit_base(&self->m_image2);
+#endif
+    /* D1：视图先于容量宿主释放亦可（视图不拥有位数据）；顺序无关。 */
+    if (self->m_capacityImage.m_data)
+        XImage_deinit_base(&self->m_capacityImage);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    if (self->m_capacityImage2.m_data)
+        XImage_deinit_base(&self->m_capacityImage2);
 #endif
     XRegion_deinit(&self->m_staticContents);
     XRegion_deinit(&self->m_paintRegion);
@@ -938,6 +1021,11 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
 #endif
     XRegion cropped;
     int ow, oh, w, h;
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    int capW = 0;
+    int capH = 0;
+    bool capOk = false;
+#endif
     if (!self || !size) return;
     w = size->width;
     h = size->height;
@@ -954,9 +1042,17 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
 #endif
     /* 零拷贝模式：平台驱动提供可直接绘制的共享内存（Win32 DIB
        section）。绘制 XImage 以它为存储，flush 只剩一次 BitBlt，
-       省去 XImage→DIB 整帧 memcpy。驱动无此能力时回落自分配。 */
+       省去 XImage→DIB 整帧 memcpy。驱动无此能力时回落自分配。
+       【账本裁冗同轮迭代 2026-09-30】驱动一旦证实恒无 native 缓冲
+       （fbdev 影子缓冲架构 getNativeBuffer 恒 NULL，posix create 却
+       以窗口指针充当 nativeState 使分支恒入），后续 resize 直接短路
+       ——「先深拷贝快照后查询」的顺序是为 getNativeBuffer 释放旧
+       DIB 的语义设计的，恒 NULL 驱动下快照即刻抛弃：整窗 malloc+
+       memcpy+free 纯浪费，A33 真机实测 realloc 相 4.3~5.3ms/落地步。
+       真提供 native 缓冲的驱动不受此闩影响（首次仍走完整探测）。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
-    if (w > 0 && h > 0 && self->m_nativeState && !self->m_externalBuffers)
+    if (w > 0 && h > 0 && self->m_nativeState && !self->m_externalBuffers &&
+        !self->m_nativeBufferNoBuf)
     {
         /* 关键顺序：getNativeBuffer 内部会释放旧 DIB，必须先把旧内容
            深拷贝快照（XCopy 是 COW 共享，不解决悬垂），再查询新缓冲。 */
@@ -1005,6 +1101,8 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
                     self->m_nativeBufferMode = true;
                     /* native 与软件单缓冲降级互斥：native 架接优先。 */
                     self->m_softwareSingleBuffer = false;
+                    /* native 与 D1 容量化互斥：DIB 视图非容量存储视图。 */
+                    self->m_capacityMode = false;
                     self->m_size.width = w;
                     self->m_size.height = h;
                     /* 与常规路径同款的簿记（不含 surfaceResized：
@@ -1026,13 +1124,81 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
             }
         }
         XImage_deinit_base(&snapshot);
-        /* 驱动拒绝该尺寸（罕见）：native 标志复位，走自分配路径。 */
+        /* 驱动拒绝该尺寸（罕见）：native 标志复位，走自分配路径。
+           恒 NULL 驱动（fbdev）在此闩住，后续 resize 短路整个探测
+           分支（含徒劳的整窗深拷贝快照）。 */
         self->m_nativeBufferMode = false;
+        self->m_nativeBufferNoBuf = true;
     }
     if (self->m_nativeBufferMode && w > 0 && h > 0)
     {
         /* 驱动拒绝该尺寸（罕见）：回落自分配前清标志。 */
         self->m_nativeBufferMode = false;
+    }
+#endif
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    /* ==================== D1 容量化重建快路径（设备面板定版） ====================
+     * 容量充足时 resize 零分配零搬运：仅把 m_image/m_image2 重描述为容量
+     * 存储上的 w×h 逻辑视图——左上重叠区内容天然在存储中（上一帧已写入），
+     * 无需快照/回拷；逻辑尺寸之外/之内未被本帧覆盖的存储像素保留旧帧内容。
+     *
+     * 【红线自查：暴露带完整重绘论证（d01b3ca2 判死线）】
+     * 1. 本路径不触碰任何 fb/呈现语义：沟槽暴露带仍由装饰层
+     *    xwd_applyResize 的 fillPanelRects 两缓冲直填（XWindowDecoration.c
+     *    暴露带计算+预填），requestPanelClear 在改尺寸路径零调用点（唯一定义
+     *    XPlatformBackingStore_posix.c），首帧清零 g_xpbsFbFirstPresent 仅一次
+     *    ——fb 侧沟槽覆盖与既有行为逐位一致，DIRECT+2 定版不翻（本文件
+     *    RENDER_MODE/BUFFER_COUNT 零改动，双缓冲轮换/差带账本/翻页全在
+     *    present 侧原样）。
+     * 2. 软件缓冲内保留的旧像素只可能被 present 读出：present 只搬运
+     *    flush region（XPlatformBackingStore_flush 裁剪到逻辑尺寸），而现行
+     *    契约下 resize 后必须整窗 updateRect（demo resizeEvent 强制整窗，
+     *    增量脏区方案落地时以「暴露带∪变更子控件 union」闭合枚举替代）才
+     *    会触发 present——即任何上屏像素必先被本帧脏区真绘，容量保留的
+     *    陈旧像素（现行为为重新清零，两者均为"未定义直到覆盖"）永不上屏，
+     *    无可见行为差异。
+     * 3. 逻辑尺寸语义不变：视图 XImage_width/height 恒=w×h，
+     *    toImage/scroll/beginPaint/flush/present 全部消费者按逻辑尺寸工作；
+     *    m_activeIndex 清零与既有语义一致（双缓冲互同步不变式：任一 flush
+     *    后两缓冲都持完整最新帧，切换活动缓冲无内容差）。
+     * 成本画像：每落地步省 ~1.2MB malloc+清零+重叠回拷+free（旧路径三遍
+     * 搬运+页错误），收益以探针 realloc_us 分相实测校准。
+     * 内存画像：容量一次取面板尺寸（设计定版：本设备 1024×600）——常驻
+     * 比精确尺寸多面板-窗口差级字节；小弹层窗（单次 resize）同样取整，
+     * 属瞬态驻留增量，为拖拽改尺寸主路径收益的对价。 */
+    if (self->m_capacityMode && !self->m_nativeBufferMode &&
+        !self->m_externalBuffers && w > 0 && h > 0 &&
+        self->m_capacityImage.m_data &&
+        w <= XImage_width(&self->m_capacityImage) &&
+        h <= XImage_height(&self->m_capacityImage))
+    {
+        XImage_deinit_base(&self->m_image);
+        XImage_init(&self->m_image);
+        xpbs_rebuildCapacityView(&self->m_image, &self->m_capacityImage, w, h);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+        if (!self->m_softwareSingleBuffer && self->m_capacityImage2.m_data)
+        {
+            XImage_deinit_base(&self->m_image2);
+            XImage_init(&self->m_image2);
+            xpbs_rebuildCapacityView(&self->m_image2,
+                                     &self->m_capacityImage2, w, h);
+        }
+#endif
+        self->m_size.width = w;
+        self->m_size.height = h;
+        self->m_activeIndex = 0u;
+        self->m_tileCursorX = 0;
+        self->m_tileCursorY = 0;
+        self->m_tileActive = false;
+        XRegion_clear(&self->m_flushRegion);
+        /* 静态内容裁到新尺寸（与慢路径同款簿记：逻辑尺寸变化即执行，
+           与是否重建存储解耦）。 */
+        XRegion_init(&cropped);
+        xpbs_clipRegion(&self->m_staticContents, w, h, &cropped);
+        XRegion_copy(&cropped, &self->m_staticContents);
+        XRegion_deinit(&cropped);
+        XPlatformBackingStoreDriver_surfaceResized(self->m_nativeState, w, h);
+        return;
     }
 #endif
     active = xpbs_activeImage(self);
@@ -1053,8 +1219,28 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
             h < XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT ? h : XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT,
             self->m_externalBuffers ? self->m_buffer1 : NULL, self->m_bufferSize);
 #else
-        xpbs_initConfiguredImage(&newImage, w, h,
-            self->m_externalBuffers ? self->m_buffer1 : NULL, self->m_bufferSize);
+    {
+        /* D1 慢路径（首次 resize/容量不足）：自分配时按面板容量定版
+           分配（逻辑尺寸与存储容量分离）；外部队制缓冲容量固定、native
+           路径不落此处，均保持精确尺寸。分配失败（低内存）回落精确尺
+           寸，两次尝试均以 m_data 判定，失败态对象无可泄漏数据
+           （initConfiguredImage 的 init 零化仅发生在无数据对象上）。 */
+        if (!self->m_externalBuffers && !self->m_nativeBufferMode &&
+            xpbs_panelCapacitySize(&capW, &capH) &&
+            w <= capW && h <= capH)
+        {
+            xpbs_initConfiguredImage(&newImage, capW, capH, NULL, 0);
+            capOk = newImage.m_data != NULL;
+        }
+        if (!capOk)
+        {
+            capW = w;
+            capH = h;
+            xpbs_initConfiguredImage(&newImage, w, h,
+                self->m_externalBuffers ? self->m_buffer1 : NULL,
+                self->m_bufferSize);
+        }
+    }
 #endif
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     /* 软件双缓冲降级：显示驱动自带硬件轮换时第二软件缓冲冗余，不分配
@@ -1069,8 +1255,31 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
             h < XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT ? h : XGUI_BACKINGSTORE_PARTIAL_BUFFER_HEIGHT,
             self->m_externalBuffers ? self->m_buffer2 : NULL, self->m_bufferSize);
 #else
-        xpbs_initConfiguredImage(&newImage2, w, h,
-            self->m_externalBuffers ? self->m_buffer2 : NULL, self->m_bufferSize);
+    {
+        if (capOk)
+        {
+            xpbs_initConfiguredImage(&newImage2, capW, capH, NULL, 0);
+            if (!newImage2.m_data)
+            {
+                /* 第二缓冲容量分配失败：整批回落精确尺寸（与第一缓冲
+                   同判定，保持下方失败检查的"旧缓冲不动"语义）。 */
+                capOk = false;
+                capW = w;
+                capH = h;
+                XImage_deinit_base(&newImage);
+                xpbs_initConfiguredImage(&newImage, w, h,
+                    self->m_externalBuffers ? self->m_buffer1 : NULL,
+                    self->m_bufferSize);
+                xpbs_initConfiguredImage(&newImage2, w, h,
+                    self->m_externalBuffers ? self->m_buffer2 : NULL,
+                    self->m_bufferSize);
+            }
+        }
+        else
+            xpbs_initConfiguredImage(&newImage2, w, h,
+                self->m_externalBuffers ? self->m_buffer2 : NULL,
+                self->m_bufferSize);
+    }
 #endif
 #endif
     /* 分配失败保持旧缓冲不变（降级时 newImage2 为空是预期，不算失败）。 */
@@ -1104,11 +1313,44 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     }
 #endif
     XImage_deinit_base(&oldImage);
+#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
+    /* D1：容量分配成功时存储归容量缓冲所有，m_image 改持逻辑视图；
+       失败/桌面路径维持既有"m_image 自有"语义。XMove 对目标旧数据
+       先 unref——旧容量存储（若有）随 Move 释放，无泄漏。 */
+    XImage_deinit_base(&self->m_image);
+    if (capOk)
+    {
+        XMove(&self->m_capacityImage, &newImage);
+        xpbs_rebuildCapacityView(&self->m_image, &self->m_capacityImage,
+                                 w, h);
+    }
+    else
+    {
+        XImage_deinit_base(&self->m_capacityImage);
+        XMove(&self->m_image, &newImage);
+    }
+    self->m_capacityMode = capOk;
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    XImage_deinit_base(&self->m_image2);
+    if (capOk && !self->m_softwareSingleBuffer && newImage2.m_data)
+    {
+        XMove(&self->m_capacityImage2, &newImage2);
+        xpbs_rebuildCapacityView(&self->m_image2, &self->m_capacityImage2,
+                                 w, h);
+    }
+    else
+    {
+        XImage_deinit_base(&self->m_capacityImage2);
+        XMove(&self->m_image2, &newImage2);
+    }
+#endif
+#else /* PARTIAL：tile 缓冲语义不变（不参与容量化）。 */
     XImage_deinit_base(&self->m_image);
     XMove(&self->m_image, &newImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     XImage_deinit_base(&self->m_image2);
     XMove(&self->m_image2, &newImage2);
+#endif
 #endif
     self->m_size.width = w;
     self->m_size.height = h;

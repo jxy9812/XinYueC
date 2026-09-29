@@ -94,6 +94,32 @@ void XWindow_enterEvent_base(XWindow* self, XEvent* event);
 /** @brief 指针离开事件槽（对标 QWindow::leaveEvent）。 @param self 目标窗口。 @param event 指针离开事件（无负载 XEvent）。 */
 void XWindow_leaveEvent_base(XWindow* self, XEvent* event);
 
+/* ==================== 平台桥接内部状态（仅供内部实现，不对外） ==================== */
+
+/**
+ * @brief      设置「CSD 激活时抑制原生 WM 装饰」标记（框架内部接口）。
+ * @details    仅供框架内部实现（标题栏自绘激活/停用路径）调用，不对外
+ *             公开：桌面会话下框架接管标题栏时置位，平台原生窗口后端
+ *             （Drive）在组装 _MOTIF_WM_HINTS 等装饰提示时读取本标记，
+ *             按无边框语义抑制 WM 装饰，避免原生标题栏与框架标题栏双
+ *             重出现。只更新快照位，不触发任何平台调用；置位后对已建
+ *             原生窗的即时生效由调用方随既有 setWindowFlags 重写路径
+ *             完成。无 WM 环境（fbdev 直写）本标记无效果。
+ * @param      self 目标窗口；NULL 不执行任何操作。
+ * @param      suppressed true 置位抑制原生装饰；false 清除（恢复交 WM）。
+ * @return     无。
+ */
+void XWindow_setCsdFrameSuppressed(XWindow* self, bool suppressed);
+
+/**
+ * @brief      查询窗口是否要求抑制原生 WM 装饰（CSD 激活，框架内部接口）。
+ * @details    仅供平台层（原生窗口后端）与框架内部实现读取，不对外公开。
+ * @param      self 目标窗口；可为 NULL。
+ * @return     需要抑制返回 true；入参非法（调用者没有提供对象）或未
+ *             置位返回 false。
+ */
+bool XWindow_isCsdFrameSuppressed(const XWindow* self);
+
 #ifdef __cplusplus
 }
 #endif

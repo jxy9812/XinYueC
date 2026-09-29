@@ -1,24 +1,41 @@
 ﻿/**
  * @file       XWindowDecoration.h
- * @brief      XWindowDecoration 框架级窗口装饰（自绘系统标题栏，对标
- *             桌面 WM 标题栏功能全集）。
+ * @brief      XWindowDecoration 框架级窗口装饰（自绘系统标题栏的判定/
+ *             抑制/承载/输入拦截层，对标桌面 WM 标题栏功能全集）。
  * @details    无窗口管理器环境（fbdev 直写面板、X11 后端不可用回落）
- *             下，框架为可装饰的顶层窗口绘制系统标题栏并接管其输入：
+ *             下，框架为可装饰的顶层窗口提供系统标题栏并接管其输入：
  *             窗口标题（超宽省略）+ 窗口图标/系统菜单钮 + 最小化/最大
  *             化(还原)/关闭三键 + 双击切换最大化 + 空白区拖拽移动 +
- *             边缘 8 向拖拽改尺寸 + 活动窗口配色。绘制经样式系统
- *             CC_TitleBar（调色板/标准图标/PM 度量），与桌面由 WM 绘
- *             制的标题栏共用同一套风格开关；上层 API 与桌面完全一致
- *             （XWidget_setWindowFlags 的 WindowTitleHint/
- *             WindowSystemMenuHint/WindowMinMaxButtonsHint/
- *             WindowCloseButtonHint/CustomizeWindowHint/
- *             FramelessWindowHint + setWindowTitle/setIcon +
- *             showMinimized/showMaximized/showNormal + XWindow_
- *             frameMargins）。
- *             桌面（X11 原生窗受 WM 管理）自动停用：flags 经
- *             _MOTIF_WM_HINTS 交给 WM，行为与自绘路径同语义。环境变量
- *             XGUI_CSD=1 可在桌面强制启用自绘（目验/调试；真 WM 下会
- *             双重标题栏），XGUI_CSD=0 强制停用。
+ *             边缘 8 向拖拽改尺寸 + 活动窗口配色。
+ *             职责分层（本模块只做判定/抑制/承载/输入，绘制归控件）：
+ *             - 归属判定问平台策略抽象
+ *               XPlatformThemeDecoration_effectiveMode（Framework=
+ *               框架自绘、System=交 WM、Auto=fbdev 探测，环境变量
+ *               XGUI_CSD 经其一次性解析），逐窗再按窗口类型/提示位
+ *               裁量；
+ *             - 条带绘制由树内标题条控件 XTitleBar 自绘（原 CC_TitleBar
+ *               样式绘制实现已迁入该控件，用户可继承定制）；本模块负责
+ *               为被装饰顶层承载该条控件（用户经
+ *               XWidget_setTitleBarWidget 挂自定义条则用之，否则创建
+ *               默认 XTitleBar 实例）并随宿主几何重钉条区；默认条生命
+ *               周期随装饰——装饰失活或宿主注销时经 XObject_deleteLater
+ *               异步释放，自定义条为借用，只解挂不释放；
+ *             - 框架自绘激活时置 CSD 抑制位（XWindow_setCsdFrameSuppressed），
+ *               平台原生窗口后端据此抑制 _MOTIF_WM_HINTS 原生装饰，
+ *               桌面强制自绘不再出现双标题栏；
+ *             - 输入拦截先于控件命中（XWidget_dispatchPointerEvent 头
+ *               部调用）：条带内事件三分流——条控件的子控件（用户按钮）
+ *               放行树派发，空白区/样式按钮位（armed/拖拽移动/双击最大
+ *               化/右键系统菜单/滚轮吞掉）由本模块接管，边缘 8 向改尺
+ *               寸带仅在无子控件接住按下时接管（子控件优先，与桌面 WM
+ *               帧外命中同效）。
+ *             上层 API 与桌面完全一致（XWidget_setWindowFlags 的
+ *             WindowTitleHint/WindowSystemMenuHint/
+ *             WindowMinMaxButtonsHint/WindowCloseButtonHint/
+ *             CustomizeWindowHint/FramelessWindowHint + setWindowTitle/
+ *             setIcon + showMinimized/showMaximized/showNormal +
+ *             XWindow_frameMargins），系统条模式（WM 绘制）与框架条
+ *             模式下同样有效。
  * @note       本模块无独立开关，随 XWIDGET_ON/XWINDOW_ON/XSTYLE_ON/
  *             XWINDOWEVENT_ON 生效；活动判定为假时全部入口零开销短路。
  * @author     XinYueC 团队
@@ -49,7 +66,10 @@ extern "C" {
 bool XWindowDecoration_activeFor(const XWidget* top);
 
 /**
- * @brief      返回装饰保留边距（标题栏计入顶部，其余为零）。
+ * @brief      返回装饰保留边距（标题条计入顶部，其余为零）。
+ * @details    条高取被装饰顶层挂载的标题条控件实际高度；条控件尚未
+ *             承载（布局期预测）时回退 XTitleBar_defaultHeight，保证
+ *             「句柄未建也能预测」的排布语义。
  * @param      top 顶层控件；可为 NULL。
  * @return     未装饰时返回全零边距。
  */
@@ -57,30 +77,58 @@ XMargins XWindowDecoration_marginsFor(const XWidget* top);
 
 /**
  * @brief      桥接窗口建立/flags 变化后重算并落盘保留边距。
- * @details    由 XWidget_createWindow（建窗后）与
- *             XWidget_setWindowFlags（活窗动态改 flags 后）调用；把
- *             XWindow_frameMargins 从恒零占位变为真实保留边距。
+ * @details    由 XWidget_createWindow（建窗后）、
+ *             XWidget_setWindowFlags（活窗动态改 flags 后）与
+ *             XWidget_setTitleBarWidget（自定义条挂载/摘除后）调用；
+ *             把 XWindow_frameMargins 从恒零占位变为真实保留边距，并
+ *             在框架自绘激活时兜底刷新 CSD 抑制位（建窗前首次预置由
+ *             XWidget_createWindow 负责）、确保被装饰顶层挂有标题条
+ *             控件（用户自定义条或默认 XTitleBar 实例）。
  * @param      top 顶层控件；可为 NULL。
  */
 void XWindowDecoration_syncWindow(XWidget* top);
 
 /**
- * @brief      绘制标题栏条带（在顶层控件子树绘制完成后调用）。
- * @details    由 XWidget_flushBackingStore 在 paintTree 之后调用；
- *             画前经 region 外接矩形与条带的相交短路，不相交零开销。
+ * @brief      顶层窗口几何变化后同步重钉生效标题条（任意来源收口）。
+ * @details    由控件级 RESIZE 事件唯一漏斗（XWidget.c VXWidget_event
+ *             的 RESIZE 分支，槽派发之后）对被装饰顶层调用，一处覆盖
+ *             全部几何来源：WM 拖边框/xdotool windowsize（ConfigureNotify
+ *             → XWidget_applyWindowGeometry）、程序化 XWidget_setGeometry/
+ *             XWindow_resize（XWidget_recomputeGeometry）、装饰自身的
+ *             拖拽/改尺寸/最大化/卷起（其后自重钉，此处同值幂等）。
+ *             零成本短路：非顶层、未装饰、无登记状态或未承载条控件时
+ *             直接返回——本入口不反向创建状态或标题条（承载语义归
+ *             XWindowDecoration_syncWindow）；重钉经既有条区钉制路径
+ *             →XWidget_setGeometry(条)，同值幂等短路，条几何变化时随
+ *             新旧双失效触发重绘；只钉条子控件——对顶层自身改几何会
+ *             经平台同步→ConfigureNotify 回环递归，严禁。
  * @param      top 顶层控件；可为 NULL。
- * @param      painter 已 begin 到窗口后备图像的画笔。
- * @param      region 本次刷新区域（窗口本地坐标；可为 NULL=整窗）。
+ */
+void XWindowDecoration_syncBarGeometry(XWidget* top);
+
+/**
+ * @brief      兼容空壳：旧「绘制标题栏条带」入口（在顶层控件子树绘制
+ *             完成后调用）。
+ * @details    条带绘制已迁为树内标题条控件 XTitleBar 的 paintEvent 自
+ *             绘（随 XWidget_paintTree 正常子控件绘制），本函数仅保留
+ *             签名兼容既有调用点（XWidget_flushBackingStore 尾部），
+ *             函数体短路零开销。
+ * @param      top 顶层控件；可为 NULL。
+ * @param      painter 未使用（保留签名兼容）。
+ * @param      region 未使用（保留签名兼容）。
  */
 void XWindowDecoration_draw(XWidget* top, XPainter* painter,
                             const XRegion* region);
 
 /**
- * @brief      窗口装饰输入拦截（鼠标形状事件，窗口本地坐标）。
- * @details    由 XWidget_dispatchPointerEvent 在命中测试之前调用：
- *             标题栏条带内事件全部由装饰接管（按钮武装/拖拽移动/双击
- *             最大化/右键系统菜单/滚轮吞掉）；边缘改尺寸带仅在无子控
- *             件接住按下时接管（子控件优先，与桌面 WM 帧外命中同效）。
+ * @brief      窗口装饰输入拦截（鼠标/滚轮/上下文菜单事件，窗口本地坐标）。
+ * @details    由 XWidget_dispatchPointerEvent 在命中测试之前调用。
+ *             条带内事件三分流：命中条控件的子控件（用户按钮）放行
+ *             return false 交树派发；空白区/样式按钮位由装饰接管
+ *             （按钮武装/拖拽移动/双击最大化/右键系统菜单/滚轮吞掉）；
+ *             边缘改尺寸带仅在无子控件接住按下时接管（子控件优先，与
+ *             桌面 WM 帧外命中同效）。默认条无子控件，行为与接管全条
+ *             带的历史口径等价。
  * @param      top 顶层控件。
  * @param      event 鼠标/滚轮/上下文菜单事件。
  * @return     事件已消费返回 true（调用方不再向控件树派发）。
@@ -112,6 +160,15 @@ void XWindowDecoration_notifyActivation(XWindow* win);
  * @param      top 顶层控件；可为 NULL。
  */
 void XWindowDecoration_notifyAppearanceChanged(XWidget* top);
+
+/**
+ * @brief      当前是否有任一装饰顶层处于手势进行态（拖拽移动/改尺寸）。
+ * @details    只读查询：扫装饰注册表任一 m_dragging/m_resizing，零状态
+ *             新增。消费方=demo 性能悬浮层手势期冻结（恒可用）；
+ *             CSD=0（WM 管理）下无手势态，恒 false，悬浮层行为不变。
+ * @return     任一顶层手势进行中返回 true。
+ */
+bool XWindowDecoration_gestureActive(void);
 
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */
 

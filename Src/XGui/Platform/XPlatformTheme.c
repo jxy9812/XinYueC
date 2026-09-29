@@ -4,6 +4,7 @@
  ****************************************************************************/
 #include "XPlatformTheme.h"
 #include "XStringUtils.h"
+#include "XSystem.h"
 
 #include "XAlgorithm.h"
 #include "XMemory.h"
@@ -87,4 +88,59 @@ int64_t XPlatformTheme_themeHint(const XPlatformTheme* self, int hint)
     (void)self; (void)hint;
     return 0;
 }
+#endif /* XPLATFORMINTEGRATION_ON */
+
+/* ==================== 平台窗口装饰策略（进程级） ====================
+ *  不受 XPLATFORMINTEGRATION_ON 门控（与声明侧 XPlatformTheme.h 同步）：
+ *  纯进程级策略查询，实现只依赖 XGuiConfig 宏与 XSystem_environment，
+ *  装饰判定调用点（XWindowDecoration_activeFor）不受平台集成宏守卫。 */
+
+/** @brief 运行时装饰策略覆盖（进程级；Auto=未覆盖，解析规则见
+ *  XPlatformThemeDecoration_effectiveMode）。 */
+static XPlatformThemeDecorationMode g_xptDecorationMode =
+    XPlatformThemeDecoration_Auto;
+
+/** @brief XGUI_CSD 环境变量解析（读一次缓存，原 XWindowDecoration 的
+ *  xwd_forceMode 逻辑迁入）：1 强制框架自绘/0 强制交 WM/其余自动。
+ *  返回值约定：-2 未读取（仅初值）、-1 自动（未设置或取值非法）、
+ *  1 强制开、0 强制关。 */
+static int xpt_envDecorationForce(void)
+{
+    static int cached = -2; /* -2=未读取，-1=自动。 */
+    if (cached == -2) {
+        const char* env = XSystem_environment("XGUI_CSD");
+        cached = -1;
+        if (env && env[0] && !env[1]) {
+            if (env[0] == '1') cached = 1;
+            else if (env[0] == '0') cached = 0;
+        }
+    }
+    return cached;
+}
+
+void XPlatformThemeDecoration_setMode(XPlatformThemeDecorationMode mode)
+{
+    g_xptDecorationMode = mode;
+}
+
+XPlatformThemeDecorationMode XPlatformThemeDecoration_mode(void)
+{
+    return g_xptDecorationMode;
+}
+
+XPlatformThemeDecorationMode XPlatformThemeDecoration_effectiveMode(void)
+{
+    int force;
+    /* 优先级（见契约头）：运行时 setMode > XGUI_CSD > XGUI_CSD_DEFAULT
+     * > Auto（回落值，调用方按 fbdev 显示驱动探测裁量）。 */
+    if (g_xptDecorationMode != XPlatformThemeDecoration_Auto)
+        return g_xptDecorationMode;
+    force = xpt_envDecorationForce();
+    if (force == 1) return XPlatformThemeDecoration_Framework;
+    if (force == 0) return XPlatformThemeDecoration_System;
+#if XGUI_CSD_DEFAULT
+    return XPlatformThemeDecoration_Framework; /* 编译默认：桌面强制 CSD。 */
+#else
+    return XPlatformThemeDecoration_Auto;
 #endif
+}

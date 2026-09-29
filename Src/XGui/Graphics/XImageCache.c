@@ -29,7 +29,7 @@
 
 #include "XImage.h"
 #include "XMemory.h"
-#include <string.h>
+#include "XStringUtils.h"
 /* ========== 配置与数据结构 ========== */
 
 /** @brief 条目池上限；编译期可用 -DXIMAGECACHE_MAX_ENTRIES 覆写。 */
@@ -79,8 +79,8 @@ static int buildKey(const char* path, const char* format,
     size_t pathLen;
     size_t formatLen;
     if (!path || !path[0]) return -1;
-    pathLen = strlen(path);
-    formatLen = format ? strlen(format) : 0;
+    pathLen = XStrlen(path);
+    formatLen = format ? XStrlen(format) : 0;
     /* 需要容纳 path + '\n' + format + '\0'。 */
     if (pathLen > (size_t)(XIMAGECACHE_KEY_MAX - 2)) return -1;
     if (formatLen > (size_t)(XIMAGECACHE_KEY_MAX - 2) - pathLen) return -1;
@@ -97,7 +97,7 @@ static XImageCacheEntry* findEntry(const char* key)
     int i;
     for (i = 0; i < XIMAGECACHE_MAX_ENTRIES; ++i)
     {
-        if (g_pool[i].m_inUse && strcmp(g_pool[i].m_key, key) == 0)
+        if (g_pool[i].m_inUse && XStrcmp(g_pool[i].m_key, key) == 0)
             return &g_pool[i];
     }
     return NULL;
@@ -207,7 +207,7 @@ void XImageCache_insert(const char* path, const char* format,
     }
     slot = acquireFreeSlot();
     if (!slot) return;  /* 防御性兜底：池全空仍无槽位属配置异常 */
-    XMemcpy(slot->m_key, key, strlen(key) + 1);
+    XMemcpy(slot->m_key, key, XStrlen(key) + 1);
     /* 条目槽已清零；XCopy 走虚表完成首次 init 并取得共享数据引用，
      * 调用方之后可随意处置自己的副本（解引用由引用计数守护）。 */
     XCopy(&slot->m_image, image);

@@ -109,6 +109,13 @@ struct XWindowPrivate
                                              栏计入顶部）；仅窗口装饰模
                                              块经 XWindow_setFrameMargins
                                              落盘，桌面 WM 管理路径恒零。 */
+    uint32_t m_csdFrameSuppressed : 1;  /**< CSD 激活时抑制原生 WM 装饰，
+                                             仅供平台层读取（经
+                                             XWindow_isCsdFrameSuppressed）；
+                                             由框架标题栏激活路径经
+                                             XWindow_setCsdFrameSuppressed
+                                             置位，平台组装装饰提示时按
+                                             无边框语义抑制 WM 装饰。 */
     XRect m_normalGeometry;             /**< 最大化/全屏前的正常几何（软
                                              件窗口状态路径保存/恢复）。 */
     bool m_normalGeometryValid;         /**< m_normalGeometry 是否有效。 */
@@ -1351,10 +1358,16 @@ void XWindow_setWindowStates(XWindow* self, XWindowStates states)
     if (after != before && !data->m_nativeWindowAttached)
         xwin_applySoftwareWindowState(self, data, before, after);
     /* 状态同步到平台层（对标 QPlatformWindow::setWindowState）：
-       此前只改内部状态位，原生窗口尺寸不随之变化，「最大化」实际
-       不生效。平台层未创建原生窗口时该调用安全 no-op。 */
+       原生窗挂接时每次调用都同步（不受 after!=before 门控）——EWMH
+       状态变更是发往根窗口的 fire-and-forget ClientMessage，WM 忽略
+       或竞态丢失后本地状态位已被本函数置起，若只在状态变化时发送，
+       平台层将被永久跳过（本地「已最大化」与 WM 实际 Normal 永久失
+       同步：桌面实测 2026-09-29，最大化钮首次点击失效后按钮在最大
+       化/还原间空翻，WM 永不再收到请求）。重复 ADD 已持有状态对 WM
+       幂等无害（重申语义），对标 Qt xcb 每次 setWindowState 都重发。
+       平台层未创建原生窗口时该调用安全 no-op。 */
 #if XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
-    if (after != before)
+    if (data->m_nativeWindowAttached)
         (void)XPlatformNativeWindow_setWindowState(
             self, (uint32_t)after);
 #endif
@@ -1558,6 +1571,20 @@ void XWindow_setFrameMargins(XWindow* self, const XMargins* margins)
         self->m_data->m_frameMargins = *margins;
     else
         self->m_data->m_frameMargins = (XMargins){0, 0, 0, 0};
+}
+
+void XWindow_setCsdFrameSuppressed(XWindow* self, bool suppressed)
+{
+    /* 只更新快照位，不触发任何平台调用；置位后的原生装饰抑制由平台
+     * 后端在下一次装饰提示组装时读取落实（XWindow.h 公开头不暴露）。 */
+    if (self && self->m_data)
+        self->m_data->m_csdFrameSuppressed = suppressed ? 1u : 0u;
+}
+
+bool XWindow_isCsdFrameSuppressed(const XWindow* self)
+{
+    return self && self->m_data ? self->m_data->m_csdFrameSuppressed != 0u
+                                : false;
 }
 
 bool XWindow_isNativeWindowAttached(const XWindow* self)

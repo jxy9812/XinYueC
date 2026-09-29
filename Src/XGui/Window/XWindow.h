@@ -831,10 +831,18 @@ XRect XWindow_geometry(const XWindow* self);
 
 /**
  * @brief      返回窗口边框边距（对标 QWindow::frameMargins）。
- * @details    桌面（原生窗受 WM 管理）返回零边距；无窗口管理器环境
- *             （fbdev/X11 后端不可用回落）由框架自绘系统标题栏时，
- *             返回标题栏保留边距（计入顶部），供上层布局让位——取值
- *             来自样式 PM_TitleBarHeight，随应用风格切换。
+ * @details    系统条模式（原生窗受 WM 管理装饰）返回零边距；框架自绘
+ *             系统标题栏激活时返回标题栏保留边距（计入顶部），供上层
+ *             布局让位。框架自绘激活口径：无窗口管理器环境（fbdev 直
+ *             写面板、X11 后端不可用回落）常规路径，或桌面经环境变量
+ *             XGUI_CSD=1/编译默认强制 CSD 路径——后者的桌面会话下平台
+ *             原生窗口后端在组装 _MOTIF_WM_HINTS 时按窗口的 CSD 抑制
+ *             位（内部快照位，经 XWindow_Protected.h 的
+ *             XWindow_setCsdFrameSuppressed/isCsdFrameSuppressed 存取，
+ *             公开头不暴露）折叠无边框提示，抑制原生 WM 装饰、消除双
+ *             重标题栏。取值由窗口装饰模块按挂载标题条控件实际高度经
+ *             XWindow_setFrameMargins 落盘（默认条回退样式度量），随
+ *             应用风格切换。
  * @param      self 目标窗口；可为 NULL。
  * @return     边距。
  */
