@@ -7741,14 +7741,98 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
 #endif
     }
 #endif /* XPAINTER_CLIP_ON */
+    /* [xvkl-begin]/painter 侧逐分支秒表（XGPU_VK_BEGIN_PROF=1）：
+       acq=会话获取（current+尺寸判定+sessionAcquire）、bflush=批防御
+       冲刷、chain=beginFrameImage 驱动 begin 链（clear 子腿=透明记账
+       整幅 fillRect）、nested/soft/fail=分支命中计数。统计全为本函数
+       内 static，3s 窗口输出 [xp-begin] 行。慢 begin 自动降级阈值
+       （XGPU_VK_BEGIN_SLOW_MS，默认 10ms——2026-09-28 第 7 轮按统筹
+       「双峰触发条件阈值化处置」指令转正默认：begin_image 双峰
+       25.6ms（慢）/2ms（快），阈值取两者中位即完全隔离；第 7 轮
+       wprof paint 总 83.5ms（较上轮 57ms +46%）即慢峰回潮实证）：
+       任一 begin_image GPU 链单次超阈值即计入 streak（函数级共享，
+       环境级慢对全体 painter 生效），后续 begin_image 直接走软件
+       路径（SW 同段 0.155ms，对慢峰三个量级根除），每 5s 放行一帧
+       重试跟随环境恢复，任一次达标（<阈值）即 streak 清零自动回到
+       GPU；XGPU_VK_BEGIN_SLOW_MS=0 逐位回退禁用旧行为。
+       【第 8 轮海森堡警报（统筹实测）】XGPU_VK_BEGIN_PROF/STAGE_PROF/
+       W_FRAME_PROF/PAINTER_PROF/PROF 五探针同开 → present 约 7 帧
+       后失效进入自由空转（fps 8400-8890，bench 实测 28.2）——归因
+       运行最多单开或二开（XGPU_VK_BEGIN_PROF+STAGE_PROF+PAINTER_PROF
+       存活组合已验证），三开以上 present 失效机制未明，数据一律作废。 */
+    static int bpOn = -1;
+    static int64_t bpLastPrint = 0;
+    static int32_t bpSlowMs = -1;
+    static uint32_t bpSlowStreak = 0;
+    static int64_t bpLastRetry = 0;
+    static uint32_t bpSkip = 0;
+    static uint32_t bpN = 0;
+    static uint32_t bpNested = 0;
+    static uint32_t bpSoft = 0;
+    static uint32_t bpFail = 0;
+    static uint64_t bpTotNs = 0;
+    static uint64_t bpAcqNs = 0;
+    static uint64_t bpBfNs = 0;
+    static uint64_t bpChainNs = 0;
+    static uint64_t bpClearNs = 0;
+    uint64_t bpT0;
+    uint64_t bpSegT0;
+    uint64_t bpSegEnd = 0;
+    int bpSkipGpu = 0;
+    /* 帧级原子降级门（统筹警报 R8 修正）：仅当本帧尚无开启的 GPU 帧
+       （depth==0 且无活动会话，即本 painter 是本帧首个可 GPU 的
+       painter）时才允许降级/计 streak——一旦降级，同帧后续 painter 因
+       depth/身份保持亦全部软件，帧内通道纯一；混合帧（部分 painter
+       GPU、部分软件）会让 readbackRect 用 FBO 旧内容覆盖软件 painter
+       已画的 paintImage 区域，产生"显示不全"。非帧首（嵌套/已开启/
+       切换目标）不降级不计 streak，保持原通道。 */
+    int bpDoorOk = (g_gpuFrameDepth == 0 && g_gpuFrameActiveBackend == NULL);
+    if (bpOn < 0)
+    {
+        const char* bpV = XSystem_environment("XGPU_VK_BEGIN_PROF");
+        bpOn = bpV && *bpV && !(bpV[0] == '0' && bpV[1] == 0) ? 1 : 0;
+            /* 慢 begin 自动降级阈值（XGPU_VK_BEGIN_SLOW_MS，默认
+               10——第 7 轮按统筹「双峰阈值化处置」指令转正默认；
+               =0 逐位回退禁用旧行为）：begin_image GPU 链单次超阈值
+               （毫秒）即计入 streak（函数级共享，环境级慢对全体
+               painter 生效），后续 begin_image 直接走软件路径，每
+               5s 放行一帧重试跟随环境恢复。降级受帧级原子门约束
+               （见 bpDoorOk）：仅帧首降级，杜绝混合帧。 */
+            {
+                const char* bs = XSystem_environment("XGPU_VK_BEGIN_SLOW_MS");
+                bpSlowMs = 10;
+                if (bs && *bs)
+                {
+                    int ms = atoi(bs);
+                    if (ms < 0) ms = 0;
+                    bpSlowMs = (int32_t)ms;
+                }
+            }
+    }
+    if (bpSlowMs > 0 && bpSlowStreak > 0 && bpDoorOk)
+    {
+        int64_t bpNow = xpainter_prof_now_ns();
+        if (bpNow - bpLastRetry >= 5000000000LL)
+        {
+            bpLastRetry = bpNow; /* 每 5s 放行一帧重试 GPU。 */
+        }
+        else
+        {
+            bpSkipGpu = 1; /* 降级窗内：全帧走软件（帧级原子）。 */
+            bpSkip += 1;
+        }
+    }
     if (XGpuRenderBackend_requested() &&
         !XGpuRenderBackend_frameDegraded() &&
+        !bpSkipGpu &&
         XImage_width(image) > 0 && XImage_height(image) > 0)
     {
         /* begin 段：会话获取/帧复用判定/beginFrame/暂存画布整幅清零
            （含 keep-open 复用分支的 xgpu_batch_canvas_clear_all——
            批画布已 init 的页每控件 painter 各付一次整幅 memset，
            「每 painter 重复做可缓存工作」的头号结构性候选）。 */
+        bpT0 = bpOn ? xpainter_prof_now_ns() : 0;
+        bpSegT0 = bpT0;
         uint64_t profT0 = xpainter_prof_requested()
                               ? xpainter_prof_now_ns() : 0;
         XGpuRenderBackend* gpu = XGpuRenderBackend_current();
@@ -7766,7 +7850,19 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
         if (!gpu)
             gpu = painterGpuSessionAcquire(XImage_width(image),
                                            XImage_height(image));
+        if (bpT0)
+        {
+            bpSegEnd = xpainter_prof_now_ns();
+            bpAcqNs += bpSegEnd - bpSegT0;
+            bpSegT0 = bpSegEnd;
+        }
         painterGpuBatchFlush(); /* 批量防御：上一帧异常残留的待定批先落地。 */
+        if (bpT0)
+        {
+            bpSegEnd = xpainter_prof_now_ns();
+            bpBfNs += bpSegEnd - bpSegT0;
+            bpSegT0 = bpSegEnd;
+        }
         if (gpu && g_gpuFrameDepth > 0 &&
             g_gpuFrameActiveBackend == gpu &&
             g_gpuFrameActiveImage == image)
@@ -7798,9 +7894,28 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 g_gpuBatchDirty.width = 0;
                 g_gpuBatchDirty.height = 0;
             }
+            if (bpT0) bpNested += 1;
         }
-        else if (gpu && XGpuRenderBackend_beginFrameImage(gpu, image))
+        else if (gpu)
         {
+            uint64_t bpChainT0 = bpT0 ? xpainter_prof_now_ns() : 0;
+            if (!XGpuRenderBackend_beginFrameImage(gpu, image))
+            {
+                if (bpChainT0)
+                {
+                    bpSegEnd = xpainter_prof_now_ns();
+                    bpChainNs += bpSegEnd - bpChainT0;
+                }
+                bpFail += 1;
+            }
+            else
+            {
+            if (bpChainT0)
+            {
+                bpSegEnd = xpainter_prof_now_ns();
+                bpChainNs += bpSegEnd - bpChainT0;
+                bpSegT0 = bpSegEnd;
+            }
             self->m_gpuBackend = gpu;
             self->m_gpuActive = true;
             g_xgpuRenderSessionInUse =
@@ -7828,8 +7943,11 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 if (xgpu_begin_clear_safe_requested() ||
                     !g_gpuBatchCanvasTransparent)
                 {
+                    uint64_t bpClrT0 = bpT0 ? xpainter_prof_now_ns() : 0;
                     XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
                     g_gpuBatchCanvasTransparent = true;
+                    if (bpClrT0)
+                        bpClearNs += xpainter_prof_now_ns() - bpClrT0;
                 }
                 g_gpuBatchHasDirty = false;
                 g_gpuBatchDirty.x = 0;
@@ -7837,11 +7955,58 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 g_gpuBatchDirty.width = 0;
                 g_gpuBatchDirty.height = 0;
             }
-        }
-        if (xpainter_prof_requested())
-        {
-            g_xpainterProf.m_beginNs += xpainter_prof_now_ns() - profT0;
-            ++g_xpainterProf.m_beginCount;
+            }
+            if (bpT0 && !self->m_gpuActive) bpSoft += 1;
+            if (xpainter_prof_requested())
+            {
+                g_xpainterProf.m_beginNs += xpainter_prof_now_ns() - profT0;
+                ++g_xpainterProf.m_beginCount;
+            }
+            if (bpT0)
+            {
+                uint64_t bpEnd = xpainter_prof_now_ns();
+                uint64_t bpCall = bpEnd - bpT0;
+                int64_t bpWin;
+                bpTotNs += bpCall;
+                bpN += 1;
+                /* 慢 streak 逐次判定（跳过帧不计入）：超阈值累计、达标
+                   （<阈值）清零自动恢复 GPU。仅帧首可降级语境
+                   （bpDoorOk）计入——嵌套/切换帧的耗时与本降级语义
+                   无关，混入会误触发混合帧。 */
+                if (bpSlowMs > 0 && !bpSkipGpu && bpDoorOk)
+                {
+                    if (bpCall > (uint64_t)bpSlowMs * 1000000ull)
+                        bpSlowStreak += 1;
+                    else
+                        bpSlowStreak = 0;
+                }
+                if (bpLastPrint == 0)
+                    bpLastPrint = bpEnd;
+                bpWin = (int64_t)(bpEnd - bpLastPrint);
+                if (bpWin >= 3000000000LL)
+                {
+                    fprintf(stderr,
+                            "[xp-begin] n=%-6u tot=%10.3fms acq=%9.3fms "
+                            "bflush=%8.3fms chain=%10.3fms clear=%8.3fms "
+                            "nested=%-5u soft=%-5u fail=%-4u skip=%-5u\n",
+                            bpN, (double)bpTotNs / 1e6,
+                            (double)bpAcqNs / 1e6, (double)bpBfNs / 1e6,
+                            (double)bpChainNs / 1e6,
+                            (double)bpClearNs / 1e6,
+                            bpNested, bpSoft, bpFail, bpSkip);
+                    bpN = 0;
+                    bpNested = 0;
+                    bpSoft = 0;
+                    bpFail = 0;
+                    bpSkip = 0;
+                    bpTotNs = 0;
+                    bpAcqNs = 0;
+                    bpBfNs = 0;
+                    bpChainNs = 0;
+                    bpClearNs = 0;
+                    bpLastPrint = bpEnd;
+                }
+            }
         }
     }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */

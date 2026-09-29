@@ -30,11 +30,13 @@
 #include "XImage.h"
 #include "XMemory.h"
 #include "XSystem.h"
+#include "XDateTime.h"
 #include "XPlatformGraphics.h"
 #include "XWindow.h"
 #include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 /* 仅包含跨平台 Vulkan SDK 核心头；窗口表面（X11 Xlib / Win32）的系统
    API 实现位于 Drive（XPlatformGraphicsDriver_createVulkanWindowSurface），
    本文件不含任何平台窗口系统头。 */
@@ -42,7 +44,293 @@
 
 #include "XGpuRenderDriver_vulkan_shaders.h"
 
+/* ==================== 帧级同步阶段计时（XGPU_VK_STAGE_PROF=1 启用） ==================== */
+
+/*
+ * 归因工具：只在提交与同步点打点（swapchain acquire、vkQueueSubmit、
+ * fence 等待、vkQueuePresentKHR、读回 mapped 拷出、waitIdle 类），
+ * 不逐绘制原语。每阶段累计总耗时/调用次数/单次最大值（尖刺归因），
+ * 2s 窗口聚合输出 stderr（前缀 [xvkl-stage]，对齐 XGPU_PROF 口径），
+ * 会话销毁时输出末窗累计（END 标记）；atexit 兜底补打（正常退出但
+ * 未走销毁路径时），保证短运行（<窗口时长）也能拿到一份实测。诊断
+ * 开关默认关；环境变量置
+ * 非 "0" 即开（"0" 显式关）。时钟与 GL 驱动/XGPU_PROF 同源
+ * （XDateTime_currentNSecsSinceEpoch，纳秒）。
+ */
+
+/** @brief 计时阶段枚举（聚合表下标）。 */
+typedef enum XvklStageId
+{
+    XvklStage_Acquire = 0,       /**< vkAcquireNextImageKHR（FIFO 背压可见）。 */
+    XvklStage_FrameFenceWait,    /**< 帧提交 fence 等待（begin 回收/end V1）。 */
+    XvklStage_SuspendFenceWait,  /**< 半帧打断 fence 等待（含兜底回收）。 */
+    XvklStage_TransferFenceWait, /**< transfer fence 回收等待（retire）。 */
+    XvklStage_ReadbackFenceWait, /**< 读回 fence 等待（槽回收+合并等待）。 */
+    XvklStage_SubmitFrame,       /**< endFrame vkQueueSubmit。 */
+    XvklStage_SubmitSuspend,     /**< 半帧打断 vkQueueSubmit。 */
+    XvklStage_SubmitTransfer,    /**< transfer/读回拷贝 vkQueueSubmit。 */
+    XvklStage_Present,           /**< vkQueuePresentKHR。 */
+    XvklStage_QueueWaitIdle,     /**< vkQueueWaitIdle（V1 路径）。 */
+    XvklStage_DeviceWaitIdle,    /**< vkDeviceWaitIdle（销毁等罕见点）。 */
+    XvklStage_ReadbackCopyout,   /**< 读回 staging mapped CPU 拷出。 */
+    XvklStage_Count
+} XvklStageId;
+
+/** @brief 阶段聚合表（进程级单例；跨会话累计，销毁时窗口收口）。 */
+static struct XvklStageProf
+{
+    uint64_t m_ns[XvklStage_Count];    /**< 各阶段累计耗时。 */
+    uint64_t m_maxNs[XvklStage_Count]; /**< 各阶段单次最大耗时。 */
+    uint32_t m_count[XvklStage_Count]; /**< 各阶段调用次数。 */
+    uint64_t m_windowStartNs;          /**< 当前聚合窗口起点。 */
+    uint32_t m_frames;                 /**< 当前窗口 beginFrame 次数。 */
+} g_xvklStageProf;
+
+static const char* const g_xvklStageNames[XvklStage_Count] =
+{
+    "acquire", "frameFenceWait", "suspendFenceWait", "transferFenceWait",
+    "readbackFenceWait", "submitFrame", "submitSuspend", "submitTransfer",
+    "present", "queueWaitIdle", "deviceWaitIdle", "readbackCopyout"
+};
+
+static void xvkl_stage_prof_atexit_report(void);
+static bool xvkl_begin_prof_on(void);
+static void xvkl_begin_prof_report(void);
+static bool xvkl_obj_prof_on(void);
+static void xvkl_obj_prof_report(void);
+
+/** @brief XGPU_VK_STAGE_PROF 开关（"0"=显式关；其余非空=开；缓存）。 */
+static bool xvkl_stage_prof_on(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_STAGE_PROF");
+        cached = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
+        if (cached)
+        {
+            g_xvklStageProf.m_windowStartNs =
+                XDateTime_currentNSecsSinceEpoch();
+            atexit(xvkl_stage_prof_atexit_report);
+        }
+    }
+    return cached != 0;
+}
+
+/** @brief 打点：累计一次阶段耗时（delta=now-startNs，含单次最大值）。 */
+static void xvkl_stage_record(XvklStageId stage, uint64_t startNs)
+{
+    uint64_t now = XDateTime_currentNSecsSinceEpoch();
+    uint64_t delta = now > startNs ? now - startNs : 0;
+    g_xvklStageProf.m_ns[stage] += delta;
+    g_xvklStageProf.m_count[stage] += 1;
+    if (delta > g_xvklStageProf.m_maxNs[stage])
+        g_xvklStageProf.m_maxNs[stage] = delta;
+}
+
+/** @brief 输出当前窗口聚合并重开窗口（final=1 附 END 标记）。 */
+static void xvkl_stage_prof_report(int final)
+{
+    uint64_t now = XDateTime_currentNSecsSinceEpoch();
+    double secs = (double)(now - g_xvklStageProf.m_windowStartNs) /
+                  1e9;
+    int i;
+    fprintf(stderr, "[xvkl-stage] %s window=%.1fs frames=%u\n",
+            final ? "END" : "2s", secs, g_xvklStageProf.m_frames);
+    for (i = 0; i < XvklStage_Count; ++i)
+    {
+        if (!g_xvklStageProf.m_count[i]) continue;
+        fprintf(stderr,
+                "[xvkl-stage]   %-18s n=%-7u total=%10.3fms "
+                "avg=%9.4fms max=%9.4fms perFrame=%8.4fms\n",
+                g_xvklStageNames[i], g_xvklStageProf.m_count[i],
+                (double)g_xvklStageProf.m_ns[i] / 1e6,
+                (double)g_xvklStageProf.m_ns[i] / 1e6 /
+                    (double)g_xvklStageProf.m_count[i],
+                (double)g_xvklStageProf.m_maxNs[i] / 1e6,
+                g_xvklStageProf.m_frames
+                    ? (double)g_xvklStageProf.m_ns[i] / 1e6 /
+                          (double)g_xvklStageProf.m_frames
+                    : 0.0);
+    }
+    xvkl_begin_prof_report();
+    xvkl_obj_prof_report();
+    XMemset(g_xvklStageProf.m_ns, 0, sizeof(g_xvklStageProf.m_ns));
+    XMemset(g_xvklStageProf.m_maxNs, 0, sizeof(g_xvklStageProf.m_maxNs));
+    XMemset(g_xvklStageProf.m_count, 0, sizeof(g_xvklStageProf.m_count));
+    g_xvklStageProf.m_frames = 0;
+    g_xvklStageProf.m_windowStartNs = now;
+}
+
+/** @brief 进程退出兜底：会话销毁未执行（正常退出但未走 destroy，或
+             退路被绕过）时补打最终报告；销毁报告已打（frames 已归零）
+             则静默，避免重复。进程被强杀时本钩子不运行——靠 2s 周期
+             窗口保证短运行也有输出。 */
+static void xvkl_stage_prof_atexit_report(void)
+{
+    if (g_xvklStageProf.m_frames) xvkl_stage_prof_report(1);
+}
+
+/** @brief beginFrame 侧窗口 tick：帧计数并按 2s 窗口驱动周期输出。 */
+static void xvkl_stage_prof_tick(void)
+{
+    if (!xvkl_stage_prof_on() && !xvkl_begin_prof_on() && !xvkl_obj_prof_on())
+        return;
+    ++g_xvklStageProf.m_frames;
+    if (XDateTime_currentNSecsSinceEpoch() -
+        g_xvklStageProf.m_windowStartNs >= 2000000000u)
+        xvkl_stage_prof_report(0);
+}
+
+/* ==================== begin 链细分计时（XGPU_VK_BEGIN_PROF=1 启用） ==================== */
+
+/* 定位 begin_image GPU 分支耗时归属：total=驱动 begin_frame 全函数，
+   fence/acquire/copyInit=三个阻塞嫌疑段（其余归 other）。与
+   XGPU_PAINTER_PROF 的 begin_image 计时同开相减，即可把 painter 侧
+   （画布清零/会话获取/批防御）与驱动侧 begin 链拆开归因。 */
+static struct XvklBeginProf
+{
+    uint64_t m_totalNs;   /**< begin_frame 全函数累计。 */
+    uint64_t m_fenceNs;   /**< 帧/悬置 fence 等待累计。 */
+    uint64_t m_acquireNs; /**< swapchain acquire 累计。 */
+    uint64_t m_copyNs;    /**< initialImage 画布整幅预乘上传累计。 */
+    uint64_t m_prepNs;    /**< prepare_frame_target（帧目标准备）累计。 */
+    uint64_t m_maxNs;     /**< 单次 begin_frame 最大耗时。 */
+    uint32_t m_count;     /**< begin_frame 次数。 */
+} g_xvklBeginProf;
+
+/** @brief XGPU_VK_BEGIN_PROF 开关（"0"=显式关；其余非空=开；缓存）。 */
+static bool xvkl_begin_prof_on(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_BEGIN_PROF");
+        cached = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
+    }
+    return cached != 0;
+}
+
+/** @brief begin 链窗口行输出（随 stage-prof 的 2s/END 窗口驱动）。 */
+static void xvkl_begin_prof_report(void)
+{
+    uint64_t known;
+    uint64_t other;
+    if (!xvkl_begin_prof_on() || !g_xvklBeginProf.m_count) return;
+    known = g_xvklBeginProf.m_fenceNs + g_xvklBeginProf.m_acquireNs +
+            g_xvklBeginProf.m_copyNs + g_xvklBeginProf.m_prepNs;
+    other = g_xvklBeginProf.m_totalNs > known
+                ? g_xvklBeginProf.m_totalNs - known
+                : 0;
+    fprintf(stderr,
+            "[xvkl-begin] n=%-7u avg=%9.4fms max=%9.4fms fence=%9.4fms "
+            "acquire=%9.4fms copyInit=%9.4fms prep=%9.4fms other=%9.4fms\n",
+            g_xvklBeginProf.m_count,
+            (double)g_xvklBeginProf.m_totalNs / 1e6 /
+                (double)g_xvklBeginProf.m_count,
+            (double)g_xvklBeginProf.m_maxNs / 1e6,
+            (double)g_xvklBeginProf.m_fenceNs / 1e6 /
+                (double)g_xvklBeginProf.m_count,
+            (double)g_xvklBeginProf.m_acquireNs / 1e6 /
+                (double)g_xvklBeginProf.m_count,
+            (double)g_xvklBeginProf.m_copyNs / 1e6 /
+                (double)g_xvklBeginProf.m_count,
+            (double)g_xvklBeginProf.m_prepNs / 1e6 /
+                (double)g_xvklBeginProf.m_count,
+            (double)other / 1e6 / (double)g_xvklBeginProf.m_count);
+    XMemset(&g_xvklBeginProf, 0, sizeof(g_xvklBeginProf));
+}
+
+/* ==================== 对象创建审计（XGPU_VK_OBJ_PROF=1 启用） ==================== */
+
+/* 第 8 轮统筹样本：amdvlk64 serialization 锁疑为管线编译锁——审计
+   vkCreateGraphicsPipelines/vkCreateShaderModule/vkCreateRenderPass/
+   vkAllocateCommandBuffers 等每窗口发生数：稳态（会话创建完成后）必须
+   为 0；非 0 即存在每帧/周期性对象重建（会话重试、staging/画布扩容、
+   swapchain 重建等），按计数定位后实施管线缓存/复用。计数点覆盖全部
+   驱动内创建入口（含 helper），窗口驱动与 [xvkl-stage] 同源。 */
+static struct XvklObjProf
+{
+    uint64_t m_winStartNs;      /**< 窗口起点。 */
+    uint32_t m_frames;          /**< 窗口内 begin_frame 次数。 */
+    uint32_t m_graphicsPipelines;
+    uint32_t m_shaderModules;
+    uint32_t m_renderPasses;
+    uint32_t m_cmdBuffers;
+    uint32_t m_framebuffers;
+    uint32_t m_swapchains;
+    uint32_t m_images;
+    uint32_t m_buffers;
+    uint32_t m_deviceMemory;
+} g_xvklObjProf;
+
+static bool g_xvklObjOn = false; /**< 惰性初始化（首次 hit/report 判定）。 */
+
+/** @brief XGPU_VK_OBJ_PROF 开关（"0"=显式关；其余非空=开；缓存）。 */
+static bool xvkl_obj_prof_on(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_OBJ_PROF");
+        g_xvklObjOn = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
+        if (g_xvklObjOn)
+            g_xvklObjProf.m_winStartNs = XDateTime_currentNSecsSinceEpoch();
+        cached = g_xvklObjOn ? 1 : 0;
+    }
+    return cached != 0;
+}
+
+/** @brief 对象创建命中计数（门控关闭时零开销直返）。 */
+static void xvkl_obj_hit(uint32_t* slot)
+{
+    if (g_xvklObjOn) *slot += 1;
+}
+
+/** @brief 对象审计窗口行（随 stage-prof 的 2s/END 窗口驱动）。 */
+static void xvkl_obj_prof_report(void)
+{
+    if (!g_xvklObjOn) return;
+    fprintf(stderr,
+            "[xvkl-obj] frames=%-6u pipelines=%-4u shaders=%-4u "
+            "passes=%-4u cmdbuf=%-4u fb=%-4u swap=%-3u img=%-4u "
+            "buf=%-4u mem=%-4u\n",
+            g_xvklObjProf.m_frames,
+            g_xvklObjProf.m_graphicsPipelines,
+            g_xvklObjProf.m_shaderModules,
+            g_xvklObjProf.m_renderPasses,
+            g_xvklObjProf.m_cmdBuffers,
+            g_xvklObjProf.m_framebuffers,
+            g_xvklObjProf.m_swapchains,
+            g_xvklObjProf.m_images,
+            g_xvklObjProf.m_buffers,
+            g_xvklObjProf.m_deviceMemory);
+    XMemset(&g_xvklObjProf.m_graphicsPipelines, 0,
+            sizeof(g_xvklObjProf.m_graphicsPipelines));
+    g_xvklObjProf.m_shaderModules = 0;
+    g_xvklObjProf.m_renderPasses = 0;
+    g_xvklObjProf.m_cmdBuffers = 0;
+    g_xvklObjProf.m_framebuffers = 0;
+    g_xvklObjProf.m_swapchains = 0;
+    g_xvklObjProf.m_images = 0;
+    g_xvklObjProf.m_buffers = 0;
+    g_xvklObjProf.m_deviceMemory = 0;
+    g_xvklObjProf.m_frames = 0;
+    g_xvklObjProf.m_winStartNs = XDateTime_currentNSecsSinceEpoch();
+}
+
 /* ==================== 会话结构 ==================== */
+
+/* 帧环深度上限（XGPU_VK_FRAMES_IN_FLIGHT 可配 1~3，默认 1）：1=旧单槽
+   路径（beginFrame 逐帧全 GPU 排空，当前最优，2026-09-28 第 2 轮实测
+   K=2 使 p0 16.3→13.4 故回退默认）；2~3=命令缓冲/fence/信号量/顶点
+   缓冲按槽轮转，endFrame N+1 的 CPU 录制/提交与 GPU 执行/present N
+   重叠（实测在本负载下反而劣化，疑似 FIFO 背压前移至 acquire 集中化
+   ——仅作显式开关保留供复测）。按槽信号量复用的合法性由单队列提交序
+   保证：renderDone[s] 的 wait（present N）在队列序上先于 submit(N+K)
+   对它的再次 signal；imageReady[s] 的再次 signal 前必经本槽 fence 等
+   待（覆盖 submit N 对它的 wait）。 */
+#define XGPU_VK_MAX_FRAMES_IN_FLIGHT 3
 
 struct XGpuRenderDriverSession
 {
@@ -59,17 +347,35 @@ struct XGpuRenderDriverSession
     VkQueue m_queue;             /**< 图形队列。 */
     uint32_t m_queueFamily;      /**< 图形/窗口 present 所在队列族。 */
     VkCommandPool m_cmdPool;     /**< 命令池。 */
-    VkCommandBuffer m_cmd;       /**< 帧命令缓冲（每帧重置重录）。 */
-    VkCommandBuffer m_transferCmd; /**< 同步上传/读回专用命令缓冲。 */
-    VkFence m_frameFence;        /**< 帧提交完成 fence。 */
+    /* 帧环（XGPU_VK_FRAMES_IN_FLIGHT，默认 1=旧单槽最优路径；2~3 显式
+       启用按槽轮转）：命令缓冲/fence/信号量/顶点缓冲按槽轮转；单数字段
+       为当前槽镜像（begin_frame 装载、帧内恒定，endFrame 尾部推进槽
+       下标）。 */
+    VkCommandBuffer m_frameCmd[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    int m_frameSlot;             /**< 当前帧槽下标（begin 取用，end 推进）。 */
+    int m_framesInFlight;        /**< 帧环深度（V1 同步路径强制 1）。 */
+    VkCommandBuffer m_cmd;       /**< 当前槽帧命令缓冲（镜像，每帧重置重录）。 */
+    /* transfer 链双缓冲轮转（第 9 轮）：命令缓冲/fence/staging 按帧槽
+       独立（K 份），帧 N 用槽 A、帧 N+1 用槽 B——B 的 retire 等的是
+       早已信号的历史 fence，消除跨帧 transferFenceWait（第 8 轮实测
+       ~1.2ms/帧）；帧内同槽串行保持（staging 重写安全必需）。单值
+       字段为当前槽镜像（begin_frame 装载，帧内恒定）。 */
+    VkCommandBuffer m_transferCmds[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    VkFence m_transferFences[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    bool m_transferInFlight[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    /**< 各槽 transfer 是否有待回收提交。 */
+    int m_transferSlot;          /**< 当前 transfer 槽（submit 后轮转）。 */
+    VkCommandBuffer m_transferCmd; /**< 当前槽 transfer 命令缓冲（镜像）。 */
+    VkFence m_transferFence;     /**< 当前槽 transfer 提交 fence（镜像）。 */
+    VkFence m_frameFences[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    VkFence m_frameFence;        /**< 当前槽帧提交 fence（镜像）。 */
 
     /* XGPU_VK_PRESENT_V2（present 模型二期，fence 批量回收，默认开；
        =0 回退旧同步路径）：endFrame 异步提交，fence 回收点移至下一帧
        beginFrame；transfer/suspend 提交以独立 fence 取代全队列等待。 */
     bool m_presentV2;            /**< V2 异步提交模型开关（创建时读环境变量）。 */
-    bool m_frameFenceArmed;      /**< 上一帧 endFrame 提交成功、fence 待回收。 */
-    VkFence m_transferFence;     /**< transfer 提交 fence（V2，取代 QueueWaitIdle）。 */
-    bool m_transferInFlight;     /**< transferFence 是否有待回收提交。 */
+    bool m_frameFenceArmed[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    /**< 各槽上一帧 endFrame 提交成功、该槽 fence 待回收。 */
     VkFence m_suspendFence;      /**< 半帧打断提交 fence（V2，离屏 upload/readback）。 */
 
     /* XGPU_VK_ASYNC_READBACK（读回异步化，默认开；置 "0" 回退旧串行
@@ -82,10 +388,18 @@ struct XGpuRenderDriverSession
        读回与旧路径逐位一致。 */
     bool m_asyncReadback;        /**< 读回异步化开关（创建时读环境变量）。 */
     VkCommandBuffer m_readbackCmd; /**< 读回专用命令缓冲（独立于 m_transferCmd）。 */
+    /* canvas keep（XGPU_VK_CANVAS_KEEP 默认开，第 10 轮）：同 swapchain
+       image 连续帧跳过冗余 copy_initial 整幅上传——IMMEDIATE 无 vsync
+       强制轮换 + FBO keep-open 自持 + 帧末 drb 脏区双向同步 ⇒ paintImage
+       与 FBO 恒等链保持，跳过帧与上传帧的 FBO 逐位一致；60 帧强制重
+       同步自愈（防 degraded 软件帧 lost-update 长尾）。 */
+    int m_keepSyncedSlot;        /**< 上次整幅上传命中的 swapchain image 下标（-1=无）。 */
+    uint32_t m_keepStreak;       /**< 连续跳过帧数（60 帧强制重同步）。 */
     VkBuffer m_readbackBuffer[2];  /**< 双缓冲读回 staging（首用时惰性分配）。 */
     VkDeviceMemory m_readbackMemory[2];
     void* m_readbackMapped[2];     /**< 持久映射。 */
     size_t m_readbackCapacity[2];  /**< 各槽字节容量。 */
+    bool m_readbackCoherent[2];   /**< 各槽内存是否 COHERENT（非 CACHED+COHERENT 档需 invalidate）。 */
     VkFence m_readbackFence[2];    /**< 各槽读回提交 fence。 */
     bool m_readbackInFlight[2];    /**< 各槽是否有待回收读回提交。 */
     int m_readbackIndex;           /**< 下一笔读回使用的槽（乒乓）。 */
@@ -119,22 +433,45 @@ struct XGpuRenderDriverSession
     VkFramebuffer m_swapFbs[8];  /**< 每图像 framebuffer（拥有）。 */
     VkImageLayout m_swapLayouts[8]; /**< 交换链图像当前布局。 */
     uint32_t m_imageIndex;       /**< 当前获取的交换链图像下标。 */
-    VkSemaphore m_imageReady;    /**< acquire 信号量。 */
-    VkSemaphore m_renderDone;    /**< present 信号量。 */
+    VkSemaphore m_imageReadys[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    VkSemaphore m_renderDones[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    VkSemaphore m_imageReady;    /**< 当前槽 acquire 信号量（镜像）。 */
+    VkSemaphore m_renderDone;    /**< 当前槽 present 信号量（镜像）。 */
     bool m_imageWaitConsumed;    /**< 本帧 acquire 信号量是否已消费。 */
 
-    /* 几何：HOST_VISIBLE 顶点缓冲（pos2+uv2+color4，8 floats/顶点）。 */
-    VkBuffer m_vertexBuffer;
-    VkDeviceMemory m_vertexMemory;
-    float* m_vertexMapped;       /**< 持久映射（拥有期间有效）。 */
-    uint32_t m_vertexCapacity;   /**< 顶点容量（个）。 */
+    /* 几何：HOST_VISIBLE 顶点缓冲（pos2+uv2+color4，8 floats/顶点），
+       按槽一份（帧环下防止下一帧 CPU 写顶点覆盖在途帧仍在读取的
+       顶点数据——同队列序管不了 CPU 侧映射写入）。 */
+    VkBuffer m_vertexBuffers[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory m_vertexMemories[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    float* m_vertexMappeds[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    uint32_t m_vertexCapacities[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    VkBuffer m_vertexBuffer;     /**< 当前槽顶点缓冲（镜像）。 */
+    float* m_vertexMapped;       /**< 当前槽持久映射（镜像）。 */
+    uint32_t m_vertexCapacity;   /**< 当前槽顶点容量（个，镜像）。 */
     uint32_t m_vertexCursor;     /**< 本帧已写顶点数。 */
 
-    /* 一次性上传 staging（HOST_VISIBLE，按需扩容）。 */
+    /* 一次性上传 staging（HOST_VISIBLE，按需扩容）——按帧槽独立（transfer
+       链槽化的一部分：staging 重写与 GPU 读它的 transfer 分槽后互不
+       等待）；单值字段为当前槽镜像。 */
+    VkBuffer m_stagingBuffers[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory m_stagingMemories[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    void* m_stagingMappeds[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
+    size_t m_stagingCapacities[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
     VkBuffer m_stagingBuffer;
-    VkDeviceMemory m_stagingMemory;
-    void* m_stagingMapped;       /**< 持久映射。 */
-    size_t m_stagingCapacity;    /**< staging 容量（字节）。 */
+    void* m_stagingMapped;       /**< 持久映射（当前槽镜像）。 */
+    size_t m_stagingCapacity;    /**< staging 容量（字节，当前槽镜像）。 */
+
+    /* 帧内内联上传 staging（XGPU_VK_UPLOAD_BATCH）：独立于 transferCmd
+       的 m_staging*（图集上传/读回共用，会在帧中途被覆写/扩容）——
+       同帧多笔上传按游标追加互不覆写；本帧 m_cmd 执行后下帧复用
+       （K=1 下 beginFrame fence 等待覆盖在途读取）。 */
+    VkBuffer m_frameStagingBuffer;
+    VkDeviceMemory m_frameStagingMemory;
+    void* m_frameStagingMapped;  /**< 持久映射。 */
+    size_t m_frameStagingCapacity; /**< 容量（字节）。 */
+    size_t m_frameStageCursor;   /**< 本帧已追加字节（beginFrame 清零）。 */
+    size_t m_frameStageDemand;   /**< 回退笔记下的扩容需求（游标 0 时扩）。 */
 
     /* 源纹理与图集（复用单图像，绘制时整幅重传）。 */
     VkImage m_sourceImage;
@@ -180,8 +517,13 @@ static bool xvkl_alloc_memory(VkDevice device, VkPhysicalDevice physical,
             ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             ai.allocationSize = req->size;
             ai.memoryTypeIndex = i;
-            return vkAllocateMemory(device, &ai, NULL, outMemory) ==
-                   VK_SUCCESS;
+            if (vkAllocateMemory(device, &ai, NULL, outMemory) ==
+                VK_SUCCESS)
+            {
+                xvkl_obj_hit(&g_xvklObjProf.m_deviceMemory);
+                return true;
+            }
+            return false;
         }
     }
     return false;
@@ -204,6 +546,7 @@ static bool xvkl_create_host_buffer(VkDevice device, VkPhysicalDevice physical,
     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if (vkCreateBuffer(device, &bi, NULL, outBuffer) != VK_SUCCESS)
         return false;
+    xvkl_obj_hit(&g_xvklObjProf.m_buffers);
     vkGetBufferMemoryRequirements(device, *outBuffer, &req);
     if (!xvkl_alloc_memory(device, physical, &req,
                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -244,6 +587,7 @@ static bool xvkl_create_color_image(VkDevice device,
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (vkCreateImage(device, &ii, NULL, outImage) != VK_SUCCESS)
         return false;
+    xvkl_obj_hit(&g_xvklObjProf.m_images);
     vkGetImageMemoryRequirements(device, *outImage, &req);
     if (!xvkl_alloc_memory(device, physical, &req,
                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, outMemory))
@@ -339,7 +683,10 @@ static bool xvkl_create_render_pass(VkDevice device, VkFormat format,
     ci.subpassCount = 1;
     ci.pSubpasses = &subpass;
     ci.dependencyCount = 0;
-    return vkCreateRenderPass(device, &ci, NULL, outPass) == VK_SUCCESS;
+    if (vkCreateRenderPass(device, &ci, NULL, outPass) != VK_SUCCESS)
+        return false;
+    xvkl_obj_hit(&g_xvklObjProf.m_renderPasses);
+    return true;
 }
 
 /**
@@ -372,6 +719,7 @@ static bool xvkl_create_pipeline(VkDevice device, VkRenderPass pass,
     sci.pCode = kSpvVertex;
     if (vkCreateShaderModule(device, &sci, NULL, &vs) != VK_SUCCESS)
         return false;
+    xvkl_obj_hit(&g_xvklObjProf.m_shaderModules);
     sci.codeSize = (textured ? KSPVFRAGMENTTEXTURE_WORDS
                              : KSPVFRAGMENTSOLID_WORDS) * sizeof(uint32_t);
     sci.pCode = textured ? kSpvFragmentTexture : kSpvFragmentSolid;
@@ -380,6 +728,7 @@ static bool xvkl_create_pipeline(VkDevice device, VkRenderPass pass,
         vkDestroyShaderModule(device, vs, NULL);
         return false;
     }
+    xvkl_obj_hit(&g_xvklObjProf.m_shaderModules);
     XMemset(stages, 0, sizeof(stages));
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -459,6 +808,7 @@ static bool xvkl_create_pipeline(VkDevice device, VkRenderPass pass,
     ci.subpass = 0;
     ok = vkCreateGraphicsPipelines(device, 0, 1, &ci, NULL, outPipeline) ==
          VK_SUCCESS;
+    if (ok) xvkl_obj_hit(&g_xvklObjProf.m_graphicsPipelines);
     vkDestroyShaderModule(device, vs, NULL);
     vkDestroyShaderModule(device, fs, NULL);
     return ok;
@@ -675,9 +1025,61 @@ static bool xvkl_create_offscreen_target(XGpuRenderDriverSession* self)
     if (vkCreateFramebuffer(self->m_device, &fi, NULL, &self->m_swapFbs[0]) !=
         VK_SUCCESS)
         return false;
+    xvkl_obj_hit(&g_xvklObjProf.m_framebuffers);
     self->m_swapCount = 1;
     self->m_colorLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     return true;
+}
+
+/**
+ * @brief      解析 XGPU_VK_PRESENT_MODE 并钳到设备支持的呈现模式。
+ * @details    默认 FIFO（现行为）；"mailbox"/"immediate"/"relaxed" 显式
+ *             选择。【第 8 轮 K=3 健康帧归因（统筹补跑）：acquire=
+ *             5.48ms/帧（max 12.9ms）为剩余最大单段=FIFO 背压在
+ *             vkAcquireNextImageKHR 上的等待——本扫描即第五轮计划的
+ *             present mode 三模式实测入口】IMMEDIATE 跳过 FIFO 队列
+ *             （撕裂）；RELAXED=FIFO 但错过 vsync 立即呈现（撕裂介于
+ *             两者，第 4 轮旧成本结构下 immediate 无收益的结论在新
+ *             结构下需重测）。请求的模式不被支持时回退 FIFO（Vulkan
+ *             规范保证 FIFO 恒支持）。
+ */
+static VkPresentModeKHR xvkl_choose_present_mode(VkPhysicalDevice physical,
+                                                 VkSurfaceKHR surface)
+{
+    VkPresentModeKHR modes[16];
+    uint32_t count = 0;
+    /* 默认 IMMEDIATE（2026-09-28）：本机 RDP+AMD 22.20 栈实测 FIFO 的显示
+       栈传输背压为帧间 30ms 级天花板（p0 27.2 / p4t20 13.1），IMMEDIATE 解锁
+       后 p0 194.6 / p4t20 82.6——与 GL 回读+BitBlt 通道「不等 vsync」的呈现
+       语义对齐（GL 路径从未等待垂直同步）。原生屏 tearing 敏感场景可用
+       XGPU_VK_PRESENT_MODE=fifo 回退（mailbox/relaxed 亦可选）。 */
+    VkPresentModeKHR want = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    const char* v = XSystem_environment("XGPU_VK_PRESENT_MODE");
+    uint32_t i;
+    if (v && v[0])
+    {
+        if (v[0] == 'm' && v[1] == 'a')
+            want = VK_PRESENT_MODE_MAILBOX_KHR;
+        else if (v[0] == 'f')
+            want = VK_PRESENT_MODE_FIFO_KHR;
+        else if (v[0] == 'r')
+            want = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    }
+    if (want == VK_PRESENT_MODE_FIFO_KHR)
+        return want;
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(physical, surface,
+                                                  &count, NULL) != VK_SUCCESS ||
+        count == 0 || count > 16)
+        return VK_PRESENT_MODE_FIFO_KHR;
+    if (vkGetPhysicalDeviceSurfacePresentModesKHR(physical, surface,
+                                                  &count, modes) != VK_SUCCESS)
+        return VK_PRESENT_MODE_FIFO_KHR;
+    for (i = 0; i < count; ++i)
+    {
+        if (modes[i] == want)
+            return want;
+    }
+    return VK_PRESENT_MODE_FIFO_KHR;
 }
 
 /** @brief 创建窗口 swapchain、图像视图与 framebuffer。 */
@@ -698,6 +1100,7 @@ static bool xvkl_create_swapchain(XGpuRenderDriverSession* self)
                                                   self->m_surface, &caps) !=
         VK_SUCCESS)
         return false;
+    presentMode = xvkl_choose_present_mode(self->m_physical, self->m_surface);
     if (vkGetPhysicalDeviceSurfaceFormatsKHR(self->m_physical, self->m_surface,
                                              &formatCount, NULL) != VK_SUCCESS ||
         formatCount == 0 || formatCount > 32)
@@ -763,6 +1166,9 @@ static bool xvkl_create_swapchain(XGpuRenderDriverSession* self)
     if (vkCreateSwapchainKHR(self->m_device, &ci, NULL, &self->m_swapchain) !=
         VK_SUCCESS)
         return false;
+    xvkl_obj_hit(&g_xvklObjProf.m_swapchains);
+    self->m_keepSyncedSlot = -1; /* swapchain 重建：canvas keep 失效。 */
+    self->m_keepStreak = 0;
     if (vkGetSwapchainImagesKHR(self->m_device, self->m_swapchain,
                                 &self->m_swapCount, NULL) != VK_SUCCESS ||
         self->m_swapCount == 0 || self->m_swapCount > 8)
@@ -803,6 +1209,7 @@ static bool xvkl_create_swapchain(XGpuRenderDriverSession* self)
         if (vkCreateFramebuffer(self->m_device, &fi, NULL,
                                 &self->m_swapFbs[i]) != VK_SUCCESS)
             return false;
+        xvkl_obj_hit(&g_xvklObjProf.m_framebuffers);
     }
     return true;
 }
@@ -829,6 +1236,7 @@ static VkFormat xvkl_surface_format(XGpuRenderDriverSession* self)
 
 static bool xvkl_present_v2(void); /* 定义于帧控制节（transfer 提交附近）。 */
 static bool xvkl_async_readback(void); /* 定义于读回节（readback 附近）。 */
+static int xvkl_frames_in_flight(void); /* 定义于帧控制节（present_v2 附近）。 */
 
 static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
                                                     int width, int height)
@@ -928,8 +1336,12 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         goto fail;
     }
     /* 读回异步化开关在命令缓冲分配前读取：异步路径需要第三条
-       PRIMARY 命令缓冲（专用读回，与帧/上传命令缓冲互不复用）。 */
+       PRIMARY 命令缓冲（专用读回，与帧/上传命令缓冲互不复用）。
+       帧环深度同在此读取：每槽一条帧命令缓冲（V1 同步路径强制 1，
+       与逐帧全排空语义绑定）。 */
     self->m_asyncReadback = xvkl_async_readback();
+    self->m_framesInFlight = xvkl_present_v2() ? xvkl_frames_in_flight() : 1;
+    self->m_frameSlot = 0;
     XMemset(&poolCi, 0, sizeof(poolCi));
     poolCi.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolCi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -944,42 +1356,76 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     cbAi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbAi.commandPool = self->m_cmdPool;
     cbAi.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbAi.commandBufferCount = self->m_asyncReadback ? 3 : 2;
+    cbAi.commandBufferCount = (uint32_t)(self->m_framesInFlight * 2 +
+                                         (self->m_asyncReadback ? 1 : 0));
     {
-        VkCommandBuffer buffers[3];
-        if (vkAllocateCommandBuffers(self->m_device, &cbAi, buffers) !=
-            VK_SUCCESS)
+        /* 容量 9 与下方 total>9 守卫一致（total = framesInFlight*2 +
+           async?1:0，K=3+异步 时 =7）。修复 2026-09-29：原 buffers[5]
+           在 K=3 时被 vkAllocateCommandBuffers 越界写 2 句柄（RTC:
+           Stack around 'buffers' corrupted → 模态框挂死 main）。 */
+        VkCommandBuffer buffers[9];
+        uint32_t bi;
+        uint32_t transferBase = (uint32_t)self->m_framesInFlight;
+        uint32_t total = transferBase + (uint32_t)self->m_framesInFlight +
+                         (self->m_asyncReadback ? 1u : 0u);
+        if (total > 9 ||
+            vkAllocateCommandBuffers(self->m_device, &cbAi, buffers) !=
+                VK_SUCCESS)
         {
             failStage = "vkAllocateCommandBuffers";
             goto fail;
         }
+        xvkl_obj_hit(&g_xvklObjProf.m_cmdBuffers);
+        for (bi = 0; bi < (uint32_t)self->m_framesInFlight; ++bi)
+            self->m_frameCmd[bi] = buffers[bi];
         self->m_cmd = buffers[0];
-        self->m_transferCmd = buffers[1];
+        for (bi = 0; bi < (uint32_t)self->m_framesInFlight; ++bi)
+            self->m_transferCmds[bi] = buffers[transferBase + bi];
+        self->m_transferCmd = self->m_transferCmds[0];
         if (self->m_asyncReadback)
-            self->m_readbackCmd = buffers[2];
+            self->m_readbackCmd = buffers[total - 1];
     }
     XMemset(&fci, 0, sizeof(fci));
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    if (vkCreateFence(self->m_device, &fci, NULL, &self->m_frameFence) !=
-        VK_SUCCESS)
     {
-        failStage = "vkCreateFence";
-        goto fail;
+        int fi;
+        for (fi = 0; fi < self->m_framesInFlight; ++fi)
+        {
+            if (vkCreateFence(self->m_device, &fci, NULL,
+                              &self->m_frameFences[fi]) != VK_SUCCESS)
+            {
+                failStage = "vkCreateFence";
+                goto fail;
+            }
+        }
+        self->m_frameFence = self->m_frameFences[0];
     }
     self->m_presentV2 = xvkl_present_v2();
     if (self->m_presentV2)
     {
-        /* V2 辅助 fence：初始 UNSIGNALED（未提交的工作无需等待）。 */
+        /* V2 辅助 fence：初始 UNSIGNALED（未提交的工作无需等待）。
+           transfer fence 按帧槽 ×K（transfer 链槽化，第 9 轮）。 */
         VkFenceCreateInfo ufci;
+        int tfi;
         XMemset(&ufci, 0, sizeof(ufci));
         ufci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        for (tfi = 0; tfi < self->m_framesInFlight; ++tfi)
+        {
+            if (vkCreateFence(self->m_device, &ufci, NULL,
+                              &self->m_transferFences[tfi]) != VK_SUCCESS)
+            {
+                failStage = "vkCreateFence(v2)";
+                goto fail;
+            }
+        }
+        self->m_transferFence = self->m_transferFences[0];
+        self->m_keepSyncedSlot = -1; /* 会话创建：canvas keep 失效待首帧同步。 */
+        self->m_keepStreak = 0;
         if (vkCreateFence(self->m_device, &ufci, NULL,
-                          &self->m_transferFence) != VK_SUCCESS ||
-            vkCreateFence(self->m_device, &ufci, NULL,
                           &self->m_suspendFence) != VK_SUCCESS)
         {
-            failStage = "vkCreateFence(v2)";
+            failStage = "vkCreateFence(v2-suspend)";
             goto fail;
         }
     }
@@ -1011,18 +1457,24 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
     sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     if (self->m_window)
     {
-        if (vkCreateSemaphore(self->m_device, &sci, NULL,
-                              &self->m_imageReady) != VK_SUCCESS)
+        int semi;
+        for (semi = 0; semi < self->m_framesInFlight; ++semi)
         {
-            failStage = "vkCreateSemaphore(imageReady)";
-            goto fail;
+            if (vkCreateSemaphore(self->m_device, &sci, NULL,
+                                  &self->m_imageReadys[semi]) != VK_SUCCESS)
+            {
+                failStage = "vkCreateSemaphore(imageReady)";
+                goto fail;
+            }
+            if (vkCreateSemaphore(self->m_device, &sci, NULL,
+                                  &self->m_renderDones[semi]) != VK_SUCCESS)
+            {
+                failStage = "vkCreateSemaphore(renderDone)";
+                goto fail;
+            }
         }
-        if (vkCreateSemaphore(self->m_device, &sci, NULL,
-                              &self->m_renderDone) != VK_SUCCESS)
-        {
-            failStage = "vkCreateSemaphore(renderDone)";
-            goto fail;
-        }
+        self->m_imageReady = self->m_imageReadys[0];
+        self->m_renderDone = self->m_renderDones[0];
     }
     if (!xvkl_create_device_objects(
             self, self->m_window ? xvkl_surface_format(self)
@@ -1044,15 +1496,26 @@ static XGpuRenderDriverSession* xvkl_session_create(XWindow* window,
         fprintf(stderr, "vulkan: offscreen target failed\n");
         goto fail;
     }
-    if (!xvkl_create_host_buffer(self->m_device, self->m_physical,
-                                 1024u * 1024u, &self->m_vertexBuffer,
-                                 &self->m_vertexMemory,
-                                 (void**)&self->m_vertexMapped))
     {
-        fprintf(stderr, "vulkan: vertex buffer failed\n");
-        goto fail;
+        int vi;
+        for (vi = 0; vi < self->m_framesInFlight; ++vi)
+        {
+            if (!xvkl_create_host_buffer(self->m_device, self->m_physical,
+                                         1024u * 1024u,
+                                         &self->m_vertexBuffers[vi],
+                                         &self->m_vertexMemories[vi],
+                                         (void**)&self->m_vertexMappeds[vi]))
+            {
+                fprintf(stderr, "vulkan: vertex buffer failed\n");
+                goto fail;
+            }
+            self->m_vertexCapacities[vi] =
+                1024u * 1024u / (sizeof(float) * 8u);
+        }
+        self->m_vertexBuffer = self->m_vertexBuffers[0];
+        self->m_vertexMapped = self->m_vertexMappeds[0];
+        self->m_vertexCapacity = self->m_vertexCapacities[0];
     }
-    self->m_vertexCapacity = 1024u * 1024u / (sizeof(float) * 8u);
     return self;
 
 fail:
@@ -1063,8 +1526,12 @@ fail:
 
 static void xvkl_session_destroy(XGpuRenderDriverSession* self)
 {
+    uint64_t profT0;
     if (!self) return;
+    profT0 = xvkl_stage_prof_on() ? XDateTime_currentNSecsSinceEpoch() : 0;
     if (self->m_device) vkDeviceWaitIdle(self->m_device);
+    if (profT0) xvkl_stage_record(XvklStage_DeviceWaitIdle, profT0);
+    if (xvkl_stage_prof_on()) xvkl_stage_prof_report(1);
     if (!self->m_device)
     {
         if (self->m_surface && self->m_instance)
@@ -1081,14 +1548,34 @@ static void xvkl_session_destroy(XGpuRenderDriverSession* self)
                 vkDestroyFramebuffer(self->m_device, self->m_swapFbs[i], NULL);
     }
     xvkl_destroy_device_objects(self);
-    if (self->m_vertexBuffer)
-        vkDestroyBuffer(self->m_device, self->m_vertexBuffer, NULL);
-    if (self->m_vertexMemory)
-        vkFreeMemory(self->m_device, self->m_vertexMemory, NULL);
-    if (self->m_stagingBuffer)
-        vkDestroyBuffer(self->m_device, self->m_stagingBuffer, NULL);
-    if (self->m_stagingMemory)
-        vkFreeMemory(self->m_device, self->m_stagingMemory, NULL);
+    {
+        int vi;
+        for (vi = 0; vi < self->m_framesInFlight; ++vi)
+        {
+            if (self->m_vertexBuffers[vi])
+                vkDestroyBuffer(self->m_device, self->m_vertexBuffers[vi],
+                                NULL);
+            if (self->m_vertexMemories[vi])
+                vkFreeMemory(self->m_device, self->m_vertexMemories[vi],
+                             NULL);
+        }
+    }
+    {
+        int si;
+        for (si = 0; si < self->m_framesInFlight; ++si)
+        {
+            if (self->m_stagingBuffers[si])
+                vkDestroyBuffer(self->m_device, self->m_stagingBuffers[si],
+                                NULL);
+            if (self->m_stagingMemories[si])
+                vkFreeMemory(self->m_device, self->m_stagingMemories[si],
+                             NULL);
+        }
+    }
+    if (self->m_frameStagingBuffer)
+        vkDestroyBuffer(self->m_device, self->m_frameStagingBuffer, NULL);
+    if (self->m_frameStagingMemory)
+        vkFreeMemory(self->m_device, self->m_frameStagingMemory, NULL);
     if (self->m_sourceView)
         vkDestroyImageView(self->m_device, self->m_sourceView, NULL);
     if (self->m_sourceImage)
@@ -1117,14 +1604,30 @@ static void xvkl_session_destroy(XGpuRenderDriverSession* self)
         vkDestroySwapchainKHR(self->m_device, self->m_swapchain, NULL);
     if (self->m_surface)
         vkDestroySurfaceKHR(self->m_instance, self->m_surface, NULL);
-    if (self->m_imageReady)
-        vkDestroySemaphore(self->m_device, self->m_imageReady, NULL);
-    if (self->m_renderDone)
-        vkDestroySemaphore(self->m_device, self->m_renderDone, NULL);
-    if (self->m_frameFence)
-        vkDestroyFence(self->m_device, self->m_frameFence, NULL);
-    if (self->m_transferFence)
-        vkDestroyFence(self->m_device, self->m_transferFence, NULL);
+    {
+        int fi;
+        for (fi = 0; fi < self->m_framesInFlight; ++fi)
+        {
+            if (self->m_imageReadys[fi])
+                vkDestroySemaphore(self->m_device, self->m_imageReadys[fi],
+                                   NULL);
+            if (self->m_renderDones[fi])
+                vkDestroySemaphore(self->m_device, self->m_renderDones[fi],
+                                   NULL);
+            if (self->m_frameFences[fi])
+                vkDestroyFence(self->m_device, self->m_frameFences[fi],
+                               NULL);
+        }
+    }
+    {
+        int fi;
+        for (fi = 0; fi < self->m_framesInFlight; ++fi)
+        {
+            if (self->m_transferFences[fi])
+                vkDestroyFence(self->m_device, self->m_transferFences[fi],
+                               NULL);
+        }
+    }
     if (self->m_suspendFence)
         vkDestroyFence(self->m_device, self->m_suspendFence, NULL);
     {
@@ -1235,27 +1738,70 @@ static bool xvkl_present_v2(void)
 }
 
 /**
+ * @brief      读取帧环深度 XGPU_VK_FRAMES_IN_FLIGHT（1~3，默认 3）。
+ * @details    默认 1=单槽路径（每帧 beginFrame 全 GPU 排空——当前
+ *             稳态默认：K=3 帧环在 XGuiGpu_Test 交互回归中触发
+ *             0xC0000005（S12 回退后仍崩），根因待 validate layers
+ *             定位，回退默认保烟测；XGPU_VK_FRAMES_IN_FLIGHT=2/3 可
+ *             显式启用帧环复测（第 8 轮统筹 K 扫描 K=3 曾达 30fps 手动
+ *             口径）——endFrame N+1 的 CPU 录制/提交与 GPU 执行/
+ *             present N 重叠；每槽独立命令缓冲/fence/信号量/顶点
+ *             缓冲，信号量复用合法性由单队列提交序与本槽 fence 等待
+ *             保证。非法/越界值钳到 1~3。
+ */
+static int xvkl_frames_in_flight(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_FRAMES_IN_FLIGHT");
+        cached = 3;
+        if (v && v[0])
+        {
+            int n = atoi(v);
+            if (n < 1) n = 1;
+            if (n > XGPU_VK_MAX_FRAMES_IN_FLIGHT)
+                n = XGPU_VK_MAX_FRAMES_IN_FLIGHT;
+            cached = n;
+        }
+    }
+    return cached;
+}
+
+/**
  * @brief      回收在途 transfer 提交（V2：fence 等待+复位；V1：恒真）。
  * @details    V2 下所有 transferCmd reset、staging 重写/销毁与 staging
- *             CPU 读回前必须经过本入口：保证上一笔 transfer 执行完毕
- *             且 fence 复位，才允许复用其资源。fence 已信号时
- *             vkWaitForFences 立即返回（查询语义，零阻塞）。
+ *             CPU 读回前必须经过本入口：保证本槽上一笔 transfer 执行
+ *             完毕且 fence 复位，才允许复用其资源。槽化（第 9 轮）后
+ *             跨帧使用间隔 ≥K-1 帧，fence 绝大多数已信号（查询语义
+ *             零阻塞）。fence 已信号时 vkWaitForFences 立即返回。
  */
 static bool xvkl_transfer_retire(XGpuRenderDriverSession* self)
 {
-    if (!self || !self->m_presentV2 || !self->m_transferInFlight) return true;
-    if (vkWaitForFences(self->m_device, 1, &self->m_transferFence, VK_TRUE,
+    int slot;
+    uint64_t profT0;
+    if (!self || !self->m_presentV2 ||
+        !self->m_transferInFlight[self->m_transferSlot])
+        return true;
+    slot = self->m_transferSlot;
+    profT0 = xvkl_stage_prof_on() ? XDateTime_currentNSecsSinceEpoch() : 0;
+    if (vkWaitForFences(self->m_device, 1,
+                        &self->m_transferFences[slot], VK_TRUE,
                         UINT64_MAX) != VK_SUCCESS)
         return false;
-    if (vkResetFences(self->m_device, 1, &self->m_transferFence) != VK_SUCCESS)
+    if (profT0) xvkl_stage_record(XvklStage_TransferFenceWait, profT0);
+    if (vkResetFences(self->m_device, 1,
+                      &self->m_transferFences[slot]) != VK_SUCCESS)
         return false;
-    self->m_transferInFlight = false;
+    self->m_transferInFlight[slot] = false;
     return true;
 }
 
 static bool xvkl_submit_transfer(XGpuRenderDriverSession* self, bool needWait)
 {
     VkSubmitInfo submit;
+    uint64_t profT0;
+    VkResult r;
     if (!self || !self->m_transferCmd) return false;
     if (vkEndCommandBuffer(self->m_transferCmd) != VK_SUCCESS) return false;
     XMemset(&submit, 0, sizeof(submit));
@@ -1264,19 +1810,42 @@ static bool xvkl_submit_transfer(XGpuRenderDriverSession* self, bool needWait)
     submit.pCommandBuffers = &self->m_transferCmd;
     if (!self->m_presentV2)
     {
-        if (vkQueueSubmit(self->m_queue, 1, &submit, 0) != VK_SUCCESS)
-            return false;
-        return vkQueueWaitIdle(self->m_queue) == VK_SUCCESS;
+        profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        r = vkQueueSubmit(self->m_queue, 1, &submit, 0);
+        if (profT0) xvkl_stage_record(XvklStage_SubmitTransfer, profT0);
+        if (r != VK_SUCCESS) return false;
+        profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        r = vkQueueWaitIdle(self->m_queue);
+        if (profT0) xvkl_stage_record(XvklStage_QueueWaitIdle, profT0);
+        return r == VK_SUCCESS;
     }
     /* V2：fence 异步提交。同队列后续提交按序执行，GPU 侧依赖（屏障、
        采样就绪）由队列序保证；CPU 侧仅在回收（retire）或本笔结果需
        立即读回（needWait）时等待，取代旧路径逐笔 vkQueueWaitIdle
-       全队列同步（34ms/会话主因，2026-09-25 在册）。 */
-    if (vkQueueSubmit(self->m_queue, 1, &submit, self->m_transferFence) !=
-        VK_SUCCESS)
-        return false;
-    self->m_transferInFlight = true;
+       全队列同步（34ms/会话主因，2026-09-25 在册）。
+       【第 12 轮回退注记（两段）】①帧内合并提交（惰性挂起+依赖点
+       flush）实测 fps=0——flush 调用点未随挂起语义完整落地（教训：
+       挂起语义必须与其全部 flush 点同轮交付，缺一即断供）；②双槽
+       轮转+镜像装载激活后 XGuiGpu_Test/demo 0xC0000005/0xC000041D
+       （transfer 槽轮转与 canvas keep 跳过/读回槽的交互在真机上踩空）。
+       均已回退：槽恒 0（=S11 稳态实测 210+），槽化资产保留待带
+       交互专项验证后经统筹重启。 */
+    profT0 = xvkl_stage_prof_on() ? XDateTime_currentNSecsSinceEpoch() : 0;
+    r = vkQueueSubmit(self->m_queue, 1, &submit, self->m_transferFence);
+    if (profT0) xvkl_stage_record(XvklStage_SubmitTransfer, profT0);
+    if (r != VK_SUCCESS) return false;
+    self->m_transferInFlight[self->m_transferSlot] = true;
+    /* needWait（结果立即读回）：retire 对准本槽（本笔）；异步路径直接
+       轮转——本槽留待下次使用前 retire（彼时早已完成），跨帧等待由
+       槽距离消除（S11 210.6 构成）。 */
     if (needWait && !xvkl_transfer_retire(self)) return false;
+    self->m_transferSlot = (self->m_transferSlot + 1) %
+                           (self->m_framesInFlight > 0 ? self->m_framesInFlight
+                                                       : 1);
+    self->m_transferCmd = self->m_transferCmds[self->m_transferSlot];
+    self->m_transferFence = self->m_transferFences[self->m_transferSlot];
     return true;
 }
 
@@ -1293,6 +1862,35 @@ static bool xvkl_begin_transfer(XGpuRenderDriverSession* self)
     return vkBeginCommandBuffer(self->m_transferCmd, &begin) == VK_SUCCESS;
 }
 
+/** @brief XGPU_VK_COPYINIT_BATCH 开关（"0"=回退逐像素旧循环；默认
+           开=GL 对齐批量路径：premul/全不透明直传+半透明快腿。第 5 轮
+           栈采样实锤 begin 链初始拷贝每帧 48 万次 XImage_pixel 调用
+           25-70ms；GL 同段 0.45ms 的根因即 GL 对 premul/全不透明整幅
+           直传（XGpuRenderDriver_gl.c:999-1029），本路径对齐该语义）。 */
+static bool xvkl_copyinit_batch(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_COPYINIT_BATCH");
+        cached = v && v[0] == '0' && v[1] == 0 ? 0 : 1;
+    }
+    return cached != 0;
+}
+
+/** @brief XGPU_VK_CANVAS_KEEP 开关（"0"=回退每帧整幅上传旧行为；默认
+           开=同 swapchain image 连续帧跳过冗余 copy_initial，第 10 轮）。 */
+static bool xvkl_canvas_keep(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_CANVAS_KEEP");
+        cached = v && v[0] == '0' && v[1] == 0 ? 0 : 1;
+    }
+    return cached != 0;
+}
+
 static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
                                     const XImage* initialImage)
 {
@@ -1301,23 +1899,137 @@ static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
     if (!self || !initialImage || XImage_width(initialImage) != self->m_width ||
         XImage_height(initialImage) != self->m_height)
         return false;
+    /* canvas keep（XGPU_VK_CANVAS_KEEP 默认开，第 10 轮）：同 swapchain
+       image 连续帧的整幅上传冗余消除——IMMEDIATE 无 vsync 强制轮换、
+       FBO keep-open 自持上帧最终内容、帧末 drb 脏区把 FBO 同步回
+       paintImage ⇒ paintImage ≡ FBO 恒等链保持，跳过帧与上传帧的
+       FBO 逐位一致；degraded/软件帧不经过本入口（painter gate），其
+       CPU 写造成的失步由 streak 冻结 + 60 帧强制重同步自愈。 */
+    if (xvkl_canvas_keep() &&
+        self->m_keepSyncedSlot == (int)self->m_imageIndex &&
+        self->m_keepStreak < 60u)
+    {
+        self->m_keepStreak += 1;
+        return true;
+    }
     bytes = (size_t)self->m_width * (size_t)self->m_height * 4u;
     if (!xvkl_stage_pixels(self, bytes)) return false;
-    for (row = 0; row < self->m_height; ++row)
+    if (xvkl_copyinit_batch() &&
+        (XImage_format(initialImage) == XImageFormat_ARGB32 ||
+         XImage_format(initialImage) ==
+             XImageFormat_ARGB32_Premultiplied))
     {
-        int col;
-        uint8_t* dst = (uint8_t*)self->m_stagingMapped +
-            (size_t)row * (size_t)self->m_width * 4u;
-        for (col = 0; col < self->m_width; ++col)
+        /* GL 对齐批量路径（XGPU_VK_COPYINIT_BATCH 默认开）：
+           ① premul 格式位图即预乘值——GL 对 premul initialImage 整幅
+              直传（XGpuRenderDriver_gl.c:999-1029），位图内存序
+              （B,G,R,A 小端）与 B8G8R8A8_UNORM staging 布局逐字节一致，
+              逐行 memcpy 零函数调用零除法；
+           ② ARGB32 直色先扫 alpha：全不透明时预乘=恒等
+              （(255c+127)/255=c 精确）→ 同样直传；含透明 → 逐像素预乘
+              数学必要（GL 同样对含半透明 ARGB32 预乘），行直读免
+              48 万次 getter，a=255/a=0 快路径免绝大多数除法，其余保持
+              原公式原舍入——三路与旧逐像素循环逐位一致。 */
+        const uint8_t* srcBits = XImage_constBits(initialImage);
+        int bpl = XImage_bytesPerLine(initialImage);
+        int premulSrc = XImage_format(initialImage) ==
+                        XImageFormat_ARGB32_Premultiplied;
+        int opaque = premulSrc;
+        if (!opaque)
         {
-            uint32_t argb = XImage_pixel(initialImage, col, row);
-            unsigned a = (argb >> 24) & 0xffu;
-            dst[col * 4 + 0] = (uint8_t)(((argb & 0xffu) * a + 127u) / 255u);
-            dst[col * 4 + 1] = (uint8_t)((((argb >> 8) & 0xffu) * a + 127u) /
-                                         255u);
-            dst[col * 4 + 2] = (uint8_t)((((argb >> 16) & 0xffu) * a + 127u) /
-                                         255u);
-            dst[col * 4 + 3] = (uint8_t)a;
+            for (row = 0; row < self->m_height && opaque; ++row)
+            {
+                const uint8_t* srow = srcBits + (size_t)row * (size_t)bpl;
+                int col;
+                for (col = 0; col < self->m_width; ++col)
+                {
+                    if (srow[col * 4 + 3] != 255u)
+                    {
+                        opaque = 0;
+                        break;
+                    }
+                }
+            }
+        }
+        if (opaque)
+        {
+            for (row = 0; row < self->m_height; ++row)
+            {
+                XMemcpy((uint8_t*)self->m_stagingMapped +
+                            (size_t)row * (size_t)self->m_width * 4u,
+                        srcBits + (size_t)row * (size_t)bpl,
+                        (size_t)self->m_width * 4u);
+            }
+        }
+        else
+        {
+            for (row = 0; row < self->m_height; ++row)
+            {
+                const uint8_t* srow = srcBits + (size_t)row * (size_t)bpl;
+                uint8_t* dst = (uint8_t*)self->m_stagingMapped +
+                    (size_t)row * (size_t)self->m_width * 4u;
+                int col;
+                for (col = 0; col < self->m_width; ++col)
+                {
+                    uint8_t b = srow[col * 4 + 0];
+                    uint8_t g = srow[col * 4 + 1];
+                    uint8_t r = srow[col * 4 + 2];
+                    uint8_t a = srow[col * 4 + 3];
+                    if (a == 255u)
+                    {
+                        dst[col * 4 + 0] = b;
+                        dst[col * 4 + 1] = g;
+                        dst[col * 4 + 2] = r;
+                        dst[col * 4 + 3] = 255u;
+                    }
+                    else if (a == 0u)
+                    {
+                        dst[col * 4 + 0] = 0u;
+                        dst[col * 4 + 1] = 0u;
+                        dst[col * 4 + 2] = 0u;
+                        dst[col * 4 + 3] = 0u;
+                    }
+                    else
+                    {
+                        /* 预乘除法消去（精确恒等，非近似）：
+                           (v+127)/255 == (w + 1 + (w>>8)) >> 8，
+                           w = v+127（v=c*a ≤ 65025 → w ≤ 65152，
+                           h=w>>8 ≤ 254、l=w&255 → h+l ≤ 509 < 510，恒等
+                           式在此域内对全部取值成立；Hacker's Delight
+                           div255 技巧）——除法→移位，结果逐位一致。 */
+                        unsigned vb = (unsigned)b * a + 127u;
+                        unsigned vg = (unsigned)g * a + 127u;
+                        unsigned vr = (unsigned)r * a + 127u;
+                        dst[col * 4 + 0] =
+                            (uint8_t)((vb + 1u + (vb >> 8)) >> 8);
+                        dst[col * 4 + 1] =
+                            (uint8_t)((vg + 1u + (vg >> 8)) >> 8);
+                        dst[col * 4 + 2] =
+                            (uint8_t)((vr + 1u + (vr >> 8)) >> 8);
+                        dst[col * 4 + 3] = a;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        for (row = 0; row < self->m_height; ++row)
+        {
+            int col;
+            uint8_t* dst = (uint8_t*)self->m_stagingMapped +
+                (size_t)row * (size_t)self->m_width * 4u;
+            for (col = 0; col < self->m_width; ++col)
+            {
+                uint32_t argb = XImage_pixel(initialImage, col, row);
+                unsigned a = (argb >> 24) & 0xffu;
+                dst[col * 4 + 0] =
+                    (uint8_t)(((argb & 0xffu) * a + 127u) / 255u);
+                dst[col * 4 + 1] =
+                    (uint8_t)((((argb >> 8) & 0xffu) * a + 127u) / 255u);
+                dst[col * 4 + 2] =
+                    (uint8_t)((((argb >> 16) & 0xffu) * a + 127u) / 255u);
+                dst[col * 4 + 3] = (uint8_t)a;
+            }
         }
     }
     if (!xvkl_begin_transfer(self)) return false;
@@ -1350,6 +2062,9 @@ static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
     if (!xvkl_submit_transfer(self, false)) return false;
     xvkl_set_frame_layout(self, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    /* canvas keep 标记：本 image 本帧内容已与 paintImage 同步。 */
+    self->m_keepSyncedSlot = (int)self->m_imageIndex;
+    self->m_keepStreak = 0;
     return true;
 }
 
@@ -1371,16 +2086,15 @@ static bool xvkl_prepare_frame_target(XGpuRenderDriverSession* self)
     return true;
 }
 
-static bool xvkl_begin_render_pass(XGpuRenderDriverSession* self)
+/** @brief 渲染通道实例开启（不含命令缓冲 begin；内联上传复用）：全幅
+           viewport/scissor + 顶点缓冲重绑，与 suspend/resume 的 resume
+           腿语义一致（剪裁由后续 setClipRect 重施）。 */
+static bool xvkl_begin_render_pass_instances(XGpuRenderDriverSession* self)
 {
-    VkCommandBufferBeginInfo begin;
     VkRenderPassBeginInfo rp;
     VkViewport viewport;
     VkRect2D scissor;
     if (!self) return false;
-    XMemset(&begin, 0, sizeof(begin));
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    if (vkBeginCommandBuffer(self->m_cmd, &begin) != VK_SUCCESS) return false;
     XMemset(&rp, 0, sizeof(rp));
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass = self->m_renderPass;
@@ -1403,6 +2117,16 @@ static bool xvkl_begin_render_pass(XGpuRenderDriverSession* self)
     vkCmdBindVertexBuffers(self->m_cmd, 0, 1, &self->m_vertexBuffer,
                            (VkDeviceSize[1]){ 0 });
     return true;
+}
+
+static bool xvkl_begin_render_pass(XGpuRenderDriverSession* self)
+{
+    VkCommandBufferBeginInfo begin;
+    if (!self) return false;
+    XMemset(&begin, 0, sizeof(begin));
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(self->m_cmd, &begin) != VK_SUCCESS) return false;
+    return xvkl_begin_render_pass_instances(self);
 }
 
 /**
@@ -1432,11 +2156,55 @@ static void xvkl_transition_color_for_draw(VkCommandBuffer cmd, VkImage image)
                          NULL, 0, NULL, 1, &barrier);
 }
 
-static bool xvkl_begin_frame(XGpuRenderDriverSession* self,
-                             const XImage* initialImage)
+/**
+ * @brief      读取 acquire 超时 XGPU_VK_ACQUIRE_TIMEOUT_MS（默认 0）。
+ * @details    0=vkAcquireNextImageKHR 以 UINT64_MAX 永久阻塞（旧行为）；
+ *             N>0 时 acquire 最多阻塞 N 毫秒，超时（VK_TIMEOUT/
+ *             VK_NOT_READY）按获取失败处理——beginFrame 返回 false，
+ *             上层走降级帧路径（软件提交腿补上屏），UI 线程不被远程/
+ *             虚拟显示栈的呈现节律拖住。诊断背景：wprof 显示 VK 帧
+ *             250ms 缺口位于 beginFrame 的 acquire（FIFO 呈现节律），
+ *             本开关与 XGPU_VK_PRESENT_MODE=immediate 二选一或叠加使用。
+ */
+static uint64_t xvkl_acquire_timeout_ns(void)
+{
+    static int64_t cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_ACQUIRE_TIMEOUT_MS");
+        cached = 0;
+        if (v && *v)
+        {
+            int ms = atoi(v);
+            if (ms < 0) ms = 0;
+            cached = (int64_t)ms;
+        }
+    }
+    return cached > 0 ? (uint64_t)cached * 1000000ull : UINT64_MAX;
+}
+
+static bool xvkl_begin_frame_impl(XGpuRenderDriverSession* self,
+                                  const XImage* initialImage)
 {
     VkResult acquired;
+    int slot;
     if (!self) return false;
+    xvkl_stage_prof_tick();
+    if (g_xvklObjOn) g_xvklObjProf.m_frames += 1;
+    /* 当前槽镜像装载：本帧所有 m_cmd/fence/信号量/顶点访问经镜像落到
+       本槽资源；fence 等待只回收本槽上一轮提交（K>1 时为 N-K 帧而非
+       N-1 帧——CPU 录制与 GPU 执行/present 重叠的落点）。 */
+    slot = self->m_frameSlot;
+    self->m_cmd = self->m_frameCmd[slot];
+    self->m_frameFence = self->m_frameFences[slot];
+    if (self->m_window)
+    {
+        self->m_imageReady = self->m_imageReadys[slot];
+        self->m_renderDone = self->m_renderDones[slot];
+    }
+    self->m_vertexBuffer = self->m_vertexBuffers[slot];
+    self->m_vertexMapped = self->m_vertexMappeds[slot];
+    self->m_vertexCapacity = self->m_vertexCapacities[slot];
     if (self->m_recording)
     {
         vkCmdEndRenderPass(self->m_cmd);
@@ -1445,8 +2213,16 @@ static bool xvkl_begin_frame(XGpuRenderDriverSession* self,
     }
     if (!self->m_presentV2)
     {
+        uint64_t profT0 = (xvkl_stage_prof_on() || xvkl_begin_prof_on())
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
         vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
                         UINT64_MAX);
+        if (profT0)
+        {
+            xvkl_stage_record(XvklStage_FrameFenceWait, profT0);
+            g_xvklBeginProf.m_fenceNs +=
+                XDateTime_currentNSecsSinceEpoch() - profT0;
+        }
         vkResetFences(self->m_device, 1, &self->m_frameFence);
     }
     else
@@ -1456,11 +2232,21 @@ static bool xvkl_begin_frame(XGpuRenderDriverSession* self,
            移到下一帧 beginFrame，CPU 记录/应用逻辑与 GPU 执行重叠，
            资源退役纪律与旧路径完全一致（录制开始时上帧必已完结）。
            未武装（上帧提交失败/首帧）直接跳过等待防死等。 */
-        if (self->m_frameFenceArmed)
+        if (self->m_frameFenceArmed[slot])
+        {
+            uint64_t profT0 = (xvkl_stage_prof_on() || xvkl_begin_prof_on())
+                ? XDateTime_currentNSecsSinceEpoch() : 0;
             vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
                             UINT64_MAX);
+            if (profT0)
+            {
+                xvkl_stage_record(XvklStage_FrameFenceWait, profT0);
+                g_xvklBeginProf.m_fenceNs +=
+                    XDateTime_currentNSecsSinceEpoch() - profT0;
+            }
+        }
         vkResetFences(self->m_device, 1, &self->m_frameFence);
-        self->m_frameFenceArmed = false;
+        self->m_frameFenceArmed[slot] = false;
     }
     /* 读回异步化的悬置半帧兜底：仅 fence API 失败时才可能到达此处
        （正常流程在读回内部已合并回收）。等待并复位，保证随后 m_cmd
@@ -1468,32 +2254,77 @@ static bool xvkl_begin_frame(XGpuRenderDriverSession* self,
        必已完结"的复用纪律一致）。 */
     if (self->m_suspendInFlight)
     {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
         vkWaitForFences(self->m_device, 1, &self->m_suspendFence, VK_TRUE,
                         UINT64_MAX);
+        if (profT0) xvkl_stage_record(XvklStage_SuspendFenceWait, profT0);
         self->m_suspendInFlight = false;
     }
     self->m_vertexCursor = 0;
+    self->m_frameStageCursor = 0;
     self->m_pendingReadback = NULL;
     self->m_imageWaitConsumed = false;
     if (self->m_window)
     {
+        uint64_t profT0 = (xvkl_stage_prof_on() || xvkl_begin_prof_on())
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
         acquired = vkAcquireNextImageKHR(self->m_device, self->m_swapchain,
-                                         UINT64_MAX, self->m_imageReady, 0,
+                                         xvkl_acquire_timeout_ns(),
+                                         self->m_imageReady, 0,
                                          &self->m_imageIndex);
+        if (profT0)
+        {
+            xvkl_stage_record(XvklStage_Acquire, profT0);
+            g_xvklBeginProf.m_acquireNs +=
+                XDateTime_currentNSecsSinceEpoch() - profT0;
+        }
         if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
             return false;
     }
     if (initialImage && XImage_width(initialImage) == self->m_width &&
         XImage_height(initialImage) == self->m_height)
     {
+        uint64_t ciT0 = xvkl_begin_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
         if (!xvkl_copy_initial_image(self, initialImage)) return false;
+        if (ciT0)
+            g_xvklBeginProf.m_copyNs +=
+                XDateTime_currentNSecsSinceEpoch() - ciT0;
+    }
+    else if (xvkl_begin_prof_on())
+    {
+        uint64_t ppT0 = XDateTime_currentNSecsSinceEpoch();
+        int okP = xvkl_prepare_frame_target(self);
+        g_xvklBeginProf.m_prepNs +=
+            XDateTime_currentNSecsSinceEpoch() - ppT0;
+        if (!okP) return false;
     }
     else if (!xvkl_prepare_frame_target(self))
         return false;
     if (!xvkl_begin_render_pass(self)) return false;
     self->m_recording = true;
     if (!initialImage) xvkl_clear(self, 0u);
+    self->m_frameSlot = (slot + 1) % self->m_framesInFlight;
     return true;
+}
+
+static bool xvkl_begin_frame(XGpuRenderDriverSession* self,
+                             const XImage* initialImage)
+{
+    /* XGPU_VK_BEGIN_PROF：total=全函数；分段累计见 g_xvklBeginProf。 */
+    uint64_t t0 = xvkl_begin_prof_on()
+        ? XDateTime_currentNSecsSinceEpoch() : 0;
+    bool ok = xvkl_begin_frame_impl(self, initialImage);
+    if (t0)
+    {
+        uint64_t delta = XDateTime_currentNSecsSinceEpoch() - t0;
+        g_xvklBeginProf.m_totalNs += delta;
+        if (delta > g_xvklBeginProf.m_maxNs)
+            g_xvklBeginProf.m_maxNs = delta;
+        g_xvklBeginProf.m_count += 1;
+    }
+    return ok;
 }
 
 static void xvkl_end_frame(XGpuRenderDriverSession* self)
@@ -1522,19 +2353,27 @@ static void xvkl_end_frame(XGpuRenderDriverSession* self)
         si.signalSemaphoreCount = 1;
         si.pSignalSemaphores = &self->m_renderDone;
     }
-    if (vkQueueSubmit(self->m_queue, 1, &si, self->m_frameFence) != VK_SUCCESS)
-        return;
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        VkResult r = vkQueueSubmit(self->m_queue, 1, &si, self->m_frameFence);
+        if (profT0) xvkl_stage_record(XvklStage_SubmitFrame, profT0);
+        if (r != VK_SUCCESS) return;
+    }
     if (!self->m_presentV2)
     {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
         vkWaitForFences(self->m_device, 1, &self->m_frameFence, VK_TRUE,
                         UINT64_MAX);
+        if (profT0) xvkl_stage_record(XvklStage_FrameFenceWait, profT0);
     }
     else
     {
         /* V2：提交即返回（武装 fence 待下一帧 beginFrame 回收），
            present 紧随提交入队（同队列有序，等待 renderDone 信号量），
            CPU 侧不再阻塞等待本帧 GPU 执行完毕——2 FPS 主因之一。 */
-        self->m_frameFenceArmed = true;
+        self->m_frameFenceArmed[self->m_frameSlot] = true;
     }
     xvkl_set_frame_layout(self, self->m_window
         ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -1548,8 +2387,16 @@ static void xvkl_end_frame(XGpuRenderDriverSession* self)
         pi.swapchainCount = 1;
         pi.pSwapchains = &self->m_swapchain;
         pi.pImageIndices = &self->m_imageIndex;
-        vkQueuePresentKHR(self->m_queue, &pi);
+        {
+            uint64_t profT0 = xvkl_stage_prof_on()
+                ? XDateTime_currentNSecsSinceEpoch() : 0;
+            vkQueuePresentKHR(self->m_queue, &pi);
+            if (profT0) xvkl_stage_record(XvklStage_Present, profT0);
+        }
     }
+    /* 帧环推进：下帧启用下一槽（提交失败/未录制的早退路径不推进，
+       原槽原 fence 状态原样重试）。 */
+    self->m_frameSlot = (self->m_frameSlot + 1) % self->m_framesInFlight;
 }
 
 /**
@@ -1570,9 +2417,17 @@ static bool xvkl_suspend_for_transfer(XGpuRenderDriverSession* self)
     submit.pCommandBuffers = &self->m_cmd;
     if (!self->m_presentV2)
     {
-        if (vkQueueSubmit(self->m_queue, 1, &submit, 0) != VK_SUCCESS)
-            return false;
-        return vkQueueWaitIdle(self->m_queue) == VK_SUCCESS;
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        VkResult r;
+        r = vkQueueSubmit(self->m_queue, 1, &submit, 0);
+        if (profT0) xvkl_stage_record(XvklStage_SubmitSuspend, profT0);
+        if (r != VK_SUCCESS) return false;
+        profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        r = vkQueueWaitIdle(self->m_queue);
+        if (profT0) xvkl_stage_record(XvklStage_QueueWaitIdle, profT0);
+        return r == VK_SUCCESS;
     }
     /* V2：仅等待本次半帧提交（suspend fence）——后续 transfer 与
        resume 的复位各自经 retire/fence 有序回收；m_cmd 在本 fence
@@ -1580,11 +2435,22 @@ static bool xvkl_suspend_for_transfer(XGpuRenderDriverSession* self)
        被本次提交置位。 */
     if (vkResetFences(self->m_device, 1, &self->m_suspendFence) != VK_SUCCESS)
         return false;
-    if (vkQueueSubmit(self->m_queue, 1, &submit, self->m_suspendFence) !=
-        VK_SUCCESS)
-        return false;
-    return vkWaitForFences(self->m_device, 1, &self->m_suspendFence, VK_TRUE,
-                           UINT64_MAX) == VK_SUCCESS;
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        VkResult r = vkQueueSubmit(self->m_queue, 1, &submit,
+                                   self->m_suspendFence);
+        if (profT0) xvkl_stage_record(XvklStage_SubmitSuspend, profT0);
+        if (r != VK_SUCCESS) return false;
+    }
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        VkResult r = vkWaitForFences(self->m_device, 1, &self->m_suspendFence,
+                                     VK_TRUE, UINT64_MAX);
+        if (profT0) xvkl_stage_record(XvklStage_SuspendFenceWait, profT0);
+        return r == VK_SUCCESS;
+    }
 }
 
 static bool xvkl_resume_after_transfer(XGpuRenderDriverSession* self)
@@ -1650,6 +2516,7 @@ static bool xvkl_copy_frame_to_image(XGpuRenderDriverSession* self,
 {
     size_t bytes;
     VkBufferImageCopy region;
+    bool ok;
     if (!self || !target || self->m_window ||
         XImage_width(target) != self->m_width ||
         XImage_height(target) != self->m_height)
@@ -1684,8 +2551,14 @@ static bool xvkl_copy_frame_to_image(XGpuRenderDriverSession* self,
        fence，不再全队列等待；像素通路与 V1 逐位一致。 */
     if (!xvkl_submit_transfer(self, true)) return false;
     self->m_colorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    return xvkl_readback_copyout(self, target,
-                                 (const uint8_t*)self->m_stagingMapped);
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        ok = xvkl_readback_copyout(self, target,
+                                   (const uint8_t*)self->m_stagingMapped);
+        if (profT0) xvkl_stage_record(XvklStage_ReadbackCopyout, profT0);
+    }
+    return ok;
 }
 
 /* ==================== 读回异步化（XGPU_VK_ASYNC_READBACK） ==================== */
@@ -1709,9 +2582,13 @@ static bool xvkl_copy_frame_to_image(XGpuRenderDriverSession* self,
 
 /**
  * @brief      读取读回异步化开关 XGPU_VK_ASYNC_READBACK。
- * @details    默认开（fence + 双缓冲读回，单次合并等待）；置 "0" 回退
- *             旧串行路径（suspend 同步等待 + 共享 staging 拷贝两次
- *             等待）。进程内读一次缓存。
+ * @details    默认关（2026-09-29 定版）：批量初始拷贝+IMMEDIATE 呈现落地
+ *             后，串行读回路径实测反而更快（vk p0 297.3 vs 异步 210.6、
+ *             p4t20 195.1 vs 111.6）——异步机器的 suspend/双槽/合并等待
+ *             开销已无可摊销对象，且其状态机存在提交期 NULL 解引用崩溃
+ *             （amdvlk64 内 mov rcx,[rax+8]，rax=0，栈：readback_submit_
+ *             copy→vkQueueSubmit）。置 "1" 启用实验性异步路径（未修复前
+ *             禁用于生产）。进程内读一次缓存。
  */
 static bool xvkl_async_readback(void)
 {
@@ -1719,7 +2596,7 @@ static bool xvkl_async_readback(void)
     if (cached < 0)
     {
         const char* v = XSystem_environment("XGPU_VK_ASYNC_READBACK");
-        cached = v && v[0] == '0' && v[1] == 0 ? 0 : 1;
+        cached = v && v[0] == '1' && v[1] == 0 ? 1 : 0;
     }
     return cached != 0;
 }
@@ -1728,15 +2605,168 @@ static bool xvkl_async_readback(void)
 static bool xvkl_readback_slot_retire(XGpuRenderDriverSession* self,
                                       int slot)
 {
+    uint64_t profT0;
     if (!self->m_readbackInFlight[slot]) return true;
+    profT0 = xvkl_stage_prof_on() ? XDateTime_currentNSecsSinceEpoch() : 0;
     if (vkWaitForFences(self->m_device, 1, &self->m_readbackFence[slot],
                         VK_TRUE, UINT64_MAX) != VK_SUCCESS)
         return false;
+    if (profT0) xvkl_stage_record(XvklStage_ReadbackFenceWait, profT0);
     if (vkResetFences(self->m_device, 1, &self->m_readbackFence[slot]) !=
         VK_SUCCESS)
         return false;
     self->m_readbackInFlight[slot] = false;
     return true;
+}
+
+/**
+ * @brief      创建读回专用缓冲（CPU 读优化三档选堆，第 11 轮）。
+ * @details    优先 HOST_VISIBLE|HOST_CACHED|HOST_COHERENT（CPU 读缓存
+ *             友好且免 invalidate）；次选 HOST_VISIBLE|HOST_CACHED
+ *             （CPU 读缓存友好，GPU 写可见性需 fence 后
+ *             xvkl_readback_invalidate 刷缓存行）；回退现状
+ *             HOST_VISIBLE|HOST_COHERENT。修复 AMD APU 统一内存下
+ *             第一个满足 HOST_VISIBLE|COHERENT 的堆常为 DEVICE_LOCAL
+ *             DDR（CPU UNCACHED）导致 copyout 每次灾难读的成因
+ *             （第 10 轮 readbackCopyout 单次 6.5-9.4ms）。所选堆
+ *             经 XGPU_VK_OBJ_PROF=1 输出一次供归因。
+ */
+static bool xvkl_create_readback_buffer(VkDevice device,
+                                        VkPhysicalDevice physical,
+                                        VkDeviceSize bytes,
+                                        VkBuffer* outBuffer,
+                                        VkDeviceMemory* outMemory,
+                                        void** outMapped,
+                                        bool* outCoherent)
+{
+    static const VkMemoryPropertyFlags kTiers[3] =
+    {
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+    };
+    VkBufferCreateInfo bi;
+    VkMemoryRequirements req;
+    VkPhysicalDeviceMemoryProperties props;
+    uint32_t typeCount;
+    int tier;
+    int picked = -1;
+    uint32_t pickedFlags = 0;
+    /* 崩溃防御（cdb 实锤 session_create+0x6cf 读 memoryTypes[rax]，
+       rax=垃圾）：props 清零防栈垃圾；memoryTypeCount 钳制 ≤32（规范
+       上限）防垃圾计数驱动循环越界；堆索引严格取自扫描循环变量
+       （< typeCount ≤ 32），绝不允许位掩码/未初始化值当下标。 */
+    XMemset(&props, 0, sizeof(props));
+    vkGetPhysicalDeviceMemoryProperties(physical, &props);
+    typeCount = props.memoryTypeCount;
+    if (typeCount > 32u)
+        typeCount = 32u;
+    XMemset(&bi, 0, sizeof(bi));
+    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size = bytes;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &bi, NULL, outBuffer) != VK_SUCCESS)
+        return false;
+    vkGetBufferMemoryRequirements(device, *outBuffer, &req);
+    /* 两阶段：先纯扫描选堆（不分配、不做副作用），索引严格来自
+       循环变量。 */
+    for (tier = 0; tier < 3 && picked < 0; ++tier)
+    {
+        uint32_t ti;
+        for (ti = 0; ti < typeCount; ++ti)
+        {
+            if (!(req.memoryTypeBits & (1u << ti)))
+                continue;
+            if ((props.memoryTypes[ti].propertyFlags & kTiers[tier]) !=
+                kTiers[tier])
+                continue;
+            picked = (int)ti;
+            pickedFlags = props.memoryTypes[ti].propertyFlags;
+            break;
+        }
+    }
+    /* 无匹配堆/属性异常 → 回退 S11 之前的旧选择逻辑
+       （HOST_VISIBLE|HOST_COHERENT 单档，xvkl_alloc_memory 旧选择器）。 */
+    if (picked < 0 ||
+        picked >= (int)typeCount ||
+        !(req.memoryTypeBits & (1u << picked)))
+    {
+        if (xvkl_alloc_memory(device, physical, &req,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                              outMemory) &&
+            vkMapMemory(device, *outMemory, 0, bytes, 0, outMapped) ==
+                VK_SUCCESS)
+        {
+            *outCoherent = true;
+            if (g_xvklObjOn)
+                fprintf(stderr,
+                        "[xvkl-obj] readback heap fallback "
+                        "(HOST_VISIBLE|HOST_COHERENT)\n");
+            xvkl_obj_hit(&g_xvklObjProf.m_buffers);
+            return true;
+        }
+        vkDestroyBuffer(device, *outBuffer, NULL);
+        *outBuffer = 0;
+        return false;
+    }
+    /* 防御断言：typeIndex 越界一律回退（picked 已由循环保证，冗余
+       防御统筹指令④）。 */
+    if (picked >= (int)typeCount)
+    {
+        vkDestroyBuffer(device, *outBuffer, NULL);
+        *outBuffer = 0;
+        return false;
+    }
+    {
+        VkMemoryAllocateInfo ai;
+        XMemset(&ai, 0, sizeof(ai));
+        ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = (uint32_t)picked;
+        if (vkAllocateMemory(device, &ai, NULL, outMemory) != VK_SUCCESS ||
+            vkMapMemory(device, *outMemory, 0, bytes, 0, outMapped) !=
+                VK_SUCCESS)
+        {
+            if (*outMemory)
+            {
+                vkFreeMemory(device, *outMemory, NULL);
+                *outMemory = 0;
+            }
+            vkDestroyBuffer(device, *outBuffer, NULL);
+            *outBuffer = 0;
+            return false;
+        }
+    }
+    *outCoherent =
+        (pickedFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
+    if (g_xvklObjOn)
+        fprintf(stderr,
+                "[xvkl-obj] readback heap type=%d coherent=%d cached=%d "
+                "(flags=0x%x)\n",
+                picked, *outCoherent ? 1 : 0,
+                (pickedFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0,
+                pickedFlags);
+    xvkl_obj_hit(&g_xvklObjProf.m_buffers);
+    return true;
+}
+
+/** @brief 非 COHERENT 读回堆的 CPU 可见性刷（fence 后、copyout 前）。 */
+static void xvkl_readback_invalidate(XGpuRenderDriverSession* self, int slot)
+{
+    VkMappedMemoryRange range;
+    if (self->m_readbackCoherent[slot]) return;
+    XMemset(&range, 0, sizeof(range));
+    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    range.memory = self->m_readbackMemory[slot];
+    range.offset = 0;
+    range.size = VK_WHOLE_SIZE;
+    vkInvalidateMappedMemoryRanges(self->m_device, 1, &range);
 }
 
 /** @brief 确保读回槽容量（惰性分配，按需扩容；不复用上传 staging）。 */
@@ -1755,10 +2785,11 @@ static bool xvkl_ensure_readback_slot(XGpuRenderDriverSession* self,
     self->m_readbackMemory[slot] = 0;
     self->m_readbackMapped[slot] = NULL;
     self->m_readbackCapacity[slot] = 0;
-    if (!xvkl_create_host_buffer(self->m_device, self->m_physical, bytes,
-                                 &self->m_readbackBuffer[slot],
-                                 &self->m_readbackMemory[slot],
-                                 &self->m_readbackMapped[slot]))
+    if (!xvkl_create_readback_buffer(self->m_device, self->m_physical, bytes,
+                                     &self->m_readbackBuffer[slot],
+                                     &self->m_readbackMemory[slot],
+                                     &self->m_readbackMapped[slot],
+                                     &self->m_readbackCoherent[slot]))
         return false;
     self->m_readbackCapacity[slot] = bytes;
     return true;
@@ -1787,9 +2818,14 @@ static bool xvkl_suspend_for_transfer_async(XGpuRenderDriverSession* self)
     /* 复位先行：fence 需未信号才能被本次提交置位（同旧路径注释）。 */
     if (vkResetFences(self->m_device, 1, &self->m_suspendFence) != VK_SUCCESS)
         return false;
-    if (vkQueueSubmit(self->m_queue, 1, &submit, self->m_suspendFence) !=
-        VK_SUCCESS)
-        return false;
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        VkResult r = vkQueueSubmit(self->m_queue, 1, &submit,
+                                   self->m_suspendFence);
+        if (profT0) xvkl_stage_record(XvklStage_SubmitSuspend, profT0);
+        if (r != VK_SUCCESS) return false;
+    }
     self->m_suspendInFlight = true;
     return true;
 }
@@ -1807,8 +2843,20 @@ static bool xvkl_readback_submit_copy(XGpuRenderDriverSession* self,
     VkCommandBufferBeginInfo begin;
     VkSubmitInfo submit;
     VkBufferImageCopy region;
+    /* 提交对象图完整性防御（第 8 轮 cdb 实锤：vkQueueSubmit 深处 ICD
+       NULL 解引用）——任何提交对象缺失/未初始化一律优雅失败（上层
+       走软件回退），绝不把 NULL/半初始化对象送进 ICD。 */
+    if (!self || !self->m_readbackCmd || !self->m_readbackFence[slot] ||
+        !self->m_readbackBuffer[slot] || !self->m_readbackMapped[slot] ||
+        !self->m_colorImage || !self->m_queue || !self->m_device)
+        return false;
     XMemset(&begin, 0, sizeof(begin));
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    /* 显式归位：readbackCmd 可能处于任意前态（已 end 未 begin/未
+       reset/外部破坏），显式 reset 强制可 begin 状态（统筹第一嫌疑
+       的直接处置），幂等无害。 */
+    if (vkResetCommandBuffer(self->m_readbackCmd, 0) != VK_SUCCESS)
+        return false;
     if (vkBeginCommandBuffer(self->m_readbackCmd, &begin) != VK_SUCCESS)
         return false;
     xvkl_image_barrier(self->m_readbackCmd, self->m_colorImage,
@@ -1841,12 +2889,20 @@ static bool xvkl_readback_submit_copy(XGpuRenderDriverSession* self,
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &self->m_readbackCmd;
+    if (!self->m_readbackFence[slot] || !self->m_readbackCmd ||
+        !self->m_readbackBuffer[slot] || !self->m_colorImage)
+        return false; /* 提交对象图防御（第 8 轮 ICD NULL AV）。 */
     if (vkResetFences(self->m_device, 1, &self->m_readbackFence[slot]) !=
         VK_SUCCESS)
         return false;
-    if (vkQueueSubmit(self->m_queue, 1, &submit,
-                      self->m_readbackFence[slot]) != VK_SUCCESS)
-        return false;
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        VkResult r = vkQueueSubmit(self->m_queue, 1, &submit,
+                                   self->m_readbackFence[slot]);
+        if (profT0) xvkl_stage_record(XvklStage_SubmitTransfer, profT0);
+        if (r != VK_SUCCESS) return false;
+    }
     self->m_readbackInFlight[slot] = true;
     self->m_colorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     return true;
@@ -1896,9 +2952,12 @@ static bool xvkl_readback_async(XGpuRenderDriverSession* self,
        调用为查询语义），恢复 m_cmd 可复位资格再武装新半帧。 */
     if (self->m_suspendInFlight)
     {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
         if (vkWaitForFences(self->m_device, 1, &self->m_suspendFence,
                             VK_TRUE, UINT64_MAX) != VK_SUCCESS)
             return false;
+        if (profT0) xvkl_stage_record(XvklStage_SuspendFenceWait, profT0);
         self->m_suspendInFlight = false;
     }
     slot = self->m_readbackIndex;
@@ -1920,9 +2979,13 @@ static bool xvkl_readback_async(XGpuRenderDriverSession* self,
            一律报失败——旧串行路径在本情形的返回值恒为 false。 */
         if (suspended)
         {
+            uint64_t profT0 = xvkl_stage_prof_on()
+                ? XDateTime_currentNSecsSinceEpoch() : 0;
             if (vkWaitForFences(self->m_device, 1, &self->m_suspendFence,
                                 VK_TRUE, UINT64_MAX) != VK_SUCCESS)
                 return false;
+            if (profT0)
+                xvkl_stage_record(XvklStage_SuspendFenceWait, profT0);
             self->m_suspendInFlight = false;
         }
         if (active && !xvkl_resume_after_readback_async(self)) return false;
@@ -1936,16 +2999,28 @@ static bool xvkl_readback_async(XGpuRenderDriverSession* self,
         waitFences[1] = self->m_suspendFence;
         waitCount = 2;
     }
-    if (vkWaitForFences(self->m_device, waitCount, waitFences, VK_TRUE,
-                        UINT64_MAX) != VK_SUCCESS)
-        return false;
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        if (vkWaitForFences(self->m_device, waitCount, waitFences, VK_TRUE,
+                            UINT64_MAX) != VK_SUCCESS)
+            return false;
+        if (profT0) xvkl_stage_record(XvklStage_ReadbackFenceWait, profT0);
+    }
     if (vkResetFences(self->m_device, waitCount, waitFences) != VK_SUCCESS)
         return false;
     self->m_readbackInFlight[slot] = false;
     self->m_suspendInFlight = false;
+    /* 非 COHERENT 读回堆：fence 后先刷 CPU 缓存行再拷出（第 11 轮）。 */
+    xvkl_readback_invalidate(self, slot);
     /* CPU 拷出：与串行路径同一例程、同一布局（逐位一致）。 */
-    ok = xvkl_readback_copyout(self, target,
-                               (const uint8_t*)self->m_readbackMapped[slot]);
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        ok = xvkl_readback_copyout(
+            self, target, (const uint8_t*)self->m_readbackMapped[slot]);
+        if (profT0) xvkl_stage_record(XvklStage_ReadbackCopyout, profT0);
+    }
     self->m_readbackIndex = slot ^ 1;
     if (active && !xvkl_resume_after_readback_async(self)) return false;
     return ok;
@@ -2126,23 +3201,34 @@ static bool xvkl_draw_solid_quad(XGpuRenderDriverSession* self, float x1,
  */
 static bool xvkl_stage_pixels(XGpuRenderDriverSession* self, size_t bytes)
 {
+    int slot;
     /* V2：staging 写入/销毁前回收在途 transfer——fence 已信号时本调用
        为零开销查询；在途时等待，避免 CPU 重写映射区与 GPU 读旧内容
-       竞争（旧路径由逐笔 vkQueueWaitIdle 隐式保证）。 */
+       竞争（旧路径由逐笔 vkQueueWaitIdle 隐式保证）。槽化（第 9 轮）：
+       staging 按帧槽独立，retire 只等本槽——跨帧等待由帧环距离自然
+       消除；帧内同槽多次上传仍按序串行（staging 复用安全必需）。 */
     if (!xvkl_transfer_retire(self)) return false;
-    if (self->m_stagingBuffer && self->m_stagingCapacity >= bytes) return true;
-    if (self->m_stagingBuffer)
-        vkDestroyBuffer(self->m_device, self->m_stagingBuffer, NULL);
-    if (self->m_stagingMemory)
-        vkFreeMemory(self->m_device, self->m_stagingMemory, NULL);
-    self->m_stagingBuffer = 0;
-    self->m_stagingMemory = 0;
-    self->m_stagingMapped = NULL;
+    slot = self->m_transferSlot;
+    if (self->m_stagingBuffers[slot] &&
+        self->m_stagingCapacities[slot] >= bytes)
+        return true;
+    if (self->m_stagingBuffers[slot])
+        vkDestroyBuffer(self->m_device, self->m_stagingBuffers[slot], NULL);
+    if (self->m_stagingMemories[slot])
+        vkFreeMemory(self->m_device, self->m_stagingMemories[slot], NULL);
+    self->m_stagingBuffers[slot] = 0;
+    self->m_stagingMemories[slot] = 0;
+    self->m_stagingMappeds[slot] = NULL;
     if (!xvkl_create_host_buffer(self->m_device, self->m_physical, bytes,
-                                 &self->m_stagingBuffer, &self->m_stagingMemory,
-                                 &self->m_stagingMapped))
+                                 &self->m_stagingBuffers[slot],
+                                 &self->m_stagingMemories[slot],
+                                 &self->m_stagingMappeds[slot]))
         return false;
-    self->m_stagingCapacity = bytes;
+    self->m_stagingCapacities[slot] = bytes;
+    /* 镜像同步为当前槽（后续填充/上传走镜像引用）。 */
+    self->m_stagingBuffer = self->m_stagingBuffers[slot];
+    self->m_stagingMapped = self->m_stagingMappeds[slot];
+    self->m_stagingCapacity = self->m_stagingCapacities[slot];
     return true;
 }
 
@@ -2176,6 +3262,117 @@ static bool xvkl_ensure_source_image(XGpuRenderDriverSession* self, int width,
     return true;
 }
 
+/* ==================== drawImage 内联合批（XGPU_VK_UPLOAD_BATCH） ==================== */
+
+/** @brief 读取 drawImage 上传合批开关（非 "0" 置位才开；默认关——
+           2026-09-28 第 3 轮实测内联合批使 p0 16.3→12.2，已回退默认，
+           三段式保持为最优路径；置 "1" 可显式复测内联）。 */
+static bool xvkl_upload_batch(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_UPLOAD_BATCH");
+        cached = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
+    }
+    return cached != 0;
+}
+
+/**
+ * @brief      确保帧内内联上传 staging 容量。
+ * @details    仅游标为 0 时允许扩容（已录拷贝命令引用旧缓冲，本帧中途
+ *             扩容会悬空它们）；游标非 0 且容量不足时记下需求并返回
+ *             false，调用方回退三段式，下帧游标 0 时按需求扩到位
+ *             （稳态后本帧容量收敛，不再回退）。本帧 m_cmd 尚未提交、
+ *             上帧已 fence 等待，扩容无执行竞争。
+ */
+static bool xvkl_frame_stage_ensure(XGpuRenderDriverSession* self,
+                                    size_t bytes)
+{
+    size_t need;
+    if (self->m_frameStagingBuffer &&
+        self->m_frameStagingCapacity - self->m_frameStageCursor >= bytes)
+        return true;
+    if (self->m_frameStageCursor > 0)
+    {
+        if (self->m_frameStageDemand <
+            self->m_frameStageCursor + bytes)
+            self->m_frameStageDemand = self->m_frameStageCursor + bytes;
+        return false;
+    }
+    need = bytes > self->m_frameStageDemand ? bytes : self->m_frameStageDemand;
+    if (self->m_frameStagingBuffer)
+    {
+        vkDestroyBuffer(self->m_device, self->m_frameStagingBuffer, NULL);
+        vkFreeMemory(self->m_device, self->m_frameStagingMemory, NULL);
+        self->m_frameStagingBuffer = 0;
+        self->m_frameStagingMemory = 0;
+        self->m_frameStagingMapped = NULL;
+        self->m_frameStagingCapacity = 0;
+    }
+    if (!xvkl_create_host_buffer(self->m_device, self->m_physical, need,
+                                 &self->m_frameStagingBuffer,
+                                 &self->m_frameStagingMemory,
+                                 &self->m_frameStagingMapped))
+        return false;
+    self->m_frameStagingCapacity = need;
+    self->m_frameStageDemand = 0;
+    return true;
+}
+
+/**
+ * @brief      帧内内联源纹理上传（XGPU_VK_UPLOAD_BATCH 合批腿）。
+ * @details    在当前帧命令缓冲内：① 结束当前渲染通道实例（不结束命令
+ *             缓冲，loadOp=LOAD 保留已画内容）；② UNDEFINED→TRANSFER_DST
+ *             屏障 + CopyBufferToImage + →SHADER_READ 屏障（屏障序列与
+ *             三段式逐位相同）；③ 重开渲染通道实例继续录制。拷贝与已录
+ *             绘制在同一命令缓冲内按队列序执行——已录绘制先采样旧源内
+ *             容、拷贝其次、后续绘制采样新内容，语义与
+ *             suspend/upload/resume 三段式完全一致，且零额外提交、零
+ *             fence 等待、零命令缓冲复位。
+ */
+static bool xvkl_inline_source_upload(XGpuRenderDriverSession* self,
+                                      const VkBufferImageCopy* region)
+{
+    VkImageMemoryBarrier barrier;
+    if (!self || !self->m_recording || !self->m_sourceImage) return false;
+    vkCmdEndRenderPass(self->m_cmd);
+    self->m_recording = false;
+    /* 首屏障 src=FRAGMENT_SHADER/SHADER_READ：同帧已录绘制（上一渲染
+       通道实例）可能仍采样本源纹理，拷贝写与其构成同命令缓冲内的
+       WRITE-AFTER-READ——内联路径无 suspend fence 等待可借，必须以屏
+       障显式声明执行/内存依赖（三段式路径由 suspend 等待提供该依赖，
+       故其首屏障 src=TOP_OF_PIPE 即可，两者最终顺序语义一致）。 */
+    XMemset(&barrier, 0, sizeof(barrier));
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = self->m_sourceImage;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                         NULL, 1, &barrier);
+    vkCmdCopyBufferToImage(self->m_cmd, self->m_frameStagingBuffer,
+                           self->m_sourceImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, region);
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(self->m_cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                         NULL, 0, NULL, 1, &barrier);
+    if (!xvkl_begin_render_pass_instances(self)) return false;
+    self->m_recording = true;
+    return true;
+}
+
 static bool xvkl_draw_image_uv(XGpuRenderDriverSession* self,
                                const XImage* image,
                                int x, int y, int width, int height,
@@ -2187,6 +3384,8 @@ static bool xvkl_draw_image_uv(XGpuRenderDriverSession* self,
     uint32_t premul;
     int srcW;
     int srcH;
+    size_t frameOffset = 0;
+    bool inlineUp = false;
     if (!self || !self->m_recording || !image || width <= 0 || height <= 0)
         return false;
     /* UV 变体：源与目标尺寸解耦（渐变 LUT 256x1 → 任意目标矩形，
@@ -2206,8 +3405,26 @@ static bool xvkl_draw_image_uv(XGpuRenderDriverSession* self,
         const uint8_t* src = XImage_constBits(image);
         int bpl = XImage_bytesPerLine(image);
         int row;
-        if (!xvkl_stage_pixels(self, bytes)) return false;
-        mapped = (uint8_t*)self->m_stagingMapped;
+        /* 内联守卫：仅当源纹理已存在且尺寸匹配（ensure_source_image
+           必为无操作、不销毁重建）——尺寸变化时本帧可能有更早的内联
+           绘制仍 pending 引用旧图像，销毁会悬空它们（legacy 由 suspend
+           等待保护，内联须自行规避），此时回退三段式。 */
+        inlineUp = xvkl_upload_batch() &&
+                   self->m_sourceImage &&
+                   self->m_sourceWidth == srcW &&
+                   self->m_sourceHeight == srcH &&
+                   xvkl_frame_stage_ensure(self, bytes);
+        if (inlineUp)
+        {
+            frameOffset = self->m_frameStageCursor;
+            self->m_frameStageCursor = frameOffset + bytes;
+            mapped = (uint8_t*)self->m_frameStagingMapped + frameOffset;
+        }
+        else
+        {
+            if (!xvkl_stage_pixels(self, bytes)) return false;
+            mapped = (uint8_t*)self->m_stagingMapped;
+        }
         /* XImage 小端 ARGB32 内存字节序 = B,G,R,A，与 VK_FORMAT_
            B8G8R8A8_UNORM 的内存布局一致：逐字节直拷，不做 GL 那样的
            R/B 交换（移植期误留交换导致贴图红蓝互换，2026-09-24 修）。 */
@@ -2238,65 +3455,86 @@ static bool xvkl_draw_image_uv(XGpuRenderDriverSession* self,
         }
     }
     if (!xvkl_ensure_source_image(self, srcW, srcH)) return false;
-    /* 上传必须在渲染通道外执行。三段式（全部用带错误检查的现成助手）：
-       ① suspend——提交并等待 m_cmd 中已录绘制（它们采样旧源内容，
-       先执行才不被新上传覆盖）；② transferCmd 上传新源内容（帧命令
-       缓冲不手工 reset，布局簿记由助手维护）；③ resume——重开渲染
-       通道继续录制。原内联实现 submit/reset/begin 全不查返回值且
-       布局簿记失效，实测帧内后续绘制全部失效（2026-09-24）。 */
-    if (!xvkl_suspend_for_transfer(self)) return false;
-    if (!xvkl_begin_transfer(self)) return false;
+    if (inlineUp)
     {
-        VkImageMemoryBarrier barrier;
-        XMemset(&barrier, 0, sizeof(barrier));
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = self->m_sourceImage;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(self->m_transferCmd,
-                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
-                             NULL, 1, &barrier);
+        /* 内联合批（XGPU_VK_UPLOAD_BATCH=1 显式启用，默认关）：零额外
+           提交/零等待，拷贝与已录绘制同队列按序（语义与三段式一致，
+           屏障序列逐位相同，见 xvkl_inline_source_upload）。 */
+        XMemset(&region, 0, sizeof(region));
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.bufferOffset = (VkDeviceSize)frameOffset;
+        region.imageExtent.width = (uint32_t)srcW;
+        region.imageExtent.height = (uint32_t)srcH;
+        region.imageExtent.depth = 1;
+        if (!xvkl_inline_source_upload(self, &region)) return false;
     }
-    XMemset(&region, 0, sizeof(region));
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent.width = (uint32_t)srcW;
-    region.imageExtent.height = (uint32_t)srcH;
-    region.imageExtent.depth = 1;
-    vkCmdCopyBufferToImage(self->m_transferCmd, self->m_stagingBuffer,
-                           self->m_sourceImage,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    else
     {
-        VkImageMemoryBarrier barrier;
-        XMemset(&barrier, 0, sizeof(barrier));
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = self->m_sourceImage;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(self->m_transferCmd,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                             NULL, 0, NULL, 1, &barrier);
+        /* 上传必须在渲染通道外执行。三段式（全部用带错误检查的现成助手）：
+           ① suspend——提交并等待 m_cmd 中已录绘制（它们采样旧源内容，
+           先执行才不被新上传覆盖）；② transferCmd 上传新源内容（帧命令
+           缓冲不手工 reset，布局簿记由助手维护）；③ resume——重开渲染
+           通道继续录制。原内联实现 submit/reset/begin 全不查返回值且
+           布局簿记失效，实测帧内后续绘制全部失效（2026-09-24）。 */
+        if (!xvkl_suspend_for_transfer(self)) return false;
+        if (!xvkl_begin_transfer(self)) return false;
+        {
+            VkImageMemoryBarrier barrier;
+            XMemset(&barrier, 0, sizeof(barrier));
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = self->m_sourceImage;
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(self->m_transferCmd,
+                                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL,
+                                 0, NULL, 1, &barrier);
+        }
+        XMemset(&region, 0, sizeof(region));
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent.width = (uint32_t)srcW;
+        region.imageExtent.height = (uint32_t)srcH;
+        region.imageExtent.depth = 1;
+        vkCmdCopyBufferToImage(self->m_transferCmd, self->m_stagingBuffer,
+                               self->m_sourceImage,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                               &region);
+        {
+            VkImageMemoryBarrier barrier;
+            XMemset(&barrier, 0, sizeof(barrier));
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = self->m_sourceImage;
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(self->m_transferCmd,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                 NULL, 0, NULL, 1, &barrier);
+        }
+        if (!xvkl_submit_transfer(self, false)) return false;
+        if (!xvkl_resume_after_transfer(self)) return false;
     }
-    if (!xvkl_submit_transfer(self, false)) return false;
-    if (!xvkl_resume_after_transfer(self)) return false;
+    if (!inlineUp)
     {
-        /* 重新绑定源纹理描述符（图像视图内容已更新）。 */
+        /* 重新绑定源纹理描述符（图像视图内容已更新）。内联合批路径跳
+           过：视图/布局不变，本次更新为等值重写，而同帧更早的内联绘制
+           可能 pending 引用该描述符集（pending 期更新非法）。 */
         VkDescriptorImageInfo imageInfo;
         VkWriteDescriptorSet write;
         XMemset(&imageInfo, 0, sizeof(imageInfo));
@@ -2373,7 +3611,9 @@ static bool xvkl_draw_image_region(XGpuRenderDriverSession* self,
     size_t baseOffset;
     size_t dstPitch;
     size_t stageBytes;
+    size_t frameOffset = 0;
     bool compact;
+    bool inlineUp = false;
     if (regionDirect < 0)
     {
         const char* rd = XSystem_environment("XGPU_VK_REGION_DIRECT");
@@ -2406,8 +3646,24 @@ static bool xvkl_draw_image_region(XGpuRenderDriverSession* self,
         stageBytes = baseOffset + dstPitch * (size_t)(srcH - 1) +
                      (size_t)srcW * 4u;
     }
-    if (!xvkl_stage_pixels(self, stageBytes)) return false;
-    mapped = (uint8_t*)self->m_stagingMapped;
+    /* 内联守卫（同 drawImageUv）：尺寸匹配才内联，避免 pending 绘制
+       引用的源图像被销毁重建。 */
+    inlineUp = xvkl_upload_batch() &&
+               self->m_sourceImage &&
+               self->m_sourceWidth == iw &&
+               self->m_sourceHeight == ih &&
+               xvkl_frame_stage_ensure(self, stageBytes);
+    if (inlineUp)
+    {
+        frameOffset = self->m_frameStageCursor;
+        self->m_frameStageCursor = frameOffset + stageBytes;
+        mapped = (uint8_t*)self->m_frameStagingMapped + frameOffset;
+    }
+    else
+    {
+        if (!xvkl_stage_pixels(self, stageBytes)) return false;
+        mapped = (uint8_t*)self->m_stagingMapped;
+    }
     for (row = 0; row < srcH; ++row)
     {
         uint8_t* drow = mapped + baseOffset + (size_t)row * dstPitch;
@@ -2451,76 +3707,101 @@ static bool xvkl_draw_image_region(XGpuRenderDriverSession* self,
         }
     }
     if (!xvkl_ensure_source_image(self, iw, ih)) return false;
-    /* transferCmd 三段式（同 drawImageUv）：suspend 提交已录绘制，
-       transferCmd 上传子矩形，resume 重开渲染通道继续录制。 */
-    if (!xvkl_suspend_for_transfer(self)) return false;
-    if (!xvkl_begin_transfer(self)) return false;
+    if (inlineUp)
     {
-        VkImageMemoryBarrier barrier;
-        XMemset(&barrier, 0, sizeof(barrier));
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = self->m_sourceImage;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(self->m_transferCmd,
-                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
-                             NULL, 1, &barrier);
-    }
-    XMemset(&region, 0, sizeof(region));
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    if (compact)
-    {
+        /* 内联合批（XGPU_VK_UPLOAD_BATCH=1 显式启用，默认关）：零额外
+           提交/零等待，子矩形 region 与三段式逐位一致，仅 bufferOffset
+           改指帧私有 staging 的本笔游标处（非紧凑模式 bufferRowLength
+           保留）。 */
+        XMemset(&region, 0, sizeof(region));
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.bufferOffset = (VkDeviceSize)(frameOffset + baseOffset);
+        if (!compact)
+            region.bufferRowLength = (uint32_t)iw;
         region.imageOffset.x = srcX;
         region.imageOffset.y = srcY;
+        region.imageExtent.width = (uint32_t)srcW;
+        region.imageExtent.height = (uint32_t)srcH;
+        region.imageExtent.depth = 1;
+        if (!xvkl_inline_source_upload(self, &region)) return false;
     }
     else
     {
-        /* 非紧凑：staging 镜像源布局（行距=整幅宽×4），子矩形起点由
-           bufferOffset 寻址（恒 4 对齐），bufferRowLength 以纹素表达
-           buffer 行距。 */
-        region.bufferOffset = (VkDeviceSize)baseOffset;
-        region.bufferRowLength = (uint32_t)iw;
-        region.imageOffset.x = srcX;
-        region.imageOffset.y = srcY;
+        /* transferCmd 三段式（同 drawImageUv）：suspend 提交已录绘制，
+           transferCmd 上传子矩形，resume 重开渲染通道继续录制。 */
+        if (!xvkl_suspend_for_transfer(self)) return false;
+        if (!xvkl_begin_transfer(self)) return false;
+        {
+            VkImageMemoryBarrier barrier;
+            XMemset(&barrier, 0, sizeof(barrier));
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = self->m_sourceImage;
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(self->m_transferCmd,
+                                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL,
+                                 0, NULL, 1, &barrier);
+        }
+        XMemset(&region, 0, sizeof(region));
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        if (compact)
+        {
+            region.imageOffset.x = srcX;
+            region.imageOffset.y = srcY;
+        }
+        else
+        {
+            /* 非紧凑：staging 镜像源布局（行距=整幅宽×4），子矩形起点由
+               bufferOffset 寻址（恒 4 对齐），bufferRowLength 以纹素表达
+               buffer 行距。 */
+            region.bufferOffset = (VkDeviceSize)baseOffset;
+            region.bufferRowLength = (uint32_t)iw;
+            region.imageOffset.x = srcX;
+            region.imageOffset.y = srcY;
+        }
+        region.imageExtent.width = (uint32_t)srcW;
+        region.imageExtent.height = (uint32_t)srcH;
+        region.imageExtent.depth = 1;
+        vkCmdCopyBufferToImage(self->m_transferCmd, self->m_stagingBuffer,
+                               self->m_sourceImage,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                               &region);
+        {
+            VkImageMemoryBarrier barrier;
+            XMemset(&barrier, 0, sizeof(barrier));
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = self->m_sourceImage;
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.layerCount = 1;
+            vkCmdPipelineBarrier(self->m_transferCmd,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                 NULL, 0, NULL, 1, &barrier);
+        }
+        if (!xvkl_submit_transfer(self, false)) return false;
+        if (!xvkl_resume_after_transfer(self)) return false;
     }
-    region.imageExtent.width = (uint32_t)srcW;
-    region.imageExtent.height = (uint32_t)srcH;
-    region.imageExtent.depth = 1;
-    vkCmdCopyBufferToImage(self->m_transferCmd, self->m_stagingBuffer,
-                           self->m_sourceImage,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    if (!inlineUp)
     {
-        VkImageMemoryBarrier barrier;
-        XMemset(&barrier, 0, sizeof(barrier));
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = self->m_sourceImage;
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.layerCount = 1;
-        vkCmdPipelineBarrier(self->m_transferCmd,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
-                             NULL, 0, NULL, 1, &barrier);
-    }
-    if (!xvkl_submit_transfer(self, false)) return false;
-    if (!xvkl_resume_after_transfer(self)) return false;
-    {
-        /* 重新绑定源纹理描述符（同 drawImageUv，视图内容已更新）。 */
+        /* 重新绑定源纹理描述符（同 drawImageUv，视图内容已更新）。内联
+           路径跳过：等值重写且 pending 期更新非法（同 drawImageUv）。 */
         XMemset(&imageInfo, 0, sizeof(imageInfo));
         imageInfo.sampler = 0;
         imageInfo.imageView = self->m_sourceView;

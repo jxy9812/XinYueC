@@ -355,6 +355,17 @@ typedef struct XGpuRenderDriverProcs
  */
 const XGpuRenderDriverProcs* XGpuRenderDriver_procs(XGpuRenderDriverType type);
 
+/**
+ * @brief      注入 mouse-grab 场景查询（GL 驱动的 PBO 滞后通道门控用）。
+ * @details    分层单向依赖桥：GL 驱动不依赖 XWidget 头，由 GUI 初始化
+ *             路径注入 XWidget_mouseGrabber 的薄包装（返回非 0 = 有交互
+ *             抓取，驱动滞后通道即回同步直读保正确性）。未注入（默认
+ *             NULL）= 驱动不自知交互态，维持既有开关口径。仅 GL 驱动
+ *             消费；Vulkan/其它驱动忽略。
+ * @param      query 查询函数（返回非 0 表示当前有鼠标抓取）；NULL 撤销。
+ */
+void XGpuRenderDriver_gl_setPointerGrabQuery(int (*query)(void));
+
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 #endif /* XGPURENDERDRIVER_H */

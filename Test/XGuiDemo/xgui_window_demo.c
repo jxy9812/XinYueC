@@ -3091,6 +3091,13 @@ static int demo_apitest_run(XGuiApplication* app, const char* onlyFamily)
     return total == 0 ? 0 : 1;
 }
 
+/* GL 驱动 PBO 滞后通道的场景自适应查询（薄包装：有鼠标抓取=交互序列
+ * 中，返回非 0 让驱动回同步直读；XWidget_mouseGrabber 返回指针）。 */
+static int demo_pointerGrabQuery(void)
+{
+    return XWidget_mouseGrabber() != NULL;
+}
+
 int main(int argc, char* argv[])
 {
     XGuiApplication* app;
@@ -3114,8 +3121,15 @@ int main(int argc, char* argv[])
      * kill -9 不经 atexit/stdio 清理，缓冲区未满的启动段日志整段丢
      * 失（夜间活锁检测假阴性根因之一：日志只见 stderr 一行）。启动
      * 即切行缓冲——每个 '\n' 自动 flush，对标 C 运行库 TTY 缺省口径；
-     * 仅作用于本演示进程，不影响库与其他可执行。 */
-    setvbuf(stdout, NULL, _IOLBF, 0);
+     * 仅作用于本演示进程，不影响库与其他可执行。
+     * 【合并修复 2026-09-29】size 参数 0 在 MSVC UCRT 触发 setvbuf 断言
+     * （2 <= size <= INT_MAX，debug CRT 弹模态框挂死 main——桌面全后端
+     * bench/autotest 挂死根因）；glibc 口径 size=0 合法。改传 1024。 */
+    setvbuf(stdout, NULL, _IOLBF, 1024);
+    /* GL 驱动 PBO 滞后通道的场景自适应门控：注入 mouse-grab 查询（有
+     * 抓取=交互序列中，驱动回同步直读保正确性；无抓取=非交互态允许
+     * 滞后拷出换吞吐）。零抓取时行为与第三夜二分口径一致。 */
+    XGpuRenderDriver_gl_setPointerGrabQuery(demo_pointerGrabQuery);
     autoSeconds = 0;
     benchmarkSeconds = 0;
     benchmarkResize = false;

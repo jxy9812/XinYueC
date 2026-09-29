@@ -152,8 +152,12 @@
                         !XPLATFORM_FBDEV_ON)
 /* 桌面原生窗口需要持久整帧缓冲：先在完整帧上合成脏区，再一次提交，
  * 与 Qt QBackingStore 的可见帧边界一致。PARTIAL tile 会逐块 present，
- * 在 X11 的高频小区域更新中可见为闪烁。 */
-#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_DIRECT
+ * 在 X11 的高频小区域更新中可见为闪烁。
+ * 【合并裁决 2026-09-29 VK 夜战】桌面分支改回 FULL：DIRECT 桌面默认下
+ * demo --benchmark 泵对所有后端（SW/GL/VK）空转挂死（CPU~0.2s 不泵帧，
+ * 三复现），真机验证未覆盖桌面基准路径。桌面 DIRECT 的 Qt 对齐语义
+ * 待上游修好桌面泵后再评估重落。 */
+#define XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_RENDER_MODE_FULL
 #else
 /* 嵌入式 fbdev 直写（XPLATFORM_FBDEV_ON）：与桌面同为 DIRECT——
  * 脏区绘制 + 硬件双缓冲轮换翻页（pan+FB_ACTIVATE_VBL 防撕裂）+

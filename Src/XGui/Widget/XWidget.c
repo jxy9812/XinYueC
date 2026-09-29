@@ -90,10 +90,29 @@
    缺原型时 MSVC 隐式声明 int 返回，Win64 下指针截断（C4047）。 */
 #include "XSystem.h"
 #include "XDateTime.h"        /* present 限频计时：单调毫秒（约束文档时间源规则） */
+#include "XPrintf.h"          /* [wprof] flush per-leg profiling summary line */
 #include <stdlib.h>
 
 /* TEMP：paintTree 派发 paintEvent 时的上屏目标图像（表面裁剪限定用）。 */
 static XImage* g_paintTargetImage;
+/* [wprof] frame-chain stamps (XGPU_W_FRAME_PROF=1, fourth round): the
+   per-frame 60ms gap sits outside flushBackingStore (third round: flush
+   6.5ms vs frame 73.9ms), inside update -> event loop -> PAINT dispatch.
+   Threaded through XWidget_addDirtyRegion (early in this file, hence the
+   forward decl and gate mirror), the PAINT case of the top-level event
+   switch, and the flush entry/exit. */
+static int xwidget_wprofOn;                /**< gate mirror for early hooks. */
+static int xwidget_wprof_gate(void);
+static void xwidget_wprof_add(int slot, int64_t startNs);
+static int64_t xwidget_wprofFrameStartNs;  /**< first dirty-enqueue of frame. */
+static int64_t xwidget_wprofPaintDispNs;   /**< PAINT dispatch stamp. */
+static int64_t xwidget_wprofFlushEndNs;    /**< previous flush exit stamp. */
+/* frame-chain slot ids: defined here because the addDirtyRegion hook and
+   the PAINT dispatch case run textually before the wprof block below */
+#define XW_WPROF_SEG_FR 15
+#define XW_WPROF_SEG_GAP 16
+#define XW_WPROF_SEG_DISP 17
+#define XW_WPROF_SEG_PEV 18
 /* 静态内容保留层前向声明：失效联动（update/几何/可见性路径调用）、
  * 生命周期挂钩与 paintTree 绘制钩子，实现体在效果钩子之后的保留层小节。 */
 static void xwidget_retainedDropCache(XWidget* self);
@@ -969,6 +988,21 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     XWidget_attrSet(&top->m_attributes, XWidgetAttribute_PendingUpdate, true);
     if (top->m_windowHandle && top->m_visible)
         (void)XWidget_postPaintEvent(top);
+    /* [wprof] frame chain H1: first dirty enqueue opens the frame; the
+       span since the previous flush exit settles as gap (event-loop idle
+       and other events between frames). Later enqueues of the same frame
+       keep the earliest stamp. */
+    if (xwidget_wprof_gate())
+    {
+        int64_t nowNs = XDateTime_currentNSecsSinceEpoch();
+        if (xwidget_wprofFlushEndNs != 0)
+        {
+            xwidget_wprof_add(XW_WPROF_SEG_GAP, xwidget_wprofFlushEndNs);
+            xwidget_wprofFlushEndNs = 0;
+        }
+        if (xwidget_wprofFrameStartNs == 0)
+            xwidget_wprofFrameStartNs = nowNs;
+    }
 }
 
 /** @brief 把局部矩形折算到顶层坐标后并入顶层脏区。 */
@@ -1988,6 +2022,18 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
         return true;
     }
     case XEVENT_TYPE_PAINT: {
+        /* [wprof] frame chain H2: the event loop just handed over the
+           PAINT event; frameStart..now settles as disp (queue lag incl.
+           other events ahead of paint). paintDisp stamps the pre-flush
+           part of paint handling, settled at flush entry (pev). */
+        if (xwidget_wprofOn)
+        {
+            int64_t nowNs = XDateTime_currentNSecsSinceEpoch();
+            if (xwidget_wprofFrameStartNs != 0)
+                xwidget_wprof_add(XW_WPROF_SEG_DISP,
+                                  xwidget_wprofFrameStartNs);
+            xwidget_wprofPaintDispNs = nowNs;
+        }
         /* PAINT 事件已被事件循环取出并开始处理，清掉投递占位位，
            允许本次绘制期间或之后产生的 update() 再次入队。必须先于
            flush 清零：flush 内部 paintEvent 触发的 update 依赖该位为 0
@@ -6327,6 +6373,172 @@ double g_xgui_flushMs = 0.0;
 double g_xgui_rootPaintMs = 0.0;
 long g_xgui_flushCount = 0;
 
+/* [wprof] XGPU_W_FRAME_PROF=1 gated per-leg nanosecond profiling of
+   XWidget_flushBackingStore (2026-09-28). VK backend burns 61-84ms/frame
+   while the 12 driver-side sync stages measure only ~2.3ms/frame; the legs
+   below attribute the remainder inside flushBackingStore/painter layer.
+   Env gate is read once lazily (XGUI_FLUSH_FULLFALLBACK idiom); unset
+   keeps a single int test per frame: zero behavior change, zero output,
+   no clock reads. Legs:
+     tot   whole call: entry -> exit (dirty repost included)
+     p2w   whole-window presentToWindow passthrough leg (XGPU_PRESENT=swap)
+     drb   dirty-rect readbackRect(+full-frame readback fallback)+flush leg
+     soft  degraded / software commit leg (gpuWindow NULL or frameDegraded)
+     fend  GPU painter frame end: XGpuRenderBackend_endWindowFrame when the
+           frame passes through this call (passthrough session only)
+     flush XBackingStore_flush body (entry -> exit), summed over all legs
+   One XPrintf summary line per 3s wall time, then counters reset:
+     [wprof] tot=N (ms) <slot>=N (ms) ...  N=hits, ms=millis per hit.
+   Statement-block segments (sequential; spans + legs partition tot):
+     prep    topLevel/createWindow/store ensure + XBackingStore_resize
+     region  whole region pick + degraded full-window lift + wholeBbox
+             collapse + attr/dirty subtraction
+     acquire paintImage check + GPU passthrough session acquire + first-
+             session reupdate
+     begpnt  surface clip + XBackingStore_beginPaint
+     paint   XWidget_paintTree + endPaint (painter layer; painterGpuEndFrame
+             and its frame-end readback land here in passthrough mode)
+     decide  present throttle window + XGPU_PRESENT env read
+     commit  present/commit region (fine legs p2w/drb/soft + fend inside)
+     tail    paintTargetImage clear + region deinit + surface clip clear
+     repost  dirty retain/re-post tail
+   Fine legs (p2w/drb/soft/fend/flush) unchanged, measured inside commit.
+   Clock: XDateTime_currentNSecsSinceEpoch (ns; same source the present
+   throttle already uses). State is a static aggregate, initialized once
+   at load; gate resolves on the first flush call. */
+#define XW_WPROF_LEG_TOT 0
+#define XW_WPROF_LEG_P2W 1
+#define XW_WPROF_LEG_DRB 2
+#define XW_WPROF_LEG_SOFT 3
+#define XW_WPROF_LEG_FEND 4
+#define XW_WPROF_LEG_FLS 5
+/* Sequential statement-block segments (2026-09-28 full-coverage pass):
+   measured earlier the legs sum only ~0.5ms while tot runs 16.7ms/frame on
+   VK, so each major block between statements gets a checkpoint
+   (xwidget_wprof_seg): consecutive checkpoints bound a segment; segment
+   spans + fine legs together partition tot. */
+#define XW_WPROF_SEG_PREP 6
+#define XW_WPROF_SEG_REGION 7
+#define XW_WPROF_SEG_ACQUIRE 8
+#define XW_WPROF_SEG_BEGPNT 9
+#define XW_WPROF_SEG_PAINT 10
+#define XW_WPROF_SEG_DECIDE 11
+#define XW_WPROF_SEG_COMMIT 12
+#define XW_WPROF_SEG_TAIL 13
+#define XW_WPROF_SEG_REPOST 14
+/* Frame-chain slots (fourth round): cross-function spans beyond
+   flushBackingStore. They are interval legs (xwidget_wprof_add) chained by
+   the file-top stamps, not sequential seg() checkpoints.
+     fr    whole async frame: first dirty enqueue -> flush exit
+     gap   previous flush exit -> this frame's first dirty enqueue (event
+           loop idle/wait incl. other events; "after present" segment)
+     disp  frame start -> PAINT dispatch (event loop queue lag; "before
+           paint dispatch" segment)
+     pev   PAINT dispatch -> flush entry (pre-flush part of paint handling)
+   Frame period ~= gap + fr; fr ~= disp + pev + tot. */
+#define XW_WPROF_SLOT_COUNT 19
+
+typedef struct XWidgetWprofState
+{
+    int inited;                        /**< env gate resolved once. */
+    int on;                            /**< XGPU_W_FRAME_PROF active. */
+    int64_t lastPrintNs;               /**< 3s summary window start. */
+    int64_t ns[XW_WPROF_SLOT_COUNT];   /**< accumulated ns per slot. */
+    long hits[XW_WPROF_SLOT_COUNT];    /**< slot entries this window. */
+} XWidgetWprofState;
+
+static XWidgetWprofState xwidget_wprof;
+
+static int xwidget_wprof_gate(void)
+{
+    if (!xwidget_wprof.inited)
+    {
+        const char* env = XSystem_environment("XGPU_W_FRAME_PROF");
+        xwidget_wprof.on =
+            env && *env && !(env[0] == '0' && env[1] == 0) ? 1 : 0;
+        xwidget_wprofOn = xwidget_wprof.on;
+        xwidget_wprof.inited = 1;
+    }
+    return xwidget_wprof.on;
+}
+
+static int64_t xwidget_wprof_now(void)
+{
+    if (!xwidget_wprof_gate()) return 0;
+    return XDateTime_currentNSecsSinceEpoch();
+}
+
+static const char* xwidget_wprof_name(int slot)
+{
+    static const char* const names[XW_WPROF_SLOT_COUNT] = {
+        "tot", "p2w", "drb", "soft", "fend", "flush",
+        "prep", "region", "acquire", "begpnt", "paint",
+        "decide", "commit", "tail", "repost",
+        "fr", "gap", "disp", "pev"
+    };
+    return names[slot];
+}
+
+/* Sequential checkpoint: charge [mark, now] to slot, then slide mark to
+   now. Chain of checkpoints per frame partitions the frame; a slot only
+   accumulates when its checkpoint runs (skipped branches leave 0 hits).
+   Gate off: no clock read, mark untouched (stays 0 from entry). */
+static void xwidget_wprof_seg(int slot, int64_t* mark)
+{
+    int64_t nowNs;
+    if (!xwidget_wprof.on) return;
+    nowNs = XDateTime_currentNSecsSinceEpoch();
+    if (*mark != 0)
+    {
+        xwidget_wprof.ns[slot] += nowNs - *mark;
+        xwidget_wprof.hits[slot] += 1;
+    }
+    *mark = nowNs;
+}
+
+static void xwidget_wprof_add(int leg, int64_t startNs)
+{
+    if (!xwidget_wprof.on || startNs == 0) return;
+    xwidget_wprof.ns[leg] += XDateTime_currentNSecsSinceEpoch() - startNs;
+    xwidget_wprof.hits[leg] += 1;
+    if (leg != XW_WPROF_LEG_TOT) return;
+    if (xwidget_wprof.lastPrintNs == 0)
+    {
+        xwidget_wprof.lastPrintNs = XDateTime_currentNSecsSinceEpoch();
+        return;
+    }
+    if (XDateTime_currentNSecsSinceEpoch() - xwidget_wprof.lastPrintNs >=
+        3000000000LL)
+    {
+        double ms[XW_WPROF_SLOT_COUNT];
+        int64_t nowNs = XDateTime_currentNSecsSinceEpoch();
+        int i;
+        for (i = 0; i < XW_WPROF_SLOT_COUNT; ++i)
+        {
+            ms[i] = xwidget_wprof.hits[i] > 0
+                ? (double)xwidget_wprof.ns[i] / 1.0e6 /
+                  (double)xwidget_wprof.hits[i]
+                : 0.0;
+        }
+        XPrintf("[wprof] tot=%ld (%.3fms)",
+                xwidget_wprof.hits[XW_WPROF_LEG_TOT],
+                ms[XW_WPROF_LEG_TOT]);
+        for (i = 1; i < XW_WPROF_SLOT_COUNT; ++i)
+        {
+            XPrintf(" %s=%ld (%.3fms)",
+                    xwidget_wprof_name(i),
+                    xwidget_wprof.hits[i], ms[i]);
+        }
+        XPrintf("\n");
+        for (i = 0; i < XW_WPROF_SLOT_COUNT; ++i)
+        {
+            xwidget_wprof.ns[i] = 0;
+            xwidget_wprof.hits[i] = 0;
+        }
+        xwidget_wprof.lastPrintNs = nowNs;
+    }
+}
+
 /* 降级帧后的整窗恢复重present（2026-09-28）：降级帧（painterGpu 本帧
    GL 调用失败）按旧口径只提交脏区 whole，且降级帧的 FBO 内容不可信，
    屏幕上可能停留部分陈旧/垃圾行；后续普通帧又只走脏区读回+脏区提交，
@@ -6367,7 +6579,18 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     XRect contents;
     XRect wholeBbox;
     XSize size;
+    int64_t wprofT0;
+    int64_t wprofMark;
     if (!self) return;
+    wprofT0 = xwidget_wprof_now();
+    wprofMark = wprofT0;
+    /* [wprof] frame chain H3: PAINT dispatch -> flush entry (pre-flush
+       slice of paint handling; the paintEvent body itself runs inside). */
+    if (xwidget_wprofOn && xwidget_wprofPaintDispNs != 0)
+    {
+        xwidget_wprof_add(XW_WPROF_SEG_PEV, xwidget_wprofPaintDispNs);
+        xwidget_wprofPaintDispNs = 0;
+    }
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (!top || !top->m_isWindow) return;
     if (!top->m_windowHandle)
@@ -6381,6 +6604,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     }
     XSize_init(&size, top->m_windowRect.width, top->m_windowRect.height);
     XBackingStore_resize(store, &size);
+    xwidget_wprof_seg(XW_WPROF_SEG_PREP, &wprofMark);
     XRegion_init(&whole);
  #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     {
@@ -6509,6 +6733,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                 XRegion_subtracted(&top->m_dirty, region, &top->m_dirty);
         }
     }
+    xwidget_wprof_seg(XW_WPROF_SEG_REGION, &wprofMark);
     if (whole.count > 0) {
         /* 后端或平台集成被裁剪/尚未建立时，repaint 仍必须同步派发
            paintEvent；区别仅是没有 XImage 可供绘制、也不会执行上屏。 */
@@ -6516,11 +6741,13 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             XWidget_paintTree(top, &whole);
         }
         else {
+        int64_t wprofFls0;
 #if XPLATFORMINTEGRATION_ON && XGPU_ON && \
     XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         /* GPU 直通（阶段 2）：请求 GPU 时获取窗口直通会话；失败自动回退
            软件/阶段 1。PARTIAL 模式保持离屏 readback（tile 缓冲语义）。 */
         XGpuRenderBackend* gpuWindow = NULL;
+        int64_t wprofLeg0;
         if (XGpuRenderBackend_requested())
             gpuWindow = XGpuRenderBackend_acquireForWindow(
                 (XWindow*)top->m_windowHandle,
@@ -6539,6 +6766,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             }
         }
 #endif /* GPU && !PARTIAL */
+        xwidget_wprof_seg(XW_WPROF_SEG_ACQUIRE, &wprofMark);
         g_paintTargetImage = XBackingStore_paintImage(store);
         /* 表面裁剪：按刷区域外接矩形设置（对标 Qt drawWidget →
            setSystemClip(toBePainted)，设备坐标）。paintTree 递归期间
@@ -6547,6 +6775,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         XPainter_setSurfaceClipRect(&wholeBbox,
                                     XBackingStore_paintImage(store));
         XBackingStore_beginPaint(store, &whole);
+        xwidget_wprof_seg(XW_WPROF_SEG_BEGPNT, &wprofMark);
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         {
             XRect tile;
@@ -6580,6 +6809,7 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         XWidget_paintTree(top, &whole);
         xwidget_drawWindowDecoration(top, &whole);
         XBackingStore_endPaint(store);
+        xwidget_wprof_seg(XW_WPROF_SEG_PAINT, &wprofMark);
 #if XPLATFORMINTEGRATION_ON && XGPU_ON && \
     XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         if (gpuWindow && !XGpuRenderBackend_frameDegraded())
@@ -6647,11 +6877,13 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             }
             if (presentThisFrame)
                 presentMode = XSystem_environment("XGPU_PRESENT");
+            xwidget_wprof_seg(XW_WPROF_SEG_DECIDE, &wprofMark);
             if (presentThisFrame && presentMode &&
                 presentMode[0] == 's' &&
                 presentMode[1] == 'w' && presentMode[2] == 'a' &&
                 presentMode[3] == 'p' && presentMode[4] == '\0')
             {
+                wprofLeg0 = xwidget_wprof_now();
 #if XGUI_PRESENT_HONEST
                 presented = XGpuRenderBackend_presentToWindow(gpuWindow);
                 if (!presented)
@@ -6666,16 +6898,20 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                    不在位时 flush 是静默空操作，此时按实不置位。 */
                 if (presented && !XBackingStore_handle(store))
                     presented = false;
+                wprofFls0 = xwidget_wprof_now();
                 XBackingStore_flush(store, &whole,
                                     (XWindow*)top->m_windowHandle, NULL);
+                xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
                 XGpuRenderBackend_setFramePresented(presented);
 #else /* XGUI_PRESENT_HONEST=0：旧谎报行为，忽略后端结果。 */
                 XGpuRenderBackend_presentToWindow(gpuWindow);
                 XGpuRenderBackend_setFramePresented(true);
 #endif
+                xwidget_wprof_add(XW_WPROF_LEG_P2W, wprofLeg0);
             }
             else if (presentThisFrame)
             {
+                wprofLeg0 = xwidget_wprof_now();
 #if XGUI_PRESENT_HONEST
                 /* 脏区读回（P-dirty-readback 2026-09-25）：默认通道只把
                    本帧呈现区域（whole 的单包围盒——多矩形区域沿项目
@@ -6712,20 +6948,26 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
                         gpuWindow, XBackingStore_paintImage(store));
                 if (presented && !XBackingStore_handle(store))
                     presented = false;
+                wprofFls0 = xwidget_wprof_now();
                 XBackingStore_flush(store, &whole,
                                     (XWindow*)top->m_windowHandle, NULL);
+                xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
                 XGpuRenderBackend_setFramePresented(presented);
 #else
                 XGpuRenderBackend_readback(
                     gpuWindow, XBackingStore_paintImage(store));
+                wprofFls0 = xwidget_wprof_now();
                 XBackingStore_flush(store, &whole,
                                     (XWindow*)top->m_windowHandle, NULL);
+                xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
                 XGpuRenderBackend_setFramePresented(true);
 #endif
+                xwidget_wprof_add(XW_WPROF_LEG_DRB, wprofLeg0);
             }
         }
         else
         {
+            wprofLeg0 = xwidget_wprof_now();
             /* 软件模式（gpuWindow=NULL）与降级帧的提交腿（2026-09-25
                修复：present 诚实化重构时 flush 被收进 gpuWindow 分支，
                软件模式从此零提交=整窗白屏，激活会话实测复现）。
@@ -6736,25 +6978,36 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             if (gpuWindow)
                 XGpuRenderBackend_readback(
                     gpuWindow, XBackingStore_paintImage(store));
+            wprofFls0 = xwidget_wprof_now();
             XBackingStore_flush(store, &whole,
                                 (XWindow*)top->m_windowHandle, NULL);
+            xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
             XGpuRenderBackend_setFramePresented(false);
             /* 降级 GPU 帧已上屏（软件常驻模式 gpuWindow 恒 NULL，不计）：
                置位下一帧的整窗恢复重present（见函数头注释）。 */
             if (gpuWindow)
                 g_xgui_degradedFramePending = 1;
+            xwidget_wprof_add(XW_WPROF_LEG_SOFT, wprofLeg0);
         }
             if (gpuWindow)
+            {
+                wprofLeg0 = xwidget_wprof_now();
                 XGpuRenderBackend_endWindowFrame();
+                xwidget_wprof_add(XW_WPROF_LEG_FEND, wprofLeg0);
+            }
 #else
+        wprofFls0 = xwidget_wprof_now();
         XBackingStore_flush(store, &whole, (XWindow*)top->m_windowHandle, NULL);
+        xwidget_wprof_add(XW_WPROF_LEG_FLS, wprofFls0);
 #endif /* GPU && !PARTIAL */
 #endif
+        xwidget_wprof_seg(XW_WPROF_SEG_COMMIT, &wprofMark);
         }
     }
         g_paintTargetImage = NULL;
     XRegion_deinit(&whole);
     XPainter_clearSurfaceClipRect();
+    xwidget_wprof_seg(XW_WPROF_SEG_TAIL, &wprofMark);
     /* 保留绘制期间或本次快照未覆盖的脏区，并确保它最终会再次派发。 */
     if (top->m_dirty.count > 0)
     {
@@ -6774,6 +7027,20 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         XWidget_attrSet(&top->m_attributes,
                         XWidgetAttribute_PendingUpdate, false);
     }
+    xwidget_wprof_seg(XW_WPROF_SEG_REPOST, &wprofMark);
+    /* [wprof] frame chain H4: flush exit closes the async frame (fr =
+       first dirty enqueue .. here) and stamps the inter-frame gap start. */
+    if (xwidget_wprofOn)
+    {
+        int64_t nowNs = XDateTime_currentNSecsSinceEpoch();
+        if (xwidget_wprofFrameStartNs != 0)
+        {
+            xwidget_wprof_add(XW_WPROF_SEG_FR, xwidget_wprofFrameStartNs);
+            xwidget_wprofFrameStartNs = 0;
+        }
+        xwidget_wprofFlushEndNs = nowNs;
+    }
+    xwidget_wprof_add(XW_WPROF_LEG_TOT, wprofT0);
 #else
     (void)self;
     (void)region;

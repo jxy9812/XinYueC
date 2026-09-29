@@ -542,5 +542,19 @@ void XPlatformBackingStoreDriver_presentTile(void* nativeState,
 #endif
 }
 
+/* Panel strip fill for the window-decoration drag path (remote 8b092c6d).
+ * fbdev-only semantics: on Windows the window system / DWM re-covers
+ * exposed regions and the per-rect BitBlt flush is already atomic, so the
+ * panel-level fill is a no-op here (same policy as the posix
+ * implementation's non-fbdev branch). Windows-side link stub added by the
+ * merge integration -- the remote commit only implemented the posix side. */
+void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
+                                          uint32_t nativePixel)
+{
+    (void)rects;
+    (void)count;
+    (void)nativePixel;
+}
+
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && defined(_WIN32) */
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */

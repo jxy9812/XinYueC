@@ -2625,6 +2625,17 @@ static bool xgld_pbo_full_readback_requested(void)
  *         呈现链默认不再进入滞后通道（拷出与异步写入一并休眠，行为逐
  *         位等同 XGPU_PBO_READBACK=0 的呈现链）；置 0 恢复旧行为，
  *         XGPU_PBO_READBACK_FULL 诊断复现须先置本开关 0。 */
+/* 场景自适应滞后（2026-09-29）：mouse-grab 查询注入点。分层单向依赖——
+ * GL 驱动不 include XWidget.h，由 XGui 初始化（XGuiApplication 启动路径）
+ * 注入 XWidget_mouseGrabber 的薄包装；NULL（默认）=不自知交互态，滞后
+ * 通道维持第三夜二分的旧口径（XGPU_PBO_LAG_FIX=0 才整体激活）。 */
+static int (*g_xgldPointerGrabQuery)(void) = NULL;
+
+void XGpuRenderDriver_gl_setPointerGrabQuery(int (*query)(void))
+{
+    g_xgldPointerGrabQuery = query;
+}
+
 static bool xgld_pbo_lag_fix_enabled(void)
 {
     static int enabled = -1;
@@ -2771,9 +2782,39 @@ static bool xgld_readback_region(XGpuRenderDriverSession* self,
                                  int width, int height, bool allowPboLag)
 {
     /* 滞后通道默认休眠（XGPU_PBO_LAG_FIX，见函数头注释）：交互拖动二分
-       实证滞后拷出呈现陈旧/半成品帧，回退同步直读；置 0 恢复旧行为。 */
+       实证滞后拷出呈现陈旧/半成品帧，回退同步直读；置 0 恢复旧行为。
+       【场景自适应 2026-09-29】XGPU_PBO_ADAPTIVE=1（默认开）时滞后通道
+       按 mouse-grab 场景门控：无抓取（无拖动/交互序列）允许滞后拷出换
+       吞吐（当前慢态实测 +35%：62→84 fps），有抓取强制同步直读保正确
+       性（第三夜二分结论的交互语义完整保留）。查询函数由 XGui 初始化
+       注入（g_xgldPointerGrabQuery，分层单向依赖：GL 驱动不 include
+       XWidget.h）；未注入=NULL=保持旧口径（完全沿第三夜二分）。关闭
+       自适应=完全旧口径。 */
     bool pboLag = (allowPboLag || xgld_pbo_full_readback_requested()) &&
                   !xgld_pbo_lag_fix_enabled();
+    {
+        static int adaptiveInit = -1;
+        static int adaptiveOn = 1;
+        if (adaptiveInit < 0)
+        {
+            const char* value = XSystem_environment("XGPU_PBO_ADAPTIVE");
+            adaptiveOn = !(value && *value && value[0] == '0' &&
+                           value[1] == 0);
+            adaptiveInit = 1;
+        }
+        if (adaptiveOn && g_xgldPointerGrabQuery)
+        {
+            /* 自适应语义：滞后通道的休眠/激活由【当前场景】决定——无
+               抓取=非交互态激活滞后（覆盖 lag_fix 的全局休眠，这是本
+               改动的本体）；有抓取=交互序列强制同步直读（lag_fix 的
+               正确性结论按场景保留）。查询未注入时不动旧口径。 */
+            if (!g_xgldPointerGrabQuery())
+                pboLag = allowPboLag ||
+                         xgld_pbo_full_readback_requested();
+            else
+                pboLag = false;
+        }
+    }
     static unsigned stCalls, stPbo, stSeed, stStall, stMapFail;
     static int statsOn = -1;
     bool usedPbo = false;
