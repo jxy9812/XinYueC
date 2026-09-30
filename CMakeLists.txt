@@ -49,7 +49,10 @@ endif()
 # GCC 14 将部分旧 C 代码诊断提升为错误。项目的容器继承接口通过宏
 # 保持现有的基类调用约定，因此暂时将这些兼容性诊断降回警告，避免
 # 升级编译器改变公开 API 和已有源码的调用方式。
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+# Clang 16+（含 NDK r29 的 Clang 21，安卓交叉编译）同步提升了同类
+# 诊断，按同一策略降回警告。
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang" OR
+   (CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_C_COMPILER_VERSION VERSION_GREATER_EQUAL 14))
     add_compile_options(
         -Wno-error=incompatible-pointer-types
         -Wno-error=return-mismatch
@@ -72,6 +75,18 @@ endif()
 # ==================== GBK转换实现切换 ====================
 # 启用文件读写方式实现GBK转换（适用于嵌入式），注释此行则使用平台系统API
 #add_compile_definitions(XCHAR_USE_FILE_GBK)
+# Android 的 bionic 无 iconv 实现，XChar_conf.h 自动检测已让安卓回落
+# 文件映射表模式，无需（也不得）在此追加定义——与自动检测叠加会触发
+# XChar_conf.h 的多模式 #error。
+# Android：开启显示驱动契约（XPlatformDisplayDriver.h 整体受
+# XPLATFORM_FBDEV_ON 门控）。安卓 NativeActivity 是与 fbdev 同构的
+# 单屏直写模型，XPlatformWindowAndroid.c 经该契约报告 surface 能力。
+# 同时把轮廓字库（GB2312 汉字全集，约 3MiB）编入目标：安卓无
+# ../Library/XFont 外挂目录，XFontOutlineFace 的外挂文件加载不可达，
+# 内嵌是项目文档标注的免文件系统部署路径（XFont_config.h）。
+if(ANDROID)
+    add_compile_definitions(XPLATFORM_FBDEV_ON=1 XFONT_BUILTIN_OUTLINE_ON=1)
+endif()
 # 映射表文件路径（干净格式，无注释，固定4字节/行，支持文件二分）
 add_compile_definitions(XCHAR_COMPACT_PATH="${CMAKE_CURRENT_LIST_DIR}/Library/XCHAR_COMPACT.BIN")
 include(CMake_Config.cmake)
@@ -89,6 +104,36 @@ include_directories(${CMAKE_CURRENT_LIST_DIR}/Src/XPlatform)
 #递归搜索目录下的文件添加到变量中
 file(GLOB_RECURSE SRC_FILE "Src/*.c" )
 file(GLOB_RECURSE TEST_FILE "Test/*.c" )
+# 拼音 IME 翻译单元显式登记（XKEYBOARD_IME_ON 门控）：GLOB 列表在
+# 配置期固化，既有构建树不重配时 glob 感知不到新增文件（XPinyinEngine.c/
+# XPinyinTable.c 不入列即 LNK2019，第 1 轮门禁实锅）；REMOVE_
+# DUPLICATES 兜底——重配置后 glob 收编同名路径时去重，防双列入库。
+# 词组库 TU（XPinyinPhrase.c，XKEYBOARD_IME_PHRASE_ON=
+# XKEYBOARD_IME_ON&&XFILE_ON 门控）同批登记。词库资产
+# （Library/VirtualKeyboard/phrases_zh.txt 及解析夹具）不拷贝不入构建树：
+# 默认路径 ../Library/VirtualKeyboard 按 XFont 外挂字库同款三段解析——
+# CTest WORKING_DIRECTORY=bin（下方 add_test）直跑命中 ../ 前缀；
+# 非 bin 工作目录经 ../ 剥前缀重试；安装布局经 exe 目录兜底拼接。
+list(APPEND SRC_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XPinyinEngine.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XPinyinTable.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XPinyinPhrase.c"
+    # Qt Virtual Keyboard 对齐类族（XVIRTUALKEYBOARD_ON 门控）：显式登记
+    # 不 glob（glob 在配置期固化，构建树不重配时感知不到新增文件——
+    # XPinyinEngine.c LNK2019 同款教训）。
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardAbstractInputMethod.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardTrace.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardSelectionListModel.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardInputEngine.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardInputContext.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardSettings.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardDictionary.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardDictionaryManager.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardObserver.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPlatformInputContext.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPlainInputMethod.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPinyinInputMethod.c")
+list(REMOVE_DUPLICATES SRC_FILE)
 # XGuiDemo 是自带 main() 的独立演示可执行（见下方 XGuiWindowDemo_Test 目标），
 # 不能被卷进 Static/Dynamic 主程序（会与 main.c 重复定义 main）。
 file(GLOB_RECURSE XGUI_DEMO_FILE "Test/XGuiDemo/*.c" )
@@ -102,6 +147,13 @@ if(XGUI_API_TEST_FILE)
     list(REMOVE_ITEM TEST_FILE ${XGUI_API_TEST_FILE})
 endif()
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
+# android_main.c 是 demo APK 的 NativeActivity 壳接线（引用 demo 入口
+# xgui_window_demo_main，定义 ANativeActivity_onCreate），归 xguidemo
+# 目标所有（该目标已显式登记此文件）；留在框架库里会让动态库
+# --no-undefined 链接因找不到 demo 入口失败，且与壳目标重复编译。
+if(ANDROID)
+    list(REMOVE_ITEM DRIVE_FILE "${CMAKE_CURRENT_LIST_DIR}/Drive/Android/android_main.c")
+endif()
 add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
 add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
 
@@ -163,7 +215,12 @@ if(UNIX AND NOT APPLE)
         target_link_libraries(${EXPORT_NAME}S PUBLIC ${OPENGL_gl_LIBRARY})
         target_link_libraries(${EXPORT_NAME} PRIVATE ${OPENGL_gl_LIBRARY})
     endif()
-    find_library(XINYUE_VULKAN_LIBRARY NAMES vulkan)
+    # Android 排除：NDK sysroot 带 libvulkan 存根会误启用 X11 窗口 surface
+    # 路径（XPlatformGraphics_posix.c 的 VK_USE_PLATFORM_XLIB_KHR 需要 Xlib）。
+    # 安卓经 VK_KHR_android_surface 建 surface，属 Drive/Android 平台层，待接。
+    if(NOT ANDROID)
+        find_library(XINYUE_VULKAN_LIBRARY NAMES vulkan)
+    endif()
     if(XINYUE_VULKAN_LIBRARY)
         add_compile_definitions(XINYUE_C_HAS_VULKAN=1)
         target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_VULKAN_LIBRARY})
@@ -245,6 +302,15 @@ endif()
 #      无 librt，经系统名判断隔离。 ====
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND XINYUE_UNIX_EXTRA_LIBS rt)
+endif()
+
+# ---- m/pthread 链接项：Android（bionic）下 pthread、数学库全部内置于
+#      libc，NDK 已不提供 libpthread 存根库，链 -lpthread 直接报
+#      "unable to find library"。桌面/服务器 UNIX 仍按原口径链。====
+if(ANDROID)
+    set(XINYUE_UNIX_THREAD_LIBS "")
+else()
+    set(XINYUE_UNIX_THREAD_LIBS "m pthread")
 endif()
 
 # ==================== zlib（压缩库）====================
@@ -340,6 +406,15 @@ if(WIN32)
     target_link_libraries(${EXPORT_NAME}S PUBLIC ${XINYUE_WIN32_LIBS})
     target_link_libraries(${EXPORT_NAME} PRIVATE ${XINYUE_WIN32_LIBS})
 endif()
+# Android 平台依赖（bionic 系统库）：
+# - log：平台层诊断输出（__android_log_print）；
+# - android：ANativeWindow/NativeActivity（XPlatformWindowAndroid.c、
+#   android_main.c）。动态库为 --no-undefined 语义，必须在本体链接
+#   阶段解析；静态库 PUBLIC 传给最终载体（libxguidemo.so）。
+if(ANDROID)
+    target_link_libraries(${EXPORT_NAME}S PUBLIC android log)
+    target_link_libraries(${EXPORT_NAME} PRIVATE android log)
+endif()
 # Windows(MSVC): mbedtls_platform_get_entropy() 调用 BCryptGenRandom（需 bcrypt.lib）。
 # 已开启 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG，TLS/PSA 运行时随机数走 XRandomGenerator，
 # 但 platform_util.c 仍被编译并链接，故 Windows 上必须链接 bcrypt 解析符号。
@@ -361,7 +436,7 @@ set_target_properties(${EXPORT_NAME}_Static PROPERTIES
 # Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
 #                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
 else()
     target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
 endif()
@@ -376,7 +451,7 @@ set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Dynamic"
 )
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite)
+    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite)
 else()
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite)
 endif()
@@ -388,7 +463,7 @@ add_executable(FtpE2E_Test
     "./ftp_e2e_test.c"
 )
 if(UNIX)
-    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
@@ -411,23 +486,23 @@ add_executable(XGuiRegression_Test
     "./Test/XGuiTest/XScrollBarTest.c"
     "./Test/XGuiTest/XStackedWidgetTest.c"
     "./Test/XGuiTest/XButtonGroupTest.c"
+    "./Test/XGuiTest/XKeyboardTest.c"
     "./Test/XGuiTest/XTouchMultiPointTest.c"
 )
 if(UNIX)
-    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 endif() # XGUI_ON
 
-# ==================== XLineControl 控制器验收测试 ====================
 if(XGUI_ON)
 add_executable(XLineControl_Acceptance_Test
     "./xgui_linecontrol_acceptance_test.c"
     "./Test/XGuiTest/XLineControlAcceptance.c"
 )
 if(UNIX)
-    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XLineControl_Acceptance_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
@@ -458,19 +533,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND X11_FOUND)
     add_executable(XGuiXdnd_Test
         "./xgui_xdnd_test.c"
     )
-    target_link_libraries(XGuiXdnd_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${X11_LIBRARIES} ${EXPORT_NAME}S)
+    target_link_libraries(XGuiXdnd_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${X11_LIBRARIES} ${EXPORT_NAME}S)
 endif()
 
 # ==================== XGui 统一可视化控件测试程序 ====================
 # 桌面原生窗口控件验收入口：XWindow + XGuiApplication + XBackingStore 走完整的
 # 「平台原生窗口（X11/Win32）-> 事件注入 -> 重绘 -> 上屏」链路。
 # 运行：无参数常驻，带参数可传入自动退出秒数（供无窗口管理器环境截图）。
-if(XGUI_ON)
+# 安卓排除：demo 由 xguidemo 共享库（NativeActivity 壳）承载，本可执行
+# 是桌面窗口系统专用；安卓下 main 已改名 xgui_window_demo_main 且诊断
+# 依赖壳里的 XGuiDemo_debugLog，独立可执行无入口可链。
+if(XGUI_ON AND NOT ANDROID)
 add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_window_demo.c"
     "./Test/XGuiDemo/xgui_demo_page_views.c"
     "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
     "./Test/XGuiDemo/xgui_demo_page_advanced.c"
+    "./Test/XGuiDemo/xgui_demo_page_keyboard.c"
     "./Test/XGuiDemo/xgui_demo_page_effects.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
@@ -483,18 +562,46 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_apitest_core.c"
 )
 if(UNIX)
-    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
-endif() # XGUI_ON
+endif() # XGUI_ON AND NOT ANDROID
+
+# ==================== XGuiWindowDemo 安卓 APK 壳（共享库） ====================
+# NativeActivity 壳：android_main.c 生命周期接线 + 平台层（窗口/输入）。
+# demo main 重命名为 xgui_window_demo_main（__ANDROID__ 下）并入本目标，
+# 导出 ANativeActivity_onCreate。打包脚本（Tools/android/build_apk.sh）
+# 以 libxguidemo.so 为载体组 APK。
+if(XGUI_ON AND ANDROID)
+    add_library(xguidemo SHARED
+        "./Drive/Android/android_main.c"
+        "./Test/XGuiDemo/xgui_window_demo.c"
+        "./Test/XGuiDemo/xgui_demo_page_views.c"
+        "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
+        "./Test/XGuiDemo/xgui_demo_page_advanced.c"
+        "./Test/XGuiDemo/xgui_demo_page_keyboard.c"
+        "./Test/XGuiDemo/xgui_demo_page_effects.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_input.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_text.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_views.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_containers.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_dialogs.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_menus.c"
+        "./Test/XGuiDemo/xgui_demo_apitest_core.c"
+    )
+    target_link_libraries(xguidemo ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+    target_link_libraries(xguidemo android log)
+endif()
 
 # ==================== XGui GPU 阶段 1 冒烟测试 ====================
 add_executable(XGuiGpu_Test
     "./xgui_gpu_test.c"
 )
 if(UNIX)
-    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S m pthread ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(XGuiGpu_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()

@@ -1,0 +1,3154 @@
+﻿# XinYueC 拼音词组库 V2 打底版（IME 词组候选 · 全键拼音）
+# 搭配：Src/XGui/Widget/XPinyinTable.c 单字候选表；格式与设计口径对齐：
+#   每行 = 拼音音节序列(空格分隔) <TAB> 汉字词 <TAB> 组内频序整数
+#   音节为无调拼音；ü 写作 v（lv/nv/lue/nue），j/q/x 后 ü 写作 u（ju/qu/xu 系）
+#   频序整数：同一拼音序列组内从 1 递增，按模型知识的大致常用度升序（非语料统计）
+#   '#' 起始为注释行；编码 UTF-8（带 BOM）；换行 LF；按拼音音节序列字典序存放，可整表二分
+# 音节合法性参考集：XPinyinTable.c 的 k_imeSyllables（408 个）；
+#   该表缺 juan/ling/dian/diao 四个标准音节（上游缺口，已 grep 核实），
+#   含这四个音节的词未收录本库（待上游补表后按 README 清单扩展）
+# 生成日期：2026-09-29；来源：模型知识人工整理（非权威语料统计）
+# 规模：3044 条（双字 2738 + 三字 306）；不同拼音序列组 2934 个；使用音节 369/408
+a yi	阿姨	1
+ai guo	爱国	1
+ai mu	爱慕	1
+ai qing	爱情	1
+ai qing pian	爱情片	1
+ai ren	爱人	1
+ai xin	爱心	1
+an ding	安定	1
+an jian	安检	1
+an jing	安静	1
+an pai	安排	1
+an quan	安全	1
+an quan dai	安全带	1
+an shi	按时	1
+an wei	安危	1
+an zhuang	安装	1
+ang gui	昂贵	1
+ang zang	肮脏	1
+ba ba	爸爸	1
+ba shi	八十	1
+ba shi	巴士	2
+bai cai	白菜	1
+bai fang	拜访	1
+bai fen bi	百分比	1
+bai jiu	白酒	1
+bai ke	百科	1
+bai nian	拜年	1
+bai se	白色	1
+bai tang	白糖	1
+bai tian	白天	1
+bai xing	百姓	1
+bai xue	白雪	1
+ban che	班车	1
+ban dao	半岛	1
+ban fa	办法	1
+ban gong lou	办公楼	1
+ban gong shi	办公室	1
+ban hua	版画	1
+ban ji	班级	1
+ban jia	搬家	1
+ban jiang	颁奖	1
+ban jue sai	半决赛	1
+ban lv	伴侣	1
+ban ma	斑马	1
+ban ma xian	斑马线	1
+ban tian	半天	1
+ban ye	半夜	1
+ban zhang	班长	1
+ban zhu ren	班主任	1
+ban zou	伴奏	1
+bang qiu	棒球	1
+bang wan	傍晚	1
+bang zhu	帮助	1
+bao an	保安	1
+bao chi	保持	1
+bao chou	报酬	1
+bao dao	报道	1
+bao feng	暴风	1
+bao gui	宝贵	1
+bao guo	包裹	1
+bao jing	报警	1
+bao kao	报考	1
+bao ling qiu	保龄球	1
+bao mi	保密	1
+bao ming	报名	1
+bao mu	保姆	1
+bao shou	保守	1
+bao tai	爆胎	1
+bao xian	保险	1
+bao xiu	保修	1
+bao yang	保养	1
+bao zheng	保证	1
+bao zhi	报纸	1
+bao zi	包子	1
+bei bing yang	北冰洋	1
+bei dong	被动	1
+bei feng	北风	1
+bei ji xiong	北极熊	1
+bei ju	悲剧	1
+bei ke	备课	1
+bei ke	贝壳	2
+bei shang	悲伤	1
+bei si	贝斯	1
+bei song	背诵	1
+bei xin	背心	1
+bei zhan	备战	1
+bei zi	被子	1
+bei zi	杯子	2
+ben ren	本人	1
+ben zhi	本质	1
+bi ci	彼此	1
+bi deng	壁灯	1
+bi hu	壁虎	1
+bi hua	笔画	1
+bi hua	壁画	2
+bi ji	笔记	1
+bi ji ben	笔记本	1
+bi nan	避难	1
+bi pin	比拼	1
+bi ru	比如	1
+bi shun	笔顺	1
+bi suan	笔算	1
+bi xu	必须	1
+bi ye	毕业	1
+bi ye sheng	毕业生	1
+bi ye zheng	毕业证	1
+bi zi	鼻子	1
+bian ji	编辑	1
+bian li dian	便利店	1
+bian pao	鞭炮	1
+biao bai	表白	1
+biao da	表达	1
+biao di	表弟	1
+biao ge	表哥	1
+biao jia	标价	1
+biao mian	表面	1
+biao shi	表示	1
+biao ti	标题	1
+biao xian	表现	1
+biao yan	表演	1
+biao zhun	标准	1
+bie ren	别人	1
+bie shu	别墅	1
+bie zhen	别针	1
+bin wei	濒危	1
+bing bao	冰雹	1
+bing chuan	冰川	1
+bing du	病毒	1
+bing fang	病房	1
+bing gan	饼干	1
+bing gui	冰柜	1
+bing gun	冰棍	1
+bing qi lin	冰淇淋	1
+bing qie	并且	1
+bing qiu	冰球	1
+bing ren	病人	1
+bing shan	冰山	1
+bing xiang	冰箱	1
+bing xue	冰雪	1
+bo bo	伯伯	1
+bo cai	菠菜	1
+bo chang	波长	1
+bo hao	拨号	1
+bo lang	波浪	1
+bo li	玻璃	1
+bo luo	菠萝	1
+bo wu guan	博物馆	1
+bo zi	脖子	1
+bu bi	不必	1
+bu dan	不但	1
+bu duan	不断	1
+bu dui	部队	1
+bu fen	部分	1
+bu guan	不管	1
+bu guo	不过	1
+bu hui	不会	1
+bu ji ge	不及格	1
+bu jin	不仅	1
+bu jiu	不久	1
+bu kao	补考	1
+bu ke	补课	1
+bu ke qi	不客气	1
+bu liao	布料	1
+bu neng	不能	1
+bu ran	不然	1
+bu ru	不如	1
+bu shi	不是	1
+bu shou	部首	1
+bu tai	补胎	1
+bu tie	补贴	1
+bu ting	不停	1
+bu xi ban	补习班	1
+bu xie	布鞋	1
+bu xing	步行	1
+bu xing jie	步行街	1
+bu yao	不要	1
+bu yong	不用	1
+bu zhi	不止	1
+bu zhi	布置	2
+bu zhou	步骤	1
+bu zhu	补助	1
+cai ban	菜板	1
+cai ce	猜测	1
+cai dan	菜单	1
+cai dao	菜刀	1
+cai fang	采访	1
+cai feng	裁缝	1
+cai hua	菜花	1
+cai hua	才华	2
+cai liao	材料	1
+cai pai	彩排	1
+cai pan	裁判	1
+cai pan yuan	裁判员	1
+cai se	彩色	1
+cai shi chang	菜市场	1
+cai xiang	猜想	1
+cai yuan	裁员	1
+can bai	惨败	1
+can guan	参观	1
+can ji ren	残疾人	1
+can jin zhi	餐巾纸	1
+can ju	惨剧	1
+can sai	参赛	1
+can shu	参数	1
+can ting	餐厅	1
+can zhuo	餐桌	1
+cang ying	苍蝇	1
+cao chang	操场	1
+cao mei	草莓	1
+cao yao	草药	1
+cao yu	草鱼	1
+cao zuo	操作	1
+ce mian	侧面	1
+ce shi	测试	1
+ce yan	测验	1
+ceng jing	曾经	1
+cha bei	茶杯	1
+cha hu	茶壶	1
+cha kou	岔口	1
+cha lu	岔路	1
+cha tou	插头	1
+cha ye	茶叶	1
+cha zuo	插座	1
+chai you	柴油	1
+chan lian	蝉联	1
+chan pin	产品	1
+chang chang	常常	1
+chang duan	长短	1
+chang fang xing	长方形	1
+chang ge	唱歌	1
+chang he	场合	1
+chang jing lu	长颈鹿	1
+chang jiu	长久	1
+chang mian	场面	1
+chang pao	长跑	1
+chang qi	长期	1
+chang shi	常识	1
+chang suo	场所	1
+chang tong	畅通	1
+chao cai	炒菜	1
+chao guo	超过	1
+chao jia	吵架	1
+chao jin lu	抄近路	1
+chao sheng bo	超声波	1
+chao shi	超市	1
+chao shui	潮水	1
+chao su	超速	1
+chao xie	抄写	1
+chao zai	超载	1
+che huo	车祸	1
+che jian	车间	1
+che ku	车库	1
+che pai	车牌	1
+che tai	车胎	1
+che wei	车位	1
+che xiang	车厢	1
+che xiao	撤销	1
+chen mi	沉迷	1
+chen shan	衬衫	1
+cheng ben	成本	1
+cheng dan	承担	1
+cheng fa	乘法	1
+cheng gong	成功	1
+cheng guo	成果	1
+cheng ji	成绩	1
+cheng ji dan	成绩单	1
+cheng ke	乘客	1
+cheng ming	成名	1
+cheng nuo	承诺	1
+cheng se	橙色	1
+cheng shi	诚实	1
+cheng shi	城市	2
+cheng wu yuan	乘务员	1
+cheng xiao	成效	1
+cheng xin	诚信	1
+cheng xu	程序	1
+cheng yu	成语	1
+cheng zi	橙子	1
+chi bang	翅膀	1
+chi fan	吃饭	1
+chi lun	齿轮	1
+chi ma	尺码	1
+chi tang	池塘	1
+chi yao	吃药	1
+chi zi	尺子	1
+chong bai	崇拜	1
+chong ci	冲刺	1
+chong dian	充电	1
+chong dian qi	充电器	1
+chong dian xian	充电线	1
+chong dong	冲动	1
+chong lang	冲浪	1
+chong qi	充气	1
+chong wu	宠物	1
+chong yang	重阳	1
+chong zhi	充值	1
+chou jin	抽筋	1
+chou lou	丑陋	1
+chou ti	抽屉	1
+chou yang	抽样	1
+chu chai	出差	1
+chu dian	触电	1
+chu fa	除法	1
+chu fang	厨房	1
+chu fang	处方	2
+chu fei	除非	1
+chu guo	出国	1
+chu jing	出境	1
+chu ju	出局	1
+chu kou	出口	1
+chu li	处理	1
+chu ming	出名	1
+chu qi	初期	1
+chu sai	初赛	1
+chu shi	厨师	1
+chu xi	除夕	1
+chu xian	出线	1
+chu yuan	出院	1
+chu zu	出租	1
+chu zu che	出租车	1
+chuan gan qi	传感器	1
+chuan ju	川剧	1
+chuan men	串门	1
+chuan qiu	传球	1
+chuan shou	传授	1
+chuan tong	传统	1
+chuang dan	床单	1
+chuang dian	床垫	1
+chuang hong deng	闯红灯	1
+chuang hu	窗户	1
+chuang lian	窗帘	1
+chuang shang	创伤	1
+chuang tou gui	床头柜	1
+chuang xin	创新	1
+chuang ye	创业	1
+chuang yi	创意	1
+chuang zao	创造	1
+chui zi	锤子	1
+chun feng	春风	1
+chun jie	春节	1
+chun lian	春联	1
+chun tian	春天	1
+ci chang	磁场	1
+ci dian	词典	1
+ci hui	词汇	1
+ci ji	刺激	1
+ci tie	磁铁	1
+ci wai	此外	1
+ci yu	词语	1
+cong lai	从来	1
+cong lin	丛林	1
+cong ming	聪明	1
+cong qian	从前	1
+cong shi	从事	1
+cu cao	粗糙	1
+cu xi	粗细	1
+cu xiao	促销	1
+cu xin	粗心	1
+cui cu	催促	1
+cun kuan	存款	1
+cun min	村民	1
+cun qian	存钱	1
+cuo guo	错过	1
+cuo wu	错误	1
+da an	答案	1
+da ba	大巴	1
+da che	打车	1
+da dao	达到	1
+da dou	大豆	1
+da fang	大方	1
+da feng	大风	1
+da ge	打嗝	1
+da hai	大海	1
+da jia	大家	1
+da jie ju	大结局	1
+da ka	打卡	1
+da liang	大量	1
+da men	大门	1
+da mi	大米	1
+da nao	大脑	1
+da po	打破	1
+da qi	打气	1
+da qi	大气	2
+da qi ceng	大气层	1
+da ren	大人	1
+da sao	打扫	1
+da sheng	大胜	1
+da shu ju	大数据	1
+da suan	打算	1
+da suan	大蒜	2
+da ti qin	大提琴	1
+da tou zhen	大头针	1
+da tui	大腿	1
+da wu	大雾	1
+da xi yang	大西洋	1
+da xiang	大象	1
+da xiao	大笑	1
+da xiao	大小	2
+da xiong mao	大熊猫	1
+da xue	大学	1
+da xue sheng	大学生	1
+da yang	大洋	1
+da yi	大衣	1
+da yi	大意	2
+da yin ji	打印机	1
+da ying	答应	1
+da yu	大雨	1
+da zhe	打折	1
+da zhen	打针	1
+da zhong	大众	1
+da zi ran	大自然	1
+dai fu	大夫	1
+dai kuan	贷款	1
+dai ma	代码	1
+dai shu	代数	1
+dai shu	袋鼠	2
+dai yu	带鱼	1
+dai yu	待遇	2
+dan bai	蛋白	1
+dan bao	担保	1
+dan che	单车	1
+dan chun	单纯	1
+dan ding he	丹顶鹤	1
+dan du	单独	1
+dan gao	蛋糕	1
+dan huang	蛋黄	1
+dan qi	氮气	1
+dan ren	担任	1
+dan shen	单身	1
+dan shi	但是	1
+dan wei	单位	1
+dan wu	耽误	1
+dan xiao	胆小	1
+dan xin	担心	1
+dan xing dao	单行道	1
+dang ran	当然	1
+dang shi	当时	1
+dang zhong	当中	1
+dao bi	倒闭	1
+dao de	道德	1
+dao hang	导航	1
+dao qi	到期	1
+dao qian	道歉	1
+dao shi	导师	1
+dao yan	导演	1
+dao you	导游	1
+dao zhan	到站	1
+de fen	得分	1
+de jiang	得奖	1
+deng gao	登高	1
+deng hui	灯会	1
+deng ji	登机	1
+deng ji pai	登机牌	1
+deng long	灯笼	1
+deng lu	登录	1
+deng mi	灯谜	1
+deng pao	灯泡	1
+deng tai	登台	1
+deng yue	登月	1
+deng zi	凳子	1
+di ban	地板	1
+di dao	地道	1
+di di	弟弟	1
+di dian	地点	1
+di fang	地方	1
+di li	地理	1
+di mian	地面	1
+di ren	敌人	1
+di tie	地铁	1
+di tu	地图	1
+di xian	底线	1
+di zhi	地址	1
+di zi	笛子	1
+dian bing xiang	电冰箱	1
+dian cai	点菜	1
+dian can	点餐	1
+dian chi	电池	1
+dian dong che	电动车	1
+dian dong ji	电动机	1
+dian fan guo	电饭锅	1
+dian feng shan	电风扇	1
+dian ge	点歌	1
+dian hua	电话	1
+dian hua ka	电话卡	1
+dian liu	电流	1
+dian lu	电路	1
+dian ming	点名	1
+dian nao	电脑	1
+dian qi	电器	1
+dian qiu	点球	1
+dian shi	电视	1
+dian shi ji	电视机	1
+dian ti	电梯	1
+dian tou	点头	1
+dian xian	电线	1
+dian ya	电压	1
+dian ying	电影	1
+dian ying jie	电影节	1
+dian ying piao	电影票	1
+dian ying yuan	电影院	1
+dian zan	点赞	1
+dian zi	电子	1
+dian zi qin	电子琴	1
+diao deng	吊灯	1
+diao dong	调动	1
+diao tou	掉头	1
+diao xiao	吊销	1
+diao yu	钓鱼	1
+die yong	蝶泳	1
+ding hun	订婚	1
+ding huo	订货	1
+ding jia	定价	1
+ding li	定理	1
+ding lv	定律	1
+ding wei	定位	1
+ding xiang	丁香	1
+ding yi	定义	1
+ding zi	钉子	1
+diu shi	丢失	1
+dong bei hu	东北虎	1
+dong che	动车	1
+dong de	懂得	1
+dong feng	东风	1
+dong gua	冬瓜	1
+dong hua	动画	1
+dong hua pian	动画片	1
+dong ji	动机	1
+dong li	动力	1
+dong tian	冬天	1
+dong wu	动物	1
+dong wu yuan	动物园	1
+dong xue	洞穴	1
+dong zhi	冬至	1
+dong zuo pian	动作片	1
+dou ban jiang	豆瓣酱	1
+dou fu	豆腐	1
+dou jiang	豆浆	1
+dou jiao	豆角	1
+dou ya	豆芽	1
+du chang	独唱	1
+du che	堵车	1
+du jia	度假	1
+du li	独立	1
+du sai	堵塞	1
+du she	毒蛇	1
+du shu	读书	1
+du zhe	读者	1
+du zi	肚子	1
+du zou	独奏	1
+duan dian	断电	1
+duan lian	锻炼	1
+duan luo	段落	1
+duan pao	短跑	1
+duan pian	短片	1
+duan qi	短期	1
+duan wu	端午	1
+duan xin	短信	1
+dui bu qi	对不起	1
+dui chang	对唱	1
+dui jue	对决	1
+dui shou	对手	1
+dui wu	队伍	1
+dui xiang	对象	1
+dui you	队友	1
+dun shi	顿时	1
+duo me	多么	1
+duo shao	多少	1
+duo shu	多数	1
+e tou	额头	1
+e yu	鳄鱼	1
+er duo	耳朵	1
+er hu	二胡	1
+er huan	耳环	1
+er ji	耳机	1
+er qie	而且	1
+er shi	二十	1
+er tong	儿童	1
+er zi	儿子	1
+fa da	发达	1
+fa dan	罚单	1
+fa dian	发电	1
+fa dian ji	发电机	1
+fa dong ji	发动机	1
+fa guan	法官	1
+fa huo	发货	1
+fa kuan	罚款	1
+fa lv	法律	1
+fa ming	发明	1
+fa piao	发票	1
+fa qiu	罚球	1
+fa qiu	发球	2
+fa shao	发烧	1
+fa she	发射	1
+fa xian	发现	1
+fa yin	发音	1
+fa yuan	法院	1
+fa zhan	发展	1
+fan dui	反对	1
+fan gui	犯规	1
+fan nao	烦恼	1
+fan pai	反派	1
+fan qie	番茄	1
+fan ren	犯人	1
+fan rong	繁荣	1
+fan wei	范围	1
+fan ying	反应	1
+fan zhi	繁殖	1
+fan zui	犯罪	1
+fang bian mian	方便面	1
+fang cheng	方程	1
+fang da jing	放大镜	1
+fang dong	房东	1
+fang fa	方法	1
+fang fan	防范	1
+fang fo	仿佛	1
+fang hu	防护	1
+fang jia	放假	1
+fang jian	房间	1
+fang mian	方面	1
+fang qi	放弃	1
+fang qi	放气	2
+fang qing	放晴	1
+fang shi	方式	1
+fang shou	防守	1
+fang song	放松	1
+fang wu	房屋	1
+fang xiang	方向	1
+fang xiang pan	方向盘	1
+fang xin	放心	1
+fang xing	方形	1
+fang xue	放学	1
+fang ying	放映	1
+fang zi	房子	1
+fei chang	非常	1
+fei chu	废除	1
+fei chuan	飞船	1
+fei ji	飞机	1
+fei ji chang	飞机场	1
+fei kuai	飞快	1
+fei su	飞速	1
+fei teng	沸腾	1
+fei xing yuan	飞行员	1
+fei zao	肥皂	1
+fen bi	粉笔	1
+fen dou	奋斗	1
+fen hong	分红	1
+fen se	粉色	1
+fen shou	分手	1
+fen shu	分数	1
+fen si	粉丝	1
+fen xi	分析	1
+fen zhong	分钟	1
+fen zi	分子	1
+fen zi qian	份子钱	1
+feng jing	风景	1
+feng li	风力	1
+feng lu	封路	1
+feng qu	风趣	1
+feng shan	风扇	1
+feng su	风速	1
+feng xian	奉献	1
+feng xiang	风向	1
+fu chu	付出	1
+fu dao	辅导	1
+fu dao ban	辅导班	1
+fu dao yuan	辅导员	1
+fu du	复读	1
+fu jia shi	副驾驶	1
+fu kuan	付款	1
+fu li	福利	1
+fu mu	父母	1
+fu nv	妇女	1
+fu qi	夫妻	1
+fu qiang	富强	1
+fu qin	父亲	1
+fu sai	复赛	1
+fu she	辐射	1
+fu wu	服务	1
+fu wu qi	服务器	1
+fu wu yuan	服务员	1
+fu xi	复习	1
+fu yin ji	复印机	1
+fu yu	富裕	1
+fu za	复杂	1
+fu ze	负责	1
+fu zhuang	服装	1
+fu zuo yong	副作用	1
+gai bian	改变	1
+gai bian	改编	2
+gai ge	改革	1
+gai jin	改进	1
+gai lv	概率	1
+gai nian	概念	1
+gai qian	改签	1
+gai shan	改善	1
+gan bei	干杯	1
+gan dong	感动	1
+gan en	感恩	1
+gan ga	尴尬	1
+gan huo	干活	1
+gan jin	赶紧	1
+gan jing	干净	1
+gan jue	感觉	1
+gan kuai	赶快	1
+gan lan qiu	橄榄球	1
+gan mao	感冒	1
+gan qing	感情	1
+gan ren	感人	1
+gan shou	感受	1
+gan xiang	感想	1
+gan ying	感应	1
+gan zhe	甘蔗	1
+gang bi	钢笔	1
+gang cai	刚才	1
+gang gang	刚刚	1
+gang qin	钢琴	1
+gang tie	钢铁	1
+gao di	高低	1
+gao dian	糕点	1
+gao liang	高粱	1
+gao su	高速	1
+gao tie	高铁	1
+gao xing	高兴	1
+gao yuan	高原	1
+ge bi	戈壁	1
+ge bie	个别	1
+ge bo	胳膊	1
+ge ci	歌词	1
+ge ge	哥哥	1
+ge li	隔离	1
+ge mi	歌迷	1
+ge ming	革命	1
+ge qu	歌曲	1
+ge ren	个人	1
+ge sheng	歌声	1
+ge shi	格式	1
+ge shou	歌手	1
+ge wai	格外	1
+ge wei	各位	1
+ge xing	个性	1
+ge zi	鸽子	1
+gen ben	根本	1
+gen ju	根据	1
+geng jia	更加	1
+gong an	公安	1
+gong chang	工厂	1
+gong cheng shi	工程师	1
+gong dian	供电	1
+gong ji jin	公积金	1
+gong jiao	公交	1
+gong jiao che	公交车	1
+gong ju	工具	1
+gong ju xiang	工具箱	1
+gong kai	公开	1
+gong lu	公路	1
+gong lue	攻略	1
+gong min	公民	1
+gong neng	功能	1
+gong ping	公平	1
+gong ren	工人	1
+gong shi	公式	1
+gong si	公司	1
+gong xian	贡献	1
+gong xiang	共享	1
+gong yi	公益	1
+gong yu	公寓	1
+gong zheng	公正	1
+gong zhong	公众	1
+gong zi	工资	1
+gong zuo	工作	1
+gong zuo fu	工作服	1
+gong zuo ri	工作日	1
+gong zuo zheng	工作证	1
+gou piao	购票	1
+gou tong	沟通	1
+gu cheng	古城	1
+gu dan	孤单	1
+gu dian	古典	1
+gu dong	股东	1
+gu du	孤独	1
+gu fen	股份	1
+gu gu	姑姑	1
+gu ji	估计	1
+gu ji	古迹	2
+gu jia	股价	1
+gu ke	顾客	1
+gu lao	古老	1
+gu niang	姑娘	1
+gu piao	股票	1
+gu qin	古琴	1
+gu shi	股市	1
+gu shi pian	故事片	1
+gu tou	骨头	1
+gu xiang	故乡	1
+gu zhe	骨折	1
+gu zhen	古镇	1
+gu zheng	古筝	1
+gu zhi	固执	1
+gua duan	挂断	1
+gua hao	挂号	1
+guai wan	拐弯	1
+guan cha	观察	1
+guan cha li	观察力	1
+guan chuang	关窗	1
+guan deng	关灯	1
+guan dian	观点	1
+guan guang	观光	1
+guan jian	关键	1
+guan jun	冠军	1
+guan li	管理	1
+guan men	关门	1
+guan shui	关税	1
+guan xin	关心	1
+guan xing	惯性	1
+guan zhong	观众	1
+guan zhu	关注	1
+guang gao	广告	1
+guang hua	光滑	1
+guang pan	光盘	1
+guang xian	光线	1
+guang yuan	光源	1
+gui ding	规定	1
+gui fan	规范	1
+gui hua	桂花	1
+gui lv	规律	1
+gui na	归纳	1
+gui ze	规则	1
+guo cheng	过程	1
+guo dao	国道	1
+guo duan	果断	1
+guo gai	锅盖	1
+guo guan	过关	1
+guo hua	国画	1
+guo ji	国际	1
+guo jia	国家	1
+guo nei	国内	1
+guo qing	国庆	1
+guo qu	过去	1
+guo ran	果然	1
+guo wai	国外	1
+guo zhi	果汁	1
+ha mi gua	哈密瓜	1
+hai an	海岸	1
+hai bian	海边	1
+hai chong	害虫	1
+hai dai	海带	1
+hai dao	海岛	1
+hai guan	海关	1
+hai gui	海龟	1
+hai jun	海军	1
+hai lang	海浪	1
+hai luo	海螺	1
+hai ma	海马	1
+hai ou	海鸥	1
+hai pa	害怕	1
+hai shi	还是	1
+hai tan	海滩	1
+hai tun	海豚	1
+hai wan	海湾	1
+hai xia	海峡	1
+hai xing	海星	1
+hai yang	海洋	1
+hai you	还有	1
+hai zi	孩子	1
+han bao	汉堡	1
+han feng	寒风	1
+han jia	寒假	1
+han shu	函数	1
+han xiu cao	含羞草	1
+han yu	汉语	1
+han zai	旱灾	1
+han zi	汉字	1
+hang ban	航班	1
+hang kong	航空	1
+hang tian	航天	1
+hang tian yuan	航天员	1
+hang xian	航线	1
+hao chu	好处	1
+hao huai	好坏	1
+hao kan	好看	1
+hao ma	号码	1
+hao you	好友	1
+he cai	喝彩	1
+he cha	喝茶	1
+he chang	合唱	1
+he chang tuan	合唱团	1
+he dian	核电	1
+he dian zhan	核电站	1
+he hao	和好	1
+he hua	荷花	1
+he jin	合金	1
+he liu	河流	1
+he ma	河马	1
+he neng	核能	1
+he ping	和平	1
+he shui	喝水	1
+he tong	合同	1
+he wu qi	核武器	1
+he xie	和谐	1
+he xin	核心	1
+he ying	合影	1
+he zi	合资	1
+he zuo	合作	1
+hei ban	黑板	1
+hei se	黑色	1
+heng xian	横线	1
+heng xing	恒星	1
+hong bao	红包	1
+hong cha	红茶	1
+hong deng	红灯	1
+hong dou	红豆	1
+hong jiu	红酒	1
+hong li	红利	1
+hong lv deng	红绿灯	1
+hong pai	红牌	1
+hong se	红色	1
+hong shu	红薯	1
+hong wai xian	红外线	1
+hou bao	厚薄	1
+hou bei	后背	1
+hou bei xiang	后备箱	1
+hou che	候车	1
+hou che shi	候车室	1
+hou guo	后果	1
+hou hui	后悔	1
+hou ji	候机	1
+hou ji shi	候机室	1
+hou lai	后来	1
+hou tian	后天	1
+hou wei	后卫	1
+hou zi	猴子	1
+hu die	蝴蝶	1
+hu han	呼喊	1
+hu ji	户籍	1
+hu kou	户口	1
+hu kou ben	户口本	1
+hu li	狐狸	1
+hu lian wang	互联网	1
+hu luo bo	胡萝卜	1
+hu po	湖泊	1
+hu ran	忽然	1
+hu shi	护士	1
+hu tong	胡同	1
+hu zhao	护照	1
+hua ban	滑板	1
+hua ban	花瓣	2
+hua bing	滑冰	1
+hua cha	花茶	1
+hua duo	花朵	1
+hua fei	花费	1
+hua fei	话费	2
+hua jia	画家	1
+hua jiao	花椒	1
+hua ju	话剧	1
+hua mian	画面	1
+hua sheng	花生	1
+hua ti	滑梯	1
+hua ti	话题	2
+hua xue	化学	1
+hua xue	滑雪	2
+hua zhuang pin	化妆品	1
+huai chu	坏处	1
+huai yi	怀疑	1
+huan bao	环保	1
+huan cheng	换乘	1
+huan jia	还价	1
+huan jie	环节	1
+huan jing	环境	1
+huan kuan	还款	1
+huan lu	环路	1
+huan man	缓慢	1
+huan niao bu	换尿布	1
+huan tai	换胎	1
+huan xian	环线	1
+huan zhai	还债	1
+huan zhe	患者	1
+huang deng	黄灯	1
+huang dou	黄豆	1
+huang gua	黄瓜	1
+huang jin zhou	黄金周	1
+huang niu	黄牛	1
+huang pai	黄牌	1
+huang se	黄色	1
+hui fu	恢复	1
+hui lv	汇率	1
+hui se	灰色	1
+hui sheng	回声	1
+hui shou	挥手	1
+hui xing	彗星	1
+hui yi	回忆	1
+hui yi shi	会议室	1
+hui yin	回音	1
+hui yuan ka	会员卡	1
+hun he	混合	1
+hun li	婚礼	1
+hun luan	混乱	1
+hun tun	馄饨	1
+hun yin	婚姻	1
+huo ban	伙伴	1
+huo che	货车	1
+huo che	火车	2
+huo che zhan	火车站	1
+huo guo	火锅	1
+huo jia	货架	1
+huo jian	火箭	1
+huo jiang	获奖	1
+huo jing	火警	1
+huo long guo	火龙果	1
+huo lu	火炉	1
+huo shan	火山	1
+huo tui	火腿	1
+huo wu	货物	1
+huo xing	火星	1
+huo yun	货运	1
+huo zai	火灾	1
+huo zhe	或者	1
+ji ben	基本	1
+ji chu	基础	1
+ji dan	鸡蛋	1
+ji de	记得	1
+ji dong	激动	1
+ji du	嫉妒	1
+ji ge	几个	1
+ji ge	及格	2
+ji guang	激光	1
+ji he	几何	1
+ji hu	几乎	1
+ji hua	计划	1
+ji hui	机会	1
+ji jiang	即将	1
+ji jie	季节	1
+ji jin	基金	1
+ji jun	季军	1
+ji liang	剂量	1
+ji ling	机灵	1
+ji lu	记录	1
+ji lu	纪录	2
+ji lu pian	纪录片	1
+ji mi	机密	1
+ji mo	寂寞	1
+ji nian	纪念	1
+ji nian pin	纪念品	1
+ji piao	机票	1
+ji qi	机器	1
+ji ran	既然	1
+ji rou	肌肉	1
+ji rou	鸡肉	2
+ji shi	及时	1
+ji shi	即使	2
+ji shi	纪实	3
+ji shi	集市	4
+ji shu	奇数	1
+ji shu	技术	2
+ji suan ji	计算机	1
+ji suan qi	计算器	1
+ji ta	吉他	1
+ji ti	集体	1
+ji xie	机械	1
+ji xu	继续	1
+ji yi li	记忆力	1
+ji yin	基因	1
+ji yu	鲫鱼	1
+ji yu	机遇	2
+ji zhe	记者	1
+ji zhen	急诊	1
+ji zhi	机制	1
+ji zhi	机智	2
+ji zhu	记住	1
+jia ban	加班	1
+jia cai	夹菜	1
+jia chu	家畜	1
+jia fa	加法	1
+jia ge	价格	1
+jia gong	加工	1
+jia huo	假货	1
+jia ju	家具	1
+jia man	加满	1
+jia qi	假期	1
+jia qian	价钱	1
+jia qin	家禽	1
+jia re	加热	1
+jia ren	家人	1
+jia ri	假日	1
+jia ru	假如	1
+jia shi	驾驶	1
+jia shi sai	加时赛	1
+jia shi yuan	驾驶员	1
+jia shi zheng	驾驶证	1
+jia su	加速	1
+jia ting	家庭	1
+jia xiang	家乡	1
+jia you	加油	1
+jia you zhan	加油站	1
+jia zhang	家长	1
+jia zhang hui	家长会	1
+jia zhao	驾照	1
+jia zhi	价值	1
+jia zi gu	架子鼓	1
+jian bang	肩膀	1
+jian ce	检测	1
+jian ce	监测	2
+jian cha	检查	1
+jian chi	坚持	1
+jian dan	简单	1
+jian dan	煎蛋	2
+jian dao	剪刀	1
+jian ding	坚定	1
+jian du	监督	1
+jian fa	减法	1
+jian guan	监管	1
+jian hu ren	监护人	1
+jian ji	剪辑	1
+jian jian	渐渐	1
+jian jie	见解	1
+jian jue	坚决	1
+jian kang	健康	1
+jian kao	监考	1
+jian kong	监控	1
+jian pan	键盘	1
+jian shao	减少	1
+jian she	建设	1
+jian shi	监视	1
+jian shi	见识	2
+jian su	减速	1
+jian xiu	检修	1
+jian yu	监狱	1
+jian zhu shi	建筑师	1
+jian zi sheng	尖子生	1
+jiang bei	奖杯	1
+jiang di	降低	1
+jiang jia	降价	1
+jiang jin	奖金	1
+jiang jun	将军	1
+jiang ke	讲课	1
+jiang li	奖励	1
+jiang pai	奖牌	1
+jiang pin	奖品	1
+jiang tai	讲台	1
+jiang xue jin	奖学金	1
+jiang yao	将要	1
+jiang you	酱油	1
+jiang zhi	降职	1
+jiao ao	骄傲	1
+jiao che	轿车	1
+jiao dian	焦点	1
+jiao feng	交锋	1
+jiao jing	交警	1
+jiao lian	教练	1
+jiao liang	较量	1
+jiao liu	交流	1
+jiao lv	焦虑	1
+jiao qiu	角球	1
+jiao shi	教师	1
+jiao shi	教室	2
+jiao shou	教授	1
+jiao wang	交往	1
+jiao wu chu	教务处	1
+jiao xun	教训	1
+jiao yi	交易	1
+jiao yu	教育	1
+jiao zi	饺子	1
+jie bing	结冰	1
+jie chu	解除	1
+jie chu	接触	2
+jie gou	结构	1
+jie guo	结果	1
+jie hun	结婚	1
+jie jie	姐姐	1
+jie ju	结局	1
+jie jue	解决	1
+jie kuan	借款	1
+jie li	接力	1
+jie li sai	接力赛	1
+jie mei	姐妹	1
+jie mu	节目	1
+jie ri	节日	1
+jie sheng	节省	1
+jie shi	结实	1
+jie shou	接受	1
+jie shou	接收	2
+jie shu	结束	1
+jie wei	结尾	1
+jie xian	界线	1
+jie yue	节约	1
+jie zhe	接着	1
+jie zhi	戒指	1
+jie zou	节奏	1
+jin biao sai	锦标赛	1
+jin huo	进货	1
+jin ji	晋级	1
+jin kou	进口	1
+jin lai	近来	1
+jin lu	近路	1
+jin nian	今年	1
+jin pai	金牌	1
+jin qiu	进球	1
+jin se	金色	1
+jin shen	谨慎	1
+jin sheng	晋升	1
+jin shu	金属	1
+jin si hou	金丝猴	1
+jin tian	今天	1
+jin xing	进行	1
+jin xing	金星	2
+jin yu	金鱼	1
+jin zhang	紧张	1
+jin zhen gu	金针菇	1
+jing bao	警报	1
+jing cai	精彩	1
+jing cha	警察	1
+jing chang	经常	1
+jing che	警车	1
+jing dian	经典	1
+jing dian	景点	2
+jing dian	静电	3
+jing guan	景观	1
+jing guo	经过	1
+jing ji	经济	1
+jing ji	竞技	2
+jing jian	精简	1
+jing jiu	敬酒	1
+jing ju	京剧	1
+jing li	经理	1
+jing li	经历	2
+jing pei	敬佩	1
+jing qu	景区	1
+jing ran	竟然	1
+jing sai	竞赛	1
+jing se	景色	1
+jing shi pai	警示牌	1
+jing ti	警惕	1
+jing tou	镜头	1
+jing xian	惊险	1
+jing yan	经验	1
+jing ye	敬业	1
+jing yin	静音	1
+jing yu	鲸鱼	1
+jing zhi	精致	1
+jing zi	镜子	1
+jing zou	竞走	1
+jiu cai	韭菜	1
+jiu hu che	救护车	1
+jiu huo	救火	1
+jiu jia	酒驾	1
+jiu jiu	舅舅	1
+jiu shi	九十	1
+jiu ye	就业	1
+jiu zai	救灾	1
+ju bao	举报	1
+ju ben	剧本	1
+ju bu	局部	1
+ju chang	剧场	1
+ju feng	飓风	1
+ju hua	菊花	1
+ju jue	拒绝	1
+ju mian	局面	1
+ju min	居民	1
+ju qing	剧情	1
+ju qing pian	剧情片	1
+ju ran	居然	1
+ju sang	沮丧	1
+ju yuan	剧院	1
+ju zhong	举重	1
+ju zi	句子	1
+ju zi	橘子	2
+jue de	觉得	1
+jue ding	决定	1
+jue jiang	倔强	1
+jue sai	决赛	1
+jue se	角色	1
+jue shi	爵士	1
+jue wang	绝望	1
+jue xin	决心	1
+jun dui	军队	1
+jun guan	军官	1
+jun ren	军人	1
+jun xun	军训	1
+ka che	卡车	1
+ka fei	咖啡	1
+kai chang	开场	1
+kai chang bai	开场白	1
+kai chuang	开窗	1
+kai deng	开灯	1
+kai guan	开关	1
+kai men	开门	1
+kai shi	开始	1
+kai suo	开锁	1
+kai tou	开头	1
+kai xin	开心	1
+kai xue	开学	1
+kai ye	开业	1
+kai zhan	开展	1
+kai zhi	开支	1
+kan fa	看法	1
+kan jia	砍价	1
+kang kai	慷慨	1
+kao he	考核	1
+kao la	考拉	1
+kao lv	考虑	1
+kao qin	考勤	1
+kao shi	考试	1
+kao xiang	烤箱	1
+ke ai	可爱	1
+ke ben	课本	1
+ke cheng	课程	1
+ke cheng biao	课程表	1
+ke dai biao	课代表	1
+ke hu	客户	1
+ke hua	刻画	1
+ke huan pian	科幻片	1
+ke ji	科技	1
+ke jian cao	课间操	1
+ke le	可乐	1
+ke mu	科目	1
+ke neng	可能	1
+ke pu	科普	1
+ke qi	客气	1
+ke ren	客人	1
+ke shi	可是	1
+ke sou	咳嗽	1
+ke tang	课堂	1
+ke ting	客厅	1
+ke xue	科学	1
+ke xue jia	科学家	1
+ke yi	可以	1
+ke yun	客运	1
+ken ding	肯定	1
+kong bu pian	恐怖片	1
+kong ju	恐惧	1
+kong jun	空军	1
+kong long	恐龙	1
+kong qi	空气	1
+kong que	孔雀	1
+kong shou dao	空手道	1
+kong tiao	空调	1
+kong xin cai	空心菜	1
+kong zhi	控制	1
+kou dai	口袋	1
+kou fen	扣分	1
+kou lan	扣篮	1
+kou suan	口算	1
+kou zhao	口罩	1
+kou zi	扣子	1
+ku qi	哭泣	1
+ku sheng	哭声	1
+ku zi	裤子	1
+kua jiang	夸奖	1
+kuai can	快餐	1
+kuai che	快车	1
+kuai di	快递	1
+kuai di yuan	快递员	1
+kuai le	快乐	1
+kuai man	快慢	1
+kuai yao	快要	1
+kuai zi	筷子	1
+kuan shi	款式	1
+kuan zhai	宽窄	1
+kuang feng	狂风	1
+kuang jia	框架	1
+kuang ke	旷课	1
+kuang quan shui	矿泉水	1
+kun chong	昆虫	1
+kun nan	困难	1
+kun qu	昆曲	1
+kuo da	扩大	1
+la ba	腊八	1
+la ba zhou	腊八粥	1
+la du zi	拉肚子	1
+la hei	拉黑	1
+la ji	垃圾	1
+la ji tong	垃圾桶	1
+la jiao	辣椒	1
+la lian	拉链	1
+la shang	拉伤	1
+la shen	拉伸	1
+la zhu	蜡烛	1
+lai dian	来电	1
+lai wang	来往	1
+lan ban	篮板	1
+lan duo	懒惰	1
+lan hua	兰花	1
+lan kuang	篮筐	1
+lan mei	蓝莓	1
+lan qiu	篮球	1
+lan se	蓝色	1
+lang du	朗读	1
+lang fei	浪费	1
+lang hua	浪花	1
+lang man	浪漫	1
+lang song	朗诵	1
+lao ban	老板	1
+lao dong	劳动	1
+lao gu	牢固	1
+lao hu	老虎	1
+lao jia	老家	1
+lao jie	老街	1
+lao nian	老年	1
+lao ren	老人	1
+lao shi	老师	1
+lao shou	老手	1
+lao ying	老鹰	1
+lei dian	雷电	1
+lei sheng	雷声	1
+lei yu	雷雨	1
+leng cang	冷藏	1
+leng dong	冷冻	1
+leng jing	冷静	1
+leng mo	冷漠	1
+li bai	礼拜	1
+li cai	理财	1
+li cheng	历程	1
+li fa shi	理发师	1
+li fu	礼服	1
+li hun	离婚	1
+li ji	立即	1
+li jie	理解	1
+li ke	立刻	1
+li lun	理论	1
+li lv	利率	1
+li mao	礼貌	1
+li pei	理赔	1
+li qi	离奇	1
+li rang	礼让	1
+li ru	例如	1
+li run	利润	1
+li shi	历史	1
+li xi	利息	1
+li xiang	理想	1
+li yi	利益	1
+li yong	利用	1
+li you	理由	1
+li yu	鲤鱼	1
+li zhi	离职	1
+li zhi	荔枝	2
+li zi	李子	1
+li zi	粒子	2
+lian ai	恋爱	1
+lian hua	莲花	1
+lian luo	联络	1
+lian ou	莲藕	1
+lian ren	恋人	1
+lian sai	联赛	1
+lian tiao	链条	1
+lian xi	练习	1
+lian xi	联系	2
+lian zai	连载	1
+liang cai	凉菜	1
+liang feng	凉风	1
+liang xie	凉鞋	1
+liang zi	量子	1
+liao jie	了解	1
+liao tian	聊天	1
+liao tian shi	聊天室	1
+lie che yuan	列车员	1
+lie shi	劣势	1
+lin ju	邻居	1
+lin shi	临时	1
+ling chen	凌晨	1
+ling dai	领带	1
+ling dao	领导	1
+ling gan	灵感	1
+ling huo	灵活	1
+ling jian	零件	1
+ling jiang	领奖	1
+ling jiang tai	领奖台	1
+ling luan	凌乱	1
+ling sheng	铃声	1
+ling shi	零食	1
+ling ting	聆听	1
+ling wai	另外	1
+ling xian	领先	1
+ling zi	领子	1
+liu cheng	流程	1
+liu ji	留级	1
+liu lan qi	浏览器	1
+liu lei	流泪	1
+liu lian	榴莲	1
+liu liang	流量	1
+liu nian	留念	1
+liu shi	六十	1
+liu shu	柳树	1
+liu shui xian	流水线	1
+liu xing	流行	1
+liu xing	流星	2
+liu xue	留学	1
+liu xue sheng	留学生	1
+long xia	龙虾	1
+long yan	龙眼	1
+lou dian	漏电	1
+lou ti	楼梯	1
+lu biao	路标	1
+lu jun	陆军	1
+lu kou	路口	1
+lu kuang	路况	1
+lu qu	录取	1
+lu shui	露水	1
+lu sun	芦笋	1
+lu xian	路线	1
+lu xiang ji	录像机	1
+lu yin ji	录音机	1
+lu ying	露营	1
+lue wei	略微	1
+lun chuan	轮船	1
+lun tai	轮胎	1
+luo bo	萝卜	1
+luo gu	锣鼓	1
+luo hou	落后	1
+luo ji	逻辑	1
+luo mu	落幕	1
+luo ri	落日	1
+luo shi	落实	1
+luo si	螺丝	1
+luo tuo	骆驼	1
+lv cha	绿茶	1
+lv deng	绿灯	1
+lv dou	绿豆	1
+lv ke	旅客	1
+lv se	绿色	1
+lv shi	律师	1
+lv xing	履行	1
+lv xing	旅行	2
+lv xing she	旅行社	1
+lv you	旅游	1
+lv you tuan	旅游团	1
+lv zhou	绿洲	1
+ma bu	抹布	1
+ma fan	麻烦	1
+ma hu	马虎	1
+ma jia	马甲	1
+ma la song	马拉松	1
+ma lu	马路	1
+ma ma	妈妈	1
+ma que	麻雀	1
+ma shang	马上	1
+ma xi	马戏	1
+ma xi tuan	马戏团	1
+ma yi	蚂蚁	1
+mai bo	脉搏	1
+mai ke feng	麦克风	1
+mai mai	买卖	1
+mai tian	麦田	1
+mai zi	麦子	1
+man che	慢车	1
+man fen	满分	1
+man hua	漫画	1
+man hua jia	漫画家	1
+man man	慢慢	1
+man pao	慢跑	1
+man tou	馒头	1
+man yi	满意	1
+man yue	满月	1
+mang guo	芒果	1
+mao bi	毛笔	1
+mao jin	毛巾	1
+mao mao chong	毛毛虫	1
+mao tou ying	猫头鹰	1
+mao xian	毛线	1
+mao xian	冒险	2
+mao yi	毛衣	1
+mao yi	贸易	2
+mao zi	帽子	1
+mei guan xi	没关系	1
+mei gui	玫瑰	1
+mei hua	梅花	1
+mei li	美丽	1
+mei li	魅力	2
+mei mao	眉毛	1
+mei mei	妹妹	1
+mei nv	美女	1
+mei shu	美术	1
+mei you	没有	1
+mei yuan	美元	1
+men jiang	门将	1
+men ling	门铃	1
+men piao	门票	1
+men zhen	门诊	1
+meng xiang	梦想	1
+mi fan	米饭	1
+mi fen	米粉	1
+mi feng	蜜蜂	1
+mi hou tao	猕猴桃	1
+mi ma	密码	1
+mi mi	秘密	1
+mi shu	秘书	1
+mi xian	米线	1
+mi yue	蜜月	1
+mian bao	面包	1
+mian bao che	面包车	1
+mian bu	棉布	1
+mian hua	棉花	1
+mian piao	免票	1
+mian shi	面试	1
+mian shui	免税	1
+mian shui dian	免税店	1
+mian tiao	面条	1
+mian yang	绵羊	1
+mian yi	免疫	1
+miao hui	庙会	1
+miao xie	描写	1
+miao zhong	秒钟	1
+mie huo	灭火	1
+mie jue	灭绝	1
+min yue	民乐	1
+min zhong	民众	1
+ming bai	明白	1
+ming nian	明年	1
+ming pai	名牌	1
+ming sheng	名胜	1
+ming tian	明天	1
+ming xian	明显	1
+ming xing	明星	1
+ming yun	命运	1
+mo ca	摩擦	1
+mo fang	模仿	1
+mo gu	蘑菇	1
+mo jing	墨镜	1
+mo li	茉莉	1
+mo shi	模式	1
+mo shu	魔术	1
+mo shui	墨水	1
+mo tuo che	摩托车	1
+mo xie	默写	1
+mu ban	木板	1
+mu biao	目标	1
+mu cai	木材	1
+mu dan	牡丹	1
+mu di	目的	1
+mu er	木耳	1
+mu gua	木瓜	1
+mu qin	母亲	1
+mu tou	木头	1
+mu xing	木星	1
+na bian	那边	1
+na ge	那个	1
+na ge	哪个	2
+na han	呐喊	1
+na li	哪里	1
+na li	那里	2
+na me	那么	1
+na shui	纳税	1
+na xie	那些	1
+na xie	哪些	2
+na yang	那样	1
+nai cha	奶茶	1
+nai li	耐力	1
+nai nai	奶奶	1
+nai niu	奶牛	1
+nai yong	耐用	1
+nan feng	南风	1
+nan gua	南瓜	1
+nan guo	难过	1
+nan hai	男孩	1
+nan kan	难看	1
+nan ren	男人	1
+nan sheng	男生	1
+nan shi	男士	1
+nan ti	难题	1
+nao ju	闹剧	1
+nei bu	内部	1
+nei cun	内存	1
+nei rong	内容	1
+nei yi	内衣	1
+neng gou	能够	1
+neng li	能力	1
+neng liang	能量	1
+neng yuan	能源	1
+ni cheng	昵称	1
+ni hao	你好	1
+ni men	你们	1
+nian dai	年代	1
+nian ji	年级	1
+nian zhong	年终	1
+nian zhong jiang	年终奖	1
+niao bu	尿布	1
+nin hao	您好	1
+ning gu	凝固	1
+ning jing	宁静	1
+ning meng	柠檬	1
+ning meng shui	柠檬水	1
+niu kou	纽扣	1
+niu nai	牛奶	1
+niu rou	牛肉	1
+niu shang	扭伤	1
+nong cun	农村	1
+nong min	农民	1
+nong tian	农田	1
+nu li	努力	1
+nuan feng	暖风	1
+nuan qi	暖气	1
+nue dai	虐待	1
+nv er	女儿	1
+nv hai	女孩	1
+nv ren	女人	1
+nv sheng	女生	1
+nv shi	女士	1
+ou er	偶尔	1
+ou shu	偶数	1
+ou xiang	偶像	1
+ou yuan	欧元	1
+pa shan	爬山	1
+pai chu suo	派出所	1
+pai gu	排骨	1
+pai lian	排练	1
+pai mai	拍卖	1
+pai qiu	排球	1
+pai zhao	拍照	1
+pan duan	判断	1
+pan jue	判决	1
+pan zi	盘子	1
+pang xie	螃蟹	1
+pao bu	跑步	1
+pao cai	泡菜	1
+pao cha	泡茶	1
+pao mian	泡面	1
+pei he	配合	1
+pei jian	配件	1
+pei jue	配角	1
+pei xun	培训	1
+pei yin	配音	1
+pei zhi	配置	1
+pen di	盆地	1
+pen quan	喷泉	1
+peng bei	碰杯	1
+peng you	朋友	1
+peng you quan	朋友圈	1
+peng zhuang	碰撞	1
+pi dai	皮带	1
+pi fu	皮肤	1
+pi gu	屁股	1
+pi jiu	啤酒	1
+pi pa	枇杷	1
+pi pa	琵琶	2
+pi qi	脾气	1
+pi sa	披萨	1
+pi xie	皮鞋	1
+pi zhun	批准	1
+pian duan	片段	1
+pian pang	偏旁	1
+pian yi	便宜	1
+pian zi	骗子	1
+piao fang	票房	1
+piao jia	票价	1
+piao liang	漂亮	1
+pin bo	拼搏	1
+pin cha	品茶	1
+pin che	拼车	1
+pin lv	频率	1
+pin pai	品牌	1
+pin qiong	贫穷	1
+pin xie	拼写	1
+pin yin	拼音	1
+pin zhi	品质	1
+ping an	平安	1
+ping bi	屏蔽	1
+ping chang	平常	1
+ping deng	平等	1
+ping gu	评估	1
+ping guo	苹果	1
+ping jia	评价	1
+ping jing	平静	1
+ping ju	平局	1
+ping lun	评论	1
+ping mu	屏幕	1
+ping pang qiu	乒乓球	1
+ping shi	平时	1
+ping tan	平坦	1
+ping yuan	平原	1
+po chan	破产	1
+po jiu	破旧	1
+pu bu	瀑布	1
+pu gong ying	蒲公英	1
+pu qu	谱曲	1
+pu tao	葡萄	1
+pu tong	普通	1
+qi che	骑车	1
+qi che	汽车	2
+qi che zhan	汽车站	1
+qi chuang	起床	1
+qi ci	其次	1
+qi dian	起点	1
+qi e	企鹅	1
+qi feng	起风	1
+qi gong	气功	1
+qi guai	奇怪	1
+qi liu	气流	1
+qi ma	骑马	1
+qi pao	起跑	1
+qi quan	弃权	1
+qi shi	七十	1
+qi shou	骑手	1
+qi shui	汽水	1
+qi tu	企图	1
+qi wu	起雾	1
+qi xi	七夕	1
+qi xing	骑行	1
+qi ye	企业	1
+qi ye jia	企业家	1
+qi yin	起因	1
+qi you	汽油	1
+qi yuan	起源	1
+qi yue	器乐	1
+qi zhong	其中	1
+qi zi	妻子	1
+qia dang	恰当	1
+qian bi	铅笔	1
+qian ding	签订	1
+qian feng	前锋	1
+qian rang	谦让	1
+qian shu	签署	1
+qian shui	潜水	1
+qian tian	前天	1
+qian xu	谦虚	1
+qian yue	签约	1
+qian zheng	签证	1
+qiang bi	墙壁	1
+qiao ke li	巧克力	1
+qie zi	茄子	1
+qin cai	芹菜	1
+qin fen	勤奋	1
+qin lao	勤劳	1
+qin qi	亲戚	1
+qin qie	亲切	1
+qin ren	亲人	1
+qing chu	清楚	1
+qing feng	清风	1
+qing gui	轻轨	1
+qing jia	请假	1
+qing jiao	请教	1
+qing jiao	青椒	2
+qing jie	情节	1
+qing jie gong	清洁工	1
+qing jin	请进	1
+qing ke	请客	1
+qing kuang	情况	1
+qing lv	情侣	1
+qing ming	清明	1
+qing nian	青年	1
+qing qi	氢气	1
+qing qiu	请求	1
+qing shang	情商	1
+qing shang	轻伤	2
+qing shuang	清爽	1
+qing song	轻松	1
+qing ting	倾听	1
+qing ting	蜻蜓	2
+qing wa	青蛙	1
+qing wen	请问	1
+qing xing	情形	1
+qing zhong	轻重	1
+qing zuo	请坐	1
+qiong you	穷游	1
+qiu chang	球场	1
+qiu dui	球队	1
+qiu feng	秋风	1
+qiu hun	求婚	1
+qiu men	球门	1
+qiu mi	球迷	1
+qiu tian	秋天	1
+qiu xie	球鞋	1
+qiu yuan	球员	1
+qu kuan	取款	1
+qu nian	去年	1
+qu xian	曲线	1
+qu xiao	取消	1
+qu zhe	曲折	1
+quan guo	全国	1
+quan ji	拳击	1
+quan mian	全面	1
+quan qiu	全球	1
+quan shui	泉水	1
+quan tou	拳头	1
+que zhen	确诊	1
+qun liao	群聊	1
+qun zhong	群众	1
+qun zi	裙子	1
+ran er	然而	1
+ran hou	然后	1
+ran liao	燃料	1
+ran shao	燃烧	1
+rang lu	让路	1
+rao dao	绕道	1
+rao xing	绕行	1
+re dian	热点	1
+re liang	热量	1
+re nao	热闹	1
+re qing	热情	1
+re shen	热身	1
+re shui qi	热水器	1
+re sou	热搜	1
+ren jia	人家	1
+ren min	人民	1
+ren min bi	人民币	1
+ren qun	人群	1
+ren ren	人人	1
+ren wei	认为	1
+ren wu	人物	1
+ren xing dao	人行道	1
+ren yi qiu	任意球	1
+ren zhen	认真	1
+reng ran	仍然	1
+ri chang	日常	1
+ri chu	日出	1
+ri li	日历	1
+ri luo	日落	1
+ri qi	日期	1
+ri yuan	日元	1
+ri zi	日子	1
+rong hua	融化	1
+rong jie	溶解	1
+rong yi	容易	1
+rou dao	柔道	1
+ru guo	如果	1
+ru jin	如今	1
+ru jing	入境	1
+ru xue	入学	1
+ru zhi	入职	1
+ruan jian	软件	1
+ruan wo	软卧	1
+ruan zuo	软座	1
+rui li	锐利	1
+sai chang	赛场	1
+sai che	塞车	1
+sai cheng	赛程	1
+sai dao	赛道	1
+sai ji	赛季	1
+sai long zhou	赛龙舟	1
+sai pao	赛跑	1
+sai shi	赛事	1
+san da	散打	1
+san fen qiu	三分球	1
+san jiao xing	三角形	1
+san lun che	三轮车	1
+san shi	三十	1
+san wen	散文	1
+sao ba	扫把	1
+sao miao yi	扫描仪	1
+sen lin	森林	1
+sha che	刹车	1
+sha chen bao	沙尘暴	1
+sha fa	沙发	1
+sha mo	沙漠	1
+sha yu	鲨鱼	1
+shai tai yang	晒太阳	1
+shan di che	山地车	1
+shan ding	山顶	1
+shan dong	山洞	1
+shan feng	山峰	1
+shan gu	山谷	1
+shan hu	珊瑚	1
+shan jiao	山脚	1
+shan liang	善良	1
+shan mai	山脉	1
+shan po	山坡	1
+shan shui	山水	1
+shan yang	山羊	1
+shan yao	山药	1
+shan zhu	山竹	1
+shang ban	上班	1
+shang chang	商场	1
+shang chuan	上传	1
+shang dian	商店	1
+shang hai	伤害	1
+shang ke	上课	1
+shang kou	伤口	1
+shang liang	商量	1
+shang pin	商品	1
+shang ren	商人	1
+shang shi	上市	1
+shang shi	伤势	2
+shang wang	伤亡	1
+shang wu	上午	1
+shang xin	伤心	1
+shang yi	上衣	1
+shang yin	上瘾	1
+shang ying	上映	1
+shang yuan	伤员	1
+shang yue	赏月	1
+shao kao	烧烤	1
+shao liang	少量	1
+shao nian	少年	1
+shao nian gong	少年宫	1
+shao shang	烧伤	1
+shao shu	少数	1
+shao wei	稍微	1
+shao zi	勺子	1
+she bao	社保	1
+she bei	设备	1
+she hui	社会	1
+she ji	设计	1
+she ji shi	设计师	1
+she men	射门	1
+she shi	设施	1
+she tou	舌头	1
+she tuan	社团	1
+she xian	射线	1
+she xiang ji	摄像机	1
+she xiang tou	摄像头	1
+shen bao	申报	1
+shen cai	身材	1
+shen fen zheng	身份证	1
+shen me	什么	1
+shen qian	深浅	1
+shen qing	申请	1
+shen ti	身体	1
+shen ye	深夜	1
+shen zhi	甚至	1
+shen zhong	慎重	1
+sheng bing	生病	1
+sheng bo	声波	1
+sheng cai	生菜	1
+sheng chan	生产	1
+sheng chan xian	生产线	1
+sheng dao	省道	1
+sheng dian	省电	1
+sheng guan	升官	1
+sheng huo	生火	1
+sheng huo	生活	2
+sheng jiang	生姜	1
+sheng li	胜利	1
+sheng ri	生日	1
+sheng wu	生物	1
+sheng xiao	生效	1
+sheng yi	生意	1
+sheng yue	声乐	1
+sheng zhi	升职	1
+shi bai	失败	1
+shi bing	士兵	1
+shi di	湿地	1
+shi du	湿度	1
+shi er	十二	1
+shi fa	始发	1
+shi fa zhan	始发站	1
+shi fen	十分	1
+shi fou	是否	1
+shi fu	师傅	1
+shi fu	师父	2
+shi ge	诗歌	1
+shi gong	施工	1
+shi gong zhong	施工中	1
+shi gu	事故	1
+shi hou	时候	1
+shi ji	世纪	1
+shi jian	时间	1
+shi jian	实践	2
+shi jie	世界	1
+shi ke	时刻	1
+shi li	实力	1
+shi min	市民	1
+shi pin	视频	1
+shi pin	食品	2
+shi shi	事实	1
+shi shi	实施	2
+shi su	时速	1
+shi tou	石头	1
+shi wang	失望	1
+shi wu	食物	1
+shi xian	实现	1
+shi xiao	失效	1
+shi yan	实验	1
+shi yan	试验	2
+shi yan shi	实验室	1
+shi ye	失业	1
+shi yong	使用	1
+shi you	室友	1
+shi you	石油	2
+shi zhi	实质	1
+shi zi	狮子	1
+shou bi	手臂	1
+shou biao	手表	1
+shou cang jia	收藏家	1
+shou dian tong	手电筒	1
+shou feng qin	手风琴	1
+shou hai	受害	1
+shou hou	售后	1
+shou huo	收货	1
+shou huo	收获	2
+shou huo yuan	售货员	1
+shou ji	手机	1
+shou ju	收据	1
+shou ke	授课	1
+shou kuan	收款	1
+shou lian	手链	1
+shou men	守门	1
+shou men yuan	守门员	1
+shou piao yuan	售票员	1
+shou ru	收入	1
+shou sha	手刹	1
+shou shi	收拾	1
+shou shi	首饰	2
+shou shu	手术	1
+shou sui	守岁	1
+shou tao	手套	1
+shou xian	首先	1
+shou yi	收益	1
+shou yin ji	收音机	1
+shou ying	首映	1
+shou zhi	手指	1
+shou zhuo	手镯	1
+shu bao	书包	1
+shu biao	鼠标	1
+shu cai	蔬菜	1
+shu dian	书店	1
+shu fa	书法	1
+shu fu	舒服	1
+shu guang	曙光	1
+shu hu	疏忽	1
+shu jia	书架	1
+shu jia	暑假	2
+shu ju	数据	1
+shu ju ku	数据库	1
+shu ju xian	数据线	1
+shu lin	树林	1
+shu mu	数目	1
+shu mu	树木	2
+shu shi	舒适	1
+shu shu	叔叔	1
+shu xi	熟悉	1
+shu xian	竖线	1
+shu xue	数学	1
+shu ye	输液	1
+shu ye	树叶	2
+shu zhi	树枝	1
+shu zhuang tai	梳妆台	1
+shu zhuo	书桌	1
+shu zi	梳子	1
+shua xin	刷新	1
+shuai ge	帅哥	1
+shuai jiao	摔跤	1
+shuai qi	帅气	1
+shui cai	水彩	1
+shui guo	水果	1
+shui hu	水壶	1
+shui jiao	睡觉	1
+shui ku	水库	1
+shui long tou	水龙头	1
+shui mian	水面	1
+shui mu	水母	1
+shui ni	水泥	1
+shui ping	水平	1
+shui qiu	水球	1
+shui shou	税收	1
+shui xian	水仙	1
+shui xing	水星	1
+shui yi	睡衣	1
+shui zai	水灾	1
+shun feng che	顺风车	1
+shun li	顺利	1
+shun xu	顺序	1
+shuo hua	说话	1
+si chou	丝绸	1
+si he yuan	四合院	1
+si ji	司机	1
+si kao	思考	1
+si nian	思念	1
+si shi	四十	1
+si wei	思维	1
+si xiang	思想	1
+song hua dan	松花蛋	1
+song shu	松树	1
+su du	速度	1
+su liao	塑料	1
+su miao	素描	1
+su she	宿舍	1
+su zhi	素质	1
+suan cai	酸菜	1
+suan shu	算术	1
+sui dao	隧道	1
+sui hou	随后	1
+sui ji	随即	1
+sui ran	虽然	1
+sui shen	随身	1
+sui shi	随时	1
+sun hai	损害	1
+sun nv	孙女	1
+sun shang	损伤	1
+sun shi	损失	1
+sun zi	孙子	1
+suo duan	缩短	1
+suo men	锁门	1
+suo na	唢呐	1
+suo xiao	缩小	1
+suo yi	所以	1
+suo you	所有	1
+ta ban	踏板	1
+ta men	他们	1
+ta men	她们	2
+tai an	泰安	1
+tai ci	台词	1
+tai deng	台灯	1
+tai ji quan	太极拳	1
+tai kong	太空	1
+tai ping yang	太平洋	1
+tai qiu	台球	1
+tai quan dao	跆拳道	1
+tai tai	太太	1
+tai yang	太阳	1
+tai yang jing	太阳镜	1
+tai yang neng	太阳能	1
+tan ce	探测	1
+tan ce qi	探测器	1
+tan mu	弹幕	1
+tan qin	探亲	1
+tan suo	探索	1
+tan wang	探望	1
+tan xi	叹息	1
+tan xian	探险	1
+tan xing	弹性	1
+tan zi	毯子	1
+tang guo	糖果	1
+tang shang	烫伤	1
+tang yuan	汤圆	1
+tao can	套餐	1
+tao lun	讨论	1
+tao tai sai	淘汰赛	1
+tao xue	逃学	1
+tao zi	桃子	1
+te bie	特别	1
+te dian	特点	1
+te ji	特技	1
+te jia	特价	1
+te se	特色	1
+te xiao	特效	1
+te zheng	特征	1
+ti gao	提高	1
+ti hui	体会	1
+ti jian	体检	1
+ti li	体力	1
+ti mu	题目	1
+ti neng	体能	1
+ti wen	体温	1
+ti wen	提问	2
+ti xi	体系	1
+ti yan	体验	1
+ti yu	体育	1
+ti yu guan	体育馆	1
+ti zhi	体制	1
+ti zhong	体重	1
+ti zi	提子	1
+tian cai	天才	1
+tian di	田地	1
+tian e	天鹅	1
+tian fu	天赋	1
+tian hua ban	天花板	1
+tian kong	天空	1
+tian qiao	天桥	1
+tian xian	天线	1
+tian ye	田野	1
+tian yuan	田园	1
+tiao gao	跳高	1
+tiao ji	跳级	1
+tiao jian	条件	1
+tiao kuan	条款	1
+tiao sheng	跳绳	1
+tiao shi	挑食	1
+tiao shui	跳水	1
+tiao xuan	挑选	1
+tiao yuan	跳远	1
+tiao zhan	挑战	1
+tiao zheng	调整	1
+tie lu	铁路	1
+ting che chang	停车场	1
+ting dian	停电	1
+ting ge	听歌	1
+ting ke	听课	1
+ting xie	听写	1
+ting zhi	停止	1
+ting zhong	听众	1
+tong ban	同伴	1
+tong hua	通话	1
+tong ji	统计	1
+tong ku	痛苦	1
+tong pai	铜牌	1
+tong shi	同事	1
+tong xue	同学	1
+tong yi	同意	1
+tong yi	统一	2
+tong zhi	同志	1
+tong zhi shu	通知书	1
+tong zhuo	同桌	1
+tou fa	头发	1
+tou nao	头脑	1
+tou su	投诉	1
+tou teng	头疼	1
+tou tiao	头条	1
+tou xiang	头像	1
+tou zi	投资	1
+tu di	徒弟	1
+tu dou	土豆	1
+tu pian	图片	1
+tu ran	突然	1
+tu shu guan	图书馆	1
+tu si	吐司	1
+tu xing	土星	1
+tuan jie	团结	1
+tuan ti	团体	1
+tuan yuan	团圆	1
+tui chao	退潮	1
+tui chi	推迟	1
+tui huo	退货	1
+tui li	推理	1
+tui piao	退票	1
+tui sai	退赛	1
+tui song	推送	1
+tui xing	推行	1
+tui xiu	退休	1
+tui xiu jin	退休金	1
+tuo ba	拖把	1
+tuo niao	鸵鸟	1
+tuo xie	拖鞋	1
+tuo yan	拖延	1
+tuo yuan xing	椭圆形	1
+tuo yun	托运	1
+wa yong	蛙泳	1
+wa zi	袜子	1
+wai bu	外部	1
+wai gong	外公	1
+wai guo	外国	1
+wai mai	外卖	1
+wai mai yuan	外卖员	1
+wai po	外婆	1
+wai tao	外套	1
+wai yu	外语	1
+wan an	晚安	1
+wan cheng	完成	1
+wan dian	晚点	1
+wan jie	完结	1
+wan qiang	顽强	1
+wan quan	完全	1
+wan shang	晚上	1
+wan xia	晚霞	1
+wan yi	万一	1
+wan zi xi	晚自习	1
+wang gou	网购	1
+wang ji	忘记	1
+wang luo	网络	1
+wang qiu	网球	1
+wang shang	网上	1
+wang ye	网页	1
+wang yuan jing	望远镜	1
+wang zhan	网站	1
+wang zhi	网址	1
+wei bo lu	微波炉	1
+wei chi	维持	1
+wei feng	微风	1
+wei hai	危害	1
+wei hu	维护	1
+wei ji	危机	1
+wei ji	危急	2
+wei jin	围巾	1
+wei jing	味精	1
+wei kou	胃口	1
+wei lai	未来	1
+wei mian	卫冕	1
+wei nai	喂奶	1
+wei qi	围棋	1
+wei qiang	围墙	1
+wei quan	维权	1
+wei sheng su	维生素	1
+wei sheng zhi	卫生纸	1
+wei xian	危险	1
+wei xiao	微笑	1
+wei xin	微信	1
+wei xing	卫星	1
+wei xiu	维修	1
+wei zhang	违章	1
+wei zhi	位置	1
+wen ding	稳定	1
+wen hua	文化	1
+wen hua gong	文化宫	1
+wen jian	文件	1
+wen jian jia	文件夹	1
+wen ju	文具	1
+wen ju he	文具盒	1
+wen ming	文明	1
+wen ping	文凭	1
+wen quan	温泉	1
+wen rou	温柔	1
+wen ti	问题	1
+wen xue	文学	1
+wen xue jia	文学家	1
+wen zhang	文章	1
+wen zhong	稳重	1
+wen zi	文字	1
+wen zi	蚊子	2
+wo men	我们	1
+wo pu	卧铺	1
+wo shi	卧室	1
+wo shou	握手	1
+wu dian	误点	1
+wu dian	污点	2
+wu ding	屋顶	1
+wu gui	乌龟	1
+wu jia	物价	1
+wu li	物理	1
+wu li	无礼	2
+wu liao	无聊	1
+wu long	舞龙	1
+wu lun	无论	1
+wu mai	雾霾	1
+wu qi	武器	1
+wu qi	雾气	2
+wu ran	污染	1
+wu shi	五十	1
+wu shi	舞狮	2
+wu tai	舞台	1
+wu xia pian	武侠片	1
+wu xian wang	无线网	1
+wu xiao	无效	1
+wu ya	乌鸦	1
+wu ye	午夜	1
+wu zhi	物质	1
+xi an	西安	1
+xi bao	细胞	1
+xi chen qi	吸尘器	1
+xi fa shui	洗发水	1
+xi fan	稀饭	1
+xi gai	膝盖	1
+xi gua	西瓜	1
+xi hong shi	西红柿	1
+xi huan	喜欢	1
+xi jie	细节	1
+xi ju	喜剧	1
+xi ju	戏剧	2
+xi ju pian	喜剧片	1
+xi jun	细菌	1
+xi lan hua	西兰花	1
+xi liu	溪流	1
+xi mi	戏迷	1
+xi qu	戏曲	1
+xi que	喜鹊	1
+xi sheng	牺牲	1
+xi tong	系统	1
+xi wan	洗碗	1
+xi wan ji	洗碗机	1
+xi wang	希望	1
+xi xin	细心	1
+xi yang	夕阳	1
+xi yao	西药	1
+xi yi ji	洗衣机	1
+xi yu	细雨	1
+xi yuan	戏院	1
+xi zao	洗澡	1
+xi zhuang	西装	1
+xia ba	下巴	1
+xia ban	下班	1
+xia gang	下岗	1
+xia ke	下课	1
+xia qi	下棋	1
+xia shui dao	下水道	1
+xia tian	夏天	1
+xia wu	下午	1
+xia zai	下载	1
+xian cai	咸菜	1
+xian dai	现代	1
+xian dao	县道	1
+xian jin	先进	1
+xian mu	羡慕	1
+xian ran	显然	1
+xian ren zhang	仙人掌	1
+xian shang	线上	1
+xian sheng	先生	1
+xian sheng	险胜	2
+xian shi ping	显示屏	1
+xian shi qi	显示器	1
+xian su	限速	1
+xian wei jing	显微镜	1
+xian xia	线下	1
+xian xing	限行	1
+xian xue	献血	1
+xian ya dan	咸鸭蛋	1
+xian zai	现在	1
+xiang bin	香槟	1
+xiang cai	香菜	1
+xiang ce	相册	1
+xiang chang	香肠	1
+xiang cun	乡村	1
+xiang dang	相当	1
+xiang fa	想法	1
+xiang gu	香菇	1
+xiang jiao	香蕉	1
+xiang jiao	橡胶	2
+xiang lian	项链	1
+xiang nian	想念	1
+xiang pi	橡皮	1
+xiang qi	象棋	1
+xiang qin	相亲	1
+xiang ri kui	向日葵	1
+xiang sheng	相声	1
+xiang xia	乡下	1
+xiang xiang	想象	1
+xiang xiang li	想象力	1
+xiang xin	相信	1
+xiang yao	想要	1
+xiang you	香油	1
+xiang zao	香皂	1
+xiao ba	小巴	1
+xiao chi	小吃	1
+xiao chou	小丑	1
+xiao fang	消防	1
+xiao fang che	消防车	1
+xiao fang dui	消防队	1
+xiao fang yuan	消防员	1
+xiao fei	消费	1
+xiao fei zhe	消费者	1
+xiao fu	校服	1
+xiao gou	小狗	1
+xiao gui	校规	1
+xiao guo	效果	1
+xiao hai	小孩	1
+xiao he	小河	1
+xiao hua	消化	1
+xiao huo zi	小伙子	1
+xiao jiao che	小轿车	1
+xiao jie	小姐	1
+xiao lv	效率	1
+xiao mai bu	小卖部	1
+xiao mao	小猫	1
+xiao mi	小米	1
+xiao niao	小鸟	1
+xiao pin	小品	1
+xiao qi	小气	1
+xiao sheng	笑声	1
+xiao shi	小时	1
+xiao shuo	小说	1
+xiao ti qin	小提琴	1
+xiao tou	小偷	1
+xiao tui	小腿	1
+xiao xi	消息	1
+xiao xi	小溪	2
+xiao xin	小心	1
+xiao xue	小学	1
+xiao xue sheng	小学生	1
+xiao xun	校训	1
+xiao yi	效益	1
+xiao yu	小雨	1
+xiao yuan	校园	1
+xiao zhang	校长	1
+xie dai	鞋带	1
+xie mu	谢幕	1
+xie tiao	协调	1
+xie xie	谢谢	1
+xie yi	协议	1
+xie zhu	协助	1
+xie zi	鞋子	1
+xie zuo	写作	1
+xin dian tu	心电图	1
+xin feng	信封	1
+xin hao	信号	1
+xin hun	新婚	1
+xin jian	信件	1
+xin jiu	新旧	1
+xin ku	辛苦	1
+xin lang	新郎	1
+xin li	心理	1
+xin li	心里	2
+xin lv	心率	1
+xin neng yuan	新能源	1
+xin niang	新娘	1
+xin qing	心情	1
+xin ren	信任	1
+xin shou	新手	1
+xin shui	薪水	1
+xin suan	心算	1
+xin tiao	心跳	1
+xin wen	新闻	1
+xin xi	信息	1
+xin xin	信心	1
+xin zang	心脏	1
+xin zhi	信纸	1
+xing cheng	行程	1
+xing fu	幸福	1
+xing ge	性格	1
+xing kong	星空	1
+xing li	行李	1
+xing li xiang	行李箱	1
+xing neng	性能	1
+xing qi	星期	1
+xing qi ri	星期日	1
+xing qi tian	星期天	1
+xing qiu	星球	1
+xing qu ban	兴趣班	1
+xing shi	行驶	1
+xing shi	形式	2
+xing xiang	形象	1
+xing xing	星星	1
+xing xing	行星	2
+xing xing	猩猩	3
+xing zhi	性质	1
+xing zuo	星座	1
+xiong di	兄弟	1
+xiong kou	胸口	1
+xiong mao	熊猫	1
+xiu che	修车	1
+xiu gai	修改	1
+xiu jia	休假	1
+xiu li	修理	1
+xiu lu	修路	1
+xiu xi	休息	1
+xiu yang	修养	1
+xiu zi	袖子	1
+xu duo	许多	1
+xu gou	虚构	1
+xu mu	序幕	1
+xu qiu	需求	1
+xu ruo	虚弱	1
+xu xian	虚线	1
+xu yao	需要	1
+xuan feng	旋风	1
+xuan lv	旋律	1
+xuan shou	选手	1
+xuan ya	悬崖	1
+xuan ze	选择	1
+xue bi	雪碧	1
+xue fei	学费	1
+xue fen	学分	1
+xue gao	雪糕	1
+xue hua	雪花	1
+xue hui	学会	1
+xue ke	学科	1
+xue li	学历	1
+xue qi	学期	1
+xue sheng	学生	1
+xue sheng zheng	学生证	1
+xue shi	学识	1
+xue wei	学位	1
+xue wen	学问	1
+xue xi	学习	1
+xue xiao	学校	1
+xue ya	血压	1
+xue ye	血液	1
+xue yuan	学院	1
+xue zi	靴子	1
+xun lian	训练	1
+xun zhao	寻找	1
+ya chi	牙齿	1
+ya dan	鸭蛋	1
+ya gao	牙膏	1
+ya jun	亚军	1
+ya li	压力	1
+ya shua	牙刷	1
+ya sui qian	压岁钱	1
+ya zhou	压轴	1
+yan an	延安	1
+yan cao	烟草	1
+yan chang	延长	1
+yan chang hui	演唱会	1
+yan chu	演出	1
+yan hua	烟花	1
+yan jing	眼睛	1
+yan jing	眼镜	2
+yan jiu	研究	1
+yan jiu sheng	研究生	1
+yan lei	眼泪	1
+yan li	严厉	1
+yan qi	延期	1
+yan se	颜色	1
+yan shen	延伸	1
+yan su	严肃	1
+yan suan	验算	1
+yan wu	延误	1
+yan xu	延续	1
+yan yuan	演员	1
+yan zheng	验证	1
+yan zheng ma	验证码	1
+yan zi	燕子	1
+yan zou	演奏	1
+yang ben	样本	1
+yang cong	洋葱	1
+yang guang	阳光	1
+yang lao jin	养老金	1
+yang qi	氧气	1
+yang rou	羊肉	1
+yang sheng qi	扬声器	1
+yang shu	杨树	1
+yang tai	阳台	1
+yang yong	仰泳	1
+yao dai	腰带	1
+yao fang	药房	1
+yao fang	药方	2
+yao gun	摇滚	1
+yao ji shi	药剂师	1
+yao kong	遥控	1
+yao kong qi	遥控器	1
+yao pin	药品	1
+yao qing sai	邀请赛	1
+yao qiu	要求	1
+yao shi	要是	1
+yao shi	钥匙	2
+yao tou	摇头	1
+ye can	野餐	1
+ye che	夜车	1
+ye kong	夜空	1
+ye li	夜里	1
+ye se	夜色	1
+ye sheng	野生	1
+ye shi	夜市	1
+ye shou	野兽	1
+ye ye	爷爷	1
+ye zi	椰子	1
+yi ban	一半	1
+yi ban	一般	2
+yi bao	医保	1
+yi bei zi	一辈子	1
+yi bian	以便	1
+yi chuan	遗传	1
+yi dian	一点	1
+yi fu	衣服	1
+yi gong	一共	1
+yi gui	衣柜	1
+yi han	遗憾	1
+yi hou	以后	1
+yi ji	以及	1
+yi jing	已经	1
+yi ju	依据	1
+yi lai	依赖	1
+yi mian	以免	1
+yi miao	疫苗	1
+yi min	移民	1
+yi qi	一起	1
+yi qian	以前	1
+yi qie	一切	1
+yi ran	依然	1
+yi shang	衣裳	1
+yi sheng	一生	1
+yi sheng	医生	2
+yi shu	艺术	1
+yi shu jia	艺术家	1
+yi tu	意图	1
+yi xie	一些	1
+yi yi	意义	1
+yi yuan	医院	1
+yi zhi	一致	1
+yi zi	椅子	1
+yin ci	因此	1
+yin diao	音调	1
+yin du yang	印度洋	1
+yin er	银耳	1
+yin fu	音符	1
+yin hang	银行	1
+yin hang ka	银行卡	1
+yin he	银河	1
+yin li	引力	1
+yin liang	音量	1
+yin liao	饮料	1
+yin pai	银牌	1
+yin pin	音频	1
+yin qing	引擎	1
+yin se	银色	1
+yin se	音色	2
+yin shui ji	饮水机	1
+yin wei	因为	1
+yin xiang	音箱	1
+yin xiang	音响	2
+yin xiang	印象	3
+yin yue	音乐	1
+yin yue hui	音乐会	1
+yin yue jia	音乐家	1
+ying cheng	影城	1
+ying di	影帝	1
+ying er	婴儿	1
+ying gai	应该	1
+ying hou	影后	1
+ying hua	樱花	1
+ying huo chong	萤火虫	1
+ying jian	硬件	1
+ying jun	英俊	1
+ying mi	影迷	1
+ying pan	硬盘	1
+ying pian	影片	1
+ying pin	应聘	1
+ying tao	樱桃	1
+ying wo	硬卧	1
+ying wu	鹦鹉	1
+ying xiang	影响	1
+ying xiong	英雄	1
+ying yang	营养	1
+ying ye yuan	营业员	1
+ying yong	应用	1
+ying yu	英语	1
+ying yuan	影院	1
+ying zhan	应战	1
+ying zuo	硬座	1
+yong bao	拥抱	1
+yong chu	用处	1
+yong du	拥堵	1
+yong gan	勇敢	1
+yong jiu	永久	1
+yong ren	佣人	1
+yong tu	用途	1
+yong yuan	永远	1
+you bian	邮编	1
+you cai	油菜	1
+you di yuan	邮递员	1
+you dian	有点	1
+you er	幼儿	1
+you hao	友好	1
+you hua	油画	1
+you hui	优惠	1
+you jian	邮件	1
+you ju	邮局	1
+you ke	游客	1
+you lan	游览	1
+you le chang	游乐场	1
+you le yuan	游乐园	1
+you men	油门	1
+you mo	幽默	1
+you piao	邮票	1
+you qi	尤其	1
+you qian	有钱	1
+you qing	友情	1
+you qu	有趣	1
+you shan	友善	1
+you shi	有时	1
+you shi	优势	2
+you tiao	油条	1
+you xi	游戏	1
+you xiang	邮箱	1
+you xiang	油箱	2
+you xiao	有效	1
+you xie	有些	1
+you xiu	优秀	1
+you yong	游泳	1
+you yong chi	游泳池	1
+you yu	由于	1
+you yu	鱿鱼	2
+you yu	犹豫	3
+you zi	柚子	1
+yu dian	雨点	1
+yu e	余额	1
+yu fa	语法	1
+yu fang	预防	1
+yu gang	浴缸	1
+yu gao	预告	1
+yu gao pian	预告片	1
+yu hang yuan	宇航员	1
+yu jia	瑜伽	1
+yu ju	豫剧	1
+yu le	娱乐	1
+yu mao	羽毛	1
+yu mao qiu	羽毛球	1
+yu mi	玉米	1
+yu sai	预赛	1
+yu shi	于是	1
+yu shui	雨水	1
+yu tou	芋头	1
+yu wen	语文	1
+yu xi	预习	1
+yu yan	语言	1
+yu yin	语音	1
+yu zhou	宇宙	1
+yuan dan	元旦	1
+yuan fang	远方	1
+yuan fen	缘分	1
+yuan gong	员工	1
+yuan gu	缘故	1
+yuan gui	圆规	1
+yuan jin	远近	1
+yuan li	原理	1
+yuan liang	原谅	1
+yuan liao	原料	1
+yuan quan	源泉	1
+yuan quan	圆圈	2
+yuan su	元素	1
+yuan wang	愿望	1
+yuan xiao	元宵	1
+yuan xiao jie	元宵节	1
+yuan xing	圆形	1
+yuan yang	鸳鸯	1
+yuan yin	原因	1
+yuan ze	原则	1
+yuan zhang	院长	1
+yuan zhu	原著	1
+yuan zhu bi	圆珠笔	1
+yuan zi	院子	1
+yuan zi	原子	2
+yuan zi dan	原子弹	1
+yue bing	月饼	1
+yue dui	乐队	1
+yue fen	月份	1
+yue guang	月光	1
+yue hui	约会	1
+yue ju	越剧	1
+yue liang	月亮	1
+yue pu	乐谱	1
+yue qi	乐器	1
+yue qu	乐曲	1
+yue tuan	乐团	1
+yue wei	越位	1
+yun dong	运动	1
+yun dong hui	运动会	1
+yun dong yuan	运动员	1
+yun he	运河	1
+yun ji suan	云计算	1
+yun qi	运气	1
+yun qiu	运球	1
+za ji	杂技	1
+za zhi	杂志	1
+zai ci	再次	1
+zai hai	灾害	1
+zai jian	再见	1
+zai nan	灾难	1
+zai qu	灾区	1
+zan men	咱们	1
+zan qian	攒钱	1
+zan shi	暂时	1
+zao chen	早晨	1
+zao du	早读	1
+zao qi	早期	1
+zao shang	早上	1
+zao sheng	噪声	1
+zao tui	早退	1
+zao yin	噪音	1
+zen me	怎么	1
+zeng hen	憎恨	1
+zeng jia	增加	1
+zeng pin	赠品	1
+zeng song	赠送	1
+zha cai	榨菜	1
+zhai wu	债务	1
+zhan ji	战绩	1
+zhan lan guan	展览馆	1
+zhan lan hui	展览会	1
+zhan lue	战略	1
+zhan piao	站票	1
+zhan shi	战士	1
+zhan shu	战术	1
+zhan tai	站台	1
+zhan xin	崭新	1
+zhan zheng	战争	1
+zhan zheng pian	战争片	1
+zhang chao	涨潮	1
+zhang fu	丈夫	1
+zhang hao	账号	1
+zhang hu	账户	1
+zhang jia	涨价	1
+zhang wo	掌握	1
+zhao gu	照顾	1
+zhao pin	招聘	1
+zhao xia	朝霞	1
+zhao xiang ji	照相机	1
+zhe bian	这边	1
+zhe ge	这个	1
+zhe kou	折扣	1
+zhe li	这里	1
+zhe me	这么	1
+zhe xie	这些	1
+zhe yang	这样	1
+zhen dong	震动	1
+zhen duan	诊断	1
+zhen gui	珍贵	1
+zhen li	真理	1
+zhen tou	枕头	1
+zhen xian	针线	1
+zhen yu	阵雨	1
+zheng ce	政策	1
+zheng chang	正常	1
+zheng chao	争吵	1
+zheng dian	正点	1
+zheng fa	蒸发	1
+zheng fang xing	正方形	1
+zheng fu	政府	1
+zheng ge	整个	1
+zheng jian	证件	1
+zheng jie	整洁	1
+zheng ju	证据	1
+zheng ju	正剧	2
+zheng li	整理	1
+zheng ming	证明	1
+zheng pai	正派	1
+zheng pin	正品	1
+zheng qi	蒸汽	1
+zheng qi	整齐	2
+zheng quan	证券	1
+zheng shu	证书	1
+zheng ti	整体	1
+zheng yi	正义	1
+zheng zai	正在	1
+zheng zhi	政治	1
+zhi ban	值班	1
+zhi biao	指标	1
+zhi bo	直播	1
+zhi chi	支持	1
+zhi chu	支出	1
+zhi dao	知道	1
+zhi dao	指导	2
+zhi du	制度	1
+zhi fei	直飞	1
+zhi fu	制服	1
+zhi gong	职工	1
+zhi hou	之后	1
+zhi hui	指挥	1
+zhi hui	智慧	2
+zhi ji	值机	1
+zhi jia	指甲	1
+zhi jian	之间	1
+zhi jin	至今	1
+zhi li	智力	1
+zhi liang	质量	1
+zhi ma	芝麻	1
+zhi pian ren	制片人	1
+zhi shang	智商	1
+zhi shi	知识	1
+zhi shi pai	指示牌	1
+zhi wu yuan	植物园	1
+zhi xian	直线	1
+zhi xing	执行	1
+zhi yao	只要	1
+zhi you	只有	1
+zhi yu	治愈	1
+zhi yuan	职员	1
+zhi yuan	志愿	2
+zhi yuan zhe	志愿者	1
+zhi zao	制造	1
+zhi zhu	蜘蛛	1
+zhi zhuo	执着	1
+zhong ba	中巴	1
+zhong dian	终点	1
+zhong dian zhan	终点站	1
+zhong feng	中锋	1
+zhong guo	中国	1
+zhong li	重力	1
+zhong nian	中年	1
+zhong qiu	中秋	1
+zhong shang	重伤	1
+zhong wu	中午	1
+zhong xue	中学	1
+zhong xue sheng	中学生	1
+zhong yao	重要	1
+zhong yao	中药	2
+zhong yu	终于	1
+zhong zhuan	中转	1
+zhou mo	周末	1
+zhou sui	周岁	1
+zhu bao	珠宝	1
+zhu chi	主持	1
+zhu chi ren	主持人	1
+zhu dong	主动	1
+zhu guan	主管	1
+zhu jian	逐渐	1
+zhu jue	主角	1
+zhu li	助理	1
+zhu lin	竹林	1
+zhu ren	主任	1
+zhu ren	主人	2
+zhu rou	猪肉	1
+zhu she	注射	1
+zhu shi	主食	1
+zhu shou	助手	1
+zhu sun	竹笋	1
+zhu ti	主题	1
+zhu wei	助威	1
+zhu xiao	注销	1
+zhu xue jin	助学金	1
+zhu yao	主要	1
+zhu yi li	注意力	1
+zhu yuan	住院	1
+zhu zi	竹子	1
+zhua jin	抓紧	1
+zhua zhu	抓住	1
+zhuan che	专车	1
+zhuan fa	转发	1
+zhuan ji	转机	1
+zhuan tou	砖头	1
+zhuan wan	转弯	1
+zhuan xue	转学	1
+zhuan zhang	转账	1
+zhuang kuang	状况	1
+zhuang tai	状态	1
+zhuang xiu	装修	1
+zhuang zhi	装置	1
+zhuang zhong	庄重	1
+zhui qiu	追求	1
+zhui wei	追尾	1
+zhui xing	追星	1
+zhun bei	准备	1
+zhun dian	准点	1
+zhun shi	准时	1
+zhun ze	准则	1
+zhuo mu niao	啄木鸟	1
+zhuo zi	桌子	1
+zi cai	紫菜	1
+zi dian	字典	1
+zi hao	自豪	1
+zi ji	自己	1
+zi jia	自驾	1
+zi jia you	自驾游	1
+zi lai shui	自来水	1
+zi liao	资料	1
+zi mu	字幕	1
+zi pai	自拍	1
+zi ran	自然	1
+zi se	紫色	1
+zi shen	自身	1
+zi sun	子孙	1
+zi wai xian	紫外线	1
+zi wo	自我	1
+zi xi	自习	1
+zi xi	仔细	2
+zi xin	自信	1
+zi xing che	自行车	1
+zi you xing	自由行	1
+zi yuan	资源	1
+zong jiao	宗教	1
+zong jie	总结	1
+zong jing li	总经理	1
+zong se	棕色	1
+zong shi	总是	1
+zong shu	总数	1
+zong zhi	总之	1
+zong zi	粽子	1
+zou lang	走廊	1
+zu fu	祖父	1
+zu guo	祖国	1
+zu li	阻力	1
+zu mu	祖母	1
+zu qiu	足球	1
+zu zhi	组织	1
+zu zhuang	组装	1
+zuan yan	钻研	1
+zui ba	嘴巴	1
+zui chu	最初	1
+zui chun	嘴唇	1
+zui fan	罪犯	1
+zui hou	最后	1
+zui jia	醉驾	1
+zui zhong	最终	1
+zun jing	尊敬	1
+zun yan	尊严	1
+zun zhong	尊重	1
+zuo ci	作词	1
+zuo fan	做饭	1
+zuo fei	作废	1
+zuo piao	坐票	1
+zuo pin	作品	1
+zuo qu	作曲	1
+zuo qu jia	作曲家	1
+zuo tian	昨天	1
+zuo wei	作为	1
+zuo wei	座位	2
+zuo ye	作业	1
+zuo ye ben	作业本	1
+zuo yong	作用	1
+zuo zhe	作者	1

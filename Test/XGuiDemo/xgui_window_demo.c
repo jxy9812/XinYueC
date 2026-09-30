@@ -31,7 +31,11 @@
 #include "XEvent.h"
 #include "XAbstractEventDispatcher.h"
 #include "XDateTime.h"
+#include "XSystem.h" /* XSystem_environment：环境变量唯一入口。 */
 #include "XGuiApplication.h"
+#if XWIDGET_ON && XKEYBOARD_ON
+#include "XVirtualKeyboard.h" /* 键盘页单例面板 win 析构前摘挂（自包含声明，防 XVIRTUALKEYBOARD_ON=0 态缺声明）。 */
+#endif
 #include "XWidget.h"
 #include "XWidget_Protected.h"
 #include "XImage.h"
@@ -370,7 +374,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[9];  /**< 页面切换按钮：5 内置页 + 4 扩展页。 */
+    XPushButton     m_pageNav[10]; /**< 页面切换按钮：5 内置页 + 5 扩展页。 */
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（4 个演示页面）。 */
@@ -379,7 +383,7 @@ typedef struct DemoWin
     XWidget         m_pageStacked; /**< 页面 2：堆叠演示容器。 */
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：选项卡演示容器。 */
-    XWidget*        m_extPages[4]; /**< 页面 5~8：扩展页根（xgui_demo_pages.h 契约，堆对象随父链级联析构）。 */
+    XWidget*        m_extPages[5]; /**< 页面 5~9：扩展页根（xgui_demo_pages.h 契约，堆对象随父链级联析构）。 */
 #endif
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -550,7 +554,12 @@ static void demo_set_widget_default_font(XWidget* widget)
 }
 #endif /* XWIDGET_ON */
 
-/** @brief 画棋盘格纹理：验证亚像素级脏区提交正确性。 */
+/** @brief 画棋盘格纹理：验证亚像素级脏区提交正确性。
+ * @details 调试遗留工具函数：当前调用点已全部摘除（曾绘于静态场景
+ *          标题栏右端验证脏区提交，在部分窗口宽度下落进键盘页黄色
+ *          说明行，观感为多余圆角图标）。函数体与调用定式保留，后续
+ *          需要逐块验证脏区提交/混合正确性时按
+ *          demo_draw_checker(painter, x, y, cols, rows, cell) 复用。 */
 static void demo_draw_checker(XPainter* painter, int x0, int y0,
                               int cols, int rows, int cell)
 {
@@ -696,9 +705,10 @@ static int demo_sysbarH(DemoWin* self)
 /* demo_drawStaticScene 无条件编译：静态场景缓存关闭（昆仑通态 fbdev
  * 定版=0）时，demo_paintScene 的 #else 分支仍需现绘整页静态基底。 */
 /** @brief 绘制不随性能采样变化的 Demo 场景：窗口背景、标题栏与状态栏基底。
- * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色，
- *          标题栏右端保留一小块棋盘格用于验证脏区提交（棋盘格必须避开
- *          内容区，否则会与各页控件相互压叠）。 */
+ * @details 标题/状态文本与导航按钮由真实子控件接管；此处只画静态底色。
+ *          标题栏右端的棋盘格脏区验证贴片（demo_draw_checker）已摘除：
+ *          在当前窗口宽度下该贴片落进键盘页黄色说明行，观感为多余的
+ *          圆角图标（调试遗留清理）；函数本身保留待脏区验证复用。 */
 static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
 {
     XFont painterFont;
@@ -710,12 +720,11 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
 
     demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);       /* 窗口背景 */
     demo_fill_rect(painter, 0, demo_sysbarH(self), w, 40, 0xff1f4e79u); /* 标题栏基底 */
+    /* 棋盘格装饰（恢复，用户裁定保留）：贴右对齐（块宽 24 + 右缘 8），
+     * y 随系统栏高度动态（demo_sysbarH）。 */
+    demo_draw_checker(painter, w - 24 - 8, demo_sysbarH(self) + 8, 2, 2, 12);
     /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
      * 不能画在根背景里）。 */
-    /* 棋盘格装饰：占位 (w-104,36) 24x24——app 栏（y 28..68）内、右侧
-     * 按钮区让位后左移的空档、导航行之上，远离右下角 FPS 悬浮层，
-     * 脏区提交验证功能不变。 */
-    demo_draw_checker(painter, w - 104, 36, 2, 2, 12);
     /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
 }
 
@@ -1146,12 +1155,9 @@ static void demo_input_autotest(DemoWin* self)
         XPoint tpos;
         XPoint tglobal;
         XTouchEvent te;
-        /* 页签中心随框架系统标题栏下移（无 WM 环境=条高，桌面
-           =0 零变化）：导航行几何 setGeometry(12+nav*78, 44+SYSBAR, 78,26)
-           → 条目视图（nav5）中心
-           (441, 57+SYSBAR)。（E2 合流修：本断言坐标原为 86px 步距旧几何
-           483，收窄后落在 nav6，页签切换回归锁恒红。） */
-        XPoint_init(&tpos, 441, 57 + demo_sysbarH(self));
+        /* 页签坐标随导航几何走：nav5「条目视图」x=12+5*78、宽 76（10
+         * 页导航收窄口径），中心≈(440, 44+demo_sysbarH(self)+13)。 */
+        XPoint_init(&tpos, 440, 57 + demo_sysbarH(self));
         tglobal = tpos;
         /* 对照组：窗口级合成鼠标按下/抬起点页签。 */
         XWindowSystemInterface_handleMouseEvent_ex(
@@ -1189,19 +1195,20 @@ static void demo_input_autotest(DemoWin* self)
 /* 前向声明：本函数定义在 demo_page_name 之前。 */
 static const char* demo_page_name(int index);
 
-/** @brief 扩展页（5~8）图形界面自动化验证调度。
+/** @brief 扩展页（5~9）图形界面自动化验证调度。
  * @details 逐页切换并调用页面自带的 autotest（xgui_demo_pages.h 契约：
  *          事件注入 + getter 断言，全程非阻塞），汇总失败数；任一失败
  *          退出非零。结束恢复第 4 页，保持交互后截图口径不变。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
-    int (*const kTests[4])(XWidget*) = {
+    int (*const kTests[5])(XWidget*) = {
         demo_page_views_autotest, demo_page_dialogs_autotest,
-        demo_page_advanced_autotest, demo_page_effects_autotest
+        demo_page_advanced_autotest, demo_page_effects_autotest,
+        demo_page_keyboard_autotest
     };
     int total = 0;
     int exti;
-    for (exti = 0; exti < 4; ++exti) {
+    for (exti = 0; exti < 5; ++exti) {
         int failures;
         if (!demo->m_extPages[exti])
             continue; /* 页面模块被裁剪，跳过 */
@@ -1457,7 +1464,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[9] = {
+    static const char* const kNames[10] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -1466,9 +1473,10 @@ static const char* demo_page_name(int index)
         "\xE6\x9D\xA1\xE7\x9B\xAE\xE8\xA7\x86\xE5\x9B\xBE", /* 条目视图 */
         "\xE5\xAF\xB9\xE8\xAF\x9D\xE6\xA1\x86",             /* 对话框 */
         "\xE9\xAB\x98\xE7\xBA\xA7\xE6\x8E\xA7\xE4\xBB\xB6", /* 高级控件 */
-        "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C"  /* 图形效果 */
+        "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C", /* 图形效果 */
+        "\xE9\x94\xAE\xE7\x9B\x98\xE6\xBC\x94\xE7\xA4\xBA"  /* 键盘演示 */
     };
-    if (index < 0 || index > 8)
+    if (index < 0 || index > 9)
         return kNames[0];
     return kNames[index];
 }
@@ -1564,7 +1572,7 @@ static void demo_switchPage(DemoWin* self, int index)
 {
     if (!self) return;
     if (index < 0) index = 0;
-    if (index > 8) index = 8;
+    if (index > 9) index = 9;
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
     /* XStackedLayout 的 setGeometry 只给当前页面分配几何；切换后必须
        重新分配，否则新页面容器保持 0x0 导致页面内容不可见。 */
@@ -1752,6 +1760,12 @@ static void demo_nav8Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 8);
+}
+/** @brief 页面 10（屏幕键盘）导航按钮 clicked 槽。 */
+static void demo_nav9Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 9);
 }
 
 /** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
@@ -2150,9 +2164,32 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
+    if (!mouse) return;
     demo_log("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
              (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
              (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
+#if defined(__ANDROID__)
+    { /* 安卓验证通道：stdout 不可见，鼠标事件到达即打 logcat。 */
+        extern void XGuiDemo_debugLog(const char* text);
+        char dbg[128];
+        snprintf(dbg, sizeof(dbg),
+                 "mousePress btn=%d pos=(%d,%d)",
+                 (int)XMouseEvent_button(mouse),
+                 (int)XMouseEvent_position(mouse).x,
+                 (int)XMouseEvent_position(mouse).y);
+        XGuiDemo_debugLog(dbg);
+    }
+#endif
+    /* 交互按下即整帧重绘：子控件形态对话框（消息框/进度条等覆盖层）
+       局部脏区重绘在其内部布局微移后会留下旧帧残影（实测消息框点击
+       后图标/文字双影，两份内容纵向错位 ~45px）。按下频率低，整帧
+       成本可接受；随后 paintTree 全量重画覆盖层新帧，旧帧残影清除。 */
+    {
+        XRect fullDirty;
+        XRect_init(&fullDirty, 0, 0,
+                   XWidget_width(&demo->m_base), XWidget_height(&demo->m_base));
+        XWidget_updateRect(&demo->m_base, &fullDirty);
+    }
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     {
         XPoint position = XMouseEvent_position(mouse);
@@ -2333,15 +2370,16 @@ static DemoWin* DemoWin_create(void)
     XWidget_init(&self->m_pageTabs, &self->m_base, 0);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageTabs);
-    /* ---- 页面 5~8：扩展页注册（xgui_demo_pages.h 契约，堆根随父级联
+    /* ---- 页面 5~9：扩展页注册（xgui_demo_pages.h 契约，堆根随父级联
      * 析构）；裁剪配置下 build 返回 NULL 则跳过注册。 ---- */
     {
         int exti;
-        XWidget* (*const kExtBuilders[4])(XWidget*, DemoPageStatusFn, void*) = {
+        XWidget* (*const kExtBuilders[5])(XWidget*, DemoPageStatusFn, void*) = {
             demo_page_views_build, demo_page_dialogs_build,
-            demo_page_advanced_build, demo_page_effects_build
+            demo_page_advanced_build, demo_page_effects_build,
+            demo_page_keyboard_build
         };
-        for (exti = 0; exti < 4; ++exti) {
+        for (exti = 0; exti < 5; ++exti) {
             self->m_extPages[exti] =
                 kExtBuilders[exti]((XWidget*)&self->m_base,
                                    demo_ext_page_status, self);
@@ -2354,7 +2392,7 @@ static DemoWin* DemoWin_create(void)
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 页面切换导航按钮（标题栏下方一行）。 */
     {
-        static const char* const kNavTexts[9] = {
+        static const char* const kNavTexts[10] = {
             "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
             "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
             "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -2364,22 +2402,22 @@ static DemoWin* DemoWin_create(void)
             "\xE5\xAF\xB9\xE8\xAF\x9D\xE6\xA1\x86",             /* 对话框 */
             "\xE9\xAB\x98\xE7\xBA\xA7\xE6\x8E\xA7\xE4\xBB\xB6", /* 高级控件 */
             "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C", /* 图形效果 */
+            "\xE9\x94\xAE\xE7\x9B\x98\xE6\xBC\x94\xE7\xA4\xBA"  /* 键盘演示 */
         };
-        static void (*const kNavSlots[9])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[10])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
             demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
-            demo_nav8Slot
+            demo_nav8Slot, demo_nav9Slot
         };
         int nav;
-        for (nav = 0; nav < 9; ++nav) {
+        for (nav = 0; nav < 10; ++nav) {
             XPushButton* button = &self->m_pageNav[nav];
             XPushButton_init(button, &self->m_base, 0);
             demo_set_widget_default_font((XWidget*)button);
             XPushButton_setText_2(button, kNavTexts[nav]);
-            /* 9 个按钮 78px/步距 78，单行排入 800 宽窗口（步距保持
-             * 78：autotest 页签回归坐标 (441,57) 按此口径锁定）。 */
+            /* 10 个按钮收窄到 76px/步距 78，单行排入 800 宽窗口。 */
             XWidget_setGeometry((XWidget*)button, 12 + nav * 78,
-                                44 + demo_sysbarH(self), 78, 26);
+                                44 + demo_sysbarH(self), 76, 26);
             XObject_connect_1((XObject*)button,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)self, kNavSlots[nav],
@@ -3164,6 +3202,12 @@ static int demo_log(const char* fmt, ...)
     int written;
     if (g_logDisabled)
         return 0; /* 已熔断：诊断静默短路（防对失效句柄逐次阻塞重试）。 */
+#if defined(__ANDROID__)
+    /* 安卓 NativeActivity 下 stdout FILE* 半初始化，vfprintf 直接 SEGV
+       （真机实测，每次点空白区即崩）。诊断行已由各探针点直接走
+       XGuiDemo_debugLog/logcat，此处整体短路不碰 stdout。 */
+    return 0;
+#endif
     va_start(args, fmt);
     written = vprintf(fmt, args);
     va_end(args);
@@ -3185,7 +3229,15 @@ static int demo_log(const char* fmt, ...)
 #include <windows.h>
 #endif
 
-int main(int argc, char* argv[])
+/* 安卓 APK 壳（Drive/Android/android_main.c）经 xgui_window_demo_main
+ * 复用同一 main 逻辑；桌面/嵌入式仍导出标准 main。 */
+#ifdef __ANDROID__
+#define xgui_demo_main xgui_window_demo_main
+#else
+#define xgui_demo_main main
+#endif
+
+int xgui_demo_main(int argc, char* argv[])
 {
     XGuiApplication* app;
     DemoWin* win;
@@ -3351,7 +3403,7 @@ int main(int argc, char* argv[])
        每轮 processEvents 强制重绘 + 悬浮层随帧刷新」口径（默认开）。
        与 XGPU_PRESENT_MAX_FPS 同族：一次性读取、进程内生效。 */
     {
-        const char* idleGate = getenv("XGUI_DEMO_IDLE_GATE");
+        const char* idleGate = XSystem_environment("XGUI_DEMO_IDLE_GATE"); /* 库内唯一环境入口（禁直呼 getenv）。 */
         g_idleGate = !(idleGate && idleGate[0] == '0');
     }
 
@@ -3423,17 +3475,19 @@ int main(int argc, char* argv[])
 
     /* 2) 创建演示窗口并设置标题/几何。show() 会在框架内部惰性创建平台窗口。 */
     win = DemoWin_create();
+    if (!win) {
+        /* 判空守卫前置：创建失败即收口退出（后续 win-> 字段写入
+           不容 NULL 解引用；守卫体必须 return，否则落空继续走）。 */
+        XPrintf("XGuiWindowDemo: DemoWin_create 失败\n");
+        XGuiApplication_delete_base(app);
+        return 1;
+    }
 #if XWIDGET_ON
     /* 顶层控件字体补设：框架标题栏文本取顶层控件字体，未设时为空字体
        （fbdev 上首帧标题缺失的嫌疑之一）；与子控件同族默认字体。 */
     demo_set_widget_default_font(&win->m_base);
 #endif
 
-
-    if (!win) {
-        XPrintf("XGuiWindowDemo: DemoWin_create 失败\n");
-        XGuiApplication_delete_base(app);
-    }
     win->m_screenshotPath = screenshotPath;
     win->m_screenshotFrames = 0;
     win->m_autoTest = autoTest;
@@ -3459,11 +3513,15 @@ int main(int argc, char* argv[])
  * show 后的 fbdev 块执行（还原基准几何存档后再最大化）。 */
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     if (win->m_extPages[0] || win->m_extPages[1] ||
-        win->m_extPages[2] || win->m_extPages[3])
-        XWidget_setGeometry(&win->m_base, 40, 40, 800, 600); /* 9 页导航与扩展页 760x480 内容需要 */
+        win->m_extPages[2] || win->m_extPages[3] || win->m_extPages[4])
+        XWidget_setGeometry(&win->m_base, 40, 40, 800, 600); /* 10 页导航与扩展页 760x480 内容需要 */
     else
 #endif
     XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
+    /* 键盘页无头截图钩子（Tools/VirtualKeyboard/style_check.py；环境变量缺省时
+       零操作）：几何定版后、事件循环前同步弹出——守护轮询 200ms 在
+       --screenshot 3 帧内到不了，钩子不依赖定时器边沿。 */
+    demo_page_keyboard_headless_hook();
 #if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
     if (fbPanelW > 0 && fbPanelH > 0 &&
         (XWidget_x(&win->m_base) + XWidget_width(&win->m_base) > fbPanelW ||
@@ -3651,7 +3709,7 @@ int main(int argc, char* argv[])
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     {
         int nav;
-        for (nav = 0; nav < 9; ++nav)
+        for (nav = 0; nav < 10; ++nav)
             XPushButton_deinit_base(&win->m_pageNav[nav]);
     }
 #endif
@@ -3661,6 +3719,21 @@ int main(int argc, char* argv[])
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
     XImage_deinit_base(&win->m_staticScene);
 #endif
+#if XWIDGET_ON && XKEYBOARD_ON
+    /* 键盘页已迁移到应用默认面板单例（XGuiApplication 拥有）：面板弹
+       出即挂本顶层窗为宿主。win 先于 app 析构——级联删除会把应用拥有
+       的单例连带删掉，随后 XGuiApplication_delete_base 对
+       m_virtualKeyboard 二次删除（悬垂崩溃）。win 析构前显式收层并摘
+       挂，面板归还顶层交还应用（virtualKeyboard 在
+       XVIRTUALKEYBOARD_ON=0 级联关闭时返回 NULL，自然空操作）。 */
+    {
+        XVirtualKeyboard* kb = XGuiApplication_virtualKeyboard();
+        if (kb) {
+            XVirtualKeyboard_closePopup(kb);
+            XWidget_setParent((XWidget*)kb, NULL, 0);
+        }
+    }
+#endif
     XWidget_delete_base((XClass*)win);
     XGuiApplication_delete_base(app);
     XPrintf("XGuiWindowDemo: 已退出\n");
@@ -3668,7 +3741,7 @@ int main(int argc, char* argv[])
 }
 
 #else /* 开关裁剪 */
-int main(int argc, char* argv[])
+int xgui_demo_main(int argc, char* argv[])
 {
     (void)argc;
     (void)argv;

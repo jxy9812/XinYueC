@@ -139,10 +139,13 @@ XScreen* XScreen_create_move(XScreen* other);
  * @brief      把屏幕注册到进程内屏幕注册表（对标 QGuiApplication 的
  *             allScreens() 语义）。
  * @details    注册表由 XScreen.c 内部静态维护，不持有屏幕所有权；重复
- *             注册同一对象是 no-op。屏幕销毁（deinit_base）时自动退表。
+ *             注册同一对象是 no-op（返回 true）。屏幕销毁（deinit_base）
+ *             时自动退表。
  * @param      screen 目标屏幕；可为 NULL。
+ * @return     已注册（或本就已在表中）返回 true；screen 为 NULL 或注
+ *             册表分配失败返回 false，调用方须自行回收 screen 所有权。
  */
-void XScreen_register(XScreen* screen);
+bool XScreen_register(XScreen* screen);
 
 /**
  * @brief      从屏幕注册表移除屏幕。

@@ -3,18 +3,29 @@
  * @brief      XMessageBox 消息对话框控件（对标 Qt 6.8 QMessageBox 核心
  *             公共 API）。
  * @details    功能范围：
+ *             - 继承 XDialog（对标 QMessageBox : QDialog : QWidget，
+ *               运行时注册 INHERIT_XCLASS(XDialog)）；构造即应用模态、
+ *               独立 Dialog 顶层窗口（默认窗口标志 = Dialog |
+ *               MSWindowsFixedSizeDialogHint | WindowTitleHint |
+ *               WindowSystemMenuHint | WindowCloseButtonHint）；
  *             - Icon 枚举（NoIcon/Information/Warning/Critical/Question，
  *               数值对齐）；StandardButton 位标志（与 XDialogButtonBox
  *               的枚举复用，位值逐项对齐 Qt）；
- *             - setText/title/icon、setStandardButtons/standardButtons、
- *               addButton(button, role)/addButton(text, role)/
- *               addButton(standard)、button(standard)、clickedButton；
- *             - exec()：模态事件循环（processEvents 驱动，对标 QDialog
- *               的模态语义）；
+ *             - setText/setWindowTitle/icon、setStandardButtons/
+ *               standardButtons、addButton(button, role)/addButton(text,
+ *               role)/addButton(standard)、button(standard)、
+ *               clickedButton；
+ *             - exec()：阻塞模态事件循环，返回被点标准按钮位值（对标
+ *               Qt 6.8：QMessageBox 无 exec 重写，实际走 QDialog::exec，
+ *               而 result() 已被回填为标准按钮位值，见 qmessagebox.cpp
+ *               setClickedButton→done(execReturnCode)）；
+ *             - informativeText/detailedText 补充与详细文本（详细文本
+ *               自动追加 Show Details... 切换按钮）；
+ *             - 键盘：Enter=默认按钮、Esc=探测转义按钮（显式设置 >
+ *               Cancel > 唯一按钮 > 唯一 RejectRole > 唯一 NoRole，
+ *               探测失败时 Esc 无效果）、Ctrl+C 复制消息文本到剪贴板；
  *             - 静态便捷方法：information/warning/critical/question/
  *               about（阻塞直至用户选择，返回被点击的标准按钮）。
- *             与 Qt 的差异：XMessageBox 继承 XWidget（Qt 为 QDialog），
- *             因库内对话框基础设施尚在建设中；API 形状保持一致。
  * @note       模块总开关 XMESSAGEBOX_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XWIDGET_ON、XDIALOGBUTTONBOX_ON、
  *             XPUSHBUTTON_ON、XLABEL_ON。
@@ -51,6 +62,10 @@ typedef struct XIcon XIcon;
 #if XCHECKBOX_ON
 /** @brief XCheckBox 前向声明（checkBox 消息框复选框）。 */
 typedef struct XCheckBox XCheckBox;
+#endif
+#if XPLAINTEXTEDIT_ON
+/** @brief XPlainTextEdit 前向声明（详细文本区）。 */
+typedef struct XPlainTextEdit XPlainTextEdit;
 #endif
 
 /** @brief 消息图标（对标 QMessageBox::Icon，数值一致）。 */
@@ -92,12 +107,21 @@ typedef struct XMessageBox
                                   *   m_modal/m_inExec/m_sizeGripEnabled 八字节会
                                   *   按别名覆盖 m_textLabel 与 m_buttonBox 低
                                   *   字节，accept/done 后按钮盒变野指针。 */
-    XLabel* m_textLabel;         /**< 消息文本标签（拥有）。 */
+    XLabel* m_textLabel;         /**< 消息文本标签（拥有；对标 qt_msgbox_label）。 */
 #if XDIALOGBUTTONBOX_ON
-    XDialogButtonBox* m_buttonBox; /**< 按钮盒（拥有）。 */
-    XVector* m_standards;        /**< 与成员顺序对应的标准按钮值。 */
+    XDialogButtonBox* m_buttonBox; /**< 按钮盒（拥有；对标 qt_msgbox_buttonbox）。 */
 #endif
-    XString* m_title;           /**< 窗口标题（对象拥有）。 */
+    XLabel* m_informativeLabel;  /**< 补充文本标签（拥有；非空补充文本时存在，
+                                  *   对标 qt_msgbox_informativelabel）。 */
+#if XPLAINTEXTEDIT_ON
+    XPlainTextEdit* m_detailsText; /**< 详细文本区（拥有；只读、默认隐藏，
+                                  *   对标 QMessageBoxDetailsText）。 */
+#endif
+    XAbstractButton* m_detailsButton; /**< Show Details... 切换按钮（拥有；
+                                  *   设详细文本时自动追加，对标 DetailButton）。 */
+    bool m_detailsVisible;       /**< 详细区展开态（Show Details... 点击切换）。 */
+    bool m_autoAddOkButton;      /**< 显示时零按钮自动补 Ok（对标 autoAddOkButton，
+                                  *   addButton/setStandardButtons 清除）。 */
     XString* m_text;            /**< 消息文本缓存（对象拥有；对标 text）。 */
     XString* m_detailedText;    /**< 详细文本（对象拥有；对标 detailedText）。 */
     XString* m_informativeText; /**< 补充文本（对象拥有；对标 informativeText）。 */
@@ -109,8 +133,12 @@ typedef struct XMessageBox
 #if XCHECKBOX_ON
     XCheckBox* m_checkBox;       /**< 复选框（对象拥有；NULL 表示未设置；对标 checkBox）。 */
 #endif
-    XImage* m_iconPixmap;        /**< 自定义图标位图（对象拥有；对标 iconPixmap；暂不参与绘制）。 */
-    bool m_inExec;               /**< exec 循环进行中。 */
+    XImage* m_iconPixmap;        /**< 自定义图标位图（对象拥有；绘制时优先于分级图标）。 */
+    XObject* m_openReceiver;     /**< open_2 记录的接收对象（关闭时
+                                  *   自动断开；对标 receiverToDisconnectOnClose）。 */
+    XSlotFunc1 m_openMember;     /**< open_2 记录的槽函数。 */
+    bool m_openButtonPayload;    /**< open_2 连接的信号类型
+                                  *   （true=buttonClicked，false=finished）。 */
 } XMessageBox;
 
 /** @brief X消息盒classinit（对标 Qt 同名接口）。
@@ -133,17 +161,6 @@ void XMessageBox_setText(XMessageBox* self, const char* utf8);
  * @return 返回 UTF-8 文本；无效时返回空串。
  */
 const char* XMessageBox_text(const XMessageBox* self);
-/** @brief X消息盒set标题（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param utf8 UTF-8 文本。
- * @return 无返回值。
- */
-void XMessageBox_setTitle(XMessageBox* self, const char* utf8);
-/** @brief X消息盒title（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回 UTF-8 文本；无效时返回空串。
- */
-const char* XMessageBox_title(const XMessageBox* self);
 /** @brief X消息盒set图标（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param icon 图标路径（UTF-8）。
@@ -179,34 +196,151 @@ XAbstractButton* XMessageBox_clickedButton(const XMessageBox* self);
 /* ==================== 模态执行 ==================== */
 
 /**
- * @brief      启动模态对话框事件循环（对标 QDialog::exec）。
+ * @brief      启动模态对话框事件循环（对标 Qt 6.8 QMessageBox::exec）。
+ * @details    Qt 6.8 中 QMessageBox 无 exec 重写（qmessagebox.h:296-299
+ *             仅 Q_QDOC 文档块），实际执行 QDialog::exec；而消息盒按钮
+ *             点击经 done(execReturnCode) 把 result() 回填为被点标准按
+ *             钮位值——因此本函数（委托 XDialog_exec 单一收口）返回
+ *             标准按钮位值（Ok=0x400、Cancel=0x400000…），与 result()
+ *             一致；自定义按钮返回 Accepted+1+索引 的不透明值，未找到
+ *             返回 -1。递归 exec 警告并返回 -1。
+ * @param      self 目标对话框；NULL 返回 NoButton(0)。
+ * @return     被点标准按钮位值；递归调用 -1。
  */
 XDialogButtonBoxStandardButton XMessageBox_exec(XMessageBox* self);
+
+/* ==================== 非阻塞打开（对标 QMessageBox::open） ==================== */
+
+/**
+ * @brief      以窗口模态显示对话框，并把关闭信号连接到 receiver 的槽
+ *             （对标 QMessageBox::open(QObject *receiver, const char
+ *             *member)；open 的重载形态，按数字后缀约定命名 _2）。
+ * @details    member 槽首参为按钮指针时等价连接 buttonClicked(signal)，
+ *             否则等价连接 finished(int)（Qt 按 member 签名选择；C 无
+ *             签名反射，以 buttonPayload 显式指定）。对话框关闭（下一
+ *             次按钮点击或 done 收口）时自动断开该连接。
+ * @param      self 目标对话框；NULL 或 member 空时不执行任何操作。
+ * @param      receiver 槽所属对象；可为 NULL（此时不连接，仅显示）。
+ * @param      member 槽函数（签名 void (*)(XObject*, XVarList*)）。
+ * @param      buttonPayload true=连接 buttonClicked（载荷：按钮指针）；
+ *             false=连接 finished（载荷：结果码 int）。
+ * @return     无返回值。
+ */
+void XMessageBox_open_2(XMessageBox* self, XObject* receiver,
+                        XSlotFunc1 member, bool buttonPayload);
 
 /* ==================== 静态便捷方法 ==================== */
 
 /**
- * @brief      信息对话框（静态）。
+ * @brief      信息对话框（静态；对标 QMessageBox::information 四参形态，
+ *             defaultButton 取 NoButton 自动选择）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @return     被点标准按钮位值（exec 收口口径，见 XMessageBox_exec）。
  */
 XDialogButtonBoxStandardButton XMessageBox_information(
     XWidget* parent, const char* title, const char* text, int buttons);
 /**
- * @brief      警告对话框（静态）。
+ * @brief      信息对话框（静态；对标 QMessageBox::information(parent,
+ *             title, text, buttons, defaultButton) 五参形态）。
+ * @details    defaultButton 必须是 buttons 中的按钮；NoButton 时自动取
+ *             第一个 AcceptRole 按钮为默认（qmessagebox.cpp:1745-1757）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @param      defaultButton 默认按钮（标准按钮位；NoButton=自动）。
+ * @return     被点标准按钮位值。
+ */
+XDialogButtonBoxStandardButton XMessageBox_information_2(
+    XWidget* parent, const char* title, const char* text, int buttons,
+    XDialogButtonBoxStandardButton defaultButton);
+/**
+ * @brief      警告对话框（静态；对标 QMessageBox::warning 四参形态，
+ *             defaultButton 取 NoButton 自动选择）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @return     被点标准按钮位值（exec 收口口径，见 XMessageBox_exec）。
  */
 XDialogButtonBoxStandardButton XMessageBox_warning(
     XWidget* parent, const char* title, const char* text, int buttons);
 /**
- * @brief      严重错误对话框（静态）。
+ * @brief      警告对话框（静态；对标 QMessageBox::warning(parent, title,
+ *             text, buttons, defaultButton) 五参形态）。
+ * @details    defaultButton 必须是 buttons 中的按钮；NoButton 时自动取
+ *             第一个 AcceptRole 按钮为默认（qmessagebox.cpp:1745-1757）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @param      defaultButton 默认按钮（标准按钮位；NoButton=自动）。
+ * @return     被点标准按钮位值（exec 收口口径，见 XMessageBox_exec）。
+ */
+XDialogButtonBoxStandardButton XMessageBox_warning_2(
+    XWidget* parent, const char* title, const char* text, int buttons,
+    XDialogButtonBoxStandardButton defaultButton);
+/**
+ * @brief      严重错误对话框（静态；对标 QMessageBox::critical 四参形态，
+ *             defaultButton 取 NoButton 自动选择）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @return     被点标准按钮位值（exec 收口口径，见 XMessageBox_exec）。
  */
 XDialogButtonBoxStandardButton XMessageBox_critical(
     XWidget* parent, const char* title, const char* text, int buttons);
 /**
- * @brief      询问对话框（静态）。
+ * @brief      严重错误对话框（静态；对标 QMessageBox::critical(parent,
+ *             title, text, buttons, defaultButton) 五参形态）。
+ * @details    defaultButton 必须是 buttons 中的按钮；NoButton 时自动取
+ *             第一个 AcceptRole 按钮为默认（qmessagebox.cpp:1745-1757）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @param      defaultButton 默认按钮（标准按钮位；NoButton=自动）。
+ * @return     被点标准按钮位值（exec 收口口径，见 XMessageBox_exec）。
+ */
+XDialogButtonBoxStandardButton XMessageBox_critical_2(
+    XWidget* parent, const char* title, const char* text, int buttons,
+    XDialogButtonBoxStandardButton defaultButton);
+/**
+ * @brief      询问对话框（静态；对标 QMessageBox::question 四参形态，
+ *             defaultButton 取 NoButton 自动选择）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @return     被点标准按钮位值（exec 收口口径，见 XMessageBox_exec）。
  */
 XDialogButtonBoxStandardButton XMessageBox_question(
     XWidget* parent, const char* title, const char* text, int buttons);
 /**
- * @brief      关于对话框（静态）。
+ * @brief      询问对话框（静态；对标 QMessageBox::question(parent, title,
+ *             text, buttons, defaultButton) 五参形态）。
+ * @details    defaultButton 必须是 buttons 中的按钮；NoButton 时自动取
+ *             第一个 AcceptRole 按钮为默认（qmessagebox.cpp:1745-1757）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @param      buttons 标准按钮位组合。
+ * @param      defaultButton 默认按钮（标准按钮位；NoButton=自动）。
+ * @return     被点标准按钮位值（exec 收口口径，见 XMessageBox_exec）。
+ */
+XDialogButtonBoxStandardButton XMessageBox_question_2(
+    XWidget* parent, const char* title, const char* text, int buttons,
+    XDialogButtonBoxStandardButton defaultButton);
+/**
+ * @brief      关于对话框（静态；对标 QMessageBox::about，Ok 单按钮）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（UTF-8）；可空。
+ * @param      text 消息文本（UTF-8）；可空。
+ * @return     无返回值。
  */
 void XMessageBox_about(XWidget* parent, const char* title,
                        const char* text);
@@ -346,8 +480,8 @@ XCheckBox* XMessageBox_checkBox(const XMessageBox* self);
 
 /**
  * @brief      设置自定义图标位图（对标 QMessageBox::setIconPixmap）。
- * @details    深拷贝存储；当前版本仅保存状态不参与绘制（绘制仍按
- *             icon 枚举交给样式层），头文件与文档已注明。
+ * @details    深拷贝存储并参与绘制（图标区优先显示位图；对标 Qt：设
+ *             置后 icon() 回读为 NoIcon，布局按位图存在性让位）。
  * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
  * @param      pixmap 位图源；NULL 清除当前位图；只借用，内部深拷贝。
  * @return     无返回值。
@@ -445,10 +579,11 @@ void XMessageBox_setButtonText_2(XMessageBox* self, int button,
 
 /**
  * @brief      显示“关于 Qt”对话框（对标静态 QMessageBox::aboutQt）。
- * @details    与 XApplication_aboutQt 保持一致：XGui 无 Qt 运行时信息，
- *             本实现为文档化空操作；参数仅保留 API 形状。
- * @param      parent 父控件；可空；本实现不使用。
- * @param      title 标题；可空；本实现不使用。
+ * @details    与 Qt 一致弹出模态消息盒（标题缺省 "About Qt"，正文为
+ *             文档化说明文案 + Ok 按钮；Qt 原文含版本号与链接，XGui
+ *             无 Qt 运行时信息，以固定文案等价呈现）。
+ * @param      parent 父控件；可空。
+ * @param      title 标题（深拷贝展示）；可空时用缺省标题。
  * @return     无返回值。
  */
 void XMessageBox_aboutQt(XWidget* parent, const XString* title);

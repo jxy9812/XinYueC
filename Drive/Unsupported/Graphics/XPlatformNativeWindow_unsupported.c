@@ -23,9 +23,12 @@
 
 #if XPLATFORMNATIVEWINDOW_ON
 
+/* 安卓（Drive/Android/Graphics/XPlatformWindowAndroid.c）提供真实实现，
+ * 本哨兵不参与，避免同符号双定义由链接器随机择一。 */
 #if !XWINDOW_ON || !((defined(__linux__) && defined(XINYUE_C_HAS_X11) && \
        XPLATFORMNATIVEWINDOW_X11_ON) || \
-      (defined(_WIN32) && XPLATFORMNATIVEWINDOW_WIN32_ON))
+      (defined(_WIN32) && XPLATFORMNATIVEWINDOW_WIN32_ON) || \
+      defined(__ANDROID__))
 
 /* ==================== 可用性与生命周期（全部空值/无操作） ==================== */
 
@@ -104,6 +107,20 @@ bool XPlatformNativeWindow_setMouseGrabEnabled(XWindow* window, bool grab)
 }
 
 bool XPlatformNativeWindow_requestActivate(XWindow* window)
+{
+    (void)window;
+    return false;
+}
+
+bool XPlatformNativeWindow_raise(XWindow* window)
+{
+    /* 能力不足的后端默认 no-op：无窗口系统即无 Z 序，XWindow 保持
+     * 虚拟窗口行为（对标 Qt 无平台插件时 raise 为空操作）。 */
+    (void)window;
+    return false;
+}
+
+bool XPlatformNativeWindow_lower(XWindow* window)
 {
     (void)window;
     return false;

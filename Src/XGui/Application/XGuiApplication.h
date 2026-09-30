@@ -40,6 +40,7 @@ extern "C" {
 #include "XFont.h"
 #include "XString.h"
 #include "XVector.h"
+#include "XWidget.h"
 #include "XWindow.h"
 #include "XScreen.h"
 #include "XIcon.h"
@@ -61,6 +62,18 @@ typedef struct XPlatformNativeInterface XPlatformNativeInterface;
 /** @brief XInputMethod 前向声明回退（开关关闭时 inputMethod() 返回 NULL）。 */
 typedef struct XInputMethod XInputMethod;
 #endif /* XINPUTMETHOD_ON */
+
+#if XVIRTUALKEYBOARD_ON
+#include "XVirtualKeyboard.h"
+#else /* !XVIRTUALKEYBOARD_ON */
+/** @brief XVirtualKeyboard 前向声明回退（开关关闭时 virtualKeyboard() 返回 NULL）。
+ *  XGui 扩展单例，Qt 无 QGuiApplication 级等价物——Qt 虚拟键盘的
+ *  InputPanel 归 QML 层。 */
+typedef struct XVirtualKeyboard XVirtualKeyboard;
+/* XWidget 形参（virtualKeyboardNotifyPress）不再依赖本分支的回退
+ * typedef：本头已无条件引入 XWidget.h（其 typedef 不受 XVIRTUALKEYBOARD_ON
+ * 裁剪），回退重定义会与 XWidget.h 的同名 typedef 构成 C99 约束违规。 */
+#endif /* XVIRTUALKEYBOARD_ON */
 
 #if XCURSOR_ON
 #include "XCursor.h"
@@ -201,6 +214,12 @@ typedef struct XGuiApplication
 #if XINPUTMETHOD_ON
     XInputMethod* m_inputMethod;          /**< 输入法惰性单例（拥有，与集成层双向绑定）。 */
 #endif /* XINPUTMETHOD_ON */
+#if XVIRTUALKEYBOARD_ON
+    XVirtualKeyboard* m_virtualKeyboard;         /**< 虚拟键盘默认面板惰性单例（拥有，见
+                                               XGuiApplication_virtualKeyboard）。 */
+#endif /* XVIRTUALKEYBOARD_ON */
+    bool m_virtualKeyboardEnabled;        /**< 虚拟键盘总开关（XGui 扩展，默认 true；
+                                               见 XGuiApplication_setVirtualKeyboardEnabled）。 */
 } XGuiApplication;
 
 /** @brief 获取全局 XGuiApplication 实例的便捷宏（对标 qGuiApp）。 */
@@ -392,6 +411,17 @@ XWindow* XGuiApplication_modalWindow(void);
 void XGuiApplication_setFocusWindow(XWindow* window, XObject* object);
 
 /**
+ * @brief      设置焦点对象（对标 QGuiApplication::focusObjectChanged）。
+ * @details    控件级焦点变化经此收口（XApplication_setFocusWidget 调
+ *             用）：变更时发射 focusObjectChanged 并联动平台输入上下文
+ *             setFocusObject 的 IME 链——虚拟键盘 hints/包围文本查询的
+ *             焦点控件事实源。此前只有窗口级桥（object 缺省=窗口自身），
+ *             控件级 hints 永远到不了输入上下文。
+ * @param      object 焦点对象（通常为持焦控件）；可为 NULL。
+ */
+void XGuiApplication_setFocusObject(XObject* object);
+
+/**
  * @brief      平台接入钩子：设置顶层模态窗口。
  * @param      window 模态窗口；NULL 清除。
  */
@@ -427,10 +457,14 @@ float XGuiApplication_devicePixelRatio(void);
 
 /**
  * @brief      平台接入钩子：登记屏幕并发射 screenAdded（对标 QGuiApplication::screenAdded）。
- * @details    内部调用 XScreen_register 保持与 XScreen 注册表一致。
+ * @details    内部调用 XScreen_register 保持与 XScreen 注册表一致。屏幕
+ *             所有权归平台层（本入口只登记借用）；返回 false 时未登记，
+ *             调用方必须回收 screen（delete），否则泄漏。
  * @param      screen 目标屏幕；可为 NULL。
+ * @return     已登记并发射信号返回 true；无应用单例/注册表分配失败/
+ *             screen 为 NULL 返回 false。
  */
-void XGuiApplication_screenAdded(XScreen* screen);
+bool XGuiApplication_screenAdded(XScreen* screen);
 
 /**
  * @brief      平台接入钩子：注销屏幕并发射 screenRemoved。
@@ -639,6 +673,60 @@ XClipboard* XGuiApplication_clipboard(void);
  * @return     XInputMethod* 借用指针；未初始化或 XINPUTMETHOD_ON=0 返回 NULL。
  */
 XInputMethod* XGuiApplication_inputMethod(void);
+
+/**
+ * @brief      获取虚拟键盘默认面板单例（XGui 扩展；惰性单例）。
+ * @details    首次调用创建 XVirtualKeyboard 顶层面板（parent=NULL；autoPopup
+ *             守护随构造启动，显隐经面板 popup/closePopup，守护轮询焦点
+ *             跟随不变——编辑控件零绑定，键盘不持有编辑控件引用）。
+ *             多视图共享同一面板实例；对象由 XGuiApplication 拥有并随
+ *             应用析构释放。设计对应：apiMapping#12 的默认面板单例。
+ *             门控：XVIRTUALKEYBOARD_ON（框架核心实现员已注册于
+ *             XGuiConfig.h，级联 !XKEYBOARD_ON||!XINPUTMETHOD_ON||
+ *             !XPLATFORMINPUTCTX_ON 压 0）。
+ *             TODO(parallel)：面板内 engine/context 接线与总开关消费
+ *             （守护停弹/已弹层收起）归键盘面板实现员——本访问器只负责
+ *             生命周期与创建。
+ * @return     XVirtualKeyboard* 借用指针；XVIRTUALKEYBOARD_ON=0 或未初始化应用
+ *             返回 NULL。
+ */
+XVirtualKeyboard* XGuiApplication_virtualKeyboard(void);
+
+/**
+ * @brief      设置虚拟键盘总开关（XGui 扩展；Qt 无直接等价物，diverge）。
+ * @details    默认 true。置 false 的生效契约由消费方接线：键盘守护停止
+ *             自动弹出、已弹出面板收起、engine 吞掉虚键、commitRequested
+ *             无人消费。开关状态为进程级单一事实源，存储于应用实例。
+ *             TODO(parallel)：XVirtualKeyboardSettings_setKeyboardEnabled
+ *             （框架核心实现员，设计 apiMapping#7）应委托/同步本开关；
+ *             守护与收层消费接线归键盘面板实现员。
+ * @param      on true 开启（默认），false 关闭。
+ */
+void XGuiApplication_setVirtualKeyboardEnabled(bool on);
+
+/**
+ * @brief      查询虚拟键盘总开关（默认 true）。
+ * @return     开关生效值；未初始化应用返回 true（缺省开放）。
+ */
+bool XGuiApplication_virtualKeyboardEnabled(void);
+
+/**
+ * @brief      按下位置驱动虚拟键盘通知（XGui 扩展；XWidget PRESS 汇聚点
+ *             转发钩子，标准触摸 UX）。
+ * @details    XWidget_dispatchPointerEvent 命中测试后对指针 PRESS 调用，
+ *             本函数转发到 XGuiApplication_virtualKeyboard() 默认面板单
+ *             例的 XVirtualKeyboard_notifyPress（判据/契约见该函数：命中
+ *             受支持编辑框→弹出/重绑，非编辑区域→收起，键盘自身按键不
+ *             受影响）。转发门控：XVIRTUALKEYBOARD_DESKTOP_ON=0 时空实
+ *             现（非桌面形态无自动弹收，与守护同停）；默认面板单例缺席
+ *             （XVIRTUALKEYBOARD_ON=0 级联压 0，或应用未初始化）经
+ *             virtualKeyboard() 返回 NULL 自然落空。XWidget 核心经本转
+ *             发保持对键盘类型零依赖。
+ * @param      hit 指针 PRESS 命中的控件（childAt 结果，借用）；可为 NULL
+ *             （按非编辑区域处理）。
+ * @return     无返回值。
+ */
+void XGuiApplication_virtualKeyboardNotifyPress(XWidget* hit);
 
 /* ==================== 平台接口（对标 QGuiApplication::platformNativeInterface 等） ==================== */
 

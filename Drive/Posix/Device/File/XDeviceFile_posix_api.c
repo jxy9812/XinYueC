@@ -42,6 +42,19 @@
 #include <sys/un.h>
 #include <sys/time.h>
 
+#if defined(__ANDROID__)
+/* bionic 无 shm_open（命名 POSIX 共享内存整个子系统不存在）。安卓跨进程
+   共享内存需 ASharedMemory + Binder 传 fd（属 Drive/Android 平台层，待接），
+   此处先以 ENOSYS 明确拒绝，调用方走通用失败路径，不做伪装成功。 */
+static int xfs_posix_shm_open(const char* name, int flags, mode_t mode)
+{
+    (void)name; (void)flags; (void)mode;
+    errno = ENOSYS;
+    return -1;
+}
+#define shm_open xfs_posix_shm_open
+#endif
+
 /* 这些函数只服务于 XDeviceFile/XDevice 对旧 XFd 的兼容路径。 */
 void XDeviceFile_legacyClose(XFd fd);
 int64_t XDeviceFile_legacyRead(XFd fd, void* buffer, int64_t size);

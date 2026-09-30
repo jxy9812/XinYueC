@@ -19,7 +19,8 @@ Tools/
 │   └── xgui.lsan.supp       LeakSanitizer 抑制列表（Linux ASan）
 ├── codegen/                 源码生成模块
 ├── analysis/                静态分析模块
-└── font/                    字体管线模块
+├── font/                    字体管线模块
+└── ime/                     拼音词库管线模块
 ```
 
 **平台约定**：平台专属的入口、依赖和工具按平台归目录——`windows/`
@@ -111,6 +112,28 @@ CMakeLists 的 Linux 分支 `find_library(NAMES vulkan)` 直接拾取。
 
 三脚本同目录互相 import，依赖 `fontTools`（`pip install fonttools`）。
 **用户在途工作**，用法见各脚本头注释。
+
+## ime/ — 拼音词库管线
+
+| 脚本 | 说明 |
+|---|---|
+| `ime_phrases_compile.py` | IME 词组 txt → XIPB 二进制（运行时零解码快路径；音节白名单从 XPinyinTable.c 提取，严格模式坏行即失败，CRC-32/ISO-HDLC + 音节指纹 + --verify 自检） |
+| `test_ime_phrases_compile.py` | 上者的回归测试（重新生成 `Library/VirtualKeyboard/phrases_zh.bin` 与 `phrases_test_fixture.bin` 并逐字节比对，另校验 4 个坏件夹具；EXIT=0 即产物一致） |
+| `style_check.py` | XVirtualKeyboard LVGL 风格自动化检查：静态断言（LVGL 9.2.2 规格现算对照）+ 无头截图像素采样 + 几何走查（被 xgui_demo_pages.h、xgui_demo_page_keyboard.c、xgui_window_demo.c 引用） |
+
+产物在 `Library/VirtualKeyboard/`（bin 随库入库、不拷贝不入构建树）。
+**改词库或改音节表后必须重编 bin**（音节表增删/重排会被载入指纹校验
+拒绝——防线而非缺陷）：`python Tools/VirtualKeyboard/test_ime_phrases_compile.py`
+，EXIT=0 即入库产物与源同步。
+
+**资产变化的回归锚**（改词库/音节表后须全绿，见
+`Library/VirtualKeyboard/README.md`）：
+
+| 消费方 | 锚点 |
+|---|---|
+| `Test/XGuiTest/XKeyboardTest.c` | ⑥d 夹具解析、⑥e 黄金一致（txt/bin 双侧全双音节键扫描摘要 + 三音节组抽查表 328 条规模锁——**改词库须按新 phrases_zh.txt 重新机械提取同步**）、⑥ 系列状态机用例（412/2017 静态表规模锁） |
+| `Test/XGuiDemo/xgui_demo_apitest_input.c` | §7 ImeTable/ImePhrase 资产锁（412/2017 编译期表 + 3143 运行期资产，isReady 守卫双分支） |
+| `Test/XGuiDemo/xgui_demo_page_keyboard.c` | 阶段 6 词组演示（ready=词组上屏 +6 字节 / 缺资产=单字回退 +3 字节） |
 
 ## 其他
 

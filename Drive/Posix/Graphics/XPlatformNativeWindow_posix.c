@@ -1473,11 +1473,17 @@ static void xpwn_screensEnumerate(bool refresh)
                             xpwn_screenFill(screen, monitorName, &geometry,
                                             (float)monitors[i].mwidth,
                                             (float)monitors[i].mheight, dpi);
-                            XWindowSystemInterface_handleScreenAdded(screen);
-                            /* 新槽位视为已匹配：避免本轮注销阶段把刚登记
-                               的屏幕误删（差分自反性）。 */
-                            matched[g_xpwnScreenCount] = true;
-                            g_xpwnScreens[g_xpwnScreenCount++] = screen;
+                            /* 返回 false=未登记（无应用单例/注册失败）：
+                               所有权仍在平台层，回收防泄漏（此前无人接管
+                               即泄漏；不入 g_xpwnScreens 免悬垂）。 */
+                            if (XWindowSystemInterface_handleScreenAdded(screen)) {
+                                /* 新槽位视为已匹配：避免本轮注销阶段把刚登记
+                                   的屏幕误删（差分自反性）。 */
+                                matched[g_xpwnScreenCount] = true;
+                                g_xpwnScreens[g_xpwnScreenCount++] = screen;
+                            } else {
+                                XScreen_delete_base(screen);
+                            }
                         }
                     }
                 } else if (i < XPWN_MAX_SCREENS) {
@@ -1490,8 +1496,12 @@ static void xpwn_screensEnumerate(bool refresh)
                     xpwn_screenFill(screen, monitorName, &geometry,
                                     (float)monitors[i].mwidth,
                                     (float)monitors[i].mheight, dpi);
-                    XWindowSystemInterface_handleScreenAdded(screen);
-                    g_xpwnScreens[g_xpwnScreenCount++] = screen;
+                    /* 返回 false=未登记：回收防泄漏（不入表免悬垂）。 */
+                    if (XWindowSystemInterface_handleScreenAdded(screen)) {
+                        g_xpwnScreens[g_xpwnScreenCount++] = screen;
+                    } else {
+                        XScreen_delete_base(screen);
+                    }
                 }
                 if (monitorName) xpwn_xFree(monitorName);
             }
@@ -1527,8 +1537,12 @@ static void xpwn_screensEnumerate(bool refresh)
             xpwn_screenFill(screen, name, &geometry,
                             (float)DisplayWidthMM(g_xpwnDisplay, i),
                             (float)DisplayHeightMM(g_xpwnDisplay, i), dpi);
-            XWindowSystemInterface_handleScreenAdded(screen);
-            g_xpwnScreens[g_xpwnScreenCount++] = screen;
+            /* 返回 false=未登记：回收防泄漏（不入表免悬垂）。 */
+            if (XWindowSystemInterface_handleScreenAdded(screen)) {
+                g_xpwnScreens[g_xpwnScreenCount++] = screen;
+            } else {
+                XScreen_delete_base(screen);
+            }
         }
     }
 }
@@ -5629,6 +5643,30 @@ bool XPlatformNativeWindow_requestActivate(XWindow* window)
     }
     XRaiseWindow(g_xpwnDisplay, entry->m_win);
     XSetInputFocus(g_xpwnDisplay, entry->m_win, RevertToParent, CurrentTime);
+    XFlush(g_xpwnDisplay);
+    return true;
+}
+
+bool XPlatformNativeWindow_raise(XWindow* window)
+{
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureConnection()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_win) return false;
+    /* 对标 QXcbWindow::raise：只提升堆叠顺序，不动输入焦点（激活与
+       Z 序解耦；MapNotify 处的无条件 XRaiseWindow 既有约定不变）。 */
+    XRaiseWindow(g_xpwnDisplay, entry->m_win);
+    XFlush(g_xpwnDisplay);
+    return true;
+}
+
+bool XPlatformNativeWindow_lower(XWindow* window)
+{
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureConnection()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_win) return false;
+    XLowerWindow(g_xpwnDisplay, entry->m_win);
     XFlush(g_xpwnDisplay);
     return true;
 }

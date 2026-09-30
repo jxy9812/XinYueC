@@ -1,8 +1,12 @@
 ﻿/**
  * @file       XDialog.h
  * @brief      XDialog 对话框控件（对标 Qt 6.8 QDialog 核心公共 API）。
- * @details    继承 XWidget；exec() 事件循环模态；accepted()/rejected()
- *             信号；done(int) 完成；setModal/setResult/result。
+ * @details    继承 XWidget（对标 QDialog : QWidget）；构造时 flags 不含
+ *             窗口类型位则自动叠加 Dialog 类型（qdialog.cpp:374-378），
+ *             即与 Qt 一致恒为独立顶层窗口；exec() 事件循环模态；
+ *             accepted()/rejected() 信号（done() 内统一按 accepted 前、
+ *             finished 后的顺序发射）；done(int) 完成；
+ *             setModal/setResult/result。
  * @note       模块总开关 XDIALOG_ON。
  * @author     XinYueC 团队
  */
@@ -20,14 +24,29 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XDialog)
 XCLASS_DEFINE_EXTEND_END(XDialog, XWidget)
 
+/** @brief 对话框结果码（对标 QDialog::DialogCode，数值一致）。 */
+typedef enum XDialogCode
+{
+    XDialogCode_Rejected = 0,        /**< 拒绝（对标 QDialog::Rejected）。 */
+    XDialogCode_Accepted = 1         /**< 接受（对标 QDialog::Accepted）。 */
+} XDialogCode;
+
 typedef struct XDialog
 {
     XWidget m_base;    /**< 基类成员；必须是第一个。 */
-    int m_result;      /**< 对标 result()；accepted=1/rejected=0。 */
+    int m_result;      /**< 对标 result()；DialogCode 或标准按钮位值。 */
     bool m_modal;      /**< 对标 modal 属性（默认 false，对标 QDialog::modal；exec 路径显式模态化）。 */
     bool m_inExec;     /**< exec() 循环标志。 */
     bool m_sizeGripEnabled; /**< 对标 QDialog::sizeGripEnabled；仅存储位
                                 （XSizeGrip 控件未自动嵌入）。 */
+    int m_resetModalityTo; /**< open() 临时切换窗口模态前的原模态值
+                                （-1=未记录；对标 QDialogPrivate::
+                                resetModalityTo，done/exec 时恢复）。 */
+    int m_csdAppliedTop;   /**< 当前已套用的 CSD 内容避让顶偏移（像素；
+                                0=未套用/系统标题栏模式）。增量记账：
+                                再次套用只补「目标-已套用」差值，重复
+                                调用幂等不叠加（见
+                                XDialog_decorationTopOffset）。 */
 } XDialog;
 
 /** @brief XDialogclassinit（对标 Qt 同名接口）。
@@ -54,6 +73,11 @@ XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags fla
 
 /**
  * @brief      启动模态对话框事件循环（对标 QDialog::exec）。
+ * @details    exec 期间无条件应用模态；递归 exec 打印警告并返回 -1；
+ *             返回值为 result()（QMessageBox 下为被点标准按钮位值）。
+ *             设有 DeleteOnClose 属性时 exec 返回前删除对话框。
+ * @param      self 目标控件指针；NULL 返回 0。
+ * @return     对话框结果码；递归调用返回 -1。
  */
 int XDialog_exec(XDialog* self);
 /**
@@ -86,8 +110,12 @@ void XDialog_setModal(XDialog* self, bool modal);
 bool XDialog_isModal(const XDialog* self);
 /**
  * @brief      以窗口模态方式显示对话框并立即返回（对标 QDialog::open）。
- * @details    与 Qt 语义一致：设置模态后显示窗口，不进入本地事件
- *             循环（XGui 无嵌套 exec，由调用方事件循环驱动）。
+ * @details    与 Qt 语义一致（qdialog.cpp:509-526）：open 前若
+ *             windowModality 不是 WindowModal 则临时改为 WindowModal
+ *             （原值记录在 m_resetModalityTo，done/exec 关闭时恢复），
+ *             setResult(0) 后 show()，不进入本地事件循环；结果只经
+ *             finished/accepted/rejected 回传。项目模态拦截以应用模态
+ *             门为既定等价物照常登记（demo 约定"模态门照常生效"）。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
  * @return     无返回值。
  */
@@ -106,6 +134,28 @@ void XDialog_setSizeGripEnabled(XDialog* self, bool enable);
  * @return     开启返回 true。
  */
 bool XDialog_isSizeGripEnabled(const XDialog* self);
+/**
+ * @brief      返回对话框内容的 CSD 避让顶偏移（像素）。
+ * @details    框架自绘窗口装饰（XWindowDecoration，CSD）把标题条画在
+ *             客户区顶部，对话框子控件仍从 y≈0 布局时首行内容被条带
+ *             遮挡（用户实测：独立顶层消息盒图标半截）。本查询返回装
+ *             饰条当前高度作为布局起始避让量（XWindowDecoration_
+ *             marginsFor 取值，与 XWindow_frameMargins 同源落盘、条未
+ *             承载时按 XTitleBar_defaultHeight 预测；主窗口布局让位
+ *             同源先例）。仅对话框自身为独立顶层窗口且被框架装饰时非
+ *             零：系统标题栏模式（WM 在客户区外画条）、CSD 抑制
+ *             （XWindow_setCsdFrameSuppressed 置位等价——未装饰时保
+ *             留边距恒零）及子控件形态对话框一律返回 0，布局零变化。
+ *             对标无公开 Qt API：Qt 原生标题栏在窗口框架内由 WM 预
+ *             留，QDialog 无需避让；XGui CSD 条带画在客户区内故需此
+ *             等价物。派生类（XMessageBox 等）自排布内容时以本值为
+ *             计算起点偏移；exec/open/show 时基类对布局挂载的对话框
+ *             自动增量改写根布局顶边距、对其余对话框整体下移直接子
+ *             控件（消息盒等自管派生类除外）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     CSD 激活返回装饰条高；否则返回 0。
+ */
+int XDialog_decorationTopOffset(const XDialog* self);
 
 /* ==================== 信号 ==================== */
 

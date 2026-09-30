@@ -40,12 +40,25 @@ extern "C" {
 /** @brief 停靠区域（对标 Qt::DockWidgetArea，数值一致）。 */
 typedef enum XDockWidgetArea
 {
-    XDockWidgetArea_Left = 0x1,
-    XDockWidgetArea_Right = 0x2,
-    XDockWidgetArea_Top = 0x4,
-    XDockWidgetArea_Bottom = 0x8,
-    XDockWidgetArea_All = 0xf
+    XDockWidgetArea_NoDockWidgetArea = 0x0, /**< 不停靠（浮动态；对标
+                                              *   Qt::NoDockWidgetArea）。 */
+    XDockWidgetArea_Left = 0x1,             /**< 主窗口左侧停靠区。 */
+    XDockWidgetArea_Right = 0x2,            /**< 主窗口右侧停靠区。 */
+    XDockWidgetArea_Top = 0x4,              /**< 主窗口顶部停靠区。 */
+    XDockWidgetArea_Bottom = 0x8,           /**< 主窗口底部停靠区。 */
+    XDockWidgetArea_All = 0xf               /**< 全部区域组合（掩码）。 */
 } XDockWidgetArea;
+
+/** @brief 停靠特性位（对标 QDockWidget::DockWidgetFeature，数值一致）。 */
+typedef enum XDockWidgetFeature
+{
+    XDockWidgetFeature_NoDockWidgetFeatures = 0x0, /**< 关闭/移动/浮动全禁用。 */
+    XDockWidgetFeature_Closable = 0x1,  /**< 可关闭：标题条显示关闭钮。 */
+    XDockWidgetFeature_Movable = 0x2,   /**< 可移动：标题条可拖动。 */
+    XDockWidgetFeature_Floatable = 0x4, /**< 可浮动：可拖出成独立顶层窗口。 */
+    XDockWidgetFeature_VerticalTitleBar = 0x8, /**< 标题条垂直排布（仅位定义）。 */
+    XDockWidgetFeature_FeatureMask = 0xf /**< 有效特性位掩码。 */
+} XDockWidgetFeature;
 
 XCLASS_DEFINE_BEGING(XDockWidget)
 XCLASS_DEFINE_EXTEND_END(XDockWidget, XWidget)
@@ -70,8 +83,23 @@ typedef struct XDockWidget
     XAction* m_toggleAction; /**< 显示/隐藏切换动作（拥有；toggleViewAction
                               *   惰性创建，对标 QDockWidget::toggleViewAction）。 */
     bool m_dragging;         /**< 浮动标题栏拖动进行中（内部状态）。 */
+    bool m_ctrlDrag;         /**< Ctrl 拖动保持浮动（内部状态）：置位时拖动
+                              *   中不吸附宿主落点、释放不落位（对标
+                              *   QDockWidgetPrivate::DragState::ctrlDrag，
+                              *   qdockwidget_p.h:50；按下时按 Ctrl 修饰键
+                              *   判定，qdockwidget.cpp:934）。 */
     XPoint m_dragOffset;     /**< 拖动抓取偏移（全局坐标 − 窗口左上角）。 */
+    XPoint m_pressGlobal;    /**< 按下点全局坐标（浮动态释放时与当前点
+                              *   比较判定是否真实拖动，过滤原地单击误
+                              *   触发落位）。 */
     bool m_announcedVisible; /**< 上次广播 visibilityChanged 的值（去重）。 */
+    XRect m_undockedGeometry; /**< 最近一次浮动态几何（全局坐标，对标
+                              *   QDockWidgetPrivate::undockedGeometry，
+                              *   qdockwidget_p.h:88；重新 setFloating(true)
+                              *   时恢复，qdockwidget.cpp:1465）。 */
+    bool m_undockedValid;    /**< m_undockedGeometry 是否已记录（对标
+                              *   QRect::isValid 的有效性判定，
+                              *   qdockwidget.cpp:1466）。 */
 } XDockWidget;
 
 /** @brief X停靠控件classinit（对标 Qt 同名接口）。
@@ -110,17 +138,29 @@ XWidget* XDockWidget_widget(const XDockWidget* self);
  * @return 无返回值。
  */
 void XDockWidget_setFeatures(XDockWidget* self, int features);
-/** @brief X停靠控件features（对标 Qt 同名接口）。
+/** @brief X停靠控件features（对标 QDockWidget::features）。
  * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+ * @return 返回当前特性位集合（XDockWidgetFeature 位组合）。
  */
 int XDockWidget_features(const XDockWidget* self);
+/** @brief X停靠控件setFeature（对标 QDockWidget::setFeature(feature, on)）。
+ * @details 单特性开关：on=true 置位、false 清位，其余特性保持不变；
+ *          实际变化时经 setFeatures 发射 featuresChanged(int)。
+ * @param self 目标控件指针。
+ * @param feature 单个特性位（XDockWidgetFeature_*，仅低 4 位有效）。
+ * @param on true 置位该特性，false 清除。
+ * @return 无返回值。
+ */
+void XDockWidget_setFeature(XDockWidget* self, int feature, bool on);
 /** @brief X停靠控件setFloating（对标 Qt QDockWidget::setFloating）。
  * @details floating=true 时面板脱离宿主主窗口布局，转成独立顶层窗口
- *          （对标 Qt：拖出主窗成独立顶层窗；保留当前尺寸并映射全局位置，
- *          顶层标题栏显示面板标题，可见时激活窗口）；floating=false 时
- *          若登记过宿主则挂回宿主，几何交还主窗口停靠布局。状态变化时
- *          真发射 topLevelChanged(bool)。
+ *          （对标 Qt：拖出主窗成独立顶层窗；顶层标题栏显示面板标题，
+ *          可见时激活窗口）。几何来源对标 Qt qdockwidget.cpp:1464-1468：
+ *          曾记录过浮动态几何（m_undockedValid，浮动态 ResizeEvent 记录，
+ *          对标 qdockwidget.cpp:1710-1712）则恢复上次浮动几何
+ *          （undockedGeometry，qdockwidget_p.h:88），否则保留当前尺寸
+ *          并映射全局位置。floating=false 时若登记过宿主则挂回宿主，
+ *          几何交还主窗口停靠布局。状态变化时真发射 topLevelChanged(bool)。
  * @param self 目标控件指针。
  * @param floating bool 参数。
  * @return 无返回值。

@@ -155,6 +155,16 @@ static XRectF xplatform_mapRectFromInputItem(const XInputMethodTransform* t,
     return result;
 }
 
+/* 面板驱动面四槽基座默认实现（前向声明：class_init 注册先于定义）。 */
+static void VXPlatformInputContext_showInputPanelImpl(
+        XPlatformInputContext* self);
+static void VXPlatformInputContext_hideInputPanelImpl(
+        XPlatformInputContext* self);
+static void VXPlatformInputContext_updateImpl(
+        XPlatformInputContext* self, XInputMethodQueries queries);
+static void VXPlatformInputContext_setFocusObjectImpl(
+        XPlatformInputContext* self, XObject* object);
+
 XVtable* XPlatformInputContext_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XPlatformInputContext)
@@ -164,6 +174,16 @@ XVtable* XPlatformInputContext_class_init(void)
      * 组合过滤/DBus portal 拦截）可派生覆盖本槽接管按键过滤。 */
     XVTABLE_OVERLOAD_DEFAULT(EXPlatformInputContext_FilterEvent,
                              VXPlatformInputContext_filterEvent);
+    /* 面板驱动面四槽默认实现（Qt 同名虚函数基座口径）：派生（虚拟键
+     * 盘平台上下文）经虚表覆盖，公共入口统一虚槽分发。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXPlatformInputContext_ShowInputPanel,
+                             VXPlatformInputContext_showInputPanelImpl);
+    XVTABLE_OVERLOAD_DEFAULT(EXPlatformInputContext_HideInputPanel,
+                             VXPlatformInputContext_hideInputPanelImpl);
+    XVTABLE_OVERLOAD_DEFAULT(EXPlatformInputContext_UpdateInputPanel,
+                             VXPlatformInputContext_updateImpl);
+    XVTABLE_OVERLOAD_DEFAULT(EXPlatformInputContext_SetFocusObject,
+                             VXPlatformInputContext_setFocusObjectImpl);
     return XVTABLE_DEFAULT;
 }
 
@@ -226,8 +246,16 @@ void XPlatformInputContext_commit(XPlatformInputContext* self)
 void XPlatformInputContext_update(XPlatformInputContext* self,
                                   XInputMethodQueries queries)
 {
-    /* 空后端无编辑状态变更协议：no-op。 */
-    (void)self; (void)queries;
+    if (!self || XClassIsVtableNull((XObject*)self))
+    {
+        VXPlatformInputContext_updateImpl(self, queries);
+        return;
+    }
+    /* 经虚槽分发（派生后端可覆盖；Qt 虚函数口径）。 */
+    XClassGetVirtualFunc((XObject*)self,
+                         EXPlatformInputContext_UpdateInputPanel,
+                         void (*)(XPlatformInputContext*,
+                                  XInputMethodQueries))(self, queries);
 }
 
 void XPlatformInputContext_invokeAction(XPlatformInputContext* self,
@@ -317,7 +345,9 @@ void XPlatformInputContext_emitAnimatingChanged(XPlatformInputContext* self)
 
 /* ==================== 输入面板显隐 ==================== */
 
-void XPlatformInputContext_showInputPanel(XPlatformInputContext* self)
+/** @brief showInputPanel 虚槽默认实现（空后端基座：记状态发信号）。 */
+static void VXPlatformInputContext_showInputPanelImpl(
+        XPlatformInputContext* self)
 {
     if (!self || !self->m_data) return;
     if (self->m_data->m_inputPanelVisible) return;
@@ -325,12 +355,58 @@ void XPlatformInputContext_showInputPanel(XPlatformInputContext* self)
     XPlatformInputContext_emitInputPanelVisibleChanged(self);
 }
 
-void XPlatformInputContext_hideInputPanel(XPlatformInputContext* self)
+/** @brief hideInputPanel 虚槽默认实现（空后端基座）。 */
+static void VXPlatformInputContext_hideInputPanelImpl(
+        XPlatformInputContext* self)
 {
     if (!self || !self->m_data) return;
     if (!self->m_data->m_inputPanelVisible) return;
     self->m_data->m_inputPanelVisible = false;
     XPlatformInputContext_emitInputPanelVisibleChanged(self);
+}
+
+/** @brief update 虚槽默认实现（空后端无编辑状态变更协议：no-op）。 */
+static void VXPlatformInputContext_updateImpl(
+        XPlatformInputContext* self, XInputMethodQueries queries)
+{
+    (void)self; (void)queries;
+}
+
+void XPlatformInputContext_showInputPanel(XPlatformInputContext* self)
+{
+    if (!self || XClassIsVtableNull((XObject*)self))
+    {
+        VXPlatformInputContext_showInputPanelImpl(self);
+        return;
+    }
+    /* 经虚槽分发（派生后端可覆盖；Qt 虚函数口径）。 */
+    XClassGetVirtualFunc((XObject*)self,
+                         EXPlatformInputContext_ShowInputPanel,
+                         void (*)(XPlatformInputContext*))(self);
+}
+
+void XPlatformInputContext_hideInputPanel(XPlatformInputContext* self)
+{
+    if (!self || XClassIsVtableNull((XObject*)self))
+    {
+        VXPlatformInputContext_hideInputPanelImpl(self);
+        return;
+    }
+    XClassGetVirtualFunc((XObject*)self,
+                         EXPlatformInputContext_HideInputPanel,
+                         void (*)(XPlatformInputContext*))(self);
+}
+
+/** @brief showInputPanel 基座直通（不经虚表分发，供派生覆盖复用）。 */
+void XPlatformInputContext_showInputPanel_base(XPlatformInputContext* self)
+{
+    VXPlatformInputContext_showInputPanelImpl(self);
+}
+
+/** @brief hideInputPanel 基座直通（不经虚表分发，供派生覆盖复用）。 */
+void XPlatformInputContext_hideInputPanel_base(XPlatformInputContext* self)
+{
+    VXPlatformInputContext_hideInputPanelImpl(self);
 }
 
 bool XPlatformInputContext_isInputPanelVisible(const XPlatformInputContext* self)
@@ -430,12 +506,36 @@ void XPlatformInputContext_emitInputDirectionChanged(
 
 /* ==================== 焦点对象 ==================== */
 
-void XPlatformInputContext_setFocusObject(XPlatformInputContext* self,
-                                          XObject* object)
+/** @brief setFocusObject 基座默认实现（记录焦点对象+重置接受态）。 */
+static void VXPlatformInputContext_setFocusObjectImpl(
+        XPlatformInputContext* self, XObject* object)
 {
     if (!self || !self->m_data) return;
     self->m_data->m_focusObject = object;
     self->m_data->m_inputMethodAccepted = false;
+}
+
+void XPlatformInputContext_setFocusObject_base(XPlatformInputContext* self,
+                                               XObject* object)
+{
+    VXPlatformInputContext_setFocusObjectImpl(self, object);
+}
+
+void XPlatformInputContext_setFocusObject(XPlatformInputContext* self,
+                                          XObject* object)
+{
+    if (!self || XClassIsVtableNull((XObject*)self))
+    {
+        VXPlatformInputContext_setFocusObjectImpl(self, object);
+        return;
+    }
+    /* 经虚槽分发（派生后端可覆盖；虚拟键盘平台上下文在此驱动默认面
+       板与 VK InputContext 焦点链）。派生覆盖内须调 *_base 复用基座
+       行为（勿再调本入口，防递归）。 */
+    XClassGetVirtualFunc((XObject*)self,
+                         EXPlatformInputContext_SetFocusObject,
+                         void (*)(XPlatformInputContext*, XObject*))(
+        self, object);
 }
 
 XObject* XPlatformInputContext_focusObject(const XPlatformInputContext* self)

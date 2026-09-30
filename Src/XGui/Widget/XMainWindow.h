@@ -82,7 +82,18 @@ typedef struct XMainWindow
                                   *   resizeDocks 的结果存储）。 */
     XVector* m_dockTabGroups;    /**< 停靠面板标签组（元素为 XVector*，
                                   *   组内为 XDockWidget* 借用指针；仅记录
-                                  *   成组关系，不绘制标签条）。 */
+                                  *   成组关系；页签条渲染见 m_dockTabBars）。 */
+    XVector* m_dockTabBars;      /**< 标签组页签条（元素为 XTabBar*，与
+                                  *   m_dockTabGroups 按下标平行；使 tab 化
+                                  *   结果可见可切换，对标 Qt 每标签组的
+                                  *   QTabBar）。 */
+    bool m_inTabSync;            /**< 页签条同步重入保护：xmw_layout 回填
+                                  *   current 下标时置位，抑制 currentChanged
+                                  *   槽递归重排。 */
+    bool m_inGroupSync;          /**< 标签组同步重入保护：dockGroupSync 修改
+                                  *   面板可见性触发 show/hide 事件 → 回触
+                                  *   updateDockLayout → 递归 dockGroupSync，
+                                  *   防止递归破坏停靠状态。 */
     int m_leftDockWidth;         /**< 左侧停靠列宽度（像素；默认 160，
                                   *   可经 resizeDocks 横向调整）。 */
     int m_rightDockWidth;        /**< 右侧停靠列宽度（像素；默认 160，
@@ -95,6 +106,25 @@ typedef struct XMainWindow
     int m_iconSize;              /**< 工具栏图标尺寸。 */
     int m_toolButtonStyle;       /**< 全局工具按钮样式（XToolButtonStyle 取值）。 */
     XWidget* m_activeTabifiedDock; /**< 最近激活的标签化停靠面板（借用）。 */
+    XWidget* m_dropIndicator;  /**< 拖放落点指示器（XRubberBand*，惰性
+                                *   创建的主窗口子控件，随父级联销毁、
+                                *   创建一次后跨拖拽复用；对标 Qt
+                                *   QMainWindowLayout::gapIndicator 的
+                                *   QRubberBand(QRubberBand::Rectangle,
+                                *   parentWidget())，qmainwindowlayout.cpp
+                                *   :2963-2964）。 */
+    int m_dropAreaShown;       /**< 指示器当前展示的区域码（0=隐藏；
+                                *   hoverDrop 幂等门——区域未变时不重复
+                                *   setGeometry/show/raise，拖动中每条
+                                *   移动都调用 hoverDrop，冗余的同步
+                                *   SetWindowPos 往返会放大呈现压力）。 */
+    XVector* m_dockTabBarPool; /**< 回收页签条池（XTabBar* 数组；组解散
+                                *   时页签条只隐藏不销毁——拖放回调链内
+                                *   删除会经析构级联触发事件分发崩溃——
+                                *   入池待复用，避免反复拖出/停靠每次
+                                *   遗弃一个隐藏页签条子控件线性累积）。
+                                *   池中条目仍为主窗口子控件，随主窗级
+                                *   联销毁；本向量仅持指针。 */
     bool m_documentMode;       /**< 文档模式（对标 documentMode）。 */
     bool m_animated;           /**< 动画（对标 animated）。 */
     bool m_dockNestingEnabled; /**< 停靠嵌套（对标 dockNestingEnabled）。 */

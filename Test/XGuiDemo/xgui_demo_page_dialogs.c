@@ -85,7 +85,9 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
    消息框×4+输入/文件/颜色/进度/自定义/目录）——此值小一处，
    m_btn[10]/m_note[10] 末位越界写将砸中紧随其后的 m_msgInfo 等对话框
    槽位（实测：m_note[9] 越界把第 9 行说明标签指针写进消息框-信息槽，
-   open 打在标签上＝信息框永不可见+错位残影+Esc 占死模态位）。 */
+   open 打在标签上＝信息框永不可见+错位残影+Esc 占死模态位）。
+   （远端同位置备注：此值小一处将砸中相邻对话框槽位——新增行时同步
+   更新本值。） */
 #define DLGPG_ROW_COUNT    10
 #define DLGPG_ROW_HEIGHT   50   /* 行距。 */
 #define DLGPG_BTN_X        16
@@ -173,11 +175,14 @@ static void dlgpg_msgAcceptedSlot(XObject* receiver, XVarList* args)
 {
     XMessageBox* box = (XMessageBox*)receiver;
     char buf[128];
+    const XString* title;
     (void)args;
     if (!box)
         return;
+    title = XWidget_windowTitle((XWidget*)box);
     snprintf(buf, sizeof(buf), "消息框[%s]：接受（result=%d）",
-             XMessageBox_title(box), XDialog_result(&box->m_base));
+             title ? XString_toUtf8(title) : "",
+             XDialog_result(&box->m_base));
     dlgpg_status(buf);
 }
 
@@ -185,11 +190,14 @@ static void dlgpg_msgRejectedSlot(XObject* receiver, XVarList* args)
 {
     XMessageBox* box = (XMessageBox*)receiver;
     char buf[128];
+    const XString* title;
     (void)args;
     if (!box)
         return;
+    title = XWidget_windowTitle((XWidget*)box);
     snprintf(buf, sizeof(buf), "消息框[%s]：拒绝（result=%d）",
-             XMessageBox_title(box), XDialog_result(&box->m_base));
+             title ? XString_toUtf8(title) : "",
+             XDialog_result(&box->m_base));
     dlgpg_status(buf);
 }
 #endif /* DLGPG_MSGBOX_ON */
@@ -284,27 +292,30 @@ static XMessageBox* dlgpg_ensureMsgBox(DlgPgMsgKind kind)
     }
     if (*slot)
         return *slot;
-    /* 非阻塞实例路径：仅构造（不 exec），打开经 XDialog_open。 */
+    /* 对标 Qt QMessageBox 独立顶层窗口：不带窗口类型位构造（库内
+     * 自动叠加 Dialog 类型 + 默认 hint），即带系统标题栏/系统菜单/
+     * 关闭钮的原生对话框窗（此前 Popup 无框形态与 Qt 偏离，已废弃；
+     * 覆盖层形态双影/几何被父链改写问题随窗口形态一并消除）。
+     * 打开经 XDialog_open（非阻塞，模态门照常生效）。 */
     box = XMessageBox_create(s_dlgpg.m_root, 0);
     if (!box)
         return NULL;
-    XMessageBox_setTitle(box, title);
+    /* 标题走继承的 QWidget::setWindowTitle 对齐（QMessageBox 无
+       setTitle；XMessageBox_setTitle 重复入口已删）。 */
+    {
+        XString* windowTitle = XString_create_utf8(title);
+        XWidget_setWindowTitle((XWidget*)box, windowTitle);
+        if (windowTitle) XString_delete_base((XClass*)windowTitle);
+    }
     XMessageBox_setText(box, text);
     XMessageBox_setIcon(box, icon);
     XMessageBox_setStandardButtons(box,
                                    (int)XDialogButtonBoxStandard_Ok |
                                    (int)XDialogButtonBoxStandard_Cancel);
-    /* 标准按钮按角色自动发 accepted/rejected → 中继到对话框
-       accept()/reject()（Qt QDialogButtonBox 接线惯例）。 */
-    XObject_connect_1((XObject*)box->m_buttonBox,
-                      (size_t)XDialogButtonBox_accepted_signal(NULL),
-                      (XObject*)box, dlgpg_boxAcceptSlot,
-                      XConnectionType_Direct);
-    XObject_connect_1((XObject*)box->m_buttonBox,
-                      (size_t)XDialogButtonBox_rejected_signal(NULL),
-                      (XObject*)box, dlgpg_boxRejectSlot,
-                      XConnectionType_Direct);
-    /* 对话框关闭结果 → 状态栏。 */
+    /* 按钮收口由消息盒内部完成（对标 QMessageBox 订阅按钮盒 clicked
+       自行 done(标准位值)）：accepted/rejected/finished 信号直接回
+       状态栏，不再经按钮盒角色信号中继 accept/reject（Qt 无此桥接，
+       双路收口会把位值结果二次覆盖为 0/1）。 */
     XObject_connect_1((XObject*)box,
                       (size_t)XDialog_accepted_signal(NULL),
                       (XObject*)box, dlgpg_msgAcceptedSlot,
@@ -313,8 +324,9 @@ static XMessageBox* dlgpg_ensureMsgBox(DlgPgMsgKind kind)
                       (size_t)XDialog_rejected_signal(NULL),
                       (XObject*)box, dlgpg_msgRejectedSlot,
                       XConnectionType_Direct);
-    /* 居中于页面内容区（XMessageBox_init 默认尺寸 320x140）。 */
-    XWidget_setGeometry((XWidget*)box, 220, 160, 320, 140);
+    /* 不显式定位：消息盒为独立顶层窗口（几何=屏幕坐标），open/exec
+       每次显示自动居中于父级顶层窗口（对标 QDialog::adjustPosition；
+       显式 setGeometry 会把页面坐标误当屏幕坐标并永久固定位置）。 */
     *slot = box;
     return box;
 }
@@ -515,7 +527,8 @@ static XProgressDialog* dlgpg_ensureProgress(void)
                       (size_t)XProgressDialog_canceled_signal(NULL),
                       (XObject*)progress, dlgpg_progressCanceledSlot,
                       XConnectionType_Direct);
-    XWidget_setGeometry((XWidget*)progress, 200, 150, 360, 170);
+    /* 不显式定位：对话框为独立顶层窗口（几何=屏幕坐标），open 每次
+       显示自动居中于父级顶层窗口（对标 QDialog::adjustPosition）。 */
     s_dlgpg.m_progress = progress;
     return progress;
 }
@@ -599,7 +612,8 @@ static XDialog* dlgpg_ensureCustom(void)
                       (size_t)XDialog_rejected_signal(NULL),
                       (XObject*)dialog, dlgpg_customRejectedSlot,
                       XConnectionType_Direct);
-    XWidget_setGeometry((XWidget*)dialog, 210, 150, 340, 170);
+    /* 不显式定位：对话框为独立顶层窗口（几何=屏幕坐标），open 每次
+       显示自动居中于父级顶层窗口（对标 QDialog::adjustPosition）。 */
     s_dlgpg.m_customBox = box;
     s_dlgpg.m_custom = dialog;
     return dialog;
@@ -662,11 +676,18 @@ static void dlgpg_countCanceledSlot(XObject* receiver, XVarList* args)
 /* ==================== 页面构建（契约接口） ==================== */
 
 #if DLGPG_BUTTONS_ON
-/** @brief 装配一行：触发按钮 + 说明标签（手工几何并 show）。 */
+/** @brief 装配一行：触发按钮 + 说明标签（手工几何并 show）。
+ *  @details 入口防御：row 越界直接忽略（历史上 ROW_COUNT=9 而装配
+ *           10 行，越界写 m_btn[9]/m_note[9] 覆盖相邻 m_msgInfo 槽，
+ *           把 XLabel 指针当 XMessageBox* open——见 DLGPG_ROW_COUNT
+ *           注）。 */
 static void dlgpg_addRow(int row, const char* btnText,
                          const char* noteText, XSlotFunc1 trigger)
 {
-    XPushButton* button = XPushButton_create(s_dlgpg.m_root, 0);
+    XPushButton* button;
+    if (row < 0 || row >= DLGPG_ROW_COUNT)
+        return;
+    button = XPushButton_create(s_dlgpg.m_root, 0);
     int y = 14 + row * DLGPG_ROW_HEIGHT;
     if (button) {
         XPushButton_setText_2(button, btnText);
@@ -809,9 +830,12 @@ int demo_page_dialogs_autotest(XWidget* page)
      *         getter + 非阻塞 accept/reject 结果码与信号计数。 ---- */
     {
         XMessageBox* box = XMessageBox_create(page, 0);
+        XString* boxTitle = XString_create_utf8("Autotest");
         DLGPG_EXPECT(box != NULL, "消息框堆构造成功");
+        DLGPG_EXPECT(box == NULL || ((XWidget*)box)->m_isWindow,
+                     "消息框构造即为独立顶层窗口（对标 QDialog 窗口类型）");
         if (box) {
-            XMessageBox_setTitle(box, "Autotest");
+            XWidget_setWindowTitle((XWidget*)box, boxTitle);
             XMessageBox_setText(box, "消息文本");
             XMessageBox_setIcon(box, XMessageBoxIcon_Information);
             XMessageBox_setStandardButtons(
@@ -819,8 +843,12 @@ int demo_page_dialogs_autotest(XWidget* page)
                      (int)XDialogButtonBoxStandard_Cancel);
             DLGPG_EXPECT(strcmp(XMessageBox_text(box), "消息文本") == 0,
                          "消息框 text getter 回读");
-            DLGPG_EXPECT(strcmp(XMessageBox_title(box), "Autotest") == 0,
-                         "消息框 title getter 回读");
+            DLGPG_EXPECT(
+                XWidget_windowTitle((XWidget*)box) != NULL &&
+                strcmp(XString_toUtf8(
+                           XWidget_windowTitle((XWidget*)box)),
+                       "Autotest") == 0,
+                "消息框 windowTitle getter 回读（对标 setWindowTitle）");
             DLGPG_EXPECT(XMessageBox_icon(box) == XMessageBoxIcon_Information,
                          "消息框 icon getter 回读");
             DLGPG_EXPECT(XMessageBox_standardButtons(box) ==
@@ -845,12 +873,17 @@ int demo_page_dialogs_autotest(XWidget* page)
                          "消息框 reject 结果码与 rejected 计数");
             XMessageBox_delete_base(box); /* 堆对象即测即毁防泄漏。 */
         }
+        if (boxTitle)
+            XString_delete_base((XClass*)boxTitle);
     }
 
     /* ---- 1b. 对话框 Enter 键派发（§8.0g14 锁定）：open 非阻塞显示
      *         后向对话框直发 Return 键事件——默认按钮（首个可见可用
-     *         标准按钮=Ok）应被点击 → accept 关闭 → accepted 计数；
-     *         结束后显式清焦点防堆对象销毁后应用焦点悬垂。 ---- */
+     *         标准按钮=Ok）应被点击 → clicked 收口 done(Ok 位值) 关闭
+     *         → result==Ok 位值（对标 QMessageBox：result/exec 返回被
+     *         点标准按钮位值，非 DialogCode）且 accepted 计数（角色
+     *         映射 AcceptRole→accepted）；结束后显式清焦点防堆对象
+     *         销毁后应用焦点悬垂。 ---- */
     {
         XMessageBox* box = XMessageBox_create(page, 0);
         int acceptedBefore = s_dlgpg.m_acceptedCount;
@@ -876,11 +909,53 @@ int demo_page_dialogs_autotest(XWidget* page)
                 XEvent_delete_base((XEvent*)keyEvent);
             }
             DLGPG_EXPECT(!XWidget_isVisible((XWidget*)box) &&
-                         XDialog_result(&box->m_base) == 1 &&
+                         XDialog_result(&box->m_base) ==
+                             (int)XDialogButtonBoxStandard_Ok &&
                          s_dlgpg.m_acceptedCount == acceptedBefore + 1,
-                         "Return 直发命中默认按钮 accept 关闭");
+                         "Return 直发命中默认按钮，result 回填 Ok 位值");
             XWidget_clearFocus((XWidget*)box);
             XMessageBox_delete_base(box);
+        }
+    }
+
+    /* ---- 1c. 页面路径回归（OOB 根因锁定）：点击"消息框-信息"触发
+     *         按钮（row 0），断言消息框对象真实创建且类型正确、独立
+     *         窗口形态、open 期间窗口模态。历史上 DLGPG_ROW_COUNT=9
+     *         而装配 10 行，addRow 越界写 m_note[9] 覆盖相邻 m_msgInfo
+     *         槽——ensureMsgBox 把说明标签指针当 XMessageBox* 返回并
+     *         open（屏幕只有一段浮字、无窗口、应用假死）。结束后
+     *         reject 关闭并验证模态恢复，防残留窗口/模态门影响后续
+     *         用例。 ---- */
+    {
+        XPushButton* trigger = (DLGPG_BUTTONS_ON && DLGPG_ROW_COUNT > 0)
+                                   ? s_dlgpg.m_btn[0] : NULL;
+        XMessageBox* box = NULL;
+        DLGPG_EXPECT(trigger != NULL, "对话框页消息框触发按钮存在");
+        if (trigger) {
+            /* 与真实点击同一信号路径（clicked → 触发槽）。 */
+            XAbstractButton_click((XAbstractButton*)trigger);
+            box = s_dlgpg.m_msgInfo;
+        }
+        DLGPG_EXPECT(box != NULL &&
+                         XClassGetVtable((XObject*)box) ==
+                             XMessageBox_class_init(),
+                     "点击消息框-信息后消息框对象真实创建（类型校验）");
+        DLGPG_EXPECT(box && ((XWidget*)box)->m_isWindow &&
+                         XWidget_isVisible((XWidget*)box),
+                     "消息框为独立顶层窗口且已可见");
+        DLGPG_EXPECT(XWidget_windowModality((XWidget*)box) ==
+                         XWindowModality_WindowModal,
+                     "消息框 open 期间为窗口模态（对标 QDialog::open）");
+        if (box) {
+            XDialog_reject(&box->m_base);
+            /* 消息盒构造即 setModal(true)（对标 qmessagebox.cpp:281），
+             * 而 setModal(true) 同步 windowModality=ApplicationModal
+             * （对标 qwidget.cpp:11440-11445）——open 记录/恢复的原值
+             * 即 ApplicationModal，不再回 NonModal。 */
+            DLGPG_EXPECT(XWidget_windowModality((XWidget*)box) ==
+                             XWindowModality_ApplicationModal &&
+                         !XWidget_isVisible((XWidget*)box),
+                         "消息框关闭后恢复应用模态（modal 属性自洽）且隐藏");
         }
     }
 #endif /* DLGPG_MSGBOX_ON */

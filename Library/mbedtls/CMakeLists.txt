@@ -138,6 +138,12 @@ target_include_directories(mbedtls PRIVATE ${MBEDTLS_PRIVATE_INCS})
 
 # 启用 XSsl mbedTLS 后端（传播给链接方）
 target_compile_definitions(mbedtls PUBLIC XSSL_USE_MBEDTLS)
+# ChaCha20 统一走纯 C 软件路径。chacha20_neon.h 在检测到 NEON 内建
+# （__ARM_NEON，安卓/ARM64 交叉均成立）时会按 MULTIBLOCK>=1 跳过
+# chacha20.c 内的软件版 mbedtls_chacha20_update，而对应的 NEON 多块
+# 实现文件并未随库入库，任何开 NEON 的构建都会链接失败。桌面 x86
+# 恰好无 NEON 才一直未暴露。待补齐 NEON 实现后方可移除此开关。
+target_compile_definitions(mbedtls PRIVATE MBEDTLS_CHACHA20_NEON_MULTIBLOCK=0)
 if(MBEDTLS_USE_XCRYPTOGRAPHIC_AEAD)
     target_compile_definitions(mbedtls PRIVATE MBEDTLS_USE_XCRYPTOGRAPHIC_AEAD=1)
 endif()

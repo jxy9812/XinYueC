@@ -964,10 +964,22 @@ void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags)
     /* 上/下按钮活动子控件标志清零（对标 activeSubControls，缺省无活动按钮）。 */
     self->m_activeUp = false;
     self->m_activeDown = false;
+    /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
+     * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
 
     edit = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
     if (edit) {
         spinbox_refreshText(self);
+        /* 输入法提示自标注（对标 QSpinBoxPrivate::init 的
+           qspinbox.cpp:41 setInputMethodHints(Qt::ImhDigitsOnly)）：落
+           内嵌编辑框本体。XGui 焦点代理方向与 Qt 相反（容器代理到编辑
+           框、焦点落编辑框本体，见 XAbstractSpinBox.c
+           spinbox_createDefaultLineEdit 注释），虚拟键盘守护按焦点控件
+           查询 ImHints，故提示须落编辑框（Qt 落 QSpinBox 本体的
+           XGui 等价位）。DigitsOnly 属排他掩码段，硬锁数字布局。 */
+        XWidget_setInputMethodHints((XWidget*)edit,
+                                    XInputMethodHint_DigitsOnly);
         XLineEdit_setValidator(edit, spinbox_validateNumeric, self);
         XObject_connect_2((XObject*)edit,
                           (size_t)XLineEdit_textChanged_signal(edit),

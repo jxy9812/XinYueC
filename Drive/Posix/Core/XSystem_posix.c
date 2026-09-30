@@ -80,7 +80,10 @@ bool XSystem_platformExecutableFilePath(char* path, size_t cap)
     return true;
 }
 
-#if XSYSTEM_CPU_USAGE_ON
+/* Android：SELinux 将 /proc/stat 对 untrusted_app 隐藏（fopen 即 EACCES），
+   CPU 采样由 Drive/Android/Core/XSystemAndroid.c 提供（/proc/self/stat
+   进程级口径），此处仅编译桌面 POSIX。 */
+#if XSYSTEM_CPU_USAGE_ON && !defined(__ANDROID__)
 
 #include <stdio.h>
 
@@ -176,7 +179,9 @@ bool XSystem_platformMemoryInfo(XSystemMemoryInfo* info)
 
 #endif /* XSYSTEM_MEMORY_USAGE_ON */
 
-#if XSYSTEM_GPU_USAGE_ON
+/* Android：SELinux 拦截 kgsl/Mali sysfs 之外的路径同样不可读，且
+   Drive/Android/Core/XSystemAndroid.c 提供探测式实现，此处排除。 */
+#if XSYSTEM_GPU_USAGE_ON && !defined(__ANDROID__)
 
 double XSystem_platformGpuUsagePercent(void)
 {

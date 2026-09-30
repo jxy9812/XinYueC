@@ -463,12 +463,14 @@ void XWindowSystemInterface_handleWindowStateChanged(XWindow* window,
     XWindow_reportWindowStateChanged(window, newState);
 }
 
-void XWindowSystemInterface_handleScreenAdded(XScreen* screen)
+bool XWindowSystemInterface_handleScreenAdded(XScreen* screen)
 {
     /* 对标 QWindowSystemInterface::handleScreenAdded：平台层枚举到屏幕后
-       统一经本入口登记；登记与 screenAdded 信号由 XGuiApplication 负责。 */
-    if (!screen) return;
-    XGuiApplication_screenAdded(screen);
+       统一经本入口登记；登记与 screenAdded 信号由 XGuiApplication 负责。
+       返回 false=未登记（无应用单例/注册失败）——所有权仍在平台层，
+       调用方必须回收 screen，否则新建对象无人接管而泄漏。 */
+    if (!screen) return false;
+    return XGuiApplication_screenAdded(screen);
 }
 
 void XWindowSystemInterface_handleScreenRemoved(XScreen* screen)

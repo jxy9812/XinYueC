@@ -276,6 +276,15 @@ void XRect_init(XRect* self, int x, int y, int width, int height)
     self->height = height;
 }
 
+void XRectF_init(XRectF* self, float x, float y, float width, float height)
+{
+    if (!self) return;
+    self->x = x;
+    self->y = y;
+    self->width = width;
+    self->height = height;
+}
+
 bool XRect_isEmpty(const XRect* self)
 {
     if (!self) return true;

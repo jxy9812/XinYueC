@@ -218,8 +218,11 @@ void XApplication_setActiveWindow(XWidget* widget)
             xapp_emitFocusChanged(app, oldFocus, app->m_focusWidget);
     }
 #if XWIDGET_ON
+    /* 焦点对象随当前焦点控件走（不传 NULL：缺省语义会落到窗口自身或
+       清空，把控件级焦点对象冲掉——虚拟键盘 hints 查询的事实源）。 */
     XGuiApplication_setFocusWindow(
-        (XWindow*)XWidget_nativeWindow(widget), NULL);
+        (XWindow*)XWidget_nativeWindow(widget),
+        (XObject*)XApplication_focusWidget());
 #endif /* XWIDGET_ON */
 }
 
@@ -232,12 +235,20 @@ XWidget* XApplication_focusWidget(void)
 void XApplication_setFocusWidget(XWidget* widget)
 {
     XApplication* app = g_xapp;
-    XWidget* old;
-    if (!app) return;
-    old = app->m_focusWidget;
-    if (old == widget) return;
-    app->m_focusWidget = widget;
-    xapp_emitFocusChanged(app, old, widget);
+    if (app) {
+        XWidget* old = app->m_focusWidget;
+        if (old != widget) {
+            app->m_focusWidget = widget;
+            xapp_emitFocusChanged(app, old, widget);
+        }
+    }
+#if XGUIAPPLICATION_ON
+    /* Qt 对齐（QApplication::setFocusWidget → focusObjectChanged → 平台
+     * 输入上下文）：控件级焦点变化即焦点对象变化。放在 XApplication
+     * 单例判据之外——无头/控件级环境（无 g_xapp）焦点链同样要通（虚
+     * 拟键盘经上下文查询控件 hints/包围文本的事实源）。 */
+    XGuiApplication_setFocusObject((XObject*)widget);
+#endif /* XGUIAPPLICATION_ON */
 }
 
 XWidget* XApplication_activeModalWidget(void)

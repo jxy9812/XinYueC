@@ -546,6 +546,44 @@
 #ifndef XLINEEDIT_ON
 #define XLINEEDIT_ON 1
 #endif
+#ifndef XKEYBOARD_ON
+#define XKEYBOARD_ON 1
+#endif
+/* 拼音 IME（XVirtualKeyboard 扩展）：内置拼音布局 + 组串状态机 + 键盘内嵌
+ * 候选带（复用气泡带行高预算）。依赖 XKEYBOARD_ON 与至少一个编辑控
+ * 件适配（汉字直写按目标 vtable 分派，见下方依赖级联）。 */
+#ifndef XKEYBOARD_IME_ON
+#define XKEYBOARD_IME_ON 1
+#endif
+/* Qt Virtual Keyboard 对齐类族（Src/XGui/VirtualKeyboard/）：InputContext/
+ * InputEngine/AbstractInputMethod/SelectionListModel/Trace/Settings/
+ * Dictionary/DictionaryManager/Observer/PlatformInputContext + Pinyin/
+ * Plain 两插件。依赖 XKEYBOARD_ON（默认面板=XVirtualKeyboard）与 XINPUTMETHOD_ON
+ * （XPlatformInputContext 基座与查询桥）；XPlatformInputContext 依赖
+ * XPLATFORMINPUTCTX_ON。嵌入树关闭 XKEYBOARD_ON 或输入法基座时整体裁剪
+ * （级联见下方依赖段）。 */
+#ifndef XVIRTUALKEYBOARD_ON
+#define XVIRTUALKEYBOARD_ON 1
+#endif
+/* 桌面/嵌入式形态开关（XVIRTUALKEYBOARD_DESKTOP_ON，默认 1）：1=守护
+ * 自动弹+贴底弹层（焦点边沿自动弹出/跟随）；0=守护停用，仅显式
+ * XVirtualKeyboard_popup/总开关控制。选区手柄/影子输入控件不在范围。 */
+#ifndef XVIRTUALKEYBOARD_DESKTOP_ON
+#define XVIRTUALKEYBOARD_DESKTOP_ON 1
+#endif
+/* 拼音词组库（IME V2 外挂词组，XPinyinPhrase TU）：词组查询与
+ * 文件加载。依赖 XKEYBOARD_IME_ON 与 XFILE_ON（词库为运行期文件资产，
+ * 嵌入式无文件系统时整体编译裁剪，仿 XFont_config.h XFONT_FILE_ON
+ * 口径）。表达式宏自动跟随下方四处 XKEYBOARD_IME_ON 级联压 0。
+ * 注意：本开关压 0 只裁词组查询与加载 TU——INV2 跨音节切分与单字区
+ * 间装配仍保留（组串行为是 V1 接受集的严格超集，非逐位等于 V1）。 */
+#ifndef XKEYBOARD_IME_PHRASE_ON
+#if defined(XFILE_ON)
+#define XKEYBOARD_IME_PHRASE_ON (XKEYBOARD_IME_ON && XFILE_ON)
+#else
+#define XKEYBOARD_IME_PHRASE_ON XKEYBOARD_IME_ON
+#endif
+#endif
 #ifndef XABSTRACTSPINBOX_ON
 #define XABSTRACTSPINBOX_ON 1
 #endif
@@ -789,11 +827,41 @@
 #define XABSTRACTSPINBOX_ON 0
 #undef XSPINBOX_ON
 #define XSPINBOX_ON 0
+#undef XKEYBOARD_ON
+#define XKEYBOARD_ON 0
+#undef XKEYBOARD_IME_ON
+#define XKEYBOARD_IME_ON 0
+#undef XVIRTUALKEYBOARD_ON
+#define XVIRTUALKEYBOARD_ON 0
 #endif
 /* XStackedLayout 依赖 XLayout；布局总开关裁剪时连带裁剪。 */
 #if !XLAYOUT_ON
 #undef XLAYOUT_STACKED_ON
 #define XLAYOUT_STACKED_ON 0
+#endif
+/* XVirtualKeyboard 拼音 IME 依赖键盘本体（User1 槽位装载拼音布局）。 */
+#if !XKEYBOARD_ON
+#undef XKEYBOARD_IME_ON
+#define XKEYBOARD_IME_ON 0
+#endif
+/* 拼音候选为汉字，提交走多字节直写（按目标 vtable 分派公开插入
+ * API）；三编辑控件开关全 0 时仅剩单字节 ASCII 合成键路径，汉字无
+ * 法上屏——编译期级联裁剪（仿 XVirtualKeyboard.c 三开关全 0 降级口径）。 */
+#if !XLINEEDIT_ON && !XPLAINTEXTEDIT_ON && !XTEXTEDIT_ON
+#undef XKEYBOARD_IME_ON
+#define XKEYBOARD_IME_ON 0
+#endif
+/* XVirtualKeyboard 类族依赖键盘本体（默认面板=XVirtualKeyboard）与输入法基座
+ * （XPlatformInputContext/XInputMethod 查询桥，XPLATFORMINPUTCTX_ON 与
+ * XINPUTMETHOD_ON 同源级联）。任一缺席时整体裁剪。 */
+#if !XKEYBOARD_ON || !XINPUTMETHOD_ON || !XPLATFORMINPUTCTX_ON
+#undef XVIRTUALKEYBOARD_ON
+#define XVIRTUALKEYBOARD_ON 0
+#endif
+/* 桌面形态开关跟随总开关（守护自动弹是总开关开启态的运行形态）。 */
+#if !XVIRTUALKEYBOARD_ON
+#undef XVIRTUALKEYBOARD_DESKTOP_ON
+#define XVIRTUALKEYBOARD_DESKTOP_ON 0
 #endif
 /* XSlider 依赖 XAbstractSlider；抽象基类裁剪时连带裁剪 XSlider。 */
 #if !XABSTRACTSLIDER_ON
@@ -978,6 +1046,14 @@
 #define XABSTRACTSPINBOX_ON 0
 #undef XSPINBOX_ON
 #define XSPINBOX_ON 0
+#undef XKEYBOARD_ON
+#define XKEYBOARD_ON 0
+#undef XKEYBOARD_IME_ON
+#define XKEYBOARD_IME_ON 0
+#undef XVIRTUALKEYBOARD_ON
+#define XVIRTUALKEYBOARD_ON 0
+#undef XVIRTUALKEYBOARD_DESKTOP_ON
+#define XVIRTUALKEYBOARD_DESKTOP_ON 0
 #undef XLAYOUT_STACKED_ON
 #define XLAYOUT_STACKED_ON 0
 #undef XAPPLICATION_ON
@@ -1109,5 +1185,12 @@
 #endif
 
 #include "Graphics/XImageCodec/XImageCodec_config.h"
+
+/* ==================== 调试跟踪（临时；问题关闭后移除） ==================== */
+/* 停靠拖放链路跟踪：置 1 时 XMainWindow/XDockWidget 关键决策点向 stdout
+ * 打一行 [DOCK] 日志（带 fflush）。默认 0（零开销）。 */
+#ifndef XGUI_DOCK_TRACE
+#define XGUI_DOCK_TRACE 1
+#endif
 
 #endif /* XGUICONFIG_H */

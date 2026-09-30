@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- XGuiWindowDemo NativeActivity 壳清单：无 Java 代码（hasCode=false），
+     全部逻辑在 libxguidemo.so（ANativeActivity_onCreate）。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.xinyuec.xguidemo"
+    android:versionCode="1"
+    android:versionName="0.1">
+
+    <uses-permission android:name="android.permission.DUMP"/>
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
+    <uses-permission android:name="android.permission.READ_LOGS"/>
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+
+    <application
+        android:label="XGuiDemo"
+        android:hasCode="false"
+        android:debuggable="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:label="XGuiDemo"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="xguidemo" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

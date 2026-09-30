@@ -383,6 +383,10 @@ XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType t
 void XObject_killTimer(XObject* self, XTimerId timerId)
 {
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
+	/* 悬空调试残留「if (timerId == 1)」已删（staged diff 可证系调试
+	 * 中间态）：它把下一行守卫短路成自己的条件体，使 timerId!=1 时
+	 * 无条件走到 unregisterTimer_base——disp 为 NULL 即触发
+	 * ArgIsNULL 报错（回归门禁实测 ×4）。恢复守卫语义。 */
 	if (!disp)return ;
 	XAbstractEventDispatcher_unregisterTimer_base(disp, timerId);
 }
@@ -551,6 +555,19 @@ void VXObject_deinit(XObject* object)
 	object->block_sig = 0;
 	if (XObject_thread(object) == XThread_currentThread())
 		XCoreApplication_removePostedEvents(object, XEVENT_TYPE_NONE);
+	/* 注销本对象在事件分发器上的全部定时器（对标 Qt ~QObject 经
+	 * QAbstractEventDispatcherPrivate::removeTimerInfo 的对象级清理）：
+	 * 定时器回调在计时线程异步触发，若对象先亡而轮表项残留，回调将
+	 * 向已释放内存 postEvent（实测堆 UAF 崩溃）。分发器必须取本对象
+	 * threadData 所属线程的（XObject_eventDispatcher，与
+	 * startTimer/killTimer 同源）——XThread 为每个工作线程建独立
+	 * dispatcher，XCoreApplication_eventDispatcher 只返回主线程的，
+	 * 跨线程对象会注销错表、真表残留悬垂指针。 */
+	{
+		XAbstractEventDispatcher* disp = XObject_eventDispatcher(object);
+		if (disp)
+			XAbstractEventDispatcher_unregisterTimers_base(disp, object);
+	}
 	XObject_destroyed_signal(object);
 
 	object->is_deleting_children = true;

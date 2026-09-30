@@ -497,6 +497,9 @@ void XScrollBar_init_2(XScrollBar* self, int orientation,
     hint.width = 15;
     hint.height = 15;
     XWidget_setSizeHint((XWidget*)self, &hint);
+    /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
+     * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
 }
 
 void XScrollBar_setShowButtons(XScrollBar* self, bool show)

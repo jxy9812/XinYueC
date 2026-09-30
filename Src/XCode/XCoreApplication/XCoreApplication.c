@@ -803,12 +803,16 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
         }
     }
 
+    /* 对标 Qt QApplication::notify：receiver 在事件处理中可能被销毁
+     * （setFloating→setParent→destroyWindow 级联），isWidgetType 与
+     * parent 须在分发前捕获——事件处理后 receiver 可能已释放（读
+     * 悬空指针导致 access violation，XObject_isWidgetType+0x17 实测
+     * 崩溃）。分发后只允许使用预捕获值。 */
+    bool recvIsWidget = XObject_isWidgetType(receiver);
+    XObject* recvParent = XObject_parent(receiver);
     handled = XObject_event_base(receiver, event);
-    if (!handled && XObject_isWidgetType(receiver)) {
-        XObject* parent = XObject_parent(receiver);
-        if (parent)
-            handled = XCoreApplication_notify_base(parent, event);
-    }
+    if (!handled && recvIsWidget && recvParent)
+        handled = XCoreApplication_notify_base(recvParent, event);
 
 done:
     if (receiverData)

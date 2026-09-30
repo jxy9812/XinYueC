@@ -435,6 +435,17 @@ void XWindow_createHandle(XWindow* self);
  */
 XWindowId XWindow_winId(const XWindow* self);
 
+/**
+ * @brief      判断窗口是否处于析构（deinit）进行中。
+ * @details    析构期复活闸查询：deinit 已摘除应用登记但尚未释放本体时
+ *             返回 true。XGuiApplication_addWindow 等登记方据此拒绝把
+ *             垂死窗口复活登记（悬垂借用指针根因防御）；winId()/
+ *             createHandle() 在此期间一律拒绝惰性建柄。
+ * @param      self 目标窗口；可为 NULL。
+ * @return     析构进行中返回 true；入参非法或正常存活返回 false。
+ */
+bool XWindow_isDestructing(const XWindow* self);
+
 /* ==================== 父窗口与顶层判断 ==================== */
 
 /**

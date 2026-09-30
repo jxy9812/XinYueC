@@ -104,7 +104,9 @@ bool XThread_wait(XThread* thread, uint32_t time)
     if (time == UINT32_MAX) {
         ret = pthread_join(pthread, NULL);
     }
-#if defined(__linux__)
+/* bionic 定义 __linux__ 但无 pthread_timedjoin_np（glibc 扩展），
+   安卓回落 m_finished 标志轮询路径。 */
+#if defined(__linux__) && !defined(__ANDROID__)
     else {
         struct timespec deadline;
         if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
@@ -151,12 +153,21 @@ bool XThread_terminate(XThread* thread)
     if (!thread || thread->m_handle == 0) return false;
 
     pthread_t pthread = (pthread_t)thread->m_handle;
+#if defined(__ANDROID__)
+    /* bionic 无 pthread_cancel（安卓线程模型没有强制取消）。
+       退化为协作式中断：置位中断标志，由线程执行体内自行检查退出；
+       无法保证回收，返回失败由上层决定后续策略。 */
+    (void)pthread;
+    thread->m_interruptionRequested = true;
+    return false;
+#else
     int ret = pthread_cancel(pthread);
     if (ret != 0) return false;
 
     void* result;
     ret = pthread_join(pthread, &result);
     if (ret != 0) return false;
+#endif
 
     thread->m_finished = true;
     thread->m_running = false;

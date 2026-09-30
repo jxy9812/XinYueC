@@ -1913,6 +1913,17 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
                                  true);
         }
     }
+    /* 输入法接入自标注（对标 QDateTimeEditPrivate::init 的
+       qdatetimeedit.cpp:2570 setInputMethodHints(Qt::ImhPreferNumbers)）：
+       PreferNumbers 为非排他软提示——数字布局优先但不锁字符集（勿硬锁，
+       日期分段仍可键入分隔符）；用户 setInputMethodHints 可整体覆盖。
+       WA_InputMethodEnabled 落壳本体（对标 QAbstractSpinBoxPrivate::init
+       的 qabstractspinbox.cpp:1607 落容器口径）：本控件行编辑
+       WA_TransparentForMouseEvents、焦点回收至壳本体（见上方 F3-②/③
+       注释），虚拟键盘守护按焦点控件（=壳）查属性位与 ImHints。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_InputMethodEnabled,
+                         true);
+    XWidget_setInputMethodHints((XWidget*)self, XInputMethodHint_PreferNumbers);
     /* 以当前时间刷新编辑框文本（无信号）。 */
     (void)now;
     xdt_refreshText(self);

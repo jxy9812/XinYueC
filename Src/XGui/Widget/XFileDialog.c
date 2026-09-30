@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XFileDialog.c
  * @brief      文件对话框控件实现（对标 Qt 6.8 QFileDialog 公共 API）。
  * @details    与同名头文件的公共 API 一一对应。静态便捷函数创建临时实例、
@@ -684,9 +684,27 @@ static void xff_sortViewUninstall(void)
 /** @brief 弹窗主屏居中（对标 Qt 静态便捷函数把对话框定位于屏幕中央）。 */
 static void xff_centerOnScreen(XWidget* w)
 {
-    /* 子控件形态对话框居中于父控件（几何为父系坐标；屏幕坐标会落
-     * 到页面坐标系外被裁剪）。无父时回退屏幕居中。 */
+    /* 窗口形态对话框（XDialog init 对无类型位叠加 Dialog 类型）几何
+     * 为全局屏幕坐标：居中于父级顶层窗口（对标 QDialogPrivate::
+     * adjustPosition）；子控件形态（历史/改型）几何为父系坐标，居
+     * 中于父控件。无父时回退屏幕居中。 */
     XWidget* parent = w ? XWidget_parentWidget(w) : NULL;
+    if (parent && w->m_isWindow) {
+        XWidget* ptop = XWidget_topLevelWidget(parent);
+        if (ptop && ptop != w) {
+            XPoint origin;
+            XPoint po;
+            int dw = XWidget_width(w);
+            int dh = XWidget_height(w);
+            int tw = XWidget_width(ptop);
+            int th = XWidget_height(ptop);
+            XPoint_init(&origin, 0, 0);
+            po = XWidget_mapToGlobal(ptop, &origin);
+            XWidget_move(w, tw > dw ? po.x + (tw - dw) / 2 : po.x,
+                            th > dh ? po.y + (th - dh) / 2 : po.y);
+            return;
+        }
+    }
     if (parent) {
         int pw = XWidget_width(parent);
         int ph = XWidget_height(parent);
@@ -2866,24 +2884,19 @@ static int xff_selectedFilterIndex(const XFileDialog* dlg)
 /** @brief 模态执行并回收：返回是否接受。 */
 static bool xff_exec(XFileDialog* dlg)
 {
-    XLineEdit* nameEdit;
     if (!dlg) return false;
     /* 宽度容纳地址行（后退36+上级64+标签+目录下拉280+搜索150）与
      * 主体行（导航窗格 120 + 文件树 min 360）+ 页边距；680 与 Win10
      * 文件对话框默认幅面同量级。 */
     XWidget_resize((XWidget*)dlg, 680, 460);
     xff_centerOnScreen((XWidget*)dlg);
-    /* 初始焦点对标 QFileDialogPrivate::initialFocus：文件名模式聚焦
-     * 文件名编辑框（打开即键入，Qt 新建/打开口径），目录模式维持
-     * exec 内 grabInitialFocus 的默认钮（「选择文件夹」）。exec 里的
-     * grabInitialFocus 见焦点已在对话框子树内则不再抢占
-     * （XDialog.c dialog_containsFocus 门禁）。 */
-    if (dlg->m_fileMode != XFileDialog_Directory) {
-        nameEdit = (XLineEdit*)xff_childByName(&dlg->m_base,
-                                               XFF_NAME_NAMEEDIT);
-        if (nameEdit)
-            XWidget_setFocusReason((XWidget*)nameEdit, XFocusReason_Other);
-    }
+    /* 不预聚焦文件名编辑框（项目口径）：嵌入式软键盘机型上文本框取得
+     * 输入焦点即弹软键盘，打开对话框不应强制弹键盘（Qt 桌面
+     * QFileDialogPrivate::setVisible 的 show 路径虽有
+     * fileNameEdit->setFocus()，但桌面无软键盘无此副作用，不照搬）。
+     * 用户点击文件名框经 XLineEdit 点击聚焦自然取焦并弹键盘。焦点
+     * 回落到 exec 内 grabInitialFocus 的默认钮（「确定/选择文件夹」，
+     * 非文本框故不触发软键盘，回车仍可确认）。 */
     return XDialog_exec(&dlg->m_base) == 1;
 }
 

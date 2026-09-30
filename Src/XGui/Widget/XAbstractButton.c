@@ -1227,6 +1227,11 @@ void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
                               XPaletteColorRole_ButtonText);
     XWidget_setBackgroundRole((XWidget*)self, XPaletteColorRole_Button);
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
+    /* 悬停外观 opt-in（对标 Qt QFusionStyle::polish 的 WA_Hover 收
+     * 口）：按钮族绘制按 State_MouseOver 出悬停高亮，ENTER/LEAVE 须
+     * 标脏自矩形；未声明该位的控件不因指针进出重绘（见
+     * VXWidget_event 的 ENTER/LEAVE 分支）。子类经本 init 继承。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
 }
 
 XAbstractButton* XAbstractButton_create_ex(XMemoryType memory,

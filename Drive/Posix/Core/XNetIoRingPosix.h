@@ -53,8 +53,12 @@
 #endif
 #include <unistd.h>
 
-/* 强制 epoll 时不编译 io_uring 引擎（头存在也不编译）。 */
-#if XNET_HAS_IO_URING_HDR && !(defined(XNET_FORCE_EPOLL) && XNET_FORCE_EPOLL)
+/* 强制 epoll 时不编译 io_uring 引擎（头存在也不编译）。
+ * Android 强制 epoll：安卓 seccomp 过滤器把 io_uring_setup（x86_64 系统调
+ * 用号 425）列为禁用项，运行时直连 SIGSYS 崩溃（WSA 实测）；且内核头虽
+ * 在 NDK sysroot 中存在，运行期任何 API 级别都未放行 io_uring。 */
+#if XNET_HAS_IO_URING_HDR && \
+    !(defined(XNET_FORCE_EPOLL) && XNET_FORCE_EPOLL) && !defined(__ANDROID__)
 #define XNET_BUILD_IO_URING 1
 #else
 #define XNET_BUILD_IO_URING 0

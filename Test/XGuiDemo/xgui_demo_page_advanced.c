@@ -466,9 +466,13 @@ static void adv_mwExitActionSlot(XObject* receiver, XVarList* args)
 }
 
 /** @brief 惰性创建演示主窗口：菜单栏 + 菜单、中央标签、左右停靠面板。
- * @note  菜单对象以主窗口为父对象（对标 XMainWindow_createPopupMenu 的
- *        既有语义：随主窗口析构级联销毁）；停靠面板/内容标签均为子控件
- *        级联销毁。 */
+ * @note  主窗口以演示主窗为父（XWindowType_Window 窗口态子窗口）：
+ *        首显按父窗口客户区上下左右居中（XWidget 首显定位的父窗口
+ *        分支，对标 QDialogPrivate::adjustPosition），随父窗口级联
+ *        析构；页面根沿父链上溯即演示主窗（顶层窗口）。
+ *        菜单对象以主窗口为父对象（对标 XMainWindow_createPopupMenu
+ *        的既有语义：随主窗口析构级联销毁）；停靠面板/内容标签均为
+ *        子控件级联销毁。 */
 static void adv_ensureMainWindow(void)
 {
     XWidget* menuBar;
@@ -483,7 +487,9 @@ static void adv_ensureMainWindow(void)
     XLabel* rightContent;
 
     if (s_adv.mainWindow) return;
-    s_adv.mainWindow = XMainWindow_create(NULL, 0);
+    s_adv.mainWindow = XMainWindow_create(
+        (XWidget*)XWidget_topLevelWidget((XWidget*)s_adv.page),
+        (XWidgetFlags)XWindowType_Window);
     if (!s_adv.mainWindow) return;
     XWidget_resize((XWidget*)s_adv.mainWindow, 560, 420);
     {

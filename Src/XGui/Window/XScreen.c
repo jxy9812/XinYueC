@@ -375,20 +375,21 @@ static void VXScreen_move(XScreen* self, XScreen* other)
 
 /* ==================== 注册表（对标 QGuiApplication 屏幕列表语义） ==================== */
 
-void XScreen_register(XScreen* screen)
+bool XScreen_register(XScreen* screen)
 {
     XVector* list;
-    if (!screen || !screen->m_data) return;
+    if (!screen || !screen->m_data) return false;
     list = g_screens;
     if (!list) {
         g_screens = XVector_Create(XScreen*);
-        if (!g_screens) return;
+        if (!g_screens) return false; /* 调用方负责回收 screen 所有权。 */
         list = g_screens;
     }
-    if (XScreen_vectorIndexOf(list, screen) >= 0) return; /* 重复注册 no-op。 */
+    if (XScreen_vectorIndexOf(list, screen) >= 0) return true; /* 重复注册 no-op。 */
     XVector_Push_Back_Base(list, XScreen*, screen);
     /* 新成员加入后各屏幕默认兄弟集合可能扩大，复查虚拟几何。 */
     XScreen_refreshVirtualGeometries(screen);
+    return true;
 }
 
 void XScreen_unregister(XScreen* screen)

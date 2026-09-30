@@ -43,9 +43,15 @@ extern "C" {
 /** @brief 私有实现前向声明；仅供实现访问。 */
 typedef struct XPlatformInputContextPrivate XPlatformInputContextPrivate;/** @brief 声明 XPlatformInputContext 虚函数枚举：继承 XObject，
  *  FilterEvent 为平台后端可覆盖的事件过滤虚槽（对标 QPlatformInputContext
- *  的虚函数 filterEvent）。 */
+ *  的虚函数 filterEvent）；其余四槽=面板驱动面（对标 Qt 同名虚函数
+ *  showInputPanel/hideInputPanel/update/setFocusObject），空后端基座
+ *  提供默认实现，派生（如虚拟键盘平台上下文）经虚表覆盖。 */
 XCLASS_DEFINE_BEGING(XPlatformInputContext)
 XCLASS_DEFINE_ENUM(XPlatformInputContext, FilterEvent) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XPlatformInputContext, ShowInputPanel),   /**< 请求显示面板。 */
+XCLASS_DEFINE_ENUM(XPlatformInputContext, HideInputPanel),   /**< 请求隐藏面板。 */
+XCLASS_DEFINE_ENUM(XPlatformInputContext, UpdateInputPanel), /**< 输入态更新。 */
+XCLASS_DEFINE_ENUM(XPlatformInputContext, SetFocusObject),   /**< 焦点对象切换。 */
 XCLASS_DEFINE_END(XPlatformInputContext)
 
 
@@ -226,6 +232,21 @@ void XPlatformInputContext_showInputPanel(XPlatformInputContext* self);
 void XPlatformInputContext_hideInputPanel(XPlatformInputContext* self);
 
 /**
+ * @brief      显示输入面板（基座直通，不经虚表分发）。
+ * @details    供派生覆盖实现内复用基座行为（记录面板可见+转发
+ *             visibleChanged）；语义同 showInputPanel 的基座默认实现。
+ *             派生覆盖内勿调公共入口，防虚表重入递归。
+ */
+void XPlatformInputContext_showInputPanel_base(XPlatformInputContext* self);
+
+/**
+ * @brief      隐藏输入面板（基座直通，不经虚表分发）。
+ * @details    供派生覆盖实现内复用基座行为（记录面板隐藏+转发
+ *             visibleChanged）；语义同 hideInputPanel 的基座默认实现。
+ */
+void XPlatformInputContext_hideInputPanel_base(XPlatformInputContext* self);
+
+/**
  * @brief      输入面板是否可见（对标 isInputPanelVisible）。
  * @return     当前可见性。
  */
@@ -294,11 +315,22 @@ void XPlatformInputContext_emitInputDirectionChanged(
 
 /**
  * @brief      设置焦点对象（对标 setFocusObject；借用不持有）。
+ * @details    经虚槽分发：派生后端（虚拟键盘平台上下文）覆盖后驱动
+ *             其面板链。派生覆盖内复用基座行为须调 *_base（调本入口
+ *             会经虚表重入覆盖，无限递归）。
  * @param      self 目标对象；可为 NULL。
  * @param      object 焦点对象借用指针；可为 NULL 清除。
  */
 void XPlatformInputContext_setFocusObject(XPlatformInputContext* self,
                                           XObject* object);
+
+/**
+ * @brief      设置焦点对象（基座直通，不经虚表分发）。
+ * @details    供派生覆盖实现内复用基座行为（记录焦点对象+重置接受
+ *             态）；语义同 setFocusObject 的基座默认实现。
+ */
+void XPlatformInputContext_setFocusObject_base(XPlatformInputContext* self,
+                                               XObject* object);
 
 /**
  * @brief      返回当前焦点对象。

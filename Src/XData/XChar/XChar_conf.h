@@ -50,7 +50,11 @@ extern "C" {
 
  //#define XCHAR_USE_CODE_GBK      /* 代码模式 */
  //#define XCHAR_USE_FILE_GBK      /* 文件模式 */
+/* 系统API模式默认开启；Android 虽属 __linux__，但 bionic 无 iconv 实现，
+   必须排除在系统API模式之外，由下方自动检测回落文件映射表模式。 */
+#if !defined(__ANDROID__)
  #define XCHAR_USE_SYSTEM_GBK    /* 系统API模式 */
+#endif
 
 /* ========================================================================== */
 /*                        文件模式配置                                         */
@@ -130,10 +134,11 @@ extern "C" {
  * 如果用户未指定任何模式，根据平台自动选择：
  *   - Windows/Linux/macOS -> XCHAR_USE_SYSTEM_GBK
  *   - 其他平台            -> XCHAR_USE_FILE_GBK
+ *   - Android 虽定义 __linux__（bionic），但无 iconv 实现，走文件映射表
  */
 #if !defined(XCHAR_USE_CODE_GBK) && !defined(XCHAR_USE_FILE_GBK) && !defined(XCHAR_USE_SYSTEM_GBK)
 
-#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__)) || defined(__APPLE__)
 #define XCHAR_USE_SYSTEM_GBK
 #else
 #define XCHAR_USE_FILE_GBK

@@ -890,7 +890,9 @@ static void VX_plainTextEdit_inputMethodEvent(XWidget* self, XEvent* event)
  *  @note  基类实现为 XWidget.c 内部静态，虚槽重载后无法显式回调，按其
  *         文档契约逐项复刻：ImCursorRectangle=(w/2,0,1,h)、
  *         ImInputItemClipRectangle=控件矩形浮点副本、ImHints=hints、
- *         ImEnabled=true，其余查询项返回 NULL（等价无效 QVariant）。 */
+ *         ImEnabled=isEnabled()&&!isReadOnly()（控制器缺席回退；
+ *         init 已置 WA_InputMethodEnabled 位），其余查询项返回 NULL
+ *         （等价无效 QVariant）。 */
 static XVariant* xpe_inputMethodQueryBase(const XWidget* self,
                                           XInputMethodQuery query)
 {
@@ -918,7 +920,12 @@ static XVariant* xpe_inputMethodQueryBase(const XWidget* self,
         return XVariant_create(&value, sizeof(value), XVariantType_Int32);
     }
     case XInputMethodQuery_ImEnabled: {
-        bool enabled = true;
+        /* 控制器缺席时的壳回退：isEnabled()&&!isReadOnly()（Qt 净语义，
+           同 XLineEdit 复刻口径）；控制器在场时 ImEnabled 由
+           XTextControl_inputMethodQuery 按 TextEditable 旗标先行应答，
+           不落本分支。 */
+        bool enabled = XWidget_isEnabled(self) &&
+                       !XPlainTextEdit_isReadOnly((const XPlainTextEdit*)self);
         return XVariant_create(&enabled, sizeof(enabled), XVariantType_Bool);
     }
     default:
@@ -1340,6 +1347,16 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
     /* 对标 QPlainTextEditPrivate::init 的 StrongFocus（qplaintextedit.cpp:790）：
        无焦点策略时键盘事件永远到不了控件，编辑功能名存实亡。 */
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
+    /* 输入法接入自标注（对标 QPlainTextEditPrivate::init 的
+       qplaintextedit.cpp:792-793）：置 WA_InputMethodEnabled 位（虚拟
+       键盘守护接受判据之一；opt-out=setAttribute(14,false)）并自标注
+       ImhMultiLine 软提示（多行布局/回车换行判据；用户
+       setInputMethodHints 可整体覆盖）。只读态由 ImEnabled 查询实时判
+       ——控制器在场时按 TextEditable 旗标（XTextControl_inputMethodQuery），
+       控制器缺席按壳回退 isEnabled()&&!isReadOnly()。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_InputMethodEnabled,
+                         true);
+    XWidget_setInputMethodHints((XWidget*)self, XInputMethodHint_MultiLine);
     XWidget_resize(self, 240, 180);
     hint.width = 240;
     hint.height = 180;

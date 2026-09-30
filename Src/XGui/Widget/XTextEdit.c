@@ -1305,6 +1305,15 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     self->m_editor = XPlainTextEdit_create_ex(
         XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, 0);
     XWidget_resize((XWidget*)self->m_editor, 200, 100);
+    /* 输入法接入自标注（对标 QTextEditPrivate::init 的
+       qtextedit.cpp:181-182）：壳置 WA_InputMethodEnabled + ImhMultiLine。
+       运行期 IME 消费走内嵌 XPlainTextEdit（其 init 已同款自标注，
+       ImHints/ImEnabled 查询经 VX_textEdit_inputMethodQuery 全枚举委托
+       内嵌编辑器），壳位为属性面对等镜像——与 Qt 把两类旗标都落在
+       QTextEdit 本体对齐；opt-out 需内外两处同置或经内嵌编辑器查询。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_InputMethodEnabled,
+                         true);
+    XWidget_setInputMethodHints((XWidget*)self, XInputMethodHint_MultiLine);
     xte_connectEditorSignals(self);
 #if XTEXTDOCUMENT_ON
     self->m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);

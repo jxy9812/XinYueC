@@ -340,10 +340,14 @@ static bool xpwn_getClientGeometry(HWND hwnd, XRect* out)
     return true;
 }
 
+/** @brief 把按窗口样式调整后的窗口矩形转换为客户端恰好等于目标几何。 */
+static DWORD xpwn_windowExStyle(const XWindow* window);
+
 /** @brief 取窗口原生样式（创建/动态落地共用单一来源；客户端区恰好等
  *         于目标几何的换算见 xpwn_adjustWindowRect）。 */
 static DWORD xpwn_windowStyle(const XWindow* window)
 {
+    DWORD style = WS_OVERLAPPEDWINDOW;
     if (window && XWindow_type(window) == XWindowType_Popup)
         return WS_POPUP;
     /* CSD 激活（框架自绘标题栏接管，标记经 XWindow_setCsdFrameSuppressed
@@ -355,20 +359,38 @@ static DWORD xpwn_windowStyle(const XWindow* window)
      * 受 WM 管理语义）；无边框最大化的工作区钳制见 wndProc WM_GETMINMAXINFO。 */
     if (window && XWindow_isCsdFrameSuppressed(window))
         return WS_POPUP;
-    return WS_OVERLAPPEDWINDOW;
+    if (window && XWindow_type(window) == XWindowType_Tool)
+    {
+        /* 对标 Qt::Tool（qdockwidget.cpp:1203 浮动停靠面板窗口旗标）：
+           工具窗 = 普通框架去掉最小/最大化盒，原生标题只剩关闭钮。 */
+        style &= ~(WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+        return style;
+    }
+    /* 对标 Qt::MSWindowsFixedSizeDialogHint（QWindowsWindow::setWindow
+       * 的固定尺寸对话框映射）：固定尺寸对话框 hint 去掉可拖拽改尺寸
+       的厚边框与最大化盒，保留标题栏/系统菜单/关闭钮——消息盒默认
+       hint 含此位（qmessagebox.cpp:838），拖拽边框不得改变尺寸。 */
+    if (window && (XWindow_flags(window) &
+                   (XWindowFlags)XWindowType_MSWindowsFixedSizeDialogHint))
+        style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+    return style;
 }
 
 static void xpwn_adjustWindowRect(const XWindow* window,
                                   const XRect* geometry, RECT* rc)
 {
     DWORD style;
+    DWORD exStyle;
     if (!geometry || !rc) return;
     rc->left = geometry->x;
     rc->top = geometry->y;
     rc->right = geometry->x + geometry->width;
     rc->bottom = geometry->y + geometry->height;
     style = xpwn_windowStyle(window);
-    AdjustWindowRectEx(rc, style, FALSE, 0);
+    /* exStyle 必须与建窗一致：WS_EX_TOOLWINDOW 工具窗标题高度小于普通
+       标题，传 0 会按普通标题扩边，客户区比请求矮一截。 */
+    exStyle = xpwn_windowExStyle(window);
+    AdjustWindowRectEx(rc, style, FALSE, exStyle);
 }
 
 /** @brief 把矩形裁剪到图像范围；空矩形返回 false。 */
@@ -566,15 +588,22 @@ static void xpwn_cursorBackendInstall(void)
    物理显示栈验证前不得默认启用；XGPU_WS_COMPOSITED=1 显式启用（物理机
    验证抗闪收益用）。与 XGPU_PRESENT_MAX_FPS 同族（呈现链路开关，静态
    缓存一次读取）。 */
-static DWORD xpwn_windowExStyle(void)
+static DWORD xpwn_windowExStyle(const XWindow* window)
 {
     static int cached = -1;
+    DWORD exStyle;
     if (cached < 0)
     {
         const char* v = XSystem_environment("XGPU_WS_COMPOSITED");
         cached = (v && v[0] == '1' && v[1] == '\0') ? 1 : 0;
     }
-    return cached ? WS_EX_COMPOSITED : 0;
+    exStyle = cached ? WS_EX_COMPOSITED : 0;
+    /* 对标 Qt::Tool（QWidgetWindow 工具窗旗标映射）：工具窗口不进任务
+       栏/Alt-Tab，标题条为细条仅含关闭钮（qdockwidget.cpp:1203 浮动
+       停靠面板走此形态）。 */
+    if (window && XWindow_type(window) == XWindowType_Tool)
+        exStyle |= WS_EX_TOOLWINDOW;
+    return exStyle;
 }
 
 /* ==================== 键鼠翻译工具（Win32 -> 无关键码） ==================== */
@@ -1022,6 +1051,42 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
     }
 
     /* ============ 鼠标按键（含系统双击，对标 Qt 键鼠消息翻译） ============ */
+    /* ============ 非客户区左键：Tool 窗标题条转译为控件事件 ============ */
+    /* 对标 Qt QWidgetWindow::handleNonClientAreaEvent → QDockWidget
+       nativeDeco 路径（qdockwidget.cpp:1097-1128）：浮动工具窗（Tool
+       窗型，当前仅浮动停靠面板使用）标题条按下启动控件拖拽（拖回宿主
+       可落位停靠）、双击切换浮/停。坐标换算：NC 消息 lParam 为屏幕坐
+       标，转客户区后标题条位于负 y 带（控件侧以 pos.y<0 识别）。吞掉
+       消息不走 DefWindowProc，避免进入系统移动循环（拖拽由控件抓取鼠
+       标接管）。仅限 Tool 窗且命中 HTCAPTION：普通窗口/边框/关闭钮等
+       保持原生行为。 */
+    case WM_NCLBUTTONDOWN:
+    case WM_NCLBUTTONDBLCLK:
+        if (entry && entry->m_window &&
+            XWindow_type(entry->m_window) == XWindowType_Tool &&
+            DefWindowProcW(hwnd, WM_NCHITTEST, 0, lParam) == HTCAPTION) {
+            XPoint position;
+            POINT pt;
+            pt.x = (int)(short)LOWORD(lParam);
+            pt.y = (int)(short)HIWORD(lParam);
+            if (ScreenToClient(hwnd, &pt)) {
+                position.x = pt.x;
+                position.y = pt.y;
+            } else {
+                position.x = (int)(short)LOWORD(lParam);
+                position.y = (int)(short)HIWORD(lParam);
+            }
+            XWindowSystemInterface_handleMouseEvent(
+                entry->m_window,
+                msg == WM_NCLBUTTONDOWN
+                    ? XEVENT_TYPE_MOUSE_BUTTON_PRESS
+                    : XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK,
+                XMouseButton_LeftButton, XMouseButton_LeftButton,
+                xpwn_translateModifiers(), position);
+            return 0;
+        }
+        break;
+
     case WM_LBUTTONDOWN:
     case WM_LBUTTONUP:
     case WM_LBUTTONDBLCLK:
@@ -1152,6 +1217,151 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
     return xpwn_callPreviousProc(entry, hwnd, msg, wParam, lParam);
 }
 
+/* ==================== 屏幕枚举（对标 QWindowsScreenManager） ==================== */
+#if XSCREEN_ON && XGUIAPPLICATION_ON && XWINDOWSYSTEMINTERFACE_ON
+
+/** @brief 单轮枚举登记上限（桌面场景远达不到；防回调失控）。 */
+#define XPWN_MAX_SCREENS 8
+
+static bool g_xpwnScreensInitDone = false;
+
+/** @brief      用一块显示器的信息回填 XScreen。
+ *  @param      screen 目标屏幕对象。
+ *  @param      deviceName 显示器设备名（MONITORINFOEXW::szDevice）。
+ *  @param      monitor 整屏几何（rcMonitor，虚拟桌面坐标）。
+ *  @param      work 可用工作区（rcWork，剔除任务栏后的可用区）。 */
+static void xpwn_screenFill(XScreen* screen, const wchar_t* deviceName,
+                            const RECT* monitor, const RECT* work)
+{
+    XRect geometry;
+    XRect available;
+    XSizeF physical;
+    char name[64];
+    HDC dc;
+    int dpiX = 96;
+    int dpiY = 96;
+    int depth = 32;
+
+    geometry.x = monitor->left;
+    geometry.y = monitor->top;
+    geometry.width = monitor->right - monitor->left;
+    geometry.height = monitor->bottom - monitor->top;
+    available.x = work->left;
+    available.y = work->top;
+    available.width = work->right - work->left;
+    available.height = work->bottom - work->top;
+    /* 设备名落 UTF-8 并剥去 \\.\ 前缀（对标 QWindowsScreen 命名）。 */
+    WideCharToMultiByte(CP_UTF8, 0, deviceName, -1,
+                        name, (int)sizeof(name) - 1, NULL, NULL);
+    name[sizeof(name) - 1] = '\0';
+    if (name[0] == '\\' && name[1] == '\\' &&
+        name[2] == '.' && name[3] == '\\')
+        memmove(name, name + 4, strlen(name + 4) + 1);
+    XScreen_setName_2(screen, name);
+    XScreen_setGeometry(screen, &geometry);
+    XScreen_setAvailableGeometry(screen, &available);
+    /* 物理 DPI/尺寸/位深取自该显示器的设备 DC：进程非 PER_MONITOR_AWARE
+       时 GetDeviceCaps 返回系统虚拟化值，与同进程窗口坐标体系一致。 */
+    dc = CreateDCW(deviceName, NULL, NULL, NULL);
+    if (dc) {
+        dpiX = GetDeviceCaps(dc, LOGPIXELSX);
+        dpiY = GetDeviceCaps(dc, LOGPIXELSY);
+        depth = GetDeviceCaps(dc, BITSPIXEL);
+        if (depth <= 0) depth = 32;
+        physical.width = (float)GetDeviceCaps(dc, HORZSIZE);
+        physical.height = (float)GetDeviceCaps(dc, VERTSIZE);
+        DeleteDC(dc);
+        XScreen_setPhysicalSize(screen, &physical);
+        XScreen_setLogicalDotsPerInch(screen, (float)dpiX, (float)dpiY);
+    }
+    XScreen_setDepth(screen, depth);
+}
+
+/** @brief EnumDisplayMonitors 回调：每块监视器登记一块 XScreen。 */
+static BOOL CALLBACK xpwn_monitorEnumProc(HMONITOR monitor, HDC dc,
+                                          LPRECT rect, LPARAM lParam)
+{
+    MONITORINFOEXW info;
+    XScreen* screen;
+    int* slots = (int*)lParam;
+    (void)dc;
+    (void)rect;
+    if (!slots) return TRUE;
+    if (*slots >= XPWN_MAX_SCREENS) return FALSE; /* 达上限：停止枚举。 */
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(monitor, (MONITORINFO*)&info)) return TRUE;
+    screen = XScreen_create();
+    if (!screen) return FALSE;
+    xpwn_screenFill(screen, info.szDevice, &info.rcMonitor, &info.rcWork);
+    /* 登记统一经 WSI 入口（注册表 + screenAdded 信号，对标
+       QGuiApplication::screenAdded）。返回 false=未登记（无应用单例/
+       注册失败），所有权仍在平台层：此处回收新建对象，防泄漏。 */
+    if (!XWindowSystemInterface_handleScreenAdded(screen)) {
+        XScreen_delete_base(screen);
+        return TRUE;
+    }
+    if (info.dwFlags & MONITORINFOF_PRIMARY)
+        XGuiApplication_setPrimaryScreen(screen);
+    ++*slots;
+    return TRUE;
+}
+
+/** @brief      枚举系统监视器并登记屏幕注册表（幂等；对标
+ *              QWindowsScreenManager::initializeScreens）。
+ *  @details    Windows 后端此前从未登记任何 XScreen：
+ *              XGuiApplication_primaryScreen() 恒为 NULL，顶层窗口首显
+ *              居中（XWidget 首显 adjustPosition 链）与
+ *              XColorDialog/XFileDialog 的屏幕居中分支全部静默回落
+ *              (0,0)——高级控件页"打开主窗口"弹出的 XMainWindow 客户区
+ *              贴死屏幕左上角，WS_OVERLAPPEDWINDOW 标题栏整条越出屏幕
+ *              上沿（不可拖动/不可见系统按钮）。此处在首个原生窗口创建
+ *              与事件泵入口 EnumDisplayMonitors 逐监视器登记（几何取
+ *              rcMonitor、可用区取 rcWork、物理尺寸/DPI/位深取显示器
+ *              DC），MONITORINFOF_PRIMARY 者设为主屏；枚举失败回落
+ *              GetSystemMetrics 单屏（SPI_GETWORKAREA 供可用区）。
+ *              多屏热切换暂不跟踪（X11 走 RandR 事件；win32 侧待
+ *              WM_DISPLAYCHANGE 接入后差分刷新，登记幂等不阻塞既有
+ *              链路）。 */
+static void xpwn_screensInit(void)
+{
+    int slots = 0;
+    if (g_xpwnScreensInitDone) return;
+    g_xpwnScreensInitDone = true;
+    EnumDisplayMonitors(NULL, NULL, xpwn_monitorEnumProc, (LPARAM)&slots);
+    if (slots > 0) return;
+    /* 回落路径：主显示器单屏（EnumDisplayMonitors 不可用的极端环境）。 */
+    {
+        XScreen* screen = XScreen_create();
+        if (screen) {
+            RECT work;
+            RECT monitor;
+            work.left = 0;
+            work.top = 0;
+            work.right = 0;
+            work.bottom = 0;
+            monitor.left = 0;
+            monitor.top = 0;
+            monitor.right = GetSystemMetrics(SM_CXSCREEN);
+            monitor.bottom = GetSystemMetrics(SM_CYSCREEN);
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+            xpwn_screenFill(screen, L"\\\\.\\DISPLAY1", &monitor, &work);
+            /* 返回 false=未登记（所有权仍在平台层）：回收防泄漏。 */
+            if (XWindowSystemInterface_handleScreenAdded(screen)) {
+                XGuiApplication_setPrimaryScreen(screen);
+            } else {
+                XScreen_delete_base(screen);
+                screen = NULL;
+            }
+        }
+    }
+}
+
+#else /* !XSCREEN_ON || !XGUIAPPLICATION_ON || !XWINDOWSYSTEMINTERFACE_ON */
+
+static void xpwn_screensInit(void) { }
+
+#endif /* XSCREEN_ON && XGUIAPPLICATION_ON && XWINDOWSYSTEMINTERFACE_ON */
+
 /* ==================== 事件泵（平台后端提供） ==================== */
 
 bool XPlatformNativeWindow_processPendingEvents(void)
@@ -1160,6 +1370,9 @@ bool XPlatformNativeWindow_processPendingEvents(void)
     bool delivered = false;
     BOOL got;
     if (!g_xpwnClassRegistered) return false;
+    /* 首次泵时惰性登记屏幕（枚举/主屏选定；此后幂等）。与 X11 后端
+       同构：放在泵而非连接期，保证应用单例已发布、信号有接收方。 */
+    xpwn_screensInit();
     while ((got = PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) != 0) {
         if (got == -1) break; /* 出错：终止本次泵空。 */
         if (msg.message == WM_QUIT) {
@@ -1889,6 +2102,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
     XString* title;
     if (!window) return false;
     if (!xpwn_ensureInstance()) return false;
+    /* 窗口几何落位前保证屏幕注册表就绪：首个窗口之前 Widget 层可能
+       查询主屏做首显居中（xpwn_screensInit 幂等）。 */
+    xpwn_screensInit();
     entry = xpwn_findByXWindow(window);
     if (entry) return true; /* 幂等：已登记直接成功。 */
     entry = xpwn_findFreeSlot();
@@ -1898,18 +2114,31 @@ bool XPlatformNativeWindow_create(XWindow* window)
     w = geom.width < 1 ? 1 : geom.width;
     h = geom.height < 1 ? 1 : geom.height;
     xpwn_adjustWindowRect(window, &geom, &rc);
-    /* WS_EX_COMPOSITED：DWM 双缓冲合成自绘窗口（见 xpwn_windowExStyle 注释），
-       脏区批量提交对合成器原子化，根治交互/切换闪烁。 */
-    hwnd = CreateWindowExW(xpwn_windowExStyle(), XPWN_CLASS_NAME, L"",
-                           xpwn_windowStyle(window),
-                           rc.left, rc.top,
-                           rc.right - rc.left, rc.bottom - rc.top,
-                           NULL, NULL, g_xpwnInstance, window);
+    /* Owner 归属（对标 qwindowswindow.cpp:784-786「Parent: Use transient
+       parent for top levels」+ 921-923 传入 CreateWindowEx）：transient
+       parent 作为 hWndParent——对话框合并进父窗任务栏项、保持「对话框
+       在父之上」Z 序、父窗销毁连带收掉 owned 窗（与 XWindow_destroy
+       次序天然对齐）。未设 transient parent 时保持 NULL（独立顶层）。 */
+    {
+        XWindow* tp = XWindow_transientParent(window);
+        XWNPendingEntry* tpe = tp ? xpwn_findByXWindow(tp) : NULL;
+        hwnd = CreateWindowExW(xpwn_windowExStyle(window), XPWN_CLASS_NAME,
+                               L"", xpwn_windowStyle(window),
+                               rc.left, rc.top,
+                               rc.right - rc.left, rc.bottom - rc.top,
+                               (tpe && tpe->m_hwnd && IsWindow(tpe->m_hwnd))
+                                   ? tpe->m_hwnd
+                                   : NULL,
+                               NULL, g_xpwnInstance, window);
+    }
     if (!hwnd) return false;
 
     entry->m_hwnd = hwnd;
     entry->m_window = window;
     entry->m_visible = false;
+    /* 内部窗口无回链（头文件字段契约「内部窗口为 NULL」）：槽位复用时
+     * 显式落盘，杜绝继承回池槽位的陈旧 m_oldProc。 */
+    entry->m_oldProc = NULL;
     entry->m_hcursor = NULL;   /* 新窗口无框架光标：类光标（箭头）兜底。 */
     entry->m_cursorSet = false;
     if (!xpwn_getClientGeometry(hwnd, &entry->m_client))
@@ -1937,6 +2166,12 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     entry->m_visible = false;
     entry->m_mouseInside = false;
     entry->m_client = (XRect){0, 0, 0, 0};
+    /* 槽位即回池：必须连同 m_oldProc 一并清零（与 WM_NCDESTROY 分支同
+     * 口径）。否则旧值残留在可复用槽上，内部建窗路径不写 m_oldProc，
+     * 新窗口继承旧链——若旧值为 xpwn_wndProc（对外挂接内部窗口的产物），
+     * 未处理消息在 wndProc 尾端经 callPreviousProc 自链，栈溢出（实测
+     * 崩溃：dock setFloating 新窗命中被 foreign 测试毒化的槽位）。 */
+    entry->m_oldProc = NULL;
     /* 光标接管随窗口脱钩：共享句柄无资源可放，仅复位状态（attachForeign
        走 memset 已覆盖）。 */
     entry->m_hcursor = NULL;
@@ -1964,6 +2199,12 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
     oldProc = (WNDPROC)(uintptr_t)SetWindowLongPtrW(
         hwnd, GWLP_WNDPROC, (LONG_PTR)xpwn_wndProc);
     if (!oldProc && GetLastError() != 0) return false;
+    if (oldProc == xpwn_wndProc) {
+        /* 目标窗口本就用本类过程（内部窗口被二次认领/重复挂接）：链回
+         * 自己必然在未处理消息的尾端转发里无限递归（callPreviousProc→
+         * CallWindowProcW→本过程→…栈溢出），按内部窗口口径不设回链。 */
+        oldProc = NULL;
+    }
     memset(entry, 0, sizeof(*entry));
     entry->m_hwnd = hwnd;
     entry->m_window = window;
@@ -2140,6 +2381,29 @@ bool XPlatformNativeWindow_requestActivate(XWindow* window)
     if (!SetForegroundWindow(entry->m_hwnd)) return false;
     SetFocus(entry->m_hwnd);
     return true;
+}
+
+bool XPlatformNativeWindow_raise(XWindow* window)
+{
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd) return false;
+    /* 对标 QWindowsWindow::raise（qwindowswindow.cpp
+     * setWindowZorder→SetWindowPos(HWND_TOP)）：SWP_NOACTIVATE 保持 Z
+     * 序与激活解耦（复扫 R-35 口径），NOMOVE/NOSIZE 只动堆叠。 */
+    return SetWindowPos(entry->m_hwnd, HWND_TOP, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != 0;
+}
+
+bool XPlatformNativeWindow_lower(XWindow* window)
+{
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd) return false;
+    return SetWindowPos(entry->m_hwnd, HWND_BOTTOM, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != 0;
 }
 
 XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,

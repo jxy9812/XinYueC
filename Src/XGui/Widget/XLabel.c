@@ -1993,6 +1993,12 @@ static bool VXLabel_event(XWidget* self, XEvent* event)
                 label->m_textControl->m_highlightedAnchor = NULL;
                 label_emitHoverLeave(label);
                 XWidget_unsetCursor((XWidget*)label);
+                /* 链接高亮属悬停外观：离开即标脏抹掉屏上高亮残留。
+                 * 本类未声明 XWidgetAttribute_Hover（普通文本标签无悬
+                 * 停样式，不得因 ENTER/LEAVE 整体标脏），清理真实发
+                 * 生时在此显式补一次（原先依赖 VXWidget_event LEAVE
+                 * 分支的无条件 update）。 */
+                XWidget_update((XWidget*)label);
             }
             label->m_pressedLink = -1;
         }

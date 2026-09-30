@@ -74,6 +74,12 @@
 #if XWIDGET_ON && XDIALOG_ON
 #include "XDialog.h"             /* XDialog_done：最后窗口关闭时收口模态 exec 阻塞循环 */
 #endif
+#if XVIRTUALKEYBOARD_ON
+#include "XVirtualKeyboard.h"           /* XVirtualKeyboard_create_ex：virtualKeyboard() 惰性默认面板（XGuiApplication.h 已随 XVIRTUALKEYBOARD_ON 引入，此处显式重入无环） */
+#if XPLATFORMINPUTCTX_ON
+#include "XVirtualKeyboardPlatformInputContext.h" /* VK 平台上下文装配（该头集成点 TODO 收口：进程无平台集成输入上下文时注册本类） */
+#endif
+#endif
 #endif /* XWIDGET_ON */
 
 #if XPALETTE_ON && XAPPLICATION_ON
@@ -361,6 +367,9 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
     /* Qt 6.8 QGuiApplication 默认值。 */
     app->m_quitOnLastWindowClosed = true;
     app->m_desktopSettingsAware = true;
+    /* 虚拟键盘总开关默认开启（XGui 扩展；置 false 见
+       XGuiApplication_setVirtualKeyboardEnabled 的消费契约）。 */
+    app->m_virtualKeyboardEnabled = true;
     app->m_requestedLayoutDirection = XGuiLayoutDirection_Auto;
     app->m_layoutDirection = XGuiLayoutDirection_LeftToRight;
     app->m_applicationState = XGuiApplicationState_Inactive;
@@ -424,6 +433,14 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
         XVector_delete_base((XClass*)app->m_overrideStack);
         app->m_overrideStack = NULL;
     }
+#if XVIRTUALKEYBOARD_ON
+    /* 虚拟键盘默认面板先于窗口注册表释放：其桥接窗口登记在 m_windows
+       内，析构经 removeWindow 摘除，容器释放后再删会访问已释放向量。 */
+    if (app->m_virtualKeyboard) {
+        XVirtualKeyboard_delete_base(app->m_virtualKeyboard);
+        app->m_virtualKeyboard = NULL;
+    }
+#endif /* XVIRTUALKEYBOARD_ON */
     if (app->m_windows) {
         /* 窗口对象由调用方拥有，这里只释放注册表容器。 */
         XVector_delete_base((XClass*)app->m_windows);
@@ -442,6 +459,19 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
             if (context)
                 XPlatformInputContext_setInputMethod(context, NULL);
         }
+#if XVIRTUALKEYBOARD_ON
+        /* VK 平台上下文（装配侧自有，非集成层拥有）：解绑并回收。 */
+        {
+            XPlatformInputContext* bound =
+                XInputMethod_platformContext(app->m_inputMethod);
+            if (bound && XClassGetVtable(bound) ==
+                             XVirtualKeyboardPlatformInputContext_class_init()) {
+                XPlatformInputContext_setInputMethod(bound, NULL);
+                XVirtualKeyboardPlatformInputContext_delete_base(
+                    (XVirtualKeyboardPlatformInputContext*)bound);
+            }
+        }
+#endif /* XVIRTUALKEYBOARD_ON */
 #endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
         XInputMethod_delete_base(app->m_inputMethod);
         app->m_inputMethod = NULL;
@@ -698,6 +728,11 @@ void XGuiApplication_addWindow(XWindow* win)
     XGuiApplication* app = XGuiApplication_instance();
     size_t n;
     if (!app || !win || !app->m_windows) return;
+    /* 析构期拒绝登记：XWindow deinit 已摘除本窗后，lastWindowClosed
+       退出策略链（模态兜底/可见性同步/无障碍通知）仍可能经惰性建柄
+       重入此处，把垂死窗口复活登记成悬垂借用指针（phase31 开后直删
+       序列实测 AV 根因）。与 XWindow_isDestructing 三点闸协同断链。 */
+    if (XWindow_isDestructing(win)) return;
     n = XVector_size_base((const XContainer*)app->m_windows);
     for (size_t i = 0; i < n; ++i) {
         if (XVector_At_Base(app->m_windows, (int64_t)i, XWindow*) == win)
@@ -771,7 +806,12 @@ void XGuiApplication_removeWindow(XWindow* win)
         /* Do not re-enter topLevelWindows() here: all entries are borrowed,
            and callers may be in a nested destruction path. */
         bool anyVisibleTopLevel = false;
-        for (size_t i = 0; i < n; ++i) {
+        /* 上界逐圈取注册表实时长度：lastWindowClosed→退出策略处理链可
+           能重入 removeWindow/销毁窗口使注册表收缩，沿用入口快照 n 会
+           越界读到悬空槽位（XWindow_isTopLevel(remaining) 实测 AV）。 */
+        for (size_t i = 0;
+             i < n && i < XVector_size_base((const XContainer*)app->m_windows);
+             ++i) {
             XWindow* remaining =
                 XVector_At_Base(app->m_windows, (int64_t)i, XWindow*);
             if (remaining && XWindow_isTopLevel(remaining) &&
@@ -848,6 +888,27 @@ XWindow* XGuiApplication_modalWindow(void)
 }
 
 #if XWINDOW_ON
+void XGuiApplication_setFocusObject(XObject* object)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    if (!app) return;
+    if (app->m_focusObject == object) return;
+    app->m_focusObject = object;
+    XGuiApplication_focusObjectChanged_signal(app, object);
+#if XINPUTMETHOD_ON && XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
+    /* Qt 在焦点对象变化时通知平台输入上下文，并重新计算 ImEnabled。 */
+    {
+        XInputMethod* inputMethod = XGuiApplication_inputMethod();
+        XPlatformInputContext* context = inputMethod
+            ? XInputMethod_platformContext(inputMethod) : NULL;
+        if (context) {
+            XPlatformInputContext_setFocusObject(context, object);
+            XInputMethod_update(inputMethod, XInputMethodQuery_ImEnabled);
+        }
+    }
+#endif /* XINPUTMETHOD_ON && XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
+}
+
 void XGuiApplication_setFocusWindow(XWindow* window, XObject* object)
 {
     XGuiApplication* app = XGuiApplication_instance();
@@ -865,22 +926,8 @@ void XGuiApplication_setFocusWindow(XWindow* window, XObject* object)
 #endif
         XGuiApplication_focusWindowChanged_signal(app, window);
     }
-    if (app->m_focusObject != object) {
-        app->m_focusObject = object;
-        XGuiApplication_focusObjectChanged_signal(app, object);
-#if XINPUTMETHOD_ON && XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
-        /* Qt 在焦点对象变化时通知平台输入上下文，并重新计算 ImEnabled。 */
-        {
-            XInputMethod* inputMethod = XGuiApplication_inputMethod();
-            XPlatformInputContext* context = inputMethod
-                ? XInputMethod_platformContext(inputMethod) : NULL;
-            if (context) {
-                XPlatformInputContext_setFocusObject(context, object);
-                XInputMethod_update(inputMethod, XInputMethodQuery_ImEnabled);
-            }
-        }
-#endif /* XINPUTMETHOD_ON && XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
-    }
+    if (app->m_focusObject != object)
+        XGuiApplication_setFocusObject(object);
 }
 
 void XGuiApplication_setModalWindow(XWindow* window)
@@ -935,12 +982,17 @@ float XGuiApplication_devicePixelRatio(void)
     return maximum;
 }
 
-void XGuiApplication_screenAdded(XScreen* screen)
+bool XGuiApplication_screenAdded(XScreen* screen)
 {
     XGuiApplication* app = XGuiApplication_instance();
-    if (!app || !screen) return;
-    XScreen_register(screen);
+    if (!app || !screen) return false;
+    /* 所有权契约：屏幕所有权归平台层（见 XWindowSystemInterface.h），
+       本入口只登记（借用）。返回 false=未登记（无应用单例/注册表分配
+       失败）——此时无人接管，调用方必须回收 screen，否则平台层新建
+       屏幕泄漏（每次进程至多一块）。 */
+    if (!XScreen_register(screen)) return false;
     XGuiApplication_screenAdded_signal(app, screen);
+    return true;
 }
 
 void XGuiApplication_screenRemoved(XScreen* screen)
@@ -1407,6 +1459,28 @@ XInputMethod* XGuiApplication_inputMethod(void)
                 if (ctx)
                     XPlatformInputContext_setInputMethod(ctx, app->m_inputMethod);
             }
+#if XVIRTUALKEYBOARD_ON
+            /* VK 平台上下文接管（XVirtualKeyboardPlatformInputContext.h
+               集成点 TODO 收口；Qt 虚拟键盘插件同型：VK 启用即由其平
+               台上下文承载进程输入上下文面）。集成层自建的空后端基座
+               仅记录状态（无后端能力损失），实例仍由集成层拥有（生命
+               周期不变），进程绑定改指 VK 实例——焦点对象经
+               setFocusObject 链进 VK InputContext（控件 hints/包围文
+               本查询的事实源，hints→布局映射的前提）。默认面板不在
+               此绑定：面板守护轮询独立工作（事件不可达口径），显隐通
+               道暂空。VK 实例随 app 析构回收（见 deinit VK 分支）。 */
+            {
+                XVirtualKeyboardPlatformInputContext* vkCtx =
+                    XVirtualKeyboardPlatformInputContext_create_ex(
+                        XCLASS_DEFAULT_MEMORY_TYPE);
+                if (vkCtx) {
+                    XInputMethod_setPlatformContext(
+                        app->m_inputMethod, (XPlatformInputContext*)vkCtx);
+                    XPlatformInputContext_setInputMethod(
+                        (XPlatformInputContext*)vkCtx, app->m_inputMethod);
+                }
+            }
+#endif /* XVIRTUALKEYBOARD_ON */
 #endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
         }
     }
@@ -1418,6 +1492,52 @@ XInputMethod* XGuiApplication_inputMethod(void)
     return NULL;
 }
 #endif /* XINPUTMETHOD_ON */
+
+#if XVIRTUALKEYBOARD_ON
+XVirtualKeyboard* XGuiApplication_virtualKeyboard(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    if (!app) return NULL;
+    if (!app->m_virtualKeyboard) {
+        /* 顶层面板：parent=NULL（面板归应用所有，对标 Qt 虚拟键盘
+           InputPanel 单例归属）；autoPopup 守护随构造启动（XVirtualKeyboard.h
+           契约），显隐由面板 popup/closePopup 与守护轮询承载——本
+           访问器只负责惰性创建与生命周期，不做任何编辑控件绑定。 */
+        app->m_virtualKeyboard =
+            XVirtualKeyboard_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    }
+    return app->m_virtualKeyboard;
+}
+#else /* !XVIRTUALKEYBOARD_ON */
+XVirtualKeyboard* XGuiApplication_virtualKeyboard(void)
+{
+    return NULL;
+}
+#endif /* XVIRTUALKEYBOARD_ON */
+
+void XGuiApplication_setVirtualKeyboardEnabled(bool on)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    if (app) app->m_virtualKeyboardEnabled = on;
+}
+
+bool XGuiApplication_virtualKeyboardEnabled(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    return app ? app->m_virtualKeyboardEnabled : true;
+}
+
+void XGuiApplication_virtualKeyboardNotifyPress(XWidget* hit)
+{
+#if XVIRTUALKEYBOARD_DESKTOP_ON
+    /* 转发到默认面板单例（应用拥有键盘实例；单例缺席/开关关闭由
+       virtualKeyboard() 返回 NULL 自然落空，此处零额外门控）。 */
+    XVirtualKeyboard* kb = XGuiApplication_virtualKeyboard();
+    if (kb) XVirtualKeyboard_notifyPress(kb, hit);
+#else /* !XVIRTUALKEYBOARD_DESKTOP_ON */
+    (void)hit; /* 非桌面形态：无自动弹收（与守护同停），空实现。 */
+#endif /* XVIRTUALKEYBOARD_DESKTOP_ON */
+}
 
 /* ==================== 平台接口 ==================== */
 

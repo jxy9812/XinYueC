@@ -45,6 +45,15 @@
 #include "XAbstractSpinBox.h"
 #endif
 
+#if XWIDGET_ON && XKEYBOARD_ON
+#include "XVirtualKeyboard.h"
+#endif
+
+#if XWIDGET_ON && XINPUTMETHOD_ON
+#include "XInputMethod.h" /* ImEnabled/ImHints 查询桥（自标注矩阵断言）。 */
+#include "XVariant.h"     /* 查询结果 Bool/Int32 载荷读取与释放。 */
+#endif
+
 #if XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON
 #include "XSpinBox.h"
 #endif
@@ -2073,6 +2082,499 @@ int xapi_input_run(void)
         XComboBox_deinit_base(&fcb);
     }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */
+
+#if XWIDGET_ON && XKEYBOARD_ON
+#if XKEYBOARD_IME_ON
+#include "XPinyinEngine.h"
+#include "XPinyinTable.h"
+#endif
+#if XKEYBOARD_IME_PHRASE_ON
+#include "XPinyinPhrase.h"
+#endif
+#endif
+
+#if XWIDGET_ON && XKEYBOARD_ON
+    /* ================================================================
+     * 7. XVirtualKeyboard：屏幕虚拟键盘（对标 LVGL 9.2.2 lv_keyboard public
+     *    API）。无头语义：本段控件堆上构造、从不 show 常驻（popup 仅
+     *    显式验证几何与可见位后立即 closePopup 复原）。
+     *    差异注释：LVGL 大写为独立布局（无 shift 锁存）；autoPopup 为
+     *    XGui 扩展（LVGL 无自身显隐逻辑），默认值按头文件 @note 口径
+     *    断言；渲染/气泡绘制不做断言（视觉边界）。
+     * ================================================================ */
+    {
+        XVirtualKeyboard* kb = XVirtualKeyboard_create(NULL, 0);
+
+        /* ---- 默认值（LVGL 构造默认 + XGui 扩展口径） ---- */
+        XAPI_EXPECT(kb != NULL && XVirtualKeyboard_mode(kb) ==
+                        XKeyboardMode_TextLower,
+                    "Keyboard 默认模式=TextLower（LVGL 构造默认小写）");
+        XAPI_EXPECT(!XVirtualKeyboard_popovers(kb),
+                    "Keyboard 默认关气泡（LVGL popovers 默认 0）");
+        XAPI_EXPECT(XVirtualKeyboard_autoPopup(kb),
+                    "Keyboard 默认开自动弹出（XGui 扩展，头文件口径）");
+        XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 40,
+                    "Keyboard 小写布局 40 键（LVGL 逐键对齐）");
+        XAPI_EXPECT(XVirtualKeyboard_textArea(kb) == NULL,
+                    "Keyboard 默认未绑定目标（对标 get_textarea NULL）");
+        XAPI_EXPECT(XVirtualKeyboard_selectedButton(kb) == XKEYBOARD_BUTTON_NONE,
+                    "Keyboard 默认无选中按钮（对标 BUTTON_NONE）");
+        XAPI_EXPECT(strcmp(xapi_cstr(XVirtualKeyboard_buttonText(kb, 0)),
+                           "1#") == 0,
+                    "Keyboard 按钮 0 为 1# 切换键");
+        XAPI_EXPECT(XVirtualKeyboard_buttonText(kb, XKEYBOARD_MAX_BUTTONS) == NULL,
+                    "Keyboard 越界 buttonText 返回 NULL");
+
+        /* ---- setMode 切换（LVGL set_mode 语义：布局随模式重建） ---- */
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_Number);
+        XAPI_EXPECT(XVirtualKeyboard_mode(kb) == XKeyboardMode_Number &&
+                        XVirtualKeyboard_buttonCount(kb) == 17,
+                    "Keyboard 数字布局 17 键（4+4+4+5，对标 KB.c:166-177）");
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_TextUpper);
+        XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 40 &&
+                        strcmp(xapi_cstr(XVirtualKeyboard_buttonText(kb, 1)),
+                               "Q") == 0,
+                    "Keyboard 大写布局键 1 为 Q（独立布局非锁存）");
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
+        XAPI_EXPECT(XVirtualKeyboard_mode(kb) == XKeyboardMode_TextLower,
+                    "Keyboard setMode 回小写生效");
+
+        /* ---- setMap 槽位替换（借用指针；接入其它布局的唯一途径） ---- */
+        {
+            static const char* const mapApi[] = { "x", "\n", "y", NULL };
+            static const XKeyboardButtonCtrl ctrlApi[] = { 1, 2 };
+            XVirtualKeyboard_setMap(kb, XKeyboardMode_User1, mapApi, ctrlApi);
+            XVirtualKeyboard_setMode(kb, XKeyboardMode_User1);
+            XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 2 &&
+                            XVirtualKeyboard_buttonText(kb, 0) == mapApi[0] &&
+                            (int)XVirtualKeyboard_buttonCtrl(kb, 1) == 2,
+                        "Keyboard setMap 槽位替换且借用指针/控制字往返");
+            XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
+        }
+
+        /* ---- setPopovers：生效控制字剥离/恢复 ---- */
+        {
+            XKeyboardButtonCtrl ctrl1;
+            XVirtualKeyboard_setPopovers(kb, true);
+            XAPI_EXPECT(XVirtualKeyboard_popovers(kb),
+                        "Keyboard setPopovers(true) 生效");
+            XVirtualKeyboard_setPopovers(kb, false);
+            ctrl1 = XVirtualKeyboard_buttonCtrl(kb, 1);
+            XAPI_EXPECT(((int)ctrl1 & (int)XKEYBOARD_CTRL_POPOVER) == 0,
+                        "Keyboard popovers=0 生效表剥 POPOVER 位");
+        }
+
+#if XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON
+        /* ---- 拼音 IME 公共 API 契约（XKEYBOARD_IME_ON 门控；栈上状
+         *     态机 + 表契约 + 开关往返，无头运行口径。面板 IME API 已
+         *     随框架化挂 XVIRTUALKEYBOARD_ON 门控——XVirtualKeyboard.h 现状，
+         *     框架未开时本段整体编译出）。IME 段收尾即关闭，不影响
+         *     后续小写布局断言。 ---- */
+        {
+            XPinyinEngine imeSmoke;
+            const XPinyinTableEntry* niBegin = NULL;
+            uint16_t niCount = 0;
+
+            XAPI_EXPECT(XPinyinTable_syllableCount() == 412 &&
+                            XPinyinTable_entryCount() == 2017,
+                        "ImeTable 音节 408/条目 1989（表头 @details 口径）");
+            XAPI_EXPECT(XPinyinTable_rankLimit() ==
+                            (XKEYBOARD_IME_RANK_LIMIT > 0
+                                 ? (uint16_t)XKEYBOARD_IME_RANK_LIMIT
+                                 : 0),
+                        "ImeTable rankLimit 回环（默认 0=全量）");
+            XAPI_EXPECT(XPinyinTable_hasSyllablePrefix("") &&
+                            XPinyinTable_hasSyllablePrefix("zhu") &&
+                            !XPinyinTable_hasSyllablePrefix("zz") &&
+                            !XPinyinTable_hasSyllablePrefix(NULL),
+                        "ImeTable hasSyllablePrefix 契约");
+            XAPI_EXPECT(XPinyinTable_find("ni", &niBegin, &niCount) &&
+                            niCount == 5 &&
+                            strcmp((const char*)niBegin[0].m_utf8,
+                                   "\xE4\xBD\xA0") == 0,
+                        "ImeTable find(ni) 5 条且首字你");
+
+            XPinyinEngine_init(&imeSmoke);
+            XAPI_EXPECT(XPinyinEngine_isChinese(&imeSmoke) &&
+                            XPinyinEngine_pageSize(&imeSmoke) == 9,
+                        "Ime 状态机 init 默认中文态/页容量 9");
+            XAPI_EXPECT(XPinyinEngine_feedLetter(&imeSmoke, 'n') ==
+                                XPinyinEngineFeed_Consumed &&
+                            XPinyinEngine_feedLetter(&imeSmoke, 'i') ==
+                                XPinyinEngineFeed_Consumed &&
+                            XPinyinEngine_isComposing(&imeSmoke),
+                        "Ime feed n/i 进组串");
+            XAPI_EXPECT(XPinyinEngine_feedCommitFirst(&imeSmoke) ==
+                                XPinyinEngineFeed_Committed &&
+                            strcmp(XPinyinEngine_commitString(&imeSmoke),
+                                   "\xE4\xBD\xA0") == 0 &&
+                            !XPinyinEngine_isComposing(&imeSmoke),
+                        "Ime feed→commit 冒烟（空格上屏首候选）");
+
+#if XKEYBOARD_IME_PHRASE_ON
+            /* ---- 词组 API 契约（XKEYBOARD_IME_PHRASE_ON 门控；资
+             *     产断言全部 isReady() 守卫双分支——缺资产象限断言回
+             *     退行为并跳过规模锁。口径：3143 是运行期文件资产
+             *     （V3 默认=Library/VirtualKeyboard/phrases_zh.bin，由同
+             *     名 txt 经 Tools/VirtualKeyboard/ime_phrases_compile.py 编译，随
+             *     特性入库，测试前置；加载器按 magic 自动识别格式），
+             *     与编译进二进制的 412/2017 静态表不同类，不作类比仅
+             *     作资产锁。 ---- */
+            XPinyinPhrase_load(); /* 幂等；负结果粘滞。 */
+            if (XPinyinPhrase_isReady()) {
+                uint16_t niId = 0;
+                uint16_t haoId = 0;
+                const XPinyinPhraseEntry* pb = NULL;
+                uint16_t pn = 0;
+                XAPI_EXPECT(XPinyinPhrase_count() == 3143,
+                            "ImePhrase 资产规模锁 3143 条（文件资产口径）");
+                XAPI_EXPECT(XPinyinTable_syllableIdOf("ni", &niId) &&
+                                XPinyinTable_syllableIdOf("hao",
+                                                               &haoId) &&
+                                niId != haoId,
+                            "ImeTable syllableIdOf 导出契约（ni/hao）");
+                {
+                    uint16_t key[2];
+                    key[0] = niId;
+                    key[1] = haoId;
+                    XAPI_EXPECT(XPinyinPhrase_find(key, 2, &pb,
+                                                        &pn) &&
+                                    pn >= 1 &&
+                                    strcmp(pb[0].m_utf8,
+                                           "\xE4\xBD\xA0\xE5\xA5\xBD") ==
+                                        0 &&
+                                    pb[0].m_rank == 1,
+                                "ImePhrase find(ni hao) 命中首条你好 "
+                                "rank=1（零拷贝区间）");
+                }
+                XAPI_EXPECT(!XPinyinPhrase_find(&niId, 1, &pb, &pn),
+                            "ImePhrase 单音节键恒 miss（词组键 2..4）");
+                XPinyinEngine_init(&imeSmoke);
+                XAPI_EXPECT(XPinyinEngine_feedLetter(&imeSmoke, 'n') ==
+                                    XPinyinEngineFeed_Consumed &&
+                                XPinyinEngine_feedLetter(&imeSmoke, 'i') ==
+                                    XPinyinEngineFeed_Consumed &&
+                                XPinyinEngine_feedLetter(&imeSmoke, 'h') ==
+                                    XPinyinEngineFeed_Consumed &&
+                                XPinyinEngine_feedLetter(&imeSmoke, 'a') ==
+                                    XPinyinEngineFeed_Consumed &&
+                                XPinyinEngine_feedLetter(&imeSmoke, 'o') ==
+                                    XPinyinEngineFeed_Consumed &&
+                                strcmp(XPinyinEngine_composingText(&imeSmoke),
+                                       "nihao") == 0,
+                            "Ime INV2 组串 nihao（跨音节，V1 同点 hao）");
+                XAPI_EXPECT(XPinyinEngine_candidateCount(&imeSmoke) == 11 &&
+                                strcmp(XPinyinEngine_candidateAt(&imeSmoke,
+                                                                0),
+                                       "\xE4\xBD\xA0\xE5\xA5\xBD") == 0,
+                            "Ime nihao 混排 11 条且首候选=你好（词组前）");
+            } else {
+                /* 缺资产象限：断言回退行为（INV2 组串 + 词组 miss 纯
+                 * 单字），规模锁跳过不红。 */
+                const XPinyinTableEntry* bn = NULL;
+                const XPinyinTableEntry* bh = NULL;
+                uint16_t cn = 0;
+                uint16_t ch = 0;
+                XPinyinTable_find("ni", &bn, &cn);
+                XPinyinTable_find("hao", &bh, &ch);
+                XPinyinEngine_init(&imeSmoke);
+                XPinyinEngine_feedLetter(&imeSmoke, 'n');
+                XPinyinEngine_feedLetter(&imeSmoke, 'i');
+                XPinyinEngine_feedLetter(&imeSmoke, 'h');
+                XPinyinEngine_feedLetter(&imeSmoke, 'a');
+                XPinyinEngine_feedLetter(&imeSmoke, 'o');
+                XAPI_EXPECT(strcmp(XPinyinEngine_composingText(&imeSmoke),
+                                   "nihao") == 0 &&
+                                bn != NULL &&
+                                XPinyinEngine_candidateCount(&imeSmoke) ==
+                                    (int32_t)(cn + ch) &&
+                                strcmp(XPinyinEngine_candidateAt(&imeSmoke,
+                                                                0),
+                                       (const char*)bn[0].m_utf8) == 0,
+                            "ImePhrase 缺资产回退：nihao 纯单字回退序首字你");
+            }
+#endif /* XKEYBOARD_IME_PHRASE_ON */
+
+            XAPI_EXPECT(XVirtualKeyboard_setImeEnabled(kb, true) &&
+                            XVirtualKeyboard_imeEnabled(kb) &&
+                            XVirtualKeyboard_imeChinese(kb) &&
+                            XVirtualKeyboard_mode(kb) == XKeyboardMode_User1,
+                        "Keyboard setImeEnabled(true) 往返（默认中文态/User1）");
+            XAPI_EXPECT(XVirtualKeyboard_buttonCount(kb) == 44,
+                        "Keyboard 拼音布局 44 键");
+            XAPI_EXPECT(XVirtualKeyboard_setImeChinese(kb, false) &&
+                            !XVirtualKeyboard_imeChinese(kb) &&
+                            XVirtualKeyboard_setImeChinese(kb, true) &&
+                            XVirtualKeyboard_imeChinese(kb),
+                        "Keyboard setImeChinese 中英往返");
+            XAPI_EXPECT(XVirtualKeyboard_setImeEnabled(kb, false) &&
+                            !XVirtualKeyboard_imeEnabled(kb) &&
+                            !XVirtualKeyboard_imeChinese(kb),
+                        "Keyboard setImeEnabled(false) 关闭复位");
+        }
+#endif /* XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON */
+
+#if XLINEEDIT_ON
+        /* ---- 绑定 XLineEdit：handleButton 合成按键写入 text/光标。
+         *     键盘本体在本子段末尾随删除次序收尾（popup 曾把它挂为 le
+         *     子控件，先删键盘再删编辑框）。 ---- */
+        {
+            XLineEdit* le = XLineEdit_create(NULL, 0);
+            uint32_t bi;
+            int qIdx = -1;
+            int bsIdx = -1;
+            int leftIdx = -1;
+            XWidget_setGeometry((XWidget*)le, 0, 0, 240, 30);
+            XVirtualKeyboard_setTextArea(kb, (XWidget*)le);
+            XAPI_EXPECT(XVirtualKeyboard_textArea(kb) == (XWidget*)le,
+                        "Keyboard setTextArea 绑定往返");
+            for (bi = 0; bi < XVirtualKeyboard_buttonCount(kb); ++bi) {
+                const char* t = XVirtualKeyboard_buttonText(kb, bi);
+                if (!t) continue;
+                if (qIdx < 0 && strcmp(t, "q") == 0) qIdx = (int)bi;
+                if (bsIdx < 0 &&
+                    strcmp(t, XKEYBOARD_LBL_BACKSPACE) == 0)
+                    bsIdx = (int)bi;
+                if (leftIdx < 0 && strcmp(t, XKEYBOARD_LBL_LEFT) == 0)
+                    leftIdx = (int)bi;
+            }
+            /* 逐键 q w（handleButton 可复用入口 → 合成 XKeyEvent 写入）。 */
+            XVirtualKeyboard_handleButton(kb, (uint32_t)qIdx);
+            {
+                int wIdx = -1;
+                for (bi = 0; bi < XVirtualKeyboard_buttonCount(kb); ++bi) {
+                    const char* t = XVirtualKeyboard_buttonText(kb, bi);
+                    if (t && strcmp(t, "w") == 0) { wIdx = (int)bi; break; }
+                }
+                XVirtualKeyboard_handleButton(kb, (uint32_t)wIdx);
+            }
+            XAPI_EXPECT(strcmp(XLineEdit_text(le), "qw") == 0,
+                        "Keyboard 点键 q w 写入编辑框 text");
+            XAPI_EXPECT(XLineEdit_cursorPosition(le) == 2,
+                        "Keyboard 写入后光标随动到 2");
+            XVirtualKeyboard_handleButton(kb, (uint32_t)leftIdx);
+            XAPI_EXPECT(XLineEdit_cursorPosition(le) == 1,
+                        "Keyboard <- 键光标左移到 1");
+            XVirtualKeyboard_handleButton(kb, (uint32_t)bsIdx);
+            XAPI_EXPECT(strcmp(XLineEdit_text(le), "w") == 0,
+                        "Keyboard 退格键删除光标前字符");
+            XAPI_EXPECT(XLineEdit_cursorPosition(le) == 0,
+                        "Keyboard 退格后光标位 0");
+
+            /* ---- popup/closePopup 几何与 popupVisible（无头可调） ---- */
+            XVirtualKeyboard_popup(kb, (XWidget*)le);
+            XAPI_EXPECT(XVirtualKeyboard_popupVisible(kb),
+                        "Keyboard popup 后 popupVisible");
+            XAPI_EXPECT(XVirtualKeyboard_width(kb) ==
+                            XWidget_width((XWidget*)le),
+                        "Keyboard 弹层宽==宿主宽");
+            XAPI_EXPECT(XVirtualKeyboard_y(kb) ==
+                            XWidget_height((XWidget*)le) -
+                                XVirtualKeyboard_height(kb),
+                        "Keyboard 弹层贴宿主底部（y==hostH-kbH）");
+            XVirtualKeyboard_closePopup(kb);
+            XAPI_EXPECT(!XVirtualKeyboard_popupVisible(kb),
+                        "Keyboard closePopup 后不可见");
+
+            /* 先删键盘（popup 曾把它挂为 le 子控件）再删编辑框。 */
+            XVirtualKeyboard_delete_base(kb);
+            XLineEdit_delete_base(le);
+        }
+#else
+        /* 无编辑控件适配：核心 API 段收尾即释放。 */
+        XVirtualKeyboard_delete_base(kb);
+#endif /* XLINEEDIT_ON */
+    }
+
+#if XVIRTUALKEYBOARD_ON
+    /* ================================================================
+     * 7.x 输入族自标注回归锁（设计 behaviorMatrix【自标注三件】+
+     *     testPlan apitest·E；XVIRTUALKEYBOARD_ON 门控——自标注随
+     *     Src 侧同批落地：XLineEdit setEchoMode→hints/ImEnabled 查
+     *     询修正、XSpinBox 内嵌框 DigitsOnly、XDateTimeEdit
+     *     PreferNumbers、编辑控件 init 置 WA14；框架宏注册后激活，
+     *     未注册时整段编译出，既有 §7 保持原样）。
+     *     【门禁对齐点】WA14 守护断言依赖 dismissFix 后的守护判据
+     *     （supportedTarget && testAttribute(14)）；守护 tick 经合
+     *     成 XTimerEvent 直派（与真实定时器事件同 vtable 路径）。
+     *     ================================================================ */
+    {
+        /* ---- 7.x-1 XSpinBox：内嵌 lineEdit 自标注 DigitsOnly
+         *     （qspinbox.cpp:39-43 口径，设计 behaviorMatrix；相等
+         *     锁——内嵌框为控件私有，用户无入口叠加自定义位）。 ---- */
+#if XSPINBOX_ON && XABSTRACTSPINBOX_ON
+        {
+            XSpinBox spin;
+            XSpinBox_init(&spin, NULL, 0);
+            XAPI_EXPECT((XWidget_inputMethodHints(
+                             (XWidget*)XSpinBox_lineEdit(&spin)) &
+                         XInputMethodHint_DigitsOnly) ==
+                            XInputMethodHint_DigitsOnly,
+                        "SpinBox 内嵌 lineEdit 自标注 DigitsOnly"
+                        "（qspinbox 口径，守护按数字盘弹出）");
+            XSpinBox_deinit_base(&spin);
+        }
+#endif /* XSPINBOX_ON && XABSTRACTSPINBOX_ON */
+
+        /* ---- 7.x-2 XDateTimeEdit：自标注 PreferNumbers 软提示
+         *     （qdatetimeedit.cpp:2570 口径；设计标注「勿硬锁」——
+         *     软提示只影响键盘偏好不锁布局，此处按置位断言；TODO
+         *     门禁对齐：若 Src 侧落为仅设置于内嵌编辑框或另行承载，
+         *     按实际断言目标调整）。 ---- */
+#if XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
+        {
+            XDateTimeEdit dt;
+            XDateTimeEdit_init(&dt, NULL, 0);
+            XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)&dt) &
+                         XInputMethodHint_PreferNumbers) ==
+                            XInputMethodHint_PreferNumbers,
+                        "DateTimeEdit 自标注 PreferNumbers 软提示"
+                        "（qdatetimeedit 口径，勿硬锁）");
+            XDateTimeEdit_deinit_base(&dt);
+        }
+#endif /* XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
+
+        /* ---- 7.x-3 XLineEdit setEchoMode→hints 自标注
+         *     （qlineedit.cpp:546-559 规则）：Password/NoEcho→
+         *     ImhHiddenText、非 Normal→NoAutoUppercase|
+         *     NoPredictiveText|SensitiveData，按位 setFlag 保留用
+         *     户位；回 Normal 剥除自标位。 ---- */
+        {
+            XLineEdit* le = XLineEdit_create(NULL, 0);
+            const XInputMethodHints kEchoBits =
+                (XInputMethodHints)(XInputMethodHint_HiddenText |
+                                    XInputMethodHint_SensitiveData |
+                                    XInputMethodHint_NoAutoUppercase |
+                                    XInputMethodHint_NoPredictiveText);
+            /* 用户自定义位先行：回 Normal 后必须原样保留。 */
+            XWidget_setInputMethodHints((XWidget*)le,
+                                        XInputMethodHint_PreferUppercase);
+            XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)le) &
+                         kEchoBits) == 0,
+                        "Normal 回显无自标 hints 位（前置干净态）");
+            XLineEdit_setEchoMode(le, XLineEditEchoMode_Password);
+            XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)le) &
+                         kEchoBits) == kEchoBits,
+                        "setEchoMode(Password)→HiddenText|SensitiveData|"
+                        "NoAutoUppercase|NoPredictiveText 全置位");
+            XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)le) &
+                         XInputMethodHint_PreferUppercase) !=
+                            0,
+                        "Password 自标注保留用户已设 hints 位"
+                        "（按位 setFlag 不清用户位）");
+            XLineEdit_setEchoMode(le, XLineEditEchoMode_Normal);
+            XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)le) &
+                         kEchoBits) == 0,
+                        "回 Normal 剥除全部自标位");
+            XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)le) &
+                         XInputMethodHint_PreferUppercase) !=
+                            0,
+                        "回 Normal 用户位保留");
+            XLineEdit_setEchoMode(le, XLineEditEchoMode_NoEcho);
+            XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)le) &
+                             (XInputMethodHints)(XInputMethodHint_HiddenText |
+                                                 XInputMethodHint_SensitiveData |
+                                                 XInputMethodHint_NoAutoUppercase |
+                                                 XInputMethodHint_NoPredictiveText)) ==
+                                (XInputMethodHints)(XInputMethodHint_HiddenText |
+                                                    XInputMethodHint_SensitiveData |
+                                                    XInputMethodHint_NoAutoUppercase |
+                                                    XInputMethodHint_NoPredictiveText),
+                        "setEchoMode(NoEcho) 同规则自标（HiddenText 等"
+                        "四位置位）");
+            XLineEdit_setEchoMode(le, XLineEditEchoMode_Normal);
+            XWidget_setInputMethodHints((XWidget*)le, (XInputMethodHints)0);
+
+#if XINPUTMETHOD_ON
+            /* ---- 7.x-4 ImEnabled 查询==isEnabled&&!readOnly 矩阵
+             *     （修正原硬编码 true，XLineEdit.c:1374-1377 既有缺
+             *     陷；经 XInputMethod_defaultQueryHandler 查询桥，
+             *     与 XLineEdit.c:1370-1373 既有 ImHints 回填同链）。 */
+            {
+                XVariant* v = XInputMethod_defaultQueryHandler(
+                    (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
+                XAPI_EXPECT(v != NULL && XVariant_toBool(v),
+                            "ImEnabled 查询：enabled+可编辑==true");
+                if (v) XVariant_delete_base((XClass*)v);
+                XLineEdit_setEnabled(le, false);
+                v = XInputMethod_defaultQueryHandler(
+                    (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
+                XAPI_EXPECT(v != NULL && !XVariant_toBool(v),
+                            "ImEnabled 查询：disabled==false");
+                if (v) XVariant_delete_base((XClass*)v);
+                XLineEdit_setEnabled(le, true);
+                XLineEdit_setReadOnly(le, true);
+                v = XInputMethod_defaultQueryHandler(
+                    (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
+                XAPI_EXPECT(v != NULL && !XVariant_toBool(v),
+                            "ImEnabled 查询：readOnly==false");
+                if (v) XVariant_delete_base((XClass*)v);
+                XLineEdit_setReadOnly(le, false);
+                v = XInputMethod_defaultQueryHandler(
+                    (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
+                XAPI_EXPECT(v != NULL && XVariant_toBool(v),
+                            "ImEnabled 查询：恢复可编辑==true");
+                if (v) XVariant_delete_base((XClass*)v);
+
+                /* ImHints 查询桥往返（既有链保持）：控件位 → Int32
+                 * 载荷原值。 */
+                XWidget_setInputMethodHints((XWidget*)le,
+                                            XInputMethodHint_DigitsOnly);
+                v = XInputMethod_defaultQueryHandler(
+                    (XObject*)le, XInputMethodQuery_ImHints, NULL, NULL);
+                XAPI_EXPECT(v != NULL && (XInputMethodHints)
+                                    XVariant_toInt32(v) ==
+                                XInputMethodHint_DigitsOnly,
+                            "ImHints 查询桥往返：控件位原值 Int32 承载");
+                if (v) XVariant_delete_base((XClass*)v);
+                XWidget_setInputMethodHints((XWidget*)le,
+                                            (XInputMethodHints)0);
+            }
+#endif /* XINPUTMETHOD_ON */
+            XLineEdit_delete_base(le);
+        }
+
+#if XINPUTMETHOD_ON
+        /* ---- 7.x-5 WA_InputMethodEnabled opt-out：编辑控件 init 置
+         *     位（E 契约）；置掉后守护 tick 不弹（接受判据=
+         *     supportedTarget && testAttribute(14)，Qt qwidget.cpp
+         *     :9057-9065 兜底口径；popup 直呼不受抑制故先收层再验
+         *     守护臂）。 ---- */
+        {
+            XVirtualKeyboard* kbOpt = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* leOpt = XLineEdit_create(NULL, 0);
+            XTimerEvent te;
+            XVirtualKeyboard_setGeometry(kbOpt, 0, 0, 400, 160);
+            XAPI_EXPECT(XWidget_testAttribute(
+                            (XWidget*)leOpt,
+                            XWidgetAttribute_InputMethodEnabled),
+                        "编辑控件 init 置位 WA_InputMethodEnabled（14）");
+            XWidget_setFocus((XWidget*)leOpt);
+            XVirtualKeyboard_popup(kbOpt, (XWidget*)leOpt);
+            XAPI_EXPECT(XVirtualKeyboard_popupVisible(kbOpt),
+                        "前置：popup 直呼弹出（不受 WA14 抑制）");
+            XVirtualKeyboard_closePopup(kbOpt);
+            XWidget_setAttribute((XWidget*)leOpt,
+                                 XWidgetAttribute_InputMethodEnabled, false);
+            XWidget_setFocus((XWidget*)leOpt);
+            if (kbOpt->m_guardTimer != XTIMER_INVALID_ID) {
+                memset(&te, 0, sizeof(te));
+                XEvent_init(&te.m_base, XEVENT_TYPE_TIMER);
+                te.timerId = kbOpt->m_guardTimer;
+                XObject_event_base((XObject*)kbOpt, (XEvent*)&te);
+            }
+            XAPI_EXPECT(!XVirtualKeyboard_popupVisible(kbOpt) && !kbOpt->m_popped,
+                        "setAttribute(InputMethodEnabled,false) 后守护"
+                        "不弹（opt-out）");
+            XVirtualKeyboard_closePopup(kbOpt);
+            XVirtualKeyboard_setParent(kbOpt, NULL, 0);
+            XLineEdit_delete_base(leOpt);
+            XVirtualKeyboard_delete_base(kbOpt);
+        }
+#endif /* XINPUTMETHOD_ON */
+    }
+#endif /* XVIRTUALKEYBOARD_ON */
+#endif /* XWIDGET_ON && XKEYBOARD_ON */
 
 #if !XWIDGET_ON
 /* 输入族整体裁剪时的非空翻译单元哨兵。 */

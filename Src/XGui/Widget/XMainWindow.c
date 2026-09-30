@@ -5,6 +5,31 @@
 #include "XWindowDecoration.h" /* 框架条让位：布局按 frameMargins 整体下移 */
 #include "XDockWidget_Protected.h"
 #include "XStringUtils.h"
+#if XRUBBERBAND_ON
+#include "XRubberBand.h"
+#endif
+#if XTABBAR_ON
+#include "XTabBar.h"
+#endif
+
+/* ==================== 调试跟踪（XGUI_DOCK_TRACE，问题关闭后移除） ==================== */
+
+#if XGUI_DOCK_TRACE
+#include <stdio.h>
+#include "XDateTime.h"
+/* 与 XDockWidget.c 的 XDW_TRACE 同口径（毫秒时间戳 + 函数名 + 即刷）。 */
+#define XMW_TRACE(...)                                                    \
+    do {                                                                  \
+        int64_t xmwTraceMs = XDateTime_currentMSecsSinceEpoch();          \
+        printf("[DOCK %lld.%03lld %s] ", (long long)(xmwTraceMs / 1000),  \
+               (long long)(xmwTraceMs % 1000), __func__);                 \
+        printf(__VA_ARGS__);                                              \
+        printf("\n");                                                     \
+        fflush(stdout);                                                   \
+    } while (0)
+#else
+#define XMW_TRACE(...) do {} while (0)
+#endif
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -317,6 +342,180 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
     }
 }
 
+/* ==================== 标签组页签条（tab 化可见化） ==================== */
+#if XTABBAR_ON && XWIDGET_ON
+
+/** @brief 标签组页签条高度（像素；对标 QTabBar 常规高度）。 */
+#define XMW_TABBAR_H 24
+
+static void xmw_dockGroupSync(XMainWindow* self);
+static void xmw_layout(XMainWindow* self);
+
+/** @brief      页签条 currentChanged 转发槽（connect_2 槽首参=发送者）。
+ *  @details    由页签条上溯宿主主窗口，按页签条在 m_dockTabBars 中的
+ *              下标定位标签组，把组内当前下标的成员置为活动面板
+ *              （m_activeTabifiedDock）并联动可见性与重排。 */
+static void xmw_tabBarCurrentChanged(void* sender, XVarList* args)
+{
+    XTabBar* bar = (XTabBar*)sender;
+    XMainWindow* self;
+    XWidget* host;
+    int64_t g;
+    int64_t gn;
+    XVector* group = NULL;
+    int64_t n;
+    int64_t idx;
+    (void)args;
+    if (!bar) return;
+    host = XWidget_parentWidget((XWidget*)bar);
+    if (!host || !((XObject*)host)->is_widget) return;
+    self = (XMainWindow*)host;
+    if (!self->m_dockTabBars || !self->m_dockTabGroups) return;
+    /* 重入保护：xmw_layout 回填 current 下标引发的信号直接跳过，
+       否则槽内 xmw_layout 递归（栈溢出）。 */
+    if (self->m_inTabSync) return;
+    gn = XVector_size_base((const XContainer*)self->m_dockTabBars);
+    for (g = 0; g < gn; ++g) {
+        XTabBar** slot =
+            (XTabBar**)XVector_at_base(self->m_dockTabBars, g);
+        if (slot && *slot == bar) {
+            group = XVector_At_Base(self->m_dockTabGroups, g, XVector*);
+            break;
+        }
+    }
+    if (!group) return;
+    n = XVector_size_base((const XContainer*)group);
+    idx = XTabBar_currentIndex(bar);
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    {
+        XDockWidget* d = XVector_At_Base(group, idx, XDockWidget*);
+        if (!d) return;
+        self->m_activeTabifiedDock = (XWidget*)d;
+    }
+    xmw_dockGroupSync(self);
+    xmw_layout(self);
+}
+
+/** @brief      标签组页签条布局与回填（xmw_layout 末尾调用）。
+ *  @details    对每组：活动面板（m_activeTabifiedDock 在组内优先，否则
+ *              组内首个可见成员）几何顶部让出 XMW_TABBAR_H 给页签条，
+ *              页签条铺在活动面板矩形顶部并回填成员标题；活动下标与
+ *              m_activeTabifiedDock 保持一致（回填经 m_inTabSync 抑制
+ *              currentChanged 槽递归）。
+ * @param      self 目标主窗口；可为 NULL，NULL 时不执行操作。
+ * @return     无返回值。
+ */
+static void xmw_tabBarsLayout(XMainWindow* self)
+{
+    int64_t g;
+    int64_t gn;
+    if (!self || !self->m_dockTabGroups || !self->m_dockTabBars) return;
+    if (self->m_inTabSync) return;
+    gn = XVector_size_base((const XContainer*)self->m_dockTabGroups);
+    for (g = 0; g < gn; ++g) {
+        XVector* group = XVector_At_Base(self->m_dockTabGroups, g, XVector*);
+        XTabBar** barSlot =
+            (XTabBar**)XVector_at_base(self->m_dockTabBars, g);
+        XTabBar* bar;
+        XDockWidget* active = NULL;
+        XDockWidget** activeSlot = NULL;
+        int64_t m;
+        int64_t j;
+        int64_t activeIdx = 0;
+        XRect r;
+        if (!barSlot) continue;
+        bar = *barSlot;
+        if (!group || XVector_size_base((const XContainer*)group) < 2) {
+            if (bar && XWidget_isVisible((XWidget*)bar))
+                XWidget_hide((XWidget*)bar);
+            continue;
+        }
+        m = XVector_size_base((const XContainer*)group);
+        /* 活动面板：m_activeTabifiedDock 在组内优先，否则首个可见成员。 */
+        for (j = 0; j < m; ++j) {
+            XDockWidget* d = XVector_At_Base(group, j, XDockWidget*);
+            if (!d) continue;
+            if ((XWidget*)d == self->m_activeTabifiedDock) {
+                active = d;
+                activeIdx = j;
+                break;
+            }
+            if (!active && !XWidget_isHidden((XWidget*)d)) {
+                active = d;
+                activeIdx = j;
+            }
+        }
+        if (!active) active = XVector_At_Base(group, 0, XDockWidget*);
+        if (!active) continue;
+        /* 惰性创建页签条（主窗口子控件，对标 Qt 每标签组一个 QTabBar）。
+         * 优先从回收池取（组解散时入池的隐藏条）：连接/父子关系仍在，
+         * 页签数由下方"成员数量变化时重建"回填；池空才新建。 */
+        if (!bar) {
+            int64_t pn = self->m_dockTabBarPool
+                ? XVector_size_base(
+                      (const XContainer*)self->m_dockTabBarPool) : 0;
+            if (pn > 0) {
+                bar = XVector_At_Base(self->m_dockTabBarPool,
+                                      pn - 1, XTabBar*);
+                XVector_remove_base(self->m_dockTabBarPool, pn - 1, 1);
+            }
+            if (!bar) {
+                bar = XTabBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                        (XWidget*)self, 0);
+                if (!bar) continue;
+                XObject_connect_2((XObject*)bar,
+                                  (size_t)XTabBar_currentChanged_signal(bar, 0),
+                                  xmw_tabBarCurrentChanged);
+            }
+            *barSlot = bar;
+        }
+        /* 回填页签：成员数量变化时重建（对标 Qt 页签随成员增删）。 */
+        if (XTabBar_count(bar) != (int)m) {
+            self->m_inTabSync = true;
+            while (XTabBar_count(bar) > 0)
+                XTabBar_removeTab(bar, 0);
+            for (j = 0; j < m; ++j) {
+                XDockWidget* d = XVector_At_Base(group, j, XDockWidget*);
+                XTabBar_addTab_2(bar,
+                                 d && d->m_title
+                                     ? XString_toUtf8(d->m_title) : "");
+            }
+            self->m_inTabSync = false;
+        }
+        /* 几何：页签条铺活动面板矩形顶部，活动面板让出页签条高度。 */
+        {
+            XDockWidget* d = XVector_At_Base(group, activeIdx, XDockWidget*);
+            if (!d) continue;
+            r = XWidget_geometry((XWidget*)d);
+        }
+        {
+            XRect barRect;
+            XRect dockRect;
+            XRect_init(&barRect, r.x, r.y, r.width, XMW_TABBAR_H);
+            XRect_init(&dockRect, r.x, r.y + XMW_TABBAR_H,
+                       r.width, r.height > XMW_TABBAR_H
+                                    ? r.height - XMW_TABBAR_H : 1);
+            XWidget_setGeometryRect((XWidget*)bar, &barRect);
+            if (!XWidget_isVisible((XWidget*)bar))
+                XWidget_show((XWidget*)bar);
+            XWidget_raise((XWidget*)bar);
+            XWidget_setGeometryRect(active, &dockRect);
+        }
+        /* 活动下标与页签条一致（回填经重入保护）。 */
+        {
+            int cur = XTabBar_currentIndex(bar);
+            if (cur != (int)activeIdx) {
+                self->m_inTabSync = true;
+                XTabBar_setCurrentIndex(bar, (int)activeIdx);
+                self->m_inTabSync = false;
+            }
+        }
+    }
+}
+
+#endif /* XTABBAR_ON */
+
 static void xmw_layout(XMainWindow* self)
 {
     int w = XWidget_width((XWidget*)self);
@@ -412,6 +611,8 @@ static void xmw_layout(XMainWindow* self)
                    h - top - bottom > 0 ? h - top - bottom : 0);
         XWidget_setGeometryRect(self->m_central, &r);
     }
+    /* 标签组页签条布局与回填（tab 化可见化；无组时无操作）。 */
+    xmw_tabBarsLayout(self);
 }
 
 /* ==================== 事件处理 ==================== */
@@ -427,6 +628,15 @@ static void VX_mainWindow_resizeEvent(XWidget* self, XEvent* event)
 static void VX_mainWindow_deinit(XMainWindow* self)
 {
     if (!self) return;
+    /* 落点指示器是主窗口子控件（随 XObject 级联销毁，XObject.c:556-574
+     * 与 m_menuBarOwned 显式删除路径不同）：析构只需隐藏并清复用位，
+     * 不删除（对标 Qt 析构时 gapIndicator 作为 parentWidget 子控件一并
+     * 销毁，qmainwindowlayout.cpp:2963-2964 的父子关系）。 */
+    if (self->m_dropIndicator) {
+        XWidget_hide(self->m_dropIndicator);
+        self->m_dropIndicator = NULL;
+    }
+    self->m_dropAreaShown = 0;
     if (self->m_menuBarOwned && self->m_menuBar) {
         XClass_delete_base((XClass*)self->m_menuBar);
     }
@@ -459,10 +669,23 @@ static void VX_mainWindow_deinit(XMainWindow* self)
         for (i = 0; i < n; ++i) {
             XVector** group =
                 (XVector**)XVector_at_base(self->m_dockTabGroups, i);
+            XTabBar** bar = self->m_dockTabBars
+                ? (XTabBar**)XVector_at_base(self->m_dockTabBars, i) : NULL;
             if (group && *group) XVector_delete_base(*group);
+            /* 页签条为主窗口子控件，随控件树级联销毁，此处仅清登记。 */
+            if (bar) *bar = NULL;
         }
         XVector_delete_base(self->m_dockTabGroups);
         self->m_dockTabGroups = NULL;
+    }
+    if (self->m_dockTabBars) {
+        XVector_delete_base(self->m_dockTabBars);
+        self->m_dockTabBars = NULL;
+    }
+    if (self->m_dockTabBarPool) {
+        /* 池中页签条同为主窗口子控件，随控件树级联销毁，此处仅清登记。 */
+        XVector_delete_base(self->m_dockTabBarPool);
+        self->m_dockTabBarPool = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -500,6 +723,9 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     self->m_dockAreas = XVector_Create(int);
     self->m_dockHeights = XVector_Create(int);
     self->m_dockTabGroups = XVector_Create(XVector*);
+    self->m_dockTabBars = XVector_Create(XTabBar*);
+    self->m_dockTabBarPool = XVector_Create(XTabBar*);
+    self->m_inTabSync = false;
     self->m_leftDockWidth = 160;
     self->m_rightDockWidth = 160;
     self->m_topDockHeight = 100;
@@ -508,6 +734,8 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
     self->m_iconSize = 16;
     self->m_toolButtonStyle = (int)XToolButtonStyle_IconOnly;
     self->m_activeTabifiedDock = NULL;
+    self->m_dropIndicator = NULL; /* 拖放落点指示器：hoverDrop 惰性创建 */
+    self->m_dropAreaShown = 0;    /* 指示器未展示（hoverDrop 幂等门） */
     XWidget_resize(self, 600, 450);
 
     self->m_documentMode = false;
@@ -766,7 +994,23 @@ static void xmw_dockGroupDetach(XMainWindow* self, const XDockWidget* dock)
         if (idx < 0) continue;
         XVector_remove_base(group, idx, 1);
         if (XVector_size_base((const XContainer*)group) < 2) {
+            /* 组解散：页签条只隐藏不销毁（它是主窗口子控件，随主窗析
+             * 构级联释放）。此前在拖出/落位回调链内 delete_base 页签
+             * 条会触发析构级联 → 事件分发 → 访问已释放对象 → 崩溃。
+             * 回收入池待复用——否则反复拖出/停靠每次都遗弃一个隐藏
+             * 页签条子控件，主窗口子控件列表线性累积（卡顿根因）。 */
+            XTabBar** bar = self->m_dockTabBars
+                ? (XTabBar**)XVector_at_base(self->m_dockTabBars, g) : NULL;
+            if (bar && *bar) {
+                XTabBar* pooled = *bar;
+                XWidget_hide((XWidget*)pooled);
+                if (self->m_dockTabBarPool)
+                    XVector_push_back_1_base(self->m_dockTabBarPool,
+                                             &pooled);
+                *bar = NULL;
+            }
             XVector_delete_base(group);
+            XVector_remove_base(self->m_dockTabBars, g, 1);
             XVector_remove_base(self->m_dockTabGroups, g, 1);
         }
         return;
@@ -800,6 +1044,11 @@ static XVector* xmw_dockGroupAttach(XMainWindow* self, XDockWidget* first,
         if (!group) return NULL;
         XVector_push_back_1_base(group, &first);
         XVector_push_back_1_base(self->m_dockTabGroups, &group);
+        /* 页签条平行登记（与组同下标；惰性创建于布局期）。 */
+        {
+            XTabBar* bar = NULL;
+            XVector_push_back_1_base(self->m_dockTabBars, &bar);
+        }
     }
     if (XVector_indexOf(group, &second, 0) < 0)
         XVector_push_back_1_base(group, &second);
@@ -813,11 +1062,64 @@ static XVector* xmw_dockGroupAttach(XMainWindow* self, XDockWidget* first,
  * @param      self 目标主窗口；可为 NULL，NULL 时不执行操作。
  * @return     无返回值。
  */
+static void xmw_dockGroupDetach(XMainWindow* self, const XDockWidget* dock);
+
 static void xmw_dockGroupSync(XMainWindow* self)
 {
     int64_t g;
     int64_t gn;
     if (!self || !self->m_dockTabGroups) return;
+    /* 浮动成员脱离编组（对标 Qt unplug：成员拖出浮动即离开标签组）。
+     * 摘除会改变组下标并可能解散组（组向量被删），必须先快照成员、
+     * 再统一摘除；组余员不足 2 解散时，剩余停靠成员恢复显示（对标
+     * Qt 拖出单个标签后其余标签仍在组内显示）——否则余员停留在
+     * "非活动隐藏"态，面板凭空消失（实测：中央 tab 化后再拖出其一，
+     * 另一块不显示）。 */
+    for (g = 0; g < (int64_t)XVector_size_base(
+                        (const XContainer*)self->m_dockTabGroups);) {
+        XVector* group =
+            XVector_At_Base(self->m_dockTabGroups, g, XVector*);
+        int64_t n = group ? XVector_size_base((const XContainer*)group) : 0;
+        int64_t floated = 0;
+        int64_t i;
+        XDockWidget* floaters[16];
+        int64_t floatersN = 0;
+        XDockWidget* survivors[16];
+        int64_t survivorsN = 0;
+        if (!group) {
+            ++g;
+            continue;
+        }
+        for (i = 0; i < n; ++i) {
+            XDockWidget* d = XVector_At_Base(group, i, XDockWidget*);
+            if (!d) continue;
+            if (d->m_floating) {
+                if (floatersN < 16) floaters[floatersN++] = d;
+                ++floated;
+            } else if (survivorsN < 16) {
+                survivors[survivorsN++] = d;
+            }
+        }
+        if (floatersN == 0) {
+            ++g;
+            continue;
+        }
+        /* 先摘浮动成员（可能解散本组：组向量与平行页签条登记随之销
+           毁），因此本组其余引用此后一律不再使用。 */
+        for (i = 0; i < floatersN; ++i)
+            xmw_dockGroupDetach(self, floaters[i]);
+        if ((n - floated) < 2) {
+            /* 组解散：余员恢复显示；活动面板指针若还指着已浮出的成
+             * 员（不在任何组里），改指余员——否则下一轮 dockGroupSync
+             * 的"仅活动成员可见"会把它重新藏掉（实测：合并后拖出一
+             * 个，另一个消失）。 */
+            for (i = 0; i < survivorsN; ++i) {
+                XWidget_show((XWidget*)survivors[i]);
+                self->m_activeTabifiedDock = (XWidget*)survivors[i];
+            }
+        }
+        g = 0; /* 组下标已变：从头重扫。 */
+    }
     gn = XVector_size_base((const XContainer*)self->m_dockTabGroups);
     for (g = 0; g < gn; ++g) {
         XVector* group =
@@ -1110,7 +1412,297 @@ void XMainWindow_updateDockLayout(XMainWindow* self)
      * 经宿主回链回触重排（对标 QDockWidget 触发
      * QMainWindowLayout::update 的私有路径）。重排幂等，重复调用安全。 */
     if (!self) return;
+    /* 先同步标签组（浮动成员脱离编组、组余员恢复显示），再重排——
+     * 否则拖出成员仍挂在旧组里被"仅活动面板可见"隐藏（实测：中央
+     * tab 化后拖出其一，另一块面板凭空消失）。 */
+    xmw_dockGroupSync(self);
     xmw_layout(self);
+}
+
+/* ==================== 拖放落点（对标 QMainWindowLayout hover/plug） ==================== */
+
+/**
+ * @brief      计算停靠区可用矩形（客户区扣除菜单栏/顶部工具栏与状态栏）。
+ * @details    与 xmw_layout 的预留口径一致：顶部 = 可见菜单栏
+ *             （xmw_menuHeight）+ 顶部工具栏（每条 30）；底部 = 可见
+ *             状态栏高度。拖放落点判定与落点指示器矩形都以该矩形为界
+ *             ——菜单栏/工具栏/状态栏不属于停靠区（对标 Qt：QMainWindow
+ *             的 dock 区布局位于菜单栏/工具栏之下、状态栏之上，拖到
+ *             菜单栏上无落点，qmainwindowlayout.cpp 布局树）。
+ * @param      self 目标主窗口；可为 NULL。
+ * @param      out 区域矩形输出（主窗口客户区坐标）；可为 NULL。
+ * @return     无返回值。
+ */
+static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
+{
+    int w;
+    int h;
+    int top;
+    int bottom;
+    int64_t i;
+    int64_t n;
+    if (!out) return;
+    w = self ? XWidget_width((const XWidget*)self) : 0;
+    h = self ? XWidget_height((const XWidget*)self) : 0;
+    XRect_init(out, 0, 0, w, h);
+    if (!self || w <= 0 || h <= 0) return;
+    top = 0;
+    bottom = 0;
+    if (self->m_menuBar && XWidget_isVisible(self->m_menuBar))
+        top += xmw_menuHeight();
+    if (self->m_toolBars) {
+        n = XVector_size_base((const XContainer*)self->m_toolBars);
+        for (i = 0; i < n; ++i) {
+            if (!xmw_isTopToolBar(self, i)) continue;
+            top += 30;
+        }
+    }
+    if (self->m_statusBar && XWidget_isVisible(self->m_statusBar))
+        bottom = XWidget_height(self->m_statusBar);
+    if (top + bottom > h) return; /* 预留超出客户区：保持全空（0 高） */
+    XRect_init(out, 0, top, w, h - top - bottom);
+}
+
+/**
+ * @brief      按三分分区求拖动落点的目标区域与指示器矩形。
+ * @details    分区规则（任务裁定，对标 Qt QDockAreaLayout
+ *             dockPosHelper 的三分分区注释图，qdockarealayout.cpp:651-733：
+ *             外/内 1/3 边缘判定 703-733、中央带返回 DockCount=tab 落点
+ *             673-700）：横向外 1/3 = Left、横向内 1/3 = Right；仅在横
+ *             向中带内再判纵向——纵向外 1/3 = Top、纵向内 1/3 = Bottom、
+ *             中央带 = All（调用方转 tab 化）。落点先经
+ *             XWidget_mapFromGlobal 折算到主窗口客户区坐标，再以停靠区
+ *             矩形（xmw_dockAreaRect，扣除菜单栏/顶部工具栏与状态栏）
+ *             为界——区外（含菜单栏/状态栏条带）无落点。目标区域经
+ *             XDockWidget_isAreaAllowed 过滤：不允许时
+ *             回退该 dock 当前登记区域（XMainWindow_dockWidgetArea 查
+ *             询）；回退区域也无效（未登记的 NoDockWidgetArea，或非单
+ *             一边缘位、或同样不被允许）时无落点。
+ * @param      self 目标主窗口；可为 NULL。
+ * @param      dock 拖动中的停靠面板；可为 NULL。
+ * @param      globalPos 落点全局坐标；可为 NULL。
+ * @param      outIndicator 指示器矩形输出（主窗口坐标系，随有效区域写
+ *             入）；可为 NULL 表示不关心几何。
+ * @return     有效目标区域码（Left/Right/Top/Bottom/All）；无落点返回
+ *             XDockWidgetArea_NoDockWidgetArea（此时不写 outIndicator）。
+ */
+static int xmw_dropAreaAt(const XMainWindow* self, const XDockWidget* dock,
+                          const XPoint* globalPos, XRect* outIndicator)
+{
+    XRect r;
+    XRect ar;
+    XPoint local;
+    int aw;
+    int ah;
+    int x3;
+    int y3;
+    int lx;
+    int ly;
+    int hit;
+    int fallback;
+    if (!self || !dock || !globalPos)
+        return (int)XDockWidgetArea_NoDockWidgetArea;
+    local = XWidget_mapFromGlobal((const XWidget*)self, globalPos);
+    /* 落点判定与指示器都以停靠区矩形为界（扣除菜单栏/顶部工具栏与
+     * 状态栏）：菜单栏上拖动无落点，指示器不再覆盖标题/菜单条带。 */
+    xmw_dockAreaRect(self, &ar);
+    aw = ar.width;
+    ah = ar.height;
+    if (aw <= 0 || ah <= 0)
+        return (int)XDockWidgetArea_NoDockWidgetArea;
+    /* 落点在停靠区外：无落点（横纵各 ×3 后比较，避免整除截断把
+     * 边界点划错带，与 XDockWidget 释放链同口径）。 */
+    if (local.x < ar.x || local.x >= ar.x + aw ||
+        local.y < ar.y || local.y >= ar.y + ah)
+        return (int)XDockWidgetArea_NoDockWidgetArea;
+    lx = local.x - ar.x;
+    ly = local.y - ar.y;
+    x3 = lx * 3;
+    y3 = ly * 3;
+    if (x3 < aw)
+        hit = (int)XDockWidgetArea_Left;
+    else if (x3 >= aw * 2)
+        hit = (int)XDockWidgetArea_Right;
+    else if (y3 < ah)
+        hit = (int)XDockWidgetArea_Top;
+    else if (y3 >= ah * 2)
+        hit = (int)XDockWidgetArea_Bottom;
+    else
+        hit = (int)XDockWidgetArea_All; /* 横纵双中带 = 中央带（tab 化） */
+    /* allowedAreas 过滤：不允许时回退该 dock 当前登记区域。 */
+    if (XDockWidget_isAreaAllowed(dock, hit)) {
+        fallback = hit;
+    } else {
+        fallback = XMainWindow_dockWidgetArea(self, (const XWidget*)dock);
+        if ((fallback != (int)XDockWidgetArea_Left &&
+             fallback != (int)XDockWidgetArea_Right &&
+             fallback != (int)XDockWidgetArea_Top &&
+             fallback != (int)XDockWidgetArea_Bottom) ||
+            !XDockWidget_isAreaAllowed(dock, fallback))
+            return (int)XDockWidgetArea_NoDockWidgetArea;
+    }
+    /* 指示器矩形按有效区域给出（左/右区 = 停靠区横向 1/3 全高条；上/
+     * 下区 = 停靠区纵向 1/3 全宽条；中央带 = 停靠区中央 1/3x1/3 矩形；
+     * 均相对停靠区原点 ar.x/ar.y 偏移）。 */
+    if (fallback == (int)XDockWidgetArea_Left) {
+        XRect_init(&r, ar.x, ar.y, aw / 3, ah);
+    } else if (fallback == (int)XDockWidgetArea_Right) {
+        XRect_init(&r, ar.x + aw - aw / 3, ar.y, aw / 3, ah);
+    } else if (fallback == (int)XDockWidgetArea_Top) {
+        XRect_init(&r, ar.x, ar.y, aw, ah / 3);
+    } else if (fallback == (int)XDockWidgetArea_Bottom) {
+        XRect_init(&r, ar.x, ar.y + ah - ah / 3, aw, ah / 3);
+    } else if (fallback == (int)XDockWidgetArea_All) {
+        XRect_init(&r, ar.x + aw / 3, ar.y + ah / 3, aw / 3, ah / 3);
+    } else {
+        return (int)XDockWidgetArea_NoDockWidgetArea;
+    }
+    if (outIndicator) *outIndicator = r;
+    return fallback;
+}
+
+/**
+ * @brief      拖动落点预览：按全局落点更新落点指示器并返回目标区域
+ *             （XMainWindow_Protected.h 冻结契约的实现）。
+ * @details    分区与 allowedAreas 过滤见 xmw_dropAreaAt。命中时惰性创
+ *             建一次 XRubberBand(XRubberBandShape_Rectangle) 主窗口子控
+ *             件并跨拖拽复用，show+raise+setGeometry 到目标分区矩形
+ *             （对标 Qt QMainWindowLayout::updateGapIndicator：橡皮筋
+ *             为 QRubberBand(QRubberBand::Rectangle, parentWidget()) 惰
+ *             性创建 qmainwindowlayout.cpp:2963-2964，setGeometry/show/
+ *             raise qmainwindowlayout.cpp:2978-2983；hover 主路径
+ *             qmainwindowlayout.cpp:2995，落点→gapRect→刷新指示器
+ *             qmainwindowlayout.cpp:3161、3169）。无落点（客户区外/区
+ *             域不允许且回退无效）时隐藏指示器（对标同函数 hide 分支
+ *             qmainwindowlayout.cpp:2985-2987）。重复调用安全（幂等）。
+ * @param      self 目标主窗口；可为 NULL，NULL 时不执行操作。
+ * @param      dock 拖动中的停靠面板（借用；用于 allowedAreas 过滤）。
+ * @param      globalPos 拖动点全局坐标（应用全局坐标，非局部）。
+ * @return     目标区域码：Left/Right/Top/Bottom、All=中央带（调用方转
+ *             tab 化）、NoDockWidgetArea=无落点（保持浮动）。
+ */
+int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
+                          const XPoint* globalPos)
+{
+    XRect r;
+    int area;
+    if (!self) return (int)XDockWidgetArea_NoDockWidgetArea;
+    area = xmw_dropAreaAt(self, (const XDockWidget*)dock, globalPos, &r);
+    XMW_TRACE("hoverDrop g=(%d,%d) area=%d",
+              globalPos ? globalPos->x : -1, globalPos ? globalPos->y : -1,
+              area);
+    if (area == (int)XDockWidgetArea_NoDockWidgetArea) {
+        /* 无落点：隐藏指示器（指示器未创建则无事可做）。 */
+        if (self->m_dropAreaShown != 0) {
+            if (self->m_dropIndicator)
+                XWidget_hide(self->m_dropIndicator);
+            self->m_dropAreaShown = 0;
+        }
+        return area;
+    }
+    /* 幂等门（拖动中每条移动都调用本接口）：区域与几何未变时不重复
+     * setGeometry/show/raise——raise 是同步 SetWindowPos 往返，逐移动
+     * 冗余调用会在 OrayIdd+AMD 栈上放大呈现侧秒级停顿（实测拖动中
+     * 帧不上屏的放大器之一）。 */
+    if (self->m_dropAreaShown == area && self->m_dropIndicator &&
+        XWidget_isVisible(self->m_dropIndicator))
+        return area;
+    /* 惰性创建落点指示器（创建一次后存 m_dropIndicator 复用；失败时
+     * 降级为无预览，不影响区域码返回）。 */
+    if (!self->m_dropIndicator) {
+#if XRUBBERBAND_ON
+        self->m_dropIndicator = (XWidget*)XRubberBand_create_ex(
+            XCLASS_DEFAULT_MEMORY_TYPE, XRubberBandShape_Rectangle,
+            (XWidget*)self);
+#endif
+        if (!self->m_dropIndicator) return area;
+    }
+    XWidget_setGeometryRect(self->m_dropIndicator, &r);
+    XWidget_show(self->m_dropIndicator);
+    XWidget_raise(self->m_dropIndicator);
+    self->m_dropAreaShown = area;
+    return area;
+}
+
+/**
+ * @brief      结束拖放：按当前落点把面板落位并隐藏指示器
+ *             （XMainWindow_Protected.h 冻结契约的实现）。
+ * @details    落点重算与 hoverDrop 同口径（xmw_dropAreaAt）。分区落点
+ *             经 XMainWindow_addDockWidget 落位（其内部完成浮动面板重
+ *             新停靠与重排；对标 Qt QMainWindowLayout::plug 的 gap 落位
+ *             路径 qmainwindowlayout.cpp:2475 与
+ *             QMainWindowLayoutState::plug qmainwindowlayout.cpp:1183）。
+ *             中央带（All）取登记顺序里第一个可见且非本 dock 的停靠面
+ *             板为 first：先 XDockWidget_setFloating(dock,false) 挂回宿
+ *             主，再 XMainWindow_tabifyDockWidget 与 first 编组并激活本
+ *             面板，返回 first 的当前区域；无可编组面板时回退用 dock
+ *             当前登记区域走分区落位。无论落位与否最后一律隐藏指示器；
+ *             无落点时不改面板状态（重复调用安全，落位幂等）。
+ * @param      self 目标主窗口；可为 NULL，NULL 时不执行操作。
+ * @param      dock 拖动中的停靠面板（借用）。
+ * @param      globalPos 释放点全局坐标。
+ * @return     实际落位区域码（中央带返回 first 的当前区域）；未落位返
+ *             回 XDockWidgetArea_NoDockWidgetArea。
+ */
+int XMainWindow_finishDrop(XMainWindow* self, XWidget* dock,
+                           const XPoint* globalPos)
+{
+    XRect r;
+    XDockWidget* d = (XDockWidget*)dock;
+    XDockWidget* first = NULL;
+    int area;
+    int64_t i;
+    int64_t n;
+    if (!self || !dock) return (int)XDockWidgetArea_NoDockWidgetArea;
+    area = xmw_dropAreaAt(self, d, globalPos, &r);
+    XMW_TRACE("finishDrop g=(%d,%d) area=%d",
+              globalPos ? globalPos->x : -1, globalPos ? globalPos->y : -1,
+              area);
+    /* 对标 Qt plug 收尾：落位/无落点都收掉落点指示器（指示器保留复
+     * 用，仅隐藏；qmainwindowlayout.cpp:2494 清 gapRect 后经
+     * updateGapIndicator 的 hide 分支隐藏）。 */
+    if (self->m_dropIndicator)
+        XWidget_hide(self->m_dropIndicator);
+    self->m_dropAreaShown = 0;
+    if (area == (int)XDockWidgetArea_NoDockWidgetArea)
+        return area; /* 无落点：面板保持浮动态，不改状态 */
+    if (area == (int)XDockWidgetArea_All) {
+        /* 中央带：与第一个可见且非本 dock 的登记面板 tab 化。 */
+        if (self->m_docks) {
+            n = XVector_size_base((const XContainer*)self->m_docks);
+            for (i = 0; i < n; ++i) {
+                XDockWidget* cand =
+                    XVector_At_Base(self->m_docks, i, XDockWidget*);
+                if (!cand || cand == d) continue;
+                if (XWidget_isHidden((XWidget*)cand)) continue;
+                first = cand;
+                break;
+            }
+        }
+        if (first) {
+            /* 先脱浮挂回宿主（setFloating(false) 内部 setParent+回链
+             * 重排），再按 tabifyDockWidget 语义编组（未登记面板在其
+             * 内部按 first 区域补登记）。 */
+            XDockWidget_setFloating(d, false);
+            XMainWindow_tabifyDockWidget(self, first, d);
+            return XMainWindow_dockWidgetArea(self, (const XWidget*)first);
+        }
+        /* 无可编组面板：回退分区落位（登记区域无效时回退左区），保证
+         * 释放点在宿主内必定落位、不悬空。 */
+        area = XMainWindow_dockWidgetArea(self, dock);
+        if (area != (int)XDockWidgetArea_Left &&
+            area != (int)XDockWidgetArea_Right &&
+            area != (int)XDockWidgetArea_Top &&
+            area != (int)XDockWidgetArea_Bottom)
+            area = (int)XDockWidgetArea_Left;
+    }
+    /* 先摘除遗留标签组：重复落位/换区落位时，面板若仍挂在旧组里，
+     * dockGroupSync 的"仅活动面板可见"会按旧组关系隐藏面板（实测
+     * 多次落位后面板凭空消失的根因）。 */
+    xmw_dockGroupDetach(self, d);
+    /* 分区落点：addDockWidget 内部完成浮动面板重新停靠 + 重排。 */
+    XMainWindow_addDockWidget(self, area, dock);
+    return area;
 }
 
 

@@ -105,10 +105,13 @@ void XWindowSystemInterface_handleWindowStateChanged(XWindow* window,
 /**
  * @brief      注入屏幕接入（对标 QWindowSystemInterface::handleScreenAdded）。
  * @details    平台后端枚举到新屏幕时调用：登记到 XScreen 注册表并发射
- *             XGuiApplication 的 screenAdded 信号。屏幕所有权归平台层。
- * @param      screen 新屏幕；可为 NULL（no-op）。
+ *             XGuiApplication 的 screenAdded 信号。屏幕所有权归平台层；
+ *             返回 false 时未登记（无应用单例/注册失败），所有权仍在
+ *             平台层，调用方必须回收 screen（delete）。
+ * @param      screen 新屏幕；可为 NULL（no-op，返回 false）。
+ * @return     已登记并发射信号返回 true；未登记返回 false。
  */
-void XWindowSystemInterface_handleScreenAdded(XScreen* screen);
+bool XWindowSystemInterface_handleScreenAdded(XScreen* screen);
 
 /**
  * @brief      注入屏幕移除（对标 QWindowSystemInterface::handleScreenRemoved）。

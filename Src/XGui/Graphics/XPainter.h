@@ -1825,6 +1825,94 @@ void XPainter_setViewTransformEnabled(XPainter* self, bool enabled);
  * @return 已绑定设备且视图变换启用时返回 true，否则返回 false。
  */
 bool XPainter_viewTransformEnabled(const XPainter* self);
+/**
+ * @brief      把逻辑窗口坐标点正向映射为设备视口坐标点（本绘制器状态）。
+ * @details    统一坐标变换的正向入口：与 painterViewTransform 消费同一
+ *             m_window/m_viewport/m_viewTransformEnabled 状态和同一比例
+ *             公式，保证渲染缩放与点级映射同源同参数。视图变换停用时
+ *             为恒等映射（输出等于输入）并返回 true。结果按就近取整。
+ * @param self 绘制器指针。
+ * @param pos 逻辑坐标输入点；NULL 时输出清零并返回 false。
+ * @param out 输出设备坐标点；调用方提供存储，可为退化失败的恒等输出。
+ * @return 成功映射（或停用时的正确恒等）返回 true；绘制器未绑定设备、
+ *         参数无效或窗口退化返回 false（此时输出等于输入）。
+ */
+bool XPainter_mapWindowToViewport(XPainter* self, const XPoint* pos,
+                                  XPoint* out);
+/**
+ * @brief      把设备视口坐标点逆映射为逻辑窗口坐标点（本绘制器状态）。
+ * @details    统一坐标变换的逆向入口，是 XPainter_mapWindowToViewport
+ *             的互逆函数：与正向共享同一状态与比例公式，先正后逆在
+ *             取整误差内还原输入点。视图变换停用时为恒等映射并返回
+ *             true。结果按就近取整。
+ * @param self 绘制器指针。
+ * @param pos 设备坐标输入点；NULL 时输出清零并返回 false。
+ * @param out 输出逻辑坐标点；调用方提供存储，可为退化失败的恒等输出。
+ * @return 成功映射（或停用时的正确恒等）返回 true；绘制器未绑定设备、
+ *         参数无效或窗口退化返回 false（此时输出等于输入）。
+ */
+bool XPainter_mapViewportToWindow(XPainter* self, const XPoint* pos,
+                                  XPoint* out);
+/**
+ * @brief      设置应用级 window/viewport 视图状态（统一坐标变换单一存储）。
+ * @details    类级静态状态，供"逻辑画布→任意客户区"整窗映射使用：输入
+ *             侧 XPainter_mapViewportToWindow_static 与渲染侧
+ *             XPainter_setWindow/XPainter_setViewport（painterViewTransform
+ *             消费）都应以本状态同参数喂入，实现两链同源。窗口与视口
+ *             宽高均为正时映射激活，否则视为未激活（映射恒等）。应用级
+ *             单映射：多顶层窗口各自逻辑画布的场景由激活方负责逐窗口
+ *             切换。必须在 WM_SIZE 同步链内（XWidget_applyWindowGeometry）
+ *             通过 XPainter_refreshViewTransformViewportSize_static 同步
+ *             刷新视口尺寸，禁止推迟到 PAINT flush。
+ * @param      window 逻辑窗口矩形；NULL 时不修改状态。
+ * @param      viewport 设备视口矩形；NULL 时不修改状态。
+ * @return     无。参数非法时保持原状态不变。
+ */
+void XPainter_setViewTransform_static(const XRect* window,
+                                      const XRect* viewport);
+/**
+ * @brief      复位应用级 window/viewport 视图状态为零矩形（未激活）。
+ * @details    与 XPainter_setViewTransform_static 配对；复位后全部
+ *             _static 映射恒等（输出等于输入并返回 false），输入命中与
+ *             渲染回到 1:1 客户坐标口径。
+ * @return     无。
+ */
+void XPainter_resetViewTransform_static(void);
+/**
+ * @brief      刷新应用级视图状态的设备视口宽高（resize 同步链专用）。
+ * @details    仅改视口宽度高度（原点与逻辑窗口保持不变）；未激活时
+ *             即时短路，零行为差异。唯一约定调用点是
+ *             XWidget_applyWindowGeometry——必须在 MOVE/RESIZE 事件派发
+ *             之前执行，保证命中几何与渲染比例同帧同值，避免一帧
+ *             "旧比例命中、新比例渲染"的两源窗口。
+ * @param      width 新视口宽度（像素）。
+ * @param      height 新视口高度（像素）。
+ * @return     无。
+ */
+void XPainter_refreshViewTransformViewportSize_static(int width, int height);
+/**
+ * @brief      把逻辑窗口坐标点正向映射为设备视口坐标点（应用级状态）。
+ * @details    读取 XPainter_setViewTransform_static 设置的类级状态，
+ *             比例公式与渲染正变换/绘制器级映射同源。未激活时输出
+ *             等于输入并返回 false（恒等，调用方可忽略返回值）。
+ * @param pos 逻辑坐标输入点；NULL 时输出清零并返回 false。
+ * @param out 输出设备坐标点；调用方提供存储。
+ * @return 成功映射返回 true；未激活、参数无效或窗口退化返回 false
+ *         （此时输出等于输入）。
+ */
+bool XPainter_mapWindowToViewport_static(const XPoint* pos, XPoint* out);
+/**
+ * @brief      把设备视口坐标点逆映射为逻辑窗口坐标点（应用级状态）。
+ * @details    XPainter_mapWindowToViewport_static 的互逆函数；输入链
+ *             命中测试（XWidget_dispatchPointerEvent）以本函数把平台
+ *             客户坐标还原为逻辑画布坐标，与渲染正变换共用同一比例
+ *             状态。未激活时输出等于输入并返回 false（恒等）。
+ * @param pos 设备坐标输入点；NULL 时输出清零并返回 false。
+ * @param out 输出逻辑坐标点；调用方提供存储。
+ * @return 成功映射返回 true；未激活、参数无效或窗口退化返回 false
+ *         （此时输出等于输入）。
+ */
+bool XPainter_mapViewportToWindow_static(const XPoint* pos, XPoint* out);
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
 
 /* ========== 透明度与合成 ========== */

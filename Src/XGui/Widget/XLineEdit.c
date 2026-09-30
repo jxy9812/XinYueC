@@ -1372,7 +1372,13 @@ static XVariant* xlineedit_inputMethodQueryBase(const XWidget* self,
         return XVariant_create(&value, sizeof(value), XVariantType_Int32);
     }
     case XInputMethodQuery_ImEnabled: {
-        bool enabled = true;
+        /* 对标 Qt 净语义：QLineEdit 路径 WA_InputMethodEnabled 按
+           shouldEnableInputMethod()=!isReadOnly() 刷新（qlineedit_p.h:157
+           非 Android 口径；qlineedit.cpp:1349），事件分发兜底再乘
+           isEnabled()（qwidget.cpp:9057-9065）——合成即
+           isEnabled()&&!isReadOnly()，不再硬编码 true。 */
+        bool enabled = XWidget_isEnabled(self) &&
+                       !XLineEdit_isReadOnly((const XLineEdit*)self);
         return XVariant_create(&enabled, sizeof(enabled), XVariantType_Bool);
     }
     default:
@@ -1392,8 +1398,10 @@ static XVariant* xlineedit_inputMethodQueryBase(const XWidget* self,
  *             ImTextAfterCursor/ImMaximumTextLength 直取控制器对应状态
  *             ——位置一律字节偏移，与 surroundingText 字节索引同基
  *             （平铺承载约定；壳公开 API 的字符索引口径不用于 IME）。
- *             ImInputItemClipRectangle/ImHints/ImEnabled 走基类默认复刻；
- *             其余查询项与控制器缺席返回 NULL（等价无效 QVariant）。
+ *             ImInputItemClipRectangle/ImHints/ImEnabled 走基类默认复刻
+ *             （ImEnabled=isEnabled()&&!isReadOnly()，echoMode 派生的
+ *             hints 见 XLineEdit_setEchoMode）；其余查询项与控制器缺席
+ *             返回 NULL（等价无效 QVariant）。
  */
 static XVariant* VXLineEdit_inputMethodQuery(const XWidget* self,
                                              XInputMethodQuery query)
@@ -1575,6 +1583,19 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
        仅能点击进入、可 Tab 出链（复扫-5 路0 N3，final_report #40 残）。 */
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
     xlineedit_updateSizeHints(self);
+    /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
+     * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
+    /* 输入法接入位：编辑框默认接入 IME（对标 QLineEditPrivate 的
+       setAttribute(Qt::WA_InputMethodEnabled, shouldEnableInputMethod())
+       ——qlineedit_p.cpp:283/qlineedit_p.h:157 非 Android 口径，init 时刻
+       未只读恒 true）。虚拟键盘守护以此位为接受判据之一；opt-out 用
+       XWidget_setAttribute(WA_InputMethodEnabled,false)，只读态由
+       ImEnabled 查询实时判 false（见 xlineedit_inputMethodQueryBase）。
+       内嵌场景（XAbstractSpinBox 内嵌编辑框）经 XLineEdit_create 同样
+       携带本位，无需容器重复置位。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_InputMethodEnabled,
+                         true);
 }
 
 XLineEdit* XLineEdit_create_ex(XMemoryType memory, XWidget* parent,
@@ -1668,6 +1689,29 @@ void XLineEdit_setEchoMode(XLineEdit* self, int echoMode)
     if (echoMode < XLineEditEchoMode_Normal ||
         echoMode > XLineEditEchoMode_PasswordEchoOnEdit)
         return;
+    /* 回显模式→输入法提示自标注（对标 qlineedit.cpp:546-559 的
+       setFlag 规则，按位翻转保留用户已设提示位）：Password/NoEcho 置
+       ImhHiddenText；非 Normal 置 ImhNoAutoUppercase|ImhNoPredictiveText|
+       ImhSensitiveData。与 Qt 同序：先刷新 hints 再落控制器回显模式。 */
+    {
+        XInputMethodHints hints = XWidget_inputMethodHints((XWidget*)self);
+        bool hidden = (echoMode == (int)XLineEditEchoMode_Password ||
+                       echoMode == (int)XLineEditEchoMode_NoEcho);
+        bool masked = (echoMode != (int)XLineEditEchoMode_Normal);
+        if (hidden)
+            hints |= (uint32_t)XInputMethodHint_HiddenText;
+        else
+            hints &= ~(uint32_t)XInputMethodHint_HiddenText;
+        if (masked)
+            hints |= (uint32_t)(XInputMethodHint_NoAutoUppercase |
+                                XInputMethodHint_NoPredictiveText |
+                                XInputMethodHint_SensitiveData);
+        else
+            hints &= ~(uint32_t)(XInputMethodHint_NoAutoUppercase |
+                                 XInputMethodHint_NoPredictiveText |
+                                 XInputMethodHint_SensitiveData);
+        XWidget_setInputMethodHints((XWidget*)self, hints);
+    }
     /* 控制器：取消密码回显定时器 + 复位编辑态 + 刷新显示（Qt 语义）。 */
     XLineControl_setEchoMode(self->m_control, (uint32_t)echoMode);
     /* 迁移前语义：切换回显模式清除选区并把光标移到末尾。 */

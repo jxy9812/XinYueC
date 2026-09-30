@@ -273,6 +273,10 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
      * 获得键盘焦点，方向键导航（keyPressEvent）才可达（修复点击选中
      * 后 Down/Up 方向键不动当前项——焦点滞留原处、键事件不达视图）。 */
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
+    /* 悬停外观 opt-in（对标 Qt polish 的 WA_Hover 收口）：条目悬停
+     * 高亮离开即清——leaveEvent 重载只复位悬停记录不自重绘，依赖
+     * ENTER/LEAVE 收口门的翻转标脏抹掉屏上残留行高亮。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
 }
 
 XAbstractItemView* XAbstractItemView_create_ex(XMemoryType memory,

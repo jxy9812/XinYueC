@@ -1,4 +1,4 @@
-/* xgui_demo_pages.h —— XGuiWindowDemo 扩展页面契约（对标 Qt 示例的分页组织）。
+﻿/* xgui_demo_pages.h —— XGuiWindowDemo 扩展页面契约（对标 Qt 示例的分页组织）。
  *
  * 每个演示页面一个独立翻译单元（xgui_demo_page_*.c），与主文件
  * xgui_window_demo.c 解耦：主文件只负责导航接线、页面注册与 autotest
@@ -50,12 +50,41 @@ XWidget* demo_page_advanced_build(XWidget* parent,
 XWidget* demo_page_effects_build(XWidget* parent,
                                  DemoPageStatusFn status, void* user);
 
+/** @brief 构建屏幕虚拟键盘页（XLineEdit 输入 + 底部 XVirtualKeyboard + 自动弹
+ *         出；XKEYBOARD_ON=0 时返回 NULL，主文件跳过注册）。 */
+XWidget* demo_page_keyboard_build(XWidget* parent,
+                                  DemoPageStatusFn status, void* user);
+
 /** @brief 各页自测：调用前主程序已把该页切为当前页且几何有效。
  *  @return 失败断言数（0=全过；page 不符=-1）。 */
 int demo_page_views_autotest(XWidget* page);
 int demo_page_dialogs_autotest(XWidget* page);
 int demo_page_advanced_autotest(XWidget* page);
 int demo_page_effects_autotest(XWidget* page);
+int demo_page_keyboard_autotest(XWidget* page);
+
+/** @brief 键盘页无头截图钩子（Tools/VirtualKeyboard/style_check.py 风格自动化专用；
+ *         其余页面无此契约）。环境变量全部缺省时零操作、零开销：
+ *   - XGUI_KB_AUTOSHOW=1   聚焦默认编辑框并 XVirtualKeyboard_popup 弹出键盘
+ *                          （守护轮询 200ms 在 --screenshot 3 帧内到
+ *                          不了，无头截图须显式弹出；真机弹收主判据
+ *                          已改按下位置驱动 notifyPress——本钩子直呼
+ *                          popup 契约不变，XGUI_KB_CLOSE=1 收层后无
+ *                          PRESS/焦点边沿不重弹，新语义下场景全兼容）；
+ *   - XGUI_KB_MODE=textlower 弹出后切 TextLower 内置布局并开 popovers
+ *                          （气泡场景；IME 拼音布局无 POPOVER 位）；
+ *   - XGUI_KB_CHINESE=1    切拼音中文态（候选带出现）；
+ *   - XGUI_KB_COMPOSE=ni   逐字符直点同名字符键（注入组串/候选）；
+ *   - XGUI_KB_PRESS_LABEL=q 令指定 label 键进入按下保持态（直写
+ *                          m_pressedKey/m_pressArmed，不注入释放）；
+ *   - XGUI_KB_CLOSE=1      弹出后立即 closePopup（收层残板检查）；
+ *   - XGUI_KB_DUMP=1       向 stdout 打 XKB-GEO 前缀几何行（控件矩
+ *                          形/键位矩形/ctrl/候选带矩形），供脚本与布
+ *                          局公式双簿比对。
+ *  调用点=主文件窗口几何定版之后、事件循环之前（弹出几何一次到位，
+ *  不依赖定时器边沿）。
+ */
+void demo_page_keyboard_headless_hook(void);
 
 #ifdef __cplusplus
 }

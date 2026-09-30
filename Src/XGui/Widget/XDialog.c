@@ -15,7 +15,7 @@
 #include "XGuiConfig.h"
 
 #include "XCoreApplication.h"
-#include "XAlgorithm.h"
+#include "XPrintf.h"
 #include "XThreadData.h"        /* xdlg_execShouldFinish：quitNow 标记感知 */
 #include "XWidget_Protected.h"
 #include "XWindowEvent.h"
@@ -30,6 +30,21 @@
 #include "XPainter.h"
 #include "XIcon.h"
 #include "XAlignment.h"
+#if XMESSAGEBOX_ON
+#include "XMessageBox.h" /* xdlg_dialogCode 的消息盒角色映射（向下识别）。 */
+#endif
+/* CSD 内容避让查询前提与 XWindowDecoration.h 的声明门槛一致（XWIDGET_ON
+ * 已由 XDIALOG_ON 的配置门保证）。查询关断时避让恒零偏移，布局零变化。 */
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+#include "XWindowDecoration.h" /* 装饰保留边距查询（让位先例=XMainWindow 布局）。 */
+#include "XTitleBar.h"         /* 默认标题条识别：位移直接子控件时跳过条带本身。 */
+#define XDLG_CSD_QUERY_ON 1
+#else
+#define XDLG_CSD_QUERY_ON 0
+#endif
+#if XLAYOUT_ON
+#include "XLayout.h" /* 布局挂载对话框：增量改写根布局顶边距实现避让。 */
+#endif
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -161,20 +176,20 @@ static bool xdlg_closeButtonHit(const XDialog* self, int x, int y)
            y >= 2 && y < 2 + XDLG_TB_CLOSE_EXTENT;
 }
 
-/** @brief      对话框首显居中到父窗口中央。
+/** @brief      未显式定位的对话框居中到父窗口中央。
  *  @details    对标 QDialogPrivate::adjustPosition（qdialog.cpp:871，
  *              QDialog 首次显示按父窗口居中）：Qt 以父窗口中心
  *              p = mapToGlobal(0,0) + parent->size()/2 为基准，再
- *              p -= size()/2 得全局落点。子控件形态对话框几何为父
- *              系坐标，把全局落点换算回父系坐标必须减去父控件在顶
- *              层窗口内的偏移——此前公式误用加法（pw + (tw-dw)/2），
- *              页偏移被双倍计入，对话框整体被推向右下：文件/颜色
- *              便捷对话框（400/340 高）底缘因此越出 800x600 窗口
- *              底部（实测文件框 window y=256..656，底缘溢出 56px，
- *              确定/取消完全不可见——夜间台账 #27/#28）。顶层对话
- *              框（m_isWindow）交由调用方的平台居中处理，此处跳
- *              过。exec/open 每次显示均居中——demo 弹窗为常驻复用
- *              件，二次打开同样回到中央。 */
+ *              p -= size()/2 得全局落点。子控件形态（历史形态，现经
+ *              init 叠加 Dialog 类型后对话框恒为顶层窗口，此分支保
+ *              留兼容 overrideWindowFlags 改型的对象）几何为父系坐
+ *              标，把全局落点换算回父系坐标必须减去父控件在顶层窗
+ *              口内的偏移——此前公式误用加法（pw + (tw-dw)/2），页
+ *              偏移被双倍计入，对话框整体被推向右下（实测文件框底
+ *              缘溢出 56px——夜间台账 #27/#28）。窗口形态对话框按
+ *              父级顶层窗口屏幕几何居中。open/exec/showEvent 每次
+ *              显示均调用；显式定位过（Moved）的对话框尊重调用方
+ *              位置不再搬动，自动居中不登记 Moved（见函数体）。 */
 static void xdlg_centerToParentWindow(XDialog* self)
 {
     XWidget* selfw = (XWidget*)self;
@@ -187,7 +202,41 @@ static void xdlg_centerToParentWindow(XDialog* self)
     int dh;
     int tw;
     int th;
-    if (!selfw || selfw->m_isWindow) return;
+    if (!selfw) return;
+    /* 对标 QDialog::showEvent 的 !WA_Moved 门（qdialog.cpp:861）：显式
+     * setGeometry/move 过的对话框尊重调用方位置，open/exec/show 的
+     * 居中一律不生效（验收：用户移动过或显式 move 后不再重定位）。 */
+    if (XWidget_testAttribute(selfw, XWidgetAttribute_Moved)) return;
+    /* 居中收尾统一复位 Moved（对标 qdialog.cpp:864 的
+     * setAttribute(WA_Moved, false)）：自动居中不是显式定位，后续
+     * show（如 updateSize 定尺寸后的 showEvent 重居中）仍按新几何
+     * 重新居中；只有用户显式 move/setGeometry 才永久固定位置。 */
+    if (selfw->m_isWindow) {
+        /* 窗口形态对话框（flags 带 Window/Popup，拥有独立原生窗）：
+         * 居中于父级顶层窗口的屏幕几何（Qt QDialog::adjustPosition
+         * 对标——以父窗口为参照居中，非屏幕居中）。 */
+        XPoint po;
+        XPoint origin;
+        XWidget* ptop;
+        parent = XWidget_parentWidget(selfw);
+        ptop = parent ? XWidget_topLevelWidget(parent) : NULL;
+        if (!ptop || ptop == selfw) return;
+        XPoint_init(&origin, 0, 0);
+        po = XWidget_mapToGlobal(ptop, &origin);
+        dw = XWidget_width(selfw);
+        dh = XWidget_height(selfw);
+        tw = XWidget_width(ptop);
+        th = XWidget_height(ptop);
+        {
+            int x = po.x + (tw > dw ? (tw - dw) / 2 : 0);
+            int y = po.y + (th > dh ? (th - dh) / 2 : 0);
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            XWidget_move(selfw, x, y);
+        }
+        XWidget_setAttribute(selfw, XWidgetAttribute_Moved, false);
+        return;
+    }
     parent = XWidget_parentWidget(selfw);
     if (!parent) return;
     top = XWidget_topLevelWidget(selfw);
@@ -209,6 +258,122 @@ static void xdlg_centerToParentWindow(XDialog* self)
     XWidget_move(selfw,
                  (tw > dw ? (tw - dw) / 2 : 0) - pw,
                  (th > dh ? (th - dh) / 2 : 0) - py);
+    XWidget_setAttribute(selfw, XWidgetAttribute_Moved, false);
+}
+
+/* ==================== CSD 内容避让（框架自绘标题条让位） ==================== */
+
+/** @brief  对话框内容的 CSD 避让顶偏移（像素；未装饰恒 0）。
+ *  @details 框架自绘装饰（XWindowDecoration）把标题条画在客户区顶部
+ *           （高约一个条带），对话框子控件仍从 y≈0 布局时首行内容被
+ *           条带遮住（用户实测：独立顶层消息盒图标半截；此前系统标
+ *           题栏模式正常——条带在客户区外无需避让）。主窗口已按
+ *           XWindowDecoration_marginsFor 整体下移布局（XMainWindow
+ *           同源先例），对话框经本查询取同值。仅对话框自身为顶层窗
+ *           口且被框架装饰时非零：系统标题栏模式、CSD 抑制位
+ *           （XWindow_setCsdFrameSuppressed 置位等价——未装饰时保留
+ *           边距恒零）与子控件形态（历史 overrideWindowFlags 对象，
+ *           装饰判定对非顶层恒假）一律 0。 */
+static int xdlg_csdTopOffset(const XDialog* self)
+{
+    const XWidget* selfw = (const XWidget*)self;
+    if (!selfw || !selfw->m_isWindow) return 0;
+#if XDLG_CSD_QUERY_ON
+    /* marginsFor 未装饰返回全零边距，已覆盖系统条/抑制两态；条控件
+     * 未承载（建窗前预测期）回退 XTitleBar_defaultHeight，与主窗口
+     * 让位口径一致。 */
+    return XWindowDecoration_marginsFor(selfw).top;
+#else
+    return 0;
+#endif
+}
+
+int XDialog_decorationTopOffset(const XDialog* self)
+{
+    return xdlg_csdTopOffset(self);
+}
+
+/** @brief  套用 CSD 内容避让：子控件布局按装饰条高整体下移（增量幂等）。
+ *  @details 两条路径按对话框形态二选一，均以 m_csdAppliedTop 记账、
+ *           只补「目标-已套用」差值，重复调用（show/exec/open 多入口）
+ *           与差值回退（CSD 动态关闭后再显示，delta 为负）皆安全：
+ *           - 布局挂载（XColorDialog/XFileDialog/XInputDialog 等经
+ *             XBoxLayout_create(dlg) 自动挂到对话框的根布局）：根布局
+ *             顶边距 += delta。此后每次布局激活（显示尾/RESIZE 尾/
+ *             updateGeometry）都自带偏移，天然覆盖后续 CSD 拖边改尺
+ *             寸；派生面板文件不在本次修复所有权内亦无需改动。
+ *           - 显式几何（无布局）：直接子控件整体 move 下移 delta——
+ *             覆盖进度对话框、XWizard/XErrorMessage 与自定义对话框等
+ *             自排布形态。装饰标题条本身（默认 XTitleBar 或
+ *             XWidget_titleBarWidget 自定义条）与顶层子窗口跳过；消
+ *             息盒除外——其 xmsg_contentTop 已含偏移自排布（showEvent
+ *             的 updateSize 与 RESIZE 重排同源），再整体位移即双重让
+ *             位（xdlg_dialogCode 同款 vtable 向下识别先例）。
+ *           调用点=SHOW 事件/exec/open（见各调用点时序注），模态与
+ *           收起（最小化）行为不经过本函数，零影响。 */
+static void xdlg_applyContentAvoidance(XDialog* self)
+{
+    XWidget* selfw = (XWidget*)self;
+    int offset;
+    int delta;
+    bool selfManaged = false;
+    if (!self || !selfw) return;
+    offset = xdlg_csdTopOffset(self);
+    delta = offset - self->m_csdAppliedTop;
+    if (delta == 0) return;
+#if XMESSAGEBOX_ON
+    selfManaged = XClassGetVtable((const XObject*)self) ==
+                  XMessageBox_class_init();
+    /* 消息盒全自管（xmsg_contentTop 已含偏移），布局/位移两条路径都
+     * 不介入，只记账保持差值口径一致。 */
+    if (selfManaged) {
+        self->m_csdAppliedTop = offset;
+        return;
+    }
+#endif
+#if XLAYOUT_ON
+    {
+        XLayout* layout = XWidget_layout(selfw);
+        if (layout) {
+            XMargins m;
+            XMargins_init(&m, 0, 0, 0, 0);
+            m = XLayout_contentsMargins(layout);
+            XLayout_setContentsMargins(layout, m.left, m.top + delta,
+                                       m.right, m.bottom);
+            self->m_csdAppliedTop = offset;
+            return;
+        }
+    }
+#endif
+    if (!selfManaged) {
+        XObject* object = (XObject*)selfw;
+        if (object->m_children) {
+            int count;
+            int i;
+            XObject* const* children =
+                (XObject* const*)XContainerDataAddr(object->m_children);
+            XWidget* customBar = NULL;
+#if XDLG_CSD_QUERY_ON && XGUI_CUSTOM_TITLEBAR_ON
+            customBar = XWidget_titleBarWidget(selfw);
+#endif
+            count = XVector_size_base((const XContainer*)object->m_children);
+            for (i = 0; i < count; ++i) {
+                XWidget* w;
+                if (!children[i] || !children[i]->is_widget) continue;
+                w = (XWidget*)children[i];
+                if (w->m_isWindow) continue; /* 顶层子窗口不随父几何摆位。 */
+                if (w == customBar) continue; /* 控件级自定义标题条。 */
+#if XDLG_CSD_QUERY_ON
+                /* 装饰默认标题条（父=本对话框的 XTitleBar 子控件）。 */
+                if (XClassGetVtable((const XObject*)w) ==
+                    XTitleBar_class_init())
+                    continue;
+#endif
+                XWidget_move(w, XWidget_x(w), XWidget_y(w) + delta);
+            }
+        }
+    }
+    self->m_csdAppliedTop = offset;
 }
 
 /** @brief 对话框面板绘制：底色 + 1px 浅灰边框 + Win10 观感标题栏。
@@ -237,7 +402,6 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
     XPaintEvent* pe;
     XImage* image;
     XRect rect;
-    XPoint offset;
     XPalette palette;
     XColor color;
     int w;
@@ -252,23 +416,25 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
     rect = XPaintEvent_rect(pe);
     w = XWidget_width(self);
     h = XWidget_height(self);
-    /* 1) 控件局部坐标：脏区 ∩ 控件矩形。 */
+    /* 1) 控件局部坐标：本次 PAINT 区域 ∩ 控件矩形（空脏区直接返回；
+     *    paintTree 只对与脏区相交的控件派发 PAINT，此处防御性再裁一
+     *    次，对标 qwidget.cpp paintEvent 内 dirty 区域语义）。 */
     if (rect.x < 0) { rect.width += rect.x; rect.x = 0; }
     if (rect.y < 0) { rect.height += rect.y; rect.y = 0; }
     if (rect.x + rect.width > w) rect.width = w - rect.x;
     if (rect.y + rect.height > h) rect.height = h - rect.y;
     if (rect.width <= 0 || rect.height <= 0) return;
-    /* 2) 平移到顶层后备存储坐标后填充。 */
-    offset = XWidget_paintOffset(self);
-    rect.x += offset.x;
-    rect.y += offset.y;
-    XImage_fillRect(image, &rect, XColor_rgba(&color));
-    /* 3) 面板描边 + 标题栏（Win10 对话框窗口观感）：一个 painter 会
-     *    话完成全部前景绘制，坐标沿用本函数既有的"paintOffset 手工
-     *    折算"口径（脏区裁剪语义交给既有 fillRect 路径，前景元素量
-     *    小且幂等，不额外依赖 XPAINTER_CLIP_ON）。标题带只在「子控
-     *    件形态 + 已设窗口标题」时绘制（xdlg_titlebarGate 口径）：
-     *    与派生面板 contentTop=28 让位同键，无标题保持原布局不占位。 */
+    /* 2) 底色与前景同一 painter 会话。底色只铺「PAINT 区域 ∩ 控件矩
+     *    形」并经 XPainter_fillRect 受表面裁剪约束（flush 按刷区域外
+     *    接矩形设置的 wholeBbox，XPainter_begin_image 会将其继承为初
+     *    始 painter 裁剪）——填充 ⊆ 提交区域恒成立，脏区外的旧前景
+     *    （图标/文本/按钮）在跨帧持久的后备缓冲中原样保留。此前「整
+     *    框裸 XImage_fillRect」绕过表面裁剪：局部悬停帧先把整框铺成
+     *    背景白、前景又被表面裁剪钳在脏区内画不回来，缓冲里脏区外
+     *    前景就此丢失，后续提交别处脏区时成片白带/底部花屏条。布局
+     *    位移（字体懒加载重排/居中移动）的旧位残影由
+     *    XWidget_recomputeGeometry 的「新旧矩形一并失效」（父层
+     *    updateRect(old∪new)）承担，不再依赖整框重铺。 */
     {
         XPainter painter;
         XPoint o = XWidget_paintOffset(self);
@@ -281,6 +447,21 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
             XPainter_deinit(&painter);
             return;
         }
+        /* 底色：PAINT 区域 ∩ 控件矩形（局部 rect 按 paintOffset 折算
+         * 到后备存储坐标），坐标口径与下方前景一致。 */
+        {
+            XRect fill;
+            fill.x = rect.x + o.x;
+            fill.y = rect.y + o.y;
+            fill.width = rect.width;
+            fill.height = rect.height;
+            XPainter_fillRect(&painter, &fill, XColor_rgba(&color));
+        }
+        /* 3) 标题栏 + 面板描边（Win10 对话框窗口观感）：坐标沿用本函
+         *    数既有的"paintOffset 手工折算"口径。标题带只在「子控
+         *    件形态 + 已设窗口标题」时绘制（xdlg_titlebarGate 口径）：
+         *    与派生面板 contentTop=28 让位同键，无标题保持原布局不占
+         *    位。 */
         if (titlebar) {
             XRect band;
             XRect rule;
@@ -621,8 +802,8 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
     }
     /* 对标 QDialog::keyPressEvent 非 Esc 分支静态调用基类实现
        （QWidget::keyPressEvent 默认 ignore 以便沿父链传播）。
-       此前经 XWidget_keyPressEvent_base 转发：该 _base 入口按对象
-       虚表再分派回最派生重载 VXDialog_keyPressEvent，非 Esc 按键
+       此前经 XWidget_keyPressEvent_base 转发：该 _base 入口按对象虚表
+       再分派回最派生重载 VXDialog_keyPressEvent，非 Esc 按键
        即形成无界自递归栈溢出（复扫 P0-1；XWizard/XInputDialog/
        XColorDialog/XFileDialog/XProgressDialog/XErrorMessage 均未
        覆写 keyPress，收到按键全数命中）。现按 XDockWidget/
@@ -630,6 +811,90 @@ static void VXDialog_keyPressEvent(XWidget* self, XEvent* event)
        槽位（即 XWidget 本类默认实现 XWidget_ignoreEvent_default，
        与 VXWidget_event 分派到 XWidget 本类时所用同一层）。 */
     XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief  对话框显示事件：未显式定位过的对话框按父窗口重新居中。
+ *  @details 对标 QDialog::showEvent（qdialog.cpp:859-868）：非自发
+ *           show 且无 WA_Moved 时 adjustPosition(parentWidget())，并
+ *           把 Moved 位复位——「本次居中不算显式定位」，用户显式
+ *           move/setGeometry 过（Moved 置位）的对话框不再被搬动，
+ *           每次未定位 show 都重新居中。XGui 窗口几何即客户区屏幕
+ *           坐标（平台层内部 AdjustWindowRectEx 扩边），Qt 以框架
+ *           位置 move 故需 extraw/extrah 修正；本实现 move 语义为
+ *           客户区原点，无框架偏移可补，居中公式相应省略该修正。 */
+static void VXDialog_showEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dialog = (XDialog*)self;
+    if (dialog && event && XEvent_type(event) == XEVENT_TYPE_SHOW) {
+        if (!XWidget_testAttribute(self, XWidgetAttribute_Moved)) {
+            xdlg_centerToParentWindow(dialog);
+            /* 复位 Moved：本次居中不是显式定位（对标 qdialog.cpp:864
+             * setAttribute(WA_Moved, false)），下次 show 仍重新居中。 */
+            XWidget_setAttribute(self, XWidgetAttribute_Moved, false);
+        }
+        /* 对标 Qt modal 属性语义（qdialog.cpp:996-1008「等价
+         * windowModality=ApplicationModal」+ qwidget.cpp:11438-11452
+         * WA_ShowModal 置位即同步模态）：setModal(true) 的对话框经裸
+         * XWidget_show 显示（非 exec/open）时登记应用模态门，补齐
+         * 「show 消费 modal 属性」缺口。exec/open 已各自无条件登记，
+         * 同为对全局门的覆写，重复登记无害。 */
+        if (dialog->m_modal)
+            XWidget_setApplicationModalWidget(self);
+        /* CSD 内容避让（装饰条让位）：顶层首显建窗（XWidget_create
+         * Window→XWindowDecoration_syncWindow 落盘 frameMargins）早于
+         * SHOW 事件，此处查询已是真实条高；未装饰/系统条模式增量恒
+         * 零直接短路。覆写 showEvent 且末尾静态父调本实现的派生类
+         * （XMessageBox/XProgressDialog）在此统一收口；纯 show() 路径
+         * 其后 XWidget_setVisible 尾部的 XLayout_activate 按已改写边
+         * 距解算，布局挂载对话框当帧避让。 */
+        xdlg_applyContentAvoidance(dialog);
+    }
+    XClass_Parent(XWidget, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief  对话框关闭事件：可见时等价 reject，拒绝被吞的关闭。
+ *  @details 对标 QDialog::closeEvent（qdialog.cpp:727-741）：可见时
+ *           reject()（done(Rejected)→隐藏+rejected/finished 信号），
+ *           reject 后仍可见（派生类拒绝隐藏）则 ignore 关闭事件；
+ *           不可见时直接接受。XDialog_reject→done→隐藏为同步，正常
+ *           一次即隐藏。 */
+static void VXDialog_closeEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dialog = (XDialog*)self;
+    if (dialog && event && XEvent_type(event) == XEVENT_TYPE_CLOSE) {
+        if (XWidget_isVisible(self)) {
+            XDialog_reject(dialog);
+            if (XWidget_isVisible(self)) {
+                XEvent_ignore(event);
+                return;
+            }
+        }
+        XEvent_accept(event);
+        return;
+    }
+    XClass_Parent(XWidget, EXWidget_CloseEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief  对话框隐藏事件：退出 exec 事件循环，不发射任何信号。
+ *  @details 对标 QDialogPrivate::setVisible(false) 的 eventLoop->exit
+ *           （qdialog.cpp:839-842）与 finished() 文档（qdialog.cpp:
+ *           1079-1082：hide()/setVisible(false) 不发射 finished）——
+ *           exec 循环退出但信号只出自 done/accept/reject 收口。 */
+static void VXDialog_hideEvent(XWidget* self, XEvent* event)
+{
+    XDialog* dialog = (XDialog*)self;
+    if (dialog && event && XEvent_type(event) == XEVENT_TYPE_HIDE) {
+        dialog->m_inExec = false;
+        /* 对称解除模态门：直接 setVisible(false) 不经 done/xdlg_close
+         * 时，门会永久留在自身（其它顶层窗全被阻塞）。gate==self 守卫
+         * 与 xdlg_close 的解除同口径，覆写无害。 */
+        if (XWidget_applicationModalWidget() == (XWidget*)self)
+            XWidget_setApplicationModalWidget(NULL);
+    }
+    XClass_Parent(XWidget, EXWidget_HideEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
@@ -731,6 +996,9 @@ XVtable* XDialog_class_init(void)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXDialog_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXDialog_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXDialog_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VXDialog_hideEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent, VXDialog_closeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXDialog_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
@@ -744,15 +1012,19 @@ void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
+    /* 对标 QDialog 构造（qdialog.cpp:374-378）：flags 不含窗口类型位
+     * 时自动叠加 Dialog 类型。Dialog 数值（0x3）含 Window 位，XWidget
+     * init 的 isWindow 判定即命中——XGui 对话框与 Qt QDialog 一样恒
+     * 为独立顶层窗口（带父控件也是），不作为父链子控件参与布局/绘
+     * 制/命中。显式传入 Popup/Tool/ToolTip 等其它类型位时尊重调用方。 */
+    if ((flags & (XWidgetFlags)XWindowType_TypeMask) == 0)
+        flags |= (XWidgetFlags)XWindowType_Dialog;
     XWidget_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    /* 对标 Qt：QDialog 恒为顶层窗口、自动回填 palette Window 背景。
-     * 本框架允许以 parent+flags=0 构造出"子控件形态"对话框（demo
-     * 对话框页即此形态），子控件默认 autoFillBackground=false 且
-     * XDialog 无自绘面板——对话框除按钮盒外整块透明，文本黑字落在
-     * 未渲染底上即"弹不出"。此处开启背景回补面板底色。 */
+    /* 对标 Qt：QDialog 恒为顶层窗口、自动回填 palette Window 背景
+     * （历史子控件形态对话框透明根因的兜底，窗口形态同样无害）。 */
     XWidget_setAutoFillBackground((XWidget*)self, true);
     /* R-81 根因：m_modal 默认 true 与 Qt QDialog 默认 false 相反，且
        show() 不消费该属性（只有 exec/open 模态化），isModal() 查询值
@@ -762,6 +1034,10 @@ void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags)
     self->m_result = 0;
     self->m_inExec = false;
     self->m_sizeGripEnabled = false;
+    self->m_resetModalityTo = -1;
+    /* CSD 内容避让增量记账清零（XMemset 已覆盖，显式赋值同其余字段
+     * 口径；show/exec/open 首次套用时按全量偏移补足）。 */
+    self->m_csdAppliedTop = 0;
 }
 
 XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -823,37 +1099,130 @@ static bool xdlg_execShouldFinish(XDialog* self, XWidget* selfw)
     return false;
 }
 
+/** @brief  恢复 open() 临时切换的窗口模态（对标 QDialogPrivate::
+ *          resetModalitySetByOpen，qdialog.cpp:458-471）。
+ *  @details open() 记录了原模态值时恢复之；用户此后显式 setWindow
+ *           Modality 的保护位（Qt WA_SetWindowModality）XGui 未建模，
+ *           以「记录即恢复」等价实现。done/exec 关闭路径调用。 */
+static void xdlg_resetModalitySetByOpen(XDialog* self)
+{
+    if (!self || self->m_resetModalityTo == -1) return;
+    XWidget_setWindowModality((XWidget*)self,
+                              (XWindowModality)self->m_resetModalityTo);
+    self->m_resetModalityTo = -1;
+}
+
+/** @brief  正确关闭对话框并置结果码（对标 QDialogPrivate::close，
+ *          qdialog.cpp:118-150）：setResult、退出 exec 循环、清应用
+ *          模态门、恢复 open 临时模态、隐藏并清理标题带跟踪态。 */
+static void xdlg_close(XDialog* self, int resultCode)
+{
+    if (!self) return;
+    self->m_result = resultCode;
+    self->m_inExec = false;
+    if (XWidget_applicationModalWidget() == (XWidget*)self)
+        XWidget_setApplicationModalWidget(NULL);
+    xdlg_resetModalitySetByOpen(self);
+    XWidget_setVisible((XWidget*)self, false);
+    /* 隐藏即解除本对话框的 [×] 悬停/按压跟踪与「画过标题带」登记
+     * （复显后由 paintEvent 重新登记，不留残态/悬停红底）。 */
+    if (xdlg_tb_owner == (const XDialog*)self) {
+        xdlg_tb_owner = NULL;
+        xdlg_tb_hover = false;
+        xdlg_tb_pressed = false;
+    }
+    xdlg_tb_unmark(self);
+    /* 隐藏后标脏原矩形：非窗口隐藏分支无重绘调度，屏幕残留对话框
+       最后一帧鬼影；把矩形折算进顶层脏区后，合成器按可见内容重画
+       该区域（对话框已隐藏即父级/邻居内容）。 */
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief  结果码 → 对话框码映射（对标 QDialogPrivate::dialogCode 与
+ *          QMessageBoxPrivate::dialogCode 的角色覆写）。
+ *  @details 基类语义：rescode 原样（<=Accepted(1) 即 DialogCode；
+ *           >1 时既非 Accepted 也非 Rejected，不映射任何信号——Qt
+ *           同值直通）。QMessageBox 覆写：>1 的标准按钮位值按最近点
+ *           击按钮角色映射 Accepted/Rejected（qmessagebox.cpp:471-
+ *           491）。C 结构体无虚私有函数，此处按 vtable 精确比对向
+ *           下识别 XMessageBox（先例：dialog_focusIsMultilineEditor
+ *           的 XTextEdit 比对），任一宏裁剪时退化为基类语义。 */
+static int xdlg_dialogCode(const XDialog* self)
+{
+    int rescode = self ? self->m_result : 0;
+#if XMESSAGEBOX_ON && XDIALOGBUTTONBOX_ON
+    /* 双宏同开才编译本段：XMessageBox::m_buttonBox 字段受
+       XDIALOGBUTTONBOX_ON 守卫（XMessageBox.h），仅开 XMESSAGEBOX_ON
+       时此处解引用编译失败——角色映射退化为基类语义即可。 */
+    if (rescode > (int)XDialogCode_Accepted && self) {
+        const XMessageBox* box = (const XMessageBox*)self;
+        if (XClassGetVtable((const XObject*)self) ==
+                XMessageBox_class_init() &&
+            box->m_buttonBox && box->m_clicked) {
+            switch (XDialogButtonBox_buttonRole(box->m_buttonBox,
+                                                box->m_clicked)) {
+            case XDialogButtonBoxRole_AcceptRole:
+            case XDialogButtonBoxRole_YesRole:
+                return (int)XDialogCode_Accepted;
+            case XDialogButtonBoxRole_RejectRole:
+            case XDialogButtonBoxRole_NoRole:
+                return (int)XDialogCode_Rejected;
+            default:
+                break;
+            }
+        }
+    }
+#endif /* XMESSAGEBOX_ON && XDIALOGBUTTONBOX_ON */
+    return rescode;
+}
+
 int XDialog_exec(XDialog* self)
 {
-    XWidget* selfw = (XWidget*)self;
+    XWidget* selfw;
+    bool deleteOnClose;
+    int result;
     if (!self) return 0;
+    selfw = (XWidget*)self;
+    /* 对标 QDialog::exec（qdialog.cpp:553-556）：递归 exec 打印警告
+       并返回 -1（警告经 XPrintf，控制台打印纪律）。 */
+    if (self->m_inExec) {
+        XPrintf("XDialog::exec: Recursive call detected\n");
+        return -1;
+    }
+    /* 对标 qdialog.cpp:558-559：exec 期间暂时清除 DeleteOnClose，返
+       回时按原状态兑现删除。 */
+    deleteOnClose = XWidget_testAttribute(selfw,
+                                          XWidgetAttribute_DeleteOnClose);
+    XWidget_setAttribute(selfw, XWidgetAttribute_DeleteOnClose, false);
+    /* 对标 qdialog.cpp:561：exec 先恢复 open 遗留的临时窗口模态。 */
+    xdlg_resetModalitySetByOpen(self);
     self->m_inExec = true;
+    XDialog_setResult(self, 0);
     xdlg_centerToParentWindow(self);
     XWidget_show(selfw);
-    /* 显示即标脏本对话框矩形：子控件形态的对话框（flags 无 Window 位）
-     * 走 XWidget_setVisible 的非窗口分支，该分支不调度重绘（只有顶层
-     * 窗口分支才有 show→update），脏区合成器只重画脏矩形，导致对话框
-     * 已 visible 却永远不上屏（复现：demo 对话框页九键中六个非阻塞/
-     * 常驻对话框点击后屏幕无任何面板墨迹）。此处对窗口形态是冗余的
-     * 一次重复标脏，无副作用。 */
+    /* 显示即标脏本对话框矩形：窗口分支 show→update 已覆盖，此处冗
+       余标脏无副作用（兼容 overrideWindowFlags 改型的兜底）。 */
     XWidget_update(selfw);
-    /* 对标 QDialog::exec（Qt 6.8.3 qdialog.cpp）：exec 期间无条件
-       应用模态（setWindowModality(ApplicationModal)），不受 modal
-       属性默认值影响——m_modal 默认改 false 后若仍以此门禁，存量
-       未调 setModal(true) 的 exec 调用将静默失去模态。 */
+    /* 对标 QDialog::exec：exec 期间无条件应用模态（Qt 语义为
+       ApplicationModal），不受 modal 属性默认值影响。 */
     XWidget_setApplicationModalWidget(selfw);
-    /* show 后强制激活布局：子控件形态下布局的挂起激活不保证随 show
-     * 走到（XBoxLayout 子控件曾零几何不绘制）。幂等。 */
+    /* CSD 内容避让（装饰条让位）：show 返回时建窗已完成、frameMargins
+       已落盘，赶在下方 updateGeometry 布局激活前套用——布局挂载对话
+       框按新边距解算，显式几何对话框子控件已位移。幂等（showEvent
+       已套用则增量零短路）。 */
+    xdlg_applyContentAvoidance(self);
+    /* show 后强制激活布局：布局的挂起激活不保证随 show 走到
+       （XBoxLayout 子控件曾零几何不绘制）。幂等。 */
     XWidget_updateGeometry(selfw);
-    /* 对标 QDialog::exec：阻塞于事件循环直到 done()。每批事件处理后
-       追加宿主终结感知（见 xdlg_execShouldFinish 注）：quit 标记或
-       宿主顶层不可见即按 done(0) 收尾（与 removeWindow 兜底同键），
-       控制权回到调用链/主循环后即可感知退出——主窗隐藏/应用退出不再
-       滞留成不可退出进程。 */
+    /* 对标 QDialog::exec：阻塞于事件循环直到 done()。WaitForMoreEvents
+       防忙等空转（复扫 R-23）。 */
     dialog_grabInitialFocus(self);
     while (self->m_inExec) {
         XCoreApplication_processEvents(XEventLoop_AllEvents |
                                        XEventLoop_WaitForMoreEvents);
+        /* 宿主终结感知（远端合并带入的 F-② 根修）：quit 标记或宿主
+           顶层不可见即按 done(0) 收尾——主窗隐藏/应用退出不再滞留成
+           不可退出进程（与 removeWindow 兜底同键）。 */
         if (!self->m_inExec)
             break; /* done() 已收尾：正常路径。 */
         if (xdlg_execShouldFinish(self, selfw)) {
@@ -864,46 +1233,42 @@ int XDialog_exec(XDialog* self)
     }
     if (XWidget_applicationModalWidget() == selfw)
         XWidget_setApplicationModalWidget(NULL);
-    return self->m_result;
+    /* 先取结果再兑现删除（对标 qdialog.cpp:583-587 的 result()/
+       delete this 次序），删除后不得再解引用 self。 */
+    result = self->m_result;
+    if (deleteOnClose)
+        XDialog_delete_base(self);
+    return result;
 }
 
 void XDialog_done(XDialog* self, int result)
 {
+    int dialogCode;
     if (!self) return;
-    self->m_result = result;
-    self->m_inExec = false;
-    if (XWidget_applicationModalWidget() == (XWidget*)self)
-        XWidget_setApplicationModalWidget(NULL);
-    XWidget_setVisible((XWidget*)self, false);
-    /* 隐藏即解除本对话框的 [×] 悬停/按压跟踪与「画过标题带」登记
-     * （复显后由 paintEvent 重新登记，不留残态/悬停红底）。 */
-    if (xdlg_tb_owner == (const XDialog*)self) {
-        xdlg_tb_owner = NULL;
-        xdlg_tb_hover = false;
-        xdlg_tb_pressed = false;
-    }
-    xdlg_tb_unmark(self);
-    /* 隐藏后标脏原矩形：子控件形态对话框走非窗口隐藏分支，无重绘
-       调度，屏幕残留对话框最后一帧鬼影；把矩形折算进顶层脏区后，
-       合成器按可见内容重画该区域（对话框已隐藏即父级/邻居内容）。 */
-    XWidget_update((XWidget*)self);
+    xdlg_close(self, result);
+    /* 对标 QDialog::done（qdialog.cpp:608-626）：先按结果码映射发射
+       accepted()/rejected()，再发射 finished(result)——hide 本身不
+       发信号（验收 13），信号只出自 done/accept/reject 收口。 */
+    dialogCode = xdlg_dialogCode(self);
+    if (dialogCode == (int)XDialogCode_Accepted)
+        xdlg_emitVoid(self, (size_t)XDialog_accepted_signal);
+    else if (dialogCode == (int)XDialogCode_Rejected)
+        xdlg_emitVoid(self, (size_t)XDialog_rejected_signal);
     xdlg_emitFinished(self, result);
 }
 
 void XDialog_accept(XDialog* self)
 {
-    if (!self) return;
-    self->m_result = 1;
-    XDialog_done(self, 1);
-    xdlg_emitVoid(self, (size_t)XDialog_accepted_signal);
+    /* 对标 QDialog::accept = done(Accepted)：accepted() 由 done 内部
+       按结果码发射，不在此重复。 */
+    XDialog_done(self, (int)XDialogCode_Accepted);
 }
 
 void XDialog_reject(XDialog* self)
 {
-    if (!self) return;
-    self->m_result = 0;
-    XDialog_done(self, 0);
-    xdlg_emitVoid(self, (size_t)XDialog_rejected_signal);
+    /* 对标 QDialog::reject = done(Rejected)：rejected() 由 done 内部
+       按结果码发射。 */
+    XDialog_done(self, (int)XDialogCode_Rejected);
 }
 
 int XDialog_result(const XDialog* self) { return self ? self->m_result : 0; }
@@ -912,6 +1277,16 @@ void XDialog_setModal(XDialog* self, bool modal)
 {
     if (!self || self->m_modal == modal) return;
     self->m_modal = modal;
+    /* 对标 qwidget.cpp:11440-11445（WA_ShowModal 置位处理）：modal 置
+     * 真且窗口模态仍为 NonModal 时同步 ApplicationModal，使 isModal()/
+     * windowModality()/XWidget_isModal() 查询一致，且值经建窗链路自
+     * 然下发（有句柄即推 XWindow，无句柄由建窗统一推入）——Qt 中
+     * QMessageBox 构造完 windowModality 已是 ApplicationModal。 */
+    if (modal &&
+        XWidget_windowModality((XWidget*)self) ==
+            XWindowModality_NonModal)
+        XWidget_setWindowModality((XWidget*)self,
+                                  XWindowModality_ApplicationModal);
     /* 可见的对话框即时生效模态登记（对标 open()/setModal 语义）。 */
     if (modal && XWidget_isVisible((XWidget*)self))
         XWidget_setApplicationModalWidget((XWidget*)self);
@@ -920,15 +1295,38 @@ bool XDialog_isModal(const XDialog* self) { return self ? self->m_modal : false;
 
 void XDialog_open(XDialog* self)
 {
+    XWidget* selfw;
     if (!self) return;
-    XDialog_setModal(self, true);
+    selfw = (XWidget*)self;
+    /* 对标 QDialog::open（qdialog.cpp:509-526）：open 前若窗口模态
+       不是 WindowModal，记录原值并临时改为 WindowModal，关闭时由
+       xdlg_close→resetModalitySetByOpen 恢复（验收：open 前后读
+       windowModality 依次为 原值→WindowModal→原值）。 */
+    if (XWidget_windowModality(selfw) != XWindowModality_WindowModal) {
+        self->m_resetModalityTo = (int)XWidget_windowModality(selfw);
+        XWidget_setWindowModality(selfw, XWindowModality_WindowModal);
+    }
+    XDialog_setResult(self, 0);
     xdlg_centerToParentWindow(self);
-    XWidget_show((XWidget*)self);
-    /* 显示即标脏本对话框矩形（根因同 XDialog_exec 注）：子控件形态
-     * 对话框 show 不产生脏区，open 后对话框永远不可见，需在此补一次
-     * update 让下一帧把面板/文本/按钮真实画上屏幕。 */
-    XWidget_update((XWidget*)self);
-    XWidget_setApplicationModalWidget((XWidget*)self);
+    XWidget_show(selfw);
+    /* 窗口形态对话框：show 后 z 序默认排在主窗之下，整窗被主窗覆盖
+     * （"只出现文字没有窗口"实测根因）。置顶提到主窗之上（对标
+     * QDialog 打开即激活前置；XWindow_raise 无平台 Z 序接口时为
+     * no-op，win32 后端补齐后此调用即真实生效）。 */
+    if (selfw->m_isWindow)
+        XWidget_raise(selfw);
+    /* 显示即标脏本对话框矩形（根因同 XDialog_exec 注）：兜底一次重
+     * 复标脏，保证面板/文本/按钮下一帧真实上屏。 */
+    XWidget_update(selfw);
+    /* CSD 内容避让（装饰条让位，同 exec 注）：open 路径无 exec 的
+     * updateGeometry 收尾，而 XWidget_show 内的布局激活先于本套用
+     * ——此处补一次强制激活，让改写后的根布局顶边距当帧生效（增量
+     * 幂等，显式几何对话框子控件此时已位移，激活对其无副作用）。 */
+    xdlg_applyContentAvoidance(self);
+    XWidget_updateGeometry(selfw);
+    /* 项目模态门（应用模态为窗口模态阻塞的既定等价物，demo 约定
+       "模态门照常生效"）：open 显示期间登记，done/close 解除。 */
+    XWidget_setApplicationModalWidget(selfw);
     dialog_grabInitialFocus(self);
 }
 

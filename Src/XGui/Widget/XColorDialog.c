@@ -179,9 +179,27 @@ static XWidget* xcd_childByName(XDialog* dlg, const char* name)
 /** @brief 弹窗主屏居中（对标 Qt 静态便捷函数把对话框定位于屏幕中央）。 */
 static void xcd_centerOnScreen(XWidget* w)
 {
-    /* 子控件形态对话框居中于父控件（几何为父系坐标；屏幕坐标会落
-     * 到页面坐标系外被裁剪）。无父时回退屏幕居中。 */
+    /* 窗口形态对话框（XDialog init 对无类型位叠加 Dialog 类型）几何
+     * 为全局屏幕坐标：居中于父级顶层窗口（对标 QDialogPrivate::
+     * adjustPosition）；子控件形态（历史/改型）几何为父系坐标，居
+     * 中于父控件。无父时回退屏幕居中。 */
     XWidget* parent = w ? XWidget_parentWidget(w) : NULL;
+    if (parent && w->m_isWindow) {
+        XWidget* ptop = XWidget_topLevelWidget(parent);
+        if (ptop && ptop != w) {
+            XPoint origin;
+            XPoint po;
+            int dw = XWidget_width(w);
+            int dh = XWidget_height(w);
+            int tw = XWidget_width(ptop);
+            int th = XWidget_height(ptop);
+            XPoint_init(&origin, 0, 0);
+            po = XWidget_mapToGlobal(ptop, &origin);
+            XWidget_move(w, tw > dw ? po.x + (tw - dw) / 2 : po.x,
+                            th > dh ? po.y + (th - dh) / 2 : po.y);
+            return;
+        }
+    }
     if (parent) {
         int pw = XWidget_width(parent);
         int ph = XWidget_height(parent);

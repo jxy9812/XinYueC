@@ -517,6 +517,9 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags)
      * 使 Tab 焦点链跳过滑块、XAbstractSlider::keyPressEvent 的方向
      * 键步进永不触发。 */
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
+    /* 悬停外观 opt-in：绘制按 State_MouseOver 出悬停高亮，ENTER/
+     * LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
 }
 
 XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,

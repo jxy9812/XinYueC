@@ -30,8 +30,9 @@
 #  define _POSIX_SOURCE
 #endif
 
-#ifdef __linux__ || defined(__APPLE__) || defined(__BSD__)
+#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include <fcntl.h>
+#include <unistd.h>  /* read/write/close/lseek 声明（Clang 下隐式声明是错误） */
 #endif
 
 #ifdef _WIN32

@@ -104,6 +104,11 @@ struct XWindowPrivate
     bool m_positionAutomatic;           /**< 位置是否由平台自动摆放。 */
     bool m_active;                      /**< 是否激活。 */
     bool m_closing;                     /**< close() 重入保护。 */
+    bool m_inDestruct;                  /**< deinit 进行中（析构期复活闸）；
+                                             VXWindow_deinit 入口置位，
+                                             createHandle/winId/addWindow
+                                             据此拒绝服务，杜绝垂死窗口
+                                             在摘除登记后被复活再登记。 */
 
     XMargins m_frameMargins;            /**< 客户端窗口装饰保留边距（标题
                                              栏计入顶部）；仅窗口装饰模
@@ -639,6 +644,14 @@ static void VXWindow_deinit(XWindow* self)
         if (self) XClass_Deinit_Parent(XObject, (XObject*)self);
         return;
     }
+    /* 析构期复活闸（根因修复）：removeWindow 命中 lastWindowClosed 退出
+       策略时，其模态兜底/可见性同步可重入本对象（XDialog_done→close→
+       setVisible(false)→StateChanged 通知→无障碍驱动 winId()→惰性
+       createHandle→addWindow），在摘除登记之后、释放之前把垂死窗口
+       复活再登记，注册表随即留下悬垂借用指针（下一个顶层注销扫槽即
+       AV）。入口先置位，令 winId()/createHandle()/addWindow() 三点
+       统一拒绝服务——任一点断链即阻断复活链，三点同设纵深防御。 */
+    data->m_inDestruct = true;
 #if XGUIAPPLICATION_ON
     /* XGuiApplication keeps borrowed window pointers.  Remove this window
        before releasing its private data so destruction cannot leave a stale
@@ -890,6 +903,9 @@ void XWindow_createHandle(XWindow* self)
     XPlatformWindow* platformWindow;
 #endif
     if (!self || !(data = self->m_data) || data->m_created) return;
+    /* 析构期拒绝复活：deinit 进行中不得重建句柄/补登记/发 ObjectCreated
+       （复活链机理见 VXWindow_deinit 入口注释）。 */
+    if (data->m_inDestruct) return;
     data->m_created = true;
 #if XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON && XPLATFORMWINDOW_ON
     /* 对齐 QWindow::create(): 应用拥有的平台集成层在此按需创建平台窗口。
@@ -944,8 +960,16 @@ XWindowId XWindow_winId(const XWindow* self)
 {
     XWindow* w = (XWindow*)self;
     if (!w || !w->m_data) return 0;
+    /* 析构期返回 0：调用方（无障碍驱动等）以 0/NULL 为「无窗口」安全
+       跳过；绝不允许此处惰性建柄复活垂死窗口。 */
+    if (w->m_data->m_inDestruct) return 0;
     if (!w->m_data->m_created) XWindow_createHandle(w);
     return w->m_data->m_winId;
+}
+
+bool XWindow_isDestructing(const XWindow* self)
+{
+    return self && self->m_data && self->m_data->m_inDestruct;
 }
 
 void XWindow_destroy(XWindow* self)
@@ -2156,7 +2180,11 @@ void XWindow_setVisible(XWindow* self, bool visible)
     }
 #endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
 #if XACCESSIBLE_ON
-    if (old != visible)
+    /* 仅已创建平台句柄的窗口才向无障碍驱动通知可见性变化：未创建/
+       已销毁（m_created=false，含析构中）时通知会经 winId() 惰性
+       建柄把垂死窗口复活（与 VXWindow_deinit 析构通知的 m_created
+       守卫同口径）。 */
+    if (old != visible && data->m_created)
         XPlatformAccessibility_notifyWindow(XAccessibleEvent_StateChanged,
                                             self);
 #endif
@@ -2229,19 +2257,25 @@ bool XWindow_close(XWindow* self)
 
 void XWindow_raise(XWindow* self)
 {
+    XWindowPrivate* data;
     /* 根因修复（复扫 R-35）：Z 序与激活解耦（对标 QWindow::raise——
        只提升堆叠顺序，不改激活态；激活唯一来源是焦点窗口变化，
        见 VXWindow_event 焦点路由与 requestActivate）。此前 raise 直置
-       m_active=true 造成 isActive 与真实焦点永久脱钩。当前无平台 Z 序
-       接口（XPlatformNativeWindow 无 raise/lower），保持参数校验后
-       no-op，与 Qt 无平台窗口时 raise 为空操作一致。 */
-    if (!self || !self->m_data) return;
+       m_active=true 造成 isActive 与真实焦点永久脱钩，本函数不回填
+       m_active。win32 后端已补 XPlatformNativeWindow_raise/lower 平台
+       Z 序接口：无平台窗口时与 Qt 一致保持空操作。 */
+    if (!self || !(data = self->m_data)) return;
+    if (data->m_platform)
+        XPlatformNativeWindow_raise(self);
 }
 
 void XWindow_lower(XWindow* self)
 {
+    XWindowPrivate* data;
     /* 对标 QWindow::lower：仅降低堆叠顺序，不改激活态（同 raise 解耦）。 */
-    if (!self || !self->m_data) return;
+    if (!self || !(data = self->m_data)) return;
+    if (data->m_platform)
+        XPlatformNativeWindow_lower(self);
 }
 
 /** @brief 判断边缘组合是否为 Qt 合法 resize 边缘（单边或两条直角邻边）。 */

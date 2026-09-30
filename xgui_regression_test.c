@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file        xgui_regression_test.c
  * @brief       XGui Qt 对齐统一自动回归测试（无平台 API、无菜单依赖）
  * @details     本文件是普通 XGui 功能的唯一自动化回归入口，集中覆盖图像、编解码、
@@ -163,6 +163,9 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #include "XDialogButtonBox.h"
 #include "XAbstractButton_Protected.h"
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
+#if XWIDGET_ON && XKEYBOARD_ON
+#include "XKeyboardTest.h"
+#endif /* XWIDGET_ON && XKEYBOARD_ON */
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
@@ -4440,7 +4443,6 @@ static void test_painter_raster_contract(void)
     XPainter_deinit(&painter);
     XImage_deinit_base(&image);
 }
-
 /* ============ Task 2.11 契约测试（图案刷/dash/clipPath/设备/ICC） ===== */
 
 static void test_painter_task211_contract(void)
@@ -13540,8 +13542,6 @@ static void test_codec_decode_real_assets(void)
                 "nonexistent asset file rejected");
     XImage_deinit_base(&image);
 }
-
-
 /* ================ PNG 扩展特性测试 ================ */
 
 static void test_codec_png_palette_round_trip(void)
@@ -19126,6 +19126,32 @@ static void test_gui_application_contract(void)
         XScreen* s1 = XScreen_create();
         XScreen* s2 = XScreen_create();
         XPoint pt = {10, 10};
+        XScreen* preScreens[16];
+        int preCount = 0;
+        int baseAdded;
+        int basePrimaryChanged;
+        int baseRemoved;
+        int i;
+        XVector* preList;
+
+        /* 平台屏幕基线：win32/X11 后端会在启动/首窗创建时登记真实显
+         * 示器（对标 Qt 平台屏恒在，QDockWidget 顶层首显居中依赖之）。
+         * 本节使用受控屏幕集——先把既有屏幕摘出并记录探针基线，节末
+         * 恢复原登记，保证前后测试看到一致的注册表与信号计数。 */
+        preList = XGuiApplication_screens();
+        if (preList) {
+            int64_t n = XVector_size_base((const XContainer*)preList);
+            for (i = 0; i < (int)n && preCount < 16; ++i) {
+                XScreen** slot = (XScreen**)XVector_at_base(preList, i);
+                if (slot && *slot) preScreens[preCount++] = *slot;
+            }
+            XVector_delete_base((XClass*)preList);
+        }
+        for (i = 0; i < preCount; ++i)
+            XGuiApplication_screenRemoved(preScreens[i]);
+        baseAdded = g_guiAppProbe.screenAdded;
+        basePrimaryChanged = g_guiAppProbe.primaryScreenChanged;
+        baseRemoved = g_guiAppProbe.screenRemoved;
 
         expect_true(s1 && s2, "屏幕创建");
         XScreen_setGeometry(s1, &(XRect){0, 0, 800, 600});
@@ -19134,20 +19160,23 @@ static void test_gui_application_contract(void)
         XScreen_setDevicePixelRatio(s2, 1.5f);
 
         XGuiApplication_screenAdded(s1);
-        expect_true(g_guiAppProbe.screenAdded == 1 &&
+        expect_true(g_guiAppProbe.screenAdded == baseAdded + 1 &&
                     g_guiAppProbe.lastScreen == s1,
                     "screenAdded 发射并登记");
         XGuiApplication_screenAdded(s2);
-        expect_true(g_guiAppProbe.screenAdded == 2, "screenAdded 再次发射");
+        expect_true(g_guiAppProbe.screenAdded == baseAdded + 2,
+                    "screenAdded 再次发射");
 
         expect_true(XGuiApplication_primaryScreen() == NULL,
                     "未设主屏时 primaryScreen 为 NULL");
         XGuiApplication_setPrimaryScreen(s1);
-        expect_true(g_guiAppProbe.primaryScreenChanged == 1 &&
+        expect_true(g_guiAppProbe.primaryScreenChanged ==
+                        basePrimaryChanged + 1 &&
                     XGuiApplication_primaryScreen() == s1,
                     "setPrimaryScreen 发射并生效");
         XGuiApplication_setPrimaryScreen(s1);
-        expect_true(g_guiAppProbe.primaryScreenChanged == 1,
+        expect_true(g_guiAppProbe.primaryScreenChanged ==
+                        basePrimaryChanged + 1,
                     "同主屏重复设置不重复发信号");
 
         list = XGuiApplication_screens();
@@ -19224,21 +19253,22 @@ static void test_gui_application_contract(void)
 
         XGuiApplication_setPrimaryScreen(s2);
         expect_true(XGuiApplication_primaryScreen() == s2 &&
-                    g_guiAppProbe.primaryScreenChanged == 2,
+                    g_guiAppProbe.primaryScreenChanged ==
+                        basePrimaryChanged + 2,
                     "切换主屏再次发射");
         dpr = XGuiApplication_devicePixelRatio();
         expect_true(dpr > 1.99f && dpr < 2.01f,
                     "devicePixelRatio 不随较低 DPR 主屏切换而降低");
 
         XGuiApplication_screenRemoved(s1);
-        expect_true(g_guiAppProbe.screenRemoved == 1 &&
+        expect_true(g_guiAppProbe.screenRemoved == baseRemoved + 1 &&
                     g_guiAppProbe.lastScreen == s1,
                     "screenRemoved 发射并注销");
         dpr = XGuiApplication_devicePixelRatio();
         expect_true(dpr > 1.49f && dpr < 1.51f,
                     "最高 DPR 屏幕移除后重新计算为剩余屏幕值");
         XGuiApplication_screenRemoved(s2);
-        expect_true(g_guiAppProbe.screenRemoved == 2 &&
+        expect_true(g_guiAppProbe.screenRemoved == baseRemoved + 2 &&
                     XGuiApplication_primaryScreen() == NULL,
                     "主屏注销后 primaryScreen 清空");
 
@@ -19250,6 +19280,11 @@ static void test_gui_application_contract(void)
                         "屏幕注册表清空");
             XVector_delete_base((XClass*)list);
         }
+        /* 恢复平台屏幕登记与主屏（基线还原，供后续测试/运行时一致）。 */
+        for (i = 0; i < preCount; ++i)
+            XGuiApplication_screenAdded(preScreens[i]);
+        if (preCount > 0)
+            XGuiApplication_setPrimaryScreen(preScreens[0]);
     }
 #endif /* XSCREEN_ON */
 
@@ -19654,6 +19689,7 @@ static void test_gui_application_contract(void)
         XPlatformNativeInterface* gni;
         XPlatformInputContext* gctx;
         XInputMethod* gim;
+        XPlatformInputContext* bound;
         XPlatformWindow* gpw = NULL;
         XWindow* gpwin = NULL;
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
@@ -19869,15 +19905,20 @@ static void test_gui_application_contract(void)
         expect_true(!XPlatformInputContext_filterEvent(gctx, NULL),
                     "filterEvent 空后端恒 false");
 
-        /* XGuiApplication::inputMethod 与输入上下文双向绑定 */
+        /* XGuiApplication::inputMethod 与输入上下文双向绑定。VK 启用时
+         * 进程绑定指向 VK 平台上下文（XGuiApplication_inputMethod 的
+         * Qt 虚拟键盘插件同型接管：集成层基座仍持有实例，绑定改指
+         * VK 实例），故断言按「实际绑定对象」取上下文，两种装配下
+         * 契约一致。 */
         gim = XGuiApplication_inputMethod();
-        expect_true(gim != NULL && XInputMethod_platformContext(gim) == gctx,
+        bound = (XPlatformInputContext*)XInputMethod_platformContext(gim);
+        expect_true(gim != NULL && bound != NULL,
                     "inputMethod 惰性创建并绑定输入上下文");
-        expect_true(!XPlatformInputContext_inputMethodAccepted(gctx),
+        expect_true(!XPlatformInputContext_inputMethodAccepted(bound),
                     "无查询回调时 ImEnabled 默认拒绝");
         XInputMethod_setQueryHandler(gim, gui_app_inputMethodQuery, NULL);
         XInputMethod_update(gim, XInputMethodQuery_ImEnabled);
-        expect_true(XPlatformInputContext_inputMethodAccepted(gctx),
+        expect_true(XPlatformInputContext_inputMethodAccepted(bound),
                     "ImEnabled 查询回调更新接受状态");
         {
             XInputMethodTransform transform;
@@ -19920,7 +19961,7 @@ static void test_gui_application_contract(void)
         }
         XInputMethod_setQueryHandler(gim, NULL, NULL);
         XInputMethod_update(gim, XInputMethodQuery_ImEnabled);
-        expect_true(!XPlatformInputContext_inputMethodAccepted(gctx),
+        expect_true(!XPlatformInputContext_inputMethodAccepted(bound),
                     "清除查询回调后恢复拒绝状态");
         expect_true(XInputMethod_cursorRectangle(gim).width == 0.0f &&
                     XInputMethod_anchorRectangle(gim).height == 0.0f,
@@ -19928,11 +19969,11 @@ static void test_gui_application_contract(void)
         expect_true(!XInputMethod_isVisible(gim), "输入面板默认隐藏");
         XInputMethod_show(gim);
         expect_true(XInputMethod_isVisible(gim) &&
-                    XPlatformInputContext_isInputPanelVisible(gctx),
+                    XPlatformInputContext_isInputPanelVisible(bound),
                     "show 联动输入上下文");
         XInputMethod_hide(gim);
         expect_true(!XInputMethod_isVisible(gim) &&
-                    !XPlatformInputContext_isInputPanelVisible(gctx),
+                    !XPlatformInputContext_isInputPanelVisible(bound),
                     "hide 联动输入上下文");
         expect_true(XInputMethod_inputDirection(gim) ==
                         XInputMethodLayoutDirection_LeftToRight,
@@ -21077,7 +21118,6 @@ static void test_window_event_payloads(void)
         if (me) XEvent_delete_base((XClass*)me);
     }
 }
-
 /* ============ Task 2.13 事件体系契约测试 ============ */
 
 static void test_window_event_task213_contract(void)
@@ -21193,7 +21233,6 @@ static void test_window_event_task213_contract(void)
         if (te) XEvent_delete_base((XClass*)te);
     }
 }
-
 /* ============ Task 2.14 Input 管线契约测试 ============ */
 
 static void test_input_task214_contract(void)
@@ -21873,7 +21912,13 @@ static TestWidget* TestWidget_create(XWidget* parent)
                                                    XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
     memset(self, 0, sizeof(TestWidget));
-    XWidget_init(&self->m_base, parent, 0);
+    /* 顶层一律 FramelessWindowHint：本辅助专测控件树语义（命中测试/
+     * Z 序/遮罩/抓取/可见性传播），不测窗口装饰——XGUI_CSD_DEFAULT=1
+     * 起普通顶层会被 XWindowDecoration 挂上标题栏子控件（条带作为
+     * 可见子控件参与 childAt/childrenRect 与输入分流），覆盖树查询
+     * 断言。装饰契约由装饰侧用例与 demo 页覆盖，测试树与装饰解耦。 */
+    XWidget_init(&self->m_base, parent,
+                 parent ? 0 : (XWidgetFlags)XWindowType_FramelessWindowHint);
     XClassSetVtable(self, TestWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
@@ -23503,7 +23548,10 @@ static GrabProbeWidget* GrabProbeWidget_create(XWidget* parent)
                                          XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
     memset(self, 0, sizeof(GrabProbeWidget));
-    XWidget_init(&self->m_base, parent, 0);
+    /* 顶层 FramelessWindowHint：与 TestWidget_create 同理，命中/抓取
+     * 断言须与窗口装饰（CSD 标题栏子控件）解耦。 */
+    XWidget_init(&self->m_base, parent,
+                 parent ? 0 : (XWidgetFlags)XWindowType_FramelessWindowHint);
     XClassSetVtable(self, GrabProbeWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
@@ -26265,7 +26313,6 @@ static void db2_expect(bool cond, const char* what)
         fprintf(stderr, "[DBB-FAIL] %s\n", what ? what : "");
     }
 }
-
 /* ==================== XStatusBar 契约测试（对标 QStatusBar） ==================== */
 
 /** @brief XStatusBar 契约：消息槽、超时清除、控件区管理、sizeGrip。 */
@@ -26297,7 +26344,6 @@ static void test_statusbar_contract(void)
     XLabel_delete_base(lbl);
     XLabel_delete_base(perm);
 }
-
 /* ==================== XMenuBar 契约测试（对标 QMenuBar） ==================== */
 
 static int mb_triggered = 0;
@@ -26362,8 +26408,11 @@ static void test_menubar_contract(void)
 
 static void mbx_expect(bool cond, const char* what)
 {
+    /* 失败须计入 s_failures：只打印不计数时本族失败永不进
+     * 退出门（对标 expect_true 口径）。 */
     if (!cond) {
         fprintf(stderr, "[MBX-FAIL] %s\n", what ? what : "");
+        ++s_failures;
     }
 }
 
@@ -26535,7 +26584,6 @@ static void tb_expect(bool cond, const char* what)
         fprintf(stderr, "[TB-FAIL] %s\n", what ? what : "");
     }
 }
-
 /* ==================== Widgets 信号补齐契约测试（2026-09-10 批次，19 个信号） ==================== */
 
 static int ws_failures = 0;
@@ -26882,7 +26930,6 @@ static void test_widgets_signals_contract(void)
     if (ws_failures != 0)
         ++s_failures;
 }
-
 /* ==================== Charts C1 契约测试（XChart 51 + XChartView 7） ==================== */
 
 static int c1_failures = 0;
@@ -27617,8 +27664,10 @@ static void test_chart_interaction_contract(void)
         XMouseEvent_deinit_base((XClass*)&move);
         c1_expect(s_chartHitHoverIn >= 2, "离开命中发射 hovered(离开)");
         (void)x; (void)y;
+        /* m_chart 已随视图 delete_base 的析构释放（XChartView.h 契约
+         * 「内部拥有；setChart 转移」，f93a7c05 起析构必释放）；此处再
+         * delete 同一图表即双重释放。 */
         XChartView_delete_base((XClass*)&view);
-        XChart_delete_base(chart);
     }
     {
         /* Charts 高级 API 契约：轴挂接/type/笔刷/点配置/最佳拟合/面积/柱集合。 */
@@ -27942,7 +27991,10 @@ static void test_chart_c1_contract(void)
                   XChartView_RubberBand_NoRubberBand, "rubberBand 关闭");
         XChartView_setChart(view, chart);
         c1_expect(XChartView_chart(view) == chart, "setChart 接管");
-        XChart_delete_base(chart);
+        /* setChart 后所有权归视图（XChartView.h「内部拥有；setChart 转
+         * 移」契约，f93a7c05 起析构必释放 m_chart），不得再外部 delete：
+         * 此前先删图表再删视图，析构二次释放同一图表（AV 于
+         * XClass_delete_base 读已释放块，门禁实测二机会崩溃点）。 */
         XChartView_delete_base(view);
     }
 
@@ -28393,8 +28445,11 @@ static void test_splashscreen_contract(void)
 
 static void msg_expect(bool cond, const char* what)
 {
+    /* 失败须计入 s_failures：只打印不计数时本族失败永不进
+     * 退出门（对标 expect_true 口径）。 */
     if (!cond) {
         fprintf(stderr, "[MSG-FAIL] %s\n", what ? what : "");
+        ++s_failures;
     }
 }
 
@@ -28410,9 +28465,17 @@ static void test_messagebox_contract(void)
     XMessageBox_setText(box, "保存更改?");
     msg_expect(strcmp(XMessageBox_text(box), "保存更改?") == 0,
                "setText/text 往返");
-    XMessageBox_setTitle(box, "标题");
-    msg_expect(strcmp(XMessageBox_title(box), "标题") == 0,
-               "setTitle/title 往返");
+    /* 对标 Qt：QMessageBox 无 setTitle/title（窗口标题即
+     * setWindowTitle），重复入口已删；经继承的 setWindowTitle 往返。 */
+    {
+        XString* boxTitle = XString_create_utf8("标题");
+        XWidget_setWindowTitle((XWidget*)box, boxTitle);
+        msg_expect(XString_equals(XWidget_windowTitle((XWidget*)box),
+                                  boxTitle, XChar_CaseSensitive),
+                   "setWindowTitle/windowTitle 往返（对标 Qt）");
+        if (boxTitle)
+            XString_delete_base((XClass*)boxTitle);
+    }
     XMessageBox_setIcon(box, XMessageBoxIcon_Question);
     msg_expect(XMessageBox_icon(box) == XMessageBoxIcon_Question,
                "setIcon 生效");
@@ -28428,6 +28491,142 @@ static void test_messagebox_contract(void)
 
     XMessageBox_delete_base(box);
 }
+/* ==================== XMessageBox::open_receiver 收口时序测试 =========
+ * 对标 qmessagebox.cpp:492-513（两种载荷 receiver 均恰回调一次）：
+ * a) finished 载荷点击收口：断开挪到 done 之后（对标 setClickedButton
+ *    先行、disconnect 收尾），receiver 恰一次、载荷=execReturnCode 结
+ *    果码（回归锁：断开曾在 done 之前，finished 载荷 receiver 永远收
+ *    不到收口回调）；
+ * b) 关闭路径（[×]/reject 经 closeEvent）：finished 恰一次送达后按头
+ *    文件契约「对话框关闭时自动断开」收口（X 侧健壮性收口，超出 Qt
+ *    严格对等）；
+ * c) 同盒二次 open_receiver：旧连接先断（disconnect_1 只移除首个匹
+ *    配），收口恰一次、无叠连误触发。 */
+
+static int msg_openFinishedCount;
+static int msg_openFinishedResult;
+static int msg_openButtonCount;
+
+static void msg_open_finishedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++msg_openFinishedCount;
+    XVarList_args_1(args, int, code);
+    msg_openFinishedResult = code;
+}
+
+static void msg_open_buttonSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++msg_openButtonCount;
+    XVarList_args_1(args, XAbstractButton*, button);
+    (void)button;
+}
+
+static void test_messagebox_open_receiver_contract(void)
+{
+    /* a) finished 载荷：点击标准按钮 → done 返回后断开，恰回调一次。 */
+    {
+        XMessageBox* box = XMessageBox_create(NULL, 0);
+        XLabel receiver;
+        XLabel_init(&receiver, NULL, 0);
+        msg_expect(box != NULL, "open a) 消息盒创建");
+        if (box) {
+            XMessageBox_setStandardButtons(
+                box, (int)XDialogButtonBoxStandard_Ok);
+            msg_openFinishedCount = 0;
+            msg_openFinishedResult = -1;
+            XMessageBox_open_2(box, (XObject*)&receiver,
+                                      msg_open_finishedSlot, false);
+            msg_expect(XWidget_isVisible((XWidget*)box),
+                       "open a) open 后可见");
+            XAbstractButton_click(
+                XMessageBox_button(box, XDialogButtonBoxStandard_Ok));
+            msg_expect(msg_openFinishedCount == 1,
+                       "open a) finished 载荷 receiver 恰回调一次");
+            msg_expect(msg_openFinishedResult ==
+                           (int)XDialogButtonBoxStandard_Ok,
+                       "open a) 载荷=execReturnCode 结果码");
+            msg_expect(!XWidget_isVisible((XWidget*)box),
+                       "open a) 收口后隐藏");
+            msg_expect(XMessageBox_clickedButton(box) ==
+                           XMessageBox_button(box,
+                                              XDialogButtonBoxStandard_Ok),
+                       "open a) clickedButton 回填为被点按钮");
+        }
+        XLabel_deinit_base(&receiver);
+        XMessageBox_delete_base(box);
+    }
+    /* b) 关闭路径：open 后经 closeEvent（[×] 等价收口）关闭。 */
+    {
+        XMessageBox* box = XMessageBox_create(NULL, 0);
+        XLabel receiver;
+        XLabel_init(&receiver, NULL, 0);
+        msg_expect(box != NULL, "open b) 消息盒创建");
+        if (box) {
+            XMessageBox_setStandardButtons(
+                box, (int)XDialogButtonBoxStandard_Cancel);
+            msg_openFinishedCount = 0;
+            msg_openFinishedResult = -1;
+            XMessageBox_open_2(box, (XObject*)&receiver,
+                                      msg_open_finishedSlot, false);
+            XWidget_close((XWidget*)box);
+            msg_expect(msg_openFinishedCount == 1,
+                       "open b) 关闭路径 receiver 恰回调一次");
+            msg_expect(msg_openFinishedResult ==
+                           (int)XDialogCode_Rejected,
+                       "open b) 载荷=Rejected 结果码");
+            msg_expect(!XWidget_isVisible((XWidget*)box),
+                       "open b) 关闭后隐藏");
+        }
+        XLabel_deinit_base(&receiver);
+        XMessageBox_delete_base(box);
+    }
+    /* c) 同盒二次 open_receiver：收口每次恰一次（防叠连）。 */
+    {
+        XMessageBox* box = XMessageBox_create(NULL, 0);
+        XLabel receiver;
+        XLabel_init(&receiver, NULL, 0);
+        msg_expect(box != NULL, "open c) 消息盒创建");
+        if (box) {
+            XMessageBox_setStandardButtons(
+                box, (int)XDialogButtonBoxStandard_Ok);
+            msg_openButtonCount = 0;
+            XMessageBox_open_2(box, (XObject*)&receiver,
+                                      msg_open_buttonSlot, true);
+            XMessageBox_open_2(box, (XObject*)&receiver,
+                                      msg_open_buttonSlot, true);
+            XAbstractButton_click(
+                XMessageBox_button(box, XDialogButtonBoxStandard_Ok));
+            msg_expect(msg_openButtonCount == 1,
+                       "open c) 二次 open 无叠连：收口恰一次");
+            msg_expect(!XWidget_isVisible((XWidget*)box),
+                       "open c) 收口后隐藏");
+        }
+        XLabel_deinit_base(&receiver);
+        XMessageBox_delete_base(box);
+    }
+    /* modal 属性消费链路（对标 Qt：构造完 windowModality 已
+     * ApplicationModal，show 后阻塞门登记，hide 对称解除）。 */
+    {
+        XMessageBox* box = XMessageBox_create(NULL, 0);
+        msg_expect(box != NULL, "modal 属性：消息盒创建");
+        if (box) {
+            msg_expect(XWidget_windowModality((XWidget*)box) ==
+                           XWindowModality_ApplicationModal,
+                       "modal 属性：构造后 windowModality=ApplicationModal");
+            msg_expect(XDialog_isModal(&((XMessageBox*)box)->m_base),
+                       "modal 属性：isModal 查询一致");
+            XWidget_show((XWidget*)box);
+            msg_expect(XWidget_applicationModalWidget() == (XWidget*)box,
+                       "modal 属性：show 登记应用模态门");
+            XWidget_setVisible((XWidget*)box, false);
+            msg_expect(XWidget_applicationModalWidget() == NULL,
+                       "modal 属性：hide 对称解除模态门");
+        }
+        XMessageBox_delete_base(box);
+    }
+}
 /* ==================== XDockWidget/XMainWindow 契约测试 ================ */
 
 static void mw_expect(bool cond, const char* what)
@@ -28435,6 +28634,177 @@ static void mw_expect(bool cond, const char* what)
     if (!cond) {
         fprintf(stderr, "[MW-FAIL] %s\n", what ? what : "");
     }
+}
+/* ==================== 浮动循环泄漏探针 ==================== */
+/* 复现"同一面板反复拖出-停靠后卡顿"：程序化 setFloating 循环 N 次，
+ * 逐段测量 GDI/USER 句柄与内存增量。每轮创建/销毁一对原生窗口，句柄
+ * 数若随循环线性增长即窗口层资源泄漏（GDI 上限 1 万，泄漏型卡顿的
+ * 直接证据）。窗口层指标仅 win32 有意义，其余平台只测内存与功能。 */
+#if defined(_WIN32)
+#include <windows.h>
+#include <crtdbg.h>
+#endif
+
+static long xfloat_memBytes(void)
+{
+    XMemoryStatistics st = XMemory_statistics();
+    return (long)(st.systemBytes + st.poolUsedBytes);
+}
+
+static void test_dock_float_cycle_leak(void)
+{
+    XMainWindow* win = XMainWindow_create(NULL, 0);
+    XDockWidget* dock = XDockWidget_create("循环面板", NULL, 0);
+    XLabel* content = XLabel_create(NULL, 0);
+    const int cycles = 300;
+#ifdef _WIN32
+    DWORD gdi0;
+    DWORD gdi1;
+    DWORD usr0;
+    DWORD usr1;
+#endif
+    int i;
+    long mem0;
+    long mem1;
+    sml_expect(win != NULL && dock != NULL, "浮循环：宿主/面板创建");
+    if (!win || !dock) return;
+    XDockWidget_setWidget(dock, (XWidget*)content);
+    XMainWindow_setCentralWidget(win, (XWidget*)XLabel_create(NULL, 0));
+    XMainWindow_addDockWidget(win, (int)XDockWidgetArea_Left,
+                              (XWidget*)dock);
+    mw_expect(XDockWidget_host(dock) != NULL, "浮循环：宿主回链登记");
+    mem0 = xfloat_memBytes();
+#ifdef _WIN32
+    gdi0 = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    usr0 = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
+#endif
+    for (i = 0; i < cycles; ++i) {
+        XDockWidget_setFloating(dock, true);
+        sml_expect(XDockWidget_isFloating(dock), "浮循环：转浮动");
+        XDockWidget_setFloating(dock, false);
+        sml_expect(!XDockWidget_isFloating(dock), "浮循环：回停靠");
+        /* 泵空排队事件（窗口创建/销毁投递的显示/几何事件）：真实应用
+           有事件循环常驻消费，泄漏探针须同口径——不泵则队列积压把
+           分配器抖动误报成泄漏。 */
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+    /* 步骤记账定位：交替循环里分别累计"转浮动步"与"回停靠步"的内存
+     * 增量（setFloating 对相同状态是 no-op，不能整段只跑单方向）。
+     * 96B/轮落在哪一步，即泄漏方向。 */
+    {
+        long sumTrue;
+        long sumFalse;
+        long prev;
+        long now;
+        const int steps = 100;
+        sumTrue = 0;
+        sumFalse = 0;
+        XDockWidget_setFloating(dock, false);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        prev = xfloat_memBytes();
+        for (i = 0; i < steps; ++i) {
+            XDockWidget_setFloating(dock, true);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+            now = xfloat_memBytes();
+            sumTrue += now - prev;
+            prev = now;
+            XDockWidget_setFloating(dock, false);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+            now = xfloat_memBytes();
+            sumFalse += now - prev;
+            prev = now;
+        }
+        printf("[float-cycle] step-attribution x%d: "
+               "float-step %+ld (%+ld/cycle), dock-step %+ld (%+ld/cycle)\n",
+               steps, sumTrue, sumTrue / steps,
+               sumFalse, sumFalse / steps);
+#ifdef _WIN32
+        /* 堆块转储（XFLOAT_LEAKDUMP=1 时启用）：转储循环起点以来仍存活
+           的全部堆块——96B/轮的泄漏块会以 100 份出现，按尺寸即可归类。 */
+        if (getenv("XFLOAT_LEAKDUMP")) {
+            _CrtMemState ms;
+            _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
+            _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDOUT);
+            _CrtMemCheckpoint(&ms);
+            for (i = 0; i < steps; ++i) {
+                XDockWidget_setFloating(dock, true);
+                XGuiApplication_processEvents(XEventLoop_AllEvents);
+                XDockWidget_setFloating(dock, false);
+                XGuiApplication_processEvents(XEventLoop_AllEvents);
+            }
+            _CrtMemDumpAllObjectsSince(&ms);
+        }
+#endif
+    }
+    mem1 = xfloat_memBytes();
+#ifdef _WIN32
+    gdi1 = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+    usr1 = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
+    printf("[float-cycle] %d cycles: GDI %lu -> %lu (%+ld), "
+           "USER %lu -> %lu (%+ld)\n",
+           cycles, (unsigned long)gdi0, (unsigned long)gdi1,
+           (long)gdi1 - (long)gdi0,
+           (unsigned long)usr0, (unsigned long)usr1,
+           (long)usr1 - (long)usr0);
+    /* 每轮 2 次窗口创建/销毁；正常应零增长（允许个位数抖动）。 */
+    mw_expect((long)gdi1 - (long)gdi0 < 20,
+              "浮循环：GDI 句柄无泄漏");
+    mw_expect((long)usr1 - (long)usr0 < 20,
+              "浮循环：USER 对象无泄漏");
+#endif
+    printf("[float-cycle] %d cycles: XMemory %+ld bytes\n",
+           cycles, mem1 - mem0);
+    /* 内存允许小幅抖动（分配器 retained），线性增长即泄漏。 */
+    mw_expect(mem1 - mem0 < (long)cycles * 256,
+              "浮循环：内存无近似线性增长");
+    XMainWindow_delete_base(win);
+}
+/* ==================== tab 化循环子控件累积探针 ==================== */
+/* 复现"同一面板拖出-停靠回中央带反复后卡顿"：历史实现里组解散只隐藏
+ * 页签条不销毁（回调链内删除会级联崩溃），每次循环遗弃一个隐藏
+ * XTabBar 子控件线性累积。修复后页签条回收池复用，主窗口子控件数
+ * 必须恒定。 */
+static void test_dock_tabify_cycle_widget_growth(void)
+{
+    XMainWindow* win = XMainWindow_create(NULL, 0);
+    XDockWidget* dockA = XDockWidget_create("循环甲", NULL, 0);
+    XDockWidget* dockB = XDockWidget_create("循环乙", NULL, 0);
+    const int cycles = 60;
+    int children0;
+    int children1;
+    int i;
+    sml_expect(win != NULL && dockA != NULL && dockB != NULL,
+               "tab 循环：宿主/面板创建");
+    if (!win || !dockA || !dockB) return;
+    XDockWidget_setWidget(dockA, (XWidget*)XLabel_create(NULL, 0));
+    XDockWidget_setWidget(dockB, (XWidget*)XLabel_create(NULL, 0));
+    XMainWindow_setCentralWidget(win, (XWidget*)XLabel_create(NULL, 0));
+    XMainWindow_addDockWidget(win, (int)XDockWidgetArea_Left,
+                              (XWidget*)dockA);
+    XMainWindow_addDockWidget(win, (int)XDockWidgetArea_Left,
+                              (XWidget*)dockB);
+    XMainWindow_tabifyDockWidget(win, dockA, dockB);
+    XGuiApplication_processEvents(XEventLoop_AllEvents);
+    children0 = (int)XVector_size_base(
+        (const XContainer*)XObject_children((XObject*)win));
+    for (i = 0; i < cycles; ++i) {
+        /* 对标用户操作：拖出（脱离标签组 → 组解散 → 页签条入池）→
+           停靠回中央带（重新 tab 化 → 从池取条）。 */
+        XDockWidget_setFloating(dockB, true);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        XDockWidget_setFloating(dockB, false);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+        XMainWindow_tabifyDockWidget(win, dockA, dockB);
+        XGuiApplication_processEvents(XEventLoop_AllEvents);
+    }
+    children1 = (int)XVector_size_base(
+        (const XContainer*)XObject_children((XObject*)win));
+    printf("[tabify-cycle] %d cycles: children %d -> %d (%+d)\n",
+           cycles, children0, children1, children1 - children0);
+    /* 页签条回收复用：子控件数不得随循环增长。 */
+    mw_expect(children1 == children0,
+              "tab 循环：主窗口子控件数恒定（页签条已回收复用）");
+    XMainWindow_delete_base(win);
 }
 
 static void test_mainwindow_contract(void)
@@ -28553,7 +28923,61 @@ static void test_mainwindow_contract(void)
         XDockWidget_delete_base(dock);
         XMainWindow_delete_base(win);
     }
-}/* ==================== XDateTimeEdit 契约测试（对标 QDateTimeEdit） == */
+
+    /* ---- 拖出/回归状态机（对标 QDockWidget unplug/plug + tab 化） ---- */
+    {
+        XMainWindow* win = XMainWindow_create(NULL, 0);
+        XDockWidget* dl = XDockWidget_create("停靠-左", (XWidget*)win, 0);
+        XDockWidget* dr = XDockWidget_create("停靠-右", (XWidget*)win, 0);
+        mw_expect(win != NULL && dl != NULL && dr != NULL,
+                  "drag-cycle 创建");
+        XMainWindow_addDockWidget(win, (int)XDockWidgetArea_Left,
+                                  (XWidget*)dl);
+        XMainWindow_addDockWidget(win, (int)XDockWidgetArea_Right,
+                                  (XWidget*)dr);
+        XMainWindow_setCentralWidget(win,
+            (XWidget*)XLabel_create((XWidget*)win, 0));
+        XWidget_show((XWidget*)win);
+        /* 中央 tab 化（对标拖入中央带）：dl/dr 编组，dr 激活可见 */
+        XMainWindow_tabifyDockWidget(win, dl, dr);
+        mw_expect(XMainWindow_tabifiedDockWidgets(win, dl) != NULL,
+                  "tab 化成组");
+        mw_expect(!XDockWidget_isFloating(dr), "tab 化后 dr 停靠态");
+        /* 拖出（对标 unplug：拖出浮动即脱离标签组，余员 dl 恢复显示） */
+        XDockWidget_setFloating(dr, true);
+        XMainWindow_updateDockLayout(win);
+        mw_expect(XDockWidget_isFloating(dr), "拖出后 dr 浮动");
+        mw_expect(XMainWindow_tabifiedDockWidgets(win, dl) == NULL,
+                  "拖出后 dr 脱离编组");
+        mw_expect(XWidget_isVisible((XWidget*)dl), "余员 dl 恢复显示");
+        /* 拖回（对标 plug）：回归停靠 */
+        XDockWidget_setFloating(dr, false);
+        XMainWindow_updateDockLayout(win);
+        mw_expect(!XDockWidget_isFloating(dr), "拖回后 dr 停靠");
+        mw_expect(XWidget_isVisible((XWidget*)dr), "拖回后 dr 可见");
+        /* 用户场景全链路：合并（再 tab 化）→ 拖出激活成员 → 余员必须
+         * 立即可见且组状态一致（实测回归：活动指针残留导致余员被下一
+         * 轮 dockGroupSync 隐藏——"消失一个"）。 */
+        XMainWindow_tabifyDockWidget(win, dl, dr);
+        mw_expect(XMainWindow_tabifiedDockWidgets(win, dl) != NULL,
+                  "再次合并成组");
+        XDockWidget_setFloating(dr, true);
+        XMainWindow_updateDockLayout(win);
+        mw_expect(XDockWidget_isFloating(dr), "再拖出 dr 浮动");
+        mw_expect(XWidget_isVisible((XWidget*)dl),
+                  "再拖出后余员 dl 立即可见");
+        mw_expect(XMainWindow_tabifiedDockWidgets(win, dl) == NULL,
+                  "再拖出后组已解散");
+        /* 余员可再次正常拖回（"无法再停靠"回归锁） */
+        XDockWidget_setFloating(dr, false);
+        XMainWindow_updateDockLayout(win);
+        mw_expect(!XDockWidget_isFloating(dr) &&
+                  XWidget_isVisible((XWidget*)dr),
+                  "余员显示后 dr 可再次停靠");
+        XMainWindow_delete_base(win); /* 级联：dl/dr 随 win 析构 */
+    }
+}
+/* ==================== XDateTimeEdit 契约测试（对标 QDateTimeEdit） == */
 
 static int dt_changed = 0;
 
@@ -28565,8 +28989,11 @@ static void dt_changedSlot(XObject* receiver, XVarList* args)
 
 static void dt_expect(bool cond, const char* what)
 {
+    /* 失败须计入 s_failures：只打印不计数时本族失败永不进
+     * 退出门（对标 expect_true 口径）。 */
     if (!cond) {
         fprintf(stderr, "[DT-FAIL] %s\n", what ? what : "");
+        ++s_failures;
     }
 }
 
@@ -28647,7 +29074,6 @@ static void test_datetimeedit_contract(void)
 
     XDateTimeEdit_delete_base(edit);
 }
-
 /* ==================== XDateTimeEdit 扩展格式引擎（对标 Qt ddd/hh/zzz/AP） ==================== */
 
 static void test_datetimeedit_format_ext(void)
@@ -28743,7 +29169,6 @@ static void test_datetimeedit_format_ext(void)
     }
     XDateTimeEdit_delete_base(edit);
 }
-
 /* ==================== XComboBox 补全/插入策略（对标 QCompleter/insertPolicy） ==================== */
 
 static void test_combobox_completer_policy(void)
@@ -28829,7 +29254,6 @@ static void test_combobox_completer_policy(void)
     XString_delete_base((XClass*)zz);
     XComboBox_delete_base(combo);
 }
-
 /* ==================== XWidget windowIcon/saveGeometry（对标 QWidget） ==================== */
 
 static void test_xwidget_icon_geometry(void)
@@ -29039,7 +29463,8 @@ static void test_plaintextedit_contract(void)
     }
 
     XPlainTextEdit_delete_base(edit);
-}/* ==================== Phase 3.1 P1 新 API 契约测试 ==================== */
+}
+/* ==================== Phase 3.1 P1 新 API 契约测试 ==================== */
 
 static void p31_expect(bool cond, const char* what)
 {
@@ -29192,14 +29617,40 @@ static void test_phase31_p1_contract(void)
         XMenu_delete_base(menu);
     }
 
-    /* --- XDialog：尺寸手柄 + open 模态 --- */
+    /* --- XDialog：尺寸手柄 + open 窗口模态 --- */
     {
+        XVector* tops0;
+        size_t baseline;
         XDialog* dlg = XDialog_create(NULL, 0);
+        /* 基线：open 前的顶层登记数（注册表为借用指针，读时即拷贝计数）。 */
+        tops0 = XGuiApplication_topLevelWindows();
+        baseline = tops0 ? XVector_size_base((const XContainer*)tops0) : 0;
+        if (tops0) XVector_delete_base((XClass*)tops0);
         XDialog_setSizeGripEnabled(dlg, true);
         p31_expect(XDialog_isSizeGripEnabled(dlg), "Dialog sizeGripEnabled");
+        p31_expect(((XWidget*)dlg)->m_isWindow,
+                   "Dialog 构造即为独立顶层窗口（对标 QDialog 窗口类型）");
         XDialog_open(dlg);
-        p31_expect(XDialog_isModal(dlg), "Dialog open 置模态");
+        /* 对标 QDialog::open：显示期间临时窗口模态（modal 属性不变，
+         * qdialog.cpp:509-526），关闭时恢复原值。 */
+        p31_expect(XWidget_windowModality((XWidget*)dlg) ==
+                       XWindowModality_WindowModal,
+                   "Dialog open 置窗口模态（对标 QDialog::open）");
+        p31_expect(!XDialog_isModal(dlg), "Dialog modal 属性保持默认 false");
         XDialog_delete_base(dlg);
+        /* 回归加固（复活悬垂探针）：open→delete 直删（不 done/close）时，
+           removeWindow 的 lastWindowClosed 退出策略曾经 XDialog_done 兜底
+           重入垂死对话框，把半析构桥接窗复活登记进注册表——悬垂槽位在
+           下一个顶层注销扫槽时才 AV（二现场相隔一个用例）。此处断言删除
+           后顶层计数回落基线，令复活悬垂在案发现场显式暴露。 */
+        {
+            XVector* tops1 = XGuiApplication_topLevelWindows();
+            size_t after = tops1 ?
+                XVector_size_base((const XContainer*)tops1) : 0;
+            if (tops1) XVector_delete_base((XClass*)tops1);
+            p31_expect(after == baseline,
+                       "Dialog open 后直删（不 done/close）顶层登记数回落基线");
+        }
     }
 
     /* --- XDockWidget / XToolBar：isAreaAllowed + 浮动/信号 --- */
@@ -29355,7 +29806,6 @@ static void test_phase31_p1_contract(void)
         XWidget_delete_base(host);
     }
 }
-
 /* ==================== Phase 3.2 P2 新 API 契约测试 ==================== */
 
 static void p32_expect(bool cond, const char* what)
@@ -29456,7 +29906,9 @@ static void test_phase32_p2_contract(void)
         XMessageBox_setTextInteractionFlags(box, 0x1u);
         p32_expect(XMessageBox_textInteractionFlags(box) == 0x1u,
                    "msgbox: textInteractionFlags 转发标签");
-        XMessageBox_aboutQt(NULL, NULL); /* 文档化空操作：仅验证可调用。 */
+        /* aboutQt 已对齐 Qt 为真实阻塞弹窗（经 about/exec 收口），
+         * 非阻塞测试口径不直调（阻塞等待无输入源会挂起）；弹窗语义
+         * 由 about/exec 路径覆盖。 */
         XMessageBox_delete_base(box);
     }
 
@@ -30573,7 +31025,6 @@ static void test_phase32_p2_contract(void)
         XComboBox_delete_base(combo);
     }
 }
-
 /* ==================== XMdiArea 契约测试（对标 QMdiArea） ========== */
 
 static int mdi_activated = 0;
@@ -30586,8 +31037,11 @@ static void mdi_activatedSlot(XObject* receiver, XVarList* args)
 
 static void mdi_expect(bool cond, const char* what)
 {
+    /* 失败须计入 s_failures：只打印不计数时本族失败永不进
+     * 退出门（对标 expect_true 口径）。 */
     if (!cond) {
         fprintf(stderr, "[MDI-FAIL] %s\n", what ? what : "");
+        ++s_failures;
     }
 }
 
@@ -30637,7 +31091,8 @@ static void test_mdiarea_contract(void)
 
     XMdiArea_delete_base(area);
     /* c0/c1 已随 area→sub window→内容 控件树一并销毁 */
-}/* ==================== XMdiSubWindow 扩展契约测试（Task 2.7） ====== */
+}
+/* ==================== XMdiSubWindow 扩展契约测试（Task 2.7） ====== */
 
 static int mdi_aboutToActivate = 0;
 static int mdi_stateChanged = 0;
@@ -30782,7 +31237,8 @@ static void test_mdisubwindow_ext_contract(void)
 
     XMdiArea_delete_base(area);
     /* c0/c1/menu 随控件树释放 */
-}/* ==================== XCalendarWidget 契约测试 ==================== */
+}
+/* ==================== XCalendarWidget 契约测试 ==================== */
 
 static int cal_selChanged = 0;
 static int cal_pageChanged = 0;
@@ -30879,7 +31335,8 @@ static void test_calendarwidget_contract(void)
                   "showTodayPage 后选中今日");
     }
 XCalendarWidget_delete_base(cal);
-}/* ==================== XTextBrowser 契约测试（对标 QTextBrowser） == */
+}
+/* ==================== XTextBrowser 契约测试（对标 QTextBrowser） == */
 
 static void tbr_expect(bool cond, const char* what)
 {
@@ -30919,7 +31376,8 @@ static void test_textbrowser_contract(void)
     XTextBrowser_reload(tb);
 
     XTextBrowser_delete_base(tb);
-}/* ==================== XKeySequenceEdit 契约测试 ==================== */
+}
+/* ==================== XKeySequenceEdit 契约测试 ==================== */
 
 static int kse_changed = 0;
 static int kse_finished = 0;
@@ -31062,7 +31520,8 @@ static void test_keysequenceedit_contract(void)
     s_failures += kse_failures;
 
     XKeySequenceEdit_delete_base(edit);
-}/* ==================== XTextEdit 契约测试 ==================== */
+}
+/* ==================== XTextEdit 契约测试 ==================== */
 
 static void te_expect(bool cond, const char* what)
 {
@@ -31229,7 +31688,6 @@ static void test_textedit_contract(void)
 
     XTextEdit_delete_base(edit);
 }
-
 /* ==================== XTextBrowser 契约测试 ==================== */
 
 static void tbr2_expect(bool cond, const char* what)
@@ -31248,7 +31706,8 @@ static void test_textbrowser2_contract(void)
     tbr2_expect(strcmp(XTextBrowser_source(tb), "help.html") == 0,
               "setSource/source 往返");
     XTextBrowser_delete_base(tb);
-}/* ==================== XDialog 契约测试 ==================== */
+}
+/* ==================== XDialog 契约测试 ==================== */
 
 static int dlg_accepted = 0;
 static int dlg_rejected = 0;
@@ -31258,7 +31717,13 @@ static void dlg_rejSlot(XObject* r, XVarList* a) { (void)r; (void)a; ++dlg_rejec
 
 static void dlg_expect(bool cond, const char* what)
 {
-    if (!cond) fprintf(stderr, "[DLG-FAIL] %s\n", what ? what : "");
+    /* 失败须计入 s_failures：只打印不计数时本族失败永不进
+     * 退出门（对标 expect_true 口径）。 */
+    if (!cond)
+    {
+        fprintf(stderr, "[DLG-FAIL] %s\n", what ? what : "");
+        ++s_failures;
+    }
 }
 
 static void test_dialog_contract(void)
@@ -31292,8 +31757,7 @@ static void test_dialog_contract(void)
         dlg_expect(((XDialog*)mb)->m_result == 1, "XMessageBox 经 XDialog accept");
         /* Task 2.1：补充文本/按钮管理/buttonClicked/options。 */
         {
-            static int mbClicked = 0;
-            XMessageBox_setDetailedText(mb, "detail");
+                    XMessageBox_setDetailedText(mb, "detail");
             dlg_expect(XStrcmp(XMessageBox_detailedText(mb), "detail") == 0,
                        "setDetailedText roundtrip");
             XMessageBox_setInformativeText(mb, "info");
@@ -31317,16 +31781,19 @@ static void test_dialog_contract(void)
             dlg_expect(XMessageBox_testOption(mb, 0x1) &&
                        !XMessageBox_testOption(mb, 0x2),
                        "options/testOption");
-            (void)mbClicked;
-        }
+                }
         XMessageBox_delete_base(mb);
     }
-}/* ==================== XTabWidget 多行换行 + 切换功能测试 ========== */
+}
+/* ==================== XTabWidget 多行换行 + 切换功能测试 ========== */
 
 static void tw_expect(bool cond, const char* what)
 {
+    /* 失败须计入 s_failures：只打印不计数时本族失败永不进
+     * 退出门（对标 expect_true 口径）。 */
     if (!cond) {
         fprintf(stderr, "[TW-FAIL] %s\n", what ? what : "");
+        ++s_failures;
     }
 }
 
@@ -31383,7 +31850,8 @@ static void test_tabwidget_wrap_contract(void)
               "tabText(16) 往返");
 
     XTabWidget_delete_base(tw);
-}/* ==================== XWizard 契约测试（对标 QWizard） ============== */
+}
+/* ==================== XWizard 契约测试（对标 QWizard） ============== */
 
 static int wiz_currentChanged = 0;
 
@@ -31392,7 +31860,13 @@ static void wiz_currentChangedSlot(XObject* r, XVarList* a)
 
 static void wiz_expect(bool cond, const char* what)
 {
-    if (!cond) fprintf(stderr, "[WIZ-FAIL] %s\n", what ? what : "");
+    /* 失败须计入 s_failures：只打印不计数时本族失败永不进
+     * 退出门（对标 expect_true 口径）。 */
+    if (!cond)
+    {
+        fprintf(stderr, "[WIZ-FAIL] %s\n", what ? what : "");
+        ++s_failures;
+    }
 }
 
 static void test_wizard_contract(void)
@@ -31484,7 +31958,8 @@ static void test_wizard_contract(void)
                "nextId 返回合法值");
 XWizard_delete_base(wiz);
     /* 页面已作为 wizard 子控件随 deinit 自动清理。 */
-}/* ==================== XDialogButtonBox 契约测试（对标 QDialogButtonBox） ==================== */
+}
+/* ==================== XDialogButtonBox 契约测试（对标 QDialogButtonBox） ==================== */
 
 static int db_accepted = 0;
 static int db_rejected = 0;
@@ -31713,8 +32188,6 @@ static void test_xstrtok_reentrant_contract(void)
     expect_true(s1 && strcmp(s1, "solo") == 0 && s2 == NULL,
                 "strtokReentrant 契约：无分隔符整串单 token");
 }
-
-
 /* ==================== XGui 控件功能测试（XGuiDemo 统一入口） ==================== */
 
 /** @brief 运行六个新控件的全部功能断言（LineEdit/Slider/SpinBox/
@@ -31740,6 +32213,9 @@ static void test_xgui_widgets(void)
     expect_true(XStackedWidgetTest_runAll(), "XStackedWidget 控件功能");
 #endif /* XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON */
     expect_true(XButtonGroupTest_runAll(), "XButtonGroup 控件功能");
+#if XWIDGET_ON && XKEYBOARD_ON
+    expect_true(XKeyboardTest_runAll(), "XKeyboard 控件功能");
+#endif /* XWIDGET_ON && XKEYBOARD_ON */
     test_statusbar_contract();
     test_menubar_contract();
     test_menubar_ext_contract();
@@ -31771,13 +32247,15 @@ static void test_xgui_widgets(void)
     test_tabwidget_wrap_contract();
     test_splashscreen_contract();
     test_messagebox_contract();
+    test_messagebox_open_receiver_contract();
     test_mainwindow_contract();
+    test_dock_float_cycle_leak();
+    test_dock_tabify_cycle_widget_growth();
     test_toolbar_contract();
     test_toolbar_ext_contract();
     test_dialogbuttonbox_contract();
     test_widgets_signals_contract();
 }
-
 /* ==================== Task 2.18a：Charts 数据模型/信号契约 ==================== */
 
 #if XCHARTS_ON
@@ -32694,8 +33172,9 @@ static void test_charts_task218b_contract(void)
                     ++colored;
         expect_true(colored > 1000, "t218b 离屏渲染像素非空");
         XImage_deinit_base(&image);
+        /* m_chart 已随视图 delete_base 的析构释放（所有权随 setChart 转
+         * 移，XChartView.h 契约），不得再外部 delete（双重释放）。 */
         XChartView_delete_base((XClass*)&view);
-        XChart_delete_base(chart);
     }
 
     /* ---- t218c 静态层缓存位一致 A/B（§10.2 Phase C）：同一图表在同
@@ -32771,8 +33250,9 @@ static void test_charts_task218b_contract(void)
 
         XImage_deinit_base(&imgDirect);
         XImage_deinit_base(&imgLayer);
+        /* m_chart 已随视图 delete_base 的析构释放（所有权随 setChart 转
+         * 移，XChartView.h 契约），不得再外部 delete（双重释放）。 */
         XChartView_delete_base((XClass*)&view);
-        XChart_delete_base(chart);
     }
 }
 #endif /* XCHARTS_ON */
@@ -33036,7 +33516,6 @@ static void test_util_task219a_contract(void)
     }
 #endif /* XWIDGET_ON && XACTION_ON */
 }
-
 /* ==================== Task 2.19b：对话框族公开类对应物 ==================== */
 
 #if XWIDGET_ON && XDIALOG_ON

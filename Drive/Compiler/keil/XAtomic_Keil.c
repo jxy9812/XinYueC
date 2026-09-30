@@ -1,5 +1,8 @@
 ﻿// XAtomic_Keil.c
-#if defined(__CC_ARM) || defined(__ARMCC_VERSION) || defined(__clang__)
+// 仅 Keil ARM Compiler（AC5: __CC_ARM / AC6: __ARMCC_VERSION）。
+// 不可单独用 __clang__ 判定——NDK 等通用 Clang 会误入此文件，
+// 与 Drive/Compiler/gcc 的实现撞符号。AC6 同时定义 __clang__ 与 __ARMCC_VERSION。
+#if defined(__CC_ARM) || defined(__ARMCC_VERSION)
 
 #include "XAtomic.h"
 #include <stdint.h>

@@ -192,6 +192,16 @@ typedef struct XRectF
 }XRectF;
 
 /**
+ * @brief      初始化 XRectF 对象
+ * @param self  目标 XRectF 对象指针
+ * @param x     左上角 X 坐标
+ * @param y     左上角 Y 坐标
+ * @param w     宽度
+ * @param h     高度
+ */
+void XRectF_init(XRectF* self, float x, float y, float w, float h);
+
+/**
  * @brief      区域类型（对标 Qt 6.8 QRegion）
  * @note       表示一个复杂区域，由矩形列表组成
  */

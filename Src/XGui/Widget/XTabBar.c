@@ -930,6 +930,9 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
      * 使页签条既不进 Tab 链、点击亦不移焦（隔夜台账猎获④）。
      */
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_TabFocus);
+    /* 悬停外观 opt-in：页签绘制按 State_MouseOver 出悬停高亮，
+     * ENTER/LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
 }
 
 XTabBar* XTabBar_create_ex(XMemoryType memory, XWidget* parent,

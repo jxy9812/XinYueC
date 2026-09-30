@@ -79,6 +79,9 @@
 #endif
 #endif /* XWINDOWEVENT_ON */
 #include "XGuiApplication.h"
+#if XINPUTMETHOD_ON
+#include "XInputMethod.h"       /* setInputMethodHints → 输入法 update 刷 hints 缓存 */
+#endif
 #include "XImage.h"
 #include "XPainter.h"
 #include "XPaintDevice.h"
@@ -288,7 +291,7 @@ static void XWidget_propagateEnabled(XWidget* self, bool enabled);
 static XEvent* XWidget_createPaintEvent(const XWidget* source);
 static void XWidget_propagateLayoutDirection(XWidget* self,
                                              XWidgetLayoutDirection direction);
-static void XWidget_clearUnderMouseRecursive(XWidget* self);
+static void XWidget_clearUnderMouseRepaintHover(XWidget* self);
 static void XWidget_addDirty(XWidget* self, const XRect* rect);
 static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region);
 static void XWidget_paintTree(XWidget* top, const XRegion* topRegion);
@@ -812,6 +815,66 @@ static void XRegion_intersectInto(const XRegion* lhs, const XRegion* rhs,
         }
 }
 
+/** @brief      首显未定位的顶层窗口定位（对标 QWidgetPrivate::adjustPosition）。
+ *  @details    Qt 规则：显式 move()/setGeometry() 过的顶层窗口采用调用方
+ *              给定的位置；否则首显时按序取——①有父控件：以父窗口客户
+ *              区中心为落点（上下左右居中，QDialog 系语义）；②无父控件：
+ *              主屏 availableGeometry 居中。XWidget_init 为顶层预置几何
+ *              (0,0,640,480)，而平台窗口几何语义是"客户区矩形"（win32
+ *              后端经 AdjustWindowRectEx 让原生框架顶到客户区上方）——
+ *              默认落点 (0,0) 使 WS_OVERLAPPEDWINDOW 标题栏整条越过屏
+ *              幕上沿：高级控件页"打开主窗口"弹出的 XMainWindow 实测
+ *              菜单栏贴屏幕顶边、标题/最小化/关闭不可见不可拖。
+ *              仅修正从未定位过的窗口（XWidgetAttribute_Moved 未置位），
+ *              显式 move/setGeometry 过的窗口（含菜单/弹层，弹出前均已
+ *              定位）零变化。 */
+static void xwidget_adjustPositionOnFirstShow(XWidget* top)
+{
+    XWidget* parentTop;
+    XScreen* screen;
+    XRect avail;
+    if (!top || !top->m_isWindow) return;
+    if (XWidget_testAttribute(top, XWidgetAttribute_Moved)) return;
+    /* ① 有父控件：父窗口客户区中心为落点。窗口几何即全局坐标，
+     *    无需折算父系偏移；父窗口尚未显示时其几何为预置值，落点
+     *    无意义但不致命（对标 Qt 同路径行为）。 */
+    parentTop = XWidget_topLevel(XWidget_parentWidget(top));
+    if (parentTop && parentTop != top) {
+        XWidget_move(top,
+                     parentTop->m_windowRect.width > top->m_windowRect.width
+                         ? parentTop->m_windowRect.x +
+                               (parentTop->m_windowRect.width -
+                                top->m_windowRect.width) / 2
+                         : parentTop->m_windowRect.x,
+                     parentTop->m_windowRect.height > top->m_windowRect.height
+                         ? parentTop->m_windowRect.y +
+                               (parentTop->m_windowRect.height -
+                                top->m_windowRect.height) / 2
+                         : parentTop->m_windowRect.y);
+        /* 自动放置不是显式定位（对标 QDialog::showEvent 在 adjust 后
+         * setAttribute(WA_Moved,false)）：复位 Moved，后续 show（如对
+         * 话框 updateSize 定尺寸后的 showEvent 重居中）仍可再修位；
+         * 用户显式 move/setGeometry 的窗口不经本函数（入口已挡）。 */
+        XWidget_setAttribute(top, XWidgetAttribute_Moved, false);
+        return;
+    }
+#if XGUIAPPLICATION_ON && XSCREEN_ON
+    /* ② 无父控件：主屏可用区居中。 */
+    screen = XGuiApplication_primaryScreen();
+    if (!screen) return;
+    avail = XScreen_availableGeometry(screen);
+    if (avail.width <= 0 || avail.height <= 0) return;
+    XWidget_move(top,
+                 avail.width > top->m_windowRect.width
+                     ? avail.x + (avail.width - top->m_windowRect.width) / 2
+                     : avail.x,
+                 avail.height > top->m_windowRect.height
+                     ? avail.y + (avail.height - top->m_windowRect.height) / 2
+                     : avail.y);
+    XWidget_setAttribute(top, XWidgetAttribute_Moved, false);
+#endif
+}
+
 /** @brief 创建并登记顶层桥接窗口（惰性；窗口对象由本控件拥有）。 */
 static XWidgetWindow* XWidget_createWindow(XWidget* top)
 {
@@ -852,6 +915,23 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
     XWindow_setMaximumSize(window, &top->m_maximumSize);
     XWindow_setGeometry(window, top->m_windowRect.x, top->m_windowRect.y,
                         top->m_windowRect.width, top->m_windowRect.height);
+#if XWINDOW_ON
+    /* 对标 Qt 顶层窗口 owner 链路（qwindowswindow.cpp:784-786 顶层以
+       transient parent 为 owner）：取父控件链顶层已存在的桥接窗口登记
+       为 transient parent（QDialog 文档 qdialog.cpp:365「share the
+       parent's taskbar entry」；win32 后端建 HWND 时经
+       XPlatformNativeWindow_create 以其作 hWndParent，任务栏合并与
+       「对话框在父之上」Z 序由原生兜底）。父窗未建时留空，与 Qt 行为
+       一致（惰性建窗次序下后建者才登记）。 */
+    {
+        XWidget* owner = XWidget_parentWidget(top);
+        while (owner && !owner->m_windowHandle)
+            owner = XWidget_parentWidget(owner);
+        if (owner && owner->m_windowHandle)
+            XWindow_setTransientParent(window,
+                                       (XWindow*)owner->m_windowHandle);
+    }
+#endif /* XWINDOW_ON */
 #if XCURSOR_ON
     if (top->m_cursor && XWindow_setCursor)
         XWindow_setCursor(window, top->m_cursor);
@@ -875,14 +955,21 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
 /** @brief 销毁顶层桥接窗口并归还注册表项。 */
 static void XWidget_destroyWindow(XWidget* top)
 {
+    XWindow* window;
     if (!top || !top->m_windowHandle) return;
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     XApplication_unregisterTopLevelWidget(top);
 #endif /* XAPPLICATION_ON */
-    XWindow_destroy((XWindow*)top->m_windowHandle);
-    /* 桥接窗口由 create_ex 堆分配，销毁后必须同时归还结构体。 */
-    XClass_delete_base((XClass*)top->m_windowHandle);
+    window = (XWindow*)top->m_windowHandle;
+    XWindow_destroy(window);
+    /* 句柄先置空再释放：delete_base→deinit→removeWindow 的退出策略链
+       （XDialog_done 兜底→close→setVisible）会重入 widget 路径，stale
+       句柄会把 setVisible/无障碍通知摸回半析构桥接窗（StateChanged→
+       winId→惰性建柄→复活登记，悬垂根因一环）。先断 widget→window
+       通道，析构重入只能看到 NULL。 */
     top->m_windowHandle = NULL;
+    /* 桥接窗口由 create_ex 堆分配，销毁后必须同时归还结构体。 */
+    XClass_delete_base((XClass*)window);
 }
 
 /** @brief 焦点清空基础实现（发 FOCUS_OUT 并联动应用登记）。 */
@@ -937,20 +1024,34 @@ static void XWidget_propagateEnabled(XWidget* self, bool enabled)
     }
 }
 
-/** @brief 清除控件及其子树的 WA_UnderMouse 状态。 */
-static void XWidget_clearUnderMouseRecursive(XWidget* self)
+/** @brief 清除控件及其子树的 WA_UnderMouse 状态，并对悬停外观真翻转
+ *         的控件差量补重绘。
+ *  @details 原生窗边界 LEAVE 的清理口（桥接 VXWidgetWindow_event）。
+ *           此前清位后无条件向顶层发 LEAVE、由其 update 整个
+ *           contentsRect——win32 桌面指针在客户区与原生标题栏/边框间
+ *           往返（WM_MOUSELEAVE↔窗口级 ENTER）即反复整窗标脏，独立
+ *           原生窗消息框表现为持续闪烁。现沿子树比对 UnderMouse 翻
+ *           转：仅声明悬停外观（XWidgetAttribute_Hover）且指针曾落于
+ *           其上的控件各自 update（悬停高亮即时消除），其余控件静默
+ *           清位、不产生脏区。 */
+static void XWidget_clearUnderMouseRepaintHover(XWidget* self)
 {
     const XVector* children;
     size_t n;
     size_t i;
     if (!self) return;
-    XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse, false);
+    if (XWidget_attrTest(&self->m_attributes, XWidgetAttribute_UnderMouse)) {
+        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
+                        false);
+        if (XWidget_attrTest(&self->m_attributes, XWidgetAttribute_Hover))
+            XWidget_update(self);
+    }
     children = XObject_children((XObject*)self);
     n = children ? XVector_size_base((const XContainer*)children) : 0;
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
         if (child && child->is_widget)
-            XWidget_clearUnderMouseRecursive((XWidget*)child);
+            XWidget_clearUnderMouseRepaintHover((XWidget*)child);
     }
 }
 
@@ -1345,11 +1446,30 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
 {
     XWidget* target;
     XPoint pos;
+#if XPAINTER_VIEW_TRANSFORM_ON
+    XPoint logical;
+#endif
     XWidget* w;
     if (!top || !event) return false;
     if (XWidget_attrTest(&top->m_attributes, XWidgetAttribute_TransparentForMouseEvents))
         return false;
     pos = XWidget_eventPosition(event);
+#if XPAINTER_VIEW_TRANSFORM_ON
+    /* 统一坐标变换（输入侧逆映射，全部指针事件的单一汇聚点）：平台
+     * 事件位置处于设备视口（客户区）坐标，应用级视图变换激活时先逆
+     * 映射回逻辑窗口坐标再进入命中，与渲染正变换 painterViewTransform
+     * 共用 XPainter 的同一比例存储与公式（mapViewportToWindow_static，
+     * XPainter_setViewTransform_static 喂入）。鼠标/滚轮/ENTER 及悬停
+     * 合成均经本入口，一处改动覆盖全通道；未激活时本调用恒等返回
+     * false，pos 原样保留（与既有 1:1 链逐位一致）。逆映射只在顶层
+     * 入口做一次：子控件局部坐标仍由下方父链纯减法得到，沿父链不再
+     * 重复除法。置回事件位置供装饰拦截（XWindowDecoration_handlePointer）
+     * 与抓取改道读取同一逻辑坐标。 */
+    if (XPainter_mapViewportToWindow_static(&pos, &logical)) {
+        pos = logical;
+        XWidget_eventSetPosition(event, &pos);
+    }
+#endif
     if (g_mouseGrabWidget) {
         XWidget* grabTop = XWidget_topLevel(g_mouseGrabWidget);
         if (grabTop && grabTop != top) {
@@ -1387,6 +1507,18 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
                 target = top;
         }
     }
+    /* 按下位置驱动虚拟键盘（标准触摸 UX；XGui 扩展经 XGuiApplication
+     * 转发，本核心对键盘类型零依赖）：指针 PRESS 命中受支持编辑框→键
+     * 盘弹出/重绑（已弹同框保持），命中非编辑区域（页面空白/按钮/标
+     * 签）→收起（点空白不迁移焦点也能收，守护 200ms 焦点边沿降为换框
+     * 兜底）；键盘自身按键不受影响（通知侧子树豁免）。单次汇聚点=本
+     * 函数命中测试后：真实鼠标与 touch→mouse 合成 press 同路（原生触
+     * 摸被控件接受的序列不经本函数，由守护兜底）；点击外部收起与同框
+     * retap 重弹双向语义见 XVirtualKeyboard_notifyPress。 */
+#if XAPPLICATION_ON && XGUIAPPLICATION_ON
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS)
+        XGuiApplication_virtualKeyboardNotifyPress(target);
+#endif
     w = target;
     while (w) {
         XPoint off = XWidget_accumulateOffset(w);
@@ -2097,7 +2229,10 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
         /* 指针离开顶层窗口：清标题栏悬停底色（防热态残留）。 */
         XWindowDecoration_handleLeave(top);
 #endif
-        XWidget_clearUnderMouseRecursive(top);
+        /* 差量清理：仅对悬停外观真翻转的控件补重绘（顶层 LEAVE 的
+         * update 已由 VXWidget_event 的 Hover 收口门裁掉，整窗标脏
+         * 消失——见 XWidget_clearUnderMouseRepaintHover 注）。 */
+        XWidget_clearUnderMouseRepaintHover(top);
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
     case XEVENT_TYPE_KEY_PRESS:
@@ -2168,9 +2303,20 @@ static XVariant* XWidget_inputMethodQuery_default(const XWidget* self,
             return XVariant_create(&value, sizeof(value), XVariantType_Int32);
         }
     case XInputMethodQuery_ImEnabled:
-        /* 对标 Qt：QVariant(true)。 */
+        /* 对标 Qt：基类 QWidget::inputMethodQuery 不实现 ImEnabled（返回
+           无效 QVariant），由 QEvent::InputMethodQuery 分发兜底回退
+           testAttribute(WA_InputMethodEnabled) 且仅 isEnabled() 时生效
+           （qwidget.cpp:9057-9065 口径）。本适配单层承载合并该回退：
+           isEnabled() && WA_InputMethodEnabled——评审遗留修正（原缺
+           isEnabled 合取，会让父链禁用传播的持焦控件误报可接受）。
+           编辑控件（XLineEdit/XPlainTextEdit/XTextEdit/XDateTimeEdit）
+           init 置位 WA14 后启用的控件为 true，未接入输入法的控件、
+           禁用控件与显式 opt-out
+           （setAttribute(WA_InputMethodEnabled,false)）返回 false。 */
         {
-            bool enabled = true;
+            bool enabled = XWidget_isEnabled(self) &&
+                           XWidget_testAttribute(
+                               self, XWidgetAttribute_InputMethodEnabled);
             return XVariant_create(&enabled, sizeof(enabled), XVariantType_Bool);
         }
     default:
@@ -2472,6 +2618,17 @@ static void VXWidget_deinit(XWidget* self)
         self->m_layout = NULL;
     }
 #endif /* XLAYOUT_ON */
+    /* 应用模态门摘除（与下方焦点/抓取/悬停靶「登记非空即活对象」同一
+       纪律）：门可指向本控件或其子树（open 的对话框即顶层），而
+       destroyWindow→桥接窗 deinit→removeWindow 的 lastWindowClosed
+       退出策略会经 XDialog_done 重入门内垂死对话框（done→close→
+       setVisible 摸回半析构桥接窗）。析构先摘门，兜底永不指向垂死
+       控件。须在 destroyWindow 之前完成，摘门在 destroyWindow 内部
+       已来不及。 */
+    if (g_applicationModalWidget &&
+        (g_applicationModalWidget == self ||
+         XWidget_isAncestorOf(self, g_applicationModalWidget)))
+        XWidget_setApplicationModalWidget(NULL);
     XWidget_destroyWindow(self);
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     if (self->m_isWindow)
@@ -2886,14 +3043,21 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
         XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
                         true);
         XWidget_enterEvent_base(self, event);
-        /* 悬停状态翻转触发重绘（对标 Qt hover 样式刷新）。 */
-        XWidget_update(self);
+        /* 悬停状态翻转触发重绘（对标 Qt hover 样式刷新）。对标 Qt
+         * polish 的 WA_Hover 收口：仅声明悬停外观（XWidgetAttribute_
+         * Hover，按钮族/输入族等样式 State_MouseOver 消费方）的控件
+         * 才标脏——悬停合成器每次指针跨子控件边界都派发 ENTER/LEAVE，
+         * 普通容器/对话框/无悬停样式的控件不得因此整体标脏（纯鼠标
+         * 移动扫过消息框曾引发成片重绘闪烁）。 */
+        if (XWidget_attrTest(&self->m_attributes, XWidgetAttribute_Hover))
+            XWidget_update(self);
         return true;
     case XEVENT_TYPE_LEAVE:
         XWidget_attrSet(&self->m_attributes, XWidgetAttribute_UnderMouse,
                         false);
         XWidget_leaveEvent_base(self, event);
-        XWidget_update(self);
+        if (XWidget_attrTest(&self->m_attributes, XWidgetAttribute_Hover))
+            XWidget_update(self);
         return true;
     case XEVENT_TYPE_KEY_PRESS:
         XWidget_keyPressEvent_base(self, event);
@@ -3988,8 +4152,14 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
         /* 对标 Qt 6.8 QWidgetPrivate::childAtRecursiveHelper：只跳过
          * isHidden()（显式隐藏位 WA_WState_Hidden）与窗口型子控件，
          * 不要求生效可见（isVisible 含父链）——父窗口未 show 时命中
-         * 测试仍按几何进行，事件投递路径（可见窗口内）等价。 */
-        if (XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
+         * 测试仍按几何进行，事件投递路径（可见窗口内）等价。
+         * 窗口型子控件（XMenu/XComboPopupView 等 Popup 子窗口）有
+         * 自己的原生窗口与派发链，几何在弹出前停留在预置位
+         * (0,0,640,480)：不跳过时窗口内命中测试被其吞掉——
+         * XMainWindow 菜单栏点击实测被覆盖其上的隐藏 menuFile/
+         * menuHelp 命中，文件菜单永远弹不出（问题 #34）。 */
+        if (widget->m_isWindow ||
+            XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
             continue;
         if (!XRect_contains(&widget->m_windowRect, point->x, point->y)) continue;
         local.x = point->x - widget->m_windowRect.x;
@@ -4418,8 +4588,12 @@ void XWidget_setVisible(XWidget* self, bool visible)
     wasVisible = self->m_visible != 0;
     if (self->m_isWindow) {
         /* 顶层控件：惰性创建桥接窗口后再映射/取消映射。 */
-        if (visible && !self->m_windowHandle)
+        if (visible && !self->m_windowHandle) {
+            /* 对标 Qt 首显定位：未 move 过的顶层窗口不落默认 (0,0)，
+             * 否则原生框架（标题栏）顶出屏幕外（见辅助函数注释）。 */
+            xwidget_adjustPositionOnFirstShow(self);
             XWidget_createWindow(self);
+        }
         /* QWidget 首次映射前必须有一帧完整的初始内容。此前子控件构造时
          * 留下的局部 update 不能代替首帧：双缓冲 DIRECT 模式会正确保留
          * 它们，却只提交那些局部矩形，导致新 X11 窗口的其余像素未定义。
@@ -5697,6 +5871,14 @@ void XWidget_setInputMethodHints(XWidget* self, XInputMethodHints hints)
 {
     if (!self) return;
     self->m_inputMethodHints = hints;
+#if XINPUTMETHOD_ON && XGUIAPPLICATION_ON
+    /* Qt 口径（QWidget::setInputMethodHints → 输入法 update）：hints 变
+     * 化即刷查询链——平台上下文 update 分发刷新 VK InputContext 的生
+     * 效 hints 缓存。同控件已持焦时焦点边沿不再触发（setFocus 幂等早
+     * 退），不改此处缓存会陈旧（hints→布局映射换档失灵）。 */
+    XInputMethod_update(XGuiApplication_inputMethod(),
+                        XInputMethodQuery_ImHints);
+#endif
 }
 
 #if XINPUTMETHOD_ON
@@ -7735,6 +7917,18 @@ void XWidget_applyWindowGeometry(XWidget* self, const XRect* geometry,
     if (!self || !geometry || !self->m_isWindow) return;
     old = self->m_windowRect;
     self->m_windowRect = *geometry;
+#if XPAINTER_VIEW_TRANSFORM_ON
+    /* 统一坐标变换（比例刷新时机约束）：应用级视图变换激活时，设备
+     * 视口尺寸必须在本几何同步链内、MOVE/RESIZE 派发之前刷新到位——
+     * applyWindowGeometry 是平台几何的单一同步更新点，输入命中
+     * （dispatchPointerEvent 的 mapViewportToWindow_static 逆映射）与
+     * 渲染（painterViewTransform 正变换）读同一份比例状态，保证 resize
+     * 当帧两链同值，不产生"旧比例命中、新比例渲染"的两源窗口；严禁
+     * 推迟到 PAINT flush 才更新。未激活时函数内部即时短路（现网 1:1
+     * 链零行为差异）。 */
+    XPainter_refreshViewTransformViewportSize_static(geometry->width,
+                                                     geometry->height);
+#endif
     if (self->m_contentsRect.width != geometry->width ||
         self->m_contentsRect.height != geometry->height) {
         self->m_contentsRect.x = 0;

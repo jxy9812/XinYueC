@@ -461,8 +461,8 @@ int xapi_dialogs_run(void)
             XAPI_EXPECT(!XWidget_isVisible((XWidget*)dlg),
                         "accept() 后对话框隐藏（对标 QDialog::done 内部 hide）");
             XAPI_EXPECT(g_dlgSig.orderLen == 2 &&
-                        g_dlgSig.order[0] == 'F' && g_dlgSig.order[1] == 'A',
-                        "accept 发射顺序 finished 先于 accepted（对标 QDialog::done 先 finished 再 accepted 的时序）");
+                        g_dlgSig.order[0] == 'A' && g_dlgSig.order[1] == 'F',
+                        "accept 发射顺序 accepted 先于 finished（对标 Qt 6.8.3 QDialog::done qdialog.cpp:617-625：先按结果码发射 accepted/rejected，最后发射 finished(result)）");
 
             /* ---- reject：result=0 + rejected/finished(0) ---- */
             dlg_sig_reset();
@@ -484,12 +484,28 @@ int xapi_dialogs_run(void)
             XAPI_EXPECT(!XWidget_isVisible((XWidget*)dlg),
                         "done() 后对话框隐藏（对标 QDialog::done → hide）");
 
-            /* ---- open：显示 + 置模态，不进本地事件循环 ---- */
-            XDialog_open(dlg);
-            XAPI_EXPECT(XWidget_isVisible((XWidget*)dlg) &&
-                        XDialog_isModal(dlg),
-                        "open() 显示并保持窗口模态（对标 QDialog::open 显示+窗口模态、XGui 无嵌套 exec）");
-            XDialog_reject(dlg); /* 收起并解除模态登记。 */
+            /* ---- open：显示 + 临时窗口模态，不进本地事件循环 ---- */
+            /* 对标 Qt 6.8.3 QDialog::open（qdialog.cpp:509-526）：显示
+             * 期间临时切换窗口模态（windowModality==WindowModal），不
+             * 改 modal 属性（保持 open 前值——phase31 此前 setModal
+             * (true) 往返测试已把 modal 置 true 且未复位，open 后仍应
+             * 为 true）；关闭时恢复原模态值。 */
+            {
+                bool modalBefore = XDialog_isModal(dlg);
+                XDialog_open(dlg);
+                XAPI_EXPECT(XWidget_isVisible((XWidget*)dlg) &&
+                            XWidget_windowModality((XWidget*)dlg) ==
+                                XWindowModality_WindowModal &&
+                            XDialog_isModal(dlg) == modalBefore,
+                            "open() 显示并临时置窗口模态、modal 属性保持 open 前值（对标 QDialog::open 显示+WindowModal、无嵌套 exec）");
+                XDialog_reject(dlg); /* 收起并恢复原模态值。 */
+                XAPI_EXPECT(XWidget_windowModality((XWidget*)dlg) ==
+                                XWindowModality_ApplicationModal,
+                            "open 关闭后恢复原窗口模态（resetModalitySetByOpen；原值即 setModal(true) 同步的 ApplicationModal，对标 qwidget.cpp:11440-11445）");
+            }
+            XAPI_EXPECT(XWidget_windowModality((XWidget*)dlg) ==
+                            XWindowModality_ApplicationModal,
+                        "open 关闭后恢复原窗口模态（原值=ApplicationModal，setModal(true) 属性自洽同步）");
 
             /* ---- Escape 键 → reject（合成键盘事件直发） ---- */
             dlg_sig_reset();
@@ -755,9 +771,21 @@ int xapi_dialogs_run(void)
             XMessageBox_setText(box, "保存更改吗？");
             XAPI_EXPECT(strcmp(xapi_cstr(XMessageBox_text(box)), "保存更改吗？") == 0,
                         "setText→text 往返（对标 QMessageBox::setText/text）");
-            XMessageBox_setTitle(box, "提示");
-            XAPI_EXPECT(strcmp(xapi_cstr(XMessageBox_title(box)), "提示") == 0,
-                        "setTitle→title 往返（对标 QMessageBox 窗口标题属性）");
+            /* 对标 Qt：QMessageBox 无 setTitle/title（窗口标题即
+             * setWindowTitle），重复入口已删；经继承的 setWindowTitle
+             * 往返。 */
+            {
+                XString* boxTitle = XString_create_utf8("提示");
+                XWidget_setWindowTitle((XWidget*)box, boxTitle);
+                /* XString* 经 xapi_u8（XString 垫片）取 UTF-8，勿入
+                 * xapi_cstr（const char* 垫片）。 */
+                XAPI_EXPECT(strcmp(xapi_u8(XWidget_windowTitle(
+                                       (XWidget*)box)),
+                                   "提示") == 0,
+                            "setWindowTitle→windowTitle 往返（对标 Qt）");
+                if (boxTitle)
+                    XString_delete_base((XClass*)boxTitle);
+            }
             XMessageBox_setIcon(box, XMessageBoxIcon_Warning);
             XAPI_EXPECT(XMessageBox_icon(box) == XMessageBoxIcon_Warning,
                         "setIcon(Warning)→icon()==Warning（对标 QMessageBox::setIcon/icon）");
@@ -825,7 +853,7 @@ int xapi_dialogs_run(void)
                 XAPI_EXPECT(XMessageBox_clickedButton(box) == discardBtn,
                             "Esc 键点击转义按钮 Discard（对标 QMessageBox Esc→escapeButton 路径）");
 
-                /* ---- 清转义按钮后 Esc 回退基类 reject ---- */
+                /* ---- 清显式转义按钮后 Esc 回探测转义按钮（Cancel） ---- */
                 XObject_connect_1((XObject*)box,
                                   XSignal(XDialog_rejected_signal),
                                   (XObject*)box, dlg_rejectedSlot,
@@ -833,11 +861,24 @@ int xapi_dialogs_run(void)
                 XMessageBox_setEscapeButton(box, NULL);
                 dlg_sig_reset();
                 dlg_injectKeyPress((XWidget*)box, (int)XKey_Escape);
-                XAPI_EXPECT(XDialog_result(&box->m_base) == 0 &&
-                            g_dlgSig.rejected == 1,
-                            "无转义按钮时 Esc 回退 QDialog::reject（对标 QMessageBox 未设 escapeButton 的 Esc 行为）");
+                /* 对标 Qt 6.8.3 QMessageBox::keyPressEvent
+                 * （qmessagebox.cpp:1568-1577）：Esc 无 reject 回退，
+                 * 一律点击探测转义按钮（显式值已清 → detectEscapeButton
+                 * 按 Cancel > 唯一按钮 > … 探测，命中 Cancel）；点击经
+                 * done(Cancel 位值) 收口，dialogCode 按角色映射
+                 * （qmessagebox.cpp:471-491，RejectRole→Rejected）发
+                 * 射 rejected，result/exec 返回 0x400000 而非 0。 */
+                XAPI_EXPECT(XDialog_result(&box->m_base) ==
+                                (int)XDialogButtonBoxStandard_Cancel &&
+                            g_dlgSig.rejected == 1 &&
+                            XMessageBox_clickedButton(box) == cancelBtn,
+                            "清显式转义按钮后 Esc 点击探测转义按钮 Cancel，result 回填 Cancel 位值并经角色映射发 rejected（对标 QMessageBox Esc→detectEscapeButton→done(execReturnCode)）");
 
                 /* ---- 程序化点击 → clickedButton/buttonClicked ---- */
+                /* 新语义下 (c) 段 Esc→点击探测转义按钮 Cancel 已使
+                   msgButtonClicked 计 1，本次断言"本次点击发射
+                   buttonClicked"，先清零再点。 */
+                dlg_sig_reset();
                 XAbstractButton_click(saveBtn);
                 XAPI_EXPECT(XMessageBox_clickedButton(box) == saveBtn &&
                             g_dlgSig.msgButtonClicked == 1,
@@ -920,9 +961,8 @@ int xapi_dialogs_run(void)
                         (XApplication_style() != NULL),
                         "standardIcon(Information) 与样式存在性一致（对标 standardIcon 经当前样式生成；无样式环境恒 NULL）");
 
-            /* aboutQt：文档化空操作（对标 QMessageBox::aboutQt），冒烟
-             * 调用无断言。 */
-            XMessageBox_aboutQt(NULL, NULL);
+            /* aboutQt：已对齐 Qt 为真实阻塞弹窗（经 about/exec 收口），
+             * 非阻塞 API 测试口径不直调（阻塞等待无输入源会挂起）。 */
 
             /* custom 经 removeButton 摘除、归调用方，即测即毁。 */
             XWidget_delete_base(custom);

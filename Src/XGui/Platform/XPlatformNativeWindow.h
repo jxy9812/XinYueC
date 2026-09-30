@@ -218,6 +218,27 @@ bool XPlatformNativeWindow_setMouseGrabEnabled(XWindow* window, bool grab);
 bool XPlatformNativeWindow_requestActivate(XWindow* window);
 
 /**
+ * @brief      将真实窗口提升到 Z 序顶部（对标 QPlatformWindow::raise，
+ *             QWindow::raise 的平台落地）。
+ * @details    只提升堆叠顺序，不请求激活（Win32 用
+ *             SetWindowPos(HWND_TOP, ..., SWP_NOMOVE|SWP_NOSIZE|
+ *             SWP_NOACTIVATE)，Z 序与激活保持解耦）；未创建窗口时
+ *             安全 no-op。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @return     true 已请求平台提升；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_raise(XWindow* window);
+
+/**
+ * @brief      将真实窗口降到 Z 序底部（对标 QPlatformWindow::lower，
+ *             QWindow::lower 的平台落地）。
+ * @details    只降低堆叠顺序，不改变激活态；未创建窗口时安全 no-op。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @return     true 已请求平台降低；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_lower(XWindow* window);
+
+/**
  * @brief      抓取真实屏幕或窗口区域（对标 QScreen::grabWindow）。
  * @param      window 原生窗口 id；0 表示整个虚拟屏幕。
  * @param      x/y    抓取起点；窗口抓取时为窗口客户区坐标。

@@ -327,7 +327,7 @@ char* XDeviceNetwork_errorString(int errorCode)
     return buf;
 }
 
-#if defined(__linux__)
+#if defined(__linux__) && !defined(__ANDROID__)
 bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
 {
     FILE* file;
@@ -390,13 +390,13 @@ bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
     return found;
 }
 #else
+/* Android：SELinux 对 untrusted_app 隐藏 /proc/net/dev（含 /proc/self/net
+   的全局视图），改经 Drive/Android/Core/XSystemAndroid.c 的 JNI
+   TrafficStats 系统级收发计数。 */
+bool XAndroid_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes);
 bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
 {
-    if (rxBytes)
-        *rxBytes = 0;
-    if (txBytes)
-        *txBytes = 0;
-    return false;
+    return XAndroid_getNetworkCounters(rxBytes, txBytes);
 }
 #endif /* __linux__ */
 

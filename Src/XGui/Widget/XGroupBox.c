@@ -525,6 +525,9 @@ void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_checkable = false;
     self->m_checked = false;
     self->m_pressed = false;
+    /* 悬停外观 opt-in：面板绘制按 State_MouseOver 出悬停高亮，
+     * ENTER/LEAVE 须标脏自矩形（对标 Qt polish 的 WA_Hover 收口）。 */
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
 }
 
 XGroupBox* XGroupBox_create_ex(XMemoryType memory, XWidget* parent,

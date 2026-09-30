@@ -10,6 +10,7 @@
 #include "XPixmap.h"
 #include "XIcon.h"
 #include "XWidget.h" /* XWidget_focusWidget/isAncestorOf（CC_SpinBox 焦点子树判据）。 */
+#include "XTextUtf8.h" /* UTF-8 码点序列长度（停靠标题省略号截断）。 */
 #include <limits.h> /* INT_MAX（刻度循环溢出护栏）。 */
 #include <math.h>
 
@@ -2445,7 +2446,22 @@ static void xcs_drawComboBox(XStyle* self, const XStyleOption* option,
 
 
 /** @brief 绘制停靠窗标题（CE_DockWidgetTitle：highlight 标题条 +
- *         左对齐标题文本 + 底部分隔线）。 */
+ *         左对齐标题文本（超宽省略号截断）+ 底部分隔线）。
+ *  @details 对标 Qt 6.8.3 qcommonstyle.cpp:2164-2191 的
+ *           CE_DockWidgetTitle：标题文本经 drawItemText 绘制
+ *           （qcommonstyle.cpp:2184-2188，文本矩形按左缩进收紧后
+ *           左对齐；QStyle::drawItemText 实现见 qstyle.cpp:572-598），
+ *           矩形放不下时由文本引擎省略号截断——保留可容纳的最长
+ *           码点前缀并追加省略号（qtextengine.cpp:3048-3102 的 elide
+ *           语义；Qt 优先 U+2026、字形缺失时回退三个 ASCII 点，本
+ *           字库固定取三 ASCII 点 "..."）。可用文本宽度 = 标题条宽
+ *           减左缩进 6px 减右侧按钮区（m_closable/m_floatable 各
+ *           18px、同在时 36px，与本函数后半按钮绘制几何一致）。
+ *  @param self 样式实例指针。
+ *  @param option 样式选项（m_rect/m_text/m_floatable/m_closable）。
+ *  @param painter 绘制器指针。
+ *  @param widget 目标控件（未使用）。
+ *  @return 无返回值。 */
 static void xcs_drawDockTitle(XStyle* self, const XStyleOption* option,
                               XPainter* painter, const XWidget* widget)
 {
@@ -2465,11 +2481,89 @@ static void xcs_drawDockTitle(XStyle* self, const XStyleOption* option,
     if (windowText == 0) windowText = 0xFF000000u;
     XPainter_fillRect(painter, &r, highlight);
     if (option->m_text && option->m_text[0]) {
-        textH = XPainter_textHeight(XPainter_font(painter));
+        const char* title = option->m_text;
+        const XFont* font = XPainter_font(painter);
+        /* 右侧按钮区宽度：close/float 各占 18px（与本函数后半按钮
+         * 几何一致：close 位于右缘 18px、float 位于右缘 36px）。 */
+        int btnW = (option->m_closable ? 18 : 0) +
+                   (option->m_floatable ? 18 : 0);
+        int availW = r.width - 6 - btnW;
+        int textW = XPainter_textWidth(font, title);
+        textH = XPainter_textHeight(font);
         if (textH < 14) textH = 14;
-        XPainter_drawText(painter, r.x + 6,
-                          r.y + (r.height - textH) / 2 + textH - 4,
-                          option->m_text, highlightedText);
+        if (textW <= availW) {
+            /* 放得下：整串原样绘制（不触发省略）。 */
+            XPainter_drawText(painter, r.x + 6,
+                              r.y + (r.height - textH) / 2 + textH - 4,
+                              title, highlightedText);
+        } else {
+            /* 超宽：按 UTF-8 码点边界截断并补 "..."（截断后
+             * 前缀宽 + 省略号宽 <= availW；逐码点推进用
+             * XTextUtf8_seqLen 钳位序列长度，绝不切在多字节
+             * 序列中间，宽度经 XPainter_textWidthRange 逐级
+             * 复测，直至放得下或一个码点都放不下）。 */
+            int titleLen = (int)XStrlen(title);
+            int dotsW = XPainter_textWidth(font, "...");
+            int maxW = availW - dotsW;
+            int keep = 0;
+            int len = 0;
+            if (maxW > 0) {
+                while (len < titleLen) {
+                    int w;
+                    len += XTextUtf8_seqLen(title + len, titleLen - len);
+                    w = XPainter_textWidthRange(font, title, 0, len);
+                    if (w > maxW) break;
+                    keep = len;
+                }
+            }
+            if (keep > 0) {
+                /* 前缀 + 三个点 + NUL，恰好 keep+4 字节。 */
+                char* buf = (char*)XMalloc_System((size_t)keep + 4);
+                if (buf) {
+                    XStrncpy(buf, title, (size_t)keep);
+                    buf[keep] = '\0';
+                    XStrcpy(buf + keep, "...");
+                    XPainter_drawText(painter, r.x + 6,
+                                      r.y + (r.height - textH) / 2 + textH - 4,
+                                      buf, highlightedText);
+                    XFree_System(buf);
+                }
+            }
+        }
+    }
+    /* 对标 Qt：标题条右侧按 features 绘制浮动/关闭按钮（从右缘向左
+     * 排，close 最右、float 次之；可见性门禁经 opt 标志携带，对标
+     * qdockwidget.cpp:693-702）。命中判定在 XDockWidget 侧按同格
+     * 几何（右缘两格、每格 18px）完成。 */
+    if (option->m_floatable) {
+        XRect box;
+        int bx = r.x + r.width - 36;
+        int by = r.y + (r.height - 12) / 2;
+        box = (XRect){bx + 2, by, 10, 1};
+        XPainter_fillRect(painter, &box, highlightedText);
+        box = (XRect){bx + 2, by + 11, 10, 1};
+        XPainter_fillRect(painter, &box, highlightedText);
+        box = (XRect){bx + 2, by, 1, 12};
+        XPainter_fillRect(painter, &box, highlightedText);
+        box = (XRect){bx + 11, by, 1, 12};
+        XPainter_fillRect(painter, &box, highlightedText);
+    }
+    if (option->m_closable) {
+        /* 关闭钮与浮动框同一中心的两条对角线（2x2 块逐格推进，9 步
+         * 跨度 11px）。原实现走文本基线公式绘制 "×"：位图字库的乘号
+         * 字形沉底，实测贴齐标题条下缘（浮出窗口截图"图标没对齐"
+         * 根因，与居中的浮动框错位半格）——原语绘制不依赖字体度量，
+         * 命中区（XDockWidget 侧右缘 18px 格）不变。 */
+        XRect box;
+        int cx = r.x + r.width - 9;              /* 关闭格中心 X */
+        int cy = r.y + (r.height - 12) / 2 + 6;  /* 与浮动框同中心 Y */
+        int i;
+        for (i = -4; i <= 4; ++i) {
+            box = (XRect){cx + i - 1, cy + i - 1, 2, 2};
+            XPainter_fillRect(painter, &box, highlightedText);
+            box = (XRect){cx - i - 1, cy + i - 1, 2, 2};
+            XPainter_fillRect(painter, &box, highlightedText);
+        }
     }
     XPainter_fillRect(painter, &(XRect){r.x, r.y + r.height,
                                         r.width, 1}, windowText);

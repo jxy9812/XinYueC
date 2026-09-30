@@ -287,7 +287,11 @@ int XLineEdit_echoMode(const XLineEdit* self);
  * @brief      设置回显模式并重绘（对标 QLineEdit::setEchoMode）。
  * @details    仅接受 XLineEditEchoMode 的 4 个合法值；切换时清除选区
  *             并把光标移到末尾（Qt 语义），并取消控制器密码回显定时
- *             器/复位编辑态。
+ *             器/复位编辑态。同时按 Qt 规则（qlineedit.cpp:546-559）
+ *             自标注输入法提示位（按位翻转保留用户位）：Password/
+ *             NoEcho 置 XInputMethodHint_HiddenText；非 Normal 置
+ *             XInputMethodHint_NoAutoUppercase|NoPredictiveText|
+ *             SensitiveData。
  * @param      self 目标编辑框；可为 NULL。
  * @param      echoMode 目标回显模式（0..3）。
  * @return     无返回值；非法模式或未变化时保持原状态。

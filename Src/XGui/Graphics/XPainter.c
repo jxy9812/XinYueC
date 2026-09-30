@@ -1890,10 +1890,114 @@ static XImageTransform painterMatrixMultiply(const XImageTransform* a,
 }
 
 #if XPAINTER_VIEW_TRANSFORM_ON
+/* 应用级 window/viewport 视图状态：统一坐标变换（渲染正变换 vs 输入逆
+ * 变换）的单一比例存储。宽度或高度非正即视为未激活，映射恒等；激活
+ * 条件与 painterViewFactors 的退化判定一致。 */
+static XRect g_xpainterViewWindow = { 0, 0, 0, 0 };   /* 逻辑窗口矩形。 */
+static XRect g_xpainterViewViewport = { 0, 0, 0, 0 }; /* 设备视口矩形。 */
+
+/**
+ * @brief      判断应用级视图状态是否处于激活（可映射）状态。
+ * @return 窗口与视口的宽高均为正返回 true。
+ */
+static bool painterClassViewTransformActive(void)
+{
+    return g_xpainterViewWindow.width > 0 && g_xpainterViewWindow.height > 0 &&
+           g_xpainterViewViewport.width > 0 &&
+           g_xpainterViewViewport.height > 0;
+}
+
+/**
+ * @brief      由 window/viewport 矩形计算 X/Y 独立缩放比例（同源公式）。
+ * @details    统一坐标变换的唯一比例计算点：渲染正变换
+ *             painterViewTransform 与点级互逆映射
+ *             painterMapPointViewTransform 都从这里取 (scaleX, scaleY)，
+ *             保证输入命中与渲染绘制永远同参数。
+ *             比例 = viewport 宽（高）/ window 宽（高）。
+ * @param window 逻辑窗口矩形（非 NULL）。
+ * @param viewport 设备视口矩形（非 NULL）。
+ * @param scaleX 输出 X 缩放比例。
+ * @param scaleY 输出 Y 缩放比例。
+ * @return window 宽或高为 0（退化）或比例非有限时返回 false。
+ */
+static bool painterViewFactors(const XRect* window, const XRect* viewport,
+                               float* scaleX, float* scaleY)
+{
+    if (!window || !viewport || !scaleX || !scaleY)
+        return false;
+    if (window->width == 0 || window->height == 0)
+        return false;
+    *scaleX = (float)viewport->width / (float)window->width;
+    *scaleY = (float)viewport->height / (float)window->height;
+    return isfinite(*scaleX) && isfinite(*scaleY);
+}
+
+/**
+ * @brief      四舍五入到最接近整数（远离零取整，正负对称）。
+ * @param value 浮点值。
+ * @return 最接近的整数值。
+ */
+static int painterViewRoundToInt(float value)
+{
+    return (int)(value + (value >= 0.0f ? 0.5f : -0.5f));
+}
+
+/**
+ * @brief      window/viewport 点级互逆映射的公共实现（同源比例）。
+ * @details    正向（toViewport=true）：设备点 = 视口原点 + (逻辑点 -
+ *             窗口原点) × 比例；逆向：逻辑点 = 窗口原点 + (设备点 -
+ *             视口原点) ÷ 比例。比例取自 painterViewFactors，与渲染
+ *             正变换同源。任何失败路径输出恒等（out == 输入点），
+ *             调用方可忽略返回值安全使用输出。
+ * @param window 逻辑窗口矩形；NULL 视为退化。
+ * @param viewport 设备视口矩形；NULL 视为退化。
+ * @param pos 输入点；NULL 视为退化。
+ * @param out 输出点（非 NULL；调用方提供存储）。
+ * @param toViewport true 正向（逻辑→设备），false 逆向（设备→逻辑）。
+ * @return 成功映射返回 true；退化/参数无效返回 false 且输出等于输入。
+ */
+static bool painterMapPointViewTransform(const XRect* window,
+                                         const XRect* viewport,
+                                         const XPoint* pos, XPoint* out,
+                                         bool toViewport)
+{
+    float scaleX;
+    float scaleY;
+    if (!out)
+        return false;
+    if (pos)
+        *out = *pos;
+    else
+    {
+        out->x = 0;
+        out->y = 0;
+    }
+    if (!pos || !window || !viewport)
+        return false;
+    if (!painterViewFactors(window, viewport, &scaleX, &scaleY))
+        return false;
+    if (toViewport)
+    {
+        out->x = viewport->x +
+                 painterViewRoundToInt((float)(pos->x - window->x) * scaleX);
+        out->y = viewport->y +
+                 painterViewRoundToInt((float)(pos->y - window->y) * scaleY);
+    }
+    else
+    {
+        out->x = window->x +
+                 painterViewRoundToInt((float)(pos->x - viewport->x) / scaleX);
+        out->y = window->y +
+                 painterViewRoundToInt((float)(pos->y - viewport->y) / scaleY);
+    }
+    return true;
+}
+
 /**
  * @brief      构造保存状态中的 window/viewport 视图矩阵。
  * @details    逻辑坐标先经过世界矩阵，再经过此处返回的视图矩阵，等价于
- *             Qt 的 window/viewport 转换。
+ *             Qt 的 window/viewport 转换。比例取自 painterViewFactors，
+ *             与点级互逆映射同源同参数。
  * @param state 绘制状态。
  * @param out 输出视图矩阵。
  * @return 状态有效且窗口尺寸非零时返回 true。
@@ -1908,11 +2012,8 @@ static bool painterViewTransform(const XPainterState* state,
     *out = g_painterIdentityTransform;
     if (!state->m_viewTransformEnabled)
         return true;
-    if (state->m_window.width == 0 || state->m_window.height == 0)
-        return false;
-    scaleX = (float)state->m_viewport.width / (float)state->m_window.width;
-    scaleY = (float)state->m_viewport.height / (float)state->m_window.height;
-    if (!isfinite(scaleX) || !isfinite(scaleY))
+    if (!painterViewFactors(&state->m_window, &state->m_viewport,
+                            &scaleX, &scaleY))
         return false;
     out->m11 = scaleX;
     out->m22 = scaleY;
@@ -4490,8 +4591,11 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
             if (by + ch > cy1) ch = cy1 - by;
         }
         /* 表面裁剪兜底：paintEvent 内 setClipRect(Replace) 逃逸时仍限制
-           在表面裁剪内（与 Qt systemClip 不可绕过一致）。 */
-        if (g_surfaceClipActive)
+           在表面裁剪内（与 Qt systemClip 不可绕过一致）。仅上屏目标：
+           离屏 painter（内容缓存/grab）的 m_image 不是主表面，不受主
+           表面裁剪框钳位——与 putPixel/fillRect/blitImageRegion 同守
+           卫（缺此判定会把过裁剪丢内容）。 */
+        if (g_surfaceClipActive && self->m_image == g_surfaceClipImage)
         {
             int cx0 = g_surfaceClipRect.x;
             int cy0 = g_surfaceClipRect.y;
@@ -4513,16 +4617,22 @@ static bool painterRaster_drawImage(XPainter* self, const XImage* image,
                                           cw, ch, opacity,
                                           state->m_compositionMode))
             return true;
-        /* 逐像素兜底：不透明度 <255、非 Source 系合成或多矩形裁剪等。 */
+        /* 逐像素兜底：不透明度 <255、非 Source 系合成或多矩形裁剪等。
+           循环界用双级裁剪收拢后的 cw/ch，源采样自 (sx0,sy0) 起步——
+           与 blitImageRegion 的源/目标映射逐位一致（bx,by 已被裁剪推
+           进到裁剪框，丢源补偿会把整幅图平移盖进脏区左上角：消息盒
+           图标悬停残影根因，2026-09-29 复核）。图标与脏区不相交时
+           cw/ch<=0，循环零次即不出像素。 */
         {
             int sy;
-            for (sy = 0; sy < height; ++sy)
+            for (sy = 0; sy < ch; ++sy)
             {
                 int sx;
-                for (sx = 0; sx < width; ++sx)
+                for (sx = 0; sx < cw; ++sx)
                     painterRaster_putPixel(self, bx + sx, by + sy,
-                        painterApplyOpacityByte(XImage_pixel(image, sx, sy),
-                                                opacity));
+                        painterApplyOpacityByte(
+                            XImage_pixel(image, sx0 + sx, sy0 + sy),
+                            opacity));
             }
         }
         return true;
@@ -14897,6 +15007,117 @@ bool XPainter_viewTransformEnabled(const XPainter* self)
 {
     return self && self->m_deviceKind != XPainterDevice_None &&
            self->m_state.m_viewTransformEnabled;
+}
+
+bool XPainter_mapWindowToViewport(XPainter* self, const XPoint* pos,
+                                  XPoint* out)
+{
+    if (!out)
+        return false;
+    if (pos)
+        *out = *pos;
+    else
+    {
+        out->x = 0;
+        out->y = 0;
+    }
+    if (!self || self->m_deviceKind == XPainterDevice_None || !pos)
+        return false;
+    /* 视图变换停用时的恒等语义与 painterViewTransform 同口径：
+     * 输出等于输入并返回 true（未应用缩放是正确结果，非失败）。 */
+    if (!self->m_state.m_viewTransformEnabled)
+        return true;
+    return painterMapPointViewTransform(&self->m_state.m_window,
+                                        &self->m_state.m_viewport,
+                                        pos, out, true);
+}
+
+bool XPainter_mapViewportToWindow(XPainter* self, const XPoint* pos,
+                                  XPoint* out)
+{
+    if (!out)
+        return false;
+    if (pos)
+        *out = *pos;
+    else
+    {
+        out->x = 0;
+        out->y = 0;
+    }
+    if (!self || self->m_deviceKind == XPainterDevice_None || !pos)
+        return false;
+    if (!self->m_state.m_viewTransformEnabled)
+        return true;
+    return painterMapPointViewTransform(&self->m_state.m_window,
+                                        &self->m_state.m_viewport,
+                                        pos, out, false);
+}
+
+void XPainter_setViewTransform_static(const XRect* window,
+                                      const XRect* viewport)
+{
+    if (!window || !viewport)
+        return;
+    g_xpainterViewWindow = *window;
+    g_xpainterViewViewport = *viewport;
+}
+
+void XPainter_resetViewTransform_static(void)
+{
+    XRect zero;
+    zero.x = 0;
+    zero.y = 0;
+    zero.width = 0;
+    zero.height = 0;
+    g_xpainterViewWindow = zero;
+    g_xpainterViewViewport = zero;
+}
+
+void XPainter_refreshViewTransformViewportSize_static(int width, int height)
+{
+    /* 统一坐标变换的 resize 刷新入口：未激活时即时短路（现网 1:1 链
+     * 零行为差异）；激活时只改视口宽高（原点由激活方维护），窗口侧
+     * 逻辑尺寸不变。调用时机约束见 XWidget_applyWindowGeometry 注。 */
+    if (!painterClassViewTransformActive())
+        return;
+    g_xpainterViewViewport.width = width;
+    g_xpainterViewViewport.height = height;
+}
+
+bool XPainter_mapWindowToViewport_static(const XPoint* pos, XPoint* out)
+{
+    if (!out)
+        return false;
+    if (pos)
+        *out = *pos;
+    else
+    {
+        out->x = 0;
+        out->y = 0;
+    }
+    if (!pos || !painterClassViewTransformActive())
+        return false;
+    return painterMapPointViewTransform(&g_xpainterViewWindow,
+                                        &g_xpainterViewViewport,
+                                        pos, out, true);
+}
+
+bool XPainter_mapViewportToWindow_static(const XPoint* pos, XPoint* out)
+{
+    if (!out)
+        return false;
+    if (pos)
+        *out = *pos;
+    else
+    {
+        out->x = 0;
+        out->y = 0;
+    }
+    if (!pos || !painterClassViewTransformActive())
+        return false;
+    return painterMapPointViewTransform(&g_xpainterViewWindow,
+                                        &g_xpainterViewViewport,
+                                        pos, out, false);
 }
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
 

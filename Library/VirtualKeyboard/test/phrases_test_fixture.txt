@@ -1,0 +1,14 @@
+﻿# XPinyinPhrase 文件解析回归夹具：期望恰装 2 条（坏行逐行跳过+计数，
+# 收尾一条汇总诊断，不终止整文件；对照 XFont_parseIncText 坏 token 全文件失败
+# 口径（XFont.c:594-610），词库加载不沿用。
+# ---- 合法行 2 条：
+ni hao	你好	1
+wo men	我们	1
+# ---- 坏行样本（各命中一条拒收规则，均不计入）：
+zz ni	坏音节	1
+ni	单音节	1
+bei jing	北京	0
+chao chang	超长词组字段超过十五字节上限了	2
+wo men	我们
+
+bei jing	�	1

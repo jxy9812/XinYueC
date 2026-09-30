@@ -1720,7 +1720,9 @@ typedef XVariant* (*XWidgetInputMethodQuerySlot)(const XWidget* self,
  *             - XInputMethodQuery_ImInputItemClipRectangle：返回控件矩形的
  *               浮点副本（XRectF 承载，类型 XVariantType_User）；
  *             - XInputMethodQuery_ImHints：返回 inputMethodHints() 的整型值；
- *             - XInputMethodQuery_ImEnabled：返回 true；
+ *             - XInputMethodQuery_ImEnabled：返回 WA_InputMethodEnabled
+ *               属性位（编辑控件 init 置位；opt-out=
+ *               setAttribute(WA_InputMethodEnabled,false)）；
  *             - 其余查询项返回 NULL（等价 Qt 的无效 QVariant）。
  * @param      self 目标控件；可为 NULL。
  * @param      query 查询项（XInputMethodQuery 取值与 Qt::InputMethodQuery 一致）。
@@ -1728,7 +1730,10 @@ typedef XVariant* (*XWidgetInputMethodQuerySlot)(const XWidget* self,
  *             查询项、控件为 NULL 或分配失败返回 NULL。
  * @note       与 Qt 的差异：ImFont 返回 NULL（XGui 未建立字体变体类型）、
  *             ImAnchorPosition 不回落 ImCursorPosition（无光标位置概念的
- *             基类控件）、ImEnabled 在基类返回 true 而非无效变体。XGui 的
+ *             基类控件）、ImEnabled 在基类返回 WA_InputMethodEnabled 属性位
+ *             而非无效变体（Qt 基类返回无效 QVariant、由 QEvent::
+ *             InputMethodQuery 分发兜底回退 testAttribute(WA_InputMethod-
+ *             Enabled)，qwidget.cpp:9064 口径；本适配单层合并该回退）。XGui 的
  *             平台输入法路径经 XInputMethodQueryHandler 回调（XInputMethod.h）；
  *             XGuiApplication_inputMethod() 自动注册的
  *             XInputMethod_defaultQueryHandler 按 focusObject 是否控件把
