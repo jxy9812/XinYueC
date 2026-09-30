@@ -655,7 +655,8 @@
  * 标题栏（client-side decorations）默认开启（用户裁定 2026-09-29）=
  * 多平台标题栏统一——桌面与无 WM 设备（fbdev 直写面板）同走框架自
  * 绘，平台层按抑制位关掉原生 WM 装饰（无双栏，posix 管线见
- * XPlatformNativeWindow_posix.c）。运行期可用环境变量 XGUI_CSD 覆盖
+ * XPlatformNativeWindow_posix.c，win32 管线见
+ * XPlatformNativeWindow_win32.c）。运行期可用环境变量 XGUI_CSD 覆盖
  * 本编译默认：XGUI_CSD=0 强制交 WM（回到系统条模式）、XGUI_CSD=1
  * 强制框架自绘；一次性解析入口见 XPlatformThemeDecoration_
  * effectiveMode（优先级：运行时 setMode > 环境变量 XGUI_CSD > 本编

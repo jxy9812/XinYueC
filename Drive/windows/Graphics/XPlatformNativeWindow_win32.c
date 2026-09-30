@@ -49,6 +49,11 @@
  *               image/png 走注册格式透传），专用隐藏窗口认领所有权并
  *               监听 WM_CLIPBOARDUPDATE，外部应用认领时经
  *               selectionRevoked 反向通知上层（受 XCLIPBOARD_ON 约束）。
+ *             - 光标后端：xpwn_cursorBackendInstall 经
+ *               XCursor_installPlatformBackend 注册 Win32 光标后端
+ *               （GetCursorPos/SetCursorPos 查询/定位，形状→LoadCursorW
+ *               共享句柄映射，WM_SETCURSOR HTCLIENT 分流应用/清除，
+ *               受 XCURSOR_ON 约束）。
  *             窗口映射/几何/标题同步全部围绕 XWindow 驱动，setGeometry 按
  *             本后端记录客户端几何去重，杜绝 WM_SIZE/WM_MOVE 与 setGeometry
  *             互相触发造成递归震荡。公共契约头不包含任何 Windows API。
@@ -74,9 +79,11 @@
 #endif
 
 #include "XWindow.h"
+#include "XWindow_Protected.h" /* CSD 抑制位读取（XWindow_isCsdFrameSuppressed，仅供平台层/内部实现）。 */
 #include "XWindowSystemInterface.h"
 #include "XWindowEvent.h"
 #include "XGuiApplication.h"
+#include "XCursor.h" /* XCursor 平台光标后端钩子表（本文件光标后端节，受 XCURSOR_ON 约束）。 */
 #include "XSystem.h"
 #include "XClipboard.h"
 #include "XImage.h"
@@ -133,6 +140,8 @@ typedef struct XWNPendingEntry
     bool m_visible;      /**< WM_SHOWWINDOW 最后记录的映射状态。 */
     bool m_mouseInside;  /**< 指针是否位于客户区内（进入/离开追踪，Win32 无原生 enter 消息）。 */
     WNDPROC m_oldProc;   /**< 外部窗口子类化前的过程；内部窗口为 NULL。 */
+    HCURSOR m_hcursor;   /**< 框架侧生效光标（LoadCursorW 共享句柄，不销毁）。 */
+    bool m_cursorSet;    /**< 框架是否已接管窗口光标（WM_SETCURSOR 分流键）。 */
 } XWNPendingEntry;
 
 /** @brief 每进程 Win32 连接状态。 */
@@ -277,6 +286,12 @@ static LRESULT xpwn_callPreviousProc(const XWNPendingEntry* entry, HWND hwnd,
 static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                                      WPARAM wParam, LPARAM lParam);
 
+#if XCURSOR_ON
+/** @brief 光标后端注册前向声明（定义见光标后端节；xpwn_ensureInstance
+ *  在连接建好后调用一次）。 */
+static void xpwn_cursorBackendInstall(void);
+#endif /* XCURSOR_ON */
+
 /** @brief 建立进程级 Win32 连接（幂等；注册窗口类失败即整体不可用）。 */
 static bool xpwn_ensureInstance(void)
 {
@@ -298,6 +313,13 @@ static bool xpwn_ensureInstance(void)
         if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
     }
     g_xpwnClassRegistered = true;
+#if XCURSOR_ON
+    /* 光标后端注册：连接（窗口类）建好后 XCursor 的 pos/setPos/窗口
+       光标接口即走真实 Win32 通道（GetCursorPos/SetCursorPos/SetCursor，
+       对标 posix 连接建好后的 xpwn_cursorBackendInstall）；本函数幂等，
+       仅首次注册成功路径到达此处。 */
+    xpwn_cursorBackendInstall();
+#endif /* XCURSOR_ON */
     return true;
 }
 
@@ -318,10 +340,20 @@ static bool xpwn_getClientGeometry(HWND hwnd, XRect* out)
     return true;
 }
 
-/** @brief 把按窗口样式调整后的窗口矩形转换为客户端恰好等于目标几何。 */
+/** @brief 取窗口原生样式（创建/动态落地共用单一来源；客户端区恰好等
+ *         于目标几何的换算见 xpwn_adjustWindowRect）。 */
 static DWORD xpwn_windowStyle(const XWindow* window)
 {
     if (window && XWindow_type(window) == XWindowType_Popup)
+        return WS_POPUP;
+    /* CSD 激活（框架自绘标题栏接管，标记经 XWindow_setCsdFrameSuppressed
+     * 置位）时按无边框组装：WS_POPUP 去除 WS_CAPTION/WS_THICKFRAME，
+     * 抑制原生 WM 装饰、消除双重标题栏（对标 posix 管线创建期把
+     * FramelessWindowHint 强制折入装饰组装；Qt 无边框窗同为 WS_POPUP）。
+     * 缩放/拖拽由装饰层自有缩放区接管（XWindowDecoration xwd_resize-
+     * ZoneAt），任务栏/Alt-Tab 不受 WS_POPUP 影响（对标 Qt 无边框窗仍
+     * 受 WM 管理语义）；无边框最大化的工作区钳制见 wndProc WM_GETMINMAXINFO。 */
+    if (window && XWindow_isCsdFrameSuppressed(window))
         return WS_POPUP;
     return WS_OVERLAPPEDWINDOW;
 }
@@ -365,6 +397,162 @@ static void xpwn_applyTitle(HWND hwnd, const XString* title)
     utf16 = title ? XString_toUtf16(title) : NULL;
     SetWindowTextW(hwnd, (LPCWSTR)(utf16 ? utf16 : L""));
 }
+
+/** @brief 客户区坐标转屏幕全局坐标（对齐 X11 x_root/y_root 事件口径）。
+ *  @details 装饰层拖拽移动/边缘改尺寸的增量锚按全局系计算（按下记锚、
+ *  逐 MOVE 取距锚总位移；客户区系随窗口移动自指——posix 同教训，+200
+ *  指针只走 +100 交替归零）。客户区→屏幕经 ClientToScreen；失败时 pt
+ *  不被改写，按客户区坐标兜底（与 ENTER 分支旧兜底同语义）。 */
+static void xpwn_clientToGlobal(HWND hwnd, const XPoint* position,
+                                XPoint* global)
+{
+    POINT pt;
+    if (!global) return;
+    pt.x = position ? position->x : 0;
+    pt.y = position ? position->y : 0;
+    ClientToScreen(hwnd, &pt);
+    global->x = pt.x;
+    global->y = pt.y;
+}
+
+/* ==================== 光标后端（XCursor 平台钩子，对标 Qt QPlatformCursor） ====================
+ * XCursor 公共层经 XCursor_applyToWindow/XCursor_clearForWindow 转发窗口
+ * 光标应用/清除（XWidget::setCursor 生效链），XCursor_pos/XCursor_setPos
+ * 转发进程级光标查询/定位；本节把四钩子落到 Win32 通道：
+ * GetCursorPos/SetCursorPos 与 SetCursor（WM_SETCURSOR HTCLIENT 分流，
+ * 见 xpwn_wndProc）。钩子表为静态存储期（XCursor_installPlatformBackend
+ * 只保存指针，不拷贝）。 */
+#if XCURSOR_ON
+
+/**
+ * @brief      XGui 光标形状 → Win32 系统光标映射（LoadCursorW 共享句柄）。
+ * @details    逐项对齐 posix 后端 xpwn_cursorShapeToFontGlyph 的字形口径
+ *             （同 Qt 形状表）：SizeBDiag→IDC_SIZENESW（"/"，同 posix
+ *             XC_top_right_corner）、SizeFDiag→IDC_SIZENWSE（"\"，同 posix
+ *             XC_top_left_corner）；SplitV→IDC_SIZEWE、SplitH→IDC_SIZENS
+ *             沿用 posix/Qt 的历史选择（分割条按拖动方向取双向尺寸光标）。
+ *             OpenHand/ClosedHand/DragCopy/DragMove/DragLink 在 Win32 系统
+ *             光标集内无原生对应，以 IDC_ARROW 近似（posix 端同为语义最
+ *             近字形的近似口径）。LoadCursorW 返回进程共享句柄，归系统
+ *             所有，无需也绝不可 DestroyCursor。Blank 返回 NULL：
+ *             SetCursor(NULL) 即客户区隐藏光标。Bitmap/Custom 暂以
+ *             IDC_ARROW 兜底（TODO 见 case 注）。
+ * @param      shape 内置光标形状。
+ * @return     共享 HCURSOR；Blank/加载失败返回 NULL。
+ */
+static HCURSOR xpwn_cursorHandleForShape(XCursorShape shape)
+{
+    switch (shape) {
+    case XCursor_Arrow:        return LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    case XCursor_UpArrow:      return LoadCursorW(NULL, (LPCWSTR)IDC_UPARROW);
+    case XCursor_Cross:        return LoadCursorW(NULL, (LPCWSTR)IDC_CROSS);
+    case XCursor_Wait:         return LoadCursorW(NULL, (LPCWSTR)IDC_WAIT);
+    case XCursor_IBeam:        return LoadCursorW(NULL, (LPCWSTR)IDC_IBEAM);
+    case XCursor_SizeVer:      return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENS);
+    case XCursor_SizeHor:      return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEWE);
+    case XCursor_SizeBDiag:    return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENESW); /* "/"（同 posix XC_top_right_corner）。 */
+    case XCursor_SizeFDiag:    return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENWSE); /* "\"（同 posix XC_top_left_corner）。 */
+    case XCursor_SizeAll:      return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEALL);
+    case XCursor_SplitV:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZEWE);   /* 水平双箭头（同 posix/Qt 口径）。 */
+    case XCursor_SplitH:       return LoadCursorW(NULL, (LPCWSTR)IDC_SIZENS);   /* 垂直双箭头（同 posix/Qt 口径）。 */
+    case XCursor_PointingHand: return LoadCursorW(NULL, (LPCWSTR)IDC_HAND);
+    case XCursor_Forbidden:    return LoadCursorW(NULL, (LPCWSTR)IDC_NO);
+    case XCursor_WhatsThis:    return LoadCursorW(NULL, (LPCWSTR)IDC_HELP);
+    case XCursor_Busy:         return LoadCursorW(NULL, (LPCWSTR)IDC_APPSTARTING);
+    /* 手型/拖拽系列：Win32 系统集无原生对应，取箭头近似（同 posix 的
+       语义最近字形近似口径）。 */
+    case XCursor_OpenHand:
+    case XCursor_ClosedHand:
+    case XCursor_DragCopy:
+    case XCursor_DragMove:
+    case XCursor_DragLink:     return LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    case XCursor_Blank:        return NULL; /* SetCursor(NULL)：客户区隐藏。 */
+    /* TODO：Bitmap/Custom 经 CreateIconIndirect 由 XBitmap/XPixmap 构造
+       真彩 HCURSOR（对标 posix xpwn_cursorAcquireBitmapCursor/
+       xpwn_cursorAcquirePixmapCursor），暂以箭头兜底。 */
+    case XCursor_Bitmap:
+    case XCursor_Custom:       return LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    default:                   return LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
+    }
+}
+
+static bool xpwn_cursorBackendQueryPos(int* x, int* y)
+{
+    POINT pt;
+    if (!GetCursorPos(&pt)) return false;
+    if (x) *x = pt.x;
+    if (y) *y = pt.y;
+    return true;
+}
+
+static bool xpwn_cursorBackendWarpPos(int x, int y)
+{
+    /* 全局（屏幕）坐标定位；失败（桌面切换/无输入桌面等）返回 false，
+       由 XCursor_setPos 保持缓存值兜底（公共层契约）。 */
+    return SetCursorPos(x, y) != 0;
+}
+
+/** @brief 槽位光标复位（清除语义）：解除框架接管并交还系统默认箭头。 */
+static void xpwn_cursorResetEntry(XWNPendingEntry* entry)
+{
+    entry->m_hcursor = NULL;
+    entry->m_cursorSet = false;
+    SetCursor(LoadCursorW(NULL, (LPCWSTR)IDC_ARROW));
+}
+
+static bool xpwn_cursorBackendApplyWindowCursor(uintptr_t nativeWindowId,
+                                                const XCursor* cursor)
+{
+    XWNPendingEntry* entry;
+    XCursorShape shape;
+    HCURSOR handle;
+    if (nativeWindowId == 0) return false;
+    entry = xpwn_findByNativeWindow((HWND)(void*)nativeWindowId);
+    if (!entry) return false; /* 非本后端登记窗口（外部/已销毁）：静默失败。 */
+    if (!cursor) {
+        /* 无光标对象按清除语义：恢复默认箭头（XUndefineCursor 的
+           Win32 等价）。 */
+        xpwn_cursorResetEntry(entry);
+        return true;
+    }
+    shape = XCursor_shape(cursor);
+    handle = xpwn_cursorHandleForShape(shape);
+    if (!handle && shape != XCursor_Blank)
+        return false; /* LoadCursorW 失败（预定义共享光标几乎不失败）。 */
+    entry->m_hcursor = handle;
+    entry->m_cursorSet = true;
+    /* 立即 SetCursor 生效：WM_SETCURSOR 仅在指针移动时派发，指针已在
+       客户区内时这里即时切换；离开/进入后由 xpwn_wndProc 的 WM_SETCURSOR
+       分流维持。 */
+    SetCursor(handle); /* NULL=Blank 隐藏语义。 */
+    return true;
+}
+
+static bool xpwn_cursorBackendClearWindowCursor(uintptr_t nativeWindowId)
+{
+    XWNPendingEntry* entry;
+    if (nativeWindowId == 0) return false;
+    entry = xpwn_findByNativeWindow((HWND)(void*)nativeWindowId);
+    if (!entry) return false;
+    xpwn_cursorResetEntry(entry);
+    return true;
+}
+
+/** @brief XCursor 平台后端钩子表（静态存储期；后端只保存指针）。 */
+static const XCursorPlatformBackend g_xpwnCursorBackend = {
+    xpwn_cursorBackendQueryPos,
+    xpwn_cursorBackendWarpPos,
+    xpwn_cursorBackendApplyWindowCursor,
+    xpwn_cursorBackendClearWindowCursor
+};
+
+/** @brief 连接建立后向 XCursor 注册平台光标后端（幂等）。 */
+static void xpwn_cursorBackendInstall(void)
+{
+    XCursor_installPlatformBackend(&g_xpwnCursorBackend);
+}
+
+#endif /* XCURSOR_ON */
 
 /* GPU 直通模式下每帧脏区 BitBlt/SetDIBitsToDevice 直投窗口 DC（本文件
    xpwn_presentRect 与 XPlatformBackingStore_win32 的零拷贝路径）。未开
@@ -607,6 +795,8 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             entry->m_visible = false;
             entry->m_mouseInside = false;
             entry->m_client = (XRect){0, 0, 0, 0};
+            entry->m_hcursor = NULL;
+            entry->m_cursorSet = false;
         }
         /* 窗口被销毁（无论谁发起）：清除用户数据，预防悬挂指针。 */
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)NULL);
@@ -670,6 +860,42 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             }
         }
         return 0;
+    }
+    case WM_SETCURSOR:
+        /* 框架光标生效链：XWidget/XWindow_setCursor → 光标后端记录 →
+           本处 HTCLIENT 命中应用（DefWindowProc 每次移动重置为类光标，
+           必须截获才能稳定生效）；NC 命中（系统条模式原生帧缘）走默认
+           过程取系统尺寸光标。 */
+        if (LOWORD(lParam) == HTCLIENT && entry && entry->m_cursorSet) {
+            SetCursor(entry->m_hcursor); /* NULL=Blank 隐藏语义。 */
+            return TRUE;
+        }
+        break;
+    case WM_GETMINMAXINFO:
+    {
+        /* CSD 无边框窗（WS_POPUP）最大化默认盖住任务栏：Win32 只对带
+         * WS_CAPTION 的窗口按工作区最大化。对标 QWindowsWindow::get-
+         * SizeHints，把最大化尺寸/位置钳制到最近显示器工作区，其余
+         * 字段（最小/最大追踪尺寸等）仍走默认过程。entry 可为空
+         * （WM_GETMINMAXINFO 先于 WM_NCCREATE 到达，用户数据尚未登
+         * 记），空窗直接交默认过程。 */
+        if (entry && entry->m_window &&
+            XWindow_isCsdFrameSuppressed(entry->m_window)) {
+            HMONITOR monitor;
+            MONITORINFO info;
+            MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+            info.cbSize = sizeof(info);
+            monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor && GetMonitorInfoW(monitor, &info) && mmi) {
+                DefWindowProcW(hwnd, msg, wParam, lParam);
+                mmi->ptMaxPosition.x = info.rcWork.left;
+                mmi->ptMaxPosition.y = info.rcWork.top;
+                mmi->ptMaxSize.x = info.rcWork.right - info.rcWork.left;
+                mmi->ptMaxSize.y = info.rcWork.bottom - info.rcWork.top;
+                return 0;
+            }
+        }
+        break;
     }
     case WM_SETFOCUS:
         if (entry && entry->m_window) {
@@ -812,6 +1038,7 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         XMouseButton button;
         XEventType type;
         XPoint position;
+        XPoint globalPosition;
         XMouseButton buttons;
         XKeyboardModifiers modifiers;
         if (entry && entry->m_window) {
@@ -820,13 +1047,19 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                 button != XMouseButton_NoButton) {
                 position.x = (int)(short)LOWORD(lParam);
                 position.y = (int)(short)HIWORD(lParam);
+                /* 全局坐标逐事件换算：装饰拖拽/改尺寸增量锚按全局系计算
+                   （见 xpwn_clientToGlobal 注）；缺省 (0,0) 会使按下锚失
+                   真、CSD 拖动首跳后自指归零（拖动/缩放双双无效根因）。
+                   时间戳取 GetMessageTime（消息入队时刻，Qt Windows 后端
+                   同源）。 */
+                xpwn_clientToGlobal(hwnd, &position, &globalPosition);
                 /* 按下集合：消息 wParam 的 MK_* 位并上触发键（释放时
                    wParam 不含本键，OR 不改变集合），与 X11 后端一致。 */
                 buttons = xpwn_translateButtons(wParam) | button;
                 modifiers = xpwn_translateModifiers();
-                XWindowSystemInterface_handleMouseEvent(
+                XWindowSystemInterface_handleMouseEvent_ex(
                     entry->m_window, type, button, buttons, modifiers,
-                    position);
+                    position, &globalPosition, (uint32_t)GetMessageTime());
             }
         }
         return 0;
@@ -837,22 +1070,16 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         if (entry && entry->m_window) {
             XPoint position;
             XPoint globalPosition;
-            POINT pt;
             position.x = (int)(short)LOWORD(lParam);
             position.y = (int)(short)HIWORD(lParam);
+            /* 全局坐标逐事件换算（含首次进入分支共用）：拖拽/改尺寸增量
+               锚按全局系计算，客户区系随窗口移动自指（见 xpwn_clientTo-
+               Global 注；缺省 (0,0) 曾使 CSD 拖动首跳后归零）。 */
+            xpwn_clientToGlobal(hwnd, &position, &globalPosition);
             if (!entry->m_mouseInside) {
                 /* 指针首次进入客户区：先注入进入事件，再开启一次性离开
                    追踪（TME_LEAVE），收到 WM_MOUSELEAVE 后清标记。 */
                 TRACKMOUSEEVENT tme;
-                pt.x = position.x;
-                pt.y = position.y;
-                if (ClientToScreen(hwnd, &pt)) {
-                    globalPosition.x = pt.x;
-                    globalPosition.y = pt.y;
-                } else {
-                    globalPosition.x = position.x;
-                    globalPosition.y = position.y;
-                }
                 XWindowSystemInterface_handleEnterEvent(
                     entry->m_window, position, &globalPosition);
                 entry->m_mouseInside = true;
@@ -862,10 +1089,11 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                 tme.hwndTrack = hwnd;
                 TrackMouseEvent(&tme);
             }
-            XWindowSystemInterface_handleMouseEvent(
+            XWindowSystemInterface_handleMouseEvent_ex(
                 entry->m_window, XEVENT_TYPE_MOUSE_MOVE,
                 XMouseButton_NoButton, xpwn_translateButtons(wParam),
-                xpwn_translateModifiers(), position);
+                xpwn_translateModifiers(), position, &globalPosition,
+                (uint32_t)GetMessageTime());
         }
         return 0;
     case WM_MOUSELEAVE:
@@ -1682,6 +1910,8 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_hwnd = hwnd;
     entry->m_window = window;
     entry->m_visible = false;
+    entry->m_hcursor = NULL;   /* 新窗口无框架光标：类光标（箭头）兜底。 */
+    entry->m_cursorSet = false;
     if (!xpwn_getClientGeometry(hwnd, &entry->m_client))
     entry->m_client = geom;
     DragAcceptFiles(hwnd, TRUE);
@@ -1707,6 +1937,10 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     entry->m_visible = false;
     entry->m_mouseInside = false;
     entry->m_client = (XRect){0, 0, 0, 0};
+    /* 光标接管随窗口脱钩：共享句柄无资源可放，仅复位状态（attachForeign
+       走 memset 已覆盖）。 */
+    entry->m_hcursor = NULL;
+    entry->m_cursorSet = false;
     /* 拖放注销：与 create/attachForeign 的 DragAcceptFiles(hwnd, TRUE)
        成对；外部窗口存活脱钩时不经 DestroyWindow，必须显式 FALSE。 */
     if (hwnd && IsWindow(hwnd))
@@ -1786,12 +2020,43 @@ bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
 
 bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
 {
-    /* 能力不足的标志子集默认 no-op 保持链接（TODO：对标
-     * QWindowsWindow::setWindowFlags，用 SetWindowLong 重设
-     * WS_OVERLAPPEDWINDOW/WS_EX_TOOLWINDOW/WS_EX_TOPMOST/
-     * WS_EX_TRANSPARENT/WS_EX_NOACTIVATE 等风格位落地提示位）。 */
-    (void)window; (void)flags;
-    return false;
+    /* 装饰相关风格位落地：目标样式由窗口类型与 CSD 抑制位共同决定
+     * （xpwn_windowStyle，与创建期同一来源），抑制位/类型已由调用方
+     * 先于本函数刷新（XWidget_setWindowFlags 先置 CSD 抑制位，XWindow_
+     * setFlags 先更新 m_flags 再进入本函数），动态切 FramelessWindow-
+     * Hint/自定义条挂摘后原生样式即时生效（对标 posix 管线 setWindow-
+     * Flags 折入 _MOTIF_WM_HINTS 重写；QWindowsWindow::setWindowFlags
+     * 的 SetWindowLong 通路）。其余提示位（工具窗/置顶/穿透等）落地
+     * 仍属 TODO（见下）。 */
+    XWNPendingEntry* entry;
+    DWORD wantStyle;
+    DWORD exStyle;
+    RECT rc;
+    (void)flags;
+    if (!window || !xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd) return false;
+    wantStyle = xpwn_windowStyle(window);
+    if ((DWORD)GetWindowLongPtrW(entry->m_hwnd, GWL_STYLE) == wantStyle)
+        return true;
+    exStyle = (DWORD)GetWindowLongPtrW(entry->m_hwnd, GWL_EXSTYLE);
+    SetWindowLongPtrW(entry->m_hwnd, GWL_STYLE, (LONG_PTR)wantStyle);
+    /* 风格位改变外框换算：以现客户端几何（屏幕坐标）按新样式重算外框
+     * 矩形并 SWP_FRAMECHANGED 落地（如去 WS_CAPTION 后外框收缩而客户
+     * 区变大），客户端几何保持不变，杜绝 WM_SIZE 回环造成布局跳动。 */
+    rc.left = entry->m_client.x;
+    rc.top = entry->m_client.y;
+    rc.right = entry->m_client.x + entry->m_client.width;
+    rc.bottom = entry->m_client.y + entry->m_client.height;
+    AdjustWindowRectEx(&rc, wantStyle, FALSE, exStyle);
+    SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
+                 rc.right - rc.left, rc.bottom - rc.top,
+                 SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+                 SWP_FRAMECHANGED);
+    /* TODO：对标 QWindowsWindow::setWindowFlags，剩余提示位经
+       SetWindowLong 落地 WS_EX_TOOLWINDOW/WS_EX_TOPMOST/WS_EX_TRANSPARENT/
+       WS_EX_NOACTIVATE 等；落地后此函数返回值与公共层语义对齐。 */
+    return true;
 }
 
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)

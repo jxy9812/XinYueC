@@ -22,6 +22,7 @@
 #include "XScreen.h"
 #include "XPlatformBackingStore.h"
 #include "XWindow_Protected.h"
+#include "XCursor.h" /* 边缘改尺寸悬停光标：标准形状经 XWidget_setCursor 生效链 */
 #include "XPlatformTheme.h"
 #include "XPlatformNativeWindow.h" /* 拖拽平台指针抓取：指针出窗仍持续投递 MOVE（软件重路由的出窗盲区兜底） */
 #include "XDateTime.h" /* 交互限帧计时：单调毫秒（时间源约束同 XWidget.c present 限频） */
@@ -41,8 +42,10 @@
 
 /** @brief 边缘改尺寸命中带宽度（W/E/S，像素）。
  *  电阻屏手指精度 ±10px 级，窄带真机实测多次才触发（昆仑通态
- *  2026-09-28 教训：6px→24px）；带与内容控件重叠无冲突——改尺寸只在
- *  无子控件接住按下的空白区接管（子控件优先，等价桌面 WM 帧外命中）。 */
+ *  2026-09-28 教训：6px→24px）；带与内容控件重叠按宿主双口径分流：
+ *  有原生窗（桌面 WM）边缘带优先于内容子控件（对标 WM 改尺寸框帧外
+ *  恒胜内容命中）；无原生窗（fbdev 直写触屏）保持子控件优先（带侵入
+ *  内容区，内容可点优先）。 */
 #define XWD_RESIZE_ZONE 24
 /** @brief 顶边改尺寸命中带宽度（窄带：标题栏大部分区域归拖拽移动）。 */
 #define XWD_RESIZE_ZONE_N 8
@@ -95,6 +98,9 @@ typedef struct XWindowDecorationState
                                 XGUI_RESIZE_REPAINT_MAX_FPS）共用本戳：
                                 置手势时清零防跨手势首帧被旧戳误跳；
                                 ensureState 的 XMemset 已含零初始化。 */
+    int m_edgeCursor;      /**< 装饰侧边缘光标当前形状键（XCursorShape+1；
+                                0=未接管，与 Arrow(0) 区分；ensureState 的
+                                XMemset 清零即未接管）。 */
 } XWindowDecorationState;
 
 /** @brief 装饰状态注册表（懒扩容；容量以 2 的幂增长）。 */
@@ -376,6 +382,38 @@ static int xwd_resizeZoneAt(XWidget* top, const XPoint* pos, int barH)
         if (pos->y < XWD_RESIZE_ZONE_N) zone |= XWD_RZ_N;
     }
     return zone;
+}
+
+/** @brief 改尺寸方向位掩码 → 标准光标形状（同 Qt 约定：
+ *  BDiag="/"=NE/SW 角、FDiag="\"=NW/SE 角，与 posix 字形映射一致）。 */
+static XCursorShape xwd_resizeCursorShape(int zone)
+{
+    if ((zone & XWD_RZ_W) && (zone & XWD_RZ_N)) return XCursor_SizeFDiag;
+    if ((zone & XWD_RZ_E) && (zone & XWD_RZ_S)) return XCursor_SizeFDiag;
+    if ((zone & XWD_RZ_E) && (zone & XWD_RZ_N)) return XCursor_SizeBDiag;
+    if ((zone & XWD_RZ_W) && (zone & XWD_RZ_S)) return XCursor_SizeBDiag;
+    if (zone & (XWD_RZ_N | XWD_RZ_S)) return XCursor_SizeVer;
+    return XCursor_SizeHor;
+}
+
+/** @brief 悬停边缘改尺寸光标反馈（仅原生窗；fbdev 无系统光标）。
+ *  命中边缘带切换对应尺寸光标，离带还原 Arrow；形状键去重，同形状
+ *  零开销。手势中不调用（保持手势起始形状，对标原生 WM）。 */
+static void xwd_updateEdgeCursor(XWindowDecorationState* st, int zone)
+{
+    XCursor cursor;
+    XCursorShape shape;
+    int key;
+    if (!st || !st->m_top || !st->m_window) return;
+    if (!XWindow_isNativeWindowAttached(st->m_window)) return;
+    shape = zone ? xwd_resizeCursorShape(zone) : XCursor_Arrow;
+    key = (int)shape + 1;
+    if (st->m_edgeCursor == key) return;
+    st->m_edgeCursor = key;
+    XCursor_init(&cursor);
+    XCursor_setShape(&cursor, shape);
+    XWidget_setCursor(st->m_top, &cursor);
+    XCursor_deinit_base(&cursor);
 }
 
 /* ==================== 内部辅助：重绘与几何 ==================== */
@@ -1095,8 +1133,34 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                 XWidget_releaseMouse(top);
                 xwd_platformGrab(st, false);
             }
-            /* 三分流第一路：条带内命中条控件子控件（用户按钮）放行树
-             * 派发（子控件优先，与桌面 WM 帧外命中等效）。 */
+            /* 边缘改尺寸带（四边+四角）先于一切条带命中判定：桌面 WM
+             * 的改尺寸框在帧外、恒胜标题栏按钮与内容命中——CSD 带若让
+             * 位于条子控件/装饰按钮，N 向角带（W+N/E+N）与 min/close
+             * 按钮几何重叠处按钮先赢，角点拉伸永不可用（真机实测：左
+             * 上/右上角按下变按钮按压）。原生窗（桌面 WM 口径）zone 非
+             * 零直接接管；无原生窗（fbdev 直写触屏）保持既有顺序——
+             * 24px 触屏带宽侵入内容区，条子控件/内容可点优先，仅空白区
+             * 接管（带与按钮重叠处触屏用户点按钮意图优先，原口径保
+             * 留）。增量锚取全局坐标：本地系随窗口移动自指（见拖拽处
+             * 注释）。 */
+            {
+                int zone = xwd_resizeZoneAt(top, &pos, barH);
+                if (zone && XWindow_isNativeWindowAttached(st->m_window)) {
+                    st->m_resizing = true;
+                    st->m_resizeMask = zone;
+                    st->m_resizeAnchor =
+                        XMouseEvent_globalPosition(mouse);
+                    st->m_resizeGeometry = XWidget_geometry(top);
+                    /* 节流戳不清零（全局连续间隔）：幻触 PRESS 清戳
+                       会打穿限帧闸，见 xwd_resizeThrottleSkip 注。 */
+                    XWidget_grabMouse(top);
+                    xwd_platformGrab(st, true);
+                    XEvent_accept(event);
+                    return true;
+                }
+            }
+            /* 三分流（fbdev 口径及条内非边缘区）：条带内命中条控件子
+             * 控件（用户按钮）放行树派发（子控件优先）。 */
             if (pos.y >= 0 && pos.y < barH &&
                 xwd_isBarChild(st, XWidget_childAt(top, &pos)))
                 return false;
@@ -1113,30 +1177,25 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                 XEvent_accept(event);
                 return true;
             }
-            /* 边缘改尺寸带（四边+四角；空白区才接管——命中子控件时放
-             * 行，子控件优先与桌面 WM 帧外命中等效，demo 真机口径；
-             * 条控件自身视作空白——它是装饰承载物而非内容子控件，N 向
-             * 窄带照常接管）。增量锚取全局坐标：本地系随窗口移动自指
-             * （见拖拽处注释）。 */
+            /* fbdev 双口径残余：边缘带命中内容子控件时放行（上方原生
+             * 窗分支已接管全部 zone；此处仅无原生窗且条外贴边命中）。 */
             {
                 int zone = xwd_resizeZoneAt(top, &pos, barH);
                 if (zone) {
                     XWidget* hitChild = XWidget_childAt(top, &pos);
-                    if (!hitChild || hitChild == (XWidget*)top ||
-                        hitChild == st->m_bar) {
-                        st->m_resizing = true;
-                        st->m_resizeMask = zone;
-                        st->m_resizeAnchor =
-                            XMouseEvent_globalPosition(mouse);
-                        st->m_resizeGeometry = XWidget_geometry(top);
-                        /* 节流戳不清零（全局连续间隔）：幻触 PRESS 清戳
-                           会打穿限帧闸，见 xwd_resizeThrottleSkip 注。 */
-                        XWidget_grabMouse(top);
-                        xwd_platformGrab(st, true);
-                        XEvent_accept(event);
-                        return true;
-                    }
-                    if (pos.y >= barH) return false; /* 边缘命中子控件。 */
+                    bool childTakes = hitChild && hitChild != (XWidget*)top &&
+                                      hitChild != st->m_bar;
+                    if (childTakes)
+                        return false; /* 边缘命中子控件（fbdev 口径，条内外一致放行）。 */
+                    st->m_resizing = true;
+                    st->m_resizeMask = zone;
+                    st->m_resizeAnchor =
+                        XMouseEvent_globalPosition(mouse);
+                    st->m_resizeGeometry = XWidget_geometry(top);
+                    XWidget_grabMouse(top);
+                    xwd_platformGrab(st, true);
+                    XEvent_accept(event);
+                    return true;
                 }
             }
             /* 条内空白区：开始拖拽移动（须显式抓取鼠标——框架对 MOVE
@@ -1292,6 +1351,12 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
             XEvent_accept(event);
             return true;
         }
+        /* 边缘改尺寸光标反馈先于按钮放行：press 臂按桌面 WM 口径让角/
+         * 边带恒胜按钮命中，光标必须同口径——悬停进角带（含按钮几何重
+         * 叠区）即切尺寸形状，否则 press 是缩放而光标仍是箭头的反馈错
+         * 位（真机实测左上/右上角）。CSD 无原生帧，装饰层自补（原生窗
+         * 口径；fbdev 无系统光标内部早退）。 */
+        xwd_updateEdgeCursor(st, xwd_resizeZoneAt(top, &pos, barH));
         /* 三分流（MOVE）：移入/移经用户按钮放行，让按钮收到自身 MOVE
          *（按住态跟随/悬停效果）；装饰侧悬停/武装位同步清零防残像。 */
         if (pos.y >= 0 && pos.y < barH &&
