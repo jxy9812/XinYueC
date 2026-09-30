@@ -7,6 +7,7 @@
  */
 
 #include "XAbstractScrollArea.h"
+#include "XAbstractScrollArea_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -94,6 +95,9 @@ static void xasa_disconnectBar(XAbstractScrollArea* self, XScrollBar* bar,
                                     : xasa_vScrollChangedSlot);
 }
 
+/** @brief 视口/滚动条几何排布前置声明（显隐联动重排用）。 */
+static void xasa_layout(XAbstractScrollArea* self);
+
 /** @brief 依据策略与内容尺寸更新滚动条可见性与范围。 */
 static void xasa_updateScrollBars(XAbstractScrollArea* self)
 {
@@ -137,54 +141,65 @@ static void xasa_updateScrollBars(XAbstractScrollArea* self)
     else {
         XScrollBar_setRange(self->m_hScrollBar, 0, 0);
     }
+    /* 对标 Qt updateScrollBars 的 layout 联动（qabstractscrollarea.cpp
+     * 每次范围/显隐更新即 updateGeometries）：无条件全量重排。仅靠
+     * 显隐翻转触发不够——条显隐恒真而控件几何早已变化时（如容器
+     * resize 前 AsNeeded 已显示的条），几何会永久滞留旧值（实测水平
+     * 条滞留 (0,84,200,16) 挂在内容区中部）。xasa_layout 幂等且不回调
+     * 本函数，无递归。 */
+    xasa_layout(self);
 }
 
 /* ==================== 事件处理 ==================== */
 
-static void VX_asa_resizeEvent(XWidget* self, XEvent* event)
+/** @brief 视口/滚动条/corner/附加控件几何排布（不含范围刷新）。 */
+static void xasa_layout(XAbstractScrollArea* self)
 {
-    XAbstractScrollArea* area = (XAbstractScrollArea*)self;
-    int w = XWidget_width(self);
-    int h = XWidget_height(self);
+    int w = XWidget_width((XWidget*)self);
+    int h = XWidget_height((XWidget*)self);
+    int vw = XWidget_width(self->m_viewport);
+    int vh = XWidget_height(self->m_viewport);
     int sbw = 16;
     bool showV;
     bool showH;
     XRect r;
-    (void)event;
-    if (!area || !area->m_viewport) return;
-    showV = area->m_vPolicy != XScrollBarPolicy_AlwaysOff &&
-            (area->m_vPolicy == XScrollBarPolicy_AlwaysOn ||
-             area->m_contentHeight > h);
-    showH = area->m_hPolicy != XScrollBarPolicy_AlwaysOff &&
-            (area->m_hPolicy == XScrollBarPolicy_AlwaysOn ||
-             area->m_contentWidth > w);
+    if (!self || !self->m_viewport) return;
+    /* 显隐判定与 xasa_updateScrollBars 同口径（vw/vh=视口尺寸）：
+     * 两处分裂时条会「显示却不排布」——AsNeeded 在（视口宽,控件宽］
+     * 区间的内容宽恒为显隐真、几何永滞旧值（水平条挂内容区中部实证）。 */
+    showV = self->m_vPolicy != XScrollBarPolicy_AlwaysOff &&
+            (self->m_vPolicy == XScrollBarPolicy_AlwaysOn ||
+             self->m_contentHeight > vh);
+    showH = self->m_hPolicy != XScrollBarPolicy_AlwaysOff &&
+            (self->m_hPolicy == XScrollBarPolicy_AlwaysOn ||
+             self->m_contentWidth > vw);
     XRect_init(&r, 0, 0, showV ? w - sbw : w, showH ? h - sbw : h);
-    XWidget_setGeometryRect(area->m_viewport, &r);
+    XWidget_setGeometryRect(self->m_viewport, &r);
     if (showV) {
         XRect_init(&r, w - sbw, 0, sbw, showH ? h - sbw : h);
-        XWidget_setGeometryRect((XWidget*)area->m_vScrollBar, &r);
+        XWidget_setGeometryRect((XWidget*)self->m_vScrollBar, &r);
     }
     if (showH) {
         XRect_init(&r, 0, h - sbw, showV ? w - sbw : w, sbw);
-        XWidget_setGeometryRect((XWidget*)area->m_hScrollBar, &r);
+        XWidget_setGeometryRect((XWidget*)self->m_hScrollBar, &r);
     }
     /* 右下角控件：仅当两个滚动条都显示时可见。 */
-    if (area->m_cornerWidget) {
+    if (self->m_cornerWidget) {
         if (showV && showH) {
             XRect_init(&r, w - sbw, h - sbw, sbw, sbw);
-            XWidget_setGeometryRect(area->m_cornerWidget, &r);
-            XWidget_setVisible(area->m_cornerWidget, true);
+            XWidget_setGeometryRect(self->m_cornerWidget, &r);
+            XWidget_setVisible(self->m_cornerWidget, true);
         } else {
-            XWidget_setVisible(area->m_cornerWidget, false);
+            XWidget_setVisible(self->m_cornerWidget, false);
         }
     }
     /* 附加滚动条控件（addScrollBarWidget）：按对齐位挂靠边缘；
      * 简化排布：覆盖在对应边缘，不参与视口尺寸计算（头文件注明）。 */
     {
         int i;
-        for (i = 0; i < area->m_sbWidgetCount; ++i) {
-            XWidget* sw = area->m_sbWidgets[i];
-            int al = area->m_sbWidgetAligns[i];
+        for (i = 0; i < self->m_sbWidgetCount; ++i) {
+            XWidget* sw = self->m_sbWidgets[i];
+            int al = self->m_sbWidgetAligns[i];
             if (!sw) continue;
             if (al & (int)XAlignment_Top) {
                 XRect_init(&r, 0, 0, w, sbw);
@@ -201,6 +216,14 @@ static void VX_asa_resizeEvent(XWidget* self, XEvent* event)
             }
         }
     }
+}
+
+static void VX_asa_resizeEvent(XWidget* self, XEvent* event)
+{
+    XAbstractScrollArea* area = (XAbstractScrollArea*)self;
+    (void)event;
+    if (!area || !area->m_viewport) return;
+    xasa_layout(area);
     xasa_updateScrollBars(area);
 }
 
@@ -274,6 +297,16 @@ void XAbstractScrollArea_scrollContentsBy_base(XAbstractScrollArea* self,
     /* 子类未覆盖时无默认实现：不调用，避免空槽指针崩溃。 */
     if (!fn) return;
     fn(self, dx, dy);
+}
+
+void XAbstractScrollArea_resizeEvent_base(XAbstractScrollArea* self)
+{
+    if (!self) return;
+    /* 直调父类槽位实现（XAbstractScrollArea_class_init() 虚表，等价
+       XClass_Parent）：不可走对象虚表，否则子类重载 ResizeEvent 后会
+       经对象表再次进入子类自身（递归/栈溢出，见代码风格文档约定）。 */
+    XClass_Parent(XAbstractScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)((XWidget*)self, NULL);
 }
 
 /* ==================== 生命周期与虚表 ==================== */

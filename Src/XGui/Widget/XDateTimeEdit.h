@@ -22,7 +22,9 @@
  *               timeChanged（携带内部 XDateTime 指针，借用）；
  *             - calendarWidget 族：calendarWidget/setCalendarWidget
  *               （内置日历懒创建、外部日历接管与 selectionChanged →
- *               setDate 信号联动）。
+ *               setDate 信号联动）；setCalendarPopup(true) 开启下拉
+ *               箭头与日历弹层（对标 QDateTimeEdit::calendarPopup：
+ *               弹层容器、贴边翻转、外部点击/Esc 关闭、选中回写）。
  * @note       模块总开关 XDATETIMEEDIT_ON 定义于 XGuiConfig.h。
  * @author     XinYueC 团队
  */
@@ -64,6 +66,9 @@ XCLASS_DEFINE_EXTEND_END(XDateTimeEdit, XAbstractSpinBox)
 /** @brief XCalendarWidget 前向声明（内置日历弹出控件；完整定义见
  *         XCalendarWidget.h）。 */
 typedef struct XCalendarWidget XCalendarWidget;
+/** @brief 日历弹层容器前向声明（顶层 Popup 窗口承载日历；完整定义仅
+ *         实现文件可见，对标 QDateTimeEditPrivate::QDateTimePopup）。 */
+typedef struct XDateTimePopup XDateTimePopup;
 
 typedef struct XDateTimeEdit
 {
@@ -83,9 +88,16 @@ typedef struct XDateTimeEdit
                                     QDateTimeEdit::calendarPopup）。 */
     int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime）。 */
 #if XCALENDARWIDGET_ON
-    XCalendarWidget* m_calendar; /**< 内置日历（懒创建；对象拥有，
+    XCalendarWidget* m_calendar; /**< 内置日历（懒创建；对象由本控件持有，
                                      setCalendarWidget 可整体接管）。 */
 #endif
+    XDateTimePopup* m_popup;   /**< 日历弹层容器（懒创建；对象拥有；
+                                    对标 QDateTimeEditPrivate::popup；
+                                    仅 XCALENDARWIDGET_ON 下会创建）。 */
+    bool m_popupVisible;       /**< 弹层可见态（收起/点击外部/Esc 复位）。 */
+    XTimerId m_grabTimer;      /**< 弹层平台双抓取延迟定时器（1ms 精确；
+                                    平台 XGrabPointer/XGrabKeyboard 需
+                                    窗口完成映射，XComboBox 同款时序）。 */
 } XDateTimeEdit;
 
 XVtable* XDateTimeEdit_class_init(void);
@@ -96,6 +108,10 @@ XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
                                        XWidgetFlags flags);
 #define XDateTimeEdit_deinit_base(self) XAbstractSpinBox_deinit_base((XAbstractSpinBox*)(self))
 /** @brief 设置日历弹出（对标 setCalendarPopup）。
+ * @details true 时控件呈可编辑下拉形态（右侧日历箭头，对标 Qt 以
+ *          CC_ComboBox 呈现），点箭头在下缘弹出日历弹层（贴边超屏
+ *          翻转、点外部/Esc 关闭、选中日期写回编辑框并收起）；false
+ *          恢复普通上下步进形态（绘制/命中/几何与开启前完全一致）。
  * @param self 目标控件。
  * @param popup true 弹出日历。
  * @return 无返回值。

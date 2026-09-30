@@ -394,6 +394,10 @@ XDate XCalendarWidget_selectedDate(const XCalendarWidget* self)
 void XCalendarWidget_setSelectedDate(XCalendarWidget* self, const XDate* date)
 {
     if (!self || !date) return;
+    /* 同值早退（对标 Qt QCalendarWidget::setSelectedDate 的同日期直接
+     * return：重复设置同值不重发 selectionChanged、不重置显示页）——
+     * 亦是日历弹层每次开启前同步选中态时保持零信号副作用的依赖点。 */
+    if (XDate_compare(&self->m_selected, date) == 0) return;
     self->m_selected = *date;
     xcal_clampToRange(self);
     self->m_shownYear = XDate_year(&self->m_selected);

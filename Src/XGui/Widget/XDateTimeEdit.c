@@ -14,6 +14,12 @@
 #include "XLineEdit.h"
 #include "XCalendarWidget.h"
 #include "XGuiConfig.h"
+#include "XWindow.h"
+#include "XCoreApplication.h"
+#include "XGuiApplication.h"   /* 主屏查询/焦点窗口（弹层翻转与焦点回交） */
+#include "XScreen.h"           /* 屏幕几何（弹层贴边超屏翻转） */
+#include "XStyle.h"
+#include "XStyleOption.h"
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -738,6 +744,14 @@ static void xdt_emitUserTime(XDateTimeEdit* self)
     }
 }
 
+/* ==================== calendarPopup 弹层前向声明（弹层机器实现见
+ *                     「日历弹层」节；键入/点击路径先于此引用） ==================== */
+#if XCALENDARWIDGET_ON
+static void xdt_popupShow(XDateTimeEdit* self);
+static void xdt_popupHide(XDateTimeEdit* self);
+#endif
+static XRect xdt_arrowRect(XDateTimeEdit* edit);
+
 /* ==================== 虚槽重载 ==================== */
 
 static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
@@ -1165,6 +1179,23 @@ static void XDateTimeEdit_mousePressEvent(XWidget* self, XEvent* event)
                       void (*)(XWidget*, XEvent*)) (self, event);
         return;
     }
+#if XCALENDARWIDGET_ON
+    if (edit->m_calendarPopup) {
+        /* 日历态：点下拉箭头开/收弹层（对标 Qt QDateTimeEdit 日历态
+           命中 SC_ComboBoxArrow 才弹层；弹层存活时此点击落在弹层抓取
+           域外——收层走弹层越界判定，不会抵达本分支）。 */
+        XRect arrow = xdt_arrowRect(edit);
+        XPoint wpos = XMouseEvent_position(me);
+        if (XRect_contains(&arrow, wpos.x, wpos.y)) {
+            if (edit->m_popupVisible) xdt_popupHide(edit);
+            else xdt_popupShow(edit);
+            XWidget_setFocus(self);
+            XEvent_accept(event);
+            return;
+        }
+        /* 箭头之外按既有分段点击路径继续（含编辑区内/外分支）。 */
+    }
+#endif
     leGeo = XWidget_geometry((XWidget*)line);
     local.x = XMouseEvent_position(me).x - leGeo.x;
     local.y = XMouseEvent_position(me).y - leGeo.y;
@@ -1191,20 +1222,623 @@ static void XDateTimeEdit_mousePressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/* ==================== 日历弹层（calendarPopup=true 接线，对标
+ *                     QDateTimeEditPrivate::QDateTimePopup 容器弹层） ==================== */
+
+#if XCALENDARWIDGET_ON
+
+XCLASS_DEFINE_BEGING(XDateTimePopup)
+XCLASS_DEFINE_EXTEND_END(XDateTimePopup, XWidget)
+
+/** @brief 日历弹层容器对象；m_base 必须是第一个成员。容器为顶层
+ *         Popup 窗口（XWindowType_Popup），日历作为子件铺在其 1px
+ *         边框带内；外部点击收层与 Esc 收层在容器层拦截。 */
+typedef struct XDateTimePopup
+{
+    XWidget m_base;      /**< 基类成员（嵌 XWidget）；必须是第一个。 */
+    XDateTimeEdit* m_owner; /**< 属主日期时间控件（借用；可为 NULL）。 */
+} XDateTimePopup;
+
+static void VXDateTimePopup_paintEvent(XWidget* self, XEvent* event);
+static void VXDateTimePopup_mousePressEvent(XWidget* self, XEvent* event);
+static void VXDateTimePopup_mouseReleaseEvent(XWidget* self, XEvent* event);
+static void VXDateTimePopup_keyPressEvent(XWidget* self, XEvent* event);
+
+static void XDateTimeEdit_paintEvent(XWidget* self, XEvent* event);
+static void XDateTimeEdit_resizeEvent(XWidget* self, XEvent* event);
+static void XDateTimeEdit_hideEvent(XWidget* self, XEvent* event);
+static void XDateTimeEdit_timerEvent(XObject* object, XTimerEvent* event);
+static void xdt_syncEditGeometry(XDateTimeEdit* self);
+
+/** @brief 弹层容器绘制：Base 底 + 1px Mid 边框带（对标 QDateTimePopup
+ *         的 QFrame::StyledPanel|Plain 细边框；日历子件铺在边框带内）。 */
+static void VXDateTimePopup_paintEvent(XWidget* self, XEvent* event)
+{
+    XDateTimePopup* popup = (XDateTimePopup*)self;
+    XPainter painter;
+    XImage* image;
+    XPoint offset;
+    XRect r;
+    uint32_t base;
+    uint32_t mid;
+    int w;
+    int h;
+    if (!popup || !event ||
+        XEvent_type(event) != XEVENT_TYPE_PAINT) {
+        XClass_Parent(XWidget, EXWidget_PaintEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    w = XWidget_width(self);
+    h = XWidget_height(self);
+    image = XWidget_paintImage(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+#if XPALETTE_ON
+    {
+        XPalette palette = XWidget_palette(self);
+        XColor c;
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Base);
+        base = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Mid);
+        mid = XColor_rgba(&c);
+    }
+#else
+    base = 0xFFFFFFFFu; mid = 0xFF808080u;
+#endif /* XPALETTE_ON */
+    XRect_init(&r, 0, 0, w, h);
+    XPainter_fillRect(&painter, &r, base);
+    /* 四边 1px 边框带（日历子件从 (1,1) 铺设，边框带不被覆盖）。 */
+    XRect_init(&r, 0, 0, w, 1);
+    XPainter_fillRect(&painter, &r, mid);
+    XRect_init(&r, 0, h - 1, w, 1);
+    XPainter_fillRect(&painter, &r, mid);
+    XRect_init(&r, 0, 0, 1, h);
+    XPainter_fillRect(&painter, &r, mid);
+    XRect_init(&r, w - 1, 0, 1, h);
+    XPainter_fillRect(&painter, &r, mid);
+    XPainter_deinit(&painter);
+}
+
+/** @brief 弹层内坐标判定（对标 XComboPopupView 越界判据：抓取直投
+ *         容器的本地坐标与容器尺寸比较）。 */
+static bool xdtp_contains(const XDateTimePopup* popup, int x, int y)
+{
+    if (!popup) return false;
+    return x >= 0 && y >= 0 &&
+           x < XWidget_width((const XWidget*)popup) &&
+           y < XWidget_height((const XWidget*)popup);
+}
+
+/** @brief 把容器本地坐标事件转投日历子件（抓取直投容器、不再做子
+ *         命中——XWidget 派发层抓取分支语义；转投前把事件位置换算
+ *         到日历局部坐标，对标 QWidget::grabMouse 下的手工转发）。 */
+static void xdtp_forwardToCalendar(XDateTimePopup* popup, XEvent* event)
+{
+    XDateTimeEdit* owner = popup ? popup->m_owner : NULL;
+    XCalendarWidget* cal = owner ? owner->m_calendar : NULL;
+    XMouseEvent* me = (XMouseEvent*)event;
+    XRect cg;
+    XPoint pos;
+    XPoint local;
+    if (!cal || !XWidget_isVisible((XWidget*)cal)) return;
+    pos = XMouseEvent_position(me);
+    cg = XWidget_geometry((XWidget*)cal);
+    local.x = pos.x - cg.x;
+    local.y = pos.y - cg.y;
+    me->m_position = local;
+    XObject_event_base((XObject*)cal, event);
+}
+
+/** @brief 按下：越界（弹窗外部）点击收层并吞掉；界内转投日历子件
+ *         （日期选择/翻页导航），日历未接住时由容器吸收（边框带）。 */
+static void VXDateTimePopup_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XDateTimePopup* popup = (XDateTimePopup*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    if (!popup || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) {
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    if (!xdtp_contains(popup, pos.x, pos.y)) {
+        /* 模态抓取期间转发到本窗口的弹窗外按下：一律收层并吞掉。 */
+        if (popup->m_owner) xdt_popupHide(popup->m_owner);
+        XEvent_accept(event);
+        return;
+    }
+    xdtp_forwardToCalendar(popup, event);
+    XEvent_accept(event);
+}
+
+/** @brief 释放：越界吞掉（防止后续合成误判）；界内转投日历子件
+ *         （与按下同口径，保持按下/释放成对到达）。 */
+static void VXDateTimePopup_mouseReleaseEvent(XWidget* self, XEvent* event)
+{
+    XDateTimePopup* popup = (XDateTimePopup*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    if (!popup || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) {
+        XClass_Parent(XWidget, EXWidget_MouseReleaseEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    if (!xdtp_contains(popup, pos.x, pos.y)) {
+        XEvent_accept(event);
+        return;
+    }
+    xdtp_forwardToCalendar(popup, event);
+    XEvent_accept(event);
+}
+
+/** @brief 按键：Esc 收层（对标 Qt 日历弹层 Esc 关闭并焦点回交）；
+ *         其余按键不消费（弹层存活期键盘抓取直投本容器）。 */
+static void VXDateTimePopup_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XDateTimePopup* popup = (XDateTimePopup*)self;
+    XKeyEvent* ke;
+    if (!popup || !event ||
+        XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) {
+        XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    ke = (XKeyEvent*)event;
+    if (XKeyEvent_key(ke) == XKey_Escape && popup->m_owner) {
+        xdt_popupHide(popup->m_owner);
+        XEvent_accept(event);
+        return;
+    }
+    XEvent_ignore(event);
+}
+
+static XVtable* XDateTimePopup_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XDateTimePopup)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXDateTimePopup_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VXDateTimePopup_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
+                             VXDateTimePopup_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
+                             VXDateTimePopup_keyPressEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 创建弹层容器（NULL 父控件；窗口类型在显形前置 Popup）。 */
+static XDateTimePopup* xdtPopup_create(XDateTimeEdit* owner)
+{
+    XDateTimePopup* popup = (XDateTimePopup*)XMemory_malloc(
+        sizeof(XDateTimePopup), XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!popup) return NULL;
+    XMemset(popup, 0, sizeof(*popup));
+    XWidget_init(&popup->m_base, NULL, 0);
+    XClassSetVtable(popup, XDateTimePopup);
+    popup->m_owner = owner;
+    Set_Class_Memory(popup, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(popup, true);
+    return popup;
+}
+
+/** @brief 确保日历与弹层容器就位并挂接父子关系（日历经既有懒创建
+ *         语义产出后收编为弹层子件；已收编则幂等）。 */
+static void xdt_ensureCalendarPopup(XDateTimeEdit* self)
+{
+    XCalendarWidget* cal;
+    if (!self) return;
+    cal = XDateTimeEdit_calendarWidget(self);
+    if (!cal) return;
+    if (!self->m_popup) {
+        self->m_popup = xdtPopup_create(self);
+        if (!self->m_popup) return;
+    }
+    if (XWidget_parentWidget((XWidget*)cal) != (XWidget*)self->m_popup) {
+        /* 日历收编进弹层容器（容器析构级联；本控件 deinit 先显式删
+         * 日历再删容器，次序安全）。日历此前从未显式 show（懒创建
+         * 语义），换父后须显式 show 置 explicitShow 才会随弹层显形
+         * （propagateVisibility 只带出未显式隐藏的子控件）。 */
+        XWidget_setParent((XWidget*)cal, (XWidget*)self->m_popup, 0);
+        XWidget_setGeometry((XWidget*)cal, 1, 1,
+                            XWidget_width((XWidget*)cal),
+                            XWidget_height((XWidget*)cal));
+        XWidget_show((XWidget*)cal);
+    }
+}
+
+/** @brief 日历点击槽：选中日期已由 selectionChanged 槽写回编辑框，
+ *         此处只负责收层（对标 Qt 点日期即关闭弹层）。 */
+static void xdt_calendarClickedSlot(XObject* receiver, XVarList* args)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)receiver;
+    (void)args;
+    if (edit && edit->m_popupVisible) xdt_popupHide(edit);
+}
+
+/** @brief 日历弹层几何：宽高=日历+2px 边框带；默认控件左下缘起、
+ *         右缘与控件右缘对齐（箭头贴右，对标 Qt 下拉弹层锚点）；
+ *         超下缘翻转到控件上方，横向钳入主屏（对标 QComboBox 弹层
+ *         的屏幕边界处理）。 */
+static void xdt_popupReposition(XDateTimeEdit* self)
+{
+    XWidget* popup;
+    XCalendarWidget* cal;
+    XPoint origin;
+    XPoint g;
+    XRect r;
+    XRect sg;
+    bool haveScreen = false;
+    int selfW;
+    int selfH;
+    int pw;
+    int ph;
+    int x;
+    int y;
+    if (!self || !self->m_popup) return;
+    popup = (XWidget*)self->m_popup;
+    cal = self->m_calendar;
+    if (!cal) return;
+    XWidget_setWindowFlags(popup, (XWidgetFlags)XWindowType_Popup);
+    selfW = XWidget_width((XWidget*)self);
+    selfH = XWidget_height((XWidget*)self);
+    pw = XWidget_width((XWidget*)cal) + 2;
+    ph = XWidget_height((XWidget*)cal) + 2;
+    origin.x = 0;
+    origin.y = selfH;
+    g = XWidget_mapToGlobal((XWidget*)self, &origin);
+    XMemset(&sg, 0, sizeof(sg));
+    {
+        XScreen* screen = XGuiApplication_primaryScreen();
+        if (screen) {
+            sg = XScreen_geometry(screen);
+            haveScreen = sg.width > 0 && sg.height > 0;
+        }
+    }
+    x = g.x + selfW - pw;
+    y = g.y;
+    if (haveScreen) {
+        if (x < sg.x) x = sg.x;
+        if (x + pw > sg.x + sg.width) x = sg.x + sg.width - pw;
+    }
+    if (haveScreen && y + ph > sg.y + sg.height) {
+        /* 贴下缘超屏：翻转到控件上方（仍超上缘则钳回屏顶）。 */
+        y = g.y - selfH - ph;
+        if (y < sg.y) y = sg.y;
+    }
+    XRect_init(&r, x, y, pw, ph);
+    XWidget_setGeometryRect(popup, &r);
+    if (self->m_popupVisible)
+        XWidget_flushBackingStore(popup, NULL);
+}
+
+/** @brief 弹出弹层（选中同步+几何+show/raise/首帧/模态双抓取全流程；
+ *         对标 QDateTimeEdit 弹出日历：弹层以编辑框当前日期初始化
+ *         选中态与显示页）。 */
+static void xdt_popupShow(XDateTimeEdit* self)
+{
+    XCalendarWidget* cal;
+    if (!self || self->m_popupVisible) return;
+    xdt_ensureCalendarPopup(self);
+    cal = self->m_calendar;
+    if (!self->m_popup || !cal) return;
+    /* 以当前值同步日历选中态并翻到所在页：仅差异时推送（配合日历
+     * setSelectedDate 同值早退与联动槽幂等，开弹层零信号副作用——
+     * 对标 Qt 开弹层不触发 value 信号）；showSelectedDate 只对齐
+     * 显示页不携带选中信号。 */
+    {
+        XDate sel = XCalendarWidget_selectedDate(cal);
+        if (XDate_compare(&sel, &self->m_dateTime.m_date) != 0)
+            XCalendarWidget_setSelectedDate(cal, &self->m_dateTime.m_date);
+        XCalendarWidget_showSelectedDate(cal);
+    }
+    xdt_popupReposition(self);
+    self->m_popupVisible = true;
+    XWidget_show((XWidget*)self->m_popup);
+    /* 对标 Qt QWidgetPrivate::show_helper 的 Popup 分支（qwidget.cpp:
+       8038-8043「new popups and tools need to be raised」）：弹层每次
+       show 都必须置顶。平台唯一置顶通道是 requestActivate→
+       XRaiseWindow；未映射窗口的激活在平台层挂起（MapNotify 后补做）。
+       先例：XComboBox xcombo_popupShow/XMenu XMenu_popup。 */
+    XWidget_activateWindow((XWidget*)self->m_popup);
+    XWidget_raise((XWidget*)self->m_popup);
+    /* 独立顶层窗口无宿主帧泵：主动完成首帧绘制上屏（含日历子件）。 */
+    XWidget_flushBackingStore((XWidget*)self->m_popup, NULL);
+    /* 模态鼠标+键盘抓取（对标 Qt grabForPopup 成对抓取）：公共层立即
+       设置直投目标使弹窗外点击也路由到弹层（越界收层判定依赖此）；
+       平台抓取需窗口完成映射，延迟到 1ms 精确定时器执行。 */
+    XWidget_grabMouse((XWidget*)self->m_popup);
+    XWidget_grabKeyboard((XWidget*)self->m_popup);
+    if (self->m_grabTimer == XTIMER_INVALID_ID) {
+        self->m_grabTimer = XObject_startTimer_ms(
+            (XObject*)self, 1u, XTimerType_PreciseTimer);
+    }
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 收起弹层（解抓取+隐藏+焦点回交+控件重绘；幂等）。 */
+static void xdt_popupHide(XDateTimeEdit* self)
+{
+    XWindow* handle;
+    if (!self || !self->m_popupVisible) return;
+    self->m_popupVisible = false;
+    if (self->m_grabTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_grabTimer);
+        self->m_grabTimer = XTIMER_INVALID_ID;
+    }
+    if (self->m_popup) {
+        XWidget_releaseMouse((XWidget*)self->m_popup);
+        /* 对标 Qt closePopup：鼠标/键盘成对解抓（漏解键盘抓取会使弹层
+           收起后全局按键仍被劫持，XComboBox 同款纪律）。 */
+        XWidget_releaseKeyboard((XWidget*)self->m_popup);
+        handle = XWidget_windowHandle((XWidget*)self->m_popup);
+        if (handle) {
+            XWindow_setMouseGrabEnabled(handle, false);
+            XWindow_setKeyboardGrabEnabled(handle, false);
+        }
+        XWidget_hide((XWidget*)self->m_popup);
+    }
+    /* 焦点回交（对标 Qt closePopup 的焦点还原）：弹出时 activateWindow
+       曾把应用焦点窗口指向弹层；收起后重新激活宿主顶层恢复按键链。 */
+    {
+        XWidget* host = XWidget_topLevelWidget((XWidget*)self);
+        if (host && host->m_isWindow && self->m_popup &&
+            XGuiApplication_focusWindow() ==
+                (XWindow*)XWidget_windowHandle((XWidget*)self->m_popup))
+            XWidget_activateWindow(host);
+    }
+    XWidget_update((XWidget*)self);
+}
+
+#endif /* XCALENDARWIDGET_ON */
+
+/** @brief 延迟平台双抓取（1ms 精确定时器，窗口已映射；XComboBox
+ *         同款时序——先杀定时器记账再启用鼠标+键盘平台抓取）。 */
+static void XDateTimeEdit_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XDateTimeEdit* self = (XDateTimeEdit*)object;
+    XTimerId id;
+    XWindow* handle;
+    if (self && event &&
+        XTimerEvent_timerId(event) == self->m_grabTimer) {
+        id = self->m_grabTimer;
+        self->m_grabTimer = XTIMER_INVALID_ID;
+        XObject_killTimer(object, id);
+        if (self->m_popupVisible && self->m_popup) {
+            handle = XWidget_windowHandle((XWidget*)self->m_popup);
+            if (handle) {
+                XWindow_setMouseGrabEnabled(handle, true);
+                XWindow_setKeyboardGrabEnabled(handle, true);
+            }
+        }
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    XClass_Parent(XAbstractSpinBox, EXObject_TimerEvent,
+                  void (*)(XObject*, XTimerEvent*)) (object, event);
+}
+
+/** @brief 弹层态绘制（calendarPopup=true）：可编辑下拉形态（对标 Qt
+ *         QDateTimeEdit 日历态以 CC_ComboBox 呈现——面板+编辑区+下拉
+ *         箭头），文本由内嵌行编辑子件自绘。calendarPopup=false 走
+ *         默认绘制路径（与未引入本功能前逐像素一致）。 */
+static void XDateTimeEdit_paintEvent(XWidget* self, XEvent* event)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)self;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_PAINT || !edit->m_calendarPopup) {
+        XClass_Parent(XWidget, EXWidget_PaintEvent,
+                      void (*)(XWidget*, XEvent*)) (self, event);
+        return;
+    }
+    {
+        XPainter painter;
+        XImage* image;
+        XPoint offset;
+        XRect r;
+        int w = XWidget_width(self);
+        int h = XWidget_height(self);
+        image = XWidget_paintImage(self);
+        if (!image) return;
+        XPainter_init(&painter, NULL);
+        if (!XPainter_begin_image(&painter, image)) {
+            XPainter_deinit(&painter);
+            return;
+        }
+        offset = XWidget_paintOffset(self);
+        if (offset.x != 0 || offset.y != 0)
+            XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+        XRect_init(&r, 0, 0, w, h);
+#if XSTYLE_ON
+        if (XStyle_defaultStyle() != NULL) {
+            XStyle* style = XStyle_defaultStyle();
+            XStyleOption opt;
+            XStyleOption_init(&opt, XStyleCC_ComboBox);
+            opt.m_rect = r;
+            opt.m_state = XWidget_isEnabled(self)
+                ? XStyleState_Enabled | XStyleState_Raised : 0;
+            if (edit->m_popupVisible)
+                opt.m_state |= XStyleState_Sunken | XStyleState_On;
+            if (XWidget_hasFocus(self))
+                opt.m_state |= XStyleState_HasFocus;
+            if (XWidget_underMouse(self) && XWidget_isEnabled(self))
+                opt.m_state |= XStyleState_MouseOver;
+            opt.m_text = "";
+#if XPALETTE_ON
+            opt.m_palette = XWidget_palette(self);
+#endif
+            XStyle_drawComplexControl(style, XStyleCC_ComboBox, &opt,
+                                      &painter, self);
+        } else
+#endif /* XSTYLE_ON */
+        {
+            /* 无样式回退：边框+右缘 16px 箭头列（与回退命中/几何同源）。 */
+            uint32_t base = 0xFFFFFFFFu;
+            uint32_t dark = 0xFF606060u;
+#if XPALETTE_ON
+            XPalette palette = XWidget_palette(self);
+            XColor c;
+            c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                               XPaletteColorRole_Base);
+            base = XColor_rgba(&c);
+            c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                               XPaletteColorRole_Dark);
+            dark = XColor_rgba(&c);
+#endif
+            XPainter_fillRect(&painter, &r, base);
+            XRect_init(&r, 0, 0, w, 1);
+            XPainter_fillRect(&painter, &r, dark);
+            XRect_init(&r, 0, h - 1, w, 1);
+            XPainter_fillRect(&painter, &r, dark);
+            XRect_init(&r, 0, 0, 1, h);
+            XPainter_fillRect(&painter, &r, dark);
+            XRect_init(&r, w - 1, 0, 1, h);
+            XPainter_fillRect(&painter, &r, dark);
+            XRect_init(&r, w - 16, 0, 16, h);
+            XPainter_fillRect(&painter, &r, base);
+            {
+                int cx = w - 8;
+                int cy = h / 2;
+                XPainter_setPen(&painter, dark);
+                XPainter_drawLine(&painter, cx - 4, cy - 2, cx + 4, cy - 2);
+                XPainter_drawLine(&painter, cx - 4, cy - 2, cx, cy + 3);
+                XPainter_drawLine(&painter, cx + 4, cy - 2, cx, cy + 3);
+            }
+            XRect_init(&r, 0, 0, w, h);
+        }
+        XPainter_deinit(&painter);
+    }
+}
+
+/** @brief 弹层态几何：箭头列之外全归编辑区（SC_ComboBoxEditField 口
+ *         径，与绘制同源）；非弹层态交回基类（CC_SpinBox 口径不变）。 */
+static void XDateTimeEdit_resizeEvent(XWidget* self, XEvent* event)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)self;
+    if (!edit || !event ||
+        XEvent_type(event) != XEVENT_TYPE_RESIZE || !edit->m_calendarPopup) {
+        XClass_Parent(XAbstractSpinBox, EXWidget_ResizeEvent,
+                      void (*)(XWidget*, XEvent*)) ((XWidget*)self, event);
+        return;
+    }
+    xdt_syncEditGeometry(edit);
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  void (*)(XWidget*, XEvent*)) ((XWidget*)self, event);
+}
+
+/** @brief 隐藏事件：控件随页签切换/顶层隐藏而隐藏时收起弹层并解抓
+ *         取（对标 Qt 弹层随宿主隐藏关闭），再链基类提交路径。 */
+static void XDateTimeEdit_hideEvent(XWidget* self, XEvent* event)
+{
+    XDateTimeEdit* edit = (XDateTimeEdit*)self;
+    if (edit && event && XEvent_type(event) == XEVENT_TYPE_HIDE) {
+#if XCALENDARWIDGET_ON
+        if (edit->m_popupVisible) xdt_popupHide(edit);
+#endif
+    }
+    XClass_Parent(XAbstractSpinBox, EXWidget_HideEvent,
+                  void (*)(XWidget*, XEvent*)) ((XWidget*)self, event);
+}
+
+/** @brief 按样式取下拉箭头子矩形（无样式回退右缘 16px 列，与回退
+ *         绘制同源）。 */
+static XRect xdt_arrowRect(XDateTimeEdit* edit)
+{
+    XRect r;
+    int w = XWidget_width((XWidget*)edit);
+    int h = XWidget_height((XWidget*)edit);
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        XStyleOption opt;
+        XStyleOption_init(&opt, XStyleCC_ComboBox);
+        XRect_init(&opt.m_rect, 0, 0, w, h);
+        opt.m_state = XWidget_isEnabled((XWidget*)edit)
+            ? (uint32_t)XStyleState_Enabled : 0;
+        r = XStyle_subControlRect(XStyle_defaultStyle(), XStyleCC_ComboBox,
+                                  &opt, XStyleSC_ComboBoxArrow,
+                                  (XWidget*)edit);
+        if (r.width > 0 && r.height > 0) return r;
+    }
+#endif /* XSTYLE_ON */
+    XRect_init(&r, w - 16, 0, 16, h);
+    return r;
+}
+
+/** @brief 弹层态编辑区几何（SC_ComboBoxEditField；无样式回退右缘留
+ *         16px 箭头列）。setCalendarPopup 开关与 resize 共用。 */
+static void xdt_syncEditGeometry(XDateTimeEdit* self)
+{
+    XLineEdit* line;
+    int w;
+    int h;
+    if (!self) return;
+    line = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)self);
+    if (!line) return;
+    w = XWidget_width((XWidget*)self);
+    h = XWidget_height((XWidget*)self);
+#if XSTYLE_ON
+    if (XStyle_defaultStyle() != NULL) {
+        XStyleOption opt;
+        XRect field;
+        XStyleOption_init(&opt, XStyleCC_ComboBox);
+        XRect_init(&opt.m_rect, 0, 0, w, h);
+        opt.m_state = XWidget_isEnabled((XWidget*)self)
+            ? (uint32_t)XStyleState_Enabled : 0;
+        field = XStyle_subControlRect(XStyle_defaultStyle(),
+                                      XStyleCC_ComboBox, &opt,
+                                      XStyleSC_ComboBoxEditField,
+                                      (XWidget*)self);
+        if (field.width > 0 && field.height > 0) {
+            XWidget_setGeometry((XWidget*)line, field.x, field.y,
+                                field.width, field.height);
+            return;
+        }
+    }
+#endif /* XSTYLE_ON */
+    XWidget_setGeometry((XWidget*)line, 0, 0, w - 16 > 1 ? w - 16 : 1, h);
+}
+
 /* ==================== 生命周期与虚表 ==================== */
 
 static void VXDateTimeEdit_deinit(XDateTimeEdit* self)
 {
     if (!self) return;
+#if XCALENDARWIDGET_ON
+    /* 弹层存活先收层（解抓取+杀延迟定时器，须先于对象删除）。 */
+    if (self->m_popupVisible) xdt_popupHide(self);
     if (self->m_displayFormat) {
         XString_delete_base((XClass*)self->m_displayFormat);
         self->m_displayFormat = NULL;
     }
-#if XCALENDARWIDGET_ON
-    /* 释放内置/接管的日历控件（对象由本控件拥有）。 */
+    /* 释放内置/接管的日历控件（先删日历：显式删除已将其摘离弹层
+     * 子链，随后删弹层容器不会级联重复释放）。 */
     if (self->m_calendar) {
         XCalendarWidget_delete_base((XClass*)self->m_calendar);
         self->m_calendar = NULL;
+    }
+    if (self->m_popup) {
+        XClass_delete_base((XClass*)self->m_popup);
+        self->m_popup = NULL;
+    }
+#else
+    if (self->m_displayFormat) {
+        XString_delete_base((XClass*)self->m_displayFormat);
+        self->m_displayFormat = NULL;
     }
 #endif
     XClass_Deinit_Parent(XAbstractSpinBox, (XAbstractSpinBox*)self);
@@ -1229,6 +1863,11 @@ XVtable* XDateTimeEdit_class_init(void)
      * （行编辑已设鼠标穿透，点击直达本控件）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              XDateTimeEdit_mousePressEvent);
+    /* calendarPopup 弹层接线：弹层态绘制/几何/收层/延迟抓取四虚槽。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, XDateTimeEdit_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, XDateTimeEdit_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, XDateTimeEdit_hideEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, XDateTimeEdit_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDateTimeEdit_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -1279,9 +1918,15 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
     xdt_refreshText(self);
 
     /* P2：calendarPopup 默认 false（对标 QDateTimeEdit::calendarPopup
-     * 默认值；框架当前无弹出面板接线，true 默认会误导调用方）。 */
+     * 默认值）。true 时弹出接线见「日历弹层」节：箭头命中开层、
+     * 贴边超屏翻转、外部点击/Esc 收层、选中日期写回编辑框。 */
     self->m_calendarPopup = false;
     self->m_timeSpec = 0;
+#if XCALENDARWIDGET_ON
+    self->m_popup = NULL;
+    self->m_popupVisible = false;
+    self->m_grabTimer = XTIMER_INVALID_ID;
+#endif
 }
 
 XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
@@ -1646,7 +2291,19 @@ void* XDateTimeEdit_userTimeChanged_signal(XDateTimeEdit* self,
 /* ==================== Task 2.5：日历弹出/时区/分段 ==================== */
 
 void XDateTimeEdit_setCalendarPopup(XDateTimeEdit* self, bool popup)
-{ if (self) self->m_calendarPopup = popup; }
+{
+    if (!self || self->m_calendarPopup == popup) return;
+    self->m_calendarPopup = popup;
+#if XCALENDARWIDGET_ON
+    /* 关闭时弹层存活先收层（对标 Qt 禁用 calendarPopup 即隐藏弹层）。 */
+    if (!popup && self->m_popupVisible) xdt_popupHide(self);
+    /* 切换瞬间编辑区几何随形态换轨（弹层态=SC_ComboBoxEditField 留
+     * 箭头列；普通态回基类 CC_SpinBox 口径——经 update 后重排或直接
+     * 依基类 resize 路径收口，此处主动同步弹层态）。 */
+    if (popup) xdt_syncEditGeometry(self);
+#endif
+    XWidget_update((XWidget*)self);
+}
 /* P2：NULL 回退值随默认值改为 false（对标 QDateTimeEdit 默认）。 */
 bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self)
 { return self ? self->m_calendarPopup : false; }
@@ -1658,15 +2315,19 @@ bool XDateTimeEdit_calendarPopup(const XDateTimeEdit* self)
  *                     与 QComboBox::view/setView 一致） ==================== */
 
 /** @brief 日历选中变化联动槽：把日历选中日期回填到编辑框（单向同步，
- *         setDate 不回写日历，故无回环）。 */
+ *         setDate 不回写日历，故无回环）。同值不重复提交（幂等：弹层
+ *         开启时的选中同步、重复点同一天均不产生多余信号）。 */
 static void xdt_calendarSelectionSlot(XObject* receiver, XVarList* args)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)receiver;
     XDate d;
+    XDate cur;
     (void)args;
     if (!edit || !edit->m_calendar) return;
     d = XCalendarWidget_selectedDate(edit->m_calendar);
-    XDateTimeEdit_setDate(edit, &d);
+    cur = XDateTimeEdit_date(edit);
+    if (XDate_compare(&cur, &d) != 0)
+        XDateTimeEdit_setDate(edit, &d);
 }
 
 XCalendarWidget* XDateTimeEdit_calendarWidget(const XDateTimeEdit* self)
@@ -1675,16 +2336,22 @@ XCalendarWidget* XDateTimeEdit_calendarWidget(const XDateTimeEdit* self)
     XCalendarWidget* cal;
     if (!edit) return NULL;
     if (edit->m_calendar) return edit->m_calendar;
-    /* 懒创建：保持 NULL 父控件（对象由本控件持有，deinit 释放）。 */
+    /* 懒创建：保持 NULL 父控件（对象由本控件持有，deinit 释放；
+     * 弹出路径再把日历收编进弹层容器子链）。 */
     cal = XCalendarWidget_create(NULL, 0);
     if (!cal) return NULL;
     edit->m_calendar = cal;
-    /* 以当前日期初始化日历选中态（不触发编辑框信号）。 */
+    /* 以当前日期初始化日历选中态（不触发编辑框信号：先置值后连接）。 */
     XCalendarWidget_setSelectedDate(cal, &edit->m_dateTime.m_date);
     /* 连接日历选中信号 → setDate 联动槽。 */
     XObject_connect_1((XObject*)cal,
         (size_t)XCalendarWidget_selectionChanged_signal(cal),
         (XObject*)edit, xdt_calendarSelectionSlot,
+        XConnectionType_Direct);
+    /* 连接点击信号 → 收层槽（对标 Qt 点日期即选中并收起弹层）。 */
+    XObject_connect_1((XObject*)cal,
+        (size_t)XCalendarWidget_clicked_signal(cal, NULL),
+        (XObject*)edit, xdt_calendarClickedSlot,
         XConnectionType_Direct);
     return cal;
 }
@@ -1703,11 +2370,29 @@ void XDateTimeEdit_setCalendarWidget(XDateTimeEdit* self,
         /* 以外部日历的选中日期回填本控件（触发 dateChanged 等信号）。 */
         XDate d = XCalendarWidget_selectedDate(calendar);
         XDateTimeEdit_setDate(self, &d);
-        /* 连接选中信号 → setDate 联动槽。 */
+        /* 连接选中/点击信号 → 联动槽（写回+收层）。 */
         XObject_connect_1((XObject*)calendar,
             (size_t)XCalendarWidget_selectionChanged_signal(calendar),
             (XObject*)self, xdt_calendarSelectionSlot,
             XConnectionType_Direct);
+        XObject_connect_1((XObject*)calendar,
+            (size_t)XCalendarWidget_clicked_signal(calendar, NULL),
+            (XObject*)self, xdt_calendarClickedSlot,
+            XConnectionType_Direct);
+        /* 弹层容器已存在时把外部日历收编进容器子链（与内置日历同
+         * 承载；几何在弹层显形路径统一收口；显式 show 同
+         * xdt_ensureCalendarPopup——外部日历若从未 show 过，换父后
+         * 不会随弹层显形）。 */
+        if (self->m_popup &&
+            XWidget_parentWidget((XWidget*)calendar) !=
+                (XWidget*)self->m_popup) {
+            XWidget_setParent((XWidget*)calendar,
+                              (XWidget*)self->m_popup, 0);
+            XWidget_setGeometry((XWidget*)calendar, 1, 1,
+                                XWidget_width((XWidget*)calendar),
+                                XWidget_height((XWidget*)calendar));
+            XWidget_show((XWidget*)calendar);
+        }
     }
 }
 

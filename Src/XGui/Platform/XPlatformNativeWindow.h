@@ -137,6 +137,22 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible);
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry);
 
 /**
+ * @brief      挂起/恢复窗口几何的立即落窗（拖拽改尺寸手势专用）。
+ * @details    桌面 X11 每步改尺寸若立即 XMoveResizeWindow，服务器当场按
+ *             background_pixel（ForgetGravity 口径为整窗）把扩区填黑，
+ *             盖掉黑底的整窗重绘要等下一轮事件循环的 PAINT→present——
+ *             「服务器先黑、客户端后补」构成单帧黑闪。挂起后 setGeometry
+ *             只记账不落窗，几何改由 present 在提交内容的同一 X 请求批内
+ *             先落地（ConfigureWindow + PutImage + 一次冲刷），黑底中间态
+ *             不再有机会上屏。仅装饰层拖拽改尺寸手势期间挂起，松手恢复；
+ *             非手势期的 setGeometry 语义不变。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @param      deferred true 挂起立即落窗、false 恢复立即落窗。
+ * @return     true 已切换；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_deferGeometry(XWindow* window, bool deferred);
+
+/**
  * @brief      同步窗口状态（最大化/最小化/全屏）到真实原生窗口。
  * @details    对标 QPlatformWindow::setWindowState：Qt 在
  *             QWindow::setWindowStates 里把状态转成 QWindowStateChangeEvent

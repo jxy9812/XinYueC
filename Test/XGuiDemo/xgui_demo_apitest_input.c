@@ -52,6 +52,7 @@
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
 #include "XDateTimeEdit.h"
 #include "XDateTime.h"
+#include "XCalendarWidget.h" /* 日历弹层承载 API（calendarWidget 族断言） */
 #endif
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
@@ -1583,8 +1584,45 @@ int xapi_input_run(void)
                     "DateTimeEdit setTimeSpec(UTC=1) 往返");
         XDateTimeEdit_setTimeSpec(&dt, 0);
 #if XCALENDARWIDGET_ON
-        XAPI_EXPECT(XDateTimeEdit_calendarWidget(&dt) != NULL,
-                    "DateTimeEdit calendarWidget 懒创建非空（对标 calendarWidget）");
+        {
+            /* 日历弹层承载 API 闭环（无头：弹层窗口仅弹路径创建，本段
+             * 只测懒创建恒等/接管/释放语义，对标 calendarWidget 族）。 */
+            XCalendarWidget* cal1 = XDateTimeEdit_calendarWidget(&dt);
+            XAPI_EXPECT(cal1 != NULL,
+                        "DateTimeEdit calendarWidget 懒创建非空（对标 calendarWidget）");
+            XAPI_EXPECT(cal1 != NULL &&
+                        XDateTimeEdit_calendarWidget(&dt) == cal1,
+                        "DateTimeEdit calendarWidget 二次访问同指针（懒创建幂等）");
+            {
+                /* 联动单向性：setDate 不回写日历（回写仅经弹层开启同步
+                 * 与日历选中→编辑框方向，防回环——联动槽注释口径）。 */
+                XDate d2;
+                XDate calSel;
+                XDate_setDate(&d2, 2024, 6, 15);
+                XDateTimeEdit_setDate(&dt, &d2);
+                calSel = cal1 ? XCalendarWidget_selectedDate(cal1) : d2;
+                XAPI_EXPECT(XDate_compare(&calSel, &d2) != 0,
+                            "DateTimeEdit setDate 不回写日历（联动单向：日历→编辑框）");
+            }
+            {
+                /* 外部日历接管/释放（对标 setCalendarWidget 语义）。 */
+                XCalendarWidget* ext = XCalendarWidget_create(NULL, 0);
+                XDate d3;
+                XDate back;
+                XDate_setDate(&d3, 2023, 1, 9);
+                XCalendarWidget_setSelectedDate(ext, &d3);
+                XDateTimeEdit_setCalendarWidget(&dt, ext);
+                XAPI_EXPECT(XDateTimeEdit_calendarWidget(&dt) == ext,
+                            "DateTimeEdit setCalendarWidget 接管外部日历");
+                back = XDateTimeEdit_date(&dt);
+                XAPI_EXPECT(XDate_compare(&back, &d3) == 0,
+                            "DateTimeEdit setCalendarWidget 以日历选中回填编辑框");
+                XDateTimeEdit_setCalendarWidget(&dt, NULL);
+                XAPI_EXPECT(XDateTimeEdit_calendarWidget(&dt) != NULL &&
+                            XDateTimeEdit_calendarWidget(&dt) != ext,
+                            "DateTimeEdit setCalendarWidget(NULL) 释放后懒创建重建内置日历");
+            }
+        }
 #endif
 
         /* ---- NULL/越界边界 ---- */

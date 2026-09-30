@@ -278,6 +278,12 @@ typedef struct XWNPendingEntry
     bool m_deferredActivation;         /**< 窗口未映射期间的激活请求挂起
                                             （对齐 QXcbWindow::m_deferredActivation，
                                             MapNotify 后补激活）。 */
+    bool m_deferGeometry;              /**< 几何挂起臂（拖拽改尺寸手势期）：
+                                            setGeometry 只记账不落窗，落窗
+                                            改由 present 与内容同批执行。 */
+    bool m_hasPendingGeom;             /**< 有挂起几何待 present 批内落地。 */
+    XRect m_pendingGeom;               /**< 挂起待落地几何（钳边后口径，与
+                                            XMoveResizeWindow 实参一致）。 */
 } XWNPendingEntry;
 
 /** @brief 每进程 X11 连接状态。 */
@@ -4632,6 +4638,14 @@ bool XPlatformNativeWindow_create(XWindow* window)
     attr.background_pixel = 0u;
     attr.border_pixel = 0u;
     attr.colormap = g_xpwnColormap;
+    /* 位重力 NorthWest：改尺寸时服务器保留旧内容，扩区只按背景像素补
+     * 新条带——默认 ForgetGravity 下每步 XMoveResizeWindow 服务器把
+     * 整窗按 background_pixel=0 重铺，是拖拽黑闪的服务器侧源头；与
+     * present 批内落窗配合（挂起几何与整窗内容同一请求批生效），把
+     * 「ConfigureWindow 已处理、PutImage 流式落地中」的微秒级窗口内的
+     * 可见黑态从整窗压到条带。客户端语义不变：扩区 Expose 照发，本框
+     * 架 Expose 一律升整窗重绘。 */
+    attr.bit_gravity = NorthWestGravity;
     /* 本窗口实际使用的视觉/深度（普通窗口 = 进程选定 TrueColor 视觉；
      * override-redirect 瞬态弹层在下方按屏幕默认视觉改选——present 路径
      * 按本值创建匹配深度的 XImage，见 xpwn_preparePresentImage）。 */
@@ -4700,7 +4714,8 @@ bool XPlatformNativeWindow_create(XWindow* window)
                          geom.x, geom.y, (unsigned)w, (unsigned)h, 0,
                          entryDepth, InputOutput, entryVisual,
                          CWBackPixel | CWBorderPixel | CWColormap |
-                             CWEventMask | CWOverrideRedirect,
+                             CWEventMask | CWOverrideRedirect |
+                             CWBitGravity,
                          &attr);
     if (!xwin) return false;
 
@@ -4983,6 +4998,17 @@ void XPlatformNativeWindow_destroy(XWindow* window)
 
 /* ==================== 属性同步（平台后端提供） ==================== */
 
+/** @brief 把挂起几何落入 X 请求缓冲（调用方负责同批提交内容后再冲刷）。 */
+static void xpwn_applyPendingGeometry(XWNPendingEntry* entry)
+{
+    if (!entry->m_hasPendingGeom) return;
+    XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+                      entry->m_pendingGeom.x, entry->m_pendingGeom.y,
+                      (unsigned)entry->m_pendingGeom.width,
+                      (unsigned)entry->m_pendingGeom.height);
+    entry->m_hasPendingGeom = false;
+}
+
 bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
 {
     XWNPendingEntry* entry;
@@ -4990,6 +5016,8 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return false;
     if (visible) {
+        /* 映射前先落挂起几何：map+configure 同批，避免按旧几何映射后再跳位。 */
+        xpwn_applyPendingGeometry(entry);
         XMapWindow(g_xpwnDisplay, entry->m_win);
     } else {
         XUnmapWindow(g_xpwnDisplay, entry->m_win);
@@ -5014,10 +5042,35 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
         return true;
     w = geometry->width < 1 ? 1 : geometry->width;
     h = geometry->height < 1 ? 1 : geometry->height;
+    entry->m_client = *geometry;
+    if (entry->m_deferGeometry) {
+        /* 拖拽改尺寸手势期：只记账不落窗，几何由 present 与整窗内容同批
+           落地（根因见 deferGeometry 注）。挂起值存钳边后口径，与立即路
+           XMoveResizeWindow 实参逐字段一致；挂起期内重复 setGeometry 以
+           最新值为准（覆盖式），present 消费后清标记。 */
+        entry->m_pendingGeom.x = geometry->x;
+        entry->m_pendingGeom.y = geometry->y;
+        entry->m_pendingGeom.width = w;
+        entry->m_pendingGeom.height = h;
+        entry->m_hasPendingGeom = true;
+        return true;
+    }
+    /* 立即路径作废可能残留的挂起几何（解挂后的即时几何已覆盖其语义）。 */
+    entry->m_hasPendingGeom = false;
     XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
                       geometry->x, geometry->y, (unsigned)w, (unsigned)h);
-    entry->m_client = *geometry;
     XFlush(g_xpwnDisplay);
+    return true;
+}
+
+bool XPlatformNativeWindow_deferGeometry(XWindow* window, bool deferred)
+{
+    XWNPendingEntry* entry;
+    if (!window) return false;
+    if (!xpwn_ensureConnection()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_win) return false;
+    entry->m_deferGeometry = deferred;
     return true;
 }
 
@@ -6066,6 +6119,10 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     if (!xpwn_ensureConnection()) return false;
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return false;
+    /* 挂起几何与内容同批落地：ConfigureWindow 先于 PutImage 进请求缓冲、
+       函数尾 XFlush 一次冲刷——服务器按 background_pixel 填黑的中间态没有
+       上屏机会（拖拽改尺寸「服务器先黑、客户端后补」单帧黑闪的根修点）。 */
+    xpwn_applyPendingGeometry(entry);
     imgW = XImage_width(image);
     imgH = XImage_height(image);
     if (imgW <= 0 || imgH <= 0) return false;

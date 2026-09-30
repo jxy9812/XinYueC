@@ -176,8 +176,14 @@ static XRect xpe_viewportRect(const XPlainTextEdit* self)
         XRect_init(&r, 0, 0, 0, 0);
         return r;
     }
-    XRect_init(&r, 0, 0, XWidget_width((XWidget*)self),
-               XWidget_height((XWidget*)self));
+    /* 对标 Qt：内容矩形=viewport 口径（滚动条显隐收缩后绘制/命中/
+     * 折行三处共用同一宽高，防止行尾文字伸进滚动条下方）。 */
+    if (self->m_base.m_viewport)
+        XRect_init(&r, 0, 0, XWidget_width(self->m_base.m_viewport),
+                   XWidget_height(self->m_base.m_viewport));
+    else
+        XRect_init(&r, 0, 0, XWidget_width((XWidget*)self),
+                   XWidget_height((XWidget*)self));
     return r;
 }
 
@@ -605,11 +611,17 @@ static void xpe_ctlUpdateRequestSlot(XObject* receiver, XVarList* args)
 }
 
 /** @brief 转发槽：documentSizeChanged → 内容尺寸联动（滚动区机制）。 */
+static void xpe_updateWrapWidth(XPlainTextEdit* self);
+
 static void xpe_ctlDocumentSizeSlot(XObject* receiver, XVarList* args)
 {
     XPlainTextEdit* self = (XPlainTextEdit*)receiver;
     if (!args || !self) return;
     XVarList_args_1(args, XSize, size);
+    /* 折行宽先按当前视口收紧再报内容尺寸：竖条显隐翻转改变视口宽后，
+     * 首个 documentSize 即把 textWidth 对齐视口，假水平溢出随之消失
+     * （对标 Qt resizeEvent → setTextWidth(viewport width) 的收敛）。 */
+    xpe_updateWrapWidth(self);
     /* 与原 xpe_afterChange 口径一致：高度附加 4px 绘制余量。 */
     XAbstractScrollArea_setContentSize((XAbstractScrollArea*)self,
                                        size.width, size.height + 4);
@@ -769,7 +781,12 @@ static void xpe_updateWrapWidth(XPlainTextEdit* self)
 {
     if (!self || !self->m_control) return;
     if (self->m_wrapMode == (int)XPlainTextEditMode_WidgetWidth) {
-        int w = XWidget_width((XWidget*)self) - XPE_TEXT_LEFT;
+        /* 对标 Qt：折行宽=viewport 宽（滚动条显隐收缩视口后随之收紧，
+         * qplaintextedit.cpp 折行口径）。此前用控件全宽，竖条显示的
+         * 16px 被计入折行宽，造成假水平溢出（水平条 max=14 常驻）。 */
+        int w = self->m_base.m_viewport
+                    ? XWidget_width(self->m_base.m_viewport) - XPE_TEXT_LEFT
+                    : XWidget_width((XWidget*)self) - XPE_TEXT_LEFT;
         if (w < 1) w = 1;
         XTextControl_setTextWidth(self->m_control, w);
     } else {
@@ -1141,6 +1158,47 @@ static void VX_plainTextEdit_resizeEvent(XWidget* self, XEvent* event)
     if (edit) xpe_updateWrapWidth(edit);
 }
 
+/** @brief 滚轮 → 滚动条步进（同 XScrollArea.c:150 复扫 r2 #48 口径：
+ *         主导轴选条、value −= steps*3*20（正角度=滚向内容开头减小值）。
+ *         此前继承基类 VX_asa_wheelEvent 的 stepBy(steps*3)：符号与
+ *         Qt scrollByDelta 相反且单步缺省 1px，下滚零位移。setValue
+ *         内部钳位，valueChanged → scrollContentsBy → 重绘链既有。 */
+static void VX_plainTextEdit_wheelEvent(XWidget* self, XEvent* event)
+{
+    XPlainTextEdit* edit = (XPlainTextEdit*)self;
+    XAbstractScrollArea* base;
+    XScrollBar* bar;
+    XPoint delta;
+    int steps;
+    int value;
+    if (!edit || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+#if XWINDOWEVENT_ON
+    delta = XWheelEvent_angleDelta((XWheelEvent*)event);
+#else
+    delta.x = 0;
+    delta.y = 0;
+#endif
+    {
+        int ay = delta.y >= 0 ? delta.y : -delta.y;
+        int ax = delta.x >= 0 ? delta.x : -delta.x;
+        base = (XAbstractScrollArea*)edit;
+        if (ax > ay) {
+            steps = -(delta.x / 120); /* 横向取反（Qt scrollByDelta）。 */
+            bar = XAbstractScrollArea_horizontalScrollBar(base);
+        } else {
+            steps = delta.y / 120;
+            bar = XAbstractScrollArea_verticalScrollBar(base);
+        }
+    }
+    if (steps == 0 || !bar) {
+        XEvent_accept(event);
+        return;
+    }
+    value = XScrollBar_value(bar) - steps * 3 * 20;
+    XScrollBar_setValue(bar, value);
+    XEvent_accept(event);
+}
+
 static void VX_plainTextEdit_scrollContentsBy(XAbstractScrollArea* self, int dx, int dy)
 {
     XPlainTextEdit* edit;
@@ -1221,6 +1279,7 @@ XVtable* XPlainTextEdit_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, VX_plainTextEdit_contextMenuEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_plainTextEdit_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_plainTextEdit_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_plainTextEdit_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy, VX_plainTextEdit_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_plainTextEdit_deinit);
     return XVTABLE_DEFAULT;
@@ -1345,6 +1404,10 @@ void XPlainTextEdit_insertPlainText(XPlainTextEdit* self, const char* utf8)
 {
     if (!self || !self->m_control || !utf8) return;
     XTextControl_insertPlainText(self->m_control, utf8);
+    /* 对标 Qt：插入后光标保持可见（QPlainTextEdit 键入/插入路径的
+     * ensureCursorVisible 语义）。此前视口滞留顶部：插入多行后光标在
+     * 末尾而视口不跟随，滚轮上滚在 value=0 端点钳位呈零位移。 */
+    XTextControl_ensureCursorVisible(self->m_control);
 }
 
 void XPlainTextEdit_clear(XPlainTextEdit* self)

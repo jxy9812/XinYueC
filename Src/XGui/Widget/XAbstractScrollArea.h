@@ -225,11 +225,8 @@ XAbstractScrollAreaSizeAdjustPolicy XAbstractScrollArea_sizeAdjustPolicy(
 void XAbstractScrollArea_setSizeAdjustPolicy(
     XAbstractScrollArea* self, XAbstractScrollAreaSizeAdjustPolicy policy);
 
-/* ==================== 保护槽入口（对标 protected scrollContentsBy） ==== */
-
-/** @brief 内容滚动槽：滚动条变化后由基类调用（dx/dy 为增量）。 */
-void XAbstractScrollArea_scrollContentsBy_base(XAbstractScrollArea* self,
-                                               int dx, int dy);
+/* 保护槽入口（scrollContentsBy_base/resizeEvent_base）声明于
+ * XAbstractScrollArea_Protected.h；本公共头仅保留公开 API。 */
 
 #ifdef __cplusplus
 }

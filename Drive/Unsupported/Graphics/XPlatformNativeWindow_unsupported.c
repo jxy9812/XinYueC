@@ -79,6 +79,12 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     return false;
 }
 
+bool XPlatformNativeWindow_deferGeometry(XWindow* window, bool deferred)
+{
+    (void)window; (void)deferred;
+    return false;
+}
+
 bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
 {
     (void)window; (void)title;

@@ -510,6 +510,8 @@ static void xwd_endInteractions(XWindowDecorationState* st)
         XWidget_releaseMouse(st->m_top);
         xwd_platformGrab(st, false);
     }
+    if (st->m_resizing)
+        XPlatformNativeWindow_deferGeometry(st->m_window, false);
     st->m_dragging = false;
     st->m_resizing = false;
     st->m_armed = 0;
@@ -1130,6 +1132,7 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
             if (st->m_dragging || st->m_resizing) {
                 st->m_dragging = false;
                 st->m_resizing = false;
+                XPlatformNativeWindow_deferGeometry(st->m_window, false);
                 XWidget_releaseMouse(top);
                 xwd_platformGrab(st, false);
             }
@@ -1151,6 +1154,13 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                     st->m_resizeAnchor =
                         XMouseEvent_globalPosition(mouse);
                     st->m_resizeGeometry = XWidget_geometry(top);
+                    /* 几何挂起至 present 批内落地：拖拽每步若立即
+                       XMoveResizeWindow，服务器按 background_pixel=0
+                       （ForgetGravity 口径整窗）当场填黑扩区，盖黑帧要
+                       等下一轮 PAINT——桌面 X11 四方位同源的单帧黑闪
+                       根因；挂起后几何与整窗内容同一请求批生效，黑态
+                       无窗口期。 */
+                    XPlatformNativeWindow_deferGeometry(st->m_window, true);
                     /* 节流戳不清零（全局连续间隔）：幻触 PRESS 清戳
                        会打穿限帧闸，见 xwd_resizeThrottleSkip 注。 */
                     XWidget_grabMouse(top);
@@ -1282,6 +1292,9 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
         }
         if (st->m_resizing) {
             st->m_resizing = false;
+            /* 尾帧挂起几何由松手后的整窗 PAINT present 消费（release 末次
+               applyResize 已重挂同值），此处仅恢复立即落窗。 */
+            XPlatformNativeWindow_deferGeometry(st->m_window, false);
             XWidget_releaseMouse(top);
             xwd_platformGrab(st, false);
             xwd_clearOutsideWindow(st);

@@ -799,18 +799,14 @@ static void xte_paintFrag(XTextEdit* self, const XTERichGeom* geom, void* ud)
 static void xte_updatePreviewScroll(XTextEdit* self)
 {
 #if XTEXTDOCUMENT_ON
-    XScrollBar* vsb;
     int contentH;
-    int viewH;
     if (!self || !self->m_richPreview) return;
     contentH = xte_walkRich(self, NULL, NULL);
-    vsb = XAbstractScrollArea_verticalScrollBar(
-        (const XAbstractScrollArea*)self);
-    if (!vsb) return;
-    viewH = XWidget_height((XWidget*)self);
-    XAbstractSlider_setRange((XAbstractSlider*)vsb, 0,
-                             contentH > viewH ? contentH - viewH : 0);
-    XScrollBar_setPageStep(vsb, viewH > 0 ? viewH : 1);
+    /* 统一走基类内容尺寸口径：AsNeeded 显隐/范围/几何排布/翻页步进
+       均由基类 updateScrollBars 维护（此前直设滚动条 range 绕过基类，
+       m_contentHeight 恒 0，resize/显隐联动脱节，条滞留默认几何）。 */
+    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)self,
+                                       0, contentH);
 #endif
 }
 
@@ -856,6 +852,9 @@ static void xte_exitPreview(XTextEdit* self)
     self->m_richPreview = false;
     xte_resetAnchorState(self);
     if (self->m_editor) XWidget_show((XWidget*)self->m_editor);
+    /* 清预览态内容尺寸：编辑态壳滚动条按 AsNeeded 回归隐藏，
+       内嵌编辑器重新占满视口（防与壳滚动条几何重叠）。 */
+    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)self, 0, 0);
     XWidget_update((XWidget*)self);
 }
 
@@ -995,11 +994,78 @@ static void VX_textEdit_mouseMoveEvent(XWidget* self, XEvent* event)
 static void VX_textEdit_resizeEvent(XWidget* self, XEvent* event)
 {
     XTextEdit* te = (XTextEdit*)self;
+    XWidget* vp;
     if (!te || !te->m_editor) return;
-    XWidget_setGeometry((XWidget*)te->m_editor, 0, 0,
-                        XWidget_width(self), XWidget_height(self));
+    /* 先回调基类：视口/滚动条/corner 几何排布（对标 QAbstractScrollArea::
+       resizeEvent 的 updateScrollBars+updateWidgetPosition 链；此前缺失
+       导致滚动条滞留默认几何、AsNeeded 显隐永不联动）。 */
+    XClass_Parent(XAbstractScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    /* 内嵌编辑器=内容视图：铺基类视口（滚动条显示时右缘让位，对标
+       Qt QTextEdit 的 viewport 扣除条宽；编辑态壳条隐藏时视口=整窗，
+       几何与既有行为一致）。 */
+    vp = XAbstractScrollArea_viewport((const XAbstractScrollArea*)te);
+    if (vp) {
+        XWidget_setGeometry((XWidget*)te->m_editor, 0, 0,
+                            XWidget_width(vp), XWidget_height(vp));
+    } else {
+        XWidget_setGeometry((XWidget*)te->m_editor, 0, 0,
+                            XWidget_width(self), XWidget_height(self));
+    }
     /* 预览态视口高度变化：滚动范围随之刷新。 */
     xte_updatePreviewScroll(te);
+}
+
+/** @brief 预览态滚动平移重绘：内容随滚动条取值平移后整体重绘
+ *         （paintEvent 内按条值 translate；对标 QTextEdit::
+ *         scrollContentsBy 末尾 viewport()->update()）。 */
+static void VX_textEdit_scrollContentsBy(XAbstractScrollArea* self,
+                                         int dx, int dy)
+{
+    (void)dx;
+    (void)dy;
+    if (self) XWidget_update((XWidget*)self);
+}
+
+/** @brief 滚轮 → 滚动条步进（同 XScrollArea.c:150 复扫 r2 #48 口径：
+ *         主导轴选条、value −= steps*3*20（正角度=滚向内容开头减小值）。
+ *         此前继承基类 VX_asa_wheelEvent 的 stepBy(steps*3)：符号与
+ *         Qt scrollByDelta 相反且单步缺省 1px，预览态下滚零位移。
+ *         编辑态事件由内嵌 XPlainTextEdit 同款虚槽承接。 */
+static void VX_textEdit_wheelEvent(XWidget* self, XEvent* event)
+{
+    XTextEdit* te = (XTextEdit*)self;
+    XAbstractScrollArea* base;
+    XScrollBar* bar;
+    XPoint delta;
+    int steps;
+    int value;
+    if (!te || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+#if XWINDOWEVENT_ON
+    delta = XWheelEvent_angleDelta((XWheelEvent*)event);
+#else
+    delta.x = 0;
+    delta.y = 0;
+#endif
+    {
+        int ay = delta.y >= 0 ? delta.y : -delta.y;
+        int ax = delta.x >= 0 ? delta.x : -delta.x;
+        base = (XAbstractScrollArea*)te;
+        if (ax > ay) {
+            steps = -(delta.x / 120); /* 横向取反（Qt scrollByDelta）。 */
+            bar = XAbstractScrollArea_horizontalScrollBar(base);
+        } else {
+            steps = delta.y / 120;
+            bar = XAbstractScrollArea_verticalScrollBar(base);
+        }
+    }
+    if (steps == 0 || !bar) {
+        XEvent_accept(event);
+        return;
+    }
+    value = XScrollBar_value(bar) - steps * 3 * 20;
+    XScrollBar_setValue(bar, value);
+    XEvent_accept(event);
 }
 
 static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
@@ -1121,6 +1187,9 @@ XVtable* XTextEdit_class_init(void)
     XVTABLE_INIT_DEFAULT(XTextEdit)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_textEdit_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
+                             VX_textEdit_scrollContentsBy);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_textEdit_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_textEdit_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_textEdit_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VX_textEdit_mouseReleaseEvent);
@@ -1175,6 +1244,26 @@ static void xte_fwdUndoAvailable(XObject* receiver, XVarList* args)
 static void xte_fwdRedoAvailable(XObject* receiver, XVarList* args)
 { xte_fwdVoid(receiver, args, (size_t)XTextEdit_redoAvailable_signal); }
 
+/** @brief 内嵌编辑器文档尺寸变化：重铺编辑器=基类视口几何。
+ *  对标 Qt：滚动条显隐收缩视口后内容视图必须跟随（折行宽=视口宽，
+ *  qplaintextedit.cpp 折行宽取 viewport）。此前编辑器滞留旧几何
+ *  （300 宽盖住竖条区），折行宽虚增 16px 假水平溢出，且其水平条
+ *  显隐恒真不再翻转、几何永久滞留旧值挂在中部。 */
+static void xte_editorDocSizeSlot(XObject* receiver, XVarList* args)
+{
+    XTextEdit* te = (XTextEdit*)receiver;
+    XWidget* vp;
+    (void)args;
+    if (!te || !te->m_editor || te->m_richPreview) return;
+    vp = XAbstractScrollArea_viewport((const XAbstractScrollArea*)te);
+    if (vp && (XWidget_width((XWidget*)te->m_editor) != XWidget_width(vp) ||
+               XWidget_height((XWidget*)te->m_editor) !=
+                   XWidget_height(vp))) {
+        XWidget_setGeometry((XWidget*)te->m_editor, 0, 0,
+                            XWidget_width(vp), XWidget_height(vp));
+    }
+}
+
 static void xte_connectEditorSignals(XTextEdit* self)
 {
     XObject* ed;
@@ -1185,6 +1274,12 @@ static void xte_connectEditorSignals(XTextEdit* self)
                       XConnectionType_Direct)
     XTE_CONNECT(XPlainTextEdit_textChanged_signal(self->m_editor),
                 xte_fwdTextChanged);
+    /* documentSize 由编辑器内部控制器发射：sender 必须是 m_control
+     * （与 XPlainTextEdit_init 的 XPE_CONNECT 同一 sender/id 口径）。 */
+    XObject_connect_1((XObject*)self->m_editor->m_control,
+                      (size_t)XTextControl_documentSizeChanged_signal,
+                      (XObject*)self, xte_editorDocSizeSlot,
+                      XConnectionType_Direct);
     XTE_CONNECT(XPlainTextEdit_cursorPositionChanged_signal(self->m_editor),
                 xte_fwdCursorPositionChanged);
     XTE_CONNECT(XPlainTextEdit_selectionChanged_signal(self->m_editor),

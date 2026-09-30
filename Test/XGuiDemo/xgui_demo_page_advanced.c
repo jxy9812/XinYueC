@@ -167,6 +167,8 @@
 #endif
 #if ADV_SPLASH_ON
 #include "XSplashScreen.h"
+#include "XGuiApplication.h"   /* 主屏查询（启动画面居屏） */
+#include "XScreen.h"           /* 屏幕几何 */
 #endif
 #if ADV_MAINWIN_ON
 #include "XMainWindow.h"
@@ -393,15 +395,51 @@ static void adv_btnSplashSlot(XObject* receiver, XVarList* args)
     (void)receiver;
     (void)args;
     if (!s_adv.splash) {
-        /* 顶层窗口（parent=NULL）；演示期常驻复用，随进程退出回收。 */
-        s_adv.splash = XSplashScreen_create(NULL, 0);
+        /* 顶层窗口（parent=NULL）；演示期常驻复用，随进程退出回收。
+         * 窗口类型对标 QSplashScreen 默认 Qt::SplashScreen：框架
+         * 「瞬态类型永不装饰」策略按类型位生效（真·无边框）；传 0
+         * 会被 XWidget_init 补成普通 Window，桌面 WM 下错误地带
+         * 原生标题栏。 */
+        s_adv.splash = XSplashScreen_create(NULL, XWindowType_SplashScreen);
         if (!s_adv.splash) return;
-        XSplashScreen_showMessage(s_adv.splash,
-                                  "XGui 高级控件页启动画面…",
-                                  XAlignment_Left | XAlignment_Bottom,
-                                  0xFFE6E6E6u); /* 黑底浅灰字，保证对比度可读 */
+        /* 对标 QSplashScreen 惯用法：先 setPixmap 背景图（按图定尺寸，
+         * 实现内为深拷贝，栈上临时随即释放），再 showMessage 叠字。
+         * 加载失败时保持无图黑底路径（浅灰字），行为不劣于旧版。 */
+        {
+            XPixmap logo;
+            bool hasLogo;
+            XPixmap_init(&logo);
+            hasLogo = XPixmap_load_2(&logo, "assets/运行.png", "PNG", 0);
+            if (hasLogo)
+                XSplashScreen_setPixmap(s_adv.splash, &logo);
+            XPixmap_deinit_base(&logo);
+            XSplashScreen_showMessage(s_adv.splash,
+                                      "XGui 高级控件页启动画面…",
+                                      XAlignment_Left | XAlignment_Bottom,
+                                      hasLogo ? 0xFF1A1A1Au
+                                              : 0xFFE6E6E6u);
+        }
+    }
+    /* 对标 Qt 惯用法（QSplashScreen 不自动居屏，由应用 move 到屏幕
+     * 中央，同 XFileDialog 无父窗口分支的居屏公式）：每次显示前
+     * 统一居屏，避免落 (0,0) 角落。 */
+    {
+        XScreen* screen = XGuiApplication_primaryScreen();
+        if (screen) {
+            XRect g = XScreen_geometry(screen);
+            XWidget* sp = (XWidget*)s_adv.splash;
+            int sw = XWidget_width(sp);
+            int sh = XWidget_height(sp);
+            XWidget_move(sp,
+                         g.x + (g.width > sw ? (g.width - sw) / 2 : 0),
+                         g.y + (g.height > sh ? (g.height - sh) / 2 : 0));
+        }
     }
     XWidget_show((XWidget*)s_adv.splash);
+    /* 对标 Qt "show 后立即上屏"：演示主循环限帧（HUD 2~10fps）且高
+     * 负载下 PAINT 延迟 0.7~4s，异步首绘可能晚于 1.5s finish 而
+     * 全程不可见（"点击无反应"）；repaint 同步绘制+提交兜底。 */
+    XSplashScreen_repaint(s_adv.splash);
     XTimer_singleShot1(1500, (XObject*)s_adv.splash, adv_splashTimeoutSlot,
                        XConnectionType_Direct);
     adv_status("XSplashScreen: 启动画面显示中（1.5s 后自动关闭）");
@@ -1169,7 +1207,8 @@ int demo_page_advanced_autotest(XWidget* page)
      * 结束前销毁（防 ASan 泄漏）。 ---- */
 #if ADV_SPLASH_ON
     {
-        XSplashScreen* splash = XSplashScreen_create(NULL, 0);
+        XSplashScreen* splash = XSplashScreen_create(NULL,
+                                                     XWindowType_SplashScreen);
         ADV_EXPECT(splash != NULL, "XSplashScreen 临时实例创建");
         if (splash) {
             XSplashScreen_showMessage(splash, "自动测试启动画面",

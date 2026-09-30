@@ -1433,12 +1433,25 @@ static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event)
 #endif /* XPAINTER_CLIP_ON */
     /* 1) 底色（裁剪已把填充限制在脏区内）。 */
     XPainter_fillRect(&painter, &dirty, base);
-    /* 2) 水平表头。 */
-    XPainter_fillRect(&painter,
-        &(XRect){0, 0, w, tw->m_headerHeight}, button);
-    XPainter_setPen(&painter, dark);
-    XPainter_drawLine(&painter, 0, tw->m_headerHeight - 1,
-                      w, tw->m_headerHeight - 1);
+    /* 2) 水平表头：段带（角按钮+列段）止于末段右缘；其外的超长区域
+       保持 1) 的底色、不铺任何表头色也不画线——若按 Qt 字面语义铺
+       CE_HeaderEmptyArea=window 色，默认调色板 window=button 同为
+       #efefef，空区仍读作"无标题的灰第三列"（用户裁定不收），故此
+       处以底色收束，与 XHeaderView 空区观感一致。此前整带宽铺按钮
+       色且底线画到控件右缘，空区被读成无标签幻影列。 */
+    {
+        int bandEnd = tw->m_headerWidth; /* 角按钮区恒属段带。 */
+        if (tw->m_columns > 0)
+            bandEnd = xtw_colX(tw, tw->m_columns - 1)
+                + tw->m_base.m_colWidths[tw->m_columns - 1] - ho;
+        if (bandEnd < tw->m_headerWidth) bandEnd = tw->m_headerWidth;
+        if (bandEnd > w) bandEnd = w;
+        XPainter_fillRect(&painter,
+            &(XRect){0, 0, bandEnd, tw->m_headerHeight}, button);
+        XPainter_setPen(&painter, dark);
+        XPainter_drawLine(&painter, 0, tw->m_headerHeight - 1,
+                          bandEnd - 1, tw->m_headerHeight - 1);
+    }
     if (dirty.y < tw->m_headerHeight) {
     for (col = 0; col < tw->m_columns; ++col) {
         int cx = xtw_colX(tw, col) - ho;

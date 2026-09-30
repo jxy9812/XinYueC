@@ -2782,6 +2782,9 @@ static DemoWin* DemoWin_create(void)
     XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 200, 26);
     XWidget_setGeometry((XWidget*)&self->m_dtEdit, 10, 10, 250, 28);
     XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 220, 28);
+    /* 对标 QDateTimeEdit::setCalendarPopup(true)：点下拉箭头弹出
+     * XCalendarWidget 日历弹层（弹层机器见 XDateTimeEdit.c）。 */
+    XDateTimeEdit_setCalendarPopup(&self->m_dtEdit, true);
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 10,
                                demo_wrapTabPage(self, (XWidget*)&self->m_dtEdit), "日期时间");
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 11,

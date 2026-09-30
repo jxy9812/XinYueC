@@ -2085,6 +2085,14 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     return true;
 }
 
+bool XPlatformNativeWindow_deferGeometry(XWindow* window, bool deferred)
+{
+    /* Win32 增量改尺寸管线（SetWindowPos 同步派发 WM_SIZE）无「服务器先
+       黑、客户端后补」窗口期，本任务不引入挂起批语义，恒 no-op。 */
+    (void)window; (void)deferred;
+    return false;
+}
+
 bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
 {
     XWNPendingEntry* entry;

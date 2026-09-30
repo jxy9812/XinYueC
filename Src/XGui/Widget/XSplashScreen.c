@@ -54,10 +54,8 @@ static void VX_splash_paintEvent(XWidget* self, XEvent* event)
     XPainter painter;
     XImage* image;
     XPoint offset;
-    int w;
     int h;
     if (!sp || !event) return;
-    w = XWidget_width(self);
     h = XWidget_height(self);
     image = XWidget_paintImage(self);
     if (!image) return;
@@ -69,6 +67,14 @@ static void VX_splash_paintEvent(XWidget* self, XEvent* event)
     offset = XWidget_paintOffset(self);
     if (offset.x != 0 || offset.y != 0)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    {
+        /* 确定性黑底：后备存储新页在 fbdev 双缓冲/GPU 路径上内容
+         * 未定义（此前黑观感只是 X11 calloc 零页的偶然），黑底必须
+         * 自填再叠 pixmap/文字。 */
+        XRect full;
+        XRect_init(&full, 0, 0, XWidget_width(self), h);
+        XPainter_fillRect(&painter, &full, 0xFF000000u);
+    }
 #if XPIXMAP_ON && XPAINTER_PIXMAP_ON
     if (sp->m_pixmap)
         XPainter_drawPixmap(&painter, sp->m_pixmap, 0, 0);
@@ -81,8 +87,6 @@ static void VX_splash_paintEvent(XWidget* self, XEvent* event)
                           XString_toUtf8(sp->m_message), sp->m_color);
         XFont_deinit_base(&font);
     }
-    (void)w;
-    (void)h;
     XPainter_deinit(&painter);
 }
 

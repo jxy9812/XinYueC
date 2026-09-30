@@ -155,10 +155,10 @@ static const char* xlcd_segments(char ch)
         { 0, 1, 4, 5, 6, 99, 0, 0},             /* 22   P            */
         { 4, 6, 99, 0, 0, 0, 0, 0},             /* 23   r            */
         { 2, 3, 4, 99, 0, 0, 0, 0},             /* 24   u            */
-        { 1, 2, 3, 4, 99, 0, 0, 0},             /* 25   U            */
+        { 1, 2, 3, 4, 5, 99, 0, 0},             /* 25   U            */
         { 1, 2, 3, 5, 6, 99, 0, 0},             /* 26   Y            */
         { 8, 9, 99, 0, 0, 0, 0, 0},             /* 27   :            */
-        { 0, 1, 2, 3, 99, 0, 0, 0},             /* 28   ' (度符号)   */
+        { 0, 1, 5, 6, 99, 0, 0, 0},             /* 28   ' (度符号)   */
         { 99, 0, 0, 0, 0, 0, 0, 0} };           /* 29   空格/非法    */
     if (ch >= '0' && ch <= '9') return segments[ch - '0'];
     if (ch >= 'A' && ch <= 'F') return segments[ch - 'A' + 12];
@@ -174,7 +174,9 @@ static const char* xlcd_segments(char ch)
     case 'o': return segments[21];
     case 'p': case 'P': return segments[22];
     case 'r': case 'R': return segments[23];
-    case 'u': case 'U': return segments[25];
+    case 's': case 'S': return segments[5];
+    case 'u': return segments[24];
+    case 'U': return segments[25];
     case 'y': case 'Y': return segments[26];
     case ':': return segments[27];
     case '\'': return segments[28];
@@ -303,23 +305,27 @@ static void xlcd_drawSegment(XLcdNumber* self, XPainter* painter,
     uint32_t color = (self->m_segmentStyle ==
                       (int)XLcdNumberSegmentStyle_Outline) ? off : on;
     /* 段厚对标 QLCDNumberPrivate::drawSegment（qlcdnumber.cpp:844
-     * width = segLen/5；此前 /8 偏细）。Flat 风格保持 1px 细段。 */
+     * width = segLen/5；此前 /8 偏细）。Flat 风格保持 1px 细段。
+     * 竖段/底段一律收进 segLen×2·segLen 单元格内侧（右竖 [segLen-w,segLen)、
+     * 底横 [2·segLen-w,2·segLen)、中横以 segLen 居中、点/冒号偏移按
+     * qlcdnumber.cpp:946-978）——此前右竖/底横画在单元格外侧，c/d、b/g
+     * 交接角无人覆盖，成 w×w 缺角（用户截图「3」缺角病灶）。 */
     int w = (self->m_segmentStyle == (int)XLcdNumberSegmentStyle_Flat)
                 ? 1 : (segLen / 5 < 1 ? 1 : segLen / 5);
     XRect r;
     switch (seg) {
     case 0: XRect_init(&r, x, y, segLen, w); break;                          /* a 顶 */
-    case 1: XRect_init(&r, x + segLen, y, w, segLen); break;                  /* b 右上 */
-    case 2: XRect_init(&r, x + segLen, y + segLen, w, segLen); break;          /* c 右下 */
-    case 3: XRect_init(&r, x, y + 2 * segLen, segLen, w); break;               /* d 底 */
+    case 1: XRect_init(&r, x + segLen - w, y, w, segLen); break;              /* b 右上 */
+    case 2: XRect_init(&r, x + segLen - w, y + segLen, w, segLen); break;      /* c 右下 */
+    case 3: XRect_init(&r, x, y + 2 * segLen - w, segLen, w); break;           /* d 底 */
     case 4: XRect_init(&r, x, y + segLen, w, segLen); break;                   /* e 左下 */
     case 5: XRect_init(&r, x, y, w, segLen); break;                            /* f 左上 */
-    case 6: XRect_init(&r, x, y + segLen, segLen, w); break;                   /* g 中 */
-    case 7: XRect_init(&r, x + segLen + w, y + 2 * segLen - w,
+    case 6: XRect_init(&r, x, y + segLen - w / 2, segLen, w); break;           /* g 中 */
+    case 7: XRect_init(&r, x + segLen / 2, y + 2 * segLen - w,
                        w, w); break;                                           /* 小数点 */
-    case 8: XRect_init(&r, x + segLen / 2 - w, y + segLen / 2,
+    case 8: XRect_init(&r, x + segLen / 2 - w / 2 + 1, y + segLen / 2,
                        w, w); break;                                           /* 冒号上 */
-    case 9: XRect_init(&r, x + segLen / 2 - w, y + 2 * segLen - w - segLen / 4,
+    case 9: XRect_init(&r, x + segLen / 2 - w / 2 + 1, y + 3 * segLen / 2,
                        w, w); break;                                           /* 冒号下 */
     default: return;
     }
@@ -403,7 +409,7 @@ static void VX_lcdNumber_paintEvent(XWidget* self, XEvent* event)
     }
     for (i = 0; i < ndigits; ++i) {
         int x = startX + i * dw;
-        int y = fw + (r.height - 2 * fw - (2 * segLen + 5)) / 2;
+        int y = fw + (r.height - 2 * fw - 2 * segLen) / 2;
         char ch = lcd->m_digitStr[i];
         bool pt = lcd->m_points[i] != 0;
         if (ch == '.') {
