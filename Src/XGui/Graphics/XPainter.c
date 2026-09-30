@@ -587,6 +587,32 @@ static bool xgpu_end_lean_requested(void)
     return requested != 0;
 }
 
+/* ==================== [quad-probe] drawLine 分路归因计数 ==================== */
+/* XGPU_QUAD_PROF=1 启用（与 VK 驱动 [xvkl-quad] 同开关）：painterGpuEndFrame
+   每帧输出一行 stderr——drawLine 各分路（轴向 quad/斜线 ext quad/斜线画布/
+   斜线 AA）的进入次数与 quad 提交失败次数。用于判定斜线段在 painter 侧
+   走了哪条通道、是否在 drawSolidQuad 处被拒。默认关：单次缓存 env 测试。 */
+static struct XPainterQuadProf
+{
+    uint32_t m_axisQuad;      /**< 轴对齐 quad 快速路径提交次数。 */
+    uint32_t m_axisQuadFalse; /**< 轴向 drawSolidQuad 返回 false 次数。 */
+    uint32_t m_diagExt;       /**< 斜线 ext quad 分支进入次数。 */
+    uint32_t m_diagExtFalse;  /**< 斜线 drawSolidQuad 返回 false 次数。 */
+    uint32_t m_diagCanvas;    /**< 斜线段落入 drawLineCanvas 次数。 */
+    uint32_t m_diagAa;        /**< 斜线段走 AA 光栅分支次数。 */
+} g_xpainterQuadProf;
+
+static bool xpainter_quad_prof_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        const char* v = XSystem_environment("XGPU_QUAD_PROF");
+        on = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
+    }
+    return on != 0;
+}
+
 /** @brief XGPU_ENV_CACHE 环境开关（默认开；"0"=回退逐次实时读取）。
  *  @details 帧率主攻（夜六）：XGUI_GPU_SYNC 门此前在 painterGpuSync-
  *           Requested 里每命令经 XSystem_environment→GetEnvironment-
@@ -718,8 +744,12 @@ static bool painterGpuSyncRequested(void)
 }
 
 /**
- * @brief 读取斜线 quad 快速路径扩展开关（XGPU_FASTPATH_EXT，默认开）。
- * @details 与 painterGpuSyncRequested 同口径："0"=关。扩展路由把非轴
+ * @brief 读取斜线 quad 快速路径扩展开关（XGPU_FASTPATH_EXT，默认关）。
+ * @details 与 painterGpuSyncRequested 同解析式，但注意语义：env 未设时
+ *          本开关恒为关（表达式 value&&... 未设即 0），注释此前误标
+ *          「默认开」与实现矛盾（六波 XGUI_QUAD_PROF 实测 diagExt=0、
+ *          斜线段全部落画布通道，2026-09-30 勘误）。设 "1" 显式开启：
+ *          扩展路由把非轴
  *          对齐 SolidLine 硬边线段（椭圆描边 32 段折线、箭头、对角
  *          连线等命令族）从批量画布回退改经 drawSolidQuad 提交；
  *          设 0 回退既有画布路径（行为回退开关）。
@@ -865,6 +895,16 @@ static void painterGpuEndFrame(XPainter* self)
 {
     uint64_t profT0;
     if (!self || !self->m_gpuActive) return;
+    if (xpainter_quad_prof_on())
+        fprintf(stderr,
+                "[xpainter-quad] axis=%u axisFalse=%u diagExt=%u "
+                "diagExtFalse=%u diagCanvas=%u diagAa=%u\n",
+                g_xpainterQuadProf.m_axisQuad,
+                g_xpainterQuadProf.m_axisQuadFalse,
+                g_xpainterQuadProf.m_diagExt,
+                g_xpainterQuadProf.m_diagExtFalse,
+                g_xpainterQuadProf.m_diagCanvas,
+                g_xpainterQuadProf.m_diagAa);
     profT0 = xpainter_prof_requested() ? xpainter_prof_now_ns() : 0;
     /* XGPU_END_LEAN：批不活跃免空转调用冲刷——flush 首行同一判定直返
        无副作用；开关=0 保持无条件调用旧口径。 */
@@ -3383,6 +3423,7 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
     if ((self->m_state.m_renderHints & XPainterRenderHint_Antialiasing) != 0u &&
         dx != 0 && dy != 0)
     {
+        if (xpainter_quad_prof_on()) g_xpainterQuadProf.m_diagAa += 1;
         return painterRaster_drawLineAntialiased(self, ix1, iy1, ix2, iy2,
                                                  width);
     }
@@ -3470,13 +3511,27 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
                重入。 */
             if (!painterGpuApplyStateClip(self))
                 goto drawLineCanvas;
-            return XGpuRenderBackend_drawSolidQuad(
-                self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
-                premul,
-                self->m_state.m_compositionMode ==
-                    XPainterCompositionMode_SourceOver);
+            {
+                bool quadOk = XGpuRenderBackend_drawSolidQuad(
+                    self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x,
+                    q4y, premul,
+                    self->m_state.m_compositionMode ==
+                        XPainterCompositionMode_SourceOver);
+                if (xpainter_quad_prof_on())
+                {
+                    g_xpainterQuadProf.m_axisQuad += 1;
+                    if (!quadOk) g_xpainterQuadProf.m_axisQuadFalse += 1;
+                }
+                /* 提交失败（顶点容量不足等）：回退画布重入而非丢段
+                   （此前 return false 直接丢段——容量临界帧尾段静默
+                   消失）。SYNC 契约下 fastpath 本就不该走，直退。 */
+                if (!quadOk && !painterGpuSyncRequested())
+                    goto drawLineCanvas;
+                return quadOk;
+            }
         }
-        /* 斜线 quad 快速路径（XGPU_FASTPATH_EXT 扩展路由，默认开）：
+        /* 斜线 quad 快速路径（XGPU_FASTPATH_EXT 扩展路由，默认关——env
+           未设时 painterGpuFastPathExtRequested 恒 false，需显式 "1"）：
            非轴对齐 SolidLine 硬边线段此前逐段落入下方批量画布回退
            （椭圆描边=32 段折线、箭头/对角连线皆此族），且与相邻原语
            交错时每命令触发一次暂存画布冲批上传——REGION_DISABLE 口径
@@ -3535,11 +3590,23 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
             q2x = bx - nx * hw + ex;  q2y = by - ny * hw + ey;
             q3x = ax + nx * hw - ex;  q3y = ay + ny * hw - ey;
             q4x = bx + nx * hw + ex;  q4y = by + ny * hw + ey;
-            return XGpuRenderBackend_drawSolidQuad(
-                self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x, q4y,
-                premul,
-                self->m_state.m_compositionMode ==
-                    XPainterCompositionMode_SourceOver);
+            {
+                bool quadOk = XGpuRenderBackend_drawSolidQuad(
+                    self->m_gpuBackend, q1x, q1y, q2x, q2y, q3x, q3y, q4x,
+                    q4y, premul,
+                    self->m_state.m_compositionMode ==
+                        XPainterCompositionMode_SourceOver);
+                if (xpainter_quad_prof_on())
+                {
+                    g_xpainterQuadProf.m_diagExt += 1;
+                    if (!quadOk) g_xpainterQuadProf.m_diagExtFalse += 1;
+                }
+                /* 提交失败（顶点容量不足等）：回退画布重入而非丢段
+                   （同轴向分支注释）。SYNC 契约下本分支不进入，直退。 */
+                if (!quadOk && !painterGpuSyncRequested())
+                    goto drawLineCanvas;
+                return quadOk;
+            }
         }
         /* 虚线非轴向段/圆头/零尺寸点/SYNC 契约/扩展开关关闭/状态裁剪
            不支持：软件光栅局部提交（不整帧降级）。端点已是设备坐标，
@@ -3547,6 +3614,8 @@ static bool painterRaster_drawLineDevice(XPainter* self, int ix1, int iy1,
         drawLineCanvas:
         {
             PainterGpuLineArgs args = { ix1, iy1, ix2, iy2 };
+            if (xpainter_quad_prof_on() && dx != 0 && dy != 0)
+                g_xpainterQuadProf.m_diagCanvas += 1;
             XRect lineRect;
             int lx0 = (ix1 < ix2 ? ix1 : ix2) - (int)width / 2 - 2;
             int ly0 = (iy1 < iy2 ? iy1 : iy2) - (int)width / 2 - 2;
@@ -6956,7 +7025,8 @@ static bool painterFillPathContours(XPainter* self,
         pathBounds.height = (int)(maxY - minY) + 1;
         if (painterGpuFillPathGradient(self, workContours, contourCount,
                                        &pathBounds, bg, fillRule))
-            return true;
+            goto done; /* 成功早退也须释放四临时缓冲（done: 统一释放并
+                          return true，语义不变；XFree_Hybrid(NULL) 安全） */
         /* 门控不满足：继续走下方覆盖图/扫描线路径。 */
     }
     /* 抗锯齿（Antialiasing 提示）时的填充：光栅化到灰度覆盖图再混合/
@@ -6972,8 +7042,16 @@ static bool painterFillPathContours(XPainter* self,
                      XPainterRenderHint_Antialiasing) != 0u;
 #endif /* XPAINTER_RENDERHINT_ON */
         if (antialias)
-            return painterFillContoursAntialiased(
+        {
+            /* 暂存返回值经 done:/fail: 统一释放四临时缓冲后返回，
+               返回值语义与直接 return 完全一致（true→done→true，
+               false→fail→false），修复成功/失败早退的确定性泄漏。 */
+            bool filled = painterFillContoursAntialiased(
                 self, workContours, contourCount, fillRule, brushColor, 4);
+            if (filled)
+                goto done;
+            goto fail;
+        }
     }
 #endif /* XPAINTER_PATH_ON */
 

@@ -1374,6 +1374,13 @@ void XWindowDecoration_notifyTopDestroyed(XWidget* top)
             /* 尾交换摘除（注册表无序，O(1) 删除）。 */
             g_xwdStates[i] = g_xwdStates[g_xwdCount - 1];
             --g_xwdCount;
+            if (g_xwdCount == 0) {
+                /* 全部摘除后释放块并复位，避免峰值容量长期占住；
+                 * 置空指针防悬挂（ensureState 按 NULL 重新懒分配）。 */
+                XMemory_free(g_xwdStates, XCLASS_DEFAULT_MEMORY_TYPE);
+                g_xwdStates = NULL;
+                g_xwdCapacity = 0;
+            }
             return;
         }
     }

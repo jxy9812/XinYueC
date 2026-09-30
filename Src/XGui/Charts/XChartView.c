@@ -489,11 +489,15 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
     uint32_t textY;
     bool visX;
     bool visY;
-    XFont font = XWidget_font((XWidget*)self);
+    XFont font;
     char buf[32];
     int i;
     int ticks;
     if (!ax || !ay) return;
+    /* 字体深拷贝下移到空轴早退之后（XWidget_font 契约：用后必须
+     * XFont_deinit_base）：此前先拷贝再在空轴处 return，副本（家族
+     * XString）随早退泄漏。 */
+    font = XWidget_font((XWidget*)self);
     /* 根因（R-106）：轴 m_visible 此前只存不用——setVisible(false) 后
      * 轴线/网格/标签照画。对标 QAbstractAxis::setVisible(false) 隐藏该轴
      * 全部可视元素（轴线、网格、次网格、标签、阴影带），双轴同隐时整段
@@ -2135,10 +2139,10 @@ static void VX_chartView_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VX_chartView_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 /** @brief 滚轮处理（虚表入口，定义见下）。 */
 static void VX_chartView_wheelEvent(XWidget* self, XEvent* event);
-#if XCHARTVIEW_STATIC_LAYER_ON
-/** @brief 析构处理（虚表入口，定义见下）。 */
+/** @brief 析构处理（虚表入口，定义见下）。不随 STATIC_LAYER 裁剪：
+ *         自有 m_chart 的释放（见定义处注释）在任何编译配置下都必须
+ *         挂入虚表。 */
 static void VX_chartView_deinit(XChartView* self);
-#endif /* XCHARTVIEW_STATIC_LAYER_ON */
 
 /** @brief 尺寸变化：静态层失效（§10.2 失效挂钩；层画布在新尺寸首帧
  *         重建，尺寸/格式比对在 renderToImage 入口兜底）。图例瓦片随
@@ -2158,16 +2162,28 @@ static void VX_chartView_resizeEvent(XWidget* self, XEvent* event)
     (void)event;
 }
 
-#if XCHARTVIEW_STATIC_LAYER_ON
-/** @brief 析构：释放静态层/图例瓦片画布（§8.0g 逐套 deinit 纪律）。 */
+/** @brief 析构：释放自有图表模型与静态层/图例瓦片画布（§8.0g 逐套
+ *         deinit 纪律）。 */
 static void VX_chartView_deinit(XChartView* self)
 {
     if (!self) return;
+    /* 自有 m_chart（XChartView_init 分配；setChart 转移所有权，头文件
+     * 契约「内部拥有」）必须随视图释放：此前析构不释放，窗口/对话框
+     * 关闭、视图重建轮换即泄漏图表连带双轴与标题/标签字符串（约
+     * 1.2KB/次）。释放方式与 XChartView_setChart 对旧模型的释放同型；
+     * 置 NULL 防悬垂。本重载此前整体在 XCHARTVIEW_STATIC_LAYER_ON 内，
+     * =0 裁剪构建连注册都没有，图表必然泄漏——故移出该开关（仅层画布
+     * 两行留在开关内：字段本身随头文件裁剪）。 */
+    if (self->m_chart) {
+        XChart_delete_base(self->m_chart);
+        self->m_chart = NULL;
+    }
+#if XCHARTVIEW_STATIC_LAYER_ON
     XImage_deinit_base(&self->m_staticLayer);
     XImage_deinit_base(&self->m_legendLayer);
+#endif /* XCHARTVIEW_STATIC_LAYER_ON */
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
-#endif /* XCHARTVIEW_STATIC_LAYER_ON */
 
 XVtable* XChartView_class_init(void)
 {
@@ -2179,9 +2195,8 @@ XVtable* XChartView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VX_chartView_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VX_chartView_mouseDoubleClickEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_chartView_wheelEvent);
-#if XCHARTVIEW_STATIC_LAYER_ON
+    /* 析构重载不随 STATIC_LAYER 裁剪：m_chart 的释放依赖它（定义处注释）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_chartView_deinit);
-#endif /* XCHARTVIEW_STATIC_LAYER_ON */
     return XVTABLE_DEFAULT;
 }
 

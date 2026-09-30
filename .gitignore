@@ -458,3 +458,4 @@ Tools/grade_blank.ps1
 Tools/bisect_drag.ps1
 Tools/_*.txt
 %T%
+diag/

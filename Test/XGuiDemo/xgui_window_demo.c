@@ -21,6 +21,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
+#include <stdarg.h> /* demo_log：va_list 转发 vprintf（诊断行立即落盘）。 */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -1315,24 +1316,35 @@ static bool demo_framePumpBody(void* userData)
                 if (session)
                 {
                     XImage shotImage;
+                    bool readOk;
                     XImage_init(&shotImage);
                     XImage_init_ex(&shotImage, XWidget_width(&demo->m_base),
                                    XWidget_height(&demo->m_base),
                                    XImageFormat_ARGB32);
                     /* 建立 GL 上下文后再读回 FBO（窗口模式首帧后不清除）。 */
                     XGpuRenderBackend_beginFrame(session);
-                    XGpuRenderBackend_readback(session, &shotImage);
+                    /* 读回结果必须检查：VK 窗口态 readback 修复前恒返
+                       false，未检查会把未填充的全零 XImage 存成全黑
+                       PNG（1974 字节根因）。失败落 paintImage 兜底。 */
+                    readOk = XGpuRenderBackend_readback(session, &shotImage);
                     XGpuRenderBackend_endWindowFrame();
-                    XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
-                            demo->m_screenshotPath);
-                    if (!XImage_save_2(&shotImage, demo->m_screenshotPath,
-                                       "PNG", 95))
-                        XPrintf("XGuiWindowDemo: 截图保存失败\n");
+                    if (readOk)
+                    {
+                        XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
+                                demo->m_screenshotPath);
+                        if (!XImage_save_2(&shotImage, demo->m_screenshotPath,
+                                           "PNG", 95))
+                            XPrintf("XGuiWindowDemo: 截图保存失败\n");
+                        XImage_deinit_base(&shotImage);
+                        demo_stopTimers(demo);
+                        demo->m_closed = true;
+                        XGuiApplication_quit();
+                        return false;
+                    }
                     XImage_deinit_base(&shotImage);
-                    demo_stopTimers(demo);
-                    demo->m_closed = true;
-                    XGuiApplication_quit();
-                    return false;
+                    /* readback 失败：不保存未填充图像，落到下方
+                       XWidget_paintImage 分支兜底保存。 */
+                    XPrintf("XGuiWindowDemo: GPU 读回失败，回退后备图像\n");
                 }
             }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -2100,15 +2112,25 @@ static void VDemoWin_paintEvent(XWidget* self, XEvent* event)
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON */
 }
 
+/* 事件处理器诊断日志（定义在 main 前紧邻 setvbuf）：重定向下 UCRT 忽略
+ * _IOLBF 行缓冲语义（实测仍按全缓冲，1KB 边界腰斩——见 main 内 setvbuf
+ * 注释），裸 printf 行只在缓冲满/进程退出时落盘，挂起时末行只剩半行。 */
+static int demo_log(const char* fmt, ...);
+
+/** @brief 诊断日志熔断开关（wave6 管道挂起缓解①）。demo_log 一旦观测到
+ *  底层写失败（vprintf 返回负 / fflush 返回 EOF——读端断开、共享流错误
+ *  态）即置位，后续调用直接短路返回，不再对失效句柄逐次阻塞重试。 */
+static bool g_logDisabled;
+
 /** @brief KeyPressEvent：打印键码/修饰键/自动重复（真实输入闭环验证）。 */
 static void VDemoWin_keyPressEvent(XWidget* self, XEvent* event)
 {
     XKeyEvent* key = (XKeyEvent*)event;
     (void)self;
     if (!key) return;
-    printf("XGuiWindowDemo: keyPress key=%d modifiers=0x%x autoRepeat=%d\n",
-           XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key),
-           (int)XKeyEvent_autoRepeat(key));
+    demo_log("XGuiWindowDemo: keyPress key=%d modifiers=0x%x autoRepeat=%d\n",
+             XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key),
+             (int)XKeyEvent_autoRepeat(key));
 }
 
 /** @brief KeyReleaseEvent：打印释放键码。 */
@@ -2117,8 +2139,8 @@ static void VDemoWin_keyReleaseEvent(XWidget* self, XEvent* event)
     XKeyEvent* key = (XKeyEvent*)event;
     (void)self;
     if (!key) return;
-    printf("XGuiWindowDemo: keyRelease key=%d modifiers=0x%x\n",
-           XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key));
+    demo_log("XGuiWindowDemo: keyRelease key=%d modifiers=0x%x\n",
+             XKeyEvent_key(key), (unsigned)XKeyEvent_modifiers(key));
 }
 
 /** @brief MousePressEvent：标题栏 ✕ 武装按压；背景区域处理性能悬浮层；
@@ -2128,9 +2150,9 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
     DemoWin* demo = (DemoWin*)self;
     XMouseEvent* mouse = (XMouseEvent*)event;
     if (!mouse) return;
-    printf("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
-           (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
-           (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
+    demo_log("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
+             (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
+             (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     {
         XPoint position = XMouseEvent_position(mouse);
@@ -2175,9 +2197,9 @@ static void VDemoWin_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     XMouseEvent* mouse = (XMouseEvent*)event;
     DemoWin* demo = (DemoWin*)self;
     if (!mouse) return;
-    printf("XGuiWindowDemo: mouseDoubleClick button=%d pos=(%d,%d)\n",
-           (int)XMouseEvent_button(mouse),
-           (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
+    demo_log("XGuiWindowDemo: mouseDoubleClick button=%d pos=(%d,%d)\n",
+             (int)XMouseEvent_button(mouse),
+             (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
 }
 
 /** @brief MouseMoveEvent：边缘改尺寸/标题栏拖拽/悬停热跟踪/悬浮层拖动。 */
@@ -2212,10 +2234,10 @@ static void VDemoWin_wheelEvent(XWidget* self, XEvent* event)
     (void)self;
     if (!wheel) return;
     delta = XWheelEvent_angleDelta(wheel);
-    printf("XGuiWindowDemo: wheel delta=(%d,%d) pos=(%d,%d)\n",
-           (int)delta.x, (int)delta.y,
-           (int)XWheelEvent_position(wheel).x,
-           (int)XWheelEvent_position(wheel).y);
+    demo_log("XGuiWindowDemo: wheel delta=(%d,%d) pos=(%d,%d)\n",
+             (int)delta.x, (int)delta.y,
+             (int)XWheelEvent_position(wheel).x,
+             (int)XWheelEvent_position(wheel).y);
 }
 
 /** @brief EnterEvent：打印进入坐标（局部+全局）。 */
@@ -2226,9 +2248,9 @@ static void VDemoWin_enterEvent(XWidget* self, XEvent* event)
     (void)self;
     if (!enter) return;
     global = XEnterEvent_globalPosition(enter);
-    printf("XGuiWindowDemo: enter pos=(%d,%d) global=(%d,%d)\n",
-           (int)XEnterEvent_position(enter).x, (int)XEnterEvent_position(enter).y,
-           (int)global.x, (int)global.y);
+    demo_log("XGuiWindowDemo: enter pos=(%d,%d) global=(%d,%d)\n",
+             (int)XEnterEvent_position(enter).x, (int)XEnterEvent_position(enter).y,
+             (int)global.x, (int)global.y);
 }
 
 /** @brief LeaveEvent：打印离开通知。 */
@@ -2236,7 +2258,7 @@ static void VDemoWin_leaveEvent(XWidget* self, XEvent* event)
 {
     (void)self;
     (void)event;
-    printf("XGuiWindowDemo: leave\n");
+    demo_log("XGuiWindowDemo: leave\n");
 }
 /** @brief 演示窗口类虚表初始化。 */
 static XVtable* DemoWin_class_init(void)
@@ -3120,6 +3142,46 @@ static int demo_pointerGrabQuery(void)
     return XWidget_mouseGrabber() != NULL;
 }
 
+/**
+ * @brief      事件处理器诊断日志：vprintf 后立即 fflush(stdout)。
+ * @details    printf 与 XPrintf→fwrite 共锁共缓冲；现场挂起冻结点正被
+ *             1KB 冲刷边界腰斩（stdout 终止于 enter 行 'global=(9'——
+ *             %d 中途），证明重定向下 UCRT 忽略 _IOLBF、实际全缓冲。
+ *             事件处理器诊断全部改走此处：每次调用即时落盘，下次挂起
+ *             时 stdout 末行即精确指向最后完成的处理器；共享流一旦
+ *             进入错误态，fflush 返回非 0 立即暴露，不再静默吞掉全部
+ *             后续诊断。输出文本与原裸 printf 逐字节一致。
+ * @param      fmt printf 风格格式串。
+ * @return     vprintf 写出字符数；fflush 失败（共享流错误态）返回 EOF，
+ *             并置 g_logDisabled 熔断，后续调用短路返回 0。
+ */
+static int demo_log(const char* fmt, ...)
+{
+    va_list args;
+    int written;
+    if (g_logDisabled)
+        return 0; /* 已熔断：诊断静默短路（防对失效句柄逐次阻塞重试）。 */
+    va_start(args, fmt);
+    written = vprintf(fmt, args);
+    va_end(args);
+    if (written < 0 || fflush(stdout) != 0)
+    {
+        /* wave6 管道挂起取证（diag/wave6/hang/pipe_hang_stacks.txt）：UI
+         * 线程冻结于本函数 fflush→WriteFile 的满管道内核写等待。写一旦
+         * 实际失败（如读端断开返回 EOF）即永久熔断，不再对死流重试。 */
+        g_logDisabled = true;
+        return EOF; /* 共享流损坏/错误态：显式暴露，不静默丢弃。 */
+    }
+    return written;
+}
+
+#ifdef _WIN32
+/* 挂起缓解②所需（SetConsoleMode/GetStdHandle）。放在 main 前而非文件
+ * 头：windows.h 的 IN/OUT/TRUE 等宏只波及其后代码，不污染上方 3 千余行
+ * 与全部 XGui 头。 */
+#include <windows.h>
+#endif
+
 int main(int argc, char* argv[])
 {
     XGuiApplication* app;
@@ -3148,6 +3210,60 @@ int main(int argc, char* argv[])
      * （2 <= size <= INT_MAX，debug CRT 弹模态框挂死 main——桌面全后端
      * bench/autotest 挂死根因）；glibc 口径 size=0 合法。改传 1024。 */
     setvbuf(stdout, NULL, _IOLBF, 1024);
+#ifdef _WIN32
+    /* 挂起缓解③（wave7 六波实锤：满管道内核级无限阻塞，冻结栈
+     * NtWriteFile←WriteFile←fflush←demo_log——diag/wave7/pipe/）：
+     * stdout 被重定向进命名管道且读端连而不读时，管道缓冲写满后
+     * WriteFile 在内核无限等待；g_logDisabled 熔断只覆盖 EOF/错误
+     * 返回路径，控制权滞留内核时熔断无从触发。改用管道非阻塞模式：
+     * 写满即以 ERROR_NO_DATA 立即失败返回，fflush 得以回到用户态
+     * 置熔断，后续诊断短路。只对 FILE_TYPE_PIPE 句柄做——控制台
+     * （FILE_TYPE_CHAR）与文件重定向（FILE_TYPE_DISK）语义不变；
+     * PIPE_NOWAIT 的读语义变化只波及本进程自己的日志写句柄。 */
+    {
+        HANDLE stdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (stdOut && stdOut != INVALID_HANDLE_VALUE &&
+            GetFileType(stdOut) == FILE_TYPE_PIPE)
+        {
+            DWORD pipeMode = PIPE_READMODE_BYTE | PIPE_NOWAIT;
+            SetNamedPipeHandleState(stdOut, &pipeMode, NULL, NULL);
+        }
+    }
+    /* 挂起缓解②（用户真实部署形态：demo 自带控制台窗口长时间挂机）：
+     * 用户在控制台窗口拖选文本会让 conhost 冻结写入方（与 wave6 管道
+     * 满写冻结同签名：UI 线程停在 fflush→WriteFile）。先用 STD_OUTPUT_
+     * HANDLE 判定"未重定向态"——GetConsoleMode 对文件/管道句柄失败，
+     * 成功即意味着 demo 有自己的控制台窗口。QuickEdit 标志位于控制台
+     * 输入缓冲：SetConsoleMode 须落在 STD_INPUT_HANDLE（在输出句柄上
+     * 设 QUICKEDIT 位实测 err=87，diag/wave7 配方核对器），stdin 若被
+     * 重定向则回退 CONIN$ 打开本控制台的输入缓冲。清除 QUICKEDIT 位
+     * 时必须保留/置上 ENABLE_EXTENDED_FLAGS（MSDN 规定）。 */
+    {
+        HANDLE consoleOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD consoleMode;
+        if (consoleOut && consoleOut != INVALID_HANDLE_VALUE &&
+            GetConsoleMode(consoleOut, &consoleMode))
+        {
+            HANDLE consoleIn = GetStdHandle(STD_INPUT_HANDLE);
+            DWORD inputMode;
+            if (!consoleIn || consoleIn == INVALID_HANDLE_VALUE ||
+                !GetConsoleMode(consoleIn, &inputMode))
+            {
+                consoleIn = CreateFileW(L"CONIN$",
+                                        GENERIC_READ | GENERIC_WRITE,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                        NULL, OPEN_EXISTING, 0, NULL);
+                if (!consoleIn || consoleIn == INVALID_HANDLE_VALUE ||
+                    !GetConsoleMode(consoleIn, &inputMode))
+                    inputMode = 0;
+            }
+            if (inputMode)
+                SetConsoleMode(consoleIn,
+                               (inputMode & ~ENABLE_QUICK_EDIT_MODE) |
+                               ENABLE_EXTENDED_FLAGS);
+        }
+    }
+#endif
     /* GL 驱动 PBO 滞后通道的场景自适应门控：注入 mouse-grab 查询（有
      * 抓取=交互序列中，驱动回同步直读保正确性；无抓取=非交互态允许
      * 滞后拷出换吞吐）。零抓取时行为与第三夜二分口径一致。 */

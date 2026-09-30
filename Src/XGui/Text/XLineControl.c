@@ -67,6 +67,13 @@
 #define XLC_DELETE_ALL_DELAY_MS 750
 /** @brief 光标包围盒左右包络（对标 QRect(cix-5,0,w+9,ch)）。 */
 #define XLC_CURSOR_RECT_PAD 5
+/** @brief 撤销历史深度上限（命令条数，含 Separator/SetSelection）。
+ *  @note  有界性约定：键入驱动的 m_history 原本只扩不缩且无深度上限
+ *         （仅 internalInit/setText 清空与析构释放，现场常驻增长泄漏
+ *         源），此处封顶；达到上限后逐出最旧条目、数组容量保留不回
+ *         缩，单控件历史常驻上界 ≈ XLC_UNDO_DEPTH_MAX *
+ *         sizeof(XLineControlCommand)（约 1000 x 24B ≈ 24KB）。 */
+#define XLC_UNDO_DEPTH_MAX 1000
 /** @brief 默认绘制四色（Qt fusion 亮色系近似；接入层可覆盖）。 */
 #define XLC_COLOR_HIGHLIGHT       0xFF308CC6u
 #define XLC_COLOR_HIGHLIGHTEDTEXT 0xFFFFFFFFu
@@ -1415,9 +1422,41 @@ static bool xlc_historyReserve(XLineControl* self, int needed)
 }
 
 /**
+ * @brief 撤销历史深度封顶：丢弃最旧 drop 条（上限 XLC_UNDO_DEPTH_MAX）。
+ * @details 仅在 xlc_addCommand 压栈前调用（该处 redo 分支已截断，
+ *          m_undoState == m_historySize）：memmove 前移存活条目，并
+ *          同步前移 m_undoState/m_historySize 基准；m_modifiedState
+ *          基准一并前移，基准条目被逐出时置 -1（已修改哨兵，保证
+ *          isModified 不误报“未修改”）。命令为纯值结构（无堆串，
+ *          见 XLineControlCommand），逐出即丢弃、无需释放；数组容量
+ *          保留不回缩（后续压栈在稳态容量下不再重分配）。
+ * @note    公共编辑入口先取的 priorState 绝对索引会因前移失配，仅
+ *          影响 validator 拒绝回滚的终点（偏移 ≤ 本次编辑压入条数，
+ *          不越界、不影响内存安全；XValidator 体系未建立，当前无
+ *          调用方装钩），undo/redo 主路径不受影响。
+ */
+static void xlc_historyEvictOldest(XLineControl* self, int incoming)
+{
+    int drop;
+    if (!self || !self->m_history) return;
+    drop = self->m_historySize + incoming - XLC_UNDO_DEPTH_MAX;
+    if (drop <= 0) return;
+    if (drop > self->m_historySize) drop = self->m_historySize;
+    XMemmove(self->m_history, self->m_history + drop,
+             (size_t)(self->m_historySize - drop) * sizeof(XLineControlCommand));
+    self->m_historySize -= drop;
+    self->m_undoState -= drop;
+    if (self->m_undoState < 0) self->m_undoState = 0;
+    if (self->m_modifiedState >= drop) self->m_modifiedState -= drop;
+    else if (self->m_modifiedState > 0) self->m_modifiedState = -1;
+}
+
+/**
  * @brief 命令入栈（对标 addCommand；不施加命令）。
  * @details 先截断重做分支（history 尺寸收敛到 undoState）；分组标志
- *          挂起时先压 Separator；随后压命令并推进 undoState。
+ *          挂起时先压 Separator；随后压命令并推进 undoState。每次压
+ *          栈前按 XLC_UNDO_DEPTH_MAX 封顶逐出最旧条目（有界撤销深
+ *          度，见 xlc_historyEvictOldest）。
  */
 static void xlc_addCommand(XLineControl* self, XLineControlCommand cmd)
 {
@@ -1427,6 +1466,7 @@ static void xlc_addCommand(XLineControl* self, XLineControlCommand cmd)
     if (self->m_separator && self->m_undoState
         && self->m_history[self->m_undoState - 1].type
             != (int)XLineControlCommandType_Separator) {
+        xlc_historyEvictOldest(self, 1);
         if (xlc_historyReserve(self, self->m_historySize + 1)) {
             self->m_history[self->m_historySize++] =
                 xlc_cmdMark((int)XLineControlCommandType_Separator,
@@ -1434,6 +1474,7 @@ static void xlc_addCommand(XLineControl* self, XLineControlCommand cmd)
         }
     }
     self->m_separator = false;
+    xlc_historyEvictOldest(self, 1);
     if (xlc_historyReserve(self, self->m_historySize + 1)) {
         self->m_history[self->m_historySize++] = cmd;
         self->m_undoState = self->m_historySize;

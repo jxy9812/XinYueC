@@ -1348,7 +1348,12 @@ void XChart_zoomOut(XChart* self)
 void XChart_zoomReset(XChart* self)
 {
     if (!self) return;
+    /* 复位即释放缩放栈（与 deinit 同风格）：高频滚轮缩放后
+     * 避免数组长期占住高水位容量。置空指针防悬挂。 */
+    if (self->m_zoomStack) XFree_System(self->m_zoomStack);
+    self->m_zoomStack = NULL;
     self->m_zoomCount = 0;
+    self->m_zoomCapacity = 0;
     if (self->m_axisX)
         XValueAxis_setRange(self->m_axisX, self->m_defaultMinX,
                             self->m_defaultMaxX);

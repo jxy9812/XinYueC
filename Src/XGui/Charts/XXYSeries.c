@@ -248,18 +248,29 @@ static void VXXYSeries_deinit(XXYSeries* self)
 static void VXXYSeries_copy(XXYSeries* self, const XXYSeries* other)
 {
     int i;
+    XPointF* p;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XXYSeries_init(self);
     XClass_Parent(XAbstractSeries, EXClass_Copy,
                   void(*)(XAbstractSeries*, const XAbstractSeries*))(
         (XAbstractSeries*)self, (const XAbstractSeries*)other);
+    /* 注：XXYSeries_clear 只释放 m_selected/m_pointColors/m_pointSizes，
+     * 刻意保留 m_points 旧块（与 clear 的保留容量语义一致），故此处
+     * self->m_points 仍可能非 NULL。 */
     XXYSeries_clear(self);
     if (other->m_count > 0 && other->m_points) {
-        self->m_points = (XPointF*)XMalloc_System(
+        /* 泄漏修复（对标 VXBarSet_copy）：先分配新块，成功后才释放旧块
+         * 并交换——若直接覆盖 m_points，对已持数据序列的二次拷贝每次
+         * 泄漏旧点数组；分配失败则保留旧块（m_count 已被 clear 归零，
+         * m_capacity 与旧块长度保持一致，不变式不破坏）。每次拷贝后
+         * 序列至多持有 1 个点块，无累积增长。 */
+        p = (XPointF*)XMalloc_System(
             sizeof(XPointF) * (size_t)other->m_count);
-        if (self->m_points) {
-            XMemcpy(self->m_points, other->m_points,
+        if (p) {
+            XMemcpy(p, other->m_points,
                    sizeof(XPointF) * (size_t)other->m_count);
+            if (self->m_points) XFree_System(self->m_points);
+            self->m_points = p;
             self->m_count = other->m_count;
             self->m_capacity = other->m_count;
         }

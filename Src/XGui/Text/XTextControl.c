@@ -57,6 +57,14 @@
 #define XTC_DEFAULT_BASELINE 13         /**< 字体度量失败时的回退基线偏移。 */
 #define XTC_CAP_GROW 8                  /**< 数组容量步进。 */
 #define XTC_MAX_DRAW_BOUNDS 64          /**< 行绘制分段边界上限（超出合并，绘制近似）。 */
+/** @brief 撤销栈深度上限（命令条数）。
+ *  @note  有界性约定：键入驱动的 m_undoStack 原本只扩不缩且无深度上限
+ *         （仅文本重置/析构清空，现场常驻增长泄漏源），此处封顶；达到
+ *         上限后逐出最旧命令并释放其堆串、数组容量保留不回缩。常驻上
+ *         界 = XTC_UNDO_DEPTH_MAX 条命令及其堆串（每条串长 ≤ 单次编辑
+ *         串长；键入场景每条 1~4 字节，约 1000 x (32B + 串) ≈ 数十
+ *         KB 量级）。 */
+#define XTC_UNDO_DEPTH_MAX 1000
 
 /* ==================== 小工具 ==================== */
 
@@ -1163,6 +1171,32 @@ static void xtc_truncateRedo(XTextControl* self)
 }
 
 /**
+ * @brief      撤销栈深度封顶：丢最旧 drop 条并释放其堆串。
+ * @details    与 xtc_truncateRedo 同型：逐条 xtc_commandClear 释放
+ *             removed/inserted 堆串后 memmove 前移存活命令；仅清条
+ *             目、保留数组容量。仅限 xtc_recordCommand 新命令压栈前
+ *             调用（此时 undo 栈独占持有 [0, m_undoCount) 全部命令
+ *             的所有权，redo 栈串不受影响）；undo/redo 搬移只在两栈
+ *             间转移所有权、不新增条目，无需封顶。键入驱动的 undo
+ *             栈原本只增不减，封顶后条数恒 ≤ XTC_UNDO_DEPTH_MAX。
+ */
+static void xtc_undoEvictOldest(XTextControl* self, int incoming)
+{
+    int drop;
+    int i;
+    if (!self || !self->m_undoStack) return;
+    drop = self->m_undoCount + incoming - XTC_UNDO_DEPTH_MAX;
+    if (drop <= 0) return;
+    if (drop > self->m_undoCount) drop = self->m_undoCount;
+    for (i = 0; i < drop; ++i)
+        xtc_commandClear(&self->m_undoStack[i]);
+    XMemmove(&self->m_undoStack[0], &self->m_undoStack[drop],
+             (size_t)(self->m_undoCount - drop)
+                 * sizeof(XTextControlUndoCommand));
+    self->m_undoCount -= drop;
+}
+
+/**
  * @brief      记录一条撤销命令（自动分组时与栈顶相邻命令合并，对标
  *             QTextDocument 的键入/删除分组）。
  * @details    合并规则：同为纯插入且位置相接（pos == 上条 pos + 插入长）
@@ -1173,7 +1207,9 @@ static void xtc_truncateRedo(XTextControl* self)
  *             栈，undo→输入→redo 时 redo() 按旧位置重放过期命令损坏
  *             文档。undo 栈唯一写点即本函数（undo/redo 搬移除外），
  *             editInsert/editRemove 及其上游（键入/粘贴/预编辑提交）
- *             全部经此收口。
+ *             全部经此收口。新命令压栈前按 XTC_UNDO_DEPTH_MAX 封顶
+ *             逐出最旧命令并释放其堆串（有界撤销深度，见
+ *             xtc_undoEvictOldest）。
  */
 static void xtc_recordCommand(XTextControl* self, int pos, const char* removed,
                               const char* inserted, int group)
@@ -1243,6 +1279,7 @@ static void xtc_recordCommand(XTextControl* self, int pos, const char* removed,
         xtc_commandClear(&cmd);
         return;
     }
+    xtc_undoEvictOldest(self, 1);
     if (!xtc_commandPush(&self->m_undoStack, &self->m_undoCount,
                          &self->m_undoCap, &cmd)) {
         xtc_commandClear(&cmd);

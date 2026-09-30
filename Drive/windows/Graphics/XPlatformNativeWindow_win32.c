@@ -705,23 +705,27 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         }
         break;
     case WM_DROPFILES:
-        if (entry && entry->m_window) {
+        /* HDROP 由 shell 分配，必须 DragFinish 释放且与是否找到目标窗口
+           无关：else 路径（entry/m_window 为空）不释放即每次漏 150~500B。 */
+        {
             HDROP drop = (HDROP)wParam;
-            POINT point;
-            POINT global;
-            char* uriList;
-            point.x = 0;
-            point.y = 0;
-            (void)DragQueryPoint(drop, &point);
-            global = point;
-            ClientToScreen(hwnd, &global);
-            uriList = xpwn_dropFilesUriList(drop);
-            (void)XWindowSystemInterface_handleDropEvent(
-                entry->m_window, XEVENT_TYPE_DROP,
-                (XPoint){ point.x, point.y },
-                &(XPoint){ global.x, global.y }, "text/uri-list",
-                uriList ? uriList : "");
-            if (uriList) XFree_Hybrid(uriList);
+            if (entry && entry->m_window) {
+                POINT point;
+                POINT global;
+                char* uriList;
+                point.x = 0;
+                point.y = 0;
+                (void)DragQueryPoint(drop, &point);
+                global = point;
+                ClientToScreen(hwnd, &global);
+                uriList = xpwn_dropFilesUriList(drop);
+                (void)XWindowSystemInterface_handleDropEvent(
+                    entry->m_window, XEVENT_TYPE_DROP,
+                    (XPoint){ point.x, point.y },
+                    &(XPoint){ global.x, global.y }, "text/uri-list",
+                    uriList ? uriList : "");
+                if (uriList) XFree_Hybrid(uriList);
+            }
             DragFinish(drop);
         }
         return 0;
@@ -1703,6 +1707,10 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     entry->m_visible = false;
     entry->m_mouseInside = false;
     entry->m_client = (XRect){0, 0, 0, 0};
+    /* 拖放注销：与 create/attachForeign 的 DragAcceptFiles(hwnd, TRUE)
+       成对；外部窗口存活脱钩时不经 DestroyWindow，必须显式 FALSE。 */
+    if (hwnd && IsWindow(hwnd))
+        DragAcceptFiles(hwnd, FALSE);
     /* 外部窗口只恢复过程并解除登记，不销毁调用方拥有的 HWND。 */
     if (hwnd && IsWindow(hwnd) &&
         XWindow_type(window) != XWindowType_ForeignWindow)

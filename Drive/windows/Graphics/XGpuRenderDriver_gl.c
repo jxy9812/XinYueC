@@ -2343,6 +2343,12 @@ static void xgld_session_destroy(XGpuRenderDriverSession* self)
             self->glDeleteProgram(self->m_solidProgram);
         if (self->glDeleteProgram && self->m_textureProgram)
             self->glDeleteProgram(self->m_textureProgram);
+        /* 批/渐变 program 配对释放（渐变 program 装配失败时为 0，判空
+           即幂等跳过），与 solid/texture program 同口径。 */
+        if (self->glDeleteProgram && self->m_batchProgram)
+            self->glDeleteProgram(self->m_batchProgram);
+        if (self->glDeleteProgram && self->m_gradientProgram)
+            self->glDeleteProgram(self->m_gradientProgram);
         if (self->glDeleteBuffers && self->m_vertexBuffer)
             self->glDeleteBuffers(1, &self->m_vertexBuffer);
         if (self->glDeleteTextures && self->m_sourceTexture)
@@ -2351,6 +2357,14 @@ static void xgld_session_destroy(XGpuRenderDriverSession* self)
             self->glDeleteTextures(1, &self->m_colorTexture);
         if (self->glDeleteTextures && self->m_glyphAtlasTexture)
             self->glDeleteTextures(1, &self->m_glyphAtlasTexture);
+        /* 白纹理与渐变 LUT/掩码纹理配对释放（均在 initialize 创建，
+           此前仅靠 wglDeleteContext 兜底），与上述纹理同口径。 */
+        if (self->glDeleteTextures && self->m_whiteTexture)
+            self->glDeleteTextures(1, &self->m_whiteTexture);
+        if (self->glDeleteTextures && self->m_gradientLutTexture)
+            self->glDeleteTextures(1, &self->m_gradientLutTexture);
+        if (self->glDeleteTextures && self->m_gradientMaskTexture)
+            self->glDeleteTextures(1, &self->m_gradientMaskTexture);
         if (self->glDeleteFramebuffers && self->m_framebuffer)
             self->glDeleteFramebuffers(1, &self->m_framebuffer);
         xgld_done_current(self);

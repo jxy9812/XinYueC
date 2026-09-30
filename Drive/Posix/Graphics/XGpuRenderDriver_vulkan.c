@@ -44,6 +44,60 @@
 
 #include "XGpuRenderDriver_vulkan_shaders.h"
 
+/* ==================== [quad-probe] VK quad/region 归因计数（XGPU_QUAD_PROF=1） ==================== */
+/* 一次性（--screenshot）判别探针：退出时输出一行 stderr——solid quad
+   录制成功/拒绝按「全整数坐标 vs 含分数坐标」分桶 + image region/整幅
+   绘制成败。用于判定 painter 斜线（分数坐标旋转 quad）是「提交了没画
+   出来」还是「驱动侧被拒」。默认关：单次缓存 env 测试，零输出零开销。 */
+static struct XvklQuadProf
+{
+    uint32_t m_recordCalls;       /**< record_quad 进入次数。 */
+    uint32_t m_recordOk;          /**< 录制成功（含 vkCmdDraw）次数。 */
+    uint32_t m_recordOkInteger;   /**< 成功且 4 顶点全整数坐标。 */
+    uint32_t m_recordOkFraction;  /**< 成功且含分数坐标（旋转/斜线 quad）。 */
+    uint32_t m_rejectRecording;   /**< 拒绝：会话未在录制。 */
+    uint32_t m_rejectPipeline;    /**< 拒绝：管线未就绪。 */
+    uint32_t m_rejectCapacity;    /**< 拒绝：顶点容量不足。 */
+    uint32_t m_imageRegionCalls;  /**< drawImageRegion 调用次数。 */
+    uint32_t m_imageRegionOk;     /**< drawImageRegion 返回 true 次数。 */
+    uint32_t m_imageCalls;        /**< drawImage（整幅）调用次数。 */
+    uint32_t m_imageOk;           /**< drawImage 返回 true 次数。 */
+} g_xvklQuadProf;
+
+static void xvkl_quad_prof_report(void)
+{
+    fprintf(stderr,
+            "[xvkl-quad] record=%u ok=%u int=%u frac=%u rejRec=%u "
+            "rejPipe=%u rejCap=%u region=%u/%u image=%u/%u\n",
+            g_xvklQuadProf.m_recordCalls,
+            g_xvklQuadProf.m_recordOk,
+            g_xvklQuadProf.m_recordOkInteger,
+            g_xvklQuadProf.m_recordOkFraction,
+            g_xvklQuadProf.m_rejectRecording,
+            g_xvklQuadProf.m_rejectPipeline,
+            g_xvklQuadProf.m_rejectCapacity,
+            g_xvklQuadProf.m_imageRegionOk,
+            g_xvklQuadProf.m_imageRegionCalls,
+            g_xvklQuadProf.m_imageOk,
+            g_xvklQuadProf.m_imageCalls);
+}
+
+static bool xvkl_quad_prof_on(void)
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        const char* v = XSystem_environment("XGPU_QUAD_PROF");
+        on = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
+        if (on) atexit(xvkl_quad_prof_report);
+    }
+    return on != 0;
+}
+
+/* 角标案前向声明：窗口态半帧落盘（定义在窗口读回区），供
+   xvkl_suspend_for_transfer 的窗口分支改道调用。 */
+static bool xvkl_window_suspend_frame(XGpuRenderDriverSession* self);
+
 /* ==================== 帧级同步阶段计时（XGPU_VK_STAGE_PROF=1 启用） ==================== */
 
 /*
@@ -433,6 +487,9 @@ struct XGpuRenderDriverSession
     VkFramebuffer m_swapFbs[8];  /**< 每图像 framebuffer（拥有）。 */
     VkImageLayout m_swapLayouts[8]; /**< 交换链图像当前布局。 */
     uint32_t m_imageIndex;       /**< 当前获取的交换链图像下标。 */
+    int m_lastPresentedIndex;    /**< 最近一次成功 present 的图像下标
+                                     （-1=尚无，交换链重建后复位）——
+                                      begin 帧首「从刚呈现帧恢复」用。 */
     VkSemaphore m_imageReadys[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
     VkSemaphore m_renderDones[XGPU_VK_MAX_FRAMES_IN_FLIGHT];
     VkSemaphore m_imageReady;    /**< 当前槽 acquire 信号量（镜像）。 */
@@ -1196,6 +1253,9 @@ static bool xvkl_create_swapchain(XGpuRenderDriverSession* self)
             return false;
         self->m_swapLayouts[i] = VK_IMAGE_LAYOUT_UNDEFINED;
     }
+    /* 交换链（重）建：尚无已呈现图像可恢复，「从刚呈现帧恢复」禁用，
+       帧首退回 paintImage 整幅上传承底（首帧/resize 后首绘自愈）。 */
+    self->m_lastPresentedIndex = -1;
     XMemset(&fi, 0, sizeof(fi));
     fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fi.renderPass = self->m_renderPass;
@@ -1738,7 +1798,7 @@ static bool xvkl_present_v2(void)
 }
 
 /**
- * @brief      读取帧环深度 XGPU_VK_FRAMES_IN_FLIGHT（1~3，默认 3）。
+ * @brief      读取帧环深度 XGPU_VK_FRAMES_IN_FLIGHT（1~3，默认 1）。
  * @details    默认 1=单槽路径（每帧 beginFrame 全 GPU 排空——当前
  *             稳态默认：K=3 帧环在 XGuiGpu_Test 交互回归中触发
  *             0xC0000005（S12 回退后仍崩），根因待 validate layers
@@ -1755,7 +1815,11 @@ static int xvkl_frames_in_flight(void)
     if (cached < 0)
     {
         const char* v = XSystem_environment("XGPU_VK_FRAMES_IN_FLIGHT");
-        cached = 3;
+        /* 默认 1=单槽路径（见上方 @details 与 submit_transfer 第 12 轮
+           回退注记：K>1 的 transfer 槽轮转与 stage 镜像/交互路径尚有
+           未决问题，回退默认保烟测；显式 XGPU_VK_FRAMES_IN_FLIGHT=2/3
+           仍可启用帧环复测）。 */
+        cached = 1;
         if (v && v[0])
         {
             int n = atoi(v);
@@ -1891,6 +1955,96 @@ static bool xvkl_canvas_keep(void)
     return cached != 0;
 }
 
+/** @brief XGPU_VK_BEGIN_RESTORE 开关（默认开=窗口态 begin 恢复「刚
+           呈现帧」为基底，六波基线行为；"0"=改以 initialImage 整幅
+           上传为基——诊断开关：restore 基底会使上帧 AA 图元与本帧
+           重绘叠加成 a² 加倍（quad 案 wave7 已探明未修），但直落整
+           幅上传的口径另有 --screenshot 全黑退化未解明耦合，见
+           xvkl_copy_initial_image 注）。 */
+static bool xvkl_begin_restore_requested(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* v = XSystem_environment("XGPU_VK_BEGIN_RESTORE");
+        cached = !(v && v[0] == '0' && v[1] == 0);
+    }
+    return cached != 0;
+}
+
+/**
+ * @brief      窗口态帧首「从刚呈现帧恢复」：GPU 内把最近一次成功
+ *             present 的姊妹图像整幅拷到当前 acquire 图像。
+ * @details    读回案验收失败归因（2026-09-30）：paintImage 在 GPU 直通
+ *             模式不含场景（场景只在 GPU 图像上，CPU 侧仅经 XWidget
+ *             drb 读回腿收敛），每帧把恒黑 paintImage 整幅上传盖到刚
+ *             绘好的图像上（present 探针实测第 1 帧 nz=1875/1875 全
+ *             场景，~240 帧后 nz=24 仅条带——场景旋转一圈被摧毁，
+ *             读回/BitBlt/截图同根黑化）。恢复源替代该破坏性上传：
+ *             布局口径两图簿记均为 PRESENT，屏障 0/0 access（VUID-
+ *             01208/01209 合规，与本文件 !active 读回同口径），源恢复
+ *             PRESENT（呈现引擎所有权不变），目标转 COLOR_ATTACHMENT
+ *             供本帧渲染通道（initialLayout=COLOR）。调用方免除清屏/
+ *             上传。失败（无恢复源：首帧/单图像/交换链重建后/簿记
+ *             异常）返回 false，调用方走原 upload/clear 路径。
+ * @return     true 已恢复；false 无恢复源或提交失败。
+ */
+static bool xvkl_window_restore_last_presented(XGpuRenderDriverSession* self)
+{
+    VkImage dst;
+    VkImage src;
+    VkImageCopy region;
+    if (!self || !self->m_window || self->m_swapCount <= 1u ||
+        self->m_lastPresentedIndex < 0 ||
+        (uint32_t)self->m_lastPresentedIndex >= self->m_swapCount ||
+        (uint32_t)self->m_lastPresentedIndex == self->m_imageIndex ||
+        self->m_swapLayouts[self->m_lastPresentedIndex] !=
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+        return false;
+    if (!xvkl_begin_transfer(self)) return false;
+    dst = xvkl_frame_image(self);
+    src = self->m_swapImages[self->m_lastPresentedIndex];
+    xvkl_image_barrier(self->m_transferCmd, dst, xvkl_frame_layout(self),
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                       VK_ACCESS_TRANSFER_WRITE_BIT,
+                       VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT);
+    xvkl_image_barrier(self->m_transferCmd, src,
+                       VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
+                       VK_ACCESS_TRANSFER_READ_BIT,
+                       VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT);
+    XMemset(&region, 0, sizeof(region));
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.srcSubresource.layerCount = 1;
+    region.dstSubresource.layerCount = 1;
+    region.extent.width = (uint32_t)self->m_width;
+    region.extent.height = (uint32_t)self->m_height;
+    region.extent.depth = 1;
+    vkCmdCopyImage(self->m_transferCmd, src,
+                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    xvkl_image_barrier(self->m_transferCmd, src,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                       VK_ACCESS_TRANSFER_READ_BIT, 0,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    xvkl_image_barrier(self->m_transferCmd, dst,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                       VK_ACCESS_TRANSFER_WRITE_BIT,
+                       VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    if (!xvkl_submit_transfer(self, false)) return false;
+    xvkl_set_frame_layout(self, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    return true;
+}
+
 static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
                                     const XImage* initialImage)
 {
@@ -1905,6 +2059,31 @@ static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
        paintImage ⇒ paintImage ≡ FBO 恒等链保持，跳过帧与上传帧的
        FBO 逐位一致；degraded/软件帧不经过本入口（painter gate），其
        CPU 写造成的失步由 streak 冻结 + 60 帧强制重同步自愈。 */
+    /* 窗口态「从刚呈现帧恢复」必须先于同图 keep-skip（读回案
+       2026-09-30 第二轮归因）：keep-skip 让本图停留在上一轮内容
+       （缺本帧姊妹图刚绘制的内容），随后一次恢复会把陈旧内容传播
+       到姊妹图——两图分叉，「隔帧绘制」的内容永久丢失（6s 截图
+       导航按钮隔位缺失的根因）。恢复每帧整幅同步两图，keep-skip
+       仅在恢复不可用（同图重入/单图像）时兜底。 */
+    /* quad 案（wave7，2026-09-30）已探明未修：restore 腿以「刚呈现
+       帧」为本帧基底，上帧已呈现内容里已含同一批 AA 图元（文案行、
+       单选框环斜线段），本帧应用重绘同批内容时半透明覆盖逐像素叠
+       加——实测 VK=(1-a)²·bg 与 GL=(1-a)·bg 逐位吻合（p1 文案行
+       1455px 全部偏暗；单选框环对角段 darkpx 59↔68 间歇，路由计数
+       XGUI_QUAD_PROF axis/diagCanvas 与 GL 全同=与 painter 路由无
+       关）。XGPU_VK_CANVAS_KEEP=0（基底改恒整幅上传）后与 GL 角标
+       外逐位一致——但该口径在本文件内试改（跳过 restore/keep-skip
+       直落整幅上传）使 --screenshot 全 9 页退化 1974 字节全黑 PNG
+       （确定性复现，两次批量），上传腿与截图读回腿存在未解明的耦
+       合，留待专案处理；XGPU_VK_BEGIN_RESTORE=1 可诊断回旧 restore
+       腿（本腿默认仍 restore，行为与六波基线逐位一致）。 */
+    if (self->m_window && xvkl_begin_restore_requested() &&
+        xvkl_canvas_keep() && self->m_keepStreak < 60u &&
+        xvkl_window_restore_last_presented(self))
+    {
+        self->m_keepStreak += 1;
+        return true;
+    }
     if (xvkl_canvas_keep() &&
         self->m_keepSyncedSlot == (int)self->m_imageIndex &&
         self->m_keepStreak < 60u)
@@ -1912,6 +2091,9 @@ static bool xvkl_copy_initial_image(XGpuRenderDriverSession* self,
         self->m_keepStreak += 1;
         return true;
     }
+    /* streak≥60 到此强制走一次整幅上传（degraded/CPU 写失步的自愈
+       阀门，paintImage 经 drb 读回腿收敛后上传无害）；首帧/交换链
+       重建后无恢复源，同样落到整幅上传承底。 */
     bytes = (size_t)self->m_width * (size_t)self->m_height * 4u;
     if (!xvkl_stage_pixels(self, bytes)) return false;
     if (xvkl_copyinit_batch() &&
@@ -2188,6 +2370,7 @@ static bool xvkl_begin_frame_impl(XGpuRenderDriverSession* self,
 {
     VkResult acquired;
     int slot;
+    bool restored;
     if (!self) return false;
     xvkl_stage_prof_tick();
     if (g_xvklObjOn) g_xvklObjProf.m_frames += 1;
@@ -2282,6 +2465,11 @@ static bool xvkl_begin_frame_impl(XGpuRenderDriverSession* self,
         if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
             return false;
     }
+    /* beginFrame(NULL) 的窗口帧：先尝试「从刚呈现帧恢复」（读回案
+       2026-09-30：--screenshot/drb 直调 beginFrame 不带 canvas，原
+       路径落到 xvkl_clear(0u) 把刚呈现内容清黑——恢复成功则免除
+       清屏，对齐 GL「首帧后不清除」的窗口持久语义）。 */
+    restored = !initialImage && xvkl_window_restore_last_presented(self);
     if (initialImage && XImage_width(initialImage) == self->m_width &&
         XImage_height(initialImage) == self->m_height)
     {
@@ -2292,19 +2480,22 @@ static bool xvkl_begin_frame_impl(XGpuRenderDriverSession* self,
             g_xvklBeginProf.m_copyNs +=
                 XDateTime_currentNSecsSinceEpoch() - ciT0;
     }
-    else if (xvkl_begin_prof_on())
+    else if (!restored)
     {
-        uint64_t ppT0 = XDateTime_currentNSecsSinceEpoch();
-        int okP = xvkl_prepare_frame_target(self);
-        g_xvklBeginProf.m_prepNs +=
-            XDateTime_currentNSecsSinceEpoch() - ppT0;
-        if (!okP) return false;
+        if (xvkl_begin_prof_on())
+        {
+            uint64_t ppT0 = XDateTime_currentNSecsSinceEpoch();
+            int okP = xvkl_prepare_frame_target(self);
+            g_xvklBeginProf.m_prepNs +=
+                XDateTime_currentNSecsSinceEpoch() - ppT0;
+            if (!okP) return false;
+        }
+        else if (!xvkl_prepare_frame_target(self))
+            return false;
     }
-    else if (!xvkl_prepare_frame_target(self))
-        return false;
     if (!xvkl_begin_render_pass(self)) return false;
     self->m_recording = true;
-    if (!initialImage) xvkl_clear(self, 0u);
+    if (!initialImage && !restored) xvkl_clear(self, 0u);
     self->m_frameSlot = (slot + 1) % self->m_framesInFlight;
     return true;
 }
@@ -2392,6 +2583,8 @@ static void xvkl_end_frame(XGpuRenderDriverSession* self)
                 ? XDateTime_currentNSecsSinceEpoch() : 0;
             vkQueuePresentKHR(self->m_queue, &pi);
             if (profT0) xvkl_stage_record(XvklStage_Present, profT0);
+            /* 帧首「从刚呈现帧恢复」的恢复源（内容=本帧最终内容）。 */
+            self->m_lastPresentedIndex = (int)self->m_imageIndex;
         }
     }
     /* 帧环推进：下帧启用下一槽（提交失败/未录制的早退路径不推进，
@@ -2401,13 +2594,25 @@ static void xvkl_end_frame(XGpuRenderDriverSession* self)
 
 /**
  * @brief      暂停主图形命令并等待执行完成；随后由调用方执行一次同步
- *             transfer。该路径只用于离屏会话，窗口会话必须维持 acquire /
- *             present 信号量的单次提交协议。
+ *             transfer。离屏会话走无信号量半帧提交；窗口会话改走
+ *             xvkl_window_suspend_frame（同读回案半帧腿：consume 本帧
+ *             acquire 等待、等 suspend fence，不 signal renderDone——
+ *             present 仍由重开帧的 endFrame 提交 signal），维持
+ *             acquire/present 信号量单次提交协议。
+ * @details    角标案修复（2026-09-30）：此前窗口会话在此恒返 false，
+ *             drawImage/drawImageRegion 两条上传腿随之全部失败——
+ *             XPainter 批画布冲刷（painterGpuBatchFlush）的
+ *             drawImageRegion→false→drawImage 整幅兜底同样失败且返回值
+ *             被忽略，平移绘制（translate+裁剪走批量软件局部提交的
+ *             全部控件内容，含性能悬浮层角标）静默丢失：VK 窗口只剩
+ *             首帧整幅上传（copy_initial_image）+restore 链的内容，
+ *             其后一切增量内容不上屏（角标缺失根因）。
  */
 static bool xvkl_suspend_for_transfer(XGpuRenderDriverSession* self)
 {
     VkSubmitInfo submit;
-    if (!self || !self->m_recording || self->m_window) return false;
+    if (!self || !self->m_recording) return false;
+    if (self->m_window) return xvkl_window_suspend_frame(self);
     vkCmdEndRenderPass(self->m_cmd);
     if (vkEndCommandBuffer(self->m_cmd) != VK_SUCCESS) return false;
     self->m_recording = false;
@@ -2455,7 +2660,13 @@ static bool xvkl_suspend_for_transfer(XGpuRenderDriverSession* self)
 
 static bool xvkl_resume_after_transfer(XGpuRenderDriverSession* self)
 {
-    if (!self || self->m_window) return false;
+    /* 角标案修复（2026-09-30）：撤销窗口会话拒收。窗口半帧（xvkl_
+       window_suspend_frame）执行后簿记=PRESENT_SRC（窗口渲染通道
+       finalLayout），prepare_frame_target 按簿记布局 PRESENT→COLOR
+       屏障（srcAccess 0，VUID-01208 合规）重转 COLOR_ATTACHMENT 并
+       重开渲染通道——与离屏同一条 resume 腿，两规格差异仅由
+       prepare_frame_target 的簿记驱动。 */
+    if (!self) return false;
     if (vkResetCommandBuffer(self->m_cmd, 0) != VK_SUCCESS) return false;
     if (!xvkl_prepare_frame_target(self) || !xvkl_begin_render_pass(self))
         return false;
@@ -2929,6 +3140,105 @@ static bool xvkl_resume_after_readback_async(XGpuRenderDriverSession* self)
 }
 
 /**
+ * @brief      窗口态半帧落盘：提交开着帧已录制的绘制命令（不带 present）。
+ * @details    读回案修复（2026-09-30）：窗口态 active 臂修复前直接拷贝
+ *             m_swapImages[m_imageIndex]，而本帧绘制只录进 m_cmd 未提交
+ *             （提交仅在 endFrame），单队列提交序保证拷贝读到的恒为该图
+ *             上一轮遗留内容 ⇒ 帧末整帧读回把画前旧内容回写 paintImage，
+ *             被下帧整幅上传反复盖写（--screenshot 全黑与暗稀同根）。
+ *             复用离屏 suspend 纪律（xvkl_suspend_for_transfer 两腿）：
+ *             EndRenderPass→EndCommandBuffer→提交→同步等待。信号量口径
+ *             与 endFrame 一致：wait 本帧 acquire 信号量
+ *             （COLOR_ATTACHMENT_OUTPUT 等待点）并置 m_imageWaitConsumed，
+ *             令随后重开帧的 endFrame 提交不再重复 wait（信号量单 wait
+ *             纪律）；renderDone 不在此 signal——present 只 wait 一次，
+ *             由重开帧的 endFrame 提交 signal。fence 用 m_suspendFence
+ *             （复位先行，同 V2 suspend；提交后置 m_suspendInFlight，
+ *             等待失败由下一帧 beginFrame 既有兜底回收）；开关组合皆关
+ *             时该 fence 为 NULL，退 V1 语义（无 fence 提交 +
+ *             vkQueueWaitIdle）。渲染通道执行后图像落窗口渲染通道
+ *             finalLayout=PRESENT_SRC，簿记与 endFrame 同步置 PRESENT_SRC
+ *             （随后拷贝屏障自然走 fromPresent 0/0 access 通道，
+ *             VUID-01208/01209 合规）。
+ * @return     true 半帧已执行完毕（m_cmd 可复位重开）；false 失败
+ *             （会话状态与离屏 suspend 失败同构：recording=false）。
+ */
+static bool xvkl_window_suspend_frame(XGpuRenderDriverSession* self)
+{
+    VkSubmitInfo submit;
+    VkPipelineStageFlags waitStage =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkResult r;
+    if (!self || !self->m_recording || !self->m_cmd) return false;
+    vkCmdEndRenderPass(self->m_cmd);
+    if (vkEndCommandBuffer(self->m_cmd) != VK_SUCCESS) return false;
+    self->m_recording = false;
+    XMemset(&submit, 0, sizeof(submit));
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &self->m_cmd;
+    /* consume 本帧 acquire 等待（与 endFrame 同参）：半帧绘制写
+       COLOR_ATTACHMENT 前必须等 acquire；置位后 endFrame 重提交不再
+       重复 wait。 */
+    if (!self->m_imageWaitConsumed)
+    {
+        submit.waitSemaphoreCount = 1;
+        submit.pWaitSemaphores = &self->m_imageReady;
+        submit.pWaitDstStageMask = &waitStage;
+        self->m_imageWaitConsumed = true;
+    }
+    if (self->m_suspendFence)
+    {
+        /* 复位先行：fence 需未信号才能被本次提交置位（同 V2 suspend）。 */
+        if (vkResetFences(self->m_device, 1, &self->m_suspendFence) !=
+            VK_SUCCESS)
+            return false;
+        {
+            uint64_t profT0 = xvkl_stage_prof_on()
+                ? XDateTime_currentNSecsSinceEpoch() : 0;
+            r = vkQueueSubmit(self->m_queue, 1, &submit,
+                              self->m_suspendFence);
+            if (profT0) xvkl_stage_record(XvklStage_SubmitSuspend, profT0);
+            if (r != VK_SUCCESS) return false;
+        }
+        self->m_suspendInFlight = true; /* 等待失败时由 beginFrame 兜底回收。 */
+        {
+            uint64_t profT0 = xvkl_stage_prof_on()
+                ? XDateTime_currentNSecsSinceEpoch() : 0;
+            r = vkWaitForFences(self->m_device, 1, &self->m_suspendFence,
+                                VK_TRUE, UINT64_MAX);
+            if (profT0) xvkl_stage_record(XvklStage_SuspendFenceWait, profT0);
+            if (r != VK_SUCCESS) return false;
+        }
+        self->m_suspendInFlight = false;
+    }
+    else
+    {
+        /* V1 组合（PRESENT_V2=0 且 ASYNC_READBACK=0，无 suspend fence）：
+           退旧同步语义（xvkl_suspend_for_transfer V1 腿同参）。 */
+        {
+            uint64_t profT0 = xvkl_stage_prof_on()
+                ? XDateTime_currentNSecsSinceEpoch() : 0;
+            r = vkQueueSubmit(self->m_queue, 1, &submit, 0);
+            if (profT0) xvkl_stage_record(XvklStage_SubmitSuspend, profT0);
+            if (r != VK_SUCCESS) return false;
+        }
+        {
+            uint64_t profT0 = xvkl_stage_prof_on()
+                ? XDateTime_currentNSecsSinceEpoch() : 0;
+            r = vkQueueWaitIdle(self->m_queue);
+            if (profT0) xvkl_stage_record(XvklStage_QueueWaitIdle, profT0);
+            if (r != VK_SUCCESS) return false;
+        }
+    }
+    /* 渲染通道已执行：图像落 finalLayout=PRESENT_SRC（窗口渲染通道创建
+       口径），簿记与 endFrame 提交口径同步。 */
+    self->m_swapLayouts[self->m_imageIndex] =
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    return true;
+}
+
+/**
  * @brief      读回异步化主流程（XGPU_VK_ASYNC_READBACK 开时接管
  *             readback 操作表入口）。
  * @param      active 进入时帧是否在录制中（决定 suspend/resume 腿）。
@@ -3026,12 +3336,168 @@ static bool xvkl_readback_async(XGpuRenderDriverSession* self,
     return ok;
 }
 
+/**
+ * @brief      窗口态整幅读回（swapchain 直读，2026-09-30 截图通道修复）。
+ * @details    修复前本会话形态在 xvkl_readback 首行即 return false：
+ *             --screenshot 对窗口会话保存的是未填充全零 XImage（1974
+ *             字节全黑 PNG 的根因）。VK 为纯 swapchain 模型，窗口帧
+ *             内容只存在于 m_swapImages[m_imageIndex]，这里把该图像经
+ *             布局屏障到 TRANSFER_SRC、vkCmdCopyImageToBuffer 进共享
+ *             上传 staging（复用 xvkl_copy_frame_to_image 的 copy 模机：
+ *             stage_pixels+transfer 链+needWait 回收），fence 等待后经
+ *             xvkl_readback_copyout 拷出，尾屏障原样恢复簿记布局。
+ *             布局口径（m_swapLayouts[m_imageIndex] 簿记已给出）：
+ *             - active（帧开着，demo --screenshot 在 beginFrame 与
+ *               endWindowFrame 之间调用）：先经 xvkl_window_suspend_
+ *               frame 把已录绘制半帧提交执行（读回案修复：修复前此处
+ *               直接拷贝，读到的恒为画前旧内容），随后簿记已置
+ *               PRESENT_SRC（渲染通道 finalLayout），拷贝走
+ *               PRESENT_SRC→TRANSFER_SRC→COLOR_ATTACHMENT——尾屏障
+ *               回 COLOR_ATTACHMENT 供重开渲染通道（initialLayout=
+ *               COLOR_ATTACHMENT）与 endFrame 渲染通道继续使用；
+ *             - !active（帧已 endFrame+present，XWidget flush 的
+ *               readbackRect/整帧读回兜底链）：PRESENT_SRC→TRANSFER_
+ *               SRC→PRESENT_SRC。PRESENT_SRC 参与的屏障 src/dstAccess
+ *               恒为 0（VUID-oldLayout-01208/newLayout-01209）。
+ *             fence 纪律：active 时半帧提交以 m_suspendFence 内联等待
+ *             （xvkl_window_suspend_frame，复位先行；等待失败由下一帧
+ *             beginFrame 既有兜底回收），GPU 侧依赖（拷贝读到绘制结果）
+ *             由单队列提交序保证（本文件既有约定，见 m_transferCmds
+ *             注释）；仅 !active 且 V2 上一帧提交尚未回收（armed）时等
+ *             本槽帧 fence（K 环下覆盖本 imageIndex 上帧 GPU 写——
+ *             present 以 renderDone 信号量在其后）。
+ * @param      active 进入时帧是否在录制中（决定半帧提交与布局恢复目标）。
+ * @return     true 目标图像已含窗口整幅内容；false 失败（调用方回退
+ *             paintImage/后备镜像通道，绝不产出未填充图像）。
+ */
+static bool xvkl_readback_window(XGpuRenderDriverSession* self,
+                                 XImage* target, bool active)
+{
+    size_t bytes;
+    VkBufferImageCopy region;
+    VkImageLayout bookLayout;
+    VkImage image;
+    bool fromPresent;
+    bool ok;
+    bool suspended = false;
+    /* 提交对象图完整性防御（同 xvkl_readback_submit_copy 口径）：
+       imageIndex 越界/图像缺失一律优雅失败，不送半初始化对象进 ICD。 */
+    if (!self || !target || !self->m_device || !self->m_queue ||
+        !self->m_swapchain || self->m_imageIndex >= self->m_swapCount ||
+        !self->m_swapImages[self->m_imageIndex])
+        return false;
+    if (XImage_width(target) != self->m_width ||
+        XImage_height(target) != self->m_height)
+        return false;
+    if (!active && self->m_presentV2)
+    {
+        /* V2 fence 批量回收：上一帧 endFrame 异步提交未回收（armed）
+           时先等它（其 present 已入队，等 fence 即等本 imageIndex 上
+           帧绘制完结），并代办 beginFrame 的复位+清武装（复用纪律
+           「录制开始时在途必已完结」不受影响）。 */
+        int prev = (self->m_frameSlot + self->m_framesInFlight - 1) %
+                   self->m_framesInFlight;
+        if (self->m_frameFenceArmed[prev])
+        {
+            if (vkWaitForFences(self->m_device, 1, &self->m_frameFence,
+                                VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+                return false;
+            if (vkResetFences(self->m_device, 1, &self->m_frameFence) !=
+                VK_SUCCESS)
+                return false;
+            self->m_frameFenceArmed[prev] = false;
+        }
+    }
+    /* active 臂修复（读回案，2026-09-30）：先把开着帧已录绘制半帧
+       提交执行再拷贝——修复前直接拷贝刚 acquire 的图，拷到的恒为画前
+       旧内容，帧末读回被下帧整幅上传反复回写（暗稀同根）。失败口径
+       与离屏 suspend 失败同构（recording=false、无在途工作）。 */
+    if (active)
+    {
+        if (!xvkl_window_suspend_frame(self)) return false;
+        suspended = true;
+    }
+    bytes = (size_t)self->m_width * (size_t)self->m_height * 4u;
+    if (!xvkl_stage_pixels(self, bytes) || !xvkl_begin_transfer(self))
+    {
+        /* 悬置半帧先收口（重开渲染通道）再报失败，会话保持可录制。 */
+        if (suspended) xvkl_resume_after_readback_async(self);
+        return false;
+    }
+    image = self->m_swapImages[self->m_imageIndex];
+    bookLayout = xvkl_frame_layout(self);
+    fromPresent = bookLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    if (bookLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+        xvkl_image_barrier(self->m_transferCmd, image, bookLayout,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           fromPresent ? 0
+                                       : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                           VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT);
+    XMemset(&region, 0, sizeof(region));
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent.width = (uint32_t)self->m_width;
+    region.imageExtent.height = (uint32_t)self->m_height;
+    region.imageExtent.depth = 1;
+    vkCmdCopyImageToBuffer(self->m_transferCmd, image,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           self->m_stagingBuffer, 1, &region);
+    /* 尾屏障：!active 臂原样恢复簿记布局（PRESENT_SRC 供下轮
+       acquire/present）；active 臂（suspended）恢复 COLOR_ATTACHMENT
+       ——重开渲染通道（initialLayout=COLOR_ATTACHMENT）与随后
+       endFrame 渲染通道（COLOR→PRESENT finalLayout）都用它，簿记
+       同步落值（与 xvkl_readback_submit_copy 尾段同参）。 */
+    if (bookLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+        xvkl_image_barrier(self->m_transferCmd, image,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           suspended ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                     : bookLayout,
+                           VK_ACCESS_TRANSFER_READ_BIT,
+                           suspended
+                               ? (VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                  VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                               : (fromPresent
+                                      ? 0
+                                      : (VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)),
+                           VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    /* needWait：本笔结果 CPU 立即读回（同 xvkl_copy_frame_to_image）。 */
+    if (!xvkl_submit_transfer(self, true))
+    {
+        /* 拷贝提交失败：重开渲染通道（帧继续录制）再报失败——同
+           xvkl_readback_async 失败口径。（suspend 已执行、拷贝未执行
+           的角落态物理布局停在 PRESENT_SRC，与本文件 canvas-keep 路径
+           同级的既有簿记宽限，不在失败路径追加补救提交。） */
+        if (suspended) xvkl_resume_after_readback_async(self);
+        return false;
+    }
+    if (suspended)
+        xvkl_set_frame_layout(self, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    {
+        uint64_t profT0 = xvkl_stage_prof_on()
+            ? XDateTime_currentNSecsSinceEpoch() : 0;
+        ok = xvkl_readback_copyout(self, target,
+                                   (const uint8_t*)self->m_stagingMapped);
+        if (profT0) xvkl_stage_record(XvklStage_ReadbackCopyout, profT0);
+    }
+    /* 重开渲染通道恢复录制（suspend fence 已内联等待，m_cmd 复位安全；
+       loadOp=LOAD 保留已绘内容）——demo 随后的 endWindowFrame 仍能
+       提交（空）帧并 present。 */
+    if (suspended && !xvkl_resume_after_readback_async(self)) return false;
+    return ok;
+}
+
 static bool xvkl_readback(XGpuRenderDriverSession* self, XImage* target)
 {
     bool active;
     bool ok;
-    if (!self || !target || self->m_window) return false;
+    if (!self || !target) return false;
     active = self->m_recording;
+    if (self->m_window)
+        return xvkl_readback_window(self, target, active);
     if (self->m_asyncReadback)
         return xvkl_readback_async(self, target, active);
     if (active && !xvkl_suspend_for_transfer(self)) return false;
@@ -3062,12 +3528,26 @@ static bool xvkl_record_quad(XGpuRenderDriverSession* self, float x1, float y1,
     uint32_t first;
     unsigned i;
     VkPipeline pipeline;
-    if (!self || !self->m_recording) return false;
+    bool quadProf = xvkl_quad_prof_on();
+    if (quadProf) g_xvklQuadProf.m_recordCalls += 1;
+    if (!self || !self->m_recording)
+    {
+        if (quadProf) g_xvklQuadProf.m_rejectRecording += 1;
+        return false;
+    }
     pipeline = textured
         ? (sourceOver ? self->m_texPipeline : self->m_texSourcePipeline)
         : (sourceOver ? self->m_solidPipeline : self->m_solidSourcePipeline);
-    if (!pipeline) return false;
-    if (self->m_vertexCursor + 4u > self->m_vertexCapacity) return false;
+    if (!pipeline)
+    {
+        if (quadProf) g_xvklQuadProf.m_rejectPipeline += 1;
+        return false;
+    }
+    if (self->m_vertexCursor + 4u > self->m_vertexCapacity)
+    {
+        if (quadProf) g_xvklQuadProf.m_rejectCapacity += 1;
+        return false;
+    }
     first = self->m_vertexCursor;
     v = self->m_vertexMapped + (size_t)first * 8u;
     {
@@ -3097,6 +3577,18 @@ static bool xvkl_record_quad(XGpuRenderDriverSession* self, float x1, float y1,
     }
     self->m_vertexCursor += 4u;
     vkCmdDraw(self->m_cmd, 4, 1, first, 0);
+    if (quadProf)
+    {
+        /* 分桶：任一顶点坐标带分数（旋转斜线 quad）vs 全整数（轴向）。 */
+        g_xvklQuadProf.m_recordOk += 1;
+        if (x1 == (float)(int)x1 && y1 == (float)(int)y1 &&
+            x2 == (float)(int)x2 && y2 == (float)(int)y2 &&
+            x3 == (float)(int)x3 && y3 == (float)(int)y3 &&
+            x4 == (float)(int)x4 && y4 == (float)(int)y4)
+            g_xvklQuadProf.m_recordOkInteger += 1;
+        else
+            g_xvklQuadProf.m_recordOkFraction += 1;
+    }
     return true;
 }
 
@@ -3211,7 +3703,23 @@ static bool xvkl_stage_pixels(XGpuRenderDriverSession* self, size_t bytes)
     slot = self->m_transferSlot;
     if (self->m_stagingBuffers[slot] &&
         self->m_stagingCapacities[slot] >= bytes)
+    {
+        /* 尺寸契约（两侧一致）：调用方按各自整帧/子图算出 bytes
+           （如 copy_initial_image: bytes=w*h*4；drawImage 子区:
+           stageBytes=baseOffset+dstPitch*(srcH-1)+srcW*4）后只经本
+           入口拿镜像，拷贝循环恰好写/读 bytes 字节；本函数必须保证
+           「镜像=当前槽且容量>=bytes」。槽化后各槽容量独立，容量命中
+           的提前返回若不同步镜像，单值 m_stagingBuffer/Mapped/Capacity
+           仍指上一使用槽的小映射（K=3 实测：slot0/slot1=0x1D4C00、
+           slot2=0x4C8，镜像停在小槽）——下一次整帧上传在当前大槽命中
+           提前返回，逐行 XMemcpy 仍把 w*h*4 字节写进小槽映射，堆越界
+           0xC0000005（2026-09-29 首帧 AV 根因）。命中路径同样按当前
+           槽刷新镜像，任何 K 值下契约恒成立。 */
+        self->m_stagingBuffer = self->m_stagingBuffers[slot];
+        self->m_stagingMapped = self->m_stagingMappeds[slot];
+        self->m_stagingCapacity = self->m_stagingCapacities[slot];
         return true;
+    }
     if (self->m_stagingBuffers[slot])
         vkDestroyBuffer(self->m_device, self->m_stagingBuffers[slot], NULL);
     if (self->m_stagingMemories[slot])
@@ -3409,10 +3917,16 @@ static bool xvkl_draw_image_uv(XGpuRenderDriverSession* self,
            必为无操作、不销毁重建）——尺寸变化时本帧可能有更早的内联
            绘制仍 pending 引用旧图像，销毁会悬空它们（legacy 由 suspend
            等待保护，内联须自行规避），此时回退三段式。 */
-        inlineUp = xvkl_upload_batch() &&
-                   self->m_sourceImage &&
-                   self->m_sourceWidth == srcW &&
-                   self->m_sourceHeight == srcH &&
+        /* 窗口会话强制走内联（同 drawImageRegion 注释）：三段式 suspend
+           腿在窗口会话恒拒绝，图像/渐变 LUT/整幅画布上传在窗口模式此前
+           全部静默失败。源不存在时先 ensure 创建（本帧无已录绘制采样过
+           该纹理，描述符更新合法）；源存在但尺寸不符回退三段式（维持
+           原状，防 pending 内联绘制引用被销毁重建的源图像）。 */
+        inlineUp = (xvkl_upload_batch() || self->m_window) &&
+                   (self->m_sourceImage
+                        ? (self->m_sourceWidth == srcW &&
+                           self->m_sourceHeight == srcH)
+                        : xvkl_ensure_source_image(self, srcW, srcH)) &&
                    xvkl_frame_stage_ensure(self, bytes);
         if (inlineUp)
         {
@@ -3562,9 +4076,13 @@ static bool xvkl_draw_image(XGpuRenderDriverSession* self, const XImage* image,
                             int x, int y, int width, int height,
                             float opacity, bool sourceOver)
 {
+    bool ok;
+    if (xvkl_quad_prof_on()) g_xvklQuadProf.m_imageCalls += 1;
     /* 整幅变体：UV 全幅 0..1（与原实现一致）。 */
-    return xvkl_draw_image_uv(self, image, x, y, width, height,
-                              0.0f, 0.0f, 1.0f, 1.0f, opacity, sourceOver);
+    ok = xvkl_draw_image_uv(self, image, x, y, width, height,
+                            0.0f, 0.0f, 1.0f, 1.0f, opacity, sourceOver);
+    if (ok && xvkl_quad_prof_on()) g_xvklQuadProf.m_imageOk += 1;
+    return ok;
 }
 
 /**
@@ -3614,6 +4132,8 @@ static bool xvkl_draw_image_region(XGpuRenderDriverSession* self,
     size_t frameOffset = 0;
     bool compact;
     bool inlineUp = false;
+    bool quadOk;
+    if (xvkl_quad_prof_on()) g_xvklQuadProf.m_imageRegionCalls += 1;
     if (regionDirect < 0)
     {
         const char* rd = XSystem_environment("XGPU_VK_REGION_DIRECT");
@@ -3648,10 +4168,20 @@ static bool xvkl_draw_image_region(XGpuRenderDriverSession* self,
     }
     /* 内联守卫（同 drawImageUv）：尺寸匹配才内联，避免 pending 绘制
        引用的源图像被销毁重建。 */
-    inlineUp = xvkl_upload_batch() &&
-               self->m_sourceImage &&
-               self->m_sourceWidth == iw &&
-               self->m_sourceHeight == ih &&
+    /* 窗口会话强制走内联：三段式的 suspend 腿在窗口会话恒拒绝
+       （acquire/present 单次提交协议，见 xvkl_suspend_for_transfer 的
+       m_window 早退）——批量画布脏区/整幅上传此前在窗口模式全部静默
+       失败（2026-09-30 探针实测 region=0/565 image=0/565：p1 单选框环
+       斜线段、p3/p4 箭头等画布内容整体丢失）。内联路径（结束当前渲染
+       通道实例→屏障→拷贝→重开）零提交零等待，窗口安全，语义与三段式
+       逐位一致。源纹理尚不存在（首次上传）时先 ensure 创建——本帧尚无
+       已录绘制采样过该纹理，描述符更新合法；源存在但尺寸不符仍回退
+       三段式（窗口下该角落维持原状）。 */
+    inlineUp = (xvkl_upload_batch() || self->m_window) &&
+               (self->m_sourceImage
+                    ? (self->m_sourceWidth == iw &&
+                       self->m_sourceHeight == ih)
+                    : xvkl_ensure_source_image(self, iw, ih)) &&
                xvkl_frame_stage_ensure(self, stageBytes);
     if (inlineUp)
     {
@@ -3816,16 +4346,19 @@ static bool xvkl_draw_image_region(XGpuRenderDriverSession* self,
     }
     /* UV：子矩形按图像坐标归一化（顶行在 v=0，无翻转），1:1 绘制到
        (dstX,dstY)——drawImageRegion 的宽高=srcW/srcH。源已含透明度。 */
-    return xvkl_record_quad(self, (float)dstX, (float)dstY,
-                            (float)(dstX + srcW), (float)dstY,
-                            (float)dstX, (float)(dstY + srcH),
-                            (float)(dstX + srcW), (float)(dstY + srcH),
-                            0xffffffffu, sourceOver, true,
-                            self->m_sourceView,
-                            (float)srcX / (float)iw,
-                            (float)srcY / (float)ih,
-                            (float)(srcX + srcW) / (float)iw,
-                            (float)(srcY + srcH) / (float)ih);
+    quadOk = xvkl_record_quad(self, (float)dstX, (float)dstY,
+                              (float)(dstX + srcW), (float)dstY,
+                              (float)dstX, (float)(dstY + srcH),
+                              (float)(dstX + srcW), (float)(dstY + srcH),
+                              0xffffffffu, sourceOver, true,
+                              self->m_sourceView,
+                              (float)srcX / (float)iw,
+                              (float)srcY / (float)ih,
+                              (float)(srcX + srcW) / (float)iw,
+                              (float)(srcY + srcH) / (float)ih);
+    if (quadOk && xvkl_quad_prof_on())
+        g_xvklQuadProf.m_imageRegionOk += 1;
+    return quadOk;
 }
 
 static bool xvkl_draw_alpha_bitmap(XGpuRenderDriverSession* self,
