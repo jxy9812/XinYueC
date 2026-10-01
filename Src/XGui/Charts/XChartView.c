@@ -2774,7 +2774,12 @@ XChart* XChartView_chart(const XChartView* self)
 void XChartView_setChart(XChartView* self, XChart* chart)
 {
     if (!self || chart == self->m_chart) return;
-    if (self->m_chart) XChart_delete_base(self->m_chart);
+    if (self->m_chart) {
+        /* 旧图表的系列 hovered/clicked 等 Direct 发射链可能在途（用户槽
+           内换图表时正处发射帧）；同步删会在发射帧返回途中释放结构体。
+           悬停状态仍同步清除（R-103 根因不变），结构体延迟回收。 */
+        XObject_deleteLater((XObject*)self->m_chart);
+    }
     /* 根因（R-103）：setChart 删除旧图表（连带全部序列）后，跨事件
      * 借用的 m_hoverSeries 即悬垂——对标 Qt Charts「交互项随序列删除
      * 即时销毁」，删除属主图表时同步清悬停状态；removeSeries 路径的

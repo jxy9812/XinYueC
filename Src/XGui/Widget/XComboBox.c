@@ -1033,7 +1033,9 @@ void XComboBox_setLineEdit(XComboBox* self, XLineEdit* edit)
     if (self->m_completionActive && self->m_popupVisible)
         XComboBox_hidePopup_base(self);
     if (self->m_lineEdit) {
-        XLineEdit_delete_base(self->m_lineEdit);
+        /* 旧编辑框是本控件输入事件的转发目标，可能在自身按键/输入法
+           回调链中被换（对标 Qt QComboBox::setLineEdit 的延迟删除）。 */
+        XObject_deleteLater((XObject*)self->m_lineEdit);
         self->m_lineEdit = NULL;
     }
     self->m_lineEdit = edit;
@@ -1386,8 +1388,13 @@ void XComboBox_setView(XComboBox* self, XListView* view)
     if (self->m_model)
         XAbstractItemView_setModel((XAbstractItemView*)view, self->m_model);
     XListView_setModelColumn(view, self->m_modelColumn);
-    if (self->m_popupView)
-        XListView_delete_base((XClass*)self->m_popupView);
+    if (self->m_popupView) {
+        /* 旧弹层视图是 activated 等信号的 Direct 发送方与弹层输入/绘制
+           事件主体：若在视图自身信号链（activated→用户槽→setView）中
+           被换，同步删会在其 mouseRelease→activated 发射帧返回途中释放
+           结构体造成 UAF；延迟到事件循环归还后回收（对标 Qt setView）。 */
+        XObject_deleteLater((XObject*)self->m_popupView);
+    }
     self->m_popupView = view;
 }
 
@@ -1403,8 +1410,11 @@ void XComboBox_setModel(XComboBox* self, XAbstractItemModel* model)
     if (self->m_popupView)
         XAbstractItemView_setModel((XAbstractItemView*)self->m_popupView,
                                    model);
-    if (self->m_model)
-        XAbstractItemModel_delete_base((XClass*)self->m_model);
+    if (self->m_model) {
+        /* 旧模型可能正被弹层视图的条目渲染/activated 发射链引用；
+           延迟回收，避免信号在途时结构体被同步释放。 */
+        XObject_deleteLater((XObject*)self->m_model);
+    }
     self->m_model = model;
 }
 

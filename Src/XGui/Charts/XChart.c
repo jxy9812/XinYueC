@@ -447,6 +447,15 @@ XVtable* XChart_class_init(void)
  * @param self 目标图表指针。
  * @return 无返回值。
  */
+/* 运行期删除入口：系列结构体延迟到事件循环归还后回收
+ * （removeSeries/setPieSeries 可能处于系列自身信号发射帧内）；
+ * 析构路径(XChart_deinit)仍走同步版。 */
+static void xchart_deleteSeriesByTypeLater(void* series, XChartSeriesType type)
+{
+    if (!series) return;
+    XObject_deleteLater((XObject*)series);
+}
+
 static void xchart_deleteSeriesByType(void* series, XChartSeriesType type)
 {
     if (!series) return;
@@ -835,7 +844,11 @@ void XChart_removeSeries(XChart* self, void* series)
     /* 先从泛型注册表摘除（P0-2：唯一摘除路径，memmove 收缩 + 尾部清空）。 */
     found = xchart_unregisterSeries(self, series, &type) ? 1 : 0;
     xchart_unlinkSeries(self, series);
-    if (found) xchart_deleteSeriesByType(series, type);
+    if (found) {
+        /* 系列的 hovered/clicked 等信号可由自身 mouseMove/点击事件链触发,
+           remove 可能在系列自身发射帧内被调用;延迟回收防 UAF。 */
+        xchart_deleteSeriesByTypeLater(series, type);
+    }
 }
 
 void XChart_removeAllSeries(XChart* self)
@@ -1541,7 +1554,8 @@ void XChart_setPieSeries(XChart* self, XPieSeries* series)
          * 会对已释放对象二次释放。类型化直设路径未登记，摘除为无操作，
          * 语义不变。 */
         xchart_unregisterSeries(self, self->m_pieSeries, NULL);
-        XPieSeries_delete_base(self->m_pieSeries);
+        /* 旧饼图可能正处于自身 slice hovered/clicked 发射帧内，延迟回收。 */
+        XObject_deleteLater((XObject*)self->m_pieSeries);
     }
     self->m_pieSeries = series;
 }

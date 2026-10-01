@@ -116,6 +116,7 @@ typedef struct XBGroupBridge
     XButtonGroup* m_group;         /**< 所属组（借用）。 */
     XAbstractButton* m_button;     /**< 桥接的成员按钮（借用）。 */
     bool m_buttonDead;             /**< 按钮已销毁（跳过断连）。 */
+    bool m_groupDead;              /**< 组已析构/正在析构（destroyed 槽只断连）。 */
 } XBGroupBridge;
 
 static XVtable* XBGroupBridge_class_init(void)
@@ -147,10 +148,13 @@ static XBGroupBridge* xbgroup_bridgeCreate(XButtonGroup* group,
     return bridge;
 }
 
-static void xbgroup_bridgeDestroy(XBGroupBridge* bridge)
+/* @param deferred true=事件循环归还后回收（运行期路径：桥挂在
+ *        clicked/destroyed 的 Direct 发射链上，槽内同步删会在发射帧
+ *        返回途中释放结构体造成 UAF）；false=立即回收（仅限析构路径）。 */
+static void xbgroup_bridgeDestroyDeferred(XBGroupBridge* bridge, bool deferred)
 {
     if (!bridge) return;
-    if (bridge->m_buttonDead) {
+    if (bridge->m_buttonDead && !deferred) {
         /* 按钮已销毁：其连接表随之消亡，直接删除桥。 */
         XClass_delete_base((XClass*)bridge);
         return;
@@ -168,7 +172,10 @@ static void xbgroup_bridgeDestroy(XBGroupBridge* bridge)
     XObject_disconnect_1((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_toggled_signal),
                          (XObject*)bridge, xbgroup_bridgeToggledSlot);
-    XClass_delete_base((XClass*)bridge);
+    if (deferred)
+        XObject_deleteLater((XObject*)bridge);
+    else
+        XClass_delete_base((XClass*)bridge);
 }
 
 /** @brief toggled 转发：维护 checkedButton/checkedId、互斥、发射信号。 */
@@ -244,7 +251,10 @@ static void xbgroup_bridgeReleasedSlot(XObject* receiver, XVarList* args)
 }
 
 /** @brief 按钮 destroyed 转发：按钮先于组销毁时自动移除成员并删桥
- *         （按钮连接表已随对象消亡，跳过断连直接删桥）。 */
+ *         （按钮连接表已随对象消亡，跳过断连直接删桥）。
+ * @note   本槽也挂在组对象自身的 destroyed 上（组析构时按钮尚未销毁、
+ *         其连接表仍活，需显式断连防二次入槽）：组析构先于按钮时，
+ *         m_groupDead 已置位，槽内仅断连不触碰组数据。 */
 static void xbgroup_bridgeDestroyedSlot(XObject* receiver, XVarList* args)
 {
     XBGroupBridge* bridge = (XBGroupBridge*)receiver;
@@ -254,6 +264,30 @@ static void xbgroup_bridgeDestroyedSlot(XObject* receiver, XVarList* args)
     int64_t n;
     int index = -1;
     if (!bridge || !bridge->m_group) return;
+    /* 识别发射者：args 携带发送者（组或按钮）。经 XObject_currentSender
+       判定，组亡窗口期内两分支都不触碰组侧数据。 */
+    {
+        XObject* sender = XObject_sender(receiver);
+        if (sender == (XObject*)bridge->m_group) {
+            /* 组亡发射帧：组内存此刻仍存。置亡标记 + 断开按钮侧
+               destroyed 连接，此后按钮后亡不再进本槽。 */
+            bridge->m_groupDead = true;
+            XObject_disconnect_1((XObject*)bridge->m_button,
+                                 XSignal(XObject_destroyed_signal),
+                                 (XObject*)bridge,
+                                 xbgroup_bridgeDestroyedSlot);
+            return;
+        }
+    }
+    if (bridge->m_groupDead) {
+        /* 组已析构：组侧数据不可访问；桥随组析构流程回收，
+           此处只断开与按钮的连接，防按钮后亡时再次触发本槽。 */
+        XObject_disconnect_1((XObject*)bridge->m_button,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)bridge,
+                             xbgroup_bridgeDestroyedSlot);
+        return;
+    }
     self = bridge->m_group;
     bridge->m_buttonDead = true;
     button = bridge->m_button;
@@ -280,7 +314,8 @@ static void xbgroup_bridgeDestroyedSlot(XObject* receiver, XVarList* args)
         XVector_remove_base(self->m_bridges, index, 1);
         if (self->m_checkedButton == button)
             self->m_checkedButton = NULL;
-        XClass_delete_base((XClass*)bridge);
+        /* 本槽运行在按钮 destroyed 发射帧上；延迟回收桥。 */
+        XObject_deleteLater((XObject*)bridge);
     }
 }
 
@@ -310,6 +345,14 @@ static XBGroupBridge* xbgroup_connectButton(XButtonGroup* self,
                       XSignal(XObject_destroyed_signal),
                       (XObject*)bridge, xbgroup_bridgeDestroyedSlot,
                       XConnectionType_Direct);
+    /* 组自身 destroyed 也接入本槽：组亡时组内存尚存（destroyed 在
+       deinit 尾部发射），槽内置 groupDead 并断开按钮侧连接，堵住
+       "组先亡、按钮后亡"窗口期内按钮 destroyed 再次入槽触达悬垂
+       组数据的路径。 */
+    XObject_connect_1((XObject*)self,
+                      XSignal(XObject_destroyed_signal),
+                      (XObject*)bridge, xbgroup_bridgeDestroyedSlot,
+                      XConnectionType_Direct);
     return bridge;
 }
 
@@ -319,6 +362,17 @@ static XBGroupBridge* xbgroup_connectButton(XButtonGroup* self,
 static void VX_buttonGroup_deinit(XButtonGroup* self)
 {
     if (!self) return;
+    /* 先置组亡标记：后续回收桥/基类析构发射 destroyed 时，桥槽据此
+       停止访问组侧数据（按钮销毁顺序不受组控制）。 */
+    if (self->m_bridges) {
+        int64_t i;
+        int64_t n = XVector_size_base((const XContainer*)self->m_bridges);
+        for (i = 0; i < n; ++i) {
+            XBGroupBridge** bp =
+                (XBGroupBridge**)XVector_at_base(self->m_bridges, i);
+            if (bp && *bp) (*bp)->m_groupDead = true;
+        }
+    }
     if (self->m_buttons) {
         XVector_delete_base(self->m_buttons);
         self->m_buttons = NULL;
@@ -334,7 +388,7 @@ static void VX_buttonGroup_deinit(XButtonGroup* self)
             XBGroupBridge** bp =
                 (XBGroupBridge**)XVector_at_base(self->m_bridges, i);
             if (bp && *bp)
-                xbgroup_bridgeDestroy(*bp);
+                xbgroup_bridgeDestroyDeferred(*bp, false);
         }
         XVector_delete_base(self->m_bridges);
         self->m_bridges = NULL;
@@ -440,7 +494,7 @@ void XButtonGroup_removeButton(XButtonGroup* self, XAbstractButton* button)
         XBGroupBridge** bp =
             (XBGroupBridge**)XVector_at_base(self->m_bridges, index);
         if (bp && *bp)
-            xbgroup_bridgeDestroy(*bp);
+            xbgroup_bridgeDestroyDeferred(*bp, true);
     }
     XVector_remove_base(self->m_bridges, index, 1);
     XVector_remove_base(self->m_buttons, index, 1);

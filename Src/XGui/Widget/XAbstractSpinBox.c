@@ -676,8 +676,11 @@ void XAbstractSpinBox_setLineEdit(XAbstractSpinBox* self, XLineEdit* lineEdit)
 {
     if (!self) return;
     if (lineEdit == self->m_lineEdit) return;
-    if (self->m_lineEdit)
-        XLineEdit_delete_base(self->m_lineEdit);
+    if (self->m_lineEdit) {
+        /* 旧编辑框可能在自身按键/输入法回调链中被换；延迟回收
+           （对标 Qt QAbstractSpinBox::setLineEdit）。 */
+        XObject_deleteLater((XObject*)self->m_lineEdit);
+    }
     self->m_lineEdit = lineEdit;
     if (!self->m_lineEdit)
         self->m_lineEdit = spinbox_createDefaultLineEdit(self);

@@ -7,6 +7,8 @@
 
 /* XThread forward declaration: XThreadData only borrows the pointer; still needed when XTHREAD_ON is off. */
 typedef struct XThread XThread;
+/* XProperty 模块的属性绑定对象（求值栈元素类型，仅用指针，定义在 XClass/XPropertyBinding.h）。 */
+struct XPropertyBinding;
 #include "XAbstractEventDispatcher.h"
 #include "XMutex.h"
 #include "XVector.h"
@@ -83,8 +85,13 @@ typedef struct XThreadData{
     bool            m_isAdopted;      ///< 是否为 adopted 线程（对标 bool isAdopted）
     bool            m_requiresCoreApplication; ///< 是否需要 QCoreApplication（对标 bool requiresCoreApplication）
 
-    XSemaphore*     m_wakeSemaphore;  ///< 唤醒信号量（工作线程阻塞等待用，扩展字段）
+#if XSEMAPHORE_ON
+    XSemaphore*     m_wakeSemaphore;  ///< 唤醒信号量（工作线程阻塞等待用，扩展字段；随 XSEMAPHORE_ON 裁剪）
+#endif
     XStack          m_senderStack;    ///< 发送者栈（对标 QObjectPrivate::senderStack）
+#if XPROPERTY_ON
+    XStack          m_bindingEvalStack; ///< 绑定求值栈（对标 Qt thread_local QBindingStatus::currentlyEvaluatingBinding；元素为 struct XPropertyBinding*，由 XProperty 模块在绑定求值期间入栈/出栈，依赖捕获据此识别"当前正在求值的绑定"；XThreadData_init/deinit 负责栈生命周期；随 XPROPERTY_ON 裁剪——模块关闭时不占每线程内存）
+#endif
 } XThreadData;
 
 /**

@@ -616,14 +616,8 @@ XCLASS_DEFINE_END(MyObject, XClass)
 ```c
 XVtable* MyObject_class_init() 
 {
-   	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XObject)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
-	//继承类
+   	XVTABLE_INIT_DEFAULT(XObject)
+		//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
     
     // 重载虚函数
@@ -684,13 +678,8 @@ XCLASS_DEFINE_EXTEND_END(MyWidget, XObject)//继承虚函数表不扩展
 
 // 类初始化
 XVtable* MyWidget_class_init() {
-	XVTABLE_CREAT_DEFAULT
+	XVTABLE_INIT_DEFAULT(MyWidget)
 		//虚函数表初始化
-#if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(MyWidget)
-#else
-		XVTABLE_HEAP_INIT_DEFAULT
-#endif
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XObject);
     

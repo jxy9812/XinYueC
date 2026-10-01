@@ -266,7 +266,9 @@ bool XPieSeries_insert(XPieSeries* self, int index, XPieSlice* slice)
 bool XPieSeries_remove(XPieSeries* self, XPieSlice* slice)
 {
     if (!XPieSeries_take(self, slice)) return false;
-    XPieSlice_delete_base(slice);
+    /* slice 的 hovered/clicked 信号可由自身事件链触发，remove 可能在其
+       发射帧内被调用；同步删 UAF，延迟回收。 */
+    XObject_deleteLater((XObject*)slice);
     return true;
 }
 

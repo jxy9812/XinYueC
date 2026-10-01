@@ -1,4 +1,4 @@
-#include "XDataStructTest.h"
+﻿#include "XDataStructTest.h"
 #include "XTestMenuTest.h"
 #include "XTestMenu.h"
 #include "XCoreApplication.h"
@@ -19,6 +19,7 @@
 #include"XDeviceTest.h"
 #include"XMemoryTest.h"
 #include"XDataTest.h"
+#include"XPropertyTest.h"
 XTestMenu* XTestMenuTest_create()
 {
 	XTestMenu* root = XTestMenu_create("测试代码");
@@ -31,6 +32,9 @@ XTestMenu* XTestMenuTest_create()
 	XTestMenu_XTimerTest(root);
 	XTestMenu_XMemoryTest(root);
 	XTestMenu_XDataTest(root);
+#if DEMOTEST && XPROPERTY_ON
+	XTestMenu_XPropertyTest(root);
+#endif
 	return root;
 }
 

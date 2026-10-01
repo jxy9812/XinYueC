@@ -2767,7 +2767,11 @@ bool XVirtualKeyboard_setImeEnabled(XVirtualKeyboard* self, bool on)
             XVirtualKeyboardAbstractInputMethod* old =
                 XVirtualKeyboardInputEngine_inputMethod(engine);
             XVirtualKeyboardInputEngine_setInputMethod(engine, plugin);
-            if (old) XVirtualKeyboardAbstractInputMethod_delete_base(old);
+            if (old) {
+                /* 旧输入法的 keyClick 等回调可能仍挂在引擎事件链上，
+                   延迟回收防发射帧内同步释放。 */
+                XObject_deleteLater((XObject*)old);
+            }
         }
         self->m_imeEnabled = true;
 #if XKEYBOARD_IME_PHRASE_ON
@@ -2795,7 +2799,7 @@ bool XVirtualKeyboard_setImeEnabled(XVirtualKeyboard* self, bool on)
         XVirtualKeyboardInputEngine_setInputMethod(
             engine, (XVirtualKeyboardAbstractInputMethod*)
                         XVirtualKeyboardPlainInputMethod_create());
-        if (old) XVirtualKeyboardAbstractInputMethod_delete_base(old);
+        if (old) XObject_deleteLater((XObject*)old);
     }
     /* 无论 setMode 是否已触发过重建（值未变早退），统一重建一次确保
        带矩形与布局同步（重建幂等且廉价）。 */

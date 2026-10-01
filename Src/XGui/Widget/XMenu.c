@@ -662,10 +662,13 @@ static void xmenu_close(XMenu* self)
     }
     /* 对标 Qt WA_DeleteOnClose：设置该属性的弹出菜单在关闭时自删。
        仅在交互关闭路径（动作触发/菜单外点击/Escape）执行；对象析构
-       路径不经过本函数，无二次删除风险。 */
+       路径不经过本函数，无二次删除风险。同步删改为延迟：本函数由
+       mouseRelease/keyPress/triggered 槽路径进入，aboutToHide 已在本帧
+       发射，事件分发帧返回途中仍会访问本控件——立即释放 UAF，
+       Qt 的 close() 自删即 deleteLater 语义。 */
     if (XWidget_testAttribute((XWidget*)self,
                               XWidgetAttribute_DeleteOnClose))
-        XWidget_delete_base((XClass*)self);
+        XObject_deleteLater((XObject*)self);
 }
 
 /* 移动高亮到下一个/上一个可选条目；wrap 循环。 */

@@ -142,13 +142,20 @@ static void xdb_bridgeClickedSlot(XObject* receiver, XVarList* args)
     xdb_emitButton(self, (size_t)XDialogButtonBox_clicked_signal, button);
 }
 
-static void xdb_bridgeDestroy(XDBBridge* bridge)
+/* @param deferred true=事件循环归还后回收（运行期 API 路径：桥挂在
+ *        clicked 的 Direct 发射链上，槽内同步删会在按钮 mouseRelease→
+ *        clicked 发射帧返回途中释放结构体造成 UAF）；false=立即回收
+ *        （仅限析构路径，deinit 中延迟删除会悬挂）。 */
+static void xdb_bridgeDestroyDeferred(XDBBridge* bridge, bool deferred)
 {
     if (!bridge) return;
     XObject_disconnect_1((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_clicked_signal),
                          (XObject*)bridge, xdb_bridgeClickedSlot);
-    XClass_delete_base((XClass*)bridge);
+    if (deferred)
+        XObject_deleteLater((XObject*)bridge);
+    else
+        XClass_delete_base((XClass*)bridge);
 }
 
 /* ==================== 内部排布（WinLayout 角色序 + 右对齐/居中横排） ==================== */
@@ -318,7 +325,7 @@ static void VX_dialogButtonBox_deinit(XDialogButtonBox* self)
     for (i = 0; i < n; ++i) {
         XDBBridge** bp =
             (XDBBridge**)XVector_at_base(self->m_bridges, i);
-        xdb_bridgeDestroy(bp ? *bp : NULL);
+        xdb_bridgeDestroyDeferred(bp ? *bp : NULL, false);
     }
     if (self->m_bridges) {
         XVector_delete_base(self->m_bridges);
@@ -509,7 +516,7 @@ void XDialogButtonBox_removeButton(XDialogButtonBox* self,
     {
         XDBBridge** bp =
             (XDBBridge**)XVector_at_base(self->m_bridges, index);
-        xdb_bridgeDestroy(bp ? *bp : NULL);
+        xdb_bridgeDestroyDeferred(bp ? *bp : NULL, true);
     }
     /* 摘除即解除显式焦点链残留（见 xdb_unlinkFocus 注）。 */
     xdb_unlinkFocus(button);
@@ -536,7 +543,7 @@ void XDialogButtonBox_clear(XDialogButtonBox* self)
         btn = self->m_buttons
                   ? (XAbstractButton**)XVector_at_base(self->m_buttons, i)
                   : NULL;
-        xdb_bridgeDestroy(bp ? *bp : NULL);
+        xdb_bridgeDestroyDeferred(bp ? *bp : NULL, true);
         XVector_remove_base(self->m_bridges, i, 1);
         if (self->m_buttons)
             XVector_remove_base(self->m_buttons, i, 1);
@@ -555,8 +562,12 @@ void XDialogButtonBox_clear(XDialogButtonBox* self)
              * 仅摘父归还调用方。此前一律摘父使标准按钮成孤儿泄漏
              * （ASan 归因 7.7KB/18 块）。向量条目已先行移除，删除
              * 无自摘回调冲突。 */
-            if (stdVal && *stdVal != 0)
-                XWidget_delete_base((XWidget*)*btn);
+            if (stdVal && *stdVal != 0) {
+                /* 盒自建按钮的 clicked 是 Direct 发射链：槽内调 clear 时
+                   按钮正处于自身 mouseRelease→clicked 帧内，同步删 UAF
+                   （对标 Qt 编辑器 releaseEditor 的 deleteLater 纪律）。 */
+                XObject_deleteLater((XObject*)*btn);
+            }
             else
                 XWidget_setParent((XWidget*)*btn, NULL, 0);
         }

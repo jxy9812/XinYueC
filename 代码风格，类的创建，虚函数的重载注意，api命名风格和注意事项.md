@@ -1,4 +1,4 @@
-# XinYueC 库代码风格指南
+﻿# XinYueC 库代码风格指南
 
 ## 目录
 1. [命名规范](#命名规范)
@@ -94,7 +94,7 @@
   ```
 
 ### 宏命名
-- **全大写 + 下划线分隔**：`XCLASS_VTABLE_SIZE`、`XVTABLE_CREAT_DEFAULT`、`ISNULL(args, str)`、`XAssert(args, str)`、`XNew(Type)`
+- **全大写 + 下划线分隔**：`XCLASS_VTABLE_SIZE`、`XVTABLE_INIT_DEFAULT`、`ISNULL(args, str)`、`XAssert(args, str)`、`XNew(Type)`
 - **容器创建宏**：`_Create` 后缀自动推导 sizeof
   ```c
   #define XVector_Create(Type) XVector_create_ex(sizeof(Type), true)
@@ -287,12 +287,7 @@ static void VXExample_move(XExample* dest, XExample* src)
 // ============== 虚函数表初始化（各宏逐项说明见「虚函数表与虚函数重载」） ==============
 XVtable* XExample_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XExample)
-#else
-    XVTABLE_HEAP_INIT_DEFAULT
-#endif
+    XVTABLE_INIT_DEFAULT(XExample)                                 // 一体宏：建表+初始化（栈/堆由配置选择）
     XVTABLE_INHERIT_XCLASS(XClass);                                // 继承父类虚函数表
     void* table[] = { VXExample_event, VXExample_childEvent };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);                          // 添加自己新增的虚函数
@@ -374,12 +369,16 @@ XCLASS_DEFINE_EXTEND_END(XChildClass, XParentClass)   // 指定父类
 
 `XExample_class_init()` 的标准流程（完整示例见「类的创建」源文件结构）：
 
-1. `XVTABLE_CREAT_DEFAULT` —— 创建虚函数表（单例模式）；
-2. `XVTABLE_STACK_INIT_DEFAULT(XExample)` 或 `XVTABLE_HEAP_INIT_DEFAULT` —— 初始化虚函数表，由 `#if VTABLE_ISSTACK` 选择栈或堆；
-3. `XVTABLE_INHERIT_XCLASS(XParentClass)` —— 继承父类虚函数表；
-4. `XVTABLE_ADD_FUNC_LIST_DEFAULT(table)` —— 添加自己新增的虚函数（`void* table[] = { VXExample_event, VXExample_childEvent };`）；
-5. `XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXExample_deinit)` 等 —— 重载父类虚函数；
-6. `return XVTABLE_DEFAULT;`
+1. `XVTABLE_INIT_DEFAULT(XExample)` —— 一体宏：创建虚函数表（单例模式）并按配置初始化（栈模式按该类枚举容量建栈表，堆模式建可扩容堆表），同时登记默认类名；
+2. `XVTABLE_INHERIT_XCLASS(XParentClass)` —— 继承父类虚函数表；
+3. `XVTABLE_ADD_FUNC_LIST_DEFAULT(table)` —— 添加自己新增的虚函数（`void* table[] = { VXExample_event, VXExample_childEvent };`）；
+4. `XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXExample_deinit)` 等 —— 重载父类虚函数；
+5. `return XVTABLE_DEFAULT;`
+
+> ⚠️ **迁移说明（2026-10 起）**：旧的 `XVTABLE_CREAT_DEFAULT` + `#if VTABLE_ISSTACK
+> XVTABLE_STACK_INIT_DEFAULT(X)` / `XVTABLE_HEAP_INIT_DEFAULT` 分段写法已废弃，
+> 由 `XVTABLE_INIT_DEFAULT(Type)` 一体宏取代（展开时完成分支选择，无运行时开销）。
+> 新代码一律使用一体宏；文档历史示例中出现的分段写法均按此条替换理解。
 
 ### 虚函数重载注意事项
 
@@ -598,6 +597,37 @@ XExample_delete_base(heapSrc);    // 创建者：空源对象同样 delete_base�
 ```c
 XObject_deleteLater(obj);
 ```
+
+#### 对象释放方式选择约束（2026-10 裁定，对标 Qt deleteLater 语义）
+
+XObject 派生对象（结构体首成员为 XObject，或 `_init` 调用 `XObject_init`）**何时必须延迟释放、何时必须同步释放**，按以下判据执行：
+
+**必须延迟释放（堆对象用 `XObject_deleteLater`，栈对象用 `XObject_deinitLater`）：**
+
+1. 删除动作发生在对象自身的事件/信号调用栈上——事件处理器（`VXxx_event`）、槽函数（经 `XObject_connect` 注册的回调）、观察者回调、输入处理路径中删除"自己"或删除当前发射链上的对象；
+2. 对象可能仍有未处理的投递事件（`XObject_postEvent` 已投递、输入事件在途）；
+3. 对象可能在信号发射中途被删除，导致其他连接方在发射循环中访问已释放内存。
+
+```c
+// ✗ 错误：槽函数内同步删除自身参与发射链的对象（悬垂）
+static void VXView_onClose(XView* self, XVarList* args) {
+    XClass_delete_base((XClass*)self);        // 发射循环可能还在遍历本对象连接
+}
+// ✓ 正确
+static void VXView_onClose(XView* self, XVarList* args) {
+    XObject_deleteLater((XObject*)self);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);  // 需立即回收时由事件循环统一处理
+}
+```
+
+**必须同步释放（禁止改为延迟）：**
+
+1. 析构函数内部（`VXxx_deinit`）清理自己的成员与子对象——延迟删除析构路径会引入重入与顺序问题；
+2. 栈上/嵌入对象的 `deinit_base` 收尾；
+3. 非 XObject 的值类型（XString/XVariant/容器等，无 deleteLater 入口）；
+4. 能证明对象无任何信号槽连接、无在途事件且删除不在对象自身调用栈上的纯业务对象（此时同步释放成本更低、语义更明确）。
+
+**信号槽连接的自动断开不构成豁免**：连接虽随对象析构自动清理，但"析构时机"本身若可能落在发射循环/事件在途窗口内，就必须延迟释放。无法证明安全时，选择延迟释放并注明理由。
 
 ---
 
@@ -929,8 +959,8 @@ static void VXExample_copy(XExample* dest, const XExample* src) { ... }
 
 XVtable* XExample_class_init(void)                                         // 5. 虚函数表初始化（单例）
 {
-    XVTABLE_CREAT_DEFAULT
-    // ... 虚函数表初始化 ...
+    XVTABLE_INIT_DEFAULT(XExample)
+    // ... 继承/添加/重载虚函数 ...
     return XVTABLE_DEFAULT;
 }
 void XExample_init(XExample* obj) { ... }                                  // 6. 构造函数
@@ -950,7 +980,7 @@ static void VXClass_copy(XObject* dest, const XObject* src) { ... }
 
 XVtable* XClass_class_init(void)
 {
-    XVTABLE_CREAT_DEFAULT
+    XVTABLE_INIT_DEFAULT(XClass)
     // ...
     return XVTABLE_DEFAULT;
 }
@@ -1062,7 +1092,7 @@ bool XSemaphore_init(XSemaphore* sem, ...);
 ```c
 // 每个平台实现自己的 class_init()，如 XThreadPosix.c
 XVtable* XThread_class_init(void) {
-    XVTABLE_CREAT_DEFAULT
+    XVTABLE_INIT_DEFAULT(XThread)
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = { VXThread_start, VXThread_wait, ... };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);

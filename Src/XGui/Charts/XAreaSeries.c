@@ -93,8 +93,10 @@ const char* XAreaSeries_name_2(const XAreaSeries* self)
 void XAreaSeries_setUpperSeries(XAreaSeries* self, XLineSeries* series)
 {
     if (!self) return;
-    if (self->m_upper && self->m_upper != series)
-        XLineSeries_delete_base(self->m_upper);
+    if (self->m_upper && self->m_upper != series) {
+        /* 旧 upper 序列可能正被本系列绘制遍历或其自身信号链引用，延迟回收。 */
+        XObject_deleteLater((XObject*)self->m_upper);
+    }
     self->m_upper = series;
 }
 

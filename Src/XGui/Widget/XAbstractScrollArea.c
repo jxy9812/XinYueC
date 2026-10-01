@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XAbstractScrollArea.c
  * @brief      抽象滚动区域基类实现（对标 Qt 6.8 QAbstractScrollArea 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -519,8 +519,13 @@ void XAbstractScrollArea_setViewport(XAbstractScrollArea* self,
 {
     if (!self || !widget) return;
     if (self->m_viewport == widget) return;
-    if (self->m_viewport)
-        XWidget_delete_base((XWidget*)self->m_viewport);
+    if (self->m_viewport) {
+        /* 视口是滚动区输入/绘制事件的接收主体：在视口自身事件栈内
+           （视口事件→槽→setViewport）被换时，同步删会在其事件处理帧
+           返回途中释放结构体造成 UAF；延迟到事件循环归还后回收
+           （与 XWindowDecoration 控件释放契约同口径）。 */
+        XObject_deleteLater((XObject*)self->m_viewport);
+    }
     self->m_viewport = widget;
     XWidget_setParent(widget, (XWidget*)self, 0);
     VX_asa_resizeEvent((XWidget*)self, NULL);

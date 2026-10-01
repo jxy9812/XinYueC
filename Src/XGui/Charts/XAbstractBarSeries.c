@@ -377,7 +377,9 @@ bool XAbstractBarSeries_take(XAbstractBarSeries* self, XBarSet* set)
 bool XAbstractBarSeries_remove(XAbstractBarSeries* self, XBarSet* set)
 {
     if (!XAbstractBarSeries_take(self, set)) return false;
-    XBarSet_delete_base(set);
+    /* set 的 clicked/hovered 等信号可由自身事件链触发，remove 可能在其
+       发射帧内被调用；同步删 UAF，延迟到事件循环归还后回收。 */
+    XObject_deleteLater((XObject*)set);
     return true;
 }
 

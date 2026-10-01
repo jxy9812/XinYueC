@@ -91,6 +91,7 @@ typedef struct XActionGroupBridge
     XActionGroup* m_group;   /**< 所属组（借用）。 */
     XAction*    m_action;    /**< 桥接的成员动作（借用）。 */
     bool        m_actionDead;/**< 动作已销毁（跳过断连）。 */
+    bool        m_groupDead; /**< 组已析构/正在析构（destroyed 槽只断连）。 */
 } XActionGroupBridge;
 
 static XVtable* XActionGroupBridge_class_init(void)
@@ -124,7 +125,9 @@ static XActionGroupBridge* xactiongroup_bridgeCreate(XActionGroup* group,
     return bridge;
 }
 
-static void xactiongroup_bridgeDestroy(XActionGroupBridge* bridge)
+/* @param deferred true=事件循环归还后回收（运行期路径，桥在
+ *        triggered/destroyed Direct 发射链上）；false=立即回收（仅限析构路径）。 */
+static void xactiongroup_bridgeDestroyDeferred(XActionGroupBridge* bridge, bool deferred)
 {
     if (!bridge) return;
     if (bridge->m_actionDead) {
@@ -144,7 +147,10 @@ static void xactiongroup_bridgeDestroy(XActionGroupBridge* bridge)
                          XSignal(XObject_destroyed_signal),
                          (XObject*)bridge,
                          xactiongroup_bridgeDestroyedSlot);
-    XClass_delete_base((XClass*)bridge);
+    if (deferred)
+        XObject_deleteLater((XObject*)bridge);
+    else
+        XClass_delete_base((XClass*)bridge);
 }
 
 /** @brief triggered 转发：互斥维护 + 发射组 triggered(action)。 */
@@ -193,6 +199,28 @@ static void xactiongroup_bridgeDestroyedSlot(XObject* receiver,
     int64_t n;
     int index = -1;
     if (!bridge || !bridge->m_group) return;
+    {
+        XObject* sender = XObject_sender(receiver);
+        if (sender == (XObject*)bridge->m_group) {
+            /* 组亡发射帧：组内存此刻仍存。置亡标记 + 断开动作侧
+               destroyed 连接，此后动作后亡不再进本槽。 */
+            bridge->m_groupDead = true;
+            XObject_disconnect_1((XObject*)bridge->m_action,
+                                 XSignal(XObject_destroyed_signal),
+                                 (XObject*)bridge,
+                                 xactiongroup_bridgeDestroyedSlot);
+            return;
+        }
+    }
+    if (bridge->m_groupDead) {
+        /* 组已析构：组侧数据不可访问；桥随组析构流程回收，
+           此处只断开与动作的连接，防动作后亡时再次触发本槽。 */
+        XObject_disconnect_1((XObject*)bridge->m_action,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)bridge,
+                             xactiongroup_bridgeDestroyedSlot);
+        return;
+    }
     self = bridge->m_group;
     bridge->m_actionDead = true;
     action = bridge->m_action;
@@ -212,7 +240,8 @@ static void xactiongroup_bridgeDestroyedSlot(XObject* receiver,
         XVector_remove_base(self->m_bridges, index, 1);
         if (self->m_checkedAction == action)
             self->m_checkedAction = NULL;
-        XClass_delete_base((XClass*)bridge);
+        /* 本槽运行在动作 destroyed 发射帧上；延迟回收桥。 */
+        XObject_deleteLater((XObject*)bridge);
     }
 }
 
@@ -238,6 +267,13 @@ static XActionGroupBridge* xactiongroup_connectAction(XActionGroup* self,
                       (XObject*)bridge,
                       xactiongroup_bridgeDestroyedSlot,
                       XConnectionType_Direct);
+    /* 组自身 destroyed 也接入本槽：组亡时组内存尚存，槽内置 groupDead
+       并断开动作侧连接，堵住"组先亡、动作后亡"窗口期 UAF。 */
+    XObject_connect_1((XObject*)self,
+                      XSignal(XObject_destroyed_signal),
+                      (XObject*)bridge,
+                      xactiongroup_bridgeDestroyedSlot,
+                      XConnectionType_Direct);
     return bridge;
 }
 
@@ -246,6 +282,17 @@ static XActionGroupBridge* xactiongroup_connectAction(XActionGroup* self,
 static void VX_actionGroup_deinit(XActionGroup* self)
 {
     if (!self) return;
+    /* 先置组亡标记：后续回收桥/基类析构发射 destroyed 时，桥槽据此
+       停止访问组侧数据（动作销毁顺序不受组控制）。 */
+    if (self->m_bridges) {
+        int64_t i;
+        int64_t n = XVector_size_base((const XContainer*)self->m_bridges);
+        for (i = 0; i < n; ++i) {
+            XActionGroupBridge** bp =
+                (XActionGroupBridge**)XVector_at_base(self->m_bridges, i);
+            if (bp && *bp) (*bp)->m_groupDead = true;
+        }
+    }
     if (self->m_actions) {
         XVector_delete_base((XClass*)self->m_actions);
         self->m_actions = NULL;
@@ -257,7 +304,7 @@ static void VX_actionGroup_deinit(XActionGroup* self)
             XActionGroupBridge** bp =
                 (XActionGroupBridge**)XVector_at_base(self->m_bridges, i);
             if (bp && *bp)
-                xactiongroup_bridgeDestroy(*bp);
+                xactiongroup_bridgeDestroyDeferred(*bp, false);
         }
         XVector_delete_base((XClass*)self->m_bridges);
         self->m_bridges = NULL;
@@ -332,7 +379,7 @@ void XActionGroup_removeAction(XActionGroup* self, XAction* action)
         XActionGroupBridge** bp =
             (XActionGroupBridge**)XVector_at_base(self->m_bridges, index);
         if (bp && *bp)
-            xactiongroup_bridgeDestroy(*bp);
+            xactiongroup_bridgeDestroyDeferred(*bp, true);
     }
     XVector_remove_base(self->m_bridges, index, 1);
     XVector_remove_base(self->m_actions, index, 1);

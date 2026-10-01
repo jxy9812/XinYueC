@@ -2006,8 +2006,10 @@ void XTextEdit_setDocument(XTextEdit* self, XTextDocument* doc)
 {
     if (!self || doc == self->m_textDoc) return;
     /* 释放原内部默认文档；外部接管文档所有权归调用方。 */
-    if (self->m_textDoc && self->m_textDocOwned)
-        XClass_delete_base((XClass*)self->m_textDoc);
+    if (self->m_textDoc && self->m_textDocOwned) {
+        /* 旧文档的 contentsChange 等信号可能正处发射帧；延迟回收。 */
+        XObject_deleteLater((XObject*)self->m_textDoc);
+    }
     if (doc) {
         self->m_textDoc = doc;      /* 外部接管：不拥有。 */
         self->m_textDocOwned = false;

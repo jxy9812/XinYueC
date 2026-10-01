@@ -1,4 +1,4 @@
-#ifndef CXINYUECONFIG_H
+﻿#ifndef CXINYUECONFIG_H
 #define CXINYUECONFIG_H
 
 #ifdef __cplusplus
@@ -89,6 +89,18 @@ extern "C" {
  *       关闭后依赖 XAction 的 Test/XTestMenu 测试菜单相关能力也需同步裁剪。 */
 #ifndef XACTION_ON
 #define XACTION_ON 1
+#endif
+
+
+/* ========================================================================== */
+/*                          XProperty 声明式属性绑定模块开关                          */
+/* ========================================================================== */
+/** @brief XProperty 模块总开关；置 0 时裁剪声明式属性绑定全部公共 API。
+ * @note 该模块对标 Qt 6.8 QProperty/QBindable/QPropertyBinding/QPropertyAlias，
+ *       位于 XClass 层、依赖 XVariant/XObject 信号体系与 XSync 的 XThreadData
+ *       （绑定依赖捕获的线程求值栈）；关闭后依赖属性绑定的模块需同步裁剪。 */
+#ifndef XPROPERTY_ON
+#define XPROPERTY_ON 1
 #endif
 
 

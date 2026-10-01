@@ -133,17 +133,22 @@ void XThreadData_delete(XThreadData* data)
     XVector_deinit_base(&data->m_postEventList);
     XStack_deinit_base(&data->m_activePostEventLists);
     XStack_deinit_base(&data->m_eventLoops);
+#if XSEMAPHORE_ON
     if (data->m_wakeSemaphore)
     {
         XSemaphore_delete(data->m_wakeSemaphore);
         data->m_wakeSemaphore = NULL;
     }
+#endif
     if (data->m_mutex)
     {
         XMutex_delete(data->m_mutex);
         data->m_mutex = NULL;
     }
     XStack_deinit_base(&data->m_senderStack);
+#if XPROPERTY_ON
+    XStack_deinit_base(&data->m_bindingEvalStack);
+#endif
     //// Qt 6.8: 清理 TLS
     //if (data->m_tls)
     //{
@@ -230,12 +235,17 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     if (!data)return;
     memset(data,0,sizeof(XThreadData));
     data->m_mutex = XMutex_create(XLock_NonRecursive);
+#if XSEMAPHORE_ON
     data->m_wakeSemaphore = XSemaphore_create(0, 0x7FFFFFFF);
+#endif
     XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent), TryPostEvent_QueueSize);
     XVector_init(&data->m_postEventList, sizeof(XPostEvent),false);
     XStack_init(&data->m_activePostEventLists, sizeof(XVector*));
     XStack_init(&data->m_eventLoops, sizeof(XEventLoop*));  // Qt 6.8: 事件循环栈
     XStack_init(&data->m_senderStack, sizeof(XSenderFrame));
+#if XPROPERTY_ON
+    XStack_init(&data->m_bindingEvalStack, sizeof(struct XPropertyBinding*));  // XProperty: 绑定求值栈（元素为绑定指针）
+#endif
     data->m_thread = thread;
     XAtomic_init(data->m_loopLevel, 0);
     XAtomic_init(data->m_canWait, true);  // Qt 6.8: 默认可以阻塞等待

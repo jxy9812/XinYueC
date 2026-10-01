@@ -27,6 +27,7 @@
 #include "XSslTest.h"
 #include "XProtocolTest.h"
 #include "XDataTest.h"
+#include "XPropertyTest.h"
 #include "XTestCommand.h"
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
@@ -58,6 +59,13 @@ static int main_run_test_path(const char* testPath)
         return XDeviceSerialPortTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xdata") == 0)
         return XDataTest_runAll() ? 0 : 1;
+#if DEMOTEST && XPROPERTY_ON
+    if (strcmp(testPath, "xproperty") == 0)
+    {
+        XPropertyTestAll();
+        return 0;
+    }
+#endif
     if (strcmp(testPath, "xprocess") == 0)
         return XProcessTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xconsole-shell") == 0)

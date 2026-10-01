@@ -871,7 +871,10 @@ void XMdiArea_removeSubWindow(XMdiArea* self, XWidget* widget)
             (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
         if (sw && *sw && XMdiSubWindow_widget(*sw) == widget) {
             if (self->m_active == *sw) self->m_active = NULL;
-            XClass_delete_base((XClass*)*sw);
+            /* 子窗口可能正处于自身 closeEvent/事件分发栈上（closeAll
+               级联、内容控件触发移除等）；同步删会在其事件帧返回途中
+               释放结构体。延迟回收（对标 Qt QMdiArea::removeSubWindow）。 */
+            XObject_deleteLater((XObject*)*sw);
             XVector_remove_base(self->m_subWindows, i, 1);
             return;
         }
@@ -916,8 +919,11 @@ void XMdiArea_closeAllSubWindows(XMdiArea* self)
         for (i = 0; i < n; ++i) {
             XMdiSubWindow** sw =
                 (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
-            if (sw && *sw)
-                XClass_delete_base((XClass*)*sw);
+            if (sw && *sw) {
+                /* 对标 Qt QMdiArea::closeAllSubWindows：逐窗 close 并
+                   延迟回收，避免在子窗口事件帧内同步释放。 */
+                XObject_deleteLater((XObject*)*sw);
+            }
         }
         XVector_clear_base(self->m_subWindows);
     }
@@ -1223,7 +1229,10 @@ void XMdiArea_closeActiveSubWindow(XMdiArea* self)
         XMdiSubWindow** slot =
             (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
         if (slot && *slot == sw) {
-            XClass_delete_base((XClass*)sw);
+            /* 关闭路径可能由子窗口自身事件（closeEvent/按键）触发；
+               同步删会在其事件帧返回途中释放自身，改延迟回收
+               （对标 Qt QMdiArea::closeActiveSubWindow 的 deleteLater）。 */
+            XObject_deleteLater((XObject*)sw);
             XVector_remove_base(self->m_subWindows, i, 1);
             break;
         }

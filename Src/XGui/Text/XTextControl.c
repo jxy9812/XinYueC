@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XTextControl.c
  * @brief      XTextControl 私有文本控制器实现（对标 Qt 6.8
  *             QWidgetTextControl 的 API/功能/行为三层）。
@@ -3942,8 +3942,11 @@ void XTextControl_setDocument(XTextControl* self, XTextDocument* doc)
 {
     char* text;
     if (!self || self->m_textDoc == doc) return;
-    if (self->m_textDoc)
-        XClass_delete_base((XClass*)self->m_textDoc);
+    if (self->m_textDoc) {
+        /* 旧文档的 contentsChange 等信号可能正处发射帧（业务槽内
+           换文档）；同步删 UAF，延迟回收。 */
+        XObject_deleteLater((XObject*)self->m_textDoc);
+    }
     if (doc) {
         self->m_textDoc = doc;
         text = XTextDocument_toPlainText(doc);
