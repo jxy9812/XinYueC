@@ -21,6 +21,7 @@
 
 #if defined(__ANDROID__)
 
+#include "XPlatformScreen.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -31,6 +32,22 @@
 static JavaVM* g_xsysAndroidVm = NULL;
 static jobject g_xsysMainActivity = NULL;
 
+/* JNI 查询 last-known-good 缓存：密度是设备常量；原点/窗口尺寸仅在
+   窗口化↔最大化切换时缓变。查询抖动（Activity 过渡期读数失效）沿用
+   旧值远好于回落 0/160——0 会把屏幕坐标当窗口本地坐标用（DOWN/UP
+   原点不一致即出现负坐标），160/1.0 会让整套 DPI 缩放静默失效。 */
+static int g_xsysLastOriginX = 0;
+static int g_xsysLastOriginY = 0;
+static bool g_xsysHaveOrigin = false;
+static int g_xsysLastFrameW = 0;
+static int g_xsysLastFrameH = 0;
+static bool g_xsysHaveFrame = false;
+static float g_xsysLastDensity = 0.0f;
+static int g_xsysLastDensityDpi = 0;
+static int g_xsysLastXdpi = 0;
+static int g_xsysLastYdpi = 0;
+static bool g_xsysHaveDensity = false;
+
 void XAndroid_setJavaVm(JavaVM* vm)
 {
     g_xsysAndroidVm = vm;
@@ -38,7 +55,28 @@ void XAndroid_setJavaVm(JavaVM* vm)
 
 void XAndroid_setMainActivity(jobject activity)
 {
+    /* activity->clazz 是 onCreate 调用帧里的【局部引用】：仅 UI 线程
+       当前消息帧内有效。demo/输入线程随后的密度/原点/窗口尺寸查询
+       跨线程复用它属未定义行为——实测同一份代码首启 JNI 查询成功、
+       关闭后冷启二启整链失败（回落 160/1.0、几何 0x0），运行期读数
+       抖动致点击坐标漂移（用户实测"点击左侧不准"根因）。必须升全局
+       引用；Activity 重建换实例时释放旧全局引用防泄漏。 */
+    if (g_xsysMainActivity && g_xsysAndroidVm) {
+        JNIEnv* env = NULL;
+        if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
+                                       JNI_VERSION_1_6) == JNI_OK) {
+            (*env)->DeleteGlobalRef(env, g_xsysMainActivity);
+            g_xsysMainActivity = NULL;
+        }
+    }
     g_xsysMainActivity = activity;
+    if (g_xsysMainActivity && g_xsysAndroidVm) {
+        JNIEnv* env = NULL;
+        if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
+                                       JNI_VERSION_1_6) == JNI_OK)
+            g_xsysMainActivity =
+                (*env)->NewGlobalRef(env, g_xsysMainActivity);
+    }
 }
 
 /**
@@ -76,12 +114,12 @@ bool XAndroid_getWindowScreenOrigin(int* outX, int* outY)
     if (!outX || !outY) return false;
     *outX = 0;
     *outY = 0;
-    if (!g_xsysAndroidVm || !g_xsysMainActivity) return false;
+    if (!g_xsysAndroidVm || !g_xsysMainActivity) goto fail2;
     if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
                                    JNI_VERSION_1_6) != JNI_OK &&
         (*g_xsysAndroidVm)->AttachCurrentThread(g_xsysAndroidVm,
                                                 &env, NULL) != JNI_OK)
-        return false;
+        goto fail2;
 
     natActivityCls = (*env)->GetObjectClass(env, g_xsysMainActivity);
     if (!natActivityCls) goto fail2;
@@ -115,10 +153,20 @@ bool XAndroid_getWindowScreenOrigin(int* outX, int* outY)
     (*env)->DeleteLocalRef(env, natActivityCls);
     *outX = (int)elems[0];
     *outY = (int)elems[1];
+    g_xsysLastOriginX = *outX;
+    g_xsysLastOriginY = *outY;
+    g_xsysHaveOrigin = true;
     return true;
 
 fail2:
-    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (env && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    /* 查询抖动兜底：沿用上次成功原点而非 0——窗口化/最大化切换瞬间
+       原点读数失效会把点击算到窗外（DOWN/UP 原点不一致即负坐标）。 */
+    if (g_xsysHaveOrigin) {
+        *outX = g_xsysLastOriginX;
+        *outY = g_xsysLastOriginY;
+        return true;
+    }
     return false;
 }
 
@@ -177,36 +225,198 @@ bool XAndroid_getWindowFrameSize(int* outWidth, int* outHeight)
     if (!outWidth || !outHeight) return false;
     *outWidth = 0;
     *outHeight = 0;
-    if (!g_xsysAndroidVm || !g_xsysMainActivity) return false;
+    if (!g_xsysAndroidVm || !g_xsysMainActivity) goto fail3;
     if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
                                    JNI_VERSION_1_6) != JNI_OK &&
         (*g_xsysAndroidVm)->AttachCurrentThread(g_xsysAndroidVm,
                                                 &env, NULL) != JNI_OK)
-        return false;
+        goto fail3;
     natActivityCls = (*env)->GetObjectClass(env, g_xsysMainActivity);
-    if (!natActivityCls) return false;
+    if (!natActivityCls) goto fail3;
 
     midContent = (*env)->GetMethodID(env, natActivityCls, "findViewById",
                                            "(I)Landroid/view/View;");
-    if (!midContent) return false;
+    if (!midContent) goto fail3;
     contentView = (*env)->CallObjectMethod(env, g_xsysMainActivity, midContent,
                                                  0x01020002);
     if (!contentView) {
         if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
-        return false;
+        goto fail3;
     }
     viewCls = (*env)->GetObjectClass(env, contentView);
     midGetWidth = (*env)->GetMethodID(env, viewCls, "getWidth", "()I");
     midGetHeight = (*env)->GetMethodID(env, viewCls, "getHeight", "()I");
-    if (!midGetWidth || !midGetHeight) return false;
+    if (!midGetWidth || !midGetHeight) goto fail3;
     w = (*env)->CallIntMethod(env, contentView, midGetWidth);
     h = (*env)->CallIntMethod(env, contentView, midGetHeight);
     (*env)->DeleteLocalRef(env, contentView);
     (*env)->DeleteLocalRef(env, viewCls);
-    if (w <= 0 || h <= 0) return false;
+    if (w <= 0 || h <= 0) goto fail3;
     *outWidth = (int)w;
     *outHeight = (int)h;
+    g_xsysLastFrameW = *outWidth;
+    g_xsysLastFrameH = *outHeight;
+    g_xsysHaveFrame = true;
     return true;
+
+fail3:
+    /* 查询抖动兜底：沿用上次成功尺寸而非 0（0x0 会让屏幕登记/最大化
+       目标几何全错）。 */
+    if (g_xsysHaveFrame) {
+        *outWidth = g_xsysLastFrameW;
+        *outHeight = g_xsysLastFrameH;
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief  经 JNI 查询 DisplayMetrics 密度（dpr 唯一数据源 + 物理 DPI）。
+ * @details getResources().getDisplayMetrics() 四字段：density（即 dpr，
+ *          wm density 覆盖即时生效）、densityDpi（整档，仅诊断日志用）、
+ *          xdpi/ydpi（设备真实物理 DPI，XScreen physicalSize 毫米反推用，
+ *          见设计 §1.5）。回填定版：只回填 setDevicePixelRatio(density)，
+ *          logicalDpi 永不回填（H1：densityDpi 灌入 logicalDpi 会触发
+ *          dpr²x(densityDpi/96) 复合爆炸）。纯 JNI 读数（GetEnv/Attach
+ *          双路径自适应任意线程），UI 线程首帧同步采样依此（不属信号面
+ *          收口，§1.4 澄清）。
+ * @return true 查询成功；false 无 VM/反射失败/数值非法（调用方兜底
+ *         160 dpi / 1.0，安全退化为现网 dpr=1 行为）。
+ */
+bool XAndroid_getDisplayDensity(float* outDensity, int* outDensityDpi,
+                                int* outXdpi, int* outYdpi)
+{
+    JNIEnv* env = NULL;
+    jclass natActivityCls = NULL;
+    jmethodID midGetResources;
+    jobject resources = NULL;
+    jclass resCls = NULL;
+    jmethodID midMetrics;
+    jobject metrics = NULL;
+    jclass metricsCls = NULL;
+    jfieldID fidDensity;
+    jfieldID fidDensityDpi;
+    jfieldID fidXdpi;
+    jfieldID fidYdpi;
+    float density;
+    int densityDpi;
+    float xdpi;
+    float ydpi;
+
+    /* 兜底先写：任一步失败调用方拿到的都是 160/1.0 安全值。 */
+    if (outDensity) *outDensity = 1.0f;
+    if (outDensityDpi) *outDensityDpi = 160;
+    if (outXdpi) *outXdpi = 160;
+    if (outYdpi) *outYdpi = 160;
+    if (!outDensity || !outDensityDpi || !outXdpi || !outYdpi) return false;
+    if (!g_xsysAndroidVm || !g_xsysMainActivity) goto fail;
+    if ((*g_xsysAndroidVm)->GetEnv(g_xsysAndroidVm, (void**)&env,
+                                   JNI_VERSION_1_6) != JNI_OK &&
+        (*g_xsysAndroidVm)->AttachCurrentThread(g_xsysAndroidVm,
+                                                &env, NULL) != JNI_OK)
+        goto fail;
+
+    natActivityCls = (*env)->GetObjectClass(env, g_xsysMainActivity);
+    if (!natActivityCls) goto fail;
+    midGetResources = (*env)->GetMethodID(env, natActivityCls,
+                                          "getResources",
+                                          "()Landroid/content/res/Resources;");
+    if (!midGetResources) goto fail;
+    resources = (*env)->CallObjectMethod(env, g_xsysMainActivity,
+                                         midGetResources);
+    if (!resources) goto fail;
+    resCls = (*env)->GetObjectClass(env, resources);
+    midMetrics = (*env)->GetMethodID(env, resCls, "getDisplayMetrics",
+                                     "()Landroid/util/DisplayMetrics;");
+    if (!midMetrics) goto fail;
+    metrics = (*env)->CallObjectMethod(env, resources, midMetrics);
+    if (!metrics) goto fail;
+    metricsCls = (*env)->GetObjectClass(env, metrics);
+    fidDensity = (*env)->GetFieldID(env, metricsCls, "density", "F");
+    fidDensityDpi = (*env)->GetFieldID(env, metricsCls, "densityDpi", "I");
+    fidXdpi = (*env)->GetFieldID(env, metricsCls, "xdpi", "F");
+    fidYdpi = (*env)->GetFieldID(env, metricsCls, "ydpi", "F");
+    if (!fidDensity || !fidDensityDpi || !fidXdpi || !fidYdpi) goto fail;
+    density = (*env)->GetFloatField(env, metrics, fidDensity);
+    densityDpi = (*env)->GetIntField(env, metrics, fidDensityDpi);
+    xdpi = (*env)->GetFloatField(env, metrics, fidXdpi);
+    ydpi = (*env)->GetFloatField(env, metrics, fidYdpi);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        goto fail;
+    }
+    /* 非法读数（部分 ROM 返回 0）按失败处理，走 160/1.0 兜底。 */
+    if (density <= 0.0f || xdpi <= 0.0f || ydpi <= 0.0f ||
+        densityDpi <= 0)
+        goto fail;
+    *outDensity = density;
+    *outDensityDpi = densityDpi;
+    *outXdpi = (int)(xdpi + 0.5f);
+    *outYdpi = (int)(ydpi + 0.5f);
+    /* last-known-good：密度是设备常量，成功一次永久缓存；后续查询失败
+       （Activity 过渡/线程态抖动）沿用缓存而非回落 160/1.0——后者会让
+       整套 DPI 缩放静默失效（dpr 1.5→1.0 翻转即点击全偏）。 */
+    g_xsysLastDensity = density;
+    g_xsysLastDensityDpi = densityDpi;
+    g_xsysLastXdpi = *outXdpi;
+    g_xsysLastYdpi = *outYdpi;
+    g_xsysHaveDensity = true;
+    (*env)->DeleteLocalRef(env, metricsCls);
+    (*env)->DeleteLocalRef(env, metrics);
+    (*env)->DeleteLocalRef(env, resCls);
+    (*env)->DeleteLocalRef(env, resources);
+    (*env)->DeleteLocalRef(env, natActivityCls);
+    return true;
+
+fail:
+    /* 失败路径与成功路径同一纪律：清异常后删除已创建的局部引用
+       （未创建者为 NULL，DeleteLocalRef(NULL) 按 JNI 规范为安全空操作；
+       env 为 NULL 时异常检查整体跳过）。 */
+    if (env && (*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (metricsCls) (*env)->DeleteLocalRef(env, metricsCls);
+    if (metrics) (*env)->DeleteLocalRef(env, metrics);
+    if (resCls) (*env)->DeleteLocalRef(env, resCls);
+    if (resources) (*env)->DeleteLocalRef(env, resources);
+    if (natActivityCls) (*env)->DeleteLocalRef(env, natActivityCls);
+    /* 有历史成功读数时沿用缓存（密度是设备常量）；从未成功才回落
+       160/1.0，由调用方 m_densityValid 守卫位按"未知"处理。 */
+    if (g_xsysHaveDensity) {
+        if (outDensity) *outDensity = g_xsysLastDensity;
+        if (outDensityDpi) *outDensityDpi = g_xsysLastDensityDpi;
+        if (outXdpi) *outXdpi = g_xsysLastXdpi;
+        if (outYdpi) *outYdpi = g_xsysLastYdpi;
+        return true;
+    }
+    return false;
+}
+
+/* ==================== XPlatformScreen 契约实现（安卓） ==================== */
+/* 统一平台 API 的安卓侧：委托上方三个 JNI 读数函数（last-known-good
+   缓存纪律在那些函数内），公共层经 Src/XGui/Platform/XPlatformScreen.h
+   的统一签名拉取，不感知 JNI 细节。 */
+
+bool XPlatformScreen_isAvailable(void)
+{
+    return g_xsysAndroidVm != NULL && g_xsysMainActivity != NULL;
+}
+
+bool XPlatformScreen_queryDpi(XPlatformScreenDpiInfo* out)
+{
+    if (!out) return false;
+    out->m_valid = XAndroid_getDisplayDensity(&out->m_density,
+                                              &out->m_densityDpi,
+                                              &out->m_xdpi, &out->m_ydpi);
+    return out->m_valid;
+}
+
+bool XPlatformScreen_queryOrigin(int* outX, int* outY)
+{
+    return XAndroid_getWindowScreenOrigin(outX, outY);
+}
+
+bool XPlatformScreen_queryFrameSize(int* outWidth, int* outHeight)
+{
+    return XAndroid_getWindowFrameSize(outWidth, outHeight);
 }
 
 /** @brief 取当前线程 JNIEnv；主线程外首次调用时附加（ detach 由本文件

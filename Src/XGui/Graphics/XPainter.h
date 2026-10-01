@@ -32,6 +32,11 @@ typedef struct XPaintDevice XPaintDevice;
 
 /* XPixmap 仅在像素图适配接口中使用，采用前向声明避免头文件依赖环。 */
 typedef struct XPixmap XPixmap;
+/* XScreen 前向声明（fontPixelSizeForScreen 借用指针参数；完整定义见
+ * XScreen.h）。XScreen.h 反向依赖本层（其 :25 含 XImage.h），故本头不
+ * 直接包含它——与 XWidget.h 同款不透明指针前向模式，避免 Window 层
+ * 被拉进全部 XPainter 消费方的包含链。 */
+typedef struct XScreen XScreen;
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 /** @brief GPU 光栅会话前向声明（完整类型由 XGpuRenderBackend.h 提供）。 */
 typedef struct XGpuRenderBackend XGpuRenderBackend;
@@ -1286,6 +1291,44 @@ int XPainter_textHeight(const XFont* font);
 int XPainter_textAscent(const XFont* font);
 /** @brief 返回指定点阵字体的基线以下高度（含缩放）。 */
 int XPainter_textDescent(const XFont* font);
+
+/* ========== 字体点尺寸 → 像素字号（唯一换算点，对标 Qt 逻辑 DPI 语义） ========== */
+
+/**
+ * @brief      按目标屏幕把字体点尺寸换算为像素字号（对标 Qt 的
+ *             QFont pointSize→pixelSize 走 QScreen logicalDpi 语义）。
+ * @details    全框架唯一的 pt→px 换算入口（此前 XPainter.c 与
+ *             XTextEdit.c 各持一份写死 96/72 的拷贝）：px =
+ *             (int)(pt × scaleDpi / 72 + 0.5)，其中
+ *             scaleDpi = (屏幕 dpr > 1 ? 逻辑DPI : 96)（F3 桌面守卫：
+ *             dpr<=1 的屏恒取 96，无视 logicalDpi 上报值——posix
+ *             Xft.dpi=120/144、win32 LOGPIXELS 环境逐位保持现行为）。
+ *             物理放大不在度量层发生：安卓 dpr>1 时 logicalDpi 定版
+ *             保持 96，几何放大由平台 present 层承担（设计 §0）。
+ *             screen 为 NULL 取主屏；无主屏或 DPI 非法值兜底 96。
+ * @param      screen 目标屏幕；NULL 取进程主屏幕。
+ * @param      pointSize 字体点尺寸；<=0 返回 0。
+ * @return     换算后的像素字号（四舍五入，正数域 +0.5 截断）。
+ */
+int XPainter_fontPixelSizeForScreen(const XScreen* screen, double pointSize);
+/**
+ * @brief      按主屏幕把字体点尺寸换算为像素字号（便捷重载）。
+ * @details    等价 XPainter_fontPixelSizeForScreen(NULL, pointSize)：
+ *             screen 缺省取主屏，再无屏/非法值兜底 96（含 F3 桌面守卫）。
+ * @param      pointSize 字体点尺寸；<=0 返回 0。
+ * @return     换算后的像素字号。
+ */
+int XPainter_fontPixelSize(double pointSize);
+/**
+ * @brief      清空字体度量表记忆全部槽位（DPI/dpr 变化消费者的第一站）。
+ * @details    g_fontTableMemos 的键不含 DPI：屏幕 dpr/逻辑 DPI 变化后
+ *             必须先失效记忆、再触发全窗口重绘，否则 pt→px 口径已变而
+ *             度量表仍命中旧键（对标 Qt QFontCache 在 logicalDpi 变化
+ *             时清引擎缓存）。消费顺序契约：先本函数清表，后逐窗口
+ *             XWindow_requestUpdate；单线程绘制，无需加锁。
+ * @return     无。
+ */
+void XPainter_fontTableMemosInvalidate(void);
 
 /**
  * @brief      计算文本在给定矩形内按对齐标志的实际包围矩形

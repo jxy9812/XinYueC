@@ -66,6 +66,14 @@
 
 #include "XImageFormat.h"
 #include "XPlatformNativeWindow.h" /* isAvailable：反向时序防护。 */
+#include "XPlatformScreen.h"
+/* 屏幕登记（opt-in，XPLATFORM_FBDEV_REGISTER_SCREEN）：经公共层既有
+ * 通道把面板登记为框架 XScreen（平台层只采集+上报，公共层零改动）。
+ * 三头各自带配置守卫（XSCREEN_ON / XGUIAPPLICATION_ON / WSI 四宏），
+ * 全裁剪配置下仅声明消失、包含安全；登记函数体在同款守卫内。 */
+#include "XScreen.h"
+#include "XGuiApplication.h"
+#include "XWindowSystemInterface.h"
 
 /* ==================== 进程级驱动状态（静态，无堆分配） ==================== */
 
@@ -182,6 +190,11 @@ static bool xpdfb_probeDevice(void)
     memset(&g_xpdfbInfo, 0, sizeof(g_xpdfbInfo));
     g_xpdfbInfo.m_width = (int)var.xres;
     g_xpdfbInfo.m_height = (int)var.yres;
+    /* 面板物理尺寸（mm）：var.width/height 原值透传（内核 UAPI 注释
+     * "picture in mm"），0=面板无 EDID/驱动未上报（未知），严禁编造
+     * ——dpr 不得由 mm 反推（XPLATFORM_DISPLAY_INFO 契约 ABI 2）。 */
+    g_xpdfbInfo.m_physicalWidthMm = (float)var.width;
+    g_xpdfbInfo.m_physicalHeightMm = (float)var.height;
     g_xpdfbInfo.m_format = format;
     g_xpdfbInfo.m_bitsPerPixel = (int)var.bits_per_pixel;
     g_xpdfbInfo.m_stride = (size_t)fix.line_length;
@@ -424,6 +437,83 @@ const XPlatformDisplayDriverOps* XPlatformDisplayDriver_active(void)
     return g_xpdfbActiveOps;
 }
 
+/* ---- 屏幕登记（opt-in：XPLATFORM_FBDEV_REGISTER_SCREEN，缺省 0） ---- */
+
+/* 定义守卫=opt-in ∧ 框架屏幕/应用/WSI 模块就绪（WSI handleScreenAdded
+ * 声明守卫要求 XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON &&
+ * XWINDOW_ON && XWINDOWEVENT_ON 四宏，XWindowSystemInterface.h:41——
+ * 在定版三宏 XSCREEN_ON/XGUIAPPLICATION_ON/XWINDOWSYSTEMINTERFACE_ON
+ * 上补齐后两宏）；任一不满足即空壳（no-op），调用点无条件调用空壳，
+ * 保证任何配置下无「定义未引用」静态函数（-Wall 干净）。 */
+#if XPLATFORM_FBDEV_REGISTER_SCREEN && XSCREEN_ON && \
+    XGUIAPPLICATION_ON && XWINDOWSYSTEMINTERFACE_ON && \
+    XWINDOW_ON && XWINDOWEVENT_ON
+
+static XScreen* g_xpdfbScreen = NULL;  /**< fbdev 唯一逻辑屏（平台层所有）。 */
+static bool g_xpdfbScreenDone = false; /**< 仅 handleScreenAdded 成功后置位。 */
+
+/**
+ * @brief  把 fbdev 面板登记为框架 XScreen（登记范式对齐安卓定版样板
+ *         xpad_ensureScreenRegistered，XPlatformWindowAndroid.c）。
+ * @details 单屏静态参数，一次性登记；序与安卓定版一致=先登记后回填
+ *          （XGuiApplication_screenAdded 内部挂 dpr/logicalDpi 变化槽，
+ *          先回填后登记会把 dpr 推送发在挂槽之前而丢失）：
+ *          - dpr = XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO（板级显式注入，
+ *            严禁由 mm 反推）；<=0 非法板级值兜底回落 1.0；
+ *          - geometry = (0,0, xres/dpr, yres/dpr)（round，框架恒逻辑
+ *            像素，物理=逻辑×dpr 同一 round 式，对标安卓 surf/dpr）；
+ *          - physicalSize = 契约 mm 原值（0=未知，不编造）；
+ *          - logicalDpi 永不回填（保持缺省 96；fbdev 无偏好源，物理
+ *            放大由 dpr 单独承载——§0.2 归一化铁律下 scaleDpi 恒 96）。
+ *          所有权：handleScreenAdded 返回 false（无应用单例/注册表失
+ *          败）即 XScreen_delete_base 回收、不置守卫——非安卓重试保留
+ *          模式（fbdev 单屏参数静态，重建零成本，不占所有权灰色态）；
+ *          应用单例未就绪时不创建对象直接返回（调用方须在 GUI 单例
+ *          就绪后调用，见宏注释）。重复调用幂等（done 守卫）。
+ *          线程口径：主线程（与 XPlatformFramebuffer_register 同线程、
+ *          GUI 初始化期单线程；XObject 信号面无并发）。
+ */
+static void xpdfb_ensureScreenRegistered(void)
+{
+    XRect logicalGeom;
+    XSizeF mm;
+    float dpr = XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO;
+    if (g_xpdfbScreenDone) return;
+    if (!g_xpdfbDeviceReady || !XGuiApplication_instance()) return;
+    if (dpr <= 0.0f) dpr = 1.0f; /* 板级非法值兜底（防除零/负缩放）。 */
+    /* 强制 DPI（XGUI_FORCE_DPI>0 时替换板级宏/原生读数，统一切口）。 */
+    dpr = XPlatformScreen_applyDpiOverride(dpr);
+    g_xpdfbScreen = XScreen_create();
+    if (!g_xpdfbScreen) return;
+    if (!XWindowSystemInterface_handleScreenAdded(g_xpdfbScreen))
+    {
+        /* 登记失败：无人接管，必须回收（所有权契约，WSI handleScreen
+         * Added @details）。不置守卫，下轮调用重建重试。 */
+        XScreen_delete_base(g_xpdfbScreen);
+        g_xpdfbScreen = NULL;
+        return;
+    }
+    XGuiApplication_setPrimaryScreen(g_xpdfbScreen);
+    g_xpdfbScreenDone = true;
+    /* 回填（先登记后回填，见上；setter 值不变即静默差分）。 */
+    XRect_init(&logicalGeom, 0, 0,
+               (int)((float)g_xpdfbInfo.m_width / dpr + 0.5f),
+               (int)((float)g_xpdfbInfo.m_height / dpr + 0.5f));
+    mm.width = g_xpdfbInfo.m_physicalWidthMm;
+    mm.height = g_xpdfbInfo.m_physicalHeightMm;
+    XScreen_setDevicePixelRatio(g_xpdfbScreen, dpr);
+    XScreen_setPhysicalSize(g_xpdfbScreen, &mm);
+    XScreen_setGeometry(g_xpdfbScreen, &logicalGeom);
+}
+
+#else /* 屏幕登记被裁剪（opt-in 关闭或框架屏幕/应用/WSI 模块被裁剪）。 */
+
+static void xpdfb_ensureScreenRegistered(void)
+{
+}
+
+#endif /* XSCREEN_ON && XGUIAPPLICATION_ON && XWINDOWSYSTEMINTERFACE_ON && … */
+
 /* ---- fbdev 注册入口（板级启动代码调用） ---- */
 
 bool XPlatformFramebuffer_register(void)
@@ -453,6 +543,9 @@ bool XPlatformFramebuffer_register(void)
         return false;
     }
     g_xpdfbRegistered = true;
+    /* opt-in：把面板登记为框架 XScreen（缺省 0 时函数为空壳 no-op，
+     * 行为与历史版本逐位一致；定义守卫见上方屏幕登记段注释）。 */
+    xpdfb_ensureScreenRegistered();
     return true;
 }
 
@@ -498,5 +591,73 @@ bool XPlatformNativeWindow_useFramebufferDriver(const char* device)
         g_xpdfbDevicePath = device;
     return XPlatformFramebuffer_register();
 }
+
+/* ==================== XPlatformScreen 契约实现（fbdev） ==================== */
+/* 统一平台 API 的 fbdev 侧：数据源与 xpdfb_ensureScreenRegistered 同源
+   （probe 快照 g_xpdfbInfo + 板级 dpr 宏），公共层经
+   Src/XGui/Platform/XPlatformScreen.h 的统一签名拉取。
+   与 X11 实现（XPlatformNativeWindow_posix.c）同符号互斥：X11 在场时
+   本实现让位（fbdev 面向无 X11 的嵌入门；XINYUE_C_HAS_X11 由 CMake
+   find_package(X11) 注入）。与安卓实现（XSystemAndroid.c）同样互斥：
+   安卓虽 __linux__ 且 XPLATFORM_FBDEV_ON=1（显示驱动直写模型），但
+   屏幕信息源必须唯一——读数让位给 JNI DisplayMetrics。 */
+
+#if !defined(XINYUE_C_HAS_X11) && !defined(__ANDROID__)
+
+bool XPlatformScreen_isAvailable(void)
+{
+    return g_xpdfbDeviceReady && XPlatformDisplayDriver_active() == &g_xpdfbOps;
+}
+
+bool XPlatformScreen_queryDpi(XPlatformScreenDpiInfo* out)
+{
+    float dpr;
+    if (!out) return false;
+    if (!g_xpdfbDeviceReady) return false;
+    dpr = XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO;
+    if (dpr <= 0.0f) dpr = 1.0f; /* 板级非法值兜底（同登记口径）。 */
+    dpr = XPlatformScreen_applyDpiOverride(dpr);
+    out->m_density = dpr;
+    /* 板级未提供密度档：0=未知（诊断字段，严禁由 mm 编造）。 */
+    out->m_densityDpi = 0;
+    if (g_xpdfbInfo.m_physicalWidthMm > 0.0f &&
+        g_xpdfbInfo.m_physicalHeightMm > 0.0f)
+    {
+        out->m_xdpi = (int)((float)g_xpdfbInfo.m_width * 25.4f /
+                            g_xpdfbInfo.m_physicalWidthMm + 0.5f);
+        out->m_ydpi = (int)((float)g_xpdfbInfo.m_height * 25.4f /
+                            g_xpdfbInfo.m_physicalHeightMm + 0.5f);
+    }
+    else
+    {
+        out->m_xdpi = 0;
+        out->m_ydpi = 0;
+    }
+    out->m_valid = true;
+    return true;
+}
+
+bool XPlatformScreen_queryFrameSize(int* outWidth, int* outHeight)
+{
+    float dpr;
+    if (!outWidth || !outHeight) return false;
+    if (!g_xpdfbDeviceReady) return false;
+    dpr = XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO;
+    if (dpr <= 0.0f) dpr = 1.0f;
+    /* 逻辑口径 = 面板物理 ÷ dpr（与登记 geometry 同一 round 式）。 */
+    *outWidth = (int)((float)g_xpdfbInfo.m_width / dpr + 0.5f);
+    *outHeight = (int)((float)g_xpdfbInfo.m_height / dpr + 0.5f);
+    return true;
+}
+
+bool XPlatformScreen_queryOrigin(int* outX, int* outY)
+{
+    /* fbdev 单屏直写：触摸即面板本地坐标，无窗口原点偏移。 */
+    (void)outX;
+    (void)outY;
+    return false;
+}
+
+#endif /* !defined(XINYUE_C_HAS_X11) */
 
 #endif /* defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON */

@@ -12,6 +12,16 @@
 #include "XWidget.h"
 #include "XPalette.h"
 #include "XAlignment.h"
+#if XSCREEN_ON
+/* XStyle_dpiScaled 的主屏 dpr/logicalDpi 读取（经 Application 层头传递
+   XScreen.h，与 XPainter.c 同款先例；不直含 XScreen.h 以免 Style→Window
+   反依赖）。 */
+#if XGUIAPPLICATION_ON
+#include "XGuiApplication.h"
+#else /* !XGUIAPPLICATION_ON */
+#include "XScreen.h"
+#endif /* XGUIAPPLICATION_ON */
+#endif /* XSCREEN_ON */
 
 #if XSTYLE_ON
 
@@ -681,6 +691,28 @@ int XStyle_sliderValueFromPosition(int min, int max, int pos, int span,
                       (2 * mod * pos + span) / ((int64_t)2 * span);
         return upsideDown ? (int)(max - tmp) : (int)(tmp + min);
     }
+}
+
+int XStyle_dpiScaled(int value, const XStyleOption* option)
+{
+    float scaleDpi = 96.0f;
+    /* option 预留屏幕关联通道：XStyleOption 无屏幕字段（对标 Qt 按
+       option->widget 的窗门口径取 QScreen），首版恒主屏，传 NULL 同效。 */
+    (void)option;
+#if XSCREEN_ON
+    {
+        /* F3 守卫与 XPainter_fontPixelSizeForScreen 同式：主屏 dpr<=1
+           恒 96（桌面/安卓定版下乘数恒 1.0，逐位不变）；只乘逻辑 DPI
+           不乘 dpr——几何放大由渲染/present 链承担，此处再乘即 dpr²。 */
+        const XScreen* screen = XScreen_primaryScreen();
+        if (screen && XScreen_devicePixelRatio(screen) > 1.0f)
+            scaleDpi = XScreen_logicalDotsPerInch(screen);
+        if (scaleDpi <= 0.0f) scaleDpi = 96.0f;
+    }
+#endif /* XSCREEN_ON */
+    /* 直接乘除、不加 0.5 取整（对标 Qt dpiScaled 的 int 截断）：乘数
+       1.0 时逐位返回原值；-1 等哨兵值即便误包也原样穿透。 */
+    return (int)(((double)value) * (double)scaleDpi / 96.0);
 }
 
 void XStyle_setDefaultStyle(XStyle* style)

@@ -87,6 +87,12 @@ endif()
 if(ANDROID)
     add_compile_definitions(XPLATFORM_FBDEV_ON=1 XFONT_BUILTIN_OUTLINE_ON=1)
 endif()
+# 强制 DPI（XGUI_FORCE_DPI，XGuiConfig.h 有 #ifndef 兜底 0）：命令行
+# -DXGUI_FORCE_DPI=2.0 调试缩放链/小屏放大画面。CMake -D 只建变量不自动
+# 变编译定义，此处显式转发（全平台，非安卓限定）。
+if(DEFINED XGUI_FORCE_DPI AND NOT XGUI_FORCE_DPI STREQUAL "" AND NOT XGUI_FORCE_DPI STREQUAL "0")
+    add_compile_definitions(XGUI_FORCE_DPI=${XGUI_FORCE_DPI})
+endif()
 # 映射表文件路径（干净格式，无注释，固定4字节/行，支持文件二分）
 add_compile_definitions(XCHAR_COMPACT_PATH="${CMAKE_CURRENT_LIST_DIR}/Library/XCHAR_COMPACT.BIN")
 include(CMake_Config.cmake)

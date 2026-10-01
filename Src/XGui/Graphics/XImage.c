@@ -27,6 +27,13 @@
 #include "XStringList.h"
 #include "XVariant.h"
 #include "XFile.h"
+#if XGUIAPPLICATION_ON && XSCREEN_ON
+/* dpm 主屏化（DPI 定版 §4.5）的主屏 dpr/logicalDpi 读取。反依赖约束：
+   XScreen.h:25 反向包含本层 XImage.h，故本文件不直含 XScreen.h，经
+   Application 层头（XGuiApplication.h:45 传递引入）取得完整类型——
+   Graphics→Application 先例即本目录 XPainter.c:29。 */
+#include "XGuiApplication.h"
+#endif /* XGUIAPPLICATION_ON && XSCREEN_ON */
 #include <limits.h>
 #include <math.h>
 
@@ -246,14 +253,25 @@ bool XImage_allGray(const XImage* self);
 
 /**
  * @brief 获取嵌入式图像对象使用的默认水平/垂直分辨率。
- * @return 按 Qt 6.8 默认 96 DPI 换算得到的每米点数。
+ * @return 主屏逻辑 DPI（带桌面守卫）换算的每米点数；无屏兜底 96。
  * @note Qt 在 QImageData 构造时以 qt_defaultDpiX/Y() * 100 / 2.54
- *       初始化 dpmx/dpmy；XScreen 的默认逻辑 DPI 同样为 96，因此在
- *       不暴露平台 DPI 查询的嵌入式实现中使用对应的固定换算值。
+ *       初始化 dpmx/dpmy，qt_defaultDpiX 取主屏逻辑 DPI——本函数对齐
+ *       该语义（DPI 定版 §4.5）：scaleDpi = (主屏 dpr > 1 ? 逻辑DPI :
+ *       96)，与 XPainter_fontPixelSizeForScreen / XStyle_dpiScaled 同一
+ *       F3 守卫，posix Xft.dpi≠96 的 dpr=1 桌面逐位保持 96 口径（数值
+ *       3779.5→3780 不变）。无屏或 DPI 非法值兜底 96（保持原头注释语义）。
  */
 static int XImage_defaultDotsPerMeter(void)
 {
-    return (int)(96.0f * 100.0f / 2.54f + 0.5f);
+    float dpi = 96.0f;
+#if XGUIAPPLICATION_ON && XSCREEN_ON
+    const XScreen* screen = XGuiApplication_primaryScreen();
+    if (screen && XScreen_devicePixelRatio(screen) > 1.0f)
+        dpi = XScreen_logicalDotsPerInch(screen);
+    if (dpi <= 0.0f) dpi = 96.0f;
+#endif /* XGUIAPPLICATION_ON && XSCREEN_ON */
+    /* 浮点表达式与写死 96 的原实现逐位同式，dpr=1 桌面零差异。 */
+    return (int)(dpi * 100.0f / 2.54f + 0.5f);
 }
 
 static int64_t XImageData_nextCacheKey(void)

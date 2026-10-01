@@ -107,7 +107,12 @@ void XWindowSystemInterface_handleWindowStateChanged(XWindow* window,
  * @details    平台后端枚举到新屏幕时调用：登记到 XScreen 注册表并发射
  *             XGuiApplication 的 screenAdded 信号。屏幕所有权归平台层；
  *             返回 false 时未登记（无应用单例/注册失败），所有权仍在
- *             平台层，调用方必须回收 screen（delete）。
+ *             平台层。默认契约下调用方必须回收 screen（delete），否则
+ *             泄漏；例外——平台层显式采用「重试登记」模式时（如安卓
+ *             xpad_ensureScreenRegistered：surface 事件常早于应用单例
+ *             创建，首试 false 属预期时序），可在 false 返回后保留
+ *             screen 待下次重试；保留期内所有权持续归平台层，登记成功
+ *             前不得视为泄漏（防止按旧契约"修泄漏"误删重试路径）。
  * @param      screen 新屏幕；可为 NULL（no-op，返回 false）。
  * @return     已登记并发射信号返回 true；未登记返回 false。
  */
@@ -141,11 +146,39 @@ void XWindowSystemInterface_handleScreenGeometryChange(XScreen* screen,
  *             handleScreenLogicalDotsPerInchChange）。
  * @details    平台后端逻辑 DPI（如 Xft.dpi 资源）变化时调用；同时更新
  *             水平/垂直逻辑 DPI，值变化时发射 logicalDotsPerInchChanged。
+ *             通道权限（DPI 定版 H1）：安卓后端禁用——本入口实现为
+ *             setLogicalDotsPerInch(dpi,dpi)，安卓若把 densityDpi 灌入
+ *             logicalDpi，scaleDpi 守卫（dpr>1 放行）后字体/样式将触发
+ *             dpr²×(densityDpi/96) 复合爆炸；安卓密度唯一载体是
+ *             devicePixelRatio（回填只走 handleScreenDevicePixelRatioChange+
+ *             handleScreenGeometryChange，logicalDpi 永不回填）。本通道保留给桌面平台（posix RandR
+ *             Xft.dpi 现网消费、win32 WM_DPICHANGED 后续批次——桌面被
+ *             dpr 守卫短路，仅作语义通道）；仅框架事件线程调用。
  * @param      screen 目标屏幕；可为 NULL（no-op）。
  * @param      dpi 新逻辑 DPI（水平与垂直同值）。
  */
 void XWindowSystemInterface_handleScreenLogicalDotsPerInchChange(XScreen* screen,
                                                                  float dpi);
+
+/**
+ * @brief      注入屏幕设备像素比变化（对标 Qt 6 QWindowSystemInterface::
+ *             handleScreenDevicePixelRatioChange）。
+ * @details    平台后端 dpr（安卓 DisplayMetrics.density、win32 逐监视器
+ *             缩放）读取/变化时调用：内部 XScreen_setDevicePixelRatio
+ *             值变化发 devicePixelRatioChanged（字体度量表失效→窗口
+ *             resize+repolish 闭环）。可选携带物理毫米（来自同一次
+ *             xdpi/ydpi 读数，与 dpr 同源同刻）——非空时先同步
+ *             physicalSize（物理 DPI 由 mm 派生，派生值变化发
+ *             physicalDotsPerInchChanged）。dpr 与 logicalDpi 是两个
+ *             量纲两条通道：本入口不携带 logicalDpi（安卓 H1：密度
+ *             唯一载体是 dpr，logicalDpi 恒 96 永不经此回填）。
+ * @param      screen 目标屏幕；可为 NULL（no-op）。
+ * @param      devicePixelRatio 新 dpr。
+ * @param      physicalSizeMm 物理毫米；可为 NULL（不更新物理尺寸）。
+ */
+void XWindowSystemInterface_handleScreenDevicePixelRatioChange(
+    XScreen* screen, float devicePixelRatio,
+    const XSizeF* physicalSizeMm);
 
 /**
  * @brief      注入平台主题变化（对标 QWindowSystemInterface::

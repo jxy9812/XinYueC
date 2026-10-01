@@ -47,13 +47,39 @@ extern "C" {
 #define XPLATFORM_FBDEV_DOUBLEBUFFERED_ON 1
 #endif
 
+/** @brief 屏幕登记开关（缺省 0=不登记，行为与历史版本逐位一致）。
+ *         置 1 后 XPlatformFramebuffer_register 成功路径把面板登记为
+ *         框架 XScreen（xpdfb_ensureScreenRegistered：geometry=面板物理
+ *         ÷dpr（round）、physicalSize=契约 mm 原值、dpr=下宏；logicalDpi
+ *         永不回填、保持缺省 96——物理放大由 dpr 单独承载，scaleDpi
+ *         守卫下字体/样式基准值不变）。登记后行为变化：窗口首显居中
+ *         链从「无屏回落 (0,0)」变按 XScreen_geometry 真实居中。登记
+ *         要求应用单例已就绪（对齐板级引导范式：GUI 单例就绪后、首窗
+ *         显示前调用注册，见 XGuiWindowDemo）；早于 GUI 初始化调用时
+ *         屏幕登记被跳过（面板几何仍经 ops probe 供 XWindow 回退，
+ *         行为同登记前）。屏幕生命周期=进程级（对齐安卓样板）。 */
+#ifndef XPLATFORM_FBDEV_REGISTER_SCREEN
+#define XPLATFORM_FBDEV_REGISTER_SCREEN 0
+#endif
+
+/** @brief 面板 devicePixelRatio（缺省 1.0f=逐位直通）。>1 时屏幕几何按
+ *         物理÷dpr 上报、框架 dpr 推送/重绘闭环自动生效；但 fbdev 的
+ *         present 放大管道本批未实现（DPI 定版 §6.4 预留）——置 >1
+ *         必须与 present 放大同批落地，否则逻辑尺寸内容直写物理面板、
+ *         画面只占面板左上区域。dpr 严禁由面板 mm 反推（mm 允许为 0）。 */
+#ifndef XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO
+#define XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO 1.0f
+#endif
+
 /**
  * @brief      探测并注册 fbdev 显示驱动（板级启动代码显式调用一次）。
  * @details    流程：open(XPLATFORM_FBDEV_DEVICE) ->
  *             FBIOGET_FSCREENINFO/FBIOGET_VSCREENINFO -> mmap ->
  *             识别面板格式 -> XPlatformDisplayDriver_register。任一步
  *             失败即整体不可用并释放已取得资源（桌面/无 fb 环境的预期
- *             路径，返回 false）。重复调用幂等。
+ *             路径，返回 false）。重复调用幂等。注册成功后若板级宏
+ *             XPLATFORM_FBDEV_REGISTER_SCREEN=1，随后把面板登记为框架
+ *             XScreen（geometry/dpr/physicalSize 口径见该宏注释）。
  * @return     true 已注册为活动显示驱动；false 不可用或已有活动驱动。
  */
 bool XPlatformFramebuffer_register(void);

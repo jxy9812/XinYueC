@@ -50,19 +50,14 @@
  *         SubScript/SuperScript 的缩小呈现，约 2/3 字号）。 */
 #define XTE_SUPSUB_PERMILLE 620
 
-/** @brief 点尺寸转像素尺寸（与 XPainter 位图缩放推导同式：
- *         px = pt * 96 / 72，对标 Qt 高通 96dpi 换算）。 */
-static int xte_pointToPixel(double pointSize)
-{
-    if (pointSize <= 0.0) return 0;
-    return (int)(pointSize * (96.0 / 72.0) + 0.5);
-}
-
-/** @brief 读取字体生效像素字号（pixelSize 未设时由点尺寸推导）。 */
+/** @brief 读取字体生效像素字号（pixelSize 未设时由点尺寸推导）。
+ *         推导走 XPainter_fontPixelSize（DPI 定版唯一换算入口，含
+ *         F3 桌面守卫）——本文件此前私有拷贝 xte_pointToPixel（写死
+ *         96/72）已删除，dpr=1 桌面逐位等值，dpr>1 平台随主屏口径。 */
 static int xte_fontPixelSize(const XFont* font)
 {
     int px = font ? XFont_pixelSize(font) : 0;
-    if (px <= 0 && font) px = xte_pointToPixel(XFont_pointSizeF(font));
+    if (px <= 0 && font) px = XPainter_fontPixelSize(XFont_pointSizeF(font));
     return px > 0 ? px : 16;
 }
 
@@ -110,7 +105,7 @@ static int xte_fragPixelSize(const XTextEdit* self, const XTDFragment* f,
                              int blockPx)
 {
     int px = f->fmt.fontPointSize > 0
-                 ? xte_pointToPixel(f->fmt.fontPointSize)
+                 ? XPainter_fontPixelSize(f->fmt.fontPointSize)
                  : blockPx;
     (void)self;
     if (f->fmt.superScript || f->fmt.subScript)

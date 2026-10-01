@@ -65,8 +65,12 @@ extern "C" {
 
 #if XGUI_ON && XPLATFORM_FBDEV_ON
 
-/** @brief 驱动契约 ABI 版本（ops 结构布局变更时递增，供驱动侧自检）。 */
-#define XPLATFORM_DISPLAY_DRIVER_ABI_VERSION 1u
+/** @brief 驱动契约 ABI 版本（ops 结构布局变更时递增，供驱动侧自检）。
+ *         2u：XPlatformDisplayInfo 尾部增面板物理尺寸两 mm 字段（DPI
+ *         定版 §1.4）。字段只在尾部追加，属布局断裂：ABI 1 旧驱动
+ *         （未同步扩列）注册时经 m_abiVersion 自检即被拒绝，防止其对
+ *         新字段视而不见、消费方读到未定义值。 */
+#define XPLATFORM_DISPLAY_DRIVER_ABI_VERSION 2u
 
 /**
  * @brief      显示驱动 probe 结果（面板能力快照，对标 QPlatformScreen
@@ -84,6 +88,12 @@ typedef struct XPlatformDisplayInfo
     void* m_frameBuffer;     /**< mmap 直写地址（驱动所有，借用）。 */
     size_t m_frameBufferSize;/**< 映射区总长（字节）。 */
     bool m_doubleBuffered;   /**< yres_virtual >= 2*yres，可后台翻页。 */
+    /* —— ABI 2 新增（只在尾部追加，见 ABI 版本注释）：面板物理尺寸，
+     * 驱动按数据源原值透传（fbdev=var.width/height）；0=面板无 EDID/
+     * 驱动未上报（未知），消费方严禁据此编造或反推 dpr——dpr 只能由
+     * 板级显式注入（XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO）。 */
+    float m_physicalWidthMm;  /**< 面板物理宽度（mm，原值；0=未知）。 */
+    float m_physicalHeightMm; /**< 面板物理高度（mm，原值；0=未知）。 */
 } XPlatformDisplayInfo;
 
 /**

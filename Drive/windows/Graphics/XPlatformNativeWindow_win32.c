@@ -20,10 +20,17 @@
  *               WM_NCCREATE 存入 GWLP_USERDATA，后续消息经
  *               GetWindowLongPtrW 恢复窗口对象；
  *             - 事件翻译（对标 X11 后端对应消息）：WM_PAINT -> 以
- *               BeginPaint 的 rcPaint 为脏区注入 handleExposeEvent（重绘）；
+ *               BeginPaint 的 rcPaint 为脏区（÷dpr 出框）注入
+ *               handleExposeEvent（重绘）；
  *               WM_SIZE/WM_MOVE -> 先按 GetClientRect+ClientToScreen 得到
- *               客户端屏幕几何并更新本后端记录再注入 handleGeometryChange
- *               （防 setGeometry 回环，与 X11 ConfigureNotify 处理同构）；
+ *               客户端屏幕几何（物理口径）并按窗口 dpr ÷出框更新本后端
+ *               记录（逻辑口径）再注入 handleGeometryChange
+ *               （防 setGeometry 回环，与 X11 ConfigureNotify 处理同构；
+ *               handler 头部先经 xpwn_maintainScreenAssignment 收敛屏幕
+ *               归属——先维护后换算）；
+ *               WM_DPICHANGED -> 每监视器 DPI 变化五步链（归一化回填→
+ *               归属维护→建议矩形 SetWindowPos→WM_SIZE 链出框）；
+ *               WM_DISPLAYCHANGE -> 屏幕拓扑差分刷新（同步迁移+槽位压实）；
  *               WM_SETFOCUS -> handleFocusWindowChanged(ActiveWindow)；
  *               WM_KILLFOCUS -> 直接自发投递 FOCUS_OUT（WSI 无 FocusOut
  *               注入入口，与 X11 FocusOut 处理约定一致）；WM_CLOSE ->
@@ -36,7 +43,8 @@
  *               MsgWaitForMultipleObjects(QS_ALLINPUT) 阻塞等待事件就绪后
  *               再泵一批，形成自绘主循环事件源；
  *             - 上屏：present 把软件缓冲的脏区按行重排进与脏区等宽的
- *               自顶向下 DIB，再经 SetDIBitsToDevice 提交到窗口 DC；
+ *               自顶向下 DIB，再经 SetDIBitsToDevice（dpr>1 时经
+ *               StretchDIBits 放大）提交到窗口 DC；
  *               DIB 负高度表示 top-down。表面格式随
  *               XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16（XGuiConfig 定义，
  *               默认 0）：0=ARGB32（BI_RGB，BGRA 字节序与 XImage 小端
@@ -54,6 +62,16 @@
  *               （GetCursorPos/SetCursorPos 查询/定位，形状→LoadCursorW
  *               共享句柄映射，WM_SETCURSOR HTCLIENT 分流应用/清除，
  *               受 XCURSOR_ON 约束）。
+ *             - DPI（PMv2）：进程感知经 xpwn_dpiAwarenessInit 在首个
+ *               HWND/DC 创建点之前声明（PMv2 → shcore PER_MONITOR →
+ *               SYSTEM_AWARE 回退链 + R7 失败反查 + XPWN_DPI_AWARENESS
+ *               退出开关）；屏幕注册表逐监视器登记 dpr（GetDpiForMonitor）
+ *               与归一化 logicalDpi（R4：round(rawDpi/dpr)）与 ÷dpr 逻辑
+ *               几何；窗口归属经 xpwn_maintainScreenAssignment 先维护后
+ *               换算（首派 heal 走 xpwn_setGeometryForced 去重豁免通道）；
+ *               几何出口物理=逻辑×dpr（同一 round 函数，dpr==1 直通）；
+ *               present ×dpr 为唯一放大点（scale 内部读
+ *               XWindow_devicePixelRatio）。
  *             窗口映射/几何/标题同步全部围绕 XWindow 驱动，setGeometry 按
  *             本后端记录客户端几何去重，杜绝 WM_SIZE/WM_MOVE 与 setGeometry
  *             互相触发造成递归震荡。公共契约头不包含任何 Windows API。
@@ -66,6 +84,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformNativeWindow.h"
+#include "XPlatformScreen.h"
 
 #if XPLATFORMNATIVEWINDOW_ON && XPLATFORMNATIVEWINDOW_WIN32_ON && XWINDOW_ON
 
@@ -136,12 +155,23 @@ typedef struct XWNPendingEntry
 {
     HWND m_hwnd;         /**< Win32 原生窗口句柄（NULL 表示空槽）。 */
     XWindow* m_window;   /**< 公共窗口对象借用指针；槽位为空时 NULL。 */
-    XRect m_client;      /**< 本后端最近一次记录的客户端屏幕几何（去重用）。 */
+    XRect m_client;      /**< 最近一次记录的客户端屏幕几何（逻辑口径：
+                              物理 ÷dpr，与框架几何同空间；setGeometry 去重
+                              与 WM_SIZE 回写共用同一 round 函数，R8-③）。 */
     bool m_visible;      /**< WM_SHOWWINDOW 最后记录的映射状态。 */
     bool m_mouseInside;  /**< 指针是否位于客户区内（进入/离开追踪，Win32 无原生 enter 消息）。 */
     WNDPROC m_oldProc;   /**< 外部窗口子类化前的过程；内部窗口为 NULL。 */
     HCURSOR m_hcursor;   /**< 框架侧生效光标（LoadCursorW 共享句柄，不销毁）。 */
     bool m_cursorSet;    /**< 框架是否已接管窗口光标（WM_SETCURSOR 分流键）。 */
+#if XSCREEN_ON
+    XScreen* m_screen;   /**< 后端侧指派屏簿记（非 dpr 缓存——dpr 单源仍是
+                              XWindow_devicePixelRatio）；NULL=尚未指派。
+                              【R20 生命周期】create/attachForeign 置 NULL、
+                              destroy 与 WM_NCDESTROY 清零链增补、屏移除压实
+                              后复查——复用槽陈旧非 NULL 使 outboundDpr 误走
+                              「已指派」分支读到新框架对象缺省 1.0（对照
+                              m_oldProc 槽位投毒前科，见 destroy 清零链注）。 */
+#endif
 } XWNPendingEntry;
 
 /** @brief 每进程 Win32 连接状态。 */
@@ -286,6 +316,143 @@ static LRESULT xpwn_callPreviousProc(const XWNPendingEntry* entry, HWND hwnd,
 static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                                      WPARAM wParam, LPARAM lParam);
 
+/* ==================== 进程 DPI 感知（PMv2 回退链 + R7 反查 + 退出开关） ====================
+ * 未声明感知时窗口消息坐标为系统虚拟化口径（96 基准位图拉伸，与被虚拟
+ * 化的 GetDeviceCaps 返回值一致）；声明 PerMonitorV2 后全部 WM 消息坐标
+ * 变每监视器物理像素，入框/出框换算见本文件 xpwn_nativeRectToLogical 等。
+ * 【时序契约（R19）】全部 HWND/DC 创建点——xpwn_ensureInstance 链（原生
+ * 窗口/剪贴板窗）、xpwn_screensInit 屏幕枚举 DC、XPlatformGraphics_win32
+ * 离屏渲染窗——必须先经 xpwn_dpiAwarenessInit 完成声明：首个窗口创建会
+ * 锁死进程感知态，之后声明静默失效。 */
+
+/** @brief WM_DPICHANGED 消息号（winuser.h 需 _WIN32_WINNT >= 0x0603，本地兜底）。 */
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+#endif
+
+/** @brief Shcore 感知 API 常量（不引入 shcore.h，动态装载用本地兜底）。 */
+#ifndef MDT_EFFECTIVE_DPI
+#define MDT_EFFECTIVE_DPI 0
+#endif
+#ifndef PROCESS_PER_MONITOR_DPI_AWARE
+#define PROCESS_PER_MONITOR_DPI_AWARE 2
+#endif
+
+/** @brief DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 句柄值 -4（Win10
+ *         1703+；winuser.h 声明同样需高版本宏，本地兜底）。 */
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((HANDLE)-4)
+#endif
+
+/** @brief DPI_AWARENESS 枚举的 PER_MONITOR_AWARE 取值（R7 反查判据）。 */
+#define XPWN_DPI_AWARENESS_PER_MONITOR 2
+
+/**
+ * @brief      退出开关 XPWN_DPI_AWARENESS 读取（静态缓存一次，读取纪律同
+ *             XGPU_PRESENT_MICRO，见 xpwn_windowExStyle 注）。
+ * @details    未设或 "permonitorv2"=新行为（声明感知 + 全链换算）；
+ *             "unaware"=旧行为（不声明感知、dpr 恒 1.0、全链直通）。
+ */
+static int xpwn_dpiAwarenessRequested(void)
+{
+    static int requested = -1;
+    if (requested < 0)
+    {
+        const char* v = XSystem_environment("XPWN_DPI_AWARENESS");
+        requested = (v && strcmp(v, "unaware") == 0) ? 0 : 1;
+    }
+    return requested;
+}
+
+/** @brief 进程感知态缓存：<0 未初始化；0=未感知（dpr=1 旧链）；1=已感知。 */
+static int g_xpwnDpiAwareness = -1;
+
+/**
+ * @brief      进程 DPI 感知一次性声明（XPWN_DPI_AWARENESS 退出开关）。
+ * @details    PMv2 优先（Win10 1703+，GetProcAddress 动态装载）；逐级回落
+ *             shcore SetProcessDpiAwareness(PER_MONITOR_AWARE) → user32
+ *             SetProcessDPIAware（SYSTEM_AWARE）。
+ *             【声明失败 ≠ 未感知（R7）】E_ACCESSDENIED 两种成因：本进程
+ *             已设置过（无害），或 EXE 清单/兼容性设置已声明感知——必须
+ *             反查真实态收口：GetAwarenessFromDpiAwarenessContext(
+ *             GetThreadDpiAwarenessContext())（动态装载，不可用回落 shcore
+ *             GetProcessDpiAwareness）；PER_MONITOR_AWARE(_V2) 按启用分支
+ *             处理，SYSTEM_AWARE/UNAWARE 才走 dpr=1 旧链。结果进程级缓存。
+ */
+static void xpwn_dpiAwarenessInit(void)
+{
+    typedef BOOL(WINAPI* PFN_SetCtx)(HANDLE);
+    typedef HANDLE(WINAPI* PFN_ThreadCtx)(void);
+    typedef int(WINAPI* PFN_AwarenessFromCtx)(HANDLE);
+    typedef HRESULT(WINAPI* PFN_SetAwareness)(int);
+    typedef HRESULT(WINAPI* PFN_ProcessAwareness)(HANDLE, int*);
+    PFN_SetCtx setContext;
+    PFN_ThreadCtx threadContext;
+    PFN_AwarenessFromCtx awarenessFromContext;
+    PFN_SetAwareness setAwareness;
+    PFN_ProcessAwareness processAwareness;
+    HMODULE user32;
+    HMODULE shcore;
+    if (g_xpwnDpiAwareness >= 0) return;
+    g_xpwnDpiAwareness = 0; /* 缺省未感知；下文各分支按实际结果收敛。 */
+    if (!xpwn_dpiAwarenessRequested()) return; /* unaware 退出开关：旧行为。 */
+    user32 = GetModuleHandleW(L"user32.dll");
+    shcore = GetModuleHandleW(L"Shcore.dll");
+    if (!shcore) shcore = LoadLibraryW(L"Shcore.dll");
+    setContext = user32
+                     ? (PFN_SetCtx)GetProcAddress(user32, "SetProcessDpiAwarenessContext")
+                     : NULL;
+    threadContext = user32
+                        ? (PFN_ThreadCtx)GetProcAddress(user32, "GetThreadDpiAwarenessContext")
+                        : NULL;
+    awarenessFromContext = user32
+                               ? (PFN_AwarenessFromCtx)GetProcAddress(
+                                     user32, "GetAwarenessFromDpiAwarenessContext")
+                               : NULL;
+    setAwareness = shcore
+                       ? (PFN_SetAwareness)GetProcAddress(shcore, "SetProcessDpiAwareness")
+                       : NULL;
+    processAwareness = shcore
+                           ? (PFN_ProcessAwareness)GetProcAddress(shcore, "GetProcessDpiAwareness")
+                           : NULL;
+    /* 1) PMv2（Win10 1703+）。 */
+    if (setContext &&
+        setContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+        g_xpwnDpiAwareness = 1;
+        return;
+    }
+    /* 2) shcore：PER_MONITOR_AWARE（Win8.1+）。声明失败（含 E_ACCESSDENIED
+       ——已设置过/清单已声明）落 R7 反查。 */
+    if (setAwareness &&
+        SUCCEEDED(setAwareness(PROCESS_PER_MONITOR_DPI_AWARE))) {
+        g_xpwnDpiAwareness = 1;
+        return;
+    }
+    /* 3) 最低回落 SYSTEM_AWARE（无更高声明路径的旧系统；坐标仍为系统
+       虚拟化口径，R7 定版：非 PER_MONITOR 一律按未感知 dpr=1 旧链）。 */
+    if (user32) (void)SetProcessDPIAware();
+    /* R7 反查真实态收口。 */
+    if (threadContext && awarenessFromContext) {
+        if (awarenessFromContext(threadContext()) ==
+            XPWN_DPI_AWARENESS_PER_MONITOR)
+            g_xpwnDpiAwareness = 1;
+        return;
+    }
+    if (processAwareness) {
+        int awareness = 0;
+        if (SUCCEEDED(processAwareness(NULL, &awareness)) &&
+            awareness == (int)PROCESS_PER_MONITOR_DPI_AWARE)
+            g_xpwnDpiAwareness = 1;
+    }
+}
+
+/** @brief 进程是否已按每监视器口径感知（进程级缓存；惰性触发声明）。 */
+static bool xpwn_dpiAwarenessEnabled(void)
+{
+    if (g_xpwnDpiAwareness < 0) xpwn_dpiAwarenessInit();
+    return g_xpwnDpiAwareness > 0;
+}
+
 #if XCURSOR_ON
 /** @brief 光标后端注册前向声明（定义见光标后端节；xpwn_ensureInstance
  *  在连接建好后调用一次）。 */
@@ -297,6 +464,9 @@ static bool xpwn_ensureInstance(void)
 {
     WNDCLASSEXW wc;
     if (g_xpwnInstance && g_xpwnClassRegistered) return true;
+    /* R19 时序契约：本函数链覆盖三个 HWND/DC 创建点之一（原生窗口/
+       剪贴板窗），感知声明必须先于窗口类注册完成。 */
+    xpwn_dpiAwarenessInit();
     g_xpwnInstance = GetModuleHandleW(NULL);
     if (!g_xpwnInstance) return false;
     if (g_xpwnClassRegistered) return true;
@@ -323,7 +493,9 @@ static bool xpwn_ensureInstance(void)
     return true;
 }
 
-/** @brief 取窗口客户端区域屏幕几何（XWindow 几何语义：客户区坐标即窗口位置）。 */
+/** @brief 取窗口客户区域屏幕几何（【物理像素口径】：PMv2 下虚拟桌面坐标
+ *         为每监视器物理像素；÷dpr 出框见 xpwn_nativeRectToLogical 调用
+ *         点。XWindow 几何语义：客户区坐标即窗口位置）。 */
 static bool xpwn_getClientGeometry(HWND hwnd, XRect* out)
 {
     RECT rc;
@@ -339,6 +511,77 @@ static bool xpwn_getClientGeometry(HWND hwnd, XRect* out)
     out->height = rc.bottom - rc.top;
     return true;
 }
+
+/* ==================== dpr 换算（物理 = 逻辑 × dpr，全链同一 round） ==================== */
+
+/** @brief 换算取整：几何出框/入框/去重记账/WM_SIZE 回写全链唯一 round
+ *         函数（R8-③），dpr==1.0f 直通。 */
+static int xpwn_dprRound(float value)
+{
+    return (int)(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
+
+/** @brief 逻辑 → 物理（×dpr；dpr==1.0f 直通）。 */
+static int xpwn_dprMul(int value, float dpr)
+{
+    return dpr == 1.0f ? value : xpwn_dprRound((float)value * dpr);
+}
+
+/** @brief 物理 → 逻辑（÷dpr；dpr==1.0f 直通）。 */
+static int xpwn_dprDiv(int value, float dpr)
+{
+    return dpr == 1.0f ? value : xpwn_dprRound((float)value / dpr);
+}
+
+/** @brief 每监视器有效 DPI → dpr（两位小数吸附：96→1.0、120→1.25、
+ *         144→1.5；非法/亚 1.0 回落 1.0 直通——F3 守卫口径不支持缩小）。
+ *         强制 DPI（XGUI_FORCE_DPI>0）：经统一切口替换原生读数
+ *         （调试/特定屏放大，XPlatformScreen_applyDpiOverride）。 */
+static float xpwn_dprFromDpi(int dpi)
+{
+    float raw;
+    float snapped;
+    if (dpi <= 0) return XPlatformScreen_applyDpiOverride(1.0f);
+    raw = (float)dpi / 96.0f;
+    snapped = (float)((int)(raw * 100.0f + 0.5f)) / 100.0f;
+    return XPlatformScreen_applyDpiOverride(snapped >= 1.0f ? snapped : 1.0f);
+}
+
+/** @brief 物理矩形 → 逻辑（÷dpr；dpr==1.0f 原样直通）。 */
+static XRect xpwn_nativeRectToLogical(const XRect* native, float dpr)
+{
+    XRect logical;
+    logical.x = xpwn_dprDiv(native->x, dpr);
+    logical.y = xpwn_dprDiv(native->y, dpr);
+    logical.width = xpwn_dprDiv(native->width, dpr);
+    logical.height = xpwn_dprDiv(native->height, dpr);
+    return logical;
+}
+
+/** @brief 逻辑矩形 → 物理（×dpr；dpr==1.0f 原样直通）。 */
+static XRect xpwn_logicalRectToNative(const XRect* logical, float dpr)
+{
+    XRect native;
+    native.x = xpwn_dprMul(logical->x, dpr);
+    native.y = xpwn_dprMul(logical->y, dpr);
+    native.width = xpwn_dprMul(logical->width, dpr);
+    native.height = xpwn_dprMul(logical->height, dpr);
+    return native;
+}
+
+/* ==================== DPI/屏幕归属（定义见屏幕枚举节） ====================
+ * 前向声明：窗口过程与几何出口先于定义使用；XSCREEN_ON 等裁剪配置下由
+ * 同节空壳实现兜底（全链 dpr=1 直通）。 */
+static float xpwn_dprForHwnd(HWND hwnd);
+static float xpwn_outboundDpr(XWNPendingEntry* entry,
+                              const XRect* requestedLogical);
+static void xpwn_maintainScreenAssignment(XWNPendingEntry* entry);
+static void xpwn_screenDpiChanged(HWND hwnd, UINT dpiX, UINT dpiY);
+static void xpwn_screensRefresh(void);
+static bool xpwn_primaryScreenNativeRect(RECT* out);
+static float xpwn_primaryScreenDpr(void);
+static void xpwn_mousePosToLogical(HWND hwnd, LPARAM lParam, bool isScreen,
+                                   XPoint* position, XPoint* globalPosition);
 
 /** @brief 把按窗口样式调整后的窗口矩形转换为客户端恰好等于目标几何。 */
 static DWORD xpwn_windowExStyle(const XWindow* window);
@@ -418,23 +661,6 @@ static void xpwn_applyTitle(HWND hwnd, const XString* title)
     if (!hwnd) return;
     utf16 = title ? XString_toUtf16(title) : NULL;
     SetWindowTextW(hwnd, (LPCWSTR)(utf16 ? utf16 : L""));
-}
-
-/** @brief 客户区坐标转屏幕全局坐标（对齐 X11 x_root/y_root 事件口径）。
- *  @details 装饰层拖拽移动/边缘改尺寸的增量锚按全局系计算（按下记锚、
- *  逐 MOVE 取距锚总位移；客户区系随窗口移动自指——posix 同教训，+200
- *  指针只走 +100 交替归零）。客户区→屏幕经 ClientToScreen；失败时 pt
- *  不被改写，按客户区坐标兜底（与 ENTER 分支旧兜底同语义）。 */
-static void xpwn_clientToGlobal(HWND hwnd, const XPoint* position,
-                                XPoint* global)
-{
-    POINT pt;
-    if (!global) return;
-    pt.x = position ? position->x : 0;
-    pt.y = position ? position->y : 0;
-    ClientToScreen(hwnd, &pt);
-    global->x = pt.x;
-    global->y = pt.y;
 }
 
 /* ==================== 光标后端（XCursor 平台钩子，对标 Qt QPlatformCursor） ====================
@@ -576,7 +802,8 @@ static void xpwn_cursorBackendInstall(void)
 
 #endif /* XCURSOR_ON */
 
-/* GPU 直通模式下每帧脏区 BitBlt/SetDIBitsToDevice 直投窗口 DC（本文件
+/* GPU 直通模式下每帧脏区 BitBlt/SetDIBitsToDevice（dpr>1 经 Stretch 系
+   拉伸）直投窗口 DC（本文件
    xpwn_presentRect 与 XPlatformBackingStore_win32 的零拷贝路径）。未开
    DWM 双缓冲合成时，远程显示栈（RDP/OrayIdd）可在一次脏区提交中途取样
    窗口重定向表面，交互/切换页期间表现为整窗黑帧/旧帧闪烁。WS_EX_COMPOSITED
@@ -709,26 +936,6 @@ static XMouseButton xpwn_translateButtons(WPARAM wParam)
     return buttons;
 }
 
-/** @brief 从消息 lParam 取客户区/全局（屏幕）坐标。
- * @details 鼠标按下/移动类消息的 lParam 为客户区坐标；滚轮类消息为屏幕
- *          坐标，调用方传入 isScreen=true 时先把全局坐标转换回客户区。 */
-static void xpwn_getMousePos(HWND hwnd, LPARAM lParam, bool isScreen,
-                             XPoint* position, XPoint* globalPosition)
-{
-    POINT pt;
-    pt.x = (int)(short)LOWORD(lParam);
-    pt.y = (int)(short)HIWORD(lParam);
-    if (globalPosition) {
-        globalPosition->x = pt.x;
-        globalPosition->y = pt.y;
-    }
-    if (isScreen && hwnd) ScreenToClient(hwnd, &pt);
-    if (position) {
-        position->x = pt.x;
-        position->y = pt.y;
-    }
-}
-
 /** @brief 从 Win32 鼠标按键消息推导事件类型与触发按键。
  * @details 左/中/右三键按消息号直接确定；WM_XBUTTON* 的附加键由
  *          wParam 的 HIWORD（XBUTTON1=后退、XBUTTON2=前进）确定。
@@ -826,6 +1033,9 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             entry->m_client = (XRect){0, 0, 0, 0};
             entry->m_hcursor = NULL;
             entry->m_cursorSet = false;
+#if XSCREEN_ON
+            entry->m_screen = NULL; /* R20-③：指派簿记随清零链一并复位。 */
+#endif
         }
         /* 窗口被销毁（无论谁发起）：清除用户数据，预防悬挂指针。 */
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)NULL);
@@ -854,11 +1064,15 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
              * WM_PAINT. */
             EndPaint(hwnd, &ps);
             if (entry && entry->m_window && !IsRectEmpty(&r)) {
+                float dpr;
                 XRegion_init(&region);
-                rect.x = r.left;
-                rect.y = r.top;
-                rect.width = r.right - r.left;
-                rect.height = r.bottom - r.top;
+                /* rcPaint 为物理像素口径（PMv2）：÷dpr 出框为逻辑脏区
+                   （dpr==1 直通）。 */
+                dpr = xpwn_outboundDpr(entry, NULL);
+                rect.x = xpwn_dprDiv(r.left, dpr);
+                rect.y = xpwn_dprDiv(r.top, dpr);
+                rect.width = xpwn_dprDiv(r.right - r.left, dpr);
+                rect.height = xpwn_dprDiv(r.bottom - r.top, dpr);
                 XRegion_addRect(&region, &rect);
                 /* 注入暴露：XBackingStore/绘制槽通过 paintEvent 重绘并上屏。 */
                 XWindowSystemInterface_handleExposeEvent(entry->m_window,
@@ -875,18 +1089,23 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
     case WM_MOVE:
     {
         XRect client;
-        if (xpwn_getClientGeometry(hwnd, &client)) {
-            if (entry) {
-                /* 先更新本后端记录，再注入几何变化：setGeometry 去重比对
-                   以此为准，从源头切断「setGeometry -> WM_SIZE/MOVE ->
-                   handleGeometryChange -> setGeometry」回环（与 X11
-                   ConfigureNotify 处理同构）。 */
-                entry->m_client = client;
-                if (entry->m_window) {
-                    XWindowSystemInterface_handleGeometryChange(
-                        entry->m_window, &client);
-                }
-            }
+        float dpr;
+        if (!entry) return 0;
+        /* 先维护后换算（R13）：归属/dpr 收敛在几何出框之前——跨屏拖动/
+           WM_DPICHANGED 后首个几何事件在此完成指派（heal 经
+           xpwn_setGeometryForced 豁免通道，R18）。 */
+        xpwn_maintainScreenAssignment(entry);
+        if (!xpwn_getClientGeometry(hwnd, &client)) return 0;
+        dpr = xpwn_outboundDpr(entry, NULL);
+        client = xpwn_nativeRectToLogical(&client, dpr); /* dpr==1 直通。 */
+        /* 先更新本后端记录（逻辑口径），再注入几何变化：setGeometry 去重
+           比对以此为准，从源头切断「setGeometry -> WM_SIZE/MOVE ->
+           handleGeometryChange -> setGeometry」回环（与 X11
+           ConfigureNotify 处理同构）。 */
+        entry->m_client = client;
+        if (entry->m_window) {
+            XWindowSystemInterface_handleGeometryChange(
+                entry->m_window, &client);
         }
         return 0;
     }
@@ -907,7 +1126,10 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
          * SizeHints，把最大化尺寸/位置钳制到最近显示器工作区，其余
          * 字段（最小/最大追踪尺寸等）仍走默认过程。entry 可为空
          * （WM_GETMINMAXINFO 先于 WM_NCCREATE 到达，用户数据尚未登
-         * 记），空窗直接交默认过程。 */
+         * 记），空窗直接交默认过程。
+         * 【R8 口径审计】MonitorFromWindow/rcWork/MINMAXINFO 两侧同为
+         * 物理像素口径（PMv2）或同为虚拟化口径（未感知），坐标系一致，
+         * 无需 ÷dpr。 */
         if (entry && entry->m_window &&
             XWindow_isCsdFrameSuppressed(entry->m_window)) {
             HMONITOR monitor;
@@ -968,16 +1190,20 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                 POINT point;
                 POINT global;
                 char* uriList;
+                float dpr = xpwn_dprForHwnd(hwnd);
                 point.x = 0;
                 point.y = 0;
                 (void)DragQueryPoint(drop, &point);
                 global = point;
                 ClientToScreen(hwnd, &global);
                 uriList = xpwn_dropFilesUriList(drop);
+                /* 拖放点物理口径 ÷dpr 出框（与鼠标四路同规则）。 */
                 (void)XWindowSystemInterface_handleDropEvent(
                     entry->m_window, XEVENT_TYPE_DROP,
-                    (XPoint){ point.x, point.y },
-                    &(XPoint){ global.x, global.y }, "text/uri-list",
+                    (XPoint){ xpwn_dprDiv(point.x, dpr),
+                              xpwn_dprDiv(point.y, dpr) },
+                    &(XPoint){ xpwn_dprDiv(global.x, dpr),
+                               xpwn_dprDiv(global.y, dpr) }, "text/uri-list",
                     uriList ? uriList : "");
                 if (uriList) XFree_Hybrid(uriList);
             }
@@ -1066,16 +1292,10 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             XWindow_type(entry->m_window) == XWindowType_Tool &&
             DefWindowProcW(hwnd, WM_NCHITTEST, 0, lParam) == HTCAPTION) {
             XPoint position;
-            POINT pt;
-            pt.x = (int)(short)LOWORD(lParam);
-            pt.y = (int)(short)HIWORD(lParam);
-            if (ScreenToClient(hwnd, &pt)) {
-                position.x = pt.x;
-                position.y = pt.y;
-            } else {
-                position.x = (int)(short)LOWORD(lParam);
-                position.y = (int)(short)HIWORD(lParam);
-            }
+            /* NC 消息 lParam 为屏幕坐标：R3 收拢点——客户区出口经
+               ScreenToClient（物理口径执行）后 ÷dpr（标题条位于负 y 带，
+               控件侧以 pos.y<0 识别）。 */
+            xpwn_mousePosToLogical(hwnd, lParam, true, &position, NULL);
             XWindowSystemInterface_handleMouseEvent(
                 entry->m_window,
                 msg == WM_NCLBUTTONDOWN
@@ -1110,14 +1330,14 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             type = xpwn_mouseMessageEvent(msg, wParam, &button);
             if (type != XEVENT_TYPE_NONE &&
                 button != XMouseButton_NoButton) {
-                position.x = (int)(short)LOWORD(lParam);
-                position.y = (int)(short)HIWORD(lParam);
-                /* 全局坐标逐事件换算：装饰拖拽/改尺寸增量锚按全局系计算
-                   （见 xpwn_clientToGlobal 注）；缺省 (0,0) 会使按下锚失
-                   真、CSD 拖动首跳后自指归零（拖动/缩放双双无效根因）。
-                   时间戳取 GetMessageTime（消息入队时刻，Qt Windows 后端
-                   同源）。 */
-                xpwn_clientToGlobal(hwnd, &position, &globalPosition);
+                /* 按键消息 lParam 为客户区坐标：R3 收拢点——客户区取
+                   raw、全局经 ClientToScreen（物理口径执行），两出口统一
+                   ÷dpr。全局坐标逐事件换算：装饰拖拽/改尺寸增量锚按全局
+                   系计算（缺省 (0,0) 会使按下锚失真、CSD 拖动首跳后自指
+                   归零——拖动/缩放双双无效根因）。时间戳取 GetMessageTime
+                   （消息入队时刻，Qt Windows 后端同源）。 */
+                xpwn_mousePosToLogical(hwnd, lParam, false,
+                                       &position, &globalPosition);
                 /* 按下集合：消息 wParam 的 MK_* 位并上触发键（释放时
                    wParam 不含本键，OR 不改变集合），与 X11 后端一致。 */
                 buttons = xpwn_translateButtons(wParam) | button;
@@ -1135,12 +1355,9 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         if (entry && entry->m_window) {
             XPoint position;
             XPoint globalPosition;
-            position.x = (int)(short)LOWORD(lParam);
-            position.y = (int)(short)HIWORD(lParam);
-            /* 全局坐标逐事件换算（含首次进入分支共用）：拖拽/改尺寸增量
-               锚按全局系计算，客户区系随窗口移动自指（见 xpwn_clientTo-
-               Global 注；缺省 (0,0) 曾使 CSD 拖动首跳后归零）。 */
-            xpwn_clientToGlobal(hwnd, &position, &globalPosition);
+            /* 移动消息 lParam 为客户区坐标：R3 收拢点（同按键路径）。 */
+            xpwn_mousePosToLogical(hwnd, lParam, false,
+                                   &position, &globalPosition);
             if (!entry->m_mouseInside) {
                 /* 指针首次进入客户区：先注入进入事件，再开启一次性离开
                    追踪（TME_LEAVE），收到 WM_MOUSELEAVE 后清标记。 */
@@ -1177,8 +1394,10 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         XPoint angleDelta;
         short delta;
         if (entry && entry->m_window) {
-            /* 滚轮消息 lParam 为屏幕坐标：先转回客户区作为局部坐标。 */
-            xpwn_getMousePos(hwnd, lParam, true, &position, &globalPosition);
+            /* 滚轮消息 lParam 为屏幕坐标：R3 收拢点——全局取 raw、客户区
+               经 ScreenToClient（物理口径执行），两出口统一 ÷dpr。 */
+            xpwn_mousePosToLogical(hwnd, lParam, true,
+                                   &position, &globalPosition);
             delta = (short)HIWORD(wParam);
             angleDelta.x = 0;
             angleDelta.y = 0;
@@ -1195,6 +1414,44 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         }
         return 0;
     }
+
+    /* ============ 每监视器 DPI 变化（PMv2；R2 建议矩形 / R9 LOWORD） ============ */
+    case WM_DPICHANGED:
+    {
+        RECT* suggested = (RECT*)lParam;
+        UINT dpiX;
+        UINT dpiY;
+        if (!xpwn_dpiAwarenessEnabled()) break; /* 未感知不收到；防御兜底。 */
+        dpiX = LOWORD(wParam);
+        dpiY = HIWORD(wParam);
+        /* 固定次序（R2 五步）：
+           ① dpr 取 X 向 LOWORD（R9；Y 向差 >1px 的各向异性缩放取均值）；
+           ② 屏差分回填（dpr + 归一化 logicalDpi + 几何，R4 铁律同式）；
+           ③ 先维护后换算：跨屏拖动即此切换指派（heal 走
+              xpwn_setGeometryForced，R18）；同屏仅 DPI 变化时 setScreen
+              no-op，dpr 经 setter 信号→公共层槽→逐窗推送+请求重绘；
+           ④ R2：PMv2 下系统只发建议矩形不代劳 resize——以建议矩形
+              SetWindowPos（物理口径）；DPI 已变，不会再次触发
+              WM_DPICHANGED，无循环；
+           ⑤ SetWindowPos 同步派发 WM_SIZE/WM_MOVE → handler（维护已完成）
+              ÷新 dpr 出框 → handleGeometryChange，框架逻辑几何单一来源。 */
+        xpwn_screenDpiChanged(hwnd, dpiX, dpiY);
+        if (entry) xpwn_maintainScreenAssignment(entry);
+        if (suggested && entry && !IsRectEmpty(suggested))
+            SetWindowPos(hwnd, NULL, suggested->left, suggested->top,
+                         suggested->right - suggested->left,
+                         suggested->bottom - suggested->top,
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        return 0;
+    }
+    /* ============ 显示拓扑变化（R6 差分 / R14 同步迁移 / R22 压实） ============ */
+    case WM_DISPLAYCHANGE:
+        /* 基于注册表重跑 EnumDisplayMonitors 差分：新增登记、消失走
+           xpwn_screenRemove（同步迁移+槽位压实）；未感知（XPWN_DPI_
+           AWARENESS=unaware）保持旧行为。广播消息多窗重复触发，刷新
+           幂等无害。 */
+        xpwn_screensRefresh();
+        break;
 
 #if XCLIPBOARD_ON
     case WM_CLIPBOARDUPDATE:
@@ -1217,7 +1474,7 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
     return xpwn_callPreviousProc(entry, hwnd, msg, wParam, lParam);
 }
 
-/* ==================== 屏幕枚举（对标 QWindowsScreenManager） ==================== */
+/* ==================== 屏幕枚举与 DPI（对标 QWindowsScreenManager） ==================== */
 #if XSCREEN_ON && XGUIAPPLICATION_ON && XWINDOWSYSTEMINTERFACE_ON
 
 /** @brief 单轮枚举登记上限（桌面场景远达不到；防回调失控）。 */
@@ -1225,13 +1482,203 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
 
 static bool g_xpwnScreensInitDone = false;
 
+/** @brief win32 屏幕注册表（平台层所有；对标 posix g_xpwnScreens
+ *         posix.c:1203-1211 的数组管理方式，槽位压实见 xpwn_screenRemove）。 */
+static XScreen* g_xpwnScreens[XPWN_MAX_SCREENS];          /**< 已登记屏幕（拥有）。 */
+static wchar_t g_xpwnScreenDevices[XPWN_MAX_SCREENS][32]; /**< 匹配键：MONITORINFOEXW.szDevice。 */
+static RECT g_xpwnScreenNativeRects[XPWN_MAX_SCREENS];    /**< 登记时整屏原生矩形（物理虚拟桌面
+                                                               坐标；R21 仿射折算基准，差分
+                                                               刷新/DPICHANGED 随动更新）。 */
+static int g_xpwnScreenCount;
+
+/** @brief EnumDisplayMonitors 差分枚举状态（首轮登记与刷新共用）。 */
+typedef struct XPwnScreenEnumState
+{
+    bool m_matched[XPWN_MAX_SCREENS]; /**< 槽位屏幕本轮仍存在的差分标记。 */
+    int m_registered;                 /**< 本轮新登记的屏幕数。 */
+    int m_seen;                       /**< 本轮见到的监视器数（0=枚举整体失败）。 */
+} XPwnScreenEnumState;
+
+static void xpwn_screenRemove(XScreen* screen);
+static void xpwn_screensReselectPrimary(void);
+static bool xpwn_setGeometryForced(XWindow* window, const XRect* logical);
+
+/** @brief 定宽拷贝设备名（含结束符；避开 MSVC strn/wcsn 系安全告警）。 */
+static void xpwn_screenCopyDeviceName(wchar_t* dst, const wchar_t* src)
+{
+    size_t i;
+    size_t capacity = sizeof(g_xpwnScreenDevices[0]) /
+                      sizeof(g_xpwnScreenDevices[0][0]);
+    for (i = 0; i + 1 < capacity && src && src[i]; ++i) dst[i] = src[i];
+    dst[i] = L'\0';
+}
+
+/** @brief 屏幕注册（登记表尾追加；表满静默丢弃——调用方先行判定）。
+ *  @return 登记槽位下标；表满未登记返回 -1（差分刷新据此置 matched）。 */
+static int xpwn_screenRegister(XScreen* screen, const wchar_t* deviceName,
+                               const RECT* nativeRect)
+{
+    int index;
+    if (g_xpwnScreenCount >= XPWN_MAX_SCREENS) return -1;
+    index = g_xpwnScreenCount++;
+    g_xpwnScreens[index] = screen;
+    xpwn_screenCopyDeviceName(g_xpwnScreenDevices[index], deviceName);
+    g_xpwnScreenNativeRects[index] = nativeRect ? *nativeRect : (RECT){0, 0, 0, 0};
+    return index;
+}
+
+/** @brief 按设备名查既有屏（命中返回借用指针，未命中 NULL）。 */
+static XScreen* xpwn_screenForDevice(const wchar_t* deviceName)
+{
+    int i;
+    if (!deviceName || !deviceName[0]) return NULL;
+    for (i = 0; i < g_xpwnScreenCount; ++i) {
+        if (g_xpwnScreens[i] &&
+            wcscmp(g_xpwnScreenDevices[i], deviceName) == 0)
+            return g_xpwnScreens[i];
+    }
+    return NULL;
+}
+
+/** @brief 按屏幕对象反查注册表槽位（未登记返回 -1）。 */
+static int xpwn_screenIndexOf(const XScreen* screen)
+{
+    int i;
+    if (!screen) return -1;
+    for (i = 0; i < g_xpwnScreenCount; ++i) {
+        if (g_xpwnScreens[i] == screen) return i;
+    }
+    return -1;
+}
+
+/** @brief 按 HWND 定位所属屏（MonitorFromWindow(MONITOR_DEFAULTTONEAREST)
+ *         → MONITORINFOEXW.szDevice → 注册表查找）。 */
+static XScreen* xpwn_screenForHwnd(HWND hwnd)
+{
+    HMONITOR monitor;
+    MONITORINFOEXW info;
+    if (!hwnd) return NULL;
+    monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if (!monitor) return NULL;
+    info.cbSize = sizeof(info);
+    if (!GetMonitorInfoW(monitor, (MONITORINFO*)&info)) return NULL;
+    return xpwn_screenForDevice(info.szDevice);
+}
+
+/** @brief      按请求几何定位所属屏（R13/R21，两段式定版）。
+ *  @details    ①先按注册表【逻辑】几何包含判定（请求几何中心为逻辑坐标，
+ *              注册表屏幕几何同为逻辑口径——同空间直接判定，混合 DPI 无
+ *              歧义；接缝/越界按最近逻辑矩形取）；②未命中才 MonitorFromPoint
+ *              兜底——其入参是【物理】虚拟桌面坐标，须先把逻辑点经最近
+ *              逻辑矩形 S 仿射折算：物理 = 逻辑 − S.logOrigin + S.natOrigin，
+ *              禁止逻辑点直传（物理桌面比逻辑「长」，混合 DPI 直传落错屏）。
+ *              未命中且无注册表（枚举失败极端环境）回落主屏。 */
+static XScreen* xpwn_screenForPoint(int logicalCenterX, int logicalCenterY,
+                                    int logicalW, int logicalH)
+{
+    XScreen* best = NULL;
+    int bestIndex = -1;
+    long bestDistance = 0;
+    int i;
+    (void)logicalW; /* 定版以中心点判定；宽高为签名契约预留。 */
+    (void)logicalH;
+    /* ① 注册表逻辑几何包含/最近判定（同空间，无歧义）。 */
+    for (i = 0; i < g_xpwnScreenCount; ++i) {
+        XRect g;
+        long dx;
+        long dy;
+        long distance;
+        if (!g_xpwnScreens[i]) continue;
+        g = XScreen_geometry(g_xpwnScreens[i]);
+        dx = 0;
+        dy = 0;
+        if (logicalCenterX < g.x)
+            dx = (long)g.x - logicalCenterX;
+        else if (logicalCenterX > g.x + g.width - 1)
+            dx = (long)logicalCenterX - (g.x + g.width - 1);
+        if (logicalCenterY < g.y)
+            dy = (long)g.y - logicalCenterY;
+        else if (logicalCenterY > g.y + g.height - 1)
+            dy = (long)logicalCenterY - (g.y + g.height - 1);
+        if (dx == 0 && dy == 0) return g_xpwnScreens[i]; /* 中心包含。 */
+        distance = dx * dx + dy * dy;
+        if (!best || distance < bestDistance) {
+            best = g_xpwnScreens[i];
+            bestIndex = i;
+            bestDistance = distance;
+        }
+    }
+    if (!best) return XScreen_primaryScreen(); /* 无注册表：回落主屏。 */
+    /* ② MonitorFromPoint 兜底：逻辑点经最近矩形仿射折算成物理点。 */
+    {
+        XRect logical = XScreen_geometry(best);
+        POINT point;
+        HMONITOR monitor;
+        MONITORINFOEXW info;
+        point.x = logicalCenterX - logical.x +
+                  g_xpwnScreenNativeRects[bestIndex].left;
+        point.y = logicalCenterY - logical.y +
+                  g_xpwnScreenNativeRects[bestIndex].top;
+        monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+        if (monitor) {
+            info.cbSize = sizeof(info);
+            if (GetMonitorInfoW(monitor, (MONITORINFO*)&info)) {
+                XScreen* screen = xpwn_screenForDevice(info.szDevice);
+                if (screen) return screen;
+            }
+        }
+    }
+    return best; /* 兜底未命中：最近逻辑矩形即归属。 */
+}
+
+/** @brief GetDpiForMonitor 动态装载缓存（Shcore.dll，Win8.1+）。 */
+static int xpwn_monitorDpi(const wchar_t* deviceName, HMONITOR monitor)
+{
+    typedef HRESULT(WINAPI* PFN_GetDpiForMonitor)(HMONITOR, int, UINT*, UINT*);
+    static PFN_GetDpiForMonitor getDpiForMonitor;
+    static bool probed = false;
+    UINT dpiX = 96;
+    UINT dpiY = 96;
+    HDC dc;
+    int dpi;
+    if (!probed) {
+        HMODULE shcore = GetModuleHandleW(L"Shcore.dll");
+        if (!shcore) shcore = LoadLibraryW(L"Shcore.dll");
+        getDpiForMonitor = shcore
+                               ? (PFN_GetDpiForMonitor)GetProcAddress(
+                                     shcore, "GetDpiForMonitor")
+                               : NULL;
+        probed = true;
+    }
+    /* 每监视器有效 DPI（物理口径，含显示缩放）。 */
+    if (getDpiForMonitor && monitor &&
+        SUCCEEDED(getDpiForMonitor(monitor, MDT_EFFECTIVE_DPI,
+                                   &dpiX, &dpiY)) &&
+        dpiX > 0)
+        return (int)dpiX;
+    /* 回落：显示器 DC 的 LOGPIXELSX（PMv2 下非虚拟化）。 */
+    dc = CreateDCW(deviceName, NULL, NULL, NULL);
+    if (!dc) return 96;
+    dpi = GetDeviceCaps(dc, LOGPIXELSX);
+    DeleteDC(dc);
+    return dpi > 0 ? dpi : 96;
+}
+
 /** @brief      用一块显示器的信息回填 XScreen。
  *  @param      screen 目标屏幕对象。
  *  @param      deviceName 显示器设备名（MONITORINFOEXW::szDevice）。
- *  @param      monitor 整屏几何（rcMonitor，虚拟桌面坐标）。
- *  @param      work 可用工作区（rcWork，剔除任务栏后的可用区）。 */
+ *  @param      monitor 该监视器句柄（真实 DPI 查询用；兜底路径可为
+ *              MonitorFromPoint 结果）。
+ *  @param      monitorRect 整屏几何（rcMonitor，物理虚拟桌面坐标）。
+ *  @param      work 可用工作区（rcWork，剔除任务栏后的可用区）。
+ *  @details    感知启用分支：dpr=round2(effectiveDpi/96)、几何/可用区
+ *              ÷dpr 出框为逻辑口径、logicalDpi 按 R4 归一化铁律上报
+ *              round(rawDpi/dpr)（整数缩放档恒 96——缩放由 dpr 单独承载，
+ *              防止 dpr×(rawDpi/96) 复合爆炸，H1 同源）；感知未启用分支
+ *              与历史逐位一致（虚拟化口径、dpr 缺省 1.0 全直通）。 */
 static void xpwn_screenFill(XScreen* screen, const wchar_t* deviceName,
-                            const RECT* monitor, const RECT* work)
+                            HMONITOR monitor, const RECT* monitorRect,
+                            const RECT* work)
 {
     XRect geometry;
     XRect available;
@@ -1241,15 +1688,27 @@ static void xpwn_screenFill(XScreen* screen, const wchar_t* deviceName,
     int dpiX = 96;
     int dpiY = 96;
     int depth = 32;
+    float dpr = 1.0f;
 
-    geometry.x = monitor->left;
-    geometry.y = monitor->top;
-    geometry.width = monitor->right - monitor->left;
-    geometry.height = monitor->bottom - monitor->top;
+    geometry.x = monitorRect->left;
+    geometry.y = monitorRect->top;
+    geometry.width = monitorRect->right - monitorRect->left;
+    geometry.height = monitorRect->bottom - monitorRect->top;
     available.x = work->left;
     available.y = work->top;
     available.width = work->right - work->left;
     available.height = work->bottom - work->top;
+    if (xpwn_dpiAwarenessEnabled()) {
+        /* 真实每监视器口径：物理 DPI/矩形 ÷dpr 出框为逻辑。 */
+        int dpi = xpwn_monitorDpi(deviceName, monitor);
+        dpr = xpwn_dprFromDpi(dpi);
+        dpiX = dpi;
+        dpiY = dpi;
+        if (dpr > 1.0f) {
+            geometry = xpwn_nativeRectToLogical(&geometry, dpr);
+            available = xpwn_nativeRectToLogical(&available, dpr);
+        }
+    }
     /* 设备名落 UTF-8 并剥去 \\.\ 前缀（对标 QWindowsScreen 命名）。 */
     WideCharToMultiByte(CP_UTF8, 0, deviceName, -1,
                         name, (int)sizeof(name) - 1, NULL, NULL);
@@ -1260,39 +1719,67 @@ static void xpwn_screenFill(XScreen* screen, const wchar_t* deviceName,
     XScreen_setName_2(screen, name);
     XScreen_setGeometry(screen, &geometry);
     XScreen_setAvailableGeometry(screen, &available);
-    /* 物理 DPI/尺寸/位深取自该显示器的设备 DC：进程非 PER_MONITOR_AWARE
-       时 GetDeviceCaps 返回系统虚拟化值，与同进程窗口坐标体系一致。 */
+    /* 物理尺寸/位深取自该显示器的设备 DC：HORZSIZE/VERTSIZE/BITSPIXEL 为
+       显示器物理属性，与进程感知态无关；LOGPIXELS 仅在未感知分支消费
+       （虚拟化口径，与同进程窗口坐标体系一致——历史行为）。 */
     dc = CreateDCW(deviceName, NULL, NULL, NULL);
     if (dc) {
-        dpiX = GetDeviceCaps(dc, LOGPIXELSX);
-        dpiY = GetDeviceCaps(dc, LOGPIXELSY);
+        if (dpr <= 1.0f) {
+            dpiX = GetDeviceCaps(dc, LOGPIXELSX);
+            dpiY = GetDeviceCaps(dc, LOGPIXELSY);
+        }
         depth = GetDeviceCaps(dc, BITSPIXEL);
         if (depth <= 0) depth = 32;
         physical.width = (float)GetDeviceCaps(dc, HORZSIZE);
         physical.height = (float)GetDeviceCaps(dc, VERTSIZE);
         DeleteDC(dc);
         XScreen_setPhysicalSize(screen, &physical);
-        XScreen_setLogicalDotsPerInch(screen, (float)dpiX, (float)dpiY);
+        if (dpr <= 1.0f)
+            XScreen_setLogicalDotsPerInch(screen, (float)dpiX, (float)dpiY);
+    }
+    if (dpr > 1.0f) {
+        /* 归一化铁律（R4）：dpr>1 时 logicalDpi 上报 round(rawDpi/dpr)，
+           运行期回填（WM_DPICHANGED）同式。 */
+        int logical = xpwn_dprRound((float)dpiX / dpr);
+        XScreen_setDevicePixelRatio(screen, dpr);
+        XScreen_setLogicalDotsPerInch(screen, (float)logical, (float)logical);
     }
     XScreen_setDepth(screen, depth);
 }
 
-/** @brief EnumDisplayMonitors 回调：每块监视器登记一块 XScreen。 */
+/** @brief EnumDisplayMonitors 回调：差分登记/回填（首轮与刷新共用）。 */
 static BOOL CALLBACK xpwn_monitorEnumProc(HMONITOR monitor, HDC dc,
                                           LPRECT rect, LPARAM lParam)
 {
+    XPwnScreenEnumState* state = (XPwnScreenEnumState*)lParam;
     MONITORINFOEXW info;
     XScreen* screen;
-    int* slots = (int*)lParam;
+    int index;
     (void)dc;
     (void)rect;
-    if (!slots) return TRUE;
-    if (*slots >= XPWN_MAX_SCREENS) return FALSE; /* 达上限：停止枚举。 */
+    if (!state) return TRUE;
     info.cbSize = sizeof(info);
     if (!GetMonitorInfoW(monitor, (MONITORINFO*)&info)) return TRUE;
+    ++state->m_seen;
+    screen = xpwn_screenForDevice(info.szDevice);
+    if (screen) {
+        /* 已登记：差分回填（setter 内部差分，静默无信号），原生矩形簿记
+           随动（R21 仿射折算基准）。 */
+        index = xpwn_screenIndexOf(screen);
+        if (index >= 0) {
+            state->m_matched[index] = true;
+            g_xpwnScreenNativeRects[index] = info.rcMonitor;
+        }
+        xpwn_screenFill(screen, info.szDevice, monitor,
+                        &info.rcMonitor, &info.rcWork);
+        return TRUE;
+    }
+    if (g_xpwnScreenCount >= XPWN_MAX_SCREENS)
+        return TRUE; /* 表满：跳过该监视器（其余继续，防回调失控）。 */
     screen = XScreen_create();
-    if (!screen) return FALSE;
-    xpwn_screenFill(screen, info.szDevice, &info.rcMonitor, &info.rcWork);
+    if (!screen) return FALSE; /* 分配失败：停止枚举。 */
+    xpwn_screenFill(screen, info.szDevice, monitor,
+                    &info.rcMonitor, &info.rcWork);
     /* 登记统一经 WSI 入口（注册表 + screenAdded 信号，对标
        QGuiApplication::screenAdded）。返回 false=未登记（无应用单例/
        注册失败），所有权仍在平台层：此处回收新建对象，防泄漏。 */
@@ -1300,67 +1787,436 @@ static BOOL CALLBACK xpwn_monitorEnumProc(HMONITOR monitor, HDC dc,
         XScreen_delete_base(screen);
         return TRUE;
     }
+    /* 本轮新登记：立即置差分标记，防 xpwn_screensRefresh 的移除循环把
+       刚登记的屏当消失监视器误删（对标 Qt QWindowsScreenManager::
+       handleScreenChange——仅把本轮未出现的屏入 removed 集）。 */
+    index = xpwn_screenRegister(screen, info.szDevice, &info.rcMonitor);
+    if (index >= 0)
+        state->m_matched[index] = true;
     if (info.dwFlags & MONITORINFOF_PRIMARY)
         XGuiApplication_setPrimaryScreen(screen);
-    ++*slots;
+    ++state->m_registered;
     return TRUE;
 }
 
 /** @brief      枚举系统监视器并登记屏幕注册表（幂等；对标
  *              QWindowsScreenManager::initializeScreens）。
- *  @details    Windows 后端此前从未登记任何 XScreen：
- *              XGuiApplication_primaryScreen() 恒为 NULL，顶层窗口首显
- *              居中（XWidget 首显 adjustPosition 链）与
- *              XColorDialog/XFileDialog 的屏幕居中分支全部静默回落
- *              (0,0)——高级控件页"打开主窗口"弹出的 XMainWindow 客户区
- *              贴死屏幕左上角，WS_OVERLAPPEDWINDOW 标题栏整条越出屏幕
- *              上沿（不可拖动/不可见系统按钮）。此处在首个原生窗口创建
- *              与事件泵入口 EnumDisplayMonitors 逐监视器登记（几何取
- *              rcMonitor、可用区取 rcWork、物理尺寸/DPI/位深取显示器
- *              DC），MONITORINFOF_PRIMARY 者设为主屏；枚举失败回落
- *              GetSystemMetrics 单屏（SPI_GETWORKAREA 供可用区）。
- *              多屏热切换暂不跟踪（X11 走 RandR 事件；win32 侧待
- *              WM_DISPLAYCHANGE 接入后差分刷新，登记幂等不阻塞既有
- *              链路）。 */
+ *  @details    首个原生窗口创建与事件泵入口逐监视器登记（几何取 rcMonitor
+ *              ÷dpr、可用区取 rcWork ÷dpr、dpr/logicalDpi 取
+ *              GetDpiForMonitor 真实口径、物理尺寸/位深取显示器 DC），
+ *              MONITORINFOF_PRIMARY 者设为主屏；枚举失败回落 GetSystemMetrics
+ *              单屏（SPI_GETWORKAREA 供可用区）。多屏热切换经 WM_DISPLAYCHANGE
+ *              差分刷新（xpwn_screensRefresh）。 */
 static void xpwn_screensInit(void)
 {
-    int slots = 0;
+    XPwnScreenEnumState state;
+    memset(&state, 0, sizeof(state));
     if (g_xpwnScreensInitDone) return;
     g_xpwnScreensInitDone = true;
-    EnumDisplayMonitors(NULL, NULL, xpwn_monitorEnumProc, (LPARAM)&slots);
-    if (slots > 0) return;
-    /* 回落路径：主显示器单屏（EnumDisplayMonitors 不可用的极端环境）。 */
+    /* R19 时序契约：本函数创建屏幕 DC（xpwn_screenFill → CreateDCW），
+       感知声明必须先于它完成（「无窗先查屏」路径无 ensureInstance 前置）。 */
+    xpwn_dpiAwarenessInit();
+    EnumDisplayMonitors(NULL, NULL, xpwn_monitorEnumProc, (LPARAM)&state);
+    if (state.m_registered > 0) return;
+    /* 回落路径：主显示器单屏（EnumDisplayMonitors 不可用的极端环境）。
+       GetSystemMetrics 口径审计（R8）：兜底屏 dpr 取 MonitorFromPoint({0,0})
+       主屏值，几何仍取 SM_CXSCREEN（未感知等价，感知环境注册表通常已
+       建成不走此路径）。 */
     {
         XScreen* screen = XScreen_create();
         if (screen) {
+            HMONITOR monitor;
+            POINT origin;
             RECT work;
-            RECT monitor;
+            RECT monitorRect;
             work.left = 0;
             work.top = 0;
             work.right = 0;
             work.bottom = 0;
-            monitor.left = 0;
-            monitor.top = 0;
-            monitor.right = GetSystemMetrics(SM_CXSCREEN);
-            monitor.bottom = GetSystemMetrics(SM_CYSCREEN);
+            monitorRect.left = 0;
+            monitorRect.top = 0;
+            monitorRect.right = GetSystemMetrics(SM_CXSCREEN);
+            monitorRect.bottom = GetSystemMetrics(SM_CYSCREEN);
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-            xpwn_screenFill(screen, L"\\\\.\\DISPLAY1", &monitor, &work);
+            origin.x = 0;
+            origin.y = 0;
+            monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTONEAREST);
+            xpwn_screenFill(screen, L"\\\\.\\DISPLAY1", monitor,
+                            &monitorRect, &work);
             /* 返回 false=未登记（所有权仍在平台层）：回收防泄漏。 */
             if (XWindowSystemInterface_handleScreenAdded(screen)) {
+                xpwn_screenRegister(screen, L"\\\\.\\DISPLAY1", &monitorRect);
                 XGuiApplication_setPrimaryScreen(screen);
             } else {
                 XScreen_delete_base(screen);
-                screen = NULL;
             }
         }
     }
 }
 
+/** @brief 显示拓扑/DPI 变化差分刷新（WM_DISPLAYCHANGE；R6/R14/R22）。
+ *  @details 重跑 EnumDisplayMonitors：新增监视器登记、已登记差分回填；
+ *           消失监视器走 xpwn_screenRemove（同步迁移+槽位压实）。本轮
+ *           一个监视器都没见到（枚举整体失败）时不做移除，防瞬时失败
+ *           清空注册表。未感知（退出开关）保持旧行为（不跟踪）。 */
+static void xpwn_screensRefresh(void)
+{
+    XPwnScreenEnumState state;
+    int i;
+    if (!g_xpwnScreensInitDone) return; /* 未登记过：交给惰性 init。 */
+    if (!xpwn_dpiAwarenessEnabled()) return; /* unaware 旧行为。 */
+    memset(&state, 0, sizeof(state));
+    EnumDisplayMonitors(NULL, NULL, xpwn_monitorEnumProc, (LPARAM)&state);
+    if (state.m_seen <= 0) return;
+    /* 消失监视器：倒序移除+压实，保证 memmove 不影响未处理槽位。 */
+    for (i = g_xpwnScreenCount - 1; i >= 0; --i) {
+        XScreen* screen = g_xpwnScreens[i];
+        if (!screen || state.m_matched[i]) continue;
+        xpwn_screenRemove(screen);
+    }
+    xpwn_screensReselectPrimary();
+}
+
+/** @brief      主屏重选：包含原点 (0,0) 的监视器，否则取第一块登记屏幕。
+ *  @details    对标 posix xpwn_screensReselectPrimary（与 QXcbConnection::
+ *              updateScreen 同语义）；handleScreenRemoved 内部已晋升，此处
+ *              兜底几何挪动使 (0,0) 落到别的监视器的场景。 */
+static void xpwn_screensReselectPrimary(void)
+{
+    XScreen* best = NULL;
+    int i;
+    for (i = 0; i < g_xpwnScreenCount; ++i) {
+        XRect geometry;
+        if (!g_xpwnScreens[i]) continue;
+        geometry = XScreen_geometry(g_xpwnScreens[i]);
+        if (geometry.x <= 0 && geometry.y <= 0 &&
+            geometry.x + geometry.width > 0 &&
+            geometry.y + geometry.height > 0) {
+            best = g_xpwnScreens[i];
+            break;
+        }
+    }
+    if (!best && g_xpwnScreenCount > 0) best = g_xpwnScreens[0];
+    if (best) XGuiApplication_setPrimaryScreen(best);
+}
+
+/** @brief      移除一块屏幕（热拔/拓扑变化；R14 同步迁移序 + R22 压实）。
+ *  @details    ①注册表注销 + screenRemoved 信号（主屏晋升在内部完成）；
+ *              ②同步迁移其上全部窗口（遍历 allWindows 取 XWindow_screen
+ *              ==被移除屏者：几何钳位 → setScreen → handleGeometryChange →
+ *              xpwn_setGeometryForced 原生重落地——钳位后几何常与原客户区
+ *              相同，普通 setGeometry 会被 :2313 去重吞掉，统一走豁免通道；
+ *              禁止异步等 WM_MOVE，隐藏窗口可永不收，悬空 m_screen 被消费
+ *              方解引用即 UAF）；③最后释放屏幕对象；④注册表槽位压实
+ *              （memmove 前移 + count−−，防固定表反复拔插耗尽与陈旧
+ *              szDevice 错配）；⑤压实后复查全部 entry->m_screen 无指向
+ *              已释放屏（R20-④；迁移经 XWindow_setScreen 直改框架归属，
+ *              未经 maintain——清扫仍指向已释放屏的残留簿记，NULL=未指派，
+ *              下个事件由 maintain 重解析）。 */
+static void xpwn_screenRemove(XScreen* screen)
+{
+    XScreen* target;
+    XVector* windows;
+    size_t k;
+    int index;
+    if (!screen) return;
+    index = xpwn_screenIndexOf(screen);
+    if (index < 0) return; /* 非本注册表对象：不处理。 */
+    /* 1) 注册表注销 + screenRemoved 信号（主屏晋升在内部完成）。 */
+    XWindowSystemInterface_handleScreenRemoved(screen);
+    /* 2) 窗口同步迁移：屏幕已不在注册表，XWindow_screen 仍指向它的顶层
+       窗口全部迁往现主屏；无主屏（全移除）时跳过。 */
+    target = XScreen_primaryScreen();
+    windows = XGuiApplication_allWindows();
+    for (k = 0; windows && k < XVector_size_base((const XContainer*)windows);
+         ++k) {
+        XWindow* window = XVector_At_Base(windows, (int64_t)k, XWindow*);
+        if (!window || XWindow_screen(window) != screen) continue;
+        if (target) {
+            XRect g = XWindow_geometry(window);
+            XRect pg = XScreen_geometry(target);
+            /* 几何钳位到主屏（逻辑口径）：宽高先压入，再拉回越界偏移。 */
+            if (g.width > pg.width) g.width = pg.width;
+            if (g.height > pg.height) g.height = pg.height;
+            if (g.x < pg.x) g.x = pg.x;
+            if (g.y < pg.y) g.y = pg.y;
+            if (g.x + g.width > pg.x + pg.width)
+                g.x = pg.x + pg.width - g.width;
+            if (g.y + g.height > pg.y + pg.height)
+                g.y = pg.y + pg.height - g.height;
+            XWindow_setScreen(window, target); /* 发 screenChanged + dpr 直同步。 */
+            XWindowSystemInterface_handleGeometryChange(window, &g);
+            /* R18：框架侧重落地走去重豁免通道。 */
+            xpwn_setGeometryForced(window, &g);
+        } else {
+            XWindow_setScreen(window, NULL); /* 无屏可迁，回退主屏语义。 */
+        }
+    }
+    if (windows) XVector_delete_base((XClass*)windows);
+    /* 3) 平台层持有所有权，负责释放。 */
+    XScreen_delete_base((XClass*)screen);
+    /* 4) R22 槽位压实：尾段前移 + count−−（对标 posix 数组管理）。 */
+    if (index < g_xpwnScreenCount - 1) {
+        memmove(&g_xpwnScreens[index], &g_xpwnScreens[index + 1],
+                sizeof(XScreen*) * (size_t)(g_xpwnScreenCount - 1 - index));
+        memmove(&g_xpwnScreenDevices[index], &g_xpwnScreenDevices[index + 1],
+                sizeof(g_xpwnScreenDevices[0]) *
+                    (size_t)(g_xpwnScreenCount - 1 - index));
+        memmove(&g_xpwnScreenNativeRects[index],
+                &g_xpwnScreenNativeRects[index + 1],
+                sizeof(RECT) * (size_t)(g_xpwnScreenCount - 1 - index));
+    }
+    --g_xpwnScreenCount;
+    g_xpwnScreens[g_xpwnScreenCount] = NULL;
+    memset(&g_xpwnScreenDevices[g_xpwnScreenCount], 0,
+           sizeof(g_xpwnScreenDevices[0]));
+    memset(&g_xpwnScreenNativeRects[g_xpwnScreenCount], 0, sizeof(RECT));
+    /* 5) R20-④ 复查簿记：残留 m_screen 清零（防复用槽投毒）。 */
+    for (k = 0; k < XPWN_MAX_WINDOWS; ++k) {
+        if (g_xpwnEntries[k].m_screen == screen)
+            g_xpwnEntries[k].m_screen = NULL;
+    }
+}
+
+/** @brief      WM_DPICHANGED 屏差分回填（五步之②；R4 归一化同式）。
+ *  @details    dpr=X 向 LOWORD/96（R9；Y 向差 >1px 的各向异性缩放取均值）；
+ *              命中注册表屏时同步：dpr + 归一化 logicalDpi + 几何/可用区
+ *              （新物理 ÷ 新 dpr）+ 原生矩形簿记。 */
+static void xpwn_screenDpiChanged(HWND hwnd, UINT dpiX, UINT dpiY)
+{
+    XScreen* screen = xpwn_screenForHwnd(hwnd);
+    HMONITOR monitor;
+    MONITORINFOEXW info;
+    float dpr;
+    int logical;
+    int index;
+    if (!screen) return;
+    if (dpiY > dpiX + 1 || dpiX > dpiY + 1)
+        dpr = xpwn_dprFromDpi((int)((dpiX + dpiY) / 2)); /* R9 均值兜底。 */
+    else
+        dpr = xpwn_dprFromDpi((int)dpiX);
+    /* 归一化铁律（R4）：与 xpwn_screenFill 静态回填同式。 */
+    logical = (dpr > 1.0f) ? xpwn_dprRound((float)dpiX / dpr) : (int)dpiX;
+    monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if (monitor && GetMonitorInfoW(monitor, (MONITORINFO*)&info)) {
+        XRect native;
+        XRect nativeWork;
+        native.x = info.rcMonitor.left;
+        native.y = info.rcMonitor.top;
+        native.width = info.rcMonitor.right - info.rcMonitor.left;
+        native.height = info.rcMonitor.bottom - info.rcMonitor.top;
+        nativeWork.x = info.rcWork.left;
+        nativeWork.y = info.rcWork.top;
+        nativeWork.width = info.rcWork.right - info.rcWork.left;
+        nativeWork.height = info.rcWork.bottom - info.rcWork.top;
+        index = xpwn_screenIndexOf(screen);
+        XScreen_setDevicePixelRatio(screen, dpr);
+        if (dpr > 1.0f) {
+            XRect geometry = xpwn_nativeRectToLogical(&native, dpr);
+            XRect available = xpwn_nativeRectToLogical(&nativeWork, dpr);
+            XScreen_setGeometry(screen, &geometry);
+            XScreen_setAvailableGeometry(screen, &available);
+        } else {
+            XScreen_setGeometry(screen, &native);
+            XScreen_setAvailableGeometry(screen, &nativeWork);
+        }
+        if (index >= 0) g_xpwnScreenNativeRects[index] = info.rcMonitor;
+    } else {
+        XScreen_setDevicePixelRatio(screen, dpr);
+    }
+    XScreen_setLogicalDotsPerInch(screen, (float)logical, (float)logical);
+}
+
+/** @brief 出框换算 dpr 源（按 HWND 定位；R13）。
+ *  @details 已指派窗口读 XWindow_devicePixelRatio（单源）；未指派期按
+ *           窗口所在屏直查 XScreen_devicePixelRatio，禁止读缺省 1.0 快照。 */
+static float xpwn_dprForHwnd(HWND hwnd)
+{
+    XWNPendingEntry* entry = xpwn_findByNativeWindow(hwnd);
+    XScreen* screen;
+    if (entry && entry->m_screen && entry->m_window)
+        return XWindow_devicePixelRatio(entry->m_window);
+    screen = xpwn_screenForHwnd(hwnd);
+    if (screen) return XScreen_devicePixelRatio(screen);
+    return 1.0f;
+}
+
+/** @brief      出框换算的 dpr 源（R13 单点定版）。
+ *  @details    entry->m_screen 非空（已指派）→ XWindow_devicePixelRatio；
+ *              NULL（create/首几何期）→ 按请求几何所在屏直查
+ *              XScreen_devicePixelRatio；无请求几何（事件路径）→ 按窗口
+ *              所在屏。禁止读缺省 1.0 快照做未指派期换算。 */
+static float xpwn_outboundDpr(XWNPendingEntry* entry,
+                              const XRect* requestedLogical)
+{
+    XScreen* screen;
+    if (entry && entry->m_screen && entry->m_window)
+        return XWindow_devicePixelRatio(entry->m_window);
+    if (requestedLogical && requestedLogical->width > 0 &&
+        requestedLogical->height > 0) {
+        screen = xpwn_screenForPoint(
+            requestedLogical->x + requestedLogical->width / 2,
+            requestedLogical->y + requestedLogical->height / 2,
+            requestedLogical->width, requestedLogical->height);
+        return screen ? XScreen_devicePixelRatio(screen) : 1.0f;
+    }
+    if (entry && entry->m_hwnd) return xpwn_dprForHwnd(entry->m_hwnd);
+    return 1.0f;
+}
+
+/** @brief      窗口→屏幕归属维护（WM_SIZE/WM_MOVE/WM_DPICHANGED handler
+ *              头部、几何换算之前调用——先维护后换算）。
+ *  @details    xpwn_screenForHwnd 与 entry->m_screen 比对：首次指派或变化
+ *              时 XWindow_setScreen（screenChanged 信号 + dpr 快照直同步）
+ *              并同步 entry->m_screen。【首次指派 heal（R13+R18）】指派
+ *              变化时若落地口径与现屏 dpr 不一致（mis-pick 双向：×1.0
+ *              落入 1.5 屏或反之，检测式=物理客户区 ≠ 簿记逻辑 × 现 dpr），
+ *              以框架几何经 xpwn_setGeometryForced 原生重落地——普通
+ *              setGeometry 的去重守卫在两方向下都逐字段相等，heal 会被
+ *              静默吞掉。最小化/最大化窗口跳过 heal（客户区不代表框架
+ *              几何；跨屏 DPICHANGED 的建议矩形链负责）。仅顶层（setScreen
+ *              契约）；entry 无 window 借用时跳过。 */
+static void xpwn_maintainScreenAssignment(XWNPendingEntry* entry)
+{
+    XScreen* screen;
+    XWindow* window;
+    float dpr;
+    XRect native;
+    bool changed;
+    if (!entry || !entry->m_hwnd || !entry->m_window) return;
+    window = entry->m_window;
+    screen = xpwn_screenForHwnd(entry->m_hwnd);
+    if (!screen) return;
+    changed = (entry->m_screen != screen);
+    if (changed) {
+        entry->m_screen = screen;
+        /* 首派/变化即 setScreen：发 screenChanged + dpr 快照直同步
+           （XWindow_setScreen 尾部，等值短路）。 */
+        XWindow_setScreen(window, screen);
+    }
+    if (!changed) return;
+    dpr = XWindow_devicePixelRatio(window);
+    /* 不按 dpr==1.0 早退：mis-pick 双向（×1.0 落入 1.5 屏或 ×1.5 落入
+       1.0 屏），dpr==1.0 时检测式同样能命中反向口径差（R13+R18）。 */
+    if (IsIconic(entry->m_hwnd) || IsZoomed(entry->m_hwnd)) return;
+    if (!xpwn_getClientGeometry(entry->m_hwnd, &native)) return;
+    if (entry->m_client.width > 0 &&
+        native.width == xpwn_dprMul(entry->m_client.width, dpr) &&
+        native.height == xpwn_dprMul(entry->m_client.height, dpr))
+        return; /* 口径一致：无需 heal。 */
+    {
+        XRect logical = XWindow_geometry(window);
+        /* heal 重落地：嵌套 WM_SIZE/WM_MOVE 链（handler 内维护已完成）
+           以新 dpr 出框注入真实落地结果，簿记自然收敛。 */
+        xpwn_setGeometryForced(window, &logical);
+    }
+}
+
+/** @brief      去重豁免的重落地（R18；仅 heal 与屏移除迁移使用）。
+ *  @details    跳过 xpwn_setGeometry 的 m_client 逐字段去重（相等即跳过
+ *              落地），其余同链：xpwn_logicalRectToNative(×当前 dpr) →
+ *              xpwn_adjustWindowRect（chrome 增量物理口径）→ SetWindowPos
+ *              → 嵌套 WM_SIZE/WM_MOVE 同步派发记账收敛；消息被裁剪（如
+ *              窗口未显示）时 m_client 仍为空或整场未被本次 SetWindowPos
+ *              更新（陈旧值），名义写 m_client 收口（R18）。 */
+static bool xpwn_setGeometryForced(XWindow* window, const XRect* logical)
+{
+    XWNPendingEntry* entry;
+    XRect native;
+    RECT rc;
+    XRect before;
+    float dpr;
+    if (!logical) return false;
+    if (!xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd) return false;
+    dpr = xpwn_outboundDpr(entry, logical);
+    native = xpwn_logicalRectToNative(logical, dpr);
+    xpwn_adjustWindowRect(window, &native, &rc);
+    before = entry->m_client;
+    SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
+                 rc.right - rc.left, rc.bottom - rc.top,
+                 SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    /* 名义兜底：SetWindowPos 消息被裁剪时（窗口未显示等）簿记不悬空——
+       m_client 仍为空，或嵌套 WM_SIZE/WM_MOVE 根本没跑（与入场快照逐
+       字段相等=未更新，含陈旧非零值场景）都名义写；真实落地后本式恰为
+       幂等（落地客户区=logical×dpr÷dpr）。 */
+    if (entry->m_client.width == 0 ||
+        (entry->m_client.x == before.x && entry->m_client.y == before.y &&
+         entry->m_client.width == before.width &&
+         entry->m_client.height == before.height))
+        entry->m_client = *logical;
+    return true;
+}
+
+/** @brief 主屏 dpr（grabWindow 全屏路径用；无屏回落 1.0 直通）。 */
+static float xpwn_primaryScreenDpr(void)
+{
+    XScreen* screen = XScreen_primaryScreen();
+    return screen ? XScreen_devicePixelRatio(screen) : 1.0f;
+}
+
+/** @brief 主屏整屏原生矩形（物理虚拟桌面坐标；注册表空返回 false）。 */
+static bool xpwn_primaryScreenNativeRect(RECT* out)
+{
+    XScreen* screen;
+    int index;
+    if (!out) return false;
+    screen = XScreen_primaryScreen();
+    if (!screen) return false;
+    index = xpwn_screenIndexOf(screen);
+    if (index < 0) return false;
+    *out = g_xpwnScreenNativeRects[index];
+    return true;
+}
+
 #else /* !XSCREEN_ON || !XGUIAPPLICATION_ON || !XWINDOWSYSTEMINTERFACE_ON */
 
 static void xpwn_screensInit(void) { }
+static void xpwn_screensRefresh(void) { }
+static void xpwn_screenDpiChanged(HWND hwnd, UINT dpiX, UINT dpiY)
+{ (void)hwnd; (void)dpiX; (void)dpiY; }
+static float xpwn_dprForHwnd(HWND hwnd) { (void)hwnd; return 1.0f; }
+static float xpwn_outboundDpr(XWNPendingEntry* entry, const XRect* rect)
+{ (void)entry; (void)rect; return 1.0f; }
+static void xpwn_maintainScreenAssignment(XWNPendingEntry* entry) { (void)entry; }
+static bool xpwn_primaryScreenNativeRect(RECT* out) { (void)out; return false; }
+static float xpwn_primaryScreenDpr(void) { return 1.0f; }
 
 #endif /* XSCREEN_ON && XGUIAPPLICATION_ON && XWINDOWSYSTEMINTERFACE_ON */
+
+/** @brief      从鼠标消息 lParam 取客户区/全局坐标并统一 ÷dpr 出框
+ *              （R3 四路收拢点：滚轮/按键/移动/NC Tool 共用；dpr==1 直通）。
+ *  @details    屏幕类消息（滚轮/NC）lParam 为全局物理坐标：全局出口取
+ *              raw、客户区出口经 ScreenToClient；客户类消息（按键/移动）
+ *              相反，全局经 ClientToScreen——换算保持物理口径执行，仅
+ *              出口 ÷dpr。失败时坐标不被改写，按输入口径兜底（与既有
+ *              分支同语义）。装饰层拖拽/改尺寸的增量锚按全局系计算
+ *              （客户区系随窗口移动自指——posix 同教训）。 */
+static void xpwn_mousePosToLogical(HWND hwnd, LPARAM lParam, bool isScreen,
+                                   XPoint* position, XPoint* globalPosition)
+{
+    POINT pt;
+    POINT global;
+    float dpr = xpwn_dprForHwnd(hwnd);
+    pt.x = (int)(short)LOWORD(lParam);
+    pt.y = (int)(short)HIWORD(lParam);
+    global = pt;
+    if (hwnd) {
+        if (isScreen)
+            ScreenToClient(hwnd, &pt);
+        else
+            ClientToScreen(hwnd, &global);
+    }
+    if (position) {
+        position->x = xpwn_dprDiv(pt.x, dpr);
+        position->y = xpwn_dprDiv(pt.y, dpr);
+    }
+    if (globalPosition) {
+        globalPosition->x = xpwn_dprDiv(global.x, dpr);
+        globalPosition->y = xpwn_dprDiv(global.y, dpr);
+    }
+}
 
 /* ==================== 事件泵（平台后端提供） ==================== */
 
@@ -2097,9 +2953,12 @@ bool XPlatformNativeWindow_create(XWindow* window)
     XWNPendingEntry* entry;
     HWND hwnd;
     XRect geom;
+    XRect native;
+    XRect client;
     RECT rc;
     int w, h;
     XString* title;
+    float createDpr;
     if (!window) return false;
     if (!xpwn_ensureInstance()) return false;
     /* 窗口几何落位前保证屏幕注册表就绪：首个窗口之前 Widget 层可能
@@ -2113,7 +2972,11 @@ bool XPlatformNativeWindow_create(XWindow* window)
     geom = XWindow_geometry(window);
     w = geom.width < 1 ? 1 : geom.width;
     h = geom.height < 1 ? 1 : geom.height;
-    xpwn_adjustWindowRect(window, &geom, &rc);
+    /* R13：create 期 dpr 按请求几何所在屏直查（未指派期禁读缺省 1.0
+       快照）；chrome 增量在 ×dpr 之后调用（物理口径）。 */
+    createDpr = xpwn_outboundDpr(NULL, &geom);
+    native = xpwn_logicalRectToNative(&geom, createDpr);
+    xpwn_adjustWindowRect(window, &native, &rc);
     /* Owner 归属（对标 qwindowswindow.cpp:784-786「Parent: Use transient
        parent for top levels」+ 921-923 传入 CreateWindowEx）：transient
        parent 作为 hWndParent——对话框合并进父窗任务栏项、保持「对话框
@@ -2141,8 +3004,17 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_oldProc = NULL;
     entry->m_hcursor = NULL;   /* 新窗口无框架光标：类光标（箭头）兜底。 */
     entry->m_cursorSet = false;
-    if (!xpwn_getClientGeometry(hwnd, &entry->m_client))
-    entry->m_client = geom;
+#if XSCREEN_ON
+    /* R20-①：create 期未指派（NULL）；首个 WM_SIZE/MOVE 由
+       xpwn_maintainScreenAssignment 收敛指派（mis-pick 经 heal 重落地）。 */
+    entry->m_screen = NULL;
+#endif
+    /* 客户区簿记为逻辑口径：create 物理客户区 ÷ create 期 dpr（与请求
+       几何同空间，R8-③/R18）；读取失败按请求几何兜底。 */
+    if (xpwn_getClientGeometry(hwnd, &client))
+        entry->m_client = xpwn_nativeRectToLogical(&client, createDpr);
+    else
+        entry->m_client = geom;
     DragAcceptFiles(hwnd, TRUE);
     /* 初始标题同步（公共层 createHandle 后也会再同步，这里是兜底）。 */
     title = XWindow_title(window);
@@ -2166,6 +3038,11 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     entry->m_visible = false;
     entry->m_mouseInside = false;
     entry->m_client = (XRect){0, 0, 0, 0};
+#if XSCREEN_ON
+    /* R20-②：指派簿记随槽位回池一并清零（与 WM_NCDESTROY 分支同口径；
+       陈旧非 NULL 使复用槽新窗 outboundDpr 误走「已指派」分支）。 */
+    entry->m_screen = NULL;
+#endif
     /* 槽位即回池：必须连同 m_oldProc 一并清零（与 WM_NCDESTROY 分支同
      * 口径）。否则旧值残留在可复用槽上，内部建窗路径不写 m_oldProc，
      * 新窗口继承旧链——若旧值为 xpwn_wndProc（对外挂接内部窗口的产物），
@@ -2191,6 +3068,7 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
     XWNPendingEntry* entry;
     HWND hwnd = (HWND)(uintptr_t)nativeId;
     WNDPROC oldProc;
+    XRect client;
     if (!window || !hwnd || !IsWindow(hwnd) || !xpwn_ensureInstance()) return false;
     if (xpwn_findByXWindow(window)) return true;
     entry = xpwn_findFreeSlot();
@@ -2205,11 +3083,15 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
          * CallWindowProcW→本过程→…栈溢出），按内部窗口口径不设回链。 */
         oldProc = NULL;
     }
+    /* memset 全零覆盖含 R20-① 的 m_screen（attachForeign 语义=全新簿记）。 */
     memset(entry, 0, sizeof(*entry));
     entry->m_hwnd = hwnd;
     entry->m_window = window;
     entry->m_oldProc = oldProc;
-    (void)xpwn_getClientGeometry(hwnd, &entry->m_client);
+    /* 客户区簿记为逻辑口径（物理 ÷ 窗口所在屏 dpr；未指派期直查）。 */
+    if (xpwn_getClientGeometry(hwnd, &client))
+        entry->m_client = xpwn_nativeRectToLogical(
+            &client, xpwn_outboundDpr(entry, NULL));
     DragAcceptFiles(hwnd, TRUE);
     return true;
 }
@@ -2282,13 +3164,18 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
         return true;
     exStyle = (DWORD)GetWindowLongPtrW(entry->m_hwnd, GWL_EXSTYLE);
     SetWindowLongPtrW(entry->m_hwnd, GWL_STYLE, (LONG_PTR)wantStyle);
-    /* 风格位改变外框换算：以现客户端几何（屏幕坐标）按新样式重算外框
-     * 矩形并 SWP_FRAMECHANGED 落地（如去 WS_CAPTION 后外框收缩而客户
-     * 区变大），客户端几何保持不变，杜绝 WM_SIZE 回环造成布局跳动。 */
-    rc.left = entry->m_client.x;
-    rc.top = entry->m_client.y;
-    rc.right = entry->m_client.x + entry->m_client.width;
-    rc.bottom = entry->m_client.y + entry->m_client.height;
+    /* 风格位改变外框换算：以现客户端几何（逻辑口径）×dpr 还原物理客户
+     * 矩形后按新样式重算外框（chrome 增量物理口径）并 SWP_FRAMECHANGED
+     * 落地（如去 WS_CAPTION 后外框收缩而客户区变大），客户端几何保持
+     * 不变，杜绝 WM_SIZE 回环造成布局跳动。 */
+    {
+        XRect native = xpwn_logicalRectToNative(
+            &entry->m_client, xpwn_outboundDpr(entry, NULL));
+        rc.left = native.x;
+        rc.top = native.y;
+        rc.right = native.x + native.width;
+        rc.bottom = native.y + native.height;
+    }
     AdjustWindowRectEx(&rc, wantStyle, FALSE, exStyle);
     SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
@@ -2303,19 +3190,24 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     XWNPendingEntry* entry;
+    XRect native;
     RECT rc;
+    float dpr;
     if (!geometry) return false;
     if (!xpwn_ensureInstance()) return false;
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_hwnd) return false;
-    /* 去重：与最近一次记录/应用的客户端几何一致则跳过（防
-       WM_SIZE/WM_MOVE 回环）。 */
+    /* 去重：与最近一次记录/应用的客户端几何（逻辑口径）一致则跳过（防
+       WM_SIZE/WM_MOVE 回环）。heal/屏移除迁移类同值重落地必须走
+       xpwn_setGeometryForced 豁免通道（R18），禁经本入口。 */
     if (geometry->x == entry->m_client.x &&
         geometry->y == entry->m_client.y &&
         geometry->width == entry->m_client.width &&
         geometry->height == entry->m_client.height)
         return true;
-    xpwn_adjustWindowRect(window, geometry, &rc);
+    dpr = xpwn_outboundDpr(entry, geometry);
+    native = xpwn_logicalRectToNative(geometry, dpr);
+    xpwn_adjustWindowRect(window, &native, &rc);
     SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
                  rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
@@ -2420,6 +3312,10 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     XPixmap captured;
     XPixmap* result;
     RECT client;
+    RECT nativeRect;
+    float dpr;
+    int originX;
+    int originY;
     int targetWidth;
     int targetHeight;
     int width;
@@ -2427,18 +3323,36 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     int row;
     int col;
     if (!xpwn_ensureInstance()) return NULL;
+    originX = 0;
+    originY = 0;
     if (window != 0) {
         hwnd = (HWND)(void*)(uintptr_t)window;
         if (!IsWindow(hwnd)) return NULL;
         if (!GetClientRect(hwnd, &client)) return NULL;
+        dpr = xpwn_dprForHwnd(hwnd);
         targetWidth = client.right - client.left;
         targetHeight = client.bottom - client.top;
     } else {
-        targetWidth = GetSystemMetrics(SM_CXSCREEN);
-        targetHeight = GetSystemMetrics(SM_CYSCREEN);
+        /* GetSystemMetrics 口径审计（R8）：PMv2 下 SM_CXSCREEN 为系统 DPI
+           折算口径而非物理像素——全屏抓取按主屏原生矩形取物理口径，
+           注册表不可用（极端环境）回落 GetSystemMetrics 直通。 */
+        dpr = xpwn_primaryScreenDpr();
+        if (xpwn_primaryScreenNativeRect(&nativeRect)) {
+            targetWidth = nativeRect.right - nativeRect.left;
+            targetHeight = nativeRect.bottom - nativeRect.top;
+            originX = nativeRect.left;
+            originY = nativeRect.top;
+        } else {
+            targetWidth = GetSystemMetrics(SM_CXSCREEN);
+            targetHeight = GetSystemMetrics(SM_CYSCREEN);
+        }
     }
-    width = w < 0 ? targetWidth - x : w;
-    height = h < 0 ? targetHeight - y : h;
+    /* x/y/w/h 为框架逻辑口径（对标 QScreen::grabWindow）：×dpr 取物理区
+       （dpr==1 直通，算术与既往逐位一致）。 */
+    x = xpwn_dprMul(x, dpr);
+    y = xpwn_dprMul(y, dpr);
+    width = w < 0 ? targetWidth - x : xpwn_dprMul(w, dpr);
+    height = h < 0 ? targetHeight - y : xpwn_dprMul(h, dpr);
     if (x < 0) { width += x; x = 0; }
     if (y < 0) { height += y; y = 0; }
     if (x >= targetWidth || y >= targetHeight || width <= 0 || height <= 0)
@@ -2457,8 +3371,10 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
         return NULL;
     }
     oldBitmap = SelectObject(memoryDc, bitmap);
-    if (!BitBlt(memoryDc, 0, 0, width, height, sourceDc, x, y,
-                SRCCOPY | CAPTUREBLT)) {
+    /* 窗口抓取源坐标相对客户区原点；全屏抓取经 GetDC(NULL) 的屏幕 DC，
+       源坐标补主屏原生原点偏移（虚拟桌面多屏场景）。 */
+    if (!BitBlt(memoryDc, 0, 0, width, height, sourceDc, originX + x,
+                originY + y, SRCCOPY | CAPTUREBLT)) {
         SelectObject(memoryDc, oldBitmap);
         DeleteObject(bitmap);
         DeleteDC(memoryDc);
@@ -2544,9 +3460,15 @@ XWindow* XPlatformNativeWindow_windowForWinId(XWindowId id)
 
 /* ==================== 上屏（平台后端提供） ==================== */
 
-/** @brief 把 XImage 的一块矩形按行重排为等宽 packed DIB 并提交。 */
+/** @brief 把 XImage 的一块矩形按行重排为等宽 packed DIB 并提交。
+ *  @details dstX/dstY 为窗口客户区【逻辑】坐标；scale=dpr（窗口已指派时
+ *           单源 XWindow_devicePixelRatio）——dpr==1.0f 参数与既往逐位
+ *           一致（SetDIBitsToDevice 1:1）；dpr>1 时目标原点/尺寸 ×scale
+ *           放大（present 唯一放大点）——SetDIBitsToDevice 仅做同尺寸
+ *           块拷贝，放大必须走 StretchDIBits（COLORONCOLOR）。 */
 static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
-                             const XRect* srect, int dstX, int dstY)
+                             const XRect* srect, int dstX, int dstY,
+                             float scale)
 {
     const uint8_t* sbuf;
     int srcBpl;
@@ -2605,9 +3527,20 @@ static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
         XFree_Hybrid(buf);
         return false;
     }
-    SetDIBitsToDevice(hdc, dstX, dstY, (DWORD)w, (DWORD)h,
-                      0, 0, 0, (UINT)h, buf, (BITMAPINFO*)&bmi,
-                      DIB_RGB_COLORS);
+    if (scale == 1.0f)
+        SetDIBitsToDevice(hdc, xpwn_dprMul(dstX, scale), xpwn_dprMul(dstY, scale),
+                          (DWORD)xpwn_dprMul(w, scale),
+                          (DWORD)xpwn_dprMul(h, scale),
+                          0, 0, 0, (UINT)h, buf, (BITMAPINFO*)&bmi,
+                          DIB_RGB_COLORS);
+    else
+    {
+        SetStretchBltMode(hdc, COLORONCOLOR);
+        StretchDIBits(hdc, xpwn_dprMul(dstX, scale), xpwn_dprMul(dstY, scale),
+                      xpwn_dprMul(w, scale), xpwn_dprMul(h, scale),
+                      0, 0, w, h, buf, (BITMAPINFO*)&bmi,
+                      DIB_RGB_COLORS, SRCCOPY);
+    }
     ReleaseDC(entry->m_hwnd, hdc);
     XFree_Hybrid(buf);
     return true;
@@ -2626,6 +3559,7 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     int imgW, imgH;
     int i;
     bool any = false;
+    float scale;
     if (!window || !image) return false;
     if (!xpwn_ensureInstance()) {
         return false;
@@ -2639,6 +3573,10 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     if (imgW <= 0 || imgH <= 0) {
         return false;
     }
+    /* R1：present 放大 scale 平台内部读取（共享契约签名零改动）；dpr
+       单源=XWindow_devicePixelRatio（框架内部恒逻辑像素，缓冲即逻辑
+       分辨率，物理放大全在平台 present 层）。 */
+    scale = XWindow_devicePixelRatio(window);
 
     /* 裁剪脏区：region 为 NULL/空按整幅；offset 为缓冲相对窗口偏移。 */
     if (!offset) {
@@ -2666,7 +3604,9 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         if (!xpwn_clipRectToImage(&srect, imgW, imgH, &srect)) continue;
         drect.x = srect.x + off->x;
         drect.y = srect.y + off->y;
-        if (xpwn_presentRect(entry, image, &srect, drect.x, drect.y)) any = true;
+        if (xpwn_presentRect(entry, image, &srect, drect.x, drect.y,
+                             scale))
+            any = true;
     }
     return any;
 }

@@ -1259,6 +1259,16 @@ XScreenOrientation XWindow_contentOrientation(const XWindow* self)
 float XWindow_devicePixelRatio(const XWindow* self)
 { return self && self->m_data ? self->m_data->m_devicePixelRatio : 1.0f; }
 
+void XWindow_setDevicePixelRatio_internal(XWindow* self, float ratio)
+{
+    /* 框架内部推送口（screen dpr 信号→遍历 allWindows 的运行期补线）：
+       等值短路保证桌面 dpr=1 下信号路径零扰动；变化时只落快照不发
+       信号，重绘节奏由调用方经 XWindow_requestUpdate 统一驱动。 */
+    if (!self || !self->m_data) return;
+    if (self->m_data->m_devicePixelRatio == ratio) return;
+    self->m_data->m_devicePixelRatio = ratio;
+}
+
 /* ==================== 窗口状态 ==================== */
 
 XWindowState XWindow_windowState(const XWindow* self)

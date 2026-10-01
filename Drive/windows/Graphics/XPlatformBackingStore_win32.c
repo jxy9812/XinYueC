@@ -14,7 +14,13 @@
  *               像素转换；
  *             - present：先把脏矩形对应的 XImage 行同步进 DIB，再把每块
  *               脏区经 BitBlt(SRCCOPY) 从内存 DC 合成到目标窗口 DC
- *               （FULL 模式经 SetDIBitsToDevice 整屏上传）；
+ *               （FULL 模式经 SetDIBitsToDevice 整屏上传）；dpr>1 时
+ *               同位点改用拉伸原语 StretchBlt/StretchDIBits（目标矩形
+ *               ×dpr 放大——BitBlt/SetDIBitsToDevice 仅 1:1，present
+ *               唯一放大点，四 blit 位点由 xpbs_win32_blitRectScaled
+ *               收拢，scale==1.0 原调用逐位透传），scale 平台内部读
+ *               XWindow_devicePixelRatio——
+ *               共享契约 present/presentTile/getNativeBuffer 签名零改动；
  *             - presentTile：窗口已挂接真实 HWND 时经
  *               XPlatformNativeWindow_present 上屏；
  *             - 目标窗口句柄（HWND）经
@@ -238,13 +244,97 @@ static void xpbs_win32_syncDirtyRect(struct XWin32BackingStoreNative* state,
                (size_t)rect->width * XPBS_WIN32_PIXEL_BYTES);
 }
 
+/** @brief 换算取整（与 xpwn_dprRound 同式；本文件私有）。 */
+static int xpbs_win32_roundScale(float value)
+{
+    return (int)(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
+
+/** @brief      四 blit 位点收拢（R15）：把一块逻辑脏区提交到目标窗口 DC。
+ *  @details    scale==1.0f 时 GDI 调用与既往逐位一致（BitBlt/
+ *              SetDIBitsToDevice 1:1 参数原样透传）；dpr>1 时目标原点/
+ *              尺寸 ×scale 放大（源矩形保持逻辑坐标）——GDI 的 BitBlt/
+ *              SetDIBitsToDevice 仅做同尺寸块拷贝，放大必须走拉伸原语，
+ *              故 memDC 路径改 StretchBlt、缓冲路径改 StretchDIBits，
+ *              拉伸模式 COLORONCOLOR（最近邻取样，present 唯一放大点
+ *              口径；SetStretchBltMode 仅作用于 Stretch 系）。
+ *              src 语义随 fromMemDC：true=源内存 DC（零拷贝路径，DIB 与
+ *              缓冲同内存）；false=顶下行主序紧凑缓冲（biWidth=rect.width，
+ *              行距按 DWORD 对齐公式，与 DIB 行距声明逐字节吻合——整屏
+ *              FULL 提交与逐矩形兼容路径共用此声明）。 */
+static void xpbs_win32_blitRectScaled(HDC hdc, const XRect* rect, void* src,
+                                      bool fromMemDC, float scale)
+{
+    int dx;
+    int dy;
+    int dw;
+    int dh;
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    struct
+    {
+        BITMAPINFOHEADER bmiHeader;
+        DWORD bmiMasks[3];
+    } bmi;
+#else
+    BITMAPINFO bmi;
+#endif
+    if (!hdc || !rect || !src || rect->width <= 0 || rect->height <= 0)
+        return;
+    if (scale == 1.0f) {
+        dx = rect->x;
+        dy = rect->y;
+        dw = rect->width;
+        dh = rect->height;
+    } else {
+        dx = xpbs_win32_roundScale((float)rect->x * scale);
+        dy = xpbs_win32_roundScale((float)rect->y * scale);
+        dw = xpbs_win32_roundScale((float)rect->width * scale);
+        dh = xpbs_win32_roundScale((float)rect->height * scale);
+        SetStretchBltMode(hdc, COLORONCOLOR);
+    }
+    if (fromMemDC) {
+        if (scale == 1.0f)
+            BitBlt(hdc, dx, dy, dw, dh, (HDC)src, rect->x, rect->y, SRCCOPY);
+        else
+            StretchBlt(hdc, dx, dy, dw, dh, (HDC)src,
+                       rect->x, rect->y, rect->width, rect->height, SRCCOPY);
+        return;
+    }
+    memset(&bmi, 0, sizeof(bmi));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = rect->width;
+    bmi.bmiHeader.biHeight = -rect->height; /* 自顶向下：行 0 为矩形首行。 */
+    bmi.bmiHeader.biPlanes = 1;
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    bmi.bmiHeader.biBitCount = 16;
+    bmi.bmiHeader.biCompression = BI_BITFIELDS;
+    bmi.bmiMasks[0] = 0xF800u; /* R：高 5 位。 */
+    bmi.bmiMasks[1] = 0x07E0u; /* G：中 6 位。 */
+    bmi.bmiMasks[2] = 0x001Fu; /* B：低 5 位。 */
+    bmi.bmiHeader.biSizeImage =
+        (DWORD)XPBS_WIN32_DIB_ROW_STRIDE(rect->width) * (DWORD)rect->height;
+#else
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+#endif
+    if (scale == 1.0f)
+        SetDIBitsToDevice(hdc, dx, dy, (DWORD)dw, (DWORD)dh,
+                          0, 0, 0, (UINT)rect->height, src,
+                          (BITMAPINFO*)&bmi, DIB_RGB_COLORS);
+    else
+        StretchDIBits(hdc, dx, dy, dw, dh,
+                      0, 0, rect->width, rect->height, src,
+                      (BITMAPINFO*)&bmi, DIB_RGB_COLORS, SRCCOPY);
+}
+
 /** @brief 从内存 DC 把一帧脏区提交到目标窗口 DC。
  * @details 取得/释放目标 DC 是一次刷新中最昂贵的部分。DIRECT/FULL
  *          模式先同步所有脏矩形，再复用同一个 DC 完成全部 BitBlt，
  *          对齐 LVGL Windows 在最后一次 flush 中一次提交 framebuffer 的
- *          行为。 */
+ *          行为。scale=dpr（present 唯一放大点；1.0 逐位透传）。 */
 static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
-                                     HWND hwnd, const XRegion* region, bool full)
+                                     HWND hwnd, const XRegion* region, bool full,
+                                     float scale)
 {
     HDC winDC;
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
@@ -260,49 +350,23 @@ static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
     /* PARTIAL/DIRECT 都按脏矩形提交：同步进 DIB 的只有变化区域，
        因此上屏也只 BitBlt 这些矩形。DIRECT 虽然持有整帧双缓冲，
        但每帧只把变化的小块上传到窗口，帧成本与窗口面积无关。 */
-    (void)full;
     for (i = 0; i < region->count; ++i) {
         const XRect* rect = &region->rects[i];
         if (rect->width > 0 && rect->height > 0)
-            BitBlt(winDC, rect->x, rect->y, rect->width, rect->height,
-                   state->m_memDC, rect->x, rect->y, SRCCOPY);
+            xpbs_win32_blitRectScaled(winDC, rect, (void*)state->m_memDC,
+                                      true, scale);
     }
 #else
     /* FULL 的语义是每次提交整屏：即使脏区很小也整帧上传。 */
     {
-#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
-        /* RGB16：与 createSurface 同构的 565 掩码 DIB 描述。 */
-        struct
-        {
-            BITMAPINFOHEADER bmiHeader;
-            DWORD bmiMasks[3];
-        } bmi;
-#else
-        BITMAPINFO bmi;
-#endif
-        int width = state->m_width;
-        int height = state->m_height;
-        if (width > 0 && height > 0 && state->m_dibBits) {
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height;
-            bmi.bmiHeader.biPlanes = 1;
-#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
-            bmi.bmiHeader.biBitCount = 16;
-            bmi.bmiHeader.biCompression = BI_BITFIELDS;
-            bmi.bmiMasks[0] = 0xF800u; /* R：高 5 位。 */
-            bmi.bmiMasks[1] = 0x07E0u; /* G：中 6 位。 */
-            bmi.bmiMasks[2] = 0x001Fu; /* B：低 5 位。 */
-            bmi.bmiHeader.biSizeImage =
-                (DWORD)XPBS_WIN32_DIB_ROW_STRIDE(width) * (DWORD)height;
-#else
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-#endif
-            SetDIBitsToDevice(winDC, 0, 0, (DWORD)width, (DWORD)height,
-                              0, 0, 0, (UINT)height, state->m_dibBits,
-                              (BITMAPINFO*)&bmi, DIB_RGB_COLORS);
+        if (state->m_width > 0 && state->m_height > 0 && state->m_dibBits) {
+            XRect rect;
+            rect.x = 0;
+            rect.y = 0;
+            rect.width = state->m_width;
+            rect.height = state->m_height;
+            xpbs_win32_blitRectScaled(winDC, &rect, state->m_dibBits,
+                                      false, scale);
         }
     }
 #endif
@@ -388,6 +452,7 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
         (struct XWin32BackingStoreNative*)nativeState;
     HWND hwnd;
     int i;
+    float scale;
     if (!state || !image || !image->m_data || !region || region->count <= 0)
         return;
     /* 目标 DC 只能在真实窗口上取得；无 HWND（离屏/测试）时提交交给
@@ -395,6 +460,15 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
     hwnd = xpbs_win32_targetHwnd(state, window);
     if (!hwnd) return;
     (void)offset; /* 窗口客户区坐标提交，偏移由提交目标窗口决定。 */
+#if XPLATFORMNATIVEWINDOW_ON
+    /* R1：present 放大 scale 平台内部读取（共享契约签名零改动）；dpr
+       单源=XWindow_devicePixelRatio（缓冲恒逻辑分辨率，物理放大全在
+       present 层）。 */
+    scale = XWindow_devicePixelRatio(window);
+#else
+    (void)window;
+    scale = 1.0f;
+#endif
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
     /* 零拷贝模式：公共层在 resize 时经 getNativeBuffer 把绘制 XImage
        直接架在 DIB 内存上。此处无需任何像素拷贝——按脏矩形把 DIB
@@ -411,8 +485,8 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
         {
             const XRect* rect = &region->rects[j];
             if (rect->width > 0 && rect->height > 0)
-                BitBlt(winDC, rect->x, rect->y, rect->width, rect->height,
-                       state->m_memDC, rect->x, rect->y, SRCCOPY);
+                xpbs_win32_blitRectScaled(winDC, rect, (void*)state->m_memDC,
+                                          true, scale);
         }
         /* 上屏只做脏矩形 BitBlt；目标窗口 DC 由 xpbs_win32_windowDC 按
            HWND 缓存复用，不再逐帧 GetDC/ReleaseDC——分段实测这两步合计
@@ -422,10 +496,10 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
            destroy 兜底回收，BitBlt 对失效 DC 返回失败而不崩溃。 */
         return;
     }
-    /* 非 native 缓冲（外部缓冲/兼容路径）：SetDIBitsToDevice 直接从
-       XImage 行内存上屏。注意其源子矩形（XSrc/YSrc 与 iStartScan/
-       cScanLines）在负高度 DIB 下语义陷阱多（曾导致屏幕整帧垂直
-       错位复制），因此每矩形把脏行拷入紧凑临时缓冲
+    /* 非 native 缓冲（外部缓冲/兼容路径）：SetDIBitsToDevice（dpr>1 时
+       StretchDIBits）直接从 XImage 行内存上屏。注意其源子矩形（XSrc/
+       YSrc 与 iStartScan/cScanLines）在负高度 DIB 下语义陷阱多（曾导致
+       屏幕整帧垂直错位复制），因此每矩形把脏行拷入紧凑临时缓冲
        （biWidth=rect.width，XSrc=YSrc=0），与既有 xpwn_presentRect
        同构。 */
     {
@@ -479,29 +553,7 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
                        sbuf + (size_t)(rect->y + row) * (size_t)bpl +
                               (size_t)x0 * XPBS_WIN32_PIXEL_BYTES,
                        (size_t)rect->width * XPBS_WIN32_PIXEL_BYTES);
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = rect->width;
-            bmi.bmiHeader.biHeight = -rect->height; /* 自顶向下。 */
-            bmi.bmiHeader.biPlanes = 1;
-#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
-            /* 像素已是 565 布局，仅重排行距，无颜色转换。 */
-            bmi.bmiHeader.biBitCount = 16;
-            bmi.bmiHeader.biCompression = BI_BITFIELDS;
-            bmi.bmiMasks[0] = 0xF800u; /* R：高 5 位。 */
-            bmi.bmiMasks[1] = 0x07E0u; /* G：中 6 位。 */
-            bmi.bmiMasks[2] = 0x001Fu; /* B：低 5 位。 */
-            bmi.bmiHeader.biSizeImage =
-                (DWORD)XPBS_WIN32_DIB_ROW_STRIDE(rect->width) *
-                (DWORD)rect->height;
-#else
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-#endif
-            SetDIBitsToDevice(winDC, rect->x, rect->y,
-                              (DWORD)rect->width, (DWORD)rect->height,
-                              0, 0, 0, (UINT)rect->height,
-                              buf, (BITMAPINFO*)&bmi, DIB_RGB_COLORS);
+            xpbs_win32_blitRectScaled(winDC, rect, buf, false, scale);
         }
         if (buf) XFree_Hybrid(buf);
         if (!xpbs_present_micro_requested()) ReleaseDC(hwnd, winDC);
@@ -521,10 +573,11 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
     }
     xpbs_win32_presentRegion(state, hwnd, region,
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
-                             true);
+                             true,
 #else
-                             false);
+                             false,
 #endif
+                             scale);
 }
 
 void XPlatformBackingStoreDriver_presentTile(void* nativeState,

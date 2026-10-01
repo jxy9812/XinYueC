@@ -20,7 +20,13 @@
  *             - WM 属性：XStoreName + _NET_WM_NAME(UTF8_STRING)。
  *             窗口映射/几何/标题同步全部围绕 XWindow 驱动，
  *             setGeometry 按本后端记录几何去重，杜绝 ConfigureNotify
- *             与 setGeometry 互相触发造成递归震荡。
+ *             与 setGeometry 互相触发造成递归震荡；
+ *             - DPI（DPI 定版 §1.3）：dpr 唯一强制源为编译宏
+ *               XPWN_SCREEN_SCALE_FACTOR（缺省 1.0f=全程直通，与旧
+ *               行为逐位一致）；强制 dpr>1 时屏幕登记按 dpr 入框记账
+ *               逻辑几何并归一化 logicalDpi（R4/R16 静态+运行期同式），
+ *               窗口几何/鼠标坐标出入框按同 round 函数族换算，present
+ *               源准备段最近邻放大（§6.3 唯一放大点）。
  * @note       本文件只在「Linux + 已检出 X11 头/库」时参与编译（宏
  *             XINYUE_C_HAS_X11 由 CMake 在 find_package(X11) 成功后注入），
  *             并受 XPLATFORMNATIVEWINDOW_ON 与
@@ -31,6 +37,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPlatformNativeWindow.h"
+#include "XPlatformScreen.h"
 
 #if XPLATFORMNATIVEWINDOW_ON && XPLATFORMNATIVEWINDOW_X11_ON && XWINDOW_ON
 
@@ -256,7 +263,10 @@ typedef struct XWNPendingEntry
     int m_presentBytesPerLine;  /**< 描述符对应的缓冲行跨度。 */
     bool m_presentDirect;       /**< 是否可以按后备缓冲原生布局直拷（ARGB32
                                      模式为 BGRA8888；RGB16 模式为 565）。 */
-    XRect m_client;      /**< 本后端最近一次记录的客户端几何（去重用）。 */
+    XRect m_client;      /**< 本后端最近一次记录的客户端几何（去重用；
+                              逻辑像素口径：X 事件/请求坐标按 dpr 入框
+                              ÷dpr 记账、出框 ×dpr 落地，dpr==1.0f 全链
+                              直通与旧物理口径逐位一致）。 */
     bool m_keyPressed[256];    /**< 各键码当前按下状态（X11 键码 8..255），用于识别自动重复。 */
     unsigned long m_lastPressTime;    /**< 最近一次非滚轮按键的时间戳（X11 毫秒节拍）。 */
     XMouseButton m_lastPressButton;   /**< 最近一次非滚轮按键的按键。 */
@@ -282,8 +292,11 @@ typedef struct XWNPendingEntry
                                             setGeometry 只记账不落窗，落窗
                                             改由 present 与内容同批执行。 */
     bool m_hasPendingGeom;             /**< 有挂起几何待 present 批内落地。 */
-    XRect m_pendingGeom;               /**< 挂起待落地几何（钳边后口径，与
-                                            XMoveResizeWindow 实参一致）。 */
+    XRect m_pendingGeom;               /**< 挂起待落地几何（钳边后【物理】
+                                            口径，与 XMoveResizeWindow 实参
+                                            逐字段一致：强制 dpr>1 时在
+                                            setGeometry 记账处已出框换算，
+                                            dpr==1.0f 即逻辑直通同旧值）。 */
 } XWNPendingEntry;
 
 /** @brief 每进程 X11 连接状态。 */
@@ -1207,6 +1220,127 @@ static int g_xpwnScreenCount;
 /** @brief 屏幕枚举是否已执行（惰性连接只初始化一次）。 */
 static bool g_xpwnScreensInitDone;
 
+/* ==================== 强制 dpr 源与几何换算（DPI 定版 §1.3，opt-in） ====================
+ * X11 无每屏 HiDPI 缩放管道，dpr 缺省恒 1.0（原注释口径维持）；本节
+ * 提供唯一强制源：编译期宏 XPWN_SCREEN_SCALE_FACTOR（板级/发行版打包
+ * 按 -DXPWN_SCREEN_SCALE_FACTOR=1.25f 之类注入），未定义即 1.0f=现状
+ * 逐位。归一化铁律（R4）：强制 dpr>1 时同屏 logicalDpi 上报值必须
+ * round(rawDpi/dpr)——静态回填（xpwn_screenFill）与运行期回填
+ * （xpwn_screensApplyLogicalDpi，R16）同式，否则字体/样式守卫放行后
+ * 与 present 放大复合爆炸（dpr×raw/96）。换算规则（§2 规则 B）：框架
+ * 内部恒逻辑像素，入框=物理÷dpr、出框=逻辑×dpr，全文件共用同一组
+ * round 函数；dpr==1.0f 的所有调用点短路直通，与旧代码逐位一致。
+ * 强制 dpr 进程全局单值，per-monitor 异 dpr 不支持（§11）。 */
+#ifndef XPWN_SCREEN_SCALE_FACTOR
+#define XPWN_SCREEN_SCALE_FACTOR 1.0f
+#endif
+
+/**
+ * @brief      强制设备像素比源（XPWN_SCREEN_SCALE_FACTOR）。
+ * @details    静态缓存一次读取；取值非法（NaN 或 <1.0f，含 0/负——
+ *             除零与负几何防护）时回落 1.0f 直通。>1.0f 才是「缩放
+ *             已启用」总开关（F3 守卫同口径）。
+ * @return     强制 dpr（恒 >= 1.0f）。
+ */
+static float xpwn_screenForcedDpr(void)
+{
+    static bool cached = false;
+    static float value = 1.0f;
+    if (!cached) {
+        value = XPWN_SCREEN_SCALE_FACTOR;
+        if (!(value >= 1.0f)) value = 1.0f; /* NaN/<1 一律回落直通。 */
+        cached = true;
+    }
+    /* 强制 DPI（XGUI_FORCE_DPI>0）：统一切口替换平台宏结果。 */
+    return XPlatformScreen_applyDpiOverride(value);
+}
+
+/**
+ * @brief      几何换算统一 round 函数（半值远离零）。
+ * @details    入框/出框/记账/回填全走本函数（含挂起几何记账，§10.1.4）；
+ *             负值分支覆盖 RandR 多屏负原点。
+ */
+static int xpwn_dprRound(float value)
+{
+    return value >= 0.0f ? (int)(value + 0.5f) : -(int)(0.5f - value);
+}
+
+/** @brief 出框换算：逻辑 → 物理（×dpr）；dpr==1.0f 直通。 */
+static int xpwn_logicalToPhysical(int logical, float dpr)
+{
+    if (dpr == 1.0f) return logical;
+    return xpwn_dprRound((float)logical * dpr);
+}
+
+/** @brief 入框换算：物理 → 逻辑（÷dpr）；dpr==1.0f 直通。 */
+static int xpwn_physicalToLogical(int physical, float dpr)
+{
+    if (dpr == 1.0f) return physical;
+    return xpwn_dprRound((float)physical / dpr);
+}
+
+/** @brief 矩形入框（物理 → 逻辑，逐字段同 round）；dpr==1.0f 值直通。 */
+static XRect xpwn_rectPhysicalToLogical(const XRect* rect, float dpr)
+{
+    XRect out;
+    out.x = xpwn_physicalToLogical(rect->x, dpr);
+    out.y = xpwn_physicalToLogical(rect->y, dpr);
+    out.width = xpwn_physicalToLogical(rect->width, dpr);
+    out.height = xpwn_physicalToLogical(rect->height, dpr);
+    return out;
+}
+
+/** @brief 矩形出框（逻辑 → 物理，逐字段同 round）；dpr==1.0f 值直通。 */
+static XRect xpwn_rectLogicalToPhysical(const XRect* rect, float dpr)
+{
+    XRect out;
+    out.x = xpwn_logicalToPhysical(rect->x, dpr);
+    out.y = xpwn_logicalToPhysical(rect->y, dpr);
+    out.width = xpwn_logicalToPhysical(rect->width, dpr);
+    out.height = xpwn_logicalToPhysical(rect->height, dpr);
+    return out;
+}
+
+/**
+ * @brief      归一化逻辑 DPI（R4 铁律同式）。
+ * @details    dpr>1 时 round(rawDpi/dpr)（Xft.dpi=120+强制1.25 → 96）；
+ *             dpr==1.0f 原值返回（守卫锁 96 的现状口径不变）。
+ */
+static float xpwn_normalizedLogicalDpi(float rawDpi, float dpr)
+{
+    if (dpr > 1.0f) return (float)xpwn_dprRound(rawDpi / dpr);
+    return rawDpi;
+}
+
+/**
+ * @brief      请求几何所在屏的 dpr（dpr 源定版 R13：未指派期单源读取口）。
+ * @details    posix 平台层不维护窗口→屏幕归属簿记（对齐 win32
+ *             xpwn_outboundDpr 的未指派分支语义）：按请求几何中心包含
+ *             判定定位已登记屏幕，直查 XScreen_devicePixelRatio（与
+ *             guiApp 屏信号→窗口 dpr 推送链同源）；未命中/无注册表
+ *             回落先登记屏，再回落强制源。禁止读 XWindow 的缺省 1.0
+ *             快照换算——posix 屏 dpr 在 handleScreenAdded 之前回填，
+ *             窗口快照不保证已被推送。进程全局强制源下各屏值恒一致，
+ *             本查询是口径单一化而非多值分派。
+ */
+static float xpwn_dprForGeometry(const XRect* logical)
+{
+    XScreen* first = NULL;
+    int cx = logical ? logical->x + logical->width / 2 : 0;
+    int cy = logical ? logical->y + logical->height / 2 : 0;
+    int i;
+    for (i = 0; i < g_xpwnScreenCount; ++i) {
+        XRect g;
+        if (!g_xpwnScreens[i]) continue;
+        g = XScreen_geometry(g_xpwnScreens[i]);
+        if (cx >= g.x && cy >= g.y &&
+            cx < g.x + g.width && cy < g.y + g.height)
+            return XScreen_devicePixelRatio(g_xpwnScreens[i]);
+        if (!first) first = g_xpwnScreens[i];
+    }
+    return first ? XScreen_devicePixelRatio(first) : xpwn_screenForcedDpr();
+}
+
 /**
  * @brief      逻辑 DPI 回填（对标 QXcbScreen::logicalDpi 的 Xft 资源读取）。
  * @details    优先级：RESOURCE_MANAGER 根窗口属性中的 Xft.dpi 资源 >
@@ -1275,27 +1409,39 @@ static void xpwn_screenFillPhysical(XScreen* screen, float widthMm,
 
 /**
  * @brief      按平台观测值回填一块 XScreen 的静态属性。
- * @details    geometry 为虚拟桌面像素矩形；physicalSize 为 EDID 毫米尺寸
- *             （物理 DPI 由 XScreen 按 pixels/(mm/25.4) 换算；毫米为 0 的
- *             虚拟显示器保留 0，不伪造，Qt xcb 同样不编造 EDID）。
- *             devicePixelRatio 不回填、保持 1.0：X11 无 HiDPI 缩放管道，
- *             与 Qt xcb（QXcbScreen::devicePixelRatio 无强制时恒为 1）一致。
+ * @details    geometry 为虚拟桌面【物理】像素矩形，dpr>1 时按 dpr 入框
+ *             ÷dpr 记账为逻辑几何（同 round 函数）；physicalSize 为 EDID
+ *             毫米尺寸（物理尺寸不参与缩放换算，毫米为 0 的虚拟显示器
+ *             保留 0，不伪造，Qt xcb 同样不编造 EDID）。
+ *             devicePixelRatio 仅在强制源（XPWN_SCREEN_SCALE_FACTOR）
+ *             >1 时回填：X11 无每屏 HiDPI 缩放管道，无强制时保持 1.0，
+ *             与 Qt xcb（QXcbScreen::devicePixelRatio 无强制时恒为 1）
+ *             一致。归一化铁律（R4）：强制 dpr>1 时 logicalDpi 上报
+ *             round(rawDpi/dpr)（Xft.dpi=120 + 强制 1.25 → 96，字体
+ *             pt→px 守卫放行后 12pt=16 逻辑 px×1.25=20 物理px）；无
+ *             强制时原值上报（dpr==1 守卫锁 96，现状逐位一致）。
  * @param      screen 目标屏幕。
  * @param      name 屏幕名（监视器名或 Screen<N>）；可为 NULL。
- * @param      geometry 像素几何。
+ * @param      geometry 物理像素几何。
  * @param      widthMm 物理宽（毫米）。
  * @param      heightMm 物理高（毫米）。
- * @param      dpi 逻辑 DPI。
+ * @param      dpi 逻辑 DPI（raw，未归一化）。
+ * @param      dpr 该屏设备像素比（xpwn_screenForcedDpr，进程全局）。
  */
 static void xpwn_screenFill(XScreen* screen, const char* name,
                             const XRect* geometry,
-                            float widthMm, float heightMm, float dpi)
+                            float widthMm, float heightMm, float dpi,
+                            float dpr)
 {
+    XRect logical = xpwn_rectPhysicalToLogical(geometry, dpr);
     XScreen_setName_2(screen, name ? name : "Screen");
     XScreen_setDepth(screen, DefaultDepth(g_xpwnDisplay, g_xpwnScreenNumber));
-    XScreen_setGeometry(screen, geometry);
+    XScreen_setGeometry(screen, &logical);
     xpwn_screenFillPhysical(screen, widthMm, heightMm);
-    XScreen_setLogicalDotsPerInch(screen, dpi, dpi);
+    if (dpr > 1.0f) XScreen_setDevicePixelRatio(screen, dpr);
+    XScreen_setLogicalDotsPerInch(screen,
+                                  xpwn_normalizedLogicalDpi(dpi, dpr),
+                                  xpwn_normalizedLogicalDpi(dpi, dpr));
 }
 
 /**
@@ -1423,6 +1569,7 @@ static void xpwn_screensReselectPrimary(void)
 static void xpwn_screensEnumerate(bool refresh)
 {
     float dpi = xpwn_screenLogicalDpi();
+    float dpr = xpwn_screenForcedDpr();
     int i;
 #if defined(XINYUE_C_HAS_XRANDR)
     if (g_xpwnRrEventBase >= 0) {
@@ -1460,9 +1607,13 @@ static void xpwn_screensEnumerate(bool refresh)
                     if (existing) {
                         /* 对标 QXcbScreen::updateGeometry：几何经 WSI 入口
                            差分同步（变化才发 changed 信号），物理尺寸随行
-                           刷新（内部联动 physicalDotsPerInchChanged）。 */
+                           刷新（内部联动 physicalDotsPerInchChanged）。
+                           强制 dpr>1 时先按同式入框 ÷dpr（运行期回填与
+                           静态登记同口径，归一化铁律 R4 的几何侧）。 */
+                        XRect logical =
+                            xpwn_rectPhysicalToLogical(&geometry, dpr);
                         XWindowSystemInterface_handleScreenGeometryChange(
-                            existing, &geometry, NULL);
+                            existing, &logical, NULL);
                         xpwn_screenFillPhysical(existing,
                                                 (float)monitors[i].mwidth,
                                                 (float)monitors[i].mheight);
@@ -1472,7 +1623,8 @@ static void xpwn_screensEnumerate(bool refresh)
                         if (screen) {
                             xpwn_screenFill(screen, monitorName, &geometry,
                                             (float)monitors[i].mwidth,
-                                            (float)monitors[i].mheight, dpi);
+                                            (float)monitors[i].mheight, dpi,
+                                            dpr);
                             /* 返回 false=未登记（无应用单例/注册失败）：
                                所有权仍在平台层，回收防泄漏（此前无人接管
                                即泄漏；不入 g_xpwnScreens 免悬垂）。 */
@@ -1495,7 +1647,7 @@ static void xpwn_screensEnumerate(bool refresh)
                     }
                     xpwn_screenFill(screen, monitorName, &geometry,
                                     (float)monitors[i].mwidth,
-                                    (float)monitors[i].mheight, dpi);
+                                    (float)monitors[i].mheight, dpi, dpr);
                     /* 返回 false=未登记：回收防泄漏（不入表免悬垂）。 */
                     if (XWindowSystemInterface_handleScreenAdded(screen)) {
                         g_xpwnScreens[g_xpwnScreenCount++] = screen;
@@ -1536,7 +1688,8 @@ static void xpwn_screensEnumerate(bool refresh)
             geometry.height = DisplayHeight(g_xpwnDisplay, i);
             xpwn_screenFill(screen, name, &geometry,
                             (float)DisplayWidthMM(g_xpwnDisplay, i),
-                            (float)DisplayHeightMM(g_xpwnDisplay, i), dpi);
+                            (float)DisplayHeightMM(g_xpwnDisplay, i), dpi,
+                            dpr);
             /* 返回 false=未登记：回收防泄漏（不入表免悬垂）。 */
             if (XWindowSystemInterface_handleScreenAdded(screen)) {
                 g_xpwnScreens[g_xpwnScreenCount++] = screen;
@@ -1590,6 +1743,13 @@ static void xpwn_screensInit(void)
  *             handleScreenLogicalDotsPerInchChange 单值回填 X/Y；
  *             XScreen_setLogicalDotsPerInch 内部做浮点近等差分，值未
  *             变化时不发射 logicalDotsPerInchChanged。
+ *             【归一化铁律运行期落点（R16 必改）】强制源激活时逐屏按
+ *             该屏 XScreen_devicePixelRatio 折算 round(rawDpi/dpr) 后
+ *             下发——本函数是 RR 热刷新（xpwn_screensRefresh）与公开
+ *             入口 XPlatformNativeWindow_refreshScreenLogicalDpi 的
+ *             唯一运行期回填点，漏折算则任一 RandR/xrdb 事件把未归一
+ *             化 rawDpi 灌回已登记 dpr>1 的屏幕，dpr×raw/96 复合爆炸
+ *             复活（静态回填 xpwn_screenFill 同式）。
  * @return     本轮是否有屏幕的逻辑 DPI 实际发生变化。
  */
 static bool xpwn_screensApplyLogicalDpi(void)
@@ -1599,12 +1759,16 @@ static bool xpwn_screensApplyLogicalDpi(void)
     int i;
     for (i = 0; i < g_xpwnScreenCount; ++i) {
         XScreen* screen = g_xpwnScreens[i];
+        float normalized;
         if (!screen) continue;
+        /* 强制源激活时按该屏 dpr 折算（归一化铁律，与登记同式）。 */
+        normalized = xpwn_normalizedLogicalDpi(
+            dpi, XScreen_devicePixelRatio(screen));
         /* 快路径跳过：与当前平均值完全相等时无需回填（XScreen 内部
            还有浮点近等差分兜底，重复值不会发信号）。 */
-        if (XScreen_logicalDotsPerInch(screen) == dpi) continue;
+        if (XScreen_logicalDotsPerInch(screen) == normalized) continue;
         XWindowSystemInterface_handleScreenLogicalDotsPerInchChange(screen,
-                                                                    dpi);
+                                                                    normalized);
         changed = true;
     }
     return changed;
@@ -1953,25 +2117,34 @@ static bool xpwn_cursorBackendQueryPos(int* x, int* y)
     Window root, child;
     int rootX, rootY, winX, winY;
     unsigned int mask;
+    float dpr;
     if (!g_xpwnDisplay)
         return false;
     if (!XQueryPointer(g_xpwnDisplay,
                        RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
                        &root, &child, &rootX, &rootY, &winX, &winY, &mask))
         return false; /* 指针在其他屏幕（Xinerama）等场景。 */
-    if (x) *x = rootX;
-    if (y) *y = rootY;
+    /* 全局指针坐标入框（物理→逻辑）：无窗口上下文，dpr 取强制源
+       （posix 进程全局单值，各屏一致）；dpr==1.0f 直通。 */
+    dpr = xpwn_screenForcedDpr();
+    if (x) *x = xpwn_physicalToLogical(rootX, dpr);
+    if (y) *y = xpwn_physicalToLogical(rootY, dpr);
     return true;
 }
 
 static bool xpwn_cursorBackendWarpPos(int x, int y)
 {
+    float dpr;
     if (!g_xpwnDisplay)
         return false;
-    /* 全局（根窗口）坐标定位：src_w=None + dest_w=根窗口。 */
+    /* 全局（根窗口）坐标定位：src_w=None + dest_w=根窗口。
+       框架逻辑坐标出框（逻辑→物理，×dpr；dpr==1.0f 直通）。 */
+    dpr = xpwn_screenForcedDpr();
     XWarpPointer(g_xpwnDisplay, None,
                  RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
-                 0, 0, 0, 0, x, y);
+                 0, 0, 0, 0,
+                 xpwn_logicalToPhysical(x, dpr),
+                 xpwn_logicalToPhysical(y, dpr));
     XFlush(g_xpwnDisplay);
     return true;
 }
@@ -2410,7 +2583,102 @@ static bool xpwn_copyRect16(const XImage* src, const XRect* srect,
 }
 #endif /* XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 */
 
+/**
+ * @brief      present 源准备段最近邻放大（DPI 定版 §6.3，唯一放大点）。
+ * @details    仅强制 dpr>1 的 present 路径进入：把逻辑后备缓冲的脏区
+ *             rect 逐像素最近邻放大写入物理上屏缓冲（XPutImage 提交）。
+ *             物理像素 (px,py) 采样源像素 (floor(px/dpr), floor(py/dpr))；
+ *             脏区边界列可能采到相邻源像素——后备缓冲恒为完整新帧，
+ *             内容仍然当帧一致（最近邻非几何 round，与 §2 换算口径
+ *             各自独立）。目标编码按 direct 分流：4 字节/像素直拷或
+ *             24 位重排（B,G,R），与 xpwn_copyRectDirect/copyRect24
+ *             同布局；RGB16 构建恒 565→565 2 字节/像素（非直拷视觉
+ *             在 xpwn_preparePresentImage 已拒绝上屏，不会走到放大）。
+ *             dpr==1.0f 不进本函数（调用方保留原直拷路径逐位透传）。
+ * @param      src 逻辑后备缓冲（框架 XImage，ARGB32 或 RGB16）。
+ * @param      srectP 物理脏区（缓冲空间；逻辑脏区 ×dpr 同 round 函数）。
+ * @param      dst 物理上屏缓冲（pw×ph）。
+ * @param      dstBpl 物理缓冲行跨度。
+ * @param      direct 目标是否 32 位直拷布局（false=24 位重排）。
+ * @param      dpr 强制设备像素比（>1.0f）。
+ */
+static void xpwn_blitRectScaled(const XImage* src, const XRect* srectP,
+                                uint8_t* dst, int dstBpl, bool direct,
+                                float dpr)
+{
+    const uint8_t* sbuf;
+    int bpl;
+    int imgW;
+    int imgH;
+    int row;
+    int col;
+    if (!src || !srectP || !dst || dstBpl <= 0 || !(dpr > 1.0f))
+        return;
+    sbuf = XImage_constBits(src);
+    bpl = XImage_bytesPerLine(src);
+    if (!sbuf || bpl <= 0) return;
+    imgW = XImage_width(src);
+    imgH = XImage_height(src);
+    for (row = 0; row < srectP->height; ++row) {
+        int sy = (int)((float)(srectP->y + row) / dpr);
+        const uint8_t* srow;
+        uint8_t* drow;
+        if (sy > imgH - 1) sy = imgH - 1; /* 防御：采样钳回图像内。 */
+        srow = sbuf + (int64_t)sy * bpl;
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+        (void)direct; /* RGB16 构建恒 565 直拷布局（非直拷已拒绝上屏）。 */
+        drow = dst + (int64_t)(srectP->y + row) * dstBpl +
+               (int64_t)srectP->x * 2;
+        for (col = 0; col < srectP->width; ++col) {
+            int sx = (int)((float)(srectP->x + col) / dpr);
+            if (sx > imgW - 1) sx = imgW - 1;
+            drow[col * 2 + 0] = srow[sx * 2 + 0];
+            drow[col * 2 + 1] = srow[sx * 2 + 1];
+        }
+#else
+        drow = dst + (int64_t)(srectP->y + row) * dstBpl +
+               (int64_t)srectP->x * (direct ? 4 : 3);
+        for (col = 0; col < srectP->width; ++col) {
+            int sx = (int)((float)(srectP->x + col) / dpr);
+            if (sx > imgW - 1) sx = imgW - 1;
+            if (direct) {
+                drow[col * 4 + 0] = srow[sx * 4 + 0];
+                drow[col * 4 + 1] = srow[sx * 4 + 1];
+                drow[col * 4 + 2] = srow[sx * 4 + 2];
+                drow[col * 4 + 3] = srow[sx * 4 + 3];
+            } else {
+                drow[col * 3 + 0] = srow[sx * 4 + 0]; /* B */
+                drow[col * 3 + 1] = srow[sx * 4 + 1]; /* G */
+                drow[col * 3 + 2] = srow[sx * 4 + 2]; /* R */
+            }
+        }
+#endif
+    }
+}
+
 /* ==================== 键鼠翻译工具（X11 -> 无关键码） ==================== */
+
+/**
+ * @brief      鼠标事件坐标入框（物理→逻辑；DPI 定版 §5，四路收拢单点）。
+ * @details    按键按下/释放、移动、进入四路的窗口局部与根坐标统一在
+ *             注入 WSI 前经本函数换算（先汇聚后换算，对齐 win32 R3）；
+ *             双击判定的位置比较在换算后的逻辑坐标上进行（与
+ *             m_lastPressPos 记账口径一致）。dpr 按事件窗口当前逻辑
+ *             几何所在屏查询（xpwn_dprForGeometry），dpr==1.0f 直通
+ *             逐位不改。滚轮 angleDelta 为相对量，不参与换算。
+ */
+static void xpwn_eventPosToLogical(const XWNPendingEntry* entry,
+                                   XPoint* local, XPoint* global)
+{
+    float dpr;
+    if (!entry || !local || !global) return;
+    dpr = xpwn_dprForGeometry(&entry->m_client);
+    if (dpr == 1.0f) return;
+    local->x = xpwn_physicalToLogical(local->x, dpr);
+    local->y = xpwn_physicalToLogical(local->y, dpr);
+    global->x = xpwn_physicalToLogical(global->x, dpr);
+    global->y = xpwn_physicalToLogical(global->y, dpr);
+}
 
 /** @brief 把 X11 KeySym 翻译为与平台无关的按键码（XKey 枚举或 ASCII 码位）。
  * @details 可打印 ASCII/Latin-1（0x20..0xff）直接取码位；特殊功能键
@@ -2980,7 +3248,8 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xexpose.window);
         if (entry && entry->m_window && ev->xexpose.count == 0) {
             /* count==0 表示该区域 Expose 已完成（X11 语义），此时把整块
-               区域一次性注入，Qt 平台层同样合并多次 Expose。 */
+               区域一次性注入，Qt 平台层同样合并多次 Expose。脏区坐标
+               入框（物理→逻辑，dpr==1.0f 直通）。 */
             XRegion region;
             XRect rect;
             XRegion_init(&region);
@@ -2988,6 +3257,9 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             rect.y = ev->xexpose.y;
             rect.width = ev->xexpose.width;
             rect.height = ev->xexpose.height;
+            rect = xpwn_rectPhysicalToLogical(&rect,
+                                              xpwn_dprForGeometry(
+                                                  &entry->m_client));
             XRegion_addRect(&region, &rect);
             XWindowSystemInterface_handleExposeEvent(entry->m_window, &region);
             XRegion_deinit(&region);
@@ -2998,6 +3270,8 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
         entry = xpwn_findByNativeWindow(ev->xconfigure.window);
         if (entry && entry->m_window) {
             XRect client;
+            XRect native;
+            float dpr;
             int oldX = entry->m_client.x;
             int oldY = entry->m_client.y;
             bool sizeChanged;
@@ -3005,10 +3279,14 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             /* 先更新本后端记录，再注入几何变化：setGeometry 去重比对以
                此为准，从源头切断「setGeometry -> ConfigureNotify ->
                handleGeometryChange -> setGeometry」回环。 */
-            client.x = ev->xconfigure.x;
-            client.y = ev->xconfigure.y;
-            client.width = ev->xconfigure.width;
-            client.height = ev->xconfigure.height;
+            native.x = ev->xconfigure.x;
+            native.y = ev->xconfigure.y;
+            native.width = ev->xconfigure.width;
+            native.height = ev->xconfigure.height;
+            /* 几何入框（物理→逻辑）：记账 m_client 与 WSI 注入恒逻辑
+               口径，dpr==1.0f 直通逐位一致。 */
+            dpr = xpwn_dprForGeometry(&entry->m_client);
+            client = xpwn_rectPhysicalToLogical(&native, dpr);
             sizeChanged = (client.width != entry->m_client.width ||
                            client.height != entry->m_client.height);
             posChanged = (client.x != entry->m_client.x ||
@@ -3027,12 +3305,13 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                    ConfigureNotify 的位置增量经 handleGeometryChange 交
                    QWindow::moveEvent——qxcbwindow.cpp
                    handleConfigureNotifyEvent → QWindowSystemInterface::
-                   handleGeometryChange 链）。旧位置取回写前记录。 */
+                   handleGeometryChange 链）。旧位置取回写前记录
+                   （逻辑口径，与记账一致）。 */
                 XPoint newPos;
                 XPoint oldPos;
                 XMoveEvent* moveEvent;
-                newPos.x = ev->xconfigure.x;
-                newPos.y = ev->xconfigure.y;
+                newPos.x = client.x;
+                newPos.y = client.y;
                 oldPos.x = oldX;
                 oldPos.y = oldY;
                 moveEvent = XMoveEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
@@ -3056,14 +3335,16 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                    提交。用 PAINT 而非合成 Expose——handleExposeEvent
                    会置 m_exposed（隐藏窗口的 ConfigureNotify 会误标
                    「已暴露」），PAINT 无状态副作用。幂等性：同尺寸的
-                   重复 ConfigureNotify（去重见 sizeChanged）不重绘。 */
+                   重复 ConfigureNotify（去重见 sizeChanged）不重绘。
+                   区域取换算后的逻辑 client 尺寸（原 ev 物理值仅 dpr
+                   ==1 等值）。 */
                 XRegion paintRegion;
                 XRect paintRect;
                 XRegion_init(&paintRegion);
                 paintRect.x = 0;
                 paintRect.y = 0;
-                paintRect.width = ev->xconfigure.width;
-                paintRect.height = ev->xconfigure.height;
+                paintRect.width = client.width;
+                paintRect.height = client.height;
                 XRegion_addRect(&paintRegion, &paintRect);
                 XWindowSystemInterface_handlePaintEvent(entry->m_window,
                                                         &paintRegion);
@@ -3301,6 +3582,9 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                位置/时间戳语义）。 */
             globalPosition.x = ev->xbutton.x_root;
             globalPosition.y = ev->xbutton.y_root;
+            /* 坐标入框（物理→逻辑，dpr==1.0f 直通）：双击位置比较在
+               换算后坐标上进行，与 m_lastPressPos 记账口径一致。 */
+            xpwn_eventPosToLogical(entry, &position, &globalPosition);
             modifiers = xpwn_translateModifiers(ev->xbutton.state, NoSymbol);
             buttons = xpwn_translateButtonMask(ev->xbutton.state);
             if (ev->xbutton.button >= 4 && ev->xbutton.button <= 7) {
@@ -3360,6 +3644,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             position.y = ev->xbutton.y;
             globalPosition.x = ev->xbutton.x_root;
             globalPosition.y = ev->xbutton.y_root;
+            xpwn_eventPosToLogical(entry, &position, &globalPosition);
             modifiers = xpwn_translateModifiers(ev->xbutton.state, NoSymbol);
             button = xpwn_translateButton(ev->xbutton.button);
             if (button != XMouseButton_NoButton) {
@@ -3384,6 +3669,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             position.y = ev->xmotion.y;
             globalPosition.x = ev->xmotion.x_root;
             globalPosition.y = ev->xmotion.y_root;
+            xpwn_eventPosToLogical(entry, &position, &globalPosition);
             buttons = xpwn_translateButtonMask(ev->xmotion.state);
             modifiers = xpwn_translateModifiers(ev->xmotion.state, NoSymbol);
             XWindowSystemInterface_handleMouseEvent_ex(
@@ -3408,6 +3694,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                 position.y = ev->xcrossing.y;
                 globalPosition.x = ev->xcrossing.x_root;
                 globalPosition.y = ev->xcrossing.y_root;
+                xpwn_eventPosToLogical(entry, &position, &globalPosition);
                 XWindowSystemInterface_handleEnterEvent(
                     entry->m_window, position, &globalPosition);
                 delivered = true;
@@ -4619,7 +4906,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
     XSetWindowAttributes attr;
     Window xwin;
     XRect geom;
+    XRect nativeGeom;
     XString* title;
+    float dpr;
     int w, h;
     if (!window) return false;
 #if XGUI_ON && XPLATFORM_FBDEV_ON
@@ -4648,6 +4937,13 @@ bool XPlatformNativeWindow_create(XWindow* window)
     geom = XWindow_geometry(window);
     w = geom.width < 1 ? 1 : geom.width;
     h = geom.height < 1 ? 1 : geom.height;
+    /* 出框换算（逻辑→物理）：XCreateWindow 吃服务器物理坐标；dpr 按
+       请求几何所在屏查询（R13 未指派期单源，禁读窗口缺省 1.0 快照），
+       dpr==1.0f 直通逐位一致。记账 m_client 保持逻辑口径。 */
+    dpr = xpwn_dprForGeometry(&geom);
+    nativeGeom = xpwn_rectLogicalToPhysical(&geom, dpr);
+    nativeGeom.width = xpwn_logicalToPhysical(w, dpr);
+    nativeGeom.height = xpwn_logicalToPhysical(h, dpr);
     memset(&attr, 0, sizeof(attr));
     attr.background_pixel = 0u;
     attr.border_pixel = 0u;
@@ -4725,7 +5021,9 @@ bool XPlatformNativeWindow_create(XWindow* window)
                    | EnterWindowMask | LeaveWindowMask | PropertyChangeMask;
     xwin = XCreateWindow(g_xpwnDisplay,
                          RootWindow(g_xpwnDisplay, g_xpwnScreenNumber),
-                         geom.x, geom.y, (unsigned)w, (unsigned)h, 0,
+                         nativeGeom.x, nativeGeom.y,
+                         (unsigned)nativeGeom.width,
+                         (unsigned)nativeGeom.height, 0,
                          entryDepth, InputOutput, entryVisual,
                          CWBackPixel | CWBorderPixel | CWColormap |
                              CWEventMask | CWOverrideRedirect |
@@ -4917,7 +5215,10 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
 {
     XWNPendingEntry* entry;
     XWindowAttributes attrs;
+    XRect nativeGeom;
+    XRect logicalGeom;
     Window child;
+    float dpr;
     int rootX, rootY;
     if (!window || nativeId == 0 || !xpwn_ensureConnection()) return false;
     /* 已登记的窗口可能拥有另一个真实句柄；外部挂接不能悄悄改写它。 */
@@ -4939,7 +5240,16 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
         entry->m_client = (XRect){0, 0, 0, 0};
         return false;
     }
-    entry->m_client = (XRect){rootX, rootY, attrs.width, attrs.height};
+    /* 首几何入框（物理→逻辑）：XGetWindowAttributes/TranslateCoordinates
+       报服务器物理口径，记账 m_client 恒逻辑（去重比对口径一致）；
+       dpr==1.0f 直通。 */
+    nativeGeom.x = rootX;
+    nativeGeom.y = rootY;
+    nativeGeom.width = attrs.width;
+    nativeGeom.height = attrs.height;
+    dpr = xpwn_dprForGeometry(&nativeGeom);
+    logicalGeom = xpwn_rectPhysicalToLogical(&nativeGeom, dpr);
+    entry->m_client = logicalGeom;
     XSelectInput(g_xpwnDisplay, entry->m_win,
                  ExposureMask | StructureNotifyMask | FocusChangeMask |
                  KeyPressMask | KeyReleaseMask | ButtonPressMask |
@@ -5043,12 +5353,15 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     XWNPendingEntry* entry;
+    XRect nativeGeom;
+    float dpr;
     int w, h;
     if (!geometry) return false;
     if (!xpwn_ensureConnection()) return false;
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return false;
-    /* 去重：与最近一次记录/应用的几何一致则跳过（防 ConfigureNotify 回环）。 */
+    /* 去重：与最近一次记录/应用的几何一致则跳过（防 ConfigureNotify
+       回环）。比对恒逻辑口径（m_client 入框记账，见 ConfigureNotify）。 */
     if (geometry->x == entry->m_client.x &&
         geometry->y == entry->m_client.y &&
         geometry->width == entry->m_client.width &&
@@ -5056,23 +5369,34 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
         return true;
     w = geometry->width < 1 ? 1 : geometry->width;
     h = geometry->height < 1 ? 1 : geometry->height;
+    /* 出框换算（逻辑→物理，×dpr；dpr==1.0f 直通）：X 服务器坐标恒
+       物理口径；dpr 按请求几何所在屏查询（R13）。两条路径（挂起记账/
+       立即落地）共用同一换算值，与 ConfigureNotify 入框的记账口径
+       互为逆（同 round 函数族）。 */
+    dpr = xpwn_dprForGeometry(geometry);
+    nativeGeom = xpwn_rectLogicalToPhysical(geometry, dpr);
+    nativeGeom.width = xpwn_logicalToPhysical(w, dpr);
+    nativeGeom.height = xpwn_logicalToPhysical(h, dpr);
     entry->m_client = *geometry;
     if (entry->m_deferGeometry) {
         /* 拖拽改尺寸手势期：只记账不落窗，几何由 present 与整窗内容同批
-           落地（根因见 deferGeometry 注）。挂起值存钳边后口径，与立即路
-           XMoveResizeWindow 实参逐字段一致；挂起期内重复 setGeometry 以
-           最新值为准（覆盖式），present 消费后清标记。 */
-        entry->m_pendingGeom.x = geometry->x;
-        entry->m_pendingGeom.y = geometry->y;
-        entry->m_pendingGeom.width = w;
-        entry->m_pendingGeom.height = h;
+           落地（根因见 deferGeometry 注）。挂起值存钳边后【物理】口径，
+           与立即路 XMoveResizeWindow 实参逐字段一致（见 m_pendingGeom
+           注）；挂起期内重复 setGeometry 以最新值为准（覆盖式），
+           present 消费后清标记。 */
+        entry->m_pendingGeom.x = nativeGeom.x;
+        entry->m_pendingGeom.y = nativeGeom.y;
+        entry->m_pendingGeom.width = nativeGeom.width;
+        entry->m_pendingGeom.height = nativeGeom.height;
         entry->m_hasPendingGeom = true;
         return true;
     }
     /* 立即路径作废可能残留的挂起几何（解挂后的即时几何已覆盖其语义）。 */
     entry->m_hasPendingGeom = false;
     XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
-                      geometry->x, geometry->y, (unsigned)w, (unsigned)h);
+                      nativeGeom.x, nativeGeom.y,
+                      (unsigned)nativeGeom.width,
+                      (unsigned)nativeGeom.height);
     XFlush(g_xpwnDisplay);
     return true;
 }
@@ -6151,6 +6475,8 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     uint8_t* buffer;
     int bufBpl;
     int imgW, imgH;
+    int presW, presH;
+    float dpr;
     int i;
     bool any = false;
     if (!window || !image) return false;
@@ -6164,6 +6490,13 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     imgW = XImage_width(image);
     imgH = XImage_height(image);
     if (imgW <= 0 || imgH <= 0) return false;
+    /* present 唯一放大点（DPI 定版 §6.3）：后备缓冲恒逻辑尺寸，强制
+       dpr>1 时上屏描述符按物理尺寸准备，脏区在源准备段最近邻放大后
+       XPutImage 提交；dpr 按窗口当前逻辑几何所在屏查询，dpr==1.0f
+       全链直拷与原路径逐位一致。 */
+    dpr = xpwn_dprForGeometry(&entry->m_client);
+    presW = xpwn_logicalToPhysical(imgW, dpr);
+    presH = xpwn_logicalToPhysical(imgH, dpr);
 #if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
     /* RGB16 模式契约：后备缓冲即 RGB16/565。非 RGB16 输入属配置错配，
        拒绝上屏（copyRect16 按 2 字节/像素搬运，误拷 4 字节缓冲会越界）。 */
@@ -6187,7 +6520,7 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         rectCount = 1;
     }
 
-    if (!xpwn_preparePresentImage(entry, imgW, imgH)) {
+    if (!xpwn_preparePresentImage(entry, presW, presH)) {
         return false;
     }
     ximg = entry->m_presentImage;
@@ -6206,7 +6539,18 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
         drect.y = srect.y + off->y;
         drect.width = srect.width;
         drect.height = srect.height;
-        if (direct) {
+        if (dpr > 1.0f) {
+            /* 强制 dpr>1：脏区出框换算后放大写入物理缓冲，XPutImage
+               源/目的均物理口径（源=缓冲内脏区位，目的=窗口内脏区位，
+               各自独立 round，与几何出框同函数族）。 */
+            XRect srectP = xpwn_rectLogicalToPhysical(&srect, dpr);
+            XRect drectP = xpwn_rectLogicalToPhysical(&drect, dpr);
+            xpwn_blitRectScaled(image, &srectP, buffer, bufBpl, direct,
+                                dpr);
+            XPutImage(g_xpwnDisplay, entry->m_win, entry->m_gc, ximg,
+                      srectP.x, srectP.y, drectP.x, drectP.y,
+                      (unsigned)srectP.width, (unsigned)srectP.height);
+        } else if (direct) {
 #if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
             /* RGB16 模式：direct 仅在「缓冲 565 + 视觉 depth-16/565」
                时成立（见 xpwn_preparePresentImage），按 2 字节/像素
@@ -6239,6 +6583,55 @@ void* XPlatformNativeWindow_nativeConnection(
     if (!xpwn_ensureConnection()) return NULL;
     if (outType) *outType = XPlatformNativeWindowConnection_X11;
     return (void*)g_xpwnDisplay;
+}
+
+/* ==================== XPlatformScreen 契约实现（X11） ==================== */
+/* 统一平台 API 的 X11 侧：委托本文件的 Xft.dpi 归一化读取
+   （xpwn_screenLogicalDpi）与主屏几何，公共层经
+   Src/XGui/Platform/XPlatformScreen.h 的统一签名拉取。 */
+
+bool XPlatformScreen_isAvailable(void)
+{
+    return XScreen_primaryScreen() != NULL;
+}
+
+bool XPlatformScreen_queryDpi(XPlatformScreenDpiInfo* out)
+{
+    float dpi;
+    if (!out) return false;
+    dpi = xpwn_screenLogicalDpi();
+    if (dpi <= 0.0f) return false;
+    /* X11 无 dpr 源：几何缩放恒 1，逻辑 DPI 即唯一载体（R4 归一化值）。
+       强制 DPI（XGUI_FORCE_DPI）可在此注入非 1 dpr。 */
+    out->m_density = XPlatformScreen_applyDpiOverride(1.0f);
+    out->m_densityDpi = (int)(dpi + 0.5f);
+    /* 物理毫米在登记期已消费进 XScreen（physicalSize 联动换算），
+       本查询不重复推导，0=未知（契约严禁编造）。 */
+    out->m_xdpi = 0;
+    out->m_ydpi = 0;
+    out->m_valid = true;
+    return true;
+}
+
+bool XPlatformScreen_queryFrameSize(int* outWidth, int* outHeight)
+{
+    XScreen* primary;
+    XRect geom;
+    primary = XScreen_primaryScreen();
+    if (!primary) return false;
+    geom = XScreen_geometry(primary);
+    if (geom.width <= 0 || geom.height <= 0) return false;
+    *outWidth = geom.width;
+    *outHeight = geom.height;
+    return true;
+}
+
+bool XPlatformScreen_queryOrigin(int* outX, int* outY)
+{
+    /* X11 无触屏原点概念：OS 直接投递窗口本地坐标（与 win32 同口径）。 */
+    (void)outX;
+    (void)outY;
+    return false;
 }
 
 #endif /* defined(__linux__) && defined(XINYUE_C_HAS_X11) */

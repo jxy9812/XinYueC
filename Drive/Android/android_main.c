@@ -30,6 +30,7 @@ void XPad_onNativeWindowResized(ANativeWindow* window);
 void XPad_onNativeWindowRedrawNeeded(ANativeWindow* window);
 void XPad_onNativeWindowDestroyed(void);
 void XPad_onInputEvent(AInputEvent* event);
+void XPad_onConfigurationChanged(void);
 void XPad_setRunning(bool running);
 void XPad_setDestroyed(void);
 void XPad_resetDestroyed(void);
@@ -201,7 +202,13 @@ static void xpad_onWindowFocusChanged(ANativeActivity* activity, int focused)
 { (void)activity; (void)focused; }
 
 static void xpad_onConfigurationChanged(ANativeActivity* activity)
-{ (void)activity; }
+{
+    /* 密度运行期变化（wm density）：UI 线程只写平台层 pending 槽
+       （密度快照 + 待办标志），XScreen 差分回填由 demo 事件线程消费
+       （设计 §1.3/§1.4 线程口径）。 */
+    (void)activity;
+    XPad_onConfigurationChanged();
+}
 
 static void xpad_onLowMemory(ANativeActivity* activity)
 { (void)activity; }

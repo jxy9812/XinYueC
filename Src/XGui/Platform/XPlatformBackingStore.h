@@ -227,6 +227,9 @@ bool XPlatformBackingStore_hasPendingTiles(const XPlatformBackingStore* self);
  *             Qt 语义收敛（与 Qt 一致：resize 后静态内容区域被修剪到
  *             新尺寸内；Qt 的 QPlatformBackingStore::resize 直接接收
  *             staticContents，本契约以 setStaticContents 维护）。
+ *             尺寸口径（DPI 定版）：本层缓冲恒为窗口逻辑像素尺寸；
+ *             dpr>1 平台的物理放大由平台 present 层承担（安卓
+ *             xpad_drawImage），桌面 present 链零改动。
  * @param      self 目标句柄；可为 NULL。
  * @param      size 新尺寸（可为 NULL 按无效处理）。
  */
@@ -426,7 +429,11 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
  *             省去 XImage→DIB 的整帧 memcpy。返回 NULL 或任一出参为
  *             NULL/非正时表示平台无共享缓冲能力，公共层回落自分配。
  *             注意：指针在 surfaceResized 重建后失效，公共层必须每次
- *             resize 重新查询。
+ *             resize 重新查询。缓冲语义（DPI 定版）：width/height 与
+ *             返回缓冲恒为窗口逻辑像素尺寸，本链无任何 dpr 参与；
+ *             dpr>1 平台的物理放大只在平台 present 提交层发生（对标
+ *             Qt QBackingStore：缓冲为逻辑尺寸，缩放归平台层），故本
+ *             契约签名不承载缩放参数，演进须独立批次。
  * @param      nativeState 平台提交状态。
  * @param      width/height 期望的缓冲尺寸（后端按此创建）。
  * @param      outStride   输出每行字节数（32bpp 时通常为 width*4）。

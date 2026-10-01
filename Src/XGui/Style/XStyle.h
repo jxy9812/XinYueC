@@ -460,6 +460,25 @@ int XStyle_visualAlignment(int direction, int alignment);
 XRect XStyle_alignedRect(int direction, int alignment, const XSize* size,
                          const XRect* rectangle);
 
+/**
+ * @brief 按屏幕逻辑 DPI 缩放样式度量基准值（对标 QStyleHelper::dpiScaled）。
+ *
+ *        乘数 = scaleDpi / 96；scaleDpi 与字体入口同一守卫（F3）：
+ *        主屏 dpr > 1 取主屏逻辑 DPI，否则恒 96——桌面（dpr=1）与安卓
+ *        定版（logicalDpi=96）下乘数恒 1.0，包裹为机制接线，现网逐位
+ *        不变；未来逻辑 DPI≠96 且 dpr>1 的平台自动生效。只乘逻辑 DPI、
+ *        不乘 devicePixelRatio：几何放大由渲染/present 链承担，此处再
+ *        乘即 dpr² 双重缩放。option 当前恒按主屏口径（XStyleOption 无
+ *        屏幕字段，多屏异 dpr 的 option→screen 关联列后续批次）；
+ *        传 NULL 可。
+ *
+ * @param value 度量基准值（像素语义；哨兵值/超时等非几何语义由调用方
+ *              自行不包裹）。
+ * @param option 样式选项；可空（预留屏幕关联通道）。
+ * @return 缩放后的度量值。
+ */
+int XStyle_dpiScaled(int value, const XStyleOption* option);
+
 /* ==================== 全局默认样式 ==================== */
 
 /**

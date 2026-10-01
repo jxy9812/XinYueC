@@ -28,6 +28,13 @@
 #if XGUIAPPLICATION_ON
 #include "XGuiApplication.h"
 #endif /* XGUIAPPLICATION_ON */
+#if XSCREEN_ON
+/* 字体 pt→px 换算的 dpr/logicalDpi 读取（XPainter_fontPixelSizeForScreen）。
+   XGUIAPPLICATION_ON 下已随 XGuiApplication.h:45 传递引入，此显式包含
+   保证「应用层关闭而屏幕层开启」的裁剪组合下仍可编译（无包含环：
+   XScreen.h 仅依赖 XImage.h 等叶子头）。 */
+#include "XScreen.h"
+#endif /* XSCREEN_ON */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #include "XGpuRenderBackend.h"
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
@@ -10076,6 +10083,45 @@ static PainterBitmapFontTable painterBitmapFont(const XFont* font)
     return table;
 }
 
+void XPainter_fontTableMemosInvalidate(void)
+{
+    /* DPI/dpr 变化消费者的第一站（先清表、后全窗口 updateRect）：记忆键
+       只含字体标量字段不含 DPI，屏幕口径变化后旧表全部失配失效。置
+       m_valid=false 即可——槽位在下次 painterBitmapFont 未命中时按轮转
+       覆盖，无需清 face 指针（悬挂风险不存在：face 由字库静态持有）。 */
+    int i;
+    for (i = 0; i < (int)(sizeof(g_fontTableMemos) /
+                          sizeof(g_fontTableMemos[0])); ++i)
+        g_fontTableMemos[i].m_valid = false;
+}
+
+int XPainter_fontPixelSizeForScreen(const XScreen* screen, double pointSize)
+{
+    const XScreen* s;
+    float dpi;
+    if (pointSize <= 0.0) return 0;
+#if XSCREEN_ON
+    /* F3 桌面守卫：dpr<=1 的屏恒 96，无视 logicalDpi 上报值（posix
+       Xft.dpi=120/144、win32 LOGPIXELS 虚拟化环境逐位保持现行为）。
+       安卓定版 logicalDpi 恒 96、密度唯一载体是 dpr，物理放大由平台
+       present 层承担——本函数在全定版平台下与写死 96 等值。 */
+    s = screen ? screen : XScreen_primaryScreen();
+    dpi = (s && XScreen_devicePixelRatio(s) > 1.0f)
+              ? XScreen_logicalDotsPerInch(s)
+              : 96.0f;
+    if (dpi <= 0.0f) dpi = 96.0f;
+#else
+    (void)screen;
+    dpi = 96.0f;
+#endif /* XSCREEN_ON */
+    return (int)(pointSize * ((double)dpi / 72.0) + 0.5);
+}
+
+int XPainter_fontPixelSize(double pointSize)
+{
+    return XPainter_fontPixelSizeForScreen(NULL, pointSize);
+}
+
 static PainterBitmapFontTable painterBitmapFontBuild(const XFont* font)
 {
     PainterBitmapFontTable table;
@@ -10129,9 +10175,12 @@ static float painterBitmapScaleForTable(const XFont* font,
     {
         if (target <= 0)
         {
+            /* 唯一换算点（DPI 定版）：此前此处与 XTextEdit.c 各持一份
+               写死 96/72 的拷贝，现统一走公共入口（含 F3 桌面守卫）——
+               dpr=1 桌面仍走 96 分支逐位等值。 */
             double pointSize = XFont_pointSizeF(font);
             if (pointSize > 0.0)
-                target = (int)(pointSize * (96.0 / 72.0) + 0.5);
+                target = XPainter_fontPixelSize(pointSize);
         }
         if (target <= 0)
             target = table->m_unitsPerEm;

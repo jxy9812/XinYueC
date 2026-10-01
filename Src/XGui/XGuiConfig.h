@@ -219,6 +219,23 @@
 #define XGUI_PRESENT_MAX_FPS 0
 #endif
 
+/* 强制 DPI 缩放（对标 Qt QT_SCALE_FACTOR 的编译期版；2026-10-01 用户
+ * 裁定用宏而非环境变量——调试经 CMake -D 注入即可，安卓无 shell env
+ * 也免文件通道）：
+ * - 0（默认）：devicePixelRatio 跟随各平台真实读数（安卓
+ *   DisplayMetrics.density / win32 LOGPIXELS / fbdev 板级宏
+ *   XPLATFORM_FBDEV_DEVICE_PIXEL_RATIO），行为不变；
+ * - >0（如 2.0）：强制 dpr 为该值（替换语义，非乘法——调试时直接
+ *   指定目标倍率最直观），全平台统一经
+ *   XPlatformScreen_applyDpiOverride 切口生效；几何÷dpr、触摸÷dpr、
+ *   present 放大、字体/样式缩放自动随动。典型用途：无高分屏时模拟
+ *   dpr 调试缩放链、小物理分辨率屏幕整体放大画面。
+ * 注意：替换发生在各平台取得原生 dpr 之后、任何下游消费之前，因此
+ * 平台内自洽（如安卓标定的 presentScale 仍由真实 surface/逻辑比推导）。 */
+#ifndef XGUI_FORCE_DPI
+#define XGUI_FORCE_DPI 0
+#endif
+
 /* 窗口表面（后备存储）像素格式的编译期选择器（对标 Qt QBackingStore
  * 随目标窗口/屏幕格式协商缓冲格式的行为：Qt 由平台窗口报告格式后按
  * 其分配缓冲；嵌入式目标的面板像素接口在出厂时固定，没有运行期协商

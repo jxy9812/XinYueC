@@ -97,6 +97,23 @@ void XWindow_leaveEvent_base(XWindow* self, XEvent* event);
 /* ==================== 平台桥接内部状态（仅供内部实现，不对外） ==================== */
 
 /**
+ * @brief      推送窗口设备像素比（框架内部接口，仅供子类与内部实现）。
+ * @details    闭环 XWindow_setScreen 声明的「屏幕归属决定 dpr」语义的
+ *             运行期补线（DPI 定版）：屏幕 dpr/logicalDpi 变化经
+ *             XGuiApplication 的 screen 信号回调遍历 allWindows 时调用
+ *             （对标 Qt QWindowPrivate::setScreen 更新
+ *             QHighDpiDirty / QWindow::devicePixelRatio 随屏联动）。仅
+ *             更新快照值：等值短路（零扰动），变化时也不发信号——窗口
+ *             级 dpr 无对应 Qt 信号，重绘由调用方随后续 XWindow_
+ *             requestUpdate 统一触发。不走公开 API 是刻意收窄：外部
+ *             调用方设置 dpr 无合法语义（Qt 中该属性只由窗口系统写）。
+ * @param      self 目标窗口；NULL 不执行任何操作。
+ * @param      ratio 新设备像素比（来自 XScreen_devicePixelRatio）。
+ * @return     无。
+ */
+void XWindow_setDevicePixelRatio_internal(XWindow* self, float ratio);
+
+/**
  * @brief      设置「CSD 激活时抑制原生 WM 装饰」标记（框架内部接口）。
  * @details    仅供框架内部实现（标题栏自绘激活/停用路径）调用，不对外
  *             公开：桌面会话下框架接管标题栏时置位，平台原生窗口后端

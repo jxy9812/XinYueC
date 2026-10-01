@@ -373,53 +373,58 @@ static void VXFusionStyle_drawComplexControl(XStyle* self, int cc,
 static int VXFusionStyle_pixelMetric(XStyle* self, int metric,
                                      const XStyleOption* option)
 {
+    /* Fusion 覆盖层像素基准值统一经 XStyle_dpiScaled 接线（对标
+     * QStyleHelper::dpiScaled 切入点，覆盖在 XCommonStyle 之上）：
+     * 守卫下当前乘数恒 1.0（桌面 dpr=1 / 安卓 logicalDpi=96），
+     * 逐位等于原写死值；-1 语义哨兵（MaximumDragDistance/
+     * SubMenuOverlap 的"未定义/回落父类"）与零值不包裹。 */
     switch (metric) {
-    case XStylePM_SliderTickmarkOffset: return 4;
-    case XStylePM_HeaderMargin: return 2;
-    case XStylePM_ToolTipLabelFrameWidth: return 2;
+    case XStylePM_SliderTickmarkOffset: return XStyle_dpiScaled(4, option);
+    case XStylePM_HeaderMargin: return XStyle_dpiScaled(2, option);
+    case XStylePM_ToolTipLabelFrameWidth: return XStyle_dpiScaled(2, option);
     case XStylePM_ButtonDefaultIndicator: return 0;
     case XStylePM_ButtonShiftHorizontal: return 0;
     case XStylePM_ButtonShiftVertical: return 0;
-    case XStylePM_MessageBoxIconSize: return 48;
-    case XStylePM_ListViewIconSize: return 24;
-    case XStylePM_ScrollBarSliderMin: return 26;
-    case XStylePM_TitleBarHeight: return 28; /* 对齐 CommonStyle 触屏观感。 */
-    case XStylePM_ScrollBarExtent: return 14;
-    case XStylePM_SliderThickness: return 15;
-    case XStylePM_SliderLength: return 15;
-    case XStylePM_DockWidgetTitleMargin: return 1;
-    case XStylePM_SpinBoxFrameWidth: return 3;
+    case XStylePM_MessageBoxIconSize: return XStyle_dpiScaled(48, option);
+    case XStylePM_ListViewIconSize: return XStyle_dpiScaled(24, option);
+    case XStylePM_ScrollBarSliderMin: return XStyle_dpiScaled(26, option);
+    case XStylePM_TitleBarHeight: return XStyle_dpiScaled(28, option); /* 对齐 CommonStyle 触屏观感。 */
+    case XStylePM_ScrollBarExtent: return XStyle_dpiScaled(14, option);
+    case XStylePM_SliderThickness: return XStyle_dpiScaled(15, option);
+    case XStylePM_SliderLength: return XStyle_dpiScaled(15, option);
+    case XStylePM_DockWidgetTitleMargin: return XStyle_dpiScaled(1, option);
+    case XStylePM_SpinBoxFrameWidth: return XStyle_dpiScaled(3, option);
     case XStylePM_MenuVMargin: return 0;
     case XStylePM_MenuHMargin: return 0;
     case XStylePM_MenuPanelWidth: return 0;
-    case XStylePM_MenuBarItemSpacing: return 6;
+    case XStylePM_MenuBarItemSpacing: return XStyle_dpiScaled(6, option);
     case XStylePM_MenuBarVMargin: return 0;
     case XStylePM_MenuBarHMargin: return 0;
     case XStylePM_MenuBarPanelWidth: return 0;
-    case XStylePM_ToolBarHandleExtent: return 9;
-    case XStylePM_ToolBarItemSpacing: return 1;
-    case XStylePM_ToolBarFrameWidth: return 2;
-    case XStylePM_ToolBarItemMargin: return 2;
-    case XStylePM_SmallIconSize: return 16;
-    case XStylePM_ButtonIconSize: return 16;
-    case XStylePM_DockWidgetTitleBarButtonMargin: return 2;
-    case XStylePM_TitleBarButtonSize: return 24;
+    case XStylePM_ToolBarHandleExtent: return XStyle_dpiScaled(9, option);
+    case XStylePM_ToolBarItemSpacing: return XStyle_dpiScaled(1, option);
+    case XStylePM_ToolBarFrameWidth: return XStyle_dpiScaled(2, option);
+    case XStylePM_ToolBarItemMargin: return XStyle_dpiScaled(2, option);
+    case XStylePM_SmallIconSize: return XStyle_dpiScaled(16, option);
+    case XStylePM_ButtonIconSize: return XStyle_dpiScaled(16, option);
+    case XStylePM_DockWidgetTitleBarButtonMargin: return XStyle_dpiScaled(2, option);
+    case XStylePM_TitleBarButtonSize: return XStyle_dpiScaled(24, option);
     case XStylePM_MaximumDragDistance: return -1;
-    case XStylePM_TabCloseIndicatorWidth: return 20;
-    case XStylePM_TabCloseIndicatorHeight: return 20;
-    case XStylePM_TabBarTabVSpace: return 12;
-    case XStylePM_TabBarTabOverlap: return 1;
-    case XStylePM_TabBarBaseOverlap: return 2;
+    case XStylePM_TabCloseIndicatorWidth: return XStyle_dpiScaled(20, option);
+    case XStylePM_TabCloseIndicatorHeight: return XStyle_dpiScaled(20, option);
+    case XStylePM_TabBarTabVSpace: return XStyle_dpiScaled(12, option);
+    case XStylePM_TabBarTabOverlap: return XStyle_dpiScaled(1, option);
+    case XStylePM_TabBarBaseOverlap: return XStyle_dpiScaled(2, option);
     case XStylePM_SubMenuOverlap: return -1;
-    case XStylePM_DockWidgetHandleExtent: return 4;
-    case XStylePM_SplitterWidth: return 4;
-    case XStylePM_IndicatorHeight: return 14;
-    case XStylePM_IndicatorWidth: return 14;
-    case XStylePM_ExclusiveIndicatorHeight: return 14;
-    case XStylePM_ExclusiveIndicatorWidth: return 14;
+    case XStylePM_DockWidgetHandleExtent: return XStyle_dpiScaled(4, option);
+    case XStylePM_SplitterWidth: return XStyle_dpiScaled(4, option);
+    case XStylePM_IndicatorHeight: return XStyle_dpiScaled(14, option);
+    case XStylePM_IndicatorWidth: return XStyle_dpiScaled(14, option);
+    case XStylePM_ExclusiveIndicatorHeight: return XStyle_dpiScaled(14, option);
+    case XStylePM_ExclusiveIndicatorWidth: return XStyle_dpiScaled(14, option);
     case XStylePM_ScrollView_ScrollBarSpacing: return 0;
     case XStylePM_ScrollView_ScrollBarOverlap: return 0;
-    case XStylePM_DefaultFrameWidth: return 1;
+    case XStylePM_DefaultFrameWidth: return XStyle_dpiScaled(1, option);
     default:
         return XClass_Parent(XCommonStyle, EXStyle_PixelMetric,
                              int(*)(XStyle*, int, const XStyleOption*))(

@@ -1228,6 +1228,21 @@ static void demo_ext_pages_autotest(DemoWin* demo)
 
 static bool demo_framePumpBody(void* userData);
 
+/** @brief autotest 截图落盘目录：POSIX/安卓 /tmp；Windows 用 %TEMP%/%TMP%
+ *  （"/tmp/..." 在 Windows 解析为当前盘根 \tmp，CI 换盘符即失效——walk 轮
+ *  实测落 D:\tmp）。取自框架环境入口 XSystem_environment；两端都无时回退
+ *  当前目录 "."。 */
+static const char* demo_autotest_tmpdir(void)
+{
+#ifdef _WIN32
+    const char* dir = XSystem_environment("TEMP");
+    if (!dir || !dir[0]) dir = XSystem_environment("TMP");
+    return (dir && dir[0]) ? dir : ".";
+#else
+    return "/tmp";
+#endif
+}
+
 /** @brief 帧泵（重入守卫）：autotest 内 XGuiApplication_processEvents
  *         会重入本帧定时器，守卫位防递归（触摸接线断言引入事件泵）。 */
 static bool demo_framePump(void* userData)
@@ -1277,9 +1292,11 @@ static bool demo_framePumpBody(void* userData)
         else if (demo->m_autoTestFrames == 5) {
             {
                 XImage* device = XWidget_paintImage(&demo->m_base);
-                if (device && XImage_save_2(device, "/tmp/demo_autotest_after.png",
-                                            "PNG", 95))
-                    XPrintf("XGuiAutoTest: 交互后截图 /tmp/demo_autotest_after.png\n");
+                char shotPath[260];
+                snprintf(shotPath, sizeof(shotPath), "%s/demo_autotest_after.png",
+                         demo_autotest_tmpdir());
+                if (device && XImage_save_2(device, shotPath, "PNG", 95))
+                    XPrintf("XGuiAutoTest: 交互后截图 %s\n", shotPath);
             }
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
             /* 切到效果页：repaint 异步投递，本帧只切页，隔两帧再截图。 */
@@ -1295,10 +1312,11 @@ static bool demo_framePumpBody(void* userData)
             /* 效果页留证：启用态效果与无效果基线同屏，供集成阶段像素对照。 */
             if (demo->m_extPages[3]) {
                 XImage* fxDevice = XWidget_paintImage(&demo->m_base);
-                if (fxDevice &&
-                    XImage_save_2(fxDevice, "/tmp/demo_page8_effects.png",
-                                  "PNG", 95))
-                    XPrintf("XGuiAutoTest: 效果页截图 /tmp/demo_page8_effects.png\n");
+                char fxPath[260];
+                snprintf(fxPath, sizeof(fxPath), "%s/demo_page8_effects.png",
+                         demo_autotest_tmpdir());
+                if (fxDevice && XImage_save_2(fxDevice, fxPath, "PNG", 95))
+                    XPrintf("XGuiAutoTest: 效果页截图 %s\n", fxPath);
                 demo_switchPage(demo, 3);
             }
 #endif

@@ -127,7 +127,9 @@ static int VXWindowsStyle_pixelMetric(XStyle* self, int pm,
 {
     switch (pm) {
     case XStylePM_SplitterWidth:
-        return 4;
+        /* 像素基准值经 DPI 缩放（XStyle_dpiScaled 守卫：dpr<=1 恒
+           乘数 1.0，现网逐位 4）。 */
+        return XStyle_dpiScaled(4, option);
     default:
         return XClass_Parent(XCommonStyle, EXStyle_PixelMetric,
                              int(*)(XStyle*, int, const XStyleOption*))(

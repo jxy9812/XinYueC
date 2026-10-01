@@ -64,6 +64,12 @@
 #if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
 #include "XWindowSystemInterface.h"
 #endif /* XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON */
+#if XWINDOW_ON
+#include "XWindow_Protected.h"   /* XWindow_setDevicePixelRatio_internal：screen dpr 信号→窗口推送（DPI 定版 §1.6） */
+#endif
+#if XPAINTER_ON
+#include "XPainter.h"            /* XPainter_fontTableMemosInvalidate：dpr/logicalDpi 变化先清字体度量表（§2.2） */
+#endif
 
 #if XGUIAPPLICATION_ON
 
@@ -940,6 +946,42 @@ void XGuiApplication_setModalWindow(XWindow* window)
 /* ==================== 屏幕 ==================== */
 
 #if XSCREEN_ON
+/**
+ * @brief      screen 物理 DPI/逻辑 DPI 变化联动槽（DPI 定版 §1.6/§2.2）。
+ * @details    screenAdded 时挂接到每块屏幕的 physicalDotsPerInchChanged
+ *             （dpr setter 按约定发此信号，Qt NOTIFY 对齐）与
+ *             logicalDotsPerInchChanged 两路信号。消费顺序契约：先清
+ *             字体度量表（键不含 DPI，pt→px 口径已变则旧表必须失效），
+ *             后遍历 allWindows 推送 dpr 快照并逐窗请求重绘。仅处理
+ *             归属本屏的窗口（XWindow_screen 未显式设屏时回退主屏，
+ *             主屏信号即覆盖全量默认窗口——与 XWindow_setScreen 的
+ *             「屏幕变化同步 dpr」同口径）。发信号侧先落值后发射，
+ *             单线程模型下读回 sender 当前值即本次变化值（与
+ *             colorSchemeChangedSlot 同款读取方式，不解析 args）。
+ */
+static void guiApp_screenDotsPerInchChangedSlot(XObject* sender, XVarList* args)
+{
+    XScreen* screen = (XScreen*)sender;
+    XVector* windows;
+    float dpr;
+    size_t i;
+    (void)args;
+    if (!screen) return;
+#if XPAINTER_ON
+    XPainter_fontTableMemosInvalidate();
+#endif
+    dpr = XScreen_devicePixelRatio(screen);
+    windows = XGuiApplication_allWindows();
+    if (!windows) return;
+    for (i = 0; i < XVector_size_base((const XContainer*)windows); ++i) {
+        XWindow* win = XVector_At_Base(windows, (int64_t)i, XWindow*);
+        if (!win || XWindow_screen(win) != screen) continue;
+        XWindow_setDevicePixelRatio_internal(win, dpr);
+        XWindow_requestUpdate(win);
+    }
+    XVector_delete_base((XClass*)windows);
+}
+
 XScreen* XGuiApplication_primaryScreen(void)
 {
     return XScreen_primaryScreen();
@@ -991,6 +1033,18 @@ bool XGuiApplication_screenAdded(XScreen* screen)
        失败）——此时无人接管，调用方必须回收 screen，否则平台层新建
        屏幕泄漏（每次进程至多一块）。 */
     if (!XScreen_register(screen)) return false;
+    /* 屏幕运行期 dpr/logicalDpi 变化 → 窗口 dpr 推送 + 重绘闭环（DPI
+       定版 §1.6，对标 Qt QGuiApplicationPrivate 监听 QScreen 属性）。
+       连接归属发送方 screen 对象，screenRemoved/析构时随之释放，应用
+       侧无需持有连接句柄。 */
+    XObject_connect_2((XObject*)screen,
+                      (size_t)XScreen_physicalDotsPerInchChanged_signal(
+                          NULL, 0.0f),
+                      guiApp_screenDotsPerInchChangedSlot);
+    XObject_connect_2((XObject*)screen,
+                      (size_t)XScreen_logicalDotsPerInchChanged_signal(
+                          NULL, 0.0f),
+                      guiApp_screenDotsPerInchChangedSlot);
     XGuiApplication_screenAdded_signal(app, screen);
     return true;
 }

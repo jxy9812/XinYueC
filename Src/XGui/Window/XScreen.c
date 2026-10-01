@@ -275,9 +275,18 @@ void XScreen_init(XScreen* self)
     self->m_data->m_depth = 32;
     self->m_data->m_logicalDotsPerInchX = 96.0f;
     self->m_data->m_logicalDotsPerInchY = 96.0f;
-    /* 设备像素比固定 1.0：X11 无 HiDPI 缩放管道，逻辑像素即设备像素，
-       与 Qt xcb 平台（QXcbScreen::devicePixelRatio 无 QT_SCALE_FACTOR 等
-       强制时恒为 1）保持一致；平台层无需也不应回填其它值。 */
+    /* 设备像素比缺省 1.0＝「缺省即语义」（DPI 定版）：无数据源的平台
+       （Unsupported/无屏/未声明感知）保持缺省即完整 DPI 语义，零改动
+       即正确——对标 Qt xcb（QXcbScreen::devicePixelRatio 无
+       QT_SCALE_FACTOR 等强制时恒为 1）。有数据源的平台经
+       XScreen_setDevicePixelRatio 回填真实值（win32 PMv2 每监视器、
+       posix 强制源、安卓 density、fbdev 板级宏）。【归一化铁律】平台
+       回填 dpr>1 时，同屏 logicalDpi 上报值必须归一化为
+       round(rawDpi/dpr)（静态与运行期回填同式）：字体/样式守卫
+       （XPainter_fontPixelSizeForScreen/XStyle_dpiScaled）只在 dpr>1
+       时放行 logicalDpi，灌入未归一化 rawDpi 即 dpr×raw/96 复合爆炸
+       （同源数学见 XWindowSystemInterface.h 的 H1 条款）；安卓密度
+       唯一载体是 dpr，logicalDpi 永不回填。 */
     self->m_data->m_devicePixelRatio = 1.0f;
     self->m_data->m_refreshRate = 60.0f;
     self->m_data->m_primaryOrientation =

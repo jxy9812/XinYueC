@@ -507,6 +507,22 @@ void XWindowSystemInterface_handleScreenLogicalDotsPerInchChange(XScreen* screen
 #endif /* XSCREEN_ON */
 }
 
+void XWindowSystemInterface_handleScreenDevicePixelRatioChange(
+    XScreen* screen, float devicePixelRatio, const XSizeF* physicalSizeMm)
+{
+#if XSCREEN_ON
+    if (!screen) return;
+    /* 先毫米后 dpr（与安卓定版回填次序一致）：mm 派生的
+       physicalDotsPerInchChanged 先到，dpr 的 devicePixelRatioChanged
+       （字体度量表失效→窗口 resize+repolish）作为本批次的收尾信号。 */
+    if (physicalSizeMm)
+        XScreen_setPhysicalSize(screen, physicalSizeMm);
+    XScreen_setDevicePixelRatio(screen, devicePixelRatio);
+#else
+    (void)screen; (void)devicePixelRatio; (void)physicalSizeMm;
+#endif /* XSCREEN_ON */
+}
+
 void XWindowSystemInterface_handleThemeChanged(XStyleHintsColorScheme theme)
 {
 #if XSTYLEHINTS_ON

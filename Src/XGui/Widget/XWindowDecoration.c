@@ -45,10 +45,13 @@
  *  2026-09-28 教训：6px→24px）；带与内容控件重叠按宿主双口径分流：
  *  有原生窗（桌面 WM）边缘带优先于内容子控件（对标 WM 改尺寸框帧外
  *  恒胜内容命中）；无原生窗（fbdev 直写触屏）保持子控件优先（带侵入
- *  内容区，内容可点优先）。 */
-#define XWD_RESIZE_ZONE 24
+ *  内容区，内容可点优先）。
+ *  DPI 接线：经 XStyle_dpiScaled 按屏幕逻辑 DPI 缩放（守卫下 dpr=1
+ *  逐位保持 24/8 昆仑通态调校；安卓经 present 物理只会更大不会更小，
+ *  dpr>1 平台自动跟随 scaleDpi）。option=NULL 恒取主屏。 */
+#define XWD_RESIZE_ZONE XStyle_dpiScaled(24, NULL)
 /** @brief 顶边改尺寸命中带宽度（窄带：标题栏大部分区域归拖拽移动）。 */
-#define XWD_RESIZE_ZONE_N 8
+#define XWD_RESIZE_ZONE_N XStyle_dpiScaled(8, NULL)
 
 /** @brief 无窗口管理器环境的「桌面底色」（面板原生像素）。
  *  框架即合成器：窗口外的面板区域没有 WM 铺桌面，恒为黑会被用户

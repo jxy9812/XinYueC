@@ -280,6 +280,14 @@ bool XPlatformGraphicsDriver_createOffscreen(uint32_t width, uint32_t height,
     int h;
     if (nativeState) *nativeState = NULL;
     if (!nativeState) return false;
+    /* R19 感知时序契约：本函数的离屏 STATIC 窗 + GetDC 是全部 HWND/DC
+       创建点之一（GPU/离屏渲染链）——GPU 应用离屏窗先建场景下，进程
+       感知必须先于此处声明（首个窗口创建会锁死进程感知态，之后
+       SetProcessDpiAwarenessContext 静默失效、PMv2 承诺落空）。经公共
+       API XPlatformNativeWindow_isAvailable() 触发 xpwn_ensureInstance
+       → xpwn_dpiAwarenessInit 完成声明（幂等；窗口类注册对本路径无
+       副作用，零新增耦合）。 */
+    (void)XPlatformNativeWindow_isAvailable();
     /* drawable（窗口）必须与会话渲染尺寸一致：glReadPixels 越界读会破坏
        驱动内部缓冲；0 尺寸按 1x1 兜底。 */
     w = width > 0 ? (int)width : 1;
