@@ -68,6 +68,13 @@
 #include "XString.h"
 #include "XPrintf.h"
 #include "XPainter.h"
+#if XWINDOW_ON
+#include "XWindow.h" /* 悬浮面板接管原生鼠标捕获（XWindow_setMouseGrabEnabled）。 */
+#endif
+#if XAPPLICATION_ON
+#include "XApplication.h" /* 悬浮锚主窗口解析：应用顶层表（XCalendarWidget 弹层容器锚）。 */
+#include "XVector.h"      /* XApplication_topLevelWidgets 返回向量遍历/释放。 */
+#endif
 #if XLINEEDIT_ON
 #include "XLineEdit.h"
 #endif /* XLINEEDIT_ON */
@@ -463,10 +470,24 @@ static void xkb_notifyObserver(const XVirtualKeyboard* self)
 #endif /* XVIRTUALKEYBOARD_ON */
 
 /**
- * @brief 判定目标控件是否为受支持的编辑框类型（适配层类型识别）。
- * @details 逐一比对 vtable（XCompleter.c:535 先例）；三个适配开关全 0
- *          时类型识别降级：恒返回 true（setTextArea 接受任意 XWidget*，
- *          合成键路径类型无关，仅直写回退缺席）。
+ * @brief 判定目标控件是否为受支持的输入目标（适配层类型识别 + WA14
+ *        放行回退）。
+ * @details 双口径：①vtable 快路径——逐一比对三编辑控件（XCompleter.c:
+ *          535 先例），直写+合成键双写入通道齐备；②WA_InputMethodEnabled
+ *          放行回退——对齐 Qt inputMethodAccepted=WA14 口径
+ *          （qwidget.cpp:9057-9057 同族），任意开了 WA14 的控件皆可绑
+ *          定。修复「XDateEdit/XDateTimeEdit 字段壳获焦后面板闪退」：
+ *          壳（XDateTimeEdit vtable）曾在此被拒（init 置 WA14+DigitsOnly，
+ *          XDateTimeEdit.c:3067-3070）→popup 经 setTextArea 早退不弹/
+ *          守护 ②′ 与 notifyPress 幂等收层。放行目标的写入面=合成键
+ *          注入（xkb_sendKey 经 XObject_event_base 直发 m_target，类型
+ *          无关）：单字节 ASCII 字符键/Return 照常可达——XDateTimeEdit
+ *          壳的数字键由其 keyPressEvent 分段消化（xdt_typeDigit，按下
+ *          即终结不转发行编辑），行为对齐无头 apitest 注入口径；多字节/
+ *          IME 上屏直写仍仅认三编辑控件 vtable（writeText 尾部诊断忽
+ *          略），+/- 符号翻转仍仅 XLineEdit——能力不对称在 writeText
+ *          注释与本回退处双声明。三个适配开关全 0 时类型识别降级：
+ *          恒返回 true（setTextArea 接受任意 XWidget*）。
  */
 static bool xkb_supportedTarget(const XWidget* target)
 {
@@ -483,9 +504,12 @@ static bool xkb_supportedTarget(const XWidget* target)
     if (vt == XTextEdit_class_init()) return true;
 #endif
 #if !XLINEEDIT_ON && !XPLAINTEXTEDIT_ON && !XTEXTEDIT_ON
+    (void)vt;
     return true; /* 类型识别降级：接受任意控件（合成键路径类型无关）。 */
 #else
-    return false;
+    /* WA14 放行回退：非三编辑控件但显式开启输入法属性（WA14）即接受
+       绑定（合成键注入焦点路径承载写入；直写回退缺席见函数头）。 */
+    return XWidget_testAttribute(target, XWidgetAttribute_InputMethodEnabled);
 #endif
 }
 
@@ -501,6 +525,83 @@ static bool xkb_insidePanel(const XVirtualKeyboard* self, const XWidget* hit)
     }
     return false;
 }
+
+#if XAPPLICATION_ON
+/** @brief 判定顶层控件是否 Popup 型窗口（悬浮锚识别弹层容器）。
+ *  @details 类型位=windowFlags & TypeMask（XWidget_windowType 口径）；
+ *           XDateTimeEdit 日历弹层容器在 xdt_popupReposition 里
+ *           XWidget_setWindowFlags(Popup)。XWINDOW_ON=0 无弹层形态，
+ *           恒 false。 */
+static bool xkb_isPopupTypeWindow(const XWidget* w)
+{
+    if (!w) return false;
+#if XWINDOW_ON
+    return XWidget_windowType(w) == XWindowType_Popup;
+#else
+    (void)w;
+    return false; /* 无窗口层：Popup 型弹层容器不存在。 */
+#endif
+}
+
+/** @brief 悬浮锚候选可用性（非键盘自身/非锚本身/顶层/非 Popup 型）。 */
+static bool xkb_anchorCandidateOk(const XVirtualKeyboard* self,
+                                  const XWidget* host, const XWidget* w)
+{
+    if (!w || w == (const XWidget*)self || w == host) return false;
+    if (!XWidget_isWindow(w) || xkb_isPopupTypeWindow(w)) return false;
+    return true;
+}
+
+/** @brief 悬浮锚解析：锚为弹层容器时定位主窗口顶层。
+ *  @details 弹层容器是 NULL 父的独立 Popup 顶层，其 widget 父链与桥接
+ *           窗 transient parent 均无主窗口反向引用（XWidget_createWindow
+ *           的 owner 链走父控件链，弹层父链为空），应用顶层表
+ *           （XApplication_topLevelWidgets）在 XGuiApplication 单根应
+ *           用（不创建 XApplication 基类实例，g_xapp 空）下亦不可用——
+ *           按可信次序取候选：① m_hostHint=setHostWindow 时刻焦点顶
+ *           层快照（弹层打开前用户所在主窗口，transient parent 语义）；
+ *           ② m_host=上一次内嵌弹层的宿主顶层（普通编辑框键盘的记忆
+ *           宿主）；③ 应用顶层表（g_xapp 存在的多窗口应用）可见非
+ *           Popup 顶层中客户面积最大者。全缺回落锚自身（键盘仍悬浮
+ *           压过弹层，仅几何缩为弹层底部）。 */
+static XWidget* xkb_resolveFloatingHost(XVirtualKeyboard* self, XWidget* host)
+{
+    XVector* tops;
+    XWidget* best;
+    int64_t bestArea;
+    size_t n;
+    size_t i;
+    if (!xkb_isPopupTypeWindow(host)) return host; /* 锚即主窗口顶层。 */
+    if (xkb_anchorCandidateOk(self, host, self->m_hostHint))
+        return self->m_hostHint;
+    if (xkb_anchorCandidateOk(self, host, self->m_host))
+        return self->m_host;
+    tops = XApplication_topLevelWidgets();
+    if (!tops) return host;
+    best = NULL;
+    bestArea = -1;
+    n = XVector_size_base((const XContainer*)tops);
+    for (i = 0; i < n; ++i) {
+        XWidget* w = XVector_At_Base(tops, (int64_t)i, XWidget*);
+        int64_t area;
+        if (!xkb_anchorCandidateOk(self, host, w)) continue;
+        if (!XWidget_isVisible(w)) continue;
+        area = (int64_t)XWidget_width(w) * (int64_t)XWidget_height(w);
+        if (area > bestArea) {
+            bestArea = area;
+            best = w;
+        }
+    }
+    XVector_delete_base((XClass*)tops);
+    return best ? best : host;
+}
+#else /* !XAPPLICATION_ON */
+static XWidget* xkb_resolveFloatingHost(XVirtualKeyboard* self, XWidget* host)
+{
+    (void)self;
+    return host; /* 无应用顶层表：锚原样（调用方保证非 Popup 型）。 */
+}
+#endif /* XAPPLICATION_ON */
 
 /** @brief 目标 destroyed 防悬垂槽：解绑并收层（守护 tick 解引用已销毁
  *         editor 即崩溃，此连接是前置防线）。 */
@@ -1615,7 +1716,15 @@ static void xkb_startGuard(XVirtualKeyboard* self)
 }
 
 /** @brief 按宿主当前几何重定位弹层（高度钳位：hostH/2 → 下界 120 →
- *         上界 hostH-32，上界最终生效恒给编辑区留 32px）。 */
+ *         上界 hostH-32，上界最终生效恒给编辑区留 32px）。
+ *  @details 内嵌形态（m_floating=false）按宿主局部坐标
+ *           setGeometry(0, hostH-kbH, hostW, kbH)；悬浮形态
+ *           （setHostWindow 锚生效）按宿主全局坐标
+ *           setGeometry(gx, gy+hostH-kbH, hostW, kbH)——顶层无父偏移
+ *           全局坐标即屏幕坐标（XComboBox 弹层 setGeometryRect 先例），
+ *           外观/尺寸与内嵌形态完全一致（同一钳位公式、宿主全宽），
+ *           仅坐标系不同。两种形态均缓存宿主宽高（悬浮另缓存全局位
+ *           置），供守护 tick ③ Resize/位移检测比对。 */
 static void xkb_reposition(XVirtualKeyboard* self)
 {
     int kbH;
@@ -1628,8 +1737,29 @@ static void xkb_reposition(XVirtualKeyboard* self)
         kbH = self->m_hostH - XKEYBOARD_POPUP_MARGIN_H;
     if (kbH < 1) kbH = 1;
     self->m_popupHeight = kbH;
-    XWidget_setGeometry((XWidget*)self, 0, self->m_hostH - kbH,
-                        self->m_hostW, kbH);
+    if (self->m_floating) {
+        XPoint anchorLocal;
+        XPoint anchorGlobal;
+        XPoint originGlobal;
+        anchorLocal.x = 0;
+        anchorLocal.y = self->m_hostH - kbH;
+        anchorGlobal = XWidget_mapToGlobal(self->m_host, &anchorLocal);
+        /* 缓存基准改=宿主 (0,0) 全局点（r2 项5c）：守护 ③ 用
+         * mapToGlobal(host,(0,0)) 比对，原缓存取键盘贴附点
+         * (0,hostH-kbH) 恒失配 → 每 200ms 守护 tick 空转一次
+         * reposition（几何相同的 churn），并把外部对键盘几何的合法调
+         * 整（XDateTimeEdit 时间行避让）打回原位。放置点本式不变。 */
+        originGlobal.x = 0;
+        originGlobal.y = 0;
+        originGlobal = XWidget_mapToGlobal(self->m_host, &originGlobal);
+        self->m_hostGX = originGlobal.x;
+        self->m_hostGY = originGlobal.y;
+        XWidget_setGeometry((XWidget*)self, anchorGlobal.x, anchorGlobal.y,
+                            self->m_hostW, kbH);
+    } else {
+        XWidget_setGeometry((XWidget*)self, 0, self->m_hostH - kbH,
+                            self->m_hostW, kbH);
+    }
 }
 
 /**
@@ -1642,9 +1772,10 @@ static void xkb_reposition(XVirtualKeyboard* self)
  *          绑/收层）；②IME 候选带等稳态巡检依赖轮询（宿主 Resize 重
  *          定位③）。三段（统一边沿，去 m_target 水平判据）：①m_target
  *          不可见→closePopup（原样）；②边沿 focus != m_prevFocus——焦
- *          点为受支持编辑框 && isEnabled && WA_InputMethodEnabled &&
- *          总开关→popup(focus)，否则（非编辑控件/NULL/不可接受/总开
- *          关）若 m_popped→closePopup；两路均更新 m_prevFocus=focus—
+ *          点可接受（xkb_supportedTarget=vtable 快路径 ∪ WA14 放行回
+ *          退，Qt inputMethodAccepted 口径）&& isEnabled && 总开关→
+ *          popup(focus)，否则（不可接受目标/NULL/总开关）若
+ *          m_popped→closePopup；两路均更新 m_prevFocus=focus—
  *          对齐 Qt evaluateInputPanelVisible = m_visible &&
  *          (focusObject && inputMethodAccepted())（platforminputcontext.cpp
  *          :251-259/266-283）的 show/hide 双向。行为变化声明：点按
@@ -1701,7 +1832,14 @@ static void xkb_guardTick(XVirtualKeyboard* self)
 #endif
     if (focus != self->m_prevFocus) {
         self->m_prevFocus = focus; /* 两路均更新采样（先记边沿已消费）。 */
+        /* 焦点迁出（≠收起时目标）即清用户收起闩锁：换框跟随恢复。 */
+        if (focus != self->m_target) self->m_userCollapsed = false;
         if (accept) {
+            if (self->m_userCollapsed && focus == self->m_target) {
+                /* 用户收起后原地（同目标）不重弹——收起语义保持。 */
+                self->m_prevFocus = focus;
+                return;
+            }
             XVirtualKeyboard_popup(self, focus);
             return;
         }
@@ -1724,11 +1862,35 @@ static void xkb_guardTick(XVirtualKeyboard* self)
         XVirtualKeyboard_closePopup(self);
         return;
     }
-    /* ③ 宿主 Resize 检测（原样）。 */
-    if (self->m_host && self->m_popped &&
-        (XWidget_width(self->m_host) != self->m_hostW ||
-         XWidget_height(self->m_host) != self->m_hostH))
-        xkb_reposition(self);
+    /* ③ 宿主 Resize 检测（原样）。悬浮形态扩为 Resize+位移复核：主窗
+       口被拖动/缩放时悬浮面板跟随重定位（内嵌形态是宿主子控件、随父
+       移动，仅查尺寸不变）。 */
+    if (self->m_host && self->m_popped) {
+        bool hostMoved = XWidget_width(self->m_host) != self->m_hostW ||
+                         XWidget_height(self->m_host) != self->m_hostH;
+        if (!hostMoved && self->m_floating) {
+            XPoint origin;
+            XPoint global;
+            origin.x = 0;
+            origin.y = 0;
+            global = XWidget_mapToGlobal(self->m_host, &origin);
+            hostMoved = global.x != self->m_hostGX ||
+                        global.y != self->m_hostGY;
+        }
+        if (hostMoved) xkb_reposition(self);
+#if XWINDOW_ON
+        /* 悬浮态 Z 序不变式复核（S5 回修）：外源 SetForegroundWindow/
+         * activateWindow(锚主窗)（宿主焦点回交、自动化探针、他窗切换
+         * 等路径）会把非 topmost 的锚主窗整体抬到键盘原生 Popup 之上，
+         * 面板被遮蔽「隐形」（HWND 仍可见、捕获/键入照常，唯屏幕不可
+         * 见——实测探针复现）。与 Qt「popup 恒浮于其父窗之上」不变式
+         * 相悖，200ms 周期幂等校正：XWidget_raise = SetWindowPos
+         * (HWND_TOP, SWP_NOACTIVATE|NOMOVE|NOSIZE)，不夺焦、零几何副
+         * 作用（XPlatformNativeWindow_raise）。 */
+        if (self->m_floating)
+            XWidget_raise((XWidget*)self);
+#endif
+    }
 }
 
 /* ==================== 虚槽实现 ==================== */
@@ -1882,6 +2044,50 @@ static void VXKeyboard_mousePressEvent(XWidget* self, XEvent* event)
         return;
     }
     pos = XMouseEvent_position(me);
+#if XWINDOW_ON
+    /* 悬浮态界外按下：收层+重放（Qt Popup 点外语义）。悬浮双抓取+原
+       生捕获是本面板收到界外点击的唯一通道（跨顶层抓取改道 XWidget.c
+       派发入口把一切按下改投抓取者），界外坐标在键面命中天然全 miss，
+       原实现吞掉即死锁（日历弹层越界收层/点选收层/主窗口关闭钮全部
+       不可达）。先 closePopup 成对释放并归还抢占前抓取者，重放管线即
+       无抓取态；重放单次派发无回环（界外坐标不可能再落回已收层键
+       盘）。 */
+    if (kb->m_floating && kb->m_popped &&
+        (pos.x < 0 || pos.y < 0 ||
+         pos.x >= XWidget_width(self) || pos.y >= XWidget_height(self))) {
+        XPoint g = XMouseEvent_globalPosition(me);
+        XWidget* redir;
+        if (g.x == 0 && g.y == 0) /* 平台未注入全局坐标兜底（XEvent.h
+                                     globalPosition 契约；win32 必注入）。 */
+            g = XWidget_mapToGlobal(self, &pos);
+        XVirtualKeyboard_closePopup(kb);
+        /* closePopup 刚归还的被抢占弹层（日历/时间弹层链；prev==NULL
+           表示无被抢占弹层，下方第一发重放已直达命中控件）。 */
+        redir = XWidget_mouseGrabber();
+        XWidget_replayPressAtGlobal(me, &g);
+        /* 链式二次派发（S4：一次点击级联关闭整条弹层链并直达真实命中
+           控件，主窗自绘关闭钮首击生效）：第一发重放被恢复的弹层抓取
+           改道→弹层越界分支同步自关（此刻鼠标/键盘抓取者皆空）。判据
+           三合一：①确有被抢占弹层归还（redir 非空且非自己）；②命中点
+           在弹层顶层几何之外（排除「弹层内容自关」——如点选日期经
+           calClick 收层，此拍已被弹层内容消费，不得再透传）；③两抓取
+           者已空（弹层链确已闭合）。三判据齐备才补发第二发——此刻无
+           抓取者，直达光标下控件（Qt 点外重放口径）。 */
+        if (redir && redir != (XWidget*)kb) {
+            XWidget* redirTop = XWidget_topLevelWidget(redir);
+            if (redirTop && !XWidget_mouseGrabber() &&
+                !XWidget_keyboardGrabber()) {
+                XPoint lp = XWidget_mapFromGlobal(redirTop, &g);
+                if (lp.x < 0 || lp.y < 0 ||
+                    lp.x >= XWidget_width(redirTop) ||
+                    lp.y >= XWidget_height(redirTop))
+                    XWidget_replayPressAtGlobal(me, &g);
+            }
+        }
+        XEvent_accept(event);
+        return;
+    }
+#endif
 #if XVIRTUALKEYBOARD_ON
     /* 候选带命中优先（xkb_hitTest 之前）：命中即 press 直触发（chip/
        翻页/「中」chip），不进 m_pressedKey 武装链——键位矩形起点已在
@@ -1978,6 +2184,15 @@ static void VXKeyboard_hideEvent(XWidget* self, XEvent* event)
     if (xkb_engineOf(kb)) XVirtualKeyboardInputEngine_reset(xkb_engineOf(kb));
 #endif
     if (XWidget_mouseGrabber() == self) XWidget_releaseMouse(self);
+    /* 悬浮面板隐藏随行释放键盘抓取与原生鼠标捕获（弹出时 popup 悬浮
+       分支夺取的弹层模态抓取，成对归还；identity 判据不误放他者）。 */
+    if (XWidget_keyboardGrabber() == self) XWidget_releaseKeyboard(self);
+#if XWINDOW_ON
+    {
+        XWindow* handle = XWidget_windowHandle(self);
+        if (handle) XWindow_setMouseGrabEnabled(handle, false);
+    }
+#endif
     if (!kb->m_autoPopup) xkb_stopGuard(kb);
 }
 
@@ -2016,6 +2231,11 @@ static void VXKeyboard_deinit(XVirtualKeyboard* self)
     }
     self->m_target = NULL;
     self->m_host = NULL;
+    self->m_hostOverride = NULL; /* 悬浮锚为借用指针，反初始化一并解除。 */
+    self->m_hostHint = NULL;
+    self->m_prevMouseGrab = NULL; /* 抓取者快照同属运行态借用，一并解除。 */
+    self->m_prevKbdGrab = NULL;
+    self->m_floating = false;
     self->m_keyCount = 0;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
@@ -2044,6 +2264,8 @@ static void VXKeyboard_copy(XVirtualKeyboard* self, const XVirtualKeyboard* othe
     }
     self->m_hostW = other->m_hostW;
     self->m_hostH = other->m_hostH;
+    self->m_hostGX = other->m_hostGX;
+    self->m_hostGY = other->m_hostGY;
     self->m_popupHeight = other->m_popupHeight;
 #if XVIRTUALKEYBOARD_ON
     /* 候选带几何/插件装载镜像/分页面板本地状态随拷贝迁移；落地契约
@@ -2060,6 +2282,11 @@ static void VXKeyboard_copy(XVirtualKeyboard* self, const XVirtualKeyboard* othe
     self->m_popped = false;
     self->m_target = NULL;
     self->m_host = NULL;
+    self->m_hostOverride = NULL; /* 悬浮锚属运行态借用，不跨对象迁移。 */
+    self->m_hostHint = NULL;
+    self->m_prevMouseGrab = NULL; /* 抓取者快照同属运行态借用，不迁移。 */
+    self->m_prevKbdGrab = NULL;
+    self->m_floating = false;
     self->m_targetConn = NULL;
     self->m_hostConn = NULL;
     /* 守护/重复定时器按拷贝结果重同步（init 兜底路径可能已把守护拉
@@ -2110,11 +2337,27 @@ static void VXKeyboard_move(XVirtualKeyboard* self, XVirtualKeyboard* other)
     other->m_target = NULL;
     self->m_host = other->m_host;
     other->m_host = NULL;
+    self->m_hostOverride = other->m_hostOverride; /* 悬浮态随宿主整体转移。 */
+    other->m_hostOverride = NULL;
+    self->m_hostHint = other->m_hostHint;
+    other->m_hostHint = NULL;
+    /* 抓取者快照不随移动转移（框架抓取态不在源对象上，快照即失效）：
+       双方清空，悬浮重弹时由 popup 重拍。 */
+    self->m_prevMouseGrab = NULL;
+    other->m_prevMouseGrab = NULL;
+    self->m_prevKbdGrab = NULL;
+    other->m_prevKbdGrab = NULL;
+    self->m_floating = other->m_floating;
+    other->m_floating = false;
     self->m_hostW = other->m_hostW;
     self->m_hostH = other->m_hostH;
+    self->m_hostGX = other->m_hostGX;
+    self->m_hostGY = other->m_hostGY;
     self->m_popupHeight = other->m_popupHeight;
     other->m_hostW = 0;
     other->m_hostH = 0;
+    other->m_hostGX = 0;
+    other->m_hostGY = 0;
     other->m_popupHeight = 0;
 #if XVIRTUALKEYBOARD_ON
     /* 候选带几何/插件装载镜像/分页状态随移动转移，源归零（构造默认：
@@ -2195,6 +2438,7 @@ void XVirtualKeyboard_init(XVirtualKeyboard* self, XWidget* parent, XWidgetFlags
     self->m_popovers = false;
     self->m_autoPopup = true;
     self->m_popped = false;
+    self->m_userCollapsed = false;
     self->m_selectedKey = XKEYBOARD_BUTTON_NONE;
     self->m_pressedKey = XKEYBOARD_BUTTON_NONE;
     self->m_pressArmed = false;
@@ -2468,8 +2712,8 @@ void XVirtualKeyboard_setTextArea(XVirtualKeyboard* self, XWidget* target)
     if (!self) return;
     if (target == self->m_target) return;
     if (target && !xkb_supportedTarget(target)) {
-        XPrintf("[XVirtualKeyboard] setTextArea: 不支持的目标类型（仅 XLineEdit/"
-                "XPlainTextEdit/XTextEdit），保持原绑定\n");
+        XPrintf("[XVirtualKeyboard] setTextArea: 不支持的目标类型（三编辑控件/"
+                "WA_InputMethodEnabled 控件之外），保持原绑定\n");
         return;
     }
     xkb_bindTargetDestroyed(self, target);
@@ -2616,27 +2860,81 @@ void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor)
 {
     XWidget* host;
     if (!self || !editor) return;
+    self->m_userCollapsed = false; /* 显式/自动弹出即清用户收起闩锁。 */
     XVirtualKeyboard_setTextArea(self, editor); /* 含类型校验与防悬垂连接。 */
     if (self->m_target != editor) return; /* setTextArea 拒绝（类型不支持）。 */
-    host = XWidget_topLevelWidget(editor);
-    if (!host) return;
-    xkb_bindHostDestroyed(self, host);
-    self->m_host = host;
-    /* 键盘挂宿主顶层窗口底部（XCompleter 弹层挂顶层窗口先例；子控件
-       浮层形态，无独立 OS 窗口、无应用模态登记）。 */
-    XWidget_setParent((XWidget*)self, host, 0);
-    xkb_reposition(self);
-    XWidget_show((XWidget*)self);
-    XWidget_raise((XWidget*)self);
-    self->m_popped = true;
 #if XVIRTUALKEYBOARD_ON
-    /* 落地契约连接（直呼 popup 不受抑制；setTextArea 已连则幂等）+
-       hints→布局映射（上下文生效 hints 已含控件 OR Settings 叠加）+
-       焦点采样同步（防直呼后下一 tick 被记为边沿）。 */
+    /* 首帧布局定版前置（缺陷⑤根修）：悬浮分支下方 flushBackingStore 是
+       唯一同步首帧——契约连接/hints→模式映射若滞留在 show+flush 之后，
+       首帧按残留模式（init TextLower/上一会话映射）上屏，随后的显式
+       setMode 只能救第二帧（QWERTY 闪帧）。前置后 flush 即按定版
+       m_mode 出帧；同目标重弹（setTextArea 同值早退不重跑）由本块补跑
+       幂等对（bindContextConns 幂等、applyFocusHints 同值 setMode 早
+       退），换绑路径 setTextArea 内已在同位序跑同一对函数，不引入新时
+       序面。m_prevFocus 采样前移等价：show/setParent/setWindowFlags 均
+       不改应用焦点（键盘 NoFocus 不夺焦）；键位矩形随后由 reposition
+       的 setGeometry→resizeEvent→rebuildLayout 按最终几何重算，前置无
+       几何失配。 */
     xkb_bindContextConns(self, true);
     xkb_applyFocusHints(self);
     self->m_prevFocus = XWidget_appFocusWidget();
 #endif
+    host = XWidget_topLevelWidget(editor);
+    if (!host) return;
+    /* 悬浮模式（setHostWindow 锚生效）：跳过挂父，保持独立顶层窗口形
+       态；锚为 Popup 型弹层容器时自动解析主窗口顶层为实际锚（几何因
+       此锚定主窗口底部全宽，与普通编辑框弹出一致），raise 压过日历弹
+       层——时序上键盘 popup 晚于弹层最近一次 show（弹层 show 即 raise），
+       再显式 raise 一次兜底。 */
+    self->m_floating = (self->m_hostOverride != NULL);
+    if (self->m_floating) {
+        XWidget* anchor = xkb_resolveFloatingHost(self, host);
+        if (!anchor) anchor = host;
+        xkb_bindHostDestroyed(self, anchor); /* 覆盖宿主 destroyed 防悬垂。 */
+        self->m_host = anchor;
+        if (XWidget_parentWidget((XWidget*)self))
+            XWidget_setParent((XWidget*)self, NULL, 0); /* 归位顶层形态。 */
+        /* 窗口类型=Popup（XComboBox 弹层同款）：Popup/ToolTip 等瞬态类
+           型永不装饰（XWindowDecoration_activeFor 类型分支）——悬浮键
+           盘外观因此与内嵌形态完全一致（无 CSD 标题栏条带）。 */
+        XWidget_setWindowFlags((XWidget*)self,
+                               (XWidgetFlags)XWindowType_Popup);
+    } else {
+        xkb_bindHostDestroyed(self, host);
+        self->m_host = host;
+        /* 键盘挂宿主顶层窗口底部（XCompleter 弹层挂顶层窗口先例；子控件
+           浮层形态，无独立 OS 窗口、无应用模态登记）。 */
+        XWidget_setParent((XWidget*)self, host, 0);
+    }
+    xkb_reposition(self);
+    XWidget_show((XWidget*)self);
+    XWidget_raise((XWidget*)self);
+    if (self->m_floating)
+        XWidget_flushBackingStore((XWidget*)self, NULL);
+    self->m_popped = true;
+    if (self->m_floating) {
+        /* 抢占弹层模态双抓取：日历弹层 show 即 grabMouse/grabKeyboard
+           （跨顶层抓取改道 XWidget.c 派发入口）+ 1ms 后原生 SetCapture
+           （win32 把全部鼠标消息收入弹层 HWND）——悬浮面板不夺取则键
+           面点击被改道/吞掉。接管后键盘自身点击经本地抓取分支直达，
+           物理按键经守护抓取 topLevel 失配回退焦点链照常到编辑框。
+           closePopup/hideEvent 成对释放。 */
+        /* 抢占前快照框架双抓取者（界外收层时归还，Qt closePopup 的
+           previous-grabber 语义；抓取者仍是自己=未收层的重弹，保留旧
+           快照不覆盖——closePopup 只按最早会话归还一次）。 */
+        if (XWidget_mouseGrabber() != (XWidget*)self)
+            self->m_prevMouseGrab = XWidget_mouseGrabber();
+        if (XWidget_keyboardGrabber() != (XWidget*)self)
+            self->m_prevKbdGrab = XWidget_keyboardGrabber();
+        XWidget_grabMouse((XWidget*)self);
+        XWidget_grabKeyboard((XWidget*)self);
+#if XWINDOW_ON
+        {
+            XWindow* handle = XWidget_windowHandle((XWidget*)self);
+            if (handle) XWindow_setMouseGrabEnabled(handle, true);
+        }
+#endif
+    }
     /* 键盘 NoFocus（XWidget 基类默认）不抢焦点：焦点保持/交还 editor，
        物理键盘直入编辑框不受影响。 */
     xkb_startGuard(self);
@@ -2645,6 +2943,47 @@ void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor)
 void XVirtualKeyboard_closePopup(XVirtualKeyboard* self)
 {
     if (!self) return;
+    /* 用户收起闩锁置位：守护轮询不再原地自动重弹（焦点未迁移时），
+     * 直到用户再次按下编辑框（notifyPress 清锁即弹）。 */
+    self->m_userCollapsed = true;
+    /* 悬浮面板收层先释放双抓取与原生鼠标捕获再隐藏（popup 悬浮分支
+       夺取的弹层模态抓取成对归还；identity 判据不误放他者抓取），随后
+       隐藏、保持顶层归属（无需归还主窗口，下次 popup 按锚重挂）并清
+       空悬浮锚（回内嵌模式）。 */
+    if (self->m_floating) {
+        XWidget_releaseMouse((XWidget*)self);
+        XWidget_releaseKeyboard((XWidget*)self);
+#if XWINDOW_ON
+        {
+            XWindow* handle = XWidget_windowHandle((XWidget*)self);
+            if (handle) XWindow_setMouseGrabEnabled(handle, false);
+        }
+#endif
+        /* 归还抢占前抓取者（Qt closePopup 的 previous-grabber 语义；
+           XMenu 嵌套弹层交接同款）：框架双抓取+原生鼠标捕获成对还原
+           ——悬浮分支从未夺取原生键盘抓取（popup 侧仅 setMouseGrab
+           Enabled），只还原鼠标侧。快照=自己（异常态）或已隐藏不还
+           原（grabMouse 对不可见控件本就 no-op，isVisible 守卫为
+           windowHandle 取用兜底），防把抓取交给不可见控件。 */
+        if (self->m_prevMouseGrab &&
+            self->m_prevMouseGrab != (XWidget*)self &&
+            XWidget_isVisible(self->m_prevMouseGrab)) {
+            XWidget_grabMouse(self->m_prevMouseGrab);
+#if XWINDOW_ON
+            {
+                XWindow* prevHandle =
+                    XWidget_windowHandle(self->m_prevMouseGrab);
+                if (prevHandle) XWindow_setMouseGrabEnabled(prevHandle, true);
+            }
+#endif
+        }
+        if (self->m_prevKbdGrab &&
+            self->m_prevKbdGrab != (XWidget*)self &&
+            XWidget_isVisible(self->m_prevKbdGrab))
+            XWidget_grabKeyboard(self->m_prevKbdGrab);
+        self->m_prevMouseGrab = NULL;
+        self->m_prevKbdGrab = NULL;
+    }
     /* 无条件隐藏（不以 isVisible 为前置）：pre-show 收层（无头钩子在
        宿主 show 前调本接口）effectiveVisible 恒假，带「isVisible 才
        隐藏」护栏会跳过隐藏——弹层 show 位残留，宿主 show 后传播把整
@@ -2653,6 +2992,9 @@ void XVirtualKeyboard_closePopup(XVirtualKeyboard* self)
        不变、无 SHOW/HIDE 事件）。 */
     XWidget_setVisible((XWidget*)self, false);
     self->m_popped = false;
+    self->m_floating = false;
+    self->m_hostOverride = NULL; /* 收层自动清悬浮锚（回内嵌挂父模式）。 */
+    self->m_hostHint = NULL;     /* 锚解析提示同周期失效。 */
 #if XVIRTUALKEYBOARD_ON
     /* 收层弃组串草稿（含关闭键路径）：engine reset→插件 reset
        Composition（弃草稿链，不翻转中文态）+ 清面板本地页；断开落地
@@ -2686,6 +3028,41 @@ bool XVirtualKeyboard_popupVisible(const XVirtualKeyboard* self)
     return XWidget_isVisible((XWidget*)self);
 }
 
+void XVirtualKeyboard_setHostWindow(XVirtualKeyboard* self, XWidget* host)
+{
+    XWidget* focus;
+    if (!self) return;
+    /* 仅存锚（借用）；悬浮形态在随后 popup() 生效（m_floating 置位）。
+       已弹出期间改锚不重定位（先 closePopup 再设锚重弹；收层自动清锚
+       契约使残留锚不越过一次弹层生命周期）。 */
+    self->m_hostOverride = host;
+    self->m_hostHint = NULL;
+    if (host) {
+        /* 锚为 Popup 型弹层容器时主窗口反向引用不可达（widget 父链/
+           transient parent 均空，应用顶层表在 XGuiApplication 单根应用
+           下不可用），此刻补拍焦点顶层快照作解析提示（m_hostHint）：
+           契约时序=布锚先于落焦（XCalendarWidget beginYearEdit 先布锚
+           后 setFocus），快照即弹层打开前用户所在主窗口顶层（transient
+           parent 语义）；焦点为空/已在锚内/Popup 型时无快照，解析回落
+           m_host/应用顶层表/锚自身。 */
+        focus = XWidget_appFocusWidget();
+        if (focus && !xkb_insidePanel(self, focus)) {
+            XWidget* top = XWidget_isWindow(focus)
+                               ? (XWidget*)focus
+                               : XWidget_topLevelWidget(focus);
+            if (top != host && XWidget_isWindow(top) &&
+                !xkb_isPopupTypeWindow(top))
+                self->m_hostHint = top;
+        }
+    }
+    if (!host) self->m_floating = false;
+}
+
+XWidget* XVirtualKeyboard_hostWindow(const XVirtualKeyboard* self)
+{
+    return self ? self->m_hostOverride : NULL;
+}
+
 void XVirtualKeyboard_setAutoPopup(XVirtualKeyboard* self, bool on)
 {
     if (!self) return;
@@ -2714,9 +3091,22 @@ void XVirtualKeyboard_notifyPress(XVirtualKeyboard* self, XWidget* hit)
     bool accept;
     if (!self || !self->m_autoPopup) return; /* autoPopup 关=应用全权接管。 */
     if (xkb_insidePanel(self, hit)) return;  /* 键盘自身按键不受影响。 */
-    /* accept 判据与守护 tick ②全等（supportedTarget&&enabled&&WA14&&
-       总开关）：同框 opt-out 编辑框按下不弹（Qt inputMethodAccepted
-       口径），已弹则随非编辑分支幂等收层。 */
+    /* 穿透归属上溯（与按下派发循环 XWidget.c:1529-1547 同口径：
+       XWidget_attrTest(TransparentForMouseEvents) 跳过、沿父链上抛）。
+       childAt 不跳
+       穿透控件，点日期时间字段编辑区时 hit=内嵌行编辑（F3-② 置穿透，
+       XDateTimeEdit.c:3014；其 hints=ImhNone→误弹 QWERTY、合成数字键
+       直插显示文本绕过分段消化）。收敛到实际接收按下事件的祖先=字段壳
+       （WA14+DigitsOnly），键盘目标与事件接收者对齐；hit 为形参本地量，
+       调用方汇聚点（XWidget.c:1520）不受影响。 */
+    while (hit &&
+           XWidget_testAttribute(hit,
+                                 XWidgetAttribute_TransparentForMouseEvents))
+        hit = XWidget_parentWidget(hit);
+    /* accept 判据与守护 tick ②全等（supportedTarget=vtable 快路径 ∪
+       WA14 放行回退 &&enabled&&总开关）：同框 opt-out 编辑框按下不弹
+       （Qt inputMethodAccepted 口径），已弹则随非编辑分支幂等收层；
+       WA14 放行使 XDateEdit/XDateTimeEdit 字段壳按下即弹面板不闪退。 */
     accept = hit && xkb_supportedTarget(hit) &&
              XWidget_isEnabled(hit) &&
              XWidget_testAttribute(hit, XWidgetAttribute_InputMethodEnabled);

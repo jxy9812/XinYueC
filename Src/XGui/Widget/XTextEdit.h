@@ -540,12 +540,29 @@ void XTextEdit_setCenterOnScroll(XTextEdit* self, bool enabled);
  * @return 条件成立返回 true，否则返回 false。
  */
 bool XTextEdit_centerOnScroll(const XTextEdit* self);
-/** @brief X文本Editset额外Selections（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param selections 选择集指针。
- * @return 无返回值。
+/**
+ * @brief      设置额外选择集（对标 QTextEdit::setExtraSelections 的平铺承载）。
+ * @details    与 XPlainTextEdit_setExtraSelections 同一套 (行, 列, 长度,
+ *             颜色) 承载，委托内嵌编辑器换算为文档绝对区间写入（拷贝
+ *             语义）并请求重绘；高亮由控制器 XTextControl_draw 渲染。
+ * @param      self 目标控件指针；NULL 无操作。
+ * @param      selections 条目数组；NULL 视为清空。
+ * @param      count 条目数；负值按 0 处理。
+ * @return     无返回值。
  */
-void XTextEdit_setExtraSelections(XTextEdit* self, void* selections);
+void XTextEdit_setExtraSelections(XTextEdit* self,
+                                  const XPlainTextEditExtraSelection* selections,
+                                  int count);
+
+/**
+ * @brief      读取额外选择集（对标 QTextEdit::extraSelections 的平铺承载）。
+ * @details    读内嵌编辑器额外选择集并换算为 (行, 列, 长度) 承载输出。
+ * @param      self 目标控件指针；NULL 时返回 0 且 *selections 置 NULL。
+ * @param      selections 输出借用数组首地址；可为 NULL（只要条目数）。
+ * @return     条目数（无额外选择时为 0）。
+ */
+int XTextEdit_extraSelections(const XTextEdit* self,
+                              const XPlainTextEditExtraSelection** selections);
 /** @brief X文本Editset背景可见（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param visible bool：true 可见。
@@ -557,17 +574,15 @@ void XTextEdit_setBackgroundVisible(XTextEdit* self, bool visible);
  * @return 条件成立返回 true，否则返回 false。
  */
 bool XTextEdit_backgroundVisible(const XTextEdit* self);
-/** @brief X文本Editset文本光标2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param cursor 光标指针。
- * @return 无返回值。
+/**
+ * @brief      返回文本光标（对标 QTextEdit::textCursor 的平铺行列承载）。
+ * @details    内嵌编辑器光标绝对位置换算为 XPoint 承载：x = 行号（0 起），
+ *             y = 列（行内 UTF-8 字节偏移）；与 setTextCursor(line, col)、
+ *             textCursorLine/textCursorColumn 同源。
+ * @param      self 目标控件指针；NULL 时返回 {0,0}。
+ * @return     光标位置承载（x = 行，y = 列）。
  */
-void XTextEdit_setTextCursor_2(XTextEdit* self, void* cursor);
-/** @brief X文本Edittext光标（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对象指针；无效时返回 NULL。
- */
-void* XTextEdit_textCursor(const XTextEdit* self);
+XPoint XTextEdit_textCursor(const XTextEdit* self);
 /** @brief X文本Editset光标宽（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param width 宽（像素）。
@@ -626,9 +641,9 @@ XString* XTextEdit_anchorAt(const XTextEdit* self, const XPoint* pos);
 /** @brief 设置光标位置（对标 QTextEdit::setTextCursor 的平铺行列简化）。
  * @details 委托内嵌编辑器 XPlainTextEdit_setTextCursor：行列越界时
  *          钳位到有效范围（行 [0, 行数-1]、列 [0, 该行字节数]），并
- *          请求重绘。既有 setTextCursor_2/textCursor（void*
- *          QTextCursor 承载版）为预留桩；本组平铺行列接口与
- *          XPlainTextEdit 同名接口语义一致。
+ *          请求重绘。textCursor()/textCursorLine/textCursorColumn 为
+ *          同源查询接口；本组平铺行列接口与 XPlainTextEdit 同名接口
+ *          语义一致。
  * @param self 目标控件指针；NULL 或内嵌编辑器缺失时无操作。
  * @param line 目标行（0 起）。
  * @param col 目标列（行内 UTF-8 字节偏移）。
@@ -833,18 +848,30 @@ const char* XTextEdit_markdown(const XTextEdit* self);
  */
 void XTextEdit_setPlainText(XTextEdit* self, const char* text);
 
-/** @brief X文本Editprint（对标 Qt 同名接口）。
+/**
+ * @brief      X文本Editprint（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param printer 打印机指针。
  * @return 无返回值。
+ * @note       子集边界：本库未建 QPagedPaintDevice/分页打印基础设施，
+ *             当前为空承载（接口存在性对齐 Qt QTextEdit::print）。
  */
 void XTextEdit_print(XTextEdit* self, void* printer);
-/** @brief X文本EditcreateStandardContext菜单（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对象指针；无效时返回 NULL。
+
+#if XMENU_ON
+/**
+ * @brief      创建标准右键菜单（对标 QTextEdit::createStandardContextMenu）。
+ * @details    委托内嵌编辑器（动作集合与灰化条件读取编辑器控制器状态；
+ *             只读时仅提供复制/全选）。弹出（popup）与 DeleteOnClose 由
+ *             调用方负责（参照 contextMenuEvent 用法）。
+ * @param      self 目标控件指针；可为 NULL（返回 NULL）。
+ * @return     新建的 XMenu*；所有权转移给调用方（用 XMenu_delete_base
+ *             释放）；创建失败返回 NULL。
  */
-void* XTextEdit_createStandardContextMenu(XTextEdit* self);
-/** @brief X文本Editset文本交互Flags（对标 Qt 同名接口）。
+XMenu* XTextEdit_createStandardContextMenu(XTextEdit* self);
+#endif /* XMENU_ON */
+/**
+ * @brief      X文本Editset文本交互Flags（对标 Qt 同名接口）。
  * @param self 目标控件指针。
  * @param flags 窗口标志位组合。
  * @return 无返回值。
@@ -866,23 +893,17 @@ void XTextEdit_setOverwriteMode(XTextEdit* self, bool overwrite);
  * @return 条件成立返回 true，否则返回 false。
  */
 bool XTextEdit_overwriteMode(const XTextEdit* self);
-/** @brief X文本Editcursor矩形width（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回对应数值；无效时返回 0 或 -1（视接口语义）。
+/**
+ * @brief      移动光标（对标 QTextEdit::moveCursor）。
+ * @details    operation 对标 QTextCursor::MoveOperation 数值
+ *             （XTextControlMoveOperation），mode 对标 MoveMode；委托
+ *             内嵌编辑器在控制器内完成移动与选区扩展。
+ * @param      self 目标控件指针；NULL 无操作。
+ * @param      operation 移动操作（XTextControlMoveOperation）。
+ * @param      mode 移动模式（XTextControlMoveMode）。
+ * @return     无返回值。
  */
-int XTextEdit_cursorRect_width(const XTextEdit* self);
-/** @brief X文本Editmove光标2（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param operation int 参数。
- * @param mode bool 模式开关。
- * @return 无返回值。
- */
-void XTextEdit_moveCursor_2(XTextEdit* self, int operation, int mode);
-/** @brief X文本EditcursorCan粘贴（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 条件成立返回 true，否则返回 false。
- */
-bool XTextEdit_cursorCanPaste(const XTextEdit* self);
+void XTextEdit_moveCursor(XTextEdit* self, int operation, int mode);
 #endif /* XTEXTEDIT_H */
 
 #endif /* XTEXTEDIT_ON */

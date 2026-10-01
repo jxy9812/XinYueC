@@ -12,7 +12,8 @@
  *               存在裁剪差异处按头文件口径断言并在注释中标注差异；无依
  *               据的写注释不硬断言防误报）；
  *             - 信号发射与状态迁移（textChanged/textEdited/inputRejected/
- *               valueChanged/dateTimeChanged 三信号/userDateChanged/
+ *               valueChanged/dateTimeChanged 三信号/user 变体信号（子类
+ *               userDateChanged/userTimeChanged，全变更转发口径）/
  *               currentIndexChanged/popupShown 等经 XObject_event_base 直
  *               发合成键盘/滚轮事件或槽调用触发，与真实输入同路径）；
  *             - 边界（空串/NULL/0/极大值/重复 set/越界钳位/未 show 直接
@@ -62,6 +63,18 @@
 #include "XDateTimeEdit.h"
 #include "XDateTime.h"
 #include "XCalendarWidget.h" /* 日历弹层承载 API（calendarWidget 族断言） */
+#endif
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XDATEEDIT_ON
+#include "XDateEdit.h" /* userDateChanged 归属子类（对标 QDateEdit）。 */
+#include "XImage.h"    /* 缺陷 D：XWidget_grab 离屏渲染像素扫描。 */
+#if XPALETTE_ON
+#include "XPalette.h"  /* 缺陷 D：Highlight 角色取色（段高亮像素断言）。 */
+#endif
+#endif
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON
+#include "XTimeEdit.h" /* userTimeChanged 归属子类（对标 QTimeEdit）。 */
 #endif
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
@@ -264,8 +277,10 @@ typedef struct DtSigRec
     int dateTimeChanged;    /**< dateTimeChanged 次数。 */
     int dateChanged;        /**< dateChanged 次数（日期部分实际变化）。 */
     int timeChanged;        /**< timeChanged 次数（时间部分实际变化）。 */
-    int userDateChanged;    /**< userDateChanged 次数（仅用户步进路径）。 */
-    int userTimeChanged;    /**< userTimeChanged 次数（仅用户步进路径）。 */
+    int userDateChanged;    /**< userDateChanged 次数（XDateEdit 子类信号，
+                                 构造连接 dateChanged 全变更转发）。 */
+    int userTimeChanged;    /**< userTimeChanged 次数（XTimeEdit 子类信号，
+                                 构造连接 timeChanged 全变更转发）。 */
 } DtSigRec;
 
 static DtSigRec g_dtSig;
@@ -325,15 +340,33 @@ static void input_dtConnect(XDateTimeEdit* dt)
     XObject_connect_1(obj, (size_t)XDateTimeEdit_timeChanged_signal(NULL,
                                                                     NULL),
                       obj, input_dtTimeChangedSlot, XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XDateTimeEdit_userDateChanged_signal(
-                                NULL, NULL),
+    /* user 变体信号按 Qt 6.8 归属子类（QDateTimeEdit 基类无此信号）：
+     * 分别经 input_deConnect/input_teConnect 连接 XDateEdit/XTimeEdit。 */
+}
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XDATEEDIT_ON
+/** @brief XDateEdit user 信号连接（userDateChanged 计数入 g_dtSig）。 */
+static void input_deConnect(XDateEdit* de)
+{
+    XObject* obj = (XObject*)de;
+    XObject_connect_1(obj, (size_t)XDateEdit_userDateChanged_signal(NULL,
+                                                                    NULL),
                       obj, input_dtUserDateChangedSlot,
                       XConnectionType_Direct);
-    XObject_connect_1(obj, (size_t)XDateTimeEdit_userTimeChanged_signal(
-                                NULL, NULL),
+}
+#endif /* XDATEEDIT_ON */
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON
+/** @brief XTimeEdit user 信号连接（userTimeChanged 计数入 g_dtSig）。 */
+static void input_teConnect(XTimeEdit* te)
+{
+    XObject* obj = (XObject*)te;
+    XObject_connect_1(obj, (size_t)XTimeEdit_userTimeChanged_signal(NULL,
+                                                                    NULL),
                       obj, input_dtUserTimeChangedSlot,
                       XConnectionType_Direct);
 }
+#endif /* XTIMEEDIT_ON */
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
@@ -715,10 +748,15 @@ int xapi_input_run(void)
         XLineEdit_setReadOnly(&le, true);
         XAPI_EXPECT(XLineEdit_isReadOnly(&le),
                     "LineEdit setReadOnly(true) 往返");
+        /* 断言口径=Qt 6.8.3：insert 直通控制器、不设 readOnly 门禁
+         * （qlineedit.cpp:1279-1284 → qwidgetlinecontrol.cpp:227-233
+         * 均无 m_readOnly 检查；只读只拦键盘 processKeyEvent/IME 路
+         * 径，XLineEdit_insert 同口径注释），故只读下 insert 照常
+         * 插入并按用户编辑发射 textChanged（旧行为对齐改动同步）。 */
         XLineEdit_insert(&le, "zz");
-        XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_text(&le)), "keep") == 0 &&
-                    g_leSig.textChanged == 0,
-                    "LineEdit readOnly 拒绝 insert 不发 textChanged");
+        XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_text(&le)), "keepzz") == 0 &&
+                    g_leSig.textChanged == 1,
+                    "LineEdit readOnly insert 直通插入 keepzz（Qt insert 无只读门禁）");
         XLineEdit_setReadOnly(&le, false);
         XAPI_EXPECT(!XLineEdit_isReadOnly(&le),
                     "LineEdit readOnly 恢复可编辑");
@@ -741,9 +779,14 @@ int xapi_input_run(void)
                 XLineEdit_clear(&le);
                 XAPI_EXPECT(XCompleter_widget(comp) == (XWidget*)&le,
                             "setCompleter 安装时回填 widget 借用");
+                /* 大写按平台键值归一契约携带 Shift 修饰位（xgui_window_demo
+                 * 键入段同款）：无 Shift 的字母键经 xlc_keyToText 落小写
+                 * 'o'，与 Qt 实键语义一致——本段断言大写 'O' 前缀（补全
+                 * 默认 CaseSensitive，对齐 QCompleter 默认）。 */
                 kev = XKeyEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                           XEVENT_TYPE_KEY_PRESS,
-                                          (int)XKey_O, 0);
+                                          (int)XKey_O,
+                                          (int)XKeyboardModifier_ShiftModifier);
                 XAPI_EXPECT(kev != NULL, "补全键事件构造成功");
                 if (kev) {
                     XObject_event_base((XObject*)&le, (XEvent*)kev);
@@ -1398,9 +1441,9 @@ int xapi_input_run(void)
         XAPI_EXPECT(g_dtSig.dateTimeChanged == 1 && g_dtSig.dateChanged == 1 &&
                     g_dtSig.timeChanged == 1,
                     "DateTimeEdit setDateTime 三信号齐发（dateTime 恒发，日期/时间部分按变化发射）");
-        XAPI_EXPECT(g_dtSig.userDateChanged == 0 &&
-                    g_dtSig.userTimeChanged == 0,
-                    "DateTimeEdit 程序化 setDateTime 不发用户变体信号（user 族仅步进路径）");
+        /* user 变体信号已按 Qt 6.8 归属子类：基类对象不声明也不发射
+         * userDateChanged/userTimeChanged（QDateTimeEdit 亦无），其
+         * 全变更转发语义在下方 XDateEdit/XTimeEdit 子类段验证。 */
 
         /* ---- 范围钳位（越界值收敛到边界） ---- */
         dtv = XDateTime_create_datetime(XDate_create_date(1800, 1, 1),
@@ -1569,9 +1612,6 @@ int xapi_input_run(void)
         got = XDateTimeEdit_dateTime(&dt);
         XAPI_EXPECT(XDate_month(&got->m_date) == 7,
                     "DateTimeEdit Up 键步进月段 +1（2024-06→07）");
-        XAPI_EXPECT(g_dtSig.userDateChanged == 1 &&
-                    g_dtSig.userTimeChanged == 0,
-                    "DateTimeEdit 步进改日期部分发射 userDateChanged");
         XAPI_EXPECT(g_dtSig.dateTimeChanged == 1 && g_dtSig.dateChanged == 1 &&
                     g_dtSig.timeChanged == 0,
                     "DateTimeEdit 步进按部分变化发射 dateChanged 不发 timeChanged");
@@ -1644,6 +1684,356 @@ int xapi_input_run(void)
         XDateTimeEdit_deinit_base(&dt);
     }
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XDATEEDIT_ON
+
+    /* ================================================================
+     * 4a. XDateEdit：QDateEdit 便捷子类（构造口径 + userDateChanged
+     *     全变更转发；对标 Qt 6.8 QDateEdit→QDateTimeEdit）。
+     * ================================================================ */
+    {
+        XDateEdit de;
+        XDate d;
+        XTime t;
+
+        XDateEdit_init(&de, NULL, 0);
+        input_dtConnect(&de.m_base);
+        input_deConnect(&de);
+        input_dtReset();
+
+        /* ---- 构造默认值（QDateEdit(QWidget*) 口径） ---- */
+        XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&de.m_base),
+                           "yyyy/M/d") == 0,
+                    "DateEdit 默认格式=yyyy/M/d（zh_CN 短日期格式口径）");
+        XAPI_EXPECT(XDateTimeEdit_sections(&de.m_base) ==
+                    ((int)XDateTimeEditSection_YearSection |
+                     (int)XDateTimeEditSection_MonthSection |
+                     (int)XDateTimeEditSection_DaySection),
+                    "DateEdit 默认分段掩码=年|月|日（parserType=Date 滤段时间段）");
+        XAPI_EXPECT(XDateTimeEdit_sectionCount(&de.m_base) == 3,
+                    "DateEdit sectionCount=3");
+        XAPI_EXPECT(XDateTimeEdit_currentSection(&de.m_base) ==
+                    (int)XDateTimeEditSection_YearSection,
+                    "DateEdit 默认当前分段=YearSection");
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2000 && XDate_month(&d) == 1 &&
+                    XDate_day(&d) == 1,
+                    "DateEdit 初始值=2000-01-01（QDATETIMEEDIT_DATE_INITIAL 口径）");
+        t = XDateTimeEdit_time(&de.m_base);
+        XAPI_EXPECT(XTime_hour(&t) == 0 && XTime_minute(&t) == 0 &&
+                    XTime_second(&t) == 0 && XTime_msec(&t) == 0,
+                    "DateEdit 初始时间部分=00:00:00.000（startOfDay 口径）");
+        d = XDateTimeEdit_minimumDate(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 1752 && XDate_month(&d) == 9 &&
+                    XDate_day(&d) == 14,
+                    "DateEdit minimumDate=1752-09-14（COMPAT_DATE_MIN 口径）");
+        d = XDateTimeEdit_maximumDate(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 9999 && XDate_month(&d) == 12 &&
+                    XDate_day(&d) == 31,
+                    "DateEdit maximumDate=9999-12-31（DATE_MAX 口径）");
+
+        /* ---- 程序性 setDate 触发 userDateChanged（Qt 全变更口径） ---- */
+        d = XDate_create_date(2020, 3, 4);
+        XDateTimeEdit_setDate(&de.m_base, &d);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2020,
+                    "DateEdit setDate 往返");
+        XAPI_EXPECT(g_dtSig.userDateChanged == 1 && g_dtSig.dateChanged == 1,
+                    "DateEdit 程序性 setDate 触发 userDateChanged（dateChanged 全变更转发）");
+        XAPI_EXPECT(g_dtSig.userTimeChanged == 0 && g_dtSig.timeChanged == 0,
+                    "DateEdit 程序性 setDate 不触发 userTimeChanged/timeChanged");
+
+        /* ---- 步进同样转发（方向键路径） ---- */
+        input_dtReset();
+        XDateTimeEdit_setCurrentSectionIndex(&de.m_base, 0);
+        input_injectKey((XWidget*)&de, XKey_Up, 0);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2021,
+                    "DateEdit 年段 Up 步进 +1（2020→2021）");
+        XAPI_EXPECT(g_dtSig.userDateChanged == 1 && g_dtSig.dateChanged == 1,
+                    "DateEdit 步进改日期部分转发 userDateChanged");
+
+        /* ---- parserType 段集约束（setDisplayFormat 混段拒绝） ---- */
+        XDateTimeEdit_setDisplayFormat(&de.m_base, "HH:mm:ss");
+        XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&de.m_base),
+                           "yyyy/M/d") == 0,
+                    "DateEdit 纯时间格式被拒（parserType=Date，原格式保持）");
+        XDateTimeEdit_setDisplayFormat(&de.m_base, "yyyy-MM-dd HH:mm");
+        XAPI_EXPECT((XDateTimeEdit_sections(&de.m_base) &
+                     (int)XDateTimeEditSection_HourSection) == 0,
+                    "DateEdit 混入时间记号被剥离（段集仅日期侧）");
+        XDateTimeEdit_setDisplayFormat(&de.m_base, "yyyy/M/d");
+
+        /* ---- 年段键入越界钳制（验收 e：走到 1752 下界被钳；真实
+         *      keyPressEvent 键入路径经注入直发，与真实键盘同路） ---- */
+        input_dtReset();
+        XDateTimeEdit_setCurrentSectionIndex(&de.m_base, 0);
+        input_injectKey((XWidget*)&de, XKey_1, 0);
+        input_injectKey((XWidget*)&de, XKey_2, 0);
+        input_injectKey((XWidget*)&de, XKey_3, 0);
+        input_injectKey((XWidget*)&de, XKey_4, 0);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 1752 && XDate_month(&d) == 9 &&
+                    XDate_day(&d) == 14,
+                    "DateEdit 年段键入 1234 被钳到 1752-09-14（COMPAT_DATE_MIN 下界）");
+        XAPI_EXPECT(g_dtSig.userDateChanged == 1 && g_dtSig.dateChanged == 1,
+                    "DateEdit 键入钳位提交同样转发 userDateChanged（钳到下界即值变化）");
+        XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&de.m_base),
+                           "yyyy/M/d") == 0,
+                    "DateEdit 键入钳位后格式不变（yyyy/M/d）");
+
+        /* ================================================================
+         * 4a-x. 输入链路六缺陷回归（2026-10-01；A 于 2026-10-01 随缺陷⑥
+         *  定版改为「壳恢复 WA14+DigitsOnly」，覆盖旧删除口径）：
+         *  A=壳 WA14+DigitsOnly 定版（字段直点/守护均弹 Digits 数字盘）、
+         *  D=段高亮/光标、E=readOnly 门禁、F=弹层随值同步（无头门禁路径）。
+         * ================================================================ */
+
+        /* ---- 缺陷 A 定版（缺陷⑥ 2026-10-01 复盘，覆盖本块旧「壳不置
+         *      WA14/守护不弹」口径——该口径属过杀方案，使点字段也不弹
+         *      键盘）：壳恢复 WA_InputMethodEnabled+ImhDigitsOnly
+         *      （XDateTimeEdit_init 双行）；字段直点经 notifyPress 穿透
+         *      归属上溯收敛到壳→xkb_supportedTarget 的 WA14 放行回退
+         *      过判→Digits 数字盘。守护 tick 同判据（supportedTarget &&
+         *      enabled && WA14 && 总开关），壳获焦即弹；注入同 7.x-5
+         *      模式（合成 XTimerEvent 直派）。 ---- */
+        XAPI_EXPECT(XWidget_testAttribute(
+                        (XWidget*)&de.m_base,
+                        XWidgetAttribute_InputMethodEnabled),
+                    "缺陷A定版：DateEdit 壳置位 WA_InputMethodEnabled（14）");
+        XAPI_EXPECT(XWidget_inputMethodHints((XWidget*)&de.m_base) ==
+                        XInputMethodHint_DigitsOnly,
+                    "缺陷A定版：DateEdit 壳 ImHints==DigitsOnly"
+                    "（缺陷⑥定版 DigitsOnly→Digits 数字盘）");
+#if XWIDGET_ON && XKEYBOARD_ON
+        {
+            XVirtualKeyboard* kbA = XVirtualKeyboard_create(NULL, 0);
+            XTimerEvent teA;
+            XVirtualKeyboard_setGeometry(kbA, 0, 0, 400, 160);
+            XWidget_setFocus((XWidget*)&de.m_base);
+            if (kbA->m_guardTimer != XTIMER_INVALID_ID) {
+                memset(&teA, 0, sizeof(teA));
+                XEvent_init(&teA.m_base, XEVENT_TYPE_TIMER);
+                teA.timerId = kbA->m_guardTimer;
+                XObject_event_base((XObject*)kbA, (XEvent*)&teA);
+                /* WA14 放行使壳获焦的守护边沿走 accept→popup（键面随
+                 * 壳 hints 切 Digits 12 键布局=字段直点定版布局）。断言
+                 * 口径=弹层状态+目标绑定：非悬浮形态键盘挂宿主顶层下
+                 * （popup 内 setParent），无头环境宿主（栈上 de）从未
+                 * show，effectiveVisible 走父链恒假（XVirtualKeyboard
+                 * guardTick @note :1792-1796 同口径承认该无头语义）；
+                 * 真实已 show 宿主下 popupVisible 即真（Qt InputPanel
+                 * 为独立顶层窗，XGui 内嵌形态以宿主链承载可见性）。 */
+                XAPI_EXPECT(kbA->m_popped &&
+                            XVirtualKeyboard_textArea(kbA) ==
+                                (XWidget*)&de.m_base,
+                            "缺陷A定版：壳获焦+守护 tick 弹屏幕键盘"
+                            "（WA14 放行回退过判）");
+                XAPI_EXPECT(XVirtualKeyboard_mode(kbA) ==
+                                XKeyboardMode_Digits,
+                            "缺陷A定版：字段壳目标键面布局=Digits（12 键）");
+                XVirtualKeyboard_closePopup(kbA);
+            }
+            XVirtualKeyboard_setParent(kbA, NULL, 0);
+            XVirtualKeyboard_delete_base(kbA);
+        }
+#endif /* XKEYBOARD_ON */
+
+        /* ---- 缺陷 E：readOnly 门禁——setReadOnly(true) 后 Up 步进/
+         *      滚轮/数字键入/日历选日均不改值；解除后恢复。 ---- */
+        input_dtReset();
+        d = XDate_create_date(2020, 3, 4);
+        XDateTimeEdit_setDate(&de.m_base, &d);
+        XAbstractSpinBox_setReadOnly((XAbstractSpinBox*)&de, true);
+        XAPI_EXPECT(XAbstractSpinBox_isReadOnly((XAbstractSpinBox*)&de),
+                    "缺陷E：setReadOnly(true) 生效");
+        XDateTimeEdit_setCurrentSectionIndex(&de.m_base, 0);
+        input_injectKey((XWidget*)&de, XKey_Up, 0);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2020,
+                    "缺陷E：readOnly 后 Up 步进不改值");
+        input_injectWheel((XWidget*)&de, 120);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2020,
+                    "缺陷E：readOnly 后滚轮不改值（同 stepBy 路径）");
+        input_injectKey((XWidget*)&de, XKey_5, 0);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2020 && XDate_month(&d) == 3 &&
+                    XDate_day(&d) == 4,
+                    "缺陷E：readOnly 后数字键入不改值");
+        {
+            /* 日历选日回写门禁：readOnly 时弹层可开可浏览，选择不落值
+             * （xdt_calendarSelectionSlot 直返；对标 Qt calendarPopup
+             * readOnly 口径）。 */
+            XCalendarWidget* calRo =
+                XDateTimeEdit_calendarWidget(&de.m_base);
+            XDate other;
+            if (calRo) {
+                other = XDate_create_date(2021, 6, 15);
+                XCalendarWidget_setSelectedDate(calRo, &other);
+            }
+            d = XDateTimeEdit_date(&de.m_base);
+            XAPI_EXPECT(XDate_year(&d) == 2020 && XDate_month(&d) == 3 &&
+                        XDate_day(&d) == 4,
+                        "缺陷E：readOnly 后日历选日不落值");
+        }
+        XAbstractSpinBox_setReadOnly((XAbstractSpinBox*)&de, false);
+        XDateTimeEdit_setCurrentSectionIndex(&de.m_base, 0);
+        input_injectKey((XWidget*)&de, XKey_Up, 0);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2021,
+                    "缺陷E：解除只读后 Up 步进恢复改值（2020→2021）");
+
+        /* ---- 缺陷 D：壳持焦时当前编辑段恒整段高亮（Selected 底色）
+         *      +段内键入位可见光标。行编辑经反向焦点代理（LE→壳）判焦
+         *      成立=光标绘制门禁；渲染图像当前段区域存在 Highlight 色
+         *      像素（无头渲染自检，XWidget_grab 离屏路径）。 ---- */
+        {
+            XLineEdit* le = XAbstractSpinBox_lineEdit((XAbstractSpinBox*)&de);
+            /* 点击定段路径等价注入：setFocus(壳) + setCurrentSectionIndex
+             * （真实鼠标点击=XDateTimeEdit_mousePressEvent 的
+             * xdt_focusSectionIndex+setFocus 序列；此前 setDate 会经
+             * refreshText 清选区——程序性改值不重立段选区属既有口径）。 */
+            XDateTimeEdit_setDate(&de.m_base, &d); /* 归位 2021-3-4 渲染。 */
+            XWidget_setFocus((XWidget*)&de.m_base);
+            XDateTimeEdit_setCurrentSectionIndex(&de.m_base, 0);
+            XAPI_EXPECT(XWidget_hasFocus((XWidget*)le),
+                        "缺陷D：壳持焦时行编辑经反向焦点代理 hasFocus 成立");
+            XAPI_EXPECT(XLineEdit_hasSelectedText(le),
+                        "缺陷D：当前编辑段整段反选（高亮底色数据源）");
+            XAPI_EXPECT(XLineEdit_selectionStart(le) == 0 &&
+                        XLineEdit_selectionLength(le) == 4,
+                        "缺陷D：年段选区=[0,4)（yyyy/M/d 首段）");
+#if XPALETTE_ON
+            {
+                XImage* shot = XWidget_grab((XWidget*)le);
+                XPalette pal = XWidget_palette((XWidget*)le);
+                XColor hc = XPalette_color(&pal,
+                                           XPaletteColorGroup_Current,
+                                           XPaletteColorRole_Highlight);
+                uint32_t highlight = XColor_rgba(&hc);
+                int found = 0;
+                int x;
+                int y;
+                if (shot) {
+                    for (y = 0; !found && y < XImage_height(shot); ++y) {
+                        for (x = 0; x < XImage_width(shot); ++x) {
+                            XColor pc = XImage_pixelColor(shot, x, y);
+                            if (XColor_rgba(&pc) == highlight) {
+                                found = 1;
+                                break;
+                            }
+                        }
+                    }
+                    XImage_delete_base(shot);
+                }
+                XAPI_EXPECT(found,
+                            "缺陷D：渲染图像当前段区域存在 Highlight 高亮像素");
+            }
+#endif /* XPALETTE_ON */
+            /* 点击定段等价 API：高亮+光标立即随段切换（选区随动）。 */
+            XDateTimeEdit_setCurrentSectionIndex(&de.m_base, 1);
+            XAPI_EXPECT(XLineEdit_selectionStart(le) == 5 &&
+                        XLineEdit_selectionLength(le) == 1,
+                        "缺陷D：定段月段后选区随段切换=[5,6)（M 单宽）");
+            XDateTimeEdit_setCurrentSectionIndex(&de.m_base, 2);
+            XAPI_EXPECT(XLineEdit_selectionStart(le) == 7 &&
+                        XLineEdit_selectionLength(le) == 1,
+                        "缺陷D：定段日段后选区随段切换=[7,8)");
+        }
+
+        /* ---- 缺陷 F：弹层随值同步钩子的无头门禁路径——弹层可见态误
+         *      残留且容器缺席时 setDate 不崩（m_popup 空守卫），日历
+         *      缺席零副作用；真实随动由交互脚本 vk2_test.ps1 断言。 ---- */
+        de.m_base.m_popupVisible = true;
+        d = XDate_create_date(2022, 10, 9);
+        XDateTimeEdit_setDate(&de.m_base, &d);
+        d = XDateTimeEdit_date(&de.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2022,
+                    "缺陷F：弹层同步钩子空弹层守卫路径不崩且值正常落账");
+        de.m_base.m_popupVisible = false;
+
+        XDateEdit_deinit_base(&de);
+    }
+#endif /* XDATEEDIT_ON */
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON
+
+    /* ================================================================
+     * 4b. XTimeEdit：QTimeEdit 便捷子类（构造口径 + userTimeChanged
+     *     全变更转发；对标 Qt 6.8 QTimeEdit→QDateTimeEdit）。
+     * ================================================================ */
+    {
+        XTimeEdit te;
+        XDate d;
+        XTime t;
+
+        XTimeEdit_init(&te, NULL, 0);
+        input_dtConnect(&te.m_base);
+        input_teConnect(&te);
+        input_dtReset();
+
+        /* ---- 构造默认值（QTimeEdit(QWidget*) 口径） ---- */
+        XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&te.m_base),
+                           "HH:mm:ss") == 0,
+                    "TimeEdit 默认格式=HH:mm:ss");
+        XAPI_EXPECT(XDateTimeEdit_sections(&te.m_base) ==
+                    ((int)XDateTimeEditSection_HourSection |
+                     (int)XDateTimeEditSection_MinuteSection |
+                     (int)XDateTimeEditSection_SecondSection),
+                    "TimeEdit 默认分段掩码=时|分|秒（parserType=Time 滤掉日期段）");
+        XAPI_EXPECT(XDateTimeEdit_currentSection(&te.m_base) ==
+                    (int)XDateTimeEditSection_HourSection,
+                    "TimeEdit 默认当前分段回正=HourSection（原 Year 段不在格式）");
+        t = XDateTimeEdit_time(&te.m_base);
+        XAPI_EXPECT(XTime_hour(&t) == 0 && XTime_minute(&t) == 0 &&
+                    XTime_second(&t) == 0 && XTime_msec(&t) == 0,
+                    "TimeEdit 初始时间=00:00:00.000（QDATETIMEEDIT_TIME_MIN 口径）");
+        d = XDateTimeEdit_minimumDate(&te.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2000 && XDate_month(&d) == 1 &&
+                    XDate_day(&d) == 1,
+                    "TimeEdit 纯时间段收窄：minimumDate=初始值日期 2000-01-01");
+        d = XDateTimeEdit_maximumDate(&te.m_base);
+        XAPI_EXPECT(XDate_year(&d) == 2000 && XDate_month(&d) == 1 &&
+                    XDate_day(&d) == 1,
+                    "TimeEdit 纯时间段收窄：maximumDate==minimumDate（同一天）");
+        t = XDateTimeEdit_minimumTime(&te.m_base);
+        XAPI_EXPECT(XTime_hour(&t) == 0 && XTime_msec(&t) == 0,
+                    "TimeEdit minimumTime=00:00:00.000");
+        t = XDateTimeEdit_maximumTime(&te.m_base);
+        XAPI_EXPECT(XTime_hour(&t) == 23 && XTime_minute(&t) == 59 &&
+                    XTime_second(&t) == 59 && XTime_msec(&t) == 999,
+                    "TimeEdit maximumTime=23:59:59.999（同一天）");
+
+        /* ---- 程序性 setTime 触发 userTimeChanged（Qt 全变更口径） ---- */
+        t = XTime_create_time(8, 30, 15, 0);
+        XDateTimeEdit_setTime(&te.m_base, &t);
+        t = XDateTimeEdit_time(&te.m_base);
+        XAPI_EXPECT(XTime_hour(&t) == 8 && XTime_minute(&t) == 30,
+                    "TimeEdit setTime 往返");
+        XAPI_EXPECT(g_dtSig.userTimeChanged == 1 && g_dtSig.timeChanged == 1,
+                    "TimeEdit 程序性 setTime 触发 userTimeChanged（timeChanged 全变更转发）");
+        XAPI_EXPECT(g_dtSig.userDateChanged == 0 && g_dtSig.dateChanged == 0,
+                    "TimeEdit 程序性 setTime 不触发 userDateChanged/dateChanged");
+
+        /* ---- 步进同样转发（方向键路径） ---- */
+        input_dtReset();
+        XDateTimeEdit_setCurrentSectionIndex(&te.m_base, 0);
+        input_injectKey((XWidget*)&te, XKey_Up, 0);
+        t = XDateTimeEdit_time(&te.m_base);
+        XAPI_EXPECT(XTime_hour(&t) == 9,
+                    "TimeEdit 时段 Up 步进 +1（08→09）");
+        XAPI_EXPECT(g_dtSig.userTimeChanged == 1 && g_dtSig.timeChanged == 1,
+                    "TimeEdit 步进改时间部分转发 userTimeChanged");
+
+        /* ---- parserType 段集约束（setDisplayFormat 混段拒绝） ---- */
+        XDateTimeEdit_setDisplayFormat(&te.m_base, "yyyy");
+        XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&te.m_base),
+                           "HH:mm:ss") == 0,
+                    "TimeEdit 纯日期格式被拒（parserType=Time，原格式保持）");
+        XTimeEdit_deinit_base(&te);
+    }
+#endif /* XTIMEEDIT_ON */
 
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
 
@@ -2391,8 +2781,9 @@ int xapi_input_run(void)
      * 7.x 输入族自标注回归锁（设计 behaviorMatrix【自标注三件】+
      *     testPlan apitest·E；XVIRTUALKEYBOARD_ON 门控——自标注随
      *     Src 侧同批落地：XLineEdit setEchoMode→hints/ImEnabled 查
-     *     询修正、XSpinBox 内嵌框 DigitsOnly、XDateTimeEdit
-     *     PreferNumbers、编辑控件 init 置 WA14；框架宏注册后激活，
+     *     询修正、XSpinBox 内嵌框 DigitsOnly、XDateTimeEdit 壳
+     *     DigitsOnly（缺陷⑥ 2026-10-01 定版，覆盖旧 PreferNumbers
+     *     口径）、编辑控件 init 置 WA14；框架宏注册后激活，
      *     未注册时整段编译出，既有 §7 保持原样）。
      *     【门禁对齐点】WA14 守护断言依赖 dismissFix 后的守护判据
      *     （supportedTarget && testAttribute(14)）；守护 tick 经合
@@ -2416,20 +2807,21 @@ int xapi_input_run(void)
         }
 #endif /* XSPINBOX_ON && XABSTRACTSPINBOX_ON */
 
-        /* ---- 7.x-2 XDateTimeEdit：自标注 PreferNumbers 软提示
-         *     （qdatetimeedit.cpp:2570 口径；设计标注「勿硬锁」——
-         *     软提示只影响键盘偏好不锁布局，此处按置位断言；TODO
-         *     门禁对齐：若 Src 侧落为仅设置于内嵌编辑框或另行承载，
-         *     按实际断言目标调整）。 ---- */
+        /* ---- 7.x-2 XDateTimeEdit：壳自标注 DigitsOnly（缺陷⑥
+         *     2026-10-01 定版 DigitsOnly→Digits，覆盖旧「PreferNumbers
+         *     软提示」口径——Qt 原版 qdatetimeedit.cpp:2570
+         *     setInputMethodHints(ImhPreferNumbers) 的 Number 布局在壳
+         *     目标下「+/.」为死键/污键，改定 DigitsOnly→12 键 Digits
+         *     布局全键有效；WA14 为 XGui 侧壳自标（opt-in 口径）。 ---- */
 #if XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
         {
             XDateTimeEdit dt;
             XDateTimeEdit_init(&dt, NULL, 0);
             XAPI_EXPECT((XWidget_inputMethodHints((XWidget*)&dt) &
-                         XInputMethodHint_PreferNumbers) ==
-                            XInputMethodHint_PreferNumbers,
-                        "DateTimeEdit 自标注 PreferNumbers 软提示"
-                        "（qdatetimeedit 口径，勿硬锁）");
+                         XInputMethodHint_DigitsOnly) ==
+                            XInputMethodHint_DigitsOnly,
+                        "DateTimeEdit 壳自标注 DigitsOnly"
+                        "（缺陷⑥定版，守护/直点均按 Digits 弹出）");
             XDateTimeEdit_deinit_base(&dt);
         }
 #endif /* XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */

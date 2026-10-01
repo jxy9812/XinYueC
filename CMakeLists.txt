@@ -108,6 +108,8 @@ include_directories(${INCLUDE_TEST_LIST})
 # 头文件目录收集器只记录父目录而在 Visual Studio 构建中遗漏此叶子目录。
 include_directories(${CMAKE_CURRENT_LIST_DIR}/Src/XPlatform)
 #递归搜索目录下的文件添加到变量中
+# XDateEdit.c/XTimeEdit.c（XDateTimeEdit 同族子类控件，Src/XGui/Widget/）
+# 经本 glob 自动入列——新增/删除源文件后须触发重新配置（改动本文件即可）。
 file(GLOB_RECURSE SRC_FILE "Src/*.c" )
 file(GLOB_RECURSE TEST_FILE "Test/*.c" )
 # 拼音 IME 翻译单元显式登记（XKEYBOARD_IME_ON 门控）：GLOB 列表在

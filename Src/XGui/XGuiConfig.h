@@ -548,6 +548,14 @@
 #ifndef XDATETIMEEDIT_ON
 #define XDATETIMEEDIT_ON 1
 #endif
+/* XDateEdit/XTimeEdit（对标 QDateEdit/QTimeEdit→QDateTimeEdit 的便捷
+ * 子类控件；裁剪时连带受 XDATETIMEEDIT_ON 约束，见文件尾依赖区块）。 */
+#ifndef XDATEEDIT_ON
+#define XDATEEDIT_ON 1
+#endif
+#ifndef XTIMEEDIT_ON
+#define XTIMEEDIT_ON 1
+#endif
 #ifndef XFONTCOMBOBOX_ON
 #define XFONTCOMBOBOX_ON 1
 #endif

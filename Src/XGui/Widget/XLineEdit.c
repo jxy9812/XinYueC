@@ -42,6 +42,9 @@
 #include "XLineEdit.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
+#if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
+#include "XStyleHints.h"
+#endif /* XSTYLEHINTS_ON && XGUIAPPLICATION_ON */
 #include "XWidget_Protected.h"
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
@@ -80,6 +83,14 @@ static XLineEdit* g_focusedLineEdit = NULL;
 /** @brief 控制器侧「不限制长度」上限（对标 Qt 构造默认 32767；壳 API
  *         以 0 表示不限，两者在壳的委托层换算）。 */
 #define XLINEEDIT_UNLIMITED_MAX_LENGTH 32767
+/** @brief 三击窗口的回退时长/距离（XStyleHints 不可用时取 Qt 默认
+ *         doubleClickInterval=400ms、startDragDistance=10px）。 */
+#define XLINEEDIT_TRIPLE_CLICK_MS   400
+#define XLINEEDIT_TRIPLE_CLICK_DIST 10
+/** @brief 行编辑内边距（对标 QLineEditPrivate::verticalMargin=1/
+ *         horizontalMargin=2，qlineedit_p.cpp:34-35）。 */
+#define XLINEEDIT_VERTICAL_MARGIN   1
+#define XLINEEDIT_HORIZONTAL_MARGIN 2
 
 /* ==================== 前向声明 ==================== */
 static void  VXLineEdit_keyPressEvent(XWidget* self, XEvent* event);
@@ -93,6 +104,7 @@ static void  VXLineEdit_focusInEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_focusOutEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_paintEvent(XWidget* self, XEvent* event);
 static void  VXLineEdit_changeEvent(XWidget* self, XEvent* event);
+static void  VXLineEdit_timerEvent(XObject* object, XTimerEvent* event);
 static void  VXLineEdit_deinit(XLineEdit* self);
 static void  VXLineEdit_copy(XLineEdit* self, const XLineEdit* other);
 static void  VXLineEdit_move(XLineEdit* self, XLineEdit* other);
@@ -184,6 +196,31 @@ static int xlineedit_displayWidth(const XFont* font, const char* display,
         byte = next;
     }
     return width;
+}
+
+/** @brief 回显模式 → 输入法提示位分流（对标 QLineEdit::setEchoMode 的
+ *         imHints 调整，qlineedit.cpp:551-556）：Password/NoEcho 置
+ *         HiddenText；非 Normal 置 NoAutoUppercase/NoPredictiveText/
+ *         SensitiveData。 */
+static XInputMethodHints xlineedit_echoImHints(XInputMethodHints hints,
+                                               int echoMode)
+{
+    bool hidden = (echoMode == (int)XLineEditEchoMode_Password ||
+                   echoMode == (int)XLineEditEchoMode_NoEcho);
+    bool plain = (echoMode == (int)XLineEditEchoMode_Normal);
+    if (hidden)
+        hints |= (XInputMethodHints)XInputMethodHint_HiddenText;
+    else
+        hints &= ~(XInputMethodHints)XInputMethodHint_HiddenText;
+    if (!plain)
+        hints |= (XInputMethodHints)(XInputMethodHint_NoAutoUppercase |
+                                     XInputMethodHint_NoPredictiveText |
+                                     XInputMethodHint_SensitiveData);
+    else
+        hints &= ~(XInputMethodHints)(XInputMethodHint_NoAutoUppercase |
+                                      XInputMethodHint_NoPredictiveText |
+                                      XInputMethodHint_SensitiveData);
+    return hints;
 }
 
 /** @brief 发射 const char* 参数信号（textChanged/textEdited）。 */
@@ -491,7 +528,10 @@ static int xlineedit_textStartX(const XLineEdit* self)
     return x;
 }
 
-/** @brief 按光标位置更新水平滚动偏移（光标→X 取控制器，钳位留壳）。 */
+/** @brief 按光标位置与对齐更新水平滚动偏移（光标→X 取控制器，钳位留壳）。
+ *  @details 对标 Qt paintEvent 内联的 hscroll 结算（qlineedit.cpp:2036-
+ *           2064）：文本未溢出时按水平对齐放置——Right→widthUsed−宽+1、
+ *           HCenter→(widthUsed−宽)/2、Left→0；溢出时按光标位置钳位。 */
 static void xlineedit_updateViewOffset(XLineEdit* self)
 {
     int textStart;
@@ -514,7 +554,15 @@ static void xlineedit_updateViewOffset(XLineEdit* self)
        命中同口径，中文双宽正确）。 */
     textW = XLineControl_naturalTextWidth(self->m_control);
     if (textW <= visibleW) {
-        self->m_viewOffset = 0;
+        /* 文本未溢出：hscroll 由水平对齐决定（可为负，对标 Qt 的
+         * AlignRight/AlignHCenter 分支；Justify 映射 Left）。 */
+        int ha = self->m_alignment & XAlignment_HorizontalMask;
+        if (ha & XAlignment_Right)
+            self->m_viewOffset = textW - visibleW + 1;
+        else if (ha & XAlignment_HCenter)
+            self->m_viewOffset = (textW - visibleW) / 2;
+        else
+            self->m_viewOffset = 0;
         return;
     }
     cursorX = XLineControl_cursorToXCurrent(self->m_control);
@@ -544,6 +592,122 @@ static void xlineedit_updateSizeHints(XLineEdit* self)
     XWidget_setSizeHint((XWidget*)self, &hint);
     XWidget_setMinimumSizeHint((XWidget*)self, &min);
     XWidget_updateGeometry((XWidget*)self);
+}
+
+/** @brief 查询双击间隔 ms（对标 QApplication::doubleClickInterval；
+ *         XStyleHints 不可用时回退 Qt 默认 400）。 */
+static int xlineedit_doubleClickInterval(void)
+{
+#if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
+    XStyleHints* hints = XGuiApplication_styleHints();
+    if (hints) {
+        int ms = XStyleHints_mouseDoubleClickInterval(hints);
+        if (ms > 0) return ms;
+    }
+#endif /* XSTYLEHINTS_ON && XGUIAPPLICATION_ON */
+    return XLINEEDIT_TRIPLE_CLICK_MS;
+}
+
+/** @brief 查询拖拽启动距离（对标 QApplication::startDragDistance；
+ *         XStyleHints 不可用时回退 Qt 默认 10）。 */
+static int xlineedit_startDragDistance(void)
+{
+#if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
+    XStyleHints* hints = XGuiApplication_styleHints();
+    if (hints) {
+        int dist = XStyleHints_startDragDistance(hints);
+        if (dist >= 0) return dist;
+    }
+#endif /* XSTYLEHINTS_ON && XGUIAPPLICATION_ON */
+    return XLINEEDIT_TRIPLE_CLICK_DIST;
+}
+
+/** @brief 查询 SH_BlinkCursorWhenTextSelected（对标 QCommonStyle 非
+ *         Darwin 默认 1；XStyleHints/XStyle 不可用时同默认）。 */
+static bool xlineedit_blinkCursorWhenTextSelected(const XLineEdit* self)
+{
+#if XSTYLE_ON
+    XStyle* style = XStyle_defaultStyle();
+    XStyleOption opt;
+    if (style) {
+        XStyleOption_init(&opt, XStylePE_FrameLineEdit);
+        opt.m_rect = XWidget_rect((XWidget*)self);
+#if XPALETTE_ON
+        opt.m_palette = XWidget_palette((XWidget*)self);
+#endif /* XPALETTE_ON */
+        return XStyle_styleHint(style,
+                                (int)XStyleSH_BlinkCursorWhenTextSelected,
+                                &opt, (XWidget*)self) != 0;
+    }
+#else
+    (void)self;
+#endif /* XSTYLE_ON */
+    return true; /* QCommonStyle 非 Darwin 平台默认。 */
+}
+
+/** @brief 按样式提示注入密码回显延迟（对标 QLineEditPrivate::init 的
+ *         SH_LineEdit_PasswordMaskDelay 注入，qlineedit_p.cpp:227）。
+ *  @note  SH_LineEdit_PasswordCharacter 注入有意不做：XCommonStyle 返回
+ *         U+25CF「●」而本库控制器与既有测试契约统一用「*」掩码字形
+ *         （XLineControl 默认 + XLineEditTest/xgui_demo_apitest 的
+ *         displayText 断言），改字形属跨族视觉契约变更，见 deferred。 */
+static void xlineedit_applyStylePasswordHints(XLineEdit* self)
+{
+#if XSTYLE_ON
+    XStyle* style = XStyle_defaultStyle();
+    XStyleOption opt;
+    int delay;
+    if (!self || !self->m_control || !style) return;
+    XStyleOption_init(&opt, XStylePE_FrameLineEdit);
+    opt.m_rect = XWidget_rect((XWidget*)self);
+#if XPALETTE_ON
+    opt.m_palette = XWidget_palette((XWidget*)self);
+#endif /* XPALETTE_ON */
+    delay = XStyle_styleHint(style,
+                             (int)XStyleSH_LineEdit_PasswordMaskDelay,
+                             &opt, (XWidget*)self);
+    XLineControl_setPasswordMaskDelay(self->m_control, delay);
+#else
+    (void)self;
+#endif /* XSTYLE_ON */
+}
+
+/** @brief 重启三击窗口定时器并记录双击坐标（对标 mouseDoubleClickEvent
+ *         尾部的 tripleClickTimer.start + d->tripleClick 赋值）。 */
+static void xlineedit_armTripleClick(XLineEdit* self, const XPoint* pos)
+{
+    XObject* object;
+    if (!self) return;
+    object = (XObject*)self;
+    if (self->m_tripleClickTimer != XTIMER_INVALID_ID)
+        XObject_killTimer(object, self->m_tripleClickTimer);
+    self->m_tripleClickTimer = XObject_startTimer_ms(
+        object, (uint64_t)xlineedit_doubleClickInterval(),
+        XTimerType_CoarseTimer);
+    self->m_tripleClick = pos ? *pos : self->m_tripleClick;
+}
+
+/** @brief 三击窗口内且按点邻近双击点判定（对标 mousePressEvent 的
+ *         tripleClickTimer.isActive() + manhattanLength < startDragDistance）。 */
+static bool xlineedit_isTripleClick(const XLineEdit* self, const XPoint* pos)
+{
+    int dx;
+    int dy;
+    if (!self || !pos) return false;
+    if (self->m_tripleClickTimer == XTIMER_INVALID_ID) return false;
+    dx = pos->x - self->m_tripleClick.x;
+    dy = pos->y - self->m_tripleClick.y;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    return (dx + dy) < xlineedit_startDragDistance();
+}
+
+/** @brief 停止三击窗口定时器（定时器到期/控件析构时）。 */
+static void xlineedit_disarmTripleClick(XLineEdit* self)
+{
+    if (!self || self->m_tripleClickTimer == XTIMER_INVALID_ID) return;
+    XObject_killTimer((XObject*)self, self->m_tripleClickTimer);
+    self->m_tripleClickTimer = XTIMER_INVALID_ID;
 }
 
 /**
@@ -637,7 +801,9 @@ static void xlineedit_paintActions(const XLineEdit* self, XPainter* painter,
 
 /** @brief 键盘按下：整体分派给控制器 processKeyEvent（编辑/移动/回车/
  *         快捷键/补全；readOnly 门禁与事件 accept/ignore 由控制器口径
- *         结算）。 */
+ *         结算）；接受后重排光标闪烁相位（对标 qlineedit.cpp keyPressEvent
+ *         的 event->isAccepted() → control->updateCursorBlinking()，每次
+ *         击键重置闪烁计时，光标在连续输入期间保持常显）。 */
 static void VXLineEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -648,6 +814,8 @@ static void VXLineEdit_keyPressEvent(XWidget* self, XEvent* event)
         return;
     }
     XLineControl_processKeyEvent(edit->m_control, (XKeyEvent*)event);
+    if (XEvent_isAccepted(event))
+        XLineControl_updateCursorBlinking(edit->m_control);
 }
 
 /** @brief 键盘释放：默认忽略（自动重复/修饰键行为为后续扩展）。 */
@@ -686,7 +854,9 @@ static void VXLineEdit_inputMethodEvent(XWidget* self, XEvent* event)
 #if XMENU_ON
 /** @brief 上下文菜单事件：创建标准菜单并弹出到事件全局坐标（对标
  *         QLineEdit::contextMenuEvent 的 createStandardContextMenu +
- *         popup；关闭即删对齐 WA_DeleteOnClose）。 */
+ *         popup；关闭即删对齐 WA_DeleteOnClose）；IME 组合态中抑制
+ *         （对标 QLineEdit::event 的 QEvent::ContextMenu 分支
+ *         composeMode 早退，qlineedit.cpp:1439-1443）。 */
 static void VXLineEdit_contextMenuEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -695,6 +865,11 @@ static void VXLineEdit_contextMenuEvent(XWidget* self, XEvent* event)
     XPoint global;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_CONTEXT_MENU) return;
+    if (edit->m_control &&
+        XLineControl_composeMode(edit->m_control)) {
+        XEvent_accept(event);
+        return;
+    }
     ctx = (XContextMenuEvent*)event;
     menu = XLineEdit_createStandardContextMenu(edit);
     if (!menu) return;
@@ -710,43 +885,12 @@ static void VXLineEdit_contextMenuEvent(XWidget* self, XEvent* event)
 
 /* ==================== 鼠标处理 ==================== */
 
-#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
-/** @brief 中键按下：光标落到点击处后从 Selection（X11 PRIMARY）粘贴。
- *         对标 Qt QWidgetLineControl::processMouseEvent 中键分支
- *         （supportsSelection 时 xToPos + moveCursor(pos,false) +
- *         paste(QClipboard::Selection)）。
- * @return true 表示已处理（事件接收）；false 保持既有 ignore 行为。
- * @note   粘贴复用控制器 XLineControl_paste 既有通道，只读不写剪贴板，
- *         CLIPBOARD 内容不受影响（对标 Qt 中键粘贴语义）。 */
-static bool xlineedit_pasteSelectionAt(XLineEdit* edit, const XMouseEvent* me)
-{
-    XClipboard* clip;
-    XPoint pos;
-    int clickX;
-    int bytePos;
-    if (!edit || !edit->m_control) return false;
-    clip = XGuiApplication_clipboard();
-    /* 对标 Qt：中键 Selection 粘贴仅当平台后端声明支持选择区
-       （QGuiApplication::clipboard()->supportsSelection() 门禁）。 */
-    if (!clip || !XClipboard_supportsSelection(clip)) return false;
-    if (XLineControl_isReadOnly(edit->m_control)) return false;
-    /* 坐标口径与左键定位一致：壳 contents 平移（边框/边距/action 区/
-       滚动偏移），控制器像素→字节偏移命中。xToPos 恒有合法落点（钳位），
-       对标 Qt 中键"若有 hit 则落光标"。 */
-    pos = XMouseEvent_position(me);
-    clickX = pos.x - xlineedit_textStartX(edit) + edit->m_viewOffset;
-    xlineedit_syncControlFont(edit);
-    bytePos = XLineControl_xToPos(edit->m_control, clickX,
-                                  (int)XLineControlCursorPosition_BetweenCharacters);
-    XLineControl_moveCursor(edit->m_control, bytePos, false);
-    XLineControl_paste(edit->m_control, (int)XClipboardMode_Selection);
-    return true;
-}
-#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
-
-/** @brief 左键按下：获得焦点；命中清除按钮则清空文本；否则把光标定位到
+/** @brief 左键/中键按下：获得焦点；三击窗口内全选（对标 Qt 三击
+ *         selectAll）；左键命中清除按钮则清空文本；否则把光标定位到
  *         点击处（坐标平移在壳，命中测试 xToPos 与移动 moveCursor 在
- *         控制器；Shift+点击扩展选区）。 */
+ *         控制器；Shift+点击扩展选区）。中键与左键同为光标移动（对标
+ *         Qt mousePressEvent 无按键分流，qlineedit.cpp:1498-1536；
+ *         中键的 Selection 粘贴在释放路径，qlineedit.cpp:1605-1608）。 */
 static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -756,23 +900,10 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
     me = (XMouseEvent*)event;
-    if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
-        /* 对标 Qt：中键按下且平台支持 Selection（X11 PRIMARY）时在点击
-           处粘贴；其余按键（含不支持 Selection 的中键）保持既有 ignore
-           行为零回归。 */
-        if (XMouseEvent_button(me) == XMouseButton_MiddleButton &&
-            xlineedit_pasteSelectionAt(edit, me)) {
-            /* 对标 Qt：点击聚焦由投递层按策略位结算，控件不得在点击路径
-               改写自身策略（改写会把 init 的 StrongFocus 降级回
-               ClickFocus，首次点击后 LE 再度脱离 Tab 候选集，#40 修复
-               随之失效）。XWidget_setFocus 不查策略位，直接聚焦。 */
-            XWidget_setFocus((XWidget*)edit);
-            g_focusedLineEdit = edit;
-            XWidget_update((XWidget*)edit);
-            XEvent_accept(event);
-        } else {
-            XEvent_ignore(event);
-        }
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton &&
+        XMouseEvent_button(me) != XMouseButton_MiddleButton) {
+        /* 右键等按键保持 ignore（上下文菜单由投递层对未接受右键合成）。 */
+        XEvent_ignore(event);
         return;
     }
     /* 点击聚焦：setFocus 不查策略位（XWidget.c XWidget_setFocusReason
@@ -783,6 +914,31 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
     XWidget_setFocus((XWidget*)edit);
     g_focusedLineEdit = edit;
     pos = XMouseEvent_position(me);
+    /* 三击：双击窗口期内且按点邻近双击点 → 全选并结束（对标 Qt
+       mousePressEvent 的 tripleClick 分支，qlineedit.cpp:1516-1520；
+       定时器保持活跃到自然到期）。 */
+    if (xlineedit_isTripleClick(edit, &pos) && edit->m_control) {
+        XLineControl_selectAll(edit->m_control);
+        XEvent_accept(event);
+        return;
+    }
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
+        /* 中键：仅光标移动（对标 Qt；粘贴在 mouseReleaseEvent）。 */
+        shift = (me->m_modifiers & XKeyboardModifier_ShiftModifier) != 0;
+        if (edit->m_control) {
+            int clickX = pos.x - xlineedit_textStartX(edit) +
+                         edit->m_viewOffset;
+            int bytePos;
+            xlineedit_syncControlFont(edit);
+            bytePos = XLineControl_xToPos(
+                edit->m_control, clickX,
+                (int)XLineControlCursorPosition_BetweenCharacters);
+            XLineControl_moveCursor(edit->m_control, bytePos, shift);
+        }
+        XWidget_grabMouse((XWidget*)edit);
+        XEvent_accept(event);
+        return;
+    }
     /* 内置 action 命中：触发 action 后返回（不移动光标）。 */
     {
         int actionIdx = xlineedit_hitAction(edit, pos.x);
@@ -827,7 +983,8 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-/** @brief 鼠标双击：全选（对标 Qt 双击选词的简化行为）。 */
+/** @brief 鼠标双击：选词（对标 Qt 双击 selectWordAtPos）并布防三击窗口
+ *         定时器（对标 qlineedit.cpp:1657-1658）。 */
 static void VXLineEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
@@ -837,30 +994,65 @@ static void VXLineEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event)
     int bytePos;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK) return;
+    /* 对标 Qt：仅左键走选词路径（qlineedit.cpp:1623）。 */
+    me = (XMouseEvent*)event;
+    if (XMouseEvent_button(me) != XMouseButton_LeftButton) {
+        XEvent_ignore(event);
+        return;
+    }
     /* 对标 Qt 双击选词（此前简化为 selectAll；控制器已有
      * selectWordAtPos 未被使用）。坐标口径与 mousePress 一致：
      * contents 平移 + 滚动偏移。 */
     if (!edit->m_control) return;
-    me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
     clickX = pos.x - xlineedit_textStartX(edit) + edit->m_viewOffset;
     xlineedit_syncControlFont(edit);
     bytePos = XLineControl_xToPos(edit->m_control, clickX,
                                   (int)XLineControlCursorPosition_BetweenCharacters);
     XLineControl_selectWordAtPos(edit->m_control, bytePos);
+    /* 布防三击窗口：窗口期内邻近按下 → mousePressEvent 全选。 */
+    xlineedit_armTripleClick(edit, &pos);
     XWidget_update((XWidget*)edit);
     XEvent_accept(event);
 }
 
 /** @brief 鼠标释放：解除本控件在按下时建立的鼠标抓取（releaseMouse
- *         仅当 self 为当前抓取者时生效；非自身序列的释放零干预）。 */
+ *         仅当 self 为当前抓取者时生效；非自身序列的释放零干预）；
+ *         平台支持选择区（X11 PRIMARY）时左键释放复制选区、中键释放
+ *         在点击处粘贴（对标 qlineedit.cpp:1601-1610）。 */
 static void VXLineEdit_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
+    XMouseEvent* me;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
-    if (XWidget_mouseGrabber() != self) return;
+    me = (XMouseEvent*)event;
+    /* 仅承接自身按下序列的释放（Qt 隐式抓取下释放恒投按下控件；此处
+       以显式抓取登记等价判定，非自身序列保持既有 ignore 零回归）。 */
+    if (XWidget_mouseGrabber() != self) {
+        XEvent_ignore(event);
+        return;
+    }
     XWidget_releaseMouse(self);
+#if XCLIPBOARD_ON && XGUIAPPLICATION_ON
+    if (edit->m_control) {
+        /* 对标 Qt：Selection 通道操作仅当平台后端声明支持选择区
+           （QGuiApplication::clipboard()->supportsSelection() 门禁）。 */
+        XClipboard* clip = XGuiApplication_clipboard();
+        if (clip && XClipboard_supportsSelection(clip)) {
+            if (XMouseEvent_button(me) == XMouseButton_LeftButton) {
+                /* copy 空选区/密码回显下零写入（控制器语义）。 */
+                XLineControl_copy(edit->m_control,
+                                  (int)XClipboardMode_Selection);
+            } else if (XMouseEvent_button(me) == XMouseButton_MiddleButton &&
+                       !XLineControl_isReadOnly(edit->m_control)) {
+                XLineControl_deselect(edit->m_control);
+                XLineControl_paste(edit->m_control,
+                                   (int)XClipboardMode_Selection);
+            }
+        }
+    }
+#endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     XEvent_accept(event);
 }
 
@@ -913,34 +1105,66 @@ static void VXLineEdit_mouseMoveEvent(XWidget* self, XEvent* event)
 
 /* ==================== 焦点处理 ==================== */
 
-/** @brief 获得焦点：把焦点/编辑态推送控制器（PasswordEchoOnEdit 明文
- *         回显 + 关闭首键清空路径，行为与迁移前一致）；光标常显置位；
- *         重绘。 */
+/** @brief 获得焦点：Tab/Backtab/快捷键聚焦时全选（有掩码则光标落首个
+ *         可编辑位）（对标 qlineedit.cpp:1899-1907）；启用光标闪烁
+ *         （qlineedit.cpp:1915）；PasswordEchoOnEdit 焦点态推送控制器
+ *         切明文回显；重绘。 */
 static void VXLineEdit_focusInEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
+    XFocusReason reason = XFocusReason_Other;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_FOCUS_IN) return;
+#if XWINDOWEVENT_ON
+    reason = XFocusEvent_reason((XFocusEvent*)event);
+#endif /* XWINDOWEVENT_ON */
     if (edit->m_control) {
+        if (reason == XFocusReason_Tab || reason == XFocusReason_Backtab ||
+            reason == XFocusReason_Shortcut) {
+            if (XLineControl_inputMask(edit->m_control)[0])
+                XLineControl_moveCursor(edit->m_control,
+                                        XLineControl_nextMaskBlank(
+                                            edit->m_control, 0),
+                                        false);
+            else if (!XLineControl_hasSelectedText(edit->m_control))
+                XLineControl_selectAll(edit->m_control);
+        }
         /* 密码回显宿主判定：控制器无 widget 身份，壳推送焦点态（审计
            5.1；对标 Qt updatePasswordEchoEditing 的壳侧编排）。 */
         XLineControl_updatePasswordEchoEditing(edit->m_control, true);
-        /* 焦点内光标常显：置位闪烁相位而不启用定时器（行为不变）。 */
-        XLineControl_updateCursorBlinking(edit->m_control);
+        /* 启用光标闪烁（焦点内 blink 定时器 + 相位置位；击键/移动经
+           keyPressEvent 的 updateCursorBlinking 重置计时；失焦经
+           focusOutEvent 关闭并断开 styleHints 联动）。 */
+        XLineControl_setBlinkingCursorEnabled(edit->m_control, true);
     }
     XWidget_update((XWidget*)edit);
     XEvent_accept(event);
 }
 
-/** @brief 失去焦点：自上次发射后用户编辑过则提交 editingFinished（壳
- *         门禁，对标 Qt d->edited && (hasAcceptableInput||fixup()) 的
- *         失焦路径；可接受性/fixup 能力在控制器）；焦点态推送控制器切
- *         回密码回显并重绘。 */
+/** @brief 失去焦点：切回密码回显（PasswordEchoOnEdit）、失焦清选区
+ *         （ActiveWindow/Popup 原因除外）、关闭闪烁（对标
+ *         qlineedit.cpp focusOutEvent:1939-1951 的顺序）；自上次发射
+ *         后用户编辑过则提交 editingFinished（壳门禁，对标 Qt
+ *         d->edited && (hasAcceptableInput||fixup())）。 */
 static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
 {
     XLineEdit* edit = (XLineEdit*)self;
+    XFocusReason reason = XFocusReason_Other;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_FOCUS_OUT) return;
+#if XWINDOWEVENT_ON
+    reason = XFocusEvent_reason((XFocusEvent*)event);
+#endif /* XWINDOWEVENT_ON */
+    if (edit->m_control) {
+        if (XLineControl_passwordEchoEditing(edit->m_control)) {
+            /* PasswordEchoOnEdit：失焦切回密码回显（qlineedit.cpp:1939）。 */
+            XLineControl_updatePasswordEchoEditing(edit->m_control, false);
+        }
+        if (reason != XFocusReason_ActiveWindow &&
+            reason != XFocusReason_Popup)
+            XLineControl_deselect(edit->m_control);
+        XLineControl_setBlinkingCursorEnabled(edit->m_control, false);
+    }
     if (edit->m_finishedPending) {
         edit->m_finishedPending = false;
         /* 对标 Qt d->edited && (hasAcceptableInput()||fixup())：不可
@@ -950,6 +1174,7 @@ static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
             if (edit->m_control)
                 XLineControl_fixup(edit->m_control);
             if (!XLineEdit_hasAcceptableInput(edit)) {
+                XWidget_update((XWidget*)edit);
                 XEvent_accept(event);
                 return;
             }
@@ -958,8 +1183,6 @@ static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
         xlineedit_emitVoidSignal(edit,
                                  (size_t)XLineEdit_editingFinished_signal);
     }
-    if (edit->m_control)
-        XLineControl_updatePasswordEchoEditing(edit->m_control, false);
     XWidget_update((XWidget*)edit);
     XEvent_accept(event);
 }
@@ -1068,15 +1291,26 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
         XLineControl_setPalette(edit->m_control, &pal);
         xlineedit_syncControlFont(edit);
     }
+    /* 滚动偏移按当前几何/对齐/光标结算（对标 Qt 在 paintEvent 内联
+       结算 hscroll，尺寸变化/对齐变化无需额外事件联动）。 */
+    xlineedit_updateViewOffset(edit);
     {
         const XFont* font = &((XWidget*)self)->m_font;
         int ascent = XPainter_textAscent(font);
         int descent = XPainter_textDescent(font);
+        int va;
         lineH = ascent + descent; /* 字形盒高（不含行距）。 */
         if (lineH < 14) lineH = 14;
-        /* 行盒垂直居中：ty 为行顶部；控制器以 offset.y + ascent 为
-           基线逐字绘制，与迁移前 baseline = ty + ascent 一致。 */
-        ty = (r.height - lineH) / 2;
+        /* 垂直对齐结算 vscroll（对标 qlineedit.cpp:1996-2008 的
+         * AlignBottom/AlignTop/center 三分支，verticalMargin=1）；
+         * ty 为行顶部；控制器以 offset.y + ascent 为基线逐字绘制。 */
+        va = edit->m_alignment & XAlignment_VerticalMask;
+        if (va & XAlignment_Bottom)
+            ty = r.height - lineH - XLINEEDIT_VERTICAL_MARGIN;
+        else if (va & XAlignment_Top)
+            ty = XLINEEDIT_VERTICAL_MARGIN;
+        else
+            ty = (r.height - lineH + 1) / 2;
         baseline = ty + ascent;
     }
     tx = xlineedit_textStartX(edit);
@@ -1087,7 +1321,10 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
          * 亮且非只读）；DrawCursor 仅在光标亮且非只读且 inputMask 为空
          * ——掩码反选格与细光标互斥。旧代码恒传 Selections+焦点即传
          * Cursor，普通行编辑 blink 亮相时反相格+细光标同屏。 */
-        bool cursorVisible = XWidget_hasFocus(self);
+        bool hasSel = XLineControl_hasSelectedText(edit->m_control);
+        bool cursorVisible = XWidget_hasFocus(self) &&
+                             (!hasSel || xlineedit_blinkCursorWhenTextSelected(
+                                             edit));
         bool hasMask = XLineControl_inputMask(edit->m_control)[0] != '\0';
         bool readOnly = XLineControl_isReadOnly(edit->m_control);
         int flags = (int)XLineControlDrawFlag_Text;
@@ -1104,8 +1341,7 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
         textClip.height = r.height;
         origin.x = tx - edit->m_viewOffset;
         origin.y = ty;
-        /* 光标亮 = 焦点内常显（blinkStatus 由 focusIn 置位）。 */
-        if (XLineControl_hasSelectedText(edit->m_control) ||
+        if (hasSel ||
             (cursorVisible && hasMask && !readOnly))
             flags |= (int)XLineControlDrawFlag_Selections;
         if (cursorVisible && !readOnly && !hasMask)
@@ -1119,12 +1355,45 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
                           flags);
         XPainter_restore(&painter);
     }
-    /* 占位提示（空文本时灰显；空判定读控制器，对标 Qt 壳绘制）。 */
-    if (xlineedit_ctlRawText(edit)[0] == '\0' && edit->m_placeholder &&
-        XString_toUtf8(edit->m_placeholder) &&
-        XString_toUtf8(edit->m_placeholder)[0]) {
-        XPainter_drawText(&painter, tx - edit->m_viewOffset, baseline,
-                          XString_toUtf8(edit->m_placeholder), mid);
+    /* 占位提示（对标 Qt shouldShowPlaceholderText + paintEvent 占位分支，
+     * qlineedit.cpp:2012-2027）：空文本且非组合态时显示；AlignHCenter
+     * 聚焦态抑制（qlineedit_p.h:165-169）；用 PlaceholderText 调色板
+     * 角色（Qt pal.placeholderText()），按水平对齐放置并裁剪到文本区。 */
+    if (xlineedit_ctlRawText(edit)[0] == '\0' &&
+        (!edit->m_control || !XLineControl_composeMode(edit->m_control)) &&
+        edit->m_placeholder && XString_toUtf8(edit->m_placeholder) &&
+        XString_toUtf8(edit->m_placeholder)[0] &&
+        !((edit->m_alignment & XAlignment_HCenter) &&
+          XWidget_hasFocus(self))) {
+        const char* phText = XString_toUtf8(edit->m_placeholder);
+        const XFont* font = &((XWidget*)self)->m_font;
+        /* 占位仅在空文本时显示——清除按钮此态不绘制，不预留 18px。 */
+        int textEndPx = XWidget_width((XWidget*)self) -
+                        (edit->m_frame ? 4 : 2) - edit->m_textMargins.right;
+        int visibleW = (textEndPx > tx) ? (textEndPx - tx) : 1;
+        int phW = xlineedit_displayWidth(font, phText,
+                                         xlineedit_charCount(phText));
+        int phX;
+        uint32_t phColor;
+        XRect textClip;
+        textClip.x = tx;
+        textClip.y = 0;
+        textClip.width = visibleW;
+        textClip.height = r.height;
+        /* 按水平对齐放置（Qt drawText(lineRect, alignPhText, …)）；宽度
+           溢出时钳到起始侧由 clip 裁剪（Qt 为省略号截断，见 deferred）。 */
+        if (edit->m_alignment & XAlignment_Right)
+            phX = textEndPx - (phW < visibleW ? phW : visibleW);
+        else if (edit->m_alignment & XAlignment_HCenter)
+            phX = tx + (visibleW - (phW < visibleW ? phW : visibleW)) / 2;
+        else
+            phX = tx;
+        phColor = xlineedit_color(edit, XPaletteColorRole_PlaceholderText);
+        XPainter_save(&painter);
+        XPainter_setClipRect(&painter, &textClip,
+                             XPainterClipOperation_IntersectClip);
+        XPainter_drawText(&painter, phX, baseline, phText, phColor);
+        XPainter_restore(&painter);
     }
 
     /* 清除按钮（简笔 ×；点击清除由 mousePressEvent 处理）。 */
@@ -1157,17 +1426,66 @@ static void VXLineEdit_paintEvent(XWidget* self, XEvent* event)
 
 /* ==================== 虚槽 ==================== */
 
+/** @brief 变更事件（对标 QLineEdit::changeEvent，qlineedit.cpp:2282-2316）：
+ *         FontChange → 控制器字体重排；StyleChange → 按样式提示重注密码
+ *         掩码字符/回显延迟；ActivationChange → 重绘；尾转父类（Qt 以
+ *         QWidget::changeEvent(ev) 收尾）。 */
 static void VXLineEdit_changeEvent(XWidget* self, XEvent* event)
 {
-    XEvent_ignore(event);
-    (void)self;
+    XLineEdit* edit = (XLineEdit*)self;
+    XEventType type;
+    if (!edit || !event) return;
+    type = XEvent_type(event);
+    switch (type) {
+    case XEVENT_TYPE_FONT_CHANGE:
+        xlineedit_syncControlFont(edit);
+        xlineedit_updateSizeHints(edit);
+        XWidget_update(self);
+        break;
+    case XEVENT_TYPE_STYLE_CHANGE:
+        xlineedit_applyStylePasswordHints(edit);
+        XWidget_update(self);
+        break;
+    case XEVENT_TYPE_ACTIVATION_CHANGE:
+        XWidget_update(self);
+        break;
+    default:
+        XEvent_ignore(event);
+        break;
+    }
+    XClass_Parent(XWidget, EXWidget_ChangeEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+
+/** @brief 定时器事件：三击窗口到期即撤防（对标 QWidgetLineControl/
+ *         QLineEditPrivate 对 tripleClickTimer 的到期停表）；其余交父类。 */
+static void VXLineEdit_timerEvent(XObject* object, XTimerEvent* event)
+{
+    XLineEdit* edit = (XLineEdit*)object;
+    XTimerId id;
+    if (!edit || !event) return;
+    id = XTimerEvent_timerId(event);
+    if (id != XTIMER_INVALID_ID && id == edit->m_tripleClickTimer) {
+        edit->m_tripleClickTimer = XTIMER_INVALID_ID;
+        XEvent_accept((XEvent*)event);
+        return;
+    }
+    XClass_Parent(XObject, EXObject_TimerEvent,
+                  void(*)(XObject*, XTimerEvent*))((XObject*)object, event);
 }
 
 /** @brief 反初始化：销毁控制器与壳资源后调用父类 deinit。 */
 static void VXLineEdit_deinit(XLineEdit* self)
 {
     if (!self) return;
+    xlineedit_disarmTripleClick(self);
     if (self->m_control) {
+        /* 先关闪烁再删控制器：销毁聚焦中的编辑框时 FOCUS_OUT 由基类
+         * deinit 派发（晚于本函数），若不在此显式关闭，控制器侧 blink
+         * 定时器与 styleHints 联动连接将随悬空对象残留（对标 Qt：
+         * QWidgetLineControl 析构前焦点清理已 setBlinkingCursorEnabled
+         * (false)）。 */
+        XLineControl_setBlinkingCursorEnabled(self->m_control, false);
         XLineControl_delete_base((XClass*)self->m_control);
         self->m_control = NULL;
     }
@@ -1224,6 +1542,9 @@ static void VXLineEdit_copy(XLineEdit* self, const XLineEdit* other)
         }
     }
     self->m_clearButtonRect = other->m_clearButtonRect;
+    self->m_tripleClick = other->m_tripleClick;
+    /* 三击窗口定时器不随拷贝迁移（窗口语义属源对象）。 */
+    self->m_tripleClickTimer = XTIMER_INVALID_ID;
     xlineedit_updateSizeHints(self);
     XWidget_update((XWidget*)self);
 }
@@ -1266,7 +1587,9 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     self->m_validator = other->m_validator;
     self->m_validatorUserData = other->m_validatorUserData;
     self->m_clearButtonRect = other->m_clearButtonRect;
-    /* 源对象归构造默认值。 */
+    /* 三击窗口随宿主整体转移；源对象归构造默认值。 */
+    self->m_tripleClick = other->m_tripleClick;
+    self->m_tripleClickTimer = other->m_tripleClickTimer;
     other->m_viewOffset = 0;
     other->m_frame = true;
     other->m_alignment = XAlignment_Left;
@@ -1276,6 +1599,8 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     other->m_validator = NULL;
     other->m_validatorUserData = NULL;
     XRect_init(&other->m_clearButtonRect, 0, 0, 0, 0);
+    other->m_tripleClickTimer = XTIMER_INVALID_ID;
+    XPoint_init(&other->m_tripleClick, 0, 0);
     /* 校验钩子经适配层下发：控制器仅存壳借用指针，move 后重定位到
        目标壳（源壳指针随默认值复位）。 */
     XLineEdit_setValidator(self, self->m_validator,
@@ -1412,6 +1737,19 @@ static XVariant* VXLineEdit_inputMethodQuery(const XWidget* self,
         return xlineedit_inputMethodQueryBase(self, query);
     ctl = edit->m_control;
     switch (query) {
+    case XInputMethodQuery_ImEnabled: {
+        /* 对标 Qt ImEnabled = isEnabled() && !isReadOnly()
+         * （qlineedit.cpp:1847-1848；基类默认恒 true，此处按行编辑语义
+         * 收紧）。 */
+        bool enabled = XWidget_isEnabled(self) &&
+                       !XLineControl_isReadOnly(ctl);
+        return XVariant_create(&enabled, sizeof(enabled), XVariantType_Bool);
+    }
+    case XInputMethodQuery_ImReadOnly: {
+        /* 对标 Qt ImReadOnly = isReadOnly()（qlineedit.cpp:1874-1875）。 */
+        bool ro = XLineControl_isReadOnly(ctl);
+        return XVariant_create(&ro, sizeof(ro), XVariantType_Bool);
+    }
     case XInputMethodQuery_ImCursorRectangle: {
         XRect rect = XLineEdit_cursorRect(edit);
         XRectF rectF;
@@ -1537,6 +1875,9 @@ XVtable* XLineEdit_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VXLineEdit_focusOutEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXLineEdit_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXLineEdit_changeEvent);
+    /* 三击窗口定时器虚槽（对标 QLineEditPrivate tripleClickTimer 的壳侧
+       承载；其余定时器交父类）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXLineEdit_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXLineEdit_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXLineEdit_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXLineEdit_deinit);
@@ -1567,6 +1908,8 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
     XMemset(self->m_actions, 0, sizeof(self->m_actions));
     XMemset(self->m_actionPositions, 0, sizeof(self->m_actionPositions));
     XRect_init(&self->m_clearButtonRect, 0, 0, 0, 0);
+    self->m_tripleClickTimer = XTIMER_INVALID_ID;
+    XPoint_init(&self->m_tripleClick, 0, 0);
     /* 编辑控制器：迁入编辑逻辑的私有控制器（对标 Qt d->control）。
        创建即预热（控制器空缓冲缺陷的壳侧规避，见 xlineedit_createControl）。 */
     self->m_control = xlineedit_createControl();
@@ -1574,6 +1917,9 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
         XLineControl_setAccessibleObject(self->m_control, (XObject*)self);
         xlineedit_connectControlSignals(self, self);
         xlineedit_syncControlFont(self);
+        /* 密码掩码字符/回显延迟由样式提示注入（对标 QLineEditPrivate::
+         * init 的 SH_LineEdit_PasswordCharacter/PasswordMaskDelay）。 */
+        xlineedit_applyStylePasswordHints(self);
     }
     /* 对标 qlineedit_p.cpp:231（QLineEditPrivate::init 的
        q->setFocusPolicy(Qt::StrongFocus)）：行编辑可经 Tab 与点击双路
@@ -1640,7 +1986,9 @@ void XLineEdit_clear(XLineEdit* self)
 void XLineEdit_insert(XLineEdit* self, const char* utf8)
 {
     if (!self || !utf8 || !self->m_control) return;
-    if (XLineControl_isReadOnly(self->m_control)) return;
+    /* 与 Qt 一致不设 readOnly 门禁（qlineedit.cpp insert 直通控制器；
+     * 只读只拦键盘/IME 路径——分别由控制器 processKeyEvent 与壳
+     * inputMethodEvent 守卫）。 */
     XLineControl_insert(self->m_control, utf8);
 }
 
@@ -1673,7 +2021,11 @@ bool XLineEdit_isReadOnly(const XLineEdit* self)
 void XLineEdit_setReadOnly(XLineEdit* self, bool readOnly)
 {
     if (!self || !self->m_control) return;
+    if (XLineControl_isReadOnly(self->m_control) == readOnly) return;
+    /* 控制器联动光标闪烁（读写切换后焦点内闪烁启停，对标
+     * QWidgetLineControl::setReadOnly 的 updateCursorBlinking）。 */
     XLineControl_setReadOnly(self->m_control, readOnly);
+    XWidget_update((XWidget*)self);
 }
 
 int XLineEdit_echoMode(const XLineEdit* self)
@@ -1714,8 +2066,6 @@ void XLineEdit_setEchoMode(XLineEdit* self, int echoMode)
     }
     /* 控制器：取消密码回显定时器 + 复位编辑态 + 刷新显示（Qt 语义）。 */
     XLineControl_setEchoMode(self->m_control, (uint32_t)echoMode);
-    /* 迁移前语义：切换回显模式清除选区并把光标移到末尾。 */
-    XLineControl_end(self->m_control, false);
     XWidget_update((XWidget*)self);
 }
 
@@ -1773,6 +2123,24 @@ void XLineEdit_addAction(XLineEdit* self, XAction* action, int position)
     self->m_actionPositions[self->m_actionCount] = (uint8_t)position;
     ++self->m_actionCount;
     XWidget_update((XWidget*)self);
+    xlineedit_updateSizeHints(self);
+}
+
+XAction* XLineEdit_addActionIcon(XLineEdit* self, const char* iconPath,
+                                 int position)
+{
+    XAction* action;
+    if (!self) return NULL;
+    if (position != XLineEditActionPosition_Leading &&
+        position != XLineEditActionPosition_Trailing)
+        return NULL;
+    /* 对标 QLineEdit::addAction(const QIcon&, ActionPosition)
+     * （qlineedit.cpp:436-441）：新建 action → 注册 → 返回所有权。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, "");
+    if (!action) return NULL;
+    if (iconPath && iconPath[0]) XAction_setIcon_2(action, iconPath);
+    XLineEdit_addAction(self, action, position);
+    return action;
 }
 
 bool XLineEdit_isClearButtonEnabled(const XLineEdit* self)
@@ -1966,14 +2334,15 @@ void XLineEdit_cursorWordBackward(XLineEdit* self, bool mark)
 void XLineEdit_backspace(XLineEdit* self)
 {
     if (!self || !self->m_control) return;
-    if (XLineControl_isReadOnly(self->m_control)) return;
+    /* 与 Qt 一致不设 readOnly 门禁（qlineedit.cpp backspace 直通控制
+     * 器；键盘路径由控制器 processKeyEvent 守卫）。 */
     XLineControl_backspace(self->m_control);
 }
 
 void XLineEdit_del(XLineEdit* self)
 {
     if (!self || !self->m_control) return;
-    if (XLineControl_isReadOnly(self->m_control)) return;
+    /* 与 Qt 一致不设 readOnly 门禁（同 backspace）。 */
     XLineControl_del(self->m_control);
 }
 
@@ -2007,18 +2376,17 @@ void XLineEdit_setModified(XLineEdit* self, bool modified)
 
 void XLineEdit_setSelection(XLineEdit* self, int start, int length)
 {
-    size_t chars;
-    size_t s;
     const char* raw;
+    int s;
     if (!self || !self->m_control) return;
-    /* 迁移前公开口径：start 为字符索引（钳位到 [0,字符数]），length 为
-       字符数（可负）；控制器以字节偏移承载 start。 */
+    /* start 为字符索引（合法域 [0,字符数]，越界整个调用忽略——对标 Qt
+       qlineedit.cpp setSelection 的 Q_UNLIKELY 分支，控制器同样告警并
+       忽略）；length 为字符数（可负）；控制器以字节偏移承载 start。 */
+    if (start < 0) return;
     raw = xlineedit_ctlRawText(self);
-    chars = xlineedit_charCount(raw);
-    if (start < 0) start = 0;
-    if ((size_t)start > chars) start = (int)chars;
-    s = xlineedit_charIndexToByte(raw, (size_t)start);
-    XLineControl_setSelection(self->m_control, (int)s, length);
+    if ((size_t)start > xlineedit_charCount(raw)) return;
+    s = (int)xlineedit_charIndexToByte(raw, (size_t)start);
+    XLineControl_setSelection(self->m_control, s, length);
 }
 
 bool XLineEdit_hasSelectedText(const XLineEdit* self)
@@ -2113,9 +2481,9 @@ void XLineEdit_redo(XLineEdit* self)
 void XLineEdit_cut(XLineEdit* self)
 {
     if (!self || !self->m_control) return;
-    if (XLineControl_isReadOnly(self->m_control)) return;
+    /* 对标 Qt cut（qlineedit.cpp:1377-1383）：有选区才 copy+del，无
+     * readOnly 门禁（copy 通道在密码类回显下防泄漏不写剪贴板）。 */
     if (!XLineControl_hasSelectedText(self->m_control)) return;
-    /* 对标 Qt cut = copy + del（控制器内为一次编辑结算）。 */
     XLineControl_copy(self->m_control, (int)XClipboardMode_Clipboard);
     XLineControl_del(self->m_control);
 }
@@ -2130,7 +2498,7 @@ void XLineEdit_copy(XLineEdit* self)
 void XLineEdit_paste(XLineEdit* self)
 {
     if (!self || !self->m_control) return;
-    if (XLineControl_isReadOnly(self->m_control)) return;
+    /* 与 Qt 一致不设 readOnly 门禁（qlineedit.cpp paste 直通控制器）。 */
     XLineControl_paste(self->m_control, (int)XClipboardMode_Clipboard);
 }
 

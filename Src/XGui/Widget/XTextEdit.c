@@ -1090,6 +1090,31 @@ static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
     r.height = XWidget_height(self);
     /* 白色背景 */
     XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
+    /* 视口边框：上/左 dark、下/右 light 的凹陷框（对标 QAbstractScrollArea
+       默认 StyledPanel|Sunken，与 XPlainTextEdit/XLineEdit 手绘回退同款
+       ——QTextBrowser 即带框滚动视口，无框时浏览器页只剩白底裸文，观感
+       退化成输入框）。编辑态与内嵌编辑器边框同位重绘（幂等）；预览态
+       编辑器隐藏，本框为唯一框源。 */
+    {
+        uint32_t dark = 0xFF808080u;
+        uint32_t light = 0xFFE0E0E0u;
+#if XPALETTE_ON
+        XPalette palette = XWidget_palette(self);
+        XColor c;
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Dark);
+        if (XColor_rgba(&c) != 0u) dark = XColor_rgba(&c);
+        c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                           XPaletteColorRole_Light);
+        if (XColor_rgba(&c) != 0u) light = XColor_rgba(&c);
+#endif /* XPALETTE_ON */
+        XPainter_fillRect(&painter, &(XRect){0, 0, r.width, 1}, dark);
+        XPainter_fillRect(&painter, &(XRect){0, 0, 1, r.height}, dark);
+        XPainter_fillRect(&painter,
+                          &(XRect){0, r.height - 1, r.width, 1}, light);
+        XPainter_fillRect(&painter,
+                          &(XRect){r.width - 1, 0, 1, r.height}, light);
+    }
     if (!te->m_richPreview) {
         /* 编辑态：正文由内嵌编辑器子控件绘制，壳只铺底。 */
         XPainter_deinit(&painter);
@@ -1327,9 +1352,13 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     self->m_fontPointSize = 10.0;
     self->m_tabStopDistance = 80.0;
     self->m_cursorWidth = 1;
-    self->m_lineWrapMode = 0;
+    /* 对标 QTextEditPrivate 构造默认（qtextedit.cpp:87）：
+       lineWrap = WidgetWidth(1)、wordWrap = WrapAtWordBoundaryOrAnywhere
+       （XTextControlWrap_WordBoundaryOrAnywhere = 4，数值与
+       QTextOption 一致）。 */
+    self->m_lineWrapMode = (int)XPlainTextEditMode_WidgetWidth;
     self->m_lineWrapColumnOrWidth = 0; /* 对标 Qt 默认值 0。 */
-    self->m_wordWrapMode = 1;
+    self->m_wordWrapMode = (int)XTextControlWrap_WordBoundaryOrAnywhere;
     self->m_acceptRichText = true;
     self->m_autoFormatting = 0;
     self->m_centerOnScroll = false;
@@ -1337,6 +1366,15 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent,
     self->m_richPreview = false;   /* 默认纯文本编辑态。 */
     self->m_hoverAnchor = NULL;
     self->m_pressedAnchor = NULL;
+    /* 默认值下发内嵌编辑器（换行/断行/光标宽/制表位随壳状态渲染，
+     * 对标 Qt 属性写入文档缺省选项）。 */
+    if (self->m_editor) {
+        XPlainTextEdit_setLineWrapMode(self->m_editor, self->m_lineWrapMode);
+        XPlainTextEdit_setWordWrapMode(self->m_editor, self->m_wordWrapMode);
+        XPlainTextEdit_setCursorWidth(self->m_editor, self->m_cursorWidth);
+        XPlainTextEdit_setTabStopDistance(
+            self->m_editor, (int)self->m_tabStopDistance);
+    }
 }
 
 XTextEdit* XTextEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags)
@@ -1680,7 +1718,12 @@ void XTextEdit_clear_2(XTextEdit* self)
     XWidget_update((XWidget*)self);
 }
 void XTextEdit_selectAll_2(XTextEdit* self) { XPlainTextEdit_selectAll(&self->m_editor->m_base); }
-bool XTextEdit_canPaste(XTextEdit* self) { return XPlainTextEdit_isReadOnly(&self->m_editor->m_base) ? false : true; }
+bool XTextEdit_canPaste(XTextEdit* self)
+{
+    /* 对标 QTextEdit::canPaste：可编辑且剪贴板有文本（读内嵌编辑器
+     * 控制器状态，替代旧 !readOnly 口径）。 */
+    return self ? XPlainTextEdit_canPaste(self->m_editor) : false;
+}
 void XTextEdit_setAcceptRichText(XTextEdit* self, bool accept) { if (self) self->m_acceptRichText = accept; }
 bool XTextEdit_acceptRichText(const XTextEdit* self) { return self ? self->m_acceptRichText : true; }
 void XTextEdit_setTextBackgroundColor(XTextEdit* self, uint32_t color) { if (self) self->m_textBackgroundColor = color; }
@@ -1699,7 +1742,48 @@ const char* XTextEdit_fontFamily(const XTextEdit* self)
 }
 void XTextEdit_setFontWeight(XTextEdit* self, int weight) { if (self && weight > 0) self->m_fontWeight = weight; }
 int XTextEdit_fontWeight(const XTextEdit* self) { return self ? self->m_fontWeight : 400; }
-void XTextEdit_setFontPointSize(XTextEdit* self, double size) { if (self && size > 0) self->m_fontPointSize = size; }
+/** @brief 字体度量失败时的回退行高（与 XTE_LINE_HEIGHT 同口径）。 */
+#define XTE_FALLBACK_LINE_HEIGHT 16
+
+/** @brief 以带符号点增量同步内嵌编辑器字体（zoomIn/zoomOut 与
+ *         setFontPointSize 共用；点大小与像素字号同步增减，点阵渲染
+ *         路径仅改点大小不产生视觉变化）。 */
+static void xte_applyFontDelta(XTextEdit* self, int delta)
+{
+    XFont font;
+    int ps;
+    int px;
+    if (!self || !self->m_editor || delta == 0) return;
+    font = XWidget_font((XWidget*)self->m_editor);
+    ps = XFont_pointSize(&font);
+    if (ps <= 0) ps = (int)XFONT_DEFAULT_POINT_SIZE;
+    ps += delta;
+    if (ps < 1) ps = 1;
+    XFont_setPointSize(&font, ps);
+    px = XFont_bitmapPixelSize(&font, XTE_FALLBACK_LINE_HEIGHT);
+    px += delta;
+    if (px < 1) px = 1;
+    XFont_setPixelSize(&font, px);
+    XWidget_setFont((XWidget*)self->m_editor, &font);
+    XFont_deinit_base((XClass*)&font);
+    XWidget_update((XWidget*)self->m_editor);
+}
+
+/** @brief double 增量四舍五入为 int（负值向下取整）。 */
+static int xte_roundDelta(double delta)
+{
+    return (int)(delta >= 0 ? delta + 0.5 : delta - 0.5);
+}
+
+void XTextEdit_setFontPointSize(XTextEdit* self, double size)
+{
+    double before;
+    if (!self || size <= 0) return;
+    before = self->m_fontPointSize;
+    self->m_fontPointSize = size;
+    /* 对标 Qt：字号变化在编辑器可见（字体下发内嵌编辑器渲染）。 */
+    xte_applyFontDelta(self, xte_roundDelta(size - before));
+}
 double XTextEdit_fontPointSize(const XTextEdit* self) { return self ? self->m_fontPointSize : 10.0; }
 void XTextEdit_setCurrentFont(XTextEdit* self, const char* family) { XTextEdit_setFontFamily(self, family); }
 
@@ -1721,14 +1805,48 @@ XFont XTextEdit_currentFont(const XTextEdit* self)
     XFont_setUnderline(&font, XTextEdit_isUnderline(self));
     return font;
 }
-void XTextEdit_zoomIn(XTextEdit* self, int range) { if (self) { self->m_fontPointSize += (range > 0 ? range : 1); if (self->m_fontPointSize > 100) self->m_fontPointSize = 100; } }
-void XTextEdit_zoomOut(XTextEdit* self, int range) { if (self) { self->m_fontPointSize -= (range > 0 ? range : 1); if (self->m_fontPointSize < 1) self->m_fontPointSize = 1; } }
-void XTextEdit_setTabStopDistance(XTextEdit* self, double distance) { if (self && distance >= 0) self->m_tabStopDistance = distance; }
+void XTextEdit_zoomIn(XTextEdit* self, int range)
+{
+    double before;
+    if (!self) return;
+    before = self->m_fontPointSize;
+    self->m_fontPointSize += (range > 0 ? range : 1);
+    if (self->m_fontPointSize > 100) self->m_fontPointSize = 100;
+    /* 对标 Qt：缩放在编辑器可见（字体点/像素字号同步下发）。 */
+    xte_applyFontDelta(self,
+                       xte_roundDelta(self->m_fontPointSize - before));
+}
+void XTextEdit_zoomOut(XTextEdit* self, int range)
+{
+    double before;
+    if (!self) return;
+    before = self->m_fontPointSize;
+    self->m_fontPointSize -= (range > 0 ? range : 1);
+    if (self->m_fontPointSize < 1) self->m_fontPointSize = 1;
+    xte_applyFontDelta(self,
+                       xte_roundDelta(self->m_fontPointSize - before));
+}
+void XTextEdit_setTabStopDistance(XTextEdit* self, double distance)
+{
+    if (!self || distance < 0) return;
+    self->m_tabStopDistance = distance;
+    /* 对标 Qt：制表位距写入文档缺省选项（下发内嵌编辑器）。 */
+    if (self->m_editor)
+        XPlainTextEdit_setTabStopDistance(self->m_editor,
+                                          (int)distance);
+}
 double XTextEdit_tabStopDistance(const XTextEdit* self) { return self ? self->m_tabStopDistance : 80.0; }
 void XTextEdit_setAutoFormatting(XTextEdit* self, int features) { if (self) self->m_autoFormatting = features; }
 int XTextEdit_autoFormatting(const XTextEdit* self) { return self ? self->m_autoFormatting : 0; }
-void XTextEdit_setTabChangesFocus(XTextEdit* self, bool b) { (void)self; (void)b; /* 键盘焦点链由 XWidget 统一管理；存储位预留。 */ }
-bool XTextEdit_tabChangesFocus(const XTextEdit* self) { (void)self; return false; }
+void XTextEdit_setTabChangesFocus(XTextEdit* self, bool b)
+{
+    if (!self) return;
+    /* 对标 QTextEdit::setTabChangesFocus：状态在文本承载层生效
+     * （内嵌编辑器 keyPressEvent 依此决定 Tab 吞掉/交焦点遍历）。 */
+    if (self->m_editor) XPlainTextEdit_setTabChangesFocus(self->m_editor, b);
+}
+bool XTextEdit_tabChangesFocus(const XTextEdit* self)
+{ return self ? XPlainTextEdit_tabChangesFocus(self->m_editor) : false; }
 void XTextEdit_setDocumentTitle(XTextEdit* self, const char* title)
 {
     if (!self) return;
@@ -1743,10 +1861,27 @@ const char* XTextEdit_documentTitle(const XTextEdit* self)
 }
 void XTextEdit_setUndoRedoEnabled_2(XTextEdit* self, bool enable) { XPlainTextEdit_setUndoRedoEnabled(&self->m_editor->m_base, enable); }
 bool XTextEdit_isUndoRedoEnabled_2(const XTextEdit* self) { return XPlainTextEdit_isUndoRedoEnabled(&self->m_editor->m_base); }
-void XTextEdit_setLineWrapMode(XTextEdit* self, int mode) { if (self) self->m_lineWrapMode = mode; }
-int XTextEdit_lineWrapMode(const XTextEdit* self) { return self ? self->m_lineWrapMode : 0; }
-void XTextEdit_setWordWrapMode(XTextEdit* self, int policy) { if (self) self->m_wordWrapMode = policy; }
-int XTextEdit_wordWrapMode(const XTextEdit* self) { return self ? self->m_wordWrapMode : 1; }
+void XTextEdit_setLineWrapMode(XTextEdit* self, int mode)
+{
+    if (!self || self->m_lineWrapMode == mode) return;
+    self->m_lineWrapMode = mode;
+    /* 对标 QTextEdit::setLineWrapMode：换行开关触发重排（下发内嵌
+     * 编辑器，重布局/重绘随其联动）。 */
+    if (self->m_editor) XPlainTextEdit_setLineWrapMode(self->m_editor, mode);
+    XWidget_update((XWidget*)self);
+}
+int XTextEdit_lineWrapMode(const XTextEdit* self) { return self ? self->m_lineWrapMode : 1; }
+void XTextEdit_setWordWrapMode(XTextEdit* self, int policy)
+{
+    if (!self || self->m_wordWrapMode == policy) return;
+    self->m_wordWrapMode = policy;
+    /* 对标 QTextOption::setWrapMode：断行规则下发内嵌编辑器承载。 */
+    if (self->m_editor) XPlainTextEdit_setWordWrapMode(self->m_editor, policy);
+    XWidget_update((XWidget*)self);
+}
+int XTextEdit_wordWrapMode(const XTextEdit* self)
+{ return self ? self->m_wordWrapMode
+              : (int)XTextControlWrap_WordBoundaryOrAnywhere; }
 void XTextEdit_setReadOnly_2(XTextEdit* self, bool ro) { XPlainTextEdit_setReadOnly(&self->m_editor->m_base, ro); }
 bool XTextEdit_isReadOnly_2(const XTextEdit* self) { return XPlainTextEdit_isReadOnly(&self->m_editor->m_base); }
 void XTextEdit_setPlaceholderText_2(XTextEdit* self, const char* text) { XPlainTextEdit_setPlaceholderText(&self->m_editor->m_base, text); }
@@ -1754,12 +1889,38 @@ const char* XTextEdit_placeholderText_2(const XTextEdit* self) { return XPlainTe
 void XTextEdit_ensureCursorVisible_2(XTextEdit* self) { XPlainTextEdit_ensureCursorVisible(&self->m_editor->m_base); }
 void XTextEdit_setCenterOnScroll(XTextEdit* self, bool enabled) { if (self) self->m_centerOnScroll = enabled; }
 bool XTextEdit_centerOnScroll(const XTextEdit* self) { return self ? self->m_centerOnScroll : false; }
-void XTextEdit_setExtraSelections(XTextEdit* self, void* selections) { (void)self; (void)selections; }
-void XTextEdit_setBackgroundVisible(XTextEdit* self, bool visible) { (void)self; (void)visible; }
-bool XTextEdit_backgroundVisible(const XTextEdit* self) { (void)self; return false; }
-void XTextEdit_setTextCursor_2(XTextEdit* self, void* cursor) { (void)self; (void)cursor; }
-void* XTextEdit_textCursor(const XTextEdit* self) { (void)self; return NULL; }
-void XTextEdit_setCursorWidth(XTextEdit* self, int width) { if (self && width > 0) self->m_cursorWidth = width; }
+void XTextEdit_setExtraSelections(XTextEdit* self,
+                                  const XPlainTextEditExtraSelection* selections,
+                                  int count)
+{
+    if (!self) return;
+    /* 委托内嵌编辑器（换算/写入/重绘一体；承载与 XPlainTextEdit 同款）。 */
+    XPlainTextEdit_setExtraSelections(self->m_editor, selections, count);
+}
+
+int XTextEdit_extraSelections(const XTextEdit* self,
+                              const XPlainTextEditExtraSelection** selections)
+{
+    if (selections) *selections = NULL;
+    if (!self) return 0;
+    return XPlainTextEdit_extraSelections(self->m_editor, selections);
+}
+void XTextEdit_setBackgroundVisible(XTextEdit* self, bool visible)
+{
+    if (!self) return;
+    /* 对标 QPlainTextEdit 同名属性（viewport 边框外背景可见性）；委托
+     * 内嵌编辑器承载（其默认 true，与 Qt 一致）。 */
+    XPlainTextEdit_setBackgroundVisible(self->m_editor, visible);
+}
+bool XTextEdit_backgroundVisible(const XTextEdit* self)
+{ return self ? XPlainTextEdit_backgroundVisible(self->m_editor) : true; }
+void XTextEdit_setCursorWidth(XTextEdit* self, int width)
+{
+    if (!self || width <= 0) return;
+    self->m_cursorWidth = width;
+    /* 对标 Qt：光标宽度随属性即时生效（下发内嵌编辑器渲染）。 */
+    XPlainTextEdit_setCursorWidth(self->m_editor, width);
+}
 int XTextEdit_cursorWidth(const XTextEdit* self) { return self ? self->m_cursorWidth : 1; }
 /* ==================== 光标几何与查找（对标 QPlainTextEdit 同组 API） ==== */
 
@@ -1849,6 +2010,16 @@ int XTextEdit_textCursorColumn(const XTextEdit* self)
 {
     if (!self || !self->m_editor) return 0;
     return XPlainTextEdit_textCursorColumn(self->m_editor);
+}
+
+XPoint XTextEdit_textCursor(const XTextEdit* self)
+{
+    XPoint result;
+    result.x = 0;
+    result.y = 0;
+    if (!self || !self->m_editor) return result;
+    /* 平铺行列承载与 XPlainTextEdit_textCursor 同源（x=行，y=列）。 */
+    return XPlainTextEdit_textCursor(self->m_editor);
 }
 
 /* ==================== 文档/插入/资源/Markdown 补齐组（对标 QTextEdit） ==== */
@@ -2102,14 +2273,39 @@ void XTextEdit_setPlainText(XTextEdit* self, const char* text)
 }
 
 void XTextEdit_print(XTextEdit* self, void* printer) { (void)self; (void)printer; }
-void* XTextEdit_createStandardContextMenu(XTextEdit* self) { (void)self; return NULL; }
-void XTextEdit_setTextInteractionFlags(XTextEdit* self, int flags) { (void)self; (void)flags; }
-int XTextEdit_textInteractionFlags(const XTextEdit* self) { (void)self; return 0; }
-void XTextEdit_setOverwriteMode(XTextEdit* self, bool overwrite) { (void)self; (void)overwrite; }
-bool XTextEdit_overwriteMode(const XTextEdit* self) { (void)self; return false; }
-int XTextEdit_cursorRect_width(const XTextEdit* self) { (void)self; return 1; }
-void XTextEdit_moveCursor_2(XTextEdit* self, int operation, int mode) { (void)self; (void)operation; (void)mode; }
-bool XTextEdit_cursorCanPaste(const XTextEdit* self) { (void)self; return false; }
+#if XMENU_ON
+XMenu* XTextEdit_createStandardContextMenu(XTextEdit* self)
+{
+    if (!self) return NULL;
+    /* 菜单数据源在内嵌编辑器控制器（撤销/重做/剪切/复制/粘贴/删除/
+     * 全选，灰化读控制器状态；只读时仅复制/全选）。 */
+    return XPlainTextEdit_createStandardContextMenu(self->m_editor);
+}
+#endif /* XMENU_ON */
+void XTextEdit_setTextInteractionFlags(XTextEdit* self, int flags)
+{
+    if (!self) return;
+    /* 对标 QTextEdit::setTextInteractionFlags：交互标志在文本承载层
+     * 生效（下发内嵌编辑器，只读映射随其统一）。 */
+    XPlainTextEdit_setTextInteractionFlags(self->m_editor, flags);
+}
+int XTextEdit_textInteractionFlags(const XTextEdit* self)
+{ return self ? XPlainTextEdit_textInteractionFlags(self->m_editor) : 0; }
+void XTextEdit_setOverwriteMode(XTextEdit* self, bool overwrite)
+{
+    if (!self) return;
+    /* 对标 QTextEdit::setOverwriteMode：覆盖开关由控制器承载（插入时
+     * 先删除光标后字符，对标 qwidgettextcontrol.cpp:1350）。 */
+    XPlainTextEdit_setOverwriteMode(self->m_editor, overwrite);
+}
+bool XTextEdit_overwriteMode(const XTextEdit* self)
+{ return self ? XPlainTextEdit_overwriteMode(self->m_editor) : false; }
+void XTextEdit_moveCursor(XTextEdit* self, int operation, int mode)
+{
+    if (!self) return;
+    /* 对标 QTextEdit::moveCursor：委托内嵌编辑器在控制器内移动。 */
+    XPlainTextEdit_moveCursor(self->m_editor, operation, mode);
+}
 void* XTextEdit_currentCharFormatChanged_signal(XTextEdit* self)
 {
     if (!self || !((XObject*)self)->m_signalSlot)

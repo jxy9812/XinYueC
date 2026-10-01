@@ -16,6 +16,12 @@ static void xtd_formatClear(XTDCharFormat* fmt);
 static bool xtd_formatEqual(const XTDCharFormat* a, const XTDCharFormat* b);
 static void xtd_fragClear(XTDFragment* frag);
 static const char* xtd_fragText(const XTDFragment* frag);
+static void xtd_notifyUndoRedo(XTextDocument* self);
+static void xtd_enforceMaximumBlockCount(XTextDocument* self);
+static void xtd_clearBlocksOnly(XTextDocument* self);
+static void xtd_setPlainTextNoHistory(XTextDocument* self, const char* utf8);
+static void xtd_saveSnapshot(XTextDocument* self);
+static void xtd_changedCore(XTextDocument* self, bool markModified);
 
 /* ==================== 生命周期 ==================== */
 
@@ -53,6 +59,35 @@ static void VX_td_deinit(XTextDocument* self)
         XString_delete_base(self->m_url);
         self->m_url = NULL;
     }
+    if (self->m_cssMedia) {
+        XString_delete_base(self->m_cssMedia);
+        self->m_cssMedia = NULL;
+    }
+    if (self->m_frontMatter) {
+        XString_delete_base(self->m_frontMatter);
+        self->m_frontMatter = NULL;
+    }
+    if (self->m_baseUrl) {
+        XString_delete_base(self->m_baseUrl);
+        self->m_baseUrl = NULL;
+    }
+    xtd_formatClear(&self->m_defaultFormat);
+    for (i = 0; i < self->m_resourceCount; ++i) {
+        XTDResource* res = &self->m_resources[i];
+        if (res->name) {
+            XString_delete_base(res->name);
+            res->name = NULL;
+        }
+        if (res->text) {
+            XString_delete_base(res->text);
+            res->text = NULL;
+        }
+        if (res->image) {
+            XImage_delete_base((XClass*)res->image);
+            res->image = NULL;
+        }
+    }
+    self->m_resourceCount = 0;
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
@@ -73,6 +108,14 @@ void XTextDocument_init(XTextDocument* self)
     self->m_undoRedoEnabled = true;
     self->m_title = XString_create();
     self->m_url = XString_create();
+    self->m_cssMedia = XString_create();
+    self->m_frontMatter = XString_create();
+    self->m_baseUrl = XString_create();
+    /* m_modified/m_modifiedFlag/撤销重做栈/资源表/m_defaultFormat 已随
+     * XMemset 清零；发射去重基准取初始块数（blockCountChanged 不误发）。 */
+    self->m_emittedBlockCount = 1;
+    self->m_emittedCharCount = 0;
+    self->m_maximumBlockCount = 0;
 }
 
 XTextDocument* XTextDocument_create_ex(XMemoryType memory)
@@ -111,6 +154,149 @@ static void xtd_emitVoid(XTextDocument* self, size_t signal)
     } else {
         XVarList_delete(args);
     }
+}
+
+static void xtd_emitBool(XTextDocument* self, size_t signal, bool value)
+{
+    XVarList* args = XVarList_Create(XVar(bool, value));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+static void xtd_emitInt(XTextDocument* self, size_t signal, int value)
+{
+    XVarList* args = XVarList_Create(XVar(int, value));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief contentsChange(from, removed, added) 三参信号发射。 */
+static void xtd_emitContentsChange(XTextDocument* self, int from,
+                                   int removed, int added)
+{
+    XVarList* args = XVarList_Create(XVar(int, from), XVar(int, removed),
+                                     XVar(int, added));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XTextDocument_contentsChange_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief 撤销/重做可用性边沿检测发射（对标 QTextDocumentPrivate 的
+ *         emitUndoAvailable/emitRedoAvailable：仅在可用性翻转时发射）。 */
+static void xtd_notifyUndoRedo(XTextDocument* self)
+{
+    bool undoAvail;
+    bool redoAvail;
+    if (!self) return;
+    undoAvail = self->m_undoRedoEnabled && self->m_undoTop > 0;
+    redoAvail = self->m_undoRedoEnabled && self->m_redoTop > 0;
+    if (undoAvail != self->m_wasUndoAvailable) {
+        self->m_wasUndoAvailable = undoAvail;
+        xtd_emitBool(self, (size_t)XTextDocument_undoAvailable_signal,
+                     undoAvail);
+    }
+    if (redoAvail != self->m_wasRedoAvailable) {
+        self->m_wasRedoAvailable = redoAvail;
+        xtd_emitBool(self, (size_t)XTextDocument_redoAvailable_signal,
+                     redoAvail);
+    }
+}
+
+/** @brief 清空撤销/重做快照并释放内存（供 clear/禁用撤销/显式清栈共用）。 */
+static void xtd_clearUndoRedoArrays(XTextDocument* self)
+{
+    int i;
+    if (!self) return;
+    for (i = 0; i < self->m_undoTop; ++i) XFree_System(self->m_undoStack[i]);
+    self->m_undoTop = 0;
+    for (i = 0; i < self->m_redoTop; ++i) XFree_System(self->m_redoStack[i]);
+    self->m_redoTop = 0;
+}
+
+/** @brief 块数上限立即生效：超出部分从文档开头移除（对标
+ *         QTextDocumentPrivate::ensureMaximumBlockCount 的"从头移除"语义；
+ *         不发射信号——发射由调用方 xtd_changed/setMaximumBlockCount 统一）。 */
+static void xtd_enforceMaximumBlockCount(XTextDocument* self)
+{
+    int remove;
+    int i;
+    int j;
+    if (!self || !self->m_blocks || self->m_maximumBlockCount <= 0) return;
+    if (self->m_blockCount <= self->m_maximumBlockCount) return;
+    remove = self->m_blockCount - self->m_maximumBlockCount;
+    for (i = 0; i < remove; ++i) {
+        XTDBlock* blk = &self->m_blocks[i];
+        for (j = 0; j < blk->fragmentCount; ++j)
+            xtd_fragClear(&blk->fragments[j]);
+        if (blk->blockFormat) {
+            XString_delete_base(blk->blockFormat);
+            blk->blockFormat = NULL;
+        }
+    }
+    /* 剩余块整体前移（块为值语义结构，memmove 安全）。 */
+    XMemmove(self->m_blocks, self->m_blocks + remove,
+             sizeof(XTDBlock) * (size_t)self->m_maximumBlockCount);
+    self->m_blockCount = self->m_maximumBlockCount;
+}
+
+/** @brief 仅清块内容（不动撤销/重做栈、元信息、modified 与信号——
+ *         Qt clear 的块级子集；setPlainText/undo 快照恢复共用）。 */
+static void xtd_clearBlocksOnly(XTextDocument* self)
+{
+    int b;
+    int j;
+    if (!self || !self->m_blocks) return;
+    /* 释放全部已用块（含 setHtml 填充的多块），不止 block0：
+       此前只清 block0 导致多块 fragment text 泄漏（Phase 3.2）。 */
+    for (b = 0; b < self->m_blockCount && b < self->m_capacity; ++b) {
+        XTDBlock* blk = &self->m_blocks[b];
+        for (j = 0; j < blk->fragmentCount; ++j)
+            xtd_fragClear(&blk->fragments[j]);
+        if (blk->blockFormat) {
+            XString_delete_base(blk->blockFormat);
+            blk->blockFormat = NULL;
+        }
+        XMemset(blk, 0, sizeof(XTDBlock));
+    }
+    self->m_blockCount = 1;
+}
+
+/** @brief 清空按名资源表并释放载荷（对标 Qt clear 的 d->resources.clear()）。 */
+static void xtd_clearResources(XTextDocument* self)
+{
+    int i;
+    if (!self) return;
+    for (i = 0; i < self->m_resourceCount; ++i) {
+        XTDResource* res = &self->m_resources[i];
+        if (res->name) {
+            XString_delete_base(res->name);
+            res->name = NULL;
+        }
+        if (res->text) {
+            XString_delete_base(res->text);
+            res->text = NULL;
+        }
+        if (res->image) {
+            XImage_delete_base((XClass*)res->image);
+            res->image = NULL;
+        }
+    }
+    self->m_resourceCount = 0;
 }
 
 /** @brief 深拷贝字符格式（含字符串字段）。 */
@@ -193,37 +379,62 @@ static const char* xtd_fragText(const XTDFragment* frag)
     return t ? t : "";
 }
 
-static void xtd_changed(XTextDocument* self)
+/** @brief 内容变化统一出口（对标 Qt finishEdit 的信号编排子集）：
+ *         maximumBlockCount 钳位 → [markModified 时 revision 递增与
+ *         modified 翻转发射 modificationChanged(true)] →
+ *         blockCountChanged（去重）→ contentsChange(0, prev, now) →
+ *         contentsChanged。from 子集恒 0（快照制无字符级差异定位）。
+ *         clear 走 markModified=false（Qt：clear 私有直置 modified=false，
+ *         不发 modificationChanged，且清空后文档保持未修改态）。 */
+static void xtd_changedCore(XTextDocument* self, bool markModified)
 {
     if (self) {
-        self->m_modified++;
+        int nowChars;
+        xtd_enforceMaximumBlockCount(self);
+        if (markModified) {
+            self->m_modified++;
+            if (!self->m_modifiedFlag) {
+                self->m_modifiedFlag = true;
+                xtd_emitBool(self,
+                             (size_t)XTextDocument_modificationChanged_signal,
+                             true);
+            }
+        }
+        if (self->m_blockCount != self->m_emittedBlockCount) {
+            self->m_emittedBlockCount = self->m_blockCount;
+            xtd_emitInt(self,
+                        (size_t)XTextDocument_blockCountChanged_signal,
+                        self->m_blockCount);
+        }
+        nowChars = XTextDocument_characterCount(self);
+        xtd_emitContentsChange(self, 0, self->m_emittedCharCount, nowChars);
+        self->m_emittedCharCount = nowChars;
         xtd_emitVoid(self, (size_t)XTextDocument_contentsChanged_signal);
     }
+}
+
+static void xtd_changed(XTextDocument* self)
+{
+    xtd_changedCore(self, true);
 }
 
 /* ==================== 块操作 ==================== */
 
 void XTextDocument_clear(XTextDocument* self)
 {
-    int b;
-    int j;
     if (!self) return;
-    if (self->m_blocks) {
-        /* 释放全部已用块（含 setHtml 填充的多块），不止 block0：
-           此前只清 block0 导致多块 fragment text 泄漏（Phase 3.2）。 */
-        for (b = 0; b < self->m_blockCount && b < self->m_capacity; ++b) {
-            XTDBlock* blk = &self->m_blocks[b];
-            for (j = 0; j < blk->fragmentCount; ++j)
-                xtd_fragClear(&blk->fragments[j]);
-            if (blk->blockFormat) {
-                XString_delete_base(blk->blockFormat);
-                blk->blockFormat = NULL;
-            }
-            XMemset(blk, 0, sizeof(XTDBlock));
-        }
-    }
-    self->m_blockCount = 1;
-    xtd_changed(self);
+    /* 对标 QTextDocument::clear（d->clear()）：清块内容 + 清标题元信息
+     * （title.clear()）+ 清资源表（resources.clear()）+ 清撤销/重做栈
+     * （UndoAndRedoStacks）+ modified 复位（私有直置，不发
+     * modificationChanged——Qt 同口径）；随后经 xtd_changed 发射内容变化
+     * 与块数变化信号。 */
+    xtd_clearBlocksOnly(self);
+    if (self->m_title) XString_assign_utf8(self->m_title, "");
+    xtd_clearResources(self);
+    xtd_clearUndoRedoArrays(self);
+    self->m_modifiedFlag = false;
+    xtd_notifyUndoRedo(self);
+    xtd_changedCore(self, false);
 }
 
 bool XTextDocument_isEmpty(const XTextDocument* self)
@@ -280,24 +491,20 @@ char* XTextDocument_toPlainText(const XTextDocument* self)
     return out;
 }
 
-void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
+/** @brief 按 '\n' 拆分填充块（setPlainText 与撤销快照恢复共用）。
+ * @details 容量增长前补零新增槽位（realloc 不清零，旧实现直接抬
+ *          m_blockCount 会让析构/clear 读到未初始化块的垃圾 fragment
+ *          指针——越界读修复，见历史注）。 */
+static void xtd_fillPlainTextBlocks(XTextDocument* self, const char* utf8)
 {
     const char* p;
     int blockIdx = 0;
-    if (!self) return;
-    XTextDocument_clear(self);
-    xtd_emitVoid(self, (size_t)XTextDocument_documentLayoutChanged_signal);
-    xtd_emitVoid(self, (size_t)XTextDocument_undoCommandAdded_signal);
-    if (!utf8 || !utf8[0]) return;
     p = utf8;
     while (*p) {
         const char* nl = XStrchr(p, '\n');
         size_t len = nl ? (size_t)(nl - p) : XStrlen(p);
         if (blockIdx >= XTD_MAX_BLOCKS) break;
         if (blockIdx >= self->m_capacity) {
-            /* 增长前必须补容量；realloc 不清零，新增槽位逐块置零，
-               否则旧实现直接抬 m_blockCount 会让析构/clear 读到
-               未初始化块的垃圾 fragment 指针（越界读）。 */
             int bi;
             int oldCap = self->m_capacity;
             xtd_ensureCapacity(self, blockIdx + 1);
@@ -318,7 +525,37 @@ void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
         p = nl + 1;
     }
     if (blockIdx > self->m_blockCount) self->m_blockCount = blockIdx;
+}
+
+/** @brief 快照恢复专用：仅重建块内容（不清撤销/重做栈、不发
+ *         documentLayoutChanged——undo/redo 内部路径，Qt 的 undo 亦不经
+ *         setPlainText 公共口）。 */
+static void xtd_setPlainTextNoHistory(XTextDocument* self, const char* utf8)
+{
+    if (!self) return;
+    xtd_clearBlocksOnly(self);
+    if (utf8 && utf8[0]) xtd_fillPlainTextBlocks(self, utf8);
     xtd_changed(self);
+}
+
+void XTextDocument_setPlainText(XTextDocument* self, const char* utf8)
+{
+    if (!self) return;
+    /* 对标 QTextDocument::setPlainText：撤销/重做历史随 clear 复位
+     * （Qt 文档注记 "The undo/redo history is reset"）。 */
+    XTextDocument_clear(self);
+    xtd_emitVoid(self, (size_t)XTextDocument_documentLayoutChanged_signal);
+    xtd_emitVoid(self, (size_t)XTextDocument_undoCommandAdded_signal);
+    if (!utf8 || !utf8[0]) return;
+    xtd_fillPlainTextBlocks(self, utf8);
+    xtd_changed(self);
+}
+
+char* XTextDocument_toRawText(const XTextDocument* self)
+{
+    /* 对标 toRawText：子集内与 toPlainText 等价（NBSP 已在解析期折叠、
+     * 无分隔符概念），见头文件注。 */
+    return XTextDocument_toPlainText(self);
 }
 
 
@@ -1273,6 +1510,7 @@ char* XTextDocument_toHtml(const XTextDocument* self)
 void XTextDocument_setBlockAlignment(XTextDocument* self, int blockIndex, int alignment)
 {
     if (!self || blockIndex < 0 || blockIndex >= self->m_blockCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[blockIndex].alignment = alignment;
     xtd_changed(self);
 }
@@ -1286,6 +1524,7 @@ int XTextDocument_blockAlignment(const XTextDocument* self, int blockIndex)
 void XTextDocument_setBlockHeadingLevel(XTextDocument* self, int blockIndex, int level)
 {
     if (!self || blockIndex < 0 || blockIndex >= self->m_blockCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[blockIndex].headingLevel = level;
     xtd_changed(self);
 }
@@ -1301,6 +1540,7 @@ int XTextDocument_addFragment(XTextDocument* self, int blockIndex,
     blk = &self->m_blocks[blockIndex];
     fi = blk->fragmentCount;
     if (fi >= XTD_MAX_FRAGMENTS_PER_BLOCK) return -1;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈（快照制撤销接线）。 */
     XMemset(&blk->fragments[fi], 0, sizeof(XTDFragment));
     blk->fragments[fi].text = XString_create_utf8(text);
     if (fmt) xtd_formatAssign(&blk->fragments[fi].fmt, fmt);
@@ -1335,12 +1575,16 @@ void XTextDocument_insertText(XTextDocument* self, int blockIndex,
 
 void XTextDocument_appendBlock(XTextDocument* self, const XTDCharFormat* fmt)
 {
+    if (!self) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     xtd_ensureCapacity(self, self->m_blockCount + 1);
     if (self->m_blockCount < XTD_MAX_BLOCKS) {
         XMemset(&self->m_blocks[self->m_blockCount], 0, sizeof(XTDBlock));
         self->m_blockCount++;
     }
     (void)fmt;
+    /* 块数变化经统一出口发射 blockCountChanged（Qt 信号语义）。 */
+    xtd_changed(self);
 }
 
 void XTextDocument_appendText(XTextDocument* self, const char* text,
@@ -1353,6 +1597,8 @@ void XTextDocument_appendHtml(XTextDocument* self, const char* html)
 {
     /* 对标 QTextDocument::appendHtml：以既有解析器在文档尾部追加，
      * 不清空既有块（末块非空时另起新段）；子集口径与 setHtml 一致。 */
+    if (!self) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈（快照制撤销接线）。 */
     xtd_parseHtml(self, html, false);
 }
 
@@ -1375,6 +1621,7 @@ int XTextDocument_insertImage(XTextDocument* self, const XImage* image)
     blk = &self->m_blocks[bi];
     fi = blk->fragmentCount;
     if (fi >= XTD_MAX_FRAGMENTS_PER_BLOCK) return -1;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈（快照制撤销接线）。 */
     frag = &blk->fragments[fi];
     XMemset(frag, 0, sizeof(*frag));
     /* 图片片段：text 恒为空串（toPlainText/编辑器同步不含图片——子集
@@ -1400,39 +1647,45 @@ int XTextDocument_insertImage(XTextDocument* self, const XImage* image)
 
 void XTextDocument_setMetaInformation(XTextDocument* self, int info, const char* value)
 {
+    XString** slot = NULL;
     if (!self || !value) return;
-    if (info == 0) {
-        if (!self->m_title) self->m_title = XString_create();
-        if (self->m_title) XString_assign_utf8(self->m_title, value);
-    } else if (info == 1) {
-        if (!self->m_url) self->m_url = XString_create();
-        if (self->m_url) XString_assign_utf8(self->m_url, value);
+    /* 类别数值对标 QTextDocument::MetaInformation（0-3）。 */
+    if (info == (int)XTDMetaInformation_DocumentTitle) slot = &self->m_title;
+    else if (info == (int)XTDMetaInformation_DocumentUrl) slot = &self->m_url;
+    else if (info == (int)XTDMetaInformation_CssMedia) slot = &self->m_cssMedia;
+    else if (info == (int)XTDMetaInformation_FrontMatter) slot = &self->m_frontMatter;
+    if (slot) {
+        if (!*slot) *slot = XString_create();
+        if (*slot) XString_assign_utf8(*slot, value);
     }
 }
 
 const char* XTextDocument_metaInformation(const XTextDocument* self, int info)
 {
+    XString* field = NULL;
+    const char* text;
     if (!self) return "";
-    {
-        const char* text;
-        if (info == 0) {
-            if (!self->m_title) return "";
-            text = XString_toUtf8(self->m_title);
-            return text ? text : "";
-        }
-        if (info == 1) {
-            if (!self->m_url) return "";
-            text = XString_toUtf8(self->m_url);
-            return text ? text : "";
-        }
-        return "";
-    }
+    if (info == (int)XTDMetaInformation_DocumentTitle) field = self->m_title;
+    else if (info == (int)XTDMetaInformation_DocumentUrl) field = self->m_url;
+    else if (info == (int)XTDMetaInformation_CssMedia) field = self->m_cssMedia;
+    else if (info == (int)XTDMetaInformation_FrontMatter) field = self->m_frontMatter;
+    if (!field) return "";
+    text = XString_toUtf8(field);
+    return text ? text : "";
 }
 
 /* ==================== 撤销/重做 ==================== */
 
 void XTextDocument_setUndoRedoEnabled(XTextDocument* self, bool enable)
-{ if (self) self->m_undoRedoEnabled = enable; }
+{
+    if (!self) return;
+    /* 对标 QTextDocumentPrivate::enableUndoRedo：块数上限生效期间禁止
+     * 重新启用；禁用时清空撤销栈与重做栈并发射不可用信号。 */
+    if (enable && self->m_maximumBlockCount > 0) return;
+    self->m_undoRedoEnabled = enable;
+    if (!enable) xtd_clearUndoRedoArrays(self);
+    xtd_notifyUndoRedo(self);
+}
 bool XTextDocument_isUndoRedoEnabled(const XTextDocument* self)
 { return self ? self->m_undoRedoEnabled : false; }
 bool XTextDocument_isUndoAvailable(const XTextDocument* self)
@@ -1446,21 +1699,62 @@ bool XTextDocument_isRedoAvailable(const XTextDocument* self)
     return self ? (self->m_undoRedoEnabled && self->m_redoTop > 0) : false;
 }
 
-/* ==================== 默认格式 ==================== */
+void XTextDocument_clearUndoRedoStacks(XTextDocument* self, int stacks)
+{
+    bool changed = false;
+    if (!self) return;
+    /* 对标 QTextDocument::clearUndoRedoStacks：按 Stacks 位组合清栈；
+     * 清空导致可用性变化时发射不可用信号（Qt 同语义）。 */
+    if (stacks & (int)XTDStacks_UndoStack) {
+        int i;
+        for (i = 0; i < self->m_undoTop; ++i)
+            XFree_System(self->m_undoStack[i]);
+        self->m_undoTop = 0;
+        changed = true;
+    }
+    if (stacks & (int)XTDStacks_RedoStack) {
+        int i;
+        for (i = 0; i < self->m_redoTop; ++i)
+            XFree_System(self->m_redoStack[i]);
+        self->m_redoTop = 0;
+        changed = true;
+    }
+    if (changed) xtd_notifyUndoRedo(self);
+}
 
-static XTDCharFormat g_tdDefaultFmt;
+int XTextDocument_availableUndoSteps(const XTextDocument* self)
+{
+    /* 对标 QTextDocumentPrivate::availableUndoSteps：禁用时 0。 */
+    return (self && self->m_undoRedoEnabled) ? self->m_undoTop : 0;
+}
+
+int XTextDocument_availableRedoSteps(const XTextDocument* self)
+{
+    /* 对标 QTextDocumentPrivate::availableRedoSteps：禁用时 0。 */
+    return (self && self->m_undoRedoEnabled) ? self->m_redoTop : 0;
+}
+
+/* ==================== 默认格式 ==================== */
 
 void XTextDocument_setDefaultFormat(XTextDocument* self, const XTDCharFormat* fmt)
 {
-    if (self && fmt) xtd_formatAssign(&g_tdDefaultFmt, fmt);
+    /* 每文档独立存储（对标 Qt defaultFont 属性）；此前为全局静态，
+     * 多文档互相污染（与撤销栈同族问题）。 */
+    if (self && fmt) xtd_formatAssign(&self->m_defaultFormat, fmt);
 }
 const XTDCharFormat* XTextDocument_defaultFormat(const XTextDocument* self)
-{ (void)self; return &g_tdDefaultFmt; }
+{ return self ? &self->m_defaultFormat : NULL; }
 
 /* ==================== 信号 ==================== */
 
 void* XTextDocument_contentsChanged_signal(XTextDocument* self)
 { (void)self; return (void*)(size_t)XTextDocument_contentsChanged_signal; }
+void* XTextDocument_contentsChange_signal(XTextDocument* self, int from,
+                                          int charsRemoved, int charsAdded)
+{
+    (void)self; (void)from; (void)charsRemoved; (void)charsAdded;
+    return (void*)(size_t)XTextDocument_contentsChange_signal;
+}
 void* XTextDocument_blockCountChanged_signal(XTextDocument* self, int newCount)
 { (void)self; (void)newCount; return (void*)(size_t)XTextDocument_blockCountChanged_signal; }
 void* XTextDocument_modificationChanged_signal(XTextDocument* self, bool modified)
@@ -1481,30 +1775,39 @@ void* XTextDocument_undoCommandAdded_signal(XTextDocument* self)
 
 /* ==================== 撤销/重做栈 ==================== */
 
-#define XTD_MAX_UNDO 50
+#define XTD_MAX_UNDO XTD_MAX_UNDO_STEPS /* 栈深常量已上收到头文件。 */
 
 static void xtd_saveSnapshot(XTextDocument* self)
 {
+    char* snap;
     if (!self || !self->m_undoRedoEnabled) return;
+    snap = XTextDocument_toPlainText(self);
+    if (!snap) return;
+    if (self->m_undoTop < XTD_MAX_UNDO) {
+        self->m_undoStack[self->m_undoTop++] = snap;
+    } else {
+        int i;
+        XFree_System(self->m_undoStack[0]);
+        for (i = 0; i < XTD_MAX_UNDO - 1; ++i)
+            self->m_undoStack[i] = self->m_undoStack[i + 1];
+        self->m_undoStack[XTD_MAX_UNDO - 1] = snap;
+    }
+    /* 新变更使既有重做历史失效（Qt 同语义）；此前直接置 redoTop=0
+     * 未释放重做快照——泄漏修复。 */
     {
-        char* snap = XTextDocument_toPlainText(self);
-        if (!snap) return;
-        if (self->m_undoTop < XTD_MAX_UNDO) {
-            self->m_undoStack[self->m_undoTop++] = snap;
-        } else {
-            int i;
-            XFree_System(self->m_undoStack[0]);
-            for (i = 0; i < XTD_MAX_UNDO - 1; ++i)
-                self->m_undoStack[i] = self->m_undoStack[i + 1];
-            self->m_undoStack[XTD_MAX_UNDO - 1] = snap;
-        }
+        int i;
+        for (i = 0; i < self->m_redoTop; ++i)
+            XFree_System(self->m_redoStack[i]);
         self->m_redoTop = 0;
     }
+    xtd_notifyUndoRedo(self);
 }
 
 static void xtd_restoreSnapshot(XTextDocument* self, const char* text)
 {
-    XTextDocument_setPlainText(self, text);
+    /* 内部路径：不经公共 setPlainText（否则 clear 会清空刚压入的重做
+     * 快照，撤销链断裂）；恢复仅承载纯文本（快照制子集，格式不回放）。 */
+    xtd_setPlainTextNoHistory(self, text);
 }
 
 /* ==================== 块级格式 API ==================== */
@@ -1512,6 +1815,7 @@ static void xtd_restoreSnapshot(XTextDocument* self, const char* text)
 void XTextDocument_setBlockIndentLevel(XTextDocument* self, int blockIndex, int level)
 {
     if (!self || blockIndex < 0 || blockIndex >= self->m_blockCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[blockIndex].indentLevel = level;
     xtd_changed(self);
 }
@@ -1525,6 +1829,7 @@ int XTextDocument_blockIndentLevel(const XTextDocument* self, int blockIndex)
 void XTextDocument_setBlockListItem(XTextDocument* self, int blockIndex, bool isItem, bool ordered)
 {
     if (!self || blockIndex < 0 || blockIndex >= self->m_blockCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[blockIndex].isListItem = isItem;
     self->m_blocks[blockIndex].isOrdered = ordered;
     xtd_changed(self);
@@ -1536,6 +1841,7 @@ void XTextDocument_setFragmentBold(XTextDocument* self, int bi, int fi, bool bol
 {
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[bi].fragments[fi].fmt.bold = bold;
     xtd_changed(self);
 }
@@ -1544,6 +1850,7 @@ void XTextDocument_setFragmentItalic(XTextDocument* self, int bi, int fi, bool i
 {
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[bi].fragments[fi].fmt.italic = italic;
     xtd_changed(self);
 }
@@ -1552,6 +1859,7 @@ void XTextDocument_setFragmentUnderline(XTextDocument* self, int bi, int fi, boo
 {
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[bi].fragments[fi].fmt.underline = underline;
     xtd_changed(self);
 }
@@ -1560,6 +1868,7 @@ void XTextDocument_setFragmentStrikeOut(XTextDocument* self, int bi, int fi, boo
 {
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[bi].fragments[fi].fmt.strikeOut = strikeOut;
     xtd_changed(self);
 }
@@ -1568,6 +1877,7 @@ void XTextDocument_setFragmentFgColor(XTextDocument* self, int bi, int fi, uint3
 {
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[bi].fragments[fi].fmt.fgColor = color;
     xtd_changed(self);
 }
@@ -1576,6 +1886,7 @@ void XTextDocument_setFragmentBgColor(XTextDocument* self, int bi, int fi, uint3
 {
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[bi].fragments[fi].fmt.bgColor = color;
     xtd_changed(self);
 }
@@ -1585,6 +1896,7 @@ void XTextDocument_setFragmentFontFamily(XTextDocument* self, int bi, int fi, co
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
     if (!family) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     if (!self->m_blocks[bi].fragments[fi].fmt.fontFamily)
         self->m_blocks[bi].fragments[fi].fmt.fontFamily = XString_create();
     if (self->m_blocks[bi].fragments[fi].fmt.fontFamily)
@@ -1597,6 +1909,7 @@ void XTextDocument_setFragmentFontSize(XTextDocument* self, int bi, int fi, int 
 {
     if (!self || bi < 0 || bi >= self->m_blockCount) return;
     if (fi < 0 || fi >= self->m_blocks[bi].fragmentCount) return;
+    xtd_saveSnapshot(self); /* 变更前快照入撤销栈。 */
     self->m_blocks[bi].fragments[fi].fmt.fontPointSize = size;
     xtd_changed(self);
 }
@@ -1615,22 +1928,82 @@ void XTextDocument_setCursorPosition(XTextDocument* self, int position)
 int XTextDocument_cursorPosition(const XTextDocument* self)
 { return self ? self->m_cursorPosition : 0; }
 
-int XTextDocument_find(const XTextDocument* self, const char* text)
+/** @brief 词内字符判定（WholeWords 边界用）：ASCII 字母数字 +
+ *         UTF-8 多字节序列（>=0x80 视为词内字符——CJK 词不误断）。 */
+static bool xtd_findIsWordChar(char c)
+{
+    unsigned char u = (unsigned char)c;
+    return (u >= '0' && u <= '9') || (u >= 'A' && u <= 'Z') ||
+           (u >= 'a' && u <= 'z') || u >= 0x80;
+}
+
+/** @brief pos 处是否命中 needle（大小写与整词选项生效）。 */
+static bool xtd_findMatchAt(const char* hay, int hayLen, int pos,
+                            const char* needle, int needleLen, int flags)
+{
+    int i;
+    if (pos < 0 || pos + needleLen > hayLen) return false;
+    if (flags & (int)XTDFindFlag_CaseSensitively) {
+        if (XStrncmp(hay + pos, needle, (size_t)needleLen) != 0) return false;
+    } else {
+        /* 默认大小写不敏感（Qt 同语义；ASCII 折叠，非 ASCII 原样）。 */
+        for (i = 0; i < needleLen; ++i) {
+            char a = hay[pos + i];
+            char b = needle[i];
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+            if (a != b) return false;
+        }
+    }
+    if (flags & (int)XTDFindFlag_WholeWords) {
+        /* 词边界：两侧均不得为词内字符（对标 Qt isLetterOrNumber 子集）。 */
+        if (pos > 0 && xtd_findIsWordChar(hay[pos - 1])) return false;
+        if (pos + needleLen < hayLen &&
+            xtd_findIsWordChar(hay[pos + needleLen])) return false;
+    }
+    return true;
+}
+
+int XTextDocument_find_ex(const XTextDocument* self, const char* text,
+                          int from, int flags)
 {
     char* plain;
-    const char* hit;
-    int result;
-    if (!self || !text) return -1;
+    int len;
+    int needleLen;
+    int result = -1;
+    if (!self || !text || !text[0]) return -1;
     plain = XTextDocument_toPlainText(self);
     if (!plain) return -1;
-    hit = XStrstr(plain, text);
-    if (!hit) {
-        XFree_System(plain);
-        return -1;
+    len = (int)XStrlen(plain);
+    needleLen = (int)XStrlen(text);
+    if (from < 0) from = 0;
+    if (from > len) from = len;
+    if (flags & (int)XTDFindFlag_Backward) {
+        /* 反向：自 from（含）向前；起点越界钳到末个完整窗口。 */
+        int start = from;
+        if (start + needleLen > len) start = len - needleLen;
+        for (; start >= 0; --start) {
+            if (xtd_findMatchAt(plain, len, start, text, needleLen, flags)) {
+                result = start;
+                break;
+            }
+        }
+    } else {
+        int start;
+        for (start = from; start + needleLen <= len; ++start) {
+            if (xtd_findMatchAt(plain, len, start, text, needleLen, flags)) {
+                result = start;
+                break;
+            }
+        }
     }
-    result = (int)(hit - plain);
     XFree_System(plain);
     return result;
+}
+
+int XTextDocument_find(const XTextDocument* self, const char* text)
+{
+    return XTextDocument_find_ex(self, text, 0, 0);
 }
 
 char XTextDocument_characterAt(const XTextDocument* self, int position)
@@ -1659,6 +2032,7 @@ void XTextDocument_undo(XTextDocument* self)
                 XTextDocument_toPlainText(self);
         xtd_restoreSnapshot(self, snap);
         XFree_System(snap);
+        xtd_notifyUndoRedo(self);
     }
 }
 
@@ -1672,21 +2046,495 @@ void XTextDocument_redo(XTextDocument* self)
                 XTextDocument_toPlainText(self);
         xtd_restoreSnapshot(self, snap);
         XFree_System(snap);
+        xtd_notifyUndoRedo(self);
     }
 }
 
-/* ==================== HTML 解析增强 ==================== */
+/* ==================== 修改状态（对标 modified 属性族） ==================== */
 
-void XTextDocument_setHtmlEnhanced(XTextDocument* self, const char* html)
+bool XTextDocument_isModified(const XTextDocument* self)
+{ return self ? self->m_modifiedFlag : false; }
+
+void XTextDocument_setModified(XTextDocument* self, bool m)
 {
-    XTextDocument_setHtml(self, html);
+    /* 对标 QTextDocumentPrivate::setModified：仅状态翻转时发射
+     * modificationChanged；复位即记撤销基准（快照制无基准——简化）。 */
+    if (!self || m == self->m_modifiedFlag) return;
+    self->m_modifiedFlag = m;
+    xtd_emitBool(self, (size_t)XTextDocument_modificationChanged_signal, m);
 }
 
-/* ==================== HTML 生成增强 ==================== */
+int XTextDocument_revision(const XTextDocument* self)
+{ return self ? self->m_modified : 0; }
 
-char* XTextDocument_toHtmlEnhanced(const XTextDocument* self)
+int XTextDocument_lineCount(const XTextDocument* self)
 {
-    return XTextDocument_toHtml(self);
+    /* 子集无换行布局（无折行）：每块即一行。 */
+    return self ? self->m_blockCount : 0;
+}
+
+/* ==================== 块查询（对标 findBlock 族） ==================== */
+
+/** @brief 单块字符数（不含块分隔符；空片段安全）。 */
+static int xtd_blockCharCount(const XTDBlock* blk)
+{
+    int j;
+    int total = 0;
+    if (!blk) return 0;
+    for (j = 0; j < blk->fragmentCount; ++j)
+        total += (int)XStrlen(xtd_fragText(&blk->fragments[j]));
+    return total;
+}
+
+const XTDBlock* XTextDocument_firstBlock(const XTextDocument* self)
+{
+    if (!self || !self->m_blocks || self->m_blockCount <= 0) return NULL;
+    return &self->m_blocks[0];
+}
+
+const XTDBlock* XTextDocument_lastBlock(const XTextDocument* self)
+{
+    if (!self || !self->m_blocks || self->m_blockCount <= 0) return NULL;
+    return &self->m_blocks[self->m_blockCount - 1];
+}
+
+const XTDBlock* XTextDocument_findBlockByNumber(const XTextDocument* self, int blockNumber)
+{
+    if (!self || !self->m_blocks || blockNumber < 0 ||
+        blockNumber >= self->m_blockCount) return NULL;
+    return &self->m_blocks[blockNumber];
+}
+
+const XTDBlock* XTextDocument_findBlockByLineNumber(const XTextDocument* self, int lineNumber)
+{
+    /* 子集无换行布局：每块即一行，行号与块号一一对应。 */
+    return XTextDocument_findBlockByNumber(self, lineNumber);
+}
+
+const XTDBlock* XTextDocument_findBlock(const XTextDocument* self, int position)
+{
+    int i;
+    int acc = 0;
+    if (!self || !self->m_blocks || self->m_blockCount <= 0) return NULL;
+    if (position < 0) return XTextDocument_firstBlock(self);
+    for (i = 0; i < self->m_blockCount; ++i) {
+        int n = xtd_blockCharCount(&self->m_blocks[i]);
+        if (position < acc + n) return &self->m_blocks[i];
+        acc += n;
+    }
+    /* 越过文档尾：钳到末块（Qt 光标语义）。 */
+    return XTextDocument_lastBlock(self);
+}
+
+/* ==================== 块数上限（对标 maximumBlockCount） ==================== */
+
+int XTextDocument_maximumBlockCount(const XTextDocument* self)
+{ return self ? self->m_maximumBlockCount : 0; }
+
+void XTextDocument_setMaximumBlockCount(XTextDocument* self, int maximum)
+{
+    if (!self) return;
+    if (maximum < 0) maximum = 0; /* Qt：负值按不限处理。 */
+    self->m_maximumBlockCount = maximum;
+    /* 上限立即生效（超出从文档开头移除，Qt 同语义），并发射内容变化
+     * 信号（Qt 经编辑块发射 contentsChange）。 */
+    xtd_enforceMaximumBlockCount(self);
+    xtd_changedCore(self, false);
+    /* 设置上限同时禁用撤销/重做历史（Qt setMaximumBlockCount 同语义）。 */
+    XTextDocument_setUndoRedoEnabled(self, false);
+}
+
+/* ==================== baseUrl 属性 ==================== */
+
+const char* XTextDocument_baseUrl(const XTextDocument* self)
+{
+    const char* text;
+    if (!self || !self->m_baseUrl) return "";
+    text = XString_toUtf8(self->m_baseUrl);
+    return text ? text : "";
+}
+
+void XTextDocument_setBaseUrl(XTextDocument* self, const char* url)
+{
+    const char* cur;
+    if (!self || !url) return;
+    if (!self->m_baseUrl) {
+        self->m_baseUrl = XString_create();
+        if (!self->m_baseUrl) return;
+    }
+    /* 对标 Qt setBaseUrl：值未变化不发射。 */
+    cur = XString_toUtf8(self->m_baseUrl);
+    if (cur && XStrcmp(cur, url) == 0) return;
+    XString_assign_utf8(self->m_baseUrl, url);
+    xtd_emitVoid(self, (size_t)XTextDocument_baseUrlChanged_signal);
+}
+
+/* ==================== 按名资源表（对标 resource/addResource） ==================== */
+
+/** @brief 释放单个资源条目载荷（不移动数组）。 */
+static void xtd_resourceEntryClear(XTDResource* res)
+{
+    if (!res) return;
+    if (res->name) {
+        XString_delete_base(res->name);
+        res->name = NULL;
+    }
+    if (res->text) {
+        XString_delete_base(res->text);
+        res->text = NULL;
+    }
+    if (res->image) {
+        XImage_delete_base((XClass*)res->image);
+        res->image = NULL;
+    }
+    res->type = 0;
+}
+
+void XTextDocument_addResource(XTextDocument* self, int type,
+                               const char* name, const void* resource)
+{
+    XTDResource* slot = NULL;
+    int i;
+    if (!self || !name || !name[0] ||
+        type == (int)XTDResourceType_UnknownResource) return;
+    /* 同 type+name 已存在则替换（对标 QMap 覆盖语义）。 */
+    for (i = 0; i < self->m_resourceCount; ++i) {
+        XTDResource* res = &self->m_resources[i];
+        const char* rn = res->name ? XString_toUtf8(res->name) : NULL;
+        if (res->type == type && rn && XStrcmp(rn, name) == 0) {
+            if (!resource) {
+                /* NULL 载荷：移除条目（压缩数组）。 */
+                xtd_resourceEntryClear(res);
+                for (; i < self->m_resourceCount - 1; ++i)
+                    self->m_resources[i] = self->m_resources[i + 1];
+                XMemset(&self->m_resources[self->m_resourceCount - 1], 0,
+                        sizeof(XTDResource));
+                self->m_resourceCount--;
+            } else {
+                slot = res;
+                xtd_resourceEntryClear(slot);
+                slot->type = type;
+            }
+            break;
+        }
+    }
+    if (!resource) return;
+    if (!slot) {
+        if (self->m_resourceCount >= XTD_MAX_RESOURCES) return; /* 表满：忽略。 */
+        slot = &self->m_resources[self->m_resourceCount++];
+        XMemset(slot, 0, sizeof(XTDResource));
+        slot->type = type;
+    }
+    slot->name = XString_create_utf8(name);
+    if (type == (int)XTDResourceType_ImageResource) {
+        const XImage* img = (const XImage*)resource;
+        if (XImage_width(img) > 0 && XImage_height(img) > 0) {
+            XRect full;
+            slot->image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+            if (slot->image) {
+                XRect_init(&full, 0, 0, XImage_width(img), XImage_height(img));
+                XImage_copyRect(img, &full, slot->image);
+                if (XImage_isNull(slot->image)) {
+                    XImage_delete_base((XClass*)slot->image);
+                    slot->image = NULL;
+                }
+            }
+        }
+    } else {
+        slot->text = XString_create_utf8((const char*)resource);
+    }
+    /* 载荷失败：条目仅剩 name 的残槽不判定命中（resource 查询按
+     * text/image 非空返回），clear/析构统一回收。 */
+}
+
+const void* XTextDocument_resource(const XTextDocument* self, int type,
+                                   const char* name)
+{
+    int i;
+    if (!self || !name || !name[0]) return NULL;
+    for (i = 0; i < self->m_resourceCount; ++i) {
+        const XTDResource* res = &self->m_resources[i];
+        const char* rn = res->name ? XString_toUtf8(res->name) : NULL;
+        if (res->type == type && rn && XStrcmp(rn, name) == 0) {
+            if (type == (int)XTDResourceType_ImageResource)
+                return res->image ? (const void*)res->image : NULL;
+            return res->text ? (const void*)XString_toUtf8(res->text) : NULL;
+        }
+    }
+    return NULL;
+}
+
+/* ==================== 深拷贝（对标 clone） ==================== */
+
+XTextDocument* XTextDocument_clone(const XTextDocument* self)
+{
+    XTextDocument* doc;
+    int i;
+    int j;
+    if (!self) return NULL;
+    doc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!doc) return NULL;
+    /* 块+片段深拷贝（含图片深拷贝与块级格式字段）。 */
+    for (i = 0; i < self->m_blockCount; ++i) {
+        const XTDBlock* src = &self->m_blocks[i];
+        XTDBlock* dst;
+        xtd_ensureCapacity(doc, i + 1);
+        if (i >= doc->m_capacity) break; /* 扩容失败：截断。 */
+        if (i >= doc->m_blockCount) doc->m_blockCount = i + 1;
+        dst = &doc->m_blocks[i];
+        XMemset(dst, 0, sizeof(XTDBlock));
+        dst->alignment = src->alignment;
+        dst->indentLevel = src->indentLevel;
+        dst->isListItem = src->isListItem;
+        dst->isOrdered = src->isOrdered;
+        dst->listFresh = src->listFresh;
+        dst->headingLevel = src->headingLevel;
+        if (src->blockFormat)
+            dst->blockFormat = XString_create_copy(src->blockFormat);
+        for (j = 0; j < src->fragmentCount; ++j) {
+            const XTDFragment* sf = &src->fragments[j];
+            XTDFragment* df = &dst->fragments[j];
+            XMemset(df, 0, sizeof(XTDFragment));
+            xtd_formatAssign(&df->fmt, &sf->fmt);
+            if (sf->text) df->text = XString_create_copy(sf->text);
+            if (sf->image) {
+                XRect full;
+                df->image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+                if (df->image) {
+                    XRect_init(&full, 0, 0, XImage_width(sf->image),
+                               XImage_height(sf->image));
+                    XImage_copyRect(sf->image, &full, df->image);
+                    if (XImage_isNull(df->image)) {
+                        XImage_delete_base((XClass*)df->image);
+                        df->image = NULL;
+                    }
+                }
+            }
+            dst->fragmentCount = j + 1;
+        }
+    }
+    /* 元信息/默认格式/资源表（对标 Qt clone：title/url/cssMedia/
+     * resources/defaultFont；baseUrl 与 frontMatter 不拷贝——Qt 6.8
+     * clone 同口径）。 */
+    XTextDocument_setMetaInformation(doc, (int)XTDMetaInformation_DocumentTitle,
+                                     XTextDocument_metaInformation(
+                                         self, (int)XTDMetaInformation_DocumentTitle));
+    XTextDocument_setMetaInformation(doc, (int)XTDMetaInformation_DocumentUrl,
+                                     XTextDocument_metaInformation(
+                                         self, (int)XTDMetaInformation_DocumentUrl));
+    XTextDocument_setMetaInformation(doc, (int)XTDMetaInformation_CssMedia,
+                                     XTextDocument_metaInformation(
+                                         self, (int)XTDMetaInformation_CssMedia));
+    xtd_formatAssign(&doc->m_defaultFormat, &self->m_defaultFormat);
+    for (i = 0; i < self->m_resourceCount; ++i) {
+        const XTDResource* res = &self->m_resources[i];
+        const char* rn = res->name ? XString_toUtf8(res->name) : NULL;
+        if (!rn) continue;
+        if (res->image)
+            XTextDocument_addResource(doc, res->type, rn, res->image);
+        else if (res->text)
+            XTextDocument_addResource(doc, res->type, rn,
+                                      XString_toUtf8(res->text));
+    }
+    return doc;
+}
+
+/* ==================== 命名空间函数子集（对标 Qt::mightBeRichText/
+ *                    Qt::convertFromPlainText） ==================== */
+
+/** @brief 已知 HTML 元素名表（mightBeRichText 判定用：本库解析子集 +
+ *         常用块/表格/元数据元素，对标 QTextHtmlParser::lookupElement
+ *         的常量子集）。 */
+static const char* const xtd_htmlElementNames[] = {
+    "html", "body", "head", "title", "meta", "style", "script", "link",
+    "p", "div", "br", "hr", "span", "font", "a", "img",
+    "b", "strong", "i", "em", "u", "s", "strike", "del", "ins",
+    "sub", "sup", "small", "big", "code", "tt", "kbd", "samp",
+    "var", "cite", "q", "dfn", "abbr", "nobr", "center",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "ul", "ol", "li", "dl", "dt", "dd", "pre", "blockquote",
+    "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption"
+};
+
+bool XTextDocument_mightBeRichText(const char* text)
+{
+    const char* p = text;
+    /* 启发式子集（对标 mightBeRichTextImpl）：跳过行首空白与
+     * <?xml ...?> 前缀；"<!doc" 判真；首个 '\n' 前找 '<'，'<..>' 之间
+     * 为纯字母数字且命中元素名表判真；"&lt;" 实体判真。 */
+    if (!p || !p[0]) return false;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    if (XStrncmp(p, "<?xml", 5) == 0) {
+        while (*p) {
+            if (p[0] == '?' && p[1] == '>') { p += 2; break; }
+            ++p;
+        }
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    }
+    if (p[0] == '<' && p[1] == '!') {
+        /* 大小写不敏感的 "<!doc" 前缀判定（对标 text.mid(start,5)
+         * .compare("<!doc", CaseInsensitive)）。 */
+        static const char prefix[5] = { '<', '!', 'd', 'o', 'c' };
+        int i;
+        bool hit = true;
+        for (i = 0; i < 5; ++i) {
+            char c = p[i];
+            char d = prefix[i];
+            if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            if (c != d) { hit = false; break; }
+        }
+        if (hit) return true;
+    }
+    {
+        const char* q = p;
+        while (*q && *q != '<' && *q != '\n') {
+            if (q[0] == '&' && XStrncmp(q + 1, "lt;", 3) == 0)
+                return true; /* 用户力图显示 '<' 的转义文本。 */
+            ++q;
+        }
+        if (*q == '<') {
+            const char* close = XStrchr(q, '>');
+            if (close) {
+                bool haveTag = false;
+                bool isTag = true;
+                const char* r;
+                for (r = q + 1; r < close; ++r) {
+                    char c = *r;
+                    if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                        (c >= 'a' && c <= 'z')) {
+                        haveTag = true;
+                    } else if (haveTag && (c == ' ' || c == '\t')) {
+                        break; /* 标签名后跟属性：名字已收齐。 */
+                    } else if (haveTag && c == '/' && r + 1 == close) {
+                        break; /* 自闭合尾斜杠。 */
+                    } else if (c != ' ' && c != '\t' && c != '!') {
+                        isTag = false; /* 非标签形态。 */
+                        break;
+                    }
+                }
+                if (isTag && haveTag) {
+                    int i;
+                    char name[16];
+                    size_t n = 0;
+                    for (r = q + 1; r < close && n + 1 < sizeof(name); ++r) {
+                        char c = *r;
+                        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                            (c >= 'a' && c <= 'z')) {
+                            if (c >= 'A' && c <= 'Z')
+                                c = (char)(c - 'A' + 'a');
+                            name[n++] = c;
+                        } else if (n > 0) {
+                            break;
+                        }
+                    }
+                    name[n] = '\0';
+                    if (n > 0) {
+                        for (i = 0;
+                             i < (int)(sizeof(xtd_htmlElementNames) /
+                                       sizeof(xtd_htmlElementNames[0]));
+                             ++i) {
+                            if (XStrcmp(name, xtd_htmlElementNames[i]) == 0)
+                                return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/** @brief convertFromPlainText 输出槽（counting=true 仅统计字节数）。 */
+typedef struct XTDCfptBuffer
+{
+    size_t size;  /**< 目标总字节数（含 NUL）。 */
+    size_t pos;   /**< 已写字节数。 */
+    char* data;   /**< 写入目标；NULL=仅统计。 */
+} XTDCfptBuffer;
+
+static void xtd_cfptPut(XTDCfptBuffer* b, const char* s, size_t n)
+{
+    if (!b) return;
+    if (!b->data) { b->size += n; return; }
+    if (b->pos + n > b->size - 1) n = b->size - 1 - b->pos; /* 防御钳位。 */
+    if (n > 0) {
+        XMemcpy(b->data + b->pos, s, n);
+        b->pos += n;
+    }
+}
+
+static void xtd_cfptPutStr(XTDCfptBuffer* b, const char* s)
+{
+    if (s) xtd_cfptPut(b, s, XStrlen(s));
+}
+
+char* XTextDocument_convertFromPlainText(const char* plain, int mode)
+{
+    /* 逐字符移植 Qt::convertFromPlainText（两遍式：先统计后填充）：
+     * "<p>" 起；'\n' 单个转 "<br>\n"、连串折叠为段落分隔；Pre 模式
+     * 空白以 &nbsp; 承载、制表符展开到 8 列（与 Qt 同口径的列计数，
+     * 含制表符二次 ++col 的既有行为）；& < > 转义；col!=0 时 "</p>" 收尾。 */
+    XTDCfptBuffer buf;
+    int pass;
+    if (!plain) return NULL;
+    buf.size = 0;
+    buf.pos = 0;
+    buf.data = NULL;
+    for (pass = 0; pass < 2; ++pass) {
+        int col = 0;
+        const char* p;
+        if (pass == 1) {
+            buf.size += 1; /* NUL。 */
+            buf.data = (char*)XMalloc_System(buf.size);
+            if (!buf.data) return NULL;
+            buf.pos = 0;
+        }
+        xtd_cfptPutStr(&buf, "<p>");
+        p = plain;
+        while (*p) {
+            if (*p == '\n') {
+                int c = 1;
+                while (p[1] == '\n') { ++p; ++c; }
+                if (c == 1) {
+                    xtd_cfptPutStr(&buf, "<br>\n");
+                } else {
+                    xtd_cfptPutStr(&buf, "</p>\n");
+                    while (--c > 1) xtd_cfptPutStr(&buf, "<br>\n");
+                    xtd_cfptPutStr(&buf, "<p>");
+                }
+                col = 0;
+            } else {
+                if (mode == (int)XTDWhiteSpaceMode_Pre && *p == '\t') {
+                    xtd_cfptPutStr(&buf, "&nbsp;");
+                    ++col;
+                    while (col % 8) {
+                        xtd_cfptPutStr(&buf, "&nbsp;");
+                        ++col;
+                    }
+                } else if (mode == (int)XTDWhiteSpaceMode_Pre &&
+                           (*p == ' ' || *p == '\r' || *p == '\v' ||
+                            *p == '\f')) {
+                    xtd_cfptPutStr(&buf, "&nbsp;");
+                } else if (*p == '<') {
+                    xtd_cfptPutStr(&buf, "&lt;");
+                } else if (*p == '>') {
+                    xtd_cfptPutStr(&buf, "&gt;");
+                } else if (*p == '&') {
+                    xtd_cfptPutStr(&buf, "&amp;");
+                } else {
+                    /* 非 ASCII UTF-8 序列整段透传（多字节不拆散）。 */
+                    int seq = xtd_utf8SeqLen(p);
+                    xtd_cfptPut(&buf, p, (size_t)seq);
+                    p += seq - 1;
+                }
+                ++col;
+            }
+            ++p;
+        }
+        if (col != 0) xtd_cfptPutStr(&buf, "</p>");
+    }
+    buf.data[buf.pos < buf.size ? buf.pos : buf.size - 1] = '\0';
+    return buf.data;
 }
 
 #endif /* XTEXTDOCUMENT_ON */

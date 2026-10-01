@@ -18,7 +18,12 @@
  *               获编辑框校验/掩码/撤销全套语义）或公开插入 API 直写；
  *             - 弹层（XGui 扩展，非 LVGL 语义）：popup/closePopup 把
  *               键盘挂到编辑框顶层窗口底部（子控件浮层，无独立 OS 窗
- *               口、无应用模态登记）；自动弹收主判据=按下位置驱动
+ *               口、无应用模态登记）；setHostWindow 悬浮模式例外：
+ *               悬浮锚非空时跳过挂父，键盘保持独立顶层窗口、悬浮锚定
+ *               宿主全局底部并 raise 到日历弹层等一切同应用窗口之上
+ *               （对标 QVirtualKeyboardInputPanel 独立顶层窗口形态；
+ *               锚=弹层容器时自动解析主窗口顶层，几何与普通编辑框弹
+ *               出完全一致）；自动弹收主判据=按下位置驱动
  *               （notifyPress：指针 PRESS 命中受支持编辑框→弹出/重绑，
  *               命中非编辑区域→收起；经 XGuiApplication 转发自
  *               XWidget_dispatchPointerEvent 的 PRESS 汇聚点，标准触摸
@@ -220,6 +225,8 @@ XCLASS_DEFINE_EXTEND_END(XVirtualKeyboard, XWidget)
  *               在 autoPopup 关时随层停守护，autoPopup 开则轮询继续）；
  *             - m_host/m_hostW/m_hostH：弹层宿主顶层窗口与几何缓存；
  *             - m_targetConn/m_hostConn：防悬垂 destroyed 连接句柄；
+ *             - m_prevMouseGrab/m_prevKbdGrab：popup 悬浮抢占前的抓取
+ *               者快照（closePopup 成对归还后清；未收层重弹不覆盖）；
  *             - m_popupHeight：弹层高度缓存（守护重定位用）；
  *             - m_imeBandRect/m_imeEnabled（XVIRTUALKEYBOARD_ON 门
  *               控）：内嵌候选带矩形（控件局部坐标，h==0=无带）与拼
@@ -257,10 +264,33 @@ typedef struct XVirtualKeyboard
     XTimerId m_repeatTimer;            /**< 长按重复定时器（XTIMER_INVALID_ID=未启动）。 */
     XTimerId m_guardTimer;             /**< 守护轮询定时器（XTIMER_INVALID_ID=未启动）。 */
     XWidget* m_host;                   /**< 弹层宿主顶层窗口（借用；NULL=未挂载）。 */
+    bool m_userCollapsed;              /**< 用户收起闩锁（收起键/确认后置位：
+                                            守护轮询不再自动重弹，直到用户
+                                            再次按下编辑框；防「收起即弹回」）。 */
     int m_hostW;                       /**< 宿主宽度缓存（守护 Resize 检测用）。 */
     int m_hostH;                       /**< 宿主高度缓存（守护 Resize 检测用）。 */
+    int m_hostGX;                      /**< 悬浮宿主全局 x 缓存（悬浮形态守护
+                                            位移检测用；主窗口被拖动时跟随
+                                            重定位，内嵌形态随父移动不查）。 */
+    int m_hostGY;                      /**< 悬浮宿主全局 y 缓存（悬浮形态守护
+                                            位移检测用）。 */
+    XWidget* m_hostOverride;           /**< 悬浮模式宿主锚（借用；NULL=内嵌
+                                            挂父模式）。可传弹层容器（Popup
+                                            型顶层），popup() 时自动解析主
+                                            窗口为实际锚；closePopup 自动
+                                            清空。 */
+    XWidget* m_hostHint;               /**< 悬浮锚解析提示（借用；setHost
+                                            Window 时刻的焦点顶层快照=弹层
+                                            打开前用户所在主窗口，transient
+                                            parent 语义；closePopup 清空）。 */
+    bool m_floating;                   /**< 当前弹层=独立顶层悬浮形态（悬浮
+                                            锚生效期弹出；closePopup 复位）。 */
     XConnection* m_targetConn;         /**< 目标 destroyed 防悬垂连接句柄（借用）。 */
     XConnection* m_hostConn;           /**< 宿主 destroyed 防悬垂连接句柄（借用）。 */
+    XWidget* m_prevMouseGrab;          /**< popup 悬浮抢占前的鼠标抓取者快照
+                                            （借用；closePopup 归还后清）。 */
+    XWidget* m_prevKbdGrab;            /**< popup 悬浮抢占前的键盘抓取者快
+                                            照（借用；closePopup 归还后清）。 */
     int m_popupHeight;                 /**< 弹层高度缓存（守护重定位复用）。 */
     XWidget* m_prevFocus;              /**< 守护边沿上一焦点采样（dismissFix；
                                             无条件成员——三段边沿判据在
@@ -478,7 +508,15 @@ bool XVirtualKeyboard_handleButton(XVirtualKeyboard* self, uint32_t buttonId);
  *             （焦点保持/交还 editor，物理键入直达编辑框）。高度钳位
  *             次序：kbH=hostH/2 → 下界 XKEYBOARD_POPUP_MIN_H(120) →
  *             上界 hostH-XKEYBOARD_POPUP_MARGIN_H(32)（上界最终生效，
- *             恒给编辑区留 32px）。启动守护轮询定时器。重复调用按新
+ *             恒给编辑区留 32px）。悬浮模式（setHostWindow 锚生效）：
+ *             跳过挂父，键盘保持独立顶层窗口（锚=Popup 型弹层容器时
+ *             自动解析主窗口顶层），几何=锚全局坐标
+ *             (gx, gy+hostH-kbH, hostW, kbH)——外观/尺寸/位置与普通
+ *             编辑框弹出的内嵌形态完全一致，仅以顶层悬浮并 raise 压过
+ *             日历弹层等一切同应用窗口；随后抢占弹层模态双抓取并接管
+ *             原生鼠标捕获（弹层 show 即 grabMouse/grabKeyboard+1ms 后
+ *             原生 SetCapture，悬浮面板不夺取则键面点击被跨顶层抓取
+ *             改道/原生捕获吞掉）。启动守护轮询定时器。重复调用按新
  *             编辑框重定位（多编辑框跟随重绑）。面板构造即隐藏（init
  *             对非窗口子控件形态补置 WState_Hidden，顶层构造已
  *             Hidden）：首次弹出前不参与页面绘制与命中，弹出经本接口
@@ -493,9 +531,12 @@ void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor);
  * @details    隐藏为无条件 setVisible(false)（不以 isVisible 为前置）：
  *             pre-show 收层（宿主未 show）同样补置 WState_Hidden，杜
  *             绝弹层 show 位残留、宿主 show 后整块画出的残影；已可见
- *             面板行为不变。守护轮询按运行条件保留：autoPopup 开时常
- *             驻轮询继续（兜底）；autoPopup 关时守护随层停。收层同时
- *             解除编辑框绑定（m_target 置空、防悬垂连接断开）。
+ *             面板行为不变。悬浮面板（setHostWindow 锚生效期弹出）收
+ *             层先释放双抓取与原生鼠标捕获再隐藏，保持顶层归属（不归
+ *             还主窗口）并自动清空悬浮锚（回内嵌模式）。守护轮询按运
+ *             行条件保留：autoPopup 开时常驻轮询继续（兜底）；autoPopup
+ *             关时守护随层停。收层同时解除编辑框绑定（m_target 置空、
+ *             防悬垂连接断开）。
  *             弹收主判据=按下位置驱动（notifyPress）：收起后再按受支
  *             持编辑框（含同框，无需焦点往返）即经按下路径重弹——旧
  *             dismissFix「同框 retap 不重弹」契约已作废（反直觉：同框
@@ -512,6 +553,38 @@ void XVirtualKeyboard_closePopup(XVirtualKeyboard* self);
  * @return     弹层可见返回 true；self 为 NULL 返回 false。
  */
 bool XVirtualKeyboard_popupVisible(const XVirtualKeyboard* self);
+/**
+ * @brief      设置悬浮模式宿主锚（XGui 扩展；独立顶层输入面板宿主）。
+ * @details    host 非空进入悬浮模式：随后 popup() 不再把键盘挂父为编辑
+ *             框顶层窗口的子控件浮层，而是保持独立顶层窗口形态，以全局
+ *             坐标悬浮在 host 客户区底部（宽=host 全宽、高与内嵌形态
+ *             同一钳位公式——外观/尺寸/位置与普通编辑框弹出完全一致），
+ *             show+raise 置顶压过日历弹层等一切同应用窗口。host 允许
+ *             直接传弹层容器（日历弹层内编辑器场景）：弹层容器是
+ *             Popup 型独立顶层且 widget 父链/transient parent 均无主窗
+ *             口反向引用，popup() 时按可信次序解析主窗口为实际锚——
+ *             ①本接口时刻的焦点顶层快照（契约时序=布锚先于落焦，快照
+ *             即弹层打开前用户所在主窗口，transient parent 语义）；
+ *             ②上一次内嵌弹层的宿主顶层（普通编辑框键盘的记忆宿主）；
+ *             ③应用顶层表可见非 Popup 顶层中客户面积最大者（g_xapp 存
+ *             在的多窗口应用）；全缺回落锚自身（键盘仍悬浮压过弹层）。
+ *             防悬垂 destroyed 连接照旧挂最终锚，宿主销毁路径不变；悬
+ *             浮期守护除 Resize 外还复核锚全局位移（主窗口拖动→跟随
+ *             重定位）。closePopup 自动清空锚与快照回内嵌模式。须在
+ *             popup()/焦点驱动自动弹出之前调用。host 为 NULL 等价清
+ *             除。
+ * @param      self 目标键盘；可为 NULL。
+ * @param      host 悬浮锚顶层窗口/弹层容器（借用）；NULL 清除。
+ * @return     无返回值。
+ */
+void XVirtualKeyboard_setHostWindow(XVirtualKeyboard* self, XWidget* host);
+/**
+ * @brief      查询悬浮模式宿主锚（XGui 扩展）。
+ * @param      self 键盘对象借用指针；可为 NULL。
+ * @return     悬浮锚借用指针（设置时的原值，未经解析）；未设置或
+ *             self 为 NULL 返回 NULL。
+ */
+XWidget* XVirtualKeyboard_hostWindow(const XVirtualKeyboard* self);
 /**
  * @brief      设置自动弹出开关（XGui 扩展；默认 true）。
  * @details    on 时自动弹收机制随行：主判据=按下位置驱动（notifyPress，

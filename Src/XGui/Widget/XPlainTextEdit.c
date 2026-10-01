@@ -1047,6 +1047,20 @@ static void VX_plainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
             return;
         }
     }
+    /* 对标 QPlainTextEdit::focusNextPrevChild（qplaintextedit.cpp:2095）：
+       可编辑且 tabChangesFocus=false（默认）时 Tab 不作为输入也不作
+       焦点遍历（Qt 侧 control 对 '\t' isAcceptableInput=false 忽略，
+       focusNextPrevChild 恒返回 false，Tab 空消费）；置位时保持事件
+       未接受，交 XWidget 默认 Tab 焦点遍历移焦（Qt 的
+       QAbstractScrollArea::focusNextPrevChild 语义）。 */
+    if (!edit->m_readOnly && !edit->m_tabChangesFocus &&
+        (ke->m_key == (int)XKey_Tab || ke->m_key == (int)XKey_Backtab) &&
+        ((int)ke->m_modifiers &
+         ~((int)XKeyboardModifier_ShiftModifier
+           | (int)XKeyboardModifier_KeypadModifier)) == 0) {
+        XEvent_accept(event);
+        return;
+    }
     xpe_syncControlFont(edit);
     XTextControl_processEvent(edit->m_control, event);
 }
@@ -1076,7 +1090,11 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
         XPainter_translate(&painter, (float)offset.x, (float)offset.y);
     vsb = XAbstractScrollArea_verticalScrollBar((XAbstractScrollArea*)self);
     if (vsb) scroll = XScrollBar_value(vsb);
-    placeholder = xpe_color(edit, XPaletteColorRole_Mid);
+    /* 占位文本色：调色板 PlaceholderText 角色（对标 Qt 占位色取自
+       palette().placeholderText()；未设置时回落 Mid 灰）。 */
+    placeholder = xpe_color(edit, XPaletteColorRole_PlaceholderText);
+    if (placeholder == 0u)
+        placeholder = xpe_color(edit, XPaletteColorRole_Mid);
     /* 绘制范围 = 事件脏区（非 PAINT 入口退化为整控件）：背景填充、
        边框、行绘制全部限幅在脏区内，避免小区域刷新（性能浮层/光标
        闪烁）触发整页文本重绘。 */
@@ -1129,12 +1147,20 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
         XPainter_drawText(&painter, 4, 14,
                           XString_toUtf8(edit->m_placeholder), placeholder);
     }
-    /* 正文绘制入口：平移行左留白与垂直滚动后交控制器
-       （选区高亮/额外选择集/锚点/IME 下划线/闪烁光标由控制器绘制）。 */
+    /* 正文绘制入口：平移行左留白与垂直/水平滚动后交控制器
+       （选区高亮/额外选择集/锚点/IME 下划线/闪烁光标由控制器绘制）。
+       平移量与 xpe_toContentPos/cursorRect 的映射互逆：内容 X = 视口 X
+       - 行左留白 + 水平滚动（此前仅平移垂直滚动，NoWrap 长行水平
+       滚动条不动正文，与 Qt 视口平移不符）。 */
     if (edit->m_control) {
         XRect content;
-        XPainter_translate(&painter, (float)XPE_TEXT_LEFT, (float)-scroll);
-        XRect_init(&content, 0, scroll, XWidget_width(self),
+        XScrollBar* hsb;
+        int hs = 0;
+        hsb = XAbstractScrollArea_horizontalScrollBar((XAbstractScrollArea*)self);
+        if (hsb) hs = XScrollBar_value(hsb);
+        XPainter_translate(&painter, (float)(XPE_TEXT_LEFT - hs),
+                           (float)-scroll);
+        XRect_init(&content, hs, scroll, XWidget_width(self),
                    XWidget_height(self));
         XTextControl_draw(edit->m_control, &painter, &content);
     }
@@ -1635,23 +1661,45 @@ void XPlainTextEdit_selectAll(XPlainTextEdit* self)
 void XPlainTextEdit_ensureCursorVisible(XPlainTextEdit* self)
 {
     XScrollBar* vsb;
-    XTextControl* ctl;
-    int pos = 0;
-    int anchor = 0;
-    int line = 0;
-    int lh;
-    int target;
+    XScrollBar* hsb;
+    XRect cr;
+    int vh;
+    int vw;
+    int v;
+    int hv;
     if (!self) return;
     vsb = XAbstractScrollArea_verticalScrollBar(
         (XAbstractScrollArea*)self);
-    ctl = self->m_control;
-    if (!vsb || !ctl) return;
-    /* 壳保留滚动条数学（旧行顶对齐口径）：光标行顶 = line x 行高。 */
-    XTextControl_textCursor(ctl, &pos, &anchor);
-    xpe_ctlPosToLineCol(ctl, pos, &line, NULL);
-    lh = xpe_ctlLineHeight(ctl);
-    target = line * lh;
-    XScrollBar_setValue(vsb, target);
+    hsb = XAbstractScrollArea_horizontalScrollBar(
+        (XAbstractScrollArea*)self);
+    if (!vsb && !hsb) return;
+    /* 光标矩形（控件局部坐标，已扣滚动取值；与 paintEvent 同一口径）。 */
+    cr = XPlainTextEdit_cursorRect(self);
+    vh = XWidget_height((XWidget*)self);
+    vw = XWidget_width((XWidget*)self);
+    /* 对标 QPlainTextEditPrivate::ensureCursorVisible（qplaintextedit.cpp:
+       3074）：仅在光标矩形越出可视范围时以最小滚动量使其可见；
+       centerOnScroll 开启时竖向滚动改为居中放置（ensureVisible 的
+       center 语义）。此前"行顶对齐"口径在光标本已可见时也会滚动，
+       与 Qt 不符。 */
+    if (vsb && (cr.y < 0 || cr.y + cr.height > vh)) {
+        v = XScrollBar_value(vsb);
+        if (self->m_centerOnScroll)
+            v += cr.y + cr.height / 2 - vh / 2;
+        else if (cr.y < 0)
+            v += cr.y;
+        else
+            v += cr.y + cr.height - vh;
+        XScrollBar_setValue(vsb, v);
+    }
+    if (hsb && (cr.x < 0 || cr.x + cr.width > vw)) {
+        hv = XScrollBar_value(hsb);
+        if (cr.x < 0)
+            hv += cr.x;
+        else
+            hv += cr.x + cr.width - vw;
+        XScrollBar_setValue(hsb, hv);
+    }
 }
 
 void* XPlainTextEdit_textChanged_signal(XPlainTextEdit* self)

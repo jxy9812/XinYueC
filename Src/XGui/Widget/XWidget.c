@@ -2265,6 +2265,52 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     }
 }
 
+/* ==================== 界外按下重放（悬浮弹层点外语义，内部） ==================== */
+
+XWidget* XWidget_widgetForWindow(const XWindow* window)
+{
+    if (!window) return NULL;
+    /* 桥窗口判定=虚表与 XWidgetWindow_class_init() 共享表同指针
+       （XWidget_createWindow 经 XClassSetVtable(win, XWidgetWindow)
+       落表；纯 XWindow（无控件归属）走回退返回 NULL）。 */
+    if (XClassGetVtable((XObject*)window) != XWidgetWindow_class_init())
+        return NULL;
+    return ((const XWidgetWindow*)window)->m_widget;
+}
+
+bool XWidget_replayPressAtGlobal(const XMouseEvent* src, const XPoint* global)
+{
+#if XAPPLICATION_ON && XGUIAPPLICATION_ON && \
+    XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+    XWindow* win;
+    XWidget* top;
+    XPoint local;
+    if (!src || !global) return false;
+    /* 全局坐标→顶层窗口（登记逆序、优先可见；XGuiApplication_topLevelAt
+       返回 XWindow*，经桥窗口反查顶层控件——纯 XWindow 不承载控件树，
+       无可重放目标）。 */
+    win = XGuiApplication_topLevelAt(global);
+    if (!win) return false;
+    top = XWidget_widgetForWindow(win);
+    if (!top) return false;
+    local = XWidget_mapFromGlobal(top, global);
+    /* 经窗口系统接口完整负载注入 PRESS：从桥接窗口事件总入口走完整
+       派发管线（装饰拦截→跨顶层抓取改道→childAt 命中→notifyPress
+       汇聚点→控件事件槽），与原生平台按下同路。调用方必须已处于无
+       抓取态（先 closePopup 归还双抓取），单次派发无回环。对标 Qt
+       qwidgetwindow.cpp 关层后向光标下控件重放。 */
+    return XWindowSystemInterface_handleMouseEvent_ex(
+        win, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+        XMouseEvent_button(src), XMouseEvent_buttons(src),
+        XMouseEvent_modifiers(src), local, global,
+        XMouseEvent_timestamp(src));
+#else
+    (void)src;
+    (void)global;
+    return false; /* 窗口/应用层裁剪：无可重放目标，回退空实现。 */
+#endif
+}
+
 /* ==================== XWidget 类初始化与生命周期 ==================== */
 
 #if XINPUTMETHOD_ON

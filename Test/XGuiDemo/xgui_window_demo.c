@@ -130,6 +130,12 @@
 #if XDATETIMEEDIT_ON
 #include "XDateTimeEdit.h"
 #endif
+#if XDATEEDIT_ON
+#include "XDateEdit.h"
+#endif
+#if XTIMEEDIT_ON
+#include "XTimeEdit.h"
+#endif
 #if XFONTCOMBOBOX_ON
 #include "XFontComboBox.h"
 #endif
@@ -217,6 +223,12 @@
 #endif
 #if XDATETIMEEDIT_ON
 #include "XDateTimeEdit.h"
+#endif
+#if XDATEEDIT_ON
+#include "XDateEdit.h"
+#endif
+#if XTIMEEDIT_ON
+#include "XTimeEdit.h"
 #endif
 #if XFONTCOMBOBOX_ON
 #include "XFontComboBox.h"
@@ -432,6 +444,12 @@ typedef struct DemoWin
 #endif
 #if XDATETIMEEDIT_ON
     XDateTimeEdit   m_dtEdit;       /**< 日期时间编辑。 */
+#endif
+#if XDATEEDIT_ON
+    XDateEdit       m_dateEdit;     /**< 日期编辑（对标 QDateEdit）。 */
+#endif
+#if XTIMEEDIT_ON
+    XTimeEdit       m_timeEdit;     /**< 时间编辑（对标 QTimeEdit）。 */
 #endif
 #if XFONTCOMBOBOX_ON
     XFontComboBox   m_fontCombo;    /**< 字体下拉框。 */
@@ -2832,17 +2850,42 @@ static DemoWin* DemoWin_create(void)
                                (XWidget*)&self->m_plainEdit, "多行编辑");
 #endif
 #if XDATETIMEEDIT_ON && XFONTCOMBOBOX_ON
-    /* 页十：XDateTimeEdit + XFontComboBox。 */
+    /* 页十：XDateTimeEdit + XDateEdit + XTimeEdit（三控件同页可对比；
+     * 弹层内容按各自 displayFormat 分段构成自动三态：日期时间=日历+
+     * 时间行、纯日期=纯日历、纯时间=纯时间设定行）。 */
     XDateTimeEdit_init(&self->m_dtEdit, (XWidget*)&self->m_tabWidget, 0);
-    XFontComboBox_init(&self->m_fontCombo, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 200, 26);
     XWidget_setGeometry((XWidget*)&self->m_dtEdit, 10, 10, 250, 28);
-    XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 50, 220, 28);
-    /* 对标 QDateTimeEdit::setCalendarPopup(true)：点下拉箭头弹出
-     * XCalendarWidget 日历弹层（弹层机器见 XDateTimeEdit.c）。 */
+    /* 对标 QDateTimeEdit::setCalendarPopup(true)：点下拉箭头弹出日历
+     * 弹层（弹层机器见 XDateTimeEdit.c）。 */
     XDateTimeEdit_setCalendarPopup(&self->m_dtEdit, true);
-    (void)XTabWidget_insertTab_2(&self->m_tabWidget, 10,
-                               demo_wrapTabPage(self, (XWidget*)&self->m_dtEdit), "日期时间");
+#if XDATEEDIT_ON
+    /* 对标 QDateEdit：构造即设 "yyyy/MM/dd"（仅日期段）→弹层=纯日历。 */
+    XDateEdit_init(&self->m_dateEdit, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_dateEdit, 10, 50, 250, 28);
+    XDateTimeEdit_setCalendarPopup((XDateTimeEdit*)&self->m_dateEdit, true);
+#endif
+#if XTIMEEDIT_ON
+    /* 对标 QTimeEdit：构造即设 "HH:mm:ss"（仅时间段）→弹层=纯时间行。 */
+    XTimeEdit_init(&self->m_timeEdit, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_timeEdit, 10, 90, 250, 28);
+    XDateTimeEdit_setCalendarPopup((XDateTimeEdit*)&self->m_timeEdit, true);
+#endif
+    XFontComboBox_init(&self->m_fontCombo, (XWidget*)&self->m_tabWidget, 0);
+    XWidget_setGeometry((XWidget*)&self->m_fontCombo, 10, 130, 220, 28);
+    {
+        /* 三控件同页：XDateTimeEdit 先经 wrapTabPage 落页，XDateEdit/
+         * XTimeEdit 直插同页（页内直插型显式 show，随页显形）。 */
+        XWidget* dtPage = demo_wrapTabPage(self, (XWidget*)&self->m_dtEdit);
+#if XDATEEDIT_ON
+        XWidget_setParent((XWidget*)&self->m_dateEdit, dtPage, 0);
+        XWidget_show((XWidget*)&self->m_dateEdit);
+#endif
+#if XTIMEEDIT_ON
+        XWidget_setParent((XWidget*)&self->m_timeEdit, dtPage, 0);
+        XWidget_show((XWidget*)&self->m_timeEdit);
+#endif
+        (void)XTabWidget_insertTab_2(&self->m_tabWidget, 10, dtPage, "日期时间");
+    }
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 11,
                                demo_wrapTabPage(self, (XWidget*)&self->m_fontCombo), "字体");
 #endif

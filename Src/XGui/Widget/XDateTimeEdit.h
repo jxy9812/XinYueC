@@ -15,11 +15,18 @@
  *               dd/dddd/ddd/HH/h/hh/mm/ss/zzz/zz/z/AP(A) 占位符展开，
  *               字面字符原样输出；ddd/dddd 星期文案周一..周日/星期一..
  *               星期日，AP/A 固定中文「上午/下午」，详见实现注释）；
+ *               setDisplayFormat 同时对齐 Qt 的两类派生行为：格式不
+ *               含本类（parserType）允许的分段时保持原格式不变（对标
+ *               parseFormat 失败守卫），纯时间段/纯日期段格式按
+ *               qdatetimeedit.cpp:954-964 收窄范围与值（详见实现）；
  *             - stepBy：按当前分段增减（年/月/日/时/分/秒/毫秒，含进位；
  *               上下午段 ±12 小时翻转）；键盘 Left/Right 跨段导航并整段
  *               选中（对标 QDateTimeEdit 方向键分段导航）；
  *             - 信号：dateTimeChanged(QDateTime*)/dateChanged/
- *               timeChanged（携带内部 XDateTime 指针，借用）；
+ *               timeChanged（携带内部 XDateTime 指针，借用）；用户
+ *               变体信号按 Qt 归属放在子类（userDateChanged 属
+ *               XDateEdit、userTimeChanged 属 XTimeEdit，见
+ *               XDateEdit.h/XTimeEdit.h），基类不声明；
  *             - calendarWidget 族：calendarWidget/setCalendarWidget
  *               （内置日历懒创建、外部日历接管与 selectionChanged →
  *               setDate 信号联动）；setCalendarPopup(true) 开启下拉
@@ -60,6 +67,20 @@ typedef enum XDateTimeEditSection
     XDateTimeEditSection_YearSection = 0x0400
 } XDateTimeEditSection;
 
+/** @brief 解析类型（对标 QDateTimeParser::parserType，即
+ *         QMetaType::QDateTime/QDate/QTime 三值的 C 化；决定
+ *         setDisplayFormat 允许的分段集合与范围收窄行为）。
+ * @note  QDateTimeEdit 本类恒为 DateTime；XDateEdit 置 Date（时间/
+ *        时段记号被拒：混入时按字面字符处理，纯时间格式整体拒绝），
+ *        XTimeEdit 置 Time（日期记号同理），对齐 Qt 两子类的编辑
+ *        语义（qdatetimeparser.cpp:457-555 的 parserType 滤段）。 */
+typedef enum XDateTimeEditParserType
+{
+    XDateTimeEditParserType_DateTime = 0, /**< 日期+时间段（基类默认）。 */
+    XDateTimeEditParserType_Date = 1,     /**< 仅日期段（XDateEdit 口径）。 */
+    XDateTimeEditParserType_Time = 2      /**< 仅时间段（XTimeEdit 口径）。 */
+} XDateTimeEditParserType;
+
 XCLASS_DEFINE_BEGING(XDateTimeEdit)
 XCLASS_DEFINE_EXTEND_END(XDateTimeEdit, XAbstractSpinBox)
 
@@ -84,9 +105,20 @@ typedef struct XDateTimeEdit
     int m_typingDigits;        /**< 当前段已键入位数（满段位宽即提交并
                                     跳下一段，对标 QDateTimeEdit 分段
                                     键入模型）。 */
+    int m_undoSection;         /**< 键入撤销段（G3 退格回归 2026-10-02）：
+                                    最近一次满位键入提交的段枚举码；
+                                    NoSection=无撤销态，退格据此回退。 */
+    int m_undoValue;           /**< 撤销段键入落账前的段值（退格恢复
+                                    目标；z 段存实际毫秒，回退时按
+                                    记号位宽逆折回键入域）。 */
     bool m_calendarPopup;      /**< 日历弹出（默认 false，对标
                                     QDateTimeEdit::calendarPopup）。 */
     int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime）。 */
+    int m_parserType;          /**< 解析类型（XDateTimeEditParserType；
+                                    默认 0=DateTime；基类与两子类共用同
+                                    一承载，对标 QDateTimeEditPrivate::
+                                    parserType——Qt 亦无 QDateEditPrivate/
+                                    QTimeEditPrivate）。 */
 #if XCALENDARWIDGET_ON
     XCalendarWidget* m_calendar; /**< 内置日历（懒创建；对象由本控件持有，
                                      setCalendarWidget 可整体接管）。 */
@@ -98,6 +130,16 @@ typedef struct XDateTimeEdit
     XTimerId m_grabTimer;      /**< 弹层平台双抓取延迟定时器（1ms 精确；
                                     平台 XGrabPointer/XGrabKeyboard 需
                                     窗口完成映射，XComboBox 同款时序）。 */
+    XLineEdit* m_timeEdits[3]; /**< 弹层时间行 时/分/秒 三段真实编辑器
+                                    （缺陷 G；懒创建于弹层容器、对象由
+                                    deinit 级联释放；手绘值框的手绘点击
+                                    无真实编辑控件 → 虚拟键盘链路不通，
+                                    换真实 XLineEdit 后焦点即接入屏幕
+                                    键盘/输入法，与年份编辑器定版方案
+                                    同款）。 */
+    int m_timeEditGroup;       /**< 当前编辑的时间行组序号（0=时/1=分/
+                                    2=秒；-1=无编辑会话；Return/失焦
+                                    提交时按此定位写回段）。 */
 } XDateTimeEdit;
 
 XVtable* XDateTimeEdit_class_init(void);
@@ -359,7 +401,8 @@ const char* XDateTimeEdit_displayFormat(const XDateTimeEdit* self);
  */
 int XDateTimeEdit_currentSection(const XDateTimeEdit* self);
 /**
- * @brief      设置当前编辑分段。
+ * @brief      设置当前编辑分段（对标 setCurrentSection：NoSection 或
+ *             分段不在显示格式中时不动作）。
  */
 void XDateTimeEdit_setCurrentSection(XDateTimeEdit* self, int section);
 /**
@@ -404,8 +447,9 @@ int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index);
 XString* XDateTimeEdit_sectionText(const XDateTimeEdit* self, int section);
 /**
  * @brief      设置选中分段（对标 QDateTimeEdit::setSelectedSection）。
- * @details    仅当该分段确实出现在显示格式中才生效，否则保持原分段
- *             不变（对齐 Qt 的有效性检查）。
+ * @details    section 为 NoSection 时反选全部文本；其余仅当该分段确实
+ *             出现在显示格式中才生效，否则保持原分段不变（对齐 Qt 的
+ *             有效性检查）。
  * @param      self 目标控件；传入 NULL 时函数不执行任何操作。
  * @param      section 分段枚举值（XDateTimeEditSection）。
  * @return     无返回值。
@@ -429,18 +473,13 @@ void* XDateTimeEdit_dateChanged_signal(XDateTimeEdit* self,
  */
 void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
                                        const XTime* time);
-/** @brief      用户改期信号（对标 QDateEdit::userDateChanged；真发射）。
- * @details    仅用户经步进（方向键/箭头点击）修改日期部分时发射，
- *             程序性 setDateTime/setDate 不发射；载荷为新日期。
- */
-void* XDateTimeEdit_userDateChanged_signal(XDateTimeEdit* self,
-                                           const XDate* date);
-/** @brief      用户改时信号（对标 QTimeEdit::userTimeChanged；真发射）。
- * @details    仅用户经步进修改时间部分时发射，程序性设置不发射；
- *             载荷为新时间。
- */
-void* XDateTimeEdit_userTimeChanged_signal(XDateTimeEdit* self,
-                                           const XTime* time);
+/* 用户变体信号按 Qt 6.8 归属放在子类（QDateTimeEdit 基类亦无
+ * userDateChanged/userTimeChanged）：XDateEdit.h 声明
+ * XDateEdit_userDateChanged_signal、XTimeEdit.h 声明
+ * XTimeEdit_userTimeChanged_signal，由子类构造连接基类
+ * dateChanged/timeChanged 转发发射（程序性 setDate/setTime 同样
+ * 触发，对齐 Qt connect(this, &QDateEdit::dateChanged,
+ * this, &QDateEdit::userDateChanged) 语义）。 */
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
 

@@ -348,6 +348,12 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     XPlainTextEdit_setReadOnly(self->m_base.m_editor, true);
+    /* 对标 QTextBrowserPrivate::init（qtextbrowser.cpp:669）：浏览器
+       恒只读浏览语义——撤销重做关闭、交互标志 TextBrowserInteraction
+       （鼠标可选 + 链接鼠标/键盘可达，不含可编辑）。 */
+    XTextEdit_setUndoRedoEnabled_2(&self->m_base, false);
+    XTextEdit_setTextInteractionFlags(
+        &self->m_base, (int)XTextControlInteraction_TextBrowserInteraction);
 #if XTEXTDOCUMENT_ON
     /* XTextEdit_init 已创建 m_textDoc：覆盖前释放旧对象（否则泄漏）。 */
     if (self->m_base.m_textDoc) {
@@ -473,6 +479,16 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
         XString_assign_utf8(self->m_source, url ? url : "");
     xtb_emitStr(self, (size_t)XTextBrowser_sourceChanged_signal,
                 XString_toUtf8(self->m_source));
+    /* 对标 QTextBrowserPrivate::setSource 收尾（qtextbrowser.cpp:356）：
+       导航后视口复位到顶部（无 fragment 锚即重置垂直/水平滚动取值）。 */
+    {
+        XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+            (const XAbstractScrollArea*)self);
+        XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(
+            (const XAbstractScrollArea*)self);
+        if (vsb) XScrollBar_setValue(vsb, 0);
+        if (hsb) XScrollBar_setValue(hsb, 0);
+    }
     if (!addHistory) {
         xtb_updateNavigationState(self);
         return;

@@ -73,8 +73,12 @@ typedef struct XCalendarWidget
     int m_verticalHeaderFormat; /**< 垂直表头格式（0=ISO 周数，1=无）。 */
     int m_headerTextFormat; /**< 表头文本格式位（0=默认；预留 QTextCharFormat 简化）。 */
     int m_weekdayTextFormat; /**< 周几文本格式位（预留）。 */
-    int m_horizontalHeaderFormat; /**< 水平表头格式（对标 HorizontalHeaderFormat；默认 1=短名；仅存储）。 */
+    int m_horizontalHeaderFormat; /**< 水平表头格式（对标 HorizontalHeaderFormat；默认 2=ShortDayNames）。 */
     int m_dateEditAcceptDelay;  /**< 日期编辑确认延迟 ms（对标 dateEditAcceptDelay；默认 1500；仅存储）。 */
+    struct XLineEdit* m_yearEdit; /**< 年份就地编辑器（对标 Qt yearEdit 的
+                                       真实编辑控件：WA14+焦点接入输入法/
+                                       屏幕键盘链路；懒创建、归属本控件，
+                                       deinit 释放；可见即编辑态）。 */
 } XCalendarWidget;
 
 /** @brief X日历控件classinit（对标 Qt 同名接口）。
@@ -109,6 +113,19 @@ int XCalendarWidget_monthShown(const XCalendarWidget* self);
  * @brief      设置当前页（年/月）。
  */
 void XCalendarWidget_setCurrentPage(XCalendarWidget* self, int year, int month);
+/**
+ * @brief      结束年份就地编辑会话（不提交；幂等，无会话时零操作）。
+ * @details    终结 beginYearEdit 开启的会话：收起年份编辑器、解除屏幕
+ *             键盘确认接线并收起键盘（对标 yearEdit 的 Escape 语义），
+ *             不翻页、不改选中值。供日历弹层宿主（XDateTimeEdit）在弹
+ *             层收起/重开时调用——年份编辑器以 explicitShow 显形，弹层
+ *             隐藏/重现的可见性传播不收回它，残留会话会把旧缓冲文本
+ *             （如 "2000"）覆在标题年份上并吞掉后续物理键入（r2 项4
+ *             「2000年1月」残留态根因）。
+ * @param      self 日历控件；NULL 零操作。
+ * @return     无返回值。
+ */
+void XCalendarWidget_endYearEdit(XCalendarWidget* self);
 /**
  * @brief      获取最小日期。
  */
@@ -230,16 +247,17 @@ int XCalendarWidget_headerTextFormat(const XCalendarWidget* self);
  */
 int XCalendarWidget_weekdayTextFormat(const XCalendarWidget* self);
 /** @brief 设置水平表头格式（对标 QCalendarWidget::setHorizontalHeaderFormat）。
- * @details 仅存储状态；渲染层表头文本当前为固定样式。
+ * @details 渲染层按格式切换表头文案（0=不显示，1=单字，2=短名
+ *          「周一」，3=长名「星期一」）。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
- * @param format 格式码（对标 HorizontalHeaderFormat：0=单字母，1=短名，
- *        2=长名，3=不显示）。
+ * @param format 格式码（对标 HorizontalHeaderFormat：0=不显示，1=单字母，
+ *        2=短名，3=长名）。
  * @return 无返回值。
  */
 void XCalendarWidget_setHorizontalHeaderFormat(XCalendarWidget* self,
                                                int format);
 /** @brief 查询水平表头格式（对标 QCalendarWidget::horizontalHeaderFormat）。
- * @param self 目标控件；传入 NULL 时返回 1（ShortDayNames 默认值）。
+ * @param self 目标控件；传入 NULL 时返回 2（ShortDayNames 默认值）。
  * @return 格式码。
  */
 int XCalendarWidget_horizontalHeaderFormat(const XCalendarWidget* self);

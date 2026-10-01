@@ -672,6 +672,17 @@ XLineEdit* XAbstractSpinBox_lineEdit(const XAbstractSpinBox* self)
     return self ? self->m_lineEdit : NULL;
 }
 
+/** @brief 替换内嵌编辑框（对标 QAbstractSpinBox::setLineEdit）。
+ *  @note  不变量警示（缺陷⑥ 2026-10-02 定版）：日期时间家族
+ *         （XDateTimeEdit/XDateEdit/XTimeEdit）不得经此换编辑框——
+ *         XDateTimeEdit_init 在 init 链上对默认编辑框置鼠标穿透
+ *         （TransparentForMouseEvents）+NoFocus+反向焦点代理（编辑框
+ *         →壳），配合壳 WA14+DigitsOnly 构成「字段直点→notifyPress
+ *         穿透上溯到壳→Digits 数字盘」整链；经此换上的新编辑框三样
+ *         全无（hints=ImhNone），childAt 重新命中编辑框、vtable 短路
+ *         放行（xkb_supportedTarget 行编辑分支）直弹 QWERTY，缺陷⑥
+ *         复发。当前全仓库无调用点（仅 XSpinBox 宏别名），留作契约
+ *         锚点。 */
 void XAbstractSpinBox_setLineEdit(XAbstractSpinBox* self, XLineEdit* lineEdit)
 {
     if (!self) return;

@@ -233,6 +233,34 @@ XImage* XWidget_beginContentCacheFormat(XWidget* self, int width, int height,
  */
 void XWidget_markContentCacheReady(XWidget* self);
 
+/* ==================== 界外按下重放（悬浮弹层点外语义，内部） ==================== */
+
+/**
+ * @brief      返回控件桥窗口归属的顶层控件（内部）。
+ * @details    顶层控件经 XWidget_createWindow 内嵌 XWidgetWindow 桥接窗，
+ *             本函数做 window→widget 反查（悬浮弹层界外收层重放链的
+ *             落点解析步；XGuiApplication_topLevelAt 只给 XWindow*）。
+ * @param      window 待反查窗口；可为 NULL。
+ * @return     归属顶层控件（借用）；非桥窗口（纯 XWindow）或 NULL 实参
+ *             返回 NULL。
+ */
+XWidget* XWidget_widgetForWindow(const XWindow* window);
+/**
+ * @brief      把一次界外按下转发到全局坐标下的顶层窗口（内部）。
+ * @details    全局坐标解析顶层（XGuiApplication_topLevelAt→桥窗口反查
+ *             控件）后经 XWindowSystemInterface_handleMouseEvent_ex 完整
+ *             负载注入 PRESS——从桥接窗口事件总入口走完整派发管线（装
+ *             饰拦截→childAt→真实靶→notifyPress 汇聚点），与原生平台按
+ *             下同路。调用方必须已处于无抓取态（先 closePopup 成对归还
+ *             双抓取），单次派发无回环（界外坐标不可能再落回已收层键
+ *             盘）。对标 Qt qwidgetwindow.cpp 关层后向光标下控件重放。
+ * @param      src 原始按下事件（取按键/按键集合/修饰键/时间戳；借用）。
+ * @param      global 屏幕全局坐标（按下点）。
+ * @return     已派发返回 true；参数无效、无可重放顶层或窗口/应用层裁
+ *             剪（对应宏门关闭）返回 false。
+ */
+bool XWidget_replayPressAtGlobal(const XMouseEvent* src, const XPoint* global);
+
 /* ==================== 应用模态（对标 QApplication activeModalWidget） ==================== */
 
 /**
