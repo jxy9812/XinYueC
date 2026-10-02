@@ -35,6 +35,7 @@
 #endif
 #if XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON
 #include "XTabWidget.h"
+#include "XCoreApplication.h" /* sendPostedEvents：无头套件显式冲刷 DeferredDelete。 */
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON && \
     XSTACKEDWIDGET_ON
@@ -813,6 +814,9 @@ static int containers_tabbar(void)
     XTabBar_setTabButton(&bar2, 1, NULL);
     XAPI_EXPECT(XTabBar_tabButton(&bar2, 1) == NULL,
                 "XTabBar setTabButton(NULL) 清除角按钮");
+    /* 栈对象按头文件契约用 deinit_base 收尾（槽位已置 NULL、无其他
+     * 引用，直接 deinit 无悬垂）。 */
+    XAbstractButton_deinit_base(&corner);
 #endif
     XTabBar_setTabVisible(&bar2, 0, false);
     XAPI_EXPECT(!XTabBar_isTabVisible(&bar2, 0),
@@ -1110,6 +1114,11 @@ static int containers_tabwidget(void)
     XTabWidget_clear(&tw); /* page1/page2/pageB 随页容器级联释放。 */
     XAPI_EXPECT(XTabWidget_count(&tw) == 0 && XTabWidget_currentIndex(&tw) == -1,
                 "XTabWidget clear 清空全部页（Qt clear 对标）");
+    /* removeTab/clear 走 deleteLater 延迟删除；无头套件无事件循环，事件
+     * 本就不投递（Qt 同），此处显式冲刷 DeferredDelete 让已摘父链的页
+     * 容器经 XClass_delete_base 级联释放内容页。removeTab/clear 均在本
+     * 函数栈上直调、不在页容器自身信号帧内，同步删安全。 */
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
     page1 = NULL;
     page2 = NULL;
     page3 = NULL;
@@ -2022,9 +2031,14 @@ static int containers_toolbox(void)
                     XToolBox_currentWidget(&tb3) == wb,
                 "XToolBox 移除当前条目后激活后继条目（Qt 同）");
 
-    XToolBox_deinit_base(&tb3); /* wa/wb/wc 仍为子控件随级联释放。 */
-    XToolBox_deinit_base(&tb2); /* wOnly 仍为子控件随级联释放。 */
-    XToolBox_deinit_base(&tb);  /* w1/w2 仍为子控件随级联释放；w3 同。 */
+    XToolBox_deinit_base(&tb3); /* wb/wc 仍为子控件随级联释放；wa 已摘链由调用方释放。 */
+    XToolBox_deinit_base(&tb2); /* 空箱析构；wOnly 已摘链由调用方释放。 */
+    XToolBox_deinit_base(&tb);  /* w1/w2 仍为子控件随级联释放；w3 已摘链由调用方释放。 */
+    /* w3/wOnly/wa 已被 removeItem 摘父链归还调用方（不销毁），此处显式
+     * 释放；VXWidget_deinit 会自动从应用顶层注册表摘除悬垂项。 */
+    XWidget_delete_base((XClass*)w3);
+    XWidget_delete_base((XClass*)wOnly);
+    XWidget_delete_base((XClass*)wa);
     return failures;
 }
 
@@ -2408,6 +2422,10 @@ static int containers_dock(void)
                 "XDockWidget NULL 查询返回默认值");
 
     XDockWidget_deinit_base(&dock);
+    /* 栈上 titleBar 已被 setTitleBarWidget(NULL) 摘父链归还（不随 dock
+     * 级联），按头文件契约显式 deinit_base 收尾（VXWidget_deinit 自动
+     * 从顶层注册表摘项，单独 deinit 无 double-free）。 */
+    XWidget_deinit_base(&titleBar);
     return failures;
 }
 

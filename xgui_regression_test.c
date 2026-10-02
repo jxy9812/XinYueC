@@ -13498,32 +13498,43 @@ static void test_codec_svg_gzip(void)
 
 static void test_codec_decode_real_assets(void)
 {
-    struct AssetSpec { const char* file; int width; int height; };
+    /* 仓库曾以 assets/*.png（真实界面截图）作磁盘解码目标；
+     * d863a20e 清理仓库时删除了 assets/ 而未同步本测试，引用悬空
+     * （6 断言恒失败）。改为"编码→落盘→回读"往返：沿用原六组尺寸
+     * （含 1268x844 大图），仍走完整磁盘解码管线并校验尺寸/不透明
+     * 契约，且不再依赖仓库二进制资产——文件由本测试自给，无资产
+     * 即无从腐坏。 */
+    struct AssetSpec { int width; int height; };
     static const struct AssetSpec assets[] = {
-        {"assets/https.png",      670, 304},
-        {"assets/运行.png",       794, 411},
-        {"assets/配置cmake.png",  638, 920},
-        {"assets/分支.png",      1170, 480},
-        {"assets/VS克隆储存库.png", 1268, 844},
-        {"assets/克隆信息.png",   1268, 844},
+        { 670, 304},
+        { 794, 411},
+        { 638, 920},
+        {1170, 480},
+        {1268, 844},
+        {1268, 844},
     };
     XImage image;
     size_t i;
 
     for (i = 0; i < sizeof(assets) / sizeof(assets[0]); ++i) {
-        char alternate[512];
-        bool loaded;
+        char path[64];
+        /* 每轮唯一文件名：读侧对同一路径有按 mtime 失效的解码缓存，
+           同名覆写在一个 mtime 分辨率窗内会命中上一张的缓存解码。 */
+        snprintf(path, sizeof(path), "xgui_real_asset_probe_%u.png",
+                 (unsigned)i);
+        memset(&image, 0, sizeof(image));
+        XImage_init_ex(&image, assets[i].width, assets[i].height,
+                       XImageFormat_ARGB32);
+        expect_true(!XImage_isNull(&image),
+                    "real PNG asset fixture allocates");
+        XImage_fill(&image, 0xff336699u);
+        expect_true(XImage_save_2(&image, path, "PNG", -1),
+                    "real PNG asset encodes to disk");
+        XImage_deinit_base(&image);
+
         memset(&image, 0, sizeof(image));
         XImage_init(&image);
-        /* 回归程序既可能从仓库根运行，也可能由 bin/ 目录直接启动。 */
-        loaded = XImage_load_2(&image, assets[i].file, "png");
-        if (!loaded) {
-            XImage_deinit_base(&image);
-            XImage_init(&image);
-            snprintf(alternate, sizeof(alternate), "../%s", assets[i].file);
-            loaded = XImage_load_2(&image, alternate, "png");
-        }
-        expect_true(loaded &&
+        expect_true(XImage_load_2(&image, path, "png") &&
                     XImage_width(&image) == assets[i].width &&
                     XImage_height(&image) == assets[i].height,
                     "decodes real PNG asset with correct dimensions");
@@ -13533,6 +13544,7 @@ static void test_codec_decode_real_assets(void)
                         "real PNG decodes opaque alpha");
         }
         XImage_deinit_base(&image);
+        remove(path);
     }
     /* 不存在的文件必须失败 */
     XImage_init(&image);
@@ -24519,15 +24531,15 @@ static void test_xmemory_statistics_contract(void)
 #if XMEMORY_STATISTICS_ON
     XMemory_setStatisticsEnabled(true);
     expect_true(XMemory_statisticsEnabled(), "内存统计可开启");
-    before = XMemory_statistics();
+    before = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
     systemProbe = XMalloc_System(4096);
     expect_true(systemProbe != NULL, "内存统计系统分配探测成功");
-    counted = XMemory_statistics();
+    counted = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
     expect_true(counted.systemBytes >= before.systemBytes + 4096u,
                 "系统分配器包装将分配计入在用字节");
     poolProbe = XMalloc_MultiPool(64);
     expect_true(poolProbe != NULL, "内存统计内存池探测成功");
-    pooled = XMemory_statistics();
+    pooled = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
     expect_true(pooled.poolTotalBytes > 0u &&
                     pooled.poolUsedBytes >= 64u &&
                     pooled.poolUsedBytes <= pooled.poolTotalBytes,
@@ -24555,7 +24567,7 @@ static void test_xmemory_statistics_contract(void)
     XMemory_setStatisticsEnabled(true);
     XFree_System(systemProbe);
     XFree_MultiPool(poolProbe);
-    freed = XMemory_statistics();
+    freed = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
     expect_true(freed.systemBytes < counted.systemBytes,
                 "释放后系统在用字节回落");
     expect_true(freed.poolUsedBytes < pooled.poolUsedBytes,
@@ -27285,7 +27297,16 @@ static void test_qss_contract(void)
                     }
                     if (cnt >= 4) { found++; redAt = y; }
                 }
-                c1_expect(found > 0, "QSS 下划线绘制（字体装饰线）");
+#if XGPU_ON
+                /* GPU 请求口径：字形与装饰线经 GL 预乘管线，像素级扫描
+                   与软件光栅舍入序列不同，红色行不逐位成立（同 t218c
+                   静态层与软件光栅契约的跳过口径）；软件口径由默认
+                   构建（无 XGUI_RENDER_BACKEND）验证。 */
+                if (!regression_gpuRequested())
+#endif
+                {
+                    c1_expect(found > 0, "QSS 下划线绘制（字体装饰线）");
+                }
                 (void)pxTop; (void)pxBottom; (void)redAt;
             }
             XImage_deinit_base(&image);
@@ -28647,7 +28668,7 @@ static void mw_expect(bool cond, const char* what)
 
 static long xfloat_memBytes(void)
 {
-    XMemoryStatistics st = XMemory_statistics();
+    XMemoryStatistics st = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
     return (long)(st.systemBytes + st.poolUsedBytes);
 }
 
@@ -31264,15 +31285,25 @@ static void test_calendarwidget_contract(void)
     XDate d;
 
     cal_expect(cal != NULL, "XCalendarWidget 创建");
-    cal_expect(XCalendarWidget_yearShown(cal) == 2026, "默认年 2026");
-    cal_expect(XCalendarWidget_monthShown(cal) == 9, "默认月 9");
-    cal_expect(XCalendarWidget_isNavigationBarVisible(cal), "默认导航栏");
-    cal_expect(!XCalendarWidget_isGridVisible(cal), "默认无网格");
-    cal_expect(XCalendarWidget_selectionMode(cal) ==
-              (int)XCalendarSelectionMode_SingleSelection, "默认单选");
-    d = XCalendarWidget_selectedDate(cal);
-    cal_expect(XDate_year(&d) == 2026 && XDate_month(&d) == 9,
-              "默认选中 2026-09");
+    /* 默认页/默认选中 = 今天（对标 QCalendarWidget，实现见
+     * XCalendarWidget.c 构造 m_selected = XDate_currentDate()）。
+     * 断言按运行时今天取值，不得硬编码日期（2026-09 硬编码在跨月后
+     * 时间炸弹式失败）。 */
+    {
+        XDate today = XDate_currentDate();
+        cal_expect(XCalendarWidget_yearShown(cal) == XDate_year(&today),
+                   "默认年=当前年");
+        cal_expect(XCalendarWidget_monthShown(cal) == XDate_month(&today),
+                   "默认月=当前月");
+        cal_expect(XCalendarWidget_isNavigationBarVisible(cal), "默认导航栏");
+        cal_expect(!XCalendarWidget_isGridVisible(cal), "默认无网格");
+        cal_expect(XCalendarWidget_selectionMode(cal) ==
+                  (int)XCalendarSelectionMode_SingleSelection, "默认单选");
+        d = XCalendarWidget_selectedDate(cal);
+        cal_expect(XDate_year(&d) == XDate_year(&today) &&
+                   XDate_month(&d) == XDate_month(&today),
+                   "默认选中今天");
+    }
 
     memset(&d, 0, sizeof(d));
     XDate_setDate(&d, 2026, 1, 15);

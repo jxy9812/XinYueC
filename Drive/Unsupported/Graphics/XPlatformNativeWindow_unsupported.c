@@ -120,6 +120,16 @@ bool XPlatformNativeWindow_raise(XWindow* window)
     return false;
 }
 
+bool XPlatformNativeWindow_setTransientParent(XWindow* window,
+                                              XWindow* parent)
+{
+    /* 能力不足的后端默认 no-op：无窗口系统即无 owner/Z 序语义；返回
+     * true 让公共层视为已落地（虚拟窗口天然无遮挡问题）。 */
+    (void)window;
+    (void)parent;
+    return true;
+}
+
 bool XPlatformNativeWindow_lower(XWindow* window)
 {
     (void)window;

@@ -538,7 +538,7 @@ static void XStateMachine_exitStates(XStateMachine* machine, XEvent* event, XVec
             const XVector* transitions = XState_transitions_const((XState*)state);
             for (int64_t j = 0; transitions && j < (int64_t)XVector_size_base((const XContainer*)transitions); ++j) {
                 XAbstractTransition* transition = XVector_At_Base(transitions, j, XAbstractTransition*);
-                XStateMachine_unregisterTransition_internal(machine, transition);
+                XStateMachine_unregisterTransition_internal(machine, transition, true); /* 运行期:延迟回收 */
             }
         }
         XAbstractState_onExit_base(state, event);
@@ -873,14 +873,16 @@ static bool XStateMachine_microstep(XStateMachine* machine, XEvent* event, XVect
     return finished;
 }
 
-static void XStateMachine_unregisterConfigurationTransitions(XStateMachine* machine)
+/* @param deferred 运行期(finish)路径须延迟回收;析构路径必须同步删,
+ *        防事件循环退出后泄漏(参照 XActionGroup 双模式先例)。 */
+static void XStateMachine_unregisterConfigurationTransitions(XStateMachine* machine, bool deferred)
 {
     if (!machine)
         return;
     const XVector* rootTransitions = XState_transitions_const((XState*)machine);
     for (int64_t i = 0; rootTransitions && i < (int64_t)XVector_size_base((const XContainer*)rootTransitions); ++i) {
         XAbstractTransition* transition = XVector_At_Base(rootTransitions, i, XAbstractTransition*);
-        XStateMachine_unregisterTransition_internal(machine, transition);
+        XStateMachine_unregisterTransition_internal(machine, transition, deferred);
     }
     for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)machine->m_configuration); ++i) {
         XAbstractState* state = XVector_At_Base(machine->m_configuration, i, XAbstractState*);
@@ -889,7 +891,7 @@ static void XStateMachine_unregisterConfigurationTransitions(XStateMachine* mach
         const XVector* transitions = XState_transitions_const((XState*)state);
         for (int64_t j = 0; transitions && j < (int64_t)XVector_size_base((const XContainer*)transitions); ++j) {
             XAbstractTransition* transition = XVector_At_Base(transitions, j, XAbstractTransition*);
-            XStateMachine_unregisterTransition_internal(machine, transition);
+            XStateMachine_unregisterTransition_internal(machine, transition, deferred);
         }
     }
 }
@@ -899,7 +901,7 @@ static void XStateMachine_finish(XStateMachine* machine)
     machine->m_state = XStateMachine_NotRunning;
     machine->m_processing = false;
     XStateMachine_cancelAllDelayedEvents(machine);
-    XStateMachine_unregisterConfigurationTransitions(machine);
+    XStateMachine_unregisterConfigurationTransitions(machine, true); /* 运行期:延迟回收 */
     XState_finished_signal((XState*)machine);
     XStateMachine_runningChanged_signal(machine, false);
 }
@@ -910,7 +912,7 @@ static void XStateMachine_completeStop(XStateMachine* machine)
     machine->m_state = XStateMachine_NotRunning;
     machine->m_processing = false;
     XStateMachine_cancelAllDelayedEvents(machine);
-    XStateMachine_unregisterConfigurationTransitions(machine);
+    XStateMachine_unregisterConfigurationTransitions(machine, true); /* 运行期:延迟回收 */
     XStateMachine_stopped_signal(machine);
     XStateMachine_runningChanged_signal(machine, false);
 }
@@ -980,7 +982,7 @@ static void XStateMachine_startInternal(XStateMachine* machine)
     if (!machine || machine->m_state != XStateMachine_Starting)
         return;
 
-    XStateMachine_unregisterConfigurationTransitions(machine);
+    XStateMachine_unregisterConfigurationTransitions(machine, true); /* 运行期:延迟回收 */
     for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)machine->m_configuration); ++i) {
         XAbstractState* state = XVector_At_Base(machine->m_configuration, i, XAbstractState*);
         XAbstractState_setActive_internal(state, false);
@@ -1117,7 +1119,7 @@ static void VXStateMachine_deinit(XStateMachine* machine)
 {
     if (!machine)
         return;
-    XStateMachine_unregisterConfigurationTransitions(machine);
+    XStateMachine_unregisterConfigurationTransitions(machine, false); /* 析构路径:同步删 */
     XStateMachine_clearSignalConnections(machine);
     XStateMachine_cancelAllDelayedEvents(machine);
     XStateMachine_clearOwnedEvents(machine->m_internalEventQueue);
@@ -1405,8 +1407,12 @@ void XStateMachine_registerSignalTransition_internal(XStateMachine* machine,
     transition->m_registeredMachine = machine;
 }
 
+/* @param deferred 运行期路径(setSignal/setSenderObject/removeTransition)可能处于
+ *        sender 发射快照中,须延迟回收,同步删 UAF(对标 Qt deleteLater 语义);
+ *        析构路径必须同步删,防事件循环退出后泄漏。参照 XActionGroup 双模式先例。 */
 void XStateMachine_unregisterSignalTransition_internal(XStateMachine* machine,
-                                                        XSignalTransition* transition)
+                                                        XSignalTransition* transition,
+                                                        bool deferred)
 {
     if (!transition)
         return;
@@ -1438,7 +1444,12 @@ void XStateMachine_unregisterSignalTransition_internal(XStateMachine* machine,
         }
         record->m_connection = NULL;
         XVector_removeAt_base(machine->m_signalConnections, i);
-        XClass_delete_base((XClass*)record);
+        /* record 可能处于 sender 发射快照中:运行期延迟回收防同步删 UAF;
+         * 析构路径(deferred=false)必须同步,防事件循环退出后泄漏。 */
+        if (deferred)
+            XObject_deleteLater((XObject*)record);
+        else
+            XClass_delete_base((XClass*)record);
         return;
     }
 
@@ -1518,14 +1529,16 @@ void XStateMachine_registerTransition_internal(XStateMachine* machine, XAbstract
     }
 }
 
-void XStateMachine_unregisterTransition_internal(XStateMachine* machine, XAbstractTransition* transition)
+/* @param deferred 运行期路径可能处于 sender 发射快照中,须延迟回收;析构路径必须
+ *        同步删,防事件循环退出后泄漏(参照 XActionGroup 双模式先例)。 */
+void XStateMachine_unregisterTransition_internal(XStateMachine* machine, XAbstractTransition* transition, bool deferred)
 {
     (void)machine;
     if (!transition)
         return;
     switch (transition->m_kind) {
     case XAbstractTransition_SignalTransition:
-        XSignalTransition_unregister_internal((XSignalTransition*)transition);
+        XSignalTransition_unregister_internal((XSignalTransition*)transition, deferred);
         break;
     case XAbstractTransition_EventTransition:
     case XAbstractTransition_KeyEventTransition:

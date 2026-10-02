@@ -43,7 +43,14 @@ void XClass_delete_base(XClass* object)
 	if (!is_heap)
 		return;
 	if (memory && memory->free)
+	{
+		/* 记账与清账内嵌于槽位表函数本体（XMemory.c 的 xmemory_system_*
+		 * 系列：分配函数内嵌记账、释放函数内嵌清账）——任何调用路径
+		 * （本处直调 method->free、XMemory_free 封装、其他裸 method->free）
+		 * 账目自动对称，无需调用侧遍历匹配槽位；自定义分配器表未内嵌
+		 * 记账，分配/释放两侧直调，天然对称。 */
 		memory->free(object);
+	}
 	else
 		XFree_System(object);
 }

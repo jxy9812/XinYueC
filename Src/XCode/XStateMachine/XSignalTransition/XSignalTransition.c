@@ -24,7 +24,7 @@ static void VXSignalTransition_deinit(XSignalTransition* transition)
 {
     if (!transition)
         return;
-    XSignalTransition_unregister_internal(transition);
+    XSignalTransition_unregister_internal(transition, false); /* 析构路径:同步删 */
     transition->m_senderObject = NULL;
     transition->m_signal = 0;
     XVtableGetFunc(XAbstractTransition_class_init(), EXClass_Deinit,
@@ -88,7 +88,7 @@ void XSignalTransition_setSenderObject(XSignalTransition* transition, const XObj
     if (!transition || transition->m_senderObject == sender)
         return;
 
-    XSignalTransition_unregister_internal(transition);
+    XSignalTransition_unregister_internal(transition, true); /* 运行期:延迟回收 */
     transition->m_senderObject = sender;
     XSignalTransition_register_internal(transition);
     XSignalTransition_senderObjectChanged_signal(transition);
@@ -104,7 +104,7 @@ void XSignalTransition_setSignal(XSignalTransition* transition, size_t signal)
     if (!transition || transition->m_signal == signal)
         return;
 
-    XSignalTransition_unregister_internal(transition);
+    XSignalTransition_unregister_internal(transition, true); /* 运行期:延迟回收 */
     transition->m_signal = signal;
     XSignalTransition_register_internal(transition);
     XSignalTransition_signalChanged_signal(transition);
@@ -124,12 +124,14 @@ void XSignalTransition_register_internal(XSignalTransition* transition)
     XStateMachine_registerSignalTransition_internal(machine, transition);
 }
 
-void XSignalTransition_unregister_internal(XSignalTransition* transition)
+/* @param deferred 运行期路径可能处于 sender 发射快照中,须延迟回收;析构路径必须
+ *        同步删,防事件循环退出后泄漏(参照 XActionGroup 双模式先例)。 */
+void XSignalTransition_unregister_internal(XSignalTransition* transition, bool deferred)
 {
     if (!transition || !transition->m_connection)
         return;
     XStateMachine_unregisterSignalTransition_internal(
-        transition->m_registeredMachine, transition);
+        transition->m_registeredMachine, transition, deferred);
 }
 
 void* XSignalTransition_senderObjectChanged_signal(XSignalTransition* transition)

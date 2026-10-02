@@ -2464,7 +2464,9 @@ static void xhttp_manager_close_socket(XHttpTransaction* tx)
     xhttp_manager_disconnect_socket(tx);
     if (tx->m_socket) {
         XAbstractSocket_abort(tx->m_socket);
-        XClass_delete_base((XClass*)tx->m_socket);
+        /* socket 的 readyRead/disconnected 为 Direct 直连，此处删除可能处于
+         * 对象自身事件/信号发射帧，同步删 UAF，延迟回收（对标 Qt deleteLater 语义）。 */
+        XObject_deleteLater((XObject*)tx->m_socket);
         tx->m_socket = NULL;
     }
     xhttp_manager_reset_http2(tx);

@@ -149,7 +149,7 @@ static void performanceOverlay_sampleMemory(XPerformanceOverlay* self)
     } else if (self->m_memorySource != XPerformanceOverlayMemorySource_System) {
         /* 库内口径：准确数=系统分配器+内存池在用；百分比只取有固定容量
            的内存池（系统堆无上限，不参与百分比基准）。 */
-        XMemoryStatistics stats = XMemory_statistics();
+        XMemoryStatistics stats = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
         uint64_t percentTotal = (uint64_t)stats.poolTotalBytes;
         self->m_memoryUsedBytes = (uint64_t)stats.systemBytes +
                                   (uint64_t)stats.poolUsedBytes;

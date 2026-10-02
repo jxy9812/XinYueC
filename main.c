@@ -90,6 +90,13 @@ static int main_run_test_path(const char* testPath)
         return XMqttTcpClientProcess_run() ? 0 : 1;
     if (strcmp(testPath, "xmqtt-tcp-interop") == 0)
         return XMqttTcpInteropTest_run() ? 0 : 1;
+#if DEMOTEST && XS7_ON
+    if (strcmp(testPath, "xs7-unit") == 0)
+        return XS7Test_runAll() ? 0 : 1;
+    /* S7 集成测试：目标 PLC IP 由环境变量 XS7_PLC_IP 指定（默认 192.168.1.251） */
+    if (strcmp(testPath, "xs7-plc") == 0)
+        return XS7Test_integration_run() ? 0 : 1;
+#endif
     if (strcmp(testPath, "all") == 0) {
         bool esp8266 = XESP8266WifiTest_runUnit() == 0;
         bool deviceFile = XDeviceFileTest_runAll();
@@ -119,6 +126,8 @@ static void main_print_test_list(void)
     XPrintf("  Test xcryptographic\n");
     XPrintf("  Test xssl\n");
     XPrintf("  Test xmqtt\n");
+    XPrintf("  --test xs7-unit\n");
+    XPrintf("  --test xs7-plc\n");
     XPrintf("  Test all\n");
     XPrintf("  --test esp8266-unit\n");
     XPrintf("  --test esp8266-auto\n");

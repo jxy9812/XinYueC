@@ -228,15 +228,33 @@ void XFtp_deinit_base(XFtp* ftp);
 
 /**
  * @brief 创建 FTP 客户端实例
- * @return 新实例；失败返回 NULL。调用方使用 XFtp_delete 释放。
+ * @return 新实例；失败返回 NULL。调用方使用 XFtp_delete 释放；在 XFtp 信号
+ *         （readyRead/commandFinished/done 等）槽内禁止 XFtp_delete，须用
+ *         XFtp_deleteLater。
  */
 XFtp* XFtp_create_ex(XMemoryType memory);
 
 /**
  * @brief 销毁 FTP 客户端实例
  * @param[in] ftp XFtp_create 返回的实例；NULL 安全
+ * @note 仅限非重入上下文的显式析构；信号/回调上下文须改用 XFtp_deleteLater
  */
 void XFtp_delete(XFtp* ftp);
+
+/******************************************************************************************
+ * 内存管理宏
+ ******************************************************************************************/
+/**
+ * @brief 延迟销毁 FTP 客户端实例（对标 Qt deleteLater 语义）。
+ *        在信号/回调上下文中必须用 deleteLater 释放，DeferredDelete 经事件循环回收；
+ *        删除可能处于对象自身事件/信号发射帧，同步删 UAF，延迟回收。
+ */
+#define XFtp_deleteLater XObject_deleteLater
+/**
+ * @brief 延迟反初始化（对标 Qt deleteLater 语义），栈上/自管内存对象用；
+ *        信号/回调上下文中必须用 deinitLater，DeferredDelete 经事件循环回收。
+ */
+#define XFtp_deinitLater XObject_deinitLater
 
 // =============== 连接管理 ===============
 

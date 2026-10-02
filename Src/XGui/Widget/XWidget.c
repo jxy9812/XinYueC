@@ -276,7 +276,7 @@ static void XWidget_updateContentsRect(XWidget* self);
 static void XWidget_propagateVisibility(XWidget* self, bool parentVisible);
 static XWidget* XWidget_topLevel(const XWidget* self);
 static XWidgetWindow* XWidget_createWindow(XWidget* top);
-static void XWidget_destroyWindow(XWidget* top);
+static void XWidget_destroyWindow(XWidget* top, bool defer);
 static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
@@ -922,14 +922,34 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
        parent's taskbar entry」；win32 后端建 HWND 时经
        XPlatformNativeWindow_create 以其作 hWndParent，任务栏合并与
        「对话框在父之上」Z 序由原生兜底）。父窗未建时留空，与 Qt 行为
-       一致（惰性建窗次序下后建者才登记）。 */
+       一致（惰性建窗次序下后建者才登记）。
+       【弹层族 owner 缺口收口】弹层控件按设计无父控件（XDateTimeEdit
+       xdtPopup_create / XComboBox 下拉视图均 NULL 父），父链走空即无
+       owner——win32 下 WS_POPUP 无 owner 没有任何 Z 序保护：主窗一次
+       激活/raise 就把弹层压到主窗之后（弹层被埋后点击落主窗，弹层会
+       话抓取按 believed 几何换算必错位）。回退口径：父链找不到 owner
+       且窗口类型为 Popup/Tool 时取应用当前焦点窗口——弹层总是「开它的
+       人持焦点」时创建，focusWindow 即 opener（submenu 链取父弹层，
+       与 Qt 同构）；焦点窗口为空（无窗口系统/极端时序）时保持无
+       owner，行为与改前一致。 */
     {
         XWidget* owner = XWidget_parentWidget(top);
         while (owner && !owner->m_windowHandle)
             owner = XWidget_parentWidget(owner);
-        if (owner && owner->m_windowHandle)
+        if (owner && owner->m_windowHandle) {
             XWindow_setTransientParent(window,
                                        (XWindow*)owner->m_windowHandle);
+        } else {
+            XWindowFlags typeMask = (XWindowFlags)XWindowType_TypeMask;
+#if XGUIAPPLICATION_ON
+            if ((XWindow_flags(window) & typeMask) == XWindowType_Popup ||
+                (XWindow_flags(window) & typeMask) == XWindowType_Tool) {
+                XWindow* fw = XGuiApplication_focusWindow();
+                if (fw && fw != window)
+                    XWindow_setTransientParent(window, fw);
+            }
+#endif /* XGUIAPPLICATION_ON */
+        }
     }
 #endif /* XWINDOW_ON */
 #if XCURSOR_ON
@@ -952,8 +972,12 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
     return win;
 }
 
-/** @brief 销毁顶层桥接窗口并归还注册表项。 */
-static void XWidget_destroyWindow(XWidget* top)
+/** @brief 销毁顶层桥接窗口并归还注册表项。
+ *  @param defer true=事件循环归还后回收窗口结构体（运行期路径：控件
+ *         处理器内 setParent/setWindowFlags 即在自身事件/信号发射帧上
+ *         删窗口，同步删 UAF，延迟回收，对标 Qt deleteLater 语义）；
+ *         false=立即回收（仅限析构路径）。 */
+static void XWidget_destroyWindow(XWidget* top, bool defer)
 {
     XWindow* window;
     if (!top || !top->m_windowHandle) return;
@@ -968,8 +992,32 @@ static void XWidget_destroyWindow(XWidget* top)
        winId→惰性建柄→复活登记，悬垂根因一环）。先断 widget→window
        通道，析构重入只能看到 NULL。 */
     top->m_windowHandle = NULL;
-    /* 桥接窗口由 create_ex 堆分配，销毁后必须同时归还结构体。 */
-    XClass_delete_base((XClass*)window);
+    /* 桥接窗口由 create_ex 堆分配，销毁后必须同时归还结构体；删除可能
+       处于对象自身事件/信号发射帧（控件处理器内 setParent/setWindowFlags
+       即在自身派发栈上删窗口），同步删 UAF，延迟回收（对标 Qt
+       deleteLater 语义）；析构路径无重入风险，保持同步归还。 */
+    if (defer) {
+        /* 延迟回收前先摘除事件队列中已投递给本桥接窗口的存量事件
+           （PAINT/RESIZE/SHOW/HIDE 等，接收者即本窗口对象，见
+           XWidget_postPaintEvent 以 m_windowHandle 为 receiver）：这些
+           事件可能排在低优先级的 DeferredDelete 之后派发——对象已按
+           deleteLater 兑现回收，随后派发即对已释放内存写占位位
+           （实测 XGuiRegression test_dock_float_cycle_leak 停靠/浮动
+           循环崩溃：回停靠 destroyWindow(defer) 后，同拍排队的旧
+           PAINT 在桥接窗回收后才派发，VXWidgetWindow_event 清
+           m_paintEventPosted 即 AV）。对标 Qt 销毁口径：对象消亡前
+           QCoreApplication::removePostedEvents 先清队，入队事件不得
+           迟于对象消亡派发。次序必须先清队后补投 DeferredDelete：
+           removePostedEvents(NONE) 会把刚投递的 DeferredDelete 一并
+           摘除，反序则删除永不兑现。清队后再入队的来源（widget 句柄
+           已先置 NULL、平台 wndProc 已随 XWindow_destroy 摘除）均已
+           切断，无悬垂入队通道。 */
+        XCoreApplication_removePostedEvents((XObject*)window,
+                                            XEVENT_TYPE_NONE);
+        XObject_deleteLater((XObject*)window);
+    } else {
+        XClass_delete_base((XClass*)window);
+    }
 }
 
 /** @brief 焦点清空基础实现（发 FOCUS_OUT 并联动应用登记）。 */
@@ -2260,6 +2308,20 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
            转发控件，避免同一翻转双次发射 visibilityChanged 等信号。 */
         XEvent_accept(event);
         return true;
+    case XEVENT_TYPE_DEFERRED_DELETE:
+        /* 桥接窗自身的延迟回收：deleteLater(本窗) 投递的事件接收者=
+           本窗对象，必须由本窗承接 delete_base(本窗)（对标 Qt
+           QDeferredDelete 派发到对象即删对象）。此前 default 转发
+           top（桥接的控件）→ VXObject_event 把 DEFERRED_DELETE 当作
+           控件自身的延迟删除 → 控件被误删（实机：悬浮键盘每次弹出
+           的 setParent 降级投递桥接窗延迟回收，帧泵兑现时键盘单例
+           被 VXKeyboard_deinit 析构，应用级 m_virtualKeyboard 悬垂，
+           下一年编提交 disconnect_1 解引已释放堆页 AV——页堆取证
+           XMemory_free ← XClass_delete_base ← XDeferredDeleteEvent_
+           handler ← VXWidgetWindow_event 链实证）。 */
+        XClass_delete_base((XClass*)self);
+        XEvent_accept(event);
+        return true;
     default:
         return XWidget_event_base(top, event);
     }
@@ -2675,7 +2737,8 @@ static void VXWidget_deinit(XWidget* self)
         (g_applicationModalWidget == self ||
          XWidget_isAncestorOf(self, g_applicationModalWidget)))
         XWidget_setApplicationModalWidget(NULL);
-    XWidget_destroyWindow(self);
+    /* 析构路径：窗口结构体同步归还（defer=false）。 */
+    XWidget_destroyWindow(self, false);
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     if (self->m_isWindow)
         XApplication_unregisterTopLevelWidget(self);
@@ -2763,7 +2826,9 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_focusProxy = NULL;
     /* 拷贝不继承目标对象的平台资源；目标若已创建过资源，必须先销毁，
        否则下面置 NULL 会泄漏原生窗口、后备存储和无障碍对象。 */
-    XWidget_destroyWindow(self);
+    /* 运行期路径：控件可处于自身事件/信号发射帧，窗口结构体延迟回收
+       （defer=true），同步删 UAF（对标 Qt deleteLater 语义）。 */
+    XWidget_destroyWindow(self, true);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
         XBackingStore_delete_base(self->m_backingStore);
@@ -3297,7 +3362,10 @@ void XWidget_setWindowFlags(XWidget* self, XWidgetFlags flags)
     self->m_isWindow = (!(XObject_parent((XObject*)self)) ||
                         (flags & (XWidgetFlags)XWindowType_Window) ||
                         (flags & (XWidgetFlags)XWindowType_Popup)) ? 1 : 0;
-    if (wasWindow && !self->m_isWindow) XWidget_destroyWindow(self);
+    /* 从顶层降级为子控件时释放其桥接窗口；setWindowFlags 可在控件自身
+       事件/信号发射帧内被调用，窗口结构体延迟回收（defer=true），
+       同步删 UAF（对标 Qt deleteLater 语义）。 */
+    if (wasWindow && !self->m_isWindow) XWidget_destroyWindow(self, true);
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
     /* 活窗动态改 flags：同步到桥接窗口（X11 侧更新 _MOTIF_WM_HINTS/
      * _NET_WM_STATE）并重算窗口装饰保留边距——FramelessWindowHint 等
@@ -4129,9 +4197,12 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_isWindow = (!parent ||
                         (flags & (XWidgetFlags)XWindowType_Window) ||
                         (flags & (XWidgetFlags)XWindowType_Popup)) ? 1 : 0;
-    /* 从顶层降级为子控件时释放其桥接窗口。 */
+    /* 从顶层降级为子控件时释放其桥接窗口；setParent 可在控件自身
+       事件/信号发射帧内被调用（父级处理器内重挂父即在其自身派发栈上
+       删窗口），窗口结构体延迟回收（defer=true），同步删 UAF（对标
+       Qt deleteLater 语义）。 */
     if (wasWindow && !self->m_isWindow)
-        XWidget_destroyWindow(self);
+        XWidget_destroyWindow(self, true);
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
     if (wasWindow && !self->m_isWindow)
         XApplication_unregisterTopLevelWidget(self);

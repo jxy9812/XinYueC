@@ -766,13 +766,28 @@ void XMenu_popup(XMenu* self, const XPoint* pos)
 
 XAction* XMenu_exec(XMenu* self)
 {
+    bool deleteOnClose;
+    XAction* result;
+
     if (!self)
         return NULL;
+    /* exec 阻塞循环期间关闭路径仍在本帧事件分发中执行：若此时
+       DeleteOnClose 自删，删除将处于对象自身事件分发帧，同步删 UAF。
+       进入 exec 暂存并清除该属性，使菜单 exec 期间不自删，退出时按
+       原状态兑现删除（与 XDialog_exec 同口径）。 */
+    deleteOnClose = XWidget_testAttribute((XWidget*)self,
+                                          XWidgetAttribute_DeleteOnClose);
+    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_DeleteOnClose,
+                         false);
     self->m_execResult = NULL;
     XMenu_popup(self, NULL);
     while (self->m_popupActive)
         XCoreApplication_processEvents(XEventLoop_AllEvents);
-    return self->m_execResult;
+    /* 先取结果再兑现删除：删除后不得再解引用 self。 */
+    result = self->m_execResult;
+    if (deleteOnClose)
+        XMenu_delete_base(self);
+    return result;
 }
 
 /* ==================== 尺寸（对标 QMenu::sizeHint） ==================== */

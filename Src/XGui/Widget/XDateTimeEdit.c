@@ -986,6 +986,29 @@ static XRect xdt_arrowRect(XDateTimeEdit* edit);
 
 /* ==================== 虚槽重载 ==================== */
 
+/** @brief 纯时间编辑（parserType=Time）时段步进的日内回绕。
+ * @details XTimeEdit 载体为单日 datetime（纯时间格式收窄后日期范围=当
+ *         天，XTimeEdit_init 收窄注释），时段步进走 epoch 加算跨过 24h
+ *         边界时日期侧越界，xdt_clamp 会把值钳成 23:59:59.999——Qt 口
+ *         径（QTimeEdit 的值即 time-of-day，QTime::addSecs 午夜回绕）
+ *         应回到 00 并保留分秒（与分/秒 59→00 带进位的既有 epoch 模型
+ *         同源，仅放开单日日期侧钳制）。仅时间段分支且 parserType=Time
+ *         时启用；日期/混合格式路径行为不变。 */
+static void xdt_stepWrapTimeOfDay(XDateTimeEdit* edit, int64_t deltaMs)
+{
+    const int64_t dayMs = 86400000;
+    int64_t ms;
+    int64_t tod;
+    if (!edit || deltaMs == 0) return;
+    ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
+    tod = ms % dayMs;
+    if (tod < 0) tod += dayMs;
+    ms -= tod;
+    tod = (tod + deltaMs) % dayMs;
+    if (tod < 0) tod += dayMs;
+    XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms + tod);
+}
+
 static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
@@ -1024,25 +1047,40 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
     } else if (section == (int)XDateTimeEditSection_HourSection) {
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps * 3600000;
-        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
+        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
+            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 3600000);
+        else
+            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
     } else if (section == (int)XDateTimeEditSection_MinuteSection) {
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps * 60000;
-        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
+        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
+            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 60000);
+        else
+            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
     } else if (section == (int)XDateTimeEditSection_MSecSection) {
         /* 毫秒段步进：1 毫秒/步（跨秒/分/时的进位由 epoch 换算天然承担）。 */
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps;
-        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
+        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
+            xdt_stepWrapTimeOfDay(edit, (int64_t)steps);
+        else
+            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
     } else if (section == (int)XDateTimeEditSection_AmPmSection) {
         /* 上下午段步进 = 翻转上午/下午（±12 小时，对标 Qt 步进 AmPm 段）。 */
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps * 43200000;
-        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
+        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
+            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 43200000);
+        else
+            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
     } else {
         int64_t ms = XDateTime_toMSecsSinceEpoch(&edit->m_dateTime);
         ms += (int64_t)steps * 1000;
-        XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
+        if (edit->m_parserType == (int)XDateTimeEditParserType_Time)
+            xdt_stepWrapTimeOfDay(edit, (int64_t)steps * 1000);
+        else
+            XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms);
     }
     xdt_clamp(edit);
     if (XDateTime_compare(&old, &edit->m_dateTime) != 0) {

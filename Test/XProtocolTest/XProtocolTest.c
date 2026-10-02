@@ -8,4 +8,7 @@ void XTestMenu_XProtocolTest(XTestMenu* root)
 	XTestMenu_XModbusTest(menu);
 	XTestMenu_XMqttTest(menu);
 	XTestMenu_XCanTest(menu);
+#if XPROTOCOL_ON && XPLC_ON && XS7_ON
+	XTestMenu_XS7Test(menu);
+#endif
 }

@@ -724,6 +724,12 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
 {
     if (!parent)
         return NULL;
+    /* demo 单实例：重复 build 直接返回已登记根控件（契约见
+       xgui_demo_pages.h「build 时登记、autotest 使用」口径）。守卫挡在
+       memset 之前，防止登记表被静默清零后旧 m_scroll/m_root/常驻对话
+       框指针悬垂、再次 build 泄漏整棵页面树。 */
+    if (s_dlgpg.m_scroll)
+        return s_dlgpg.m_scroll;
     memset(&s_dlgpg, 0, sizeof(s_dlgpg));
     s_dlgpg.m_status = status;
     s_dlgpg.m_statusUser = user;

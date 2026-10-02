@@ -126,9 +126,12 @@ int xapi_core_run(void)
     childB = XWidget_create(top, 0);
     if (!top || !child || !childB) {
         XPrintf("XGuiApiTest: [FAIL] core 夹具创建失败（内存不足）\n");
-        if (top) XWidget_delete_base(top);
-        if (child) XWidget_delete_base(child);
-        if (childB) XWidget_delete_base(childB);
+        if (top) XWidget_delete_base(top); /* 级联释放已挂树的 child/childB。 */
+        else {
+            /* top 失败时二者各为顶层（父为 NULL），需各自单独释放。 */
+            if (child) XWidget_delete_base(child);
+            if (childB) XWidget_delete_base(childB);
+        }
         return 1;
     }
 

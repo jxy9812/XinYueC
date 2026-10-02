@@ -9,6 +9,7 @@
  *   5. XHTTP_ON     - HTTP 协议（XHttp）
  *   6. XSSH_ON      - SSH 协议客户端/服务端（XSsh）
  *   7. XTELNET_ON   - Telnet 协议客户端/服务端（XTelnet）
+ *   8. XPLC_ON      - PLC 协议族（XPlc 伞层 + 西门子 S7）
  *
  * 模块总开关 XPROTOCOL_ON 在 CXinYueConfig.h 中定义，此处仅提供默认值。
  * 关闭后若仍有其它模块无条件引用 XProtocol 符号，需同步裁剪对应依赖。
@@ -87,6 +88,11 @@ extern "C" {
 #define XTELNET_ON 1
 #endif
 
+/** @brief PLC 协议族（XPlc 伞层 + 西门子 S7，后续可扩三菱 MC 等） */
+#ifndef XPLC_ON
+#define XPLC_ON 1
+#endif
+
 /* 引入各协议子配置文件 */
 #include "XCan_config.h"
 #include "XModbus_config.h"
@@ -95,6 +101,7 @@ extern "C" {
 #include "XHttp_config.h"
 #include "XSsh_config.h"
 #include "XTelnet_config.h"
+#include "XPlc_config.h"
 
 #endif /* XPROTOCOL_ON */
 

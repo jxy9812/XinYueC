@@ -3324,8 +3324,13 @@ int xgui_demo_main(int argc, char* argv[])
      * 仅作用于本演示进程，不影响库与其他可执行。
      * 【合并修复 2026-09-29】size 参数 0 在 MSVC UCRT 触发 setvbuf 断言
      * （2 <= size <= INT_MAX，debug CRT 弹模态框挂死 main——桌面全后端
-     * bench/autotest 挂死根因）；glibc 口径 size=0 合法。改传 1024。 */
-    setvbuf(stdout, NULL, _IOLBF, 1024);
+     * bench/autotest 挂死根因）；glibc 口径 size=0 合法。改传 1024。
+     * 【修复 2026-10-03】_IOLBF 在 UCRT 重定向下被忽略（见 demo_log 声
+     * 明处注释：仍按全缓冲 1KB 腰斩）——F3 验收实测 kill 强杀后 XPrintf
+     * 探针行整段丢失、仅 demo_log 的显式 fflush 把先行缓冲带出。切
+     * _IONBF 全无缓冲：每个 XPrintf 即写即达，harness 探针行不再依赖
+     * flush 运气（本行即 2165 注释所述问题的最终收口）。 */
+    setvbuf(stdout, NULL, _IONBF, 1024);
 #ifdef _WIN32
     /* 挂起缓解③（wave7 六波实锤：满管道内核级无限阻塞，冻结栈
      * NtWriteFile←WriteFile←fflush←demo_log——diag/wave7/pipe/）：
@@ -3794,6 +3799,21 @@ int xgui_demo_main(int argc, char* argv[])
             XWidget_setParent((XWidget*)kb, NULL, 0);
         }
     }
+#endif
+#if XMENUBAR_ON && XMENU_ON && XTOOLBAR_ON && XACTION_ON
+    /* 页八：addMenu_2 返回的堆菜单归调用方（XMenuBar.h 口径），且为
+       无父顶层弹窗——win 级联只回收菜单栏本体，触及不到它们；窗口
+       销毁前显式释放（菜单内部动作随 VXMenu_deinit 级联回收）。 */
+    if (win->m_fileMenu)
+        XMenu_delete_base(win->m_fileMenu);
+    if (win->m_editMenu)
+        XMenu_delete_base(win->m_editMenu);
+#endif
+#if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON && XLAYOUT_STACKED_ON
+    /* 页十五：按钮组为无父 XObject，不随 win 级联析构——deinit 回收
+       内部向量与堆桥接；按钮成员此刻仍存活，析构先断开按钮侧连接再
+       同步删桥，顺序安全。 */
+    XButtonGroup_deinit_base(&win->m_btnGroup);
 #endif
     XWidget_delete_base((XClass*)win);
     XGuiApplication_delete_base(app);

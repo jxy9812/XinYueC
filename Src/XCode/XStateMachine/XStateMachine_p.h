@@ -15,11 +15,14 @@ void XAbstractState_setActive_internal(XAbstractState* state, bool active);
 void XAbstractState_setMachine_internal(XAbstractState* state, XStateMachine* machine);
 
 void XStateMachine_registerTransition_internal(XStateMachine* machine, XAbstractTransition* transition);
-void XStateMachine_unregisterTransition_internal(XStateMachine* machine, XAbstractTransition* transition);
+/* deferred: true=运行期延迟回收,false=析构路径同步删(参照 XActionGroup 双模式先例) */
+void XStateMachine_unregisterTransition_internal(XStateMachine* machine, XAbstractTransition* transition, bool deferred);
 void XStateMachine_registerSignalTransition_internal(XStateMachine* machine,
                                                       XSignalTransition* transition);
+/* deferred: true=运行期延迟回收,false=析构路径同步删(参照 XActionGroup 双模式先例) */
 void XStateMachine_unregisterSignalTransition_internal(XStateMachine* machine,
-                                                        XSignalTransition* transition);
+                                                        XSignalTransition* transition,
+                                                        bool deferred);
 void XStateMachine_removeTargetState_internal(XStateMachine* machine,
                                               XAbstractState* target);
 void XStateMachine_postInternalEvent_internal(XStateMachine* machine, XEvent* event);
@@ -29,7 +32,8 @@ XEventType XStateMachine_signalEventType_internal(void);
 XEventType XStateMachine_wrappedEventType_internal(void);
 
 void XSignalTransition_register_internal(XSignalTransition* transition);
-void XSignalTransition_unregister_internal(XSignalTransition* transition);
+/* deferred: true=运行期延迟回收,false=析构路径同步删(参照 XActionGroup 双模式先例) */
+void XSignalTransition_unregister_internal(XSignalTransition* transition, bool deferred);
 void XEventTransition_register_internal(XEventTransition* transition);
 void XEventTransition_unregister_internal(XEventTransition* transition);
 

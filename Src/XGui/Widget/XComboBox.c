@@ -1015,7 +1015,10 @@ void XComboBox_setEditable(XComboBox* self, bool editable)
         if (self->m_completionActive && self->m_popupVisible)
             XComboBox_hidePopup_base(self);
         if (self->m_lineEdit) {
-            XLineEdit_delete_base(self->m_lineEdit);
+            /* 删除可能处于对象自身事件/信号发射帧（编辑框补全回调内
+               触发 setEditable(false)），同步删 UAF，延迟到事件循环
+               归还后回收（对标 Qt deleteLater 语义）。 */
+            XObject_deleteLater((XObject*)self->m_lineEdit);
             self->m_lineEdit = NULL;
         }
     }

@@ -1839,6 +1839,8 @@ int xapi_dialogs_run(void)
             wiz = XWizard_create(NULL, 0);
             if (!wiz) {
                 XAPI_EXPECT(0, "XWizard 堆构造成功");
+                XWizardPage_delete_base(p0); /* 无父堆页对象失败分支自释（对标 1755 行 XProgressDialog_delete_base 惯用法）。 */
+                p0 = NULL;
             } else {
                 dlg_sig_reset();
                 XObject_connect_1((XObject*)wiz,

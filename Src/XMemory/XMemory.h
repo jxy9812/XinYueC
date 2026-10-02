@@ -248,16 +248,6 @@ void XMemory_setStatisticsEnabled(bool enabled);
 bool XMemory_statisticsEnabled(void);
 
 /**
-* @brief 读取全局内存统计快照。
-* @return 当前统计快照（系统分配器与内存池两路口径齐全）；宏裁剪时各字段
-*         恒为 0。
-* @note 等价于 XMemory_statistics_2(XMEMORY_TYPE_HYBRID)。systemBytes 与
-*       poolUsedBytes 口径不同（堆可用字节 vs 池用户容量），全局多级内存
-*       池的后备缓冲计入 systemBytes，读取本接口不会触发内存池的惰性创建。
-*/
-XMemoryStatistics XMemory_statistics(void);
-
-/**
 * @brief 读取指定内存类型的统计快照。
 * @param type 内存类型；XMEMORY_TYPE_SYSTEM 只含系统分配器（堆）口径，
 *             XMEMORY_TYPE_MULTIPOOL 只含内存池口径，

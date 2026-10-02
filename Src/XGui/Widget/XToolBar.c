@@ -701,10 +701,13 @@ void XToolBar_removeAction(XToolBar* self, XAction* action)
                 (XToolButton**)XVector_at_base(self->m_buttons, i);
             XTBBridge** b =
                 (XTBBridge**)XVector_at_base(self->m_bridges, i);
+            /* 删除可能处于对象自身事件/信号发射帧，同步删 UAF，延迟
+             * 回收（对标 Qt deleteLater 语义）；本函数仅运行期调用，
+             * 析构路径（VX_toolBar_deinit）不经此处。 */
             if (btn && *btn)
-                XClass_delete_base((XClass*)*btn);
+                XObject_deleteLater((XObject*)*btn);
             if (b && *b)
-                XClass_delete_base((XClass*)*b);
+                XObject_deleteLater((XObject*)*b);
             XVector_remove_base(self->m_actions, i, 1);
             XVector_remove_base(self->m_buttons, i, 1);
             XVector_remove_base(self->m_bridges, i, 1);
@@ -714,9 +717,11 @@ void XToolBar_removeAction(XToolBar* self, XAction* action)
                 XVector_remove_base(self->m_widgets, i, 1);
             /* 对标 QWidget::removeAction（复扫 R-19）：移除即解除工具
              * 栏持有，不释放对象；仅工具栏自建动作（QObject 父=本栏）
-             * 随移除销毁，外部注入的借用动作归还调用方。 */
+             * 随移除销毁，外部注入的借用动作归还调用方。删除可能处于
+             * 对象自身事件/信号发射帧，同步删 UAF，延迟回收（对标 Qt
+             * deleteLater 语义）。 */
             if (xtb_ownsAction(self, action))
-                XAction_delete_base(action);
+                XObject_deleteLater((XObject*)action);
             xtb_relayout(self);
             return;
         }
@@ -734,9 +739,12 @@ void XToolBar_clear(XToolBar* self)
             XAction** item =
                 (XAction**)XVector_at_base(self->m_actions, i);
             /* 仅销毁工具栏自建动作；借用动作（addAction(XAction*) 注入）
-             * 只随容器摘除，不释放（复扫 R-19，对标 QToolBar::clear）。 */
+             * 只随容器摘除，不释放（复扫 R-19，对标 QToolBar::clear）。
+             * 删除可能处于对象自身事件/信号发射帧，同步删 UAF，延迟
+             * 回收（对标 Qt deleteLater 语义）；本函数仅运行期调用，
+             * 析构路径（VX_toolBar_deinit）不经此处。 */
             if (item && *item && xtb_ownsAction(self, *item))
-                XAction_delete_base(*item);
+                XObject_deleteLater((XObject*)*item);
         }
         XVector_clear_base(self->m_actions);
     }
@@ -748,8 +756,11 @@ void XToolBar_clear(XToolBar* self)
         for (i = 0; i < n; ++i) {
             XTBBridge** b =
                 (XTBBridge**)XVector_at_base(self->m_bridges, i);
+            /* 删除可能处于对象自身事件/信号发射帧，同步删 UAF，延迟
+             * 回收（对标 Qt deleteLater 语义）；本函数仅运行期调用，
+             * 析构路径（VX_toolBar_deinit）不经此处。 */
             if (b && *b)
-                XClass_delete_base((XClass*)*b);
+                XObject_deleteLater((XObject*)*b);
         }
         XVector_clear_base(self->m_bridges);
     }

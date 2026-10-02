@@ -1431,6 +1431,18 @@ void XWindow_reportWindowStateChanged(XWindow* self, XWindowState state)
 
 /* ==================== 瞬态父窗口 ==================== */
 
+#if XPLATFORMNATIVEWINDOW_ON
+/* 内部契约（非公开 API，原型仅本翻译单元可见；win32 真实现、posix/
+ * unsupported 空实现兜底）：迟到的 setTransientParent 平台落地——
+ * 双方已建柄时换原生 owner 并抬到 owner 之上；未建柄时 no-op，建柄期
+ * XPlatformNativeWindow_create 以 m_transientParent 作 hWndParent 一次
+ * 性建出 owned 窗。此前本函数只存账+发信号，从不向平台传播（win32 下
+ * WS_POPUP 无 owner 无任何 Z 序保护：owner 激活/raise 即把弹层压到
+ * 主窗之后）。 */
+extern bool XPlatformNativeWindow_setTransientParent(XWindow* window,
+                                                     XWindow* parent);
+#endif
+
 void XWindow_setTransientParent(XWindow* self, XWindow* parent)
 {
     XWindowPrivate* data;
@@ -1446,6 +1458,12 @@ void XWindow_setTransientParent(XWindow* self, XWindow* parent)
     /* Qt 6.8：无条件发射 transientParentChanged。 */
     XWindow_transientParentChanged_signal(self, parent);
     (void)changed;
+#if XPLATFORMNATIVEWINDOW_ON
+    /* 已建柄的窗口迟到登记：即时向平台落地（win32 GWLP_HWNDPARENT +
+       抬升）；未建柄时 no-op——建柄期经 hWndParent 通路生效。 */
+    if (data->m_created && data->m_nativeWindowAttached)
+        (void)XPlatformNativeWindow_setTransientParent(self, parent);
+#endif
 }
 
 XWindow* XWindow_transientParent(const XWindow* self)

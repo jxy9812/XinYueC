@@ -437,8 +437,14 @@ void XTabWidget_removeTab(XTabWidget* self, int index)
 {
     if (!self || index < 0 || index >= self->m_count) return;
     if (self->m_pages[index]) {
-        XWidget_deinit_base(self->m_pages[index]);
-        XFree_System(self->m_pages[index]);
+        /* 删除可能处于对象自身事件/信号发射帧（如页签信号槽内调本
+           函数或 clear），同步 deinit+free 即 UAF——延迟回收；先摘
+           除父链，使基类析构对页内子控件的级联不与本 deferred 事件
+           竞争（对标 Qt deleteLater 语义）。页容器创建时已按堆登记
+           分配器（见 insertTab），延迟删除经 XClass_delete_base 归
+           还堆存储。 */
+        XWidget_setParent(self->m_pages[index], NULL, 0);
+        XObject_deleteLater((XObject*)self->m_pages[index]);
     }
     XMemmove(&self->m_pages[index], &self->m_pages[index + 1],
             sizeof(XWidget*) * (size_t)(self->m_count - index - 1));

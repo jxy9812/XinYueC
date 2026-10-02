@@ -2432,6 +2432,7 @@ int xapi_views_run(void)
         XAPI_EXPECT(XAbstractItemView_currentColumn(&table.m_base) == 1,
                     "selectColumn(1) 当前列=1");
 
+        XTableView_setVerticalHeader(&table, NULL); /* 删除前解挂，与 hHeader 口径一致 */
         if (hHeader) XHeaderView_delete_base(hHeader);
         if (vHeader) XHeaderView_delete_base(vHeader);
         if (model) XAbstractItemModel_delete_base(model);

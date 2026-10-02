@@ -536,10 +536,15 @@ void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
 {
     int i;
     int n;
+    const char* text;
     if (!self || !family) return;
     n = XComboBox_count(self);
     for (i = 0; i < n; ++i) {
-        if (XStrcmp(XComboBox_itemText_2(self, i), family) == 0) {
+        /* itemText_2 透传 toUtf8：空 XString 条目返回 NULL（如本地化字体
+           族名枚举产生的空串），比较前必须跳过，否则 strcmp(NULL) 段错误。 */
+        text = XComboBox_itemText_2(self, i);
+        if (!text) continue;
+        if (XStrcmp(text, family) == 0) {
             XComboBox_setCurrentIndex(self, i);
             xfcb_emitText(self,
                           (size_t)XFontComboBox_currentFontChanged_signal(

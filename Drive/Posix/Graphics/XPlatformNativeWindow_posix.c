@@ -5995,6 +5995,30 @@ bool XPlatformNativeWindow_lower(XWindow* window)
     return true;
 }
 
+bool XPlatformNativeWindow_setTransientParent(XWindow* window,
+                                              XWindow* parent)
+{
+    XWNPendingEntry* entry;
+    XWNPendingEntry* ownerEntry;
+    Window ownerWin;
+    if (!xpwn_ensureConnection()) return false;
+    entry = xpwn_findByXWindow(window);
+    /* 任一方未映射：返回 true，留给建窗期通路（create/映射期以
+       XWindow_transientParent 写 WM_TRANSIENT_FOR 的既有约定）。 */
+    if (!entry || !entry->m_win) return true;
+    ownerEntry = parent ? xpwn_findByXWindow(parent) : NULL;
+    ownerWin = (ownerEntry && ownerEntry->m_win) ? ownerEntry->m_win
+                                                 : None;
+    if (ownerWin == None || ownerWin == entry->m_win) return true;
+    /* 迟到 setTransientParent 的原生落地（对标 QXcbWindow::setParent 的
+       transient parent 重挂）：WM_TRANSIENT_FOR 即 ICCCM owned 语义，
+       EWMH 合规 WM 依此保持弹层恒在 owner 之上。 */
+    XSetTransientForHint(g_xpwnDisplay, entry->m_win, ownerWin);
+    XRaiseWindow(g_xpwnDisplay, entry->m_win);
+    XFlush(g_xpwnDisplay);
+    return true;
+}
+
 /** @brief 从 X11 visual mask 提取并归一化一个 8 位颜色通道。 */
 static uint32_t xpwn_maskChannel(unsigned long pixel, unsigned long mask)
 {

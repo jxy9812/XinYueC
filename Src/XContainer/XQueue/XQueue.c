@@ -79,7 +79,15 @@ size_t VXQueue_size(const XQueue* this_queue)
 
 bool VXQueue_push(XQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {
-	return XVtableGetFunc(XListSLinked_class_init(), EXListBase_Push_Back, bool (*)(XListSLinked*,void*, XCDataCreatMethod))(this_queue, pvValue, dataCreatMethod);
+	/* EXListBase_Push_Back 槽的真实契约是 XListBaseNode* 返回（NULL=失败，
+	 * 见 XListBase.c XListBase_push_back_base 的调用原型）。此前误用
+	 * bool(*)(...) 截断解读实现返回的节点指针：16 字节对齐的节点地址
+	 * 低位字节恰为 0x00 时被读成 false——元素已入队却报告失败，调用方
+	 * 释放元素后队列遗留悬垂指针（S7 集成联调第 1 轮 0xC0000005 根因）。
+	 * 此处按真实原型取节点指针，转换为成败布尔值。 */
+	void* node = XVtableGetFunc(XListSLinked_class_init(), EXListBase_Push_Back,
+		XListBaseNode* (*)(XListSLinked*, void*, XCDataCreatMethod))(this_queue, pvValue, dataCreatMethod);
+	return node != NULL;
 }
 
 void VXQueue_pop(XQueue* this_queue)

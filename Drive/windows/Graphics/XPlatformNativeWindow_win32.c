@@ -2100,14 +2100,23 @@ static void xpwn_maintainScreenAssignment(XWNPendingEntry* entry)
        1.0 屏），dpr==1.0 时检测式同样能命中反向口径差（R13+R18）。 */
     if (IsIconic(entry->m_hwnd) || IsZoomed(entry->m_hwnd)) return;
     if (!xpwn_getClientGeometry(entry->m_hwnd, &native)) return;
+    /* 口径检测含原点（原仅宽高：纯位置失真永不触发 heal——外部移动在
+       首派期会被静默忽略）。物理实况 vs 簿记逻辑 × 现 dpr，逐字段比对
+       （xpwn_dprRound 全链唯一 round，R8-③）。 */
     if (entry->m_client.width > 0 &&
+        native.x == xpwn_dprMul(entry->m_client.x, dpr) &&
+        native.y == xpwn_dprMul(entry->m_client.y, dpr) &&
         native.width == xpwn_dprMul(entry->m_client.width, dpr) &&
         native.height == xpwn_dprMul(entry->m_client.height, dpr))
-        return; /* 口径一致：无需 heal。 */
+        return; /* 口径一致（含原点）：无需 heal。 */
     {
-        XRect logical = XWindow_geometry(window);
-        /* heal 重落地：嵌套 WM_SIZE/WM_MOVE 链（handler 内维护已完成）
-           以新 dpr 出框注入真实落地结果，簿记自然收敛。 */
+        /* heal 采纳实况（账本归 XWindow、实况唯一真值）：以本函数头部
+           取到的物理客户区按新 dpr 出框为落地口径。此前以陈旧账本
+           XWindow_geometry 重落地，首派前的外部移动/落位调整（Windows
+           工作区钳制、harness MoveWindow 等）会被「还原」而非「采纳」。
+           重落地对实况幂等（logical×dpr==native），簿记经嵌套
+           WM_SIZE/WM_MOVE 链（handler 内维护已完成）自然收敛。 */
+        XRect logical = xpwn_nativeRectToLogical(&native, dpr);
         xpwn_setGeometryForced(window, &logical);
     }
 }
@@ -3015,6 +3024,32 @@ bool XPlatformNativeWindow_create(XWindow* window)
         entry->m_client = xpwn_nativeRectToLogical(&client, createDpr);
     else
         entry->m_client = geom;
+#if XSCREEN_ON
+    /* 创建即收敛屏幕指派/dpr 快照（+50 根因收口）：此前唯一播种口在
+       WM_SIZE/WM_MOVE 处理器，而建窗期到达的 WM_SIZE/WM_MOVE 因 entry
+       尚未登记被丢弃（缺口B），建后 setGeometry 又被 m_client 去重短路
+       ——弹出层族终生死 dpr 消息：present 腿读桥接窗缺省 dpr 1.0，与
+       原生/输入腿的每屏真值口径分裂（逻辑表面 1:1 糊进 ×dpr 原生窗）。
+       此刻 entry 已注册、xpwn_screensInit 已跑、HWND 存活：
+       XWindow_setScreen 发 screenChanged 并把 dpr 快照直同步到监视器
+       真值，弹层/工具窗/对话框出生即同步，不再依赖「事后必须来一条
+       WM_MOVE/WM_SIZE」。mis-pick 经 heal 采纳实况（xpwn_maintain-
+       ScreenAssignment），嵌套消息簿记自然收敛。 */
+    xpwn_maintainScreenAssignment(entry);
+#endif
+    /* 缺口B 收口（创建期实况回写，账本归 XWindow）：CreateWindowExW
+       期间的 WM_MOVE/WM_SIZE 因 entry 未登记全部丢弃，Windows 侧任何
+       落位调整（工作区钳制等）不进 m_geometry——entry->m_client（刚按
+       实况记账）与请求几何不等时把实况反灌框架账本。防递归三保障：
+       此时 XWindow.c:909 已置 m_created、:926 已置 m_nativeWindowAttached，
+       回推 XPlatformNativeWindow_setGeometry(实况) 与 entry->m_client
+       逐字段相等被去重短路，零 SetWindowPos（heal 重落地走
+       xpwn_setGeometryForced 豁免通道，不受此去重影响）。 */
+    if (entry->m_client.x != geom.x || entry->m_client.y != geom.y ||
+        entry->m_client.width != geom.width ||
+        entry->m_client.height != geom.height) {
+        XWindowSystemInterface_handleGeometryChange(window, &entry->m_client);
+    }
     DragAcceptFiles(hwnd, TRUE);
     /* 初始标题同步（公共层 createHandle 后也会再同步，这里是兜底）。 */
     title = XWindow_title(window);
@@ -3187,6 +3222,37 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
     return true;
 }
 
+bool XPlatformNativeWindow_setTransientParent(XWindow* window,
+                                              XWindow* parent)
+{
+    XWNPendingEntry* entry;
+    XWNPendingEntry* ownerEntry;
+    HWND hwnd;
+    HWND ownerHwnd;
+    if (!window || !xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    /* 任一方未建柄：返回 true，留给建窗期通路——create 以
+       XWindow_transientParent 作 hWndParent 一次性建出 owned 窗。 */
+    if (!entry || !entry->m_hwnd) return true;
+    hwnd = entry->m_hwnd;
+    ownerEntry = parent ? xpwn_findByXWindow(parent) : NULL;
+    ownerHwnd = (ownerEntry && ownerEntry->m_hwnd &&
+                 IsWindow(ownerEntry->m_hwnd)) ? ownerEntry->m_hwnd : NULL;
+    if (!ownerHwnd || ownerHwnd == hwnd) return true;
+    /* 迟到 setTransientParent 的原生落地（对标 QWindowsWindow::setWindow
+       的 owner 重挂）：GWLP_HWNDPARENT 换主即建立 Win32 owned 语义——
+       owner 激活/raise 不再改变 owned 窗相对次序（框架自有 SetWindowPos
+       均带 SWP_NOOWNERZORDER，不破坏该保证）。 */
+    if ((HWND)(void*)(uintptr_t)GetWindowLongPtrW(hwnd, GWLP_HWNDPARENT) !=
+        ownerHwnd)
+        SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, (LONG_PTR)ownerHwnd);
+    /* 立即抬到 owner 之上（SWP_NOACTIVATE 保持 Z 序与激活解耦，与
+       raise 同式；NOMOVE/NOSIZE 只动堆叠）。 */
+    SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    return true;
+}
+
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     XWNPendingEntry* entry;
@@ -3204,7 +3270,14 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
         geometry->y == entry->m_client.y &&
         geometry->width == entry->m_client.width &&
         geometry->height == entry->m_client.height)
+    {
+        /* 保险带：被去重吞掉的几何操作同样收敛屏幕指派/dpr 快照——
+           create 期主修（xpwn_maintainScreenAssignment 直调）之外，
+           此处兜住「建后从未收到过任何未去重几何操作」的窗口。changed
+           才动作（首派/跨屏），稳态逐字段比对后立即返回，零副作用。 */
+        xpwn_maintainScreenAssignment(entry);
         return true;
+    }
     dpr = xpwn_outboundDpr(entry, geometry);
     native = xpwn_logicalRectToNative(geometry, dpr);
     xpwn_adjustWindowRect(window, &native, &rc);

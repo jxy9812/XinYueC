@@ -408,7 +408,11 @@ void XAbstractBarSeries_clear(XAbstractBarSeries* self)
     XAbstractBarSeries_countChanged_signal(self);
     for (i = 0; i < self->m_barSetCapacity; ++i) {
         if (self->m_barSets[i]) {
-            XBarSet_delete_base(self->m_barSets[i]);
+            XBarSet* set = self->m_barSets[i];
+            /* 删除可能处于对象自身事件/信号发射帧（set 的信号可由自身
+               事件链触发）；同步删 UAF，延迟到事件循环归还后回收
+               （对标 Qt deleteLater 语义）。 */
+            XObject_deleteLater((XObject*)set);
             self->m_barSets[i] = NULL;
         }
     }

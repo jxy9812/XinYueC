@@ -2463,9 +2463,11 @@ int xapi_input_run(void)
         XString_delete_base((XClass*)sample);
         XAPI_EXPECT(XFontComboBox_sampleTextForFont(&fcb, NULL) == NULL,
                     "FontComboBox sampleTextForFont(NULL 族名) 返回 NULL");
-        XAPI_EXPECT(XFontComboBox_sampleTextForSystem(
-                        &fcb, (int)XFontComboBoxWritingSystem_Latin) != NULL,
+        sample = XFontComboBox_sampleTextForSystem(
+            &fcb, (int)XFontComboBoxWritingSystem_Latin);
+        XAPI_EXPECT(sample != NULL,
                     "FontComboBox 合法书写系统样例查询非空（回退当前族名）");
+        XString_delete_base((XClass*)sample);
         XAPI_EXPECT(XFontComboBox_sampleTextForSystem(&fcb, -1) == NULL,
                     "FontComboBox 非法书写系统样例查询返回 NULL");
 

@@ -15,7 +15,7 @@ static void VXState_deinit(XState* state)
              i < (int64_t)XVector_size_base(
                  (const XContainer*)state->m_transitions); ++i) {
             XAbstractTransition* transition = XVector_At_Base(state->m_transitions, i, XAbstractTransition*);
-            XStateMachine_unregisterTransition_internal(state->m_class.m_machine, transition);
+            XStateMachine_unregisterTransition_internal(state->m_class.m_machine, transition, false); /* 析构路径:同步删 */
             transition->m_sourceState = NULL;
         }
         XVector_delete_base((XClass*)state->m_transitions);
@@ -242,7 +242,7 @@ bool XState_removeTransition(XState* state, XAbstractTransition* transition)
         return false;
 
     if (state->m_class.m_machine)
-        XStateMachine_unregisterTransition_internal(state->m_class.m_machine, transition);
+        XStateMachine_unregisterTransition_internal(state->m_class.m_machine, transition, true); /* 运行期:延迟回收 */
     XVector_removeAt_base(state->m_transitions, index);
     transition->m_sourceState = NULL;
     if (XObject_parent((XObject*)transition) == (XObject*)state)

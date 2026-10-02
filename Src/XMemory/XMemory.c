@@ -78,11 +78,6 @@ bool XMemory_statisticsEnabled(void)
 #endif
 }
 
-XMemoryStatistics XMemory_statistics(void)
-{
-	return XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
-}
-
 XMemoryStatistics XMemory_statistics_2(XMemoryType type)
 {
 	XMemoryStatistics stats;
@@ -116,13 +111,6 @@ bool XMemory_statisticsEnabled(void)
 	return false;
 }
 
-XMemoryStatistics XMemory_statistics(void)
-{
-	XMemoryStatistics stats;
-	XMemset(&stats, 0, sizeof(stats));
-	return stats;
-}
-
 XMemoryStatistics XMemory_statistics_2(XMemoryType type)
 {
 	XMemoryStatistics stats;
@@ -132,16 +120,6 @@ XMemoryStatistics XMemory_statistics_2(XMemoryType type)
 }
 
 #endif /* XMEMORY_STATISTICS_ON */
-
-#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
-#include<stdlib.h>
-static XMemory global_Memory[] = { {malloc,free,realloc,calloc},{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
-#elif defined(__FreeRTOS__)
-#include"FreeRTOS.h"
-static XMemory global_Memory = { { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
-#else//裸机环境
-static XMemory global_Memory = { { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
-#endif
 
 #if XMEMORY_STAT_TRACK_SYSTEM
 
@@ -173,50 +151,79 @@ static void xmemory_stat_realloc(size_t oldBlock, size_t newBlock)
 
 #endif /* XMEMORY_STAT_TRACK_SYSTEM */
 
-void* XMemory_malloc(size_t size, XMemoryType type)
+/* 槽位表函数内嵌记账/清账（设计：分配函数内嵌记账、释放函数内嵌清账）——
+ * 任何调用路径（XMemory_free 封装、XClass 直调 method->free、其他裸
+ * method->free）账目自动对称；自定义表未内嵌记账，两侧直调同样对称。 */
+static void* xmemory_system_malloc(size_t size)
 {
-	void* ptr = global_Memory[type].malloc(size);
+	void* ptr = malloc(size);
 #if XMEMORY_STAT_TRACK_SYSTEM
-	if (type == XMEMORY_TYPE_SYSTEM && ptr && xmemory_stat_enabled)
+	if (ptr && xmemory_stat_enabled)
 		xmemory_stat_alloc(xmemory_system_usable(ptr));
 #endif
 	return ptr;
 }
-void* XMemory_realloc(void* ptr, size_t size, XMemoryType type)
+static void* xmemory_system_realloc(void* ptr, size_t size)
 {
-	void* newPtr;
 #if XMEMORY_STAT_TRACK_SYSTEM
-	size_t oldBlock = 0;
-	if (type == XMEMORY_TYPE_SYSTEM && xmemory_stat_enabled && ptr)
-		oldBlock = xmemory_system_usable(ptr);
-	newPtr = global_Memory[type].realloc(ptr, size);
+	size_t oldBlock = ptr ? xmemory_system_usable(ptr) : 0;
+	void* newPtr = realloc(ptr, size);
 	/* 失败（newPtr 为 NULL 且 size 非零）时原块保持有效，不调整计数；
 	   realloc(ptr, 0) 释放原块并返回 NULL，按释放调整。 */
-	if (type == XMEMORY_TYPE_SYSTEM && xmemory_stat_enabled &&
-	    (newPtr || size == 0))
+	if ((newPtr || size == 0) && xmemory_stat_enabled)
 		xmemory_stat_realloc(oldBlock, xmemory_system_usable(newPtr));
-#else
-	newPtr = global_Memory[type].realloc(ptr, size);
-#endif
 	return newPtr;
+#else
+	return realloc(ptr, size);
+#endif
+}
+static void* xmemory_system_calloc(size_t count, size_t size)
+{
+	void* ptr = calloc(count, size);
+#if XMEMORY_STAT_TRACK_SYSTEM
+	if (ptr && xmemory_stat_enabled)
+		xmemory_stat_alloc(xmemory_system_usable(ptr));
+#endif
+	return ptr;
+}
+static void xmemory_system_free(void* ptr)
+{
+#if XMEMORY_STAT_TRACK_SYSTEM
+	if (ptr && xmemory_stat_enabled)
+		xmemory_stat_release(xmemory_system_usable(ptr));
+#endif
+	free(ptr);
+}
+
+#if defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+#include<stdlib.h>
+static XMemory global_Memory[] = { {xmemory_system_malloc,xmemory_system_free,xmemory_system_realloc,xmemory_system_calloc},{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+#elif defined(__FreeRTOS__)
+#include"FreeRTOS.h"
+static XMemory global_Memory = { { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+#else//裸机环境
+static XMemory global_Memory = { { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+#endif
+
+/* 记账/清账已内嵌于槽位表函数本体（上方 xmemory_system_* 系列）——
+ * 封装层保持纯直通：若此处再挂钩子，与表函数内嵌账本叠加即双重记账/
+ * 双重清账（账本只能挂在一层）。 */
+void* XMemory_malloc(size_t size, XMemoryType type)
+{
+	return global_Memory[type].malloc(size);
+}
+void* XMemory_realloc(void* ptr, size_t size, XMemoryType type)
+{
+	return global_Memory[type].realloc(ptr, size);
 }
 
 void* XMemory_calloc(size_t count, size_t size, XMemoryType type)
 {
-	void* ptr = global_Memory[type].calloc(count, size);
-#if XMEMORY_STAT_TRACK_SYSTEM
-	if (type == XMEMORY_TYPE_SYSTEM && ptr && xmemory_stat_enabled)
-		xmemory_stat_alloc(xmemory_system_usable(ptr));
-#endif
-	return ptr;
+	return global_Memory[type].calloc(count, size);
 }
 
 void XMemory_free(void* ptr, XMemoryType type)
 {
-#if XMEMORY_STAT_TRACK_SYSTEM
-	if (type == XMEMORY_TYPE_SYSTEM && ptr && xmemory_stat_enabled)
-		xmemory_stat_release(xmemory_system_usable(ptr));
-#endif
 	global_Memory[type].free(ptr);
 }
 void* XMalloc_System(size_t size)

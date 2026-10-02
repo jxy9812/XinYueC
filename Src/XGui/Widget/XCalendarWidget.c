@@ -481,7 +481,19 @@ static void xcal_yearEditCommitSlot(XObject* receiver, XVarList* args)
 /** @brief 年份编辑期键盘确认键接线句柄（begin 连接 / end 断开配对记账；
  *         文件级静态：键盘为应用单例，同一时刻至多一份年份编辑会话有
  *         效，句柄不随控件实例携带）。 */
-static XConnection* xcal_kbReadyConn = NULL;
+/* 确认键接线断开按「信号+接收者+槽」身份检索（XObject_disconnect_1），
+ * 不缓存 XConnection 裸指针：缓存指针在连接对象被其他通路销毁/重建后
+ * 成为悬垂，disconnect_2 首解引 conn->signal 即 AV（实机 4 次同偏移
+ * 0x36c26c 崩溃实证，皆发生在年份编辑会话序列）；检索式断开按值匹配、
+ * 幂等，连接已不存在时安全返回 false。 */
+static void xcal_disconnectKbReady(XCalendarWidget* cal)
+{
+    XVirtualKeyboard* kb = XGuiApplication_virtualKeyboard();
+    if (!cal || !kb) return;
+    XObject_disconnect_1((XObject*)kb,
+                         (size_t)XVirtualKeyboard_ready_signal(NULL),
+                         (XObject*)cal, xcal_yearEditCommitSlot);
+}
 
 /** @brief 落焦前布锚：把日历当前顶层设为键盘悬浮锚。
  *  @details 弹层内编辑时日历当前顶层=日历弹层容器（Popup 型独立顶层，
@@ -526,14 +538,9 @@ static void xcal_yearEditPopupKeyboard(XCalendarWidget* cal)
     if (!cal) return;
     kb = XGuiApplication_virtualKeyboard();
     if (!kb) return;
-    if (xcal_kbReadyConn) {
-        XObject_disconnect_2(xcal_kbReadyConn);
-        xcal_kbReadyConn = NULL;
-    }
-    xcal_kbReadyConn = XObject_connect_1(
+    XObject_connect_1(
         (XObject*)kb, (size_t)XVirtualKeyboard_ready_signal(NULL),
         (XObject*)cal, xcal_yearEditCommitSlot, XConnectionType_Direct);
-    /* 12 键数字布局定版先于 popup：首帧即按 Digits 渲染上屏（缺陷⑤）。 */
     XVirtualKeyboard_setMode(kb, XKeyboardMode_Digits);
     XVirtualKeyboard_popup(kb, (XWidget*)cal->m_yearEdit);
 }
@@ -548,10 +555,7 @@ static void xcal_yearEditDismissKeyboard(XCalendarWidget* cal)
 {
     XVirtualKeyboard* kb;
     if (!cal) return;
-    if (xcal_kbReadyConn) {
-        XObject_disconnect_2(xcal_kbReadyConn);
-        xcal_kbReadyConn = NULL;
-    }
+    xcal_disconnectKbReady(cal);
     kb = XGuiApplication_virtualKeyboard();
     if (kb) XVirtualKeyboard_closePopup(kb);
 }

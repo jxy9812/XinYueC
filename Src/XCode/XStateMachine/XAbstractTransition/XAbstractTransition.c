@@ -23,7 +23,7 @@ static void VXAbstractTransition_deinit(XAbstractTransition* transition)
 
     XStateMachine* machine = XAbstractTransition_machine(transition);
     if (machine)
-        XStateMachine_unregisterTransition_internal(machine, transition);
+        XStateMachine_unregisterTransition_internal(machine, transition, false); /* 析构路径:同步删 */
     if (transition->m_sourceState)
         XState_removeTransition(transition->m_sourceState, transition);
     if (transition->m_targetStates) {

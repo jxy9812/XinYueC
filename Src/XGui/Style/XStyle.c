@@ -752,8 +752,20 @@ bool XStyle_installStyleSheet(const char* css)
      * 替换默认样式后仍存活，且 ss 析构时一并释放，消除泄漏。 */
     XStyleSheetStyle_setSourceStyle_move(ss, source);
     ok = XStyleSheetStyle_setStyleSheet(ss, css);
-    if (ok) g_defaultStyle = (XStyle*)ss;
-    else XStyleSheetStyle_delete_base(ss);
+    if (ok) {
+        g_defaultStyle = (XStyle*)ss;
+    } else {
+        /* 失败回滚的所有权归宿：安装未成，g_defaultStyle 仍指向旧默认
+         * 样式，而其所有权已在上方 setSourceStyle_move 移交 ss——直接删
+         * ss 会经析构级联释放 m_source（VXStyleSheetStyle_deinit 的
+         * m_sourceOwned 分支），仍在服役的旧默认样式被误删即全局悬垂。
+         * 先经借用接口摘除所有权（m_source/m_proxy 置空、
+         * m_sourceOwned=false），旧默认样式归还 g_defaultStyle 独立持有；
+         * ss 为本函数刚创建、尚无任何连接/在途事件的回滚对象，按
+         * 「失败回滚→同步释放」约定保持同步删（对标删改约束备忘 3）。 */
+        XStyleSheetStyle_setSourceStyle(ss, NULL);
+        XStyleSheetStyle_delete_base(ss);
+    }
     return ok;
 }
 

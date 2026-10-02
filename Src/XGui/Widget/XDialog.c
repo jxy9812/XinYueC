@@ -1236,8 +1236,11 @@ int XDialog_exec(XDialog* self)
     /* 先取结果再兑现删除（对标 qdialog.cpp:583-587 的 result()/
        delete this 次序），删除后不得再解引用 self。 */
     result = self->m_result;
+    /* 删除可能处于对象自身事件/信号发射帧，同步删 self 即 UAF，须延
+       迟回收（对标 Qt deleteLater 语义）；deinit 路径会撤销挂起删除
+       事件，与析构路径双路互斥安全。 */
     if (deleteOnClose)
-        XDialog_delete_base(self);
+        XObject_deleteLater((XObject*)self);
     return result;
 }
 
