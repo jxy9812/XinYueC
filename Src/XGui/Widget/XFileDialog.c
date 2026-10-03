@@ -1948,6 +1948,9 @@ static void xff_viewRowActivated(XFileDialog* dlg, int row)
             xff_cd(dlg, up);
             XString_delete_base((XClass*)up);
         }
+        /* 回上级分支与 else 分支同持 orderD/orderF 显示序映射，补齐配对释放。 */
+        if (orderD) XFree_System(orderD);
+        if (orderF) XFree_System(orderF);
     } else {
         /* 激活命中按显示序解析（映射与装载同源产出）——排序态下
          * 行号不脱节；映射为 NULL 的列源序即显示序。 */

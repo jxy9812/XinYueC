@@ -61,7 +61,11 @@ XVector* XPlatformFontDatabase_families(const XPlatformFontDatabase* self)
         XString* const* item = (XString* const*)XVector_at_base(
             self->m_families, (int64_t)i);
         XString* copy = item && *item ? XString_create_copy(*item) : NULL;
-        if (copy) XVector_Push_Back_Base(out, XString*, copy);
+        /* 容器不接管的拷贝就地释放：扩容失败后继续 push 只会逐条复制逐条丢。 */
+        if (copy && !XVector_push_back_1_base(out, &copy)) {
+            XString_delete_base((XClass*)copy);
+            break;
+        }
     }
     return out;
 }

@@ -81,6 +81,8 @@ static int xtv_modelCols(const XTreeView* self)
 static void xtv_syncRowStates(XTreeView* self, int count)
 {
     int old;
+    bool* newExpanded;
+    bool* newRowHidden;
     if (!self) return;
     if (count < 0) count = 0;
     old = self->m_rowStateCount;
@@ -98,11 +100,16 @@ static void xtv_syncRowStates(XTreeView* self, int count)
         self->m_rowHiddenCount = 0;
         return;
     }
-    self->m_expanded = (bool*)XRealloc_System(
+    /* 先扩容并即刻回写字段（realloc 失败时原块仍有效，字段不丢唯一
+       引用），再按成功与否整体收口——失败路径释放在字段中的块后整体
+       回退为未分配，杜绝孤儿块；就地扩容时新旧指针同址，也只释放一次。 */
+    newExpanded = (bool*)XRealloc_System(
         self->m_expanded, sizeof(bool) * (size_t)count);
-    self->m_rowHidden = (bool*)XRealloc_System(
+    if (newExpanded) self->m_expanded = newExpanded;
+    newRowHidden = (bool*)XRealloc_System(
         self->m_rowHidden, sizeof(bool) * (size_t)count);
-    if (self->m_expanded && self->m_rowHidden) {
+    if (newRowHidden) self->m_rowHidden = newRowHidden;
+    if (newExpanded && newRowHidden) {
         if (count > old) {
             XMemset(self->m_expanded + old, 0,
                     sizeof(bool) * (size_t)(count - old));
@@ -112,6 +119,8 @@ static void xtv_syncRowStates(XTreeView* self, int count)
         self->m_rowStateCount = count;
         self->m_rowHiddenCount = count;
     } else {
+        if (self->m_expanded) XFree_System(self->m_expanded);
+        if (self->m_rowHidden) XFree_System(self->m_rowHidden);
         self->m_expanded = NULL;
         self->m_rowHidden = NULL;
         self->m_rowStateCount = 0;
@@ -126,6 +135,8 @@ static void xtv_syncRowStates(XTreeView* self, int count)
 static void xtv_syncColumnStates(XTreeView* self, int count)
 {
     int old;
+    bool* newHidden;
+    int* newWidths;
     if (!self) return;
     if (count < 0) count = 0;
     old = self->m_columnStateCount;
@@ -142,11 +153,14 @@ static void xtv_syncColumnStates(XTreeView* self, int count)
         self->m_columnStateCount = 0;
         return;
     }
-    self->m_columnHidden = (bool*)XRealloc_System(
+    /* 同 xtv_syncRowStates：先扩容回写、失败整体回退，防孤儿块。 */
+    newHidden = (bool*)XRealloc_System(
         self->m_columnHidden, sizeof(bool) * (size_t)count);
-    self->m_columnWidths = (int*)XRealloc_System(
+    if (newHidden) self->m_columnHidden = newHidden;
+    newWidths = (int*)XRealloc_System(
         self->m_columnWidths, sizeof(int) * (size_t)count);
-    if (self->m_columnHidden && self->m_columnWidths) {
+    if (newWidths) self->m_columnWidths = newWidths;
+    if (newHidden && newWidths) {
         if (count > old) {
             XMemset(self->m_columnHidden + old, 0,
                     sizeof(bool) * (size_t)(count - old));
@@ -155,6 +169,8 @@ static void xtv_syncColumnStates(XTreeView* self, int count)
         }
         self->m_columnStateCount = count;
     } else {
+        if (self->m_columnHidden) XFree_System(self->m_columnHidden);
+        if (self->m_columnWidths) XFree_System(self->m_columnWidths);
         self->m_columnHidden = NULL;
         self->m_columnWidths = NULL;
         self->m_columnStateCount = 0;

@@ -276,7 +276,11 @@ XPlatformWindow* XPlatformIntegration_createPlatformWindow(
     }
     pw = XPlatformWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, window);
     if (!pw) return NULL;
-    XVector_Push_Back_Base(self->m_data->m_platformWindows, XPlatformWindow*, pw);
+    if (!XVector_push_back_1_base(self->m_data->m_platformWindows, &pw)) {
+        /* 登记失败容器不接管：就地释放防无主块（对象+私有块+属性表）。 */
+        XPlatformWindow_delete_base(pw);
+        return NULL;
+    }
 #if XWINDOW_ON
     if (window) {
         XWindow_setHandle(window, (XWindowPlatform*)pw); /* 挂接平台句柄（借用）。 */
@@ -320,7 +324,11 @@ XPlatformWindow* XPlatformIntegration_createForeignWindow(
     }
     pw = XPlatformWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, window);
     if (!pw) return NULL;
-    XVector_Push_Back_Base(self->m_data->m_platformWindows, XPlatformWindow*, pw);
+    if (!XVector_push_back_1_base(self->m_data->m_platformWindows, &pw)) {
+        /* 登记失败容器不接管：就地释放防无主块。 */
+        XPlatformWindow_delete_base(pw);
+        return NULL;
+    }
     if (!XWindow_attachForeignHandle(window, nativeHandle)) {
         n = XVector_size_base((const XContainer*)self->m_data->m_platformWindows);
         if (n > 0)

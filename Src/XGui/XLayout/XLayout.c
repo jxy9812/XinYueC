@@ -1159,6 +1159,7 @@ void XLayout_invalidate(XLayout* self)
 void XLayout_addWidget(XLayout* self, XWidget* widget)
 {
     XLayoutItem* item;
+    int before;
     if (!self || !widget) return;
     item = XLayoutItem_createWidgetItem(widget);
     if (!item) return;
@@ -1168,7 +1169,14 @@ void XLayout_addWidget(XLayout* self, XWidget* widget)
        从不清除 m_ownedByLayout，故挂入前置位即可；子类 insert*
        路径本就传 owned=true，行为不变无回归。 */
     item->m_ownedByLayout = 1;
+    before = self->m_itemCount;
     XLayout_addItem_base(self, item);
+    if (self->m_itemCount == before) {
+        /* 虚路径插入失败（扩容失败）：条目未入列、所有权未随挂接移出，
+           由本入口就地释放防孤儿块（网格 ensureCells 失败路径经 takeAt
+           移出后计数同样回落至此，一并覆盖）。 */
+        XLayoutItem_delete_base(item);
+    }
 }
 
 #endif /* XLAYOUT_ON */

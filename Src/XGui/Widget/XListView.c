@@ -88,15 +88,16 @@ static void xlv_syncRowStates(XListView* self, int count)
         self->m_rowStateCount = 0;
         return;
     }
-    self->m_rowHidden = (bool*)XRealloc_System(
-        self->m_rowHidden, sizeof(bool) * (size_t)count);
-    if (self->m_rowHidden) {
+    {
+        /* 失败时 realloc 原块保持有效：先接临时指针再回写，保旧表防 OOM 泄漏。 */
+        bool* grown = (bool*)XRealloc_System(
+            self->m_rowHidden, sizeof(bool) * (size_t)count);
+        if (!grown) return;
+        self->m_rowHidden = grown;
         if (count > old)
             XMemset(self->m_rowHidden + old, 0,
                     sizeof(bool) * (size_t)(count - old));
         self->m_rowStateCount = count;
-    } else {
-        self->m_rowStateCount = 0;
     }
 }
 

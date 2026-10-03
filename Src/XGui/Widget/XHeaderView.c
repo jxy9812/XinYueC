@@ -569,9 +569,15 @@ void XHeaderView_setCount(XHeaderView* self, int count)
             XVector_push_back_1_base(self->m_sections, &v);
             if (self->m_sectionModes)
                 XVector_push_back_1_base(self->m_sectionModes, &mv);
-            self->m_hidden = (bool*)XRealloc_System(
-                self->m_hidden, sizeof(bool) * (size_t)(i + 1));
-            if (self->m_hidden) self->m_hidden[i] = h;
+            {
+                /* 失败时 realloc 原块保持有效：先接临时指针再回写，防 OOM 丢块；
+                   整体放弃本次扩容，保证 m_hidden 容量始终 ≥ m_count。 */
+                bool* grown = (bool*)XRealloc_System(
+                    self->m_hidden, sizeof(bool) * (size_t)(i + 1));
+                if (!grown) return;
+                self->m_hidden = grown;
+                grown[i] = h;
+            }
         }
     } else if (count < n) {
         for (i = count; i < n; ++i) {

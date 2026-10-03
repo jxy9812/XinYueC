@@ -519,6 +519,14 @@ const char* XStatusBar_currentMessage(const XStatusBar* self)
 
 /* ==================== 信号 ==================== */
 
+/** @brief argsDel 回调：释放 XString 载荷（对齐 XObject 信号惯例，
+ *  载荷所有权随 args 移交 emit 链，缺删除器即逐次泄漏）。 */
+static void xsb_str_args_del(XVarList* list)
+{
+    XVarList_args_1(list, XString*, val);
+    if (val) XString_delete_base((XClass*)val);
+}
+
 void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text)
 {
     XVarList* args;
@@ -530,7 +538,8 @@ void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text)
         if (args) {
             XObject_emitSignal((XObject*)self,
                                (size_t)XStatusBar_messageChanged_signal,
-                               args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+                               args, xsb_str_args_del, NULL,
+                               XEVENT_PRIORITY_NORMAL);
         } else if (value) {
             XString_delete_base((XClass*)value);
         }

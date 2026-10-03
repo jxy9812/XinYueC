@@ -239,7 +239,8 @@ void* XSplashScreen_messageChanged_signal(XSplashScreen* self,
         if (args) {
             XObject_emitSignal((XObject*)self,
                                (size_t)XSplashScreen_messageChanged_signal,
-                               args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+                               args, xsp2_str_args_del, NULL,
+                               XEVENT_PRIORITY_NORMAL);
         } else if (value) {
             XString_delete_base((XClass*)value);
         }

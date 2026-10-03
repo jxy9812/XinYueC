@@ -238,7 +238,11 @@ static void xcompleter_rebuild(XCompleter* self)
     self->m_currentRow = -1;
     xcompleter_replaceString(&self->m_currentCompletion, NULL);
 
-    if (!self->m_model) return;
+    if (!self->m_model) {
+        /* 无模型早退同样跳过了函数尾的备份释放，须在此补齐。 */
+        if (oldCompletion) XString_delete_base((XClass*)oldCompletion);
+        return;
+    }
     rows = XAbstractItemModel_rowCount(self->m_model);
     column = self->m_completionColumn;
     firstText = NULL;

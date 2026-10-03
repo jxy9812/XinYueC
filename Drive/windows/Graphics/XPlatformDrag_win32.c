@@ -285,7 +285,8 @@ XPlatformDragResult XPlatformDrag_exec(XPlatformDrag* self, XWindow* source,
     coinit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (FAILED(coinit) && coinit != RPC_E_CHANGED_MODE) return XPlatformDragResult_Cancelled;
     data = (XPDragData*)XMalloc_System(sizeof(*data));
-    if (!data) { if (coinit == S_OK) CoUninitialize(); return XPlatformDragResult_Cancelled; }
+    /* S_FALSE 同样取走一次 COM 引用（对齐 XPlatformAccessibility 的配对口径），须配对释放。 */
+    if (!data) { if (SUCCEEDED(coinit)) CoUninitialize(); return XPlatformDragResult_Cancelled; }
     memset(data, 0, sizeof(*data));
     data->iface.lpVtbl = &g_dataVtbl;
     data->refs = 1;
@@ -298,7 +299,7 @@ XPlatformDragResult XPlatformDrag_exec(XPlatformDrag* self, XWindow* source,
                     ((actions & XPlatformDragAction_Link) ? DROPEFFECT_LINK : 0),
                     &effect);
     data->iface.lpVtbl->Release(&data->iface);
-    if (coinit == S_OK) CoUninitialize();
+    if (SUCCEEDED(coinit)) CoUninitialize();
     if (hr != DRAGDROP_S_DROP) return XPlatformDragResult_Cancelled;
     if (effect & DROPEFFECT_MOVE) return XPlatformDragResult_Moved;
     if (effect & DROPEFFECT_LINK) return XPlatformDragResult_Linked;

@@ -457,23 +457,25 @@ static void xtc_rebuildLayout(XTextControl* self)
         char* heap = NULL;
         const char* text = xtc_visualLineText(self, i, &heap);
         int len = xtc_visualLineLen(self, i);
+        bool ok;
         if (wrapW <= 0) {
             /* 不折行：可视行与逻辑行 1:1（对标 NoWrap）。 */
             XFont font;
             int w;
             XMemcpy(&font, &self->m_font, sizeof(XFont));
             w = XPainter_textWidthRange(&font, text, 0, len);
-            if (!xtc_layoutPushRow(&self->m_visualRows, &self->m_visualCount,
+            ok = xtc_layoutPushRow(&self->m_visualRows, &self->m_visualCount,
                                    &self->m_visualCap, i, 0, len,
-                                   w > 0 ? w : 0))
-                break;
+                                   w > 0 ? w : 0);
         } else {
-            if (!xtc_layoutLine(self->m_wordWrapMode, &self->m_font,
+            ok = xtc_layoutLine(self->m_wordWrapMode, &self->m_font,
                                 &self->m_visualRows, &self->m_visualCount,
-                                &self->m_visualCap, i, text, len, wrapW))
-                break;
+                                &self->m_visualCap, i, text, len, wrapW);
         }
+        /* 释放先行于失败收口：组合行堆缓冲不能随 break 逃逸
+           （对照增量路径 xtc_incrementalLayoutLine 的统一收尾）。 */
         if (heap) XFree_System(heap);
+        if (!ok) break;
     }
     self->m_layoutValid = true;
 }

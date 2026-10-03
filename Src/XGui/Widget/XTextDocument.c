@@ -22,6 +22,7 @@ static void xtd_clearBlocksOnly(XTextDocument* self);
 static void xtd_setPlainTextNoHistory(XTextDocument* self, const char* utf8);
 static void xtd_saveSnapshot(XTextDocument* self);
 static void xtd_changedCore(XTextDocument* self, bool markModified);
+static void xtd_clearUndoRedoArrays(XTextDocument* self);
 
 /* ==================== 生命周期 ==================== */
 
@@ -88,6 +89,9 @@ static void VX_td_deinit(XTextDocument* self)
         }
     }
     self->m_resourceCount = 0;
+    /* 撤销/重做快照串由本对象 malloc 入栈，析构必须清栈，
+       否则挂起的整篇文本拷贝随对象销毁失联。 */
+    xtd_clearUndoRedoArrays(self);
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 

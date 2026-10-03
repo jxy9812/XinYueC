@@ -196,9 +196,10 @@ static int XGridLayout_appendCellItem(XGridLayout* self, XLayoutItem* item,
     if (idx < 0) return -1;
     if (idx >= self->m_cellCapacity) {
         if (!XGridLayout_ensureCells(self, idx + 1)) {
-            /* 退回条目挂接：仅移除条目数组项，释放责任不变。 */
+            /* 退回条目挂接：仅移除条目数组项。释放责任随 takeAt 移交
+               调用方（owned 调用方收 idx<0 后自删、借用调用方自持），
+               此处不得代删，否则 owned 路径双重释放。 */
             (void)XLayout_takeAt_base((XLayout*)self, idx);
-            if (owned) XLayoutItem_delete_base(item);
             return -1;
         }
     }

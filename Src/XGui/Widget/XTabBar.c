@@ -752,16 +752,92 @@ static void VXTabBar_copy(XTabBar* self, const XTabBar* other)
     self->m_scrollOffset = other->m_scrollOffset;
 }
 
-static void VXTabBar_move(XTabBar* self, XTabBar* other)
+/** @brief 释放全部页签平行数组与逐页 XString 载荷（deinit 与 move-assign
+ *  接管前共用；不触父类与定时器）。 */
+static void xtabbar_releaseTabs(XTabBar* self)
 {
     int i;
+    if (!self) return;
+    for (i = 0; i < self->m_count; ++i) {
+        if (self->m_titles && self->m_titles[i]) {
+            XString_delete_base(self->m_titles[i]);
+            self->m_titles[i] = NULL;
+        }
+        if (self->m_tabToolTips && self->m_tabToolTips[i]) {
+            XString_delete_base(self->m_tabToolTips[i]);
+            self->m_tabToolTips[i] = NULL;
+        }
+        if (self->m_tabWhatsThis && self->m_tabWhatsThis[i]) {
+            XString_delete_base(self->m_tabWhatsThis[i]);
+            self->m_tabWhatsThis[i] = NULL;
+        }
+        if (self->m_tabAccessibleNames && self->m_tabAccessibleNames[i]) {
+            XString_delete_base(self->m_tabAccessibleNames[i]);
+            self->m_tabAccessibleNames[i] = NULL;
+        }
+        if (self->m_tabIcons && self->m_tabIcons[i]) {
+            XString_delete_base(self->m_tabIcons[i]);
+            self->m_tabIcons[i] = NULL;
+        }
+        if (self->m_tabData && self->m_tabData[i]) {
+            XString_delete_base(self->m_tabData[i]);
+            self->m_tabData[i] = NULL;
+        }
+    }
+    if (self->m_titles) {
+        XFree_System(self->m_titles);
+        self->m_titles = NULL;
+    }
+    if (self->m_enabled) {
+        XFree_System(self->m_enabled);
+        self->m_enabled = NULL;
+    }
+    if (self->m_tabTextColors) {
+        XFree_System(self->m_tabTextColors);
+        self->m_tabTextColors = NULL;
+    }
+    if (self->m_tabVisible) {
+        XFree_System(self->m_tabVisible);
+        self->m_tabVisible = NULL;
+    }
+    if (self->m_tabToolTips) {
+        XFree_System(self->m_tabToolTips);
+        self->m_tabToolTips = NULL;
+    }
+    if (self->m_tabWhatsThis) {
+        XFree_System(self->m_tabWhatsThis);
+        self->m_tabWhatsThis = NULL;
+    }
+    if (self->m_tabAccessibleNames) {
+        XFree_System(self->m_tabAccessibleNames);
+        self->m_tabAccessibleNames = NULL;
+    }
+    if (self->m_tabIcons) {
+        XFree_System(self->m_tabIcons);
+        self->m_tabIcons = NULL;
+    }
+    if (self->m_tabData) {
+        XFree_System(self->m_tabData);
+        self->m_tabData = NULL;
+    }
+    if (self->m_tabButtons) {
+        XFree_System(self->m_tabButtons);
+        self->m_tabButtons = NULL;
+    }
+    self->m_count = 0;
+    self->m_capacity = 0;
+}
+
+static void VXTabBar_move(XTabBar* self, XTabBar* other)
+{
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XTabBar_init(self, NULL, 0);
     XClass_Parent(XWidget, EXClass_Move,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
-    for (i = 0; i < self->m_count; ++i)
-        if (self->m_titles[i]) XString_delete_base(self->m_titles[i]);
+    /* 接管前先释放 self 已持有的全部页签资源（数组本体+逐页载荷），
+       仅清标题会使其余平行数组与载荷随覆盖失联。 */
+    xtabbar_releaseTabs(self);
     self->m_titles = other->m_titles;
     self->m_enabled = other->m_enabled;
     self->m_tabTextColors = other->m_tabTextColors;
@@ -802,68 +878,9 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
 /** @brief 反初始化：释放全部页签标题与数组。 */
 static void VXTabBar_deinit(XTabBar* self)
 {
-    int i;
     if (!self) return;
     xtabbar_scrollRepeatStop(self); /* §8.0g11：析构停连发定时器。 */
-    for (i = 0; i < self->m_count; ++i) {
-        if (self->m_titles[i]) XString_delete_base(self->m_titles[i]);
-        self->m_titles[i] = NULL;
-    }
-    if (self->m_titles) {
-        XFree_System(self->m_titles);
-        self->m_titles = NULL;
-    }
-    if (self->m_enabled) {
-        XFree_System(self->m_enabled);
-        self->m_enabled = NULL;
-    }
-    if (self->m_tabTextColors) {
-        XFree_System(self->m_tabTextColors);
-        self->m_tabTextColors = NULL;
-    }
-    if (self->m_tabVisible) {
-        XFree_System(self->m_tabVisible);
-        self->m_tabVisible = NULL;
-    }
-    if (self->m_tabToolTips) {
-        for (i = 0; i < self->m_count; ++i)
-            if (self->m_tabToolTips[i])
-                XString_delete_base(self->m_tabToolTips[i]);
-        XFree_System(self->m_tabToolTips);
-        self->m_tabToolTips = NULL;
-    }
-    if (self->m_tabWhatsThis) {
-        for (i = 0; i < self->m_count; ++i)
-            if (self->m_tabWhatsThis[i])
-                XString_delete_base(self->m_tabWhatsThis[i]);
-        XFree_System(self->m_tabWhatsThis);
-        self->m_tabWhatsThis = NULL;
-    }
-    if (self->m_tabAccessibleNames) {
-        for (i = 0; i < self->m_count; ++i)
-            if (self->m_tabAccessibleNames[i])
-                XString_delete_base(self->m_tabAccessibleNames[i]);
-        XFree_System(self->m_tabAccessibleNames);
-        self->m_tabAccessibleNames = NULL;
-    }
-    if (self->m_tabIcons) {
-        for (i = 0; i < self->m_count; ++i)
-            if (self->m_tabIcons[i]) XString_delete_base(self->m_tabIcons[i]);
-        XFree_System(self->m_tabIcons);
-        self->m_tabIcons = NULL;
-    }
-    if (self->m_tabData) {
-        for (i = 0; i < self->m_count; ++i)
-            if (self->m_tabData[i]) XString_delete_base(self->m_tabData[i]);
-        XFree_System(self->m_tabData);
-        self->m_tabData = NULL;
-    }
-    if (self->m_tabButtons) {
-        XFree_System(self->m_tabButtons);
-        self->m_tabButtons = NULL;
-    }
-    self->m_count = 0;
-    self->m_capacity = 0;
+    xtabbar_releaseTabs(self);
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 

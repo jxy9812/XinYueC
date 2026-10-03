@@ -2475,7 +2475,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             uint32_t dprBits = XPicture_getU32(payload + 28);
             uint32_t extraOffset = XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u + imageSize;
             const uint8_t* imageData = payload + XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u;
-            uint8_t* imageBytes = (uint8_t*)XMalloc_Hybrid(imageSize);
+            uint8_t* imageBytes;
             float dpr;
             XImage image;
             XPixmap pixmap;
@@ -2484,7 +2484,11 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             XRect sourceRect;
             bool drawOk;
             uint32_t i;
-            if (!painter->m_drawImage || !imageBytes) return false;
+            /* 先查激活再分配（同 DrawImage 分支次序）：未激活 painter 的
+               早退绕过释放即漏整幅图像缓冲。 */
+            if (!painter->m_drawImage) return false;
+            imageBytes = (uint8_t*)XMalloc_Hybrid(imageSize);
+            if (!imageBytes) return false;
             XPixmap_init(&pixmap);
             XMemcpy(imageBytes, imageData, imageSize);
             XImage_init_ex_2(&image, (int)width, (int)height, format,
@@ -2544,7 +2548,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             uint32_t dprBits = XPicture_getU32(payload + 28);
             uint32_t extraOffset = XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u + imageSize;
             const uint8_t* imageData = payload + XPICTURE_IMAGE_FIXED_SIZE + colorCount * 4u;
-            uint8_t* imageBytes = (uint8_t*)XMalloc_Hybrid(imageSize);
+            uint8_t* imageBytes;
             float dpr;
             XImage image;
             XPixmap pixmap;
@@ -2552,7 +2556,10 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             XRect rect;
             XPoint offsetPoint;
             uint32_t i;
-            if (!painter->m_drawImage || !imageBytes) return false;
+            /* 先查激活再分配（同 DrawImage 分支次序），防早退绕过释放。 */
+            if (!painter->m_drawImage) return false;
+            imageBytes = (uint8_t*)XMalloc_Hybrid(imageSize);
+            if (!imageBytes) return false;
             XPixmap_init(&pixmap);
             XMemcpy(imageBytes, imageData, imageSize);
             XImage_init_ex_2(&image, (int)width, (int)height, format,

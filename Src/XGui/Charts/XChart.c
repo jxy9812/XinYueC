@@ -524,6 +524,25 @@ XChart* XChart_create_ex(XMemoryType memory)
     return self;
 }
 
+/** @brief 查序列是否已在类型化数组/饼图槽中（类型化直加入口不进泛型
+ *  注册表，泛型注册表条目则可能同时存在于两处，析构兜底需去重）。 */
+static bool xchart_seriesInTypedArrays(const XChart* self, const void* series)
+{
+    int i;
+    for (i = 0; i < self->m_lineCount; ++i)
+        if ((const void*)self->m_lineSeries[i] == series) return true;
+    if ((const void*)self->m_pieSeries == series) return true;
+    for (i = 0; i < self->m_barCount; ++i)
+        if ((const void*)self->m_barSeries[i] == series) return true;
+    for (i = 0; i < self->m_scatterCount; ++i)
+        if ((const void*)self->m_scatterSeries[i] == series) return true;
+    for (i = 0; i < self->m_areaCount; ++i)
+        if ((const void*)self->m_areaSeries[i] == series) return true;
+    for (i = 0; i < self->m_splineCount; ++i)
+        if ((const void*)self->m_splineSeries[i] == series) return true;
+    return false;
+}
+
 static void VXChart_deinit(XChart* self)
 {
     int i;
@@ -551,6 +570,17 @@ static void VXChart_deinit(XChart* self)
         if (self->m_areaSeries[i]) XAreaSeries_delete_base(self->m_areaSeries[i]);
     for (i = 0; i < self->m_splineCount; ++i)
         if (self->m_splineSeries[i]) XSplineSeries_delete_base(self->m_splineSeries[i]);
+    /* 泛型注册表兜底：登记在册却未进类型化数组的序列（容量静默拒绝、
+       BoxPlot/Candlestick 等无类型化槽的类型）随图表析构补释放；
+       多态 XClass_delete_base 不依赖注册类型，已释放过的不重复释放。 */
+    for (i = 0; i < self->m_seriesCount; ++i) {
+        if (self->m_series[i] &&
+            !xchart_seriesInTypedArrays(self, self->m_series[i])) {
+            XClass_delete_base((XClass*)self->m_series[i]);
+        }
+        self->m_series[i] = NULL;
+    }
+    self->m_seriesCount = 0;
     if (self->m_axisX) { XValueAxis_deinit_base(self->m_axisX); XFree_System(self->m_axisX); }
     if (self->m_axisY) { XValueAxis_deinit_base(self->m_axisY); XFree_System(self->m_axisY); }
     if (self->m_zoomStack) XFree_System(self->m_zoomStack);
@@ -577,9 +607,10 @@ void XChart_deinit(XChart* self)
 static void VXChart_copy(XChart* self, const XChart* other)
 {
     if (!self || !other || self == other) return;
-    /* 序列与缩放栈不可复制（Qt 同语义：QChart 禁用拷贝构造）。 */
+    /* 序列与缩放栈不可复制（Qt 同语义：QChart 禁用拷贝构造）。
+       vtable 为空的裸对象上 XChart_deinit 自会优雅返回，init 只跑一次——
+       双重 init 会把首次分配整体清零失联。 */
     XChart_deinit(self);
-    if (XClassIsVtableNull(self)) XChart_init(self);
     XChart_init(self);
     XChart_setTitle(self, XChart_title(other));
     self->m_legendVisible = other->m_legendVisible;

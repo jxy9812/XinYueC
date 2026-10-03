@@ -214,6 +214,7 @@ void XVirtualKeyboardTrace_setChannels(XVirtualKeyboardTrace* self,
 {
     XVirtualKeyboardTracePrivate* priv = xvkt_priv(self);
     int i;
+    int n = 0;
     if (!priv) return;
     xvkt_clearChannels(priv);
     if (channels && count > 0) {
@@ -222,15 +223,18 @@ void XVirtualKeyboardTrace_setChannels(XVirtualKeyboardTrace* self,
         if (priv->m_channels) {
             XMemset(priv->m_channels,
                     0, (size_t)count * sizeof(XVirtualKeyboardTraceChannel));
+            /* 紧凑下标 n 写入：失败槽不占坑，计数与已填充槽严格一致，
+               clearChannels 按 m_channelCount 释放才不漏（对齐
+               XVirtualKeyboardSettings/XVirtualKeyboardDictionary 写法）。 */
             for (i = 0; i < count && channels[i]; ++i) {
                 size_t len = XStrlen(channels[i]) + 1;
-                priv->m_channels[i].m_name =
-                    (char*)XMalloc_System(len);
-                if (priv->m_channels[i].m_name) {
-                    XMemcpy(priv->m_channels[i].m_name, channels[i], len);
-                    ++priv->m_channelCount;
-                }
+                char* copy = (char*)XMalloc_System(len);
+                if (!copy) continue;
+                XMemcpy(copy, channels[i], len);
+                priv->m_channels[n].m_name = copy;
+                ++n;
             }
+            priv->m_channelCount = n;
         }
     }
     xvkt_emit(self, (size_t)XVirtualKeyboardTrace_channelsChanged_signal(

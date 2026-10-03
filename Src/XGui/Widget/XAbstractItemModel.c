@@ -287,7 +287,21 @@ void XAbstractItemModel_setDimension(XAbstractItemModel* self,
         XFree_System(self->m_cells[r]);
         self->m_cells[r] = NULL;
     }
-    /* 表头数组同步（列头/行头）。 */
+    /* 表头数组同步（列头/行头）。表头条目归模型所有，换数组前必须
+       先逐条释放被裁剪区间（[cols,oldCols)/[rows,oldRows)）的旧条目，
+       否则指针随旧数组一并丢失。 */
+    for (c = cols; c < oldCols; ++c) {
+        if (self->m_hHeader && self->m_hHeader[c]) {
+            XString_delete_base(self->m_hHeader[c]);
+            self->m_hHeader[c] = NULL;
+        }
+    }
+    for (r = rows; r < oldRows; ++r) {
+        if (self->m_vHeader && self->m_vHeader[r]) {
+            XString_delete_base(self->m_vHeader[r]);
+            self->m_vHeader[r] = NULL;
+        }
+    }
     {
         XString** newH = NULL;
         XString** newV = NULL;

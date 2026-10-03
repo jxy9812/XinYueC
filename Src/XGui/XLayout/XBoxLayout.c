@@ -1460,6 +1460,10 @@ void XBoxLayout_insertSpacerItem(XBoxLayout* self, int index, XSpacerItem* item)
         item->m_isMagic = 1;
         XBoxLayout_insertStretchSlot(self, idx, 0);
         XLayoutItem_invalidate_base((XLayoutItem*)self);
+    } else {
+        /* 所有权已按契约移交布局而条目未入列：与同文件 insertWidget/
+         * insertSpacing 等同型入口一致，失败路径在此兜底释放。 */
+        XLayoutItem_delete_base((XLayoutItem*)item);
     }
 }
 
