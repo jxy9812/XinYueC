@@ -133,6 +133,7 @@ extern int XRRUpdateConfiguration(X11_XEvent* event);
  * 时运行时回退核心协议事件（原行为零变化）。 */
 #ifdef XINYUE_C_HAS_XI2
 #include <X11/extensions/XI2.h>
+#include <math.h> /* lround：触摸坐标 double → int 四舍五入（仅本守卫内使用）。 */
 
 typedef struct
 {
@@ -167,7 +168,6 @@ typedef struct {
     Display       *display;
     int           extension;
     int           evtype;
-    XID           cookie;
     Time          time;
     int           deviceid;
     int           sourceid;
@@ -183,8 +183,17 @@ typedef struct {
     XGuiXIButtonState   buttons;
     XGuiXIValuatorState valuators;
     XGuiXIModifierState mods;
-    XGuiXIModifierState group;
 } XGuiXIDeviceEvent;
+/* 布局契约（独立复审 P1 修正）：上表与 libXi XInput2.h 的 XIDeviceEvent
+ * 逐字段同序同宽（LP64/ILP32 均布局等价）——XGetEventData 返回的
+ * cookie->data 按该布局填充，多一个少一个成员都会使后续字段错位。
+ * 特别注意没有 cookie 成员：XID cookie 是 XGenericEventCookie（真实
+ * 头文件类型，见 xpwn_dispatchXi2TouchEvent 的 ev->xcookie）的字段，
+ * 不属于 XIDeviceEvent 本体；旧镜像在此多插了 XID cookie，LP64 下自
+ * time 起整体错位 +8 字节（detail 读到 root、坐标互串、event 读到
+ * child、flags 读到 buttons 指针低半）。仅声明触摸接入所需子集：末尾
+ * 的 group（上游为 XIGroupState，XIModifierState 的别名）未用成员从
+ * 略（位于全部已读字段之后，不影响布局前缀）。 */
 
 extern Status XIQueryVersion(Display* dpy, int* major_inout,
                              int* minor_inout);
@@ -3041,17 +3050,16 @@ static void xpwn_xi2SelectTouch(Window win)
     XISelectEvents(g_xpwnDisplay, win, &mask, 1);
 }
 
-/** @brief XI2 触摸事件转译：Touch 三类 → handleTouchEvent_ex（主点，
- *         pointCount=1；tracking id 留待多点方案 B）。非触摸 XI2 事
- *         件按已消费忽略。 */
+/** @brief XI2 触摸事件转译：Touch 三类 → handleTouchPoints_ex（单点
+ *         注入，detail=tracking id per-id 透传，控件层 B1 已支持）。
+ *         非触摸 XI2 事件按已消费忽略。 */
 static bool xpwn_dispatchXi2TouchEvent(const X11_XEvent* ev)
 {
     XGenericEventCookie* cookie;
     XGuiXIDeviceEvent* dev;
     XWNPendingEntry* entry;
     XEventType type;
-    XPoint local;
-    XPoint global;
+    XTouchPoint point;
     if (ev->type != GenericEvent || g_xpwnXi2Opcode < 0 ||
         ev->xcookie.extension != g_xpwnXi2Opcode)
         return false;
@@ -3062,21 +3070,51 @@ static bool xpwn_dispatchXi2TouchEvent(const X11_XEvent* ev)
         return true; /* 其他 XI2 事件：消费但不处理。 */
     if (!XGetEventData(g_xpwnDisplay, cookie)) return true;
     dev = (XGuiXIDeviceEvent*)cookie->data;
+    /* 模拟报文过滤（独立复审 P2 修正）：不按 emulated 标志过滤注入。
+     * 其一，旧代码自补的 #define XIPointerEmulated (1<<2) 与本守卫内
+     * 已包含的 xorgproto XI2.h 同名宏（1<<16）异值重定义，且 1<<2 不
+     * 命中服务器置位的任何位（xcb-proto xinput.xml PointerEmulated=
+     * bit16），过滤恒假属死代码。其二，标志位按事件类分族：1<<16 在
+     * 指针事件是 XIPointerEmulated、在触摸事件是 XITouchPendingEnd
+     * （触摸的模拟标志为 XITouchEmulatingPointer 1<<17），指针族测试
+     * 用在触摸事件上会误吞合法报文。其三，本后端触摸选中生效时服务
+     * 器已对该窗口抑制核心指针模拟（去重自动化，见
+     * xpwn_xi2SelectTouch 注释），XI2 路不存在双投；XI2 不可用时本
+     * 分派路不被选中。即 XI2 emulated 过滤经评估移除：服务器已抑制
+     * + 未选指针掩码，真机语义需硬件验证。故触摸报文一律注入。 */
     entry = xpwn_findByNativeWindow(dev->event);
     if (entry && entry->m_window)
     {
         switch (cookie->evtype)
         {
-        case XI_TouchBegin: type = XEVENT_TYPE_TOUCH_BEGIN; break;
-        case XI_TouchUpdate: type = XEVENT_TYPE_TOUCH_UPDATE; break;
-        default: type = XEVENT_TYPE_TOUCH_END; break;
+        case XI_TouchBegin:
+            type = XEVENT_TYPE_TOUCH_BEGIN;
+            point.m_state = XTOUCHPOINT_STATE_PRESSED;
+            break;
+        case XI_TouchUpdate:
+            type = XEVENT_TYPE_TOUCH_UPDATE;
+            point.m_state = XTOUCHPOINT_STATE_UPDATED;
+            break;
+        default:
+            /* X11 无原生触摸 CANCEL 报文：TouchEnd 只映射 TOUCH_END。 */
+            type = XEVENT_TYPE_TOUCH_END;
+            point.m_state = XTOUCHPOINT_STATE_RELEASED;
+            break;
         }
-        local.x = (short)dev->event_x;
-        local.y = (short)dev->event_y;
-        global.x = (short)dev->root_x;
-        global.y = (short)dev->root_y;
-        XWindowSystemInterface_handleTouchEvent_ex(
-            entry->m_window, type, local, &global, 1,
+        /* detail = tracking id：per-id 透传（多点抓取的匹配依据）。 */
+        point.m_id = (int32_t)dev->detail;
+        /* 坐标先 lround 到物理像素（截 short 会环绕出负坐标），再经
+           xpwn_eventPosToLogical 入框（物理→逻辑，dpr==1.0f 直通），
+           对齐鼠标路 ButtonPress 的坐标口径。 */
+        point.m_position.x = (int)lround(dev->event_x);
+        point.m_position.y = (int)lround(dev->event_y);
+        point.m_globalPosition.x = (int)lround(dev->root_x);
+        point.m_globalPosition.y = (int)lround(dev->root_y);
+        point.m_pressure = 1.0f; /* 无 valuator 负载：契约缺省满压。 */
+        xpwn_eventPosToLogical(entry, &point.m_position,
+                               &point.m_globalPosition);
+        XWindowSystemInterface_handleTouchPoints_ex(
+            entry->m_window, type, &point, 1,
             (uint32_t)(dev->time & 0xffffffffu));
     }
     XFreeEventData(g_xpwnDisplay, cookie);

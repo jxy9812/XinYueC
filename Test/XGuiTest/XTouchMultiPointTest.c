@@ -4,8 +4,11 @@
  * @details    覆盖：per-id 序列路由（双触点交错 BEGIN/UPDATE/END 各自
  *             独立且不串扰）、单点序列行为与既有语义逐位一致（touch→
  *             mouse 仿真）、CANCEL 清全部抓取、XTouchEvent setPoints/
- *             points/clone/deinit 生命周期（无泄漏）。全部经 WSI 注入
- *             （handleTouchPoints_ex，与平台 XI2 分派同层，无需硬件）。
+ *             points/clone/deinit 生命周期（无泄漏）、主点手势状态机
+ *             （第 4 节：单击=左键、双击=DBL_CLICK、拖动=滚轮相位、
+ *             长按=右键自动弹 CONTEXT_MENU，惰性兜底路径驱动）。
+ *             全部经 WSI 注入（handleTouchPoints_ex，与平台 XI2 分派
+ *             同层，无需硬件）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XTouchMultiPointTest.h"
@@ -98,6 +101,90 @@ static XTouchPoint tp_point(int32_t id, int x, int y, int state)
     p.m_globalPosition = p.m_position;
     p.m_pressure = 1.0f;
     return p;
+}
+
+/* ==================== 第 4 节：主点手势状态机回归 ==================== */
+
+/* 手势计数 sink：正式 XCLASS 子类（继承 XWidget），覆写鼠标按下/释放/
+ * 双击/上下文菜单/滚轮虚槽计数。触摸事件保持基类默认忽略——手势状态机
+ * 只驱动未被接受的触摸序列（接受即走控件抓取，不合成）。鼠标按下/释放/
+ * 双击有意不 accept（对标 Qt 未处理路径；右键按下未被接受时框架才自动
+ * 合成 CONTEXT_MENU）；contextMenu/wheel 记录后 accept。 */
+typedef struct TpGestureSink
+{
+    XWidget m_base;      /**< 基类成员；必须为第一个。 */
+    int m_press;         /**< 左键 mousePress 次数。 */
+    int m_rightPress;    /**< 右键 mousePress 次数（长按诊断）。 */
+    int m_release;       /**< mouseRelease 次数（左右键合计）。 */
+    int m_dblClick;      /**< mouseDoubleClick 次数。 */
+    int m_contextMenu;   /**< contextMenu 次数。 */
+    int m_wheel;         /**< wheel 次数。 */
+    int m_lastAngleY;    /**< 最近一次滚轮 angleDelta.y。 */
+    int m_lastPhase;     /**< 最近一次滚轮 phase（XWheelEventPhase）。 */
+} TpGestureSink;
+
+XCLASS_DEFINE_BEGING(TpGestureSink)
+XCLASS_DEFINE_EXTEND_END(TpGestureSink, XWidget)
+
+static void TpGestureSink_mousePress(XWidget* self, XEvent* event)
+{
+    TpGestureSink* sink = (TpGestureSink*)self;
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
+    if (((const XMouseEvent*)event)->m_button == XMouseButton_RightButton)
+        ++sink->m_rightPress;
+    else
+        ++sink->m_press;
+    /* 有意忽略（不 accept）：右键未接受才触发框架 CONTEXT_MENU 合成。 */
+}
+
+static void TpGestureSink_mouseRelease(XWidget* self, XEvent* event)
+{
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
+    ++((TpGestureSink*)self)->m_release;
+}
+
+static void TpGestureSink_mouseDoubleClick(XWidget* self, XEvent* event)
+{
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK) return;
+    ++((TpGestureSink*)self)->m_dblClick;
+}
+
+static void TpGestureSink_contextMenu(XWidget* self, XEvent* event)
+{
+    (void)event;
+    ++((TpGestureSink*)self)->m_contextMenu;
+    XEvent_accept(event);
+}
+
+static void TpGestureSink_wheel(XWidget* self, XEvent* event)
+{
+    TpGestureSink* sink = (TpGestureSink*)self;
+    if (XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+    ++sink->m_wheel;
+    sink->m_lastAngleY = (int)((const XWheelEvent*)event)->m_angleDelta.y;
+    sink->m_lastPhase = XWheelEvent_phase((const XWheelEvent*)event);
+    XEvent_accept(event);
+}
+
+XVtable* TpGestureSink_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(TpGestureSink)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, TpGestureSink_mousePress);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, TpGestureSink_mouseRelease);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, TpGestureSink_mouseDoubleClick);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, TpGestureSink_contextMenu);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, TpGestureSink_wheel);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 注入单点触摸序列步（第 4 节；显式时间戳驱动长按惰性兜底）。 */
+static void tp_gestureStep(XWindow* xw, XEventType type, int32_t id,
+                           int x, int y, int state, uint32_t ts)
+{
+    XTouchPoint one[1];
+    one[0] = tp_point(id, x, y, state);
+    XWindowSystemInterface_handleTouchPoints_ex(xw, type, one, 1, ts);
 }
 
 int XTouchMultiPointTest_run(void)
@@ -236,6 +323,84 @@ int XTouchMultiPointTest_run(void)
                 XClassDelete(copy);
             }
         XClassDelete((XEvent*)ev);
+    }
+
+    /* 4. 主点手势状态机（tap/双击/拖动滚轮/长按惰性路径）：手势 sink
+     *    后入栈覆盖两既有 sink（childAt 逆序命中=最上层）；触摸保持未
+     *    接受→整序列走合成路径。显式时间戳使长按走惰性兜底（无需真等
+     *    800ms/事件环）；每断言组间注入 CANCEL 清状态。 */
+    {
+        TpGestureSink gs;
+        XWindow* xw = (XWindow*)XWidget_windowHandle(&top);
+        memset(&gs, 0, sizeof(gs));
+        XWidget_init(&gs.m_base, &top, 0);
+        XClassGetVtable(&gs.m_base) = TpGestureSink_class_init();
+        XWidget_setGeometry(&gs.m_base, 0, 0, 400, 300);
+        XWidget_show(&gs.m_base);
+        tp_expect(xw != NULL, "4.0 手势组：顶层窗口句柄就绪");
+
+        /* 4.1 单击=左键：press@BEGIN、release@END 同点（既有 touch→mouse
+         *    仿真 tap 子情况逐位兼容锚点）。 */
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 5, 100, 100,
+                       XTOUCHPOINT_STATE_PRESSED, 1000);
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 5, 100, 100,
+                       XTOUCHPOINT_STATE_RELEASED, 1050);
+        tp_expect(gs.m_press == 1 && gs.m_release == 1,
+                  "4.1 tap：press@BEGIN 且 release@END");
+        /* 组间 CANCEL：清手势单序列状态（序列已收口，此处应为空操作）。 */
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 5, 100, 100,
+                       XTOUCHPOINT_STATE_RELEASED, 1060);
+
+        /* 4.2 双击=DBL_CLICK：第二序列 BEGIN 在双击窗口（400ms）内且同点
+         *    →布防双击、不合成 press；END 合成 DBL_CLICK+RELEASE。 */
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 5, 100, 100,
+                       XTOUCHPOINT_STATE_PRESSED, 1200);
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 5, 100, 100,
+                       XTOUCHPOINT_STATE_RELEASED, 1250);
+        tp_expect(gs.m_dblClick == 1, "4.2 double-tap：DBL_CLICK 合成");
+        tp_expect(gs.m_press == 1 && gs.m_release == 2,
+                  "4.2 double-tap：第二序列不合成 press（release 配对）");
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 5, 100, 100,
+                       XTOUCHPOINT_STATE_RELEASED, 1260);
+
+        /* 4.3 拖动=滚轮：dy=80 超阈值→转拖（左键 press 以远偏移释放，
+         *    释放不落回命中靶）；UPDATE 合成 ScrollBegin 滚轮（angleDelta.y
+         *    取反<0，整格 -120）；END 补 ScrollEnd 收口。 */
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 5, 100, 100,
+                       XTOUCHPOINT_STATE_PRESSED, 1000);
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 5, 100, 180,
+                       XTOUCHPOINT_STATE_UPDATED, 1100);
+        tp_expect(gs.m_wheel >= 1 && gs.m_lastAngleY < 0 &&
+                  gs.m_lastPhase == XWheelEventPhase_ScrollBegin,
+                  "4.3 drag→wheel：ScrollBegin 且 angleDelta.y<0");
+        tp_expect(gs.m_press == 2 && gs.m_release == 2,
+                  "4.3 drag：press 随 BEGIN 合成、转换远偏移释放不落回靶");
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 5, 100, 180,
+                       XTOUCHPOINT_STATE_RELEASED, 1150);
+        tp_expect(gs.m_wheel == 2 &&
+                  gs.m_lastPhase == XWheelEventPhase_ScrollEnd,
+                  "4.3 drag：END 补 ScrollEnd 收口");
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 5, 5, 5,
+                       XTOUCHPOINT_STATE_RELEASED, 1160);
+
+        /* 4.4 长按=右键（惰性兜底路径）：UPDATE 到达时已超长按间隔
+         *    （1900-1000>=800）且未拖动→先触发长按：左键序列以远偏移
+         *    释放关断，合成右键按下（未接受→框架自动弹 CONTEXT_MENU）+
+         *    右键释放；其后的 END 不再合成任何鼠标事件。 */
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 5, 200, 200,
+                       XTOUCHPOINT_STATE_PRESSED, 1000);
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 5, 200, 200,
+                       XTOUCHPOINT_STATE_UPDATED, 1900);
+        tp_expect(gs.m_contextMenu == 1 && gs.m_rightPress == 1,
+                  "4.4 long-press：右键按下自动弹 CONTEXT_MENU");
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 5, 200, 200,
+                       XTOUCHPOINT_STATE_RELEASED, 1950);
+        tp_expect(gs.m_press == 3 && gs.m_release == 3 && gs.m_dblClick == 1,
+                  "4.4 long-press：左键序列远偏移关断、END 不再合成");
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 5, 200, 200,
+                       XTOUCHPOINT_STATE_RELEASED, 1960);
+
+        XClassDeinit(&gs.m_base);
     }
 
     XClassDeinit(&sinkB.m_base);

@@ -79,6 +79,10 @@
 #endif
 #endif /* XWINDOWEVENT_ON */
 #include "XGuiApplication.h"
+#if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
+#include "XStyleHints.h"        /* 长按间隔 mousePressAndHoldInterval 读取
+                                   （手势参数模式对标 XLineEdit.c 参数读取） */
+#endif /* XSTYLEHINTS_ON && XGUIAPPLICATION_ON */
 #if XINPUTMETHOD_ON
 #include "XInputMethod.h"       /* setInputMethodHints → 输入法 update 刷 hints 缓存 */
 #endif
@@ -229,11 +233,45 @@ static int g_touchGrabCount = 0;
 /** @brief touch→mouse 仿真开关（对标 Qt AA_SynthesizeMouseForUnhandledTouch-
  *         Events；Qt 6 对未处理触摸序列的鼠标仿真默认开启，应用可显式关闭）。 */
 static bool g_touchMouseSynthEnabled = true;
-/** @brief 当前触摸序列的 touch→mouse 仿真状态：BEGIN 未被任何控件接受时
- *         置位，END/CANCEL 清除（对标 Qt per-point synthesized-mouse 生命
- *         周期；单点模型简化为序列级标志）。同一 BEGIN 只走 touch 或仿真
- *         鼠标一条路。 */
-static bool g_touchMouseSynthActive = false;
+
+/** @brief 主点触摸手势状态机（单击/双击/长按/拖动滚轮；对标 Qt 触摸
+ *         序列的 synthesized-mouse 生命周期并按触屏交互需求扩展）：
+ *         单击=左键 press/release（既有 touch→mouse 仿真）、双击=
+ *         MOUSE_BUTTON_DBL_CLICK+RELEASE、长按=右键 press（框架自动弹
+ *         CONTEXT_MENU）、拖动=合成滚轮（ScrollBegin/Update/End 相位）。
+ *         模块级静态、一次只跟一个主点序列（多点时非主点只做触摸派发）；
+ *         仿真开关联动：同一 BEGIN 只走 touch 或合成一条路。 */
+typedef struct XWidgetTouchGesture
+{
+    bool     m_active;         /**< 主点序列进行中（BEGIN 起、END/CANCEL 止）。 */
+    int32_t  m_primaryId;      /**< 当前主点触点 id（手势只跟主点）。 */
+    int      m_beginX;         /**< BEGIN 主点位置（顶层局部坐标）。 */
+    int      m_beginY;
+    int      m_lastX;          /**< 最近一次主点位置（拖动累积增量基准）。 */
+    int      m_lastY;
+    int64_t  m_beginMs;        /**< 序列开始时刻（手势时钟域，0=无效）。 */
+    bool     m_synthPressSent; /**< 本序列已合成左键 press（收口须配对释放）。 */
+    bool     m_dragging;       /**< 已转入拖动滚动（此后 UPDATE 合成滚轮）。 */
+    bool     m_longFired;      /**< 长按已触发（本序列不再合成任何鼠标事件）。 */
+    bool     m_armedDouble;    /**< 双击已布防（tap 收口改发 DBL_CLICK）。 */
+    bool     m_wheelSent;      /**< 本序列已发过滚轮（首个 phase=ScrollBegin）。 */
+    int      m_accX;           /**< 拖动位移累积（px；转拖时清零，余数保留）。 */
+    int      m_accY;
+    XObject* m_longPressHost;  /**< 长按定时器宿主（模块内部专用 XObject 派
+                                    生类实例，非序列顶层——叶子类 timerEvent
+                                    覆写会吞掉顶层到期事件，见宿主注释）。 */
+    XTimerId m_longPressTimerId; /**< 长按定时器 id（XTIMER_INVALID_ID=未布防）。 */
+    XWidget* m_top;            /**< 序列真实顶层控件（合成事件/长按目标；
+                                    析构自清判据，非定时器宿主）。 */
+} XWidgetTouchGesture;
+
+/** @brief 手势状态机单序列状态（零初始化=无序列/无定时器）。 */
+static XWidgetTouchGesture g_touchGesture;
+/** @brief 跨序列：上次 tap 收口时刻（双击窗口判定基准；手势时钟域）。 */
+static int64_t g_touchLastTapEndMs = 0;
+/** @brief 跨序列：上次 tap 收口位置（顶层局部坐标；邻域判定基准）。 */
+static int g_touchLastTapEndX = 0;
+static int g_touchLastTapEndY = 0;
 /* 应用模态控件（对标 QApplication 模态登记；经 XWidget_Protected.h
  * 供 XDialog/XApplication 读写，VXWidgetWindow_event 做输入拦截）。 */
 static XWidget* g_applicationModalWidget = NULL;
@@ -318,6 +356,34 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
                                        XEventType type,
                                        const XTouchPoint* group, int count,
                                        XWidget* target, bool direct);
+/* ---- 主点触摸手势状态机（实现体紧随 synthesizeMouseFromTouch 之后） ---- */
+static int xwidget_gestureDoubleClickInterval(void);
+static int xwidget_gesturePressAndHoldInterval(void);
+static int xwidget_gestureStartDragDistance(void);
+static int64_t xwidget_gestureNowMs(void);
+static void xwidget_touchGestureKillTimer(void);
+static void xwidget_touchGestureReset(void);
+static XObject* xwidget_touchTimerHostInstance(void);
+static XPoint xwidget_gestureFarPoint(int beginX, int beginY);
+static void xwidget_touchGestureFireLongPress(XWidget* top);
+static void xwidget_touchGestureTimerExpired(void);
+static void xwidget_touchGestureLazyLongPress(XWidget* top);
+static void xwidget_touchGestureEmitWheel(XWidget* top, bool finalEnd,
+                                          const XPoint* topLocal,
+                                          const XPoint* globalPos);
+static void xwidget_touchGestureBegin(XWidget* top, const XTouchEvent* te,
+                                      const XPoint* topLocal,
+                                      bool primaryAccepted);
+static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
+                                       const XPoint* topLocal,
+                                       const XPoint* globalPos);
+static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
+                                    const XPoint* topLocal);
+static void xwidget_touchGestureAbort(XWidget* top);
+static void xwidget_touchGestureStep(XWidget* top, const XTouchEvent* te,
+                                     XEventType type, const XPoint* topLocal,
+                                     const XPoint* globalPos,
+                                     bool primaryAccepted);
 
 /** ==================== per-id 触点隐式抓取表（触摸派发域） ==================== */
 
@@ -1866,29 +1932,562 @@ static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
     return accepted;
 }
 
+/* ==================== 主点触摸手势状态机（单击/双击/长按/拖动滚轮） ==================== */
+
+/** @brief 查询双击判定间隔 ms（对标 QApplication::doubleClickInterval；
+ *         XApplication 不可用时回退 Qt 默认 400）。 */
+static int xwidget_gestureDoubleClickInterval(void)
+{
+#if XAPPLICATION_ON && XGUIAPPLICATION_ON
+    int ms = XApplication_doubleClickInterval(); /* 内部已带 400 回退。 */
+    if (ms > 0) return ms;
+#else
+    (void)0;
+#endif /* XAPPLICATION_ON && XGUIAPPLICATION_ON */
+    return 400;
+}
+
+/** @brief 查询长按判定间隔 ms（对标 QStyleHints::mousePressAndHoldInterval；
+ *         XStyleHints 不可用时回退 Qt 默认 800，见 XStyleHints.c 默认表）。 */
+static int xwidget_gesturePressAndHoldInterval(void)
+{
+#if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
+    XStyleHints* hints = XGuiApplication_styleHints();
+    if (hints) {
+        int ms = XStyleHints_mousePressAndHoldInterval(hints);
+        if (ms > 0) return ms;
+    }
+#else
+    (void)0;
+#endif /* XSTYLEHINTS_ON && XGUIAPPLICATION_ON */
+    return 800;
+}
+
+/** @brief 查询拖动启动距离 px（对标 QApplication::startDragDistance；
+ *         XApplication 不可用时回退 Qt 默认 10）。 */
+static int xwidget_gestureStartDragDistance(void)
+{
+#if XAPPLICATION_ON && XGUIAPPLICATION_ON
+    int dist = XApplication_startDragDistance(); /* 内部已带 10 回退。 */
+    if (dist >= 0) return dist;
+#else
+    (void)0;
+#endif /* XAPPLICATION_ON && XGUIAPPLICATION_ON */
+    return 10;
+}
+
+/** @brief 手势时钟：触摸时间戳域优先（同一序列各事件同域可比，对标 Qt
+ *         触摸事件 timestamp 一致性）；无同步触摸派发（时间戳 0）时回退
+ *         单调毫秒墙钟（约束文档时间源规则，见 XDateTime.h）。 */
+static int64_t xwidget_gestureNowMs(void)
+{
+#if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
+    {
+        uint32_t ts = XWindowSystemInterface_touchTimestamp();
+        if (ts != 0) return (int64_t)ts;
+    }
+#endif
+    return XDateTime_currentMSecsSinceEpoch();
+}
+
+/** @brief 撤长按定时器（宿主存活时经 XObject_killTimer 注销）。 */
+static void xwidget_touchGestureKillTimer(void)
+{
+    if (g_touchGesture.m_longPressTimerId == XTIMER_INVALID_ID) return;
+    if (g_touchGesture.m_longPressHost)
+        XObject_killTimer(g_touchGesture.m_longPressHost,
+                          g_touchGesture.m_longPressTimerId);
+    g_touchGesture.m_longPressTimerId = XTIMER_INVALID_ID;
+    g_touchGesture.m_longPressHost = NULL;
+}
+
+/** @brief 清全部单序列状态（不动跨序列 lastTapEnd 历史；定时器一并撤）。 */
+static void xwidget_touchGestureReset(void)
+{
+    xwidget_touchGestureKillTimer();
+    XMemset(&g_touchGesture, 0, sizeof(g_touchGesture));
+    g_touchGesture.m_longPressTimerId = XTIMER_INVALID_ID;
+    g_touchGesture.m_primaryId = 0;
+}
+
+/* ---- 长按定时器专用内部宿主（模块内部 XObject 派生类，静态存储） ---- */
+
+/** @brief 内部定时器宿主虚表枚举（仅重载 TimerEvent 槽；容量随 XObject）。 */
+XCLASS_DEFINE_BEGING(xwidget_touchTimerHost)
+XCLASS_DEFINE_EXTEND_END(xwidget_touchTimerHost, XObject)
+
+/**
+ * @brief 触摸长按定时器专用内部宿主（模块内部类，XObject 直接派生）。
+ * @details 独立复审 P2：十余个叶子类（XLineEdit/XTabBar/XMenu/
+ *          XAbstractButton/XAbstractSlider/XComboBox/XTitleBar/XToolButton
+ *          等）覆写 EXObject_TimerEvent 后或链回 XObject 默认（仅 accept），
+ *          或干脆忽略（XTabBar）——以序列顶层控件作宿主时，到期事件按
+ *          宿主最派生类虚表槽派发（XObject_timerEvent_base），被叶子槽
+ *          吞掉，长按静默退化为 UPDATE/END 惰性兜底（XMenu 弹出窗等现实
+ *          宿主全中）。宿主固定为本模块自持的专用类实例：其
+ *          EXObject_TimerEvent 槽即 xwidget_touchTimerHost_timerEvent，
+ *          到期事件必达；序列真实顶层另存 m_top（合成事件目标/析构自清
+ *          判据）。宿主为模块级静态存储对象，零堆分配（内存 Soak 门禁
+ *          不记账），惰性初始化一次（幂等守卫），创建后
+ *          Set_Class_IsHeap 保持 false；无父对象、非 widget
+ *          （is_widget=0）、无几何，不进任何控件枚举/命中路径。分发器经
+ *          XObject_eventDispatcher 的应用级回退取得（XObject.c:438-446），
+ *          无应用环境 startTimer 返回 XTIMER_INVALID_ID 静默不布防（惰性
+ *          兜底覆盖，既有口径）。 */
+typedef struct xwidget_touchTimerHost
+{
+    XObject m_base;      /**< 基类 XObject；必须是第一个成员。 */
+} xwidget_touchTimerHost;
+
+/** @brief 宿主唯一实例（静态存储；与 g_touchGesture 同一生命周期纪律）。 */
+static xwidget_touchTimerHost g_touchTimerHostInstance;
+/** @brief 宿主惰性初始化守卫（幂等；首次布防长按定时器时构造一次）。 */
+static bool g_touchTimerHostReady = false;
+
+/** @brief 宿主定时器事件槽：比对到期 timerId 与长按布防 id，命中则触发
+ *         手势长按超时处理（xwidget_touchGestureTimerExpired），未命中
+ *         忽略（宿主不承载其他定时器）。 */
+static void xwidget_touchTimerHost_timerEvent(XObject* object,
+                                              XTimerEvent* event)
+{
+    (void)object; /* 单例宿主，无需回读；手势状态自 g_touchGesture 取。 */
+    if (!event) return;
+    if (XTimerEvent_timerId(event) != XTIMER_INVALID_ID &&
+        XTimerEvent_timerId(event) == g_touchGesture.m_longPressTimerId) {
+        xwidget_touchGestureTimerExpired();
+        XEvent_accept((XEvent*)event);
+    }
+}
+
+/** @brief 宿主类虚函数表（继承 XObject 全部槽位 + 重载 TimerEvent）。 */
+static XVtable* xwidget_touchTimerHost_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(xwidget_touchTimerHost)
+    XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent,
+                             xwidget_touchTimerHost_timerEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 宿主实例初始化（对标 XTimer_init 惯用法：XObject_init 后改绑
+ *         本类虚表；XObject_init→XClass_init 已置 IsHeap=false，静态存储
+ *         零堆分配）。 */
+static void xwidget_touchTimerHost_init(xwidget_touchTimerHost* host)
+{
+    if (!host) return;
+    XObject_init(&host->m_base);
+    XClassSetVtable(&host->m_base, xwidget_touchTimerHost);
+    /* 静态存储宿主非堆对象：Set_Class_IsHeap 钉住 false（XObject_init→
+     * XClass_init 已置，此处显式复述口径防回归）。 */
+    Set_Class_IsHeap(&host->m_base, false);
+}
+
+/** @brief 取长按定时器宿主（惰性初始化一次；返回宿主基类指针供
+ *         XObject_startTimer_ms/XObject_killTimer 同源使用；线程=首次
+ *         调用处即手势所在 GUI 线程，XObject_init 就地绑定 threadData）。 */
+static XObject* xwidget_touchTimerHostInstance(void)
+{
+    if (!g_touchTimerHostReady)
+    {
+        g_touchTimerHostReady = true;
+        xwidget_touchTimerHost_init(&g_touchTimerHostInstance);
+    }
+    return &g_touchTimerHostInstance.m_base;
+}
+
+/** @brief 远偏移释放点：begin+(4096,4096)（XPoint 为 short，4096 偏移在
+ *         常规控件坐标域合法）；钳位 short 上限防回绕落回按钮。 */
+static XPoint xwidget_gestureFarPoint(int beginX, int beginY)
+{
+    XPoint p;
+    int x = beginX + 4096;
+    int y = beginY + 4096;
+    if (x > 32767) x = 32767;
+    if (y > 32767) y = 32767;
+    p.x = (short)x;
+    p.y = (short)y;
+    return p;
+}
+
+/** @brief 长按触发动作：远偏移释放关闭挂着的左键序列（press 靶的
+ *         pressed/hitButton 必假，防长按把按住中的按钮误判 click——对标
+ *         长按取消点击语义）+ 合成右键按下（未被接受时框架自动弹
+ *         CONTEXT_MENU，见 XWidget_dispatchPointerEvent 尾部契约）+ 右键
+ *         释放配对收口；longFired 后本序列 UPDATE/END 不再合成鼠标事件。 */
+static void xwidget_touchGestureFireLongPress(XWidget* top)
+{
+    XPoint beginPos;
+    XPoint farPos;
+    if (!g_touchGesture.m_active || g_touchGesture.m_dragging ||
+        g_touchGesture.m_longFired)
+        return;
+    g_touchGesture.m_longFired = true;
+    xwidget_touchGestureKillTimer();
+    beginPos.x = (short)g_touchGesture.m_beginX;
+    beginPos.y = (short)g_touchGesture.m_beginY;
+    farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
+                                     g_touchGesture.m_beginY);
+    if (g_touchGesture.m_synthPressSent) {
+        /* a) 已合成左键 press：远偏移释放关闭左键序列（释放沿命中管线
+         *    落在序列起点之外，不再构成按钮点击）。 */
+        XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                         XMouseButton_LeftButton,
+                                         XMouseButton_NoButton, &farPos);
+        g_touchGesture.m_synthPressSent = false;
+    }
+    /* b) 右键按下（自动弹 CONTEXT_MENU）+ 右键释放（普通点击对收口）。 */
+    XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                                     XMouseButton_RightButton,
+                                     XMouseButton_RightButton, &beginPos);
+    XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                     XMouseButton_RightButton,
+                                     XMouseButton_NoButton, &beginPos);
+}
+
+/** @brief 长按定时器到期命中处理（自 XWidget 级定时器事件重载抽出的独立
+ *         静态函数，宿主专属槽 xwidget_touchTimerHost_timerEvent 调用）：
+ *         先经 KillTimer 真正注销分发器侧定时器、再清布防标记（宿主+id，
+ *         令后续 KillTimer 幂等）——分发器注册的是周期型定时器
+ *         （registerTimer 零初始化 XTimerData，singleShot=false），时间
+ *         轮对非 singleShot 节点到期后无条件重挂，只清标记则本函数与
+ *         KillTimer 的 INVALID_ID 早退守卫互相空转，后续 End/Reset/
+ *         Abort/析构自清永远无法注销，每触发一次长按即永久泄漏
+ *         TimerInfo+时间轮节点+Fd 表项，且此后每周期空唤醒、堆分配一个
+ *         被宿主槽 id 比对守卫忽略的 TIMER 事件。槽运行于事件循环派发
+ *         上下文、注销只作用于时间轮侧，重入安全；清标记后队列残余的
+ *         重复 TIMER 事件因 id 已清被守卫忽略，不二次触发（另有
+ *         m_longFired 双保险）。再以序列真实顶层 m_top 触发长按
+ *         （FireLongPress 内复核未拖动、未 END/CANCEL、未触发）。 */
+static void xwidget_touchGestureTimerExpired(void)
+{
+    xwidget_touchGestureKillTimer();
+    /* 到期触发目标=序列真实顶层（非定时器宿主）。 */
+    xwidget_touchGestureFireLongPress(g_touchGesture.m_top);
+}
+
+/** @brief 长按惰性兜底：触屏按住不动没有事件流，定时器驱动为主；下一个
+ *         UPDATE/END 到达时若已超长按间隔且未拖动未触发，先行触发长按
+ *         （纯注入式测试无需真等 800ms，亦覆盖定时器槽被子类覆写的场景）。 */
+static void xwidget_touchGestureLazyLongPress(XWidget* top)
+{
+    int64_t now;
+    if (!g_touchGesture.m_active || g_touchGesture.m_dragging ||
+        g_touchGesture.m_longFired || g_touchGesture.m_beginMs <= 0)
+        return;
+    now = xwidget_gestureNowMs();
+    if (now < g_touchGesture.m_beginMs) return; /* 跨时钟域/回绕防御。 */
+    if (now - g_touchGesture.m_beginMs <
+        (int64_t)xwidget_gesturePressAndHoldInterval())
+        return;
+    xwidget_touchGestureFireLongPress(top);
+}
+
+/** @brief 拖动滚动合成滚轮事件（角度换算 k=2：60px 手指位移=1 格=120
+ *         角度）。非收口按「|角度|>=120 才发、发整格数、余数保留」节流；
+ *         finalEnd 发 phase=ScrollEnd 收口事件（余数角度随事件下发，
+ *         不足一格消费方按 0 步滚动自动吞掉，无害）。主导轴：横向角度
+ *         绝对值更大只填 x，否则只填 y。angleDelta.y 取反（手指下滑
+ *         显示下方内容，对标 XScrollArea wheelEvent 的
+ *         value=当前值-steps*60 口径）、angleDelta.x 不取反；
+ *         source=SynthesizedByQt、buttons/modifiers=0、position=主点
+ *         top-local、global=主点 global。 */
+static void xwidget_touchGestureEmitWheel(XWidget* top, bool finalEnd,
+                                          const XPoint* topLocal,
+                                          const XPoint* globalPos)
+{
+    int angleX = g_touchGesture.m_accX * 2;    /* 横向不取反。 */
+    int angleY = -(g_touchGesture.m_accY * 2); /* 纵向取反（见上注）。 */
+    int axAbs = angleX >= 0 ? angleX : -angleX;
+    int ayAbs = angleY >= 0 ? angleY : -angleY;
+    int n;
+    int phase;
+    XPoint angle;
+    XWheelEvent* wheel;
+    if (!finalEnd && axAbs < 120 && ayAbs < 120)
+        return;
+    angle.x = 0;
+    angle.y = 0;
+    if (finalEnd) {
+        /* 收口：携带全部余数角度并清累积（不足一格被消费方吞掉）。 */
+        if (axAbs > ayAbs) angle.x = angleX; else angle.y = angleY;
+        g_touchGesture.m_accX = 0;
+        g_touchGesture.m_accY = 0;
+    } else if (axAbs > ayAbs) {
+        n = angleX / 120;                 /* C 整除向零截断=整格数。 */
+        angle.x = n * 120;
+        g_touchGesture.m_accX -= n * 60;  /* 余数保留（px 域，n*120/2）。 */
+    } else {
+        n = angleY / 120;
+        angle.y = n * 120;
+        g_touchGesture.m_accY += n * 60;  /* 纵向带符号，余数同域保留。 */
+    }
+    wheel = XWheelEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                  XEVENT_TYPE_WHEEL, topLocal, globalPos,
+                                  &angle, XMouseButton_NoButton,
+                                  (XKeyboardModifiers)XKeyboardModifier_NoModifier);
+    if (!wheel) return;
+    phase = g_touchGesture.m_wheelSent ? XWheelEventPhase_ScrollUpdate
+                                       : XWheelEventPhase_ScrollBegin;
+    if (finalEnd) phase = XWheelEventPhase_ScrollEnd;
+    XWheelEvent_setPhase(wheel, phase);
+    XWheelEvent_setSource(wheel, XWheelEventSource_SynthesizedByQt);
+    g_touchGesture.m_wheelSent = true;
+    (void)XWidget_dispatchPointerEvent(top, (XEvent*)wheel);
+    XClassDelete((XEvent*)wheel);
+}
+
+/** @brief BEGIN 布防：记录序列基准（主点/位置/时刻）；双击窗口内且起点
+ *         邻近上次 tap 收口 → 布防双击（本序列 BEGIN 不合成左键 press，
+ *         tap 收口改发 DBL_CLICK+RELEASE）；否则按既有仿真合成左键 press；
+ *         并布防长按定时器（宿主=模块内部专用静态宿主对象，见
+ *         xwidget_touchTimerHost 注释）。上一序列未收口（平台漏
+ *         END/CANCEL 或第二指 BEGIN 打断）时先按 CANCEL 语义兜底收口。 */
+static void xwidget_touchGestureBegin(XWidget* top, const XTouchEvent* te,
+                                      const XPoint* topLocal,
+                                      bool primaryAccepted)
+{
+    int64_t now;
+    int dblMs;
+    int dist;
+    int dx;
+    int dy;
+    if (g_touchGesture.m_active)
+        xwidget_touchGestureAbort(top);
+    if (primaryAccepted) {
+        /* 触摸被控件接受：序列归接受控件所有（同一 BEGIN 只走 touch 或
+         * 合成一条路，对标 AA_SynthesizeMouseForUnhandledTouchEvents 的
+         * 未处理序列语义），状态机整体不跟进——既不合成 press/滚轮，
+         * 也不布防长按。 */
+        return;
+    }
+    now = xwidget_gestureNowMs();
+    dblMs = xwidget_gestureDoubleClickInterval();
+    dist = xwidget_gestureStartDragDistance();
+    g_touchGesture.m_active = true;
+    g_touchGesture.m_primaryId = xwidget_touchPrimaryId(te);
+    g_touchGesture.m_beginX = topLocal->x;
+    g_touchGesture.m_beginY = topLocal->y;
+    g_touchGesture.m_lastX = topLocal->x;
+    g_touchGesture.m_lastY = topLocal->y;
+    g_touchGesture.m_beginMs = now;
+    g_touchGesture.m_accX = 0;
+    g_touchGesture.m_accY = 0;
+    g_touchGesture.m_wheelSent = false;
+    g_touchGesture.m_dragging = false;
+    g_touchGesture.m_longFired = false;
+    g_touchGesture.m_synthPressSent = false;
+    /* 双击布防：上次 tap 收口后 dblMs 内、起点与收口点邻域（manhattan
+     * 距离<=startDragDistance，对标 QStyleHints 双击窗口+拖动阈值语义）。 */
+    dx = topLocal->x - g_touchLastTapEndX;
+    dy = topLocal->y - g_touchLastTapEndY;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    g_touchGesture.m_armedDouble =
+        (g_touchLastTapEndMs > 0 && now >= g_touchLastTapEndMs &&
+         now - g_touchLastTapEndMs <= (int64_t)dblMs && (dx + dy) <= dist);
+    if (!g_touchGesture.m_armedDouble) {
+        /* tap 首段：合成左键 press（对标 Qt
+         * AA_SynthesizeMouseForUnhandledTouchEvents；button 与 buttons
+         * 一致携带 LeftButton）。双击布防序列不合成 press。 */
+        g_touchGesture.m_synthPressSent = true;
+        XWidget_synthesizeMouseFromTouch(top,
+            XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton,
+            XMouseButton_LeftButton, topLocal);
+    }
+    /* 长按定时器：触屏按住不动没有事件流，必须定时器驱动（另有
+     * UPDATE/END 的惰性兜底覆盖无事件环的注入式路径）。宿主=模块内部
+     * 专用定时器宿主对象（叶子类 timerEvent 覆写会吞掉顶层到期事件，见
+     * xwidget_touchTimerHost 注释）；序列真实顶层记入 m_top。 */
+    g_touchGesture.m_top = top;
+    g_touchGesture.m_longPressHost = xwidget_touchTimerHostInstance();
+    g_touchGesture.m_longPressTimerId = XObject_startTimer_ms(
+        g_touchGesture.m_longPressHost,
+        (uint64_t)xwidget_gesturePressAndHoldInterval(),
+        XTimerType_CoarseTimer);
+}
+
+/** @brief UPDATE 推进：惰性长按兜底先行；超拖动阈值转拖（撤长按表、
+ *         远偏移释放关闭左键序列），此后累积位移合成滚轮；未转拖时维持
+ *         既有 touch→mouse 仿真（MOUSE_MOVE 随 UPDATE）。 */
+static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
+                                       const XPoint* topLocal,
+                                       const XPoint* globalPos)
+{
+    int dx;
+    int dy;
+    (void)te; /* 主点位置经 topLocal 快照承载，te 仅入参对称保留。 */
+    if (!g_touchGesture.m_active)
+        return;
+    xwidget_touchGestureLazyLongPress(top);
+    if (g_touchGesture.m_longFired)
+        return; /* 长按后本序列不再合成任何鼠标事件。 */
+    if (!g_touchGesture.m_dragging) {
+        dx = topLocal->x - g_touchGesture.m_beginX;
+        dy = topLocal->y - g_touchGesture.m_beginY;
+        if (dx < 0) dx = -dx;
+        if (dy < 0) dy = -dy;
+        if ((dx + dy) <= xwidget_gestureStartDragDistance()) {
+            /* 未超阈值：维持按住态，MOUSE_MOVE 随行（button=NoButton、
+             * buttons 保持按压，与旧仿真块逐位一致）。 */
+            if (g_touchGesture.m_synthPressSent)
+                XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_MOVE,
+                                                 XMouseButton_NoButton,
+                                                 XMouseButton_LeftButton,
+                                                 topLocal);
+            return;
+        }
+        /* 转拖：撤长按表；挂着的左键 press 以远偏移释放关闭（防止后续
+         * 滚轮序列仍处于左键按压态），累积器自序列起点重新计。 */
+        g_touchGesture.m_dragging = true;
+        xwidget_touchGestureKillTimer();
+        if (g_touchGesture.m_synthPressSent) {
+            XPoint farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
+                                                    g_touchGesture.m_beginY);
+            XWidget_synthesizeMouseFromTouch(top,
+                XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+                XMouseButton_NoButton, &farPos);
+            g_touchGesture.m_synthPressSent = false;
+        }
+        g_touchGesture.m_accX = 0;
+        g_touchGesture.m_accY = 0;
+    }
+    /* 累积本帧位移（增量基准=上次主点位置）并发整格滚轮。 */
+    g_touchGesture.m_accX += topLocal->x - g_touchGesture.m_lastX;
+    g_touchGesture.m_accY += topLocal->y - g_touchGesture.m_lastY;
+    g_touchGesture.m_lastX = topLocal->x;
+    g_touchGesture.m_lastY = topLocal->y;
+    xwidget_touchGestureEmitWheel(top, false, topLocal, globalPos);
+}
+
+/** @brief END 收口：拖动→补 phase=ScrollEnd 滚轮；双击布防且 tap 收口→
+ *         合成 DBL_CLICK+RELEASE（代替 press+release）；普通合成序列→
+ *         RELEASE（同点）；tap 收口记录跨序列 lastTapEnd（双击窗口基准）；
+ *         长按已触发→不再合成任何鼠标事件。末尾清全部单序列状态。 */
+static void xwidget_touchGestureEnd(XWidget* top, const XTouchEvent* te,
+                                    const XPoint* topLocal)
+{
+    XPoint globalPos = te->m_globalPosition;
+    bool tapDone = false;
+    if (!g_touchGesture.m_active)
+        return;
+    xwidget_touchGestureLazyLongPress(top); /* 惰性兜底先行。 */
+    if (g_touchGesture.m_dragging) {
+        xwidget_touchGestureEmitWheel(top, true, topLocal, &globalPos);
+    } else if (!g_touchGesture.m_longFired) {
+        if (g_touchGesture.m_armedDouble) {
+            /* 双击：DBL_CLICK（button 与 buttons 携带 LeftButton）+ 配对
+             * RELEASE，代替普通 tap 的 press+release。 */
+            XWidget_synthesizeMouseFromTouch(top,
+                XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK, XMouseButton_LeftButton,
+                XMouseButton_LeftButton, topLocal);
+            XWidget_synthesizeMouseFromTouch(top,
+                XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+                XMouseButton_NoButton, topLocal);
+        } else if (g_touchGesture.m_synthPressSent) {
+            /* 单击：release@END 同点（与旧仿真块逐位一致）。 */
+            XWidget_synthesizeMouseFromTouch(top,
+                XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
+                XMouseButton_NoButton, topLocal);
+        }
+        tapDone = (g_touchGesture.m_synthPressSent ||
+                   g_touchGesture.m_armedDouble);
+    }
+    if (tapDone) {
+        /* tap 收口记录：下一序列 BEGIN 的双击窗口/邻域判定基准。 */
+        g_touchLastTapEndMs = xwidget_gestureNowMs();
+        g_touchLastTapEndX = topLocal->x;
+        g_touchLastTapEndY = topLocal->y;
+    }
+    xwidget_touchGestureReset();
+}
+
+/** @brief 序列异常收口（CANCEL / 新 BEGIN 打断 / 顶层析构）：撤长按表；
+ *         挂着的左键 press 以远偏移释放关闭（拖动/长按路径已自行关断则
+ *         不重复）；清全部单序列状态。跨序列 lastTapEnd 历史保留——
+ *         CANCEL 不构成 tap，亦不抹既有记录。 */
+static void xwidget_touchGestureAbort(XWidget* top)
+{
+    if (!g_touchGesture.m_active)
+        return;
+    xwidget_touchGestureKillTimer();
+    if (g_touchGesture.m_synthPressSent && !g_touchGesture.m_longFired &&
+        !g_touchGesture.m_dragging) {
+        XPoint farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
+                                                g_touchGesture.m_beginY);
+        XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                         XMouseButton_LeftButton,
+                                         XMouseButton_NoButton, &farPos);
+    }
+    xwidget_touchGestureReset();
+}
+
+/** @brief 手势状态机分派入口（主点驱动；多点时非主点只做触摸派发不进
+ *         手势——UPDATE/END 按主点 id 过滤，交错多点序列的他人帧不动
+ *         状态机）。 */
+static void xwidget_touchGestureStep(XWidget* top, const XTouchEvent* te,
+                                     XEventType type, const XPoint* topLocal,
+                                     const XPoint* globalPos,
+                                     bool primaryAccepted)
+{
+    switch (type) {
+    case XEVENT_TYPE_TOUCH_BEGIN:
+        xwidget_touchGestureBegin(top, te, topLocal, primaryAccepted);
+        break;
+    case XEVENT_TYPE_TOUCH_UPDATE:
+        if (!g_touchGesture.m_active ||
+            xwidget_touchPrimaryId(te) != g_touchGesture.m_primaryId)
+            break;
+        xwidget_touchGestureUpdate(top, te, topLocal, globalPos);
+        break;
+    case XEVENT_TYPE_TOUCH_END:
+        if (!g_touchGesture.m_active ||
+            xwidget_touchPrimaryId(te) != g_touchGesture.m_primaryId)
+            break;
+        /* 真帧聚合守卫：主点未随本帧 RELEASED（他人点先行收尾的负载）
+           不收口手势，序列继续等主点自身的 END 帧。旧单点负载（无列表）
+           不设此门，行为等价旧单指针模型。 */
+        if (te->m_points && te->m_pointCount > 0 &&
+            te->m_points[0].m_state != XTOUCHPOINT_STATE_RELEASED)
+            break;
+        xwidget_touchGestureEnd(top, te, topLocal);
+        break;
+    default:
+        /* CANCEL 收口在 XWidget_dispatchTouchEvent 的 CANCEL 尾部无条件
+           执行（不设门）：本帧主点 id 可能已被他人抓取（真帧聚合），带门
+           跳过会让合成路径序列连带着长按定时器残留到下一序列。 */
+        break;
+    }
+}
+
 /** @brief 触摸事件命中派发：per-id 触点隐式抓取 + 按靶分组派发 +
- *         touch→mouse 仿真（对标 QWidgetWindow::handleTouchEvent /
+ *         主点手势状态机（对标 QWidgetWindow::handleTouchEvent /
  *         QApplicationPrivate::translateRawTouchEvent，Qt 6.8
  *         qapplication.cpp:3791-3842 per-point 契约）。
  * @details Qt 语义：BEGIN（Pressed）逐点 childAt 命中；被接受的触点按 id
  *          记入隐式抓取表（activateImplicitTouchGrab 记于触点）；非
  *          Pressed 逐点取各自 target，抓取期查无该 id 的点丢弃
  *          （:3824-3826 if(!target) continue）；连续同靶点合并为一次
- *          投递（:3840-3842 按靶分组）。跨顶层按各点各自 grab 的
- *          topLevel 换算转投。END 按事件携带 id 逐 id 摘表，CANCEL 全清。
- *          TouchBegin 未被任何控件接受的序列进入鼠标仿真（对标
- *          AA_SynthesizeMouseForUnhandledTouchEvents，默认开启）：合成
- *          MOUSE_BUTTON_PRESS（坐标同触摸点）、UPDATE→MOUSE_MOVE、
- *          END→MOUSE_BUTTON_RELEASE，复用鼠标命中/派发管线；同一 BEGIN
- *          只走 touch 或仿真鼠标一条路。多点模型下仿真门控仅由主点 id
- *          驱动（主点被抓取即整批不合成；非主点不单独合成）。无触点
- *          列表的旧单点负载以主点字段合成单点、id 取主点哨兵，行为
- *          等价旧单指针模型。 */
+ *          投递（:3840-3842 按靶分组）。真帧聚合负载按触点状态过滤：
+ *          BEGIN 只派发 PRESSED、UPDATE 只派发 UPDATED、END 只派发
+ *          RELEASED（STATIONARY 随行点不重复投递；旧单点负载不过滤）。
+ *          跨顶层按各点各自 grab 的 topLevel 换算转投。END 按事件携带
+ *          id 逐 id 摘表，CANCEL 全清。
+ *          TouchBegin 未被任何控件接受的序列进入主点手势状态机（对标
+ *          AA_SynthesizeMouseForUnhandledTouchEvents，默认开启）：单击
+ *          合成 MOUSE_BUTTON_PRESS@BEGIN/RELEASE@END、UPDATE 随行
+ *          MOUSE_MOVE、拖动转合成滚轮（ScrollBegin/Update/End）、双击
+ *          合成 DBL_CLICK+RELEASE、长按（定时器+惰性兜底）合成右键
+ *          press/release（未被接受时框架自动弹 CONTEXT_MENU），复用鼠标
+ *          命中/派发管线；同一 BEGIN 只走 touch 或合成一条路。多点模型
+ *          下仿真门控仅由主点 id 驱动（主点被抓取即整批不合成；非主点
+ *          不单独合成、不进手势）。无触点列表的旧单点负载以主点字段
+ *          合成单点、id 取主点哨兵，行为等价旧单指针模型。 */
 static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
 {
     XTouchEvent* te = (XTouchEvent*)event;
     XEventType type;
     XPoint topLocal;
+    XPoint topGlobal;
     int32_t primaryId;
     bool anyAccepted = false;
     bool primaryAccepted = false;
@@ -1907,9 +2506,8 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
     /* 顶层局部坐标快照：后续命中派发会把事件位置改写为接收者局部坐标，
        仿真鼠标必须以同一触摸主点坐标进入鼠标管线。 */
     topLocal = XWidget_eventPosition(event);
-    /* 新序列开始：防御性清理上一序列可能残留的仿真状态（平台漏发 END）。 */
-    if (type == XEVENT_TYPE_TOUCH_BEGIN)
-        g_touchMouseSynthActive = false;
+    /* 主点全局坐标快照：合成滚轮事件的 global 负载（与 topLocal 同点）。 */
+    topGlobal = te->m_globalPosition;
     /* 逐点路由（对标 translateRawTouchEvent 逐点循环）：BEGIN 逐点
        childAt 命中；非 BEGIN 逐点取各自抓取靶，抓取期查无该 id 丢点。
        抓取表为空（非抓取期）时保持既有主点命中形态——touch→mouse
@@ -1921,6 +2519,19 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
         bool direct;
         if (te->m_points) {
             pt = te->m_points[i];
+            /* 多点状态过滤（修真帧聚合双投）：BEGIN 只派发 PRESSED 点、
+               UPDATE 只派发 UPDATED 点、END 只派发 RELEASED 点——真帧
+               负载会把未变化触点以 STATIONARY 随行（第二指落下帧尤其
+               如此），不过滤则旧触点被二次投递 TouchBegin/重复 UPDATE
+               （对标 Qt6 QEventPoint::State 按状态拆分派发语义）。旧单点
+               负载（下方 else 分支合成）不过滤，与旧单指针模型逐位一致。 */
+            if ((type == XEVENT_TYPE_TOUCH_BEGIN &&
+                 pt.m_state != XTOUCHPOINT_STATE_PRESSED) ||
+                (type == XEVENT_TYPE_TOUCH_UPDATE &&
+                 pt.m_state != XTOUCHPOINT_STATE_UPDATED) ||
+                (type == XEVENT_TYPE_TOUCH_END &&
+                 pt.m_state != XTOUCHPOINT_STATE_RELEASED))
+                continue;
         } else {
             /* 旧单点负载（无触点列表）：主点字段合成单触点，id 取主点
                哨兵。 */
@@ -1981,31 +2592,19 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
             if (groupHasPrimary) primaryAccepted = true;
         }
     }
-    /* touch→mouse 仿真：仅主点 id 驱动——主点已被触点隐式抓取时整批
-       不合成；BEGIN 未被接受（主点无抓取且命中组未被接受）时开启，
-       之后整条序列持续合成，END 合成释放后复位（对标 Qt per-point
-       状态机的单点收敛；回归锁「touch→mouse 仿真 itemClicked」实证
-       TouchBegin 被接受才抓取、不合成）。 */
-    if (g_touchMouseSynthEnabled && !xwidget_touchGrabFind(primaryId)) {
-        if (type == XEVENT_TYPE_TOUCH_BEGIN && !primaryAccepted) {
-            g_touchMouseSynthActive = true;
-            /* 对标 Qt：合成 press 携带 LeftButton（button 与 buttons 一致）。 */
-            XWidget_synthesizeMouseFromTouch(top,
-                XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_LeftButton,
-                XMouseButton_LeftButton, &topLocal);
-        } else if (type == XEVENT_TYPE_TOUCH_UPDATE && g_touchMouseSynthActive) {
-            /* move：button 为 NoButton，buttons 保持按压态。 */
-            XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_MOVE,
-                XMouseButton_NoButton, XMouseButton_LeftButton, &topLocal);
-        } else if (type == XEVENT_TYPE_TOUCH_END && g_touchMouseSynthActive) {
-            /* release：button 为 LeftButton，buttons 为剩余按压（空）。 */
-            XWidget_synthesizeMouseFromTouch(top,
-                XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
-                XMouseButton_NoButton, &topLocal);
-        }
-    }
-    /* Qt 语义：序列结束（END）按事件携带 id 逐 id 摘表；CANCEL 全清；
-       两态均复位仿真状态。 */
+    /* 主点手势状态机（接管旧无条件 touch→mouse 仿真块）：单击=左键
+       press@BEGIN/release@END（tap 子情况与旧实现逐位一致）、双击=
+       DBL_CLICK+RELEASE、长按=右键（自动弹 CONTEXT_MENU）、拖动=合成
+       滚轮（ScrollBegin/Update/End）。仅主点 id 驱动——主点已被触点
+       隐式抓取时整批不进状态机；BEGIN 未被接受（主点无抓取且命中组未
+       被接受）时进入合成路径（对标 Qt per-point 状态机的单点收敛；
+       回归锁「touch→mouse 仿真 itemClicked」实证 TouchBegin 被接受才
+       抓取、不合成）。 */
+    if (g_touchMouseSynthEnabled && !xwidget_touchGrabFind(primaryId))
+        xwidget_touchGestureStep(top, te, type, &topLocal, &topGlobal,
+                                 primaryAccepted);
+    /* Qt 语义：序列结束（END）按事件携带 id 逐 id 摘表；CANCEL 全清
+       （手势单序列状态已由上方状态机收口复位）。 */
     if (type == XEVENT_TYPE_TOUCH_END) {
         if (te->m_points) {
             int k;
@@ -2014,10 +2613,12 @@ static bool XWidget_dispatchTouchEvent(XWidget* top, XEvent* event)
         } else {
             xwidget_touchGrabRemoveId(primaryId);
         }
-        g_touchMouseSynthActive = false;
     } else if (type == XEVENT_TYPE_TOUCH_CANCEL) {
+        /* CANCEL 全清：手势单序列收口不设门（无条件）——合成路径序列的
+           长按定时器/挂起 press 必须随序列异常终止回收，即便本帧主点 id
+           已被他人抓取导致上方状态机带门跳过。 */
+        xwidget_touchGestureAbort(top);
         xwidget_touchGrabClear();
-        g_touchMouseSynthActive = false;
     }
     return anyAccepted;
 }
@@ -2479,6 +3080,11 @@ XVtable* XWidget_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXWidget_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXWidget_move);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXWidget_event);
+    /* 注意：本类不重载 EXObject_TimerEvent（对标 QWidget：控件无定时器
+       事件语义，恢复既有 vtable）。触摸长按定时器由模块内部专用宿主对象
+       承载——叶子子类覆写本槽后链回 XObject 默认或干脆忽略（XTabBar），
+       以顶层控件作宿主时到期事件会被吞掉，见 xwidget_touchTimerHost
+       注释。 */
     return XVTABLE_DEFAULT;
 }
 
@@ -2761,6 +3367,12 @@ static void VXWidget_deinit(XWidget* self)
         XWidget_clearFocusBase(self, XFocusReason_Other);
     if (g_mouseGrabWidget == self)
         g_mouseGrabWidget = NULL;
+    /* 触摸长按序列析构自清（登记非空即活对象纪律）：本控件若是在按
+       序列的真实顶层（m_top；定时器宿主恒为模块内部专用静态宿主对象
+       xwidget_touchTimerHost，永不析构），同步撤表并复位手势单序列状
+       态，防到期触发打在垂死对象上。 */
+    if (g_touchGesture.m_top == self)
+        xwidget_touchGestureReset();
     /* 销毁路径全表遍历摘除该控件全部触点抓取表项（per-id 表；多触点
        抓取同一控件时旧单指针比较会漏摘其余表项）。 */
     xwidget_touchGrabRemoveWidget(self);

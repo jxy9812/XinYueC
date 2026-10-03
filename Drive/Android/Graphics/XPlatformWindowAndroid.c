@@ -8,9 +8,12 @@
  *               surface 尺寸/格式/行距；present 由 ANativeWindow_lock
  *               直写 + unlock 提交（软件渲染路径，对标 linuxfb memcpy）。
  *               GPU（EGL/Vulkan）路径待后续批次接入。
- *             - 输入：NativeActivity 主线程回调（AInputQueue）经
- *               XWindowSystemInterface_handleMouseEvent 注入触摸（单点）
- *               —— 映射为左键 PRESS/RELEASE/MOVE。
+ *             - 输入：NativeActivity 主线程回调（AInputQueue）抽整帧
+ *               真触摸（多点 ≤8：逐点 id/raw 坐标 + 事件时间戳）入队，
+ *               渲染线程经 XWindowSystemInterface_handleTouchPoints_ex
+ *               注入 —— 映射为 TOUCH BEGIN/UPDATE/END/CANCEL 四态多点
+ *               （对标 QTouchEvent 的 QEventPoint 列表；笔悬停
+ *               HOVER_MOVE 仍走单点鼠标 MOVE，双击由框架层手势判定）。
  *             - 生命周期：ANativeActivityCallbacks onResume/onPause/
  *               onDestroy 与 surface Created/Changed/Destroyed 全部落到
  *               本文件的静态状态机；XGui 侧零感知。
@@ -48,7 +51,6 @@
 #include <android/looper.h>
 #include <android/log.h>
 #include <string.h>
-#include <stdlib.h>
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
@@ -72,12 +74,28 @@ bool XAndroid_moveTaskToBack(void);
 
 /* ==================== 模块状态（单屏单窗模型） ==================== */
 
-/** @brief 待注入触摸事件（动作 + 窗口本地坐标）。 */
+/** @brief 单触点快照（帧内一员：触点 id + 窗口本地逻辑坐标）。 */
+typedef struct XPadTouchPoint
+{
+    int32_t id;   /**< AMotionEvent_getPointerId（跨线程稳定标识）。 */
+    int32_t x;    /**< 逻辑化后窗口本地坐标（§6.1，见 onInputEvent）。 */
+    int32_t y;
+} XPadTouchPoint;
+
+/** 单帧触点上限（Android 多指常见 ≤5，8 留裕量；超出截断）。 */
+#define XPAD_MAX_TOUCH_POINTS 8
+
+/** @brief 待注入触摸帧（完整多点快照：动作 + 全部触点 + 时间戳）。
+ *  @note  Android 语义：每个 motion 事件自带当前全部触点（POINTER_UP
+ *         的离屏点仍在列表内），帧即事件原样快照，平台侧无需跨帧重建
+ *         触点表。action 存未掩码原值：低 8 位动作码 + 高 8 位
+ *         ACTION_POINTER_INDEX（POINTER_DOWN/UP 取变化点下标要用）。 */
 typedef struct XPadTouchEvent
 {
-    int32_t action;
-    int32_t x;
-    int32_t y;
+    int32_t action;                      /**< 未掩码动作值。 */
+    int32_t count;                       /**< 触点数（<=XPAD_MAX_TOUCH_POINTS）。 */
+    XPadTouchPoint pts[XPAD_MAX_TOUCH_POINTS]; /**< 逐点快照。 */
+    uint32_t timestampMs;                /**< AMotionEvent_getEventTime（ns→ms）。 */
 } XPadTouchEvent;
 
 /** @brief 坐标空间标定分支（设计 §4.3 探针：不预设 origin/raw 的测量
@@ -102,19 +120,25 @@ typedef struct XPadState
     bool m_surfaceDirty;              /**< surface 新建/变尺寸，待重绘。 */
 
     /* 触摸事件队列：库内 XRingBuffer（字节环形缓冲，动态扩容），以
-       XPadTouchEvent 为单位读写。input tap 的 DOWN/UP 同毫秒到达，
+       XPadTouchEvent 整帧为单位读写。input tap 的 DOWN/UP 同毫秒到达，
        单槽互相覆盖丢事件（实测 RELEASE 被 DOWN 覆盖，工具按钮的
-       释放弹菜单永不触发），故必须排队；队列懒初始化。 */
+       释放弹菜单永不触发），故必须排队；队列懒初始化。
+       按压态不再跨事件增量维护（旧 m_pointerDown 已撤销）：每帧自带
+       完整触点列表，按压与否按帧 count>0 直读；双击亦改由框架层手势
+       状态机统一判定（平台合成 DBL_CLICK 已撤销）。 */
     XRingBuffer m_touchQueue;         /**< 事件队列。 */
     bool m_queueReady;                /**< 队列已初始化。 */
-    bool m_pointerDown;               /**< 当前有手指按下。 */
 
-    /* 双击检测（平台合成 DBL_CLICK：桌面由 WM_LBUTTONDBLCLK/徐 X11
-       按钮计数生成，触屏/注入路径必须自己合成）。 */
-    int64_t m_lastUpMs;               /**< 上次 UP 时刻（单调毫秒）。 */
-    int32_t m_lastUpX, m_lastUpY;     /**< 上次 UP 位置。 */
-    bool m_haveLastUp;                /**< 已有有效上次 UP。 */
-    bool m_nextPressIsDouble;         /**< 下个 PRESS 按双击合成。 */
+    /* MOVE 帧逐点状态缓存（对标 Win32 WM_POINTER 修复）：Android 的
+       MOVE 动作不指明变化触点（Win32 每条消息自带变化 id），全帧
+       UPDATED 会让静止伴指逐帧重投到抓取靶、架空控件层的 STATIONARY
+       过滤。按触点 id 记上一注入帧坐标：MOVE 帧内坐标与缓存相同者标
+       STATIONARY、变化者标 UPDATED；DOWN/POINTER_DOWN/POINTER_UP/UP/
+       CANCEL 的状态映射不变，缓存随 CANCEL/全部抬起（UP）清空、其余
+       动作整体替换为当前帧快照（新 DOWN 全量重建，残 id 不跨序列
+       残留）。仅注入侧（事件线程）在 m_mutex 锁内读写。 */
+    XPadTouchPoint m_lastPts[XPAD_MAX_TOUCH_POINTS]; /**< 按 id 的上次坐标。 */
+    int m_lastCount;                  /**< 上帧快照点数（0=无可比缓存）。 */
 
     /* ---- DPI/坐标空间标定（设计 §1/§4.3/§5/§6）：UI 线程（生命周期
        回调）写、框架事件线程读，一律持 m_mutex。首帧密度在
@@ -141,8 +165,7 @@ static XPadState g_xpad = {
     PTHREAD_COND_INITIALIZER,
     false, false, false, false,
     { 0 }, false,
-    false,
-    0, 0, 0, false, false,
+    { { 0 } }, 0,
     /* DPI/标定默认：dpr=1、PHYSICAL、scale=1 —— 全部安全退化为现网
        dpr=1 行为（JNI 读数失败时的兜底链，设计 §10-13）。 */
     1.0f, 160, 160.0f, 160.0f, false,
@@ -990,7 +1013,7 @@ bool XPlatformNativeWindow_processPendingEvents(void)
         pthread_mutex_lock(&g_xpad.m_mutex);
     }
 
-    /* ---- 2. 触摸注入（目标 = 最后一个可见图层；注入在锁外） ---- */
+    /* ---- 2. 触摸注入（多点帧；目标 = 最后一个可见图层；注入在锁外） ---- */
     {
         XPadLayer* targetLayer = NULL;
         int ti;
@@ -998,63 +1021,149 @@ bool XPlatformNativeWindow_processPendingEvents(void)
             if (g_xpadWindows[ti].visible) { targetLayer = &g_xpadWindows[ti]; break; }
         if (targetLayer) {
             XWindow* target = targetLayer->win;
-            XPadTouchEvent evt;
+            XPadTouchEvent frame;
             size_t got;
-            while ((got = XRingBuffer_read(&g_xpad.m_touchQueue, &evt,
-                                           sizeof(evt))) == sizeof(evt)) {
+            while ((got = XRingBuffer_read(&g_xpad.m_touchQueue, &frame,
+                                           sizeof(frame))) == sizeof(frame)) {
                 XEventType type = XEVENT_TYPE_NONE;
-                XMouseButton button = XMouseButton_NoButton;
-                XMouseButton buttons = XMouseButton_NoButton;
-                XPoint pos;
-                int32_t action = evt.action;
+                XTouchPoint pts[XPAD_MAX_TOUCH_POINTS];
+                int32_t baseAction = frame.action & AMOTION_EVENT_ACTION_MASK;
+                int actionIndex = (int)((frame.action &
+                    AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                    AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+                int n = frame.count;
+                int i;
                 had = true;
-                /* BlueStacks 等报屏幕坐标，WSA 报窗口本地坐标——按图层
-                   登记的窗口原点换算成控件树坐标（原点 0 平台不受影响）。 */
-                pos.x = evt.x - targetLayer->pos.x;
-                pos.y = evt.y - targetLayer->pos.y;
-                if (action == AMOTION_EVENT_ACTION_DOWN) {
-                    buttons = XMouseButton_LeftButton;
-                    g_xpad.m_pointerDown = true;
-                    if (g_xpad.m_nextPressIsDouble) {
-                        /* 双击合成（对标桌面 WM_LBUTTONDBLCLK/X11 按钮
-                           计数）：快速二次按下直接发 DBL_CLICK，消费后
-                           复位——标题栏双击最大化/还原依赖本类型。 */
-                        type = XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK;
-                        g_xpad.m_nextPressIsDouble = false;
+                if (n <= 0) continue;          /* 畸形空帧：不可注入 */
+                if (n > XPAD_MAX_TOUCH_POINTS) n = XPAD_MAX_TOUCH_POINTS;
+                if (actionIndex >= n) actionIndex = n - 1;  /* 畸形下标兜底 */
+                /* 动作映射（K3 多点收口，对标 QWindowSystemInterface::
+                   handleTouchEvent 的 QEventPoint 列表形态）：
+                   - DOWN         → BEGIN（单点 PRESSED）
+                   - POINTER_DOWN → BEGIN（actionIndex 点 PRESSED、其余
+                     STATIONARY——新指落屏携带全帧快照，框架按点命中/
+                     按 id 抓取）
+                   - MOVE         → UPDATE（坐标较上帧变化者 UPDATED、
+                     未变者 STATIONARY——按 m_lastPts 缓存逐点判定）
+                   - POINTER_UP   → END（actionIndex 点 RELEASED、其余
+                     STATIONARY）
+                   - UP           → END（末点 RELEASED）
+                   - CANCEL       → CANCEL（全部 RELEASED） */
+                switch (baseAction) {
+                case AMOTION_EVENT_ACTION_DOWN:
+                    type = XEVENT_TYPE_TOUCH_BEGIN;
+                    for (i = 0; i < n; ++i)
+                        pts[i].m_state = XTOUCHPOINT_STATE_PRESSED;
+                    break;
+                case AMOTION_EVENT_ACTION_POINTER_DOWN:
+                    type = XEVENT_TYPE_TOUCH_BEGIN;
+                    for (i = 0; i < n; ++i)
+                        pts[i].m_state = (i == actionIndex)
+                            ? XTOUCHPOINT_STATE_PRESSED
+                            : XTOUCHPOINT_STATE_STATIONARY;
+                    break;
+                case AMOTION_EVENT_ACTION_MOVE:
+                    type = XEVENT_TYPE_TOUCH_UPDATE;
+                    /* 逐点对照上次坐标缓存（m_lastPts）：坐标未变=静止
+                       伴指，标 STATIONARY（控件层只派发 UPDATED 点，全帧
+                       UPDATED 会把静止伴指逐帧重投到抓取靶，同 Win32
+                       修复口径）；缓存无此 id（队列重置后的首帧等）保守
+                       标 UPDATED，维持旧行为下限。 */
+                    for (i = 0; i < n; ++i) {
+                        int j;
+                        bool moved = true;
+                        for (j = 0; j < g_xpad.m_lastCount; ++j) {
+                            if (g_xpad.m_lastPts[j].id == frame.pts[i].id) {
+                                moved = (g_xpad.m_lastPts[j].x !=
+                                             frame.pts[i].x ||
+                                         g_xpad.m_lastPts[j].y !=
+                                             frame.pts[i].y);
+                                break;
+                            }
+                        }
+                        pts[i].m_state = moved
+                            ? XTOUCHPOINT_STATE_UPDATED
+                            : XTOUCHPOINT_STATE_STATIONARY;
                     }
-                    else {
-                        type = XEVENT_TYPE_MOUSE_BUTTON_PRESS;
+                    break;
+                case AMOTION_EVENT_ACTION_POINTER_UP:
+                    type = XEVENT_TYPE_TOUCH_END;
+                    for (i = 0; i < n; ++i)
+                        pts[i].m_state = (i == actionIndex)
+                            ? XTOUCHPOINT_STATE_RELEASED
+                            : XTOUCHPOINT_STATE_STATIONARY;
+                    break;
+                case AMOTION_EVENT_ACTION_UP:
+                    type = XEVENT_TYPE_TOUCH_END;
+                    for (i = 0; i < n; ++i)
+                        pts[i].m_state = XTOUCHPOINT_STATE_RELEASED;
+                    break;
+                case AMOTION_EVENT_ACTION_CANCEL:
+                    type = XEVENT_TYPE_TOUCH_CANCEL;
+                    for (i = 0; i < n; ++i)
+                        pts[i].m_state = XTOUCHPOINT_STATE_RELEASED;
+                    break;
+                case AMOTION_EVENT_ACTION_HOVER_MOVE:
+                    /* 笔悬停（悬停语义=无触点按压，帧 count>0 但非按压
+                       状态，触摸四态无法表达）：保留既有单点鼠标 MOVE
+                       注入，供悬浮光标/悬停预热（buttons 恒 NoButton，
+                       与 Android hover 仅在无按压时上报的契约一致）。 */
+                    {
+                        XPoint pos;
+                        XPoint global;
+                        /* BlueStacks 等报屏幕坐标，WSA 报窗口本地坐标——
+                           按图层登记的窗口原点换算（原点 0 平台不受影响）；
+                           单 surface 模型下表面坐标即全局坐标。 */
+                        pos.x = frame.pts[0].x - targetLayer->pos.x;
+                        pos.y = frame.pts[0].y - targetLayer->pos.y;
+                        global.x = frame.pts[0].x;
+                        global.y = frame.pts[0].y;
+                        pthread_mutex_unlock(&g_xpad.m_mutex);
+                        XWindowSystemInterface_handleMouseEvent_ex(
+                            target, XEVENT_TYPE_MOUSE_MOVE,
+                            XMouseButton_NoButton, XMouseButton_NoButton,
+                            XKeyboardModifier_NoModifier, pos, &global,
+                            frame.timestampMs);
+                        pthread_mutex_lock(&g_xpad.m_mutex);
                     }
-                    button = XMouseButton_LeftButton;
+                    continue;
+                default:
+                    continue;   /* 其余动作（HOVER_ENTER/EXIT/SCROLL 等，
+                                   与既有口径一致）静默丢弃 */
                 }
-                else if (action == AMOTION_EVENT_ACTION_UP) {
-                    type = XEVENT_TYPE_MOUSE_BUTTON_RELEASE;
-                    button = XMouseButton_LeftButton;
-                    g_xpad.m_pointerDown = false;
+                /* 逐点填充触点负载：本地=帧坐标减图层原点（同上换算）；
+                   global=表面坐标（单 surface 模型下即全局坐标，沿用旧
+                   口径——CSD 拖拽锚依赖全局坐标算增量）；无压力 valuator
+                   按 1.0（XWindowEvent.h 契约）。 */
+                for (i = 0; i < n; ++i) {
+                    pts[i].m_id = frame.pts[i].id;
+                    pts[i].m_position.x = frame.pts[i].x - targetLayer->pos.x;
+                    pts[i].m_position.y = frame.pts[i].y - targetLayer->pos.y;
+                    pts[i].m_globalPosition.x = frame.pts[i].x;
+                    pts[i].m_globalPosition.y = frame.pts[i].y;
+                    pts[i].m_pressure = 1.0f;
                 }
-                else if (action == AMOTION_EVENT_ACTION_MOVE ||
-                         action == AMOTION_EVENT_ACTION_HOVER_MOVE) {
-                    type = XEVENT_TYPE_MOUSE_MOVE;
-                    if (g_xpad.m_pointerDown) buttons = XMouseButton_LeftButton;
+                /* 帧后刷新坐标缓存：UP（全部抬起）/CANCEL 清空，残快照
+                   不得泄入下一触摸序列；其余动作整体替换为当前帧快照
+                   （POINTER_UP 的离屏点随下一帧自然剔除）。仍在锁内。 */
+                if (baseAction == AMOTION_EVENT_ACTION_UP ||
+                    baseAction == AMOTION_EVENT_ACTION_CANCEL) {
+                    g_xpad.m_lastCount = 0;
+                }
+                else {
+                    int ci;
+                    for (ci = 0; ci < n; ++ci)
+                        g_xpad.m_lastPts[ci] = frame.pts[ci];
+                    g_xpad.m_lastCount = n;
                 }
                 pthread_mutex_unlock(&g_xpad.m_mutex);
-                if (type != XEVENT_TYPE_NONE) {
-                    /* 全局坐标必须下发：标题栏 CSD 拖拽锚用
-                       XMouseEvent_globalPosition 算增量（本地系随窗口
-                       自移而自指），恒 (0,0) 会让拖动纹丝不动。单
-                       surface 模型下 surface 坐标即全局坐标。 */
-                    XPoint global;
-                    global.x = evt.x;
-                    global.y = evt.y;
-                    XWindowSystemInterface_handleMouseEvent_ex(target,
-                                                            type,
-                                                            button, buttons,
-                                                            XKeyboardModifier_NoModifier,
-                                                            pos, &global, 0);
-                    if (type != XEVENT_TYPE_MOUSE_MOVE)
-                        XPAD_LOGI("inject: type=%d local=(%d,%d) delivered=1",
-                                  (int)type, pos.x, pos.y);
-                }
+                XWindowSystemInterface_handleTouchPoints_ex(target, type, pts,
+                                                            n,
+                                                            frame.timestampMs);
+                if (baseAction != AMOTION_EVENT_ACTION_MOVE)
+                    XPAD_LOGI("inject touch: type=%d count=%d primary=(%d,%d)",
+                              (int)type, n, pts[0].m_position.x,
+                              pts[0].m_position.y);
                 pthread_mutex_lock(&g_xpad.m_mutex);
             }
         }
@@ -1391,15 +1500,29 @@ void XPad_onInputEvent(AInputEvent* event)
     int originY = 0;
     float dpr;
     XPadViewSpace viewSpace;
-    float rawX;
-    float rawY;
-    XPadTouchEvent evt;
+    XPadTouchEvent frame;
+    int32_t baseAction;
+    int n;
+    int i;
+    size_t written;
 
     if (type != AINPUT_EVENT_TYPE_MOTION) return;
     /* origin 查询（JNI 往返）在锁外：不持 g_xpad.m_mutex 做 JNI（与
        探针同纪律，H4）；查询失败按 (0,0) 处理——退化路径仍按标定分支
        换算，不退化为混算（§6.1）。 */
     XPlatformScreen_queryOrigin(&originX, &originY);
+    /* AInputEvent 仅在本回调内有效（UI 线程）：整帧快照（全部触点
+       id/raw 坐标 + 时间戳）必须就地抽成值拷贝入队，严禁把 AInputEvent
+       指针跨线程携带。 */
+    frame.action = AMotionEvent_getAction(event);  /* 未掩码：含 INDEX 位 */
+    baseAction = frame.action & AMOTION_EVENT_ACTION_MASK;
+    n = AMotionEvent_getPointerCount(event);
+    if (n > XPAD_MAX_TOUCH_POINTS) n = XPAD_MAX_TOUCH_POINTS;
+    frame.count = n;
+    /* getEventTime 为 ns；框架触摸时间戳口径为 ms（X11 XIDeviceEvent
+       的 time 同口径，经 handleTouchPoints_ex 透传给合成器）。 */
+    frame.timestampMs =
+        (uint32_t)(AMotionEvent_getEventTime(event) / 1000000LL);
     pthread_mutex_lock(&g_xpad.m_mutex);
     if (!g_xpad.m_queueReady) {
         XRingBuffer_init(&g_xpad.m_touchQueue, 512);
@@ -1409,54 +1532,47 @@ void XPad_onInputEvent(AInputEvent* event)
     viewSpace = g_xpad.m_viewSpace;
     if (!(dpr > 0.0f)) dpr = 1.0f;
     /* 统一坐标口径 + 反缩放（§6.1：输入逻辑化的唯一承担者=平台入口
-       归一化）。getRawX/Y（屏幕坐标）减窗口屏幕原点得窗口本地坐标，
-       再按标定分支折算框架逻辑 px，两分支产物均为换算后逻辑坐标：
+       归一化）。逐点 getRawX/Y（屏幕坐标）减窗口屏幕原点得窗口本地
+       坐标，再按标定分支折算框架逻辑 px，两分支产物均为换算后逻辑
+       坐标：
        - PHYSICAL（origin 为物理 px）：evt = (raw − origin) / dpr
        - LOGICAL （origin 为逻辑 px）：evt = raw / dpr − origin       */
-    rawX = AMotionEvent_getRawX(event, 0);
-    rawY = AMotionEvent_getRawY(event, 0);
-    evt.action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
-    if (viewSpace == XPAD_VIEW_SPACE_LOGICAL) {
-        evt.x = (int32_t)(rawX / dpr + 0.5f) - originX;
-        evt.y = (int32_t)(rawY / dpr + 0.5f) - originY;
+    for (i = 0; i < n; ++i) {
+        float rawX = AMotionEvent_getRawX(event, i);
+        float rawY = AMotionEvent_getRawY(event, i);
+        frame.pts[i].id = (int32_t)AMotionEvent_getPointerId(event, i);
+        if (viewSpace == XPAD_VIEW_SPACE_LOGICAL) {
+            frame.pts[i].x = (int32_t)(rawX / dpr + 0.5f) - originX;
+            frame.pts[i].y = (int32_t)(rawY / dpr + 0.5f) - originY;
+        }
+        else {
+            frame.pts[i].x = (int32_t)((rawX - (float)originX) / dpr + 0.5f);
+            frame.pts[i].y = (int32_t)((rawY - (float)originY) / dpr + 0.5f);
+        }
     }
-    else {
-        evt.x = (int32_t)((rawX - (float)originX) / dpr + 0.5f);
-        evt.y = (int32_t)((rawY - (float)originY) / dpr + 0.5f);
+    written = XRingBuffer_write(&g_xpad.m_touchQueue, &frame, sizeof(frame));
+    if (written != sizeof(frame))
+    {
+        /* 半帧写入（扩容加块/块写失败返回部分写入）：108 字节定长读
+         * 契约下字节流一旦错位，此后每个"帧"都是两帧拼接的垃圾且永
+         * 不自愈——锁内重置队列丢弃本帧，下一帧从块边界重新开始
+         * （丢一帧远好于全流撕碎/幻影触摸）。 */
+        XRingBuffer_reset(&g_xpad.m_touchQueue);
+        XPAD_LOGI("touch queue: partial write %u/%u, reset & drop frame",
+                  (unsigned)written, (unsigned)sizeof(frame));
     }
-    if (evt.action == AMOTION_EVENT_ACTION_DOWN) {
-        /* 双击检测（经典算法，检测必须在 DOWN 侧）：本次 DOWN 距
-           上次 UP ≤400ms 且 ≤12px → 该 PRESS 按双击合成。阈值恒 12
-           （G2：比较的 evt.x/y 与 m_lastUpX/Y 在两标定分支下均为换算
-           后逻辑坐标，与桌面基线 12 逻辑 px 一致，不乘 dpr）。旧版
-           放在 UP 侧比较"两次 UP"拖后一拍（三击才出一次双击），且
-           m_haveLastUp 从未置 true 导致永不触发。 */
-        struct timespec now;
-        int64_t nowMs;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        nowMs = (int64_t)now.tv_sec * 1000LL + now.tv_nsec / 1000000LL;
-        g_xpad.m_nextPressIsDouble =
-            g_xpad.m_haveLastUp &&
-            nowMs - g_xpad.m_lastUpMs <= 400 &&
-            abs(evt.x - g_xpad.m_lastUpX) <= 12 &&
-            abs(evt.y - g_xpad.m_lastUpY) <= 12;
-    }
-    else if (evt.action == AMOTION_EVENT_ACTION_UP) {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        g_xpad.m_lastUpMs =
-            (int64_t)now.tv_sec * 1000LL + now.tv_nsec / 1000000LL;
-        g_xpad.m_lastUpX = evt.x;
-        g_xpad.m_lastUpY = evt.y;
-        g_xpad.m_haveLastUp = true;
-    }
-    XRingBuffer_write(&g_xpad.m_touchQueue, &evt, sizeof(evt));
     pthread_cond_broadcast(&g_xpad.m_cond);
     pthread_mutex_unlock(&g_xpad.m_mutex);
-    /* 诊断：动作与窗口本地坐标（AMotionEvent 已是窗口空间）。 */
-    XPAD_LOGI("touch: action=%d x=%.0f y=%.0f",
-              (int)(AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK),
-              AMotionEvent_getX(event, 0), AMotionEvent_getY(event, 0));
+    /* 诊断保持低频：仅帧边界动作打点（MOVE/HOVER_MOVE 连发逐帧静默，
+       避免 logcat 刷屏——移动手势每秒可上百帧）。 */
+    if (baseAction != AMOTION_EVENT_ACTION_MOVE &&
+        baseAction != AMOTION_EVENT_ACTION_HOVER_MOVE)
+        XPAD_LOGI("touch frame: action=%d index=%d count=%d t=%u",
+                  (int)baseAction,
+                  (int)((frame.action &
+                         AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+                        AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT),
+                  n, (unsigned)frame.timestampMs);
 }
 
 void XPad_setRunning(bool running)

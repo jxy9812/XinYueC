@@ -1,24 +1,27 @@
 ﻿/******************************************************************************
  * @file       XPlatformFbInput_posix.h
  * @brief      Linux fbdev 模式触摸输入驱动（linux/input.h evdev 读取 +
- *             指针事件注入）：fbdev 直写显示（XPlatformFramebuffer_posix）
- *             的配套输入端。
+ *             多点触摸事件注入）：fbdev 直写显示
+ *             （XPlatformFramebuffer_posix）的配套输入端。
  * @details    嵌入式单屏无窗口系统场景下，X11 输入路径不存在（无 X 连接，
  *             XPlatformNativeWindow 回落虚拟 WId），触摸事件没有任何进入
  *             框架的通道。本文件补齐该通道：阻塞读取交给事件循环，本实
- *             现按非阻塞逐帧读取 evdev 报文，把单点触摸（ABS_X/ABS_Y 或
- *             MT 协议 ABS_MT_POSITION_X/Y + BTN_TOUCH/ABS_MT_TRACKING_ID/
- *             ABS_PRESSURE）归一为面板像素坐标，复用框架既有注入面投递：
+ *             现按非阻塞逐帧读取 evdev 报文，把多点触摸（协议 B：
+ *             ABS_MT_SLOT + ABS_MT_POSITION_X/Y + ABS_MT_TRACKING_ID
+ *             身份，8 槽静态表；纯 ST 屏退化单槽 id=0）归一为面板像
+ *             素坐标，复用框架既有注入面投递：
  *             - 坐标校准：/etc/pointercal（QWS 7 参矩阵，路径可经
  *               XPLATFORM_FBINPUT_POINTERCAL 宏覆盖）存在时优先按厂商
  *               矩阵变换（涵盖轴交换/旋转/镜像与触摸区边沿）；缺席回退
  *               「EVIOCGABS 范围线性归一」，再退坐标直通+钳位；
  *             - 目标窗口：XGuiApplication_topLevelAt（全局坐标命中顶层，
  *               对标 QGuiApplication 的事件窗口命中）；
- *             - 注入入口：XWindowSystemInterface_handleMouseEvent_ex
- *               （指针按下/移动/抬起；控件级命中/抓取/模态拦截由
- *               VXWidgetWindow_event -> XWidget_dispatchPointerEvent
- *               既有管线完成，本文件不重复实现）。
+ *             - 注入入口：XWindowSystemInterface_handleTouchPoints_ex
+ *               （多点触摸按下/移动/抬起，触点携带身份 id 与 Qt
+ *               QEventPoint 四态；控件级命中/per-id 触摸抓取/touch→
+ *               mouse 仿真/模态拦截由 VXWidgetWindow_event ->
+ *               XWidget_dispatchTouchEvent 既有管线完成，本文件不重复
+ *               实现）。
  *             轮询挂钩复用 XAbstractEventDispatcher_addPollCallback（与
  *             XGuiApplication 原生事件泵同链），每轮 processEvents 抽干
  *             evdev 积压报文，不新增线程。
@@ -28,8 +31,8 @@
  *             节点优先读环境变量 XPLATFORM_FBINPUT_DEVICE，未设置用编译
  *             期宏 XPLATFORM_FBINPUT_DEVICE（默认 "/dev/input/event0"）；
  *             环境变量 XPLATFORM_FBINPUT=0 可在编译开启时运行期禁用。
- *             内存体系：全程无堆分配，状态静态；单线程主循环设计（与
- *             fbdev 显示驱动同口径），不加锁。
+ *             内存体系：全程无堆分配，状态静态（触点槽表定容 8 槽）；
+ *             单线程主循环设计（与 fbdev 显示驱动同口径），不加锁。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XPLATFORMFBINPUT_POSIX_H
@@ -67,7 +70,9 @@ extern "C" {
  * @details    流程：XSystem_environment(XPLATFORM_FBINPUT_DEVICE) 解析
  *             节点（"0" 视为禁用）-> open(O_RDONLY|O_NONBLOCK) ->
  *             EVIOCGNAME 打印一次设备标识 -> EVIOCGBIT(EV_ABS) 探测
- *             ABS_X/ABS_MT 与取值范围（EVIOCGABS，坐标归一基准）->
+ *             MT 轴位分流协议（具备 ABS_MT_SLOT/ABS_MT_POSITION_X 按
+ *             协议 B 8 槽模型，缺席退纯 ST 单槽）-> EVIOCGABS 取值
+ *             范围（坐标归一基准；纯 MT 屏补 ABS_MT_POSITION 范围）->
  *             加载 /etc/pointercal 厂商校准（存在即优先）-> addPollCallback
  *             注册读泵。读泵注册要求事件分发器已存在：须在 XGuiApplication
  *             创建之后调用（板级引导顺序：fbdev 显示驱动注册可在应用创建

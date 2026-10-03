@@ -36,7 +36,11 @@
  *               注入入口，与 X11 FocusOut 处理约定一致）；WM_CLOSE ->
  *               handleCloseEvent 接受后隐藏并销毁原生窗口；WM_SHOWWINDOW
  *               仅记录最后映射状态供事件去抖；WM_ERASEBKGND 恒返回 1
- *               避免 GDI 闪烁；
+ *               避免 GDI 闪烁；WM_POINTERDOWN/UPDATE/UP/CAPTURECHANGED
+ *               -> 真触摸注入（对标 Qt qwindowspointerhandler.cpp：帧
+ *               聚合 + PT_PEN 压力归一，消费后 OS 不再提升合成鼠标；
+ *               拒掌/系统取消无独立消息，按 POINTER_FLAG_CANCELED 位随
+ *               常规消息映射 TOUCH_CANCEL）；
  *             - 消息泵：processPendingEvents 用 PeekMessage(PM_REMOVE)
  *               非阻塞泵空全部待决窗口消息（TranslateMessage +
  *               DispatchMessage），WM_QUIT 只记录不派发；waitForEvents 用
@@ -1002,6 +1006,465 @@ static XEventType xpwn_mouseMessageEvent(UINT msg, WPARAM wParam,
     return type;
 }
 
+/* ==================== WM_POINTER 真触摸注入（对标 Qt qwindowspointerhandler.cpp） ====================
+ * 触摸/笔输入不再依赖 OS 提升的合成鼠标消息：Win8+ 的 WM_POINTER* 系列
+ * 消息在此直接消费并经 XWindowSystemInterface_handleTouchPoints_ex 注入
+ * 真触摸事件（帧聚合：一次消息取同帧全部触点）。消息被消费（return 0）
+ * 后 DefWindowProc 不再生成提升鼠标消息——真触摸与既有鼠标路防双投双
+ * 保险（第二保险：鼠标分支入口的 MI_WP_SIGNATURE 签名过滤）。
+ * winuser.h 的 pointer API 声明需 WINVER >= 0x0602（本文件基线
+ * _WIN32_WINNT=0x0600），对齐 WM_DPICHANGED 的本地兜底口径：消息号本地
+ * #define、结构本地镜像（逐字段对照 SDK tagPOINTER_*，二进制布局等价）、
+ * 函数经 GetProcAddress 动态装载（Win7 无此 API：装载失败整节旁路，
+ * WM_POINTER* 落回默认过程，行为与既往一致）。 */
+
+/** @brief WM_POINTER 消息号与 id 提取宏（SDK 需 WINVER >= 0x0602，本地
+ *         兜底）。注意消息族 0x0245/0x0246/0x0247 之后即 0x0249
+ *         （WM_POINTERENTER）——不存在 WM_POINTERCANCELED（0x0248 未
+ *         分配，现行 SDK winuser.h 与 MS Learn Pointer Input 消息清单
+ *         同证）；触点取消经 POINTER_FLAG_CANCELED 位随常规消息（典型
+ *         WM_POINTERUP）投递，见 xpwn_handlePointerTouch。 */
+#ifndef WM_POINTERUPDATE
+#define WM_POINTERUPDATE 0x0245
+#endif
+#ifndef WM_POINTERDOWN
+#define WM_POINTERDOWN 0x0246
+#endif
+#ifndef WM_POINTERUP
+#define WM_POINTERUP 0x0247
+#endif
+#ifndef WM_POINTERCAPTURECHANGED
+#define WM_POINTERCAPTURECHANGED 0x024C
+#endif
+#ifndef GET_POINTERID_WPARAM
+#define GET_POINTERID_WPARAM(wParam) (LOWORD(wParam))
+#endif
+
+/** @brief pointer 输入型别（SDK 为 enum tagPOINTER_INPUT_TYPE，需
+ *         WINVER >= 0x0602；本地兜底取值一致）。 */
+#ifndef PT_TOUCH
+#define PT_POINTER 1
+#define PT_TOUCH 2
+#define PT_PEN 3
+#define PT_MOUSE 4
+#endif
+
+/** @brief pointer 状态标志位（winuser.h 于 WINVER >= 0x0602 块内定义；
+ *         对齐消息号兜底口径——SDK 有定义时直接用 winuser.h 宏，基线
+ *         0x0600 下按 SDK 原值本地兜底。本节只读这两位）。 */
+#ifndef POINTER_FLAG_INCONTACT
+#define POINTER_FLAG_INCONTACT 0x00000004
+#endif
+#ifndef POINTER_FLAG_CANCELED
+#define POINTER_FLAG_CANCELED 0x00008000
+#endif
+
+/** @brief POINTER_INFO 本地镜像（逐字段对照 winuser.h tagPOINTER_INFO，
+ *         字段宽度/自然对齐与 SDK 完全一致，二进制布局等价）。 */
+typedef struct XPwnPointerInfo
+{
+    DWORD  pointerType;      /**< POINTER_INPUT_TYPE（DWORD 型别枚举）。 */
+    UINT32 pointerId;        /**< pointer 标识（WM_POINTER wParam LOWORD）。 */
+    UINT32 frameId;          /**< 同帧计数（帧聚合分组）。 */
+    UINT32 pointerFlags;     /**< POINTER_FLAGS 位集。 */
+    HANDLE sourceDevice;     /**< 源设备句柄。 */
+    HWND   hwndTarget;       /**< 目标窗口。 */
+    POINT  ptPixelLocation;  /**< 屏幕物理像素坐标（PMv2 口径）。 */
+    POINT  ptHimetricLocation;
+    POINT  ptPixelLocationRaw;
+    POINT  ptHimetricLocationRaw;
+    DWORD  dwTime;           /**< 事件时刻（与 GetMessageTime 同源）。 */
+    UINT32 historyCount;
+    INT32  InputData;
+    DWORD  dwKeyStates;
+    UINT64 PerformanceCount;
+    int    ButtonChangeType; /**< POINTER_BUTTON_CHANGE_TYPE（enum=int）。 */
+} XPwnPointerInfo;
+
+/** @brief POINTER_TOUCH_INFO 本地镜像（逐字段对照 winuser.h
+ *         tagPOINTER_TOUCH_INFO）。 */
+typedef struct XPwnPointerTouchInfo
+{
+    XPwnPointerInfo pointerInfo;
+    UINT32 touchFlags;  /**< TOUCH_FLAGS。 */
+    UINT32 touchMask;   /**< TOUCH_MASK（可选字段有效性位集）。 */
+    RECT   rcContact;
+    RECT   rcContactRaw;
+    UINT32 orientation;
+    UINT32 pressure;    /**< 0~1024 设备单位（本节未消费，压力取缺省）。 */
+} XPwnPointerTouchInfo;
+
+/** @brief POINTER_PEN_INFO 本地镜像（逐字段对照 winuser.h
+ *         tagPOINTER_PEN_INFO）。 */
+typedef struct XPwnPointerPenInfo
+{
+    XPwnPointerInfo pointerInfo;
+    UINT32 penFlags;    /**< PEN_FLAGS。 */
+    UINT32 penMask;     /**< PEN_MASK。 */
+    UINT32 pressure;    /**< 0~1024 设备单位（1024=满压）。 */
+    UINT32 rotation;
+    INT32  tiltX;
+    INT32  tiltY;
+} XPwnPointerPenInfo;
+
+/** @brief 单帧触点聚合容量上限（防御；多点触控实际远达不到）。 */
+#define XPWN_MAX_POINTER_FRAME 8
+
+typedef BOOL(WINAPI* XPWN_PFN_GetPointerType)(UINT32 pointerId,
+                                              DWORD* pointerType);
+typedef BOOL(WINAPI* XPWN_PFN_GetPointerFrameTouchInfo)(
+    UINT32 pointerId, UINT32* pointerCount,
+    XPwnPointerTouchInfo* touchInfo);
+typedef BOOL(WINAPI* XPWN_PFN_GetPointerPenInfo)(UINT32 pointerId,
+                                                 XPwnPointerPenInfo* penInfo);
+typedef BOOL(WINAPI* XPWN_PFN_SkipPointerFrameMessages)(UINT32 pointerId);
+
+/** @brief pointer API 装载态缓存：<0 未初始化；0 不可用；1 可用。 */
+static int g_xpwnPointerApis = -1;
+static XPWN_PFN_GetPointerType g_xpwnGetPointerType;
+static XPWN_PFN_GetPointerFrameTouchInfo g_xpwnGetPointerFrameTouchInfo;
+static XPWN_PFN_GetPointerPenInfo g_xpwnGetPointerPenInfo;
+static XPWN_PFN_SkipPointerFrameMessages g_xpwnSkipPointerFrameMessages;
+
+/** @brief 惰性装载 user32 pointer API（Win8+；前置四 API 任一缺失整节
+ *         旁路；SkipPointerFrameMessages 可选，缺席仅退化为重复帧）。 */
+static bool xpwn_pointerApisInit(void)
+{
+    HMODULE user32;
+    if (g_xpwnPointerApis >= 0) return g_xpwnPointerApis > 0;
+    g_xpwnPointerApis = 0;
+    user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32) return false;
+    g_xpwnGetPointerType = (XPWN_PFN_GetPointerType)GetProcAddress(
+        user32, "GetPointerType");
+    g_xpwnGetPointerFrameTouchInfo =
+        (XPWN_PFN_GetPointerFrameTouchInfo)GetProcAddress(
+            user32, "GetPointerFrameTouchInfo");
+    g_xpwnGetPointerPenInfo = (XPWN_PFN_GetPointerPenInfo)GetProcAddress(
+        user32, "GetPointerPenInfo");
+    g_xpwnSkipPointerFrameMessages =
+        (XPWN_PFN_SkipPointerFrameMessages)GetProcAddress(
+            user32, "SkipPointerFrameMessages");
+    g_xpwnPointerApis =
+        (g_xpwnGetPointerType && g_xpwnGetPointerFrameTouchInfo &&
+         g_xpwnGetPointerPenInfo)
+            ? 1
+            : 0;
+    return g_xpwnPointerApis > 0;
+}
+
+/** @brief      OS 提升的合成鼠标消息签名过滤（防双投第二保险）。
+ *  @details    触摸/笔提升出的 legacy 鼠标消息 GetMessageExtraInfo 携带
+ *              MI_WP_SIGNATURE 签名（Qt qwindowsmousehandler 同款判定）；
+ *              真鼠标无签名。本后端已整节消费 WM_POINTER，本过滤兜住
+ *              迟到的提升消息/外部注入。 */
+#define XPWN_MI_WP_SIGNATURE 0xFF515700u
+#define XPWN_MI_WP_SIGNATURE_MASK 0xFFFFFF00u
+
+static bool xpwn_mouseExtraInfoFromPointer(void)
+{
+    return ((DWORD)GetMessageExtraInfo() & XPWN_MI_WP_SIGNATURE_MASK)
+           == XPWN_MI_WP_SIGNATURE;
+}
+
+/** @brief      从 POINTER_INFO.ptPixelLocation（屏幕物理像素）取客户区/
+ *              全局坐标并统一 ÷dpr 出框（dpr 口径同 xpwn_mousePosToLogical
+ *              的 xpwn_dprForHwnd；换算物理口径执行，dpr==1 直通）。
+ *  @details    pointer 路不走 xpwn_mousePosToLogical：该 helper 吃消息
+ *              LPARAM（客户/屏幕二口径），pointer 坐标在结构内且恒为
+ *              屏幕物理像素，客户区出口经 ScreenToClient。 */
+static void xpwn_pointerPosToLogical(HWND hwnd, const POINT* ptPixelScreen,
+                                     XPoint* position,
+                                     XPoint* globalPosition)
+{
+    POINT local;
+    float dpr;
+    local = *ptPixelScreen;
+    dpr = xpwn_dprForHwnd(hwnd);
+    if (hwnd) ScreenToClient(hwnd, &local);
+    if (position) {
+        position->x = xpwn_dprDiv(local.x, dpr);
+        position->y = xpwn_dprDiv(local.y, dpr);
+    }
+    if (globalPosition) {
+        globalPosition->x = xpwn_dprDiv(ptPixelScreen->x, dpr);
+        globalPosition->y = xpwn_dprDiv(ptPixelScreen->y, dpr);
+    }
+}
+
+/** @brief 活动触摸序列簿记（CAPTURECHANGED 取消收口的注入源）。
+ *  @details 抓取被系统转移/解除（WM_POINTERCAPTURECHANGED）时触点已
+ *           离场，帧信息不可再取（GetPointerFrameTouchInfo 失败），
+ *           只能回放簿记的最后已知坐标。BEGIN/UPDATE 注入成功即登记，
+ *           END/CANCEL 注入成功即除名（与框架收到的触点流保持同步）；
+ *           对标 Qt m_lastTouchPoints（qwindowspointerhandler.cpp
+ *           handleTouchCancelEvent 全量取消后 clear 同职）。 */
+typedef struct XPwnTouchSeqPoint
+{
+    bool        active; /**< 槽位有效。 */
+    HWND        hwnd;   /**< 所属原生窗口（多窗互不串扰）。 */
+    XTouchPoint point;   /**< 最后已知触点（id/坐标/压力）。 */
+} XPwnTouchSeqPoint;
+
+/** @brief 活动触摸序列簿记表（容量与单帧聚合同源：并行触点数不超过
+ *         XPWN_MAX_POINTER_FRAME）。 */
+static XPwnTouchSeqPoint g_xpwnTouchSeq[XPWN_MAX_POINTER_FRAME];
+
+/** @brief 触摸注入成功后登记/刷新活动序列簿记（BEGIN/UPDATE 调用）。 */
+static void xpwn_touchSeqTrack(HWND hwnd, const XTouchPoint* pts, int count)
+{
+    int i;
+    for (i = 0; i < count; ++i) {
+        int slot = -1;
+        UINT32 j;
+        for (j = 0; j < (UINT32)XPWN_MAX_POINTER_FRAME; ++j) {
+            if (g_xpwnTouchSeq[j].active && g_xpwnTouchSeq[j].hwnd == hwnd &&
+                g_xpwnTouchSeq[j].point.m_id == pts[i].m_id) {
+                slot = (int)j;
+                break;
+            }
+        }
+        if (slot < 0) {
+            for (j = 0; j < (UINT32)XPWN_MAX_POINTER_FRAME; ++j) {
+                if (!g_xpwnTouchSeq[j].active) {
+                    slot = (int)j;
+                    break;
+                }
+            }
+        }
+        if (slot < 0) continue; /* 簿记满：放弃追踪（防御，正常达不到）。 */
+        g_xpwnTouchSeq[slot].active = true;
+        g_xpwnTouchSeq[slot].hwnd = hwnd;
+        g_xpwnTouchSeq[slot].point = pts[i];
+    }
+}
+
+/** @brief END/CANCEL 注入成功后把已释放触点从活动序列簿记除名（只除
+ *         RELEASED 成员：UP 帧携带的 STATIONARY 伴指仍在按压，留簿）。 */
+static void xpwn_touchSeqUntrack(HWND hwnd, const XTouchPoint* pts, int count)
+{
+    int i;
+    UINT32 j;
+    for (i = 0; i < count; ++i) {
+        if (pts[i].m_state != XTOUCHPOINT_STATE_RELEASED) continue;
+        for (j = 0; j < (UINT32)XPWN_MAX_POINTER_FRAME; ++j) {
+            if (g_xpwnTouchSeq[j].active && g_xpwnTouchSeq[j].hwnd == hwnd &&
+                g_xpwnTouchSeq[j].point.m_id == pts[i].m_id) {
+                g_xpwnTouchSeq[j].active = false;
+                break;
+            }
+        }
+    }
+}
+
+/** @brief      CAPTURECHANGED 取消收口：本窗活动触点整序列按 CANCEL 注入。
+ *  @details    对标 Qt qwindowspointerhandler.cpp:437-443（CAPTURECHANGED
+ *              → handleTouchCancelEvent + m_lastTouchPoints.clear()）：
+ *              整序列释放（state 恒 RELEASED，坐标回放簿记最后已知值），
+ *              框架 CANCEL 语义收口手势状态机/抓取表/长按定时器。簿记
+ *              空（无活动序列，如悬停/纯鼠标路径）只清理不注入。 */
+static void xpwn_touchCancelForHwnd(HWND hwnd, XWindow* window)
+{
+    XTouchPoint pts[XPWN_MAX_POINTER_FRAME];
+    int count = 0;
+    UINT32 i;
+    if (!window) return;
+    for (i = 0; i < (UINT32)XPWN_MAX_POINTER_FRAME; ++i) {
+        if (!g_xpwnTouchSeq[i].active || g_xpwnTouchSeq[i].hwnd != hwnd)
+            continue;
+        g_xpwnTouchSeq[i].active = false;
+        if (count < XPWN_MAX_POINTER_FRAME) {
+            pts[count] = g_xpwnTouchSeq[i].point;
+            pts[count].m_state = XTOUCHPOINT_STATE_RELEASED;
+            ++count;
+        }
+    }
+    if (count < 1) return; /* 无活动触摸序列：不注入。 */
+    XWindowSystemInterface_handleTouchPoints_ex(
+        window, XEVENT_TYPE_TOUCH_CANCEL, pts, count,
+        (uint32_t)GetMessageTime());
+}
+
+/** @brief      WM_POINTER* -> 真触摸注入（帧聚合；PT_TOUCH/PT_PEN 双型）。
+ *  @details    触点坐标取 ptPixelLocation（屏幕物理像素）经
+ *              xpwn_pointerPosToLogical ÷dpr 出框。状态判定：本消息 id
+ *              DOWN->PRESSED、UP->RELEASED；UPDATE 仅本消息 id UPDATED，
+ *              帧内其余 id STATIONARY（并行式 digitizer 每帧重报全部
+ *              接触点，帧成员≠本帧变化者；整帧 UPDATED 会让静止伴指被
+ *              重复派发，架空控件层 STATIONARY 过滤）；DOWN/UP 帧内其
+ *              余 id STATIONARY。整帧取走后按 pointerId 调
+ *              SkipPointerFrameMessages 丢弃同帧其余排队消息（帧内每
+ *              个 id 各有一条消息，不丢弃则整帧被重复注入 N 次，Qt
+ *              translateTouchEvent 同款去重）。取消判定：无
+ *              WM_POINTERCANCELED 消息（0x0248 未分配），帧内任一成员
+ *              带 POINTER_FLAG_CANCELED（拒掌/系统取消，随常规 UP 消
+ *              息投递）即整帧按 TOUCH_CANCEL/RELEASED 注入（框架 CANCEL
+ *              语义=序列异常收口：手势状态机/抓取表/长按定时器全清），
+ *              不作为干净 tap 放行。UPDATE 悬停（未接触）不注入，防无
+ *              按压序列扰乱触点抓取表。PT_PEN 单点（笔不成帧）：压力取
+ *              POINTER_PEN_INFO.pressure ÷1024 归一（0 压回落 1.0 满压，
+ *              Qt 同款），取消位同触摸口径，其余同触摸。
+ *              BEGIN 注入成功后 SetCapture 本窗，END/CANCEL 释放；
+ *              CAPTURECHANGED 时本窗若有活动触摸序列（注入成功即由
+ *              g_xpwnTouchSeq 簿记跟踪），整序列补注入 TOUCH_CANCEL
+ *              收口（对标 Qt qwindowspointerhandler.cpp handleTouchCancelEvent），
+ *              无活动序列只做释放清理不注入。PT_MOUSE/PT_TOUCHPAD
+ *              等非触摸/笔型与 API 缺失时返回 false 落回默认过程（真
+ *              鼠标与触摸板维持既有通道）。
+ * @return     true=消息已消费（调用方 return 0，抑制 OS 提升）。
+ */
+static bool xpwn_handlePointerTouch(HWND hwnd, XWNPendingEntry* entry,
+                                    UINT msg, WPARAM wParam)
+{
+    XTouchPoint pts[XPWN_MAX_POINTER_FRAME];
+    XEventType type;
+    POINT ptScreen;
+    UINT32 pointerId = (UINT32)GET_POINTERID_WPARAM(wParam);
+    DWORD pointerType = 0;
+    int count = 0;
+    UINT32 i;
+
+    if (msg == WM_POINTERCAPTURECHANGED) {
+        /* 抓取被系统转移/解除：先清理本侧抓取；本窗有活动触摸序列时
+           整序列按 TOUCH_CANCEL 收口（对标 Qt qwindowspointerhandler.cpp
+           handleTouchCancelEvent 的 CAPTURECHANGED 取消路），无活动序
+           列不注入（触点已被常规 UP/CANCEL 走完，簿记为空）。 */
+        XWNPendingEntry* captureEntry = xpwn_findByNativeWindow(hwnd);
+        ReleaseCapture();
+        xpwn_touchCancelForHwnd(hwnd,
+                                captureEntry ? captureEntry->m_window : NULL);
+        return true;
+    }
+    if (!xpwn_pointerApisInit()) return false;    /* Win7：整节旁路。 */
+    if (!entry || !entry->m_window) return false; /* 未登记窗口：旁路。 */
+    if (!g_xpwnGetPointerType(pointerId, &pointerType)) return false;
+    if (pointerType != PT_TOUCH && pointerType != PT_PEN)
+        return false; /* 真鼠标/触摸板/未知型：维持既有通道。 */
+
+    switch (msg) {
+    case WM_POINTERDOWN:
+        type = XEVENT_TYPE_TOUCH_BEGIN;
+        break;
+    case WM_POINTERUPDATE:
+        type = XEVENT_TYPE_TOUCH_UPDATE;
+        break;
+    case WM_POINTERUP:
+        type = XEVENT_TYPE_TOUCH_END;
+        break;
+    default:
+        return false;
+    }
+
+    memset(pts, 0, sizeof(pts));
+    if (pointerType == PT_TOUCH) {
+        XPwnPointerTouchInfo frame[XPWN_MAX_POINTER_FRAME];
+        UINT32 frameCount = 0;
+        int frameCanceled;
+        /* 两段式帧聚合：空缓冲先取帧内触点数（cap 8 防御），再整帧取出。 */
+        if (!g_xpwnGetPointerFrameTouchInfo(pointerId, &frameCount, NULL) ||
+            frameCount == 0)
+            return true; /* 无可注入帧：仍消费（抑制提升）。 */
+        if (frameCount > XPWN_MAX_POINTER_FRAME)
+            frameCount = XPWN_MAX_POINTER_FRAME;
+        if (!g_xpwnGetPointerFrameTouchInfo(pointerId, &frameCount, frame))
+            return true;
+        /* 帧已整帧取走：丢弃本帧其余排队消息（帧内每个 id 各一条消息，
+         * 不丢弃则整帧被重复注入 N 次；Qt translateTouchEvent 同款）。 */
+        if (g_xpwnSkipPointerFrameMessages)
+            g_xpwnSkipPointerFrameMessages(pointerId);
+        /* 取消判定：帧内任一成员带 POINTER_FLAG_CANCELED 即整帧按
+         * CANCEL 注入（见函数 @details）。 */
+        frameCanceled = 0;
+        for (i = 0; i < frameCount; ++i) {
+            if (frame[i].pointerInfo.pointerFlags & POINTER_FLAG_CANCELED) {
+                frameCanceled = 1;
+                break;
+            }
+        }
+        if (frameCanceled) type = XEVENT_TYPE_TOUCH_CANCEL;
+        for (i = 0; i < frameCount; ++i) {
+            ptScreen = frame[i].pointerInfo.ptPixelLocation;
+            if (!frameCanceled && msg == WM_POINTERUPDATE &&
+                !(frame[i].pointerInfo.pointerFlags &
+                  POINTER_FLAG_INCONTACT))
+                continue; /* 悬停（未接触）不注入（取消帧放行）。 */
+            xpwn_pointerPosToLogical(hwnd, &ptScreen, &pts[count].m_position,
+                                     &pts[count].m_globalPosition);
+            pts[count].m_id = (int32_t)frame[i].pointerInfo.pointerId;
+            pts[count].m_pressure = 1.0f; /* 触摸：无归一源，满压缺省。 */
+            if (frameCanceled) {
+                pts[count].m_state = XTOUCHPOINT_STATE_RELEASED;
+            } else if (frame[i].pointerInfo.pointerId == pointerId) {
+                if (msg == WM_POINTERDOWN)
+                    pts[count].m_state = XTOUCHPOINT_STATE_PRESSED;
+                else if (msg == WM_POINTERUP)
+                    pts[count].m_state = XTOUCHPOINT_STATE_RELEASED;
+                else
+                    pts[count].m_state = XTOUCHPOINT_STATE_UPDATED;
+            } else if (msg == WM_POINTERUPDATE) {
+                /* 帧内其余 id：并行 digitizer 每帧重报全部接触点，未变
+                 * 化者标 STATIONARY（控件层只派发 UPDATED 点，整帧
+                 * UPDATED 会让静止伴指被重复派发）。 */
+                pts[count].m_state = XTOUCHPOINT_STATE_STATIONARY;
+            } else {
+                pts[count].m_state = XTOUCHPOINT_STATE_STATIONARY;
+            }
+            ++count;
+        }
+    } else {
+        XPwnPointerPenInfo penInfo;
+        int penCanceled;
+        memset(&penInfo, 0, sizeof(penInfo));
+        if (!g_xpwnGetPointerPenInfo(pointerId, &penInfo))
+            return true; /* 取笔信息失败：仍消费（抑制提升）。 */
+        /* 帧去重同触摸分支：笔信息取走后丢弃同帧其余排队消息。 */
+        if (g_xpwnSkipPointerFrameMessages)
+            g_xpwnSkipPointerFrameMessages(pointerId);
+        penCanceled =
+            (penInfo.pointerInfo.pointerFlags & POINTER_FLAG_CANCELED)
+                ? 1
+                : 0;
+        if (!penCanceled && msg == WM_POINTERUPDATE &&
+            !(penInfo.pointerInfo.pointerFlags & POINTER_FLAG_INCONTACT))
+            return true; /* 笔尖悬停不注入（同触摸悬停口径）。 */
+        ptScreen = penInfo.pointerInfo.ptPixelLocation;
+        xpwn_pointerPosToLogical(hwnd, &ptScreen, &pts[0].m_position,
+                                 &pts[0].m_globalPosition);
+        pts[0].m_id = (int32_t)pointerId;
+        pts[0].m_pressure = penInfo.pressure
+                                ? (float)penInfo.pressure / 1024.0f
+                                : 1.0f;
+        if (penCanceled) {
+            type = XEVENT_TYPE_TOUCH_CANCEL;
+            pts[0].m_state = XTOUCHPOINT_STATE_RELEASED;
+        } else if (msg == WM_POINTERDOWN) {
+            pts[0].m_state = XTOUCHPOINT_STATE_PRESSED;
+        } else if (msg == WM_POINTERUP) {
+            pts[0].m_state = XTOUCHPOINT_STATE_RELEASED;
+        } else {
+            pts[0].m_state = XTOUCHPOINT_STATE_UPDATED;
+        }
+        count = 1;
+    }
+    if (count < 1) return true; /* 整帧悬停被滤空：消费但不注入。 */
+
+    /* 注入（时间戳取消息入队时刻，与鼠标四路同源）；BEGIN 成功后抓取，
+       END/CANCEL 释放（CAPTURECHANGED 已在函数头收口）；序列簿记随注
+       入成败登记/除名（见 g_xpwnTouchSeq，CAPTURECHANGED 取消路取材）。 */
+    if (XWindowSystemInterface_handleTouchPoints_ex(
+            entry->m_window, type, pts, count, (uint32_t)GetMessageTime())) {
+        if (type == XEVENT_TYPE_TOUCH_BEGIN) SetCapture(hwnd);
+        if (type == XEVENT_TYPE_TOUCH_BEGIN ||
+            type == XEVENT_TYPE_TOUCH_UPDATE)
+            xpwn_touchSeqTrack(hwnd, pts, count);
+        else
+            xpwn_touchSeqUntrack(hwnd, pts, count);
+    }
+    if (type == XEVENT_TYPE_TOUCH_END || type == XEVENT_TYPE_TOUCH_CANCEL)
+        ReleaseCapture();
+    return true;
+}
+
 /* ==================== WndProc（原生事件 -> WSI 注入） ==================== */
 
 /** @brief 窗口过程：翻译 Win32 窗口消息为窗口事件并经 WSI 注入。 */
@@ -1307,6 +1770,20 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         }
         break;
 
+    /* ============ 触摸/笔：WM_POINTER 真触摸注入（对标 Qt qwindowspointerhandler.cpp） ============ */
+    case WM_POINTERDOWN:
+    case WM_POINTERUPDATE:
+    case WM_POINTERUP:
+    case WM_POINTERCAPTURECHANGED:
+        /* 消费即 return 0：不经 DefWindowProc，OS 不再把触摸/笔提升为
+           合成鼠标消息（防双投第一保险）。PT_MOUSE 等非触摸/笔型与
+           API 缺失在 handler 内返回未消费，落回默认过程。注意无
+           WM_POINTERCANCELED case：0x0248 未分配（消息族 0x0247 后即
+           0x0249），取消经 POINTER_FLAG_CANCELED 位随 UP 消息到达，
+           在 handler 内判定。 */
+        if (xpwn_handlePointerTouch(hwnd, entry, msg, wParam)) return 0;
+        break;
+
     case WM_LBUTTONDOWN:
     case WM_LBUTTONUP:
     case WM_LBUTTONDBLCLK:
@@ -1319,6 +1796,9 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
     case WM_XBUTTONDOWN:
     case WM_XBUTTONUP:
     case WM_XBUTTONDBLCLK:
+        /* 防双投第二保险：触摸/笔提升的合成鼠标消息（GetMessageExtraInfo
+           携带 MI_WP_SIGNATURE）一律吞掉；真鼠标无签名不受影响。 */
+        if (xpwn_mouseExtraInfoFromPointer()) return 0;
     {
         XMouseButton button;
         XEventType type;
@@ -1352,6 +1832,8 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
 
     /* ============ 鼠标移动与进入/离开追踪（对标 Qt Windows 后端） ============ */
     case WM_MOUSEMOVE:
+        /* 防双投第二保险：签名过滤同按键分支（触摸/笔提升的合成移动）。 */
+        if (xpwn_mouseExtraInfoFromPointer()) return 0;
         if (entry && entry->m_window) {
             XPoint position;
             XPoint globalPosition;
@@ -1388,6 +1870,8 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
     /* ============ 滚轮事件（垂直/水平，Qt 约定 ±120/格） ============ */
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:
+        /* 防双投第二保险：签名过滤同按键分支（触摸/笔提升的合成滚轮）。 */
+        if (xpwn_mouseExtraInfoFromPointer()) return 0;
     {
         XPoint position;
         XPoint globalPosition;
