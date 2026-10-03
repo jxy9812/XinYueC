@@ -187,6 +187,32 @@ const XVector* XObject_children(const XObject* self)
 	return self->m_children;
 }
 
+// Qt 6.8: QStyleSheetStyle::previousSiblingNode - 父容器子表顺序查找上一个相邻兄弟
+// (供 QSS 兄弟组合符 '+'/'~' 匹配使用; 子表空位不跳过, 与 Qt children() 相邻语义一致)
+XObject* XObject_previousSibling(const XObject* self)
+{
+	if (!self || !self->m_parent || !self->m_parent->m_children)
+		return NULL;
+	int64_t index = XVector_indexOf(self->m_parent->m_children, &self, 0);
+	if (index <= 0)
+		return NULL;
+	XObject** children = (XObject**)XContainerDataAddr(self->m_parent->m_children);
+	return children[index - 1];
+}
+
+// Qt 6.8: 兄弟节点查询 - 父容器子表顺序查找下一个相邻兄弟
+// (供 QSS 兄弟组合符 '+'/'~' 匹配使用; 子表空位不跳过)
+XObject* XObject_nextSibling(const XObject* self)
+{
+	if (!self || !self->m_parent || !self->m_parent->m_children)
+		return NULL;
+	int64_t index = XVector_indexOf(self->m_parent->m_children, &self, 0);
+	if (index < 0 || index + 1 >= (int64_t)XContainerSize(self->m_parent->m_children))
+		return NULL;
+	XObject** children = (XObject**)XContainerDataAddr(self->m_parent->m_children);
+	return children[index + 1];
+}
+
 bool XObject_isWidgetType(const XObject* self)
 {
 	if (!self)return false;

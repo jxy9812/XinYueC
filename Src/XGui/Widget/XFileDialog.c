@@ -41,6 +41,11 @@
 #include "XPalette.h"          /* Win10 观感按控件级调色（面板白底/输入白底） */
 #include "XDir.h"              /* 目录列举（XFILE_ON && XDIR_ON 时生效） */
 #include "XFileInfo.h"         /* 条目大小/类型（W10b-3 详情列数据） */
+#include "XFileSystem_config.h" /* XFILE_ON 定义源（内容读写便捷函数门控） */
+#if XFILE_ON
+#include "XFile.h"             /* 文件字节流读写（getOpenFileContent/
+                                * saveFileContent 的内容管线） */
+#endif
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -529,10 +534,15 @@ static void xff_setName(XObject* obj, const char* name)
  * - 面板/输入白底 #FFFFFF：Win10 对话框主体与地址栏/搜索框/文件名框
  *   均为白底（主题默认面板 #EFEFEF、行编辑 Base #FFFFE0 偏黄，均按
  *   控件级 palette 覆写，不外溢全局主题）。
- * - 底部两行左对齐口径：「文件名(N):」「文件类型(T):」标签等宽（84px
- *   ≥ 两串字形宽），编辑框/下拉左缘对齐成列（Win10 底部两行口径）。 */
+ * - 底部两行左对齐口径：「文件名(N):」「文件类型(T):」标签等宽
+ *   （96px ≥ 两串字形宽），编辑框/下拉左缘对齐成列（Win10 底部两行
+ *   口径）。宽度依据：默认标签字体 XPainter_textWidth 实测
+ *   「文件类型(T):」=88px（5 汉字 + "(T):" ASCII）、「文件名(N):」
+ *   =74px——旧值 84px 时最长串尾部冒号被裁 4px（「文件名(N):」冒号
+ *   完整，行为分裂；r1 猎捕 defect#12 放大目检估 ~92px，实测 88px）；
+ *   取 96px 向 8px 栅格取整留余量，两行等宽且不再裁字。 */
 #define XFF_TB_CONTENT_TOP   28 /**< 有标题时内容让位（=标题栏行高） */
-#define XFF_LABEL_COL_WIDTH  84 /**< 底部标签列等宽（两行左对齐） */
+#define XFF_LABEL_COL_WIDTH  96 /**< 底部标签列等宽（两行左对齐） */
 #define XFF_WIN10_WHITE      0xFFFFFFFFu /**< Win10 白底 */
 
 /** @brief 按 objectName 查找对话框直接子控件（对标 QObject::findChild）。 */
@@ -2526,6 +2536,21 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
          * setHeaderLabels；内建桥模型随条目同步，无外部 model）。 */
         XTreeWidget_setColumnCount(view, 3);
         XTreeWidget_setHeaderLabels(view, kHeaders, 3);
+        /* 水平滚动条恒关（r1 猎捕 defect#13）。依据：①详情列模型为
+         * 名称列自伸展（剩余宽均分）+ 大小/类型定宽，内容宽恒等于视
+         * 口宽；②条目视图绘制仅按纵向 offY 平移（XTreeWidget paint
+         * 无横向内容平移），横条即便出现也无内容可滚；③基类 AsNeeded
+         * 的判定输入是控件全宽（XTreeWidget.c paintEvent setContentSize
+         * 上报 r.width），而垂直条显示时视口宽=控件宽-16px 边带，
+         * 「内容宽 > 视口宽」恒成立 → 垂直条在显的多条目态（如 /
+         * 根目录）必出幻影横条；稀疏目录（如 /home 单条目，垂直条隐
+         * 藏）反而没有——实证 b-XFileDialog-根目录-横向滚动条.png 与
+         * 长路径-空目录对照图行为分裂。
+         * 跨控件根修（contentWidth 按列宽和上报）归 XTreeWidget 属主；
+         * 本对话框按上述实际承载能力显式关横条，消除幻影且无功能损失。 */
+        XAbstractScrollArea_setHorizontalScrollBarPolicy(
+            (XAbstractScrollArea*)&view->m_base.m_base,
+            XScrollBarPolicy_AlwaysOff);
     }
     {
         XListView* nav = XListView_create((XWidget*)dlg, 0);
@@ -3198,6 +3223,225 @@ XString* XFileDialog_getExistingDirectory_2(XWidget* parent,
     return result;
 }
 
+/* ==================== URL 静态便捷函数（对标 Qt getOpenFileUrl 族） ====================
+ * 本库 URL 以路径字符串承载（selectedUrls 从 selectedFiles 派生、
+ * directoryUrl 为独立存储的同一口径，XFileDialog.h 2026-10-03 审计补齐）：
+ * 四个 URL 版便捷函数行为与对应路径版完全一致，仅 API 面对齐 Qt；
+ * Qt 尾参 supportedSchemes（协议过滤）无 QUrl/协议设施承载，不提供。 */
+
+XString* XFileDialog_getOpenFileUrl(XWidget* parent, const XString* caption,
+                                    const XString* dir, const XString* filter,
+                                    int* selectedFilterIndex)
+{
+    return XFileDialog_getOpenFileName(parent, caption, dir, filter,
+                                       selectedFilterIndex);
+}
+
+XString* XFileDialog_getOpenFileUrl_2(XWidget* parent, const char* caption,
+                                      const char* dir, const char* filter,
+                                      int* selectedFilterIndex)
+{
+    return XFileDialog_getOpenFileName_2(parent, caption, dir, filter,
+                                         selectedFilterIndex);
+}
+
+XString* XFileDialog_getSaveFileUrl(XWidget* parent, const XString* caption,
+                                    const XString* dir, const XString* filter,
+                                    int* selectedFilterIndex)
+{
+    return XFileDialog_getSaveFileName(parent, caption, dir, filter,
+                                       selectedFilterIndex);
+}
+
+XString* XFileDialog_getSaveFileUrl_2(XWidget* parent, const char* caption,
+                                      const char* dir, const char* filter,
+                                      int* selectedFilterIndex)
+{
+    return XFileDialog_getSaveFileName_2(parent, caption, dir, filter,
+                                         selectedFilterIndex);
+}
+
+XString* XFileDialog_getExistingDirectoryUrl(XWidget* parent,
+                                             const XString* caption,
+                                             const XString* dir)
+{
+    return XFileDialog_getExistingDirectory(parent, caption, dir);
+}
+
+XString* XFileDialog_getExistingDirectoryUrl_2(XWidget* parent,
+                                               const char* caption,
+                                               const char* dir)
+{
+    return XFileDialog_getExistingDirectory_2(parent, caption, dir);
+}
+
+XStringList* XFileDialog_getOpenFileUrls(XWidget* parent,
+                                         const XString* caption,
+                                         const XString* dir,
+                                         const XString* filter,
+                                         int* selectedFilterIndex)
+{
+    return XFileDialog_getOpenFileNames(parent, caption, dir, filter,
+                                        selectedFilterIndex);
+}
+
+XStringList* XFileDialog_getOpenFileUrls_2(XWidget* parent,
+                                           const char* caption,
+                                           const char* dir,
+                                           const char* filter,
+                                           int* selectedFilterIndex)
+{
+    return XFileDialog_getOpenFileNames_2(parent, caption, dir, filter,
+                                          selectedFilterIndex);
+}
+
+/* ==================== 文件内容便捷函数（对标 Qt getOpenFileContent/
+ * saveFileContent） ====================
+ * 一次调用完成「选文件→读全部字节」/「选保存位置→写全部字节」。回调为
+ * 函数指针+userData 惯例（仿 XHostInfo_Callback/XPermissionCallback）；
+ * 字节流经 XFile/XIODevice（XFILE_ON 门控，同真实弹窗的 XDir 门控口径），
+ * 路径选择复用本文件真实弹窗（xff_runDialog）。无 GUI 环境（无
+ * XCoreApplication 实例，如无头测试）：不弹窗、不回调、不写盘（桩约定：
+ * 等效用户取消）。 */
+
+#if XFILE_ON && XDIR_ON
+
+/** @brief 读取文件全部字节（成功返回新建 XByteArray，调用方拥有；
+ *  打开/读失败返回 NULL）。 */
+static XByteArray* xff_readAllBytes(const XString* path)
+{
+    XFile* file;
+    XByteArray* bytes;
+    if (!path) return NULL;
+    file = XFile_create_2(path);
+    if (!file) return NULL;
+    if (!XFile_open_2(file, XIODevice_ReadOnly, 0)) {
+        XClass_delete_base((XClass*)file);
+        return NULL;
+    }
+    bytes = XIODevice_readAll_3((XIODevice*)file);
+    XIODevice_close_base((XIODevice*)file);
+    XClass_delete_base((XClass*)file);
+    return bytes;
+}
+
+/** @brief 保存提示串拆分：现存目录→起始目录（不预填）；非现存路径→
+ *  「父目录 + 末段文件名」预填（对标 Qt fileNameHint 语义）；无分隔符→
+ *  纯预填名（起始目录交由弹窗 CWD/家目录回退）。与 getSaveFileName 的
+ *  dir 拆分同口径（此处 hint 无分隔符时不再按目录解释，预填语义更贴近
+ *  Qt）。输出均可为 NULL；返回的串调用方拥有。 */
+static void xff_splitSaveHint(const XString* hint, XString** outDir,
+                              XString** outPrefill)
+{
+    const char* utf;
+    const char* slash;
+    XDir probe;
+    bool isDir;
+    *outDir = NULL;
+    *outPrefill = NULL;
+    if (!hint || !(utf = XString_toUtf8(hint)) || !utf[0]) return;
+    XDir_init_2(&probe, hint);
+    isDir = XDir_exists_1(&probe);
+    XDir_deinit_base((XClass*)&probe);
+    if (isDir) {
+        *outDir = xfiledialog_dupString(hint);
+        return;
+    }
+    slash = strrchr(utf, '/');
+    if (slash && slash != utf)
+        *outDir = XString_create_fmt_utf8("%.*s", (int)(slash - utf), utf);
+    *outPrefill = XString_create_utf8(slash ? slash + 1 : utf);
+}
+
+#endif /* XFILE_ON && XDIR_ON */
+
+void XFileDialog_getOpenFileContent(const XString* nameFilter,
+                                    XFileDialogFileContentReady ready,
+                                    void* userData, XWidget* parent)
+{
+    if (!ready) return;
+    if (xff_guiReady()) {
+#if XFILE_ON && XDIR_ON
+        XFileDialog* dlg = NULL;
+        XFFLayouts ls;
+        bool accepted = xff_runDialog(parent, NULL, NULL, nameFilter, 0,
+                                      XFileDialog_ExistingFile,
+                                      XFileDialog_AcceptOpen, NULL,
+                                      &dlg, &ls);
+        XString* selected = accepted ? xff_firstSelected(dlg) : NULL;
+        XByteArray* bytes = selected ? xff_readAllBytes(selected) : NULL;
+        if (bytes)
+            ready(userData, selected, bytes);
+        if (selected) XString_delete_base((XClass*)selected);
+        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        xff_teardown(dlg, &ls);
+#endif
+    }
+    /* 无 GUI 环境/无 XFile·XDir：不选文件不回调（等效用户取消）。 */
+}
+
+void XFileDialog_getOpenFileContent_2(const char* nameFilter,
+                                      XFileDialogFileContentReady ready,
+                                      void* userData, XWidget* parent)
+{
+    XString* f = nameFilter ? XString_create_utf8(nameFilter) : NULL;
+    XFileDialog_getOpenFileContent(f, ready, userData, parent);
+    xfiledialog_freeString(&f);
+}
+
+void XFileDialog_saveFileContent(const XByteArray* content,
+                                 const XString* fileNameHint,
+                                 XWidget* parent)
+{
+    if (!content) return;
+    if (xff_guiReady()) {
+#if XFILE_ON && XDIR_ON
+        XFileDialog* dlg = NULL;
+        XFFLayouts ls;
+        XString* startDir = NULL;
+        XString* prefill = NULL;
+        XString* target;
+        bool accepted;
+        xff_splitSaveHint(fileNameHint, &startDir, &prefill);
+        accepted = xff_runDialog(parent, NULL, startDir, NULL, 0,
+                                 XFileDialog_AnyFile,
+                                 XFileDialog_AcceptSave,
+                                 prefill ? XString_toUtf8(prefill) : NULL,
+                                 &dlg, &ls);
+        if (startDir) XString_delete_base((XClass*)startDir);
+        if (prefill) XString_delete_base((XClass*)prefill);
+        /* 首个选中路径须在 teardown 前取（析构后 m_selectedFiles 失效）。 */
+        target = accepted ? xff_firstSelected(dlg) : NULL;
+        xff_teardown(dlg, &ls);
+        if (target) {
+            XFile* file = XFile_create_2(target);
+            if (file) {
+                if (XIODevice_open_base(
+                        (XIODevice*)file,
+                        (XIODeviceBaseMode)(XIODevice_WriteOnly |
+                                            XIODevice_Truncate |
+                                            XIODevice_Create))) {
+                    XIODevice_write_2((XIODevice*)file, content);
+                    XIODevice_close_base((XIODevice*)file);
+                }
+                XClass_delete_base((XClass*)file);
+            }
+            XString_delete_base((XClass*)target);
+        }
+#endif
+    }
+    /* 无 GUI 环境/无 XFile·XDir：不选位置不写盘（等效用户取消）。 */
+}
+
+void XFileDialog_saveFileContent_2(const XByteArray* content,
+                                   const char* fileNameHint,
+                                   XWidget* parent)
+{
+    XString* hint = fileNameHint ? XString_create_utf8(fileNameHint) : NULL;
+    XFileDialog_saveFileContent(content, hint, parent);
+    xfiledialog_freeString(&hint);
+}
+
 /* ==================== 信号 ==================== */
 
 void* XFileDialog_fileSelected_signal(XFileDialog* self, const XString* file)
@@ -3236,6 +3480,40 @@ void* XFileDialog_filterSelected_signal(XFileDialog* self,
     xfiledialog_emitString(self, (size_t)XFileDialog_filterSelected_signal,
                            filter);
     return (void*)(size_t)XFileDialog_filterSelected_signal;
+}
+
+/* URL 版信号（对标 Qt urlSelected 族；URL 以路径字符串承载，载荷与
+ * 非 URL 版同型——见 URL 静态便捷函数区注记）。 */
+
+void* XFileDialog_urlSelected_signal(XFileDialog* self, const XString* url)
+{
+    xfiledialog_emitString(self, (size_t)XFileDialog_urlSelected_signal,
+                           url);
+    return (void*)(size_t)XFileDialog_urlSelected_signal;
+}
+
+void* XFileDialog_urlsSelected_signal(XFileDialog* self,
+                                      const XStringList* urls)
+{
+    xfiledialog_emitList(self, (size_t)XFileDialog_urlsSelected_signal,
+                         urls);
+    return (void*)(size_t)XFileDialog_urlsSelected_signal;
+}
+
+void* XFileDialog_currentUrlChanged_signal(XFileDialog* self, const XString* url)
+{
+    xfiledialog_emitString(self, (size_t)XFileDialog_currentUrlChanged_signal,
+                           url);
+    return (void*)(size_t)XFileDialog_currentUrlChanged_signal;
+}
+
+void* XFileDialog_directoryUrlEntered_signal(XFileDialog* self,
+                                             const XString* directory)
+{
+    xfiledialog_emitString(self,
+                           (size_t)XFileDialog_directoryUrlEntered_signal,
+                           directory);
+    return (void*)(size_t)XFileDialog_directoryUrlEntered_signal;
 }
 
 

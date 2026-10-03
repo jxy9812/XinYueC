@@ -208,6 +208,21 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags);
  */
 bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title);
 
+/**
+ * @brief      把窗口最小/最大尺寸同步为原生 WM 尺寸约束。
+ * @details    X11 写 WM_NORMAL_HINTS 的 PMinSize|PMaxSize（连同
+ *             USPosition|USSize 一起重写，对标 QXcbWindow::applySizeHints）
+ *             ——缺此 hint 时 WM 视 min/max 为无约束，setFixedSize 固定
+ *             的对话框（XMessageBox 族）仍可被用户拖拽改尺寸（kwin/DDE
+ *             实测）。Win32 走 WM_GETMINMAXINFO 另有路径，此接口 no-op。
+ *             建窗期由 create 内部同源逻辑首写；运行时 min/max 变化
+ *             （XWindow_setMinMaxSize 记账后）调用本接口生效。未创建
+ *             窗口时安全 no-op。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @return     true 已同步；false 入参非法或平台不可用。
+ */
+bool XPlatformNativeWindow_setSizeHints(XWindow* window);
+
 /** @brief 启用/禁用真实窗口的键盘抓取（对标 QPlatformWindow）。 */
 bool XPlatformNativeWindow_setKeyboardGrabEnabled(XWindow* window, bool grab);
 

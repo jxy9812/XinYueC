@@ -49,6 +49,12 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #ifdef __linux__
+/* [2026-10-03 互联测试指挥官] 设备侧 socket IO 逐操作追踪(默认 0):
+ * MCGS 真机会话 RECV 续传诊断, 编译期 -DXDEVNET_IO_DEBUG=1 重开。 */
+#ifndef XDEVNET_IO_DEBUG
+#define XDEVNET_IO_DEBUG 0
+#endif
+
 #if XNET_USE_IO_URING  /* 探测宏来自 XNetIoRingPosix.h；epoll 回退用其伪 SQE 兼容层 */
 #if XNET_BUILD_IO_URING  /* 探测宏来自 XNetIoRingPosix.h；epoll 回退用其伪 SQE 兼容层 */
 #include <linux/io_uring.h>
@@ -580,6 +586,9 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
 
     submitSqe(1);
     p->readPending = true;
+#if XDEVNET_IO_DEBUG
+    fprintf(stderr, "[XDEVNET] submit RECV fd=%d\n", p->socket);
+#endif
 #else
     (void)priv; (void)isUdp;
 #endif
@@ -597,7 +606,9 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
     if (!p || p->writePending || p->socket < 0) return;
     if (len <= 0 || len > XNETWORK_WRITE_BUFFER_SIZE) return;
 
-    memcpy(p->writeBuffer, data, (size_t)len);
+    /* [2026-10-03 互联测试指挥官] memcpy→memmove: 短写续传路径以
+     * writeBuffer+sent 自身再入本函数, 区间重叠, memcpy 未定义。 */
+    memmove(p->writeBuffer, data, (size_t)len);
 
     memset(&p->writeContext, 0, sizeof(p->writeContext));
     p->writeContext.base.type = XEventContextType_Type_Socket;
@@ -634,6 +645,9 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
 
     submitSqe(1);
     p->writePending = true;
+#if XDEVNET_IO_DEBUG
+    fprintf(stderr, "[XDEVNET] submit SEND fd=%d len=%lld\n", p->socket, (long long)len);
+#endif
 #else
     (void)priv; (void)data; (void)len; (void)destAddr; (void)destPort; (void)isUdp;
 #endif
@@ -1015,12 +1029,42 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
 
     XEventSockAct* sockAct = (XEventSockAct*)e;
 
+#if XDEVNET_IO_DEBUG
+    if (sockAct->actType & XSocketAct_Write)
+        fprintf(stderr, "[XDEVNET] event W result=%lld finished=%zu\n",
+                (long long)p->writeContext.base.result,
+                p->writeContext.base.finishedBytes);
+    else
+        fprintf(stderr, "[XDEVNET] event R result=%lld finished=%zu\n",
+                (long long)p->readContext.base.result,
+                p->readContext.base.finishedBytes);
+#endif
     if (sockAct->actType & XSocketAct_Read) {
         p->readPending = false;
+#if XDEVNET_IO_DEBUG
+        fprintf(stderr, "[XDEVNET] READ done res=%lld autoRead=%d\n",
+                (long long)p->readContext.base.result, (int)p->autoRead);
+#endif
         return p->readContext.base.finishedBytes > 0;
     }
     if (sockAct->actType & XSocketAct_Write) {
         p->writePending = false;
+        /* [2026-10-03 互联测试指挥官修复归因] 短写续传: 非阻塞 SEND 部分
+         * 完成时(res>0 且 <len), 残余字节原被静默丢弃——TCP 流自此去同步,
+         * 接收端从半帧中段解析后续帧(真机 MCGS 资源档 tile 流实证: 客户端
+         * 镜像出现整体错位碎片+大面积黑洞, 见 build/xgui-remote-mcgs/
+         * run_1003_174826/clt_view0.png; 桌面回环因 send 缓冲充裕几乎不出
+         * 现短写, io_uring 用例既往全绿掩盖此缺陷)。此处对残余重提
+         * startAsyncWrite 续传, 语义=完全写完才叫完成。 */
+        {
+            int64_t sent = p->writeContext.base.result;
+            size_t total = p->writeContext.base.finishedBytes;
+            if (sent > 0 && (size_t)sent < total) {
+                startAsyncWrite(priv, p->writeBuffer + sent,
+                                (int64_t)(total - (size_t)sent),
+                                NULL, 0, false);
+            }
+        }
         return true;
     }
     if (sockAct->actType & XSocketAct_Connect) {

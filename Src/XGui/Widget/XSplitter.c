@@ -83,6 +83,42 @@ static int xsp_contentLen(const XSplitter* self)
     return len;
 }
 
+/* ---- 页尺寸意图（对标 Qt QSplitterLayoutStruct::sizer）----
+ * 意图 0=未设定（本分割器尚未为该页落位）；拖动/setSizes 落位后写
+ * 入实际尺寸。容器缩放按已设定页的意图比例重排（QSplitterPrivate::
+ * doResize），全零=首次布局均分。xsp_layout 不读页现几何当“既有尺
+ * 寸”：新挂页携带 XWidget_init 出厂默认（顶层 640x480/子页 100x30，
+ * setParent 换父保几何），那不是布局结果，混入比例即破坏默认均分。 */
+
+/** @brief 读取页尺寸意图；数组未就绪或越界按未设定（0）处理。 */
+static int xsp_sizesAt(const XSplitter* self, int index)
+{
+    if (!self || !self->m_sizes || index < 0 || index >= self->m_sizesCap)
+        return 0;
+    return self->m_sizes[index];
+}
+
+/** @brief 记录页尺寸意图（负值拒绝）；容量不足时扩容并补 0 哨兵，
+ *  分配失败静默跳过——布局随之按全零意图退化均分，不致错档。 */
+static void xsp_setSizesAt(XSplitter* self, int index, int value)
+{
+    if (!self || index < 0 || value < 0) return;
+    if (index >= self->m_sizesCap) {
+        int newCap = index + 8;
+        int* p = (int*)XRealloc_System(self->m_sizes,
+                                       (size_t)newCap * sizeof(int));
+        int i;
+        if (!p) return;
+        /* 新槽位必须补 0（未设定哨兵）：realloc 遗留垃圾非 0 即被
+           误当已设定意图参与比例分摊（同 xsp_ensureCollapsibleCap
+           的补 -1 定式）。 */
+        for (i = self->m_sizesCap; i < newCap; ++i) p[i] = 0;
+        self->m_sizes = p;
+        self->m_sizesCap = newCap;
+    }
+    self->m_sizes[index] = value;
+}
+
 static void xsp_layout(XSplitter* self)
 {
     int count = xsp_childCount(self);
@@ -93,19 +129,25 @@ static void xsp_layout(XSplitter* self)
     int x = 0;
     int y = 0;
     int curTotal = 0;
+    int unset = 0;
+    int weightLen;
     if (!self || count <= 0) return;
     len = xsp_contentLen(self);
-    /* 比例保持（对标 Qt 拖动/setsizes 后容器缩放按既有尺寸比例重排，
-       QSplitterPrivate::doResize）：存在非零现尺寸时按现尺寸比例分配
-       len，拖动结果不因容器 resize 丢失；首次布局（现尺寸全零）均分。 */
-    for (i = 0; i < count; ++i)
-        curTotal += xsp_pageSize(self, i);
+    /* 意图统计：全零=首次布局均分；部分设定时未设定页取均分基准、
+       已设定页按意图比例分摊余量（混合形态=已定尺寸后新挂页，新页
+       不再被压成 0 宽，三种形态总分配恒为 len）。 */
+    for (i = 0; i < count; ++i) {
+        if (xsp_sizesAt(self, i) > 0) curTotal += xsp_sizesAt(self, i);
+        else ++unset;
+    }
     perPage = len / (count > 0 ? count : 1);
+    weightLen = len - unset * perPage;
     for (i = 0; i < count; ++i) {
         XWidget* child = xsp_childAt(self, i);
         XRect r;
-        int size = (curTotal > 0)
-            ? (int)(((long long)len * xsp_pageSize(self, i)) / curTotal)
+        int sizer = xsp_sizesAt(self, i);
+        int size = (sizer > 0)
+            ? (int)(((long long)weightLen * sizer) / curTotal)
             : perPage;
         if (!child) continue;
         /* 几何分配不依赖当前可见性：子控件在隐藏时也需要正确尺寸，
@@ -419,6 +461,10 @@ static void xsp_moveSplitter(XSplitter* self, int pos, int index)
             trailing += XWidget_height(ch) + self->m_handleWidth;
         }
     }
+    /* 拖动落位后以现几何刷新全页意图：容器 resize 后按拖动结果比例
+       重排（对标 Qt doMove 经 setGeo 维护 sizer）。 */
+    for (i = 0; i < count; ++i)
+        xsp_setSizesAt(self, i, xsp_pageSize(self, i));
     XWidget_update((XWidget*)self);
     xsp_emitMoved(self, pos, index);
 }
@@ -508,6 +554,11 @@ static void VX_splitter_deinit(XSplitter* self)
         XFree_System(self->m_collapsible);
         self->m_collapsible = NULL;
         self->m_collapsibleCap = 0;
+    }
+    if (self->m_sizes) {
+        XFree_System(self->m_sizes);
+        self->m_sizes = NULL;
+        self->m_sizesCap = 0;
     }
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
 }
@@ -852,6 +903,9 @@ void XSplitter_setSizes(XSplitter* self, const int* sizes, int count)
         else
             XRect_init(&r, 0, y, XWidget_width((XWidget*)self), size);
         XWidget_setGeometryRect(child, &r);
+        /* 归一化落位尺寸记为页意图：此后容器缩放按该比例重排（对标
+           Qt setSizes 后 sizer 承载）。 */
+        xsp_setSizesAt(self, i, size);
         if (xsp_horiz(self)) x += size + self->m_handleWidth;
         else y += size + self->m_handleWidth;
     }

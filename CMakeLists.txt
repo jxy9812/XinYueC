@@ -141,6 +141,17 @@ list(APPEND SRC_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPlatformInputContext.c"
     "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPlainInputMethod.c"
     "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/VirtualKeyboard/XVirtualKeyboardPinyinInputMethod.c")
+# XGuiRemote 远程窗口模块（XGuiRemoteProto/Codec/Loopback/Server/Client）：
+# 显式登记同因 glob 配置期固化——既有构建树不重配时 glob 感知不到
+# Src/XGui/Remote/ 新增文件（XPinyinEngine.c LNK2019 同款教训）；
+# REMOVE_DUPLICATES 兜底——重配置后 glob 收编同名路径时去重防双列入库。
+list(APPEND SRC_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteProto.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteCodec.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiRemoteLoopback.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiServer.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XGuiClient.c"
+    "${CMAKE_CURRENT_LIST_DIR}/Src/XGui/Remote/XRemoteSessionBar.c")
 list(REMOVE_DUPLICATES SRC_FILE)
 # XGuiDemo 是自带 main() 的独立演示可执行（见下方 XGuiWindowDemo_Test 目标），
 # 不能被卷进 Static/Dynamic 主程序（会与 main.c 重复定义 main）。
@@ -318,7 +329,9 @@ endif()
 if(ANDROID)
     set(XINYUE_UNIX_THREAD_LIBS "")
 else()
-    set(XINYUE_UNIX_THREAD_LIBS "m pthread")
+    # 不带引号：展开须是 m/pthread 两个列表项（CMake 逐项转 -lm/-lpthread）；
+    # 带引号字符串会被当成单项进链接行，"pthread" 落成裸文件名致 ld 找不到。
+    set(XINYUE_UNIX_THREAD_LIBS m pthread)
 endif()
 
 # ==================== zlib（压缩库）====================
@@ -496,6 +509,7 @@ add_executable(XGuiRegression_Test
     "./Test/XGuiTest/XButtonGroupTest.c"
     "./Test/XGuiTest/XKeyboardTest.c"
     "./Test/XGuiTest/XTouchMultiPointTest.c"
+    "./Test/XGuiTest/XGuiRemoteTest.c"
 )
 if(UNIX)
     target_link_libraries(XGuiRegression_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
@@ -554,11 +568,14 @@ endif()
 if(XGUI_ON AND NOT ANDROID)
 add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_window_demo.c"
+    "./Test/XGuiDemo/xgui_demo_splitter.c"
     "./Test/XGuiDemo/xgui_demo_page_views.c"
     "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
     "./Test/XGuiDemo/xgui_demo_page_advanced.c"
     "./Test/XGuiDemo/xgui_demo_page_keyboard.c"
     "./Test/XGuiDemo/xgui_demo_page_effects.c"
+    "./Test/XGuiDemo/xgui_demo_page_remote_server.c"
+    "./Test/XGuiDemo/xgui_demo_page_remote_client.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
     "./Test/XGuiDemo/xgui_demo_apitest_input.c"
@@ -574,6 +591,22 @@ if(UNIX)
 else()
     target_link_libraries(XGuiWindowDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
+
+# ==================== XGuiRemote 远程窗口双进程演示 ====================
+# 单文件双角色（xgui_demo_remote.c 自带 main）：--server 起最小控件树 +
+# XGuiServer 共存镜像（默认端口 46000），--client 另进程连接显示；
+# --profile performance|resource 运行期切档，--tls 走 XSslSocket 加密档。
+# 安卓排除同 XGuiWindowDemo_Test：demo 为桌面窗口系统专用独立可执行。
+if(XGUI_ON AND NOT ANDROID)
+add_executable(XGuiRemoteDemo_Test
+    "./Test/XGuiDemo/xgui_demo_remote.c"
+)
+if(UNIX)
+    target_link_libraries(XGuiRemoteDemo_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XGuiRemoteDemo_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+endif() # XGUI_ON AND NOT ANDROID（XGuiRemoteDemo_Test）
 endif() # XGUI_ON AND NOT ANDROID
 
 # ==================== XGuiWindowDemo 安卓 APK 壳（共享库） ====================

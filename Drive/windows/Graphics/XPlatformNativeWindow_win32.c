@@ -3309,6 +3309,14 @@ bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
     return true;
 }
 
+bool XPlatformNativeWindow_setSizeHints(XWindow* window)
+{
+    /* Win32 尺寸约束走 WM_GETMINMAXINFO（min/max 尺寸消息路径），
+     * 无 X11 式 WM_NORMAL_HINTS 属性可写，no-op。 */
+    (void)window;
+    return true;
+}
+
 bool XPlatformNativeWindow_setKeyboardGrabEnabled(XWindow* window, bool grab)
 {
     XWNPendingEntry* entry;

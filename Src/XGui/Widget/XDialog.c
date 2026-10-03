@@ -33,6 +33,10 @@
 #if XMESSAGEBOX_ON
 #include "XMessageBox.h" /* xdlg_dialogCode 的消息盒角色映射（向下识别）。 */
 #endif
+#include "XProgressDialog.h" /* open 模态门例外识别（r2#4 非模态默认）。 */
+#if XWIZARD_ON
+#include "XWizard.h" /* CSD 避让自管理识别（同消息盒先例，见避让函数注）。 */
+#endif
 /* CSD 内容避让查询前提与 XWindowDecoration.h 的声明门槛一致（XWIDGET_ON
  * 已由 XDIALOG_ON 的配置门保证）。查询关断时避让恒零偏移，布局零变化。 */
 #if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
@@ -214,13 +218,31 @@ static void xdlg_centerToParentWindow(XDialog* self)
     if (selfw->m_isWindow) {
         /* 窗口形态对话框（flags 带 Window/Popup，拥有独立原生窗）：
          * 居中于父级顶层窗口的屏幕几何（Qt QDialog::adjustPosition
-         * 对标——以父窗口为参照居中，非屏幕居中）。 */
+         * 对标——以父窗口为参照居中，非屏幕居中）。无父（或父链解析
+         * 不到他窗）回退主屏居中——吸收原 XInputDialog 私有
+         * xid_centerOnScreen 的无父分支（2026-10-03 两套居中合并为
+         * 这一套漏斗后的能力保全）。 */
         XPoint po;
         XPoint origin;
         XWidget* ptop;
         parent = XWidget_parentWidget(selfw);
         ptop = parent ? XWidget_topLevelWidget(parent) : NULL;
-        if (!ptop || ptop == selfw) return;
+        if (!ptop || ptop == selfw) {
+            XScreen* screen = XGuiApplication_primaryScreen();
+            XRect g;
+            if (!screen) return;
+            g = XScreen_geometry(screen);
+            if (g.width <= 0 || g.height <= 0) return;
+            XWidget_move(selfw,
+                         g.x + (g.width > XWidget_width(selfw)
+                                    ? (g.width - XWidget_width(selfw)) / 2
+                                    : 0),
+                         g.y + (g.height > XWidget_height(selfw)
+                                    ? (g.height - XWidget_height(selfw)) / 2
+                                    : 0));
+            XWidget_setAttribute(selfw, XWidgetAttribute_Moved, false);
+            return;
+        }
         XPoint_init(&origin, 0, 0);
         po = XWidget_mapToGlobal(ptop, &origin);
         dw = XWidget_width(selfw);
@@ -303,12 +325,16 @@ int XDialog_decorationTopOffset(const XDialog* self)
  *             updateGeometry）都自带偏移，天然覆盖后续 CSD 拖边改尺
  *             寸；派生面板文件不在本次修复所有权内亦无需改动。
  *           - 显式几何（无布局）：直接子控件整体 move 下移 delta——
- *             覆盖进度对话框、XWizard/XErrorMessage 与自定义对话框等
- *             自排布形态。装饰标题条本身（默认 XTitleBar 或
+ *             覆盖进度对话框、XErrorMessage 与自定义对话框等自排布
+ *             形态。装饰标题条本身（默认 XTitleBar 或
  *             XWidget_titleBarWidget 自定义条）与顶层子窗口跳过；消
  *             息盒除外——其 xmsg_contentTop 已含偏移自排布（showEvent
  *             的 updateSize 与 RESIZE 重排同源），再整体位移即双重让
- *             位（xdlg_dialogCode 同款 vtable 向下识别先例）。
+ *             位（xdlg_dialogCode 同款 vtable 向下识别先例）。向导同
+ *             例外：整窗位移会把底部门按钮带按「整高-条高」推导推出
+ *             窗外（demo 480x320 实测按钮半裁），横幅/页几何/按钮行
+ *             的条高让位由 XWizard 自管理（resizeEvent 与 SHOW 重排
+ *             同源）。
  *           调用点=SHOW 事件/exec/open（见各调用点时序注），模态与
  *           收起（最小化）行为不经过本函数，零影响。 */
 static void xdlg_applyContentAvoidance(XDialog* self)
@@ -327,6 +353,14 @@ static void xdlg_applyContentAvoidance(XDialog* self)
     /* 消息盒全自管（xmsg_contentTop 已含偏移），布局/位移两条路径都
      * 不介入，只记账保持差值口径一致。 */
     if (selfManaged) {
+        self->m_csdAppliedTop = offset;
+        return;
+    }
+#endif
+#if XWIZARD_ON
+    /* 向导自管理（横幅绘制/页几何/按钮行已按条高让位，见避让函数
+     * 总注）：整体位移会推出底部门按钮带，只记账。 */
+    if (XClassGetVtable((const XObject*)self) == XWizard_class_init()) {
         self->m_csdAppliedTop = offset;
         return;
     }
@@ -1020,6 +1054,18 @@ void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags)
     if ((flags & (XWidgetFlags)XWindowType_TypeMask) == 0)
         flags |= (XWidgetFlags)XWindowType_Dialog;
     XWidget_init(&self->m_base, parent, flags);
+    /* 对标 QWidgetPrivate::init 的顶层默认几何 640x480（XWidget.c 无父
+     * 分支同口径）：XDialog 恒为独立顶层窗口（上方 Dialog 类型位含
+     * Window 位，带父控件也是），XWidget_init 的 parent!=NULL 分支却
+     * 预置子控件默认 100x30——有父创建的对话框落成「只有 CSD 标题条
+     * 大小」的空壳（账本 #3/#9 实证：demo 自定义对话框/进度对话框
+     * X 窗 100x30，demo 挂的 label(16,16,308,70) 与按钮盒(0,130,340,40)
+     * 全部落窗外）。此处统一改预置顶层默认 640x480：未显式定尺的对话
+     * 框（demo 自定义对话框等）据此可用；显式定尺的派生类在自身
+     * init/exec 覆盖不受影响（XMessageBox_init resize(320,140)、
+     * XColorDialog 便捷路径 resize(320,340)、XInputDialog exec 定尺、
+     * XWizard resize(480,320)、XFileDialog 680x460）。 */
+    XWidget_resize((XWidget*)self, 640, 480);
     XClassSetVtable(self, XDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
@@ -1328,8 +1374,17 @@ void XDialog_open(XDialog* self)
     xdlg_applyContentAvoidance(self);
     XWidget_updateGeometry(selfw);
     /* 项目模态门（应用模态为窗口模态阻塞的既定等价物，demo 约定
-       "模态门照常生效"）：open 显示期间登记，done/close 解除。 */
-    XWidget_setApplicationModalWidget(selfw);
+       "模态门照常生效"）：open 显示期间登记，done/close 解除。
+       例外=进度对话框（账本 dialogs-r2 #4，对标 Qt 6.8.3
+       qprogressdialog.cpp 全文无 setModal/setWindowModality——非模
+       态默认）：demo「再点推进 10%」约定交互要求 open 后页面触发钮
+       仍可达，模态门下实测不可达（r2 a-51：二次点击后 winbuf 仍
+       10%）。识别=vtable 向下识别先例（xdlg_applyContentAvoidance
+       的消息盒同款）；exec 路径不受影响（XDialog_exec 无条件应用模
+       态，对标 QDialog::exec）。 */
+    if (XClassGetVtable((const XObject*)self) !=
+        XProgressDialog_class_init())
+        XWidget_setApplicationModalWidget(selfw);
     dialog_grabInitialFocus(self);
 }
 

@@ -95,8 +95,30 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
 #define DLGPG_BTN_HEIGHT   34
 #define DLGPG_NOTE_X       176
 #define DLGPG_NOTE_WIDTH   568
+/* 右缘 HUD 让位带（FPS 浮层自由拖动前的静态避让）：主窗右下角半透明
+   FPS 性能浮层（XPerformanceOverlay 210x70+autoFit，见主文件
+   demo_performance_init）压住滚动内容行尾文字（目验挂项）。根宽足够
+   （>=DLGPG_HUD_YIELD_MIN_ROOT）时内容与说明列右缘收进浮层左缘内
+   （带宽 224=浮层 210 + 14 呼吸，与 page12 图表让位 218 同口径）；
+   根过窄不收——窄根浮层同样盖但行可滚动触达（收窄会挤压主列可读
+   宽，得不偿失）。 */
+#define DLGPG_HUD_YIELD_WIDTH   224
+#define DLGPG_HUD_YIELD_MIN_ROOT 640
 
 /* ==================== 页面内部控件登记表（demo 单实例） ==================== */
+
+/* 滚动区子类：仅重挂钩 resize/show 事件槽实现右缘 HUD 让位带联动
+   （子类化定式与 views/主文件一致：m_base 首成员 + 类虚表）。 */
+#if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && \
+    XSCROLLAREA_ON
+XCLASS_DEFINE_BEGING(DlgPgScroll)
+XCLASS_DEFINE_EXTEND_END(DlgPgScroll, XScrollArea)
+
+typedef struct DlgPgScroll
+{
+    XScrollArea m_base;            /**< 基类成员；必须是第一个。 */
+} DlgPgScroll;
+#endif
 
 typedef struct DlgPgUi
 {
@@ -147,6 +169,104 @@ static void dlgpg_status(const char* text)
     if (s_dlgpg.m_status)
         s_dlgpg.m_status(s_dlgpg.m_statusUser, text);
 }
+
+/* ==================== 滚动区子类：右缘 HUD 让位带联动 ==================== */
+
+#if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && \
+    XSCROLLAREA_ON
+/* 页面根=滚动区，几何由主文件 demo_layout_content 的堆叠布局统一分配
+   （本文件 build 时窗口尺寸尚未定版，无法一次收口）；滚动区非
+   widgetResizable 路径不回写内容尺寸（XScrollArea.c
+   xsa_updateWidgetGeometry），故子类化在 resizeEvent/showEvent 重排：
+   按根宽决定是否让位——收口内容定尺与说明列宽（行尾文字被控件矩形
+   裁剪），并重新通告内容尺寸驱动滚动范围。XWidget_paintTree 对子控件
+   逐级按自身矩形裁剪（XWidget.c:7146），收窄即截断行尾文字。 */
+
+/** @brief 重排内容定尺与说明列宽（HUD 让位带档位判断的唯一入口）。 */
+static void dlgpg_scrollRelayout(XScrollArea* scroll)
+{
+    XWidget* content;
+    int rootW;
+    int contentW;
+    if (!scroll || !s_dlgpg.m_root)
+        return;
+    content = s_dlgpg.m_root;
+    rootW = XWidget_width((XWidget*)scroll);
+    /* 宽根让位：右缘收进 HUD 浮层左缘内；窄根保持满宽（浮层同样盖
+       但滚动可达，见 DLGPG_HUD_YIELD_WIDTH 注）。 */
+    contentW = DLGPG_PAGE_WIDTH;
+    if (rootW >= DLGPG_HUD_YIELD_MIN_ROOT)
+        contentW = DLGPG_PAGE_WIDTH - DLGPG_HUD_YIELD_WIDTH;
+    if (contentW < 1)
+        contentW = 1;
+    XWidget_resize(content, contentW, DLGPG_PAGE_HEIGHT + 40);
+#if DLGPG_LABELS_ON
+    /* 说明列收窄 224：宽根缩至让位右缘，窄根恢复常量口径。 */
+    {
+        int i;
+        int noteW = DLGPG_NOTE_WIDTH;
+        if (rootW >= DLGPG_HUD_YIELD_MIN_ROOT)
+            noteW = DLGPG_NOTE_WIDTH - DLGPG_HUD_YIELD_WIDTH;
+        if (noteW < 1)
+            noteW = 1;
+        for (i = 0; i < DLGPG_ROW_COUNT; ++i) {
+            if (!s_dlgpg.m_note[i])
+                continue;
+            XWidget_setGeometry((XWidget*)s_dlgpg.m_note[i], DLGPG_NOTE_X,
+                                14 + i * DLGPG_ROW_HEIGHT, noteW,
+                                DLGPG_BTN_HEIGHT);
+        }
+    }
+#endif
+    /* 收口后重新通告内容尺寸（内容尺寸驱动滚动范围，XScrollArea.c
+       xsa_updateWidgetGeometry 尾注；窄根恢复满宽时水平条随之撤销）。 */
+    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)scroll,
+                                       contentW, DLGPG_PAGE_HEIGHT + 40);
+}
+
+/** @brief resizeEvent：先由基类重排视口/滚动条，再按新根宽让位收口。 */
+static void VDlgPg_scrollResizeEvent(XWidget* self, XEvent* event)
+{
+    XClass_Parent(XScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    dlgpg_scrollRelayout((XScrollArea*)self);
+}
+
+/** @brief showEvent：对标 XScrollArea 内部「show 时补排版」语义——
+ *  resize 派发先于最终定版时（隐藏页面切换瞬间），显示瞬间再按最终
+ *  几何收口一次（与基类 VX_scrollArea_showEvent 同口径）。 */
+static void VDlgPg_scrollShowEvent(XWidget* self, XEvent* event)
+{
+    XClass_Parent(XScrollArea, EXWidget_ShowEvent,
+                  XWidgetEventSlot)(self, event);
+    dlgpg_scrollRelayout((XScrollArea*)self);
+}
+
+/** @brief 初始化滚动区子类虚函数表（仅挂钩 resize/show 事件槽）。 */
+XVtable* DlgPgScroll_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(DlgPgScroll)
+    XVTABLE_INHERIT_XCLASS(XScrollArea);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VDlgPg_scrollResizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VDlgPg_scrollShowEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 堆构造滚动区子类（内存口径与 XScrollArea_create 一致）。 */
+static DlgPgScroll* dlgpg_scrollCreate(XWidget* parent)
+{
+    DlgPgScroll* scroll =
+        (DlgPgScroll*)XMemory_malloc(sizeof(DlgPgScroll),
+                                     XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!scroll)
+        return NULL;
+    XScrollArea_init(&scroll->m_base, parent, 0);
+    Set_Class_Memory(scroll, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(scroll, true);
+    XClassSetVtable(scroll, DlgPgScroll);
+    return scroll;
+}
+#endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && ... XSCROLLAREA_ON */
 
 /* ==================== 信号槽（签名 void f(XObject*, XVarList*)） ==================== */
 
@@ -391,12 +511,15 @@ static void dlgpg_inputTrigger(XObject* sender, XVarList* args)
     const char* shown;
     (void)sender;
     (void)args;
-    /* 便捷函数内部 exec 阻塞（应用模态），真人可交互；autotest 不覆盖。 */
-    text = XInputDialog_getText_2(
+    /* 便捷函数内部 exec 阻塞（应用模态），真人可交互；autotest 不覆盖。
+       初值改占位提示（getText_3）：「预置文本」仅空框灰显、输入即消失，
+       确认/取消回传不携带占位串（对标 QInputDialog placeholder 语义）。 */
+    text = XInputDialog_getText_3(
         s_dlgpg.m_root,
         "输入对话框",
         "请输入名称：",
         XInputDialogEchoMode_Normal,
+        NULL,
         "预置文本",
         &ok);
     shown = (text && XString_toUtf8(text)) ? XString_toUtf8(text) : "";
@@ -612,8 +735,23 @@ static XDialog* dlgpg_ensureCustom(void)
                       (size_t)XDialog_rejected_signal(NULL),
                       (XObject*)dialog, dlgpg_customRejectedSlot,
                       XConnectionType_Direct);
-    /* 不显式定位：对话框为独立顶层窗口（几何=屏幕坐标），open 每次
-       显示自动居中于父级顶层窗口（对标 QDialog::adjustPosition）。 */
+    /* 内容定尺（r2 猎捕 defect#4/#9）：手工子控件几何的内容包络=
+     *   标签 (16,16,308,70)   → 右缘 324、底缘 86
+     *   按钮盒 (0,130,340,40) → 右缘 340、底缘 170
+     * 即 340x170；再计 CSD 内容避让：XDialog show/exec 经
+     * xdlg_applyContentAvoidance 把子控件按装饰条高整体下移
+     * （XWindowDecoration_marginsFor().top = 标题条条带高，本主题
+     * 活体实测 31px：定尺 190 首拍按钮盒整体位移后底缘 201 越出窗高
+     * 被裁，提尺到 220 后按钮盒 161..201 完整入窗且留 ~19px 底呼吸
+     * 边，与行内 16px 边距同数量级）；宽 340+20=360（按钮盒右缘 340
+     * + 右呼吸边）。此前不显式定尺：基类无预置默认时沿用 XWidget
+     * 子控件默认 100x30 空壳（r1 #3），基类有预置默认（640x480）时
+     * 内容集中左上、右侧 ~300px/下方 ~310px 空置（r2 #4/#9）——
+     * 显式定尺两种基线态下都收敛到内容实需，且显式定尺优先级高于
+     * 基类默认（r1#3 断言同款口径）。
+     * 不显式定位：对话框为独立顶层窗口（几何=屏幕坐标），open 每次
+     * 显示自动居中于父级顶层窗口（对标 QDialog::adjustPosition）。 */
+    XWidget_resize((XWidget*)dialog, 360, 220);
     s_dlgpg.m_customBox = box;
     s_dlgpg.m_custom = dialog;
     return dialog;
@@ -739,25 +877,41 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
        的 AsNeeded 滚动条语义）。内容容器保持设计定尺，m_root 指向
        内容容器：全部子控件的手工几何（行距 50px）仍按内容坐标布置，
        构建代码零改动；滚动区为返回的堆对象，父子链级联析构。 */
+#if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && \
+    XSCROLLAREA_ON
     {
-        XScrollArea* scroll = XScrollArea_create(parent, 0);
+        DlgPgScroll* scroll = dlgpg_scrollCreate(parent);
         XWidget* content;
         if (!scroll)
             return NULL;
         content = XWidget_create((XWidget*)scroll, 0);
         if (!content) {
-            XScrollArea_delete_base(scroll);
+            XScrollArea_delete_base((XScrollArea*)scroll);
             return NULL;
         }
         /* 内容定尺 = 行区自然高度（14 + 10 行*50 + 底部余量），比
            旧 DLGPG_PAGE_HEIGHT=480 高 40——第 10 行「目录对话框」
-           （y=464..500）此前在页面定尺与视口两处都被裁掉。 */
+           （y=464..500）此前在页面定尺与视口两处都被裁掉。
+           宽度按右缘 HUD 让位带在 dlgpg_scrollRelayout 收口（build
+           时窗口尺寸未定版，resize/show 联动，见子类注）。 */
         XWidget_setGeometry(content, 0, 0,
                             DLGPG_PAGE_WIDTH, DLGPG_PAGE_HEIGHT + 40);
-        XScrollArea_setWidget(scroll, content);
+        XScrollArea_setWidget((XScrollArea*)scroll, content);
         s_dlgpg.m_root = content;
-        s_dlgpg.m_scroll = scroll;
+        s_dlgpg.m_scroll = (XWidget*)scroll;
     }
+#else
+    /* 滚动区模块裁剪：保持基线直建内容容器（无滚动/HUD 让位联动）。 */
+    {
+        XWidget* content = XWidget_create(parent, 0);
+        if (!content)
+            return NULL;
+        XWidget_setGeometry(content, 0, 0,
+                            DLGPG_PAGE_WIDTH, DLGPG_PAGE_HEIGHT + 40);
+        s_dlgpg.m_root = content;
+        s_dlgpg.m_scroll = content;
+    }
+#endif
 
 #if DLGPG_BUTTONS_ON
     /* 一列触发按钮：每个对话框一行（口径见各行说明标签）。 */

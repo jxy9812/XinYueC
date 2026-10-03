@@ -11,7 +11,9 @@
  *               doubleValue/comboBoxItems/comboBoxEditable/
  *               okButtonText/cancelButtonText、InputDialogOption 选项位；
  *             - 信号：textValueChanged(int)/intValueChanged(int)/
- *               doubleValueChanged(double)/comboBoxTextChanged(text)。
+ *               doubleValueChanged(double)/comboBoxTextChanged(text)；
+ *             - 非阻塞打开：open_2（对标 QInputDialog::open 重载，
+ *               窗口模态显示 + 族确认信号连接 + 关闭自动断开）。
  *             InputMode 数值对齐 Qt：TextInput=0/IntInput=1/DoubleInput=2；
  *             ComboBoxInput=3 为兼容扩展（Qt 5 同值，Qt 6 已移除该项，
  *             本实现保留以承载下拉输入 API）。
@@ -69,6 +71,18 @@ typedef enum XInputDialogEchoMode
     XInputDialogEchoMode_PasswordEchoOnEdit = 3 /**< 编辑时明文、失焦密码。 */
 } XInputDialogEchoMode;
 
+/** @brief open_2 信号选择（对标 QInputDialog::open 经 signalForMember
+ *         按 member 槽签名选择候选信号；C 无签名反射，显式指定，
+ *         候选集与 Qt 一致：文本/整数/浮点载荷→对应 *ValueSelected，
+ *         兜底 finished）。 */
+typedef enum XInputDialogOpenSignal
+{
+    XInputDialog_OpenFinished = 0,           /**< 连接 finished（载荷：结果码 int；Qt 兜底 accepted()）。 */
+    XInputDialog_OpenTextValueSelected = 1,  /**< 连接 textValueSelected（载荷：文本 XString*）。 */
+    XInputDialog_OpenIntValueSelected = 2,   /**< 连接 intValueSelected（载荷：整数 int）。 */
+    XInputDialog_OpenDoubleValueSelected = 3 /**< 连接 doubleValueSelected（载荷：浮点 double）。 */
+} XInputDialogOpenSignal;
+
 XCLASS_DEFINE_BEGING(XInputDialog)
 XCLASS_DEFINE_EXTEND_END(XInputDialog, XDialog)
 
@@ -92,6 +106,7 @@ typedef struct XInputDialog
     double m_doubleValue;         /**< 浮点值。 */
     XString* m_okButtonText;      /**< OK 按钮文本（拥有）。 */
     XString* m_cancelButtonText;  /**< 取消按钮文本（拥有）。 */
+    XString* m_placeholderText;   /**< 占位提示文本（拥有；TextInput 模式转发内部行编辑）。 */
     int m_intMinimum;             /**< 整数下限（默认 -2147483648）。 */
     int m_intMaximum;             /**< 整数上限（默认 2147483647）。 */
     int m_intStep;                /**< 整数步进（默认 1）。 */
@@ -99,6 +114,9 @@ typedef struct XInputDialog
     double m_doubleMaximum;       /**< 浮点上限（默认 1e308）。 */
     double m_doubleStep;          /**< 浮点步进（默认 1）。 */
     int m_doubleDecimals;         /**< 浮点小数位（默认 2）。 */
+    XObject* m_openReceiver;      /**< open_2 记录的接收对象（关闭收口时自动断开）。 */
+    XSlotFunc1 m_openMember;      /**< open_2 记录的槽函数。 */
+    XInputDialogOpenSignal m_openSignal; /**< open_2 连接的信号选择。 */
 } XInputDialog;
 
 /**
@@ -249,6 +267,22 @@ XString* XInputDialog_okButtonText(const XInputDialog* self);
  */
 void XInputDialog_setCancelButtonText(XInputDialog* self, const XString* text);
 /**
+ * @brief      设置占位提示文本（对标 QInputDialog::setPlaceholderText）。
+ * @param      self 目标对话框。
+ * @param      text 占位文本；可为 NULL 清空。仅 TextInput 模式有意义：
+ *             静态便捷函数（getText_3）在内部行编辑创建时转发，空文本
+ *             时灰显、输入即消失、不进入 textValue。
+ * @return     无返回值。
+ */
+void XInputDialog_setPlaceholderText(XInputDialog* self, const XString* text);
+/**
+ * @brief      获取占位提示文本副本（对标 QInputDialog::placeholderText）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ *             无效时返回空串。
+ */
+XString* XInputDialog_placeholderText(const XInputDialog* self);
+/**
  * @brief      获取取消按钮文本副本（对标 QInputDialog::cancelButtonText）。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
@@ -314,6 +348,24 @@ XString* XInputDialog_getText(XWidget* parent, const XString* title,
 XString* XInputDialog_getText_2(XWidget* parent, const char* title,
                                 const char* label, XInputDialogEchoMode echo,
                                 const char* text, bool* ok);
+/**
+ * @brief      弹出单行文本输入（UTF-8 重载，带占位提示）。
+ * @note       无 GUI 对话框环境：返回空串，*ok 置 false。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      title 对话框标题（UTF-8）；可为 NULL。
+ * @param      label 提示标签（UTF-8）；可为 NULL。
+ * @param      echo 回显模式（XInputDialogEchoMode）。
+ * @param      text 初始文本（UTF-8）；可为 NULL。
+ * @param      placeholder 占位提示文本（UTF-8；仅空文本时灰显，输入即
+ *             消失，不进入返回值——对标 QInputDialog::setPlaceholderText
+ *             + QLineEdit 占位语义）；可为 NULL。
+ * @param      ok 输出：是否确认（可为 NULL）。
+ * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ */
+XString* XInputDialog_getText_3(XWidget* parent, const char* title,
+                                const char* label, XInputDialogEchoMode echo,
+                                const char* text, const char* placeholder,
+                                bool* ok);
 /**
  * @brief      弹出多行文本输入（对标 QInputDialog::getMultiLineText）。
  * @note       无 GUI 对话框环境：返回空串，*ok 置 false。
@@ -439,6 +491,28 @@ XString* XInputDialog_getItem(XWidget* parent, const XString* title,
 XString* XInputDialog_getItem_2(XWidget* parent, const char* title,
                                 const char* label, const char* const* items,
                                 int count, int current, bool editable, bool* ok);
+
+/* ==================== 非阻塞打开（对标 QInputDialog::open） ==================== */
+
+/**
+ * @brief      以窗口模态显示对话框，并把族信号连接到 receiver 的槽
+ *             （对标 QInputDialog::open(QObject *receiver, const char
+ *             *member)；open 的重载形态，按数字后缀约定命名 _2；
+ *             无参 open 即基类 XDialog_open）。
+ * @details    Qt 按 member 槽签名自动选信号（signalForMember 候选集：
+ *             textValueSelected/intValueSelected/doubleValueSelected，
+ *             兜底 finished/accepted）；C 无签名反射，以 openSignal
+ *             显式指定。对话框关闭（确定/取消按钮点击或 [×] 关闭
+ *             收口，收口时 receiver 恰回调一次）后自动断开该连接；
+ *             重复 open 先清旧记录防叠连。
+ * @param      self 目标对话框；NULL 或 member 空时不执行任何操作。
+ * @param      receiver 槽所属对象；可为 NULL（此时不连接，仅显示）。
+ * @param      member 槽函数（签名 void (*)(XObject*, XVarList*)）。
+ * @param      openSignal 连接的信号选择（XInputDialogOpenSignal）。
+ * @return     无返回值。
+ */
+void XInputDialog_open_2(XInputDialog* self, XObject* receiver,
+                         XSlotFunc1 member, XInputDialogOpenSignal openSignal);
 
 /* ==================== 信号（对标 QInputDialog） ==================== */
 

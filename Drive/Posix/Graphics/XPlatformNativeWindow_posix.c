@@ -4848,6 +4848,12 @@ bool XPlatformNativeWindow_isAvailable(void)
 static void xpwn_applyMotifHints(Display* display, Window win,
                                  uint32_t flags);
 
+/** @brief 写 WM_NORMAL_HINTS（USPosition|USSize|PMinSize|PMaxSize；
+ *         定义在 XWindow 类型可用的位置，create 与
+ *         XPlatformNativeWindow_setSizeHints 共用）。 */
+static void xpwn_applySizeHints(Display* display, Window win,
+                                XWindow* window);
+
 /**
  * @brief      按 XWindow 类型写 _NET_WM_WINDOW_TYPE（对标
  *             QXcbWindow::setWindowType：EWMH 窗口类型提示，WM 据此
@@ -4898,6 +4904,60 @@ static void xpwn_applyWindowType(Display* display, Window win,
     if (g_xpwnNetWmWindowType == None || typeAtom == None) return;
     XChangeProperty(display, win, g_xpwnNetWmWindowType, XA_ATOM, 32,
                     PropModeReplace, (unsigned char*)&typeAtom, 1);
+}
+
+/** @brief 写 WM_NORMAL_HINTS（实现；create 映射前首写与运行时
+ *         XPlatformNativeWindow_setSizeHints 重写共用）。
+ *  @details USPosition|USSize：框架顶层初始几何一律程序侧定出（对话框
+ *           居中漏斗在 show 前 move），无此 hint 时 kwin/DDE 按自身
+ *           placement 策略重摆（居中落点被忽略、弹在左上的实测根因）；
+ *           PMinSize|PMaxSize：setFixedSize（min=max）的对话框若无此
+ *           约束仍可被用户拖拽改尺寸（XMessageBox 族）。min/max 取
+ *           XWindow 记账（XWindow_setMinMaxSize 语义：min 缺省 (0,0)、
+ *           max 缺省 QWINDOWSIZE_MAX——Qt 同为无约束，写 hint 时按
+ *           ICCCM 惯例对无约束维度省略位、其余照写）。 */
+static void xpwn_applySizeHints(Display* display, Window win,
+                                XWindow* window)
+{
+    XSizeHints hints;
+    XSize minSize;
+    XSize maxSize;
+    XRect geom;
+    /* 与 XWindow.c 记账上限同值（QWINDOWSIZE_MAX 语义；私有宏不在
+     * 公共头，此处按同值本地定义——无约束维度省略对应 hint 位）。 */
+    const int kMaxSizeCap = 16777215;
+    if (!display || win == None || !window) return;
+    memset(&hints, 0, sizeof(hints));
+    geom = XWindow_geometry(window);
+    hints.flags = USPosition | USSize | PPosition | PSize;
+    hints.x = geom.x;
+    hints.y = geom.y;
+    hints.width = geom.width;
+    hints.height = geom.height;
+    minSize = XWindow_minimumSize(window);
+    maxSize = XWindow_maximumSize(window);
+    if (minSize.width > 0 || minSize.height > 0) {
+        hints.flags |= PMinSize;
+        hints.min_width = minSize.width;
+        hints.min_height = minSize.height;
+    }
+    if (maxSize.width < kMaxSizeCap || maxSize.height < kMaxSizeCap) {
+        hints.flags |= PMaxSize;
+        hints.max_width = maxSize.width;
+        hints.max_height = maxSize.height;
+    }
+    XSetWMNormalHints(display, win, &hints);
+}
+
+bool XPlatformNativeWindow_setSizeHints(XWindow* window)
+{
+    XWNPendingEntry* entry;
+    if (!xpwn_ensureConnection()) return false;
+    entry = window ? xpwn_findByXWindow(window) : NULL;
+    if (!entry || !entry->m_win) return true; /* 未建窗：建窗期同源首写。 */
+    xpwn_applySizeHints(g_xpwnDisplay, entry->m_win, window);
+    XFlush(g_xpwnDisplay);
+    return true;
 }
 
 bool XPlatformNativeWindow_create(XWindow* window)
@@ -5001,7 +5061,13 @@ bool XPlatformNativeWindow_create(XWindow* window)
          * /tmp/k2_min3~8 实验记录。本分支只在「默认深度 != 进程选定
          * 深度」时改选（默认视觉本就是 32 位的屏、或进程本就运行在
          * 24 位视觉下时零变化）。 */
-        if (winTransient && g_xpwnDefaultDepth != g_xpwnDepth) {
+        /* Dialog 家族同入降视觉分支（账本 dialogs-r1 #1）：XDialog 家族落
+         * _NET_WM_WINDOW_TYPE_DIALOG、同为 depth-32 兄弟窗合成排除同族
+         * （对话框/弹层被主窗像素整窗遮盖、移出主窗矩形即现）——只入本
+         * 降视觉分支，不并入上方 winTransient（override-redirect 会把受
+         * WM 管理的对话框钉死成绕过 WM 的瞬态窗）。 */
+        if ((winTransient || winType == XWindowType_Dialog) &&
+            g_xpwnDefaultDepth != g_xpwnDepth) {
             entryVisual = g_xpwnDefaultVisual;
             entryDepth = g_xpwnDefaultDepth;
             attr.colormap = g_xpwnDefaultColormap;
@@ -5037,6 +5103,31 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_client = geom;
     entry->m_visual = entryVisual;
     entry->m_depth = entryDepth;
+    /* WM_NORMAL_HINTS（USPosition|USSize|PMinSize|PMaxSize，映射前生
+       效）：框架顶层的初始几何一律由程序侧定出（对话框居中漏斗
+       xdlg_centerToParentWindow 在 show 前已完成 move），ICCWM 无此
+       hint 时 WM 视程序摆放意图为缺省、按自身 placement 策略重摆
+       ——kwin/DDE 下对话框的居中落点被忽略（用户实测弹在左上；Xvfb
+       无 WM 程序几何直连生效故此前未暴露）；缺 PMinSize/PMaxSize 则
+       setFixedSize 固定的对话框仍可被拖拽改尺寸。对标 QXcbWindow::
+       applySizeHints 口径：创建即写，运行时 min/max 变化经
+       XPlatformNativeWindow_setSizeHints 重写。 */
+    xpwn_applySizeHints(g_xpwnDisplay, xwin, window);
+    /* 建窗期 WM_TRANSIENT_FOR（映射前生效）：XWidget 建窗链的
+       setTransientParent 发生在本 create 之前，运行时接口对未建窗
+       返回「留给建窗期通路」——本处即该通路的实现（此前从未落地，
+       对话框在 kwin/DDE 下无 transient 语义：无任务栏合并、无 owner
+       置顶保护、Alt-Tab 独立项）。记账值取 XWindow_transientParent
+       （XWidget_createWindow 已按父链 owner 解析填好）；迟到的
+       setTransientParent 仍走运行时接口（XSetTransientForHint 重写）。
+       对标 QXcbWindow::create 的 transientParent 写入时序。 */
+    {
+        XWindow* tparent = XWindow_transientParent(window);
+        XWNPendingEntry* ownerEntry =
+            tparent ? xpwn_findByXWindow(tparent) : NULL;
+        if (ownerEntry && ownerEntry->m_win && ownerEntry->m_win != xwin)
+            XSetTransientForHint(g_xpwnDisplay, xwin, ownerEntry->m_win);
+    }
     /* 窗口类型提示（对标 QXcbWindow::setWindowType：创建时按类型写
        _NET_WM_WINDOW_TYPE，映射前生效）。 */
     xpwn_applyWindowType(g_xpwnDisplay, xwin, XWindow_type(window));

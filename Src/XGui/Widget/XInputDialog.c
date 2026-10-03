@@ -22,12 +22,18 @@
 #include "XGuiApplication.h"   /* 主屏查询（弹窗居中） */
 #include "XScreen.h"           /* 屏幕几何 */
 #include "XLabel.h"            /* 提示标签 */
+#include "XFont.h"             /* 标签行高钉底（字模像素字号） */
+#include "XFont8x16.h"         /* 行高兜底常量 */
 #include "XLineEdit.h"         /* 文本/浮点输入 */
 #include "XSpinBox.h"          /* 整数输入 */
 #include "XComboBox.h"         /* 下拉选择 */
 #include "XPushButton.h"       /* OK/Cancel */
 #include "XPlainTextEdit.h"    /* 多行文本输入 */
 #include "XBoxLayout.h"        /* 对话框布局 */
+#include "XLayoutItem_Protected.h" /* XLayoutItem_widget_base 声明：缺
+                                    * 它时隐式 int 返回 + cltq 截断
+                                    * 64 位控件指针（r1#4/#10 回归锁
+                                    * 首跑 SIGSEGV 实锚，2026-10-01） */
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -114,6 +120,10 @@ static void xinputdialog_emitDouble(XInputDialog* self, size_t signal,
 
 /* ==================== 类与实例生命周期 ==================== */
 
+static void VXInputDialog_showEvent(XWidget* self, XEvent* event);
+static void VXInputDialog_closeEvent(XWidget* self, XEvent* event);
+static void xid_openCleanup(XInputDialog* dlg);
+
 /** @brief 释放对话框自有拥有字段，再委托父类。 */
 static void VXInputDialog_deinit(XInputDialog* self)
 {
@@ -123,6 +133,7 @@ static void VXInputDialog_deinit(XInputDialog* self)
     xinputdialog_freeString(&self->m_comboBoxText);
     xinputdialog_freeString(&self->m_okButtonText);
     xinputdialog_freeString(&self->m_cancelButtonText);
+    xinputdialog_freeString(&self->m_placeholderText);
     if (self->m_comboBoxItems) {
         XStringList_delete_base((XClass*)self->m_comboBoxItems);
         self->m_comboBoxItems = NULL;
@@ -134,6 +145,8 @@ XVtable* XInputDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XInputDialog)
     XVTABLE_INHERIT_XCLASS(XDialog);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXInputDialog_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_CloseEvent, VXInputDialog_closeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXInputDialog_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -158,6 +171,7 @@ void XInputDialog_init(XInputDialog* self, XWidget* parent, XWidgetFlags flags)
     self->m_doubleValue = 0.0;
     self->m_okButtonText = NULL;
     self->m_cancelButtonText = NULL;
+    self->m_placeholderText = NULL;
     /* 默认范围对齐 Qt QInputDialog：int 全范围、double 全范围、
        步进 1、小数位 2。 */
     self->m_intMinimum = -2147483647 - 1;
@@ -167,6 +181,9 @@ void XInputDialog_init(XInputDialog* self, XWidget* parent, XWidgetFlags flags)
     self->m_doubleMaximum = 1.0e308;
     self->m_doubleStep = 1.0;
     self->m_doubleDecimals = 2;
+    self->m_openReceiver = NULL;
+    self->m_openMember = NULL;
+    self->m_openSignal = XInputDialog_OpenFinished;
 }
 
 XInputDialog* XInputDialog_create_ex(XMemoryType memory, XWidget* parent,
@@ -258,10 +275,11 @@ void XInputDialog_setComboBoxItems(XInputDialog* self, const XStringList* items)
     if (!self->m_comboBoxItems || !items) return;
     n = XStringList_size_base((const XContainer*)items);
     for (i = 0; i < n; ++i) {
-        XString* item = (XString*)XStringList_at_base(items, i);
+        XString* item = (XString*)XStringList_at_base((const XVector*)items, i);
         XString* copy = item ? XString_create_copy(item) : XString_create();
         if (copy) {
-            XStringList_push_back_move_base(self->m_comboBoxItems, copy);
+            XStringList_push_back_move_base(
+                (XVector*)self->m_comboBoxItems, copy);
             XString_delete_base((XClass*)copy);
             copy = NULL;
         }
@@ -278,10 +296,11 @@ XStringList* XInputDialog_comboBoxItems(const XInputDialog* self)
     if (!self->m_comboBoxItems) return out;
     n = XStringList_size_base((const XContainer*)self->m_comboBoxItems);
     for (i = 0; i < n; ++i) {
-        XString* item = (XString*)XStringList_at_base(self->m_comboBoxItems, i);
+        XString* item = (XString*)XStringList_at_base(
+            (const XVector*)self->m_comboBoxItems, i);
         XString* copy = item ? XString_create_copy(item) : XString_create();
         if (copy) {
-            XStringList_push_back_move_base(out, copy);
+            XStringList_push_back_move_base((XVector*)out, copy);
             XString_delete_base((XClass*)copy);
             copy = NULL;
         }
@@ -317,6 +336,19 @@ void XInputDialog_setCancelButtonText(XInputDialog* self, const XString* text)
 XString* XInputDialog_cancelButtonText(const XInputDialog* self)
 {
     return self ? xinputdialog_dupString(self->m_cancelButtonText)
+                : XString_create();
+}
+
+void XInputDialog_setPlaceholderText(XInputDialog* self, const XString* text)
+{
+    if (!self) return;
+    xinputdialog_freeString(&self->m_placeholderText);
+    self->m_placeholderText = xinputdialog_dupString(text);
+}
+
+XString* XInputDialog_placeholderText(const XInputDialog* self)
+{
+    return self ? xinputdialog_dupString(self->m_placeholderText)
                 : XString_create();
 }
 
@@ -385,52 +417,6 @@ static XWidget* xid_childByName(XDialog* dlg, const char* name)
     return w;
 }
 
-/** @brief 弹窗主屏居中（对标 Qt 静态便捷函数把对话框定位于屏幕中央）。 */
-static void xid_centerOnScreen(XWidget* w)
-{
-    /* 窗口形态对话框（XDialog init 对无类型位叠加 Dialog 类型）几何
-     * 为全局屏幕坐标：居中于父级顶层窗口（对标 QDialogPrivate::
-     * adjustPosition——父窗中央落点）；子控件形态（历史/改型）几何
-     * 为父系坐标，居中于父控件；无父时回退主屏居中。 */
-    XWidget* parent = w ? XWidget_parentWidget(w) : NULL;
-    if (parent && w->m_isWindow) {
-        XWidget* ptop = XWidget_topLevelWidget(parent);
-        if (ptop && ptop != w) {
-            XPoint origin;
-            XPoint po;
-            int dw = XWidget_width(w);
-            int dh = XWidget_height(w);
-            int tw = XWidget_width(ptop);
-            int th = XWidget_height(ptop);
-            XPoint_init(&origin, 0, 0);
-            po = XWidget_mapToGlobal(ptop, &origin);
-            XWidget_move(w, tw > dw ? po.x + (tw - dw) / 2 : po.x,
-                            th > dh ? po.y + (th - dh) / 2 : po.y);
-            return;
-        }
-    }
-    if (parent) {
-        int pw = XWidget_width(parent);
-        int ph = XWidget_height(parent);
-        int dw = XWidget_width(w);
-        int dh = XWidget_height(w);
-        XWidget_move(w, pw > dw ? (pw - dw) / 2 : 0,
-                        ph > dh ? (ph - dh) / 2 : 0);
-        return;
-    }
-    {
-        XScreen* screen;
-        XRect g;
-        if (!w) return;
-        screen = XGuiApplication_primaryScreen();
-        if (!screen) return;
-        g = XScreen_geometry(screen);
-        if (g.width <= 0 || g.height <= 0) return;
-        XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
-                        g.y + (g.height - XWidget_height(w)) / 2);
-    }
-}
-
 /** @brief OK 槽：把内嵌控件当前值结算进对话框存储后 accept（对标 Qt
  *  QInputDialog 在 accept 前由输入控件同步 d->value 的路径）。 */
 static void xid_acceptSlot(XObject* receiver, XVarList* args);
@@ -440,6 +426,10 @@ static void xid_rejectSlot(XObject* receiver, XVarList* args)
 {
     (void)args;
     if (receiver) XDialog_reject((XDialog*)receiver);
+    /* open_2 连接收口：reject→done 发射 finished 时连接仍在（receiver
+     * 恰回调一次），收口后断开，防连接与记录跨关闭存活（XMessageBox
+     * 按钮点击路径同款）。 */
+    xid_openCleanup((XInputDialog*)receiver);
 }
 
 /** @brief 组装对话框骨架：Dialog 窗口标志 + 标题 + 垂直布局 + 可选标签。
@@ -473,6 +463,9 @@ static XInputDialog* xid_buildDialog(XWidget* parent, const XString* title,
         XLabel* lb = XLabel_create((XWidget*)dlg, 0);
         if (lb) {
             XLabel_setText(lb, label);
+            /* 提示行行高钉底在 xid_applyExecSize 做：主题字模在装配时
+             * 尚未落到控件（XFont_pixelSize 实测为 0），SHOW/exec 定尺
+             * 时已解析，见该函数内「标签行高修正」。 */
             XBoxLayout_addWidget(root, (XWidget*)lb);
         }
     }
@@ -530,53 +523,161 @@ static void xid_addButtons(XInputDialog* dlg, XBoxLayout* root,
     *outBar = bar;
 }
 
-/** @brief 初始焦点落到输入控件（对标 Qt 6.8 qinputdialog.cpp
- *  QInputDialog::setVisible：显示即 d->inputWidget->setFocus()，行
- *  编辑/自旋框同时 selectAll）。此前 exec 后初始焦点被
- *  dialog_grabInitialFocus 抢到默认按钮「确定」上，弹出后直接打字
- *  无效（夜间台账 #26）。exec 内 grabInitialFocus 见焦点已在对话
- *  框子树内即不抢占（dialog_containsFocus 门禁），故此处先聚焦。 */
-static void xid_focusInputWidget(XInputDialog* dlg)
+/** @brief 对象字模单行行高（像素字号优先，字库位图行高兜底，再退 16；
+ *  XLabel label_lineHeight 同源量纲）。 */
+static int xid_fontLineHeight(const XWidget* w)
 {
-    XWidget* input = NULL;
+    XFont font;
+    const XFontFace* face;
+    XFontFaceInfo info;
+    int base = XFONT8X16_HEIGHT;
+    int scaleNum;
+    if (!w) return base;
+    font = XWidget_font((XWidget*)w);
+    XMemset(&info, 0, sizeof(info));
+    face = XFont_face(&font);
+    if (face && XFontFace_info_base(face, &font, &info) &&
+        info.m_kind == XFontFace_Bitmap && info.m_bitmap.m_height > 0)
+        base = info.m_bitmap.m_height;
+    scaleNum = XFont_pixelSize(&font) > 0 ? XFont_pixelSize(&font) : base;
+    XFont_deinit_base((XClass*)&font);
+    return scaleNum < 1 ? 1 : scaleNum;
+}
+
+/** @brief exec/显示定尺：内容实测 + CSD 装饰高（账本 #4/#10 定尺口径，
+ *  exec 预定尺与 SHOW 精修共用）。
+ *  @details 定尺 = 内容实际需求：调用方基线（360x140 等，对标 Qt
+ *           QInputDialog 各便捷函数的常规默认）只作下限，实际取根布局
+ *           totalSizeHint 实测（margins 12+12 + 标签行 + spacing 8×2 +
+ *           输入行 + 按钮行）——CSD 平台装饰条画在客户区顶部，窗高不
+ *           随装饰追加即标签/行编辑/按钮行被压缩裁出窗外。
+ *
+ *           软键盘不占对话框几何（2026-10-02 所有者裁定：对话框内不塞
+ *           内嵌屏幕键盘——XVirtualKeyboard_popup 对 Dialog 宿主改以独立
+ *           Popup 浮层弹于编辑器下方，可越出对话框边界，见该函数宿主
+ *           解析分支）。本函数旧版的「软键盘避让带」（band=max(base,120)、
+ *           布局下边距 12+band）随对话框内嵌键盘路径一并拆除：键盘不再
+ *           是对话框子树浮层，无需为其预留空白带，对话框几何回归 Qt
+ *           常规默认（内容实测+装饰高；算大与算小同为缺陷）。
+ *
+ *           exec 预定尺 + SHOW 复算双入口：装饰高查询在建窗前返回预
+ *           测条高、建窗后为真实条高，两者一致时几何不变；SHOW 复算
+ *           幂等（totalSizeHint 缓存恒为原始内容提示，见函数内注），
+ *           兜底装饰态差异并重居中。 */
+static void xid_applyExecSize(XInputDialog* dlg, int w, int h)
+{
+    XLayout* root;
     if (!dlg) return;
-    switch (XInputDialog_inputMode(dlg)) {
-    case XInputDialog_IntInput:
-        input = xid_childByName(&dlg->m_base, XID_NAME_SPIN);
-        break;
-    case XInputDialog_DoubleInput:
-        input = xid_childByName(&dlg->m_base, XID_NAME_EDIT);
-        break;
-    case XInputDialog_ComboBoxInput:
-        input = xid_childByName(&dlg->m_base, XID_NAME_COMBO);
-        break;
-    case XInputDialog_TextInput:
-    default: {
-        XLineEdit* edit =
-            (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
-        if (edit) {
-            /* 对标 Qt：文本输入聚焦即全选预置文本，键入直接替换。 */
-            XLineEdit_selectAll(edit);
-            input = (XWidget*)edit;
-        } else {
-            input = xid_childByName(&dlg->m_base, XID_NAME_PLAIN);
+    root = XWidget_layout((XWidget*)dlg);
+    if (!root) {
+        XWidget_resize((XWidget*)dlg, w, h);
+        return;
+    }
+    {
+        /* 标签行高修正（账本 #4/#10 配套）：主题字模下标签 sizeHint
+         * 实测可为 0x0（装配时字模未落控件），定尺按 0 高解算会把提示
+         * 行压成 0 高（标签不可见）。按对象字模行高改写其缓存 sizeHint
+         * （盒布局 hint 数学不钳 minimumSize，改写缓存是唯一入口），再
+         * 失效布局提示缓存重取。 */
+        XLayoutItem* it0 = XLayout_count_base(root) > 0
+                               ? XLayout_itemAt_base(root, 0)
+                               : NULL;
+        XWidget* first = it0 ? XLayoutItem_widget_base(it0) : NULL;
+        if (first) {
+            XSize h0 = XWidget_sizeHint(first);
+            int rowH = xid_fontLineHeight(first);
+            if (h0.height < rowH) {
+                h0.height = rowH;
+                XWidget_setSizeHint(first, &h0);
+            }
         }
-        break;
+        /* totalSizeHint 为解算缓存（XLayout.h 缓存口径）——改写控件
+         * sizeHint 后需 update 失效重取。exec 预定尺与 SHOW 精修重复
+         * 调用天然幂等（标签行高修正单调：已 ≥ 行高则不再改写）。 */
+        XLayout_update(root);
+        XSize hint = XLayout_totalSizeHint(root);
+        int needW = hint.width > 0 ? hint.width : 0;
+        int base = (hint.height > 0 ? hint.height : 0) +
+                   XDialog_decorationTopOffset(&dlg->m_base);
+        if (w < needW) w = needW;
+        if (h < base) h = base;
     }
+    XWidget_resize((XWidget*)dlg, w, h);
+}
+
+/** @brief 显示事件：exec 预定尺后按当前装饰/边距态复算一次（幂等；
+ *  CSD 真实条高建窗后才可查询，首显精修兜底），随后父类 showEvent 的
+ *  CSD 避让链只补差额——避让改写布局顶边距发生在本次布局解算之后，
+ *  末尾显式 activate 一次按新边距重排（标签/行编辑/按钮行否则仍按
+ *  旧顶边距落位、被装饰条压住）。 */
+static void VXInputDialog_showEvent(XWidget* self, XEvent* event)
+{
+    XLayout* root = NULL;
+    if (self && event && XEvent_type(event) == XEVENT_TYPE_SHOW) {
+        xid_applyExecSize((XInputDialog*)self,
+                          XWidget_width(self), XWidget_height(self));
+        root = XWidget_layout(self);
+        /* 布局改回 SetNoConstraint：默认 SetDefault 约束会在每次
+           activate（含 show 后 updateGeometry 的挂起激活）把布局
+           minimumSize 写回对话框，覆盖下方锁死值——根布局退出写回，
+           排布照常，顶层尺寸完全由 exec 定稿 + setFixedSize 管。 */
+        if (root)
+            XLayout_setSizeConstraint(root,
+                                      XLayoutSizeConstraint_SetNoConstraint);
     }
-    if (input)
-        XWidget_setFocusReason(input, XFocusReason_Other);
+    XClass_Parent(XDialog, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    if (root) {
+        XLayout_activate(root);
+        /* 尺寸锁定（2026-10-03 所有者问询盘点，对标 qinputdialog.cpp
+         * QInputDialog 全模式用户不可拖拽改尺寸的既有效果）：activate
+         * 排布完成（默认约束会把布局 minimum 写回控件，故锁死必须居
+         * 其后）再 setFixedSize——min=max=exec 定稿尺寸（360x143/
+         * 400x260/... 视觉不变），平台层经
+         * XPlatformNativeWindow_setSizeHints 落 WM_NORMAL_HINTS
+         * PMinSize/PMaxSize（kwin/DDE 拖拽钳制）。幂等：每次 SHOW
+         * 以同一 exec 尺寸重锁。 */
+        XWidget_setFixedSize(self,
+                             XWidget_width(self), XWidget_height(self));
+    }
+}
+
+/** @brief 关闭事件：[×] 关闭经基类 reject→done 收口（finished 发射
+ *  时 open_2 连接仍在，receiver 恰回调一次），收口后断开并清记录
+ *  ——超出 Qt 严格对等的健壮性收口，防连接与记录跨关闭存活、下次
+ *  open_2 叠连（XMessageBox VXMessageBox_closeEvent 同款）。 */
+static void VXInputDialog_closeEvent(XWidget* self, XEvent* event)
+{
+    bool close = self && event && XEvent_type(event) == XEVENT_TYPE_CLOSE;
+    XClass_Parent(XDialog, EXWidget_CloseEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    if (close)
+        xid_openCleanup((XInputDialog*)self);
 }
 
 /** @brief 阻塞模态执行：定尺寸、主屏居中、exec（复用 XDialog 阻塞
- *  循环：应用模态 + Escape→reject）。返回是否接受。 */
+ *  循环：应用模态 + Escape→reject）。返回是否接受。
+ *  @details 不再预聚焦输入控件（2026-10-02 所有者点击驱动裁定，
+ *           覆盖夜间台账 #26 的预聚焦方案）：旧路径 exec 前
+ *           xid_focusInputWidget 抢先把焦点放输入控件，键盘弹出是
+ *           焦点驱动守护（XVirtualKeyboard autoPopup 默认开、宿主类
+ *           型无关）→ 输入控件一获焦即弹外置键盘，「打开即有键盘」
+ *           与裁定「点击输入框才弹」相悖。删除后初始焦点走
+ *           XDialog::dialog_grabInitialFocus 既有落点（默认按钮优
+ *           先，无则对话框自身）——打开无键盘；点击输入框时
+ *           XLineEdit mousePress → setFocus（点击驱动语义与主窗编
+ *           辑框完全一致）→ 外置键盘在编辑框下方弹出。取舍得失：
+ *           打开后不点输入框直接物理键入无效（焦点在确定钮，属标
+ *           准对话框语义，登记为有意取舍非遗忘）。 */
 static bool xid_execDialog(XInputDialog* dlg, int w, int h)
 {
     int rc;
     if (!dlg) return false;
-    XWidget_resize((XWidget*)dlg, w, h);
-    xid_centerOnScreen((XWidget*)dlg);
-    xid_focusInputWidget(dlg);
+    xid_applyExecSize(dlg, w, h);
+    /* 居中统一走 XDialog_exec 漏斗（xdlg_centerToParentWindow，对标
+     * QDialogPrivate::adjustPosition）——私有屏幕居中已清理，两套并
+     * 存时本处先行 move 会置 Moved 位、反令标准漏斗失明（2026-10-03
+     * 所有者裁定合并为一套）。 */
     rc = XDialog_exec(&dlg->m_base);
     return rc == 1; /* 对标 QDialog::Accepted。 */
 }
@@ -588,6 +689,39 @@ static void xid_teardown(XInputDialog* dlg, XBoxLayout* root, XBoxLayout* bar)
     if (root) XLayout_delete_base((XLayout*)root);
     if (bar) XLayout_delete_base((XLayout*)bar);
     if (dlg) XInputDialog_delete_base((XClass*)dlg);
+}
+
+/** @brief open_2 信号选择→信号地址（对标 Qt signalForMember 候选信号
+ *  集：文本/整数/浮点载荷→对应 *ValueSelected，兜底 finished）。 */
+static size_t xid_openSignalId(XInputDialogOpenSignal openSignal)
+{
+    switch (openSignal) {
+    case XInputDialog_OpenTextValueSelected:
+        return (size_t)XInputDialog_textValueSelected_signal;
+    case XInputDialog_OpenIntValueSelected:
+        return (size_t)XInputDialog_intValueSelected_signal;
+    case XInputDialog_OpenDoubleValueSelected:
+        return (size_t)XInputDialog_doubleValueSelected_signal;
+    case XInputDialog_OpenFinished:
+    default:
+        return (size_t)XDialog_finished_signal;
+    }
+}
+
+/** @brief open_2 连接收口：断开 open 记录的连接并清空记录（按钮
+ *  点击/done 收口与 [×] 关闭两路共用；未 open 过或已清理时空操作，
+ *  幂等。XMessageBox xmsg_openCleanup 同款）。 */
+static void xid_openCleanup(XInputDialog* dlg)
+{
+    if (!dlg) return;
+    if (dlg->m_openReceiver && dlg->m_openMember) {
+        XObject_disconnect_1((XObject*)dlg,
+                             xid_openSignalId(dlg->m_openSignal),
+                             dlg->m_openReceiver, dlg->m_openMember);
+    }
+    dlg->m_openReceiver = NULL;
+    dlg->m_openMember = NULL;
+    dlg->m_openSignal = XInputDialog_OpenFinished;
 }
 
 static void xid_acceptSlot(XObject* receiver, XVarList* args)
@@ -673,6 +807,9 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
     }
     }
     XDialog_accept(&dlg->m_base);
+    /* open_2 连接收口：accept→done 发射 finished 时连接仍在（receiver
+     * 恰回调一次），收口后断开（XMessageBox 按钮点击路径同款）。 */
+    xid_openCleanup(dlg);
 }
 
 /** @brief 创建临时实例并按静态参数应用存储 setter（无模态执行）。 */
@@ -688,9 +825,15 @@ static XInputDialog* xinputdialog_tempSetup(XWidget* parent,
     return dlg;
 }
 
-XString* XInputDialog_getText(XWidget* parent, const XString* title,
-                              const XString* label, XInputDialogEchoMode echo,
-                              const XString* text, bool* ok)
+/** @brief getText 共同实现（对标 QInputDialog::getText + 占位提示扩展）。
+ *  @param placeholder 占位提示（可为 NULL）：仅空文本时在内部行编辑灰显
+ *         （XLineEdit 占位绘制契约：PlaceholderText 调色色，输入即消失，
+ *         不进入 accept 结算值），对标 QInputDialog::setPlaceholderText。 */
+static XString* xid_getTextImpl(XWidget* parent, const XString* title,
+                                const XString* label,
+                                XInputDialogEchoMode echo,
+                                const XString* text,
+                                const XString* placeholder, bool* ok)
 {
     XInputDialog* dlg;
     XBoxLayout* root = NULL;
@@ -718,6 +861,10 @@ XString* XInputDialog_getText(XWidget* parent, const XString* title,
             XLineEdit_setEchoMode(edit, (int)echo);
             if (text)
                 XLineEdit_setText(edit, XString_toUtf8(text));
+            if (placeholder && XString_toUtf8(placeholder) &&
+                XString_toUtf8(placeholder)[0])
+                XLineEdit_setPlaceholderText(edit,
+                                             XString_toUtf8(placeholder));
             XWidget_setMinimumSize((XWidget*)edit, 220, 24);
             /* 对标 Qt 对话框私有子对象命名（xid_childByName 依赖）：
                此前漏登记 XID_NAME_EDIT，accept 结算 findChild 落空，
@@ -736,6 +883,13 @@ XString* XInputDialog_getText(XWidget* parent, const XString* title,
     return result;
 }
 
+XString* XInputDialog_getText(XWidget* parent, const XString* title,
+                              const XString* label, XInputDialogEchoMode echo,
+                              const XString* text, bool* ok)
+{
+    return xid_getTextImpl(parent, title, label, echo, text, NULL, ok);
+}
+
 XString* XInputDialog_getText_2(XWidget* parent, const char* title,
                                 const char* label, XInputDialogEchoMode echo,
                                 const char* text, bool* ok)
@@ -747,6 +901,23 @@ XString* XInputDialog_getText_2(XWidget* parent, const char* title,
     if (t) XString_delete_base((XClass*)t);
     if (l) XString_delete_base((XClass*)l);
     if (v) XString_delete_base((XClass*)v);
+    return result;
+}
+
+XString* XInputDialog_getText_3(XWidget* parent, const char* title,
+                                const char* label, XInputDialogEchoMode echo,
+                                const char* text, const char* placeholder,
+                                bool* ok)
+{
+    XString* t = title ? XString_create_utf8(title) : NULL;
+    XString* l = label ? XString_create_utf8(label) : NULL;
+    XString* v = text ? XString_create_utf8(text) : NULL;
+    XString* ph = placeholder ? XString_create_utf8(placeholder) : NULL;
+    XString* result = xid_getTextImpl(parent, t, l, echo, v, ph, ok);
+    if (t) XString_delete_base((XClass*)t);
+    if (l) XString_delete_base((XClass*)l);
+    if (v) XString_delete_base((XClass*)v);
+    if (ph) XString_delete_base((XClass*)ph);
     return result;
 }
 
@@ -1041,6 +1212,28 @@ XString* XInputDialog_getItem_2(XWidget* parent, const char* title,
     if (t) XString_delete_base((XClass*)t);
     if (l) XString_delete_base((XClass*)l);
     return result;
+}
+
+/* ==================== 非阻塞打开（对标 QInputDialog::open） ==================== */
+
+void XInputDialog_open_2(XInputDialog* self, XObject* receiver,
+                         XSlotFunc1 member, XInputDialogOpenSignal openSignal)
+{
+    if (!self || !member) return;
+    /* 重复 open 防叠连：旧记录尚存时先断开旧连接（disconnect_1 只移
+     * 除首个匹配，直接叠连会残留旧连接，receiver 每次收口被多路误
+     * 触发。XMessageBox_open_2 同款）。 */
+    if (self->m_openReceiver || self->m_openMember)
+        xid_openCleanup(self);
+    self->m_openReceiver = receiver;
+    self->m_openMember = member;
+    self->m_openSignal = openSignal;
+    if (receiver) {
+        XObject_connect_1((XObject*)self, xid_openSignalId(openSignal),
+                          receiver, member, XConnectionType_Direct);
+    }
+    /* 对标 QDialog::open：窗口模态显示并立即返回。 */
+    XDialog_open(&self->m_base);
 }
 
 /* ==================== 信号 ==================== */

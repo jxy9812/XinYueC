@@ -339,6 +339,16 @@ static bool xte_pushLine(XTELayout* lay, int segFirst, int width,
 static int xte_wrapAvailWidth(const XTextEdit* self, int widgetW)
 {
     int avail = widgetW - XTE_RICH_LEFT - XTE_RICH_RIGHT;
+    /* 预览态纵向滚动条按需显示：显示时折行宽须扣条带（视口宽口径，
+     * 与 resizeEvent/xte_editorDocSizeSlot 的「折行宽=视口宽」注释同
+     * 源）——此前按整控件宽排文，行尾字钻进条带下被竖切半字
+     * （2026-10-03 demo 高级页目验实证）。 */
+    if (self && self->m_richPreview) {
+        const XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+            (const XAbstractScrollArea*)self);
+        if (vsb && XWidget_isVisible((const XWidget*)vsb))
+            avail -= XWidget_width((const XWidget*)vsb);
+    }
     (void)self;
     return avail > 0 ? avail : 0;
 }
@@ -1127,6 +1137,16 @@ static void VX_textEdit_paintEvent(XWidget* self, XEvent* event)
     if (vsb) scroll = XScrollBar_value(vsb);
     if (scroll != 0)
         XPainter_translate(&painter, 0.0f, (float)-scroll);
+    /* 裁剪到控件视口：富文本行按文档布局宽渲染，无裁剪时超出控件
+       矩形的部分直接落进后备缓冲（全局图像系）压到邻居控件上
+       （2026-10-03 demo 高级页目验实证：窄控件宽行溢出叠印）。滚动
+       平移在裁剪之前完成，裁剪矩形即视口。 */
+    {
+        XRect clip;
+        XRect_init(&clip, 1, 1, r.width - 2 > 0 ? r.width - 2 : 0,
+                   r.height - 2 > 0 ? r.height - 2 : 0); /* 让开 1px 边框。 */
+        XPainter_setClipRect(&painter, &clip, XPainterClipOperation_IntersectClip);
+    }
     /* 渲染子集：逐块格式切换绘制（b/i/u/s、色/号、对齐、链接）。 */
     ctx.painter = &painter;
     ctx.hover = (te->m_hoverAnchor && XString_toUtf8(te->m_hoverAnchor))

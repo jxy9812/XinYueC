@@ -59,6 +59,15 @@ void XColorDialog_init(XColorDialog* self, XColor initial, XWidget* parent,
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
+    /* 固定/可拉伸归类（2026-10-02 所有者指令②：逐类抓 Qt 6.8.3 原文
+     * 核实，qcolordialog.cpp 判固定类）——initWidgets() 落
+     * QLayout::SetFixedSize（窗口恒随布局 sizeHint 吸附、用户拖边无
+     * 效），构造尾再 setSizeGripEnabled(false) 显式去尺寸把手；全文无
+     * MSWindowsFixedSizeDialogHint 字面位，固定语义由布局约束承载。
+     * XGui 布局模型无 SetFixedSize 等位，按消息族同型以该提示位声明
+     * 固定窗口（XMessageBox_init:765 先例；窗口类型位尊重调用方，不
+     * 在此叠加）。 */
+    flags |= (XWidgetFlags)XWindowType_MSWindowsFixedSizeDialogHint;
     XDialog_init(&self->m_base, parent, flags);
     XClassSetVtable(self, XColorDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
@@ -580,9 +589,24 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
             }
         }
     }
-    /* 阻塞模态执行（复用 XDialog exec：应用模态 + Escape→reject）。 */
-    XWidget_resize((XWidget*)dlg, 320, 340);
+    /* 固定尺寸收口（指令② 同型：对标 qcolordialog.cpp 布局
+     * SetFixedSize 的「窗口吸附布局 sizeHint」语义）——setFixedSize
+     * （min=max）令 exec 期间用户拖边无效。尺寸 = max(布局实测
+     * totalSizeHint, 320x340)：320x340 为 r1 猎捕实证合格常量
+     * （a-90/91：48 色板 8x6 + RGB 行 + 预览条 + 确定/取消完整、四边
+     * 不贴边）；布局实测兜底显式 minimumSize 子控件（色板 224x168、
+     * RGB spinbox 72x24、预览 224x36）不被 320 宽下限压缩。CSD 装饰
+     * 高不在此预加：r1 演示环境（装饰态）340 高实测完整（避让链顶边
+     * 距增量由布局伸展余量吸收，截图底边距可见），预加即算大。 */
+    XLayout_update((XLayout*)root);
+    {
+        XSize hint = XLayout_totalSizeHint((XLayout*)root);
+        int fw = hint.width > 320 ? hint.width : 320;
+        int fh = hint.height > 340 ? hint.height : 340;
+        XWidget_setFixedSize((XWidget*)dlg, fw, fh);
+    }
     xcd_centerOnScreen((XWidget*)dlg);
+    /* 阻塞模态执行（复用 XDialog exec：应用模态 + Escape→reject）。 */
     accepted = XDialog_exec(&dlg->m_base) == 1;
     {
         XColor result;
@@ -669,6 +693,25 @@ void XColorDialog_open(XColorDialog* self)
 {
     if (!self) return;
     XWidget_show((XWidget*)self);
+}
+
+void XColorDialog_open_2(XColorDialog* self, XObject* receiver,
+                         XSlotFunc1 member)
+{
+    if (!self || !member) return;
+    /* member 等价连接 finished(int)（对标 QDialog::open(receiver,
+     * member) 连接 finished；QColorDialog 无 buttonClicked 类信号，
+     * 故无需 XMessageBox_open_2 的载荷分派位）。 */
+    if (receiver) {
+        XObject_connect_1((XObject*)self,
+                          (size_t)XDialog_finished_signal,
+                          receiver, member, XConnectionType_Direct);
+    }
+    /* 对标 QDialog::open：窗口模态显示并立即返回（XMessageBox_open_2
+     * 同款收口：经基类 XDialog_open 承载窗口模态改写/居中/置顶/模态
+     * 门全套；与本文件 open 桩（仅 XWidget_show）的简化口径不同，
+     * receiver 形态按 Qt QDialog::open 完整语义走基类）。 */
+    XDialog_open(&self->m_base);
 }
 
 #endif /* XWIDGET_ON && XDIALOG_ON */

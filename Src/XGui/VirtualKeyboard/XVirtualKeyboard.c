@@ -324,6 +324,8 @@ static void xkb_guardTick(XVirtualKeyboard* self);
 static void xkb_reposition(XVirtualKeyboard* self);
 static void xkb_bindTargetDestroyed(XVirtualKeyboard* self, XWidget* newTarget);
 static void xkb_bindHostDestroyed(XVirtualKeyboard* self, XWidget* newHost);
+static void xkb_hostGeomSlot(XObject* receiver, XVarList* args);
+static void xkb_bindGeometrySignals(XVirtualKeyboard* self, bool bind);
 static void xkb_stopRepeat(XVirtualKeyboard* self);
 static void xkb_stopGuard(XVirtualKeyboard* self);
 #if XVIRTUALKEYBOARD_ON
@@ -631,6 +633,12 @@ static void xkb_hostDestroyedSlot(XObject* receiver, XVarList* args)
     if (!self) return;
     self->m_host = NULL;
     self->m_hostConn = NULL; /* 发送方连接表随销毁失效，句柄不可再断。 */
+    /* 几何信号宿主侧同款处置（连接表随销毁失效，置 NULL 不可再断）；
+       范围顶层若仍存活由下方 closePopup→bind(false) 真断。 */
+    self->m_geomConn[0] = NULL;
+    self->m_geomConn[1] = NULL;
+    self->m_geomConn[2] = NULL;
+    self->m_geomConn[3] = NULL;
     self->m_hostW = 0;
     self->m_hostH = 0;
     XVirtualKeyboard_closePopup(self);
@@ -1715,22 +1723,150 @@ static void xkb_startGuard(XVirtualKeyboard* self)
         (XObject*)self, XKEYBOARD_GUARD_INTERVAL_MS, XTimerType_CoarseTimer);
 }
 
+/** @brief 解析对话框外置浮层的「范围顶层」（浮层落位与守护复核共用）：
+ *         沿宿主对话框父链上溯到首个非 Dialog 型顶层（主窗等；独立
+ *         对话框退对话框自身）。浮层形态 m_host=宿主对话框。 */
+static XWidget* xkb_overlayScope(XVirtualKeyboard* self)
+{
+    XWidget* dlgTop;
+    XWidget* scope;
+    XWidget* p;
+    if (!self || !self->m_host) return NULL;
+    dlgTop = self->m_host;
+    scope = dlgTop;
+    for (p = XWidget_parentWidget(dlgTop); p;
+         p = XWidget_parentWidget(p)) {
+        XWidget* t = XWidget_topLevelWidget(p);
+        if (t && t != dlgTop &&
+            (XWidget_windowFlags(t) & (XWidgetFlags)XWindowType_TypeMask) !=
+                (XWidgetFlags)XWindowType_Dialog) {
+            scope = t;
+            break;
+        }
+    }
+    return scope;
+}
+
+/** @brief 外置浮层落位（2026-10-02 所有者裁定：对话框内不塞内嵌屏幕
+ *         键盘——点击对话框内输入框时与主窗其他输入完全一致，键盘以
+ *         独立 Popup 顶层浮层承载，可越出对话框边界）。
+ *  @details 前置：面板已由 XVirtualKeyboard_popup 的 Dialog 分支按
+ *           Popup 形态挂编辑框顶层（transient，绝不作对话框子控件）。
+ *           落位基准=「外层范围顶层」（xkb_overlayScope 解析）：宽取范
+ *           围顶层宽（与主窗形态「弹层宽==宿主宽」同刻度，外置大键盘）；
+ *           高沿用 xkb_reposition 同一钳位公式 kbH=clamp(h/2,120,h-32)
+ *           （与主窗内嵌键盘视觉同规格）；y=贴范围顶层底部（2026-10-03
+ *           所有者裁定「这种大小的底部对齐」：与主窗/悬浮形态底部对齐
+ *           同款，面板铺范围底层，对话框中部内容不被遮蔽）；x=范围顶
+ *           层全局 x（左对齐主窗）。 */
+static void xkb_repositionOverlay(XVirtualKeyboard* self)
+{
+    XWidget* scope;
+    XPoint origin;
+    XPoint sg;
+    int scopeW;
+    int scopeH;
+    int kbH;
+    int x;
+    int y;
+    if (!self) return;
+    scope = xkb_overlayScope(self);
+    if (!scope) return;
+    scopeW = XWidget_width(scope);
+    scopeH = XWidget_height(scope);
+    kbH = scopeH / 2;
+    if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
+    if (kbH > scopeH - XKEYBOARD_POPUP_MARGIN_H)
+        kbH = scopeH - XKEYBOARD_POPUP_MARGIN_H;
+    if (kbH < 1) kbH = 1;
+    origin.x = 0;
+    origin.y = 0;
+    /* 几何读 XWindow 记账（reposition 同款零滞后口径）：信号发射点在
+       控件层几何回写之前，槽链上读控件级是上一帧值。顶层窗口记账几何
+       即全局坐标。 */
+    if (XWidget_windowHandle(scope)) {
+        XWindow* scopeWin = (XWindow*)XWidget_windowHandle(scope);
+        XRect wg = XWindow_geometry(scopeWin);
+        scopeW = wg.width;
+        scopeH = wg.height;
+        sg.x = wg.x;
+        sg.y = wg.y;
+        kbH = scopeH / 2;
+        if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
+        if (kbH > scopeH - XKEYBOARD_POPUP_MARGIN_H)
+            kbH = scopeH - XKEYBOARD_POPUP_MARGIN_H;
+        if (kbH < 1) kbH = 1;
+    } else {
+        sg = XWidget_mapToGlobal(scope, &origin);
+    }
+    /* y=贴范围顶层底部（2026-10-03 所有者裁定「这种大小的底部对齐」）：
+       与主窗/悬浮形态「宿主底部全宽」同款逻辑——面板铺范围底层，编辑
+       器与面板间的对话框中部内容不被遮蔽；顶层无父偏移，全局坐标即屏
+       幕坐标（XComboBox 弹层 setGeometryRect 先例）。 */
+    x = sg.x;
+    y = sg.y + scopeH - kbH;
+    self->m_popupHeight = kbH;
+    {
+        XRect r;
+        XRect current;
+        XRect_init(&r, x, y, scopeW, kbH);
+        /* 几何短路（reposition 同款）：范围顶层 x/y/w/h 信号成对到达，
+           目标与当前一致时零操作——防布局 churn 与外部合法调整被打回。 */
+        current = XWidget_rect((XWidget*)self);
+        if (current.x == r.x && current.y == r.y &&
+            current.width == r.width && current.height == r.height)
+            return;
+        XWidget_setGeometryRect((XWidget*)self, &r);
+    }
+}
+
 /** @brief 按宿主当前几何重定位弹层（高度钳位：hostH/2 → 下界 120 →
  *         上界 hostH-32，上界最终生效恒给编辑区留 32px）。
- *  @details 内嵌形态（m_floating=false）按宿主局部坐标
- *           setGeometry(0, hostH-kbH, hostW, kbH)；悬浮形态
+ *  @details 三形态（2026-10-03 合并裁定方案 A）：①内嵌（m_floating=
+ *           false 且无父窗形态）按宿主局部坐标
+ *           setGeometry(0, hostH-kbH, hostW, kbH)；②悬浮形态
  *           （setHostWindow 锚生效）按宿主全局坐标
  *           setGeometry(gx, gy+hostH-kbH, hostW, kbH)——顶层无父偏移
  *           全局坐标即屏幕坐标（XComboBox 弹层 setGeometryRect 先例），
  *           外观/尺寸与内嵌形态完全一致（同一钳位公式、宿主全宽），
- *           仅坐标系不同。两种形态均缓存宿主宽高（悬浮另缓存全局位
- *           置），供守护 tick ③ Resize/位移检测比对。 */
+ *           仅坐标系不同；③对话框外置浮层（isWindow+有父，popup ②
+ *           分支）在入口分流至 xkb_repositionOverlay——贴范围顶层底
+ *           部落位、范围顶层全宽（同款钳位公式）。
+ *           触发源（2026-10-03 所有者裁定「几何跟随走事件推送不走轮
+ *           询」）：popup 期连接宿主/范围顶层 XWindow 的
+ *           x/y/width/heightChanged 四信号（XPlatformNativeWindow_
+ *           setSizeHints 同源的 setGeometryFields 逐字段发射，WM 拖
+ *           拽/缩放经 ConfigureNotify 回写即发），槽内直呼本函数；
+ *           width/height 信号成对到达时第二次经几何短路空转。守护
+ *           tick 不再承担几何轮询。 */
 static void xkb_reposition(XVirtualKeyboard* self)
 {
     int kbH;
+    XRect target;
+    XRect current;
+    XWindow* hostWin;
     if (!self || !self->m_host) return;
-    self->m_hostW = XWidget_width(self->m_host);
-    self->m_hostH = XWidget_height(self->m_host);
+    /* 宿主几何读 XWindow 记账（信号发射点 setGeometryFields 在控件层
+     * applyWindowGeometry 之前——ConfigureNotify→handleGeometryChange
+     * 先发 widthChanged 再派发 Resize，槽内读 XWidget_* 是上一帧值、
+     * 逐帧缩放恒滞后一档（2026-10-03 实测）；顶层 XWindow 几何即全局
+     * 坐标，恰为悬浮/浮层落位所需。未建窗回退控件级（纯程序内路径）。 */
+    hostWin = (XWindow*)XWidget_windowHandle((XWidget*)self->m_host);
+    if (hostWin) {
+        self->m_hostW = XWindow_width(hostWin);
+        self->m_hostH = XWindow_height(hostWin);
+    } else {
+        self->m_hostW = XWidget_width(self->m_host);
+        self->m_hostH = XWidget_height(self->m_host);
+    }
+    /* 外置浮层形态（Popup 独立顶层 + transient 挂宿主，2026-10-02
+     * 裁定）：按编辑器下方落位重算（几何推导见
+     * xkb_repositionOverlay），不走下方子控件铺底公式。 */
+    if (XWidget_isWindow((XWidget*)self) &&
+        XWidget_parentWidget((XWidget*)self)) {
+        xkb_repositionOverlay(self);
+        return;
+    }
     kbH = self->m_hostH / 2;
     if (kbH < XKEYBOARD_POPUP_MIN_H) kbH = XKEYBOARD_POPUP_MIN_H;
     if (kbH > self->m_hostH - XKEYBOARD_POPUP_MARGIN_H)
@@ -1738,28 +1874,33 @@ static void xkb_reposition(XVirtualKeyboard* self)
     if (kbH < 1) kbH = 1;
     self->m_popupHeight = kbH;
     if (self->m_floating) {
-        XPoint anchorLocal;
         XPoint anchorGlobal;
-        XPoint originGlobal;
-        anchorLocal.x = 0;
-        anchorLocal.y = self->m_hostH - kbH;
-        anchorGlobal = XWidget_mapToGlobal(self->m_host, &anchorLocal);
-        /* 缓存基准改=宿主 (0,0) 全局点（r2 项5c）：守护 ③ 用
-         * mapToGlobal(host,(0,0)) 比对，原缓存取键盘贴附点
-         * (0,hostH-kbH) 恒失配 → 每 200ms 守护 tick 空转一次
-         * reposition（几何相同的 churn），并把外部对键盘几何的合法调
-         * 整（XDateTimeEdit 时间行避让）打回原位。放置点本式不变。 */
-        originGlobal.x = 0;
-        originGlobal.y = 0;
-        originGlobal = XWidget_mapToGlobal(self->m_host, &originGlobal);
-        self->m_hostGX = originGlobal.x;
-        self->m_hostGY = originGlobal.y;
-        XWidget_setGeometry((XWidget*)self, anchorGlobal.x, anchorGlobal.y,
-                            self->m_hostW, kbH);
+        /* 顶层宿主全局原点=XWindow 记账位（信号时刻已新，零滞后）。 */
+        if (hostWin) {
+            XPoint hostPos = XWindow_position(hostWin);
+            anchorGlobal.x = hostPos.x;
+            anchorGlobal.y = hostPos.y + self->m_hostH - kbH;
+        } else {
+            XPoint anchorLocal;
+            anchorLocal.x = 0;
+            anchorLocal.y = self->m_hostH - kbH;
+            anchorGlobal = XWidget_mapToGlobal(self->m_host, &anchorLocal);
+        }
+        XRect_init(&target, anchorGlobal.x, anchorGlobal.y,
+                   self->m_hostW, kbH);
     } else {
-        XWidget_setGeometry((XWidget*)self, 0, self->m_hostH - kbH,
-                            self->m_hostW, kbH);
+        XRect_init(&target, 0, self->m_hostH - kbH, self->m_hostW, kbH);
     }
+    /* 几何短路：width/height 信号成对到达（每次缩放两槽），第二次
+       与首次目标一致时零操作返回，杜绝布局重排 churn；同时保住外部
+       对键盘几何的合法调整不被打回（XDateTimeEdit 时间行避让同款保
+       护语义）。 */
+    current = XWidget_rect((XWidget*)self);
+    if (current.x == target.x && current.y == target.y &&
+        current.width == target.width &&
+        current.height == target.height)
+        return;
+    XWidget_setGeometryRect((XWidget*)self, &target);
 }
 
 /**
@@ -1862,35 +2003,18 @@ static void xkb_guardTick(XVirtualKeyboard* self)
         XVirtualKeyboard_closePopup(self);
         return;
     }
-    /* ③ 宿主 Resize 检测（原样）。悬浮形态扩为 Resize+位移复核：主窗
-       口被拖动/缩放时悬浮面板跟随重定位（内嵌形态是宿主子控件、随父
-       移动，仅查尺寸不变）。 */
-    if (self->m_host && self->m_popped) {
-        bool hostMoved = XWidget_width(self->m_host) != self->m_hostW ||
-                         XWidget_height(self->m_host) != self->m_hostH;
-        if (!hostMoved && self->m_floating) {
-            XPoint origin;
-            XPoint global;
-            origin.x = 0;
-            origin.y = 0;
-            global = XWidget_mapToGlobal(self->m_host, &origin);
-            hostMoved = global.x != self->m_hostGX ||
-                        global.y != self->m_hostGY;
-        }
-        if (hostMoved) xkb_reposition(self);
+    /* ③ 几何跟随已事件化（2026-10-03 所有者裁定「取消轮询」）：popup
+       期连接宿主/范围顶层 XWindow 的 x/y/width/heightChanged 四信号
+       （xkb_bindGeometrySignals），WM 拖拽/缩放经 ConfigureNotify→
+       XWindow_setGeometryFields 逐字段发射→槽内即时 reposition——
+       原宿主 Resize 轮询比对（含对话框浮层形态范围顶层复核与
+       m_hostGX/GY、m_scope* 缓存）整体退役。本 tick 仅保留悬浮形态
+       Z 序不变式复核（S5 回修：外源 activateWindow 把锚主窗抬到键盘
+       原生 Popup 之上的遮蔽校正，幂等零副作用）。 */
 #if XWINDOW_ON
-        /* 悬浮态 Z 序不变式复核（S5 回修）：外源 SetForegroundWindow/
-         * activateWindow(锚主窗)（宿主焦点回交、自动化探针、他窗切换
-         * 等路径）会把非 topmost 的锚主窗整体抬到键盘原生 Popup 之上，
-         * 面板被遮蔽「隐形」（HWND 仍可见、捕获/键入照常，唯屏幕不可
-         * 见——实测探针复现）。与 Qt「popup 恒浮于其父窗之上」不变式
-         * 相悖，200ms 周期幂等校正：XWidget_raise = SetWindowPos
-         * (HWND_TOP, SWP_NOACTIVATE|NOMOVE|NOSIZE)，不夺焦、零几何副
-         * 作用（XPlatformNativeWindow_raise）。 */
-        if (self->m_floating)
-            XWidget_raise((XWidget*)self);
+    if (self->m_popped && self->m_floating)
+        XWidget_raise((XWidget*)self);
 #endif
-    }
 }
 
 /* ==================== 虚槽实现 ==================== */
@@ -2212,6 +2336,12 @@ static void VXKeyboard_timerEvent(XObject* object, XTimerEvent* event)
         xkb_guardTick(self);
         return;
     }
+    if (id == self->m_geomSyncTimer) {
+        XObject_killTimer((XObject*)self, self->m_geomSyncTimer);
+        self->m_geomSyncTimer = XTIMER_INVALID_ID;
+        if (self->m_popped) xkb_reposition(self);
+        return;
+    }
     XClass_Parent(XObject, EXObject_TimerEvent,
                   void (*)(XObject*, XTimerEvent*))(object, event);
 }
@@ -2221,6 +2351,10 @@ static void VXKeyboard_deinit(XVirtualKeyboard* self)
 {
     if (!self) return;
     xkb_stopGuard(self);
+    if (self->m_geomSyncTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_geomSyncTimer);
+        self->m_geomSyncTimer = XTIMER_INVALID_ID;
+    }
     if (self->m_targetConn) {
         XObject_disconnect_2(self->m_targetConn);
         self->m_targetConn = NULL;
@@ -2264,8 +2398,6 @@ static void VXKeyboard_copy(XVirtualKeyboard* self, const XVirtualKeyboard* othe
     }
     self->m_hostW = other->m_hostW;
     self->m_hostH = other->m_hostH;
-    self->m_hostGX = other->m_hostGX;
-    self->m_hostGY = other->m_hostGY;
     self->m_popupHeight = other->m_popupHeight;
 #if XVIRTUALKEYBOARD_ON
     /* 候选带几何/插件装载镜像/分页面板本地状态随拷贝迁移；落地契约
@@ -2284,6 +2416,12 @@ static void VXKeyboard_copy(XVirtualKeyboard* self, const XVirtualKeyboard* othe
     self->m_host = NULL;
     self->m_hostOverride = NULL; /* 悬浮锚属运行态借用，不跨对象迁移。 */
     self->m_hostHint = NULL;
+    {
+        int gi;
+        for (gi = 0; gi < 8; ++gi) self->m_geomConn[gi] = NULL;
+    }
+    self->m_geomScope = NULL; /* 几何信号连接属运行态，不跨对象迁移。 */
+    self->m_geomSyncTimer = XTIMER_INVALID_ID;
     self->m_prevMouseGrab = NULL; /* 抓取者快照同属运行态借用，不迁移。 */
     self->m_prevKbdGrab = NULL;
     self->m_floating = false;
@@ -2351,13 +2489,9 @@ static void VXKeyboard_move(XVirtualKeyboard* self, XVirtualKeyboard* other)
     other->m_floating = false;
     self->m_hostW = other->m_hostW;
     self->m_hostH = other->m_hostH;
-    self->m_hostGX = other->m_hostGX;
-    self->m_hostGY = other->m_hostGY;
     self->m_popupHeight = other->m_popupHeight;
     other->m_hostW = 0;
     other->m_hostH = 0;
-    other->m_hostGX = 0;
-    other->m_hostGY = 0;
     other->m_popupHeight = 0;
 #if XVIRTUALKEYBOARD_ON
     /* 候选带几何/插件装载镜像/分页状态随移动转移，源归零（构造默认：
@@ -2450,6 +2584,7 @@ void XVirtualKeyboard_init(XVirtualKeyboard* self, XWidget* parent, XWidgetFlags
     self->m_ctrls[XKEYBOARD_MODE_SLOT_COUNT] = NULL;
     self->m_repeatTimer = XTIMER_INVALID_ID;
     self->m_guardTimer = XTIMER_INVALID_ID;
+    self->m_geomSyncTimer = XTIMER_INVALID_ID;
 #if XVIRTUALKEYBOARD_ON
     /* 候选带无带、插件装载镜像关、分页面板本地态首页/容量 9、落地
        契约连接未建、守护边沿采样空（状态机在插件，面板零直连）。 */
@@ -2521,6 +2656,90 @@ static void xkb_bindHostDestroyed(XVirtualKeyboard* self, XWidget* newHost)
             (XObject*)newHost, XSignal(XObject_destroyed_signal),
             (XObject*)self, xkb_hostDestroyedSlot,
             XConnectionType_Direct);
+}
+
+/** @brief 几何信号槽（宿主/范围顶层 x/y/width/heightChanged 任一变化）：
+ *         弹层存活期即时重定位（拖拽/缩放逐帧跟随，2026-10-03 所有者
+ *         裁定事件推送替代轮询）。 */
+static void xkb_hostGeomSlot(XObject* receiver, XVarList* args)
+{
+    XVirtualKeyboard* self = (XVirtualKeyboard*)receiver;
+    (void)args;
+    if (!self || !self->m_popped) return;
+    /* 聚合节流 30ms（2026-10-03 拖动感官裁定）：几何信号 Queued 投递
+     * 的槽只置 pending 挂 30ms 单发定时器，同一拖拽批次聚合为一次
+     * reposition。直呼形态实测键盘（轻量重绘）逐帧窜到新位、主窗
+     * （整页重绘）晚 1~2 帧到位——视觉「键盘跑出父窗口」（真屏 kwin
+     * 拖拽实测）；30ms≈主窗重绘节奏，键盘略滞后于主窗显示，两者同
+     * 步感成立；拖动停止 ≤30ms 必达，非周期轮询。 */
+    if (self->m_geomSyncTimer == XTIMER_INVALID_ID)
+        self->m_geomSyncTimer = XObject_startTimer_ms(
+            (XObject*)self, 30, XTimerType_CoarseTimer);
+}
+
+/** @brief 接/断弹层期的宿主与范围顶层几何信号（2026-10-03 所有者裁定
+ *         「几何跟随走事件推送不走轮询」；popup 成功路径 bind=true、
+ *         closePopup/宿主亡 bind=false）。
+ *  @details 连接集：宿主顶层（m_host 的 windowHandle）x/y/width/
+ *           heightChanged 四条（[0..3]）；对话框外置浮层形态再加范围
+ *           顶层（xkb_overlayScope，主窗）同四条（[4..7]）——浮层落位
+ *           基准是范围顶层而非对话框，主窗拖动/缩放必须跟随。WM 拖拽
+ *           缩放经 ConfigureNotify→XWindowSystemInterface_
+ *           handleGeometryChange→XWindow_setGeometryFields 逐字段发射
+ *           （程序侧 setGeometry 同链），覆盖两向。全部 Direct 直连，
+ *           槽内几何短路兜成对信号。宿主亡（destroyedSlot）时宿主侧
+ *           句柄随发送方连接表失效，按 m_hostConn 同款直接置 NULL 不
+ *           再 disconnect；范围顶层存活期长于对话框，closePopup 统一
+ *           真断。 */
+static void xkb_bindGeometrySignals(XVirtualKeyboard* self, bool bind)
+{
+    XWindow* hostWin;
+    int i;
+    for (i = 0; i < 8; ++i) {
+        if (self->m_geomConn[i]) {
+            XObject_disconnect_2(self->m_geomConn[i]);
+            self->m_geomConn[i] = NULL;
+        }
+    }
+    self->m_geomScope = NULL;
+    if (!bind || !self->m_host || !self->m_popped) return;
+    hostWin = (XWindow*)XWidget_windowHandle((XWidget*)self->m_host);
+    if (!hostWin) return;
+    self->m_geomConn[0] = XObject_connect_1(
+        (XObject*)hostWin, XSignal(XWindow_xChanged_signal),
+        (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+    self->m_geomConn[1] = XObject_connect_1(
+        (XObject*)hostWin, XSignal(XWindow_yChanged_signal),
+        (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+    self->m_geomConn[2] = XObject_connect_1(
+        (XObject*)hostWin, XSignal(XWindow_widthChanged_signal),
+        (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+    self->m_geomConn[3] = XObject_connect_1(
+        (XObject*)hostWin, XSignal(XWindow_heightChanged_signal),
+        (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+    if (XWidget_isWindow((XWidget*)self) &&
+        XWidget_parentWidget((XWidget*)self)) {
+        XWidget* scope = xkb_overlayScope(self);
+        XWindow* scopeWin =
+            (scope && scope != self->m_host)
+                ? (XWindow*)XWidget_windowHandle(scope)
+                : NULL;
+        if (scopeWin) {
+            self->m_geomConn[4] = XObject_connect_1(
+                (XObject*)scopeWin, XSignal(XWindow_xChanged_signal),
+                (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+            self->m_geomConn[5] = XObject_connect_1(
+                (XObject*)scopeWin, XSignal(XWindow_yChanged_signal),
+                (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+            self->m_geomConn[6] = XObject_connect_1(
+                (XObject*)scopeWin, XSignal(XWindow_widthChanged_signal),
+                (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+            self->m_geomConn[7] = XObject_connect_1(
+                (XObject*)scopeWin, XSignal(XWindow_heightChanged_signal),
+                (XObject*)self, xkb_hostGeomSlot, XConnectionType_Queued);
+            self->m_geomScope = scope;
+        }
+    }
 }
 
 #if XVIRTUALKEYBOARD_ON
@@ -2859,6 +3078,7 @@ bool XVirtualKeyboard_handleButton(XVirtualKeyboard* self, uint32_t buttonId)
 void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor)
 {
     XWidget* host;
+    bool dialogHost;
     if (!self || !editor) return;
     self->m_userCollapsed = false; /* 显式/自动弹出即清用户收起闩锁。 */
     XVirtualKeyboard_setTextArea(self, editor); /* 含类型校验与防悬垂连接。 */
@@ -2881,13 +3101,30 @@ void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor)
 #endif
     host = XWidget_topLevelWidget(editor);
     if (!host) return;
-    /* 悬浮模式（setHostWindow 锚生效）：跳过挂父，保持独立顶层窗口形
-       态；锚为 Popup 型弹层容器时自动解析主窗口顶层为实际锚（几何因
-       此锚定主窗口底部全宽，与普通编辑框弹出一致），raise 压过日历弹
-       层——时序上键盘 popup 晚于弹层最近一次 show（弹层 show 即 raise），
-       再显式 raise 一次兜底。 */
+    /* 宿主形态三分支（2026-10-03 合并裁定方案 A，优先级自上而下）：
+       ①悬浮锚（setHostWindow 生效）——显式锚定意图优先；
+       ②对话框浮层（宿主为 Dialog 型顶层）——2026-10-02 所有者裁定
+         「对话框内不塞内嵌屏幕键盘」：对话框宿主不再以子控件浮层钳进
+         对话框（旧路径键盘铺宿主下半区，输入对话框被键盘大面积覆盖
+         ——所有者实拍），改按 Popup 独立顶层浮层承载（transient 挂宿
+         主对话框，落位贴范围顶层底部，xkb_reposition 经 isWindow+有
+         父分流至 xkb_repositionOverlay）；浮层是独立原生窗，可越出对
+         话框边界；应用模态门对 Popup 型顶层既有豁免（XWidget.c
+         VXWidgetWindow_event「Popup 豁免」分支，QComboBox 弹层同款先
+         例）——exec 模态下键帽依然可点（dlg-std 车道活体实证），不
+         夺双抓取；
+       ③默认——键盘挂宿主顶层窗口底部（XCompleter 弹层挂顶层窗口先
+         例；子控件浮层形态，无独立 OS 窗口、无应用模态登记）。 */
     self->m_floating = (self->m_hostOverride != NULL);
+    dialogHost = !self->m_floating &&
+        (XWidget_windowFlags(host) & (XWidgetFlags)XWindowType_TypeMask) ==
+        (XWidgetFlags)XWindowType_Dialog;
     if (self->m_floating) {
+        /* ①悬浮模式（setHostWindow 锚生效）：跳过挂父，保持独立顶层窗
+           口形态；锚为 Popup 型弹层容器时自动解析主窗口顶层为实际锚
+           （几何因此锚定主窗口底部全宽，与普通编辑框弹出一致），raise
+           压过日历弹层——时序上键盘 popup 晚于弹层最近一次 show（弹层
+           show 即 raise），再显式 raise 一次兜底。 */
         XWidget* anchor = xkb_resolveFloatingHost(self, host);
         if (!anchor) anchor = host;
         xkb_bindHostDestroyed(self, anchor); /* 覆盖宿主 destroyed 防悬垂。 */
@@ -2902,16 +3139,28 @@ void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor)
     } else {
         xkb_bindHostDestroyed(self, host);
         self->m_host = host;
-        /* 键盘挂宿主顶层窗口底部（XCompleter 弹层挂顶层窗口先例；子控件
-           浮层形态，无独立 OS 窗口、无应用模态登记）。 */
-        XWidget_setParent((XWidget*)self, host, 0);
+        if (dialogHost)
+            /* ②对话框宿主：Popup 独立顶层浮层（transient 挂宿主对话
+               框，落位/首帧口径见下方 flush 与 xkb_repositionOverlay）。 */
+            XWidget_setParent((XWidget*)self, host,
+                              (XWidgetFlags)XWindowType_Popup);
+        else
+            /* ③默认：子控件浮层挂宿主顶层窗口底部。 */
+            XWidget_setParent((XWidget*)self, host, 0);
     }
     xkb_reposition(self);
     XWidget_show((XWidget*)self);
     XWidget_raise((XWidget*)self);
-    if (self->m_floating)
+    if (self->m_floating || dialogHost)
+        /* 独立顶层浮层无宿主帧泵：主动补首帧上屏（悬浮锚与对话框浮层
+           同口径；XComboBox 弹层 xcombo_popupShow「独立顶层窗口无宿主
+           帧泵」同款）。 */
         XWidget_flushBackingStore((XWidget*)self, NULL);
     self->m_popped = true;
+    /* 几何跟随接线（2026-10-03 所有者裁定事件推送替代轮询）：宿主/
+       范围顶层 x/y/width/heightChanged 四信号连上，WM 拖拽/缩放逐帧
+       即时跟随（槽内 reposition，几何短路防成对信号 churn）。 */
+    xkb_bindGeometrySignals(self, true);
     if (self->m_floating) {
         /* 抢占弹层模态双抓取：日历弹层 show 即 grabMouse/grabKeyboard
            （跨顶层抓取改道 XWidget.c 派发入口）+ 1ms 后原生 SetCapture
@@ -2991,6 +3240,13 @@ void XVirtualKeyboard_closePopup(XVirtualKeyboard* self)
        面板行为不变；未生效可见面板仅补置 WState_Hidden（m_visible
        不变、无 SHOW/HIDE 事件）。 */
     XWidget_setVisible((XWidget*)self, false);
+    /* 几何信号先于弹层状态清（2026-10-03 事件化）：会话结束即断，宿主
+       后续缩放/拖动不再触发槽；聚合定时器一并撤销。 */
+    xkb_bindGeometrySignals(self, false);
+    if (self->m_geomSyncTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_geomSyncTimer);
+        self->m_geomSyncTimer = XTIMER_INVALID_ID;
+    }
     self->m_popped = false;
     self->m_floating = false;
     self->m_hostOverride = NULL; /* 收层自动清悬浮锚（回内嵌挂父模式）。 */
@@ -3024,8 +3280,16 @@ void XVirtualKeyboard_closePopup(XVirtualKeyboard* self)
 
 bool XVirtualKeyboard_popupVisible(const XVirtualKeyboard* self)
 {
-    if (!self) return false;
-    return XWidget_isVisible((XWidget*)self);
+    /* 弹出状态 = m_popped 生命周期位（popup 成功路径置位、closePopup
+     * 复位），非控件生效可见（XWidget_isVisible）。根因：面板是宿主
+     * 顶层窗口的子控件浮层（XVirtualKeyboard_popup 挂宿主，无独立
+     * OS 窗口），宿主未 show 时 XWidget_isVisible 按「父链生效可见」
+     * 口径恒假——apitest「popup 直呼弹出」与 demo 无头钩子（宿主
+     * show 前调 popup）两处挂接成功均被误报未弹。m_popped 与挂接
+     * 生命周期严格同步：收层唯一入口 closePopup（文档口径），直接
+     * setVisible 收层不在契约内；内部唯一消费点（dismiss 键
+     * 「弹层弹出才收」）与平台上下文 isInputPanelVisible 语义不变。 */
+    return self ? self->m_popped : false;
 }
 
 void XVirtualKeyboard_setHostWindow(XVirtualKeyboard* self, XWidget* host)

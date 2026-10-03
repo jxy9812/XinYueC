@@ -2001,3 +2001,870 @@ Qt 源码对照路径与 off-screen 探针方法见 git 历史（8a24b127 前版
 **验证方法论沉淀**：复扫像素级复核撤误报 5 条（坐标口径/放大误读类）；「自动全绿」与手测缺陷并存的根因=autotest 覆盖面不足（页0-2 真实输入链零覆盖）；跨文件调用只许头文件公开声明；xtrace+最小客户端矩阵+独立探针三件套定位 X Server 跨深度遮挡。
 
 **遗留（日间清单）**：#32 裸字母键需控件层文本推导配套（设计裁定）；#41 页3 Tab→Slider 一跳、#35 ToolTip 黑条复验、#8 效果激活态交互擦除、#37 SizeGrip 真人终验、#50 MDI 子窗拖拽为功能性新增；#38 字形需字库方案裁定（全字库 provider 或系统字形后端）。全量明细：Test/XGuiDemo/overnight_report/{final_report,issues_ledger,rescan_r*_lane*}.md。
+
+### 14.127 QSS 引擎对齐 Qt 6.8.3 战役·五线收官 + 回归补齐（批四收口，2026-09-30）
+
+**组织方式**：五条线并行 lane（解析器/值模型/触发链/兄弟导航/级联，各自只改名下文件、补丁独立），
+最终集成收口（批四）补齐回归断言与文档。前置状态：五线全部 merged——本批新增断言一律无条件
+生效（无 skipped 条件跳过项）；应用级块加 `XAPPLICATION_ON` 守卫与文件内既有 219a 块同口径。
+
+**线一·解析器（XCssStyleSheet.h/.c）**：
+- 属性枚举 26→120 全量化；`XCssRelation` 尾部追加 DirectAdjacent/IndirectAdjacent；基础选择器尾部
+  加 m_pseudoElement/m_ids/m_attributes（#a#b、[a][b] 全量存储）；`XCssParseError` 出参 +
+  `XCssStyleSheet_parse_ex()`；未识别属性存 `XCssProperty_Unknown`+原名；@charset/@import/@media/
+  @page 解析存储。对齐口径：qcssparser.cpp `properties[]` 名表全量转录（先命中先返回同
+  findKnownValue）、Selector::pseudoElement 取首伪、parseStyleSheet/parseRuleset 容忍度与失败整表
+  弃用、recordError 仅记首错（偏移=解码后缓冲坐标）、Scanner::preprocess+Symbol::lexem
+  （\XXXXXX≤6 位 hex→UTF-8、\c 字面、引号外块注释→单空格）。
+
+**线二·值模型（XStyleSheetStyle.h/.c）**：
+- `XCssLengthUnit/XCssLength/XCssParseLengthEx`（对标 qcssparser_p.h LengthData{number,unit}，扩 Pt）
+  + `XCssLengthContext` 消费端换算（% 按矩形轴、em/ex 按画笔字体高、无上下文宁 0 不给错值）；
+  具名色 8→149 项（qcolor.cpp rgbTbl 全表转录含 transparent/rebeccapurple，get_named_rgb 大小写
+  不敏感+名字内空白剥离）；#RGBA（CSS4，alpha 收尾）+9/12 位位扩展（get_hex_rgb len 口径）；
+  rgb/rgba 百分比与浮点（parseColorValue 的 % 折算+QVariant::toInt 截断+alpha≤1×255 口径）；
+  hsl/hsv 自实现换算（qcolor.cpp toRgb 的 HSL/HSV 分支、Hue_2_RGB、色相 %×359/100）；font 简写
+  （引号字族/字号关键字档位/斜杠行高）；text-decoration 组合（setTextDecorationFromValues 语义）；
+  **!important 裁决轨道删除**（matchRule 权重式无 importance 项——qcssparser.cpp matchRule）。
+
+**线三·触发链（XWidget.c/.h、XApplication.c/.h、XStyle.h）**：
+- `XWidget_setStyleSheet` 变更检测（XString_equals；NULL/非 NULL 混合=变更）→ 变更才
+  `XWidget_update`；`XApplication_setStyleSheet` 安装后经新增 static xapp_updateTopLevelWidgets
+  逐顶层 update；`XStyle_installStyleSheet` 复用/整表清空/缓存复位核实零改动。对齐口径：
+  qwidget.cpp QWidget::setStyleSheet（存串→变更 repolish(this)，可见效果以 update 等价落地）；
+  qapplication.cpp QApplication::setStyleSheet（空=setStyle(base)、总是 repolish 波及全部控件）；
+  qstylesheetstyle.cpp repolish（脏区经 addDirtyRegion 折算顶层整树重绘即其等价）。
+
+**线四·兄弟导航（XObject.h/.c）**：
+- 新增 `XObject_previousSibling/XObject_nextSibling`（严格相邻、空位不跳过，XObject parent 子表
+  顺序定位）。对齐口径：qcssparser.cpp StyleSelector::selectorMatches 的 '+'/'~' 前走
+  previousSiblingNode——**Qt 6.8.3 的 QStyleSheetStyleSelector::previousSibling 恒空桩（QSS
+  '+'/'~' 永不命中），本库按 QCss 遍历意图提供真实现，超出而非偏离 Qt**（头文件注释注明）。
+
+**线五·级联与伪类/关系匹配（XStyleSheetStyle.c/.h、XCssStyleSheet.h 伪类枚举）**：
+- `xsss_lookup` 多源级联（应用级 self->m_sheet + 控件自身/祖先 sheets，origin/depth 装配）+ 源
+  解析缓存（内容等值键、环形淘汰、替换前失效渲染缓存）；伪类位 8→20（pseudoClass(State) 全分支）；
+  '+'/'~' 匹配经兄弟线 API 前走；多 ID/多属性全列消费与特异度补权（m_idCount*0x100+
+  m_attributeCount*0x10）；新增 `XStyleSheetStyle_styleRuleForPseudoElement/_hasStyleRule…`（普通
+  查询排除伪元素规则）。对齐口径：qcssparser.cpp matchRule 权重式
+  `weight = rule.order + specificity*0x100 + (uint(origin)+depth)*0x100000`（`>=` 同权取后）、
+  buildIndexes nr.order=i、Selector::specificity、basicSelectorMatches ids 列表等值
+  （nodeIds=[objectName]，多 ID 恒不命中同 Qt 实况）；qstylesheetstyle.cpp styleRules 装配
+  （appSs depth=1、objectSs[i].depth=size-i+2 近控件恒胜）与 pseudoClass(State) 全分支（Hover 仅
+  Enabled 分支内派生；**MouseOver 与 Sunken 并置——按下不抑制 hover**，night #5 历史偏离已反转；
+  off/unchecked→Unchecked；Open|On|Sunken→Open else 无条件 Closed；!Horizontal→Vertical）、
+  declarationsForNode 跳伪元素规则。
+
+**批四（本批）·回归补齐与文档收口（xgui_regression_test.c、XGui.md）**：
+- `test_qss_contract` 新增 72 条 c1_expect 断言（120→192），全部沿用既有风格，离线软件位图像素
+  断言不依赖真屏：①值模型 23 条（12pt/1.5em/50% 单位语义、兼容签名换算 12pt→16/1.5em→24/50%→0/
+  3ex→24、百分比/浮点 rgb 截断口径、hsl/hsv、具名色抽测×5、#RGBA、9 位 hex）；②解析器契约 18 条
+  （'+'/'~' 关系存储、#a#b 多 ID、[a][b] 多属性、::placeholder 伪元素、UnknownProperty+原名、
+  !important 标志存储、\4C/\-/000041 转义、parse_ex 五类结构错误的消息/偏移/行号与失败整表清空）；
+  ③控件级端到端 26 条（兄弟导航 API 直断、'+' 紧邻命中/'~' 跨兄弟命中像素对照、级联优先级
+  控件>祖先>应用三档、!important 被 #id 特异度压过、hover+pressed 并置双命中与单命中×3、Sunken
+  不抑制 hover、伪元素普通查询排除/存在性/规则查询×3、控件级样式表存储 roundtrip 与置空）；
+  ④应用级触发链 5 条（XApplication_setStyleSheet_2 存储 roundtrip、默认样式代理命中像素、清空
+  回落）。像素期望值全部由实现读码推导；**值模型与解析器的解析层期望值另经两套"抽取实现真跑"
+  断言台核对（28+17 条全过）后才落断言**。
+- 级联端到端测试设计规避单槽规则缓存的 (对象,状态) 复用：每控件每状态仅绘制一次、样式表变更走
+  `XStyleSheetStyle_setStyleSheet`（其内部整块复位渲染缓存）。
+- 门禁第 1 轮两处修正（实测抓出）：①`XWidget_setStyleSheet` 收 `const XString*`，字面量直传会在
+  `XWidget_copyString→XString_create_copy→XClass_copy_base` 按 XString 虚表解引用段错误——须传真
+  `XString`（create/set/delete 三段式）；②控件级样式表挂到共享祖先 pane 后，**任意样式实例**的级联
+  收集都会沿父链解析到它（`xsss_collectSources` 与样式实例无关），先行用例（!important/hover+pressed/
+  伪元素）须在无 pane 表时完成，级联三档用例移到块尾收场并置空收场。
+
+**验证**：`gcc -fsyntax-only` 全头目录口径——改动文件与基线告警数同为 177（零新增），error 同为
+2 处基线既有所致（XTextClipboard_setText/XSaveFile_deinit_base 隐式声明，本机 ad-hoc include 环境
+产物，与本次改动无关）；修复后整库回归门禁口径实跑（门禁旗标编译+按 link.txt 重链接，
+`XGUI_CSD=0` 于快照树根运行）：exit=0、0 FAIL、`XGui regression tests passed`——资产/字体相对路径
+依赖仓库根 cwd（XGui.md §7 口径）。门禁构建与三套件终验由编排脚本代跑。未 commit。
+**（2026-10-01 增补）本条验证对应远端合并入主树之前的状态。远端提交 d863a20e 清理
+assets/ 移除了 6 张编解码测试样本截图，仓库所有者裁定 assets/ 目录与截图不再保留——
+该测试已改为内嵌真实 PNG 位流（标准 zlib 流字节，7x5/33x17/129x65 三尺寸内嵌数组），
+`test_codec_decode_real_assets` 更名 `test_codec_decode_embedded_png`，不再依赖任何仓库
+文件，REG 全绿。**
+
+**deferred 清单**：
+1. 伪元素/子控件绘制分派未接（查询 API 已通，`drawPrimitive` 不消费伪元素规则——线五尾巴）。
+2. 状态位置位生产者缺口：Horizontal/Open/Children/Item/Sibling/Window/Active 等伪类映射已建，
+   置位侧无生产者（XCommonStyle 绘制读取外无人置位），相应伪类恒不命中。
+3. qstylesheetstyle.cpp updateFontHelper 的 adjustmentFactors 系数表未逐值核对（沙箱内 qtbase
+   原文多路抓取均被截断，字号关键字像素化系数按 CSS 7 级比例落，如实声明待核）。
+4. ~~控件级样式表变更的样式侧渲染缓存主动失效策略~~【✅ 验收批闭环】`XWidget_setStyleSheet`
+   变更时经新增 `XStyle_invalidateStyleSheetRenderCache()`（默认样式为 XStyleSheetStyle 才
+   生效，与 installStyleSheet 复用分支同虚表名判据）失效渲染规则缓存；回归已锁"同 (对象,状态)
+   二次绘制取新色"。
+5. ~~12 位 #RRRRGGGGBBBB 通道移位缺陷~~【✅ 验收批闭环】len==12 分支改 `>>=8`（随 per 取
+   4/8），实测 "#123456789ABC"→0xFF12569A 同 Qt 口径；9/12 位形态均已入回归锁定。
+6. 特异度公式按 Qt 保留"多 ID 恒不命中"实况（nodeIds=[objectName] 恒单元素）；声明级
+   m_important 字段保留、消费端恒不消费（对齐 Qt 无 importance 轨道口径）。
+
+**验收回归补差（同日，独立验收十项逐条闭环）**：
+- **①属性名表真全集**：经 jsdelivr 镜像取 v6.8.3 qcssparser.cpp 原文逐名核正——6.8.3
+  `properties[]` 实为 120 名排序去重表（`{ "margin" , Margin }` 为原表自带空格）。k_propNames
+  重写为同序同集转录：补 18 名（white-space（原误写作 whitespace）、-qt-stroke-color/width/
+  dasharray/dashoffset/linecap/linejoin/miterlimit、-qt-style-features、-qt-fg-texture-cachekey、
+  -qt-line-height-type、image-position、spacing、subcontrol-origin、subcontrol-position、
+  text-decoration-color、page-break-after/before，枚举 17 个尾部追加）、删 17 名 6.8.3 已删旧表名
+  （alignment、gridline-color、icon-size、list-style-image/position、title、transparent-button、
+  show-decoration-selected、dialogbuttonbuttons-icons/layoutpolicy（原表重复两遍）、qt-background-role、
+  -qt-image、-qt-icon、-qt-align、-qt-stroke-brush、-qt-stroke-pen、-qt-style、whitespace 拼写名）；
+  icon→QtIcon、image→QtImage 同 6.8.3 名→ID（两 ID 全库无消费方，行为中性）；"重复键先命中先
+  返回"声明撤销（6.8.3 原表无重复键）。.h 特异度注释补声明：伪元素不计权（Qt 计
+  pseudos.size()×0x10，本库独立存储仅影响伪元素规则间相对位阶，已声明偏差）。
+- **②12 位 hex 修复落地**（=deferred#5 闭环，`>>=4`→随 per 4/8）+ **⑥渲染缓存失效落地**
+  （=deferred#4 闭环）。具名色注释修正：149 项 = rgbTbl 148 项对标 + rebeccapurple 扩展（原
+  "148 项"自相矛盾）。parseChain 的 appendBasic 失败路径补 xcss_freeBasic（OOM 泄漏 nit）。
+- **③回归 +23 条（192→215）**：at 规则存储 12 条（@charset 受理、@import url() 剥壳/引号串/
+  媒体名单、@media 名单+内嵌集/未闭合容忍/缺 '{' 与内嵌 at 判错、@page :pseudoPage 拼串、未识别
+  at 吞至 '}'、@import 缺 ';'）、值内注释剥离 1 条、font 简写引号字族 3 条（新增 xqss_painterFamily
+  探针：引号段整体取段剥引号内空折叠、逗号列表取首段）、6.8.3 名表对齐 4 条（新名可识别/旧名回落
+  Unknown+原名/icon→QtIcon）、12 位 hex 3 条、deferred#4 缓存失效回归锁 1 条。
+- **④门证据缺口（非代码缺陷）**：验收侧 /tmp/acc-asan-build 全新构建已证 diff 本身 ASan 干净
+  （LSan 456 处/101603B 与 baseline 逐字节一致=存量）。asan_gate.sh 补 CFG_EXIT!=0 直接 fail
+  （原门配置失败后复用 baseline 缓存构建得"假绿"）。两口径登记：Release 门 exit=0 仅对
+  REG/ACC/GPU 成立，--apitest 子门当前树 10 失败经 A/B 实跑（DISPLAY=:99 sort+diff 为空）证实
+  全部存量（input×6 IME/补全弹层、core×3 焦点链、XSplitter 均分），非本 diff 引入；REG 套件
+  lane_gate.sh:38 行存在存量瞬态段错误（integration 与 baseline r1 同点位复现、r2 全绿），纳入
+  flaky 清单待专项归因。
+
+**批一三线根修摘要（QSS 对齐战役批一，补记转写自 `.zcode/wf/qss-align/patches/` 各 .md）**：
+- **线 1·拖浮泄漏（dock-leak，XDockWidget.c/.h）**：根因①d863a20e 新加守卫
+  `if (!floating && !host) return;` 吞掉无宿主面板 setFloating(false) 的状态翻转与
+  topLevelChanged(false) 发射（apitest D 段面板从未 addDockWidget 故必红）；根因②"泄漏"实为
+  XMemory 计量漂移假象——浮动分支无条件 setWindowTitle 堆串倒腾 +96B/轮、每次 processEvents
+  ~88B（takePostedEvents 的 XVector 存量项），ASan/LSan 取证无真实泄漏。修法：删无宿主早退守卫
+  （flag 置位与 topLevelChanged/dockLocationChanged 发射无条件）；浮动分支标题同值跳过（对标
+  QWidget::setWindowTitle 幂等）。转绿：浮循环 `300 cycles: XMemory +42872`（阈值 76800 内）、
+  setFloating(false) 回归并发 topLevelChanged(false) 通过、apitest 失败 12 条全 ⊆ 容忍名单、
+  GATE_OK（log-lane-dock-leak-fixed-r1.log）。
+- **线 2·IME 弹层与焦点链 11 条（ime-popup，XLineControl.c/XWidget.c/XVirtualKeyboard.c/.h）**：
+  补全弹层 6 条根因=77758746 将 xlc_keyToText 改"字母键值大写归一"破坏了 8a174def 固化的"合成
+  事件键值即文本"契约（'O' 键被插成 "o"，gdb 实证），修法按 XEvent_init 载荷契约分流（scan==0
+  且 ts==0=程序合成直映 'O'→"O"；平台注入保持 Shift 派生逐字节不回退）；焦点链 3 条根因=tab 链
+  候选判据误用生效可见 m_visible（宿主顶层未 show 时恒空），修法新增 xwidget_focusChainShown
+  （显式 show 且窗口内父链无 WState_Hidden 遮蔽，隐藏页 #40 语义保持）；VK popupVisible 2 条
+  根因=弹层为宿主顶层子控件浮层（无独立 OS 窗口），宿主未显窗 isVisible 恒假，修法改返回
+  m_popped 生命周期位（closePopup/守护 dismiss/opt-out 复位路径既有断言在册）。逻辑测试台
+  17/17+10/10 PASS。
+- **线 3·Splitter 默认均分（splitter，XSplitter.c/.h）**：根因=xsp_layout 比例分支以页现几何当
+  "既有尺寸"，而 XWidget_init 出厂预置几何（顶层 640x480/子页 100x30）+setParent 保几何使
+  curTotal 永不为 0→均分分支不可达（实算 {313,317}≠{315,315}）。修法（对标
+  QSplitterLayoutStruct::sizer）：新增页尺寸意图 m_sizes/m_sizesCap 与 xsp_sizesAt/xsp_setSizesAt
+  （扩容补 0 哨兵，分配失败退化均分），未设定页取均分基准、已设定页按意图比例分摊余量；
+  setSizes/xsp_moveSplitter 落位记录意图（容器缩放比例保持承诺兑现），deinit 释放。转绿：
+  containers_splitter B 节全过 + 算术复刻台 ALL PASS（exit=0）。
+
+**REG flaky 登记（存量瞬态段错误，2026-09-30 正式入册）**：REG 套件 `XGuiRegression_Test`
+（`XGUI_CSD=0`，lane_gate.sh:38）存在启动即段错误的瞬态崩溃——r1 轮 integration 与 baseline
+两树同点位同崩（log-lane-integration-r1.log:67546-67547 / log-baseline-r1.log:67460-67461，
+均 `REG_EXIT=139`、崩前无任何断言输出），同树 r2 轮全绿（log-lane-integration-r2.log:2240
+`REG_EXIT=0`）。基线同崩证存量、r1 崩 r2 绿证瞬态；崩点在首条断言打印前（stdout 缓冲未及
+刷出），具体用例无法从日志定位，**归因未完成**（疑似 X11/窗口系统启动竞态，未证实，不做
+无证据猜测性修复）。全量证据与定性已登记
+`.zcode/wf/qss-align/notes/flaky.md`，待专项归因（建议 core dump 取栈或 ASan 复跑定位）。
+本登记不豁免任何确定性失败。
+
+**批二·线 1 遗留收口（qss-residual，2026-09-30）**：独立验收未闭环项逐条核验（以现行树为
+准，逐名/逐行对原文）：
+- **①属性名表对齐核验**：抓取 v6.8.3 qcssparser.cpp 原文（GitHub raw，99806B）逐名比对——
+  k_propNames 120 名与原表 properties[]（NumProperties-1 条，字母序）**同序同集零差异**；
+  名→ID 映射逐条同原表（9 处枚举常量后缀命名差异——QtAlternateBackground/MaximumHeight/
+  QtPlaceHolderTextColor/QtSelectionBackground/QtSelectionForeground/BorderStyles/Max(Min)Height
+  /Max(Min)Width——为库内自有枚举名，语义同项；验收所称"缺 17 名/混入 6 旧名"与原文不符，
+  系旧态清单）。名表口径注释改**「排序去重表、精确匹配」**（.c 表头 + .h 枚举文档同步）：
+  Qt 查找=lower_bound 二分 + 等值比较（大小写敏感），本库线性扫大小写不敏感为已声明偏差
+  （库内样式表与回归用例均小写、全仓 grep 无混合大小写属性名，不受影响）——并修正原注释
+  "去重表上两者结果恒一致"未限定精确名的欠准确表述。名表无需增删→无枚举改动，既有消费端
+  编译面零影响（表内 ID 无重复经 uniq 校验）。
+- **③⑧⑩核验为批一已落地**（本线未重复改动，引证）：③at 规则（@charset/@import url()
+  剥壳+媒体名单/@media 内嵌集/@page :pseudoPage 拼串）+ 值内注释剥离 + font 简写引号字族
+  断言已在 test_qss_contract（xgui_regression_test.c:27738-27860）；⑧appendBasic 失败路径
+  （XRealloc 失败）的 basic 持有串释放已在 parseChain 调用侧（XCssStyleSheet.c:871-874，
+  xcss_freeBasic 就地释放、所有权未转移）；⑩伪元素特异度口径已在 XCssSelector 类型注释
+  （XCssStyleSheet.h:297-302，Qt 计 pseudos.size()×0x10 含伪元素、本库独立存储不计权）。
+- **⑨flaky 登记**：见上条「REG flaky 登记」，flaky.md 新建 + 本文件新条目双落。
+- **本线改动面**：XCssStyleSheet.c 表头注释 1 处、XCssStyleSheet.h 枚举文档注释 1 处、
+  XGui.md 3 条目、flaky.md 新建；零代码行为改动。
+
+### 14.128 G5·qproperty-\* 动态属性执行 + @media 定性收口（qproperty-media lane，2026-10-01）
+
+**目标一·qproperty-\* 执行（对标 QStyleSheetStyle::setProperties，qstylesheetstyle.cpp
+v6.8.3:2655-2714）**：
+- **Qt 原文语义（jsdelivr 镜像取 v6.8.3 原文逐行核读）**：qproperty 执行在 polish 期——
+  `polish(QWidget*)`（:2907）于缓存清除后调 `setProperties(w)`（:2916-2924；setStyleSheet→
+  repolish 重入同径）；setProperties 取 `declarations(styleRules(w), QString())`（:2661），
+  逆序扫每名 qproperty 取**最终出现**（:2663-2678 "The final occurrence of each property is
+  authoritative"）、按最终出现正序写入（:2713 `w->setProperty`）；值类型按现值元类型分派、
+  default 分支=首值 token 字符串（:2695-2707）；`styleSheet` 同值跳过防递归（:2710-2711）；
+  渲染侧对 qproperty 声明知趣跳过（:1023 "intentionally left blank"）。采集过滤：经
+  declarations()（:1739-1753）默认 pseudoClass=Unspecified(0x100，qcssparser_p.h:480)——
+  末段带伪元素的规则被 part="" 严格等值比较排除（"Rules with pseudo elements don't
+  cascade"），末段带正伪类的规则被第三分支 `(cssClass&0x100)==cssClass` 恒败排除；
+  pseudoClass() 只读末段（qcssparser.cpp:1958-1963，无伪类返回 Unspecified）。unpolish
+  （:3038-3056）只清缓存不回滚写入。负伪类规则（cssClass==0 直通）本库解析器无负伪类建模
+  （xcss_applyPseudo 只置正位），不可表达、无偏差面。
+- **XGui 落地（XWidget.c/.h，仅 setStyleSheet 应用链+新增钩子区）**：新增公开钩子
+  `XWidget_applyStyleSheetProperties()`——账本（对象动态属性
+  `xgui.qss.qproperty.applied`，对标同文件 setGeometry 以 `_q_stylesheet_minw` 等保留动态
+  属性记账的定式 :2610-2625）在位即幂等早退（防重复触发）；否则解析控件自身样式表
+  （XCssStyleSheet_parse，失败=空表整表弃用口径）、按 Qt 同构过滤与匹配（本地
+  xwidget_qproperty\* 匹配器与 XStyleSheetStyle.c xsss_\* 同口径：元素名=虚表类名大小写不
+  敏感、#id=[objectName] 列表等值多 ID 恒不命中、属性选择器读对象动态属性六准则、中段伪类
+  忽略对标 XSSS_PSEUDOS_ANY、'+'/'~' 走 XObject_previousSibling 线四 API）、每名取最终
+  出现正序写入 `XObject_setProperty`（值=XString_toVariant_utf8 字符串变体，所有权转移给
+  对象、失败自回滚；Qt 写 QMetaObject 属性/类型映射按现值元类型——本库动态属性无元类型轨，
+  统一字符串型为**声明级偏差**；Qt 属性不存在/不可写告警路径 :2683-2690 在本库无对应——动
+  态属性任意名可写）。`XWidget_setStyleSheet` 变更路径：废弃渲染规则缓存（deferred#4 原有）
+  → 清账 → 调钩子（首次命中应用）→ update——即任务裁定的「首次命中应用+每次样式表重设重
+  置『已应用』账本」，对标 Qt repolish 重跑 setProperties 的触发点。
+- **范围声明**：采集范围=控件自身样式表文本（应用级/祖先级表中的 qproperty 对标由级联
+  owner（XStyleSheetStyle 侧）收口，本批文件范围不含该文件，不重复覆盖）；objectName 晚于
+  setStyleSheet 设置的时序窗口与 Qt 一致（Qt 同样不在 objectName 变化时重跑 setProperties）。
+
+**目标二·@media 定性（widget 口径不评估→解析存储即完全对齐，文档裁定收口）**：
+- **证据（v6.8.3 原文行号）**：media 规则唯一评估入口在
+  `StyleSelector::styleRulesForNode`（qcssparser.cpp:2193-2248）——:2232
+  `if (!medium.isEmpty())` 门禁内才对 `styleSheet.mediaRules` 按 `media.contains(medium)`
+  逐规则 matchRule（:2233-2240）；`medium` 为 StyleSelector 公有数据成员、默认空串
+  （qcssparser_p.h:661）；widget 消费端 **qstylesheetstyle.cpp 全文 0 处 medium 赋值**
+  （含其子类 QStyleSheetStyleSelector :1545-1651——`grep -c medium` = 0），故 widget 口径
+  恒走空 medium 分支、@media 规则永不评估。解析存储侧：Parser 逐 at 规则 testMedia→
+  parseMedia→`styleSheet->mediaRules.append`（qcssparser.cpp:2422-2425、:2487-2506）。
+- **裁定**：Qt widget 口径下 @media「解析存储、不评估执行」→ 本库
+  XCssStyleSheet/`XCssMediaRule` 的解析存储即**完全对齐**（此前头注释即此口径，本批补原文
+  行号证据收口：XCssStyleSheet.h XCssMediaRule 注释）；无需最小评估实现，qproperty 应用链
+  亦只扫 `m_rules` 不触 `m_mediaRules`（同口径）。
+
+**改动面**：XWidget.c（setStyleSheet 应用链接线 + qproperty 钩子区：xwidget_qproperty\*
+statics + `XWidget_applyStyleSheetProperties` + XCssStyleSheet.h/XVariant.h 条件 include）、
+XWidget.h（setStyleSheet @details 更新 + 钩子声明，`#if XSTYLE_ON` 内）、XCssStyleSheet.h
+（XCssMediaRule 注释补定性证据行号）、XGui.md（本条目）。XCssStyleSheet.h 枚举/结构**零改
+动**（qproperty 声明经既有 XCssProperty_Unknown+m_propertyName 双轨承载，无需尾部追加）。
+
+**验证（本机实跑）**：真实构建旗标口径 A/B（CMake flags.make 的 C_DEFINES/C_INCLUDES/
+C_FLAGS 原文 + CMakeLists.txt:57-60 的 -Wno-error=\* 集，`gcc -fsyntax-only`）——基线
+（git archive HEAD 提取）XWidget.c exit=0/诊断 16 条 = 改后 exit=0/诊断 16 条，**诊断多重
+集逐条相同（零新增）**；XCssStyleSheet.c(24)/XStyleSheetStyle.c(1)/XObject.c(31) 头消费
+端复验 exit=0。`XString_deinit_base` 调用点取 `XString_deinit_base((XClass*)&key)` 铸型
+形态（同文件 :1691 先例、XImage.c:331 先例），消除与 XSplitter.c:336 裸形态同源的告警。
+门禁构建与三套件由编排脚本代跑；未 commit。
+
+### 14.129 G4·palette(role) 取色 + 文本属性消费收口（palette-text lane，2026-10-01）
+
+**目标一·扩展取色链（`color:` 声明值消费，XStyleSheetStyle.c 取色区）**：
+- **落地**：`xsss_applyTextColor` 改走 `xsss4_resolveColorValue` 三态链——`XCssParseColor`
+  → palette(角色名)（`XCssParsePaletteRole` 解析枚举，取色两源序：选项调色板
+  `option->m_palette`（XStyleOption.h:611「按需填充」；控件 prep 位点已按
+  `XWidget_palette` 折入应用级——XWidget.c:6405-6431 无控件级调色板时回落
+  `XGuiApplication_palette()`，XRubberBand.c:65 等同构折入选项）→ 应用调色板
+  `XGuiApplication_palette()` 兜底；组口径与 XCommonStyle.c:144 `xcs_color` 一致取
+  Current）→ 渐变（`XCssParseGradient` 类型化解析送达）。对标 qcssparser.cpp
+  parseColorValue 的 PlainColor→Palette→Gradient 三态序；全未命中不写输出（同族口径）。
+  行为零回退审计：旧链（XCssParseColor）受理的值新链同值受理；旧链拒绝值中 palette 命中
+  为新增能力，渐变命中维持「不覆盖」（见衔接点）。
+- **渐变消费衔接点（交付 A 线=image-box 线，本批不接线）**：渐变栅格化是 A 线名下职责
+  （G3 skipped 未并入）。唯一接线点=其名下 `xsss_applyBackground` 的 XCssParseColor 失败
+  分支改调 `xsss4_resolveColorValue(text, option, &color, &isGradient, &g)`，
+  `isGradient==true` 分支按 (尺寸,值) 缓存栅格化后填充 boxRect（同 TU static 直接可见，
+  无需头文件改动）。A 线并入前渐变值维持原行为（未识别→不绘制），零回归。
+  `background-color: palette(...)` 同经该衔接点（文本路径本批已可用，背景路径待接线）。
+
+**目标二·文本属性消费（XFont/字体驱动能力证据定性；可达则实现，不可达如实登记）**：
+- **text-transform——已落地（纯字符串变换）**：`uppercase|lowercase|capitalize|none`
+  经 `xsss_applyTextTransform`（drawPrimitive/drawControl 应用链接入，紧随
+  text-decoration 之后）对 `option->m_text` 做码点级映射：`XChar_fromUtf8Stream` 解码 →
+  `XChar_toUpper`/`XChar_toLower` → `XChar_toUtf8Stream` 回编码（代理对双向安全：
+  XChar.c:905-911 解码侧、:927-938 编码侧实证）。口径：逐单元映射（QChar::toUpper 对齐，
+  无 QString toUpper 的 1:N 膨胀如 ß→SS，输出字节数不膨胀→绘制端字节宽度计量
+  无位移副作用）；capitalize 空白分词近似（`XChar_isSpace`；Qt 用 Unicode 分词，登记
+  偏差）；增补平面（代理对单元）原样保留。消费面=option->m_text 通道（XCommonStyle.c
+  :544/:594/:1578 等样式绘制文本）。变换文本落进程级 4 槽暂存环（m_text 为借用指针不可
+  就地改写、结果须存活到源样式绘制返回之后；实践嵌套 ≤2 层，>4 槽并发复用登记为边界）。
+- **text-transform 不接入面（登记）**：①drawComplexControl 复杂控件路径（与 m_textColor
+  同口径——基类切片拷贝风险，见该函数注释）；②尺寸提示链 sizeFromContents（Qt 经
+  QFont capitalization 进 QFontMetrics 感知，本库尺寸链不感知变换——紧布局下变换文本可能
+  溢出原生尺寸，已知偏差）；③行编辑/文本编辑等控件自绘文本不经 option->m_text 通道。
+- **font-variant（normal/small-caps）——旗标按 Qt 口径落盘，可见效果登记为能力边界**：
+  `xsss4_applyFontVariant` → `XFont_setCapitalization(XFont_SmallCaps/MixedCase)`（对标
+  setTextVariantFromValue → QFont::setCapitalization）。渲染不可达证据：`m_capitalization`
+  全库引用仅 XFont.c/.h 的存储/拷贝/比较（XFont.c:1724-1731 访问器、:862/:899 拷贝、
+  :1835 相等比较），字形绘制管线 XPainter.c `painterDrawCodepoint` 无大小写分支——渲染器
+  不消费，small-caps 无可见效果，不硬造。
+- **letter-spacing / word-spacing——值落盘，可见效果登记为能力边界**：
+  `xsss4_applySpacingLength` → `XFont_setLetterSpacing(AbsoluteSpacing, px)` /
+  `XFont_setWordSpacing`（normal 清零；px 直取、pt=×96/72（xsss_ptToPx）、em/ex 按画家字
+  号参考系；% 非 CSS 间距语法拒绝；对标 setLetterSpacingFromValue）。渲染不可达证据：
+  `m_letterSpacing/m_wordSpacing` 两字段全库引用仅 XFont.c/.h（结构 :166-172、访问器
+  :526-561），XPainter 字形 advance 链（painterDrawCodepoint/painterDrawTextRun，
+  XPainter.c:15377-15548）按字号缩放步进、无逐字附加量钩点。
+- **text-decoration-color——登记为渲染不可达**：装饰线由字形管线内联矩形实现且与字形共
+  用同一 `color` 参数（painterDrawCodepoint 签名单色，XPainter.c:15377-15382；三处
+  `XPainter_fillRect(self,&r,color)` :15414/:15435/:15459），XFont 无装饰色字段——分离装
+  饰色需改 XPainter.c 文本管线（非本线名下文件），本批不硬造。
+
+**改动面**：XStyleSheetStyle.c（取色/字体/文本区：`xsss_applyTextColor` 链化、
+`xsss_applyFont` 尾接三项；drawPrimitive/drawControl 应用链各接一行 text-transform；文件
+尾『G4 新增区』锚点：`xsss4_paletteRoleColor`/`xsss4_resolveColorValue`/
+`xsss4_applyFontVariant`/`xsss4_applySpacingLength`/`xsss4_textTransformMode`/
+`xsss4_transformScratch`/`xsss4_transformUtf8`/`xsss_applyTextTransform`；include 块追加
+XChar.h/XCssValue.h/XPalette.h/XGuiApplication.h）+ XGui.md（本条目）。背景/盒模型区
+（A 线）与 drawComplexControl 区（G2）零改动；XCssStyleSheet.h/XStyleSheetStyle.h 零改动
+（text-transform 等属性名表与枚举解析侧既有，本批纯消费端）。
+
+**验证（本机实跑）**：真实构建旗标口径 A/B（build-asan-lanedock flags.make 的
+C_DEFINES/C_INCLUDES/C_FLAGS 原文、`-std=gnu99`、`gcc -fsyntax-only`）——基线
+（快照 HEAD 提取，与主工作树逐字节一致实证）XStyleSheetStyle.c exit=0/诊断 2 条 = 改后
+exit=0/诊断 2 条，**诊断多重集逐条相同（零新增；唯一差异=行号位移）**。期间语法检查实抓
+并修复一处注释缺陷（`m_letterSpacing*/` 中的 `*/` 提前闭合块注释致 7 error——已改写措辞
+复验归零）。门禁构建与四套件由编排脚本代跑；lane 快照树内未 commit（补丁交付）。
+
+### 14.130 XGuiDemo fusion-css 缺省主题现代化（theme-design lane，2026-10-01）
+
+**范围与改动面**：仅 Test/XGuiDemo 名下两文件 + 本条目——新增
+`Test/XGuiDemo/xgui_demo_theme.h`（主题样式表常量 `xgui_demo_theme_css`，亮色·现代蓝，
+扁平+描边+圆角风格）；`xgui_window_demo.c` 仅换 `XStyle_installStyleSheet` 实参（旧版两行
+内嵌演示规则 → `xgui_demo_theme_css`）并加 include。**Src/ 零改动**（纯消费端设计，能力
+边界见下）。样式矩阵开关 `--style=common/fusion` 行为不变，`fusion-css`（缺省）换新主题。
+
+**设计口径（引擎消费面逐点读码裁定）**：
+- 绘制序=底层样式先绘 → QSS 背景/描边后置覆盖（XStyleSheetStyle.c
+  `VXStyleSheetStyle_drawPrimitive/drawControl`：source 绘制后
+  `xsss_applyBackground`+`xsss_drawBorder`）→ 控件自绘文本最后（XPushButton.c:540 等以
+  调色板 ButtonText 自绘，不消费 `color:` 声明）——故主题只着色盒外观，正文对比度由
+  「浅底+调色板黑字」结构保证；按钮/页签等自绘文本在主题各底色上均为 13:1+ 。
+- (对象,状态) 级联单胜出规则、无声明合并（`xsss_lookup`/`xsss_findDecl` 只读胜出规则
+  自身声明）→ **每个状态规则自包含整套盒外观**（底色+描边+圆角全重复）。
+- 伪类不入特异度权重（`matchRule` 权重=order+specificity*0x100+(origin,depth)*0x100000，
+  specificity 只计 id/属性）→ 表内书写顺序即状态优先级：常态 < `:hover` < `:focus` <
+  `:pressed`/`:checked` < `:disabled`。
+- 子控件路径按任务口径 v1 只写已验证的 slider（`XSlider::groove/::handle`，含 `:hover`/
+  `:disabled` 派生）与 spinbox（后者经 CC_SpinBox 底色覆盖会抹步进箭头，实测后改为仅
+  描边方案，未用子控件规则）。
+
+**色板（对比度按 WCAG 2.1 相对亮度核算；正文 ≥4.5:1、非文本件 ≥3:1）**：
+
+| 角色 | 色值 | 用途 | 关键对比实测 |
+|---|---|---|---|
+| 主色锚 | #3D8BFD | 任务给定主色系锚点 | vs 白 3.34:1（仅色系锚定，不作正文/边界色） |
+| 强调填充 | #2E7CE8 | 指示器选中底（checked/indeterminate） | vs 白 4.06:1 / vs 窗底 3.53:1 |
+| 强调线 | #1A66D0 | 焦点/悬停/按下描边 | vs 白 5.45:1 / vs 悬停底 4.83:1 |
+| 悬停底 | #EAF2FF | hover 浅蓝底 | 调色板黑字 13.9:1 |
+| 按压底 | #DBE7FD | pressed 浅蓝底 | 调色板黑字 16.8:1 |
+| 控件底 | #FFFFFF | 按钮输入框页签常态底 | 调色板黑字 15.5:1 |
+| 控件描边 | #8B98A5 | 常态可辨识边界 | vs 白 2.94:1（非文本件 ≈3:1） |
+| 软描边/禁用 | #D5DBE2、#F0F2F5 | 禁用态描边/底 | 禁用态 WCAG 对比豁免 |
+| 滑轨 | #DCE2EA | XSlider::groove | 装饰轨，辨识由把手承载 |
+
+**控件覆盖清单（实测生效）**：XPushButton（常态/hover/focus/pressed/disabled 五态，焦点
+描边随 PE_FrameFocusRect 二次绘制构成 3px 内缩环+外描边双环焦点指示）；XLineEdit
+（底/描边/hover/focus/disabled，聚焦态经 PE_PanelLineEdit+PE_FrameFocusRect 同矩形幂等
+双绘）；XComboBox/XSpinBox（仅描边+圆角——不设底色以护住后绘即被覆盖的下拉箭头/步进按
+钮列）；XTabBar（常态白底软描边/`:selected` 浅蓝底强调线描边/`:disabled`，选中区分随
+CE_TabBarTabShape 的 `XStyleState_Selected` 生效）；XSlider（::groove 平轨 #DCE2EA 圆角 +
+::handle 白底 #1A66D0 描边圆把手，hover 淡蓝）；XProgressBar（描边+圆角，不设底色护高亮
+块）；XCheckBox/XRadioButton（指示器底色：常态白底描边、hover 强调线描边、checked/
+indeterminate 强调填充 #2E7CE8、disabled 灰——勾/圆点为控件后绘黑线，vs #2E7CE8 实测
+5.17:1）。整表无 padding/margin（引擎盒模型只内缩被覆盖的底层绘制，控件自绘文本几何不受
+QSS padding 驱动，写之徒增状态间跳变风险）、无渐变（扁平一致性取舍）。
+
+**能力边界（引擎后置填充不可达，保持 Fusion 原生并如实登记）**：XTextEdit/XPlainTextEdit
+（全文件无样式绘制调用点，QSS 规则不可达；底色随调色板 Base）；XMenu/XMenuBar
+（PE_PanelMenu 先绘、CE_MenuItem 逐条目后置填充会抹条目文本，条目文本色亦不经
+m_textColor——XCommonStyle.c xcs_drawMenuItem 直取调色板）；XGroupBox（CC_GroupBox 整矩形
+后置填充抹标题与勾选框，整框描边横穿标题区）；XScrollBar（普通属性路径整条填充抹把手，
+任务口径又限非子控件路径——保留原生凹槽+把手）；XTabWidget 窗格（控件自身无样式绘制调用，
+页签视觉由 XTabBar 承担）。
+
+**视觉基线迁移登记（fusion-css 缺省口径，前后值+截图佐证）**：
+
+| # | 控件/状态 | 旧值（两行内嵌规则/Fusion 原生） | 新值（xgui_demo_theme_css） | 佐证截图 |
+|---|---|---|---|---|
+| 1 | XPushButton 常态 | Fusion 凸起斜面（Button=#EFEFEF） | 白底 + #8B98A5 1px 描边 + 圆角 5 | shots/page-main.png vs shots/fusion-ref-page-main.png |
+| 2 | XPushButton:hover | 实心填充 #3D8BFD（旧规则一） | #EAF2FF 底 + #1A66D0 描边 | 同上（静态页 0 无悬停态，规则迁移值以样式表文本+门禁套件为证） |
+| 3 | XLineEdit 常态 | 实心底 #FFFFE0（旧规则二，浅黄） | #FFFFFF 白底 + #8B98A5 描边 + 圆角 4 | shots/page-input.png vs shots/fusion-ref-page-input.png |
+| 4 | XLineEdit 聚焦 | Fusion 原生（无专门聚焦色） | #1A66D0 描边 | shots/page-input.png |
+| 5 | XSlider 凹槽/把手 | Fusion 斜面轨+方形把手 | 平轨 #DCE2EA + 白圆把手 #1A66D0 描边 | shots/page-input.png |
+| 6 | XProgressBar | Fusion 凹陷槽（无主题描边） | #8B98A5 描边 + 圆角 4 | shots/page-input.png |
+| 7 | XCheckBox/XRadioButton 指示器 | Fusion 斜面小块，选中=Highlight 勾 | 选中底 #2E7CE8 + #1A66D0 描边 | shots/page-select.png |
+| 8 | XTabBar 页签 | Fusion 原生斜面页签 | 常态白底软描边 / 选中 #EAF2FF+#1A66D0 | shots/page-advanced.png（页 4 同族） |
+| 9 | XComboBox/XSpinBox | Fusion 斜面框 | 仅描边+圆角（原生箭头/按钮列保留） | shots/page-input.png、page-advanced.png |
+
+**autotest 视觉基线断言排查（铁律④口径，零断言迁移）**：全 Test/XGuiDemo 实跑排查
+`grep -rn "installStyleSheet\|setStyleSheet\|styleSheet\|3D8BFD\|FFFFE0" Test/XGuiDemo/xgui_demo_apitest_*.c Test/XGuiDemo/xgui_demo_page_*.c Test/XGuiDemo/xgui_demo_pages.h Test/XGuiDemo/xgui_demo_apitest.h`
+＝**零命中**——demo autotest/apitest 无任何依赖旧主题色/像素的断言，故本批无断言改值、
+无语义断言弱化；页/控件断言全部为 API 行为断言，主题透明。xgui_regression_test.c 的 QSS
+契约断言自建样式表实例，不读 demo 主题（不随本批变化）。
+
+**验证（本机实跑）**：lane 门禁 `lane_gate2.sh lane-theme r1`（/dev/null 容忍集=必须全绿）
+＝GATE_OK：configure/build/REG/ACC/GPU/apitest 六退出码全 0，2877 条 PASS、0 条 FAIL
+（log：`$HOME/Code/wf-qss-align/log-lane-theme-r1.log`）。视觉验收：:99 Xvfb 实拍
+`--screenshot --page {0,1,2,3,4,5,7}` 七页 + `--style=fusion` 对照四页，逐页人工核验
+（按钮/输入/滑块/进度/页签/指示器/组合框主题生效；GroupBox/菜单/滚动条/条目视图/文本域
+按边界保持原生；CJK 字形缺字为字库既有现象，两口径一致，非本批引入）。像素级抽验：页 1
+勾选指示器区域 (46,124,232)=#2E7CE8×195px、#1A66D0×63px、黑勾×77px，与新色板逐值一致。
+门禁构建与套件由编排脚本代跑；未 commit。
+
+**§14.130 评审第 1 轮修订（2026-10-01，主工作树直接改，未 commit）**：
+1. **全局字体（豆腐根修）**：桌面 demo 缺省家族 "XFontOutlineCommon" 是普通名，引擎按
+   `XFONT_EXTERNAL_OUTLINE_FONT_DIR`（默认 "../Library/XFont"，相对进程 cwd）枚举外挂
+   .xfo/.inc（XFont.c `XFont_outlinePathBuild`）；demo 从 bin-*/build-* 起跑时 cwd 失配 →
+   负缓存 → 全链回落 XFont8x16 点阵（仅极少数汉字），GB2312 常用字大面积豆腐、导航栏第
+   6/7 按钮标签零字形。根修：`demo_apply_default_font` 改经
+   `XCoreApplication_applicationDirPath()` 拼 exe 相对绝对路径
+   "<exeDir>/../Library/XFont/XFontOutlineCommon.xfo"（GB2312 全集 6763 字轮廓库，
+   Library/XFont/XFontOutlineCommon.xfo 实存 3.0MiB），绝对路径走候选枚举 direct idx 0，
+   与起跑 cwd 无关；文件缺失时由 `XFont_face` 回落链兜底（外挂皆失配 → 注册链首位位图
+   provider=XFont8x16，XFontFace.c），语义不劣化；内嵌轮廓构建（Android）仍走 provider
+   家族名。回退链=provider 家族名 → 外挂轮廓 .xfo/.inc（cwd/exeDir 六候选）→ 外挂点阵 →
+   注册链首位位图（XFontFace.c `XFont_face`）。实拍：标题栏/导航/状态栏/覆盖层 CJK 全出。
+2. **滑块已填充段**：`XSlider::groove` 规则整条删除——原生 groove 自带从 min 到把手的
+   Highlight 已填充段（XCommonStyle.c `xcs_drawSlider` 子页高亮），上一轮平轨背景后置填充
+   将其抹成无填充细线；恢复后填充色=Highlight，与进度条高亮块（`xcs_drawProgressContents`
+   同取 Highlight）同源同色，即评审所指「进度条蓝系」。
+3. **滑块把手**：改白底圆角矩形+灰描边（radius 3，#5A6572/hover #1A66D0），替换上一轮
+   细描边圆环；把手矩形与命中区由引擎几何固定（`xsss2_subControlRect` 16px、XSlider 命中
+   测试同源），QSS 不可扩大——如实登记，未做。
+4. **复选框/单选钮选中标记**：根因=QSS 后置填充抹掉底层先绘标记（对勾/圆点/
+   `xcs_drawIndicatorCheckBox`/`xcs_drawIndicatorRadioButton`）——`XCheckBox` 全部规则改
+   仅描边不填充（选中描边 #1A66D0 强调），对勾恢复可见且与 XTreeWidget 条目复选框
+   「白底框+深色对勾」（xtw_drawCheckIndicator）同语义；`XRadioButton` 规则整条移除
+   （原生圆环+圆点即最终形态，圆角矩形描边会双圈）。评审所述「白色对勾」实为树控件
+   白底上的深色勾——本修与其逐像素同语义。
+5. **按钮描边加深**：主控件轮廓 #8B98A5 → **#5A6572**（XPushButton/XLineEdit/XComboBox/
+   XSpinBox/XProgressBar/XCheckBox；vs 白 5.94:1、vs 页底 #F4F6F8 5.47:1）；次级分区
+   （微调框步进按钮框）保留 #8B98A5 两档制。
+6. **微调框步进按钮**：新增 `XSpinBox::up-button/::down-button` 仅描边规则（#8B98A5，子
+   控件路径属任务口径允许的 spinbox）——框线补按钮分区，上按钮底边+下按钮顶边构成上下
+   分隔线；**不设背景色**（填充会抹底层先绘的步进箭头字形，评审「补按钮背景」一项以此
+   为能力边界，如实登记）。
+7. **滚动条橙色条带**：排查=全图唯一饱和色 #DF5F17 共 26px（x591-603/y241-265，树控件
+   垂直滚动条右缘），主题实拍与 `--style=fusion` 参考**逐字节同位同值**（双图解码比对），
+   且滚动条绘制链（xcs_drawScrollBar 全灰系：buttonColor 派生渐变+alphaOutline）与全库
+   常量表均无橙色源——定性为引擎遗留渲染伪影，非本主题回归、非 sub-control 配色可达
+   （Src 只读，主题层不可修），保持登记待引擎侧专项。
+8. **XLineEdit 描边偏离（评审决策项）**：**保留圆角描边白底**（有意增强）——无描边扁平
+   形态下输入区与页底无边界、聚焦态无落点；主题全控件统一描边语言下可用性更优。偏离
+   理由即此，登记备查。
+
+   验证：主仓 Release 重建（build-release→bin-release）后 `XGUI_CSD=0
+   ./bin-release/XGuiRegression_Test`＝"XGui regression tests passed" exit 0；demo apitest
+   2863 PASS/0 FAIL（:9110 Xvfb 实跑）；截图全套重拍覆盖 shots/（page-main/input/select/
+   itemviews/advanced/tabs + fusion-ref-*，:99 实拍）；像素抽验页 1：复选框三态横线可见、
+   单选选中圆点 #1A66D0 系可见、无填充色块。
+
+**§14.130 评审第 2 轮修订（2026-10-01，主工作树直接改，未 commit）**：
+1. **页签文字空白根修**：根因=「XTabBar 规则 background-color」的后置填充把底层在
+   CE_TabBarTabLabel 内先绘的文字（xcs_drawTabLabel，WindowText 黑）整片抹除（评审实测
+   选中标签暗像素 1/1716、未选中 0/1760=未绘制而非低对比；demo 标题已确认逐 tab 设置，
+   xgui_window_demo.c insertTab_2 "下拉/旋钮/数码管/滚动条/滚动/分割/工具箱/按钮盒"）。
+   修复：XTabBar 三条规则全部去掉 background-color（只覆描边+圆角做状态区分），底色回落
+   原生形状（未选中 Button 灰/选中 Base 白）。重拍实证 9 个页签文字全部可见
+   （shots/page-tabs.png）。
+2. **XTabWidget pane**：排查定案=该引擎 pane 框**不存在且主题层不可达**——XTabWidget 无
+   PaintEvent 虚槽（仅 resize/change/copy/move/deinit，XTabWidget.c vtable 装配处）、页面
+   为裸 XWidget（demo_wrapTabPage/insertTab 直接 XWidget_init）无任何样式绘制调用点，
+   QSS 规则无可消费原语；且 `--style=fusion` 参考实拍（shots/fusion-ref-page-tabs.png）
+   同样无 pane 框——「对齐 Fusion 的 pane 框」在本引擎无对标物。补 pane 需 Src 层新增
+   CE_TabWidgetPane 绘制链（XTabWidget paintEvent + XCommonStyle 消费），超出主题设计
+   文件白名单（Src 只读），如实登记为引擎能力缺口，未硬造。
+3. **导航按钮内边距**：轮廓字形实测「选项卡演示」5 字 77px（首轮 70px 系扫描截断误读），
+   76px 钮内文字-边框仅 2-3px。修复：导航改逐钮宽度表 {76×4, 92, 76, 64, 76×3}、间隙
+   2px——92px 钮文字-边框 7/6px、对话框钮 64px 让宽后 7/5px；按实算（kNavWidths
+   {76×4,92,76,64,76×3}、间隙 2、左缘 12）nav5「条目视图」x=418..494（宽 76）、末钮
+   右缘 794，仍在 800 窗口内；autotest nav5 合成点击点 (440,·) 落在其内，交互回归锁
+   不受扰（像素复核全部按钮 ≥5px、被点名的 5 字钮 ≥6px）。
+4. **滚动条橙色残线（已修复）**：进一步定位=残线位于**滑块下方轨道区末列**（x603=
+   groove 末列，y 随内容变化；全库 scrollbar 绘制链逐式核验均为灰系、无常量橙源，主题/
+   fusion 参考同源）。按评审「sub-control 配色改中性灰」方向：新增 `XScrollBar::handle`
+   （#8B98A5 平涂滑块+hover 深档）、`::sub-page`/`::add-page`（#E4E7EC 平涂上下轨道）
+   子控件规则+整框描边——子件 chrome 后置覆盖残线所在列。重拍实证 page-5 全图饱和橙
+   像素 **0**（修复前 24-26px）；~~独立滚动条页（page-tabs-scrollbar.png）同样干净~~
+   **【第 3 轮更正】**该页当时**并不干净**：page-tabs-scrollbar.png 实测饱和橙 162px
+   （x=49 竖列 y=221..398，独立 XScrollBar groove 末列；主题 ::sub-page/::add-page
+   填充 #E4E7EC 在该图 0 命中）——本轮重拍时该页所出二进制未含 12:42 主题规则/取证
+   结论见第 3 轮 R1，修复后该页实测橙 0、填充 1312px。
+   注：此处的子控件用法为评审第 2 轮④的明确指令（定位 sub-control 并修复），覆盖首轮
+   「滚动条走普通属性路径」的口径限制。
+5. **XTreeWidget 视口残影**：水平滚动条下方半行文字残影为**引擎视口裁剪遗留**（评审实测
+   与参考同源）——裁剪矩形/行高对齐属 Src 层几何逻辑（XTreeWidget 视口 clip），主题层
+   不可达，维持登记，未改。
+6. **风格偏离清单（评审第 6 条确认项，均为有意设计）**：
+   - 按钮/页签圆角 + #5A6572 描边（参考为黑直角描边）——现代扁平语言，对比 5.94:1；
+   - XLineEdit/XProgressBar 有描边（参考无边框）——输入区/进度区边界可辨+聚焦落点；
+   - XSpinBox 单线圆角容器；步进按钮为框线+分隔线、无底色（首轮登记的能力边界：填充
+     会抹底层先绘的箭头字形）；上下轨道/滑块中性灰（本轮④）；
+   - XCheckBox/XRadioButton 原生标记+主题描边；XTabBar 无底色描边（本轮①）；
+   - 全局轮廓字库（GB2312 全集）——参考截图录制时为点阵回退，字形/字宽不同属字体链
+     修复的预期结果（首轮①）。
+   以上逐条登记于本节及 xgui_demo_theme.h 文件头，页内一致性已实拍核验。
+
+   验证：主仓 Release 重建后 `XGUI_CSD=0 ./bin-release/XGuiRegression_Test`＝"XGui
+   regression tests passed" exit 0；demo apitest 2863 PASS/0 FAIL（:9111 Xvfb 实跑）；
+   截图全套重拍覆盖 shots/（page-main/input/select/tabs/itemviews/advanced +
+   page-tabs-scrollbar + fusion-ref-page-tabs 等，:99 实拍）；像素复核：页签文字暗像素
+   恢复、page-5 橙像素 0、导航内边距达标。
+
+**§14.130 评审第 3 轮修订（2026-10-01，lane-scrollfix 线，未 commit）**：
+1. **独立滚动条页橙残留取证定案（R1，无需改码）**：page-tabs-scrollbar.png 的饱和橙
+   162px（x=49 竖列 y=221..398）经逐像素解剖=独立 XScrollBar（页三 LCD+滚动条联动态，
+   setGeometry(10,80,24,180)，窗口坐标 x34..57/y220..399）**groove 末列**（groove
+   x42..49：x42 Dark 边、x43..48 按钮色渐变 242、x49 橙列），与 fusion 参考实拍
+   （fusion-ref-page-itemviews.png 同位同值 26px）同源，系引擎原生渲染伪影、无常量橙
+   源（全仓仅 CRC 表命中 DF5F）。主题侧分派链取证：`XScrollBar.c:190` paintEvent 走
+   `XStyle_drawComplexControl(CC_ScrollBar)`→`VXStyleSheetStyle_drawComplexControl`
+   （XStyleSheetStyle.c:2397）→`xsss2_dispatchSubControls`（:3187），::handle 规则
+   命中实测（把手区 #8B98A5 平涂）证明 drawComplexControl 被调、选择器形态无差异；
+   ::sub-page/::add-page 填充在**当前工作区源码**（引擎 05:48 冻结+主题 12:42:23）
+   下于该页**正确生效**：重建后实测填充 #E4E7EC×1312=x42..49/y220..399（恰=groove
+   180×8−把手 16×8，即 ::sub-page∪::add-page 语义矩形），金丝雀实证（临时改
+   sub-page/add-page 色=#010203 重建→同位 1312px 变色→还原）证明因果链；软件/GPU×
+   XGUI_CSD=0/1 四环境组合全过（橙 0+填充 1312）。现存七张 page-*.png 参考图经二进制
+   考古（19 个历史 lane 二进制逐一实测 page-4/tab3）定性为**旧构建产物**：12:42 主题
+   规则落地前的内嵌旧主题无滚动条子件规则（bin-lane-subcontrol 02:09 实测复现橙×164/
+   填充 0），任何存活二进制+环境组合均无法复现参考图的「itemviews 有填充+独立滚动条
+   无填充」组合态；处置=以当前源码重拍七页（见本轮验证），无引擎缺口、无选择器缺口。
+2. **按钮圆角描边右/底缺失根修（D1，引擎侧 xg3_borderDrawImpl）**：用户实机报告
+   （user-report-button-border.png）经 :99 同页复现+逐像素四边比对实证——**全部
+   QSS 圆角描边控件的右/底直段整段缺失**（堆叠页「上一页/下一页」x141 右列/y305 底
+   行=纯白非淡化；导航钮同病，报告所见「导航完整」系相邻钮左缘的视觉误读；用户真机
+   GPU 会话截图与软件会话同位同值）。根因=`xg3_borderDrawImpl`（原 xsss_drawBorder
+   函数体）圆角分支把盒矩形原样交 `XPainter_drawRoundedRect` 闭合折线描边，路径右/
+   下边界坐标 x+w/y+h 的 1px 描边落在**盒外 1 像素**（整数光栅无半像素平移），被控
+   件裁剪整段丢弃——XFusionStyle.c 圆角框「右/下内缩 1px」注释与
+   XVirtualKeyboard.c xkb_roundRect「宽高 -5」补偿均为该既档口径的调用侧先例，QSS
+   边框路径漏补偿。修复（仅动 xsss_drawBorder 区圆角分支）：描边矩形按「左/上
+   +W/2、宽/高 −1−2·⌊W/2⌋」内收——W=1（主题全部在绘规则）环完整落盒内；W≥3 奇
+   数宽与旧径逐像素同值；直角/虚线分支与画刷填充路径零改动；XPainter.c 未动
+   （painter 侧统一内收会二次内缩 XFusionStyle 已补偿的调用方，其文件不在白名单，
+   如实登记择用调用侧）。修复后实测：堆叠页两钮四边齐（top 278/bottom 305/left
+   52,148/right 141,237 长段）、导航 10 钮四边齐（底缘 y97 整行回归）；软件+GPU 双
+   会话同过；修复前后差异面=各页圆角描边控件散布行列（36..147 行/页），滚动条填充
+   与全页橙 0 不受扰。**遗留缺口（登记）**：子件级圆角描边走 `xsss2_ruleBorder`
+   （G2 区，不在本任务白名单）——XSlider::handle（1px+radius3）右/底缺失依旧实测
+   在（输入页把手右列 x265 直段缺失），待所有者裁量在 G2 区或 painter 侧统一根修。
+3. **键盘页提示标签第四行裁半根修（D2，主题几何）**：xgui_demo_page_keyboard.c
+   只读说明 XLabel 固定 setGeometry(12,152,420,40)+setWordWrap——文本实测需 4 行
+   （user-report-label-clip.png 实锚：改前文本墨迹 y260..299，第三行 y296 起被裁）。
+   修复=文本与 wordWrap 先置，再按 `XLabel_heightForWidth(hint, 420)`（对齐
+   QLabel::heightForWidth 公开 API）实算高度 64px（=4 行×16px 行高）后落几何；
+   全 demo 同模式扫描（固定高度+WordWrap 多行标签）：仅此一处病粒
+   （xgui_demo_page_advanced.c:929 提示标签 250px 宽下单行、54px 足容，不属多行
+   裁剪，未动）；修复后实测四行墨迹 y260..322 全显无裁。
+4. **XGui.md 数字纠错（R2）**：「2881 条 PASS」实为 log-theme-iter-r1.log 口径
+   （实测 2881），lane-theme 门禁日志实测 2877——已按后者更正（第 2 轮验证段）；
+   导航几何按实算口径更正：kNavWidths{76×4,92,76,64,76×3}、间隙 2、左缘 12 →
+   nav5「条目视图」x=418..494（排他端，含端 418..493）、末钮右缘 794（含端 793），
+   xgui_window_demo.c 装配处注释与像素复核（导航行四边长段审计）双证一致。
+
+   验证：lane-scrollfix Release 全量构建后 `XGUI_CSD=0 ./bin/XGuiRegression_Test`
+   ＝"XGui regression tests passed" exit 0；`XLineControl_Acceptance_Test` exit 0
+   （68 checks PASS）；`XGuiGpu_Test` exit 0；:9110 Xvfb 实跑 `XGuiWindowDemo_Test
+   --apitest --autotest`＝2863 PASS/0 FAIL（与基线同值，零断言迁移）；:99 实拍七页
+   （page-main/select/input/tabs/tabs-scrollbar/itemviews/advanced）逐像素扫描＝
+   全部页 #DF5F17 橙像素 0 且 page-tabs-scrollbar.png 含主题填充 #E4E7EC×1312；
+   GPU 会话（--gpu）复拍 page-2/page-4-tab3 同过。门禁构建与套件由编排脚本代跑；
+   未 commit。
+
+### 14.131 文件对话框两缺陷根修 + 文件/向导族 r1 猎捕核验（dlg-file lane，2026-10-01）
+
+**范围与改动面**：仅 `Src/XGui/Widget/XFileDialog.c` 一文件两处 + 本条目；账本
+`.zcode/wf/qss-align/targets/dialog-defects-r1.md` 文件/向导族条目 #11/#12/#13 逐条
+处置，XWizard/XDialogButtonBox/demo 页活体核验零改动。
+
+**1. defect#12 底部标签列宽（XFileDialog.c `XFF_LABEL_COL_WIDTH` 84→96）**：默认标签
+字体 `XPainter_textWidth` 实测「文件类型(T):」=88px、「文件名(N):」=74px（探针活测，
+/tmp/ffprobe/probe-fix2.log）——旧值 84px 时最长串行布局按 84 摆放裁尾冒号 4px
+（b-XFileDialog-常态.png 放大对照：「文件名(N):」冒号完整、「文件类型(T)」无冒号，
+行为分裂）。取 96px（8px 栅格取整留余量），两行等宽口径不变。修后实拍冒号完整
+（/tmp/ffprobe/fd-root.png 底行）。
+
+**2. defect#13 文件列表幻影水平滚动条（XFileDialog.c 视图装配处显式
+`XAbstractScrollArea_setHorizontalScrollBarPolicy(AlwaysOff)`）**：机理三重实证——
+①详情列模型=名称列自伸展+大小/类型定宽，内容宽恒等于视口宽；②条目视图绘制仅纵向
+offY 平移（XTreeWidget paint 无横向内容平移），横条出现也无内容可滚；③基类 AsNeeded
+判定输入是控件全宽（XTreeWidget.c paintEvent `setContentSize(r.width,…)`），垂直条
+显示时视口=控件宽-16px，「内容宽>视口宽」恒真 → / 根目录等多条目态（垂直条在显）必出
+幻影横条、单条目态反而无（b-XFileDialog-根目录-横向滚动条.png vs 长路径-空目录.png
+行为分裂；本组 :78 Xvfb 探针复现同象）。跨控件根修（contentWidth 按列宽和上报，
+XTreeWidget.c:2009）归条目视图属主，**已留跨组上报**；本对话框按实际承载能力关横条，
+修后根目录态横条消失、垂直条照常（/tmp/ffprobe/fd-root.png）。
+
+**3. defect#11 地址栏补全/下拉弹层「透明叠印」＝平台 defect#1 同族，本 lane 无改码**。
+:78 Xvfb 探针实证：弹层 X 窗（XComboPopupView，qt_file_dialog_dir_combo 下拉）Map
+State=IsViewable、**Depth 24**（winTransient 降视觉分支已覆盖 Popup）、xwd -id 服务端
+缓冲含完整不透明内容（白底+文字+边框），但 root 合成零贡献（弹层开合前后弹层矩形
+x11grab 像素差=0/4202）；xdotool windowmove 移出主窗/对话框矩形立即完整显示——与
+defect#1「同族深度兄弟窗合成排除」几何特征一致，遮挡方=Depth 32 的对话框/主窗。
+**已实验证实平台修法有效**：临时给
+`Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:4979` winTransient 判定扩
+`|| winType == XWindowType_Dialog`（独立 build-tmp-platform 构建，未留 lane）后对话框
+降 24 位，弹层开合像素差=2607/4202——弹层不透明白底面板正确覆盖列表表头
+（/tmp/ffprobe/withpop.png、diffmask.png 实锚）。该一行改动归平台 defect#1 属主；
+XComboBox 弹层自身绘制（XListView paintEvent 白底填充）无需动。
+
+**4. XWizard/XDialogButtonBox/demo 页同模式核验（零改动）**：XWizard 对话框形态
+（猎捕未覆盖路径）:78 活体新建父=NULL 实例 → 480x320 正常落窗，页内容与按钮行齐备
+（/tmp/ffprobe/wizard.png）；XDialogButtonBox 三调用点维持猎捕 r1 结论（tab 页签右对
+齐口径正常；100x30 裁剪为 XDialog 宿主默认尺寸问题，归账本 #3/#9 属主）。demo 页同
+模式标签扫描：键盘页提示标签已经 heightForWidth 根修（§14.130 评审第 3 轮 D2）、对话
+框页说明标签 568px 宽容最长 ~234px 文案、advanced/effects/views 页标签几何均带实测
+注释——无残留裁剪病粒，:78 实拍 page 6/9 两页全显（/tmp/ffprobe/demo-dialogs.png、
+demo-keyboard.png；页签/标题 CJK 豆腐为 lane 基线字体回落既有现象，§14.130 评审第 1
+轮已登记全局根修，非本批引入）。
+
+**验证**：lane 增量构建 0 error（log-lane-dlg-file-build3.log）；:78 Xvfb 探针全链
+实拍（打开文件对话框根目录态/弹层态/标签特写/像素差分）；门禁构建与套件由编排代跑；
+未 commit。
+
+### 14.132 标准对话框族尺寸/避让/平台降视觉根修并入 + 回归锁 24 条落库（dlg-std 车道并入 + 测试员，2026-10-01）
+
+**修复并入**（dlg-std 车道工作树 diff，账本 dialog-defects-r1 标准族 7 条全闭环）：
+
+1. **账本 #3/#9 XDialog 顶层默认尺寸**：XDialog_init 对恒为顶层窗口的对话框统一
+   `XWidget_resize(640, 480)`（对标 QWidgetPrivate::init 顶层默认，与 XWidget.c 无父
+   分支同口径；此前有父创建继承子控件默认 100x30 落成 CSD 空壳）。显式定尺派生类
+   （XMessageBox 320x140/XColorDialog/XWizard/XFileDialog/XInputDialog exec 定尺）
+   逐一核对不受影响。
+2. **账本 #2/#8 XProgressDialog 内容驱动固定尺寸**：init 补
+   MSWindowsFixedSizeDialogHint + xprogressdialog_updateSize（宽 max(360,标签+32)、
+   高 max(160,12+行+8+26+12)+XDialog_decorationTopOffset）setFixedSize 收口；
+   setLabelText/setLabel/setCancelButton 变化重算；showEvent 复算；relayout CSD
+   自洽（已套用/待套用避让分量拆分，避免双移）。
+3. **账本 #5 XErrorMessage 同型链路**：xerr_updateSize（宽 max(300,4+12+文本实测+12)、
+   高 max(40,字模行高+12)+装饰高）；showMessage 变化重算；paint 文本垂直中点取装饰
+   高以下区段防 CSD 压字。
+4. **账本 #4/#10 XInputDialog exec/show 定尺+软键盘避让带**：xid_applyExecSize =
+   max(调用方基线, XLayout_totalSizeHint+装饰高)，软键盘总开关启用时按
+   xkb_reposition 同一钳位公式预留避让带（band=max(base,120)），布局下边距
+   =12+band 钉内容于键盘带上方；标签行高按对象字模钉底（主题轮廓字模 sizeHint
+   0x0 失真防御）；物理键盘形态不预留。键盘留对话框子树内（模态门只放行子树）。
+5. **账本 #1 X11 Dialog 窗不上屏（裁定扩展一行修）**：XPlatformNativeWindow_posix.c
+   降视觉分支判定扩 `|| winType == XWindowType_Dialog`——Dialog 家族同为 depth-32
+   兄弟窗合成排除同族；只入降视觉分支不并入 override-redirect 的 winTransient。
+   连带闭合账本 #11（地址栏补全弹层叠印，dlg-file 车道实证同族根因）。
+6. **账本 #6 residual**：模态关闭后首击无响应——时间盒内定位不出（模态门对称解除/
+   平台抓取/控件级抓取/键盘域均已排除），XWidget.c 按下分派段 + XWindowSystemInterface.c
+   模态锚表需属主车道专项；二次点击可达，功能不丧失。
+
+**⚠ 回归锁首跑捕获修复引入的真缺陷（已修）**：xid_applyExecSize 调
+`XLayoutItem_widget_base`（声明仅在 XLayoutItem_Protected.h:20）未包含该头——C 隐式
+函数声明按返回 int 处理（`-Wno-error=implicit-function-declaration` 把 GCC14 error
+降为 warning 放行），编译器在 call 后插 `cltq` 截断 64 位控件指针，布局首条目
+sizeHint 解引用半截指针必崩（反汇编实锚 `call→cltq→mov %rax,-0x30(%rbp)`；SIGSEGV
+@ XWidget.c:3943，self=低 32 位截断值）。修法：XInputDialog.c 补该 include。此为
+`test_dialog_r1_defect_locks` 的直接战果。
+
+**回归锁（测试员落库，xgui_regression_test.c）**：新增 `test_dialog_r1_defect_locks()`
+（main 注册于 test_dialog_task219b_contract 后），24 条断言，覆盖账本 #2/#3/#4/#5/
+#8/#9/#10 六条 high/medium——尺寸类断言按 ask 口径以 XWidget_width/height/sizeHint
+直断（无头装饰高=0、CSD 平台由 updateSize 追加，≥ 口径两态成立），XProgressDialog/
+XErrorMessage 另锁 setFixedSize 契约（min==max==当前）：
+
+- **#3/#9（r1#3/r1#9 五条，含 2 条创建护栏）**：有父创建的 XDialog 默认 640x480；
+  容纳自定义对话框内容 360x170；基类默认不覆盖派生显式定尺（XMessageBox 320x140
+  反例锁）。
+- **#2/#8（r1#2 五条，含 1 条创建护栏）**：进度对话框 ≥360x160；setFixedSize 收口
+  （min==max==当前）；长标签实测扩宽不受下限封顶；show 复算后下限不塌缩。
+- **#5（r1#5 五条，含 1 条创建护栏）**：横幅 ≥300x40；长消息实测扩宽；setFixedSize
+  收口；空消息落宽下限锚点 300（字模无关的精确口径）。
+- **#4（r1#4 七条，含 3 条装配护栏）**：按 xid_buildDialog 同源装配（根布局
+  TopToBottom+边距 12+
+  间距 8+标签/行编辑/xid_addButtons 同构按钮行）走公开 show() 入口（与 exec 预定尺
+  共用 xid_applyExecSize 同一生产代码路径）——exec 定尺 ≥ 内容实测+装饰高+避让带
+  （≥base+120）；基线 140 被避让带抬升；布局下边距=12+band；标签 sizeHint 行高
+  钉底 ≥16。
+- **#10（r1#10 两条）**：物理键盘形态（总开关关）不预留避让带（下边距=装配 12）、
+  定尺=内容实测（无带）；全局键盘开关用后还原。
+- **#1/#11（零断言，如实披露）**：视觉/深度选择无公共查询 API（XPlatformNativeWindow.h
+  全量核对），原生句柄创建需 XGuiApplication 平台集成层且门禁 XGUI_CSD=0 无头——
+  回归凭据为车道活体证据链（xwininfo 深度实测 + x11grab 像素差矩阵），测试文件头注
+  与账本已登记。
+- **#6（零断言，residual 未修）**；**#7（记录非缺陷）**；**#12/#13（dlg-file 车道
+  已修，XFileDialog 无公开子控件查询 API 无缝合点，凭据见 §14.131）。
+
+**测试侧防复踩记录**：①测试装配勿以 XDialogButtonBox 控件形态作盒布局条目（控件
+析构与布局条目所有权交错悬垂），按 xid_addButtons 同构 XBoxLayout 子布局替代，show
+后显式 XLayout_delete_base（布局不随对话框析构）；②t219a XDialog open 直删后模态门
+悬垂（hideEvent 对称解除被 delete 跳过），后继同宿主对话框 show 前需
+`XApplication_setActiveModalWidget(NULL)` 复原。
+
+**验证（本 ask 实跑）**：lane-dlg-std 树全量构建 exit=0；`XGUI_CSD=0
+./bin-lane-dlg-std/XGuiRegression_Test` exit=0 "XGui regression tests passed"（既有
+套件零回退+新锁 24 条全过）；`env -u DISPLAY XGUI_CSD=0 …` exit=0（无头门禁口径）；
+XLineControl_Acceptance_Test exit=0 旁证零扰动。账本逐条标注见
+.zcode/wf/qss-align/targets/dialog-defects-r1.md（▶ 标记）。
+
+### 14.133 消息盒点击链/长文本收口 + 进度框非模态 + 弹层框 + 回归锁 31 条落库（r2 猎捕并入 + 测试员，2026-10-03）
+
+**修复并入**（账本 `.zcode/wf/qss-align/targets/dialog-defects-r2.md` high/medium 五条全闭环）：
+
+1. **账本 #1 消息盒标准按钮间歇性点击失效 [high]**：根因非连接断链——文本标签
+   固定 60px 矩形侵按钮行（CSD 主题字模行高 30 时矩形底 y=102 与 120 高框按钮
+   行顶 y=87 重叠 15px，childAt 把按压抢给文本标签；DBGPRESS 实锚 hit 目标=
+   (56,42 108x60)）。修=XMessageBox.c 新增 xmsg_textBlockHeight（单一几何事实
+   源：XLabel_heightForWidth 实测块高，字模未就绪退 sizeHint 再退 1 行基线）+
+   文本/补充标签 `TransparentForMouseEvents` 双保险（XLabel 旧固定 60px 硬编
+   码废弃）。
+2. **账本 #2 多行长文本只渲染 2 行+水平越界 [medium]**：同源修复——setupText/
+   setupInformative/setupCheckBox/updateSize 四处统一走 xmsg_textBlockHeight，
+   显式 `'\n'` 行与 wordWrap 折行由 label 布局器统一承载（旧「行数估算×行高」
+   模型与 60px 矩形两套口径在中英混排下偏差可达数行）；宽度按最长行实测+边距。
+3. **账本 #3 demo 自定义对话框 640x480 出血 [medium]**：demo 侧显式定尺
+   `XWidget_resize(360,220)`（xgui_demo_page_dialogs.c dlgpg_ensureCustom）——
+   内容包络 340x170 + CSD 装饰条实测 31px 让位（190 定尺首拍按钮盒底缘 201 越
+   窗，220 后完整入窗留 ~19px 底呼吸边），显式定尺优先级高于基类 640x480 默认。
+4. **账本 #4 进度对话框 open 模态门 [medium]**：XDialog_open 对 XProgressDialog
+   vtable 向下识别例外不登记应用模态门（对标 Qt 6.8.3 qprogressdialog.cpp 全
+   文无 setModal——非模态默认；demo「再点推进 10%」约定交互恢复可达）。exec 路
+   径无条件模态不受影响（XDialog_exec，对标 QDialog::exec）。
+5. **账本 #6 地址栏补全弹层「透明叠印」[medium]**：两轮旧结论更正（r1#11/r2#6）
+   ——弹层本为不透明白底且 X11 合成正常，「透出」残字均在弹层矩形之外；白底贴
+   同白列表零对比读作叠印。根修=XComboPopupView paintEvent 叠四缘 1px 弹层面板
+   框（palette Dark，对标 QComboBoxPrivateContainer「框在容器不在视图」），
+   越界收起/键盘拦截/候选选择三语义零介入。
+6. **账本 #5 进度框窗口标题 [low]**：库内默认「正在执行」（CSD 形态可辨识性，
+   对标偏差登记）；**#7 demo 偶发静默退出 [low]**：未复现无 core，维持如实待锁。
+
+**回归锁（测试员落库，xgui_regression_test.c）**：新增 `test_dialog_r2_defect_locks()`
+（main 注册于 test_dialog_r1_defect_locks 后），31 条断言覆盖 #1/#2/#3/#4/#6——
+尺寸类按 XWidget_width/height/geometry 直断 + XWidget_grab 离屏非背景像素断言
+（test_qss_wave* 同款 image 口径）：
+
+- **#1（r2#1 十一条）**：单行文本矩形实测块高<60（旧态固定 60）；文本矩形底≤
+  按钮行顶；标签鼠标穿透属性；取消钮中心 childAt=按钮本身（首次+复用二次
+  open 双断）；click 注入→隐藏+rejected 计数=1→二次 open 全链复通（计数=2）
+  ——账本建议的「open→注入点击→断言隐藏+rejected 计数」口径落库，既有 autotest
+  直调 accept/reject 不经点击链的缺口补上。
+- **#2（r2#2 六条）**：六行标签块高 ≥4 行增量（旧态 60 两行封顶）；窗高 ≥
+  heightForWidth 实测+内容顶+按钮带；宽度 ≥ 最长行实测+左右边距；离屏渲染第
+  2 行以下文本带非背景像素可见（旧态该带全裁）。
+- **#3（r2#3 四条）**：demo 源不入回归二进制——套件按 dlgpg_ensureCustom 同源
+  装配复刻（label 16,16,308,70+按钮盒 0,130,340,40+定尺 360x220 同 open 路
+  径）：显式定尺经 open 保持（不被基类 640x480 覆盖）、内容包络整体入窗（无
+  右/下出血）、标签中心可命中。
+- **#4（r2#4 六条）**：进度框 open 后 activeModalWidget==NULL；普通 XDialog
+  open 阳性对照（门仍登记、done 解除——防「门禁整体失效」假阳性）；进度框
+  done 关闭无门残留。
+- **#6（r2#6 四条）**：经公开 XComboBox_view 弹层宿主离屏渲染——四缘像素一
+  致且 ≠ 内部底色、≠ 纯白（旧态全白零对比即旧缺陷形态）。
+- **#5/#7（零断言，[low] 如实登记）**。
+
+**验证（本 ask 实跑）**：`cmake --build build --target XGuiRegression_Test` exit=0；
+`XGUI_CSD=0 ./bin/XGuiRegression_Test` exit=0 "XGui regression tests passed"（零
+r2 失败行，r1 锁 24 条同过）；`env -u DISPLAY XGUI_CSD=0 …` exit=0（无头门禁口径）；
+gdb 断点实证五处深分支断言行（36584/36673/36710/36745/36802）真实执行（嵌套
+if 内断言无静默跳过）；`bin/XLineControl_Acceptance_Test` exit=0 旁证零扰动；
+`strings bin/XGuiRegression_Test | grep -c '^r2#'`=31 与断言数一致。账本逐条
+标注见 .zcode/wf/qss-align/targets/dialog-defects-r2.md（▶ 标记）。
+
+### 14.134 r3 复核：构建滞后消解 + 长文本 wrap 路径证真 + 回归锁 11 条落库（测试员，2026-10-03）
+
+**r3 猎捕四条 medium 的复核结论**（账本 `dialog-defects-r2.md` 后继
+`dialog-defects-r3.md` ▶ 标注）：
+
+1. **defect#1 构建产物滞后（编排侧）→ 已闭环**：bin 02:40 < lib 03:46 的旧
+   口径经编排侧重链消除（bin 现与 lib 同步 07:36；python 字节复验「正在执
+   行」bin=True/lib=True）。r2#1（消息盒点击链）与 r2#5（进度框标题）在 bin
+   口径随之自然闭环。非库代码缺陷，无套件缝合点，无断言。
+2. **defect#2 长文本「未修」判定 → 推翻，修复证真**：/tmp/r3probe 探针静链
+   当前 lib 三态实测——6 行含 2 折行长句收口 400x188=12+实测块高 128+按钮带
+   48（heightForWidth=368 宽=128 八行全容）；单段超长折行同型；不折行对照
+   保持已修态。r3 的 400x170/两行证据与 r2 修复前数字全同，系探针重链早于
+   03:46 lib 收编 XMessageBox.c 修复（源 03:31）的陈旧取证。
+3. **defect#3 进度框模态「未修」判定 → 陈旧 bin 假象**：修复在 r2 车道
+   （XDialog.c:1342 open 模态门 vtable 例外），r3 的「git diff 无命中」与
+   源码不符；活体证据 a-11 系 02:40 旧 bin 口径（defect#1 同根）。r2#4 锁
+   本轮在当前树复跑通过。
+4. **defect#4 弹层叠印「仍存活」→ 陈旧 bin 假象**：弹层框修复晚于 02:40、
+   随 03:46 lib 收编；r2#6 锁本轮复跑通过。
+5. **defect#5（low）**：维持待锁观察项（3 次重放未复现）。
+
+**回归锁（测试员落库，xgui_regression_test.c）**：新增
+`test_dialog_r3_defect_locks()`（main 注册于 test_dialog_r2_defect_locks
+后），11 条断言全部锁 r2#2 修复的 **wrap 路径**——r2 锁只覆盖显式 `'\n'`
+短行不折行分支，正是 r3 猎捕误判的盲区，本轮按「断言只许更严」补齐：
+
+- **折行分支 7 条（r3#2）**：6 行含 2 个超软限长句——折行块高 ≥4 行增量
+  （旧态固定 60 两行封顶）；标签矩形高==heightForWidth 实测；箱高 ≥ 块高+
+  内容顶+按钮带；箱宽收软限 ≤500；宽按折行口径；离屏渲染第 2 行以下文本
+  带非背景像素可见（旧态该带全白）。
+- **单段折行分支 3 条（r3#2）**：无 `'\n'` 段落折 ≥5 行——块高 >60 且
+  ==实测；箱高覆盖块高+内容顶+按钮带。
+- **#3/#4 不重复落锁**：r2#4（六条）/r2#6（四条）既有锁承载，本轮复验通过。
+
+**⚠ 套件首跑捕获锁自身判别力缺陷（已修，记录防复踩）**：单段分支初版断言
+`hB > h1`（折行态高于单行态）首跑 FAIL——两态同落 120px 高度下限，比较有
+意义性缺陷；且初版段落仅折 3 行（块高 48 < 旧态 60px 矩形）对旧态无判别
+力。修正=段落加长至 ≥5 行 + 删除下限比较，改锁「块高>60 且==实测」。教训：
+下限钳位会掩盖尺寸差异，尺寸锁的下界参照物必须先于断言设计核实。
+
+**验证（本 ask 实跑）**：`cmake --build build --target XGuiRegression_Test`
+exit=0；`XGUI_CSD=0 ./bin/XGuiRegression_Test` exit=0 "XGui regression tests
+passed"（首红后修正，终态零失败行；r1 24+r2 31 条既有锁同过）；
+`env -u DISPLAY XGUI_CSD=0 …` exit=0（无头门禁口径）；gdb 断点实证 r3 全部
+8 处断言行真实执行；`bin/XLineControl_Acceptance_Test` exit=0 旁证零扰动；
+`strings … | grep -c '^r3#'`=11。账本逐条标注见
+.zcode/wf/qss-align/targets/dialog-defects-r3.md（▶ 标记）。
+
+### 14.135 r4 复核：进度框尺寸上限锁补判别力 + 占位语义契约 + 补全弹层通道锁 + 回归锁 15 条落库（测试员，2026-10-03）
+
+**r4 猎捕八条的复核结论**（账本 `dialog-defects-r4.md` ▶ 标注；新提交
+95f61e46「S7 全量落地 + CSD 弹层口径统一」后首轮）：
+
+1. **defect#1 进度框尺寸回归 640x480 [high] → 已修复（08:17 车道）**：
+   xprogressdialog_updateSize 补 init 末尾等多调用点收口，当前树创建即
+   360x160。**判别力缺口如实登记**：r1#2 既有锁（≥360x160+setFixedSize）对
+   640x480 回归无判别力（同过 ≥ 下限与 min==max 两断），07:46~08:17 回归窗
+   口恰落在套件两轮运行（07:41 绿→08:17 修）之间——锁在位而未逢跑。本轮补
+   r4#1 上限锁（创建宽==360/高<400）成 ≤/≥ 双向夹逼，基类默认覆盖路径必红。
+2. **defect#2 输入初值「丢失」[high] → 实为 demo 侧有意语义切换**：
+   dlgpg_inputTrigger 由 getText_2 改 getText_3，「预置文本」降为占位提示
+   （仅空框灰显、输入即消失、回传不携带占位串，对标 QInputDialog placeholder
+   语义；xgui_demo_page_dialogs.c:395 注登记）。库级 getText_2 初值链路
+   （setText+XID_NAME_EDIT 登记结算，台账 #25 根修）在位。锁：占位语义契约
+   六条（占位不入内容/真值不被遮蔽/查询分立/show 保持/离屏像素真值态>占位态）。
+3. **defect#3 长文本「仍未修」[medium] → 陈旧取证第三次复现**：400x170/两行
+   证据与 r2 修复前数字全同；r2#2+r3#2 十七条既有锁本轮新构建复跑全过。
+4. **defect#4 进度框模态「仍未修」[medium] → 同上**：XDialog.c:1371 例外在
+   位，r2#4 六条复跑全过。
+5. **defect#5 补全弹层 [medium] → 通道核查 + 「1 行候选」为正确语义**：
+   XFileDialog 地址栏=XComboBox 可编辑+completerMode（无独立补全代码），补全
+   弹层复用同一 XComboPopupView（1px 缘框在位）；键入全路径前缀命中 1 行→
+   弹层按命中数收高=过滤正确语义非劣化。新增 r4#5 可编辑通道显式锁六条
+   （textEdited 直发→过滤行可见性/按命中数收高/四缘框架）。
+6. **defect#6 输入对话框键盘交互 [medium] → 所有者裁定落地**：2026-10-02/03
+   点击驱动语义（预聚焦删除：打开无键盘、点击才弹外置键盘；r1「打开即整面
+   遮盖」消除）；「键入中确定/取消被遮盖须先收起」为 xid_execDialog 注登记
+   的有意取舍。r1#4 新口径两条+r1#4d 裁定时序四条（属主车道落库）复跑全过。
+7. **defect#7 [low]**：同 #1（r1#2+r4#1 承载）；**defect#8 [low]**：维持待锁
+   （2 死/6 重放不可稳定复现）。
+
+**回归锁（测试员落库，xgui_regression_test.c）**：新增
+`test_dialog_r4_defect_locks()`（main 注册于 test_dialog_r3_defect_locks
+后），15 条断言：
+
+- **r4#1（三条）**：进度框创建宽==360 收口锚点；高 ∈[160,400)——与 r1#2
+  下限锁成双向夹逼（判别力缺口修复，见上）。
+- **r4#2（六条）**：占位串不入行编辑内容；真值设置后内容=真值；占位与内容
+  查询分立；show 后初值保持；离屏渲染真值态暗像素>占位态（黑字 vs 灰占位）。
+- **r4#5（六条）**：可编辑+completerMode 补全通道——textEdited 经
+  XObject_emitSignal 直发（生产槽同源；程序化 setEditText 不弹补全为 Qt
+  对齐语言）；前缀过滤行可见性（非命中行隐藏）；弹层按命中数收高（全量
+  下拉>补全态）；四缘 1px 框架离屏断言（与 r2#6 同通道同锁形）。
+- **#3/#4/#6 不重复落锁**：既有锁承载，本轮复跑通过；**#7/#8 [low]** 无断言。
+
+**⚠ 测试侧防复踩两条**：①`XPROGRESSDIALOG_ON` 宏不存在（XProgressDialog.h
+守卫为 XDIALOG_ON）——特性守卫写错宏名该节被预处理**静默裁掉**且编译期零
+告警，新锁落库前必须核对目标头文件的实际守卫宏；②双态像素对比断言的抓拍
+顺序与计数命名要一一对应（首跑曾因方向反置 FAIL 一次，纠后全绿）。
+
+**验证（本 ask 实跑）**：`cmake --build build --target XGuiRegression_Test`
+exit=0；`XGUI_CSD=0 ./bin/XGuiRegression_Test` exit=0 "XGui regression tests
+passed"（首红一处方向错，纠后终态零失败行；r1 24+r2 31+r3 11 条既有锁同过）；
+`env -u DISPLAY XGUI_CSD=0 …` exit=0（无头门禁口径）；gdb 断点实证 r4 全部
+12 处断言行真实执行；`bin/XLineControl_Acceptance_Test` exit=0 旁证零扰动；
+`strings … | grep -c '^r4#'`=15。账本逐条标注见
+.zcode/wf/qss-align/targets/dialog-defects-r4.md（▶ 标记）。

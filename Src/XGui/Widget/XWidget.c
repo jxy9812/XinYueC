@@ -100,6 +100,11 @@
 #include "XSystem.h"
 #include "XDateTime.h"        /* present 限频计时：单调毫秒（约束文档时间源规则） */
 #include "XPrintf.h"          /* [wprof] flush per-leg profiling summary line */
+#include "XStyle.h"           /* XStyle_invalidateStyleSheetRenderCache（setStyleSheet 缓存失效联动，deferred#4） */
+#if XSTYLE_ON
+#include "XCssStyleSheet.h"   /* qproperty-* 声明结构与解析（setStyleSheet 应用链的动态属性写入） */
+#include "XVariant.h"         /* XVariant_data/create_int64（qproperty 值承载与已应用账本） */
+#endif /* XSTYLE_ON */
 
 /* TEMP：paintTree 派发 paintEvent 时的上屏目标图像（表面裁剪限定用）。 */
 static XImage* g_paintTargetImage;
@@ -5336,17 +5341,44 @@ void XWidget_setTabOrder(XWidget* first, XWidget* second)
     second->m_focusPrev = first;
 }
 
+/** @brief Tab 候选的显示性判据：已显式 show 且未被窗口内显式隐藏链遮蔽。
+ * @details 焦点遍历候选按「窗口内可达」口径判定，不要求宿主顶层窗口
+ *          生效可见：apitest 无头契约（子控件 show 不建平台窗口、顶层
+ *          始终不 show，8a174def 起）下 XWidget_isVisible 的父链生效
+ *          可见恒假，按生效可见过滤会使候选集恒空（setTabOrder/
+ *          focusNextChild 三条断言的根因）。显式隐藏遮蔽语义保持复扫-3
+ *          #40 不回退：StackedLayout 非当前页经 setVisible(false) 置
+ *          WState_Hidden，其子控件虽 explicitShow 仍被本判据排除——
+ *          Tab 不会落到隐藏页控件上；判据只在「整窗未显/整窗隐藏」
+ *          场景放宽（与生俱来不可见性不剥夺窗口内 Tab 可达性），真实
+ *          显窗 UI 的候选集与原生效可见口径逐项一致。 */
+static bool xwidget_focusChainShown(const XWidget* self)
+{
+    const XWidget* w;
+    if (!self || !self->m_explicitShow) return false;
+    /* 沿父链上溯至顶层窗口为止（不含窗口自身）：任一中间祖先带显式
+     * 隐藏位即遮蔽整棵子树。顶层自身位不参与——顶层 WState_Hidden 是
+     * 「未显窗」的初始态而非窗口内遮蔽（XWidget_init 对无父控件置
+     * 位），参与会把无头场景重新排除。 */
+    for (w = (const XWidget*)XObject_parent((XObject*)self);
+         w && !w->m_isWindow;
+         w = (const XWidget*)XObject_parent((XObject*)w)) {
+        if (XWidget_attrTest(&w->m_attributes,
+                             XWidgetAttribute_WState_Hidden))
+            return false;
+    }
+    return true;
+}
+
 /** @brief 判断控件是否可作为 Tab 链中的显式/文档序焦点候选（与收集规则一致）。 */
 static bool XWidget_focusChainCandidate(const XWidget* self)
 {
     const XObject* parent;
-    /* 对标 Qt 焦点遍历按生效可见性过滤（qwidget.cpp focusNextPrevChild
-     * 的候选走 isVisible()）：StackOne 隐藏页的子控件虽 explicitShow 但
-     * 生效不可见，不得成为候选——否则 Tab 落到不可见控件上（复扫-3
-     * #40 根因：页3 Tab 落到隐藏「按钮演示」页的 m_button）。 */
+    /* 显示性过滤见 xwidget_focusChainShown（窗口内显式隐藏链遮蔽，
+     * 复扫-3 #40 语义：隐藏「按钮演示」页的 m_button 不入候选）。 */
     if (!(self && self->m_enabled &&
           (self->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
-          self->m_visible && !self->m_isWindow))
+          xwidget_focusChainShown(self) && !self->m_isWindow))
         return false;
     /* 复合控件候选资格二选一，停靠点归容器（对标 Qt 单控件语义：
      * QAbstractSpinBoxPrivate::init 的 d->edit->setFocusProxy(q)
@@ -5357,13 +5389,14 @@ static bool XWidget_focusChainCandidate(const XWidget* self)
      * Tab 候选时子控件不重复入链——XLineEdit_init 补 StrongFocus（复
      * 扫-5 #40）后，页3 SpinBox 的内嵌编辑框不再与容器双停靠，链序
      * [LE,SpinBox,Slider,nav0..nav8] 维持（复扫-5 路0 项4）；NoFocus
-     * 容器（页面/groupBox/XChartView）下的独立控件不受影响。 */
+     * 容器（页面/groupBox/XChartView）下的独立控件不受影响。父控件
+     * 显示性用同一判据（口径一致，避免双判据分叉）。 */
     parent = XObject_parent((XObject*)self);
     if (parent && parent->is_widget) {
         const XWidget* pw = (const XWidget*)parent;
         if (pw->m_enabled &&
             (pw->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
-            pw->m_visible && !pw->m_isWindow)
+            xwidget_focusChainShown(pw) && !pw->m_isWindow)
             return false;
     }
     return true;
@@ -6019,13 +6052,427 @@ const XString* XWidget_styleSheet(const XWidget* self)
     return self ? self->m_styleSheet : NULL;
 }
 
+#if XSTYLE_ON
+/* ==================== qproperty-* 动态属性应用（对标 QStyleSheetStyle::setProperties，
+ *                      qstylesheetstyle.cpp v6.8.3:2655-2714） ==================== */
+
+/** @brief 已应用账本键（对象动态属性承载；对标同文件 setGeometry 以
+ *         "_q_stylesheet_minw" 等保留动态属性记账的定式，
+ *         qstylesheetstyle.cpp:2610-2625）。 */
+#define XWIDGET_QPROPERTY_LEDGER_KEY "xgui.qss.qproperty.applied"
+
+/** @brief qproperty- 前缀（对标 qstylesheetstyle.cpp:1023/2669 的
+ *         startsWith("qproperty-", CaseInsensitive) 与 :2679 mid(10)）。 */
+#define XWIDGET_QPROPERTY_PREFIX "qproperty-"
+
+/** @brief 最终出现记录（对标 setProperties 的 finals 列表：规则序+声明序
+ *         定位扁平声明序列中的一条；应用时按正序恢复写入顺序）。 */
+typedef struct XWidgetQPropertyOccur
+{
+    int m_rule; /**< 规则下标。 */
+    int m_decl; /**< 声明下标。 */
+} XWidgetQPropertyOccur;
+
+/** @brief 账本是否在位（在位=当前样式表文本的 qproperty 已应用，钩子幂等早退）。 */
+static bool xwidget_qpropertyLedgerApplied(const XWidget* self)
+{
+    XString key;
+    XVariant* v;
+    if (!self) return false;
+    XString_init(&key);
+    XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
+    v = XObject_property((const XObject*)self, &key);
+    XString_deinit_base((XClass*)&key);
+    return v != NULL;
+}
+
+/** @brief 落账（防重复触发）；落账失败（OOM）静默放弃——下次钩子调用重试应用。 */
+static void xwidget_qpropertyLedgerMark(XWidget* self)
+{
+    XString key;
+    XVariant* v;
+    if (!self) return;
+    v = XVariant_create_int64(1);
+    if (!v) return;
+    XString_init(&key);
+    XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
+    /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
+    if (!XObject_setProperty((XObject*)self, &key, v))
+        XVariant_delete_base((XClass*)v);
+    XString_deinit_base((XClass*)&key);
+}
+
+/** @brief 清账（样式表重设时调用；下次钩子调用重新应用——对标 Qt
+ *         repolish 重跑 setProperties 的触发点：qwidget.cpp
+ *         setStyleSheet → unpolish/polish，qstylesheetstyle.cpp:2916-2924
+ *         缓存清除后 setProperties(w) 重入）。 */
+static void xwidget_qpropertyLedgerReset(XWidget* self)
+{
+    XString key;
+    if (!self) return;
+    XString_init(&key);
+    XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
+    XObject_removeProperty((XObject*)self, &key);
+    XString_deinit_base((XClass*)&key);
+}
+
+/** @brief 声明是否为 qproperty-* 并取动态属性名。
+ *
+ *  前缀大小写不敏感（对标 qstylesheetstyle.cpp:1023/2669），名字剥前缀
+ *  后保留原大小写（对标 :2679 mid(10)）；空名返回 false（Qt 空名
+ *  indexOfProperty 必败告警跳过，:2683-2686）。
+ */
+static bool xwidget_qpropertyName(const XCssDeclaration* d, const char** nameOut)
+{
+    const char* p;
+    if (!d || !d->m_propertyName) return false;
+    p = XString_toUtf8(d->m_propertyName);
+    if (!p || XStrncasecmp(p, XWIDGET_QPROPERTY_PREFIX,
+                           sizeof(XWIDGET_QPROPERTY_PREFIX) - 1) != 0)
+        return false;
+    p += sizeof(XWIDGET_QPROPERTY_PREFIX) - 1;
+    if (*p == '\0') return false;
+    *nameOut = p;
+    return true;
+}
+
+/** @brief 单段基础选择器匹配（元素名/#id 列表/属性全列；与
+ *         XStyleSheetStyle.c xsss_basicMatches 同口径：元素名=虚表类名
+ *         大小写不敏感、#id 对标 nodeIds=[objectName] 列表等值（选择器
+ *         侧多 ID 恒不命中）、属性选择器读对象动态属性按六准则分派）。 */
+static bool xwidget_qpropertyBasicMatches(const XCssBasicSelector* sel,
+                                          const XObject* obj)
+{
+    int i;
+    if (!sel) return false;
+    if (sel->m_elementName) {
+        const char* want = XString_toUtf8(sel->m_elementName);
+        const char* cls = XVTABLE_GET_NAME(XClassGetVtable((const XClass*)obj));
+        if (!cls || !want || XStrcasecmp(cls, want) != 0) return false;
+    }
+    if (sel->m_id) {
+        const XString* n = XObject_objectName(obj);
+        const char* id = n ? XString_toUtf8(n) : NULL;
+        if (sel->m_idCount != 0) return false; /* 多 ID 恒不等值（id 列表长 1）。 */
+        if (!id || id[0] == '\0') return false;
+        if (XStrcmp(id, XString_toUtf8(sel->m_id)) != 0) return false;
+    }
+    /* 属性选择器全列匹配（首属性 + 尾部多属性，任一失败整段失败）。 */
+    for (i = 0; i < 1 + sel->m_attributeCount; ++i) {
+        const XCssAttributeSelector* attr =
+            i == 0 ? &sel->m_attribute : &sel->m_attributes[i - 1];
+        XVariant* v;
+        const char* actual;
+        const char* want;
+        if (!attr->m_name) continue; /* 无属性限定（防御）。 */
+        v = XObject_property(obj, attr->m_name);
+        if (!v) return false; /* [name] 要求属性存在。 */
+        actual = (const char*)XVariant_data(v);
+        want = attr->m_value ? XString_toUtf8(attr->m_value) : NULL;
+        if (!actual || !want) return false;
+        switch (attr->m_match) {
+        case XCssValueMatch_NoMatch:
+            break;
+        case XCssValueMatch_Equal:
+            if (XStrcmp(actual, want) != 0) return false;
+            break;
+        case XCssValueMatch_Includes: {
+            /* 空格分词包含（同 xsss_attrMatches 口径）。 */
+            const char* q = actual;
+            size_t wl = XStrlen(want);
+            bool found = false;
+            while (*q) {
+                const char* tok;
+                size_t tl;
+                while (*q == ' ') ++q;
+                tok = q;
+                while (*q && *q != ' ') ++q;
+                tl = (size_t)(q - tok);
+                if (tl == wl && XStrncmp(tok, want, wl) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+            break;
+        }
+        case XCssValueMatch_DashMatch: {
+            size_t wl = XStrlen(want);
+            if (XStrcmp(actual, want) != 0 &&
+                !(XStrncmp(actual, want, wl) == 0 && actual[wl] == '-'))
+                return false;
+            break;
+        }
+        case XCssValueMatch_BeginsWith:
+            if (XStrncmp(actual, want, XStrlen(want)) != 0) return false;
+            break;
+        case XCssValueMatch_EndsWith: {
+            size_t al = XStrlen(actual);
+            size_t wl = XStrlen(want);
+            if (al < wl || XStrcmp(actual + al - wl, want) != 0) return false;
+            break;
+        }
+        case XCssValueMatch_Contains:
+            if (!XStrstr(actual, want)) return false;
+            break;
+        default:
+            return false;
+        }
+    }
+    return true;
+}
+
+/** @brief 选择器链匹配（qproperty 采集口径；右→左，结构对标
+ *         XStyleSheetStyle.c xsss_selectorMatches / qcssparser.cpp
+ *         StyleSelector::selectorMatches 的 do-while 走查）。
+ *
+ *  末段约束（对标 declarations() 默认过滤，qstylesheetstyle.cpp:1739-1753
+ *  在 part=""/pseudoClass=Unspecified 下被 setProperties 采集的规则集）：
+ *  - 末段无伪元素（:1745-1746 part 严格等值比较，part="" 排除全部带伪
+ *    元素规则——"Rules with pseudo elements don't cascade"）；
+ *  - 末段无正伪类（qcssparser.cpp:1958-1963 Selector::pseudoClass 只读
+ *    末段、无伪类返回 Unspecified=0x100；带正伪类时 :1747-1752 第三分支
+ *    `(cssClass & 0x100)==cssClass` 恒败被跳过。本库解析器无负伪类建模
+ *    （xcss_applyPseudo 只置正位），负伪类直通分支（cssClass==0）在本库
+ *    不可表达，无对应偏差面）；
+ *  中段伪类一律忽略（对标 XSSS_PSEUDOS_ANY——Qt 匹配期 basicSelectorMatches
+ *  本就不验伪类，qcssparser.cpp:2105-2165）。段间导航：Ancestor/Parent
+ *  走 XObject_parent，'+'/'~' 走 XObject_previousSibling（线四 API；
+ *  Qt previousSiblingNode 恒空桩、本库真实现，超出而非偏离 Qt）。
+ */
+static bool xwidget_qpropertySelectorMatches(const XCssSelector* sel,
+                                             const XObject* obj)
+{
+    const XObject* cur;
+    int i;
+    bool match;
+    if (!sel || sel->m_basicCount <= 0) return false;
+    {
+        const XCssBasicSelector* last = &sel->m_basics[sel->m_basicCount - 1];
+        if (last->m_pseudoElement || last->m_pseudoClasses) return false;
+    }
+    if (sel->m_basicCount == 1)
+        return xwidget_qpropertyBasicMatches(&sel->m_basics[0], obj);
+    i = sel->m_basicCount - 1;
+    cur = obj;
+    match = true;
+    for (;;) {
+        match = xwidget_qpropertyBasicMatches(&sel->m_basics[i], cur);
+        if (!match) {
+            if (i == sel->m_basicCount - 1) break; /* 末段必须命中。 */
+            if (sel->m_basics[i + 1].m_relationToPrev !=
+                    XCssRelation_Ancestor &&
+                sel->m_basics[i + 1].m_relationToPrev !=
+                    XCssRelation_IndirectAdjacent)
+                break;
+        }
+        if (match ||
+            (sel->m_basics[i + 1].m_relationToPrev != XCssRelation_Ancestor &&
+             sel->m_basics[i + 1].m_relationToPrev !=
+                 XCssRelation_IndirectAdjacent))
+            --i;
+        if (i < 0) break;
+        /* 段 i 与段 i+1 的关系驱动导航。 */
+        if (sel->m_basics[i + 1].m_relationToPrev == XCssRelation_Ancestor ||
+            sel->m_basics[i + 1].m_relationToPrev == XCssRelation_Parent) {
+            cur = (const XObject*)XObject_parent((XObject*)cur);
+        } else if (sel->m_basics[i + 1].m_relationToPrev ==
+                       XCssRelation_DirectAdjacent ||
+                   sel->m_basics[i + 1].m_relationToPrev ==
+                       XCssRelation_IndirectAdjacent) {
+            cur = XObject_previousSibling(cur);
+        }
+        if (!cur) {
+            match = false;
+            break;
+        }
+        if (!(match ||
+              sel->m_basics[i + 1].m_relationToPrev == XCssRelation_Ancestor ||
+              sel->m_basics[i + 1].m_relationToPrev ==
+                  XCssRelation_IndirectAdjacent))
+            break;
+    }
+    return match;
+}
+
+/**
+ * @brief      应用控件样式表中的 qproperty-* 声明到对象动态属性（对标
+ *             QStyleSheetStyle::setProperties，qstylesheetstyle.cpp
+ *             v6.8.3:2655-2714；Qt 在 polish 期执行，:2907-2924）。
+ * @details    XGui 等价触发模型：首次命中应用 + 每次样式表重设重置
+ *             『已应用』账本（Qt 等价触发点=setStyleSheet→repolish→
+ *             polish 重跑 setProperties）。本钩子幂等：账本在位（
+ *             动态属性 xgui.qss.qproperty.applied 存在）即早退，防重复
+ *             触发；XWidget_setStyleSheet 变更路径负责清账后调用本钩子。
+ *             语义逐项对标：
+ *             - 采集范围=控件自身样式表文本（应用级/祖先级表中的
+ *               qproperty 对标由级联 owner 收口，本钩子不重复覆盖）；
+ *             - 每名取最终出现、按最终出现正序写入（:2666-2678 注释
+ *               "The final occurrence of each property is authoritative"）；
+ *             - 采集过滤：末段带伪元素/伪类的规则不参与（:2661 经
+ *               declarations(styleRules(w), QString()) 的过滤，见
+ *               xwidget_qpropertySelectorMatches 注释）；
+ *             - 写入=对象动态属性（XObject_setProperty），Qt 写
+ *               QMetaObject 属性（:2713）；值统一字符串型变体（Qt
+ *               default 分支 decl.d->values.at(0).variant 的字符串
+ *               口径 :2707；类型映射按现值元类型分派，本库动态属性
+ *               无元类型轨，按 XObject_property 既有约定以字符串写，
+ *               声明级偏差）；
+ *             - styleSheet 同值跳过（:2710-2711 递归写护栏同构）；
+ *             - Qt 的属性不存在/不可写告警路径（:2683-2690）在本库
+ *               无对应——动态属性任意名可写。
+ *             @media 内嵌集不参与：规则表只扫 m_rules（m_mediaRules 为
+ *             解析存储，widget 口径 Qt 不评估，见 XGui.md G5 定性）。
+ * @param      self 目标控件；可为 NULL（无操作）。
+ * @return     无返回值。
+ */
+void XWidget_applyStyleSheetProperties(XWidget* self)
+{
+    const XString* text;
+    XCssStyleSheet sheet;
+    bool* ruleHit = NULL;
+    XWidgetQPropertyOccur* finals = NULL;
+    int ruleCount;
+    int total = 0;
+    int n = 0;
+    int ri;
+    int k;
+    if (!self) return;
+    if (xwidget_qpropertyLedgerApplied(self)) return; /* 防重复触发。 */
+    text = self->m_styleSheet;
+    if (!text || XString_toUtf8_length(text) == 0)
+        return; /* 空表无可应用声明，保持未应用态（不落账）。 */
+    XCssStyleSheet_init(&sheet);
+    /* 解析失败=空表（解析失败整表弃用口径），后续按零命中收场。 */
+    (void)XCssStyleSheet_parse(&sheet, XString_toUtf8(text));
+    ruleCount = sheet.m_ruleCount;
+    if (ruleCount > 0)
+        ruleHit = (bool*)XMalloc_System(sizeof(bool) * (size_t)ruleCount);
+    if (ruleHit) {
+        for (ri = 0; ri < ruleCount; ++ri) {
+            int si;
+            int hit = 0;
+            for (si = 0; si < sheet.m_rules[ri].m_selectorCount; ++si) {
+                if (xwidget_qpropertySelectorMatches(
+                        &sheet.m_rules[ri].m_selectors[si],
+                        (const XObject*)self)) {
+                    hit = 1;
+                    break;
+                }
+            }
+            ruleHit[ri] = hit ? true : false;
+            if (hit) total += sheet.m_rules[ri].m_declarationCount;
+        }
+    }
+    if (total > 0)
+        finals = (XWidgetQPropertyOccur*)XMalloc_System(
+            sizeof(XWidgetQPropertyOccur) * (size_t)total);
+    if (finals) {
+        /* 逆序扫命中规则的声明序列，每名记录最终出现（对标 :2666-2677）。 */
+        for (ri = ruleCount - 1; ri >= 0; --ri) {
+            int di;
+            if (!ruleHit[ri]) continue;
+            for (di = sheet.m_rules[ri].m_declarationCount - 1; di >= 0; --di) {
+                const char* name = NULL;
+                bool seen = false;
+                if (!xwidget_qpropertyName(
+                        &sheet.m_rules[ri].m_declarations[di], &name))
+                    continue;
+                for (k = 0; k < n; ++k) {
+                    const char* other = NULL;
+                    if (xwidget_qpropertyName(
+                            &sheet.m_rules[finals[k].m_rule]
+                                 .m_declarations[finals[k].m_decl],
+                            &other) &&
+                        XStrcmp(other, name) == 0) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (!seen) {
+                    finals[n].m_rule = ri;
+                    finals[n].m_decl = di;
+                    ++n;
+                }
+            }
+        }
+        /* 按最终出现正序写入（finals 逆序收集，反向遍历即正序；对标
+         * :2678-2713 "in the order of property final occurrence"）。 */
+        for (k = n - 1; k >= 0; --k) {
+            const XCssDeclaration* d =
+                &sheet.m_rules[finals[k].m_rule].m_declarations[finals[k].m_decl];
+            const char* name = NULL;
+            const char* value;
+            XString nameStr;
+            XVariant* v;
+            if (!xwidget_qpropertyName(d, &name)) continue;
+            value = d->m_value ? XString_toUtf8(d->m_value) : NULL;
+            if (!value) continue;
+            if (XStrcmp(name, "styleSheet") == 0) {
+                /* styleSheet 同值跳过（对标 :2710-2711 递归写护栏）。 */
+                XString key;
+                XVariant* cur;
+                bool same = false;
+                XString_init(&key);
+                XString_assign_utf8(&key, "styleSheet");
+                cur = XObject_property((const XObject*)self, &key);
+                XString_deinit_base((XClass*)&key);
+                if (cur) {
+                    const char* curText = (const char*)XVariant_data(cur);
+                    if (curText && XStrcmp(curText, value) == 0) same = true;
+                }
+                if (same) continue;
+            }
+            /* 值按 XObject 动态属性既有类型约定以字符串变体写入；
+             * setProperty 成功后变体所有权转移给对象，失败自回滚防泄漏。 */
+            v = XString_toVariant_utf8(value);
+            if (!v) continue; /* OOM：跳过该条，不中断其余。 */
+            XString_init(&nameStr);
+            XString_assign_utf8(&nameStr, name);
+            if (!XObject_setProperty((XObject*)self, &nameStr, v))
+                XVariant_delete_base((XClass*)v);
+            XString_deinit_base((XClass*)&nameStr);
+        }
+    }
+    if (ruleHit) XFree_System(ruleHit);
+    if (finals) XFree_System(finals);
+    XCssStyleSheet_clear(&sheet);
+    xwidget_qpropertyLedgerMark(self);
+}
+
+#endif /* XSTYLE_ON */
+
 void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet)
 {
     XString* copy;
+    XString* old;
+    bool changed;
     if (!self) return;
     copy = XWidget_copyString(styleSheet);
-    XWidget_freeString(&self->m_styleSheet);
+    old = self->m_styleSheet;
+    if (old && copy)
+        changed = !XString_equals(old, copy, XChar_CaseSensitive);
+    else
+        changed = (old != copy); /* 一个为 NULL、一个非 NULL 视为变化（含置空）。 */
     self->m_styleSheet = copy;
+    XWidget_freeString(&old); /* 替换旧值后释放原字符串，避免 setter 重复赋值泄漏。 */
+    if (!changed) return;
+#if XSTYLE_ON
+    /* 控件样式表参与级联（控件源是级联源之一），源文本变化必须废弃样式
+       侧渲染规则缓存：单槽缓存按 (对象,状态) 复用且可指进控件源缓存条目
+       内规则，不失效则同对象同状态的连续第二次绘制按旧规则取色
+       （deferred#4 闭环）。 */
+    XStyle_invalidateStyleSheetRenderCache();
+    /* qproperty-* 动态属性应用链（对标 Qt setStyleSheet→repolish→polish
+       重跑 setProperties）：每次样式表重设先清『已应用』账本，再由应用
+       钩子按新文本重新执行首次命中写入（钩子账本在位即幂等早退）。 */
+    xwidget_qpropertyLedgerReset(self);
+    XWidget_applyStyleSheetProperties(self);
+#endif
+    /* 对标 Qt QWidget::setStyleSheet（qwidget.cpp v6.8.3）的可见效果：
+       规则集变更（含置空回落默认）触发控件自我刷新——Qt 经
+       repolish/StyleChange 链路达成的重绘，此处以整控件 update 等价落地。 */
+    XWidget_update(self);
 }
 
 XFont XWidget_font(const XWidget* self)

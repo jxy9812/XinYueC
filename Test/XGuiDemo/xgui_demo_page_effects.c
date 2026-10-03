@@ -472,6 +472,63 @@ XWidget* demo_page_effects_build(XWidget* parent,
     return s_page.m_root;
 }
 
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：双列栅格随根宽伸缩。
+ * @details 组栅格原点按 760/776 设计稿定版，窄内容区（导航面板展开时
+ *          根宽 ~576）下右列越界裁剪；改为列宽取根宽一半（下限 264），
+ *          标题/状态行宽随列宽收缩；右列「启用/禁用效果」按钮对装配
+ *          定版（cx=FX_CELL_X2，adapt 原不重排按钮），仅当 Off 右缘
+ *          384+128+110=622 越过根宽-8 时整对按装配间距 120 左移收口、
+ *          Off 右缘贴根宽-8（2026-10-03 目验挂项：导航展开时窗口
+ *          x=800 处右边框被裁），宽根宽几何与装配一致、观感不动。
+ *          行纵向保持 12/244 原点（组③钮底 456 在 494 高内容区内）。
+ *          由 demo_layout_content 全路径调用；page 与登记根不符时静
+ *          默返回。 */
+void demo_page_effects_adapt(XWidget* page)
+{
+    int rootW;
+    int cellW;
+    int x2;
+    int onX;
+    int offX;
+    if (!page || page != s_page.m_root) return;
+    rootW = XWidget_width(page);
+    if (rootW < 560) return; /* 过窄保持装配几何。 */
+    cellW = rootW / 2 - 24;
+    if (cellW < 264) cellW = 264;
+    x2 = 12 + cellW + 24;
+    if (x2 + cellW > rootW - 8)
+        x2 = rootW - 8 - cellW;
+    /* 右列启/禁按钮对收口：与右缘无冲突时保持装配几何（392/512）。 */
+    onX = FX_CELL_X2 + 8;
+    offX = FX_CELL_X2 + 128;
+    if (offX + 110 > rootW - 8)
+    {
+        offX = rootW - 8 - 110;
+        onX = offX - 120;
+    }
+    XWidget_setGeometry((XWidget*)s_page.m_g1On, onX,
+                        FX_PAGE_MARGIN + 182, 110, 30);
+    XWidget_setGeometry((XWidget*)s_page.m_g1Off, offX,
+                        FX_PAGE_MARGIN + 182, 110, 30);
+    /* 标题/状态行宽随列宽收缩（右列重定位）。 */
+    XWidget_setGeometry((XWidget*)s_page.m_g0Title, 12 + 8, 12 + 6,
+                        cellW - 16, 20);
+    XWidget_setGeometry((XWidget*)s_page.m_g0State, 12 + 8, 12 + 30,
+                        cellW - 16, 16);
+    XWidget_setGeometry((XWidget*)s_page.m_g1Title, x2 + 8, 12 + 6,
+                        cellW - 16, 20);
+    XWidget_setGeometry((XWidget*)s_page.m_g1State, x2 + 8, 12 + 30,
+                        cellW - 16, 16);
+    XWidget_setGeometry((XWidget*)s_page.m_g2Title, 12 + 8, 244 + 6,
+                        cellW - 16, 20);
+    XWidget_setGeometry((XWidget*)s_page.m_g2State, 12 + 8, 244 + 30,
+                        cellW - 16, 16);
+    XWidget_setGeometry((XWidget*)s_page.m_g3Title, x2 + 8, 244 + 6,
+                        cellW - 16, 20);
+    XWidget_setGeometry((XWidget*)s_page.m_g3State, x2 + 8, 244 + 30,
+                        cellW - 16, 16);
+}
+
 /* ==================== 契约实现：页面自测 ==================== */
 
 /**

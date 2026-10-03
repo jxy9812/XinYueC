@@ -3366,17 +3366,29 @@ static bool xlc_matchCtrlLetter(const XKeyEvent* ke, char letter,
 /**
  * @brief 由键值推导输入文本（平台契约：可打印字符即 ASCII 码位）。
  * @return 有可打印文本返回其字节长（1），否则 0；out 写入单字节。
- * @details 拉丁字母大小写按 Shift 修饰位派生（问题 #32 收官，对标 Qt：
- *          键事件文本随 Shift 并行于键值——qxcbkeyboard.cpp
- *          handleKeyEvent:865-866 sym 与 lookupString 同源产出、字母
- *          键值恒 Key_T 大写口径（:872 keysymToQtKey），大小写由
- *          text() 表达；消费侧 qwidgetlinecontrol.cpp:1921
- *          insert(event->text())）。平台层字母键值经大写归一恒
- *          [0x41,0x5A]（XPlatformNativeWindow_posix.c 大写归一），此处
- *          兼容小写键值（其他交付方直灌）。CapsLock 无修饰位承载
- *          （XKeyboardModifiers 契约冻结，XEvent.h:129-137），锁存态
- *          字母由平台层 LockMask 守卫留在 IME 提交通道，不入本函数。
+ * @details 按事件来源分流，判据=XKeyEvent 载荷契约（XKeyEvent_init：
+ *          「程序合成事件为 0；平台后端注入时填写原生扫描码/时间」，
+ *          XEvent.h:357 起）：
+ *          - 平台注入事件（m_nativeScanCode 或 m_timestamp 非零）：
+ *            拉丁字母大小写按 Shift 修饰位派生（问题 #32 收官，对标
+ *            Qt：键事件文本随 Shift 并行于键值——qxcbkeyboard.cpp
+ *            handleKeyEvent:865-866 sym 与 lookupString 同源产出、字母
+ *            键值恒 Key_T 大写口径（:872 keysymToQtKey），大小写由
+ *            text() 表达；消费侧 qwidgetlinecontrol.cpp:1921
+ *            insert(event->text())）。平台层字母键值经大写归一恒
+ *            [0x41,0x5A]（XPlatformNativeWindow_posix.c 大写归一），此处
+ *            兼容小写键值（其他交付方直灌）。CapsLock 无修饰位承载
+ *            （XKeyboardModifiers 契约冻结，XEvent.h:129-137），锁存态
+ *            字母由平台层 LockMask 守卫留在 IME 提交通道，不入本函数。
+ *          - 程序合成事件（m_nativeScanCode==0 且 m_timestamp==0）：
+ *            字母键值即文本直映（键值='O' 出 "O"、='a' 出 "a"）——
+ *            8a174def 补全弹层 apitest 固化的直发契约（合成事件无
+ *            平台层大写归一，键值是唯一大小写载体；其时本函数尚为
+ *            直映，77758746 平台化改造未同步该契约致「直发 O 键」
+ *            六断言连红）。Shift+小写字母与数字/标点仍走下方公共
+ *            路径（Shift 层派生），与平台事件口径一致。
  */
+
 /**
  * @brief 美式布局 Shift 层字符表（键值=未移位基础字形 → Shift 字形）。
  * @details 平台契约：Posix 列 0 keysym（XPlatformNativeWindow_posix.c
@@ -3422,8 +3434,27 @@ static char xlc_shiftedChar(int key)
 static int xlc_keyToText(const XKeyEvent* ke, char* out)
 {
     int key;
+    bool synthetic;
     if (!ke || !out) return 0;
     key = ke->m_key;
+    /* 来源分流判据（见函数头 @details；XKeyEvent_init 契约：程序合成
+     * 事件扫描码与时间戳恒 0，平台后端注入时填写原生值）。 */
+    synthetic = (ke->m_nativeScanCode == 0 && ke->m_timestamp == 0);
+    if (synthetic && key >= 'A' && key <= 'Z') {
+        /* 合成大写字母键值直映（'O' 键即文本 "O"；无平台层大写归一，
+         * 键值是合成事件唯一的大小写载体）。 */
+        out[0] = (char)key;
+        out[1] = '\0';
+        return 1;
+    }
+    if (synthetic && key >= 'a' && key <= 'z' &&
+        (ke->m_modifiers & XKeyboardModifier_ShiftModifier) == 0) {
+        /* 合成小写字母键值无 Shift 直映（"键入注入 a/b" 契约）；
+         * 带 Shift 落公共路径派生大写，与平台事件一致。 */
+        out[0] = (char)key;
+        out[1] = '\0';
+        return 1;
+    }
     if (key >= 'a' && key <= 'z') key -= 'a' - 'A';
     if (key >= 'A' && key <= 'Z') {
         out[0] = (ke->m_modifiers & XKeyboardModifier_ShiftModifier)

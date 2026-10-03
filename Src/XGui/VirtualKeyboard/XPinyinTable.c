@@ -19,6 +19,7 @@
  *             引入 string.h 白名单外接口）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#include <stddef.h> /* NULL（白名单：语言基础头，本 TU 无其他库外依赖）。 */
 #include "XPinyinTable.h"
 
 #if XKEYBOARD_IME_ON

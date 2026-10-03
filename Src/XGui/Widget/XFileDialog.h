@@ -5,11 +5,18 @@
  *             - 静态便捷函数 getOpenFileName/getOpenFileNames/
  *               getSaveFileName/getExistingDirectory（每个均带 _2 UTF-8
  *               重载；无 GUI 对话框环境时按 @note 约定返回默认值）；
+ *               及 URL 对应族 getOpenFileUrl/getOpenFileUrls/
+ *               getSaveFileUrl/getExistingDirectoryUrl（URL 以路径
+ *               字符串承载，与 selectedUrls/directoryUrl 同一口径）；
+ *             - 文件内容便捷函数 getOpenFileContent/saveFileContent
+ *               （选文件读写全部字节；回调为 函数指针+userData 惯例）；
  *             - 实例属性：fileMode/acceptMode/nameFilter/nameFilters/
  *               directory/selectedFiles/selectedFile/defaultSuffix/
  *               option 位集/labelText/viewMode/selectFile/selectNameFilter；
  *             - 信号：fileSelected/filesSelected/currentChanged/
- *               directoryEntered/filterSelected（参数带 Qt 语义）。
+ *               directoryEntered/filterSelected（参数带 Qt 语义）及
+ *               URL 版 urlSelected/urlsSelected/currentUrlChanged/
+ *               directoryUrlEntered（载荷同为路径字符串）。
  *             枚举 FileMode/AcceptMode/Option 数值与 Qt 6.8.3
  *             qtbase/src/widgets/dialogs/qfiledialog.h 完全一致。
  * @note       模块总开关 XDIALOG_ON（XWIDGET_ON && XDIALOG_ON 有效）。
@@ -473,6 +480,183 @@ XString* XFileDialog_getExistingDirectory(XWidget* parent, const XString* captio
 XString* XFileDialog_getExistingDirectory_2(XWidget* parent, const char* caption,
                                             const char* dir);
 
+/**
+ * @brief      获取单个打开文件 URL（对标 QFileDialog::getOpenFileUrl）。
+ * @note       本库 URL 以路径字符串承载（无 QUrl 设施，与 selectedUrls/
+ *             directoryUrl 同一口径），行为与 getOpenFileName 完全一致；
+ *             Qt 尾参 supportedSchemes（协议过滤）无对应设施不提供。
+ *             无 GUI 对话框环境：返回空串，selectedFilterIndex 置 0。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题；可为 NULL。
+ * @param      dir 起始目录；可为 NULL。
+ * @param      filter 名称过滤器；可为 NULL。
+ * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
+ * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ */
+XString* XFileDialog_getOpenFileUrl(XWidget* parent, const XString* caption,
+                                    const XString* dir, const XString* filter,
+                                    int* selectedFilterIndex);
+/**
+ * @brief      获取单个打开文件 URL（UTF-8 重载）。
+ * @note       语义同 getOpenFileUrl。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题（UTF-8）；可为 NULL。
+ * @param      dir 起始目录（UTF-8）；可为 NULL。
+ * @param      filter 名称过滤器（UTF-8）；可为 NULL。
+ * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
+ * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ */
+XString* XFileDialog_getOpenFileUrl_2(XWidget* parent, const char* caption,
+                                      const char* dir, const char* filter,
+                                      int* selectedFilterIndex);
+/**
+ * @brief      获取保存文件 URL（对标 QFileDialog::getSaveFileUrl）。
+ * @note       URL 以路径字符串承载（同 getOpenFileUrl 注记），行为与
+ *             getSaveFileName 完全一致；supportedSchemes 不提供。
+ *             无 GUI 对话框环境：返回空串，selectedFilterIndex 置 0。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题；可为 NULL。
+ * @param      dir 起始目录或完整保存路径；可为 NULL。
+ * @param      filter 名称过滤器；可为 NULL。
+ * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
+ * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ */
+XString* XFileDialog_getSaveFileUrl(XWidget* parent, const XString* caption,
+                                    const XString* dir, const XString* filter,
+                                    int* selectedFilterIndex);
+/**
+ * @brief      获取保存文件 URL（UTF-8 重载）。
+ * @note       语义同 getSaveFileUrl。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题（UTF-8）；可为 NULL。
+ * @param      dir 起始目录或完整保存路径（UTF-8）；可为 NULL。
+ * @param      filter 名称过滤器（UTF-8）；可为 NULL。
+ * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
+ * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ */
+XString* XFileDialog_getSaveFileUrl_2(XWidget* parent, const char* caption,
+                                      const char* dir, const char* filter,
+                                      int* selectedFilterIndex);
+/**
+ * @brief      获取已存在目录 URL（对标 QFileDialog::getExistingDirectoryUrl）。
+ * @note       URL 以路径字符串承载（同 getOpenFileUrl 注记），行为与
+ *             getExistingDirectory 完全一致；supportedSchemes 不提供。
+ *             无 GUI 对话框环境：返回空串。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题；可为 NULL。
+ * @param      dir 起始目录；可为 NULL。
+ * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ */
+XString* XFileDialog_getExistingDirectoryUrl(XWidget* parent,
+                                             const XString* caption,
+                                             const XString* dir);
+/**
+ * @brief      获取已存在目录 URL（UTF-8 重载）。
+ * @note       语义同 getExistingDirectoryUrl。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题（UTF-8）；可为 NULL。
+ * @param      dir 起始目录（UTF-8）；可为 NULL。
+ * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ */
+XString* XFileDialog_getExistingDirectoryUrl_2(XWidget* parent,
+                                               const char* caption,
+                                               const char* dir);
+/**
+ * @brief      获取多个打开文件 URL（对标 QFileDialog::getOpenFileUrls）。
+ * @note       URL 以路径字符串承载（同 getOpenFileUrl 注记），行为与
+ *             getOpenFileNames 完全一致；supportedSchemes 不提供。
+ *             无 GUI 对话框环境：返回空列表，selectedFilterIndex 置 0。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题；可为 NULL。
+ * @param      dir 起始目录；可为 NULL。
+ * @param      filter 名称过滤器；可为 NULL。
+ * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
+ * @return     新建的 XStringList，调用方拥有，须 XStringList_delete_base。
+ */
+XStringList* XFileDialog_getOpenFileUrls(XWidget* parent,
+                                         const XString* caption,
+                                         const XString* dir,
+                                         const XString* filter,
+                                         int* selectedFilterIndex);
+/**
+ * @brief      获取多个打开文件 URL（UTF-8 重载）。
+ * @note       语义同 getOpenFileUrls。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      caption 对话框标题（UTF-8）；可为 NULL。
+ * @param      dir 起始目录（UTF-8）；可为 NULL。
+ * @param      filter 名称过滤器（UTF-8）；可为 NULL。
+ * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
+ * @return     新建的 XStringList，调用方拥有，须 XStringList_delete_base。
+ */
+XStringList* XFileDialog_getOpenFileUrls_2(XWidget* parent,
+                                           const char* caption,
+                                           const char* dir,
+                                           const char* filter,
+                                           int* selectedFilterIndex);
+
+/**
+ * @brief      文件内容读取回调（对标 getOpenFileContent 的
+ *             fileContentsReady；函数指针+userData 惯例仿
+ *             XHostInfo_Callback/XPermissionCallback）。
+ * @param      userData 调用方透传上下文。
+ * @param      fileName 选中文件路径（仅回调期内有效，不得长期持有）。
+ * @param      content 文件全部字节（仅回调期内有效；读取失败为 NULL）。
+ */
+typedef void (*XFileDialogFileContentReady)(void* userData,
+                                            const XString* fileName,
+                                            const XByteArray* content);
+
+/**
+ * @brief      选文件并读全部字节（对标 QFileDialog::getOpenFileContent）。
+ * @note       有 GUI 对话框环境：弹真实打开对话框（应用模态），确认后
+ *             读文件全部字节并同步回调 ready；取消或读取失败不回调。
+ *             无 GUI 环境（无 XCoreApplication 实例）或不支持目录列举
+ *             （XFILE_ON/XDIR_ON 关闭）时无操作（等效用户取消）。
+ * @param      nameFilter 名称过滤器；可为 NULL 不过滤。
+ * @param      ready 读取就绪回调；NULL 时本函数无意义（直接返回）。
+ * @param      userData 回调透传上下文；可为 NULL。
+ * @param      parent 父控件借用指针；可为 NULL。
+ */
+void XFileDialog_getOpenFileContent(const XString* nameFilter,
+                                    XFileDialogFileContentReady ready,
+                                    void* userData, XWidget* parent);
+/**
+ * @brief      选文件并读全部字节（UTF-8 重载）。
+ * @note       语义同 getOpenFileContent。
+ * @param      nameFilter 名称过滤器（UTF-8）；可为 NULL 不过滤。
+ * @param      ready 读取就绪回调；NULL 时本函数直接返回。
+ * @param      userData 回调透传上下文；可为 NULL。
+ * @param      parent 父控件借用指针；可为 NULL。
+ */
+void XFileDialog_getOpenFileContent_2(const char* nameFilter,
+                                      XFileDialogFileContentReady ready,
+                                      void* userData, XWidget* parent);
+/**
+ * @brief      选保存位置并写入全部字节（对标 QFileDialog::saveFileContent）。
+ * @note       有 GUI 对话框环境：弹真实保存对话框（应用模态），
+ *             fileNameHint 按保存路径语义拆分预填（现存目录→起始目录；
+ *             非现存路径→“父目录+末段文件名”；无分隔符→纯预填名），
+ *             确认后把 content 写入所选路径（覆盖）。取消不写盘。
+ *             无 GUI 环境或目录列举不支持时无操作（等效用户取消）。
+ *             Qt 6.8 版无完成回调，本函数同为写完即返回。
+ * @param      content 待写入字节；NULL 时本函数直接返回。
+ * @param      fileNameHint 保存文件名提示；可为 NULL（无预填）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ */
+void XFileDialog_saveFileContent(const XByteArray* content,
+                                 const XString* fileNameHint,
+                                 XWidget* parent);
+/**
+ * @brief      选保存位置并写入全部字节（UTF-8 重载）。
+ * @note       语义同 saveFileContent。
+ * @param      content 待写入字节；NULL 时本函数直接返回。
+ * @param      fileNameHint 保存文件名提示（UTF-8）；可为 NULL。
+ * @param      parent 父控件借用指针；可为 NULL。
+ */
+void XFileDialog_saveFileContent_2(const XByteArray* content,
+                                   const char* fileNameHint,
+                                   XWidget* parent);
+
 /* ==================== 信号（对标 QFileDialog） ==================== */
 
 /**
@@ -510,6 +694,37 @@ void* XFileDialog_directoryEntered_signal(XFileDialog* self, const XString* dire
  * @return     信号标识。
  */
 void* XFileDialog_filterSelected_signal(XFileDialog* self, const XString* filter);
+/**
+ * @brief      单个 URL 选中信号（对标 QFileDialog::urlSelected）。
+ * @note       URL 以路径字符串承载（与 selectedUrls 同一口径），载荷与
+ *             fileSelected 同型。
+ * @param      self 目标对话框。
+ * @param      url 选中的 URL（XString*，载荷深拷贝）。
+ * @return     信号标识。
+ */
+void* XFileDialog_urlSelected_signal(XFileDialog* self, const XString* url);
+/**
+ * @brief      多个 URL 选中信号（对标 QFileDialog::urlsSelected）。
+ * @param      self 目标对话框。
+ * @param      urls 选中的 URL 列表（XStringList*，载荷深拷贝）。
+ * @return     信号标识。
+ */
+void* XFileDialog_urlsSelected_signal(XFileDialog* self, const XStringList* urls);
+/**
+ * @brief      当前 URL 变化信号（对标 QFileDialog::currentUrlChanged）。
+ * @param      self 目标对话框。
+ * @param      url 当前 URL（XString*，载荷深拷贝）。
+ * @return     信号标识。
+ */
+void* XFileDialog_currentUrlChanged_signal(XFileDialog* self, const XString* url);
+/**
+ * @brief      目录 URL 进入信号（对标 QFileDialog::directoryUrlEntered）。
+ * @param      self 目标对话框。
+ * @param      directory 进入的目录 URL（XString*，载荷深拷贝）。
+ * @return     信号标识。
+ */
+void* XFileDialog_directoryUrlEntered_signal(XFileDialog* self,
+                                             const XString* directory);
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
 

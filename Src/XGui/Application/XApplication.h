@@ -304,7 +304,11 @@ const XString* XApplication_styleSheet(void);
 /** @brief 读取应用级样式表（UTF-8 借用）。 */
 const char* XApplication_styleSheet_2(void);
 /** @brief 设置应用级样式表（XString 主版本；对标 setStyleSheet，内部经
- *         XStyle_installStyleSheet 应用）。 */
+ *         XStyle_installStyleSheet 应用）。
+ * @details 替换规则表后对全部已登记顶层窗口逐个 update——对标 Qt 全量
+ *          repolish（proxy->repolish(qApp) → 全控件重打磨+StyleChange）
+ *          的可见等价；子树随顶层绘制整树刷新。_2 版本转发本函数，
+ *          行为一致。 */
 void XApplication_setStyleSheet(const XString* css);
 /** @brief 设置应用级样式表（UTF-8 兼容重载，转发主版本）。 */
 void XApplication_setStyleSheet_2(const char* css);

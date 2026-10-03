@@ -63,6 +63,41 @@ int demo_page_advanced_autotest(XWidget* page);
 int demo_page_effects_autotest(XWidget* page);
 int demo_page_keyboard_autotest(XWidget* page);
 
+/** @brief 扩展页底部锚定控件自适应（2026-10-03 双行分组导航随附契约）。
+ * @details 内容区高度随 CSD 系统栏（无 WM 环境占 30px）与窗口尺寸变
+ *          化（800x600 下 WM=472 / CSD=442），按 480/494 设计稿硬编码
+ *          的底部控件在 CSD 下会被裁剪。adapt 由主文件
+ *          demo_layout_content 在切页/resize/startup 全路径调用，把
+ *          各页底部锚定控件按当前根几何贴底重排；page 与登记根不符
+ *          时静默返回（与 autotest 的 -1 防错页口径同源，静默即可——
+ *          几何重排无需向调用方报错）。 */
+void demo_page_views_adapt(XWidget* page);          /**< 条目视图：状态行贴底。 */
+void demo_page_advanced_adapt(XWidget* page);       /**< 高级控件：SizeGrip 贴右下角。 */
+void demo_page_effects_adapt(XWidget* page);        /**< 图形效果：组③启/禁按钮贴底。 */
+void demo_page_remote_client_adapt(XWidget* page);  /**< 远程客户端：统计块贴底。 */
+
+/** @brief 构建远程窗口设置页（XGuiServer 服务开关/端口/档位/TLS/证书/
+ *         私钥/认证口令/会话状态；CLI 预置与退出清理见
+ *         xgui_demo_page_remote_server.h。XGUI_REMOTE_ON=0 或控件裁剪
+ *         时返回 NULL，主文件跳过注册）。 */
+XWidget* demo_page_remote_server_build(XWidget* parent,
+                                       DemoPageStatusFn status, void* user);
+
+/** @brief 远程窗口设置页自测（非阻塞；监听演练一律端口 0，结束恢复
+ *         未监听）。 */
+int demo_page_remote_server_autotest(XWidget* page);
+
+/** @brief 构建远程客户端设置页（IP/端口/连接断开/连接状态/实时统计/
+ *         档位/TLS/模拟触摸；CLI 预置与退出清理见
+ *         xgui_demo_page_remote_client.h。XGUI_REMOTE_ON=0 或控件裁剪
+ *         时返回 NULL，主文件跳过注册；2026-10-02 追加）。 */
+XWidget* demo_page_remote_client_build(XWidget* parent,
+                                       DemoPageStatusFn status, void* user);
+
+/** @brief 远程客户端设置页自测（非阻塞；不做真实网络演练，仅断言
+ *         控件装配/预置/门控）。 */
+int demo_page_remote_client_autotest(XWidget* page);
+
 /** @brief 键盘页无头截图钩子（Tools/VirtualKeyboard/style_check.py 风格自动化专用；
  *         其余页面无此契约）。环境变量全部缺省时零操作、零开销：
  *   - XGUI_KB_AUTOSHOW=1   聚焦默认编辑框并 XVirtualKeyboard_popup 弹出键盘

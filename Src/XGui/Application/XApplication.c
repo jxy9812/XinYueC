@@ -546,6 +546,25 @@ void XApplication_aboutQt(void)
     /* 无 Qt 对话框实现：空操作（文档说明）。 */
 }
 
+#if XWIDGET_ON
+/** @brief 全部顶层窗口逐个调度整控件重绘。
+ * @details 对标 Qt 全量 repolish 的可见等价：脏区经 XWidget_addDirtyRegion
+ *          折算到顶层后备存储并投递 PAINT，子树随顶层绘制遍历整树刷新，
+ *          故逐顶层 update 即覆盖全部控件（无需逐控件递归）。 */
+static void xapp_updateTopLevelWidgets(void)
+{
+    XApplication* app = g_xapp;
+    size_t n;
+    size_t i;
+    if (!app || !app->m_topLevelWidgets) return;
+    n = XVector_size_base((const XContainer*)app->m_topLevelWidgets);
+    for (i = 0; i < n; ++i) {
+        XWidget* w = XVector_At_Base(app->m_topLevelWidgets, (int64_t)i, XWidget*);
+        if (w) XWidget_update(w);
+    }
+}
+#endif /* XWIDGET_ON */
+
 const XString* XApplication_styleSheet(void)
 {
     XApplication* app = g_xapp;
@@ -574,6 +593,16 @@ void XApplication_setStyleSheet(const XString* css)
     XStyle_installStyleSheet(utf8 ? utf8 : "");
 #else
     (void)utf8;
+#endif
+#if XWIDGET_ON
+    /* 对标 Qt QApplication::setStyleSheet（qapplication.cpp v6.8.3）：
+       已有样式表代理时 proxy->repolish(qApp)（qstylesheetstyle.cpp
+       repolish(QApplication*) → updateObjects 对每个已打磨控件重跑
+       polish + StyleChange），首次安装/清除时 setStyle 切换同样波及全部
+       控件。本仓库规则匹配为绘制期全局查询（无逐控件缓存），全量
+       repolish 的可见等价即：全部顶层窗口逐个 update——子树随顶层
+       PAINT 整树重绘（脏区经 XWidget_addDirtyRegion 折算到顶层）。 */
+    xapp_updateTopLevelWidgets();
 #endif
 }
 

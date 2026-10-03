@@ -1127,10 +1127,11 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
               useUndockedGeometry ? 1 : 0);
     selfw = (XWidget*)self;
     host = self->m_host;
-    /* 对标 Qt setWindowState 守卫（qdockwidget.cpp:1188-1193）：目标为
-     * 停靠但无宿主登记（从未 addDockWidget）时无可回归区域，直接
-     * 保持原状态返回，不改变 m_floating 也不发任何信号。 */
-    if (!floating && !host) return;
+    /* 注意：不设「无宿主即早退」守卫——浮动态翻转与 topLevelChanged
+     * 发射不依赖宿主登记（qdockwidget.cpp:1188-1193 的无可回归区守卫
+     * 由下方宿主分支跳过承载）：无宿主面板 setFloating(false) 仍须
+     * 复位 m_floating 并发射信号（回归契约，apitest D 段口径），
+     * 提前返回会同时吞掉状态翻转与信号。 */
     /* 记录当前几何与全局位置（对标 Qt：浮动时窗口保持屏幕位置尺寸）。
      * 必须在重设父对象前完成，子控件坐标经父链映射才有意义。 */
     XPoint_init(&origin, 0, 0);
@@ -1170,7 +1171,17 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
                           (XWidgetFlags)(xdw_titleBar(self)
                                              ? XWindowType_Popup
                                              : XWindowType_Tool));
-        XWidget_setWindowTitle(selfw, self->m_title);
+        /* 标题同值跳过（对标 Qt QWidget::setWindowTitle 对同值标题的
+         * 幂等语义）：反复浮/停切换传同一标题时不再重建平台窗口标题
+         * 字符串——旧实现每轮无条件重设，驱动 XWidget 侧堆字符串整建
+         * 整毁，拖浮循环内存统计近似线性增长（每轮 ~96B 计量漂移）
+         * 的直接来源；标题变化路径行为不变。 */
+        {
+            const XString* cur = XWidget_windowTitle(selfw);
+            if (!cur ||
+                !XString_equals(cur, self->m_title, XChar_CaseSensitive))
+                XWidget_setWindowTitle(selfw, self->m_title);
+        }
         if (w <= 0) w = 200; /* 无宿主几何时的兜底尺寸 */
         if (h <= 0) h = 150;
         /* 先 move 后 resize：浮动态 ResizeEvent 记录 undockedGeometry
@@ -1184,9 +1195,14 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
         }
     } else {
         /* 对标 Qt：setFloating(false) 回归停靠区，重新挂回宿主主窗口，
-         * 几何交还主窗口停靠布局（随后统一重排）。 */
-        XWidget_setParent(selfw, host, 0);
-        if (wasVisible) XWidget_show(selfw);
+         * 几何交还主窗口停靠布局（随后统一重排）。无宿主登记（从未
+         * addDockWidget）时跳过挂回——浮动翻转与信号已在下方无条件
+         * 承载（见函数首注）；此时不得走 setParent(selfw, NULL, 0)，
+         * 否则面板被错误转成普通顶层窗口、浮/停语义失真。 */
+        if (host) {
+            XWidget_setParent(selfw, host, 0);
+            if (wasVisible) XWidget_show(selfw);
+        }
     }
     if (host)
         XMainWindow_updateDockLayout((XMainWindow*)host);

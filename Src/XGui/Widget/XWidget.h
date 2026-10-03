@@ -261,6 +261,11 @@ typedef enum XWidgetAttribute
     XWidgetAttribute_TranslucentBackground   = 120, /**< 半透明背景（对标 WA_TranslucentBackground）。 */
     XWidgetAttribute_AcceptTouchEvents       = 121, /**< 接受触摸事件（对标 WA_AcceptTouchEvents）。 */
     XWidgetAttribute_TabletTracking          = 129, /**< 板绘跟踪（对标 WA_TabletTracking）。 */
+    XWidgetAttribute_HitEdgeBand             = 130, /**< 贴边交互件参与边缘带命中（非 Qt 对标，
+                                                *   CSD 扩展）：声明后，窗口四缘改尺寸带
+                                                *   内按下时装饰模块让位树派发——用于贴边
+                                                *   停靠的分割条/把手类控件（未声明的内容
+                                                *   区维持 WM parity 带内接管口径）。 */
     XWidgetAttribute_AttributeCount          = 132  /**< 属性计数（保留位上限）。 */
 } XWidgetAttribute;
 
@@ -1561,8 +1566,36 @@ XInputMethodHints XWidget_inputMethodHints(const XWidget* self);
 void XWidget_setInputMethodHints(XWidget* self, XInputMethodHints hints);
 /** @brief 查询样式表文本（对标 QWidget::styleSheet；嵌入式默认空）。 */
 const XString* XWidget_styleSheet(const XWidget* self);
-/** @brief 设置样式表文本（对标 QWidget::setStyleSheet；只存储不解释）。 */
+/** @brief 设置样式表文本（对标 QWidget::setStyleSheet）。
+ * @details 文本变更（含置空/NULL 清除）时：①废弃样式侧渲染规则缓存
+ *          （deferred#4 闭环）；②清 qproperty-『已应用』账本并执行
+ *          首次命中应用（对标 Qt setStyleSheet→repolish→polish 重跑
+ *          QStyleSheetStyle::setProperties 的 qproperty 动态属性写入，
+ *          qstylesheetstyle.cpp v6.8.3:2907-2924）；③调度整控件重绘——
+ *          对标 Qt 中 repolish 后控件自我刷新的可见效果。 */
 void XWidget_setStyleSheet(XWidget* self, const XString* styleSheet);
+#if XSTYLE_ON
+/**
+ * @brief      应用控件样式表中的 qproperty-<名>:<值> 声明到对象动态属性
+ *             （对标 QStyleSheetStyle::setProperties 的 XGui 等价钩子）。
+ * @details    幂等：『已应用』账本（对象动态属性
+ *             xgui.qss.qproperty.applied，对标 Qt setGeometry 以
+ *             _q_stylesheet_* 保留动态属性记账的定式）在位即早退；
+ *             XWidget_setStyleSheet 变更路径清账后调用本钩子实现
+ *             「首次命中应用+每次样式表重设重置账本」。语义对标 Qt
+ *             v6.8.3 qstylesheetstyle.cpp:2655-2714：每名取最终出现、
+ *             按最终出现正序写入；末段带伪元素/伪类的规则不参与采集；
+ *             值按 XObject 动态属性既有类型约定以字符串变体写入
+ *             （Qt default 分支 decl.d->values.at(0).variant 口径，
+ *             类型映射按现值元类型分派为本库声明级偏差——动态属性无
+ *             元类型轨）。采集范围=控件自身样式表文本；应用级/祖先级
+ *             表中的 qproperty 对标由级联 owner 收口。详见 XGui.md
+ *             qproperty 战役条目。
+ * @param      self 目标控件；可为 NULL（无操作）。
+ * @return     无返回值。
+ */
+void XWidget_applyStyleSheetProperties(XWidget* self);
+#endif /* XSTYLE_ON */
 /**
  * @brief      返回控件字体副本（对标 QWidget::font）。
  * @details    深拷贝语义（Phase 3.2 裁定）：副本拥有独立的家族/样式名

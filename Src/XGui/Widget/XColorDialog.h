@@ -165,19 +165,6 @@ XColorDialogOptions XColorDialog_options(const XColorDialog* self);
  * @param      options 选项位组合。
  * @return     选中的颜色；无 GUI 环境返回 initial。
  */
-/** @brief 自定义颜色数量（对标 customCount；QColorDialog 内置 16 个自定义槽位）。 */
-int XColorDialog_customCount(const XColorDialog* self);
-/** @brief 指定自定义颜色（对标 setCustomColor）。 */
-void XColorDialog_setCustomColor(XColorDialog* self, int index, XColor color);
-/** @brief 查询自定义颜色（对标 customColor；越界返回黑色）。 */
-XColor XColorDialog_customColor(const XColorDialog* self, int index);
-/** @brief 指定标准颜色（对标 setStandardColor）。 */
-void XColorDialog_setStandardColor(XColorDialog* self, int index, XColor color);
-/** @brief 查询标准颜色（对标 standardColor；越界返回黑色）。 */
-XColor XColorDialog_standardColor(const XColorDialog* self, int index);
-/** @brief 以非模态方式打开对话框（对标 QDialog::open；show + 置模态）。
- * @note 无模态事件循环，仅显示并记录。 */
-void XColorDialog_open(XColorDialog* self);
 XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                              const XString* title, XColorDialogOptions options);
 /**
@@ -191,6 +178,37 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
  */
 XColor XColorDialog_getColor_2(XColor initial, XWidget* parent,
                                const char* title, XColorDialogOptions options);
+/** @brief 自定义颜色数量（对标 customCount；QColorDialog 内置 16 个自定义槽位）。 */
+int XColorDialog_customCount(const XColorDialog* self);
+/** @brief 指定自定义颜色（对标 setCustomColor）。 */
+void XColorDialog_setCustomColor(XColorDialog* self, int index, XColor color);
+/** @brief 查询自定义颜色（对标 customColor；越界返回黑色）。 */
+XColor XColorDialog_customColor(const XColorDialog* self, int index);
+/** @brief 指定标准颜色（对标 setStandardColor）。 */
+void XColorDialog_setStandardColor(XColorDialog* self, int index, XColor color);
+/** @brief 查询标准颜色（对标 standardColor；越界返回黑色）。 */
+XColor XColorDialog_standardColor(const XColorDialog* self, int index);
+/** @brief 以非模态方式打开对话框（对标 QDialog::open；show + 置模态）。
+ * @note 无模态事件循环，仅显示并记录。 */
+void XColorDialog_open(XColorDialog* self);
+/**
+ * @brief      以窗口模态打开对话框，并把完成信号连接到 receiver 的槽
+ *             （对标 QColorDialog 继承的 QDialog::open(QObject
+ *             *receiver, const char *member) 重载形态；命名按数字后缀
+ *             约定 _2，与 XMessageBox_open_2 同款先例）。
+ * @details    member 等价连接 finished(int)（载荷：结果码 int；Qt 的
+ *             open(receiver,member) 即连接 finished，QColorDialog 无
+ *             buttonClicked 类信号故无需载荷分派位）。连接经
+ *             XObject_connect_1 建立（Direct），生命周期遵循 XObject
+ *             连接规则，如需提前解除由调用方 XObject_disconnect_1
+ *             断开（Qt 关闭路径同样不断开 open 连接）。
+ * @param      self 目标对话框；NULL 或 member 空时不执行任何操作。
+ * @param      receiver 槽所属对象；可为 NULL（此时不连接，仅显示）。
+ * @param      member 槽函数（签名 void (*)(XObject*, XVarList*)）。
+ * @return     无返回值。
+ */
+void XColorDialog_open_2(XColorDialog* self, XObject* receiver,
+                         XSlotFunc1 member);
 
 /* ==================== 信号（对标 QColorDialog） ==================== */
 

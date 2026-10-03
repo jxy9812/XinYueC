@@ -258,6 +258,16 @@ typedef struct AdvState
     XLabel* kseStatus;                 /**< 捕获状态行。 */
     XLabel* shortcutStatus;            /**< 快捷键触发状态行。 */
 #endif
+    /* 2026-10-03 自适应重排登记（原为 build 局部变量，adapt 需随根
+     * 几何重排双列布局；特性裁剪时保持 NULL，adapt 逐项判空）。 */
+    XPushButton* insertButton;         /**< 「键入文本」按钮（左列首行右）。 */
+    XLabel* topHint;                   /**< 橡皮筋提示行（左列）。 */
+    XLabel* completerCaption;          /**< 「补全输入」标题。 */
+    XLabel* kseCaption;                /**< 「快捷键捕获」标题。 */
+    XLabel* shortcutCaption;           /**< 全局快捷键标题（右列）。 */
+    XPushButton* splashButton;         /**< 「显示启动画面」按钮（右列）。 */
+    XPushButton* mainWinButton;        /**< 「打开主窗口」按钮（右列）。 */
+    XLabel* rightHint;                 /**< 主窗口说明（右列）。 */
 } AdvState;
 
 static AdvState s_adv;
@@ -555,13 +565,30 @@ static void adv_ensureMainWindow(void)
     }
 }
 
-/** @brief "打开主窗口"按钮：复用已建实例（show + activateWindow）。 */
+/** @brief "打开主窗口"按钮：复用已建实例（show + activateWindow）。
+ * @note  每次点击（首显与复用）都在 show 之前按父窗口（演示主窗）
+ *        几何将弹出主窗口居中一次：x = 父x + (父w - 560) / 2、
+ *        y = 父y + (父h - 420) / 2（下限 0），覆盖 show 后落 WM
+ *        默认位置的行为。 */
 static void adv_btnMainWindowSlot(XObject* receiver, XVarList* args)
 {
+    XWidget* parent;
+    int x;
+    int y;
+
     (void)receiver;
     (void)args;
     adv_ensureMainWindow();
     if (!s_adv.mainWindow) return;
+    parent = (XWidget*)XWidget_topLevelWidget((XWidget*)s_adv.page);
+    if (parent) {
+        /* 按父窗口几何计算居中位置（与 560x420 的创建尺寸对应），负值钳到 0。 */
+        x = XWidget_x(parent) + (XWidget_width(parent) - 560) / 2;
+        y = XWidget_y(parent) + (XWidget_height(parent) - 420) / 2;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        XWidget_move((XWidget*)s_adv.mainWindow, x, y);
+    }
     XWidget_show((XWidget*)s_adv.mainWindow);
     XWidget_activateWindow((XWidget*)s_adv.mainWindow);
     adv_status("XMainWindow: 独立主窗口已显示（重复点击复用实例）");
@@ -654,7 +681,7 @@ static AdvPage* AdvPage_create(XWidget* parent)
 
 /* ==================== 页面装配（契约接口） ======================== */
 
-/** @brief 构建高级控件页（布局手工 setGeometry，内容区 776x494）。 */
+/** @brief 构建高级控件页（布局手工 setGeometry，内容区 776x472）。 */
 XWidget* demo_page_advanced_build(XWidget* parent,
                                   DemoPageStatusFn status, void* user)
 {
@@ -688,6 +715,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XPushButton* insertButton = XPushButton_create_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)page, 0);
+        s_adv.insertButton = insertButton;
         if (insertButton) {
             XPushButton_setText_2(insertButton, "键入文本");
             XWidget_setGeometry((XWidget*)insertButton, 324, 8, 110, 26);
@@ -710,6 +738,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XLabel* hint = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                         (XWidget*)page, 0);
+        s_adv.topHint = hint;
         if (hint) {
             XLabel_setText_2(hint,
                              "页面空白处按住左键拖拽 → 橡皮筋选框（松开隐藏）");
@@ -763,6 +792,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XLabel* caption = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                            (XWidget*)page, 0);
+        s_adv.completerCaption = caption;
         if (caption) {
             XLabel_setText_2(caption, "补全输入:");
             XWidget_setGeometry((XWidget*)caption, 12, 224, 120, 18);
@@ -786,6 +816,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XLabel* caption = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                            (XWidget*)page, 0);
+        s_adv.kseCaption = caption;
         if (caption) {
             XLabel_setText_2(caption, "快捷键捕获（点击后按键，试 Ctrl+O）:");
             XWidget_setGeometry((XWidget*)caption, 12, 304, 320, 18);
@@ -835,6 +866,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XLabel* caption = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                            (XWidget*)page, 0);
+        s_adv.shortcutCaption = caption;
         if (caption) {
             /* 右缘收口：说明文案按实测字形宽（约 21px/汉字）控制在
              * 起点 x=324 → 764px 之内（XLabel 不裁剪溢出文本）；备注
@@ -881,6 +913,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XPushButton* splashButton = XPushButton_create_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)page, 0);
+        s_adv.splashButton = splashButton;
         if (splashButton) {
             XPushButton_setText_2(splashButton, "显示启动画面");
             XWidget_setGeometry((XWidget*)splashButton, 500, 96, 130, 28);
@@ -901,6 +934,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XPushButton* mainWinButton = XPushButton_create_ex(
             XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)page, 0);
+        s_adv.mainWinButton = mainWinButton;
         if (mainWinButton) {
             XPushButton_setText_2(mainWinButton, "打开主窗口");
             XWidget_setGeometry((XWidget*)mainWinButton, 324, 140, 150, 28);
@@ -921,6 +955,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     {
         XLabel* hint = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                         (XWidget*)page, 0);
+        s_adv.rightHint = hint;
         if (hint) {
             /* 右缘收口：避免 XMainWindow 长词（wordWrap 仅空格断行）
              * 溢出，改用无空格短句（约 250px，止于 486+250=736）。 */
@@ -935,13 +970,15 @@ XWidget* demo_page_advanced_build(XWidget* parent,
 #if ADV_SIZEGRIP_ON
     /* ---- XSizeGrip：页面右下角（真实拖拽由真人验证）。 ---- */
     /* 装配锚定实际内容区（demo_layout_content：窗口 800x600 时内容区
-     * 776x494）右下角 (760,478)——旧值 (736,456) 按 760x480 设计稿摆位，
-     * 落后真实区 24/16px，恰沉入根控件 FPS 浮层矩形（564,524,210x50）
-     * 之下被完全盖压（2026-09-25 页7 SizeGrip 攻坚）。 */
+     * 776x472——2026-10-03 双行分组导航使内容顶 78→100）右下角
+     * (760,456)：窗口系落点 (772,556+sysbarH) 与旧内容区 (760,478) 的
+     * 落点完全一致（100+456 = 78+478 = 556），与根控件 FPS 浮层的
+     * 重叠关系不变；旧值 (736,456) 按 760x480 设计稿摆位，曾沉入浮层
+     * 之下被盖压（2026-09-25 页7 SizeGrip 攻坚）。 */
     s_adv.sizeGrip = XSizeGrip_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                          (XWidget*)page);
     if (s_adv.sizeGrip) {
-        XWidget_setGeometry((XWidget*)s_adv.sizeGrip, 760, 478, 16, 16);
+        XWidget_setGeometry((XWidget*)s_adv.sizeGrip, 760, 456, 16, 16);
 #if ADV_TOOLTIP_ON
         adv_setToolTip((XWidget*)s_adv.sizeGrip,
                        "XSizeGrip：拖动调整顶层窗口尺寸");
@@ -960,6 +997,89 @@ XWidget* demo_page_advanced_build(XWidget* parent,
 #endif
 
     return (XWidget*)page;
+}
+
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：双列布局随根几何伸缩。
+ * @details 左列（富文本/键入钮/橡皮筋提示/补全/快捷键捕获）宽随根宽
+ *          45% 伸缩（240..320），右列（全局快捷键/焦点框/启动画面/
+ *          主窗口）起点随左列宽联动，窄窗不再溢出裁剪；SizeGrip 恒贴
+ *          右下角。由 demo_layout_content 全路径调用；page 与登记根
+ *          不符时静默返回。注意右下角与 FPS 性能悬浮层（半透明、不
+ *          消费鼠标）视觉重叠为浮层旧账，拖拽命中不受影响。 */
+void demo_page_advanced_adapt(XWidget* page)
+{
+    int rootW;
+    int rootH;
+    int leftColW;
+    int rcX;
+    int rcW;
+    if (!page || page != (XWidget*)s_adv.page) return;
+    rootW = XWidget_width(page);
+    rootH = XWidget_height(page);
+    (void)rootH;
+    if (rootW < 200) return;
+    leftColW = rootW * 45 / 100;
+    if (leftColW < 240) leftColW = 240;
+    if (leftColW > 320) leftColW = 320;
+    rcX = 12 + leftColW + 24;
+    rcW = rootW - rcX - 12;
+    if (rcW < 160) return; /* 过窄不重排（保持装配几何，宁可裁右）。 */
+    /* 左列：富文本高度=样例 7 行完整呈现所需（行高 28px 口径 ×7≈196+
+       边框余量），其下各行 y 以 ty=编辑器底+8 联动下移——固定 180 高时
+       底部行横切半字（目验二轮挂项），而单纯加高又会压住下方行
+       （三轮实证），唯一正解=整块联动。 */
+    {
+        int teH = 232;
+        int ty;
+        if (s_adv.textEdit)
+            XWidget_setGeometry((XWidget*)s_adv.textEdit, 12, 8,
+                                leftColW - 124, teH);
+        ty = 8 + teH + 8; /* =248 */
+        if (s_adv.insertButton)
+            XWidget_setGeometry((XWidget*)s_adv.insertButton,
+                                12 + leftColW - 112, 8, 100, 26);
+        if (s_adv.topHint)
+            XWidget_setGeometry((XWidget*)s_adv.topHint, 12, ty,
+                                leftColW + 110 < rootW - 24 ? leftColW + 110
+                                                            : rootW - 24, 18);
+        if (s_adv.completerCaption)
+            XWidget_setGeometry((XWidget*)s_adv.completerCaption, 12, ty + 28,
+                                120, 18);
+        if (s_adv.completerEdit)
+            XWidget_setGeometry((XWidget*)s_adv.completerEdit, 12, ty + 48,
+                                220, 26);
+        if (s_adv.completerStatus)
+            XWidget_setGeometry((XWidget*)s_adv.completerStatus, 12, ty + 80,
+                                leftColW + 110, 18);
+        if (s_adv.kseCaption)
+            XWidget_setGeometry((XWidget*)s_adv.kseCaption, 12, ty + 108,
+                                leftColW + 20, 18);
+        if (s_adv.kse)
+            XWidget_setGeometry((XWidget*)s_adv.kse, 12, ty + 128, 240, 28);
+        if (s_adv.kseStatus)
+            XWidget_setGeometry((XWidget*)s_adv.kseStatus, 12, ty + 162,
+                                leftColW + 110, 18);
+    }
+    /* 右列。 */
+    if (s_adv.shortcutCaption)
+        XWidget_setGeometry((XWidget*)s_adv.shortcutCaption, rcX, 44, rcW, 18);
+    if (s_adv.shortcutStatus)
+        XWidget_setGeometry((XWidget*)s_adv.shortcutStatus, rcX, 66, rcW, 18);
+    if (s_adv.focusTarget)
+        XWidget_setGeometry((XWidget*)s_adv.focusTarget, rcX, 96, 150, 30);
+    if (s_adv.focusFrame)
+        XWidget_setGeometry((XWidget*)s_adv.focusFrame, rcX - 2, 94, 154, 34);
+    if (s_adv.splashButton)
+        XWidget_setGeometry((XWidget*)s_adv.splashButton, rcX, 136, 130, 28);
+    if (s_adv.mainWinButton)
+        XWidget_setGeometry((XWidget*)s_adv.mainWinButton, rcX, 176, 150, 28);
+    if (s_adv.rightHint)
+        XWidget_setGeometry((XWidget*)s_adv.rightHint, rcX + 140, 136,
+                            rcW - 140, 54);
+    /* SizeGrip 贴右下角。 */
+    if (s_adv.sizeGrip)
+        XWidget_setGeometry((XWidget*)s_adv.sizeGrip,
+                            rootW - 16, rootH - 16, 16, 16);
 }
 
 /* ==================== 页面自测（契约接口） ======================== */

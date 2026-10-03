@@ -81,6 +81,14 @@
 #define XNET_EPOLL_MAX_EVENTS 64
 #endif
 
+/* [2026-10-03 互联测试指挥官] epoll 引擎逐操作追踪（默认 0）：真机
+ * MCGS(5.2.9 内核 memlock 回退 epoll)互联联调缺陷定位用, 编译期
+ * -DXNET_EPOLL_IO_DEBUG=1 重开全部输出 —— 仿本仓库 XPWN_IME_DEBUG
+ * 收编先例(Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:238)。 */
+#ifndef XNET_EPOLL_IO_DEBUG
+#define XNET_EPOLL_IO_DEBUG 0
+#endif
+
 /* epoll 兴趣/操作封装（与 XSocketActType 解耦的内部常量） */
 #define XNET_EPOLL_IN_INTEREST   (uint32_t)EPOLLIN
 #define XNET_EPOLL_OUT_INTEREST  (uint32_t)EPOLLOUT
@@ -243,8 +251,21 @@ static void ioSubmitEntries(XNetIoRingPosix* posix, int toSubmit) {
     /* 推进 SQ tail（发布到内核） */
     __atomic_store_n(posix->m_sqTailPtr, tail + toSubmit, __ATOMIC_RELEASE);
 
-    /* 非 SQPOLL 模式必须调用 io_uring_enter 才会真正提交 SQE。 */
-    syscall(__NR_io_uring_enter, posix->m_ringFd, toSubmit, 0, 0, NULL, 0);
+    /* 非 SQPOLL 模式必须调用 io_uring_enter 才会真正提交 SQE。
+     * 防御性修复(2026-10-02 延迟基准): 返回值此前被忽略——EINTR 时 SQE
+     * 不会提交, RECV 将静默滞留至下一次 enter(表现收侧无界延迟)。
+     * EINTR 重试; 其余短提交回滚 tail(调用方 readPending 状态保持,
+     * 下一事件重试), 语义与提交前一致。 */
+    {
+        long done;
+        do {
+            done = syscall(__NR_io_uring_enter, posix->m_ringFd, toSubmit,
+                           0, 0, NULL, 0);
+        } while (done < 0 && errno == EINTR);
+        if (done != toSubmit && done >= 0) {
+            __atomic_store_n(posix->m_sqTailPtr, tail, __ATOMIC_RELEASE);
+        }
+    }
 }
 
 /* 从 CQ 获取一个完成条目，非阻塞 */
@@ -393,6 +414,42 @@ static XNetPendingOp* epTakePending(XNetIoRingPosix* posix, int fd,
     return NULL;
 }
 
+/** @brief [2026-10-03 互联测试指挥官修复归因] 按 fd 挂起请求方向重铸 epoll 兴趣。
+ *  @details 缺陷实证(桌面 ulimit -l 8 强制 epoll 引擎复现; 设备真机 5.2.9
+ *           内核同走 epoll 回退同症): 同 fd 同时挂异向请求时——服务端建
+ *           会话即「RECV(IN) 挂起 + 握手 SEND(OUT) 提交」——提交路径
+ *           EPOLL_CTL_ADD 撞 EEXIST 被静默忽略, 兴趣仍停在 IN, OUT 事件
+ *           永不上报 → SEND 永久滞留, 客户端停在 connecting 等不到 XGR1
+ *           握手横幅; 完成路径无条件 DEL 也会饿死同 fd 其余方向挂起请求。
+ *           本函数按挂起链方向并集重铸(MOD/DEL): 单请求场景行为不变
+ *           (提交 ADD/完成 DEL), 多请求场景按并集。仅动 epoll 引擎兴趣
+ *           管理, 不改 io_uring 路径与任何头文件声明。 */
+static void epRearmInterest(XNetIoRingPosix* posix, int fd) {
+    XNetPendingOp* op;
+    unsigned wantIn = 0;
+    unsigned wantOut = 0;
+    uint32_t mask = 0;
+    struct epoll_event ev;
+    for (op = posix->m_pendingHead; op; op = op->next) {
+        if (op->sqe.fd != fd) continue;
+        if (op->sqe.opcode == IORING_OP_SEND ||
+            op->sqe.opcode == IORING_OP_CONNECT)
+            wantOut = 1;
+        else
+            wantIn = 1;
+    }
+    if (wantIn) mask |= XNET_EPOLL_IN_INTEREST;
+    if (wantOut) mask |= XNET_EPOLL_OUT_INTEREST;
+    if (mask == 0u) {
+        epoll_ctl(posix->m_epollFd, EPOLL_CTL_DEL, fd, NULL);
+        return;
+    }
+    memset(&ev, 0, sizeof(ev));
+    ev.events = mask;
+    ev.data.fd = fd;
+    epoll_ctl(posix->m_epollFd, EPOLL_CTL_MOD, fd, &ev);
+}
+
 /** @brief 执行挂起请求的 IO（fd 已就绪），完成推 CQ 条目。
  *  @return true 已完成并释放；false 仍在挂起（EAGAIN）。 */
 static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
@@ -428,11 +485,27 @@ static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
         break;
     }
 
-    if (res < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+#if XNET_EPOLL_IO_DEBUG
+    fprintf(stderr, "[XNET-EPOLL] exec op=%d fd=%d res=%zd errno=%d\n",
+            (int)sqe->opcode, sqe->fd, res, errno);
+#endif
+    if (res < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        /* [2026-10-03 互联测试指挥官修复归因] 摘除后未完成必须挂回链头:
+         * epTakePending 已把本请求从挂起链摘下, EAGAIN 原样 return 会令
+         * 请求孤儿化——既不在链上(重铸/再派发都找不到)也无完成事件,
+         * 后续 rearm 视该 fd 无挂起而 DEL 兴趣, 连接双向永久饿死
+         * (实证: 桌面 ulimit 复现, 服务器 PING EAGAIN 孤儿化后
+         *  ~30s 保活双端互踢; 真机 MCGS 同症)。挂回链头, 语义与
+         * 摘除前一致(仍在挂起, 等下一次就绪)。 */
+        op->next = posix->m_pendingHead;
+        posix->m_pendingHead = op;
         return false; /* 仍在挂起，等下一次就绪 */
+    }
 
-    /* 完成：摘除 epoll 兴趣、推 CQ 条目并释放 */
-    epoll_ctl(posix->m_epollFd, EPOLL_CTL_DEL, sqe->fd, NULL);
+    /* 完成：按剩余挂起请求重铸兴趣、推 CQ 条目并释放
+     * （[2026-10-03 互联测试指挥官] 原无条件 DEL 会饿死同 fd 异向挂起
+     *   请求——见 epRearmInterest 处注释; 单请求场景 DEL 等价）。 */
+    epRearmInterest(posix, sqe->fd);
     processOneCompletion(self, (int64_t)res,
                          (void*)(uintptr_t)sqe->user_data);
     XFree_System(op);
@@ -837,6 +910,10 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
         op->ctx = ctx;
         op->next = ring->m_pendingHead;
         ring->m_pendingHead = op;
+#if XNET_EPOLL_IO_DEBUG
+        fprintf(stderr, "[XNET-EPOLL] submit op=%d fd=%d\n",
+                (int)sqe->opcode, sqe->fd);
+#endif
 
         memset(&ev, 0, sizeof(ev));
         ev.events = (sqe->opcode == IORING_OP_SEND ||
@@ -844,8 +921,14 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
                         ? XNET_EPOLL_OUT_INTEREST
                         : XNET_EPOLL_IN_INTEREST;
         ev.data.fd = sqe->fd;
-        if (epoll_ctl(ring->m_epollFd, EPOLL_CTL_ADD, sqe->fd, &ev) != 0 &&
-            errno != EEXIST) {
+        if (epoll_ctl(ring->m_epollFd, EPOLL_CTL_ADD, sqe->fd, &ev) != 0) {
+            if (errno == EEXIST) {
+                /* [2026-10-03 互联测试指挥官] fd 已注册（多见：RECV 挂起
+                 * 中提交 SEND/CONNECT）——按挂起链方向并集重铸兴趣
+                 * （IN|OUT, 旧方向请求不被饿死），不再静默忽略。 */
+                epRearmInterest(ring, sqe->fd);
+                return;
+            }
             ring->m_pendingHead = op->next;
             XFree_System(op);
             processOneCompletion(self, -errno,

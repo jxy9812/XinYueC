@@ -899,6 +899,12 @@ bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
     return true;
 }
 
+bool XPlatformNativeWindow_setSizeHints(XWindow* window)
+{
+    (void)window; /* Android 无 WM 尺寸约束语义，no-op。 */
+    return true;
+}
+
 bool XPlatformNativeWindow_setKeyboardGrabEnabled(XWindow* window, bool grab)
 { (void)window; (void)grab; return true; }
 

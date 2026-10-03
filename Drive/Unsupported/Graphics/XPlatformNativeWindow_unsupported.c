@@ -94,6 +94,12 @@ bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
     return false;
 }
 
+bool XPlatformNativeWindow_setSizeHints(XWindow* window)
+{
+    (void)window; /* 无真实窗口系统：no-op。 */
+    return false;
+}
+
 bool XPlatformNativeWindow_setKeyboardGrabEnabled(XWindow* window, bool grab)
 {
     (void)window; (void)grab;

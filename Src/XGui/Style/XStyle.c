@@ -1,6 +1,5 @@
 #include "XStyle.h"
 #include "XStringUtils.h"
-
 #include "XAlgorithm.h"
 #include "XCommonStyle.h"
 #include "XWindowsStyle.h"
@@ -767,6 +766,20 @@ bool XStyle_installStyleSheet(const char* css)
         XStyleSheetStyle_delete_base(ss);
     }
     return ok;
+}
+
+void XStyle_invalidateStyleSheetRenderCache(void)
+{
+    /* 默认样式为样式表风格才持有渲染规则缓存，按虚表名识别（与
+     * installStyleSheet 复用分支同一判据）；其余风格无操作。 */
+    if (!g_defaultStyle) return;
+    {
+        XVtable* vt = XClassGetVtable((XClass*)g_defaultStyle);
+        if (XVTABLE_GET_NAME(vt) &&
+            XStrcmp(XVTABLE_GET_NAME(vt), "XStyleSheetStyle") == 0)
+            XStyleSheetStyle_invalidateRenderCache(
+                (XStyleSheetStyle*)g_defaultStyle);
+    }
 }
 
 #endif /* XSTYLE_ON */

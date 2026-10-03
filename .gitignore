@@ -464,3 +464,6 @@ diag/
 nul
 .mimocode/
 *.log
+
+# 夜战心跳运行态文件（heartbeat 维护、缺失自动重建，不入库；归档唯一落点=final_report.md）
+Test/XGuiDemo/overnight_report/state.md

@@ -12,6 +12,9 @@
  *               setAutoClose/autoClose（默认 true）、
  *               setMinimumDuration/minimumDuration（默认 4000ms）、
  *               cancel()/wasCanceled、forceShow；
+ *             - 打开：open_2（对标经 using QDialog::open 再导出的
+ *               open(receiver,member)：窗口模态非阻塞显示 + 关闭自动
+ *               断开；无参 open 由基类 XDialog_open 承接）；
  *             - 信号：canceled()（空参；cancel() 触发时发射）。
  * @note       模块总开关 XDIALOG_ON（XWIDGET_ON && XDIALOG_ON 有效）。
  * @note       本实现不创建真实的子控件布局；setBar 仅存储借用指针，
@@ -66,6 +69,10 @@ typedef struct XProgressDialog
     XProgressBar* m_bar;         /**< 进度条（借用；setBar 简化存储）。 */
     XLabel* m_label;             /**< 自定义标签控件（拥有；对标 setLabel）。 */
     XPushButton* m_cancelButton; /**< 自定义取消按钮（拥有；对标 setCancelButton）。 */
+    XObject* m_openReceiver;     /**< open_2 记录的接收对象（关闭时自动断开；
+                                     对标 QDialog::open 的
+                                     receiverToDisconnectOnClose）。 */
+    XSlotFunc1 m_openMember;     /**< open_2 记录的槽函数。 */
 } XProgressDialog;
 
 /**
@@ -307,6 +314,28 @@ int XProgressDialog_minimumDuration(const XProgressDialog* self);
  * @return     无返回值。
  */
 void XProgressDialog_forceShow(XProgressDialog* self);
+
+/* ==================== 非阻塞打开（对标 QDialog::open） ==================== */
+
+/**
+ * @brief      以窗口模态显示对话框并立即返回，同时把关闭信号连接到
+ *             receiver 的槽（对标 QProgressDialog 头文件经
+ *             `using QDialog::open` 再导出的 open(QObject *receiver,
+ *             const char *member)；open 的重载形态，按数字后缀约定
+ *             命名 _2，XMessageBox_open_2 同型）。
+ * @details    连接 finished(int)（载荷：结果码 int）；成员槽以 C 函数
+ *             指针给定（Qt 的 const char* 槽名元对象反射无 C 对应）。
+ *             无参 open 形态由基类 XDialog_open 承接。对话框关闭（关闭
+ *             事件被接受收口）时自动断开该连接；cancel() 仅隐藏不发
+ *             finished、不断开（对标 Qt：hide/setVisible 不发射
+ *             finished，连接仅经关闭收口或下一次 open_2 断开）。
+ * @param      self 目标对话框；NULL 或 member 空时不执行任何操作。
+ * @param      receiver 槽所属对象；可为 NULL（此时不连接，仅显示）。
+ * @param      member 槽函数（签名 void (*)(XObject*, XVarList*)）。
+ * @return     无返回值。
+ */
+void XProgressDialog_open_2(XProgressDialog* self, XObject* receiver,
+                            XSlotFunc1 member);
 
 /* ==================== 信号（对标 QProgressDialog） ==================== */
 

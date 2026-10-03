@@ -1567,6 +1567,10 @@ static void XWindow_setMinMaxSize(XWindow* self, const XSize* minimum,
             current.height = data->m_maximumSize.height;
         XWindow_resize_2(self, current.width, current.height);
     }
+    /* 记账后同步原生 WM 尺寸约束（X11 PMinSize/PMaxSize；无原生窗或
+     * 平台不支持时后端内部 no-op）——缺此同步时 setFixedSize 固定的
+     * 对话框在 kwin/DDE 下仍可被拖拽改尺寸（实测根因）。 */
+    XPlatformNativeWindow_setSizeHints(self);
 }
 
 void XWindow_setMinimumSize(XWindow* self, const XSize* size)

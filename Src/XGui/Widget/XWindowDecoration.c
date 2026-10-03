@@ -1148,10 +1148,21 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
              * 24px 触屏带宽侵入内容区，条子控件/内容可点优先，仅空白区
              * 接管（带与按钮重叠处触屏用户点按钮意图优先，原口径保
              * 留）。增量锚取全局坐标：本地系随窗口移动自指（见拖拽处
-             * 注释）。 */
+             * 注释）。
+             * 例外（2026-10-03 带内死区修复）：命中声明了
+             * XWidgetAttribute_HitEdgeBand 的贴边交互件（分割条细条/
+             * 把手类）时让位树派发——贴边停靠控件在 WM parity 带内曾
+             * 永不可点；未声明属性的内容区维持接管口径不变（门禁
+             * resize_follow_gate 的 E/NE 带拖拽锚定依赖该口径）。 */
             {
                 int zone = xwd_resizeZoneAt(top, &pos, barH);
                 if (zone && XWindow_isNativeWindowAttached(st->m_window)) {
+                    XWidget* hitChild = XWidget_childAt(top, &pos);
+                    if (hitChild && hitChild != (XWidget*)top &&
+                        hitChild != st->m_bar &&
+                        XWidget_testAttribute(hitChild,
+                                              XWidgetAttribute_HitEdgeBand))
+                        return false; /* 贴边交互件优先，放行树派发。 */
                     st->m_resizing = true;
                     st->m_resizeMask = zone;
                     st->m_resizeAnchor =

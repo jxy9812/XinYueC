@@ -189,7 +189,7 @@ static const char* kbd_composeText(const XVirtualKeyboard* kb)
 
 /** @brief 首候选文本比对垫片：框架世界经 engine.wordCandidateListModel()
  *         dataAt(0, Display)（XVariantType_String 承载——设计
- *         apiMapping#3/4；TODO 门禁对齐：XVariant String 载荷内部形
+ *         apiMapping#3/4；门禁对齐：XVariant String 载荷内部形
  *         态按 XString* 假定，拼音插件落地后如不符按实际调整）；
  *         既有世界 XPinyinEngine_candidateAt 直读。 */
 static bool kbd_firstCandidateIs(const XVirtualKeyboard* kb, const char* utf8)
@@ -285,12 +285,19 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     {
         XLabel* hint = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
         if (hint) {
-            XWidget_setGeometry((XWidget*)hint, 12, 152, 420, 40);
+            /* 高度按 heightForWidth 实算（对齐 QLabel::heightForWidth
+             * 口径）：固定 40px 只装三行，第四行被裁半（2026-10-01 用
+             * 户实机报告 D2，user-report-label-clip.png 实锚）；文本与
+             * wordWrap 先置再算，宽 420 与几何一致。 */
+            int hintH;
             XLabel_setText_2(hint,
                              "三框并列演示 hints 自动切键盘：默认框=主布局 / 数字框=12 键数字盘 / "
                              "英文框=主布局锁拉丁；拼音：中/EN 切换 → 字母上候选带 → "
                              "空格 / 点 chip / 1-9 上屏 → 回车=原字母 → 退格先删组串");
             XLabel_setWordWrap(hint, true);
+            hintH = XLabel_heightForWidth(hint, 420);
+            XWidget_setGeometry((XWidget*)hint, 12, 152, 420,
+                                hintH > 0 ? hintH : 40);
             XWidget_show((XWidget*)hint);
         }
     }
@@ -491,7 +498,11 @@ int demo_page_keyboard_autotest(XWidget* page)
 
     /* ---- -1. 守护常驻回归锁（评审修复）：autoPopup 默认开，构造即
      *     常驻轮询——不依赖首次 popup() 拉起（demo 进程有事件调度器，
-     *     timer id 断言可靠；无头回归测试无调度器不做此断言）。 ---- */
+     *     timer id 断言可靠；无头回归测试无调度器不做此断言）。
+     *     2026-10-03：远程客户端页 build 关断单例 autoPopup（RC 页经
+     *     悬浮条键盘钮全权接管），本页 autotest 显式恢复开态再断言
+     *     ——守护断言锚定本页契约，不受其他页面开关时序影响。 ---- */
+    XVirtualKeyboard_setAutoPopup(s_kbd.keyboard, true);
     KBD_EXPECT(s_kbd.keyboard->m_autoPopup &&
                    s_kbd.keyboard->m_guardTimer != XTIMER_INVALID_ID,
                "构造后守护轮询常驻（autoPopup 默认开，不依赖首次 popup）");

@@ -95,6 +95,19 @@ typedef enum XMessageBoxButtonRole
     XMessageBoxButtonRole_NRoles = 9
 } XMessageBoxButtonRole;
 
+/** @brief 消息框选项位（对标 QMessageBox::Option，数值一致）。
+ * @note   Qt 中 QMessageBox 本就恒为控件实现、DontUseNativeDialog 同样
+ *         不被运行时读取；XGui 恒自绘无原生消息盒后端，位值仅供
+ *         setOption/testOption/setOptions/options 存储与查询（与 Qt
+ *         的搁置口径一致，API 面对齐）。 */
+typedef enum XMessageBoxOption
+{
+    XMessageBoxOption_DontUseNativeDialog = 0x00000001 /**< 不使用平台原生消息盒。 */
+} XMessageBoxOption;
+/** @brief 消息框选项位集（对标 QMessageBox::Options，即
+ *         QFlags<Option>；typedef 口径同 XFileDialogOptions）。 */
+typedef uint32_t XMessageBoxOptions;
+
 XCLASS_DEFINE_BEGING(XMessageBox)
 XCLASS_DEFINE_EXTEND_END(XMessageBox, XDialog)
 
@@ -126,7 +139,7 @@ typedef struct XMessageBox
     XString* m_detailedText;    /**< 详细文本（对象拥有；对标 detailedText）。 */
     XString* m_informativeText; /**< 补充文本（对象拥有；对标 informativeText）。 */
     int m_icon;                  /**< 图标（XMessageBoxIcon）。 */
-    int m_options;               /**< 选项位集（对标 options）。 */
+    XMessageBoxOptions m_options; /**< 选项位集（对标 options）。 */
     XAbstractButton* m_clicked;  /**< 最近点击的按钮（exec 结果）。 */
     XAbstractButton* m_defaultButton; /**< 默认按钮（借用；对标 defaultButton）。 */
     XAbstractButton* m_escapeButton;  /**< 转义按钮（借用；对标 escapeButton）。 */
@@ -431,25 +444,26 @@ int XMessageBox_standardButton(const XMessageBox* self,
                                XAbstractButton* button);
 /** @brief 设置选项位集（对标 setOptions）。
  * @param self 目标对话框。
- * @param options 选项位组合。
+ * @param options 选项位组合（XMessageBoxOptions）。
  * @return 无返回值。
  */
-void XMessageBox_setOptions(XMessageBox* self, int options);
+void XMessageBox_setOptions(XMessageBox* self, XMessageBoxOptions options);
 /** @brief 查询选项位集。 @param self 目标对话框。 @return 位组合。 */
-int XMessageBox_options(const XMessageBox* self);
+XMessageBoxOptions XMessageBox_options(const XMessageBox* self);
 /** @brief 测试选项位（对标 testOption）。
  * @param self 目标对话框。
- * @param option 选项位。
+ * @param option 选项位（XMessageBoxOption）。
  * @return 置位返回 true。
  */
-bool XMessageBox_testOption(const XMessageBox* self, int option);
+bool XMessageBox_testOption(const XMessageBox* self, XMessageBoxOption option);
 /** @brief 设置/清除单个选项位（对标 QMessageBox::setOption）。
  * @param self 目标对话框；传入 NULL 时函数不执行任何操作。
- * @param option 选项位。
+ * @param option 选项位（XMessageBoxOption）。
  * @param on true 置位该选项，false 清除该选项；其余选项位保持不变。
  * @return 无返回值。
  */
-void XMessageBox_setOption(XMessageBox* self, int option, bool on);
+void XMessageBox_setOption(XMessageBox* self, XMessageBoxOption option,
+                           bool on);
 
 /** @brief buttonClicked(XAbstractButton*) 信号（对标 QMessageBox::buttonClicked；
  *         载荷：被点击按钮）。 */

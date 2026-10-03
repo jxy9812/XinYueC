@@ -267,13 +267,26 @@ typedef struct XVirtualKeyboard
     bool m_userCollapsed;              /**< 用户收起闩锁（收起键/确认后置位：
                                             守护轮询不再自动重弹，直到用户
                                             再次按下编辑框；防「收起即弹回」）。 */
-    int m_hostW;                       /**< 宿主宽度缓存（守护 Resize 检测用）。 */
-    int m_hostH;                       /**< 宿主高度缓存（守护 Resize 检测用）。 */
-    int m_hostGX;                      /**< 悬浮宿主全局 x 缓存（悬浮形态守护
-                                            位移检测用；主窗口被拖动时跟随
-                                            重定位，内嵌形态随父移动不查）。 */
-    int m_hostGY;                      /**< 悬浮宿主全局 y 缓存（悬浮形态守护
-                                            位移检测用）。 */
+    int m_hostW;                       /**< 宿主宽度缓存（reposition 工作变量）。 */
+    int m_hostH;                       /**< 宿主高度缓存（reposition 工作变量）。 */
+    XConnection* m_geomConn[8];        /**< 宿主/范围顶层几何信号连接句柄（借用；
+                                            [0..3]=宿主 x/y/width/height 变化、
+                                            [4..7]=对话框浮层形态范围顶层同序——
+                                            2026-10-03 所有者裁定「几何跟随走事
+                                            件推送不走轮询」：WM 拖拽/缩放经
+                                            ConfigureNotify→XWindow_setGeometry-
+                                            Fields 发射逐字段信号，Queued 连接
+                                            投递 XMetaCallEvent 事件循环异步执
+                                            行（2026-10-03 所有者裁定「投递函数
+                                            事件」），reposition 几何短路聚合；
+                                            closePopup/宿主亡清。 */
+    XWidget* m_geomScope;              /**< 几何信号连接中的范围顶层（对话框浮层
+                                            形态；借用，断连清扫用）。 */
+    XTimerId m_geomSyncTimer;          /**< 几何重排聚合定时器（30ms 单发；拖拽/
+                                            缩放的高频信号槽内只置 pending，同
+                                            一批次聚合为一次 reposition——对齐
+                                            主窗重绘节奏防「键盘先窜出」观感，
+                                            拖动停止 ≤30ms 必达，非周期轮询）。 */
     XWidget* m_hostOverride;           /**< 悬浮模式宿主锚（借用；NULL=内嵌
                                             挂父模式）。可传弹层容器（Popup
                                             型顶层），popup() 时自动解析主
@@ -548,9 +561,16 @@ void XVirtualKeyboard_popup(XVirtualKeyboard* self, XWidget* editor);
  */
 void XVirtualKeyboard_closePopup(XVirtualKeyboard* self);
 /**
- * @brief      查询弹层可见状态（对标 XComboBox_popupVisible）。
+ * @brief      查询弹层弹出状态（对标 XComboBox_popupVisible 的弹出位语义）。
+ * @details    返回 m_popped 生命周期位：popup() 成功路径置位、
+ *             closePopup() 复位——与「挂接是否生效」严格同步，而非
+ *             XWidget_isVisible 的生效可见。根因：面板是宿主顶层窗口的
+ *             子控件浮层（无独立 OS 窗口），宿主未 show 时生效可见按
+ *             父链口径恒假，apitest 直呼 popup 与 demo 宿主首显前的
+ *             无头钩子会把挂接成功误报为未弹。收层须走 closePopup
+ *             （同步复位本状态；直接 setVisible 不在契约内）。
  * @param      self 键盘对象借用指针；可为 NULL。
- * @return     弹层可见返回 true；self 为 NULL 返回 false。
+ * @return     弹层处于弹出状态返回 true；self 为 NULL 返回 false。
  */
 bool XVirtualKeyboard_popupVisible(const XVirtualKeyboard* self);
 /**

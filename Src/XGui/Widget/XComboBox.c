@@ -1094,6 +1094,7 @@ typedef struct XComboPopupView
 static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VXComboPopupView_keyPressEvent(XWidget* self, XEvent* event);
+static void VXComboPopupView_paintEvent(XWidget* self, XEvent* event);
 
 /** @brief 判断弹出层本地坐标是否落在视图矩形内。
  * @note  入参为事件相对弹层窗口的本地坐标，直接与弹层尺寸比较；
@@ -1264,7 +1265,71 @@ static void VXComboPopupView_keyPressEvent(XWidget* self, XEvent* event)
     }
 }
 
-/** @brief 弹出列表子类虚表：仅覆写按下/释放/按下键，其余继承 XListView。 */
+/** @brief 绘制：XListView 行内容之上补 1px 弹层面板边框。
+ * @details 对标 Qt QComboBox 弹层容器带框（qcombobox.cpp v6.8.3）：
+ *  QComboBoxPrivateContainer 以 QFrame(parent, Qt::Popup) 承载弹层，
+ *  updateStyleSettings() 经 SH_ComboBox_PopupFrameStyle setFrameStyle、
+ *  构造路径另有 setLineWidth(1) 兜底，内层视图反而显式 NoFrame——
+ *  「框在容器不在视图」。本封装弹层无独立容器件（XComboPopupView 一体
+ *  承载视图与弹层窗），故框画在弹层视图自身四缘，几何零变化。
+ *  颜色经 palette(Dark) 取框架色（默认 Fusion #9F9F9F，XPalette.c
+ *  background.darker(150)；演示主题中性描边 #5A6572 属 Test 层 QSS 规则、
+ *  库层不可达，随主题对 QSS 可达处的演进另行对齐）。
+ *  猎捕 defect 溯源（r1#11/r2#6 两轮旧结论更正）：弹层本为不透明白底
+ *  （XListView paint 的 Base 整幅填充）且 X11 合成正常（弹层开合 root
+ *  像素差实测 >0、「透出」残字均在弹层矩形之外）——白底贴同白列表
+ *  零对比读作「透明叠印」，本框即其根修。行为红线不动：越界收起/
+ *  键盘拦截/候选选择三语义全在按下/释放/按键覆写内，本函数只叠缘框。 */
+static void VXComboPopupView_paintEvent(XWidget* self, XEvent* event)
+{
+    XComboPopupView* view = (XComboPopupView*)self;
+    XPainter painter;
+    XImage* image;
+    XPoint offset;
+    XRect r;
+    uint32_t frame;
+    if (!view) return;
+    /* 父调先行：行内容/高亮/滚区全由 XListView 原实现承载。 */
+    XClass_Parent(XListView, EXWidget_PaintEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    image = XWidget_paintImage(self);
+    if (!image) return;
+    XRect_init(&r, 0, 0, XWidget_width(self), XWidget_height(self));
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+#if XPALETTE_ON
+    {
+        XPalette palette = XWidget_palette(self);
+        XColor c = XPalette_color(&palette, XPaletteColorGroup_Current,
+                                  XPaletteColorRole_Dark);
+        frame = XColor_rgba(&c);
+    }
+#else
+    frame = 0xFF9F9F9Fu;
+#endif
+    {
+        XRect e = r;
+        e.height = 1;
+        XPainter_fillRect(&painter, &e, frame);
+        e = r; e.y = r.y + r.height - 1; e.height = 1;
+        XPainter_fillRect(&painter, &e, frame);
+        e = r; e.width = 1;
+        XPainter_fillRect(&painter, &e, frame);
+        e = r; e.x = r.x + r.width - 1; e.width = 1;
+        XPainter_fillRect(&painter, &e, frame);
+    }
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+/** @brief 弹出列表子类虚表：覆写按下/释放/按下键/绘制，其余继承
+ *  XListView（绘制仅叠弹层面板缘框，行语义零介入）。 */
 static XVtable* XComboPopupView_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XComboPopupView)
@@ -1275,6 +1340,8 @@ static XVtable* XComboPopupView_class_init(void)
                              VXComboPopupView_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VXComboPopupView_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
+                             VXComboPopupView_paintEvent);
     return XVTABLE_DEFAULT;
 }
 

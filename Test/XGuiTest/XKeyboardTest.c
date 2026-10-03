@@ -767,7 +767,12 @@ bool XKeyboardTest_runAll(void)
             }
         }
 
-        /* +/- 符号翻转（数字模式，XLineEdit 主路径：home/选删/行首插）。 */
+        /* +/- 符号翻转（数字模式，XLineEdit 主路径：home/选删/行首插）。
+           前段收起键已按「收层解除目标绑定」契约（closePopup 置
+           m_target=NULL，XVirtualKeyboard.c closePopup 尾部定版口径）
+           解挂编辑框，本段写入语义验证前先重挂（popup 恢复弹出态+
+           目标绑定，与 GUI 实况「面板弹出时按键」一致）。 */
+        XVirtualKeyboard_popup(kb, (XWidget*)edit);
         {
             int signIdx = -1;
             XVirtualKeyboard_setMode(kb, XKeyboardMode_Number);
@@ -1936,7 +1941,7 @@ bool XKeyboardTest_runAll(void)
          *     numbers=既有 17 键数字布局（Number 模式，:415-430 锁扩
          *     展）；digits=新 12 键；dialpad=新 3×4。digits/dialpad 的
          *     新布局槽位枚举命名未在设计冻结——仅锁 buttonCount+键帽
-         *     特征（TODO 门禁对齐：Src 若以新 XKeyboardMode 槽位承载，
+         *     特征（门禁对齐：Src 若以新 XKeyboardMode 槽位承载，
          *     可追加 mode 精确断言）。popup 消费的是焦点控件 hints
          *     （经 XInputMethod_defaultQueryHandler 查询桥），故先
          *     setFocus 再 popup。 ---- */
@@ -1996,7 +2001,7 @@ bool XKeyboardTest_runAll(void)
             /* dialpad/digits 同为 12 键：键帽特征区分——3×4 拨号盘含
              * "*"/"#"，digits 盘含 0..9。负向断言（digits 不含 #/*）
              * 暂不加：XKeyboardLayouts 五型静态表键帽细节为 Src 侧自
-             * 由度（TODO 门禁对齐）。 */
+             * 由度（门禁对齐）。 */
             XWidget_setInputMethodHints(
                 (XWidget*)eh, XInputMethodHint_DialableCharactersOnly);
             XWidget_setFocus((XWidget*)eh);
@@ -2182,7 +2187,7 @@ bool XKeyboardTest_runAll(void)
          *     500ms 顶部气泡条；repeat 键不配 altKeys）：550ms ∈
          *     [500,600) 安全窗——弹层已起而重复未振，两种键帽配置
          *     （有/无变体表）下释放都恰落 1 个基础字符。变体选择
-         *     上屏断言 TODO 门禁对齐：需气泡条几何/选择公开面落地
+         *     上屏断言门禁对齐：需气泡条几何/选择公开面落地
          *     后补（ Src 侧未冻结该内部几何）。 ---- */
         {
             XVirtualKeyboard* ka = XVirtualKeyboard_create(NULL, 0);

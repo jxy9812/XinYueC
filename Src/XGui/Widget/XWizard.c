@@ -10,6 +10,12 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#if XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON && XDIALOG_ON
+#include "XDialog.h" /* CSD 装饰条让位查询（同 XMessageBox 先例）。 */
+#define XWIZ_CSD_QUERY_ON 1
+#else
+#define XWIZ_CSD_QUERY_ON 0
+#endif
 
 #if XWIDGET_ON && XDIALOG_ON && XWIZARD_ON
 
@@ -569,6 +575,27 @@ static void xwiz_customButtonDisconnect(XWizard* self,
 
 static void VX_wizard_paintEvent(XWidget* self, XEvent* event);
 
+/** @brief  内容顶偏移：CSD 框架装饰条占客户区顶部时的让位像素。
+ *  @details 框架自绘标题条（XWindowDecoration）画在客户区顶部（系统
+ *           标题栏在客户区外），向导横幅此前从 y=0 起绘、页几何与按
+ *           钮行按整高推导，首行内容被条带遮住、底部门按钮带被通用
+ *           避让的整窗位移推出窗外（demo 480x320 按钮半裁实测）。修
+ *           法对标 XMessageBox：XDialog 的通用避让对向导只记账不免除
+ *           （XWizard 例外已登记），横幅/页几何/按钮行经本查询自管
+ *           理让位——系统标题栏/CSD 抑制/子控件形态恒 0，布局零变
+ *           化；未建窗预测期 marginsFor 回退默认条高，SHOW 重排按真
+ *           值收敛。 */
+static int xwiz_contentTop(const XWizard* self)
+{
+#if XWIZ_CSD_QUERY_ON
+    if (!self) return 0;
+    return XDialog_decorationTopOffset((const XDialog*)self);
+#else
+    (void)self;
+    return 0;
+#endif
+}
+
 /** @brief 当前横幅高度：当前页有副标题时两行（56），否则单行（32）。
  *  @note  对标 QWizard ModernStyle 横幅（标题 + 副标题随内容伸缩）。 */
 static int xwiz_bannerHeight(const XWizard* self)
@@ -597,7 +624,7 @@ static void xwiz_layoutCurrentPage(XWizard* self)
         self->m_currentIndex >= self->m_pageCount)
         return;
     if (!self->m_pages[self->m_currentIndex]) return;
-    bannerH = xwiz_bannerHeight(self);
+    bannerH = xwiz_contentTop(self) + xwiz_bannerHeight(self);
     pageH = XWidget_height((XWidget*)self) - bannerH - 40;
     if (pageH < 1) pageH = 1;
     XRect_init(&r, 0, bannerH, XWidget_width((XWidget*)self), pageH);
@@ -660,19 +687,21 @@ static void VX_wizard_paintEvent(XWidget* self, XEvent* event)
     }
     /* 白色背景。 */
     XPainter_fillRect(&painter, &r, 0xFFFFFFFFu);
-    /* 顶部标题栏（有副标题时两行，对标 QWizard 横幅结构）。 */
+    /* 顶部标题栏（有副标题时两行，对标 QWizard 横幅结构）；横幅顶从
+       CSD 装饰条下缘起（xwiz_contentTop，系统条/抑制态恒 0）。 */
     page = XWizard_currentPage(wiz);
     if (page) {
+        int top = xwiz_contentTop(wiz);
         int bannerH = xwiz_bannerHeight(wiz);
-        XRect head = { 0, 0, r.width, bannerH };
+        XRect head = { 0, top, r.width, bannerH };
         const char* sub;
         XPainter_fillRect(&painter, &head, highlight);
         XSnprintf(buf, sizeof(buf), "%s", XWizardPage_title(page));
-        XPainter_drawText(&painter, 8, bannerH - (bannerH >= 56 ? 34 : 12),
+        XPainter_drawText(&painter, 8, top + bannerH - (bannerH >= 56 ? 34 : 12),
                           buf, 0xFFFFFFFFu);
         sub = XWizardPage_subTitle(page);
         if (sub && sub[0])
-            XPainter_drawText(&painter, 8, bannerH - 12, sub, 0xFFD8E8F8u);
+            XPainter_drawText(&painter, 8, top + bannerH - 12, sub, 0xFFD8E8F8u);
     }
     /* 底部分隔线。 */
     {
@@ -798,6 +827,25 @@ static void VX_wizard_resizeEvent(XWidget* self, XEvent* event)
                   void(*)(XWidget*, XEvent*))((XWidget*)self, event);
 }
 
+#if XWIZ_CSD_QUERY_ON
+/** @brief 显示：按真值装饰条高重排（CSD 让位收口）。
+ *  @details init 期建窗未发，xwiz_contentTop 走 marginsFor 的默认条
+ *           高回退；首显建窗（createWindow→syncWindow 落盘真实
+ *           frameMargins）先于 SHOW 事件派发，此处重排把横幅/页几何
+ *           收敛到真值。XDialog 通用避让对向导只记账（XWizard 例外
+ *           已登记），位移/布局两条路径均不介入，无双重让位。 */
+static void VX_wizard_showEvent(XWidget* self, XEvent* event)
+{
+    XWizard* wiz = (XWizard*)self;
+    if (wiz && event && XEvent_type(event) == XEVENT_TYPE_SHOW) {
+        xwiz_layoutButtons(wiz);
+        xwiz_layoutCurrentPage(wiz);
+    }
+    XClass_Parent(XWidget, EXWidget_ShowEvent,
+                  void(*)(XWidget*, XEvent*))((XWidget*)self, event);
+}
+#endif /* XWIZ_CSD_QUERY_ON */
+
 XVtable* XWizard_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XWizard)
@@ -805,6 +853,9 @@ XVtable* XWizard_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_wizard_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_wizard_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_wizard_resizeEvent);
+#if XWIZ_CSD_QUERY_ON
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VX_wizard_showEvent);
+#endif
     return XVTABLE_DEFAULT;
 }
 

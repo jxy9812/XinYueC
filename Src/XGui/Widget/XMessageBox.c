@@ -79,36 +79,79 @@ static int xmsg_contentTop(const XMessageBox* self)
     return base + XDialog_decorationTopOffset((const XDialog*)self);
 }
 
+/** @brief  文本标签在给定可用宽下的实测块高（行数×行高；账本 r2#2）。
+ *  @details 单一几何事实源：XLabel_heightForWidth 统一承载显式 '\n'
+ *           行与 wordWrap 折行（label_sizeForWidth 同一布局器），杜绝
+ *           旧版 setupText 硬编码 60px 高与 updateSize 行模型两套口径
+ *           的漂移——r2 猎捕实证：主题字模行高 30 时 60px 矩形恰容 2
+ *           行，第 3 行起垂直裁剪（a-91），且矩形底 y=102 与 120 高框
+ *           按钮行顶 y=87 重叠 15px，childAt 把按钮上半带的按压抢给
+ *           文本标签=标准按钮「间歇性点击失效」（r2#1，DBGPRESS 实锚
+ *           hit 目标=(56,42 108x60)）。字模未落控件建窗前实测可为
+ *           0：退 sizeHint，再退 1 行行高（r1#4 同款兜底），SHOW 复
+ *           算（updateSize in showEvent）按真字模纠正。 */
+static int xmsg_textBlockHeight(const XMessageBox* self,
+                               const XLabel* label, int availW)
+{
+    int h;
+    (void)self;
+    if (!label) return 0;
+    h = availW > 0 ? XLabel_heightForWidth(label, availW) : -1;
+    if (h <= 0) {
+        XSize hint = XLabel_sizeHint(label);
+        h = hint.height;
+    }
+    if (h <= 0) h = 18; /* 字模全未就绪的建窗前下限（1 行基线）。 */
+    return h;
+}
+
 static void xmsg_setupText(XMessageBox* self)
 {
     XRect r;
     int w = XWidget_width((XWidget*)self);
     int top;
     int x;
+    int availW;
     if (!self || !self->m_textLabel) return;
     top = xmsg_contentTop(self);
     /* 对标 Qt QMessageBox 布局：图标列在文本左侧（indentSpacer 7px +
-     * 图标区），无图标时文本占满内容行。 */
+     * 图标区），无图标时文本占满内容行。高度=实测块高（不再硬编码
+     * 60：60 是两行主题字模的历史口径，多行文本被裁、且矩形侵按钮
+     * 行——r2#1/#2 根因），标签鼠标穿透（纯展示件，压按钮带时不得
+     * 抢按压，r2#1 防回归）。 */
     x = xmsg_hasIconArea(self) ? 56 : 16;
+    availW = w > x + 16 ? w - x - 16 : 0;
     XRect_init(&r, x, top,
-               w > x + 16 ? w - x - 16 : 0, 60);
+               availW, xmsg_textBlockHeight(self, self->m_textLabel, availW));
+    XWidget_setAttribute((XWidget*)self->m_textLabel,
+                         XWidgetAttribute_TransparentForMouseEvents, true);
     XWidget_setGeometry((XWidget*)self->m_textLabel,
                         r.x, r.y, r.width, r.height);
 }
 
 /** @brief 补充文本行几何（对标 setupLayout：informativeText 在消息文
- *         本下一行；行高按 60 让位口径，随详细区压缩）。 */
+ *         本下一行；行高按 60 让位口径，随详细区压缩）。
+ *  @details y 随主文本实测块高（r2#2 同源：旧固定 top+64 在多行主文
+ *           本下与文本矩形重叠），高=自身实测块高；标签鼠标穿透同
+ *           xmsg_setupText。 */
 static void xmsg_setupInformative(XMessageBox* self)
 {
     XRect r;
     int w = XWidget_width((XWidget*)self);
     int top;
     int x;
+    int availW;
+    int textH;
     if (!self || !self->m_informativeLabel) return;
     top = xmsg_contentTop(self);
     x = xmsg_hasIconArea(self) ? 56 : 16;
-    XRect_init(&r, x, top + 64,
-               w > x + 16 ? w - x - 16 : 0, 60);
+    availW = w > x + 16 ? w - x - 16 : 0;
+    textH = xmsg_textBlockHeight(self, self->m_textLabel, availW);
+    XRect_init(&r, x, top + textH + 8,
+               availW,
+               xmsg_textBlockHeight(self, self->m_informativeLabel, availW));
+    XWidget_setAttribute((XWidget*)self->m_informativeLabel,
+                         XWidgetAttribute_TransparentForMouseEvents, true);
     XWidget_setGeometry((XWidget*)self->m_informativeLabel,
                         r.x, r.y, r.width, r.height);
 }
@@ -118,11 +161,19 @@ static void xmsg_setupCheckBox(XMessageBox* self)
 #if XCHECKBOX_ON
     int w = XWidget_width((XWidget*)self);
     int top;
+    int x;
+    int availW;
     int row;
     if (!self || !self->m_checkBox) return;
     top = xmsg_contentTop(self);
-    row = self->m_informativeLabel ? top + 128 : top + 64;
-    /* 复选框行位于消息文本/补充文本之后、按钮盒（底部 40）之前。 */
+    x = xmsg_hasIconArea(self) ? 56 : 16;
+    availW = w > x + 16 ? w - x - 16 : 0;
+    /* 复选框行位于消息文本/补充文本实测块高之后（r2#2 同源：旧固定
+     * 64/128 偏移随多行文本漂移）、按钮盒（底部 40）之前。 */
+    row = top + xmsg_textBlockHeight(self, self->m_textLabel, availW) + 8;
+    if (self->m_informativeLabel)
+        row += xmsg_textBlockHeight(self, self->m_informativeLabel,
+                                    availW) + 8;
     if (XWidget_height((XWidget*)self) > row + 20 + 40)
         XWidget_setGeometry((XWidget*)self->m_checkBox, 16, row,
                             w > 32 ? w - 32 : 0, 20);
@@ -192,8 +243,6 @@ static void xmsg_updateSize(XMessageBox* self)
     int height;
     int top;
     int textW;
-    int textRows = 1;
-    int lineH = 18;
     int screenW = 0;
     int softLimit;
     int hardLimit;
@@ -218,7 +267,6 @@ static void xmsg_updateSize(XMessageBox* self)
     /* 主文本最小宽（未换行 sizeHint）+ 图标列/边距构成布局最小宽。 */
     hint = XLabel_sizeHint(self->m_textLabel);
     textW = hint.width > 0 ? hint.width : 0;
-    if (hint.height > 0) lineH = hint.height;
     width = textW + (xmsg_hasIconArea(self) ? 56 : 16) + 16;
     if (self->m_informativeLabel) {
         XSize ih = XLabel_sizeHint(self->m_informativeLabel);
@@ -227,15 +275,13 @@ static void xmsg_updateSize(XMessageBox* self)
         if (w2 > width) width = w2;
     }
     if (width > softLimit) {
-        /* 超软限：整词换行后重算（XLabel wordWrap 的 heightForWidth
-         * 口径以软限宽折行，取行数×行高；对标 label->setWordWrap(true)
-         * + qMax(softLimit, layoutMinimumWidth())）。 */
-        int wrapW = softLimit - (xmsg_hasIconArea(self) ? 56 : 16) - 16;
-        if (wrapW < 1) wrapW = 1;
+        /* 超软限：整词换行（对标 label->setWordWrap(true) +
+         * qMax(softLimit, layoutMinimumWidth())）；行数不再估算，块高
+         * 由 xmsg_textBlockHeight（heightForWidth）按折行实测（r2#2：
+         * 旧「最长行宽/折行宽」整除估算与 label 贪心断行两套口径在
+         * 中英混排下偏差可达数行）。 */
         if (self->m_textLabel) {
             XLabel_setWordWrap(self->m_textLabel, true);
-            textRows = (textW + wrapW - 1) / wrapW;
-            if (textRows < 1) textRows = 1;
             width = softLimit;
         }
     }
@@ -253,14 +299,24 @@ static void xmsg_updateSize(XMessageBox* self)
         }
     }
 
-    /* 高度：文本行 × 行高 + 后续内容行 + 按钮盒 40（+ 展开的详细区
-     * 120）。 */
+    /* 高度：主文本实测块高（显式 '\n' 行 + 折行统一由 label 布局器
+     * 承载，r2#2：旧「行数估算×行高」模型在多行长文本下只按 2 行
+     * 收口、且与 setupText 的 60px 矩形两套口径漂移）+ 补充文本/复
+     * 选框实测 + 按钮盒 40（+ 展开的详细区 120）。单一事实源与
+     * setupText/setupInformative/setupCheckBox 同一 helper。 */
     top = xmsg_contentTop(self);
-    height = top + textRows * lineH;
-    if (self->m_informativeLabel) height += 64;
+    {
+        int contentW = width - (xmsg_hasIconArea(self) ? 56 : 16) - 16;
+        height = top +
+                 xmsg_textBlockHeight(self, self->m_textLabel, contentW);
+        if (self->m_informativeLabel)
+            height += 8 +
+                      xmsg_textBlockHeight(self, self->m_informativeLabel,
+                                           contentW);
 #if XCHECKBOX_ON
-    if (self->m_checkBox) height += 20 + 8;
+        if (self->m_checkBox) height += 20 + 8;
 #endif
+    }
     height += 40 + 8;
 #if XPLAINTEXTEDIT_ON
     if (self->m_detailsVisible) height += 120;
@@ -1304,24 +1360,25 @@ int XMessageBox_standardButton(const XMessageBox* self,
     return (int)XDialogButtonBox_standardButton(self->m_buttonBox, button);
 }
 
-void XMessageBox_setOptions(XMessageBox* self, int options)
+void XMessageBox_setOptions(XMessageBox* self, XMessageBoxOptions options)
 {
     if (self) self->m_options = options;
 }
 
-int XMessageBox_options(const XMessageBox* self)
+XMessageBoxOptions XMessageBox_options(const XMessageBox* self)
 { return self ? self->m_options : 0; }
 
-bool XMessageBox_testOption(const XMessageBox* self, int option)
+bool XMessageBox_testOption(const XMessageBox* self, XMessageBoxOption option)
 {
-    return self ? ((self->m_options & option) != 0) : false;
+    return self ? ((self->m_options & (int)option) != 0) : false;
 }
 
-void XMessageBox_setOption(XMessageBox* self, int option, bool on)
+void XMessageBox_setOption(XMessageBox* self, XMessageBoxOption option,
+                           bool on)
 {
     if (!self) return;
-    if (on) self->m_options |= option;
-    else self->m_options &= ~option;
+    if (on) self->m_options |= (int)option;
+    else self->m_options &= ~(int)option;
 }
 
 void* XMessageBox_buttonClicked_signal(XMessageBox* self,

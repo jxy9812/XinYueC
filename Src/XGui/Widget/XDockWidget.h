@@ -160,7 +160,10 @@ void XDockWidget_setFeature(XDockWidget* self, int feature, bool on);
  *          对标 qdockwidget.cpp:1710-1712）则恢复上次浮动几何
  *          （undockedGeometry，qdockwidget_p.h:88），否则保留当前尺寸
  *          并映射全局位置。floating=false 时若登记过宿主则挂回宿主，
- *          几何交还主窗口停靠布局。状态变化时真发射 topLevelChanged(bool)。
+ *          几何交还主窗口停靠布局（无宿主登记时仅复位浮动态，不重挂
+ *          父对象）。状态变化时真发射 topLevelChanged(bool)——发射不
+ *          依赖宿主登记，无宿主面板同享（浮动标题同值时不重建窗口
+ *          标题字符串，反复浮/停切换零堆倒腾）。
  * @param self 目标控件指针。
  * @param floating bool 参数。
  * @return 无返回值。

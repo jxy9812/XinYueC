@@ -626,7 +626,8 @@ XWidget* demo_page_views_build(XWidget* parent,
         XTreeWidgetItem_setCheckState(device, XItemCheckState_Checked);
         XTreeWidgetItem_setCheckState(outer,
                                       XItemCheckState_PartiallyChecked);
-        /* 双列展示（§8.0g17 四期④绘制消费）：列 1 备注 + 表头标签。 */
+        /* 双列展示（§8.0g17 四期④绘制消费）：列 1 备注 + 表头标签；
+         * 列 0 固定宽（名称列省略根修，见下方 setColumnWidth 注）。 */
         XTreeWidget_setColumnCount((XTreeWidget*)&g_views.tree, 2);
         XTreeWidgetItem_setTextAt_2(device, 1, "在线");
         XTreeWidgetItem_setTextAt_2(outer, 1, "就绪");
@@ -636,6 +637,17 @@ XWidget* demo_page_views_build(XWidget* parent,
                                         headerLabels, 2);
         }
     }
+    /* 列 0 固定宽（名称列省略根修）：缺省两列全 0=自动均摊，adapt
+     * 后树宽 w3=120（800x600＋默认贴左面板 176 → rootW=600 →
+     * usable=548 → w3=22%）时列 0 带 0..60；子行「网卡/串口」
+     * depth=1，文本起点=indent(20)×1+12=32，预算 60-32=28px < 全宽
+     * 32px（2×1em，outline 12pt→16px），被 xtw_drawColumn0Text 右
+     * 省略成「网.../串...」（顶层行文本起点 28，「设备/外设」预算
+     * 32px 恰满临界）。固定 80 后子行预算 48px 出全字，状态列自动
+     * 铺满余量 40px（「在线」起点 84、宽 32 至 116 ≤ 120 不裁）。
+     * 可行区间 [64,80]（64=子行全字下限，80=状态列「在线」上限），
+     * 110 会把状态列挤到 10px 令其消失，取 80。 */
+    XTreeView_setColumnWidth((XTreeView*)&g_views.tree, 0, 80);
     XWidget_setGeometry((XWidget*)&g_views.tree, 436, 28, 160, 130);
     XObject_connect_1((XObject*)&g_views.tree,
                       (size_t)XTreeWidget_itemClicked_signal(NULL, 0),
@@ -698,6 +710,59 @@ XWidget* demo_page_views_build(XWidget* parent,
 
     XWidget_show(root);
     return root;
+}
+
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：随根几何伸缩。
+ * @details 顶行四列（列表/模型视图/树/表头）按根宽比例展开（27/27/22/
+ *          其余），小节标题跟随；小表格与状态行位置不变（状态行贴底、
+ *          宽随根）；大表格（主文件 m_tableWidget，挂同根）由主文件重
+ *          排，两者以 x=404 为界互不重叠。由 demo_layout_content 全
+ *          路径调用；page 与登记根不符时静默返回。 */
+void demo_page_views_adapt(XWidget* page)
+{
+    int rootW;
+    int rootH;
+    int usable;
+    int w1;
+    int w2;
+    int w3;
+    int w4;
+    int x1;
+    int x2;
+    int x3;
+    int x4;
+    if (!page || page != g_views.root) return;
+    rootW = XWidget_width(page);
+    rootH = XWidget_height(page);
+    if (rootW < 360) return; /* 过窄保持装配几何。 */
+    usable = rootW - 16 - 36; /* 左右缘 8+8 与三个列间 12。 */
+    w1 = usable * 27 / 100;
+    w2 = usable * 27 / 100;
+    w3 = usable * 22 / 100;
+    /* 树列下限 176：名称列固定 80 + 状态列需让开纵向滚动条带（~12px）
+       才能出全「在线/就绪」（目验二轮挂项），176=80+84+12。 */
+    if (w3 < 176) w3 = 176;
+    w4 = usable - w1 - w2 - w3;
+    if (w4 < 90) w4 = 90; /* 表头列保底（段0/段1 可视）。 */
+    x1 = 8;
+    x2 = x1 + w1 + 12;
+    x3 = x2 + w2 + 12;
+    x4 = x3 + w3 + 12;
+#if XWIDGET_ON && XLABEL_ON
+    /* 小节标题跟随各列。 */
+    XWidget_setGeometry(&g_views.capList, x1, 6, w1, 18);
+    XWidget_setGeometry(&g_views.capView, x2, 6, w2, 18);
+    XWidget_setGeometry(&g_views.capTree, x3, 6, w3, 18);
+    XWidget_setGeometry(&g_views.capHeader, x4, 6, w4, 18);
+#endif
+    XWidget_setGeometry((XWidget*)&g_views.list, x1, 28, w1, 118);
+    XWidget_setGeometry((XWidget*)&g_views.view, x2, 28, w2, 118);
+    XWidget_setGeometry((XWidget*)&g_views.tree, x3, 28, w3, 130);
+    XWidget_setGeometry((XWidget*)&g_views.header, x4, 28, w4, 26);
+    XWidget_setGeometry((XWidget*)&g_views.table, 8, 182, 380, 124);
+    /* 状态行贴底。 */
+    XWidget_setGeometry((XWidget*)&g_views.stateLabel, 8,
+                        rootH - 32, rootW - 16, 28);
 }
 
 /* ==================== 自动测试（事件注入 + getter 断言） ==================== */

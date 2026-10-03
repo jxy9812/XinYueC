@@ -5,6 +5,8 @@
  *             - 页面管理：addWidget/insertWidget/widget/count/indexOf；
  *             - 方向：Horizontal（默认）/Vertical；
  *             - 尺寸：setSizes/sizes、setStretchFactor、handleWidth；
+ *               尚未定尺寸（未 setSizes/拖动）时各页均分，定尺寸后
+ *               容器缩放按页尺寸意图比例保持（对标 Qt sizer）；
  *             - 折叠：setChildrenCollapsible（默认 true）、
  *               setCollapsible/isCollapsible（逐页覆写）；
  *             - opaqueResize（默认 true）；refresh 重算布局；
@@ -50,6 +52,10 @@ typedef struct XSplitter
     int* m_collapsible;         /**< 逐页折叠覆写（-1 未设置）。 */
     int m_collapsibleCap;       /**< 折叠数组容量。 */
     int m_dragIndex;            /**< 正在拖动的分隔条索引（-1 无）。 */
+    int* m_sizes;               /**< 页尺寸意图（对标 Qt sizer；0=未设定，
+                                     全零时布局均分；拖动/setSizes 落位
+                                     后写入，容器缩放按此比例重排）。 */
+    int m_sizesCap;             /**< 页尺寸意图数组容量。 */
 } XSplitter;
 
 /* ==================== 生命周期 ==================== */

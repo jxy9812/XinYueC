@@ -123,6 +123,28 @@ void XObject_setParent(XObject* object, XObject* parent);
  */
 const XVector* XObject_children(const XObject* self);
 
+/**
+ * @brief 获取父对象子表中本对象的上一个相邻兄弟对象（对标 Qt 6.8
+ *        QStyleSheetStyle::previousSiblingNode 的兄弟查询需求）
+ * @param self 目标对象指针
+ * @return 相邻兄弟对象指针（借用指针，勿释放）；无父对象、父对象无子表
+ *         或本对象是第一个子对象时返回 NULL
+ * @note 实现为父容器子表顺序查找；子表中的空位（正在析构的子对象）不跳过，
+ *       与 Qt children() 相邻语义一致。供 QSS 兄弟组合符 '+'/'~' 匹配使用
+ */
+XObject* XObject_previousSibling(const XObject* self);
+
+/**
+ * @brief 获取父对象子表中本对象的下一个相邻兄弟对象（对标 Qt 6.8
+ *        QStyleSheetStyle 兄弟节点查询语义）
+ * @param self 目标对象指针
+ * @return 相邻兄弟对象指针（借用指针，勿释放）；无父对象、父对象无子表
+ *         或本对象是最后一个子对象时返回 NULL
+ * @note 实现为父容器子表顺序查找；子表空位不跳过。供 QSS 兄弟组合符
+ *       '+'/'~' 匹配使用
+ */
+XObject* XObject_nextSibling(const XObject* self);
+
 /* ======================== 对象类型查询 ======================== */
 
 /**

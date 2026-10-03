@@ -497,15 +497,31 @@ void XStyle_setDefaultStyle(XStyle* style);
 XStyle* XStyle_defaultStyle(void);
 
 /**
- * @brief 安装全局样式表（对标 QApplication::setStyleSheet）。
+ * @brief 安装全局样式表（对标 QApplication::setStyleSheet 的安装半程）。
  *
  *        以当前默认样式为底层源创建/复用 XStyleSheetStyle 并解析 CSS；
- *        后续绘制按规则匹配覆盖。重复调用更新规则表。
+ *        后续绘制按规则匹配覆盖。重复调用走复用分支（默认样式已是
+ *        XStyleSheetStyle 时仅重解析）：解析前整表清空（对标 Qt 规则表
+ *        全量替换，非增量追加），随后失效整块规则匹配缓存；缓存之外
+ *        全库无样式规则持久缓存，无需额外失效传播。重绘调度不在本层，
+ *        由调用方（XApplication_setStyleSheet → 逐顶层 update）承担。
  *
  * @param css UTF-8 样式表文本（NULL/空=仅清除规则，保留包装）。
  * @return 解析成功返回 true。
  */
 bool XStyle_installStyleSheet(const char* css);
+
+/**
+ * @brief 失效默认样式的渲染规则缓存（默认样式非样式表风格时为无操作）。
+ *
+ *        控件级 setStyleSheet 改变级联输入后由 XWidget_setStyleSheet
+ *        调用：XStyleSheetStyle 的单槽缓存按 (对象,状态) 复用且可指进
+ *        控件源缓存条目规则，不失效则同对象同状态的连续第二次绘制按
+ *        旧规则取色（deferred#4 闭环）。
+ *
+ * @return 无返回值。
+ */
+void XStyle_invalidateStyleSheetRenderCache(void);
 
 #endif /* XSTYLE_ON */
 #ifdef __cplusplus
