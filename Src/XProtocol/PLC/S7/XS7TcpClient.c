@@ -79,6 +79,8 @@ typedef struct XS7PendingRequest {
     uint16_t chunkIndex;         ///< 分片序号（上传序列=步序；下载序列=分片索引）
     uint16_t chunkCount;         ///< 分片总数（序列型步数未知填 0，完成由 kind 决定）
     XByteArray* frame;           ///< 本片完整帧（TPKT+COTP+S7，对象拥有，重试复用）
+    XByteArray* fallbackFrame;   ///< 写回退帧（String 0x09 写被 CPU 拒 0x07 时换 0x04
+                                 ///  裸字节写重发一次；对象拥有，未预置换为 NULL）
 } XS7PendingRequest;
 
 /* pduRef 在 pending->frame 内的字节偏移：TPKT(4) + COTP DT(3) 之后，S7 头内
@@ -451,6 +453,7 @@ static XS7PendingRequest* XS7TcpClient_createPending(XPlcReply* reply, uint16_t 
     pending->chunkIndex = chunkIndex;
     pending->chunkCount = chunkCount;
     pending->frame = NULL;
+    pending->fallbackFrame = NULL;
     return pending;
 }
 
@@ -463,6 +466,10 @@ static void XS7TcpClient_freePending(XS7PendingRequest* pending)
     if (pending->frame) {
         s7ByteArrayDelete(pending->frame);
         pending->frame = NULL;
+    }
+    if (pending->fallbackFrame) {
+        s7ByteArrayDelete(pending->fallbackFrame);
+        pending->fallbackFrame = NULL;
     }
     XMemory_free(pending, XCLASS_DEFAULT_MEMORY_TYPE);
 }
@@ -929,6 +936,10 @@ static void XS7TcpClient_removePendingFromMap(XS7TcpClient* client, XS7PendingRe
         s7ByteArrayDelete(pending->frame);
         pending->frame = NULL;
     }
+    if (pending->fallbackFrame) {
+        s7ByteArrayDelete(pending->fallbackFrame);
+        pending->fallbackFrame = NULL;
+    }
     pending->reply = NULL;
     pending->timeoutTimer = XTIMER_INVALID_ID;
 }
@@ -1159,6 +1170,41 @@ static void XS7TcpClient_processFrame(XS7TcpClient* client, const uint8_t* s7, s
         XObject_killTimer((XObject*)client, pending->timeoutTimer);
         pending->timeoutTimer = XTIMER_INVALID_ID;
     }
+
+    /* String 写 0x07 回退拦截（在常规解析前换发，pending 保持存活）：
+     * CPU 对 Byte 型存储区拒绝 0x09 八位组串写（应答项 0x07 data type
+     * not consistent，真机 S7-1200 实测）——预置的 Byte 裸字节写帧换新
+     * pduRef 重发一次，换发舞步与超时重发一致（先摘旧键再改键重发）。 */
+    if (pending->kind == XS7Pending_Write && pending->fallbackFrame != NULL &&
+        header.rosctr == XS7_ROSCTR_ACK_DATA && header.errorClass == 0x00 &&
+        s7[12] == XS7_FUNC_WRITE &&
+        (size_t)(12 + header.paramLen) < len &&
+        s7[12 + header.paramLen] == 0x07) {
+        XByteArray* fb = pending->fallbackFrame;
+        pending->fallbackFrame = NULL;
+        uint8_t* fd = s7ByteArrayData(fb);
+        if (fd && s7ByteArraySize(fb) >= XS7_PDU_REF_FRAME_OFFSET + XS7_PDU_REF_FRAME_SIZE &&
+            s7MapRemoveKey(client->m_pendingRequests, &header.pduRef)) {
+            uint16_t newRef = XS7Session_nextPduRef(client->m_session);
+            s7WriteU16BE(fd, XS7_PDU_REF_FRAME_OFFSET, newRef);
+            s7ByteArrayDelete(pending->frame);
+            pending->frame = fb;
+            pending->pduRef = newRef;
+            XERROR_PRINTF("[XS7TcpClient] write item 0x07, retrying as raw-byte write ref=%u\n",
+                          (unsigned)newRef);
+            if (XS7TcpClient_sendPendingNow(client, pending)) {
+                return;   /* 回退帧已发出，等待其应答走常规路径 */
+            }
+            /* 换发失败：表键已摘，按写错误收尾 */
+            XS7TcpClient_freePending(pending);
+            XPlcReply_setError(reply, XPlcDevice_WriteError, "raw-byte write retry failed");
+            XS7TcpClient_abortReplyQueuedChunks(client, reply);
+            XS7TcpClient_pumpSendQueue(client);
+            return;
+        }
+        s7ByteArrayDelete(fb);   /* 帧非法或旧键摘除失败：丢弃回退，走常规错误路径 */
+    }
+
     XPlcReply_setState(reply, XPlcReply_State_Responding);
 
     bool ok = false;
@@ -2239,6 +2285,27 @@ XPlcReply* XS7TcpClient_sendWrite(XS7TcpClient* client, const XString* address, 
                                                      &chunkAddr, encodedData + chunkByteOffset,
                                                      bitCount, (uint16_t)i, (uint16_t)chunkCount);
         if (!pendings[i]) buildOk = false;
+        /* String 写预置换版回退帧：真机 S7-1200 对 Byte 型存储区拒绝 0x09
+         * 八位组串写（应答项 0x07 data type not consistent，DB1 的 String
+         * 成员可 0x09 写、DB2 的 Byte 数组被拒——CPU 按成员类型校验传输
+         * 大小）。回退帧=同数据、Byte 类型（0x04 transport、长度=位计数），
+         * 应答 0x07 时由 processFrame 换发。String 恒单片，此处 i 恒 0。 */
+        if (buildOk && type == XS7Value_String && pendings[i]) {
+            XS7Address rawAddr = addr;
+            rawAddr.type = XS7Value_Byte;
+            rawAddr.count = (uint16_t)totalBytes;    /* [max][cur][data] 全长裸字节 */
+            const uint8_t* fbDatas[1];
+            uint16_t fbBits[1];
+            fbDatas[0] = encodedData + chunkByteOffset;
+            fbBits[0] = (uint16_t)(totalBytes * 8);
+            uint8_t fbPdu[XS7_REQUESTED_PDU_LEN];
+            size_t fbLen = XS7Pdu_buildWrite(fbPdu, pendings[i]->pduRef, &rawAddr, 1,
+                                             fbDatas, fbBits);
+            if (fbLen > 0 && fbLen <= XS7_REQUESTED_PDU_LEN) {
+                pendings[i]->fallbackFrame = XS7TcpClient_wrapDtFrame(fbPdu, fbLen);
+            }
+            /* 回退帧构建失败不阻断主流程：仅失去 0x07 时的换发机会 */
+        }
     }
     if (!buildOk) {
         for (int i = 0; i < chunkCount; i++) {

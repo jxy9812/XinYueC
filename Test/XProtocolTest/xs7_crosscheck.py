@@ -4,14 +4,14 @@
 
 子命令：
   writecheck  --c-log LOG             写路径验证：snap7 读 C 程序写过的地址，与 C 日志 RAW 行逐地址比对
-  readprepare --out EXPECT            读路径准备：snap7 向 DB1/M 写一组全新可区分值并落盘期望 JSON
+  readprepare --out EXPECT            读路径准备：snap7 向 DB2/M 写一组全新可区分值并落盘期望 JSON
   readverify  --c-log LOG --expect E  读路径验证：以 XS7_PLC_READBACK=1 的 C 日志 RAW 行比对期望 JSON
   peek                                直接读全部映射地址（调试用）
 
 说明：
   - 连接方式与 C 库集成握手一致：rack=0 slot=1（local TSAP 0x0100 / remote TSAP 0x0301），
     set_connection_params + connect（snap7 connect() 内部即 set_connection_params+Cli_Connect）。
-  - DB1.DBB20 在 C 库打印 18 字节（STRING16 = 2B 头 + 16 字符），本脚本同跨度读 18B。
+  - DB2.DBB20 在 C 库打印 18 字节（STRING16 = 2B 头 + 16 字符），本脚本同跨度读 18B。
   - T/C 区 snap7 语义与 C 库不同且目标 CPU 返回 0x05，仅尽力而为标注，不计入结论。
   - I 区只读，仅做参考比对，不计入读写结论。
 """
@@ -35,38 +35,63 @@ A_PE, A_PA, A_MK, A_DB = Areas.PE, Areas.PA, Areas.MK, Areas.DB
 A_TM, A_CT = Areas.TM, Areas.CT
 
 # 地址映射表：addr -> (area, db, byte_offset, size, bit)
-# 与 C 库 [XS7][PLC] MAP 一致；DB1.DBB20 按 C 库 RAW 跨度取 20 字节。
+# 与 C 库 [XS7][PLC] MAP 一致；DB2.DBB20 按 C 库 RAW 跨度取 20 字节。
 ADDR_MAP = {
-    "DB1.DBX0.0": (A_DB, 1, 0, 1, 0),
-    "DB1.DBB2":   (A_DB, 1, 2, 1, None),
-    "DB1.DBW4":   (A_DB, 1, 4, 2, None),
-    "DB1.DBD6":   (A_DB, 1, 6, 4, None),
-    "DB1.DBD10":  (A_DB, 1, 10, 4, None),
-    "DB1.DBB20":  (A_DB, 1, 20, 18, None),   # STRING16：2B 头 + 16 字符（C 读回 RAW 跨度 18B）
+    "DB2.DBX0.0": (A_DB, 2, 0, 1, 0),
+    "DB2.DBB2":   (A_DB, 2, 2, 1, None),
+    "DB2.DBW4":   (A_DB, 2, 4, 2, None),
+    "DB2.DBD6":   (A_DB, 2, 6, 4, None),
+    "DB2.DBD10":  (A_DB, 2, 10, 4, None),
+    "DB2.DBB20":  (A_DB, 2, 20, 18, None),   # STRING16：2B 头 + 16 字符（C 读回 RAW 跨度 18B）
     "M0.0":       (A_MK, 0, 0, 1, 0),
     "MW2":        (A_MK, 0, 2, 2, None),
     "Q0.0":       (A_PA, 0, 0, 1, 0),
     "IW0":        (A_PE, 0, 0, 2, None),
     "T1":         (A_TM, 0, 1, 2, None),
     "C1":         (A_CT, 0, 1, 2, None),
-    "DB1.DBW0":   (A_DB, 1, 0, 2, None),     # bad_address 用例后的存活读
+    "DB2.DBW0":   (A_DB, 2, 0, 2, None),     # bad_address 用例后的存活读
 }
-# 参与结论的地址（DB1/M/Q 读写区）；I/T/C 仅参考
-CONCLUSIVE = ["DB1.DBX0.0", "DB1.DBB2", "DB1.DBW4", "DB1.DBD6",
-              "DB1.DBD10", "DB1.DBB20", "M0.0", "MW2", "Q0.0"]
+# 参与结论的地址（DB2/M/Q 读写区）；I/T/C 仅参考
+CONCLUSIVE = ["DB2.DBX0.0", "DB2.DBB2", "DB2.DBW4", "DB2.DBD6",
+              "DB2.DBD10", "DB2.DBB20", "M0.0", "MW2", "Q0.0"]
 # C 库已判 SKIP-UNSUPPORTED（写被 ACK 但读回始终为 PLC 程序值）的地址
-KNOWN_PLC_OWNED = {"DB1.DBX0.0", "DB1.DBB2", "DB1.DBW4", "DB1.DBB20", "Q0.0"}
+KNOWN_PLC_OWNED = {"Q0.0"}   # DB2 为测试专用干净块，仅 Q 区可能仍被用户程序驱动
 
 RAW_RE = re.compile(r"^\[XS7\]\[PLC\] RAW (\S+) ((?:[0-9A-Fa-f]{2}[ \t]*)+)$", re.M)
+# C 日志函数级 SKIP 判定行（含 SKIP-UNSUPPORTED 标记）→ 测试函数名；[^\n]*$ 吞到行尾，
+# 使 m.group(0) 包含 SKIP-UNSUPPORTED 之后的完整原因（「占用/覆写」判定在其后）
+SKIP_VERDICT_RE = re.compile(r"^\[XS7\]\[PLC\] (\S+) SKIP （[^\n]*SKIP-UNSUPPORTED[^\n]*$", re.M)
+# 测试函数 → 覆盖的结论地址；m_q_area 的 SKIP 仅因 Q0.0
+# （同一日志中 M0.0/MW2 各自「读回比对一致」，SKIP 原因只在 Q 区）
+SKIP_FUNC_ADDR = {
+    "db_readwrite_bit":    ["DB2.DBX0.0"],
+    "db_readwrite_byte":   ["DB2.DBB2"],
+    "db_readwrite_word":   ["DB2.DBW4"],
+    "db_readwrite_dword":  ["DB2.DBD6"],
+    "db_readwrite_real":   ["DB2.DBD10"],
+    "db_readwrite_string": ["DB2.DBB20"],
+    "m_q_area":            ["Q0.0"],
+    "i_area_readonly":     ["IW0"],
+    "t_c_access":          ["T1", "C1"],
+}
+
+
+def parse_skip_unsupported(text):
+    """从 C 日志解析被标 SKIP-UNSUPPORTED 且原因为「占用/覆写」的地址集（不计入结论）。"""
+    out = set()
+    for m in SKIP_VERDICT_RE.finditer(text):
+        if "占用/覆写" in m.group(0):
+            out.update(SKIP_FUNC_ADDR.get(m.group(1), []))
+    return out
 
 # 读路径写入的全新可区分模式（与 C 库图案、PLC 现值均不同）
 NEW_PATTERN = {
-    "DB1.DBX0.0": ("bit", 1),
-    "DB1.DBB2":   ("bytes", bytes([0xC3])),
-    "DB1.DBW4":   ("bytes", bytes([0x7E, 0x5B])),
-    "DB1.DBD6":   ("bytes", bytes([0xA5, 0x5A, 0x3C, 0xC3])),
-    "DB1.DBD10":  ("bytes", struct.pack(">f", -98.6)),
-    "DB1.DBB20":  ("bytes", bytes([16, 10]) + b"SNAP7_XCHK" + bytes(8)),  # STRING 头 10 0A + 10 字符
+    "DB2.DBX0.0": ("bit", 1),
+    "DB2.DBB2":   ("bytes", bytes([0xC3])),
+    "DB2.DBW4":   ("bytes", bytes([0x7E, 0x5B])),
+    "DB2.DBD6":   ("bytes", bytes([0xA5, 0x5A, 0x3C, 0xC3])),
+    "DB2.DBD10":  ("bytes", struct.pack(">f", -98.6)),
+    "DB2.DBB20":  ("bytes", bytes([16, 10]) + b"SNAP7_XCHK" + bytes(8)),  # STRING 头 10 0A + 10 字符
     "M0.0":       ("bit", 1),
     "MW2":        ("bytes", bytes([0x51, 0xCA])),
 }
@@ -123,12 +148,20 @@ def parse_raw_lines(log_path):
 
 def cmd_writecheck(args):
     c = connect()
+    text = open(args.c_log, "r", encoding="utf-8", errors="replace").read()
     raw = parse_raw_lines(args.c_log)
-    print("[writecheck] C 日志 RAW 地址数=%d" % len(raw))
-    ok = bad = 0
+    skip_excluded = parse_skip_unsupported(text)
+    if skip_excluded != KNOWN_PLC_OWNED:
+        print("[writecheck] 注意: 日志解析的 SKIP-UNSUPPORTED 覆写区 %s 与静态清单 %s 不一致"
+              % (sorted(skip_excluded), sorted(KNOWN_PLC_OWNED)))
+    print("[writecheck] C 日志 RAW 地址数=%d SKIP-UNSUPPORTED 覆写区(不计入结论)=%s"
+          % (len(raw), sorted(skip_excluded)))
+    ok = bad = skip = 0
     for addr in [a for a in ADDR_MAP if a in raw]:
         if addr not in CONCLUSIVE:
             kind = "INFO"
+        elif addr in skip_excluded:
+            kind = "SKIPX"
         else:
             kind = "CHECK"
         try:
@@ -143,18 +176,24 @@ def cmd_writecheck(args):
         stable = "稳定" if r1 == r2 else "漂移(两次读不同!)"
         match = (r1 == raw[addr])
         verdict = "MATCH" if match else "MISMATCH"
-        print("  [%s] %-14s RAW=%-62s snap7=%-62s %s %s"
-              % (kind, addr, hx(raw[addr]), hx(r1), verdict, stable))
+        note = ""
+        if kind == "SKIPX":
+            note = "C 库已判 SKIP-UNSUPPORTED 覆写区（PLC 用户程序占用，不计入结论）"
+        elif kind == "CHECK" and not match and addr in KNOWN_PLC_OWNED:
+            note = "^ 不一致且未见于日志 SKIP 判定——按真差异计入结论"
+        print("  [%s] %-14s RAW=%-62s snap7=%-62s %s %s %s"
+              % (kind, addr, hx(raw[addr]), hx(r1), verdict, stable, note))
         if kind == "CHECK":
             if match:
                 ok += 1
             else:
                 bad += 1
-                if addr in KNOWN_PLC_OWNED:
-                    print("        ^ C 库已判 SKIP-UNSUPPORTED（PLC 用户程序占用/覆写），设备限制非库缺陷")
+        elif kind == "SKIPX":
+            skip += 1
     c.disconnect()
     c.destroy()
-    print("[writecheck] 结论: 一致=%d 不一致=%d" % (ok, bad))
+    print("[writecheck] 结论: 一致=%d 不一致=%d SKIP-UNSUPPORTED 覆写区排除=%d（不计入）"
+          % (ok, bad, skip))
     return 0 if bad == 0 else 2
 
 

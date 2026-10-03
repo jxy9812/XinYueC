@@ -111,7 +111,7 @@ bool XMemory_statisticsEnabled(void)
 	return false;
 }
 
-XMemoryStatistics XMemory_statistics_2(XMemoryType type)
+XMemoryStatistics XMemory_statistics(XMemoryType type)
 {
 	XMemoryStatistics stats;
 	XMemset(&stats, 0, sizeof(stats));

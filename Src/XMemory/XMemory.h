@@ -258,6 +258,16 @@ bool XMemory_statisticsEnabled(void);
 * @note 池的后备缓冲经系统堆分配，计入 SYSTEM 类型的 systemBytes，不随
 *       MULTIPOOL 类型返回；百分比基准同样只取 poolTotalBytes>0 的类型。
 */
+XMemoryStatistics XMemory_statistics(XMemoryType type);
+
+/**
+* @brief 读取指定内存类型的统计快照（即时口径，不走统计使能开关）。
+* @param type 内存类型；口径与 XMemory_statistics 一致（SYSTEM/MULTIPOOL/
+*             HYBRID 三选一）。
+* @return 对应类型的统计快照；type 越界或宏裁剪时各字段恒为 0。
+* @note 与 XMemory_statistics 的差别：本函数不受 XMemory_statisticsEnabled
+*       门控，直接读取当前计数（XPerformanceOverlay 等面板直读场景使用）。
+*/
 XMemoryStatistics XMemory_statistics_2(XMemoryType type);
 
 /**

@@ -3460,7 +3460,7 @@ static void integ_onWriteRetry(XObject* receiver, XVarList* args)
 
 /**
  * @brief large_fragmentation 区域存在性预检查结果槽
- * @details 读 DB1.DBB100（1 字节）成功 → 区域存在，进入正常分片读写流程；
+ * @details 读 DB2.DBB100（1 字节）成功 → 区域存在，进入正常分片读写流程；
  *          任一错误（真机实测 0x05 address out of range）→ 目标 DB1 长度
  *          不足 100 字节、映射分片区不存在，按 SKIP-UNSUPPORTED 结算
  *          （探针实测第 2 轮后：读 DBB64 正常、DBB100 即 0x05）。
@@ -3475,7 +3475,7 @@ static void integ_onLargePrecheck(XObject* sender, XVarList* args)
         return;
     }
     if (XPlcReply_error(reply) == XPlcDevice_NoError) {
-        XPrintf("  [XS7] 区域预检查通过（DB1.DBB100 可读），执行分片读写\n");
+        XPrintf("  [XS7] 区域预检查通过（DB2.DBB100 可读），执行分片读写\n");
         integ_buildCase(XS7IntegCase_LargeFrag);
         if (g_integOpCount > 0) {
             g_integOpIdx = 0;
@@ -3488,9 +3488,9 @@ static void integ_onLargePrecheck(XObject* sender, XVarList* args)
     }
     es = XPlcReply_errorString(reply);
     esUtf8 = (es != NULL) ? XString_toUtf8(es) : "";
-    XPrintf("  [XS7] 区域预检查失败（DB1.DBB100：%s）\n", esUtf8);
+    XPrintf("  [XS7] 区域预检查失败（DB2.DBB100：%s）\n", esUtf8);
     integ_settle(XS7IntegCase_LargeFrag, -1,
-                 "（目标 DB1 长度不足 100 字节，映射分片区 DB1.DBB100+1024 不存在"
+                 "（目标 DB2 长度不足 100 字节，映射分片区 DB2.DBB100+1024 不存在"
                  "——SKIP-UNSUPPORTED：设备/工程配置限制，需扩大 DB1 或更换映射区）");
     if (es != NULL) {
         xs7uStrDelete(es);
@@ -3510,41 +3510,41 @@ static void integ_buildCase(XS7IntegCase c)
     switch (c) {
     case XS7IntegCase_DbBit:
         if (!g_integReadback) {
-            integ_pushWrite("DB1.DBX0.0", XS7Value_Bool, 1, XVariant_create_bool(true));
+            integ_pushWrite("DB2.DBX0.0", XS7Value_Bool, 1, XVariant_create_bool(true));
         }
-        integ_pushRead("DB1.DBX0.0", XS7Value_Bool, 1, !g_integReadback,
+        integ_pushRead("DB2.DBX0.0", XS7Value_Bool, 1, !g_integReadback,
                        (const uint8_t*)"\x01", 1);
         break;
     case XS7IntegCase_DbByte:
         if (!g_integReadback) {
-            integ_pushWrite("DB1.DBB2", XS7Value_Byte, 1, XVariant_create_int(0x5A));
+            integ_pushWrite("DB2.DBB2", XS7Value_Byte, 1, XVariant_create_int(0x5A));
         }
-        integ_pushRead("DB1.DBB2", XS7Value_Byte, 1, !g_integReadback,
+        integ_pushRead("DB2.DBB2", XS7Value_Byte, 1, !g_integReadback,
                        (const uint8_t*)"\x5A", 1);
         break;
     case XS7IntegCase_DbWord: {
         static const uint8_t be[2] = { 0x12, 0x34 };
         if (!g_integReadback) {
-            integ_pushWrite("DB1.DBW4", XS7Value_Word, 1, XVariant_create_int(0x1234));
+            integ_pushWrite("DB2.DBW4", XS7Value_Word, 1, XVariant_create_int(0x1234));
         }
-        integ_pushRead("DB1.DBW4", XS7Value_Word, 1, !g_integReadback, be, 2);
+        integ_pushRead("DB2.DBW4", XS7Value_Word, 1, !g_integReadback, be, 2);
         break;
     }
     case XS7IntegCase_DbDWord: {
         static const uint8_t be[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
         if (!g_integReadback) {
-            integ_pushWrite("DB1.DBD6", XS7Value_DWord, 1,
+            integ_pushWrite("DB2.DBD6", XS7Value_DWord, 1,
                             XVariant_create_uint32(0xDEADBEEFu));
         }
-        integ_pushRead("DB1.DBD6", XS7Value_DWord, 1, !g_integReadback, be, 4);
+        integ_pushRead("DB2.DBD6", XS7Value_DWord, 1, !g_integReadback, be, 4);
         break;
     }
     case XS7IntegCase_DbReal: {
         static const uint8_t be[4] = { 0x42, 0xF7, 0x00, 0x00 };   /* 123.5f */
         if (!g_integReadback) {
-            integ_pushWrite("DB1.DBD10", XS7Value_Real, 1, XVariant_create_float(123.5f));
+            integ_pushWrite("DB2.DBD10", XS7Value_Real, 1, XVariant_create_float(123.5f));
         }
-        integ_pushRead("DB1.DBD10", XS7Value_Real, 1, !g_integReadback, be, 4);
+        integ_pushRead("DB2.DBD10", XS7Value_Real, 1, !g_integReadback, be, 4);
         break;
     }
     case XS7IntegCase_DbString: {
@@ -3553,10 +3553,10 @@ static void integ_buildCase(XS7IntegCase c)
                                        (uint8_t)'_', (uint8_t)'Y', (uint8_t)'U',
                                        (uint8_t)'E' };
         if (!g_integReadback) {
-            integ_pushWrite("DB1.DBB20", XS7Value_String, 16,
+            integ_pushWrite("DB2.DBB20", XS7Value_String, 16,
                             XVariant_create_utf8_str("XIN_YUE"));
         }
-        integ_pushRead("DB1.DBB20", XS7Value_String, 16, !g_integReadback, be, 9);
+        integ_pushRead("DB2.DBB20", XS7Value_String, 16, !g_integReadback, be, 9);
         break;
     }
     case XS7IntegCase_MqArea: {
@@ -3581,7 +3581,7 @@ static void integ_buildCase(XS7IntegCase c)
         integ_pushRead("C1", XS7Value_Word, 1, false, NULL, 0);
         break;
     case XS7IntegCase_LargeFrag: {
-        /* ≥1000 字节 DB 连续读与写：DB1.DBB100 起 1024 字节，图案 i*13+7 */
+        /* ≥1000 字节 DB 连续读与写：DB2.DBB100 起 1024 字节，图案 i*13+7 */
         static uint8_t pattern[1024];
         static bool patternInit = false;
         if (!patternInit) {
@@ -3596,9 +3596,9 @@ static void integ_buildCase(XS7IntegCase c)
             XVariant* v = XVariant_create_null();
             xs7uBaAppend(blob, pattern, sizeof(pattern));
             XByteArray_setVariant_move(v, blob);   /* 变体接管字节数组 */
-            integ_pushWrite("DB1.DBB100", XS7Value_Byte, 1024, v);
+            integ_pushWrite("DB2.DBB100", XS7Value_Byte, 1024, v);
         }
-        integ_pushRead("DB1.DBB100", XS7Value_Byte, 1024, !g_integReadback,
+        integ_pushRead("DB2.DBB100", XS7Value_Byte, 1024, !g_integReadback,
                        pattern, g_integReadback ? 0 : 1024);
         break;
     }
@@ -3610,7 +3610,7 @@ static void integ_buildCase(XS7IntegCase c)
 /**
  * @brief bad_address 结果槽：非法地址走错误路径且不崩溃、客户端存活
  * @details 三步判定：DB99（越界）→ 期望错误应答；BAD..ADDR → 本地拒绝
- *          （sendRead 返回 NULL）或错误应答均算正确路径；DB1.DBW0 → 成功。
+ *          （sendRead 返回 NULL）或错误应答均算正确路径；DB2.DBW0 → 成功。
  *          修正（真机第 1 轮）：本地拒绝路径此前错占子步 2，把存活确认的
  *          应答误判为"BAD..ADDR 未走错误路径"，且最终结算无视先前失败断言。
  */
@@ -3628,7 +3628,7 @@ static void integ_onBadAddrReply(XObject* sender, XVarList* args)
         g_integBadLocalReject = false;
         if (XPlcReply_error(reply) == XPlcDevice_NoError) {
             const XByteArray* raw = XPlcReply_rawResult_const(reply);
-            integ_printRaw("DB1.DBW0",
+            integ_printRaw("DB2.DBW0",
                            (raw != NULL) ? XByteArray_data((XByteArray*)raw) : NULL,
                            (raw != NULL) ? xs7uBaSize((XByteArray*)raw) : 0);
             XPrintf("  [XS7] 连续错误后客户端存活\n");
@@ -3650,7 +3650,7 @@ static void integ_onBadAddrReply(XObject* sender, XVarList* args)
         /* 第三步结果：存活确认（连续错误后客户端仍能正常通信） */
         if (XPlcReply_error(reply) == XPlcDevice_NoError) {
             const XByteArray* raw = XPlcReply_rawResult_const(reply);
-            integ_printRaw("DB1.DBW0",
+            integ_printRaw("DB2.DBW0",
                            (raw != NULL) ? XByteArray_data((XByteArray*)raw) : NULL,
                            (raw != NULL) ? xs7uBaSize((XByteArray*)raw) : 0);
             XPrintf("  [XS7] 连续错误后客户端存活\n");
@@ -3692,8 +3692,8 @@ static void integ_onBadAddrReply(XObject* sender, XVarList* args)
             XPrintf("  [XS7] 非法语法错误路径正确\n");
         }
     }
-    /* 发起存活确认读 DB1.DBW0 */
-    r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBW0", XS7Value_Word, 1);
+    /* 发起存活确认读 DB2.DBW0 */
+    r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBW0", XS7Value_Word, 1);
     if (r == NULL) {
         g_integCaseBad[XS7IntegCase_BadAddress] = true;
         g_integCaseHardBad[XS7IntegCase_BadAddress] = true;
@@ -3771,7 +3771,7 @@ static void integ_onRunStopReply(XObject* sender, XVarList* args)
         }
         XPrintf("  [XS7] Hot Run 已恢复，读回确认 PLC 在线\n");
         g_integSubMode = XS7RS_SUB_CONFIRM;
-        r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBW0", XS7Value_Word, 1);
+        r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBW0", XS7Value_Word, 1);
         if (!integ_wireReply(r, integ_onRunStopReply)) {
             integ_settle(XS7IntegCase_RunStop, 0, "（确认读返回 NULL）");
             integ_nextCase();
@@ -3781,7 +3781,7 @@ static void integ_onRunStopReply(XObject* sender, XVarList* args)
     /* SUB_CONFIRM：恢复后读回在线即 PASS */
     if (XPlcReply_error(reply) == XPlcDevice_NoError) {
         const XByteArray* raw = XPlcReply_rawResult_const(reply);
-        integ_printRaw("DB1.DBW0", (raw != NULL) ? XByteArray_data((XByteArray*)raw) : NULL,
+        integ_printRaw("DB2.DBW0", (raw != NULL) ? XByteArray_data((XByteArray*)raw) : NULL,
                        (raw != NULL) ? xs7uBaSize((XByteArray*)raw) : 0);
         integ_settle(XS7IntegCase_RunStop, 1, "（Stop→确认→Hot Run 恢复→读回在线）");
     } else {
@@ -3826,7 +3826,7 @@ static void integ_onReconnectPoll(XObject* receiver, XVarList* args)
         XPlcDevice_state((XPlcDevice*)g_integClient) == XPlcDevice_ConnectedState) {
         g_integSubMode = XS7TR_SUB_VERIFY;
         XPrintf("  [XS7] 断线后已自动重连，读回验证\n");
-        r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBW0", XS7Value_Word, 1);
+        r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBW0", XS7Value_Word, 1);
         if (integ_wireReply(r, integ_onReconnectVerify)) {
             return;
         }
@@ -3851,7 +3851,7 @@ static void integ_onReconnectVerify(XObject* sender, XVarList* args)
     (void)args;
     if (XPlcReply_error(reply) == XPlcDevice_NoError) {
         const XByteArray* raw = XPlcReply_rawResult_const(reply);
-        integ_printRaw("DB1.DBW0",
+        integ_printRaw("DB2.DBW0",
                        (raw != NULL) ? XByteArray_data((XByteArray*)raw) : NULL,
                        (raw != NULL) ? xs7uBaSize((XByteArray*)raw) : 0);
         integ_settle(XS7IntegCase_TimeoutReconn, 1, "（超时路径与断线自动重连均验证通过）");
@@ -3887,7 +3887,7 @@ static void integ_onTimeoutReply(XObject* sender, XVarList* args)
         g_fakeSilentCount = 2;
         XPlcClient_setTimeout((XPlcClient*)g_integClient, 1200);
         XPlcClient_setNumberOfRetries((XPlcClient*)g_integClient, 1);
-        r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBW0", XS7Value_Word, 1);
+        r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBW0", XS7Value_Word, 1);
         if (integ_wireReply(r, integ_onTimeoutReply)) {
             return;
         }
@@ -3914,7 +3914,7 @@ static void integ_onTimeoutReply(XObject* sender, XVarList* args)
     g_integReconnWait = 32;
     XPlcClient_setNumberOfRetries((XPlcClient*)g_integClient, 3);
     XPlcClient_setTimeout((XPlcClient*)g_integClient, 2000);
-    r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBW0", XS7Value_Word, 1);
+    r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBW0", XS7Value_Word, 1);
     if (r != NULL) {
         /* 该请求用于触发桩断连，结果不关心，完成即回收 */
         XObject_setParent((XObject*)r, (XObject*)g_integClient);
@@ -4000,7 +4000,7 @@ static void integ_nextCase(void)
             XPlcClient_setAutoReconnect((XPlcClient*)g_integClient, true);
             XPlcClient_setTimeout((XPlcClient*)g_integClient, 1200);
             XPlcClient_setNumberOfRetries((XPlcClient*)g_integClient, 1);
-            r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBW0", XS7Value_Word, 1);
+            r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBW0", XS7Value_Word, 1);
             if (!integ_wireReply(r, integ_onTimeoutReply)) {
                 integ_settle(c, 0, "（注入读返回 NULL）");
                 continue;
@@ -4022,7 +4022,7 @@ static void integ_nextCase(void)
             /* 本地即拒绝（视为正确路径），直接进入存活确认 */
             XPrintf("  [XS7] 越界地址被本地拒绝（sendRead 返回 NULL）\n");
             g_integBadSub = 1;
-            r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBW0", XS7Value_Word, 1);
+            r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBW0", XS7Value_Word, 1);
             if (r == NULL) {
                 integ_settle(c, 0, "（存活确认读返回 NULL）");
                 continue;
@@ -4034,7 +4034,7 @@ static void integ_nextCase(void)
         }
         case XS7IntegCase_LargeFrag: {
             /* 区域存在性预检查（真机第 2 轮实测：目标 DB1 长度 65..99 字节，
-             * 读 DB1.DBB100 即 0x05 —— 映射分片区不存在时按 SKIP-UNSUPPORTED
+             * 读 DB2.DBB100 即 0x05 —— 映射分片区不存在时按 SKIP-UNSUPPORTED
              * 结算，不再发送注定失败的 1024B 读写，也避免连接被 CPU 断开
              * 株连后续用例） */
             XPlcReply* r = NULL;
@@ -4047,7 +4047,7 @@ static void integ_nextCase(void)
             g_integCaseBad[c] = false;
             g_integCaseDevLimited[c] = false;
             g_integCaseHardBad[c] = false;
-            r = XS7TcpClient_sendRead_2(g_integClient, "DB1.DBB100", XS7Value_Byte, 1);
+            r = XS7TcpClient_sendRead_2(g_integClient, "DB2.DBB100", XS7Value_Byte, 1);
             if (r != NULL) {
                 integ_wireReply(r, integ_onLargePrecheck);
                 return;
@@ -4315,8 +4315,8 @@ bool XS7Test_integration_run(void)
 
     /* 地址映射固定（写操作只允许 DB1/M/Q 区；I 区只读） */
     XPrintf("[XS7][PLC] MAP %s\n",
-            "DB1.DBX0.0,DB1.DBB2,DB1.DBW4,DB1.DBD6,DB1.DBD10,"
-            "DB1.DBB20(STRING16),DB1.DBB100+1024,M0.0,MW2,Q0.0,IW0,T1,C1");
+            "DB2.DBX0.0,DB2.DBB2,DB2.DBW4,DB2.DBD6,DB2.DBD10,"
+            "DB2.DBB20(STRING16),DB2.DBB100+1024,M0.0,MW2,Q0.0,IW0,T1,C1");
 
     /* 创建客户端并配置连接参数（rack=0，slot 从序列首个开始） */
     g_integClient = XS7TcpClient_create();

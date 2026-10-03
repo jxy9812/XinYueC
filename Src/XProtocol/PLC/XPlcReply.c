@@ -294,25 +294,44 @@ void XPlcReply_clearIntermediateError(XPlcReply* reply)
 }
 
 // --- Signals ---
+// 信号 id 说明：XClass 框架默认以“信号函数自身地址”作信号标识（XEmitSignal 返回
+// (size_t)(signal)，连接侧 XSignal 宏经调用信号函数取回同一地址）。Release 链接期
+// /OPT:ICF 会把重定位后逐字节同形的 COMDAT 函数折叠为同一地址：本类
+// errorOccurred/stateChanged/intermediateErrorOccurred 三个包装函数仅参数的枚举
+// 类型名不同（均发一个 4 字节枚举 varlist），实测 Release 下三者同址，连接与发射
+// 随之串线（Debug 无 ICF 故不现形）。故改用显式编译期常量 id（"XPLR" 前缀 + 信号
+// 序号），连接与发射同源，与代码折叠正交；四常量互异且远离镜像地址区间。
+#define XPLCREPLY_SIGID_FINISHED        ((size_t)0x58504C52F1A90001ull) /**< finished 信号 id */
+#define XPLCREPLY_SIGID_STATECHANGED    ((size_t)0x58504C52F1A90002ull) /**< stateChanged 信号 id */
+#define XPLCREPLY_SIGID_ERROROCCURRED   ((size_t)0x58504C52F1A90003ull) /**< errorOccurred 信号 id */
+#define XPLCREPLY_SIGID_INTERMEDIATE    ((size_t)0x58504C52F1A90004ull) /**< intermediateErrorOccurred 信号 id */
+
 void* XPlcReply_finished_signal(XPlcReply* reply) {
-    XEmitSignal((XObject*)reply, XPlcReply_finished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    if (reply && ((XObject*)reply)->m_signalSlot)
+        XObject_emitSignal((XObject*)reply, XPLCREPLY_SIGID_FINISHED, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return (void*)XPLCREPLY_SIGID_FINISHED;
 }
 
 void* XPlcReply_stateChanged_signal(XPlcReply* reply, XPlcReply_State state)
 {
-    XEmitSignal((XObject*)reply, XPlcReply_stateChanged_signal, XVarList_Create(XVar(XPlcReply_State, state)), NULL,
-        NULL, XEVENT_PRIORITY_NORMAL);
+    if (reply && ((XObject*)reply)->m_signalSlot)
+        XObject_emitSignal((XObject*)reply, XPLCREPLY_SIGID_STATECHANGED,
+            XVarList_Create(XVar(XPlcReply_State, state)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return (void*)XPLCREPLY_SIGID_STATECHANGED;
 }
 
 void* XPlcReply_errorOccurred_signal(XPlcReply* reply, XPlcDevice_Error error) {
-    XEmitSignal((XObject*)reply, XPlcReply_errorOccurred_signal, XVarList_Create(XVar(XPlcDevice_Error, error)), NULL,
-        NULL, XEVENT_PRIORITY_NORMAL);
+    if (reply && ((XObject*)reply)->m_signalSlot)
+        XObject_emitSignal((XObject*)reply, XPLCREPLY_SIGID_ERROROCCURRED,
+            XVarList_Create(XVar(XPlcDevice_Error, error)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return (void*)XPLCREPLY_SIGID_ERROROCCURRED;
 }
 
 void* XPlcReply_intermediateErrorOccurred_signal(XPlcReply* reply, XPlcDevice_IntermediateError error) {
-    XEmitSignal((XObject*)reply, XPlcReply_intermediateErrorOccurred_signal,
-        XVarList_Create(XVar(XPlcDevice_IntermediateError, error)), NULL,
-        NULL, XEVENT_PRIORITY_NORMAL);
+    if (reply && ((XObject*)reply)->m_signalSlot)
+        XObject_emitSignal((XObject*)reply, XPLCREPLY_SIGID_INTERMEDIATE,
+            XVarList_Create(XVar(XPlcDevice_IntermediateError, error)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return (void*)XPLCREPLY_SIGID_INTERMEDIATE;
 }
 
 #endif /* XPLC_CORE_ON */
